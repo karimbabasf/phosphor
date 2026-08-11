@@ -1,8 +1,10 @@
-# Agent crypto control: design
+# Phosphor: design
 
 Date: 2026-08-11
 Status: spec, nothing built
-Name: open. `agent-crypto-control` is a working directory name, not branding.
+
+The name and the interface are the same idea. The screen is green phosphor on near-black, so the
+identity is one decision rather than a name and a palette chosen separately.
 
 ## What it is
 
