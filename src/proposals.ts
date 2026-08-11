@@ -412,9 +412,11 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
       simulation = { ok: false, summary: `patch refused: ${verdict.rule}`, error: verdict.rule };
     } else {
       const after = renderSentences(mergePatch(policy, params.patch));
+      // The +/- lines are the UI's to render from policyDiff; keeping them out of
+      // summary stops the approval gate showing the same diff twice.
       simulation = {
         ok: true,
-        summary: [`the agent asked for: ${params.sentence}`, '', ...after.filter(s => !policy.sentences.includes(s)).map(s => `+ ${s}`), ...policy.sentences.filter(s => !after.includes(s)).map(s => `- ${s}`)].join('\n'),
+        summary: `the agent asked for: ${params.sentence}`,
         policyDiff: { before: policy.sentences, after },
       };
     }
