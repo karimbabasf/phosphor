@@ -1,0 +1,12 @@
+{
+  "mode": "demo",
+  "port": 4177,
+  "addresses": {
+    "evm": [],
+    "solana": [],
+    "near": []
+  },
+  "economicTransferUsd": 10,
+  "candleProducts": ["BTC-USD", "ETH-USD", "SOL-USD", "NEAR-USD", "USDT-USD"],
+  "dataDir": "state"
+}
