@@ -178,6 +178,8 @@ safety gate that does not visually shout is a safety bug.
 | ![Approval gate with a pending proposal](docs/screenshots/pending.png) | ![Kill switch on](docs/screenshots/kill-switch.png) |
 |---|---|
 | A proposal waiting on a human click | Kill switch on: every write refused |
+| ![Policy file unreadable](docs/screenshots/policy-unreadable.png) | ![Resting state](docs/screenshots/resting.png) |
+| Corrupt policy file: every write refused until a human repairs it | Resting: nothing pending, nothing to decide |
 
 ## Layout
 
