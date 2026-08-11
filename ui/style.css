@@ -1,0 +1,276 @@
+/* PHOSPHOR terminal surface.
+   One hue: phosphor green on near-black. Hierarchy is brightness and opacity only.
+   Red is reserved for the safety gate: pending approvals, refusals, breached shares.
+   No radius, no shadow, no gradient, no transition. One animation: the cursor. */
+
+:root {
+  --bg: #0b0d0b;
+  --green: #33ff66;
+  --green-hi: #8cffab;
+  --green-dim: rgba(51, 255, 102, 0.62);
+  --green-faint: rgba(51, 255, 102, 0.38);
+  --green-ghost: rgba(51, 255, 102, 0.22);
+  --red: #ff3b30;
+  --red-dim: rgba(255, 59, 48, 0.62);
+  --red-ghost: rgba(255, 59, 48, 0.30);
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --fs: 13px;
+  --lh: 1.35;
+}
+
+* {
+  box-sizing: border-box;
+  border-radius: 0;
+}
+
+html {
+  background: var(--bg);
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--green);
+  font: var(--fs) / var(--lh) var(--mono);
+  font-variant-ligatures: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+#page {
+  max-width: 104ch;
+  margin: 0 auto;
+  padding: 10px 12px 48px;
+}
+
+/* ---------- shared tiers ---------- */
+
+.hi { color: var(--green-hi); }
+.dim { color: var(--green-dim); }
+.faint { color: var(--green-faint); }
+.red { color: var(--red); }
+.k { color: var(--green-faint); }
+.bar { color: var(--green-ghost); padding: 0 2px; }
+
+/* ---------- 1. status ---------- */
+
+.statusbar {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0 6px;
+  padding: 2px 0 6px;
+  border-bottom: 1px solid var(--green-ghost);
+}
+
+.statusbar .ident {
+  font: inherit;
+  margin: 0;
+  color: var(--green-hi);
+  letter-spacing: 0.08em;
+}
+
+/* Anchored right so it reads as a placed control, not a wrap artifact. */
+#kill-btn { margin-left: auto; }
+
+.statusbar .field .v { color: var(--green); }
+.statusbar .field .v.hi { color: var(--green-hi); }
+.statusbar .field .v.red { color: var(--red); }
+
+.cursor {
+  color: var(--green-hi);
+  animation: blink 1s steps(1) infinite;
+}
+
+@keyframes blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cursor { animation: none; }
+}
+
+.banner {
+  margin: 6px 0 0;
+  padding: 3px 6px;
+  border: 1px solid var(--red);
+  color: var(--red);
+  letter-spacing: 0.06em;
+}
+
+.alert {
+  margin: 6px 0 0;
+  color: var(--green-faint);
+}
+
+/* ---------- panels ---------- */
+
+.panel { margin-top: 14px; }
+
+.frame {
+  color: var(--green-ghost);
+  white-space: pre;
+  overflow: hidden;
+  user-select: none;
+}
+
+.frame-top { color: var(--green-faint); }
+
+.pbody { padding: 3px 1ch 4px; }
+
+/* ---------- 2. composition ---------- */
+
+.grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.grid th {
+  text-align: left;
+  font-weight: normal;
+  color: var(--green-faint);
+  letter-spacing: 0.08em;
+  padding: 0 1ch 2px 0;
+  border-bottom: 1px solid var(--green-ghost);
+}
+
+.grid td {
+  padding: 0 1ch 0 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.grid .c-num, .grid td.num { text-align: right; }
+.grid .c-chain, .grid .c-symbol { width: 8ch; }
+.grid .c-frz { width: 5ch; text-align: right; }
+.grid td.frz { text-align: right; color: var(--green-dim); }
+.grid td.frz.off { color: var(--green-ghost); }
+.grid tr td.unclassified { color: var(--green-faint); }
+.grid td.share.breach { color: var(--red); }
+
+.totals {
+  margin: 4px 0 0;
+  padding-top: 3px;
+  border-top: 1px solid var(--green-ghost);
+  color: var(--green-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 3. cost ---------- */
+
+.headline {
+  margin: 0 0 4px;
+  font-size: 19px;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.costline {
+  display: flex;
+  gap: 1ch;
+  font-variant-numeric: tabular-nums;
+}
+
+.costline .label { color: var(--green); }
+.costline .fill { flex: 1; color: var(--green-ghost); overflow: hidden; white-space: pre; }
+.costline .usd { color: var(--green-hi); }
+.costnote { color: var(--green-faint); padding-left: 2ch; }
+
+/* ---------- 4. chart ---------- */
+
+.chartbar {
+  display: flex;
+  align-items: baseline;
+  gap: 1ch;
+  margin: 0 0 4px;
+}
+
+#product {
+  appearance: none;
+  background: var(--bg);
+  color: var(--green);
+  border: 1px solid var(--green-ghost);
+  font: var(--fs) / var(--lh) var(--mono);
+  padding: 0 1ch;
+}
+
+#product:focus-visible { outline: 1px dotted var(--green); outline-offset: 1px; }
+
+#chart {
+  display: block;
+  width: 100%;
+  height: 180px;
+}
+
+/* ---------- 5. policy ---------- */
+
+.rule { white-space: pre-wrap; }
+.rule .prompt { color: var(--green-ghost); }
+
+/* ---------- 6. approval gate ---------- */
+
+.gate-empty { color: var(--green-faint); }
+
+.pending {
+  border: 1px solid var(--red);
+  padding: 4px 1ch 6px;
+  margin-bottom: 8px;
+}
+
+.pending + .pending { margin-top: 0; }
+.pending .tag { color: var(--red); letter-spacing: 0.08em; }
+.pending .head { color: var(--green-hi); }
+.pending .meta { color: var(--green-faint); }
+.pending .sim { white-space: pre-wrap; color: var(--green); }
+.pending .reason { color: var(--green-dim); }
+.pending .diff-before { color: var(--green-faint); white-space: pre-wrap; }
+.pending .diff-after { color: var(--green-hi); white-space: pre-wrap; }
+.pending .actions { margin-top: 5px; display: flex; gap: 2ch; }
+/* The one click that moves money gets a comfortable target; the rest stay dense. */
+.pending .actions .btn { padding: 3px 1ch; }
+
+/* ---------- buttons ---------- */
+
+.btn {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--green-ghost);
+  color: var(--green);
+  font: var(--fs) / var(--lh) var(--mono);
+  letter-spacing: 0.06em;
+  padding: 0 1ch;
+  cursor: pointer;
+}
+
+.btn:hover { color: var(--green-hi); border-color: var(--green-dim); }
+.btn:focus-visible { outline: 1px dotted var(--green); outline-offset: 1px; }
+.btn[disabled] { color: var(--green-ghost); border-color: var(--green-ghost); cursor: default; }
+
+.btn.on { color: var(--red); border-color: var(--red); }
+.btn.on:hover { color: var(--red); border-color: var(--red); }
+
+.btn.refuse { color: var(--red); border-color: var(--red-ghost); }
+.btn.refuse:hover { color: var(--red); border-color: var(--red); }
+
+/* ---------- 7. log ---------- */
+
+.log {
+  max-height: 46vh;
+  overflow-y: auto;
+}
+
+.logline {
+  white-space: pre-wrap;
+  color: var(--green-dim);
+  /* Hanging indent: a wrapped message stays under the message column. */
+  padding-left: 36ch;
+  text-indent: -36ch;
+}
+
+.logline .ts { color: var(--green-ghost); }
+.logline .type { color: var(--green-faint); }
+.logline .msg { color: var(--green); }
+.logline.refusal .type,
+.logline.refusal .msg { color: var(--red); }
