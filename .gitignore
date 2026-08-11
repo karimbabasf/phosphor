@@ -4,3 +4,7 @@ node_modules/
 *.log
 dist/
 .DS_Store
+state/
+.superpowers/
+.design/*.png
+.design/audit.json

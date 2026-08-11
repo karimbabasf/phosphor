@@ -1,0 +1,85 @@
+{
+  "_comment": "Curated stablecoin risk table. Human-edited, never model-generated at runtime. One source per row. Drafted 2026-08-11 from issuer transparency pages and documented depeg events; pending Karim's review before any live-mode reliance.",
+  "rows": [
+    {
+      "symbol": "USDT",
+      "issuer": "Tether",
+      "freezable": true,
+      "freezeMechanism": "Contract blacklist (addBlackList), used routinely at law-enforcement request",
+      "reserveType": "mixed",
+      "depegWorstUsd": 0.9485,
+      "depegNote": "2022-05-12, Terra collapse week, redemptions held",
+      "sourceUrl": "https://tether.to/en/transparency/"
+    },
+    {
+      "symbol": "USDC",
+      "issuer": "Circle",
+      "freezable": true,
+      "freezeMechanism": "Contract blacklist, used (e.g. Tornado Cash sanctions 2022-08)",
+      "reserveType": "treasuries-cash",
+      "depegWorstUsd": 0.877,
+      "depegNote": "2023-03-11, SVB reserve exposure weekend",
+      "sourceUrl": "https://www.circle.com/en/transparency"
+    },
+    {
+      "symbol": "USDS",
+      "issuer": "Sky",
+      "freezable": false,
+      "freezeMechanism": "No token-level blacklist; indirect exposure via USDC collateral share",
+      "reserveType": "crypto-collateralized",
+      "depegWorstUsd": 0.897,
+      "depegNote": "2023-03-11 as DAI, tracked USDC during SVB weekend",
+      "sourceUrl": "https://sky.money/"
+    },
+    {
+      "symbol": "DAI",
+      "issuer": "Sky",
+      "freezable": false,
+      "freezeMechanism": "No token-level blacklist; indirect exposure via USDC collateral share",
+      "reserveType": "crypto-collateralized",
+      "depegWorstUsd": 0.897,
+      "depegNote": "2023-03-11, tracked USDC during SVB weekend",
+      "sourceUrl": "https://makerburn.com/"
+    },
+    {
+      "symbol": "PYUSD",
+      "issuer": "Paxos",
+      "freezable": true,
+      "freezeMechanism": "Paxos-controlled freeze and wipe functions, NYDFS-regulated",
+      "reserveType": "treasuries-cash",
+      "depegWorstUsd": 0.995,
+      "depegNote": "Minor venue wobbles only",
+      "sourceUrl": "https://paxos.com/pyusd-transparency/"
+    },
+    {
+      "symbol": "USDe",
+      "issuer": "Ethena",
+      "freezable": false,
+      "freezeMechanism": "No token blacklist; custodial and CEX counterparty risk instead",
+      "reserveType": "synthetic-hedged",
+      "depegWorstUsd": 0.977,
+      "depegNote": "Brief 2024-04 dip on funding-rate stress headlines",
+      "sourceUrl": "https://ethena.fi/"
+    },
+    {
+      "symbol": "FDUSD",
+      "issuer": "First Digital",
+      "freezable": true,
+      "freezeMechanism": "Issuer freeze capability, HK trust structure",
+      "reserveType": "treasuries-cash",
+      "depegWorstUsd": 0.87,
+      "depegNote": "2025-04-02 solvency allegations, recovered same week",
+      "sourceUrl": "https://firstdigitallabs.com/transparency"
+    },
+    {
+      "symbol": "TUSD",
+      "issuer": "Techteryx",
+      "freezable": true,
+      "freezeMechanism": "Issuer freeze capability",
+      "reserveType": "mixed",
+      "depegWorstUsd": 0.97,
+      "depegNote": "2023 attestation-gap episodes",
+      "sourceUrl": "https://www.coingecko.com/en/coins/trueusd"
+    }
+  ]
+}
