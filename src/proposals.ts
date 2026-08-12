@@ -296,7 +296,15 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     });
 
     if (p.verdict.outcome === 'needs_approval') {
-      if (gateRequired(cfg)) return persist(p);
+      // A policy change is NEVER auto-approved, on any network, with the gate off or on.
+      // Karim's "no safeguards on testnet" means moving money without clicking; it cannot
+      // mean letting the agent rewrite the rules that govern it, because then the agent
+      // authors the limits AND applies them, which is the exact thing this app exists to
+      // prevent. Proven before this line existed: with the gate off an agent raised
+      // maxPerTransactionUsd from $10,000 to $999,999 and the file on disk changed.
+      // The policy file is also shared with mainnet, so a testnet convenience that can
+      // widen it is a mainnet hole wearing a testnet label.
+      if (gateRequired(cfg) || p.kind === 'policy_change') return persist(p);
 
       // The gate is off, which only ever happens on testnet: gateRequired() ignores this
       // flag entirely on mainnet. Karim asked for no safeguards while testing, and until

@@ -226,7 +226,16 @@ export type RailResult = { ok: boolean; detail: string; txids?: string[] };
 
 export type Rail<D extends WriteDraft = WriteDraft> = {
   kind: D['kind'];
-  // USD the draft moves, read by the policy engine's per-transaction and session budgets.
+  // The rail's own view of what the draft moves, in USD.
+  //
+  // NOT what the policy engine reads. evaluateRail governs on draft.amountUsd, which the
+  // proposal service sets when it builds the draft (priced from the risk table, then
+  // holdings, then spot, and never from anything the agent supplied). This comment used to
+  // claim the engine called this method; it does not, and a type comment that misstates
+  // where a safety number comes from is worth correcting even when both values agree.
+  //
+  // Kept because a rail is the thing that actually knows its own sizing, and the two
+  // agreeing is a property worth being able to assert rather than assume.
   valueUsd(draft: D): number;
   // Dry run. Must not sign or broadcast anything.
   simulate(draft: D): Promise<SimulationResult>;

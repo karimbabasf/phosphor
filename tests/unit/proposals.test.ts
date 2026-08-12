@@ -150,6 +150,40 @@ test('the gate flag cannot auto-approve on mainnet even when it is set false', a
   assert.equal(p.decidedBy, undefined);
 });
 
+// The hole this closes was real and was introduced by the F3 fix itself: with the gate off,
+// proposePolicyChange auto-applied, and an agent raised maxPerTransactionUsd from $10,000 to
+// $999,999 with no human. The agent would author the limits and apply them, which is the one
+// thing this app exists to prevent. The policy file is shared with mainnet too.
+test('a policy change never auto-approves, even with the gate off', async () => {
+  const h = setup({ approvalGate: false });
+  const p = await h.svc.proposePolicyChange({
+    patch: { outbound: { maxPerTransactionUsd: 999999 } },
+    sentence: 'Refuse any single transaction above $999,999.',
+  });
+
+  assert.equal(p.status, 'pending');
+  assert.equal(p.decidedBy, undefined);
+});
+
+test('the policy on disk is untouched while that change sits pending', async () => {
+  const h = setup({ approvalGate: false });
+  const before = loadPolicy(h.dataDir)?.outbound.maxPerTransactionUsd;
+  await h.svc.proposePolicyChange({
+    patch: { outbound: { maxPerTransactionUsd: 999999 } },
+    sentence: 'Refuse any single transaction above $999,999.',
+  });
+
+  assert.equal(loadPolicy(h.dataDir)?.outbound.maxPerTransactionUsd, before);
+});
+
+test('a fund move DOES still auto-approve with the gate off, so the flag still means something', async () => {
+  const h = setup({ approvalGate: false });
+  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
+
+  assert.equal(p.decidedBy, 'gate_disabled');
+  assert.notEqual(p.status, 'pending');
+});
+
 test('the gate being off does not turn a refusal into an approval', async () => {
   const policy = happyPolicy();
   policy.killSwitch = true;
