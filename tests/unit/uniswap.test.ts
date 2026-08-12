@@ -310,6 +310,28 @@ test('deploymentFor only answers for chains with a verified deployment', () => {
   assert.deepEqual(chainsWithDeployment('testnet').sort(), ['arb', 'base']);
 });
 
+test('each chain carries its own Chainlink feed address, because the same address is a different feed elsewhere', () => {
+  const arb = deploymentFor('testnet', 'arb').ethUsdFeed;
+  const base = deploymentFor('testnet', 'base').ethUsdFeed;
+  assert.notEqual(arb.toLowerCase(), base.toLowerCase());
+  // Checked live 2026-08-12: 0xd30e2101... is "ETH / USD" on Arbitrum Sepolia and
+  // "USDC / USD" on Base Sepolia, both deployed, both 9,571 bytes. Reusing one address
+  // across chains would price WETH at $1.00 instead of $1,884 and never throw.
+  assert.equal(arb, '0xd30e2101a97dcbAeBCBC04F14C3f624E67A35165');
+  assert.equal(base, '0x4aDC67696bA383F43DD60A9e78F2C97Fbbfc7cb1');
+});
+
+test('the arb deployment is its own contract set, not Base addresses carried over', () => {
+  const arb = deploymentFor('testnet', 'arb');
+  const base = deploymentFor('testnet', 'base');
+  for (const key of ['factory', 'positionManager', 'quoter', 'router', 'ethUsdFeed'] as const) {
+    assert.notEqual(arb[key].toLowerCase(), base[key].toLowerCase(), `${key} must differ between chains`);
+  }
+  assert.equal(arb.router, '0x101F443B4d1b059569D643917553c771E1b9663E');
+  assert.equal(arb.positionManager, '0x6b2937Bde17889EDCf8fbD8dE31C3C2a70Bc4d65');
+  assert.equal(arb.quoter, '0x2779a0CC1c3e0E44D2542EC3e79e3864Ae93Ef0B');
+});
+
 test('the token registry keeps the two testnet chains apart', () => {
   assert.equal(tokenFor('testnet', 'base', 'USDC').address, USDC);
   assert.equal(tokenFor('testnet', 'arb', 'USDC').address, '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d');

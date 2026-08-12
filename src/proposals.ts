@@ -153,6 +153,8 @@ function mergePatch(base: Policy, patch: PolicyPatch): Policy {
 
 export function createProposalService(deps: ProposalDeps): ProposalService {
   const { cfg, audit, store, ledger, riskRows, quoter, signer, dataDir } = deps;
+  const rails = deps.rails ?? NO_RAILS;
+  const stables = stableSymbols(riskRows);
 
   function notify(): void {
     deps.onChange?.();
@@ -296,7 +298,49 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
 
     // allow: under the click threshold, so the policy itself is the decision maker.
     const allowed = persist({ ...p, status: 'approved', decidedBy: 'policy', decidedAt: nowIso() });
-    return p.kind === 'policy_change' ? applyPolicyChange(allowed) : executeFundMove(allowed);
+    return executeApproved(allowed);
+  }
+
+  // The one route from an approved proposal to the thing that runs it. Both entry points
+  // (the auto-allow path above and the human approve() below) come through here, so the
+  // registry is consulted once rather than in a switch copied per call site.
+  async function executeApproved(p: Proposal): Promise<Proposal> {
+    if (p.draft.kind === 'policy_change') return applyPolicyChange(p);
+
+    const rail = rails.for(p.draft);
+    if (rail !== null) return executeRail(p, rail);
+
+    if (isRailKind(p.draft.kind)) {
+      // A rail draft with no rail behind it. Reachable when a proposal outlives the process
+      // that made it and the app comes back up in a mode that owns no rails; running it as a
+      // fund move would report a zero-leg success and move nothing.
+      const detail = `no ${p.draft.kind} rail is wired in ${cfg.mode} mode, so nothing was sent`;
+      audit.append('execution_failed', `${p.id}: ${detail}`, { id: p.id });
+      return persist({ ...p, status: 'failed', result: { ok: false, detail } });
+    }
+
+    return executeFundMove(p);
+  }
+
+  async function executeRail(p: Proposal, rail: Rail): Promise<Proposal> {
+    const executing = persist({ ...p, status: 'executing' });
+
+    let result: RailResult;
+    try {
+      result = await rail.execute(p.draft);
+    } catch (err) {
+      // A rail that throws has said nothing about whether it sent anything, so its message
+      // is passed through as-is rather than summarised into "failed".
+      result = { ok: false, detail: `${p.draft.kind} rail threw: ${errText(err)}` };
+    }
+
+    const txids = result.txids ?? [];
+    if (!result.ok) {
+      audit.append('execution_failed', `${p.id}: ${result.detail}`, { id: p.id, txids });
+      return persist({ ...executing, status: 'failed', result: { ok: false, detail: result.detail } });
+    }
+    audit.append('executed', `${p.id}: ${result.detail}`, { id: p.id, txids });
+    return persist({ ...executing, status: 'executed', result: { ok: true, detail: result.detail } });
   }
 
   function depositAddressFor(leg: TransferLeg): string {
@@ -455,6 +499,254 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     return land(newProposal('policy_change', draft, simulation, verdict));
   }
 
+  // ---------- rails ----------
+
+  // What one unit of a symbol is worth, from what the app already knows: the risk table
+  // (stables are 1.0 everywhere in this app), then the ledger's own holdings, then the
+  // native spot table. null means this app cannot honestly price it.
+  function priceOf(symbol: string, snapshot: LedgerSnapshot): number | null {
+    const upper = symbol.toUpperCase();
+    if (stables.has(upper)) return 1;
+
+    const held = snapshot.holdings.find(h => h.symbol.toUpperCase() === upper && h.amount > 0 && Number.isFinite(h.usd));
+    if (held !== undefined) return held.usd / held.amount;
+
+    // WETH is ETH wrapped: one dollar value, two contracts. The ledger prices natives only.
+    const spot = snapshot.prices[upper === 'WETH' ? 'ETH' : upper];
+    return typeof spot === 'number' && Number.isFinite(spot) && spot > 0 ? spot : null;
+  }
+
+  // USD the draft moves, which is the number every budget in the engine reads. Deliberately
+  // derived here rather than taken from the agent: a draft that could name its own dollar
+  // value could name a small one. A symbol the app cannot price becomes Infinity, never NaN,
+  // because the engine refuses a non-finite amount ('invalid_amount') where NaN would make
+  // every comparison against a cap false and sail through all of them.
+  function usdOf(symbol: string, amount: number, snapshot: LedgerSnapshot): number {
+    const price = priceOf(symbol, snapshot);
+    if (price === null || !Number.isFinite(amount) || amount < 0) return Infinity;
+    return amount * price;
+  }
+
+  function positionUsd(pos: LpPosition, snapshot: LedgerSnapshot): number {
+    return (
+      usdOf(pos.token0.symbol, pos.token0.amount, snapshot) +
+      usdOf(pos.token1.symbol, pos.token1.amount, snapshot) +
+      (pos.uncollectedFeesUsd ?? 0)
+    );
+  }
+
+  // Resolve something out of a verified table, collecting the table's own error message
+  // instead of throwing. The draft still gets built so the refusal has something to show.
+  function resolve<T>(fn: () => T, problems: string[], fallback: T): T {
+    try {
+      return fn();
+    } catch (err) {
+      problems.push(errText(err));
+      return fallback;
+    }
+  }
+
+  function ourAddress(chain: ChainId, snapshot: LedgerSnapshot, problems: string[]): string {
+    const found = recipientFor(chain, snapshot);
+    if (found === null) {
+      problems.push(`We hold no address on ${chain}, so there is no wallet of ours for this to run from.`);
+      return '';
+    }
+    return found;
+  }
+
+  function refuseDraft(kind: RailKind, draft: RailDraft, reasons: string[]): Promise<Proposal> {
+    return land(newProposal(kind, draft, null, { outcome: 'refuse', reasons, rule: 'invalid_draft' }));
+  }
+
+  // Shared tail for all four rails: evaluate, simulate, persist, and execute only if the
+  // policy said allow. Nothing here knows which rail it is holding.
+  async function proposeRail(kind: RailKind, draft: RailDraft): Promise<Proposal> {
+    const snapshot = ledger.snapshot();
+    const policy = loadPolicy(dataDir);
+
+    // The engine runs first because it is pure and its refusals are terminal. An unlisted
+    // venue, the kill switch or a cap breach settles the proposal without spending the
+    // round trips a rail simulation costs.
+    const verdict = evaluate(draft, buildCtx(snapshot, policy));
+    if (verdict.outcome === 'refuse') return land(newProposal(kind, draft, null, verdict));
+
+    const rail = rails.for(draft);
+    if (rail === null) {
+      return land(
+        newProposal(kind, draft, null, {
+          outcome: 'refuse',
+          reasons: [...verdict.reasons, `No ${kind} rail is wired in ${cfg.mode} mode, so there is nothing to execute.`],
+          rule: 'no_rail',
+        }),
+      );
+    }
+
+    let simulation: SimulationResult;
+    try {
+      simulation = await rail.simulate(draft);
+    } catch (err) {
+      const message = errText(err);
+      simulation = { ok: false, summary: `${kind} simulation threw: ${message}`, error: message };
+    }
+
+    // policy.outbound.simulateBeforeSign is a constant true and the UI says so. The engine
+    // enforces it for legs by requiring a quote on each ('simulation_required'); a rail has
+    // no legs, so the same rule is enforced here. A refusal rather than a pending proposal
+    // on purpose: approve() re-runs the engine, not the simulation, so a failed simulation
+    // parked as pending would quietly stop counting on its way to a human click.
+    if (!simulation.ok) {
+      return land(
+        newProposal(kind, draft, simulation, {
+          outcome: 'refuse',
+          reasons: [...verdict.reasons, `Simulation failed, so nothing is signed: ${simulation.error ?? simulation.summary}`],
+          rule: 'simulation_required',
+        }),
+      );
+    }
+
+    return land(newProposal(kind, draft, simulation, verdict));
+  }
+
+  async function proposeSwap(params: SwapParams): Promise<Proposal> {
+    const snapshot = ledger.snapshot();
+    const problems: string[] = [];
+    const venue = params.venue === 'oneclick' ? 'oneclick' : UNISWAP_VENUE;
+    const toChain = params.toChain ?? params.chain;
+
+    // Both sides are our own wallet. The agent picks the chains and the symbols; it has no
+    // way to say who receives the output.
+    const from = ourAddress(params.chain, snapshot, problems);
+    const to = params.chain === toChain ? from : ourAddress(toChain, snapshot, problems);
+
+    const counterparty =
+      venue === 'oneclick'
+        ? ONECLICK_COUNTERPARTY
+        : resolve(() => String(deploymentFor(cfg.network, params.chain).router), problems, '');
+
+    const draft: SwapDraft = {
+      kind: 'swap',
+      venue,
+      chain: params.chain,
+      toChain,
+      fromSymbol: params.fromSymbol,
+      toSymbol: params.toSymbol,
+      amountIn: params.amountIn,
+      amountUsd: usdOf(params.fromSymbol, params.amountIn, snapshot),
+      minAmountOut: params.minAmountOut,
+      from,
+      to,
+      counterparty,
+      quote: null,
+    };
+
+    return problems.length > 0 ? refuseDraft('swap', draft, problems) : proposeRail('swap', draft);
+  }
+
+  async function proposeHlDeposit(params: HlDepositParams): Promise<Proposal> {
+    const snapshot = ledger.snapshot();
+    const problems: string[] = [];
+    const spec = hlSpec(cfg.network);
+    const from = ourAddress(spec.chain, snapshot, problems);
+
+    const draft: HlDepositDraft = {
+      kind: 'hl_deposit',
+      chain: spec.chain,
+      symbol: spec.symbol,
+      amount: params.amount,
+      // The bridge takes one token and it is a dollar stable, which is the same rule the
+      // rail's own valueUsd applies.
+      amountUsd: Number.isFinite(params.amount) && params.amount >= 0 ? params.amount : Infinity,
+      from,
+      bridge: spec.bridge,
+    };
+
+    return problems.length > 0 ? refuseDraft('hl_deposit', draft, problems) : proposeRail('hl_deposit', draft);
+  }
+
+  async function proposeLpAdd(params: LpAddParams): Promise<Proposal> {
+    const snapshot = ledger.snapshot();
+    const problems: string[] = [];
+    const from = ourAddress(params.chain, snapshot, problems);
+
+    // Token addresses and decimals come from the venue's own verified registry, never from
+    // the agent: a token id on the wire is a contract this app would then approve.
+    const token0 = resolve(() => tokenFor(cfg.network, params.chain, params.token0Symbol), problems, null);
+    const token1 = resolve(() => tokenFor(cfg.network, params.chain, params.token1Symbol), problems, null);
+    const counterparty = resolve(
+      () => String(deploymentFor(cfg.network, params.chain).positionManager),
+      problems,
+      '',
+    );
+
+    const draft: LpAddDraft = {
+      kind: 'lp_add',
+      chain: params.chain,
+      venue: UNISWAP_VENUE,
+      // Empty on purpose: the rail asks the factory which pool this pair and fee resolve to,
+      // and a pool id from the agent would be a second answer to that question.
+      poolId: '',
+      token0: {
+        symbol: token0?.symbol ?? params.token0Symbol,
+        tokenId: token0?.address ?? '',
+        amount: params.amount0,
+        decimals: token0?.decimals ?? 0,
+      },
+      token1: {
+        symbol: token1?.symbol ?? params.token1Symbol,
+        tokenId: token1?.address ?? '',
+        amount: params.amount1,
+        decimals: token1?.decimals ?? 0,
+      },
+      feeTier: params.feeTier,
+      tickLower: params.tickLower,
+      tickUpper: params.tickUpper,
+      amountUsd:
+        usdOf(token0?.symbol ?? params.token0Symbol, params.amount0, snapshot) +
+        usdOf(token1?.symbol ?? params.token1Symbol, params.amount1, snapshot),
+      from,
+      counterparty,
+    };
+
+    return problems.length > 0 ? refuseDraft('lp_add', draft, problems) : proposeRail('lp_add', draft);
+  }
+
+  async function proposeLpRemove(params: LpRemoveParams): Promise<Proposal> {
+    const snapshot = ledger.snapshot();
+    const problems: string[] = [];
+
+    // The wallet decides which position this is. Reading the chain, the venue and the value
+    // off a position we already hold means an id we do not hold cannot be turned into a
+    // draft at all, and no field of the draft is the agent's word for it.
+    const position = ledger.positions().find(p => p.positionId === params.positionId);
+    if (position === undefined) {
+      problems.push(
+        `No pool position ${params.positionId} in the wallet. Read the wallet first: only positions this app can see can be pulled.`,
+      );
+    }
+
+    const chain = position?.chain ?? chainsWithDeployment(cfg.network)[0] ?? 'arb';
+    const from = position === undefined ? '' : ourAddress(chain, snapshot, problems);
+    const counterparty =
+      position === undefined ? '' : resolve(() => String(deploymentFor(cfg.network, chain).positionManager), problems, '');
+
+    const draft: LpRemoveDraft = {
+      kind: 'lp_remove',
+      chain,
+      venue: position?.venue ?? UNISWAP_VENUE,
+      positionId: params.positionId,
+      liquidityPct: params.liquidityPct,
+      // Pessimistic on purpose: pulling liquidity brings funds back, but the engine budgets
+      // every rail draft the same way, and over-counting a move costs a delay where
+      // under-counting it costs money.
+      amountUsd: position === undefined ? Infinity : positionUsd(position, snapshot) * params.liquidityPct,
+      from,
+      counterparty,
+    };
+
+    return problems.length > 0 ? refuseDraft('lp_remove', draft, problems) : proposeRail('lp_remove', draft);
+  }
+
   function requirePending(id: string, action: string): Proposal {
     const p = store.get(id);
     if (!p) {
@@ -484,7 +776,7 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
 
     const approved = persist({ ...p, verdict, status: 'approved', decidedBy: 'human', decidedAt: nowIso() });
     audit.append('approved', `human approved ${p.kind} proposal ${id}`, { id, totalUsd: totalUsdOf(p.draft) });
-    return p.kind === 'policy_change' ? applyPolicyChange(approved) : executeFundMove(approved);
+    return executeApproved(approved);
   }
 
   async function refuse(id: string): Promise<Proposal> {
@@ -497,7 +789,10 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     const cutoff = Date.now() - SESSION_WINDOW_MS;
     return store
       .list()
-      .filter(p => p.status === 'executed' && (p.kind === 'consolidate' || p.kind === 'transfer'))
+      // Everything that moved funds, which is every kind except a policy change. Written as
+      // an exclusion so a rail added later counts against the session cap by default: an
+      // inclusion list would leave the new kind silently unbudgeted.
+      .filter(p => p.status === 'executed' && p.kind !== 'policy_change')
       .filter(p => {
         const at = Date.parse(p.decidedAt ?? p.createdAt);
         return Number.isFinite(at) && at >= cutoff;
@@ -508,6 +803,10 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
   return {
     proposeConsolidate,
     proposePolicyChange,
+    proposeSwap,
+    proposeHlDeposit,
+    proposeLpAdd,
+    proposeLpRemove,
     approve,
     refuse,
     get: (id: string) => store.get(id),

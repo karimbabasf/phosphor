@@ -70,9 +70,11 @@ function registerRead(name: string, description: string, shape: Record<string, z
   );
 }
 
+type ProposeKind = 'consolidate' | 'policy_change' | 'swap' | 'hl_deposit' | 'lp_add' | 'lp_remove';
+
 function registerPropose(
   name: string,
-  kind: 'consolidate' | 'policy_change',
+  kind: ProposeKind,
   description: string,
   shape: Record<string, z.ZodTypeAny>,
 ): void {
@@ -80,6 +82,8 @@ function registerPropose(
     proxy({ op: 'propose', kind, params: args }),
   );
 }
+
+const CHAIN = z.enum(['eth', 'base', 'arb', 'sol', 'near']);
 
 const CANNOT_APPROVE =
   'Returns a proposal id and simulation result. Execution only ever happens after a human approves in the app window; this tool cannot approve.';
@@ -123,9 +127,9 @@ registerPropose(
   'consolidate',
   `Proposes consolidating a stablecoin's scattered balances onto one chain. ${CANNOT_APPROVE}`,
   {
-    toChain: z.enum(['eth', 'base', 'arb', 'sol', 'near']),
+    toChain: CHAIN,
     symbol: z.string(),
-    fromChains: z.array(z.enum(['eth', 'base', 'arb', 'sol', 'near'])).optional(),
+    fromChains: z.array(CHAIN).optional(),
     maxTotalUsd: z.number().optional(),
   },
 );
@@ -133,6 +137,60 @@ registerPropose('propose_policy_change', 'policy_change', `Proposes a change to 
   patch: z.object({}).passthrough(),
   sentence: z.string(),
 });
+
+// The four rail tools. Every one of them names chains, symbols and amounts and nothing
+// else: the wallet the funds leave, the wallet they come back to, and the contract they
+// pass through are all resolved by the app from its own config and its verified
+// deployment tables. There is deliberately no argument on this surface that an agent
+// could point at an address of its choosing.
+
+registerPropose(
+  'propose_swap',
+  'swap',
+  `Proposes swapping one token for another. venue uniswap-v3 swaps on a single chain through the verified router; venue oneclick swaps across chains through NEAR Intents (mainnet only). Both sides stay in this app's own wallet. ${CANNOT_APPROVE}`,
+  {
+    venue: z.enum(['uniswap-v3', 'oneclick']).optional().default('uniswap-v3'),
+    chain: CHAIN,
+    toChain: CHAIN.optional(),
+    fromSymbol: z.string(),
+    toSymbol: z.string(),
+    amountIn: z.number(),
+    minAmountOut: z.number(),
+  },
+);
+
+registerPropose(
+  'propose_hl_deposit',
+  'hl_deposit',
+  `Proposes depositing USDC into this app's own Hyperliquid account through the Bridge2 contract. The chain, the token and the bridge address come from a per-network table, not from this call. ${CANNOT_APPROVE}`,
+  { amount: z.number() },
+);
+
+registerPropose(
+  'propose_lp_add',
+  'lp_add',
+  `Proposes supplying a Uniswap v3 pool with liquidity over a tick range, minting a new position or adding to the matching one this wallet already holds. ${CANNOT_APPROVE}`,
+  {
+    chain: CHAIN,
+    token0Symbol: z.string(),
+    token1Symbol: z.string(),
+    amount0: z.number(),
+    amount1: z.number(),
+    feeTier: z.number().int(),
+    tickLower: z.number().int(),
+    tickUpper: z.number().int(),
+  },
+);
+
+registerPropose(
+  'propose_lp_remove',
+  'lp_remove',
+  `Proposes pulling a share of a liquidity position this wallet holds, collecting its fees in the same transaction. Call wallet first: only a positionId that already appears there can be pulled. ${CANNOT_APPROVE}`,
+  {
+    positionId: z.string(),
+    liquidityPct: z.number(), // 0..1 of the position
+  },
+);
 
 const transport = new StdioServerTransport();
 await server.connect(transport);

@@ -30,7 +30,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { AppConfig, ChainId, Policy, ProposalService, RiskRow } from './types.ts';
+import type { AppConfig, ChainId, Policy, Proposal, ProposalService, RiskRow } from './types.ts';
 import type { Audit } from './audit.ts';
 import type { Store } from './store.ts';
 import type { Ledger } from './ledger/index.ts';
@@ -58,6 +58,7 @@ const MIME: Record<string, string> = {
 };
 
 const CHAINS: readonly string[] = ['eth', 'base', 'arb', 'sol', 'near'];
+const PROPOSE_KINDS: readonly string[] = ['consolidate', 'policy_change', 'swap', 'hl_deposit', 'lp_add', 'lp_remove'];
 const READ_TOOLS: readonly string[] = [
   'balances',
   'composition',
@@ -472,10 +473,130 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     sendJson(res, 400, { error: `unknown read tool: ${tool}. known tools: ${READ_TOOLS.join(', ')}` });
   }
 
+  // What the agent gets back from any propose: the id to poll, what the policy decided,
+  // and what the simulation said. Never the draft itself, so the app's resolved addresses
+  // are not echoed to the caller that was deliberately not allowed to name them.
+  function sendProposal(res: http.ServerResponse, proposal: Proposal): void {
+    broadcastState();
+    sendJson(res, 200, {
+      id: proposal.id,
+      status: proposal.status,
+      verdict: proposal.verdict,
+      simulation: proposal.simulation,
+    });
+  }
+
+  // Boundary checks only: a wrong type or an unknown chain is answered here, and every
+  // question about the value of a number (too big, zero, negative) is left to the policy
+  // engine and the rails, so money rules stay in one place.
+  function numField(params: JsonBody, name: string, problems: string[]): number {
+    const raw = params[name];
+    if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+      problems.push(`${name} must be a finite number`);
+      return NaN;
+    }
+    return raw;
+  }
+
+  function strField(params: JsonBody, name: string, problems: string[]): string {
+    const raw = params[name];
+    if (typeof raw !== 'string' || raw.trim().length === 0) {
+      problems.push(`${name} is required`);
+      return '';
+    }
+    return raw.trim();
+  }
+
+  function chainField(params: JsonBody, name: string, problems: string[]): ChainId {
+    const raw = String(params[name] ?? '');
+    if (!CHAINS.includes(raw)) {
+      problems.push(`${name} must be one of: ${CHAINS.join(', ')}`);
+      return 'eth';
+    }
+    return raw as ChainId;
+  }
+
   async function handlePropose(body: JsonBody, res: http.ServerResponse): Promise<void> {
     const kind = String(body.kind ?? '');
     const params = asRecord(body.params);
+    const problems: string[] = [];
     try {
+      if (kind === 'swap') {
+        const venueRaw = params.venue === undefined ? 'uniswap-v3' : String(params.venue);
+        if (venueRaw !== 'uniswap-v3' && venueRaw !== 'oneclick') {
+          problems.push('venue must be uniswap-v3 or oneclick');
+        }
+        const chain = chainField(params, 'chain', problems);
+        const toChain = params.toChain === undefined ? chain : chainField(params, 'toChain', problems);
+        const fromSymbol = strField(params, 'fromSymbol', problems);
+        const toSymbol = strField(params, 'toSymbol', problems);
+        const amountIn = numField(params, 'amountIn', problems);
+        const minAmountOut = numField(params, 'minAmountOut', problems);
+        if (problems.length > 0) {
+          sendJson(res, 400, { error: problems.join('; ') });
+          return;
+        }
+        sendProposal(
+          res,
+          await proposals.proposeSwap({
+            venue: venueRaw as 'uniswap-v3' | 'oneclick',
+            chain,
+            toChain,
+            fromSymbol,
+            toSymbol,
+            amountIn,
+            minAmountOut,
+          }),
+        );
+        return;
+      }
+      if (kind === 'hl_deposit') {
+        const amount = numField(params, 'amount', problems);
+        if (problems.length > 0) {
+          sendJson(res, 400, { error: problems.join('; ') });
+          return;
+        }
+        sendProposal(res, await proposals.proposeHlDeposit({ amount }));
+        return;
+      }
+      if (kind === 'lp_add') {
+        const chain = chainField(params, 'chain', problems);
+        const token0Symbol = strField(params, 'token0Symbol', problems);
+        const token1Symbol = strField(params, 'token1Symbol', problems);
+        const amount0 = numField(params, 'amount0', problems);
+        const amount1 = numField(params, 'amount1', problems);
+        const feeTier = numField(params, 'feeTier', problems);
+        const tickLower = numField(params, 'tickLower', problems);
+        const tickUpper = numField(params, 'tickUpper', problems);
+        if (problems.length > 0) {
+          sendJson(res, 400, { error: problems.join('; ') });
+          return;
+        }
+        sendProposal(
+          res,
+          await proposals.proposeLpAdd({
+            chain,
+            token0Symbol,
+            token1Symbol,
+            amount0,
+            amount1,
+            feeTier,
+            tickLower,
+            tickUpper,
+          }),
+        );
+        return;
+      }
+      if (kind === 'lp_remove') {
+        const positionId = strField(params, 'positionId', problems);
+        const liquidityPct = numField(params, 'liquidityPct', problems);
+        if (problems.length > 0) {
+          sendJson(res, 400, { error: problems.join('; ') });
+          return;
+        }
+        sendProposal(res, await proposals.proposeLpRemove({ positionId, liquidityPct }));
+        return;
+      }
       if (kind === 'consolidate') {
         const toChain = String(params.toChain ?? '');
         const symbol = typeof params.symbol === 'string' ? params.symbol.trim() : '';
@@ -493,39 +614,25 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         const maxTotalUsd = typeof params.maxTotalUsd === 'number' && Number.isFinite(params.maxTotalUsd)
           ? params.maxTotalUsd
           : undefined;
-        const proposal = await proposals.proposeConsolidate({
-          toChain: toChain as ChainId,
-          symbol,
-          ...(fromChains !== undefined && fromChains.length > 0 ? { fromChains } : {}),
-          ...(maxTotalUsd !== undefined ? { maxTotalUsd } : {}),
-        });
-        broadcastState();
-        sendJson(res, 200, {
-          id: proposal.id,
-          status: proposal.status,
-          verdict: proposal.verdict,
-          simulation: proposal.simulation,
-        });
+        sendProposal(
+          res,
+          await proposals.proposeConsolidate({
+            toChain: toChain as ChainId,
+            symbol,
+            ...(fromChains !== undefined && fromChains.length > 0 ? { fromChains } : {}),
+            ...(maxTotalUsd !== undefined ? { maxTotalUsd } : {}),
+          }),
+        );
         return;
       }
       if (kind === 'policy_change') {
         // patch and sentence are passed through as authored: the engine validates
         // the patch, and the sentence is stored as data, never read as instruction.
         const sentence = typeof params.sentence === 'string' ? params.sentence : '';
-        const proposal = await proposals.proposePolicyChange({
-          patch: asRecord(params.patch),
-          sentence,
-        });
-        broadcastState();
-        sendJson(res, 200, {
-          id: proposal.id,
-          status: proposal.status,
-          verdict: proposal.verdict,
-          simulation: proposal.simulation,
-        });
+        sendProposal(res, await proposals.proposePolicyChange({ patch: asRecord(params.patch), sentence }));
         return;
       }
-      sendJson(res, 400, { error: `unknown propose kind: ${kind}. known kinds: consolidate, policy_change` });
+      sendJson(res, 400, { error: `unknown propose kind: ${kind}. known kinds: ${PROPOSE_KINDS.join(', ')}` });
     } catch (err) {
       sendJson(res, 400, { error: errText(err) });
     }

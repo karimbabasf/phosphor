@@ -22,8 +22,8 @@ const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PORT = 4199;
 const BASE = `http://127.0.0.1:${PORT}`;
 
-// The exact tool surface Task F froze, sorted. Nine names, no more: an extra tool here is a
-// new way for an agent to reach the money, so the count is part of the contract.
+// The exact tool surface, sorted. An extra tool here is a new way for an agent to reach the
+// money, so the set is part of the contract and this check is a set comparison, not a count.
 const EXPECTED_TOOLS = [
   'balances',
   'candles',
@@ -32,7 +32,12 @@ const EXPECTED_TOOLS = [
   'policy_show',
   'proposal_status',
   'propose_consolidate',
+  'propose_hl_deposit',
+  'propose_lp_add',
+  'propose_lp_remove',
   'propose_policy_change',
+  'propose_swap',
+  'wallet',
 ];
 
 const DEMO_TOTAL_STABLE_USD = 49878.15;
@@ -225,7 +230,7 @@ async function run(): Promise<void> {
 
   const names = (await client.listTools()).tools.map(t => t.name).sort();
   check(
-    'MCP surface is exactly the 9 tools',
+    `MCP surface is exactly the ${EXPECTED_TOOLS.length} expected tools`,
     names.length === EXPECTED_TOOLS.length && names.join(',') === EXPECTED_TOOLS.join(','),
     names.join(', '),
   );

@@ -11,6 +11,8 @@ import { loadConfig } from './config.ts';
 import { createAudit } from './audit.ts';
 import { createStore } from './store.ts';
 import { loadPolicy, savePolicy, defaultPolicy } from './policy/file.ts';
+import { renderSentences } from './policy/render.ts';
+import { createRails, venueAllowlist } from './rails/index.ts';
 import { createLedger } from './ledger/index.ts';
 import { oneClickQuoter, syntheticQuoter, stubSigner, type TokensFile } from './intents.ts';
 import { coinbaseSource, krakenSource, cachedCandles } from './candles.ts';
@@ -27,9 +29,38 @@ const store = createStore(cfg.dataDir);
 // Seed a default policy only when the file is absent. A present-but-corrupt file
 // is left in place: loadPolicy returns null and every write refuses (fail closed)
 // until a human repairs or deletes it.
+//
+// The seeded allowlist carries the rail venues. evaluateRail refuses an unlisted
+// counterparty outright, never as needs_approval, so without them the rails are not
+// gated, they are dead. What the allowlist still governs is size: humanClickAboveUsd
+// decides which of these venue calls a human has to click.
+//
+// An EXISTING policy.json is never rewritten, not even to add a venue. A human may
+// have curated it, and an app whose whole claim is that software does not change the
+// rules behind your back cannot change the rules behind your back. A missing venue is
+// named once in the audit log and left alone.
+const venues = venueAllowlist(cfg.network);
 if (!fs.existsSync(path.join(cfg.dataDir, 'policy.json'))) {
-  savePolicy(cfg.dataDir, defaultPolicy());
-  audit.append('policy_changed', 'seeded default policy on first boot');
+  const seeded = defaultPolicy();
+  seeded.outbound.destinationAllowlist = venues;
+  seeded.sentences = renderSentences(seeded); // the human reads the policy actually in force
+  savePolicy(cfg.dataDir, seeded);
+  audit.append(
+    'policy_changed',
+    `seeded default policy on first boot, allowing ${venues.length} rail venue(s) on ${cfg.network}`,
+    { destinationAllowlist: venues },
+  );
+} else {
+  const existing = loadPolicy(cfg.dataDir);
+  const listed = new Set((existing?.outbound.destinationAllowlist ?? []).map(a => a.toLowerCase()));
+  const missing = venues.filter(v => !listed.has(v));
+  if (existing !== null && missing.length > 0) {
+    audit.append(
+      'error',
+      `policy.json does not allow ${missing.length} rail venue(s), so those rails refuse every proposal until a human adds them: ${missing.join(', ')}`,
+      { missing },
+    );
+  }
 }
 
 const riskRows = (JSON.parse(fs.readFileSync(path.join(root, 'data', 'risk-table.json'), 'utf8')) as { rows: RiskRow[] }).rows;
@@ -47,6 +78,11 @@ const live = hyperliquidLive();
 const quoter = cfg.mode === 'demo' ? syntheticQuoter() : oneClickQuoter(tokens);
 const signer = stubSigner();
 
+// The dispatch table for swap, hyperliquid deposit and LP add/remove. Empty in demo
+// mode, where there is a fixture and no chain, so a rail proposal refuses rather than
+// reaching for an RPC and a private key.
+const rails = createRails({ cfg, tokens });
+
 const proposals = createProposalService({
   cfg,
   audit,
@@ -55,6 +91,7 @@ const proposals = createProposalService({
   riskRows,
   quoter,
   signer,
+  rails,
   dataDir: cfg.dataDir,
 });
 

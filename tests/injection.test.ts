@@ -244,7 +244,23 @@ test('the tool surface cannot express an exfiltration target', async () => {
   // one, and a quietly reintroduced one, which is what this suite actually cares about.
   assert.deepEqual(
     tools.map(t => t.name).sort(),
-    ['balances', 'candles', 'composition', 'wallet', 'log_tail', 'policy_show', 'propose_consolidate', 'propose_policy_change', 'proposal_status'].sort(),
+    [
+      'balances',
+      'candles',
+      'composition',
+      'wallet',
+      'log_tail',
+      'policy_show',
+      'proposal_status',
+      'propose_consolidate',
+      'propose_policy_change',
+      // The rails. Each one moves funds through a contract, and none of them takes an
+      // address: the loop below is what holds that to be true.
+      'propose_swap',
+      'propose_hl_deposit',
+      'propose_lp_add',
+      'propose_lp_remove',
+    ].sort(),
   );
 
   for (const tool of tools) {

@@ -9,6 +9,7 @@ import { loadDemoLedger } from './demo.ts';
 import * as evm from './evm.ts';
 import * as solana from './solana.ts';
 import * as near from './near.ts';
+import { readPositions } from '../rails/uniswap.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, '..', '..', 'data');
@@ -238,9 +239,30 @@ async function refreshNearChain(
   }
 }
 
+// Pool positions held by the configured EVM addresses, read off the venue contracts.
+//
+// Deliberately outside the per-chain token refresh. A venue read failing is not the same
+// fact as a chain read failing: a Uniswap deployment can be absent or an NPM call can
+// revert while the chain answers token balances perfectly well, so a venue problem must
+// not mark the chain stale and blank the token rows. readPositions reports per position
+// and per chain through onError and returns what it could read rather than throwing.
+async function refreshPositions(cfg: AppConfig, previous: LpPosition[]): Promise<LpPosition[]> {
+  if (cfg.addresses.evm.length === 0) return [];
+  try {
+    const perAddress = await Promise.all(
+      cfg.addresses.evm.map(address => readPositions(cfg.network, address, { onError: () => {} })),
+    );
+    return perAddress.flat();
+  } catch {
+    // readPositions is written not to throw. If it ever does, the last good list is a
+    // better answer than claiming the wallet holds no positions.
+    return previous;
+  }
+}
+
 function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch): Ledger {
   const tokens = loadTokenTable(cfg.network);
-  const livePositions: LpPosition[] = [];
+  let livePositions: LpPosition[] = [];
   let current: LedgerSnapshot = {
     holdings: [],
     chainStatus: emptyChainStatus(),
@@ -251,13 +273,15 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch): Ledger {
 
   async function refresh(): Promise<LedgerSnapshot> {
     const prices = await resolveLivePrices(fetchImpl, current.prices);
-    const [ethR, baseR, arbR, solR, nearR] = await Promise.all([
+    const [ethR, baseR, arbR, solR, nearR, positions] = await Promise.all([
       refreshEvmChain('eth', cfg, tokens, prices, current, fetchImpl),
       refreshEvmChain('base', cfg, tokens, prices, current, fetchImpl),
       refreshEvmChain('arb', cfg, tokens, prices, current, fetchImpl),
       refreshSolChain(cfg, tokens, prices, current, fetchImpl),
       refreshNearChain(cfg, tokens, prices, current, fetchImpl),
+      refreshPositions(cfg, livePositions),
     ]);
+    livePositions = positions;
 
     const holdings = priceNatives(
       [...ethR.holdings, ...baseR.holdings, ...arbR.holdings, ...solR.holdings, ...nearR.holdings],
@@ -282,8 +306,8 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch): Ledger {
 
   return {
     snapshot: () => current,
-    // Filled by the LP reader once the venue is wired (wave 1A). Empty is honest here:
-    // no positions have been read, so none are claimed.
+    // Filled by refreshPositions on every refresh. Empty before the first one, which is
+    // honest: nothing has been read, so nothing is claimed.
     positions: () => livePositions,
     refresh,
     applyDemoTransfer: () => {
