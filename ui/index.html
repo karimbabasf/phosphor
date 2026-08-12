@@ -27,79 +27,93 @@
   <p class="banner" id="policy-banner" hidden>POLICY FILE UNREADABLE: ALL WRITES REFUSED</p>
   <p class="alert dim" id="alert" hidden></p>
 
-  <!-- 2. COMPOSITION -->
-  <section class="panel">
-    <div class="frame frame-top" data-title="COMPOSITION"></div>
-    <div class="pbody">
-      <table class="grid" id="comp-table">
-        <thead>
-          <tr>
-            <th class="c-issuer">ISSUER</th>
-            <th class="c-chain">CHAIN</th>
-            <th class="c-symbol">SYMBOL</th>
-            <th class="c-num">AMOUNT</th>
-            <th class="c-num">USD</th>
-            <th class="c-num">SHARE</th>
-            <th class="c-frz">FRZ</th>
-          </tr>
-        </thead>
-        <tbody id="comp-rows"></tbody>
-      </table>
-      <p class="totals" id="comp-total">--</p>
-    </div>
-    <div class="frame frame-bottom"></div>
-  </section>
+  <!-- Two columns: left is what is held, right is what governs it.
+       Each column fills the viewport height; panels scroll inside, the page never does. -->
+  <div class="deck">
 
-  <!-- 3. COST -->
-  <section class="panel">
-    <div class="frame frame-top" data-title="COST"></div>
-    <div class="pbody">
-      <p class="headline"><span class="hi" id="cost-total">--</span> <span class="dim">fragmentation cost</span></p>
-      <div id="cost-lines"></div>
-    </div>
-    <div class="frame frame-bottom"></div>
-  </section>
+    <div class="col">
 
-  <!-- 4. CHART -->
-  <section class="panel">
-    <div class="frame frame-top" data-title="CHART"></div>
-    <div class="pbody">
-      <p class="chartbar">
-        <label class="k" for="product">product</label>
-        <select id="product"></select>
-        <span class="meta dim" id="chart-meta">--</span>
-      </p>
-      <canvas id="chart" height="180"></canvas>
-    </div>
-    <div class="frame frame-bottom"></div>
-  </section>
+      <!-- 2. COMPOSITION -->
+      <section class="panel panel-comp">
+        <div class="frame frame-top" data-title="COMPOSITION"></div>
+        <div class="pbody">
+          <table class="grid" id="comp-table">
+            <thead>
+              <tr>
+                <th class="c-issuer">ISSUER</th>
+                <th class="c-chain">CHAIN</th>
+                <th class="c-symbol">SYMBOL</th>
+                <th class="c-num">AMOUNT</th>
+                <th class="c-num">USD</th>
+                <th class="c-num">SHARE</th>
+                <th class="c-frz">FRZ</th>
+              </tr>
+            </thead>
+            <tbody id="comp-rows"></tbody>
+          </table>
+          <p class="totals" id="comp-total">--</p>
+        </div>
+        <div class="frame frame-bottom"></div>
+      </section>
 
-  <!-- 5. POLICY -->
-  <section class="panel">
-    <div class="frame frame-top" data-title="POLICY"></div>
-    <div class="pbody">
-      <div id="policy-lines"></div>
-    </div>
-    <div class="frame frame-bottom"></div>
-  </section>
+      <!-- 3. COST -->
+      <section class="panel panel-cost">
+        <div class="frame frame-top" data-title="COST"></div>
+        <div class="pbody">
+          <p class="headline"><span class="hi" id="cost-total">--</span> <span class="dim">fragmentation cost</span></p>
+          <div id="cost-lines"></div>
+        </div>
+        <div class="frame frame-bottom"></div>
+      </section>
 
-  <!-- 6. APPROVAL GATE -->
-  <section class="panel">
-    <div class="frame frame-top" data-title="APPROVAL GATE"></div>
-    <div class="pbody">
-      <div id="gate"></div>
-    </div>
-    <div class="frame frame-bottom"></div>
-  </section>
+      <!-- 4. CHART -->
+      <section class="panel panel-chart grow">
+        <div class="frame frame-top" data-title="CHART"></div>
+        <div class="pbody">
+          <p class="chartbar">
+            <label class="k" for="product">product</label>
+            <select id="product"></select>
+            <span class="meta dim" id="chart-meta">--</span>
+          </p>
+          <canvas id="chart" height="180"></canvas>
+        </div>
+        <div class="frame frame-bottom"></div>
+      </section>
 
-  <!-- 7. LOG -->
-  <section class="panel">
-    <div class="frame frame-top" data-title="LOG"></div>
-    <div class="pbody">
-      <div id="log" class="log"></div>
     </div>
-    <div class="frame frame-bottom"></div>
-  </section>
+
+    <div class="col">
+
+      <!-- 5. APPROVAL GATE -->
+      <section class="panel panel-gate">
+        <div class="frame frame-top" data-title="APPROVAL GATE"></div>
+        <div class="pbody">
+          <div id="gate"></div>
+        </div>
+        <div class="frame frame-bottom"></div>
+      </section>
+
+      <!-- 6. POLICY -->
+      <section class="panel panel-policy">
+        <div class="frame frame-top" data-title="POLICY"></div>
+        <div class="pbody">
+          <div id="policy-lines"></div>
+        </div>
+        <div class="frame frame-bottom"></div>
+      </section>
+
+      <!-- 7. LOG -->
+      <section class="panel panel-log grow">
+        <div class="frame frame-top" data-title="LOG"></div>
+        <div class="pbody">
+          <div id="log" class="log"></div>
+        </div>
+        <div class="frame frame-bottom"></div>
+      </section>
+
+    </div>
+
+  </div>
 
 </main>
 <script src="/app.js" defer></script>

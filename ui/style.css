@@ -25,10 +25,14 @@
 
 html {
   background: var(--bg);
+  height: 100%;
+  overflow: hidden;
 }
 
 body {
   margin: 0;
+  height: 100%;
+  overflow: hidden;
   background: var(--bg);
   color: var(--green);
   font: var(--fs) / var(--lh) var(--mono);
@@ -36,11 +40,39 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* One screen, never a scrollbar on the page. Panels scroll inside themselves. */
 #page {
-  max-width: 104ch;
+  height: 100dvh;
+  max-width: 2000px;
   margin: 0 auto;
-  padding: 10px 12px 48px;
+  padding: 8px 12px 10px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
+
+.deck {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1.06fr 1fr;
+  column-gap: 22px;
+}
+
+/* min-width:0 is load-bearing: without it a grid item refuses to go below its
+   min-content width, the nowrap table blows the left column out, and the right
+   column runs off the screen. */
+.col {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* Thin ghost scrollbars so a scrolling panel still reads as terminal. */
+.pbody::-webkit-scrollbar { width: 6px; height: 6px; }
+.pbody::-webkit-scrollbar-track { background: transparent; }
+.pbody::-webkit-scrollbar-thumb { background: var(--green-ghost); }
 
 /* ---------- shared tiers ---------- */
 
@@ -105,9 +137,27 @@ body {
 
 /* ---------- panels ---------- */
 
-.panel { margin-top: 14px; }
+.panel {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.col > .panel:first-child { margin-top: 10px; }
+
+/* The last panel in each column eats the leftover height. */
+.panel.grow { flex: 1; min-height: 0; }
+
+/* Caps on the variable-length panels: content grows into a scroll, not into the page. */
+.panel-comp > .pbody { max-height: 46vh; }
+.panel-gate > .pbody { max-height: 46vh; }
+.panel-policy > .pbody { max-height: 26vh; }
+.panel-cost > .pbody { max-height: 30vh; }
 
 .frame {
+  flex: none;
   color: var(--green-ghost);
   white-space: pre;
   overflow: hidden;
@@ -116,7 +166,17 @@ body {
 
 .frame-top { color: var(--green-faint); }
 
-.pbody { padding: 3px 1ch 4px; }
+.pbody {
+  padding: 3px 1ch 4px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.panel.grow > .pbody {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
 
 /* ---------- 2. composition ---------- */
 
@@ -198,10 +258,14 @@ body {
 
 #product:focus-visible { outline: 1px dotted var(--green); outline-offset: 1px; }
 
+.chartbar { flex: none; }
+
+/* Fluid: app.js reads clientWidth/clientHeight and redraws on resize. */
 #chart {
   display: block;
   width: 100%;
-  height: 180px;
+  flex: 1;
+  min-height: 120px;
 }
 
 /* ---------- 5. policy ---------- */
@@ -257,8 +321,34 @@ body {
 /* ---------- 7. log ---------- */
 
 .log {
-  max-height: 46vh;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+}
+
+.log::-webkit-scrollbar { width: 6px; }
+.log::-webkit-scrollbar-track { background: transparent; }
+.log::-webkit-scrollbar-thumb { background: var(--green-ghost); }
+
+/* Too narrow or too short for two columns: fall back to the stacked page that scrolls. */
+@media (max-width: 1100px), (max-height: 620px) {
+  html, body { height: auto; overflow: auto; }
+  #page { height: auto; overflow: visible; padding-bottom: 40px; }
+  .deck { grid-template-columns: 1fr; }
+  .panel.grow { flex: none; }
+  .panel-comp > .pbody,
+  .panel-gate > .pbody,
+  .panel-policy > .pbody,
+  .panel-cost > .pbody { max-height: none; }
+  .pbody { overflow: visible; }
+  #chart { height: 180px; flex: none; }
+  .log { max-height: 46vh; flex: none; }
+}
+
+/* Narrow enough that a 36ch hanging indent leaves the message one word wide. */
+@media (max-width: 760px) {
+  .logline { padding-left: 0; text-indent: 0; }
+  .logline .msg { display: block; padding-left: 2ch; }
 }
 
 .logline {

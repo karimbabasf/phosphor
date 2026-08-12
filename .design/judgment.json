@@ -1,37 +1,43 @@
 {
-  "stamp": "6f590a862f65e125",
-  "iteration": 2,
+  "stamp": "bff1629ce613c030",
+  "iteration": 3,
   "firstFive": {
-    "what": "A terminal-style control panel for stablecoins held across five chains: what is held, what the scatter costs, the standing policy rules, and an approval queue",
+    "what": "A terminal-style control panel for stablecoins held across five chains, now on one screen: what is held and what it costs on the left, what governs it and what is waiting for a click on the right",
     "who": "The owner of the funds, supervising what a connected AI agent is allowed to do with them",
-    "action": "Click APPROVE or REFUSE on the red pending proposal block in the approval gate"
+    "action": "Click APPROVE or REFUSE on the red pending proposal block at the top of the right column"
   },
   "asked": [
-    { "requirement": "One page, no routes, no navigation, no menus, no modals except the approval gate", "met": true, "ref": "body: single scroll, zero nav elements, gate is an inline region not a modal" },
-    { "requirement": "Seven stacked regions in order", "met": true, "ref": "status bar then COMPOSITION, COST, CHART, POLICY, APPROVAL GATE, LOG frame headers top to bottom" },
+    { "requirement": "One page, no routes, no navigation, no menus, no modals except the approval gate", "met": true, "ref": "single #page, zero nav elements, gate is an inline region not a modal" },
+    { "requirement": "All seven regions on screen together: status bar full width, then two columns, left is what is held and right is what governs it", "met": true, "ref": "status bar spans the page, then a two-column deck. Left: COMPOSITION, COST, CHART. Right: APPROVAL GATE, POLICY, LOG. All seven visible at once at 1920x1200, 1512x982 and 1440x900" },
+    { "requirement": "The page never scrolls; a region that outgrows its box scrolls inside itself", "met": true, "ref": "measured at all three viewports: document.scrollHeight equals window.innerHeight, PAGE_SCROLL=no. Every .pbody is overflow:auto with min-height:0; comp and gate capped at 46vh, policy 26vh, cost 30vh; chart and log flex to fill. At 1440x900 the log scrolls internally while the page does not" },
     { "requirement": "System monospace stack only, no webfont", "met": true, "ref": "style.css font-family ui-monospace stack, no @font-face, no font link" },
-    { "requirement": "Homebrew terminal palette, one hue by brightness/opacity", "met": true, "ref": "#0b0d0b ground, #33ff66 base with bright #8cffab and three opacity tiers" },
-    { "requirement": "Red exclusively for pending, refusals, breached shares", "met": true, "ref": "PENDING blocks + REFUSE button, refused/policy_refused/approve_attempt_rejected log lines, KILL and UNREADABLE states; nothing else red in any captured state" },
-    { "requirement": "No rounded corners, shadows, gradients, icons, illustration; box-drawing separation", "met": true, "ref": "column-measured box-glyph frames on every region; slop-lint pass" },
-    { "requirement": "No animation except cursor blink and appending log lines", "met": true, "ref": "status bar block cursor, log lines prepend; no transitions elsewhere" },
-    { "requirement": "Canvas candlesticks, monotone green, tick-only axes, asset selectable, stale marker", "met": true, "ref": "CHART canvas with BTC-USD candles, right-edge price ticks, product select, source+time line carries stale note when source is down" },
-    { "requirement": "Policy as plain sentences, never JSON", "met": true, "ref": "POLICY region renders $ prefixed sentences like 'Ask me before anything above $100.'" },
-    { "requirement": "Terminal-dense character grid, not app-airy", "met": true, "ref": "13px mono, 1.35 line height, 104ch column, tables aligned to the grid" }
+    { "requirement": "Homebrew terminal palette, one hue by brightness/opacity", "met": true, "ref": "#0b0d0b ground, #33ff66 base with bright #8cffab and three opacity tiers; scrollbar thumbs use the existing --green-ghost" },
+    { "requirement": "Red exclusively for pending, refusals, breached shares", "met": true, "ref": "PENDING block + REFUSE button, approve_attempt_rejected log line; nothing else red in the captured render" },
+    { "requirement": "No rounded corners, shadows, gradients, icons, illustration; box-drawing separation", "met": true, "ref": "frames still measured per column via layoutFrames reading parentElement.clientWidth, so both columns draw their own correct widths; slop-lint pass" },
+    { "requirement": "No animation except cursor blink and appending log lines", "met": true, "ref": "no transitions added; the only animation is still the status bar cursor" },
+    { "requirement": "Canvas candlesticks, monotone green, tick-only axes, asset selectable, stale marker", "met": true, "ref": "canvas is now fluid height instead of a fixed 180px; app.js reads clientWidth/clientHeight and redraws on resize, so it renders 528px tall at 1920x1200 and 228px at 1440x900 with no code change" },
+    { "requirement": "Policy as plain sentences, never JSON", "met": true, "ref": "POLICY region renders $ prefixed sentences, unchanged" },
+    { "requirement": "Terminal-dense character grid, not app-airy", "met": true, "ref": "13px mono and 1.35 line height unchanged. The 104ch centred column is gone, replaced by two columns of about 115ch each on a 1920 screen: denser in aggregate, not airier" }
   ],
   "goal": {
-    "outcome": "The owner understands within seconds what they hold, what the scatter costs, and whether anything is waiting for their click, then decides it",
-    "path": "Open the page, read the status bar total and the red gate block, click APPROVE or REFUSE",
+    "outcome": "The owner sees the whole machine at once, with no scrolling, and can judge what is there",
+    "path": "Open the page. Everything is already on screen. The one red block is the only thing asking for a decision",
     "holds": true,
-    "why": "In the pending render the two red blocks are the only red on the page, carry the simulation lines and why-lines, and sit directly above the log; the resting render says 'no pending approvals' quietly"
+    "why": "The red gate block sits at the top of the right column, which is the strongest position on the page after the status bar. Nothing else on screen is red. The previous stacked layout buried it about 1200px down a 1838px page where it could only be reached by scrolling"
   },
   "states": {
-    "resting": "captured states/resting/shot-768.png: gate says 'no pending approvals' dim, no red anywhere, log shows boot trio",
-    "pending": "captured states/pending/shot-768.png and .design/shot-1440.png: red bordered blocks with PENDING label, simulation and why lines, APPROVE/REFUSE buttons",
-    "refusal": "captured states/refusal/shot-768.png: 'human refused consolidate proposal ...' log line in red; policy_refused lines carry the rule name",
-    "kill switch on": "captured states/kill/shot-768.png: status bar 'policy KILL SWITCH ON' red, red [ KILL SWITCH: ON ] control, red policy sentence appended, propose under kill lands policy_refused: kill_switch in red in the log",
-    "policy unreadable": "captured states/policy-unreadable/shot-768.png: red banner 'POLICY FILE UNREADABLE: ALL WRITES REFUSED' under status bar, policy region replaced by the same statement, rest of the page stays live",
-    "agent connected": "captured states/agent/shot-768.png: status bar flips 'agent none' to 'agent connected', hello logged as tool_call"
+    "resting": "captured states/resting/shot-768.png: gate says 'no pending approvals' dim, no red anywhere",
+    "pending": "current .design/shot-1440.png and .design/fit-karim-1920x1200.png: red bordered block top of right column with simulation and why lines, APPROVE/REFUSE",
+    "refusal": "captured states/refusal/shot-768.png: 'human refused consolidate proposal ...' log line in red",
+    "kill switch on": "captured states/kill/shot-768.png: status bar 'policy KILL SWITCH ON' red, red control, red policy sentence",
+    "policy unreadable": "captured states/policy-unreadable/shot-768.png: red banner under status bar; banner sits above the deck so it still spans full width in the two-column layout",
+    "agent connected": "captured states/agent/shot-768.png: status bar flips 'agent none' to 'agent connected'"
   },
   "findings": [],
+  "notes": [
+    { "note": "Below 1100px wide or 620px tall the layout falls back to the original single stacked column and the page scrolls again. One screen is not achievable on a phone at 13px, and shrinking the type to force it would break the terminal density requirement. Deliberate.", "severity": "accepted" },
+    { "note": "The log's 36ch hanging indent left messages one word wide under 760px. Pre-existing, not caused by this change, fixed in the same pass by dropping the indent at that width.", "severity": "fixed" },
+    { "note": "At 1440x900 the log's last visible line is cut mid-glyph by its own overflow container. Honest signal that the region scrolls, but a fade or a hard row cut would read cleaner. Left alone pending Karim's call.", "severity": "minor" }
+  ],
   "verdict": "pass"
 }
