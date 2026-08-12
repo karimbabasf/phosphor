@@ -1,14 +1,19 @@
 # phosphor
 
-A local app that holds stablecoin state, chain connections and policy, and contains no AI. It
+A local app that holds your wallet state, chain connections and policy, and contains no AI. It
 exposes an MCP server. An agent you already pay for (Claude Code, Codex, anything speaking MCP)
 connects and drives it. The app is the car, the agent is the person with the key.
+
+You say "swap 20 USDC into WETH" or "put $50 into the pool". The agent turns that into a
+proposal. The app prices it, runs it through your policy, and either executes it or waits for
+your click. Three things it can do: swap, provide and withdraw liquidity, and deposit to
+Hyperliquid. All four proposal paths have run end to end on Arbitrum Sepolia.
 
 The agent can read everything and propose actions. It can never approve, never execute, and never
 touch policy without a human click in the app window. The policy engine enforces authored rules at
 machine speed with no model in the execution path.
 
-![The phosphor window: status bar, composition, cost, chart, policy, approval gate, log](docs/screenshots/full-page.png)
+![The phosphor window: status bar, chart, wallet with donut, approval gate, policy, log](docs/screenshots/full-page.png)
 
 ## The two rules
 
@@ -29,12 +34,11 @@ the agent is not in it.
 
 ## What it answers
 
-1. What do I hold, everywhere?
-2. What is being scattered actually costing me? (gas burned moving, spread paid converting, dust
-   below economic transfer size, balances idle in the wrong place)
-3. What is my money made of, and is that what I want? (issuer, freeze power, reserve type, depeg
+1. What do I hold, everywhere? Tokens, native gas assets and liquidity pool positions, each
+   with quantity, unit price and value, the way a wallet shows it.
+2. What is my money made of, and is that what I want? (issuer, freeze power, reserve type, depeg
    history, from a curated risk table with a source per row, never model-generated)
-4. Do this, but not more than X.
+3. Do this, but not more than X.
 
 ## Run it
 
@@ -51,19 +55,20 @@ Connect an agent (Claude Code):
 
     claude mcp add phosphor -- node ~/Developer/phosphor/src/mcp.ts
 
-Then ask it things. "What do I hold?" "What is fragmentation costing me?" "Never let me hold more
-than 20% in anything that can freeze me." "Consolidate my USDT onto base."
+Then ask it things. "What do I hold?" "Swap 20 USDC into WETH on arb." "Put $50 into the
+USDC/WETH pool." "Pull half my liquidity out." "Deposit 10 into Hyperliquid." "Never let me hold
+more than 20% in anything that can freeze me."
 
 ## The tool surface
 
-Nine tools, split hard. Read tools execute directly and cannot move anything. Write tools never
-execute: they return a proposal id and a simulation result, and nothing else.
+Thirteen tools, split hard. Read tools execute directly and cannot move anything. Write tools
+never execute: they return a proposal id and a simulation result, and nothing else.
 
 | Read tool | Returns |
 |---|---|
-| `balances` | Holdings across every configured chain, with per-chain staleness |
+| `wallet` | Everything held, one row per token and per pool position: chain, quantity, price, value, share |
+| `balances` | Raw holdings across every configured chain, with per-chain staleness |
 | `composition` | Shares by issuer and chain, freezable share, unclassified holdings |
-| `cost` | The fragmentation cost report: four lines plus a total |
 | `policy_show` | Current policy as plain-English sentences, or a notice that the file is unreadable |
 | `log_tail` | Most recent audit lines, newest first |
 | `candles` | Recent OHLC candles for a product, with a staleness marker |
@@ -71,7 +76,11 @@ execute: they return a proposal id and a simulation result, and nothing else.
 
 | Write tool | Does |
 |---|---|
-| `propose_consolidate` | Proposes gathering a stablecoin's scattered balances onto one chain |
+| `propose_swap` | Swaps one token for another, on a DEX or across chains through NEAR Intents |
+| `propose_lp_add` | Supplies a Uniswap v3 pool over a tick range |
+| `propose_lp_remove` | Pulls a share of a position this wallet holds, collecting its fees |
+| `propose_hl_deposit` | Deposits USDC into this app's own Hyperliquid account through Bridge2 |
+| `propose_consolidate` | Gathers a token's scattered balances onto one chain |
 | `propose_policy_change` | Proposes a patch to the policy rules |
 
 There is no `approve`, no `refuse`, no `kill`, no `dismiss` and no `execute` tool. There is also no
@@ -95,6 +104,17 @@ own addresses or on the allowlist, per-transaction cap, rolling session cap, for
 the post-move composition (issuer share caps, freezable cap, per-chain gas floors). Composition
 checks judge the resulting state rather than the delta, so a portfolio already past a cap cannot
 make further moves until a human changes the policy.
+
+The rails (swap, LP, Hyperliquid deposit) take their own branch, because they hand funds to a
+venue contract rather than decomposing into transfer legs. They are checked on the amount, the
+per-transaction and session caps, the click threshold, the venue contract, and separately on
+where the proceeds land. That branch deliberately does not compute a post-move composition: the
+engine cannot know what a pool or an exchange will hand back, and inventing a post-state would
+be worse than admitting the gap.
+
+Every amount the engine reads is priced by the app, never supplied by the agent. A token the app
+cannot price is refused rather than assumed to be worth a dollar, because a value it cannot
+establish is a value its caps cannot bound.
 
 Policy changes take a shorter path: `killSwitch`, `version` and the rendered sentences are not
 patchable at all, any other patch is schema-checked, and a valid one always lands on

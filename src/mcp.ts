@@ -62,7 +62,7 @@ async function sendHello(): Promise<void> {
   }
 }
 
-const server = new McpServer({ name: 'phosphor', version: '0.1.0' });
+const server = new McpServer({ name: 'phosphor', version: '0.2.0' });
 
 function registerRead(name: string, description: string, shape: Record<string, z.ZodTypeAny>): void {
   server.registerTool(name, { description, inputSchema: shape }, async (args) =>

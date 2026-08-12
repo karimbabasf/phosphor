@@ -1,6 +1,6 @@
 {
   "name": "phosphor",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Phosphor: local stablecoin control app driven by any MCP agent. The app is the car, the agent is the person with the key.",
