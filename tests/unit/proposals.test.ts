@@ -57,6 +57,9 @@ function setup(over: { mode?: AppConfig['mode']; policy?: Policy | 'none'; quote
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'acc-proposals-'));
   const cfg: AppConfig = {
     mode: over.mode ?? 'demo',
+    network: 'testnet',
+    approvalGate: true, // the approval flow is what these tests exercise; see policy/gate.ts
+    keysPath: '/tmp/phosphor-test-keys.json',
     port: 4177,
     addresses: { evm: [], solana: [], near: [] },
     economicTransferUsd: 10,
@@ -389,7 +392,7 @@ test('a stale proposal in the store survives a fresh service and stays gettable'
 
 test('onChange fires on every state transition', async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'acc-proposals-'));
-  const cfg: AppConfig = { mode: 'demo', port: 4177, addresses: { evm: [], solana: [], near: [] }, economicTransferUsd: 10, candleProducts: [], dataDir };
+  const cfg: AppConfig = { mode: 'demo', network: 'testnet', approvalGate: true, keysPath: '/tmp/phosphor-test-keys.json', port: 4177, addresses: { evm: [], solana: [], near: [] }, economicTransferUsd: 10, candleProducts: [], dataDir };
   savePolicy(dataDir, happyPolicy());
   let changes = 0;
   const svc = createProposalService({

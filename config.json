@@ -1,5 +1,8 @@
 {
-  "mode": "demo",
+  "_comment": "Committed template. Real addresses go in config.local.json, which is gitignored and merged over this file key by key. Private keys never appear in either: they live at keysPath, default ~/.phosphor/keys.json, outside the working copy.",
+  "mode": "live",
+  "network": "testnet",
+  "approvalGate": false,
   "port": 4177,
   "addresses": {
     "evm": [],

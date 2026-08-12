@@ -269,25 +269,7 @@ function renderComposition(s) {
   }
 }
 
-/* ---------- 3. cost ---------- */
-
-function renderCost(s) {
-  var cost = s.cost || { totalUsd: 0, lines: [] };
-  $('cost-total').textContent = usd(cost.totalUsd);
-  var box = $('cost-lines');
-  box.textContent = '';
-  for (var i = 0; i < cost.lines.length; i++) {
-    var line = cost.lines[i];
-    var row = el('div', 'costline');
-    row.appendChild(el('span', 'label', line.label));
-    row.appendChild(el('span', 'fill', repeat('.', 160)));
-    row.appendChild(el('span', 'usd', line.usd === null ? 'n/a' : usd(line.usd)));
-    box.appendChild(row);
-    if (line.note) box.appendChild(el('div', 'costnote', line.note));
-  }
-}
-
-/* ---------- 4. chart ---------- */
+/* ---------- 3. chart ---------- */
 
 function renderProducts(s) {
   var select = $('product');
@@ -765,7 +747,6 @@ async function refreshState() {
     STATE = await getJson('/api/state');
     renderStatus(STATE);
     renderComposition(STATE);
-    renderCost(STATE);
     renderProducts(STATE);
     renderPolicy(STATE);
     renderGate(STATE);

@@ -21,7 +21,6 @@ import type { Ledger } from './ledger/index.ts';
 import type { CandleService } from './candles.ts';
 import type { LiveCandles } from './hyperliquid.ts';
 import { classify } from './composition.ts';
-import { fragmentationCost } from './cost.ts';
 import { renderSentences } from './policy/render.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -44,7 +43,6 @@ const CHAINS: readonly string[] = ['eth', 'base', 'arb', 'sol', 'near'];
 const READ_TOOLS: readonly string[] = [
   'balances',
   'composition',
-  'cost',
   'policy_show',
   'log_tail',
   'candles',
@@ -232,12 +230,10 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   function buildState(): unknown {
     const snapshot = ledger.snapshot();
     const composition = classify(snapshot, riskRows);
-    const cost = fragmentationCost(snapshot, composition, cfg);
     const policy = getPolicy();
     return {
       ledger: snapshot,
       composition,
-      cost,
       policy,
       sentences: sentencesOf(policy),
       proposals: proposals.list(),
@@ -400,11 +396,6 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     }
     if (tool === 'composition') {
       sendJson(res, 200, classify(ledger.snapshot(), riskRows));
-      return;
-    }
-    if (tool === 'cost') {
-      const snapshot = ledger.snapshot();
-      sendJson(res, 200, fragmentationCost(snapshot, classify(snapshot, riskRows), cfg));
       return;
     }
     if (tool === 'policy_show') {

@@ -1,6 +1,9 @@
 node_modules/
 .env
 .env.*
+config.local.json
+keys.json
+*.key
 *.log
 dist/
 .DS_Store

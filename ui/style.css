@@ -154,7 +154,6 @@ body {
 .panel-comp > .pbody { max-height: 46vh; }
 .panel-gate > .pbody { max-height: 46vh; }
 .panel-policy > .pbody { max-height: 26vh; }
-.panel-cost > .pbody { max-height: 30vh; }
 
 .frame {
   flex: none;
@@ -218,8 +217,6 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* ---------- 3. cost ---------- */
-
 .headline {
   margin: 0 0 4px;
   font-size: 19px;
@@ -227,18 +224,7 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-.costline {
-  display: flex;
-  gap: 1ch;
-  font-variant-numeric: tabular-nums;
-}
-
-.costline .label { color: var(--green); }
-.costline .fill { flex: 1; color: var(--green-ghost); overflow: hidden; white-space: pre; }
-.costline .usd { color: var(--green-hi); }
-.costnote { color: var(--green-faint); padding-left: 2ch; }
-
-/* ---------- 4. chart ---------- */
+/* ---------- 3. chart ---------- */
 
 .chartbar {
   display: flex;
@@ -362,8 +348,7 @@ body {
   .panel.grow { flex: none; }
   .panel-comp > .pbody,
   .panel-gate > .pbody,
-  .panel-policy > .pbody,
-  .panel-cost > .pbody { max-height: none; }
+  .panel-policy > .pbody { max-height: none; }
   .pbody { overflow: visible; }
   #chart { height: 180px; flex: none; }
   .log { max-height: 46vh; flex: none; }

@@ -5,6 +5,12 @@
 export type ChainId = 'eth' | 'base' | 'arb' | 'sol' | 'near';
 export type Mode = 'demo' | 'live';
 
+// ChainId names the chain family; Network selects which world that family lives in.
+// Adding 'arb-sepolia' style ids instead was rejected: it doubles every ChainId switch
+// in the engine, ledger, policy file and UI, and the wallet's CHAIN column would read
+// 'arb-sepolia' where a wallet should read ARB. One config field moves the whole app.
+export type Network = 'testnet' | 'mainnet';
+
 // ---------- Ledger ----------
 
 export type Holding = {
@@ -59,13 +65,40 @@ export type CompositionView = {
   unclassified: string[]; // symbols with no risk row
 };
 
-// ---------- Cost ----------
+// ---------- Wallet ----------
+// What the composition panel renders: everything held, the way a normal wallet shows it.
+// CompositionView above does NOT go away; it stops being the UI's source and stays the
+// policy engine's input (byIssuer, freezableShare are what the composition rules read).
 
-export type CostLine = { label: string; usd: number | null; note: string }; // null = unavailable, note says why
+export type LpPosition = {
+  venue: string; // 'uniswap-v3', 'ref-finance', ...
+  poolId: string; // pool address or id
+  positionId: string; // NFT token id, or the pool id where positions are fungible
+  token0: { symbol: string; tokenId: string; amount: number };
+  token1: { symbol: string; tokenId: string; amount: number };
+  feeTier: number | null; // in hundredths of a bip (3000 = 0.30%); null where the venue has no tiers
+  inRange: boolean | null; // null for a venue without concentrated ranges
+  uncollectedFeesUsd: number | null; // null when the venue cannot report it
+};
 
-export type CostReport = {
-  totalUsd: number; // headline fragmentation cost
-  lines: CostLine[]; // exactly 4: gas-to-consolidate, conversion fees, dust, stranded
+export type WalletRow = {
+  kind: 'token' | 'lp';
+  chain: ChainId;
+  symbol: string; // 'USDC', 'ETH', or 'USDC/WETH 0.05%' for a pool position
+  tokenId: string;
+  quantity: number;
+  priceUsd: number; // 1.0 for stables, spot for natives; testnet prices come from the mainnet twin
+  valueUsd: number;
+  share: number; // 0..1 of wallet total
+  native: boolean;
+  lp?: LpPosition;
+};
+
+export type WalletView = {
+  rows: WalletRow[]; // value descending
+  totalUsd: number; // everything: tokens, natives and LP
+  byChain: Record<string, number>; // chain -> usd
+  stale: ChainId[]; // chains whose last read failed; never silently zero
 };
 
 // ---------- Policy ----------
@@ -204,11 +237,14 @@ export type Signer = {
 
 export type AppConfig = {
   mode: Mode;
+  network: Network; // selects RPCs, the token registry and every contract address
+  approvalGate: boolean; // honoured on testnet only; see gateRequired() in policy/gate.ts
   port: number;
   addresses: { evm: string[]; solana: string[]; near: string[] };
   economicTransferUsd: number; // below this a balance is dust regardless of gas
   candleProducts: string[];
   dataDir: string; // state dir: policy.json, proposals.json, audit.jsonl
+  keysPath: string; // absolute path OUTSIDE the working copy; never inside the repo
 };
 
 // ---------- Service interfaces (wired in main.ts) ----------

@@ -95,11 +95,6 @@ registerRead(
   {},
 );
 registerRead(
-  'cost',
-  'Returns the fragmentation cost report: four cost lines plus a total in USD. Read-only, changes nothing.',
-  {},
-);
-registerRead(
   'policy_show',
   'Returns the current policy as plain-English sentences, or reports that the policy file is unreadable and every write is refused. Read-only, changes nothing.',
   {},

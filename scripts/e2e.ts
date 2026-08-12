@@ -28,7 +28,6 @@ const EXPECTED_TOOLS = [
   'balances',
   'candles',
   'composition',
-  'cost',
   'log_tail',
   'policy_show',
   'proposal_status',
@@ -246,13 +245,6 @@ async function run(): Promise<void> {
     'composition top row is Circle',
     top !== undefined && top.issuer === 'Circle',
     `${top?.issuer}/${top?.symbol}/${top?.chain} share=${(Number(top?.share) * 100).toFixed(2)}%`,
-  );
-
-  const cost = await callTool(client, 'cost');
-  check(
-    'cost report has exactly 4 lines',
-    Array.isArray(cost.lines) && cost.lines.length === 4,
-    `total=$${cost.totalUsd}`,
   );
 
   // ---- the stranded chain refusal is a feature, not a bug ----

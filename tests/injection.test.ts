@@ -239,7 +239,13 @@ function propertyNames(schema: unknown, out: Set<string> = new Set()): Set<strin
 test('the tool surface cannot express an exfiltration target', async () => {
   assert.ok(client !== null);
   const tools = (await client.listTools()).tools;
-  assert.equal(tools.length, 9);
+  // The exact set, not a count. A count breaks on every legitimate tool addition and
+  // says nothing about which tool changed; the set catches an added tool, a renamed
+  // one, and a quietly reintroduced one, which is what this suite actually cares about.
+  assert.deepEqual(
+    tools.map(t => t.name).sort(),
+    ['balances', 'candles', 'composition', 'log_tail', 'policy_show', 'propose_consolidate', 'propose_policy_change', 'proposal_status'].sort(),
+  );
 
   for (const tool of tools) {
     const names = [...propertyNames(tool.inputSchema)].map(n => n.toLowerCase());

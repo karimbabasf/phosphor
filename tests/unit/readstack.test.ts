@@ -13,7 +13,6 @@ import { fetchHoldings as evmFetchHoldings, fetchGasPriceWei } from '../../src/l
 import { fetchHoldings as solanaFetchHoldings } from '../../src/ledger/solana.ts';
 import { fetchHoldings as nearFetchHoldings } from '../../src/ledger/near.ts';
 import { classify } from '../../src/composition.ts';
-import { fragmentationCost } from '../../src/cost.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const riskRows = JSON.parse(
@@ -22,6 +21,9 @@ const riskRows = JSON.parse(
 
 const demoConfig: AppConfig = {
   mode: 'demo',
+  network: 'testnet',
+  approvalGate: true,
+  keysPath: '/tmp/phosphor-test-keys.json',
   port: 4177,
   addresses: { evm: [], solana: [], near: [] },
   economicTransferUsd: 10,
@@ -82,44 +84,6 @@ test('composition: rows are sorted by share descending', () => {
   }
 });
 
-test('cost: near stranded line equals 950 (no gas on near, not dust)', () => {
-  const snap = loadDemoLedger();
-  const comp = classify(snap, riskRows);
-  const report = fragmentationCost(snap, comp, demoConfig);
-  const stranded = report.lines.find(l => l.label === 'stranded without gas');
-  assert.ok(stranded);
-  closeTo(stranded!.usd ?? NaN, 950, 0.01);
-});
-
-test('cost: dust line equals 4.3 + 2.1 + 1.75 (arb DAI, base DAI, sol PYUSD)', () => {
-  const snap = loadDemoLedger();
-  const comp = classify(snap, riskRows);
-  const report = fragmentationCost(snap, comp, demoConfig);
-  const dust = report.lines.find(l => l.label === 'dust below economic size');
-  assert.ok(dust);
-  closeTo(dust!.usd ?? NaN, 4.3 + 2.1 + 1.75, 0.01);
-});
-
-test('cost: conversion fee line is 1bp of the scattered usd balance, not of the gas total', () => {
-  const snap = loadDemoLedger();
-  const comp = classify(snap, riskRows);
-  const report = fragmentationCost(snap, comp, demoConfig);
-  const conversion = report.lines.find(l => l.label === 'conversion fees at 1bp');
-  assert.ok(conversion);
-  // scattered off eth (target chain), non-dust: arb USDT 6100 + arb XUSD 120 + base USDC 5200
-  // + sol USDC 4100 + sol USDT 3500 + near USDT 950 = 19970; 19970 * 0.0001 = 1.997
-  closeTo(conversion!.usd ?? NaN, 1.997, 0.01);
-});
-
-test('cost: exactly 4 lines and totalUsd equals their sum', () => {
-  const snap = loadDemoLedger();
-  const comp = classify(snap, riskRows);
-  const report = fragmentationCost(snap, comp, demoConfig);
-  assert.equal(report.lines.length, 4);
-  const sum = report.lines.reduce((s, l) => s + (l.usd ?? 0), 0);
-  closeTo(report.totalUsd, sum, 0.0001);
-});
-
 // ---------- ledger/index.ts: demo-mode wiring + applyDemoTransfer ----------
 
 test('createLedger demo mode: snapshot matches loadDemoLedger totals', () => {
@@ -173,6 +137,9 @@ test('applyDemoTransfer moves balance from source chain to destination chain, ne
 
 const liveConfig: AppConfig = {
   mode: 'live',
+  network: 'testnet',
+  approvalGate: true,
+  keysPath: '/tmp/phosphor-test-keys.json',
   port: 4177,
   addresses: {
     evm: ['0x1111111111111111111111111111111111111111'],
