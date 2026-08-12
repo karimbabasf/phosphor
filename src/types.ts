@@ -325,6 +325,40 @@ export type AppConfig = {
 
 // ---------- Service interfaces (wired in main.ts) ----------
 
+// Rail proposal parameters. Note what is NOT in any of them: no from, no to, no recipient,
+// no counterparty and no contract address. The agent names what it wants moved in chain and
+// symbol terms; the app resolves every address from its own config and from the verified
+// deployment tables in src/rails/. That is what keeps "the agent cannot name where the money
+// goes" true for the rails and not only for a transfer, and tests/injection.test.ts asserts
+// the MCP schemas built from these carry no destination field.
+
+export type SwapParams = {
+  venue: SwapDraft['venue'];
+  chain: ChainId; // origin
+  toChain?: ChainId; // defaults to chain; only the oneclick venue crosses chains
+  fromSymbol: string;
+  toSymbol: string;
+  amountIn: number;
+  minAmountOut: number; // slippage floor, in toSymbol units
+};
+
+export type HlDepositParams = { amount: number }; // chain, token and bridge come from the network table
+
+export type LpAddParams = {
+  chain: ChainId;
+  token0Symbol: string;
+  token1Symbol: string;
+  amount0: number;
+  amount1: number;
+  feeTier: number;
+  tickLower: number;
+  tickUpper: number;
+};
+
+// The position is looked up in the wallet, which is what fixes the chain, the venue and the
+// value. An id we do not already hold is refused rather than resolved.
+export type LpRemoveParams = { positionId: string; liquidityPct: number };
+
 export type ProposalService = {
   proposeConsolidate(params: {
     toChain: ChainId;
@@ -333,6 +367,10 @@ export type ProposalService = {
     maxTotalUsd?: number;
   }): Promise<Proposal>;
   proposePolicyChange(params: { patch: PolicyPatch; sentence: string }): Promise<Proposal>;
+  proposeSwap(params: SwapParams): Promise<Proposal>;
+  proposeHlDeposit(params: HlDepositParams): Promise<Proposal>;
+  proposeLpAdd(params: LpAddParams): Promise<Proposal>;
+  proposeLpRemove(params: LpRemoveParams): Promise<Proposal>;
   approve(id: string): Promise<Proposal>; // human path only; executes on approval
   refuse(id: string): Promise<Proposal>;
   get(id: string): Proposal | undefined;

@@ -1,0 +1,13 @@
+{
+  "_comment": "TESTNET token registry, kept separate from tokens.json (mainnet) because they are genuinely different documents rather than two rows of one. Every address here was verified live on 2026-08-12 by reading it, not by copying a doc. Decimals were verified behaviourally: at these values the balances come out as sane numbers, where wrong decimals produce absurd ones.",
+  "_chains": "Only arb (Arbitrum Sepolia, 421614) is populated. The other chains have testnet deployments but none were verified, and an unverified contract address in a balance reader means the wallet silently reports zero for a funded account.",
+  "eth": {},
+  "base": {},
+  "arb": {
+    "USDC": { "tokenId": "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d", "decimals": 6 },
+    "WETH": { "tokenId": "0x980B62Da83eFf3D4576C647993b0c1D7faf17c73", "decimals": 18 },
+    "USDC2": { "tokenId": "0x1baAbB04529D43a73232B713C0FE471f7c7334d5", "decimals": 6 }
+  },
+  "sol": {},
+  "near": {}
+}

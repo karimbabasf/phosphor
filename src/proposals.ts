@@ -13,16 +13,27 @@ import crypto from 'node:crypto';
 import type {
   AppConfig,
   ChainId,
+  HlDepositDraft,
+  HlDepositParams,
   Holding,
   LedgerSnapshot,
+  LpAddDraft,
+  LpAddParams,
+  LpPosition,
+  LpRemoveDraft,
+  LpRemoveParams,
   Policy,
   PolicyPatch,
   Proposal,
   ProposalService,
   Quoter,
+  Rail,
+  RailResult,
   RiskRow,
   Signer,
   SimulationResult,
+  SwapDraft,
+  SwapParams,
   TransferLeg,
   Verdict,
   WriteDraft,
@@ -35,10 +46,20 @@ import { applyLegs, evaluate } from './policy/engine.ts';
 import type { EngineCtx } from './policy/engine.ts';
 import { loadPolicy, savePolicy } from './policy/file.ts';
 import { renderSentences } from './policy/render.ts';
+import { isRailKind } from './rails/index.ts';
+import type { RailDraft, RailKind, RailRegistry } from './rails/index.ts';
+import { VENUE as UNISWAP_VENUE } from './rails/uniswap.ts';
+import { chainsWithDeployment, deploymentFor, tokenFor } from './rails/uniswap-abi.ts';
+import { hlSpec } from './rails/hyperliquid-deposit.ts';
+import { ONECLICK_COUNTERPARTY } from './rails/oneclick.ts';
 
 const ALL_CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 const EVM_CHAINS: ChainId[] = ['eth', 'base', 'arb'];
 const SESSION_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+// A registry with no rails in it. Fail closed: a wiring layer that forgets to pass one
+// gets every rail proposal refused with a reason, not a rail picked by guesswork.
+const NO_RAILS: RailRegistry = { for: () => null, kinds: () => [] };
 
 export type ProposalDeps = {
   cfg: AppConfig;
@@ -49,6 +70,7 @@ export type ProposalDeps = {
   quoter: Quoter;
   signer: Signer;
   dataDir: string;
+  rails?: RailRegistry; // src/rails/index.ts; absent means no rail can execute
   onChange?: () => void;
 };
 
@@ -75,7 +97,16 @@ function errText(err: unknown): string {
 function totalUsdOf(draft: WriteDraft): number {
   if (draft.kind === 'consolidate') return draft.totalUsd;
   if (draft.kind === 'transfer') return draft.leg.amountUsd;
-  return 0;
+  if (draft.kind === 'policy_change') return 0;
+  // Every rail draft carries its own amountUsd, which is what the engine budgets on. A
+  // non-finite one never executes (the engine refuses it), so it contributes nothing here.
+  return Number.isFinite(draft.amountUsd) ? draft.amountUsd : 0;
+}
+
+// Symbols the app prices at exactly 1.0. The risk table is already the app's register of
+// what a dollar stable is, so this reads it rather than keeping a second list to drift.
+function stableSymbols(rows: RiskRow[]): Set<string> {
+  return new Set(rows.map(r => r.symbol.toUpperCase()));
 }
 
 // Same dust rule as cost.ts: below the economic transfer size, or below 3x what it costs to

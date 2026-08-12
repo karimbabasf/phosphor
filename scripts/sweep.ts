@@ -103,6 +103,12 @@ const KNOWN_PUBLIC_CONSTANTS = new Map<string, string>([
   // A NEAR token contract lives at an account id, and a bridged one is a 64 hex implicit
   // account. Same shape as a private key, opposite meaning: this is a published contract.
   ['17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1', 'NEAR USDC token contract account id, data/tokens.json'],
+  // A transaction hash is 32 bytes of hex, exactly like a private key, and nothing about the
+  // string distinguishes them. This one is public and permanent on Arbitrum Sepolia: it is
+  // the real testnet deposit whose input decodes to transfer(bridge, 10000000), cited as the
+  // evidence that the Hyperliquid bridge takes a plain ERC-20 transfer with no signed payload.
+  // Cited in src/rails/hyperliquid-deposit.ts and tests/unit/oneclick.test.ts.
+  ['d5a06833f3e299cce32a957e4078d473d14954b3aa9ec55cd966abc527015c03', 'public Arbitrum Sepolia tx hash, evidence for the HL bridge deposit shape'],
 ]);
 
 // A 32 byte key drawn from a CSPRNG uses nearly every hex character. A run that uses four or

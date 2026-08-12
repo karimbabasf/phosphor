@@ -7,7 +7,12 @@ import type { HlEvmPort } from '../../src/rails/hyperliquid-deposit.ts';
 import type { SendOutcome, SendParams } from '../../src/chain/evm.ts';
 import type { HlDepositDraft } from '../../src/types.ts';
 
-// Real addresses, because the whole safety case is about which address is which.
+// The two BRIDGE addresses are real, because the whole safety case is about which of them
+// is which and a placeholder would test nothing. The wallet is deliberately NOT real: which
+// wallet sends is irrelevant to every assertion here, and hardcoding the app's own address
+// puts an identifying value in a public repo for no test value. The secret sweep catches it.
+// Distinct from the 0x1111... signer used in the from-mismatch test, which needs the two
+// to differ for the refusal to fire at all.
 const WALLET = '0x2222222222222222222222222222222222222222';
 const TESTNET_BRIDGE = '0x08cfc1B6b2dCF36A1480b99353A354AA8AC56f89';
 const MAINNET_BRIDGE = '0x2Df1c51E09aECF9cacB7bc98cB1742757f163dF7';

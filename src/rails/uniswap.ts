@@ -1030,18 +1030,29 @@ async function readPositionsOnChain(network: Network, chain: ChainId, ownerAddr:
   }
 
   const cache: MetaCache = new Map();
-  const results = await mapLimit(ids, 3, async tokenId => {
+  // One pool read per pool, not per position. Several positions on the same pair is the
+  // normal case, and sepolia.base.org counts every call.
+  const pools = new Map<string, PoolState | null>();
+
+  // Two at a time. The public testnet RPC answers a burst with an HTML rate-limit page,
+  // and a wallet that renders slowly beats a wallet that renders empty.
+  const results = await mapLimit(ids, 2, async tokenId => {
     try {
       const position = await readPosition(network, chain, tokenId);
       // A burned-out NFT with nothing left in it is not a holding.
       if (position.liquidity === 0n && position.tokensOwed0 === 0n && position.tokensOwed1 === 0n) return null;
 
-      const pool = await poolAddress(network, chain, position.token0, position.token1, position.fee);
-      if (pool === null) {
+      const key = `${position.token0}-${position.token1}-${position.fee}`.toLowerCase();
+      if (!pools.has(key)) {
+        const found = await poolAddress(network, chain, position.token0, position.token1, position.fee);
+        pools.set(key, found === null ? null : await poolState(network, chain, found));
+      }
+      const state = pools.get(key) ?? null;
+      if (state === null) {
         note(`uniswap-v3 position #${tokenId}: no pool for ${position.token0}/${position.token1} fee ${position.fee}`);
         return null;
       }
-      const state = await poolState(network, chain, pool);
+      const pool = state.address;
       const [token0, token1] = await Promise.all([tokenMeta(network, chain, position.token0, cache), tokenMeta(network, chain, position.token1, cache)]);
       const amounts = amountsForLiquidity(state.sqrtPriceX96, sqrtRatioAtTick(position.tickLower), sqrtRatioAtTick(position.tickUpper), position.liquidity);
       const fees = await collectableFees(network, chain, tokenId, ownerAddr, position);

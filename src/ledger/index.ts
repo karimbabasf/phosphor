@@ -4,25 +4,39 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import type { AppConfig, ChainId, ChainStatus, Holding, LedgerSnapshot, LpPosition, TransferLeg } from '../types.ts';
+import type { AppConfig, ChainId, ChainStatus, Holding, LedgerSnapshot, LpPosition, Network, TransferLeg } from '../types.ts';
 import { loadDemoLedger } from './demo.ts';
 import * as evm from './evm.ts';
 import * as solana from './solana.ts';
 import * as near from './near.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const TOKENS_PATH = path.join(__dirname, '..', '..', 'data', 'tokens.json');
+const DATA_DIR = path.join(__dirname, '..', '..', 'data');
 
 type TokenTable = Record<string, Record<string, { tokenId: string; decimals: number }>>;
 
 const ALL_CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 
-const RPC_URLS: Record<ChainId, string> = {
-  eth: 'https://ethereum-rpc.publicnode.com',
-  base: 'https://base-rpc.publicnode.com',
-  arb: 'https://arbitrum-one-rpc.publicnode.com',
-  sol: 'https://api.mainnet-beta.solana.com',
-  near: 'https://rpc.mainnet.near.org',
+// Per network, with no default. A flat mainnet table was the original shape and it was a
+// real bug: with mode live and network testnet the ledger read MAINNET balances using
+// MAINNET contracts, so a funded testnet wallet reported zero and looked simply empty
+// rather than misconfigured. The wrong answer was indistinguishable from the right one,
+// which is the worst kind.
+const RPC_URLS: Record<Network, Record<ChainId, string>> = {
+  mainnet: {
+    eth: 'https://ethereum-rpc.publicnode.com',
+    base: 'https://base-rpc.publicnode.com',
+    arb: 'https://arbitrum-one-rpc.publicnode.com',
+    sol: 'https://api.mainnet-beta.solana.com',
+    near: 'https://rpc.mainnet.near.org',
+  },
+  testnet: {
+    eth: 'https://ethereum-sepolia-rpc.publicnode.com',
+    base: 'https://sepolia.base.org',
+    arb: 'https://sepolia-rollup.arbitrum.io/rpc',
+    sol: 'https://api.devnet.solana.com',
+    near: 'https://rpc.testnet.near.org',
+  },
 };
 
 // Est. cost of one stable transfer out of a chain, in usd. Same constants as demo.ts, but
@@ -47,8 +61,9 @@ function emptyChainStatus(): Record<ChainId, ChainStatus> {
   return Object.fromEntries(ALL_CHAINS.map(c => [c, { ok: true, fetchedAt }])) as Record<ChainId, ChainStatus>;
 }
 
-function loadTokenTable(): TokenTable {
-  return JSON.parse(readFileSync(TOKENS_PATH, 'utf8')) as TokenTable;
+function loadTokenTable(network: Network): TokenTable {
+  const file = network === 'testnet' ? 'tokens.testnet.json' : 'tokens.json';
+  return JSON.parse(readFileSync(path.join(DATA_DIR, file), 'utf8')) as TokenTable;
 }
 
 // ---------- demo mode ----------
@@ -155,9 +170,9 @@ async function refreshEvmChain(
   }
   try {
     const perAddress = await Promise.all(
-      addresses.map(addr => evm.fetchHoldings(chain, RPC_URLS[chain], addr, tokens[chain] ?? {}, fetchImpl)),
+      addresses.map(addr => evm.fetchHoldings(chain, RPC_URLS[cfg.network][chain], addr, tokens[chain] ?? {}, fetchImpl)),
     );
-    const gasPriceWei = await evm.fetchGasPriceWei(RPC_URLS[chain], fetchImpl);
+    const gasPriceWei = await evm.fetchGasPriceWei(RPC_URLS[cfg.network][chain], fetchImpl);
     const transferCostUsd = (Number(gasPriceWei) / 1e18) * EVM_TRANSFER_GAS_UNITS * (prices.ETH ?? 0);
     return { holdings: perAddress.flat(), status: { ok: true, fetchedAt }, transferCostUsd };
   } catch (err) {
@@ -183,7 +198,7 @@ async function refreshSolChain(
   }
   try {
     const perAddress = await Promise.all(
-      addresses.map(addr => solana.fetchHoldings('sol', RPC_URLS.sol, addr, tokens.sol ?? {}, fetchImpl)),
+      addresses.map(addr => solana.fetchHoldings('sol', RPC_URLS[cfg.network].sol, addr, tokens.sol ?? {}, fetchImpl)),
     );
     const transferCostUsd = SOL_TRANSFER_LAMPORTS * (prices.SOL ?? 0) * SOL_TRANSFER_SIGNATURES;
     return { holdings: perAddress.flat(), status: { ok: true, fetchedAt }, transferCostUsd };
@@ -210,7 +225,7 @@ async function refreshNearChain(
   }
   try {
     const perAddress = await Promise.all(
-      addresses.map(addr => near.fetchHoldings('near', RPC_URLS.near, addr, tokens.near ?? {}, fetchImpl)),
+      addresses.map(addr => near.fetchHoldings('near', RPC_URLS[cfg.network].near, addr, tokens.near ?? {}, fetchImpl)),
     );
     const transferCostUsd = NEAR_TRANSFER_NATIVE * (prices.NEAR ?? 0);
     return { holdings: perAddress.flat(), status: { ok: true, fetchedAt }, transferCostUsd };
@@ -224,7 +239,7 @@ async function refreshNearChain(
 }
 
 function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch): Ledger {
-  const tokens = loadTokenTable();
+  const tokens = loadTokenTable(cfg.network);
   const livePositions: LpPosition[] = [];
   let current: LedgerSnapshot = {
     holdings: [],
