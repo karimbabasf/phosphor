@@ -388,6 +388,25 @@ test('the swap rail refuses another venue, a cross-chain draft and an unknown to
   assert.match(unknown.summary, /does not know token WBTC/);
 });
 
+test('every rail refuses a counterparty that is not the contract it actually sends to', async () => {
+  const elsewhere = '0x2222222222222222222222222222222222222222';
+
+  const swap = await uniswapSwapRail(cfg).simulate(swapDraft({ counterparty: elsewhere }));
+  assert.equal(swap.ok, false);
+  assert.match(swap.summary, /counterparty is 0x2222/);
+  assert.match(swap.summary, /SwapRouter02/);
+
+  // The router is the right contract for a swap and the wrong one for liquidity: an
+  // allowlist entry for one must not silently authorise the other.
+  const add = await uniswapLpAddRail(cfg).simulate(addDraft({ counterparty: ROUTER }));
+  assert.equal(add.ok, false);
+  assert.match(add.summary, /position manager/);
+
+  const remove = await uniswapLpRemoveRail(cfg).simulate(removeDraft({ counterparty: ROUTER }));
+  assert.equal(remove.ok, false);
+  assert.match(remove.summary, /position manager/);
+});
+
 test('rail.valueUsd is the draft amount the policy budgets read', () => {
   assert.equal(uniswapSwapRail(cfg).valueUsd(swapDraft({ amountUsd: 250 })), 250);
   assert.equal(uniswapSwapRail(cfg).valueUsd(swapDraft({ amountUsd: Number.NaN })), 0);

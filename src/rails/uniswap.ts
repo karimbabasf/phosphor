@@ -299,7 +299,7 @@ export function removeAndCollectCalldata(params: {
 
 // ---------- chain reads ----------
 
-export type PoolState = { address: Address; sqrtPriceX96: bigint; tick: number; liquidity: bigint };
+export type PoolState = { address: Address; sqrtPriceX96: bigint; tick: number };
 
 async function poolAddress(network: Network, chain: ChainId, token0: Address, token1: Address, fee: number): Promise<Address | null> {
   const dep = deploymentFor(network, chain);
@@ -312,14 +312,21 @@ async function poolAddress(network: Network, chain: ChainId, token0: Address, to
   return /^0x0{40}$/i.test(found) ? null : found;
 }
 
+// slot0 alone. The pool's total liquidity() is a separate call and nothing here reads it:
+// a position's amounts come from its own liquidity, not the pool's. On sepolia.base.org,
+// which rate-limits hard, one skipped call per position is the difference between a wallet
+// that renders and a wallet full of "over rate limit".
 async function poolState(network: Network, chain: ChainId, pool: Address): Promise<PoolState> {
-  const client = reader(network, chain);
-  const [slot0, liquidity] = await Promise.all([
-    client.readContract({ address: pool, abi: POOL_ABI, functionName: 'slot0' }),
-    client.readContract({ address: pool, abi: POOL_ABI, functionName: 'liquidity' }),
-  ]);
-  const s = slot0 as readonly [bigint, number, number, number, number, number, boolean];
-  return { address: pool, sqrtPriceX96: s[0], tick: Number(s[1]), liquidity: liquidity as bigint };
+  const slot0 = (await reader(network, chain).readContract({ address: pool, abi: POOL_ABI, functionName: 'slot0' })) as readonly [
+    bigint,
+    number,
+    number,
+    number,
+    number,
+    number,
+    boolean,
+  ];
+  return { address: pool, sqrtPriceX96: slot0[0], tick: Number(slot0[1]) };
 }
 
 export type RawPosition = {
