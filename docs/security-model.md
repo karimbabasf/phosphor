@@ -17,13 +17,19 @@ So approval is not a message. It is a click in a window the agent's process cann
   file.
 - The tool surface has no verb that decides. No tool name starts with `approve`, `refuse`, `kill`,
   `dismiss` or `execute`, which a test asserts against the live tool list.
-- The decision routes require an approval token minted per boot (24 random bytes, hex) and served
-  only to the browser at `/api/session`. The MCP process never sees it.
+- The decision routes require an approval token minted per boot (24 random bytes, hex) and served at
+  `/api/session`. The MCP process never sees it.
 - A pending proposal cannot be dismissed from the chat. If the agent disconnects, the proposal is
   still there and still the human's to decide.
 
 The agent is treated as a compromised-but-useful participant throughout: fully trusted to read,
 fully trusted to draft, never trusted to decide.
+
+**Read [the honest v1 boundary](#the-honest-v1-boundary) before relying on any of this.** Those four
+properties describe the MCP surface, and they hold. The window is not currently a boundary against
+an agent that can also run a shell on the same machine, which most coding agents can. The gap is
+open at the time of writing, it is documented rather than implied, and it is the top of the fix
+list.
 
 ## The three verdicts, and no fourth
 
@@ -38,6 +44,9 @@ fully trusted to draft, never trusted to decide.
 There is no override parameter, no force flag, no bypass path, and no "the user said it was fine"
 argument anywhere in the tool schemas. A caller who dislikes a refusal has exactly one recourse: get
 a human to change the policy, in the window, with a click.
+
+One switch stands outside that sentence and it is described in full below: on testnet, the approval
+gate itself can be turned off. It is not reachable from the tool surface, and mainnet ignores it.
 
 The chain stops at the first refusal, in this order:
 
@@ -62,6 +71,45 @@ delta, so a portfolio already past a cap cannot make further fund moves until a 
 policy or the breach clears. And a policy change can never be auto-executed no matter how small or
 how sensible, because a policy change the human did not click is how every other guarantee here
 gets removed.
+
+## The approval gate can be switched off, on testnet only
+
+Testing a rail against a faucet-funded testnet wallet through a human click on every proposal is
+slow enough that nobody does it, so the gate can be disabled with `"approvalGate": false` in the
+config. This is the one deliberate hole in the model, and it is drawn narrowly on purpose, because
+an agent that can approve its own actions is the exact thing this app exists to prevent.
+
+`src/policy/gate.ts` is the single chokepoint. Every caller asks `gateRequired(cfg)`, and no caller
+reads the config flag directly:
+
+    export function gateRequired(cfg: GateConfig): boolean {
+      if (cfg.network === 'mainnet') return true; // not configurable, deliberately
+      return cfg.approvalGate;
+    }
+
+**Mainnet ignores the flag rather than trusting it.** A `config.json` that says
+`{"network": "mainnet", "approvalGate": false}` still requires a human click on every proposal.
+`tests/unit/gate.test.ts` asserts that forcing. The reasoning is that config files get copied
+between machines and edited by whoever is in a hurry, so the safe state cannot depend on the file
+being right.
+
+What the switch does **not** turn off, on any network:
+
+- **The policy engine.** A `refuse` verdict still refuses. Caps, allowlists, issuer rules and
+  composition limits all still run. The gate decides whether a human clicks, not whether the rules
+  apply.
+- **The kill switch.** Still refuses every write.
+- **The audit log.** An auto-approval records `decidedBy: 'gate_disabled'`, never `human`, so no
+  transcript can later claim a person clicked when no person did. This matters more than it looks:
+  the log is the record of truth, and a log that lies about authority is worse than no log.
+
+The state is also visible rather than silent. `/api/state` carries `gate.required` and
+`gate.banner`, and the window shows `GATE DISABLED - TESTNET - EVERY PROPOSAL AUTO-APPROVES`
+whenever the gate is off.
+
+Note that the committed `config.json` template ships with `network: testnet` and
+`approvalGate: false`, because it is a testing template. Anyone pointing this at real money changes
+`network` to `mainnet`, at which point the flag stops being read at all.
 
 ## Fail closed
 
@@ -89,12 +137,16 @@ The approval routes are POST-only and defended in layers:
 
 - **Bind**: the server binds `127.0.0.1` explicitly, not `0.0.0.0`, so nothing on the network can
   reach it.
-- **Token**: a per-boot 24-byte hex token, served only at `/api/session`, required on every decision
-  route, compared with a length-safe constant-time check (a raw `timingSafeEqual` on the tokens
-  themselves would throw on a length mismatch and leak the length through the error).
+- **Token**: a per-boot 24-byte hex token, handed to the page by `GET /api/session`, required in the
+  body of every decision route, compared with a length-safe constant-time check (a raw
+  `timingSafeEqual` on the tokens themselves would throw on a length mismatch and leak the length
+  through the error). Read the next section before treating this as a boundary: `/api/session`
+  itself requires no credential, so the token stops other browser origins, not other local
+  processes.
 - **Origin**: `Host` must be `127.0.0.1` or `localhost`, and an `Origin` header, if present, must
   match. An absent `Origin` (curl, the e2e script) is allowed, which is why it is paired with the
-  token rather than relied on alone.
+  token rather than relied on alone. The two gaps compose: absent `Origin` is allowed and the token
+  is free to fetch, so a local non-browser caller satisfies both checks.
 - **Logging**: a rejected attempt is logged with the reason (`cross-origin request`, `wrong approval
   token`, `approval token missing`) and with whether a token was present. The supplied token itself
   never enters the audit log.
@@ -103,39 +155,87 @@ The e2e proof includes the negative case: `POST /api/approve` with a wrong token
 
 ## The honest v1 boundary
 
-**An agent with arbitrary local shell access is out of scope.** Phosphor separates the agent's MCP
-process from the app's decision routes, and that separation holds for everything the agent can do
-through MCP. It does not hold against an agent that can run `curl` on the same machine: it could
-fetch `/api/session` itself and post an approval. Nothing in the browser-based v1 prevents that,
-because the token has to be readable by something on localhost in order for the page to work.
+**An agent with arbitrary local shell access is out of scope, and this is the real hole, not a
+theoretical one.** Phosphor separates the agent's MCP process from the app's decision routes, and
+that separation holds for everything the agent can do *through MCP*. It does not hold against an
+agent that can run `curl` on the same machine. Most coding agents can, including the two named in
+the README, so for the usual deployment the boundary is the machine, not the app window.
 
-This is stated rather than hidden because the alternative (implying the current build is airtight
-against a hostile local shell) is the kind of claim that gets someone robbed. What v1 does defend,
-completely, is the realistic case: an agent driving the app through the tool surface it was given,
-reading hostile text, and being talked into trying something. That agent has no tool to approve
-with, no field to name a recipient in, and no way to remove a rule without a human click.
+The path is short and was verified against a running build rather than reasoned about:
 
-Closing the local-shell gap is what the Tauri window is for. In a native window the approval surface
-is a real OS window with no HTTP route behind it, so there is no token for a local process to fetch
-and no endpoint for it to post to. That is packaging work, not a redesign, and the two-process split
-is already drawn where it needs to be for the move.
+    # 1. the token is handed to any local caller, no credential required
+    TOK=$(curl -s http://127.0.0.1:4177/api/session | jq -r .token)
+
+    # 2. spend it on a decision route, no Origin header
+    curl -s -X POST -H 'content-type: application/json' \
+      -d "{\"id\":\"<pending-id>\",\"token\":\"$TOK\"}" \
+      http://127.0.0.1:4177/api/approve
+
+Against a nonexistent proposal id that returns `400 unknown proposal <id>`, while the same request
+with a wrong token returns `403 invalid approval token`. The difference between those two responses
+is the finding: authentication passed, and only the id was unknown. Against a real pending id it
+approves, and the audit log records `decidedBy: 'human'`, because from the server's position that
+is what a valid token means.
+
+Two things follow, and both are stated rather than hidden, because implying the current build is
+airtight against a hostile local shell is the kind of claim that gets someone robbed:
+
+1. **Prompt injection into a shell-capable agent is not currently contained.** The injection suite
+   below proves the tool surface holds. It cannot prove anything about an agent that stops using the
+   tool surface and opens a socket instead.
+2. **The audit log cannot distinguish this from a real click.** Everything else in this document
+   survives the gap, since the policy engine still refuses what it refuses, caps still bind and the
+   kill switch still works. Approval authority is the single guarantee that does not survive it.
+
+What v1 does defend, completely, is the case the tool surface covers: an agent driving the app
+through the tools it was given, reading hostile text, and being talked into trying something. That
+agent has no tool to approve with, no field to name a recipient in, and no way to remove a rule
+without a human click.
+
+**Fix direction, in the order the value lands.** Bind the token to the browser session rather than
+to the process (set it as an `HttpOnly` `SameSite=Strict` cookie at first page load and stop serving
+it as JSON, so a second local caller that never loaded the page cannot obtain one), then require a
+real `Origin` on decision routes and give the e2e script an explicit test-only escape rather than
+letting every credential-less caller through the same door. Both are small and neither is the real
+answer. The real answer is the Tauri window below, where the approval surface has no HTTP route
+behind it at all: no token to fetch, no endpoint to post to. That is packaging work rather than a
+redesign, and the two-process split is already drawn where it needs to be for the move.
 
 Two smaller boundaries worth naming: the risk table is curated by a human with a source per row, so
 a wrong row is a wrong risk decision (which is why it is never model-generated and is versioned in
 the repo where it can be reviewed), and reads use public RPCs, so an RPC that lies about a balance
 lies to the policy engine too.
 
+## Keys and config
+
+Private keys never live in the working copy. `keysPath` defaults to `~/.phosphor/keys.json` and
+`src/config.ts` asserts at boot that the resolved path is outside the repo, refusing to start
+otherwise. A key inside a working copy is one `git add -f` from publication; a key outside one is
+not.
+
+Config splits the same way. `config.json` is the committed template and carries no addresses.
+`config.local.json` is gitignored and merged over it key by key, which is where real addresses go.
+`PHOSPHOR_PORT`, `PHOSPHOR_MODE`, `PHOSPHOR_NETWORK`, `PHOSPHOR_DATA_DIR` and `PHOSPHOR_KEYS`
+override both.
+
+`network` has no default. `loadConfig` throws when it is absent instead of guessing, because
+guessing mainnet points real rails at real money and guessing testnet makes a mainnet deployment
+silently fake.
+
 ## What the injection suite proves
 
-`tests/injection.test.ts` (15 of the 129 tests) runs a real MCP client against a real app instance
-with hostile input from `tests/fixtures/hostile.json`. Every string in that fixture is manipulative
-on purpose, and the file is treated as data by the whole app: stored, rendered and audited verbatim,
-never interpreted.
+`tests/injection.test.ts` runs a real MCP client against a real app instance with hostile input from
+`tests/fixtures/hostile.json`. Every string in that fixture is manipulative on purpose, and the file
+is treated as data by the whole app: stored, rendered and audited verbatim, never interpreted.
+
+Everything in this section is about an agent working through the tool surface. None of it constrains
+an agent that opens a socket instead, per the boundary above.
 
 - **The tool surface cannot express an exfiltration target.** The 9 tool schemas are walked
   recursively and asserted to contain no property named for a recipient or destination, and no tool
   name that mentions one. An agent that has been talked into sending money to an attacker has no
-  field in which to say where.
+  field in which to say where. The suite pins the exact set of tool names rather than counting them,
+  so a renamed or quietly reintroduced tool fails the test instead of only a miscount doing so.
 - **The MCP process holds no path to an approval.** Asserted twice: the source contains none of the
   four decision routes, and no tool name begins with a decision verb.
 - **A transfer to the attacker is refused by the engine itself.** Not by the tool layer, not by
@@ -180,7 +280,10 @@ Before any live signing, in this order:
    and a rounded amount is a wrong amount on chain.
 4. **Real 1Click execution**: non-dry quote returns a deposit address, the Signer sends to it, then
    poll `/v0/status`. The quote client already exists; only the signing send is missing.
-5. Optional: a 1Click JWT for the lower fee tier, and indexer keys for the historical cost lines.
+5. Optional: a 1Click JWT for the lower fee tier.
+6. **Set `network` to `mainnet`.** `network` selects the RPCs, the token registry and every contract
+   address, and it is also what makes `approvalGate` unswitchable. Set it before keys rather than
+   after, so no window exists in which real keys are loaded while the gate is still a config flag.
 
 The policy engine is unchanged by any of it. It already refuses on the same rules whether the
 execution behind it is synthetic or real, which was the point of stubbing the signer rather than the

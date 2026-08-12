@@ -32,10 +32,15 @@ resolves exactly one thing on startup: which port the app is on. Every tool call
 "The control app is not running. Start it with: npm run app" rather than doing anything clever.
 
 That thinness is the point. The routes that decide things (`/api/approve`, `/api/refuse`,
-`/api/kill`, `/api/session`) are on the app process, they require a token minted per boot and handed
-only to the browser, and the string `/api/approve` does not appear anywhere in `src/mcp.ts`. A test
-asserts that, along with the absence of any tool named `approve`, `refuse`, `kill`, `dismiss` or
-`execute`. The agent's process has no route to a decision and no credential to use if it found one.
+`/api/kill`, `/api/session`) are on the app process, they require a token minted per boot, and the
+string `/api/approve` does not appear anywhere in `src/mcp.ts`. A test asserts that, along with the
+absence of any tool named `approve`, `refuse`, `kill`, `dismiss` or `execute`. The agent's *MCP
+process* has no route to a decision and no credential to use if it found one.
+
+That last sentence is narrower than it looks and the wording is deliberate. The separation is
+between processes, not between the agent and the machine. An agent that can also run a shell can
+fetch the token from `/api/session` and post it, which is an open hole at the time of writing and is
+documented in full in [the security model](security-model.md#the-honest-v1-boundary).
 
 Two agents can connect at once. Both may read. Proposals queue, and each is approved separately.
 
@@ -44,28 +49,35 @@ Two agents can connect at once. Both may read. Proposals queue, and each is appr
 | Module | Responsibility |
 |---|---|
 | `src/main.ts` | Wires everything and boots. Seeds a default policy only when the file is absent. |
-| `src/config.ts` | Reads `config.json`, applies `ACC_PORT` / `ACC_MODE` / `ACC_DATA_DIR` overrides, creates the data dir. |
+| `src/config.ts` | Merges `config.local.json` over `config.json`, applies the `PHOSPHOR_*` env overrides, resolves `keysPath` and asserts it sits outside the repo, creates the data dir. Throws when `network` is absent. |
 | `src/server.ts` | HTTP surface: the UI, the read APIs, `/api/mcp`, and the token-gated decision routes. |
 | `src/mcp.ts` | The stdio MCP server. A proxy, nothing else. |
-| `src/ledger/` | `evm.ts`, `solana.ts`, `near.ts` readers plus `demo.ts` fixtures, behind one interface in `index.ts`. Read-only by construction. |
-| `src/composition.ts` | Classifies holdings against `data/risk-table.json`: issuer, freeze power, shares. |
-| `src/cost.ts` | Fragmentation cost: four lines plus a total. |
+| `src/ledger/` | `evm.ts`, `solana.ts`, `near.ts` readers plus `demo.ts` fixtures, behind one interface in `index.ts`. Read-only by construction. `snapshot()` reads token balances; `positions()` reads pool positions separately, so a venue being down cannot mark a whole chain stale. |
+| `src/wallet.ts` | The wallet view: one row per token and per LP position, with chain, quantity, unit price, USD value and share. Natives included. |
+| `src/composition.ts` | Classifies holdings against `data/risk-table.json`: issuer, freeze power, shares. Natives excluded, because composition rules are about stablecoin issuer concentration. |
 | `src/policy/engine.ts` | Pure. Takes a draft and a context, returns one of three verdicts. No IO, no clock, no network. |
+| `src/policy/gate.ts` | The single chokepoint deciding whether a proposal needs a human click. Mainnet forces yes. |
 | `src/policy/file.ts` | Load, validate and save `state/policy.json`. Returns null on anything it cannot trust. |
 | `src/policy/render.ts` | Policy to plain English. Pure and deterministic. |
 | `src/proposals.ts` | Simulate, evaluate, persist, and execute after approval. The only path to execution. |
 | `src/intents.ts` | NEAR Intents 1Click quotes, the synthetic quoter for demo mode, and the stub Signer. |
-| `src/candles.ts` | Coinbase and Kraken candle sources behind one interface, with caching. |
+| `src/hyperliquid.ts` | Hyperliquid candles: native `candleSnapshot` at 1m and above, sub-minute bucketed in process from the trades websocket. |
+| `src/candles.ts` | The candle service: caching, staleness marking, one interface over the source. |
 | `src/audit.ts` | Append-only JSONL. One line per event, never rewritten by the app. |
 | `src/store.ts` | Proposal persistence with subscribe/notify, re-created from disk on boot. |
-| `ui/` | One page, seven regions, no framework, no build step. |
+| `ui/` | One page, no framework, no build step. |
+
+`wallet.ts` and `composition.ts` look like duplicates and are not. The wallet answers "what do I
+hold", so it includes natives and LP positions. Composition answers "what is my money made of, and
+does that break a rule", so it counts only the assets the policy engine reasons about. Merging them
+would mean one of the two answers is wrong.
 
 The engine being pure is what makes the guarantees testable: every rule has a passing and a failing
 case, and none of them need a running app to check.
 
 ## Data flow
 
-    agent --MCP--> read tool ---> ledger / composition / cost / audit ---> agent
+    agent --MCP--> read tool ---> ledger / wallet / composition / audit ---> agent
                                   (no policy consulted: reads cannot cause harm)
 
     agent --MCP--> write tool --> build draft --> simulate every leg
@@ -91,14 +103,27 @@ log or polling `proposal_status`, which is the same way a person would.
 
 ## The verdicts
 
-Exactly three, defined in `src/policy/engine.ts`, with no fourth outcome and no override path:
-`refuse`, `needs_approval`, `allow`. Every refusal carries a machine-readable rule name
-(`kill_switch`, `destination_not_allowed`, `max_per_transaction`, `max_issuer_share`, and so on) plus
-human-readable reasons, so the log says what stopped a thing rather than only that something was
-stopped.
+Exactly three, defined in `src/policy/engine.ts`, with no fourth outcome: `refuse`, `needs_approval`,
+`allow`. Every refusal carries a machine-readable rule name (`kill_switch`,
+`destination_not_allowed`, `max_per_transaction`, `max_issuer_share`, and so on) plus human-readable
+reasons, so the log says what stopped a thing rather than only that something was stopped.
 
 The rule chain and the fail-closed positions in it are described in
 [the security model](security-model.md).
+
+## Networks
+
+`Network` (`testnet` | `mainnet`) is an axis, not more chain ids. `ChainId` keeps meaning the chain
+family (`eth`, `base`, `arb`, `sol`, `near`) and the network selects the RPCs, the token registry
+and every contract address behind it.
+
+Adding `arb-sepolia` style ids was the alternative and was rejected. It doubles every `ChainId`
+switch in the engine, the ledger, the policy file and the UI, and the wallet's CHAIN column would
+read `arb-sepolia` where a wallet should read `ARB`.
+
+The network also decides whether the approval gate is switchable at all. On `mainnet` it is not, and
+`src/policy/gate.ts` ignores the config flag rather than trusting it. See
+[the security model](security-model.md) for what the switch does and does not turn off.
 
 ## Why NEAR Intents is the only rail
 
