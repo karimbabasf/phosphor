@@ -71,6 +71,7 @@ export type CompositionView = {
 // policy engine's input (byIssuer, freezableShare are what the composition rules read).
 
 export type LpPosition = {
+  chain: ChainId;
   venue: string; // 'uniswap-v3', 'ref-finance', ...
   poolId: string; // pool address or id
   positionId: string; // NFT token id, or the pool id where positions are fungible

@@ -90,6 +90,11 @@ registerRead(
   {},
 );
 registerRead(
+  'wallet',
+  'Returns everything held the way a wallet shows it: one row per token and per liquidity pool position, with chain, quantity, unit price, USD value and share of the total. Read-only, changes nothing.',
+  {},
+);
+registerRead(
   'composition',
   'Returns stablecoin composition by issuer and chain: shares, freezable share, and any unclassified holdings. Read-only, changes nothing.',
   {},

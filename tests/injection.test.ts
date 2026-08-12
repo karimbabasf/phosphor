@@ -244,7 +244,7 @@ test('the tool surface cannot express an exfiltration target', async () => {
   // one, and a quietly reintroduced one, which is what this suite actually cares about.
   assert.deepEqual(
     tools.map(t => t.name).sort(),
-    ['balances', 'candles', 'composition', 'log_tail', 'policy_show', 'propose_consolidate', 'propose_policy_change', 'proposal_status'].sort(),
+    ['balances', 'candles', 'composition', 'wallet', 'log_tail', 'policy_show', 'propose_consolidate', 'propose_policy_change', 'proposal_status'].sort(),
   );
 
   for (const tool of tools) {

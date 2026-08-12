@@ -21,6 +21,8 @@ import type { Ledger } from './ledger/index.ts';
 import type { CandleService } from './candles.ts';
 import type { LiveCandles } from './hyperliquid.ts';
 import { classify } from './composition.ts';
+import { buildWallet } from './wallet.ts';
+import { gateRequired, gateBanner } from './policy/gate.ts';
 import { renderSentences } from './policy/render.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -43,6 +45,7 @@ const CHAINS: readonly string[] = ['eth', 'base', 'arb', 'sol', 'near'];
 const READ_TOOLS: readonly string[] = [
   'balances',
   'composition',
+  'wallet',
   'policy_show',
   'log_tail',
   'candles',
@@ -233,8 +236,13 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     const policy = getPolicy();
     return {
       ledger: snapshot,
+      // wallet is what the UI renders; composition stays because the policy engine
+      // reads byIssuer and freezableShare out of it.
+      wallet: buildWallet(snapshot, ledger.positions()),
       composition,
       policy,
+      gate: { required: gateRequired(cfg), banner: gateBanner(cfg) },
+      network: cfg.network,
       sentences: sentencesOf(policy),
       proposals: proposals.list(),
       mode: cfg.mode,
@@ -396,6 +404,10 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     }
     if (tool === 'composition') {
       sendJson(res, 200, classify(ledger.snapshot(), riskRows));
+      return;
+    }
+    if (tool === 'wallet') {
+      sendJson(res, 200, buildWallet(ledger.snapshot(), ledger.positions()));
       return;
     }
     if (tool === 'policy_show') {

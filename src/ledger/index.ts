@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import type { AppConfig, ChainId, ChainStatus, Holding, LedgerSnapshot, TransferLeg } from '../types.ts';
+import type { AppConfig, ChainId, ChainStatus, Holding, LedgerSnapshot, LpPosition, TransferLeg } from '../types.ts';
 import { loadDemoLedger } from './demo.ts';
 import * as evm from './evm.ts';
 import * as solana from './solana.ts';
@@ -34,6 +34,10 @@ const NEAR_TRANSFER_NATIVE = 0.005;
 
 export type Ledger = {
   snapshot(): LedgerSnapshot;
+  // Pool positions held by the configured addresses. Separate from snapshot() because
+  // they are read from venue contracts rather than from token balances, and a venue
+  // being down must not mark the whole chain stale.
+  positions(): LpPosition[];
   refresh(): Promise<LedgerSnapshot>;
   applyDemoTransfer(leg: TransferLeg): void;
 };
@@ -90,6 +94,7 @@ function createDemoLedger(): Ledger {
 
   return {
     snapshot: () => current,
+    positions: () => [], // the demo fixture holds no pool positions
     refresh: async () => current, // fixture is static; nothing to re-fetch
     applyDemoTransfer,
   };
@@ -220,6 +225,7 @@ async function refreshNearChain(
 
 function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch): Ledger {
   const tokens = loadTokenTable();
+  const livePositions: LpPosition[] = [];
   let current: LedgerSnapshot = {
     holdings: [],
     chainStatus: emptyChainStatus(),
@@ -261,6 +267,9 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch): Ledger {
 
   return {
     snapshot: () => current,
+    // Filled by the LP reader once the venue is wired (wave 1A). Empty is honest here:
+    // no positions have been read, so none are claimed.
+    positions: () => livePositions,
     refresh,
     applyDemoTransfer: () => {
       throw new Error('applyDemoTransfer is demo-mode only');
