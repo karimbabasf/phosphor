@@ -50,7 +50,7 @@
     {
       "requirement": "While the approval gate is disabled, a permanent unmissable line in the gate's own red (#ff3b30): GATE DISABLED - TESTNET - EVERY PROPOSAL AUTO-APPROVES",
       "met": true,
-      "ref": "#gate-banner renders the server's gate.banner verbatim as a 1416px bar at y=43 directly under the status bar, background rgb(255,59,48) with rgb(11,13,11) text: the only inverted block on the page and the only solid field of red. It is not dismissable and has no close control. The APPROVAL GATE frame title also turns red, and the empty gate reads 'no pending approvals: the gate is disabled, every proposal auto-approves'. The client never decides this: with gate.banner null the bar does not render"
+      "ref": "#gate-banner renders the server's gate.banner verbatim as a 1416px bar at y=43 directly under the status bar, background rgb(255,59,48) with rgb(11,13,11) text: the only inverted block on the page and the only solid field of red. It is not dismissable and has no close control. The APPROVAL GATE frame title also turns red, and the empty gate reads 'no pending approvals: the gate is disabled, every proposal auto-approves'. The client never decides this, driven both ways: with the live payload untouched the bar renders from the server's own gate.banner, and with a stubbed gate {required:true, banner:null} the bar is hidden, body.gate-off is off, the gate frame title returns to green and the empty state returns to plain 'no pending approvals'"
     },
     {
       "requirement": "System monospace stack only, no webfont",

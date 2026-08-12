@@ -48,10 +48,22 @@ const EVM_ORIGINS: ChainId[] = ['eth', 'base', 'arb'];
 
 // SwapDraft.counterparty is checked against the policy allowlist, and for a DEX that is the
 // router address. This rail has no fixed address to name: 1Click mints a fresh deposit
-// address per quote and expires it, so no address here can ever be allowlisted in advance.
-// The allowlist entry is therefore the venue itself, and the draft must name exactly this.
-// What bounds the risk instead is everything execute() checks before it signs: the amount,
-// the slippage floor, the address format, and the policy budget on top.
+// address per quote and expires it within days, so no address here can ever be on a static
+// allowlist. The allowlist entry is therefore the venue, and a draft must name exactly this.
+//
+// The alternative, putting the deposit address in the field so an unvetted destination
+// always needs a human click, does not do that. evaluateRail treats an unlisted counterparty
+// as a TERMINAL refusal (rule 'destination_not_allowed'), never as needs_approval, so every
+// swap would be refused and the rail would be dead. Proven against the real engine in
+// tests/unit/oneclick.test.ts, 'a deposit address as counterparty is refused outright'.
+// It could not work anyway: dry:true returns no deposit address (verified live), so minting
+// one at proposal time would mean a dry:false call before any human has approved anything.
+//
+// The click is still available, and through the lever built for it: with the venue
+// allowlisted, humanClickAboveUsd governs, so $50 auto-allows and $500 needs a click. Set
+// that threshold to 0 to make every swap need one. What bounds the rest is everything
+// execute() checks before it signs: the amount, the slippage floor, the memo, the address
+// checksum, and the per-transaction and session budgets on top.
 export const ONECLICK_COUNTERPARTY = 'oneclick:1click.chaindefuser.com';
 
 // The chain seam, same shape as the Hyperliquid rail: one object the tests replace, so no

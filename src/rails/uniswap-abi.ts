@@ -26,18 +26,39 @@ export type UniswapDeployment = {
   ethUsdFeed: Address; // Chainlink, 8 decimals, used to price the USD column
 };
 
-// Base only. The other EVM chains in this app have Uniswap deployments too, but none of
-// them were verified here, and an unverified address in this table is how a rail sends
-// money to a contract that is not what its name says. `deploymentFor` throws instead.
+// Only chains verified by behaviour appear here. An unverified address in this table is how
+// a rail sends money to a contract that is not what its name says, so `deploymentFor` throws
+// for anything absent rather than guessing.
 //
 // Verified 2026-08-12 by eth_getCode plus an identity check on each side:
-//   testnet  NPM.factory() -> 0x4752ba5D...  (matches), factory tick spacings 1/10/60/200
-//   mainnet  NPM.factory() -> 0x33128a8f...  (matches)
+//   testnet base  NPM.factory() -> 0x4752ba5D...  (matches), factory tick spacings 1/10/60/200
+//   mainnet base  NPM.factory() -> 0x33128a8f...  (matches)
 // Note 0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24 is Base Sepolia's factory AND Base
 // mainnet's SwapRouter02: same deployer and nonce on two chains. Addresses do not mean
 // the same contract across chains, which is why each row was checked by behaviour.
+// Arbitrum Sepolia is the DEFAULT for testnet, added by the lead 2026-08-12 and verified the
+// same way. Not a technical preference: no testnet faucet anywhere is scriptable, so the
+// number of chains Karim has to fund by hand is the thing worth minimising. The Hyperliquid
+// deposit rail is on Arbitrum Sepolia, so putting swap and LP there too means ONE funding
+// step for all three features, and the swap rail can then produce the USDC the LP rail needs.
+//
+// Verified 2026-08-12 by eth_getCode plus the same factory() identity check:
+//   factory         0x248AB79B...  24,535 B, feeAmountTickSpacing 100/500/3000/10000 -> 1/10/60/200
+//   positionManager 0x6b2937Bd...  24,384 B, factory() -> 0x248ab79b...  MATCH
+//   quoter          0x2779a0CC...   8,273 B, factory() -> 0x248ab79b...  MATCH
+//   router          0x101F443B...  24,497 B, factory() -> 0x248ab79b...  MATCH
+//   ethUsdFeed      0xd30e2101...  Chainlink, decimals 8, live
+// Pool in use: getPool(USDC, WETH, 3000) -> 0x66eeab70ac52459dd74c6ad50d578ef76a441bbf,
+// holding 8,808 USDC + 0.7595 WETH. token0 = USDC (it sorts below WETH).
 const DEPLOYMENTS: Record<Network, Partial<Record<ChainId, UniswapDeployment>>> = {
   testnet: {
+    arb: {
+      factory: '0x248AB79Bbb9bC29bB72f7Cd42F17e054Fc40188e',
+      positionManager: '0x6b2937Bde17889EDCf8fbD8dE31C3C2a70Bc4d65',
+      quoter: '0x2779a0CC1c3e0E44D2542EC3e79e3864Ae93Ef0B',
+      router: '0x101F443B4d1b059569D643917553c771E1b9663E',
+      ethUsdFeed: '0xd30e2101a97dcbAeBCBC04F14C3f624E67A35165',
+    },
     base: {
       factory: '0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24',
       positionManager: '0x27F971cb582BF9E50F397e4d29a5C7A34f11faA2',
@@ -66,6 +87,13 @@ export function deploymentFor(network: Network, chain: ChainId): UniswapDeployme
   return found;
 }
 
+// Every chain this venue can be read or written on for a given network. readPositions
+// sweeps these, so a position minted on one chain does not vanish from the wallet when
+// the default chain for new drafts moves to another.
+export function chainsWithDeployment(network: Network): ChainId[] {
+  return Object.keys(DEPLOYMENTS[network]) as ChainId[];
+}
+
 // ---------- tokens ----------
 
 export type TokenInfo = { symbol: string; address: Address; decimals: number };
@@ -75,6 +103,15 @@ export type TokenInfo = { symbol: string; address: Address; decimals: number };
 // case-insensitively by tokenFor().
 const TOKENS: Record<Network, Partial<Record<ChainId, TokenInfo[]>>> = {
   testnet: {
+    // Arbitrum Sepolia. Decimals verified behaviourally rather than read from a doc: at 6 and
+    // 18 respectively, balanceOf on the 0.3% pool yields 8,808.22 USDC and 0.7595 WETH, which
+    // are sane numbers. Wrong decimals would have produced absurd ones.
+    // NOTE this USDC is Circle's testnet USDC and is NOT the same token as Hyperliquid's
+    // USDC2, which also lives on Arbitrum Sepolia. Same chain, two different dollars.
+    arb: [
+      { symbol: 'USDC', address: '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d', decimals: 6 },
+      { symbol: 'WETH', address: '0x980B62Da83eFf3D4576C647993b0c1D7faf17c73', decimals: 18 },
+    ],
     base: [
       { symbol: 'USDC', address: '0x036CbD53842c5426634e7929541eC2318f3dCF7e', decimals: 6 },
       { symbol: 'WETH', address: '0x4200000000000000000000000000000000000006', decimals: 18 },

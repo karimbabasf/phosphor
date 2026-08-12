@@ -9,8 +9,18 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { decodeFunctionData, parseAbi } from 'viem';
 import type { Address } from 'viem';
+
+import { classify } from '../../src/composition.ts';
+import { loadDemoLedger } from '../../src/ledger/demo.ts';
+import { defaultPolicy } from '../../src/policy/file.ts';
+import { evaluate } from '../../src/policy/engine.ts';
+import type { EngineCtx } from '../../src/policy/engine.ts';
+import type { RiskRow } from '../../src/types.ts';
 
 import { toBaseUnits, oneLine } from '../../src/intents.ts';
 import type { OneClickToken, TokensFile } from '../../src/intents.ts';
@@ -466,4 +476,47 @@ test('valueUsd fails closed rather than returning NaN to the budget rules', () =
   const rail = railOf(harness());
   assert.equal(rail.valueUsd(draftOf({ amountUsd: 100 })), 100);
   assert.equal(rail.valueUsd(draftOf({ amountUsd: Number.NaN })), Infinity);
+});
+
+// ---------- why the counterparty is the venue and not the deposit address ----------
+
+// Run against the real policy engine, because the choice turns on what the engine actually
+// does with an unlisted counterparty, and that is checkable rather than arguable.
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const riskRows = JSON.parse(
+  readFileSync(path.join(__dirname, '..', '..', 'data', 'risk-table.json'), 'utf8'),
+).rows as RiskRow[];
+const snapshot = loadDemoLedger();
+
+function engineCtx(): EngineCtx {
+  const policy = defaultPolicy();
+  // The human blesses the venue once, the way they would bless a router address.
+  policy.outbound.destinationAllowlist = [ONECLICK_COUNTERPARTY];
+  return {
+    policy,
+    composition: classify(snapshot, riskRows),
+    ledger: snapshot,
+    sessionSpentUsd: 0,
+    selfAddresses: [OWNER],
+  };
+}
+
+test('a deposit address as counterparty is refused outright, never click-gated', () => {
+  const ctx = engineCtx();
+
+  // A freshly minted deposit address is on no allowlist, by construction: it did not exist
+  // when the policy file was written and it expires within days. evaluateRail treats an
+  // unlisted counterparty as a terminal refusal, so this never reaches the click threshold.
+  const asAddress = evaluate(draftOf({ counterparty: DEPOSIT, amountUsd: 100 }), ctx);
+  assert.equal(asAddress.outcome, 'refuse');
+  assert.equal(asAddress.outcome === 'refuse' ? asAddress.rule : '', 'destination_not_allowed');
+
+  // The venue string passes the allowlist check, and the click threshold still governs:
+  // under it the policy decides, over it a human has to click.
+  const smallVenue = evaluate(draftOf({ counterparty: ONECLICK_COUNTERPARTY, amountUsd: 50 }), ctx);
+  assert.equal(smallVenue.outcome, 'allow');
+
+  const largeVenue = evaluate(draftOf({ counterparty: ONECLICK_COUNTERPARTY, amountUsd: 500 }), ctx);
+  assert.equal(largeVenue.outcome, 'needs_approval');
 });
