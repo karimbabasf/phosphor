@@ -1,6 +1,6 @@
 {
-  "stamp": "43b709d910ff8d45",
-  "iteration": 4,
+  "stamp": "4664fa316e584be7",
+  "iteration": 5,
   "firstFive": {
     "what": "A terminal-style control panel for stablecoins held across five chains, now on one screen: what is held and what it costs on the left, what governs it and what is waiting for a click on the right",
     "who": "The owner of the funds, supervising what a connected AI agent is allowed to do with them",
@@ -15,7 +15,7 @@
     {
       "requirement": "All seven regions on screen together: status bar full width, then two columns, left is what is held and right is what governs it",
       "met": true,
-      "ref": "status bar spans the page, then a two-column deck. Left: COMPOSITION, COST, CHART. Right: APPROVAL GATE, POLICY, LOG. All seven visible at once at 1920x1200, 1512x982 and 1440x900"
+      "ref": "status bar spans the page, then a two-column deck. Left: CHART (top left), COMPOSITION, COST. Right: APPROVAL GATE, POLICY, LOG. All seven visible at once at 1920x1200, 1512x982 and 1440x900"
     },
     {
       "requirement": "The page never scrolls; a region that outgrows its box scrolls inside itself",
@@ -53,9 +53,14 @@
       "ref": "measured on the live canvas at 1920x1200: 9032 green pixels and 6688 red at 1m, 5017/3354 at 1s, so both directions actually render. Bodies are solid in both directions now; the old up-solid/down-hollow convention is gone. Candle red is #cc3a30, darker than the gate's #ff3b30"
     },
     {
-      "requirement": "Charts come from Hyperliquid, timeframes down to 1s, human may only pick a timeframe and change the candle count",
+      "requirement": "Charts come from Hyperliquid, timeframes down to 1s, chart sits top left with composition and cost under it",
       "met": true,
-      "ref": "x-candle-source reads 'hyperliquid' at 1m and 'hyperliquid live trades' at 1s. Nine timeframes render (1s 5s 15s 1m 5m 15m 1h 4h 1d); clicking 1s switches and the meta line reports 'building from live trades: 66s of 272s'. Drag on the canvas moved the count 120 to 272. No indicators, no drawing tools, no crosshair were added"
+      "ref": "x-candle-source reads 'hyperliquid' at 1m and 'hyperliquid live trades' at 1s. Nine timeframes render (1s 5s 15s 1m 5m 15m 1h 4h 1d). Left column order measured as panel-chart -> panel-comp -> panel-cost, chart box at x=20 y=91 sized 949x528"
+    },
+    {
+      "requirement": "Chart handles like TradingView: plot drag pans, right axis drags price scale, bottom axis drags time scale, wheel zooms, double click resets",
+      "met": true,
+      "ref": "driven in a real browser at 1920x1200: plot drag right moved PAN_OFFSET 0->45; right-axis drag down moved PRICE_ZOOM 1->1.545; bottom-axis drag left moved VIEW_COUNT 120->245; cursors read grab / ns-resize / ew-resize over the three regions; double click reset zoom to 1 and pan to 0. A panned window is re-anchored on each push so a live chart does not slide out from under the drag, and pushes are suppressed entirely mid-drag"
     },
     {
       "requirement": "Policy as plain sentences, never JSON",
@@ -72,7 +77,7 @@
     "outcome": "The owner sees the whole machine at once, with no scrolling, and can judge what is there",
     "path": "Open the page. Everything is already on screen. The one red block is the only thing asking for a decision",
     "holds": true,
-    "why": "The red gate block sits at the top of the right column, which is the strongest position on the page after the status bar. Nothing else on screen is red. The previous stacked layout buried it about 1200px down a 1838px page where it could only be reached by scrolling"
+    "why": "The gate block sits at the top of the right column, the strongest position on the page after the status bar. The chart now owns the top left, which is where the eye lands first, and the gate holds the top right. The previous stacked layout buried the gate about 1200px down an 1838px page where it could only be reached by scrolling"
   },
   "states": {
     "resting": "captured states/resting/shot-768.png: gate says 'no pending approvals' dim, no red anywhere",

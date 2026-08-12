@@ -278,9 +278,9 @@ body {
 .tf.on::before { content: '['; color: var(--green-ghost); }
 .tf.on::after { content: ']'; color: var(--green-ghost); }
 
-/* Horizontal drag is the candle-count control, so say so with the cursor. */
-#chart { cursor: ew-resize; }
-#chart.dragging { cursor: ew-resize; }
+/* Cursor is set per region in app.js: grab on the plot, ns-resize on the price
+   axis, ew-resize on the time axis. */
+#chart { cursor: grab; }
 
 .chartbar { flex: none; }
 

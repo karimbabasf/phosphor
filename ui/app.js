@@ -24,9 +24,30 @@ var TIMEFRAMES = [
   { label: '1d', sec: 86400 }
 ];
 var TIMEFRAME_SEC = 60;
-var CANDLE_COUNT = 120;
-var CANDLE_COUNT_MIN = 20;
-var CANDLE_COUNT_MAX = 500;
+
+/* Chart view state, TradingView semantics:
+     VIEW_COUNT   how many candles are on screen  (bottom axis drag, or wheel)
+     PAN_OFFSET   how far back from the newest candle the window sits (plot drag)
+     PRICE_ZOOM   multiplier on the auto-fitted price span (right axis drag)
+   The fetch pulls VIEW_COUNT + PAN_OFFSET + margin so panning has history to move
+   through, capped at the server's own limit. */
+var VIEW_COUNT = 120;
+var VIEW_COUNT_MIN = 20;
+var VIEW_COUNT_MAX = 500;
+var PAN_OFFSET = 0;
+var PAN_MAX = 400;
+var PRICE_ZOOM = 1;
+var PRICE_ZOOM_MIN = 0.15;
+var PRICE_ZOOM_MAX = 8;
+var FETCH_MARGIN = 60;
+var FETCH_LIMIT_MAX = 1000;
+
+/* Canvas hit regions. The right strip is the price axis, the bottom strip is the
+   time axis, everything else is the plot. Kept here so drawing and hit-testing
+   cannot drift apart. */
+var PAD_RIGHT = 70;
+var PAD_BOTTOM = 20;
+var PAD_TOP = 4;
 
 /* Direction colour. Down is deliberately darker than the approval gate's #ff3b30
    so the gate stays the only alarm red on the page even though the chart now uses
@@ -40,6 +61,7 @@ var CANDLES = [];
 var CANDLE_META = { source: '', collected: 0, built: '', stale: false };
 var CANDLE_LAST_FETCH = 0;
 var CANDLE_FETCH_INFLIGHT = false;
+var CHART_DRAGGING = false;
 var SSE_SEEN_OPEN = false;
 var REFRESH_INFLIGHT = false;
 var REFRESH_QUEUED = false;
@@ -318,11 +340,13 @@ function setChartMeta(error) {
     meta.appendChild(el('span', 'faint', 'no candle data: ' + error));
     return;
   }
-  meta.appendChild(el('span', 'faint', CANDLE_META.source + '  ' + CANDLES.length + ' candles'));
+  meta.appendChild(el('span', 'faint', CANDLE_META.source + '  ' + VIEW_COUNT + ' candles'));
+  if (PAN_OFFSET > 0) meta.appendChild(el('span', 'faint', '  panned back ' + PAN_OFFSET));
+  if (PRICE_ZOOM !== 1) meta.appendChild(el('span', 'faint', '  price x' + (1 / PRICE_ZOOM).toFixed(2)));
   if (CANDLE_META.built === 'trades') {
     // Sub-minute history does not exist to be fetched, it accumulates. Say so,
     // rather than letting a short chart read as a broken one.
-    var want = TIMEFRAME_SEC * CANDLE_COUNT;
+    var want = TIMEFRAME_SEC * VIEW_COUNT;
     if (CANDLE_META.collected < want) {
       meta.appendChild(el('span', 'faint', '  building from live trades: ' + CANDLE_META.collected + 's of ' + want + 's'));
     }
@@ -336,8 +360,9 @@ async function refreshCandles() {
   if (CANDLE_FETCH_INFLIGHT) return;
   CANDLE_FETCH_INFLIGHT = true;
   CANDLE_LAST_FETCH = Date.now();
+  var fetchLimit = Math.min(FETCH_LIMIT_MAX, VIEW_COUNT + PAN_OFFSET + FETCH_MARGIN);
   var url = '/api/candles?product=' + encodeURIComponent(product) +
-    '&granularity=' + TIMEFRAME_SEC + '&limit=' + CANDLE_COUNT;
+    '&granularity=' + TIMEFRAME_SEC + '&limit=' + fetchLimit;
   try {
     var res = await fetch(url, { headers: { accept: 'application/json' } });
     if (!res.ok) {
@@ -349,7 +374,18 @@ async function refreshCandles() {
       }
       throw new Error((detail && detail.error) || ('candles returned ' + res.status));
     }
+    var prevNewest = CANDLES.length ? CANDLES[CANDLES.length - 1].t : null;
     CANDLES = await res.json();
+    // Panned back? Hold the window over the same candles as new ones arrive.
+    // Without this the chart slides out from under the drag on every push.
+    if (PAN_OFFSET > 0 && prevNewest !== null) {
+      var added = 0;
+      for (var ci = CANDLES.length - 1; ci >= 0; ci--) {
+        if (CANDLES[ci].t > prevNewest) added++;
+        else break;
+      }
+      if (added > 0) PAN_OFFSET = Math.min(PAN_MAX, PAN_OFFSET + added);
+    }
     CANDLE_META = {
       source: res.headers.get('x-candle-source') || 'unknown',
       collected: Number(res.headers.get('x-candle-collected') || 0),
@@ -371,6 +407,8 @@ async function refreshCandles() {
    memory so they can refresh fast; a minute-and-above candle comes from the
    exchange over REST and must not be refetched at trade rate. */
 function candlesPushed() {
+  // A refetch mid-drag fights the hand that is moving the chart.
+  if (CHART_DRAGGING) return;
   var minGap = TIMEFRAME_SEC < 60 ? 250 : 5000;
   if (Date.now() - CANDLE_LAST_FETCH < minGap) return;
   void refreshCandles();
@@ -380,16 +418,58 @@ function setTimeframe(sec) {
   if (sec === TIMEFRAME_SEC) return;
   TIMEFRAME_SEC = sec;
   CANDLES = [];
+  // A new timeframe is a new scale; carrying the old pan would land nowhere useful.
+  PAN_OFFSET = 0;
   renderTimeframes();
   drawChart();
   void refreshCandles();
 }
 
-function setCandleCount(next) {
-  var clamped = Math.max(CANDLE_COUNT_MIN, Math.min(CANDLE_COUNT_MAX, Math.round(next)));
-  if (clamped === CANDLE_COUNT) return;
-  CANDLE_COUNT = clamped;
-  void refreshCandles();
+// Redraw now from the candles already in hand, and refetch only if the window
+// has moved past what was fetched. Keeps dragging at frame rate instead of at
+// network rate.
+function applyView(needsFetch) {
+  setChartMeta(null);
+  drawChart();
+  if (needsFetch) void refreshCandles();
+}
+
+function setViewCount(next) {
+  var clamped = Math.max(VIEW_COUNT_MIN, Math.min(VIEW_COUNT_MAX, Math.round(next)));
+  if (clamped === VIEW_COUNT) return;
+  VIEW_COUNT = clamped;
+  applyView(VIEW_COUNT + PAN_OFFSET + 1 > CANDLES.length);
+}
+
+function setPanOffset(next) {
+  var maxBack = Math.max(0, Math.min(PAN_MAX, FETCH_LIMIT_MAX - VIEW_COUNT));
+  var clamped = Math.max(0, Math.min(maxBack, Math.round(next)));
+  if (clamped === PAN_OFFSET) return;
+  PAN_OFFSET = clamped;
+  applyView(VIEW_COUNT + PAN_OFFSET + 1 > CANDLES.length);
+}
+
+function setPriceZoom(next) {
+  var clamped = Math.max(PRICE_ZOOM_MIN, Math.min(PRICE_ZOOM_MAX, next));
+  if (Math.abs(clamped - PRICE_ZOOM) < 0.0001) return;
+  PRICE_ZOOM = clamped;
+  // Price scale is pure presentation: never costs a fetch.
+  applyView(false);
+}
+
+// The candles actually on screen: the window of VIEW_COUNT ending PAN_OFFSET
+// back from the newest.
+function visibleCandles() {
+  var end = Math.max(1, CANDLES.length - PAN_OFFSET);
+  var start = Math.max(0, end - VIEW_COUNT);
+  return CANDLES.slice(start, end);
+}
+
+// Which control a point on the canvas belongs to.
+function chartRegionAt(x, y, width, height) {
+  if (x >= width - PAD_RIGHT) return 'price';
+  if (y >= height - PAD_BOTTOM) return 'time';
+  return 'plot';
 }
 
 function drawChart() {
@@ -415,20 +495,35 @@ function drawChart() {
     return;
   }
 
-  var padRight = 70;
-  var padBottom = 14;
-  var padTop = 4;
+  var view = visibleCandles();
+  if (!view.length) {
+    ctx.fillStyle = faint;
+    ctx.fillText('no candles in this window', 0, 14);
+    return;
+  }
+
+  var padRight = PAD_RIGHT;
+  var padBottom = PAD_BOTTOM;
+  var padTop = PAD_TOP;
   var plotWidth = Math.max(10, width - padRight);
   var plotHeight = Math.max(10, height - padBottom - padTop);
 
   var low = Infinity;
   var high = -Infinity;
-  for (var i = 0; i < CANDLES.length; i++) {
-    if (CANDLES[i].l < low) low = CANDLES[i].l;
-    if (CANDLES[i].h > high) high = CANDLES[i].h;
+  for (var i = 0; i < view.length; i++) {
+    if (view[i].l < low) low = view[i].l;
+    if (view[i].h > high) high = view[i].h;
   }
   if (!(high > low)) {
     high = low + Math.max(1, Math.abs(low) * 0.001);
+  }
+  // Price zoom expands or compresses the auto-fitted span about its midpoint,
+  // which is what dragging the right axis does on a trading chart.
+  if (PRICE_ZOOM !== 1) {
+    var mid = (high + low) / 2;
+    var half = ((high - low) / 2) * PRICE_ZOOM;
+    low = mid - half;
+    high = mid + half;
   }
   var span = high - low;
 
@@ -436,11 +531,11 @@ function drawChart() {
     return padTop + ((high - value) / span) * plotHeight;
   }
 
-  var slot = plotWidth / CANDLES.length;
+  var slot = plotWidth / view.length;
   var bodyWidth = Math.max(1, Math.floor(slot * 0.62));
 
-  for (var j = 0; j < CANDLES.length; j++) {
-    var candle = CANDLES[j];
+  for (var j = 0; j < view.length; j++) {
+    var candle = view[j];
     var centre = Math.round(j * slot + slot / 2) + 0.5;
     var up = candle.c >= candle.o;
     // Direction is carried by hue now, not by fill. Both bodies are solid.
@@ -474,10 +569,10 @@ function drawChart() {
   }
 
   // X axis: three time ticks under the plot.
-  var marks = [0, Math.floor(CANDLES.length / 2), CANDLES.length - 1];
+  var marks = [0, Math.floor(view.length / 2), view.length - 1];
   for (var m = 0; m < marks.length; m++) {
     var index = marks[m];
-    if (index < 0 || index >= CANDLES.length) continue;
+    if (index < 0 || index >= view.length) continue;
     var x = Math.round(index * slot + slot / 2) + 0.5;
     ctx.strokeStyle = faint;
     ctx.beginPath();
@@ -487,7 +582,7 @@ function drawChart() {
     ctx.fillStyle = dim;
     ctx.textAlign = m === 0 ? 'left' : m === marks.length - 1 ? 'right' : 'center';
     // Seconds matter below the minute and are noise above it.
-    var stamp = clock(CANDLES[index].t * 1000);
+    var stamp = clock(view[index].t * 1000);
     ctx.fillText(TIMEFRAME_SEC < 60 ? stamp : stamp.slice(0, 5), x, padTop + plotHeight + 9);
   }
   ctx.textAlign = 'left';
@@ -756,39 +851,95 @@ function wireTimeframes() {
   });
 }
 
-function wireCandleCount() {
+/* Chart controls, TradingView semantics:
+     plot        drag left/right pans through history
+     right axis  drag up/down compresses or expands the price scale
+     bottom axis drag left/right compresses or expands the time scale
+     wheel       zooms the time scale, same capability as the bottom axis
+   Double click on either axis resets that axis. Nothing else: no indicators,
+   no drawing tools, no crosshair. */
+function wireChartControls() {
   var canvas = $('chart');
-  var dragging = false;
-  var startX = 0;
-  var startCount = 0;
+  var drag = null;
+
+  function localPoint(ev) {
+    var rect = canvas.getBoundingClientRect();
+    return { x: ev.clientX - rect.left, y: ev.clientY - rect.top, w: rect.width, h: rect.height };
+  }
+
+  function cursorFor(region) {
+    if (region === 'price') return 'ns-resize';
+    if (region === 'time') return 'ew-resize';
+    return 'grab';
+  }
 
   canvas.addEventListener('mousedown', function (ev) {
-    dragging = true;
-    startX = ev.clientX;
-    startCount = CANDLE_COUNT;
-    canvas.classList.add('dragging');
+    var p = localPoint(ev);
+    var region = chartRegionAt(p.x, p.y, p.w, p.h);
+    drag = {
+      region: region,
+      x: ev.clientX,
+      y: ev.clientY,
+      pan: PAN_OFFSET,
+      count: VIEW_COUNT,
+      zoom: PRICE_ZOOM,
+      slot: Math.max(1, (p.w - PAD_RIGHT) / Math.max(1, VIEW_COUNT))
+    };
+    CHART_DRAGGING = true;
+    canvas.style.cursor = region === 'plot' ? 'grabbing' : cursorFor(region);
     ev.preventDefault();
   });
 
   window.addEventListener('mousemove', function (ev) {
-    if (!dragging) return;
-    // Drag left to pull more candles in, right to push them out. 2.5px per candle
-    // keeps a full sweep of the plot roughly a 3x change.
-    var next = startCount + (startX - ev.clientX) / 2.5;
-    setCandleCount(next);
+    if (!drag) {
+      var q = localPoint(ev);
+      if (q.x < 0 || q.y < 0 || q.x > q.w || q.y > q.h) return;
+      canvas.style.cursor = cursorFor(chartRegionAt(q.x, q.y, q.w, q.h));
+      return;
+    }
+    var dx = ev.clientX - drag.x;
+    var dy = ev.clientY - drag.y;
+
+    if (drag.region === 'plot') {
+      // Pan by whole candles, using the slot width at grab time so the candle
+      // under the cursor stays under the cursor. Drag right goes back in time.
+      setPanOffset(drag.pan + dx / drag.slot);
+      return;
+    }
+    if (drag.region === 'price') {
+      // Drag down compresses the price scale, which is a bigger visible span.
+      setPriceZoom(drag.zoom * (1 + dy / 220));
+      return;
+    }
+    // Bottom axis: drag left squeezes more candles in, right spreads them out.
+    setViewCount(drag.count * (1 - dx / 320));
   });
 
   window.addEventListener('mouseup', function () {
-    if (!dragging) return;
-    dragging = false;
-    canvas.classList.remove('dragging');
+    if (!drag) return;
+    canvas.style.cursor = cursorFor(drag.region);
+    drag = null;
+    CHART_DRAGGING = false;
+    // Catch up on whatever the stream pushed while the hand was down.
+    void refreshCandles();
+  });
+
+  canvas.addEventListener('dblclick', function (ev) {
+    var p = localPoint(ev);
+    var region = chartRegionAt(p.x, p.y, p.w, p.h);
+    if (region === 'price') setPriceZoom(1);
+    else if (region === 'time') setViewCount(120);
+    else setPanOffset(0);
   });
 
   canvas.addEventListener('wheel', function (ev) {
-    // Same capability, second input. Not a new one.
     ev.preventDefault();
-    setCandleCount(CANDLE_COUNT * (ev.deltaY > 0 ? 1.15 : 1 / 1.15));
+    setViewCount(VIEW_COUNT * (ev.deltaY > 0 ? 1.15 : 1 / 1.15));
   }, { passive: false });
+
+  canvas.addEventListener('mouseleave', function () {
+    if (!drag) canvas.style.cursor = '';
+  });
 }
 
 function wireResize() {
@@ -809,7 +960,7 @@ async function boot() {
   wireKill();
   wireProduct();
   wireTimeframes();
-  wireCandleCount();
+  wireChartControls();
   wireResize();
   try {
     TOKEN = (await getJson('/api/session')).token;

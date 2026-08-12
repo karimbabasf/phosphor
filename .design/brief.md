@@ -28,8 +28,11 @@ like a dashboard product.
   Revised 2026-08-11 from "monotone green": Karim asked for green and red. Candle red is a darker
   #cc3a30 so the approval gate's #ff3b30 stays the only alarm red on the page.
 - Charts come from Hyperliquid, because that is the venue the execution targets. Timeframes down to
-  1s. The only two things a human may do to the chart: pick a timeframe, and change how many candles
-  are shown (drag or wheel). No indicators, no drawing tools, no crosshair.
+  1s. Chart sits top left; composition and cost sit under it.
+- Chart handles like TradingView, revised 2026-08-11 from a single drag gesture: drag the plot to pan
+  through history, drag the right axis up/down to compress or expand the price scale, drag the bottom
+  axis left/right to compress or expand the time scale, wheel to zoom time, double click either axis
+  to reset it. Still no indicators, no drawing tools, no crosshair.
 - Policy as plain sentences, never JSON
 - Terminal-dense character grid, not app-airy
 
