@@ -7,6 +7,8 @@
   "scripts": {
     "app": "node src/main.ts",
     "mcp": "node src/mcp.ts",
+    "keygen": "node scripts/keygen.ts",
+    "sweep": "node scripts/sweep.ts",
     "test": "node --test tests/unit/*.test.ts tests/injection.test.ts",
     "e2e": "node scripts/e2e.ts",
     "typecheck": "tsc --noEmit"
@@ -16,6 +18,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.0",
+    "viem": "^2.55.13",
     "zod": "^3.25.0"
   },
   "devDependencies": {

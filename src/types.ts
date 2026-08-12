@@ -154,10 +154,85 @@ export type TransferLeg = {
   gasNativeUsd: number; // est. origin-chain gas to fund the deposit
 };
 
+// The three features Karim asked for, each one draft kind. Every draft carries amountUsd
+// because that is what the policy engine's budget rules read; a rail that cannot price
+// itself in USD cannot be governed, so the field is required rather than optional.
+
+export type SwapDraft = {
+  kind: 'swap';
+  venue: 'oneclick' | 'uniswap-v3';
+  chain: ChainId; // origin chain
+  toChain: ChainId; // same as chain for a same-chain DEX swap
+  fromSymbol: string;
+  toSymbol: string;
+  amountIn: number;
+  amountUsd: number;
+  minAmountOut: number; // slippage floor; execution must revert rather than fill below this
+  from: string;
+  to: string;
+  counterparty: string; // the contract funds are handed to; must be on the policy allowlist
+  quote: LegQuote | null;
+};
+
+export type HlDepositDraft = {
+  kind: 'hl_deposit';
+  chain: ChainId; // 'arb' (Arbitrum Sepolia on testnet)
+  symbol: string; // 'USDC'
+  amount: number;
+  amountUsd: number;
+  from: string;
+  bridge: string; // resolved per network; the mainnet address on testnet burns the tokens
+};
+
+export type LpAddDraft = {
+  kind: 'lp_add';
+  chain: ChainId;
+  venue: string;
+  poolId: string;
+  token0: { symbol: string; tokenId: string; amount: number; decimals: number };
+  token1: { symbol: string; tokenId: string; amount: number; decimals: number };
+  feeTier: number;
+  tickLower: number;
+  tickUpper: number;
+  amountUsd: number;
+  from: string;
+  counterparty: string; // position manager / router; must be on the policy allowlist
+};
+
+export type LpRemoveDraft = {
+  kind: 'lp_remove';
+  chain: ChainId;
+  venue: string;
+  positionId: string;
+  liquidityPct: number; // 0..1 of the position to pull
+  amountUsd: number;
+  from: string;
+  counterparty: string; // position manager; must be on the policy allowlist
+};
+
 export type WriteDraft =
   | { kind: 'consolidate'; legs: TransferLeg[]; totalUsd: number; toChain: ChainId; symbol: string }
   | { kind: 'transfer'; leg: TransferLeg } // engine supports it; no MCP tool exposes it in v1
-  | { kind: 'policy_change'; patch: PolicyPatch; sentence: string };
+  | { kind: 'policy_change'; patch: PolicyPatch; sentence: string }
+  | SwapDraft
+  | HlDepositDraft
+  | LpAddDraft
+  | LpRemoveDraft;
+
+// One rail per feature, each owning exactly one module under src/rails/. The dispatch
+// table in proposals.ts is the only place that knows they all exist, which is what lets
+// a rail be added without touching the engine.
+export type RailResult = { ok: boolean; detail: string; txids?: string[] };
+
+export type Rail<D extends WriteDraft = WriteDraft> = {
+  kind: D['kind'];
+  // USD the draft moves, read by the policy engine's per-transaction and session budgets.
+  valueUsd(draft: D): number;
+  // Dry run. Must not sign or broadcast anything.
+  simulate(draft: D): Promise<SimulationResult>;
+  // Runs only after the proposal is approved, or auto-approved with the gate off.
+  execute(draft: D): Promise<RailResult>;
+};
 
 export type SimulationResult = {
   ok: boolean;

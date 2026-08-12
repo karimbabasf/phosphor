@@ -109,6 +109,24 @@ function legsOf(draft: WriteDraft): TransferLeg[] {
   return [];
 }
 
+// The rail kinds (swap, hyperliquid deposit, LP add/remove) do not decompose into
+// TransferLegs: they hand funds to a contract and get something else back, so there is
+// no from-chain/to-chain pair to walk. They still have to be governed, and the honest
+// way is their own branch rather than a fake leg. Anything with no legs and no branch
+// falls through to 'nothing_to_move', which is fail-closed by design.
+type RailDraft = Extract<WriteDraft, { counterparty: string } | { kind: 'hl_deposit' }>;
+
+function isRailDraft(draft: WriteDraft): draft is RailDraft {
+  return draft.kind === 'swap' || draft.kind === 'hl_deposit' || draft.kind === 'lp_add' || draft.kind === 'lp_remove';
+}
+
+// Where the funds actually go. This is the address the allowlist has to bless, and it is
+// a contract we chose rather than an arbitrary recipient, which is why rails get an
+// allowlist check on the venue instead of the leg-destination check.
+function counterpartyOf(draft: RailDraft): string {
+  return draft.kind === 'hl_deposit' ? draft.bridge : draft.counterparty;
+}
+
 function symbolOf(draft: WriteDraft): string {
   if (draft.kind === 'consolidate') return draft.symbol;
   if (draft.kind === 'transfer') return draft.leg.symbol;
@@ -241,6 +259,59 @@ function evaluatePolicyChange(draft: Extract<WriteDraft, { kind: 'policy_change'
   return { outcome: 'needs_approval', reasons };
 }
 
+// A rail hands funds to a venue contract. What can be checked is the size of the move and
+// who is receiving it; what cannot be checked is a post-move composition, because the
+// engine does not know what a pool or an exchange will hand back. So this branch enforces
+// the money rules strictly and is honest about the rest rather than inventing a post-state.
+function evaluateRail(draft: RailDraft, policy: Policy, ctx: EngineCtx, reasons: string[]): Verdict {
+  const usd = draft.amountUsd;
+  const counterparty = counterpartyOf(draft);
+  reasons.push(`${draft.kind} of ${money(usd)} to ${counterparty}.`);
+
+  if (!Number.isFinite(usd) || usd <= 0) {
+    return refusal(reasons, 'invalid_amount', `${draft.kind} declares ${usd} USD, which cannot be checked against a limit.`);
+  }
+
+  // The venue must be explicitly blessed. Unlike a transfer, the recipient here is a
+  // contract the app chose, so an unknown one means either a misconfiguration or a
+  // rail pointed somewhere it should not be. Both are refusals.
+  const allowed = new Set<string>([
+    ...ctx.selfAddresses.map(lower),
+    ...policy.outbound.destinationAllowlist.map(lower),
+  ]);
+  if (!allowed.has(lower(counterparty))) {
+    return refusal(
+      reasons,
+      'destination_not_allowed',
+      `${draft.kind} sends funds to ${counterparty}, which is not on the allowlist. Add the venue to the policy before using this rail.`,
+    );
+  }
+
+  if (usd > policy.outbound.maxPerTransactionUsd) {
+    return refusal(
+      reasons,
+      'max_per_transaction',
+      `${money(usd)} is above the ${money(policy.outbound.maxPerTransactionUsd)} per-transaction limit.`,
+    );
+  }
+
+  if (ctx.sessionSpentUsd + usd > policy.outbound.maxPerSessionUsd) {
+    return refusal(
+      reasons,
+      'max_per_session',
+      `${money(ctx.sessionSpentUsd)} already moved this session plus ${money(usd)} is above the ${money(policy.outbound.maxPerSessionUsd)} session limit.`,
+    );
+  }
+
+  if (usd > policy.outbound.humanClickAboveUsd) {
+    reasons.push(`${money(usd)} is above the ${money(policy.outbound.humanClickAboveUsd)} click threshold.`);
+    return { outcome: 'needs_approval', reasons };
+  }
+
+  reasons.push('Within every limit.');
+  return { outcome: 'allow', reasons };
+}
+
 export function evaluate(draft: WriteDraft, ctx: EngineCtx): Verdict {
   const reasons: string[] = [];
 
@@ -257,6 +328,9 @@ export function evaluate(draft: WriteDraft, ctx: EngineCtx): Verdict {
 
   // 3. Policy changes.
   if (draft.kind === 'policy_change') return evaluatePolicyChange(draft, reasons);
+
+  // 3b. Rails: swap, hyperliquid deposit, LP add/remove.
+  if (isRailDraft(draft)) return evaluateRail(draft, policy, ctx, reasons);
 
   // ---- fund moves ----
   const legs = legsOf(draft);

@@ -1,12 +1,28 @@
 // PHOSPHOR HTTP server: the one-page approval surface, the browser JSON routes,
 // an SSE change stream, and the single /api/mcp route the MCP proxy speaks.
 //
-// The trust boundary lives here. Approve, refuse and kill are the only mutating
-// browser routes and every one of them requires the per-boot token that only
-// GET /api/session hands out. The agent reaches this process through /api/mcp
-// and nothing else, so it has no path to its own approval: no token, no route.
-// Every /api/mcp op is audit-logged as a tool_call before dispatch, and every
-// rejected mutation is audit-logged as approve_attempt_rejected.
+// Approve, refuse and kill are the only mutating browser routes and every one of
+// them requires the per-boot token that GET /api/session hands out. Every /api/mcp
+// op is audit-logged as a tool_call before dispatch, and every rejected mutation is
+// audit-logged as approve_attempt_rejected.
+//
+// KNOWN HOLE, do not read the above as a boundary. This comment used to claim the
+// agent "has no path to its own approval: no token, no route". That is false and was
+// the most misleading text in the repo. GET /api/session hands the token to ANY
+// unauthenticated caller on loopback, and sameOrigin() deliberately allows an absent
+// Origin header so curl and the e2e script work. So the whole path is open to anything
+// with a shell:
+//   GET  /api/session                        -> token, no auth
+//   POST /api/approve  {id, token} no Origin -> 400 "unknown proposal" (auth CLEARED)
+//   POST /api/approve  with a wrong token    -> 403 "invalid approval token"
+// The 400-versus-403 split is the proof that authorisation passed and only the id was
+// unknown. Every coding agent on this machine has a shell, so every one of them is
+// already inside the boundary the product claims to have.
+//
+// Verified independently twice on 2026-08-11. Writeup:
+// Lessons/2026-08-11-phosphor-approval-token-reachable.md in the vault. A per-boot
+// token shared with every local caller is an identifier, never an authorisation.
+// Unfixed: the fix is a design call on the thing the product exists for.
 
 import http from 'node:http';
 import crypto from 'node:crypto';
