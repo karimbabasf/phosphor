@@ -53,12 +53,14 @@ type Harness = {
   usdtOn(chain: string): number;
 };
 
-function setup(over: { mode?: AppConfig['mode']; policy?: Policy | 'none'; quoter?: Quoter; signer?: Signer; ledger?: Ledger } = {}): Harness {
+function setup(over: { mode?: AppConfig['mode']; policy?: Policy | 'none'; quoter?: Quoter; signer?: Signer; ledger?: Ledger; approvalGate?: boolean; network?: AppConfig['network'] } = {}): Harness {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'acc-proposals-'));
   const cfg: AppConfig = {
     mode: over.mode ?? 'demo',
-    network: 'testnet',
-    approvalGate: true, // the approval flow is what these tests exercise; see policy/gate.ts
+    network: over.network ?? 'testnet',
+    // Default on: the human-approval flow is what most of these tests exercise. The
+    // gate-disabled cases below opt out explicitly. See policy/gate.ts.
+    approvalGate: over.approvalGate ?? true,
     keysPath: '/tmp/phosphor-test-keys.json',
     port: 4177,
     addresses: { evm: [], solana: [], near: [] },
@@ -112,6 +114,51 @@ function fakeLiveLedger(): Ledger {
     },
   };
 }
+
+// ---------- the gate-disabled path ----------
+// Security audit F3, 2026-08-12: gateRequired() existed and the UI reported it, but nothing
+// in the execution path read it. The banner said "every proposal auto-approves" while every
+// one of them sat pending forever. These tests are what makes the claim true.
+
+test('with the gate off, a needs_approval proposal auto-approves instead of parking', async () => {
+  const h = setup({ approvalGate: false });
+  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
+
+  assert.equal(p.verdict.outcome, 'needs_approval', 'the policy verdict itself must not change');
+  assert.notEqual(p.status, 'pending');
+  assert.equal(p.decidedBy, 'gate_disabled');
+  assert.ok(p.decidedAt);
+});
+
+test('an auto-approval is never recorded as a human decision', async () => {
+  const h = setup({ approvalGate: false });
+  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
+
+  assert.notEqual(p.decidedBy, 'human');
+  const lines = h.audit.tail(50);
+  const approved = lines.find(l => l.type === 'approved');
+  assert.ok(approved, 'the auto-approval must be audited');
+  assert.match(approved.msg, /gate disabled/i);
+  assert.doesNotMatch(approved.msg, /human/i);
+});
+
+test('the gate flag cannot auto-approve on mainnet even when it is set false', async () => {
+  const h = setup({ approvalGate: false, network: 'mainnet' });
+  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
+
+  assert.equal(p.status, 'pending', 'mainnet ignores approvalGate entirely');
+  assert.equal(p.decidedBy, undefined);
+});
+
+test('the gate being off does not turn a refusal into an approval', async () => {
+  const policy = happyPolicy();
+  policy.killSwitch = true;
+  const h = setup({ approvalGate: false, policy });
+  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
+
+  assert.equal(p.status, 'policy_refused');
+  assert.equal(p.decidedBy, 'policy');
+});
 
 // ---------- planning and the approval gate ----------
 

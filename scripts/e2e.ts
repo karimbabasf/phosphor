@@ -114,7 +114,7 @@ function holdingAmount(ledger: Json, chain: string, symbol: string): number {
 // ---------- children ----------
 
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-e2e-'));
-const childEnv = { ...cleanEnv(), ACC_PORT: String(PORT), ACC_MODE: 'demo', ACC_DATA_DIR: dataDir };
+const childEnv = { ...cleanEnv(), ACC_PORT: String(PORT), ACC_MODE: 'demo', ACC_DATA_DIR: dataDir, PHOSPHOR_APPROVAL_GATE: 'true' };
 
 type AppProcess = ChildProcessByStdio<null, Readable, Readable>;
 

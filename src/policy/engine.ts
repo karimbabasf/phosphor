@@ -127,6 +127,15 @@ function counterpartyOf(draft: RailDraft): string {
   return draft.kind === 'hl_deposit' ? draft.bridge : draft.counterparty;
 }
 
+// Where the OUTPUT lands, which is a different question from who we hand the funds to.
+// A swap passes tokens through an allowlisted router and the router delivers them to
+// draft.to; allowlisting only the router says nothing about who receives the proceeds.
+// The other rail kinds have no such field: lp_add and lp_remove deliver to the signer,
+// and hl_deposit credits whoever sent. Returns null when the kind has no destination.
+function destinationOf(draft: RailDraft): string | null {
+  return draft.kind === 'swap' ? draft.to : null;
+}
+
 function symbolOf(draft: WriteDraft): string {
   if (draft.kind === 'consolidate') return draft.symbol;
   if (draft.kind === 'transfer') return draft.leg.symbol;
@@ -284,6 +293,21 @@ function evaluateRail(draft: RailDraft, policy: Policy, ctx: EngineCtx, reasons:
       reasons,
       'destination_not_allowed',
       `${draft.kind} sends funds to ${counterparty}, which is not on the allowlist. Add the venue to the policy before using this rail.`,
+    );
+  }
+
+  // The proceeds, checked separately and against the same list. Allowlisting the router a
+  // swap passes through says nothing about who receives what comes out of it: a draft naming
+  // the real router as counterparty and an attacker's address as `to` would otherwise pass
+  // every rule here and auto-execute under the click threshold. The tool surface does not
+  // currently expose `to`, which is what stops that today, but a governance rule that holds
+  // only because of the shape of the caller is not a governance rule.
+  const destination = destinationOf(draft);
+  if (destination !== null && !allowed.has(lower(destination))) {
+    return refusal(
+      reasons,
+      'destination_not_allowed',
+      `${draft.kind} would deliver the proceeds to ${destination}, which is neither one of our own addresses nor on the allowlist.`,
     );
   }
 

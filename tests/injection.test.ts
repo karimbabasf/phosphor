@@ -149,7 +149,7 @@ before(async () => {
   dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-injection-'));
   port = await freePort();
   base = `http://127.0.0.1:${port}`;
-  const env = { ...cleanEnv(), ACC_PORT: String(port), ACC_MODE: 'demo', ACC_DATA_DIR: dataDir };
+  const env = { ...cleanEnv(), ACC_PORT: String(port), ACC_MODE: 'demo', ACC_DATA_DIR: dataDir, PHOSPHOR_APPROVAL_GATE: 'true' };
 
   const child: AppProcess = spawn(process.execPath, ['src/main.ts'], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
   child.stdout.resume();

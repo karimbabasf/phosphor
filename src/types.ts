@@ -259,7 +259,10 @@ export type Proposal = {
   draft: WriteDraft;
   simulation: SimulationResult | null;
   verdict: Verdict;
-  decidedBy?: 'human' | 'policy';
+  // 'gate_disabled' is an auto-approval taken because the approval gate is switched off on
+  // testnet. It is deliberately NOT 'human': nothing in the record may suggest a person
+  // clicked when no person did.
+  decidedBy?: 'human' | 'policy' | 'gate_disabled';
   decidedAt?: string;
   result?: { ok: boolean; detail: string };
 };

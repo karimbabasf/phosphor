@@ -86,7 +86,12 @@ export function loadConfig(root?: string): AppConfig {
     mode,
     network,
     // Mainnet ignores this entirely (see policy/gate.ts); it is read only on testnet.
-    approvalGate: parsed.approvalGate ?? true,
+    // The env override exists so the test harnesses can boot the real app with the gate ON
+    // and still exercise the human-approval flow, which is the thing most worth testing,
+    // while the shipped config.json runs testnet with it off.
+    approvalGate: env('PHOSPHOR_APPROVAL_GATE') !== undefined
+      ? env('PHOSPHOR_APPROVAL_GATE') !== 'false'
+      : (parsed.approvalGate ?? true),
     port,
     addresses: {
       evm: parsed.addresses?.evm ?? [],

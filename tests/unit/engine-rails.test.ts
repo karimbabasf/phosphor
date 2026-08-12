@@ -143,6 +143,27 @@ test('a rail pointed at an unlisted venue is refused', () => {
   }
 });
 
+// Security audit F1, 2026-08-12. The engine allowlisted the counterparty (the router) and
+// never looked at draft.to (who receives the swap output). A draft naming the real router
+// and an attacker's address passed every rule and auto-executed under the click threshold.
+test('a swap that would deliver its proceeds to an unlisted address is refused', () => {
+  const v = evaluate(swap({ to: '0x9999999999999999999999999999999999999999' }), ctxWith());
+  assert.equal(v.outcome, 'refuse');
+  assert.equal(v.outcome === 'refuse' ? v.rule : '', 'destination_not_allowed');
+});
+
+test('a swap delivering to one of our own addresses is still fine', () => {
+  const v = evaluate(swap({ to: SELF_EVM }), ctxWith());
+  assert.notEqual(v.outcome, 'refuse');
+});
+
+test('the proceeds check is separate from the counterparty check, not a substitute', () => {
+  // Real router, attacker destination: the exact shape of the audit's exploit path.
+  const v = evaluate(swap({ counterparty: VENUE, to: UNKNOWN_VENUE, amountUsd: 99 }), ctxWith());
+  assert.equal(v.outcome, 'refuse');
+  assert.match(v.outcome === 'refuse' ? v.reasons.join(' ') : '', /proceeds/);
+});
+
 test('the allowlist match is case insensitive, because addresses arrive in mixed case', () => {
   const v = evaluate(swap({ counterparty: VENUE.toUpperCase() }), ctxWith());
   assert.notEqual(v.outcome, 'refuse');

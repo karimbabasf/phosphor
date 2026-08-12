@@ -45,6 +45,7 @@ import { classify } from './composition.ts';
 import { applyLegs, evaluate } from './policy/engine.ts';
 import type { EngineCtx } from './policy/engine.ts';
 import { loadPolicy, savePolicy } from './policy/file.ts';
+import { gateRequired } from './policy/gate.ts';
 import { renderSentences } from './policy/render.ts';
 import { isRailKind } from './rails/index.ts';
 import type { RailDraft, RailKind, RailRegistry } from './rails/index.ts';
@@ -294,7 +295,26 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
       totalUsd: totalUsdOf(p.draft),
     });
 
-    if (p.verdict.outcome === 'needs_approval') return persist(p);
+    if (p.verdict.outcome === 'needs_approval') {
+      if (gateRequired(cfg)) return persist(p);
+
+      // The gate is off, which only ever happens on testnet: gateRequired() ignores this
+      // flag entirely on mainnet. Karim asked for no safeguards while testing, and until
+      // now the flag only changed what the UI said, not what the app did, so the banner
+      // claimed every proposal auto-approves while they all sat pending forever. An app
+      // that misreports its own safety state is worse than one with the safety off.
+      //
+      // decidedBy is 'gate_disabled', never 'human'. The audit trail must never let anyone
+      // read this later as a person having looked at it and clicked.
+      audit.append('approved', `${p.kind} proposal ${p.id} auto-approved: approval gate disabled on ${cfg.network}`, {
+        id: p.id,
+        decidedBy: 'gate_disabled',
+        network: cfg.network,
+        totalUsd: totalUsdOf(p.draft),
+      });
+      const auto = persist({ ...p, status: 'approved', decidedBy: 'gate_disabled', decidedAt: nowIso() });
+      return executeApproved(auto);
+    }
 
     // allow: under the click threshold, so the policy itself is the decision maker.
     const allowed = persist({ ...p, status: 'approved', decidedBy: 'policy', decidedAt: nowIso() });
