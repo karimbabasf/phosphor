@@ -109,6 +109,16 @@ const KNOWN_PUBLIC_CONSTANTS = new Map<string, string>([
   // evidence that the Hyperliquid bridge takes a plain ERC-20 transfer with no signed payload.
   // Cited in src/rails/hyperliquid-deposit.ts and tests/unit/oneclick.test.ts.
   ['d5a06833f3e299cce32a957e4078d473d14954b3aa9ec55cd966abc527015c03', 'public Arbitrum Sepolia tx hash, evidence for the HL bridge deposit shape'],
+  // The official hyperliquid-python-sdk's own signing fixture, published in that repo at
+  // tests/signing_test.py. It is a sequential counting pattern, holds nothing, and is the
+  // reference our EIP-712 implementation is checked against in
+  // tests/unit/hyperliquid-withdraw.test.ts. Removing it would delete the only external
+  // proof that the bytes we sign are the bytes Hyperliquid verifies.
+  ['0123456789012345678901234567890123456789012345678901234567890123', 'hyperliquid-python-sdk published test key, signing fixture'],
+  // The r and s that key must produce for the fixture withdrawal. Signature halves, not keys:
+  // they are an ASSERTION about output, and are worthless to anyone who has them.
+  ['8363524c799e90ce9bc41022f7c39b4e9bdba786e5f9c72b20e43e1462c37cf9', 'expected signature r from the SDK fixture'],
+  ['58b1411a775938b83e29182e8ef74975f9054c8e97ebf5ec2dc8d51bfc893881', 'expected signature s from the SDK fixture'],
 ]);
 
 // A 32 byte key drawn from a CSPRNG uses nearly every hex character. A run that uses four or

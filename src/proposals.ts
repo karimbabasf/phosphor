@@ -213,25 +213,51 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     // so it reads as no budget at all and the draft ends up refused for having nothing to move.
     const budget = params.maxTotalUsd === undefined ? Infinity : Number.isFinite(params.maxTotalUsd) ? params.maxTotalUsd : 0;
     const legs: TransferLeg[] = [];
-    let spent = 0;
+    let spentUsd = 0;
+
+    // The price of one unit of what is being moved. This used to be assumed to be 1.0, with
+    // the comment "stables are priced 1.0 everywhere in this app", and that was true while
+    // the app only ever held stables. It stopped being true in this branch: the wallet now
+    // holds WETH, data/tokens.testnet.json lists it, and the candidate filter above is
+    // `!h.native && symbol matches`, which does not exclude it.
+    //
+    // Setting amountUsd to the token count made a 10 WETH consolidation (~$18,800) govern as
+    // $10: below the $100 click threshold, so `allow`, so auto-executed with no human on any
+    // gate setting. The engine cannot catch it downstream either, because legUsd() takes
+    // max(declared, amount) and both were the token count. This is the same defect the swap
+    // path was fixed for, left on the one fund-move path the MCP surface actually exposes.
+    //
+    // Infinity when the symbol cannot be priced, which the engine refuses as invalid_amount.
+    // A token the app cannot price is a token it cannot govern.
+    const unitPrice = priceOf(params.symbol, snapshot);
+    const priceUsd = unitPrice === null ? Infinity : unitPrice;
 
     for (const h of candidates) {
-      const remaining = budget - spent;
-      if (remaining <= 0) break;
-      const take = Math.min(h.amount, remaining);
-      if (take < dustThreshold(snapshot, h.chain, cfg)) continue;
+      const remainingUsd = budget - spentUsd;
+      if (remainingUsd <= 0) break;
+      // Budget is in dollars and holdings are in tokens, so the trim has to convert rather
+      // than compare the two directly. A non-finite price makes maxTokens 0, which drops
+      // every leg and leaves the draft refused for having nothing to move.
+      const maxTokens = Number.isFinite(priceUsd) && priceUsd > 0 ? remainingUsd / priceUsd : Infinity;
+      const take = Math.min(h.amount, maxTokens);
+      const takeUsd = take * priceUsd;
+      // Dust is a DOLLAR floor, so it has to be compared against dollars. Comparing the token
+      // count against it was the same units confusion as amountUsd above, and it bit in the
+      // opposite direction: 1 WETH is $1,880 and would have been dropped as dust against a
+      // $10 floor. Cheap either way for a stable, where the two numbers coincide.
+      if (takeUsd < dustThreshold(snapshot, h.chain, cfg)) continue;
       legs.push({
         fromChain: h.chain,
         toChain: params.toChain,
         symbol: params.symbol,
         amount: take,
-        amountUsd: take, // stables are priced 1.0 everywhere in this app
+        amountUsd: takeUsd,
         from: h.address,
         to: recipient,
         quote: null,
         gasNativeUsd: snapshot.gas[h.chain]?.transferCostUsd ?? 0,
       });
-      spent += take;
+      spentUsd += takeUsd;
     }
 
     return legs;
@@ -887,10 +913,23 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     const cutoff = Date.now() - SESSION_WINDOW_MS;
     return store
       .list()
-      // Everything that moved funds, which is every kind except a policy change. Written as
-      // an exclusion so a rail added later counts against the session cap by default: an
-      // inclusion list would leave the new kind silently unbudgeted.
-      .filter(p => p.status === 'executed' && p.kind !== 'policy_change')
+      // Everything that moved funds OR is moving them right now, which is every kind except
+      // a policy change. Written as an exclusion so a rail added later counts against the
+      // session cap by default: an inclusion list would leave the new kind silently
+      // unbudgeted.
+      //
+      // 'executing' counts, and that is the whole fix. Counting only 'executed' meant a
+      // proposal was invisible to the cap for the entire duration of an on-chain send, and
+      // nothing serialises proposal handling: node:http runs them concurrently and there is
+      // no queue anywhere. So N proposals arriving together each evaluated against a spend
+      // of 0 and all N executed. Demonstrated: five concurrent $10,000 consolidations moved
+      // $50,000 against a $25,000 session cap, and the window's width tracks send latency,
+      // so a slower chain is a wider hole.
+      //
+      // Committed-but-unconfirmed money is spent for budgeting purposes. Over-counting a
+      // send that later fails costs a refusal the human can retry; under-counting one that
+      // succeeds costs the cap itself.
+      .filter(p => (p.status === 'executed' || p.status === 'executing') && p.kind !== 'policy_change')
       .filter(p => {
         const at = Date.parse(p.decidedAt ?? p.createdAt);
         return Number.isFinite(at) && at >= cutoff;
@@ -898,14 +937,39 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
       .reduce((sum, p) => sum + totalUsdOf(p.draft), 0);
   }
 
+  // Every path that can spend runs one at a time.
+  //
+  // Counting 'executing' against the session cap is necessary but not sufficient on its own:
+  // a proposal is only marked executing after it has already been evaluated, so two arriving
+  // together could both read the same spend figure and both be allowed before either
+  // reserved anything. node:http handles requests concurrently and nothing else in this
+  // process serialises them, so that window was real. Demonstrated before this existed:
+  // five concurrent $10,000 consolidations moved $50,000 against a $25,000 cap.
+  //
+  // A promise chain is the whole mechanism. It makes "read the spend, decide, reserve" one
+  // indivisible step, which is what a budget needs to mean anything. Throughput is not a
+  // concern here: these operations end in a chain send, a human click, or both.
+  let chain: Promise<unknown> = Promise.resolve();
+  function serialise<T>(fn: () => Promise<T>): Promise<T> {
+    // Both arms run fn, so one rejection does not wedge the queue for everything after it.
+    const run = chain.then(fn, fn);
+    chain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
   return {
-    proposeConsolidate,
-    proposePolicyChange,
-    proposeSwap,
-    proposeHlDeposit,
-    proposeLpAdd,
-    proposeLpRemove,
-    approve,
+    proposeConsolidate: (p) => serialise(() => proposeConsolidate(p)),
+    proposePolicyChange: (p) => serialise(() => proposePolicyChange(p)),
+    proposeSwap: (p) => serialise(() => proposeSwap(p)),
+    proposeHlDeposit: (p) => serialise(() => proposeHlDeposit(p)),
+    proposeLpAdd: (p) => serialise(() => proposeLpAdd(p)),
+    proposeLpRemove: (p) => serialise(() => proposeLpRemove(p)),
+    // approve() executes, so it shares the queue: a human click landing next to an
+    // auto-approval must not be able to double-spend the cap either.
+    approve: (id: string) => serialise(() => approve(id)),
     refuse,
     get: (id: string) => store.get(id),
     list: () => store.list(),

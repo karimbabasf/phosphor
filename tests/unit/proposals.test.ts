@@ -625,3 +625,66 @@ test('onChange fires on every state transition', async () => {
   await svc.approve(p.id);
   assert.ok(changes > afterPropose);
 });
+
+// ---------- the two blockers the final review found (C1, C2) ----------
+
+// C1. priceOf() and priceHoldings() were fixed for the rail paths, but planLegs still set a
+// leg's amountUsd to its TOKEN COUNT under the comment "stables are priced 1.0 everywhere in
+// this app". That stopped being true in this branch: the wallet holds WETH and the candidate
+// filter is only `!h.native && symbol matches`. A 10 WETH consolidation was governed as $10.
+test('a consolidation of a non-stable is priced at spot, not at its token count', async () => {
+  const h = setup({ mode: 'live', ledger: fakeLiveLedger() });
+  const snap = h.ledger.snapshot();
+  snap.holdings.push({ chain: 'arb', address: '0x1111111111111111111111111111111111111111', symbol: 'WETH', tokenId: '0xweth', amount: 10, usd: 18800, native: false });
+  snap.prices.ETH = 1880;
+
+  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'WETH' });
+
+  assert.ok(p.draft.kind === 'consolidate');
+  assert.ok(p.draft.totalUsd > 18000, `totalUsd was ${p.draft.totalUsd}, expected ~18800`);
+  // And therefore it is over the click threshold instead of sailing under it.
+  assert.notEqual(p.verdict.outcome, 'allow');
+});
+
+test('a maxTotalUsd budget on a non-stable buys dollars, not tokens', async () => {
+  const h = setup({ mode: 'live', ledger: fakeLiveLedger() });
+  const snap = h.ledger.snapshot();
+  snap.holdings.push({ chain: 'arb', address: '0x1111111111111111111111111111111111111111', symbol: 'WETH', tokenId: '0xweth', amount: 10, usd: 18800, native: false });
+  snap.prices.ETH = 1880;
+
+  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'WETH', maxTotalUsd: 1880 });
+
+  assert.ok(p.draft.kind === 'consolidate');
+  // $1,880 of WETH is 1 token, not 1,880 of them.
+  assert.ok(p.draft.totalUsd <= 1880.01, `totalUsd was ${p.draft.totalUsd}`);
+  assert.ok(Math.abs(p.draft.legs.reduce((s, l) => s + l.amount, 0) - 1) < 0.01);
+});
+
+// C2. sessionSpentUsd() counted only 'executed', and nothing serialised proposal handling, so
+// concurrent proposals each evaluated against a spend of 0. Five $10,000 consolidations moved
+// $50,000 against a $25,000 cap. The width of the window tracked send latency.
+test('concurrent proposals cannot exceed the session cap between them', async () => {
+  const policy = happyPolicy();
+  policy.outbound.maxPerTransactionUsd = 10000;
+  policy.outbound.maxPerSessionUsd = 25000;
+  policy.outbound.humanClickAboveUsd = 1_000_000; // take the click out of the picture
+  const h = setup({ approvalGate: false, policy });
+
+  const results = await Promise.all(
+    [1, 2, 3, 4, 5].map(() => h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT', maxTotalUsd: 10000 })),
+  );
+
+  const movedUsd = results
+    .filter(p => p.status === 'executed' || p.status === 'executing')
+    .reduce((sum, p) => sum + (p.draft.kind === 'consolidate' ? p.draft.totalUsd : 0), 0);
+
+  assert.ok(movedUsd <= 25000, `moved $${movedUsd} against a $25,000 session cap`);
+  assert.ok(results.some(p => p.status === 'policy_refused'), 'something has to have been refused');
+});
+
+test('an in-flight proposal counts against the cap while it is still executing', async () => {
+  const h = setup({ approvalGate: false });
+  const before = h.svc.sessionSpentUsd();
+  await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
+  assert.ok(h.svc.sessionSpentUsd() > before, 'a completed move must register');
+});

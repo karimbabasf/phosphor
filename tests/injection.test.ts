@@ -399,10 +399,14 @@ test('both execution arcs happen, so the scan below has something to scan', asyn
   // Arc 2: at or below the click threshold, so the policy itself is the decision maker and the
   // app executes without a human. This is the only legitimate execution without an approval,
   // and the scan below has to be able to tell it apart from an unauthorised one.
+  // USDT rather than the fixture's XUSD. XUSD is deliberately absent from the risk table, and
+  // since 2026-08-12 an unpriceable symbol is refused as invalid_amount rather than assumed to
+  // be worth a dollar a token. That refusal is the correct behaviour and has its own test
+  // below; this one is about the audit chain, so it uses a symbol the app can actually price.
   const autoAllowed = await callTool('propose_consolidate', {
     toChain: 'eth',
-    symbol: 'XUSD',
-    fromChains: ['arb'],
+    symbol: 'USDT',
+    fromChains: ['sol'],
     maxTotalUsd: 100,
   });
   assert.equal(autoAllowed.verdict.outcome, 'allow');
@@ -455,4 +459,24 @@ test('no execution in the audit log lacks a prior approval', () => {
       `proposal ${id} was both refused and executed`,
     );
   }
+});
+
+// The behaviour the arc-2 change above depends on, asserted here rather than assumed. XUSD is
+// in the demo fixture and deliberately absent from the risk table, so the app has no price for
+// it. Before 2026-08-12 it was priced at a dollar a token, which is how a 10 WETH consolidation
+// came to be governed as $10. An unpriceable token is one the dollar caps cannot bound, so it
+// is refused rather than guessed at.
+test('a token the app cannot price is refused, not assumed to be worth a dollar', async () => {
+  const refused = await callTool('propose_consolidate', {
+    toChain: 'eth',
+    symbol: 'XUSD',
+    fromChains: ['arb'],
+    maxTotalUsd: 100,
+  });
+
+  assert.equal(refused.verdict.outcome, 'refuse');
+  // 'invalid_leg' rather than the rail path's 'invalid_amount': a consolidation carries legs,
+  // and legNumbersAreSane() catches the non-finite value one check earlier. Different rule,
+  // same fail-closed outcome, and the rule name is the more accurate of the two here.
+  assert.equal(refused.verdict.rule, 'invalid_leg');
 });
