@@ -188,13 +188,100 @@ function gateRequired(cfg: AppConfig): boolean {
 A test asserts `gateRequired({network: 'mainnet', approvalGate: false})` is `true`. That test is the
 thing standing between a convenience flag and a product that lies about what it is.
 
-## 7. Rail: swap through NEAR Intents
+## 7. The finding that reshaped this section
 
-FILL FROM RESEARCH (agent `near-rail`).
+**NEAR Intents has no testnet.** Not "an awkward one", none. Four independent lines of
+evidence, collected 2026-08-12: every candidate host is NXDOMAIN, the verifier contract account on
+NEAR testnet has never had code deployed, the official SDK ships exactly one base URL and it is
+mainnet, and the complete 62-page documentation set contains zero occurrences of "testnet",
+"sandbox" or "staging".
 
-## 8. Rails: Hyperliquid deposit, LP provide/withdraw, signing, pricing
+So "swaps route through NEAR, tested on testnet" cannot both be true. Nobody can do it. The
+options were: build a fake testnet host (dishonest), run small real-money mainnet swaps (spends
+Karim's money without asking), or test the swap capability on a real testnet DEX while keeping the
+NEAR rail complete and mainnet-ready. **Chosen: the third.**
 
-FILL FROM RESEARCH (agents `hl-rail`, `lp-rail`).
+Two findings soften it considerably:
+- `dry:false` on 1Click needs **no API key and no NEAR signing**. An unauthenticated request
+  returns HTTP 201 with a live deposit address, and the only signing is a plain ERC-20 transfer to
+  that address. The rail is far simpler than the v1 AUTH-LAST list assumed: no NEP-413, no NEAR
+  account with a registered key.
+- The `1Click` rail is therefore complete and correct in this build. It is gated so `execute()`
+  throws unless the network is `mainnet`, which is the honest form of "we did not test this".
+
+### Rail: swap
+Two venues behind one `swap` draft kind.
+- `venue: 'oneclick'`: quote `dry:false` -> `depositAddress` -> ERC-20 transfer -> poll `/v0/status`.
+  Mainnet only, hard-guarded. Its counterparty is a freshly minted deposit address that no allowlist
+  can ever contain, so it always requires a human click. That is the correct outcome, not a
+  limitation: an unvetted destination is exactly what the click threshold exists for.
+- `venue: 'uniswap-v3'`: same-chain exact-input swap on Arbitrum Sepolia. This is the one that
+  actually executes on testnet.
+
+## 8. Rails: Hyperliquid deposit, LP, and one chain for all three
+
+### The chain decision
+Everything runs on **Arbitrum Sepolia (421614)**, not Base Sepolia as first planned.
+
+The reason is funding, not technology. No scriptable faucet exists for either chain: every one is a
+browser with a captcha, and most gate on a mainnet ETH balance. Base Sepolia would mean Karim funds
+two wallets on two chains. Arbitrum Sepolia means one, and the swap rail can then produce the USDC
+the LP rail needs, so a single ETH transfer bootstraps all three features.
+
+Verified live by the lead before committing to the move, not taken on report:
+
+    factory 0x248AB79Bbb9bC29bB72f7Cd42F17e054Fc40188e
+    getPool(USDC, WETH, 3000) -> 0x66eeab70ac52459dd74c6ad50d578ef76a441bbf
+      liquidity 8449934188401 | USDC 8808.22 | WETH 0.7595 | token0 = USDC
+
+Base Sepolia stays in the address table as a supported option (its pool is deeper) but is not the
+default. Addresses live in a per-network, per-chain table; neither chain is hardcoded.
+
+**Trap recorded:** the same address hosts different contracts on different chains, because an
+address is deployer plus nonce. A Base address must never be carried to Arbitrum on the assumption
+the name matches. Verify by behaviour, with `eth_getCode`.
+
+### Rail: LP provide and withdraw
+Uniswap v3, `NonfungiblePositionManager`. Chosen over v4 and over Ref Finance on NEAR because every
+argument of `mint`, `increaseLiquidity`, `decreaseLiquidity` and `collect` is a **static** ABI type,
+so encoding is fixed 32-byte words with no dynamic offsets. v4 routes everything through
+`modifyLiquidities(bytes unlockData, ...)`, a nested dynamic blob. Ref Finance is genuinely live
+(2,647 pools) but uses JSON args, storage deposits and `ft_transfer_call`, reusing none of the
+existing EVM path.
+
+Positions read back through `balanceOf` + `tokenOfOwnerByIndex` + `positions(tokenId)` and fill
+`ledger.positions()`, which is what puts pool positions in the wallet view as ordinary rows.
+
+### Rail: Hyperliquid deposit
+A plain ERC-20 transfer of USDC2 to Bridge2 on Arbitrum Sepolia. No permit, no signed payload.
+
+**This rail's failure mode is silent, total loss, so its refusals are the deliverable.** Verified:
+the mainnet bridge address has NO CONTRACT on Arbitrum Sepolia, so sending there burns the tokens
+to a dead EOA with no recovery, and the documented minimum is 5 USDC below which funds are "lost
+forever". `simulate()` must refuse when the bridge does not match the network, when the amount is
+under the minimum, when the destination has no bytecode on the target chain, or when the balance is
+short. Each has a test.
+
+**Funding is the one thing code cannot solve.** The testnet drip requires a prior *mainnet* deposit
+from the same address, and there is no USDC2 faucet at all: `mint` is owner-gated, proven by
+`eth_call` reverting with "Ownable: caller is not the owner" from a random EOA. Karim's route,
+chosen 2026-08-11: claim the drip with an address he has already deposited from, withdraw USDC2 to
+Arbitrum Sepolia, then send it to the app's own fresh address. His mainnet key never enters the app.
+
+### Signing
+`src/chain/evm.ts` is the only module that signs or broadcasts. It simulates before sending so a
+revert costs nothing and yields the real reason string, and approves only when the allowance is short.
+
+**viem 2.55.13 added**, reversing the near-zero-dependency stance deliberately. keccak256 is not
+Node's `sha3-256`: different padding, different digest, wrong addresses and wrong selectors. Two
+researchers hit this independently in one session and one wrote a keccak by hand that failed its own
+test vector. Hand-rolling the one thing that must never be wrong is a bad trade for a dependency
+count. Verified against the canonical vector.
+
+### Pricing on testnet
+Testnet tokens have no market price, and the Arbitrum Sepolia pool implies ~167 USDC per WETH, which
+is fiction. **Pool price is never a USD source.** Testnet symbols map to their mainnet twin and take
+that price, so the wallet's USD column reads in real money while the balances are testnet.
 
 ## 9. Remote hygiene
 
