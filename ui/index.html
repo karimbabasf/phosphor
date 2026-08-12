@@ -14,7 +14,7 @@
   <header class="statusbar" id="statusbar">
     <h1 class="ident">PHOSPHOR v0.1</h1>
     <span class="bar">&#9474;</span>
-    <span class="field"><span class="k">held</span> <span class="v hi" id="stat-total">--</span> <span class="faint" id="stat-gas"></span></span>
+    <span class="field"><span class="k">held</span> <span class="v hi" id="stat-total">--</span> <span class="faint" id="stat-positions"></span></span>
     <span class="bar">&#9474;</span>
     <span class="field"><span class="k">agent</span> <span class="v" id="stat-agent">--</span></span>
     <span class="bar">&#9474;</span>
@@ -24,6 +24,9 @@
     <button type="button" id="kill-btn" class="btn">[ KILL SWITCH: -- ]</button>
     <span class="cursor" aria-hidden="true">&#9608;</span>
   </header>
+  <!-- Gate off is the more dangerous of the two banners: policy-unreadable fails
+       closed, a disabled gate fails open. It sits first and it is inverted. -->
+  <p class="banner gate-off" id="gate-banner" role="alert" hidden></p>
   <p class="banner" id="policy-banner" hidden>POLICY FILE UNREADABLE: ALL WRITES REFUSED</p>
   <p class="alert dim" id="alert" hidden></p>
 
@@ -48,25 +51,33 @@
         <div class="frame frame-bottom"></div>
       </section>
 
-      <!-- 3. COMPOSITION -->
-      <section class="panel panel-comp">
-        <div class="frame frame-top" data-title="COMPOSITION"></div>
+      <!-- 3. WALLET: the whole bottom left. Donut on the left, table on the right,
+           one panel. The table scrolls inside itself so the donut stays put. -->
+      <section class="panel panel-wallet">
+        <div class="frame frame-top" data-title="WALLET"></div>
         <div class="pbody">
-          <table class="grid" id="comp-table">
-            <thead>
-              <tr>
-                <th class="c-issuer">ISSUER</th>
-                <th class="c-chain">CHAIN</th>
-                <th class="c-symbol">SYMBOL</th>
-                <th class="c-num">AMOUNT</th>
-                <th class="c-num">USD</th>
-                <th class="c-num">SHARE</th>
-                <th class="c-frz">FRZ</th>
-              </tr>
-            </thead>
-            <tbody id="comp-rows"></tbody>
-          </table>
-          <p class="totals" id="comp-total">--</p>
+          <div class="wallet">
+            <div class="donutwrap" id="donutwrap">
+              <canvas id="donut"></canvas>
+              <p class="readout" id="donut-readout">--</p>
+            </div>
+            <div class="walletgrid" id="walletgrid">
+              <table class="grid" id="wallet-table">
+                <thead>
+                  <tr>
+                    <th class="c-token">TOKEN</th>
+                    <th class="c-chain">CHAIN</th>
+                    <th class="c-num">QTY</th>
+                    <th class="c-num">PRICE</th>
+                    <th class="c-num">VALUE</th>
+                    <th class="c-num">SHARE</th>
+                  </tr>
+                </thead>
+                <tbody id="wallet-rows"></tbody>
+              </table>
+            </div>
+          </div>
+          <p class="totals" id="wallet-total">--</p>
         </div>
         <div class="frame frame-bottom"></div>
       </section>
@@ -75,7 +86,8 @@
 
     <div class="col">
 
-      <!-- 5. APPROVAL GATE -->
+      <!-- 5. APPROVAL GATE. Never collapses: a safety surface that can be hidden
+           is a safety bug. Its frame title carries no [-] for that reason. -->
       <section class="panel panel-gate">
         <div class="frame frame-top" data-title="APPROVAL GATE"></div>
         <div class="pbody">
@@ -86,7 +98,7 @@
 
       <!-- 6. POLICY -->
       <section class="panel panel-policy">
-        <div class="frame frame-top" data-title="POLICY"></div>
+        <button type="button" class="frame frame-top" data-title="POLICY" data-collapse="policy" aria-expanded="true" aria-controls="policy-lines"></button>
         <div class="pbody">
           <div id="policy-lines"></div>
         </div>
@@ -95,7 +107,7 @@
 
       <!-- 7. LOG -->
       <section class="panel panel-log grow">
-        <div class="frame frame-top" data-title="LOG"></div>
+        <button type="button" class="frame frame-top" data-title="LOG" data-collapse="log" aria-expanded="true" aria-controls="log"></button>
         <div class="pbody">
           <div id="log" class="log"></div>
         </div>

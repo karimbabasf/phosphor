@@ -55,7 +55,28 @@ var PAD_TOP = 4;
 var CHART_UP = '#33ff66';
 var CHART_DOWN = '#cc3a30';
 
+/* Donut. One hue, brightness by rank: the biggest slice is the brightest. The
+   ramp stops short of --green-hi (hsl 136 100% 77.5%) so the hover highlight is
+   brighter than any resting slice and cannot be mistaken for one. */
+var DONUT_HUE = 135;
+var DONUT_L_TOP = 72;
+var DONUT_L_BOTTOM = 24;
+/* A straight rank ramp spends most of its range on slices too thin to see: with
+   eighteen positions the six that own the ring would separate by two points of
+   lightness each and read as one flat band. The ease front-loads the range onto
+   the ranks that are actually wide enough to tell apart. */
+var DONUT_L_EASE = 0.55;
+var DONUT_HI = '#8cffab';
+var DONUT_INNER = 0.58;
+
+var COLLAPSE_PREFIX = 'phosphor.collapse.';
+
 var TOKEN = null;
+var WALLET = { rows: [], totalUsd: 0, byChain: {}, stale: [] };
+var DONUT_SLICES = [];
+var DONUT_GEOM = null;
+var HOVER_ROW = -1;
+var COLLAPSE_MEM = {};
 var STATE = null;
 var CANDLES = [];
 var CANDLE_META = { source: '', collected: 0, built: '', stale: false };
@@ -101,6 +122,15 @@ function amount(n) {
   var v = Number(n);
   if (!isFinite(v)) return 'n/a';
   return v.toLocaleString('en-US', { maximumFractionDigits: 4 });
+}
+
+/* A wallet prices a stable at 1.00 and a cheap token at six places. One column
+   has to hold both, so the precision follows the magnitude. */
+function price(n) {
+  var v = Number(n);
+  if (!isFinite(v)) return 'n/a';
+  var digits = v >= 1 ? 2 : v >= 0.01 ? 4 : 6;
+  return '$' + v.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits });
 }
 
 function clock(iso) {
@@ -171,12 +201,67 @@ function layoutFrames() {
     var frame = frames[i];
     var cols = Math.max(24, Math.floor(frame.parentElement.clientWidth / cw));
     var title = frame.getAttribute('data-title');
-    if (title) {
-      var head = '┌─ ' + title + ' ';
-      frame.textContent = head + repeat('─', Math.max(1, cols - head.length - 1)) + '┐';
-    } else {
+    if (!title) {
       frame.textContent = '└' + repeat('─', Math.max(1, cols - 2)) + '┘';
+      continue;
     }
+    // A collapsible panel draws its own control into the frame line: [-] open,
+    // [+] shut. Shut, the corners become tees, because there is no body left
+    // below to corner off.
+    var name = frame.getAttribute('data-collapse');
+    var shut = name ? isCollapsed(name) : false;
+    var head = (shut ? '├' : '┌') + '─ ' + title + ' ';
+    var tail = name ? ' [' + (shut ? '+' : '-') + '] ─' + (shut ? '┤' : '┐') : '┐';
+    frame.textContent = head + repeat('─', Math.max(1, cols - head.length - tail.length)) + tail;
+  }
+}
+
+/* ---------- collapsible panels ---------- */
+
+/* The layout Karim leaves is the layout he returns to, so the state lives in
+   localStorage. The in-memory copy is what keeps the control working when
+   storage throws, which it does in a locked-down browser profile. */
+function isCollapsed(name) {
+  if (COLLAPSE_MEM[name] !== undefined) return COLLAPSE_MEM[name];
+  try {
+    return window.localStorage.getItem(COLLAPSE_PREFIX + name) === '1';
+  } catch (err) {
+    return false;
+  }
+}
+
+function setCollapsed(name, shut) {
+  COLLAPSE_MEM[name] = shut;
+  try {
+    window.localStorage.setItem(COLLAPSE_PREFIX + name, shut ? '1' : '0');
+  } catch (err) {
+    // Nothing to do: the in-memory copy above still carries this session.
+  }
+}
+
+function applyCollapse() {
+  var controls = document.querySelectorAll('[data-collapse]');
+  for (var i = 0; i < controls.length; i++) {
+    var name = controls[i].getAttribute('data-collapse');
+    var shut = isCollapsed(name);
+    var panel = controls[i].parentElement;
+    panel.classList.toggle('collapsed', shut);
+    controls[i].setAttribute('aria-expanded', shut ? 'false' : 'true');
+    // The sibling that should take the released space is a CSS question, so the
+    // answer goes on the body where CSS can reach it.
+    document.body.classList.toggle(name + '-collapsed', shut);
+  }
+  layoutFrames();
+}
+
+function wireCollapse() {
+  var controls = document.querySelectorAll('[data-collapse]');
+  for (var i = 0; i < controls.length; i++) {
+    controls[i].addEventListener('click', function () {
+      var name = this.getAttribute('data-collapse');
+      setCollapsed(name, !isCollapsed(name));
+      applyCollapse();
+    });
   }
 }
 
@@ -189,21 +274,20 @@ function repeat(ch, n) {
 /* ---------- 1. status ---------- */
 
 function renderStatus(s) {
-  var stableUsd = s.composition ? s.composition.totalUsd : 0;
-  var gasUsd = 0;
-  var holdings = (s.ledger && s.ledger.holdings) || [];
-  for (var i = 0; i < holdings.length; i++) {
-    if (holdings[i].native) gasUsd += holdings[i].usd;
-  }
-  $('stat-total').textContent = usd(stableUsd);
-  $('stat-gas').textContent = '+' + usdWhole(gasUsd) + ' gas';
+  // Held is the whole wallet now: natives and LP positions included, not the
+  // stable subset the composition view used to report.
+  var count = WALLET.rows.length;
+  $('stat-total').textContent = usd(WALLET.totalUsd);
+  $('stat-positions').textContent = count + (count === 1 ? ' position' : ' positions');
 
   var connected = (s.agents && s.agents.connected) || 0;
   var agentNode = $('stat-agent');
   agentNode.textContent = connected === 0 ? 'none' : connected === 1 ? 'connected' : connected + ' connected';
   agentNode.className = connected === 0 ? 'v faint' : 'v';
 
-  $('stat-mode').textContent = s.mode || '--';
+  // Which world this is running against matters more than demo/live, and the
+  // gate banner below only makes sense next to it.
+  $('stat-mode').textContent = (s.mode || '--') + (s.network ? ' / ' + s.network : '');
 
   var kill = s.policy ? s.policy.killSwitch === true : false;
   var policyNode = $('stat-policy');
@@ -226,7 +310,7 @@ function renderStatus(s) {
   btn.disabled = false;
 }
 
-/* ---------- 2. composition ---------- */
+/* ---------- 2. wallet ---------- */
 
 function issuerCap(policy, issuer) {
   if (!policy) return 1;
@@ -236,37 +320,217 @@ function issuerCap(policy, issuer) {
   return 1;
 }
 
-function renderComposition(s) {
-  var comp = s.composition || { rows: [], byIssuer: {}, totalUsd: 0, freezableShare: 0, unclassified: [] };
+/* The wallet view is the server's to build: it owns the prices, the LP
+   positions and which chains went stale. The client renders it and does not
+   reconstruct it, so a chain that failed to read shows as stale rather than as
+   a wallet that quietly got smaller. */
+function walletOf(s) {
+  if (s.wallet && Array.isArray(s.wallet.rows)) return s.wallet;
+  return { rows: [], totalUsd: 0, byChain: {}, stale: [] };
+}
+
+/* Which wallet rows sit over a policy cap. Composition is still the authority:
+   it carries the issuer of every classified token and the freezable total. The
+   table stopped showing issuer and FRZ, but a breach still lands on the SHARE
+   cell of the row that caused it (spec 3.4). */
+function breachedRows(s) {
+  var comp = s.composition;
+  var out = {};
+  if (!comp) return out;
   var freezeCap = s.policy ? s.policy.composition.maxFreezableShare : 1;
   var freezeBreach = comp.freezableShare > freezeCap + EPS;
-
-  var tbody = $('comp-rows');
-  tbody.textContent = '';
-  for (var i = 0; i < comp.rows.length; i++) {
-    var row = comp.rows[i];
+  var rows = comp.rows || [];
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i];
     var issuerBreach = (comp.byIssuer[row.issuer] || 0) > issuerCap(s.policy, row.issuer) + EPS;
+    if (issuerBreach || (row.freezable && freezeBreach)) out[row.chain + '|' + row.symbol] = true;
+  }
+  return out;
+}
+
+function renderWallet(s) {
+  WALLET = walletOf(s);
+  var breach = breachedRows(s);
+  var stale = {};
+  for (var st = 0; st < WALLET.stale.length; st++) stale[WALLET.stale[st]] = true;
+
+  var tbody = $('wallet-rows');
+  tbody.textContent = '';
+  for (var i = 0; i < WALLET.rows.length; i++) {
+    var row = WALLET.rows[i];
     var tr = document.createElement('tr');
-    tr.appendChild(el('td', row.classified ? null : 'unclassified', row.issuer));
-    tr.appendChild(el('td', null, row.chain));
-    tr.appendChild(el('td', null, row.symbol));
-    tr.appendChild(el('td', 'num', amount(row.amount)));
-    tr.appendChild(el('td', 'num', usd(row.usd)));
-    // The share cell is where a policy violation becomes visible.
-    var breach = issuerBreach || (row.freezable && freezeBreach);
-    tr.appendChild(el('td', breach ? 'num share breach' : 'num share', pct(row.share)));
-    tr.appendChild(el('td', row.freezable ? 'frz' : 'frz off', row.freezable ? 'FRZ' : '-'));
+    tr.dataset.index = String(i);
+    // An LP row carries the pair as its symbol and reads as one ordinary line.
+    tr.appendChild(el('td', 'token', row.symbol));
+    var chain = el('td', 'chain');
+    chain.appendChild(document.createTextNode(row.chain));
+    if (stale[row.chain]) {
+      chain.appendChild(document.createTextNode(' '));
+      chain.appendChild(el('span', 'stale', 'STALE'));
+    }
+    tr.appendChild(chain);
+    tr.appendChild(el('td', 'num', amount(row.quantity)));
+    tr.appendChild(el('td', 'num', price(row.priceUsd)));
+    tr.appendChild(el('td', 'num', usd(row.valueUsd)));
+    var hit = breach[row.chain + '|' + row.symbol];
+    tr.appendChild(el('td', hit ? 'num share breach' : 'num share', pct(row.share)));
     tbody.appendChild(tr);
   }
-
-  var totals = $('comp-total');
-  totals.textContent = '';
-  totals.appendChild(el('span', null, 'TOTAL ' + usd(comp.totalUsd) + '   freezable '));
-  totals.appendChild(el('span', freezeBreach ? 'red' : null, pct(comp.freezableShare)));
-  if (freezeBreach) totals.appendChild(el('span', 'red', ' over cap ' + pct(freezeCap)));
-  if (comp.unclassified && comp.unclassified.length) {
-    totals.appendChild(el('span', 'faint', '   unclassified: ' + comp.unclassified.join(', ')));
+  if (!WALLET.rows.length) {
+    var empty = document.createElement('tr');
+    var cell = el('td', 'faint', 'wallet empty: nothing held on any chain');
+    cell.colSpan = 6;
+    empty.appendChild(cell);
+    tbody.appendChild(empty);
   }
+
+  renderWalletTotals(s);
+  if (HOVER_ROW >= WALLET.rows.length) HOVER_ROW = -1;
+  drawDonut();
+  renderReadout();
+}
+
+function renderWalletTotals(s) {
+  var node = $('wallet-total');
+  node.textContent = '';
+  node.appendChild(el('span', null, 'TOTAL '));
+  node.appendChild(el('span', 'hi', usd(WALLET.totalUsd)));
+
+  var chains = Object.keys(WALLET.byChain);
+  chains.sort(function (a, b) { return WALLET.byChain[b] - WALLET.byChain[a]; });
+  for (var i = 0; i < chains.length; i++) {
+    node.appendChild(el('span', 'faint', '   ' + chains[i] + ' ' + usdWhole(WALLET.byChain[chains[i]])));
+  }
+
+  // Freezable is what turns a SHARE cell red, so the number that decides it
+  // stays on the page next to the cells it marks.
+  var comp = s.composition;
+  if (comp) {
+    var freezeCap = s.policy ? s.policy.composition.maxFreezableShare : 1;
+    var freezeBreach = comp.freezableShare > freezeCap + EPS;
+    node.appendChild(el('span', 'dim', '   freezable '));
+    node.appendChild(el('span', freezeBreach ? 'red' : 'dim', pct(comp.freezableShare)));
+    if (freezeBreach) node.appendChild(el('span', 'red', ' over cap ' + pct(freezeCap)));
+  }
+  if (WALLET.stale.length) {
+    node.appendChild(el('span', 'hi', '   STALE: ' + WALLET.stale.join(', ')));
+  }
+}
+
+/* ---------- 2b. the donut ---------- */
+
+/* Rank, not category: the biggest slice is the brightest and the ramp falls to
+   the smallest. Same hue throughout, which is the whole page's rule. */
+function sliceColour(rank, count) {
+  var t = count < 2 ? 0 : Math.pow(rank / (count - 1), DONUT_L_EASE);
+  var lightness = DONUT_L_TOP - (DONUT_L_TOP - DONUT_L_BOTTOM) * t;
+  return 'hsl(' + DONUT_HUE + ', 100%, ' + lightness.toFixed(1) + '%)';
+}
+
+function drawDonut() {
+  var canvas = $('donut');
+  DONUT_SLICES = [];
+  DONUT_GEOM = null;
+  var width = canvas.clientWidth;
+  var height = canvas.clientHeight;
+  if (!width || !height) return;
+  var dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(width * dpr);
+  canvas.height = Math.round(height * dpr);
+  var ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+  ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, monospace';
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'center';
+
+  var cx = width / 2;
+  var cy = height / 2;
+  var outer = Math.min(width, height) / 2 - 5;
+  if (outer <= 6) return;
+  var inner = outer * DONUT_INNER;
+  DONUT_GEOM = { cx: cx, cy: cy, outer: outer, inner: inner };
+
+  var rows = WALLET.rows;
+  if (!rows.length || !(WALLET.totalUsd > 0)) {
+    ctx.strokeStyle = 'rgba(51, 255, 102, 0.22)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(cx, cy, outer, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(51, 255, 102, 0.38)';
+    ctx.fillText('empty', cx, cy);
+    ctx.textAlign = 'left';
+    return;
+  }
+
+  // A gap of about 1.5px at the outer edge, expressed as an angle, so two
+  // neighbouring ranks never merge into one unreadable ring.
+  var gap = 1.5 / outer;
+  var angle = -Math.PI / 2;
+  for (var i = 0; i < rows.length; i++) {
+    var sweep = (rows[i].valueUsd / WALLET.totalUsd) * Math.PI * 2;
+    DONUT_SLICES.push({ start: angle, end: angle + sweep });
+    var lit = i === HOVER_ROW;
+    var edge = lit ? outer + 3 : outer;
+    var trim = sweep > gap * 3 ? gap : 0;
+    ctx.beginPath();
+    ctx.arc(cx, cy, edge, angle + trim / 2, angle + sweep - trim / 2);
+    ctx.arc(cx, cy, inner, angle + sweep - trim / 2, angle + trim / 2, true);
+    ctx.closePath();
+    ctx.fillStyle = lit ? DONUT_HI : sliceColour(i, rows.length);
+    ctx.fill();
+    angle += sweep;
+  }
+
+  ctx.fillStyle = 'rgba(51, 255, 102, 0.62)';
+  ctx.fillText(usdWhole(WALLET.totalUsd), cx, cy);
+  ctx.textAlign = 'left';
+}
+
+function renderReadout() {
+  var node = $('donut-readout');
+  node.textContent = '';
+  var row = HOVER_ROW >= 0 && HOVER_ROW < WALLET.rows.length ? WALLET.rows[HOVER_ROW] : null;
+  if (!row) {
+    var count = WALLET.rows.length;
+    var chains = Object.keys(WALLET.byChain).length;
+    node.appendChild(el('span', 'line faint', count + (count === 1 ? ' position' : ' positions')));
+    node.appendChild(el('span', 'line faint', chains + (chains === 1 ? ' chain' : ' chains')));
+    return;
+  }
+  node.appendChild(el('span', 'line sym', row.symbol + '  ' + row.chain));
+  node.appendChild(el('span', 'line', usd(row.valueUsd) + '  ' + pct(row.share)));
+}
+
+/* Which slice a point on the canvas is inside. Slices are laid out from -PI/2
+   clockwise, so an atan2 angle below -PI/2 belongs to the far end of the ring. */
+function donutIndexAt(x, y) {
+  if (!DONUT_GEOM || !DONUT_SLICES.length) return -1;
+  var dx = x - DONUT_GEOM.cx;
+  var dy = y - DONUT_GEOM.cy;
+  var r = Math.sqrt(dx * dx + dy * dy);
+  if (r < DONUT_GEOM.inner || r > DONUT_GEOM.outer + 3) return -1;
+  var a = Math.atan2(dy, dx);
+  if (a < -Math.PI / 2) a += Math.PI * 2;
+  for (var i = 0; i < DONUT_SLICES.length; i++) {
+    if (a >= DONUT_SLICES[i].start && a < DONUT_SLICES[i].end) return i;
+  }
+  return -1;
+}
+
+/* One hover state, two surfaces: point at a slice and its row lights up, point
+   at a row and its slice does. Click does nothing, because on a one-page app
+   there is nowhere for a click to go. */
+function setHover(index) {
+  if (index === HOVER_ROW) return;
+  HOVER_ROW = index;
+  var rows = $('wallet-rows').children;
+  for (var i = 0; i < rows.length; i++) {
+    rows[i].classList.toggle('hi-row', i === index);
+  }
+  drawDonut();
+  renderReadout();
 }
 
 /* ---------- 3. chart ---------- */
@@ -695,6 +959,17 @@ async function decide(route, id, buttons, errorNode) {
   }
 }
 
+/* The gate can be switched off on testnet, and a machine that approves for you
+   has to say so where you cannot miss it. Rendered only from what the server
+   reports: the client never decides that the gate is off. */
+function renderGateBanner(s) {
+  var node = $('gate-banner');
+  var banner = s.gate && s.gate.banner ? String(s.gate.banner) : '';
+  node.textContent = banner;
+  node.hidden = !banner;
+  document.body.classList.toggle('gate-off', Boolean(banner));
+}
+
 function renderGate(s) {
   var box = $('gate');
   box.textContent = '';
@@ -704,7 +979,14 @@ function renderGate(s) {
     if (proposals[i].status === 'pending') pending.push(proposals[i]);
   }
   if (!pending.length) {
-    box.appendChild(el('div', 'gate-empty', 'no pending approvals'));
+    var empty = el('div', 'gate-empty', 'no pending approvals');
+    // An empty gate means two different things depending on whether the gate is
+    // on. Say which one this is.
+    if (s.gate && s.gate.required === false) {
+      empty.textContent = 'no pending approvals: ';
+      empty.appendChild(el('span', 'off', 'the gate is disabled, every proposal auto-approves'));
+    }
+    box.appendChild(empty);
     return;
   }
   pending.sort(function (a, b) {
@@ -745,10 +1027,12 @@ async function refreshState() {
   REFRESH_INFLIGHT = true;
   try {
     STATE = await getJson('/api/state');
+    // Wallet first: the status bar reports its total.
+    renderWallet(STATE);
     renderStatus(STATE);
-    renderComposition(STATE);
     renderProducts(STATE);
     renderPolicy(STATE);
+    renderGateBanner(STATE);
     renderGate(STATE);
     layoutFrames();
     alertLine(null);
@@ -923,6 +1207,29 @@ function wireChartControls() {
   });
 }
 
+/* The donut and the table are two views of one row set, so pointing at either
+   lights both. Hover only: there is nothing to click through to. */
+function wireWallet() {
+  var canvas = $('donut');
+  canvas.addEventListener('mousemove', function (ev) {
+    var rect = canvas.getBoundingClientRect();
+    setHover(donutIndexAt(ev.clientX - rect.left, ev.clientY - rect.top));
+  });
+  canvas.addEventListener('mouseleave', function () {
+    setHover(-1);
+  });
+
+  var tbody = $('wallet-rows');
+  tbody.addEventListener('mouseover', function (ev) {
+    var tr = ev.target && ev.target.closest ? ev.target.closest('tr') : null;
+    if (!tr || tr.dataset.index === undefined) return;
+    setHover(Number(tr.dataset.index));
+  });
+  tbody.addEventListener('mouseleave', function () {
+    setHover(-1);
+  });
+}
+
 function wireResize() {
   var timer = null;
   window.addEventListener('resize', function () {
@@ -931,17 +1238,20 @@ function wireResize() {
       timer = null;
       layoutFrames();
       drawChart();
+      drawDonut();
     }, 120);
   });
 }
 
 async function boot() {
-  layoutFrames();
+  applyCollapse();
   renderTimeframes();
   wireKill();
   wireProduct();
   wireTimeframes();
   wireChartControls();
+  wireCollapse();
+  wireWallet();
   wireResize();
   try {
     TOKEN = (await getJson('/api/session')).token;

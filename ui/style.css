@@ -1,6 +1,7 @@
 /* PHOSPHOR terminal surface.
    One hue: phosphor green on near-black. Hierarchy is brightness and opacity only.
-   Red is reserved for the safety gate: pending approvals, refusals, breached shares.
+   Red is reserved for the safety gate: pending approvals, refusals, breached
+   shares, and the gate-disabled banner.
    No radius, no shadow, no gradient, no transition. One animation: the cursor. */
 
 :root {
@@ -10,6 +11,7 @@
   --green-dim: rgba(51, 255, 102, 0.62);
   --green-faint: rgba(51, 255, 102, 0.38);
   --green-ghost: rgba(51, 255, 102, 0.22);
+  --green-wash: rgba(51, 255, 102, 0.10);
   --red: #ff3b30;
   --red-dim: rgba(255, 59, 48, 0.62);
   --red-ghost: rgba(255, 59, 48, 0.30);
@@ -70,9 +72,12 @@ body {
 }
 
 /* Thin ghost scrollbars so a scrolling panel still reads as terminal. */
-.pbody::-webkit-scrollbar { width: 6px; height: 6px; }
-.pbody::-webkit-scrollbar-track { background: transparent; }
-.pbody::-webkit-scrollbar-thumb { background: var(--green-ghost); }
+.pbody::-webkit-scrollbar,
+.walletgrid::-webkit-scrollbar { width: 6px; height: 6px; }
+.pbody::-webkit-scrollbar-track,
+.walletgrid::-webkit-scrollbar-track { background: transparent; }
+.pbody::-webkit-scrollbar-thumb,
+.walletgrid::-webkit-scrollbar-thumb { background: var(--green-ghost); }
 
 /* ---------- shared tiers ---------- */
 
@@ -130,6 +135,17 @@ body {
   letter-spacing: 0.06em;
 }
 
+/* The gate-disabled line is the one banner that reports a machine failing OPEN,
+   so it inverts. Every other red on the page is a line of red on the ground;
+   this is the only block of it, which is what makes it unmissable. */
+.banner.gate-off {
+  background: var(--red);
+  color: var(--bg);
+}
+
+/* The disabled gate names itself on the panel it disables, not just at the top. */
+body.gate-off .panel-gate > .frame-top { color: var(--red); }
+
 .alert {
   margin: 6px 0 0;
   color: var(--green-faint);
@@ -151,7 +167,6 @@ body {
 .panel.grow { flex: 1; min-height: 0; }
 
 /* Caps on the variable-length panels: content grows into a scroll, not into the page. */
-.panel-comp > .pbody { max-height: 46vh; }
 .panel-gate > .pbody { max-height: 46vh; }
 .panel-policy > .pbody { max-height: 26vh; }
 
@@ -165,6 +180,25 @@ body {
 
 .frame-top { color: var(--green-faint); }
 
+/* A collapsible frame title IS the control. No widget, no chevron: the [-] and
+   [+] are drawn into the box-drawing line itself by layoutFrames(). */
+button.frame {
+  display: block;
+  width: 100%;
+  text-align: left;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+
+button.frame:hover { color: var(--green); }
+button.frame:focus-visible { outline: 1px dotted var(--green); outline-offset: 1px; }
+
 .pbody {
   padding: 3px 1ch 4px;
   min-height: 0;
@@ -177,7 +211,84 @@ body {
   flex-direction: column;
 }
 
-/* ---------- 2. composition ---------- */
+/* Collapsed: the title line is all that is left, and the height it was holding
+   goes back to its siblings. Placed after .panel.grow so it wins on the log. */
+.panel.collapsed { flex: none; }
+.panel.collapsed > .pbody,
+.panel.collapsed > .frame-bottom { display: none; }
+
+/* Collapsing the log is how the gate gets room, so the gate has to be able to
+   take it: the 46vh cap lifts and it grows to whatever it holds. The cap lifts
+   rather than the panel stretching, because a gate with nothing pending would
+   otherwise become a full-height empty box. Room is what it can use, not chrome
+   painted around nothing. */
+body.log-collapsed .panel-gate { min-height: 0; }
+body.log-collapsed .panel-gate > .pbody { max-height: none; }
+
+/* ---------- 2. wallet ---------- */
+
+/* The panel body does not scroll: the table inside it does, so the donut and the
+   totals line stay put while the rows move. */
+.panel-wallet > .pbody {
+  max-height: 46vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.wallet {
+  display: flex;
+  gap: 2ch;
+  flex: 1;
+  min-height: 0;
+}
+
+.donutwrap {
+  flex: 0 0 auto;
+  width: 196px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* Takes the height the panel has going spare, capped so it stays a chart beside
+   a table rather than a hero. app.js reads clientWidth/clientHeight and redraws. */
+#donut {
+  display: block;
+  width: 100%;
+  /* basis 0, not auto: the canvas bitmap is resized to fit at draw time, and an
+     auto basis would feed that size back into the layout that produced it. */
+  flex: 1 1 0;
+  min-height: 132px;
+  max-height: 196px;
+  /* Inspectable, not navigable: there is nowhere for a click to go. */
+  cursor: crosshair;
+}
+
+/* Two short lines rather than one long one: the column is 178px and a symbol,
+   a chain, a value and a share do not fit across it. */
+.readout {
+  margin: 2px 0 0;
+  color: var(--green-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.readout .line {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.readout .sym { color: var(--green-hi); }
+
+.walletgrid {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
 
 .grid {
   width: 100%;
@@ -192,6 +303,10 @@ body {
   letter-spacing: 0.08em;
   padding: 0 1ch 2px 0;
   border-bottom: 1px solid var(--green-ghost);
+  /* The column names stay readable while the rows scroll under them. */
+  position: sticky;
+  top: 0;
+  background: var(--bg);
 }
 
 .grid td {
@@ -202,12 +317,17 @@ body {
 }
 
 .grid .c-num, .grid td.num { text-align: right; }
-.grid .c-chain, .grid .c-symbol { width: 8ch; }
-.grid .c-frz { width: 5ch; text-align: right; }
-.grid td.frz { text-align: right; color: var(--green-dim); }
-.grid td.frz.off { color: var(--green-ghost); }
-.grid tr td.unclassified { color: var(--green-faint); }
+.grid .c-chain { width: 11ch; }
+/* A native gas asset is an ordinary holding in a wallet, so it gets no tier of
+   its own. The chain column is where a failed read is reported instead. */
+.grid td .stale { color: var(--green-hi); letter-spacing: 0.06em; }
+
+/* The share cell is where a policy violation becomes visible. */
 .grid td.share.breach { color: var(--red); }
+
+/* Pointing at a slice lights its row, and pointing at a row lights its slice. */
+.grid tbody tr.hi-row td { background: var(--green-wash); color: var(--green-hi); }
+.grid tbody tr.hi-row td.share.breach { color: var(--red); }
 
 .totals {
   margin: 4px 0 0;
@@ -215,13 +335,10 @@ body {
   border-top: 1px solid var(--green-ghost);
   color: var(--green-dim);
   font-variant-numeric: tabular-nums;
-}
-
-.headline {
-  margin: 0 0 4px;
-  font-size: 19px;
-  line-height: 1.2;
-  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: none;
 }
 
 /* ---------- 3. chart ---------- */
@@ -231,6 +348,7 @@ body {
   align-items: baseline;
   gap: 1ch;
   margin: 0 0 4px;
+  flex: none;
 }
 
 #product {
@@ -265,17 +383,13 @@ body {
 .tf.on::after { content: ']'; color: var(--green-ghost); }
 
 /* Cursor is set per region in app.js: grab on the plot, ns-resize on the price
-   axis, ew-resize on the time axis. */
-#chart { cursor: grab; }
-
-.chartbar { flex: none; }
-
-/* Fluid: app.js reads clientWidth/clientHeight and redraws on resize. */
+   axis, ew-resize on the time axis. Fluid: app.js reads clientWidth and redraws. */
 #chart {
   display: block;
   width: 100%;
   flex: 1;
   min-height: 120px;
+  cursor: grab;
 }
 
 /* ---------- 5. policy ---------- */
@@ -286,6 +400,7 @@ body {
 /* ---------- 6. approval gate ---------- */
 
 .gate-empty { color: var(--green-faint); }
+.gate-empty .off { color: var(--red); }
 
 .pending {
   border: 1px solid var(--red);
@@ -340,26 +455,6 @@ body {
 .log::-webkit-scrollbar-track { background: transparent; }
 .log::-webkit-scrollbar-thumb { background: var(--green-ghost); }
 
-/* Too narrow or too short for two columns: fall back to the stacked page that scrolls. */
-@media (max-width: 1100px), (max-height: 620px) {
-  html, body { height: auto; overflow: auto; }
-  #page { height: auto; overflow: visible; padding-bottom: 40px; }
-  .deck { grid-template-columns: 1fr; }
-  .panel.grow { flex: none; }
-  .panel-comp > .pbody,
-  .panel-gate > .pbody,
-  .panel-policy > .pbody { max-height: none; }
-  .pbody { overflow: visible; }
-  #chart { height: 180px; flex: none; }
-  .log { max-height: 46vh; flex: none; }
-}
-
-/* Narrow enough that a 36ch hanging indent leaves the message one word wide. */
-@media (max-width: 760px) {
-  .logline { padding-left: 0; text-indent: 0; }
-  .logline .msg { display: block; padding-left: 2ch; }
-}
-
 .logline {
   white-space: pre-wrap;
   color: var(--green-dim);
@@ -373,3 +468,37 @@ body {
 .logline .msg { color: var(--green); }
 .logline.refusal .type,
 .logline.refusal .msg { color: var(--red); }
+
+/* Two columns, but not enough width for a 178px donut beside six nowrap columns.
+   The table is what was asked for, so the donut is what goes. */
+@media (min-width: 1101px) and (max-width: 1319px) {
+  .donutwrap { display: none; }
+}
+
+/* Too narrow or too short for two columns: fall back to the stacked page that scrolls. */
+@media (max-width: 1100px), (max-height: 620px) {
+  html, body { height: auto; overflow: auto; }
+  #page { height: auto; overflow: visible; padding-bottom: 40px; }
+  .deck { grid-template-columns: 1fr; }
+  .panel.grow { flex: none; }
+  .panel-gate > .pbody,
+  .panel-policy > .pbody { max-height: none; }
+  .pbody { overflow: visible; }
+  .panel-wallet > .pbody { max-height: none; overflow: visible; }
+  .wallet { display: block; }
+  /* Stacked, the page scrolls down but must still not scroll sideways: six
+     nowrap columns wider than a phone scroll inside their own box. */
+  .walletgrid { overflow-x: auto; overflow-y: visible; }
+  .donutwrap { margin-bottom: 6px; }
+  #donut { height: 180px; flex: none; }
+  /* Same reason: the timeframe strip wraps rather than push the body out. */
+  .chartbar { flex-wrap: wrap; }
+  #chart { height: 180px; flex: none; }
+  .log { max-height: 46vh; flex: none; }
+}
+
+/* Narrow enough that a 36ch hanging indent leaves the message one word wide. */
+@media (max-width: 760px) {
+  .logline { padding-left: 0; text-indent: 0; }
+  .logline .msg { display: block; padding-left: 2ch; }
+}

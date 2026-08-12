@@ -1,106 +1,124 @@
 {
-  "stamp": "4664fa316e584be7",
-  "iteration": 5,
+  "stamp": "6e045de452136af8",
+  "iteration": 4,
   "firstFive": {
-    "what": "A terminal-style control panel for stablecoins held across five chains, now on one screen: what is held and what it costs on the left, what governs it and what is waiting for a click on the right",
+    "what": "A terminal control panel for a crypto wallet held across five chains, with a red bar across the top saying every proposal is auto-approving because the approval gate is off on testnet",
     "who": "The owner of the funds, supervising what a connected AI agent is allowed to do with them",
-    "action": "Pick a timeframe or drag the chart; click APPROVE or REFUSE when the gate has a pending proposal"
+    "action": "Read the wallet, or click APPROVE/REFUSE when the gate has something pending. With the gate disabled the honest answer is that there is no action, and the red bar is there to say so"
   },
   "asked": [
     {
       "requirement": "One page, no routes, no navigation, no menus, no modals except the approval gate",
       "met": true,
-      "ref": "single #page, zero nav elements, gate is an inline region not a modal"
+      "ref": "single #page, zero nav elements, the gate is an inline region not a modal"
     },
     {
-      "requirement": "All seven regions on screen together: status bar full width, then two columns, left is what is held and right is what governs it",
+      "requirement": "Six regions on screen together: status bar full width, then two columns. Left is what is held (chart, then the wallet), right is what governs it (approval gate, policy, log). Revised 2026-08-11: the seventh region, cost, is deleted",
       "met": true,
-      "ref": "status bar spans the page, then a two-column deck. Left: CHART (top left), COMPOSITION, COST. Right: APPROVAL GATE, POLICY, LOG. All seven visible at once at 1920x1200, 1512x982 and 1440x900"
+      "ref": "statusbar spans the page, then .deck with .panel-chart + .panel-wallet left and .panel-gate + .panel-policy + .panel-log right. No .panel-cost in index.html, no renderCost in app.js, no .panel-cost rules in style.css. All six visible at once at 1440x900, 1512x982 and 1920x1200"
     },
     {
-      "requirement": "The page never scrolls; a region that outgrows its box scrolls inside itself",
+      "requirement": "The page never scrolls. A region whose content outgrows its box scrolls inside itself. Falls back to a stacked scrolling column under 1100px wide or 620px tall",
       "met": true,
-      "ref": "measured at all three viewports: document.scrollHeight equals window.innerHeight, PAGE_SCROLL=no. Every .pbody is overflow:auto with min-height:0; comp and gate capped at 46vh, policy 26vh, cost 30vh; chart and log flex to fill. At 1440x900 the log scrolls internally while the page does not"
+      "ref": "measured document.scrollHeight vs window.innerHeight: no page scroll at 1200x900, 1440x900, 1512x982, 1920x1200. body.scrollWidth equals innerWidth at every width tested including 390. Stacked fallback confirmed on at 390, 768, 1100 and at 1440x600. #walletgrid scrolls the rows inside the panel while the donut and totals line stay put"
+    },
+    {
+      "requirement": "\"the composition thing should just show what a normal crypto wallet would show\": the wallet owns the whole bottom left, columns exactly TOKEN CHAIN QTY PRICE VALUE SHARE, sorted by value descending, natives included, and a stale marker on any chain whose read failed",
+      "met": true,
+      "ref": "#wallet-table thead reads TOKEN CHAIN QTY PRICE VALUE SHARE exactly. 18 rows from the server's wallet.rows, first row USDC eth 18,400 $1.00 $18,400.00 35.38%, verified descending by value across every row. ETH and SOL and NEAR natives are in the table, so held now reads $52,013.21 against the old stable-only $49,878.15. Stale marker verified against a stubbed wallet.stale=['sol']: STALE renders in --green-hi next to the chain on all four sol rows and in the totals line"
+    },
+    {
+      "requirement": "The wallet must show liquidity pool positions on any chain: an LP row reads as one ordinary row with the pair as its token, for example \"USDC/WETH 0.05%\"",
+      "met": true,
+      "ref": "verified against a stubbed kind:'lp' row: renders as USDC/WETH 0.05% | arb | 0.0421 | $261,234.50 | $11,005.20 | 21.16% with the same cell classes as a token row and no extra marker, which is what reading as one ordinary row means"
+    },
+    {
+      "requirement": "A breach still marks the offending row's SHARE cell red, driven by the policy caps on issuer share and freezable share exactly as before",
+      "met": true,
+      "ref": "breachedRows() consumes composition.byIssuer and composition.freezableShare against policy.composition, the same inputs renderComposition used. Verified with maxIssuerShare {default 0.30, Circle 0.20} and maxFreezableShare 0.60: ten SHARE cells go rgb(255,59,48) and the totals line adds 'over cap 60.00%'. A breached cell stays red while its row is hover-highlighted"
+    },
+    {
+      "requirement": "An interactive donut left of the table, inside the same panel: canvas, no library, no SVG, one hue with brightness tiers per slice. Hovering a slice highlights it and writes that row into a readout line under the donut; hovering a table row highlights its slice. No click behaviour. If it cannot fit at 1440x900 without pushing the table under the fold, the donut is cut, not the table",
+      "met": true,
+      "ref": "KEPT, not cut. #donut is a 196x196 canvas at x=20 inside .panel-wallet, left of #walletgrid which starts at x=231; at 1440x900 all 18 rows are inside the grid box with zero clipped and no page scroll, so nothing went under the fold. Drawn with ctx.arc only, no library and no SVG anywhere in ui/. Sampled the painted pixels at each slice midpoint: 113,254,148 then 60,254,109 then 37,255,91 then 19,255,76 then 3,255,64, one hue at hue 135 descending in lightness by rank. Hovering the table's third row lights that slice and writes 'USDT arb / $6,100.00 11.73%' into #donut-readout; hovering the ring at 45 degrees lights the USDC eth row and writes its line. No click handler is bound to the canvas. The donut is dropped only between 1101px and 1319px, where 196px beside six nowrap columns would squeeze the table"
+    },
+    {
+      "requirement": "Policy and log are clearly collapsible. The control lives in the frame title in the box-drawing register, `[-]` expanded and `[+]` collapsed, and clicking the frame title toggles. Collapsed state persists per panel in localStorage. A collapsed panel releases its flex space to its siblings. The approval gate never collapses",
+      "met": true,
+      "ref": "the frame titles are buttons whose text layoutFrames() draws: expanded ends '─────── [-] ─┐', collapsed becomes '├─ POLICY' ... '─────── [+] ─┤', tees instead of corners because there is no body below. Clicking toggles, aria-expanded follows, localStorage carries phosphor.collapse.policy and .log, and after a reload both panels came back collapsed. Space is genuinely released: with four pending proposals the gate body grew 414px to 560px when the log collapsed and all four became visible at once. .panel-gate carries no data-collapse and its frame title is a DIV, so the gate has no control to click"
+    },
+    {
+      "requirement": "While the approval gate is disabled, a permanent unmissable line in the gate's own red (#ff3b30): GATE DISABLED - TESTNET - EVERY PROPOSAL AUTO-APPROVES",
+      "met": true,
+      "ref": "#gate-banner renders the server's gate.banner verbatim as a 1416px bar at y=43 directly under the status bar, background rgb(255,59,48) with rgb(11,13,11) text: the only inverted block on the page and the only solid field of red. It is not dismissable and has no close control. The APPROVAL GATE frame title also turns red, and the empty gate reads 'no pending approvals: the gate is disabled, every proposal auto-approves'. The client never decides this: with gate.banner null the bar does not render"
     },
     {
       "requirement": "System monospace stack only, no webfont",
       "met": true,
-      "ref": "style.css font-family ui-monospace stack, no @font-face, no font link"
+      "ref": "--mono is ui-monospace, SFMono-Regular, Menlo, monospace. No @font-face, no font link, no webfont request"
     },
     {
-      "requirement": "Homebrew terminal palette, one hue by brightness/opacity",
+      "requirement": "Homebrew terminal: near-black ground, phosphor green, one hue, hierarchy by brightness/opacity only",
       "met": true,
-      "ref": "#0b0d0b ground, #33ff66 base with bright #8cffab and three opacity tiers; scrollbar thumbs use the existing --green-ghost"
+      "ref": "#0b0d0b ground, #33ff66 base, #8cffab bright, four opacity tiers plus the new --green-wash for the hover row. The donut adds no second hue: its slices are hsl(135,100%,L) which is #33ff66's own hue at varying lightness"
     },
     {
-      "requirement": "Red in the chrome exclusively for pending, refusals, breached shares; the chart is the one exception",
+      "requirement": "Red in the UI chrome is exclusively for pending approvals, breached share cells and the gate-disabled banner. The chart is the one exception (candle red, a darker #cc3a30), so the gate stays the only alarm",
       "met": true,
-      "ref": "PENDING block + REFUSE button + approve_attempt_rejected log line are the only red chrome. The chart now draws red candles at #cc3a30, which is the declared exception and is darker and less saturated than the gate's #ff3b30. Weaker than the original rule: red is no longer unique to the gate, only the brightest red and the only bordered block"
+      "ref": "red chrome on the page is: the PENDING blocks and REFUSE buttons, refusal log lines, breached SHARE cells, the gate-disabled banner and the gate's own frame title while disabled. Every one is a gate or safety surface. Candle red stays #cc3a30, darker than the gate's #ff3b30"
     },
     {
-      "requirement": "No rounded corners, shadows, gradients, icons, illustration; box-drawing separation",
+      "requirement": "No rounded corners, shadows, gradients, icons, illustration; box-drawing characters for separation",
       "met": true,
-      "ref": "frames still measured per column via layoutFrames reading parentElement.clientWidth, so both columns draw their own correct widths; slop-lint pass"
+      "ref": "border-radius 0 on *, no box-shadow, no gradient, no icon or image element. Frames are box-drawing text measured per column by layoutFrames from parentElement.clientWidth, and the collapse control is drawn into that same line rather than added as a widget. slop-lint passes"
     },
     {
       "requirement": "No animation except cursor blink and appending log lines",
       "met": true,
-      "ref": "no transitions added; the only animation is still the status bar cursor"
+      "ref": "no transition property anywhere in style.css and one @keyframes, blink, on the status bar cursor. Donut hover and row highlight are instant redraws with no tween"
     },
     {
       "requirement": "Canvas candlesticks, green up and red down, tick-only axes, asset selectable, stale marker",
       "met": true,
-      "ref": "measured on the live canvas at 1920x1200: 9032 green pixels and 6688 red at 1m, 5017/3354 at 1s, so both directions actually render. Bodies are solid in both directions now; the old up-solid/down-hollow convention is gone. Candle red is #cc3a30, darker than the gate's #ff3b30"
+      "ref": "unchanged from the passing v1 build: both directions render on the live canvas, bodies solid, ticks only, #product selects the asset, stale marker on the chart meta line"
     },
     {
-      "requirement": "Charts come from Hyperliquid, timeframes down to 1s, chart sits top left with composition and cost under it",
+      "requirement": "Charts come from Hyperliquid, because that is the venue the execution targets. Timeframes down to 1s. Chart sits top left; the wallet sits under it",
       "met": true,
-      "ref": "x-candle-source reads 'hyperliquid' at 1m and 'hyperliquid live trades' at 1s. Nine timeframes render (1s 5s 15s 1m 5m 15m 1h 4h 1d). Left column order measured as panel-chart -> panel-comp -> panel-cost, chart box at x=20 y=91 sized 949x528"
+      "ref": "chart meta reads 'hyperliquid 120 candles', nine timeframes from 1s to 1d. Left column order measured as .panel-chart then .panel-wallet, the wallet running to the bottom of the column at y=890 of 900"
     },
     {
-      "requirement": "Chart handles like TradingView: plot drag pans, right axis drags price scale, bottom axis drags time scale, wheel zooms, double click resets",
+      "requirement": "Chart handles like TradingView: drag the plot to pan through history, drag the right axis to compress or expand the price scale, drag the bottom axis to compress or expand the time scale, wheel to zoom time, double click either axis to reset it. No indicators, no drawing tools, no crosshair",
       "met": true,
-      "ref": "driven in a real browser at 1920x1200: plot drag right moved PAN_OFFSET 0->45; right-axis drag down moved PRICE_ZOOM 1->1.545; bottom-axis drag left moved VIEW_COUNT 120->245; cursors read grab / ns-resize / ew-resize over the three regions; double click reset zoom to 1 and pan to 0. A panned window is re-anchored on each push so a live chart does not slide out from under the drag, and pushes are suppressed entirely mid-drag"
+      "ref": "unchanged from the passing v1 build: wireChartControls still binds plot pan, price-axis and time-axis drags, wheel zoom and double-click reset, with per-region cursors. Not re-driven this iteration because nothing in the chart path was touched"
     },
     {
       "requirement": "Policy as plain sentences, never JSON",
       "met": true,
-      "ref": "POLICY region renders $ prefixed sentences, unchanged"
+      "ref": "POLICY renders eight $ prefixed sentences, unchanged. Under a stubbed policy: null it renders the red POLICY FILE UNREADABLE line instead, and the wallet still renders its 18 rows rather than throwing"
     },
     {
       "requirement": "Terminal-dense character grid, not app-airy",
       "met": true,
-      "ref": "13px mono and 1.35 line height unchanged. The 104ch centred column is gone, replaced by two columns of about 115ch each on a 1920 screen: denser in aggregate, not airier"
+      "ref": "13px mono at 1.35 line height unchanged. The wallet's 18 rows, the donut and the totals line all sit in one 46vh panel, and the deleted cost region went to the wallet rather than to whitespace"
     }
   ],
   "goal": {
-    "outcome": "The owner sees the whole machine at once, with no scrolling, and can judge what is there",
-    "path": "Open the page. Everything is already on screen. The one red block is the only thing asking for a decision",
+    "outcome": "The owner sees the whole machine at once with no scrolling, and on testnet with the gate off he cannot miss that nothing is waiting for his click because everything is auto-approving",
+    "path": "Open the page. The red bar is the first thing above the fold and it states the gate is disabled. Under it, the left column is what he holds and the right column is what governs it, all without a scroll",
     "holds": true,
-    "why": "The gate block sits at the top of the right column, the strongest position on the page after the status bar. The chart now owns the top left, which is where the eye lands first, and the gate holds the top right. The previous stacked layout buried the gate about 1200px down an 1838px page where it could only be reached by scrolling"
+    "why": "On the 1440x900 screenshot the banner is the only inverted block on an otherwise green-on-black page, 1416px wide at y=43, so the eye cannot route around it. The gate panel it refers to sits directly below it in the right column and carries the same red in its frame title, so the banner and the surface it disables read as one statement rather than as a stray warning"
   },
   "states": {
-    "resting": "captured states/resting/shot-768.png: gate says 'no pending approvals' dim, no red anywhere",
-    "pending": "current .design/shot-1440.png and .design/fit-karim-1920x1200.png: red bordered block top of right column with simulation and why lines, APPROVE/REFUSE",
-    "refusal": "captured states/refusal/shot-768.png: 'human refused consolidate proposal ...' log line in red",
-    "kill switch on": "captured states/kill/shot-768.png: status bar 'policy KILL SWITCH ON' red, red control, red policy sentence",
-    "policy unreadable": "captured states/policy-unreadable/shot-768.png: red banner under status bar; banner sits above the deck so it still spans full width in the two-column layout",
-    "agent connected": "captured states/agent/shot-768.png: status bar flips 'agent none' to 'agent connected'"
+    "resting": "1440x900, no pending proposals: the gate reads 'no pending approvals: the gate is disabled, every proposal auto-approves', wallet 18 rows, no page scroll",
+    "pending": "stubbed pending consolidate proposal: red-bordered PENDING block with APPROVE and REFUSE, simulation lines and the why line. With four of them and the log collapsed, all four fit",
+    "refusal": "six approve_attempt_rejected lines render red in the log on the live page",
+    "kill switch on": "stubbed policy.killSwitch true: status bar policy field reads KILL SWITCH ON in red, the button reads [ KILL SWITCH: ON ] in red, and the policy panel leads with the red KILL SWITCH ON sentence",
+    "policy unreadable": "stubbed policy null: the red POLICY FILE UNREADABLE banner shows, status reads UNREADABLE, the policy panel shows the refusal line, and the wallet still renders all 18 rows",
+    "agent connected": "stubbed agents.connected 2: status bar agent field reads '2 connected' at full brightness rather than the faint 'none'",
+    "gate disabled": "live on this build: gate.required false and the banner bar renders inverted red at the top, gate frame title red, gate body explains the auto-approve",
+    "collapsed": "both panels collapsed to '├─ POLICY ─ [+] ─┤' lines, bodies and bottom frames hidden, state survived a reload, and the gate took the released room"
   },
   "findings": [],
-  "notes": [
-    {
-      "note": "Below 1100px wide or 620px tall the layout falls back to the original single stacked column and the page scrolls again. One screen is not achievable on a phone at 13px, and shrinking the type to force it would break the terminal density requirement. Deliberate.",
-      "severity": "accepted"
-    },
-    {
-      "note": "The log's 36ch hanging indent left messages one word wide under 760px. Pre-existing, not caused by this change, fixed in the same pass by dropping the indent at that width.",
-      "severity": "fixed"
-    },
-    {
-      "note": "At 1440x900 the log's last visible line is cut mid-glyph by its own overflow container. Honest signal that the region scrolls, but a fade or a hard row cut would read cleaner. Left alone pending Karim's call.",
-      "severity": "minor"
-    }
-  ],
   "verdict": "pass"
 }

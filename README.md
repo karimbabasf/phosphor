@@ -41,10 +41,11 @@ the agent is not in it.
 Requires Node 24+. No build step, no bundler, no packaging.
 
     npm install
+    npm run keygen
     npm run app
 
-Open http://127.0.0.1:4177. Demo mode is the default: a fixture portfolio across eth, base, arb,
-sol and near, a synthetic quoter, and the full propose/approve/execute loop working offline.
+Open http://127.0.0.1:4177. The shipped config runs live against testnet, so the wallet reads zero
+until the addresses `keygen` printed have been funded. Full walkthrough in [Testnet setup](#testnet-setup).
 
 Connect an agent (Claude Code):
 
@@ -122,34 +123,136 @@ Limits that are meaningful at their default (transaction cap, session cap, click
 floors) always render. Opt-in restrictions render only once set, because "no issuer may exceed 100%"
 says nothing. The kill switch, when on, always renders last.
 
-## Demo mode and live mode
+## Testnet setup
 
-Demo mode (the default) uses a fixture portfolio and a synthetic quoter, so the whole loop runs
-offline with nothing at stake. It is the mode the screenshots and the e2e proof run in.
+A fresh clone carries no keys and no addresses. Creating those two things is the whole setup.
 
-For live mode, set `"mode": "live"` in `config.json` and add your addresses under `addresses` (evm,
-solana, near). Balance reads use public RPCs and need no keys. Quotes come from NEAR Intents 1Click,
-which needs no key for dry quotes. Reads going live does not make writes go live: execution stays
-stubbed until a Signer exists.
+    git clone <repo> phosphor && cd phosphor
+    npm install
+    npm run keygen
 
-Execution is NEAR Intents only. One rail, no bridges, 1 basis point, 25+ chains, 125+ assets. The
-alternative was per-chain bridges, which multiplies the number of things that can steal from you by
-the number of chains supported.
+`npm run keygen` mints one testnet keypair per rail (EVM secp256k1, NEAR ed25519, Solana ed25519)
+and writes them to `~/.phosphor/keys.json`, file mode 0600, in a directory mode 0700. That path is
+outside the working copy on purpose: a key file inside a git working copy is one `git add -f` from
+being published, and one outside it cannot be reached by git at all. The `.gitignore` entry is the
+second line of defence, not the first. Move the file with `PHOSPHOR_KEYS` or a `keysPath` config
+key; the app refuses to start if that path lands inside the repo.
 
-## Auth steps (deliberately last)
+The command prints public addresses only. No branch of it prints a private key. It refuses to
+overwrite an existing key file, because silently replacing a funded testnet key loses the funds and
+the faucet cooldown together:
 
-Live execution is stubbed behind a Signer interface and fails with a clear message until keys are
-configured. To go live, in this order:
+    npm run keygen -- --force     # deliberate replacement
+
+Copy the block it prints into `config.local.json` at the repo root. That file is gitignored and
+merges over `config.json` key by key, so the addresses stay on your machine:
+
+    {
+      "addresses": {
+        "evm": ["0x..."],
+        "solana": ["..."],
+        "near": ["..."]
+      }
+    }
+
+Fund the addresses. Every rail needs native gas on the chain it runs on, and balances read zero
+until the faucets land:
+
+| Chain | Faucet |
+|---|---|
+| Ethereum Sepolia | https://cloud.google.com/application/web3/faucet/ethereum/sepolia |
+| Base Sepolia | https://www.alchemy.com/faucets/base-sepolia |
+| Arbitrum Sepolia | https://www.alchemy.com/faucets/arbitrum-sepolia |
+| Solana devnet | https://faucet.solana.com |
+| NEAR testnet | https://near-faucet.io |
+| Hyperliquid testnet | https://app.hyperliquid-testnet.xyz/drip |
+
+A NEAR implicit account exists the moment it is funded, so the faucet transfer is what creates it.
+Then:
+
+    npm run app
+
+### Before any push
+
+    npm run sweep
+
+Six checks over both the tracked tree and the entire git history: key-shaped material (64 character
+hex runs, 87 to 88 character base58 runs, `ed25519:` values, PEM blocks, seed-phrase-shaped lines),
+every address found in your local config and key file, that `config.local.json`, `keys.json`,
+`.env*` and `state/` are neither tracked nor un-ignored, and that `keysPath` resolves outside the
+working copy. History matters as much as the working tree: a file deleted today is still published
+if any commit holds it.
+
+Exit 0 means nothing secret is reachable from the remote. A finding names the file, the line and
+the pattern, and never the matched text, because printing it would put the secret in a terminal, a
+scrollback buffer and probably a CI log.
+
+## Network, mode and config
+
+Two axes, independent of each other:
+
+- `network` is `testnet` or `mainnet`. It selects the RPC endpoints, the token registry and every
+  contract address. It has no default. A missing or unrecognised value stops the app at boot rather
+  than guessing, because guessing `mainnet` points real rails at real money and guessing `testnet`
+  makes a mainnet deployment quietly fake.
+- `mode` is `live` or `demo`. Live reads real balances over public RPCs and needs no keys to read.
+  Demo uses a fixture portfolio and a synthetic quoter, so the whole propose/approve/execute loop
+  runs offline with nothing at stake.
+
+Shipped `config.json` is `network: "testnet"`, `mode: "live"`. Demo is no longer the default
+anywhere. It stays in the codebase because the test suite and the e2e proof run against it offline.
+The shipped config also sets `approvalGate: false`, which is honoured on testnet only: on mainnet
+the gate is forced on and the flag is ignored entirely.
+
+`config.json` is a committed template. It carries structure and safe defaults only: network, port,
+mode, empty address arrays, candle products. No addresses, ever. `config.local.json` carries yours,
+is gitignored, and merges over the template key by key. The environment variables
+`PHOSPHOR_NETWORK`, `PHOSPHOR_MODE`, `PHOSPHOR_PORT`, `PHOSPHOR_DATA_DIR` and `PHOSPHOR_KEYS`
+override both.
+
+## Keys and signing
+
+Key material never enters the repo tree. It lives at `keysPath`, default `~/.phosphor/keys.json`,
+and `npm run sweep` is the standing check that this stayed true. The file shape, with the private
+values named rather than shown:
+
+    {
+      "version": 1,
+      "network": "testnet",
+      "evm":    { "address": "0x...",       "privateKey": "0x<32 bytes hex>" },
+      "near":   { "accountId": "<64 hex>",  "publicKey": "ed25519:<base58>",
+                  "secretKey": "ed25519:<base58 of seed || public>" },
+      "solana": { "address": "<base58>",    "secretKey": "<base58 of seed || public>" }
+    }
+
+EVM address derivation goes through viem, the same library the rails sign with, so the codebase has
+one derivation path rather than two that have to agree. The trap this avoids is silent and
+expensive: an EVM address is keccak256 of the public key, and `node:crypto` has no keccak256. It
+ships `sha3-256`, which is NIST FIPS 202: the same permutation with a different padding byte, so it
+returns a different digest and an address nobody holds the key to. Nothing about the wrong address
+looks wrong, and funds sent there are gone.
+
+`keygen` therefore checks itself before it generates anything, on every run: the canonical
+Ethereum test key `0x4c0883a6...362318` must derive `0x2c7536E3605D9C16a7a3D7b1898e529396a65c23`,
+RFC 8032 ed25519 vector 1 must derive its published public key, and base58 must reproduce two
+published vectors. Any mismatch stops the program instead of printing an address that no private
+key opens.
+
+These are testnet keys. They are generated on a laptop, stored unencrypted behind file permissions,
+and handled by a process that also talks to the network. That is a reasonable posture for faucet
+money and the wrong one for real money. Mainnet use is gated on answering key custody first: an OS
+keychain, a hardware signer, or a separate signing process that the app talks to but does not
+contain.
+
+Execution routes through NEAR Intents. One rail, no bridges, 1 basis point, 25+ chains, 125+
+assets. The alternative was per-chain bridges, which multiplies the number of things that can steal
+from you by the number of chains supported.
+
+Still open, unrelated to keys:
 
 1. Review `data/risk-table.json` rows and sources (curated, human-owned).
-2. Decide key custody for the sending side (env var, keychain, or hardware) and implement a Signer
-   for it in `src/intents.ts` (interface in `src/types.ts`; the stub shows the contract).
-3. Real 1Click execution: request a non-dry quote (returns a depositAddress), send funds to it with
-   the Signer, poll `/v0/status`. The quote client already exists; only the signing send is missing.
-   Note `toBaseUnits` must move to BigInt before signing 18-decimal amounts.
-4. Optional: JWT for 1Click (lower fee tier) via the NEAR Intents site.
-5. Optional indexer keys (Etherscan or similar) for historical gas and spread lines in the cost
-   region; the four live-computed lines work without them.
+2. Optional: a JWT for NEAR Intents 1Click, which buys a lower fee tier.
+3. Optional: an indexer key (Etherscan or similar) for historical gas and spread.
 
 ## Test it
 
@@ -189,8 +292,9 @@ safety gate that does not visually shout is a safety bug.
     src/proposals.ts   simulate, evaluate, persist, execute after approval
     src/ledger/        evm, solana, near readers + demo fixtures
     src/composition.ts risk classification against data/risk-table.json
-    src/cost.ts        fragmentation cost, four lines
     src/intents.ts     1Click quotes, synthetic quoter, stub signer
+    scripts/keygen.ts  testnet keypairs, written outside the working copy
+    scripts/sweep.ts   secret sweep over the tracked tree and the git history
     src/candles.ts     Coinbase/Kraken candle sources behind one interface
     ui/                one page, seven regions, no framework, no build
     state/             policy.json, proposals.json, audit.jsonl (append-only)
