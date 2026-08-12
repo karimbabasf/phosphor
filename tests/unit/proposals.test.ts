@@ -115,6 +115,45 @@ function fakeLiveLedger(): Ledger {
   };
 }
 
+// ---------- pricing a non-stable, found by executing a real swap ----------
+// This app started as a stablecoin tool, so the EVM reader sets usd = amount for every
+// non-native token. Correct for USDC, wrong for WETH. amountUsd is what every budget in the
+// engine reads, so a 0.01 WETH swap was governed as $0.01 rather than ~$18.80, and 10 WETH
+// (~$18,800) would have passed a $10,000 per-transaction cap. Caught live on 2026-08-12.
+
+test('a non-stable is priced at spot, not at the ledger stablecoin assumption', async () => {
+  const h = setup({ mode: 'live', ledger: fakeLiveLedger() });
+  const snap = h.ledger.snapshot();
+  // The reader's assumption, reproduced: a WETH holding whose usd equals its amount.
+  snap.holdings.push({ chain: 'arb', address: '0x1', symbol: 'WETH', tokenId: '0xweth', amount: 2, usd: 2, native: false });
+  snap.prices.ETH = 1880;
+
+  const p = await h.svc.proposeSwap({
+    venue: 'uniswap-v3', chain: 'arb', fromSymbol: 'WETH', toSymbol: 'USDC',
+    amountIn: 0.01, minAmountOut: 1,
+  });
+
+  assert.ok(p.draft.kind === 'swap');
+  // 0.01 WETH at 1880 is 18.80, not 0.01.
+  assert.ok(Math.abs(p.draft.amountUsd - 18.8) < 0.01, `amountUsd was ${p.draft.amountUsd}`);
+});
+
+test('a token the app cannot price is refused rather than guessed at 1.0', async () => {
+  const h = setup({ mode: 'live', ledger: fakeLiveLedger() });
+  const snap = h.ledger.snapshot();
+  snap.holdings.push({ chain: 'arb', address: '0x1', symbol: 'MYSTERY', tokenId: '0xm', amount: 5, usd: 5, native: false });
+
+  const p = await h.svc.proposeSwap({
+    venue: 'uniswap-v3', chain: 'arb', fromSymbol: 'MYSTERY', toSymbol: 'USDC',
+    amountIn: 1000, minAmountOut: 1,
+  });
+
+  // Infinity, not NaN: the engine refuses a non-finite amount, where NaN would make every
+  // comparison against a cap false and sail through all of them.
+  assert.equal(p.verdict.outcome, 'refuse');
+  assert.equal(p.verdict.outcome === 'refuse' ? p.verdict.rule : '', 'invalid_amount');
+});
+
 // ---------- the venue-chosen deposit address (security audit F2) ----------
 // 1Click takes delivery at an address IT mints and pays out to leg.to itself. The engine's
 // destination rule checks leg.to, so the address actually signed for was governed by nothing

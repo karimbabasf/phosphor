@@ -152,8 +152,19 @@ async function resolveLivePrices(
   return prices;
 }
 
-function priceNatives(holdings: Holding[], prices: Record<string, number>): Holding[] {
-  return holdings.map(h => (h.native ? { ...h, usd: h.amount * (prices[h.symbol] ?? 0) } : h));
+// The chain readers set usd = amount for every non-native token, which is this app's
+// original stablecoin assumption and is correct for USDC, USDT, DAI and friends. It is
+// wrong for any other ERC-20: a wallet holding WETH reported it at a dollar a token. So
+// anything we have a spot price for gets priced properly here, natives and non-natives
+// alike, and WETH maps to ETH because it is the same dollar behind two contracts.
+function priceHoldings(holdings: Holding[], prices: Record<string, number>): Holding[] {
+  return holdings.map(h => {
+    const key = h.symbol.toUpperCase() === 'WETH' ? 'ETH' : h.symbol.toUpperCase();
+    const spot = prices[key];
+    if (h.native) return { ...h, usd: h.amount * (spot ?? 0) };
+    if (typeof spot === 'number' && Number.isFinite(spot) && spot > 0) return { ...h, usd: h.amount * spot };
+    return h; // no spot: leave the reader's stablecoin assumption in place
+  });
 }
 
 async function refreshEvmChain(
@@ -283,7 +294,7 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch): Ledger {
     ]);
     livePositions = positions;
 
-    const holdings = priceNatives(
+    const holdings = priceHoldings(
       [...ethR.holdings, ...baseR.holdings, ...arbR.holdings, ...solR.holdings, ...nearR.holdings],
       prices,
     );

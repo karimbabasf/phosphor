@@ -593,12 +593,25 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     const upper = symbol.toUpperCase();
     if (stables.has(upper)) return 1;
 
-    const held = snapshot.holdings.find(h => h.symbol.toUpperCase() === upper && h.amount > 0 && Number.isFinite(h.usd));
-    if (held !== undefined) return held.usd / held.amount;
-
-    // WETH is ETH wrapped: one dollar value, two contracts. The ledger prices natives only.
+    // Spot comes BEFORE the holdings table, and the order is the whole point.
+    //
+    // A holding's `usd` field carries this app's original stablecoin assumption: the EVM
+    // reader sets usd = amount for every non-native token (ledger/evm.ts), which is right
+    // for USDC and wrong for everything else. Reading it back as a price returns 1.0 for
+    // any ERC-20 that is not a stable. That is not cosmetic: amountUsd is the number every
+    // budget in the engine reads, so a WETH swap priced at its token count made the caps
+    // meaningless. Observed live 2026-08-12: a 0.01 WETH swap (~$18.80) was governed as
+    // $0.01, meaning 10 WETH (~$18,800) would have passed a $10,000 per-transaction cap.
+    //
+    // WETH is ETH wrapped: one dollar value, two contracts.
     const spot = snapshot.prices[upper === 'WETH' ? 'ETH' : upper];
-    return typeof spot === 'number' && Number.isFinite(spot) && spot > 0 ? spot : null;
+    if (typeof spot === 'number' && Number.isFinite(spot) && spot > 0) return spot;
+
+    // Fall back to the holdings table only for something we already treat as a dollar.
+    // For anything else, return null: usdOf turns that into Infinity and the engine refuses
+    // it as invalid_amount. A token the app cannot price is a token it cannot govern, and
+    // refusing beats guessing 1.0 and letting an unbounded amount through.
+    return null;
   }
 
   // USD the draft moves, which is the number every budget in the engine reads. Deliberately
