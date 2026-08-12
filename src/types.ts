@@ -244,6 +244,13 @@ export type Rail<D extends WriteDraft = WriteDraft> = {
 };
 
 export type SimulationResult = {
+  // For legs whose funds go to an address the VENUE chose rather than one we picked.
+  // 1Click mints a fresh deposit address per quote, so it can never be on an allowlist,
+  // and the policy engine's destination rule checks leg.to instead. That left the control
+  // pointed at a different value than the one actually sent to. Recording the addresses
+  // here at propose time gives the human something concrete to approve and gives execution
+  // something to compare against. Absent when no leg has one.
+  depositAddresses?: Array<{ leg: string; address: string }>;
   ok: boolean;
   summary: string; // human-readable, rendered in the approval gate
   postComposition?: CompositionView; // fund moves: composition after the move

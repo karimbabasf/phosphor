@@ -115,6 +115,95 @@ function fakeLiveLedger(): Ledger {
   };
 }
 
+// ---------- the venue-chosen deposit address (security audit F2) ----------
+// 1Click takes delivery at an address IT mints and pays out to leg.to itself. The engine's
+// destination rule checks leg.to, so the address actually signed for was governed by nothing
+// and never shown to the human. These cover both halves: it is now visible at approval time,
+// and execution refuses if it changes between approval and signing.
+
+const SOLVER_DEPOSIT = '0xdeadbeef00000000000000000000000000000001';
+
+// A quoter whose response carries a solver-chosen deposit address, the way 1Click's does.
+function depositQuoter(address = SOLVER_DEPOSIT): Quoter {
+  return {
+    name: 'fake-1click',
+    async quoteLeg(leg) {
+      return {
+        amountOut: leg.amount * 0.999,
+        feeUsd: leg.amount * 0.001,
+        timeEstimateSec: 8,
+        raw: { quote: { depositAddress: address } },
+      };
+    },
+  };
+}
+
+// Records where it was told to send, so a test can assert on the real destination rather
+// than on a claim about it.
+function recordingSigner(): Signer & { sentTo: string[] } {
+  const sentTo: string[] = [];
+  return {
+    sentTo,
+    ready: true,
+    describe: () => 'recording test signer',
+    async send(_leg, depositAddress) {
+      sentTo.push(depositAddress);
+      return { ok: true, txid: '0xtest' };
+    },
+  };
+}
+
+test('a solver-chosen deposit address is recorded and shown at approval time', async () => {
+  const h = setup({ mode: 'live', quoter: depositQuoter(), ledger: fakeLiveLedger() });
+  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
+
+  assert.ok(p.simulation?.depositAddresses, 'the addresses must be recorded on the proposal');
+  assert.ok(p.simulation.depositAddresses.every(d => d.address === SOLVER_DEPOSIT));
+  // Recorded is not enough: the gate renders the summary, so it has to be visible there.
+  assert.match(p.simulation.summary, /funds go to 0xdeadbeef00000000000000000000000000000001/);
+  assert.match(p.simulation.summary, /chosen by fake-1click, not by us/);
+});
+
+test('execution refuses when the deposit address changed after approval', async () => {
+  const signer = recordingSigner();
+  const h = setup({ mode: 'live', quoter: depositQuoter(), signer, ledger: fakeLiveLedger() });
+  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
+
+  // Proposals persist to disk as JSON between approval and execution. Simulate anything that
+  // rewrites the stored quote: a tampered file, a refetch, a compromised solver reply.
+  const stored = h.store.get(p.id) as Proposal;
+  assert.ok(stored.draft.kind === 'consolidate');
+  for (const leg of stored.draft.legs) {
+    (leg.quote as { raw?: unknown }).raw = { quote: { depositAddress: '0xattacker000000000000000000000000000000ff' } };
+  }
+  h.store.put(stored);
+
+  const executed = await h.svc.approve(p.id);
+
+  assert.equal(executed.status, 'failed');
+  assert.match(executed.result?.detail ?? '', /different address than the one approved/);
+  assert.deepEqual(signer.sentTo, [], 'nothing may be signed once the destination moved');
+});
+
+test('an unchanged deposit address still executes, so the check is not just a blocker', async () => {
+  const signer = recordingSigner();
+  const h = setup({ mode: 'live', quoter: depositQuoter(), signer, ledger: fakeLiveLedger() });
+  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
+
+  const executed = await h.svc.approve(p.id);
+
+  assert.equal(executed.status, 'executed');
+  assert.ok(signer.sentTo.length > 0);
+  assert.ok(signer.sentTo.every(a => a === SOLVER_DEPOSIT), 'and it went where the human approved');
+});
+
+test('a quote with no deposit address records nothing and is governed by the allowlist alone', async () => {
+  const h = setup({ mode: 'live', ledger: fakeLiveLedger() }); // syntheticQuoter, no raw payload
+  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
+
+  assert.equal(p.simulation?.depositAddresses, undefined);
+});
+
 // ---------- the gate-disabled path ----------
 // Security audit F3, 2026-08-12: gateRequired() existed and the UI reported it, but nothing
 // in the execution path read it. The banner said "every proposal auto-approves" while every

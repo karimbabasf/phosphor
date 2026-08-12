@@ -371,9 +371,53 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     return persist({ ...executing, status: 'executed', result: { ok: true, detail: result.detail } });
   }
 
+  function legKey(leg: TransferLeg): string {
+    return `${leg.fromChain}->${leg.toChain}:${leg.symbol}`;
+  }
+
+  // Where a leg's funds are ACTUALLY sent. For a 1Click quote this is a deposit address the
+  // solver minted, not leg.to: the solver takes delivery here and pays out to leg.to itself.
+  // That is inherent to intent bridging and is not the bug. The bug was that the policy
+  // engine's destination rule checks leg.to while this value is what gets signed, so the
+  // control reported a guarantee about an address nobody looked at.
   function depositAddressFor(leg: TransferLeg): string {
     const raw = leg.quote?.raw as { quote?: { depositAddress?: string } } | undefined;
     return raw?.quote?.depositAddress ?? leg.to;
+  }
+
+  // Captured at propose time so the human approves a concrete destination, and so execution
+  // has something to compare against. Only legs that actually have a venue-chosen address
+  // appear: a leg falling back to leg.to is already governed by the allowlist.
+  function depositAddressesOf(legs: TransferLeg[]): Array<{ leg: string; address: string }> {
+    const out: Array<{ leg: string; address: string }> = [];
+    for (const leg of legs) {
+      const address = depositAddressFor(leg);
+      if (address !== leg.to) out.push({ leg: legKey(leg), address });
+    }
+    return out;
+  }
+
+  // The check that closes the gap. Proposals persist to disk as JSON between approval and
+  // execution, so the quote a leg carries at send time is not necessarily the one the human
+  // saw. Anything that edits that file, or any refetch, would otherwise redirect the funds
+  // silently. Compare what we are about to sign against what was recorded when the proposal
+  // was made, and refuse on any difference rather than guessing which one is right.
+  function depositAddressMismatch(p: Proposal, legs: TransferLeg[]): string | null {
+    const approved = p.simulation?.depositAddresses;
+    if (approved === undefined) return null; // nothing venue-chosen in this proposal
+
+    const now = depositAddressesOf(legs);
+    if (now.length !== approved.length) {
+      return `deposit addresses changed since approval: ${approved.length} recorded, ${now.length} now`;
+    }
+    for (const record of approved) {
+      const current = now.find(n => n.leg === record.leg);
+      if (current === undefined) return `leg ${record.leg} no longer carries the approved deposit address`;
+      if (current.address.toLowerCase() !== record.address.toLowerCase()) {
+        return `leg ${record.leg} would now send to a different address than the one approved`;
+      }
+    }
+    return null;
   }
 
   async function executeFundMove(p: Proposal): Promise<Proposal> {
@@ -392,6 +436,13 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
       const detail = signer.describe();
       audit.append('execution_failed', `${p.id}: ${detail}`, { id: p.id });
       return persist({ ...executing, status: 'failed', result: { ok: false, detail } });
+    }
+
+    // Refuse before signing anything if the destination is no longer what was approved.
+    const mismatch = depositAddressMismatch(p, legs);
+    if (mismatch !== null) {
+      audit.append('execution_failed', `${p.id}: ${mismatch}`, { id: p.id });
+      return persist({ ...executing, status: 'failed', result: { ok: false, detail: mismatch } });
     }
 
     const failures: string[] = [];
@@ -484,10 +535,16 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     try {
       for (const leg of legs) leg.quote = await quoter.quoteLeg(leg);
       const { lines, post } = compositionDelta(snapshot, legs, selfList);
+      const deposits = depositAddressesOf(legs);
+      // The addresses go in the summary, not just the record: the approval gate renders the
+      // summary, and a destination the human cannot see is one they cannot meaningfully
+      // approve. That was the substance of the finding, not just the missing comparison.
+      const depositLines = deposits.map(d => `${d.leg} funds go to ${d.address} (chosen by ${quoter.name}, not by us)`);
       simulation = {
         ok: true,
-        summary: [...legs.map(legSummary), ...lines].join('\n'),
+        summary: [...legs.map(legSummary), ...depositLines, ...lines].join('\n'),
         postComposition: post,
+        ...(deposits.length > 0 ? { depositAddresses: deposits } : {}),
       };
     } catch (err) {
       const message = errText(err);
