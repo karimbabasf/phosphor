@@ -7,6 +7,6 @@
     "near": []
   },
   "economicTransferUsd": 10,
-  "candleProducts": ["BTC-USD", "ETH-USD", "SOL-USD", "NEAR-USD", "USDT-USD"],
+  "candleProducts": ["BTC-USD", "ETH-USD", "SOL-USD", "NEAR-USD", "HYPE-USD", "ARB-USD", "AVAX-USD"],
   "dataDir": "state"
 }

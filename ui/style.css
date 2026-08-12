@@ -258,6 +258,30 @@ body {
 
 #product:focus-visible { outline: 1px dotted var(--green); outline-offset: 1px; }
 
+/* Timeframe strip. The active one is bracketed rather than boxed, so the row
+   stays a line of text instead of becoming a toolbar. */
+.tfs { display: inline-flex; gap: 0; }
+
+.tf {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--green-faint);
+  font: var(--fs) / var(--lh) var(--mono);
+  padding: 0 0.75ch;
+  cursor: pointer;
+}
+
+.tf:hover { color: var(--green); }
+.tf:focus-visible { outline: 1px dotted var(--green); outline-offset: 1px; }
+.tf.on { color: var(--green-hi); }
+.tf.on::before { content: '['; color: var(--green-ghost); }
+.tf.on::after { content: ']'; color: var(--green-ghost); }
+
+/* Horizontal drag is the candle-count control, so say so with the cursor. */
+#chart { cursor: ew-resize; }
+#chart.dragging { cursor: ew-resize; }
+
 .chartbar { flex: none; }
 
 /* Fluid: app.js reads clientWidth/clientHeight and redraws on resize. */

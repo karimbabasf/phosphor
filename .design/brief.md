@@ -20,10 +20,16 @@ like a dashboard product.
 - The page never scrolls. A region whose content outgrows its box scrolls inside itself.
 - System monospace stack only, no webfont
 - Homebrew terminal: near-black ground, phosphor green, one hue, hierarchy by brightness/opacity only
-- Red exclusively for pending approvals, refusals, and breached share cells
+- Red in the UI chrome is exclusively for pending approvals, refusals, and breached share cells.
+  The chart is the one exception (candle red, a darker #cc3a30), so the gate stays the only alarm.
 - No rounded corners, shadows, gradients, icons, illustration; box-drawing characters for separation
 - No animation except cursor blink and appending log lines
-- Canvas candlesticks, monotone green, tick-only axes, asset selectable, stale marker
+- Canvas candlesticks, green up and red down, tick-only axes, asset selectable, stale marker.
+  Revised 2026-08-11 from "monotone green": Karim asked for green and red. Candle red is a darker
+  #cc3a30 so the approval gate's #ff3b30 stays the only alarm red on the page.
+- Charts come from Hyperliquid, because that is the venue the execution targets. Timeframes down to
+  1s. The only two things a human may do to the chart: pick a timeframe, and change how many candles
+  are shown (drag or wheel). No indicators, no drawing tools, no crosshair.
 - Policy as plain sentences, never JSON
 - Terminal-dense character grid, not app-airy
 

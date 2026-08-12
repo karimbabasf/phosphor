@@ -14,6 +14,7 @@ import { loadPolicy, savePolicy, defaultPolicy } from './policy/file.ts';
 import { createLedger } from './ledger/index.ts';
 import { oneClickQuoter, syntheticQuoter, stubSigner, type TokensFile } from './intents.ts';
 import { coinbaseSource, krakenSource, cachedCandles } from './candles.ts';
+import { hyperliquidSource, hyperliquidLive } from './hyperliquid.ts';
 import { createProposalService } from './proposals.ts';
 import { createServer } from './server.ts';
 
@@ -35,7 +36,14 @@ const riskRows = (JSON.parse(fs.readFileSync(path.join(root, 'data', 'risk-table
 const tokens = JSON.parse(fs.readFileSync(path.join(root, 'data', 'tokens.json'), 'utf8')) as TokensFile;
 
 const ledger = createLedger(cfg);
-const candles = cachedCandles(coinbaseSource(), krakenSource());
+// Hyperliquid is primary because that is the venue the high-frequency execution
+// targets, and a chart that disagrees with the venue is worse than no chart.
+// Coinbase stays as the fallback for the minute-and-above rail; Kraken behind it
+// is dropped here because cachedCandles takes one fallback and two is enough.
+const candles = cachedCandles(hyperliquidSource(), coinbaseSource());
+// Sub-minute candles have no REST source anywhere: they are bucketed from the
+// Hyperliquid trade stream in-process. See src/hyperliquid.ts.
+const live = hyperliquidLive();
 const quoter = cfg.mode === 'demo' ? syntheticQuoter() : oneClickQuoter(tokens);
 const signer = stubSigner();
 
@@ -82,6 +90,7 @@ const server = createServer({
   ledger,
   riskRows,
   candles,
+  live,
   proposals,
   getPolicy,
   setKill,

@@ -19,6 +19,7 @@ import type { Audit } from './audit.ts';
 import type { Store } from './store.ts';
 import type { Ledger } from './ledger/index.ts';
 import type { CandleService } from './candles.ts';
+import type { LiveCandles } from './hyperliquid.ts';
 import { classify } from './composition.ts';
 import { fragmentationCost } from './cost.ts';
 import { renderSentences } from './policy/render.ts';
@@ -57,6 +58,7 @@ export type ServerDeps = {
   ledger: Ledger;
   riskRows: RiskRow[];
   candles: CandleService;
+  live: LiveCandles;
   proposals: ProposalService;
   getPolicy: () => Policy | null;
   setKill: (on: boolean) => void;
@@ -101,7 +103,7 @@ function tokenMatches(supplied: unknown, expected: string): boolean {
 }
 
 export function createServer(deps: ServerDeps): PhosphorServer {
-  const { cfg, audit, store, ledger, riskRows, candles, proposals } = deps;
+  const { cfg, audit, store, ledger, riskRows, candles, live, proposals } = deps;
   const { getPolicy, setKill, agentSeen, agentsConnected } = deps;
 
   const token = crypto.randomBytes(24).toString('hex');
@@ -126,6 +128,12 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   const offStore = store.subscribe(() => broadcastState());
   const offAudit = audit.subscribe((event) => {
     for (const client of sseClients) sseSend(client, { type: 'log', event });
+  });
+
+  // Trades push the chart instead of the chart polling for them. The live layer
+  // already coalesces to ~10/s, so a busy coin cannot flood the SSE channel.
+  live.onUpdate(() => {
+    for (const client of sseClients) sseSend(client, { type: 'candles' });
   });
 
   const heartbeat = setInterval(() => {
@@ -261,6 +269,30 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     const product = url.searchParams.get('product') ?? cfg.candleProducts[0] ?? 'BTC-USD';
     const granularity = intParam(url.searchParams.get('granularity'), 60, 86400);
     const limit = intParam(url.searchParams.get('limit'), 120, CANDLE_LIMIT_MAX);
+    // Keep the trade stream pointed at whatever the chart is showing. Cheap and
+    // idempotent, and it means the sub-minute book is already warm on a switch.
+    live.watch(product);
+
+    // Under a minute there is no exchange candle to fetch: Hyperliquid's interval
+    // enum starts at 1m and rejects anything smaller with a 422. Those candles are
+    // built here from the trade stream, so they are live-only and start empty.
+    if (granularity < 60) {
+      const built = live.seconds(product, granularity, limit);
+      const body = JSON.stringify(built);
+      res.writeHead(200, {
+        'content-type': 'application/json; charset=utf-8',
+        'content-length': Buffer.byteLength(body),
+        'cache-control': 'no-store',
+        'x-candle-source': 'hyperliquid live trades',
+        'x-candle-stale': String(!live.connected()),
+        'x-candle-fetched-at': new Date().toISOString(),
+        'x-candle-built': 'trades',
+        'x-candle-collected': String(live.collectedSec(product)),
+      });
+      res.end(body);
+      return;
+    }
+
     try {
       const result = await candles.get(product, granularity, limit);
       // Body is Candle[] per the contract; the staleness marker the chart region

@@ -1,23 +1,72 @@
 {
-  "stamp": "bff1629ce613c030",
-  "iteration": 3,
+  "stamp": "43b709d910ff8d45",
+  "iteration": 4,
   "firstFive": {
     "what": "A terminal-style control panel for stablecoins held across five chains, now on one screen: what is held and what it costs on the left, what governs it and what is waiting for a click on the right",
     "who": "The owner of the funds, supervising what a connected AI agent is allowed to do with them",
-    "action": "Click APPROVE or REFUSE on the red pending proposal block at the top of the right column"
+    "action": "Pick a timeframe or drag the chart; click APPROVE or REFUSE when the gate has a pending proposal"
   },
   "asked": [
-    { "requirement": "One page, no routes, no navigation, no menus, no modals except the approval gate", "met": true, "ref": "single #page, zero nav elements, gate is an inline region not a modal" },
-    { "requirement": "All seven regions on screen together: status bar full width, then two columns, left is what is held and right is what governs it", "met": true, "ref": "status bar spans the page, then a two-column deck. Left: COMPOSITION, COST, CHART. Right: APPROVAL GATE, POLICY, LOG. All seven visible at once at 1920x1200, 1512x982 and 1440x900" },
-    { "requirement": "The page never scrolls; a region that outgrows its box scrolls inside itself", "met": true, "ref": "measured at all three viewports: document.scrollHeight equals window.innerHeight, PAGE_SCROLL=no. Every .pbody is overflow:auto with min-height:0; comp and gate capped at 46vh, policy 26vh, cost 30vh; chart and log flex to fill. At 1440x900 the log scrolls internally while the page does not" },
-    { "requirement": "System monospace stack only, no webfont", "met": true, "ref": "style.css font-family ui-monospace stack, no @font-face, no font link" },
-    { "requirement": "Homebrew terminal palette, one hue by brightness/opacity", "met": true, "ref": "#0b0d0b ground, #33ff66 base with bright #8cffab and three opacity tiers; scrollbar thumbs use the existing --green-ghost" },
-    { "requirement": "Red exclusively for pending, refusals, breached shares", "met": true, "ref": "PENDING block + REFUSE button, approve_attempt_rejected log line; nothing else red in the captured render" },
-    { "requirement": "No rounded corners, shadows, gradients, icons, illustration; box-drawing separation", "met": true, "ref": "frames still measured per column via layoutFrames reading parentElement.clientWidth, so both columns draw their own correct widths; slop-lint pass" },
-    { "requirement": "No animation except cursor blink and appending log lines", "met": true, "ref": "no transitions added; the only animation is still the status bar cursor" },
-    { "requirement": "Canvas candlesticks, monotone green, tick-only axes, asset selectable, stale marker", "met": true, "ref": "canvas is now fluid height instead of a fixed 180px; app.js reads clientWidth/clientHeight and redraws on resize, so it renders 528px tall at 1920x1200 and 228px at 1440x900 with no code change" },
-    { "requirement": "Policy as plain sentences, never JSON", "met": true, "ref": "POLICY region renders $ prefixed sentences, unchanged" },
-    { "requirement": "Terminal-dense character grid, not app-airy", "met": true, "ref": "13px mono and 1.35 line height unchanged. The 104ch centred column is gone, replaced by two columns of about 115ch each on a 1920 screen: denser in aggregate, not airier" }
+    {
+      "requirement": "One page, no routes, no navigation, no menus, no modals except the approval gate",
+      "met": true,
+      "ref": "single #page, zero nav elements, gate is an inline region not a modal"
+    },
+    {
+      "requirement": "All seven regions on screen together: status bar full width, then two columns, left is what is held and right is what governs it",
+      "met": true,
+      "ref": "status bar spans the page, then a two-column deck. Left: COMPOSITION, COST, CHART. Right: APPROVAL GATE, POLICY, LOG. All seven visible at once at 1920x1200, 1512x982 and 1440x900"
+    },
+    {
+      "requirement": "The page never scrolls; a region that outgrows its box scrolls inside itself",
+      "met": true,
+      "ref": "measured at all three viewports: document.scrollHeight equals window.innerHeight, PAGE_SCROLL=no. Every .pbody is overflow:auto with min-height:0; comp and gate capped at 46vh, policy 26vh, cost 30vh; chart and log flex to fill. At 1440x900 the log scrolls internally while the page does not"
+    },
+    {
+      "requirement": "System monospace stack only, no webfont",
+      "met": true,
+      "ref": "style.css font-family ui-monospace stack, no @font-face, no font link"
+    },
+    {
+      "requirement": "Homebrew terminal palette, one hue by brightness/opacity",
+      "met": true,
+      "ref": "#0b0d0b ground, #33ff66 base with bright #8cffab and three opacity tiers; scrollbar thumbs use the existing --green-ghost"
+    },
+    {
+      "requirement": "Red in the chrome exclusively for pending, refusals, breached shares; the chart is the one exception",
+      "met": true,
+      "ref": "PENDING block + REFUSE button + approve_attempt_rejected log line are the only red chrome. The chart now draws red candles at #cc3a30, which is the declared exception and is darker and less saturated than the gate's #ff3b30. Weaker than the original rule: red is no longer unique to the gate, only the brightest red and the only bordered block"
+    },
+    {
+      "requirement": "No rounded corners, shadows, gradients, icons, illustration; box-drawing separation",
+      "met": true,
+      "ref": "frames still measured per column via layoutFrames reading parentElement.clientWidth, so both columns draw their own correct widths; slop-lint pass"
+    },
+    {
+      "requirement": "No animation except cursor blink and appending log lines",
+      "met": true,
+      "ref": "no transitions added; the only animation is still the status bar cursor"
+    },
+    {
+      "requirement": "Canvas candlesticks, green up and red down, tick-only axes, asset selectable, stale marker",
+      "met": true,
+      "ref": "measured on the live canvas at 1920x1200: 9032 green pixels and 6688 red at 1m, 5017/3354 at 1s, so both directions actually render. Bodies are solid in both directions now; the old up-solid/down-hollow convention is gone. Candle red is #cc3a30, darker than the gate's #ff3b30"
+    },
+    {
+      "requirement": "Charts come from Hyperliquid, timeframes down to 1s, human may only pick a timeframe and change the candle count",
+      "met": true,
+      "ref": "x-candle-source reads 'hyperliquid' at 1m and 'hyperliquid live trades' at 1s. Nine timeframes render (1s 5s 15s 1m 5m 15m 1h 4h 1d); clicking 1s switches and the meta line reports 'building from live trades: 66s of 272s'. Drag on the canvas moved the count 120 to 272. No indicators, no drawing tools, no crosshair were added"
+    },
+    {
+      "requirement": "Policy as plain sentences, never JSON",
+      "met": true,
+      "ref": "POLICY region renders $ prefixed sentences, unchanged"
+    },
+    {
+      "requirement": "Terminal-dense character grid, not app-airy",
+      "met": true,
+      "ref": "13px mono and 1.35 line height unchanged. The 104ch centred column is gone, replaced by two columns of about 115ch each on a 1920 screen: denser in aggregate, not airier"
+    }
   ],
   "goal": {
     "outcome": "The owner sees the whole machine at once, with no scrolling, and can judge what is there",
@@ -35,9 +84,18 @@
   },
   "findings": [],
   "notes": [
-    { "note": "Below 1100px wide or 620px tall the layout falls back to the original single stacked column and the page scrolls again. One screen is not achievable on a phone at 13px, and shrinking the type to force it would break the terminal density requirement. Deliberate.", "severity": "accepted" },
-    { "note": "The log's 36ch hanging indent left messages one word wide under 760px. Pre-existing, not caused by this change, fixed in the same pass by dropping the indent at that width.", "severity": "fixed" },
-    { "note": "At 1440x900 the log's last visible line is cut mid-glyph by its own overflow container. Honest signal that the region scrolls, but a fade or a hard row cut would read cleaner. Left alone pending Karim's call.", "severity": "minor" }
+    {
+      "note": "Below 1100px wide or 620px tall the layout falls back to the original single stacked column and the page scrolls again. One screen is not achievable on a phone at 13px, and shrinking the type to force it would break the terminal density requirement. Deliberate.",
+      "severity": "accepted"
+    },
+    {
+      "note": "The log's 36ch hanging indent left messages one word wide under 760px. Pre-existing, not caused by this change, fixed in the same pass by dropping the indent at that width.",
+      "severity": "fixed"
+    },
+    {
+      "note": "At 1440x900 the log's last visible line is cut mid-glyph by its own overflow container. Honest signal that the region scrolls, but a fade or a hard row cut would read cleaner. Left alone pending Karim's call.",
+      "severity": "minor"
+    }
   ],
   "verdict": "pass"
 }

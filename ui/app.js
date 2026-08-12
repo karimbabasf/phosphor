@@ -7,14 +7,39 @@
 
 var REFUSAL_TYPES = { policy_refused: 1, refused: 1, approve_attempt_rejected: 1 };
 var EPS = 1e-9;
-var CANDLE_POLL_MS = 20000;
-var GRANULARITY_SEC = 60;
-var CANDLE_LIMIT = 120;
 var LOG_MAX_LINES = 400;
+
+/* Timeframes. Anything under 60s has no exchange candle behind it: Hyperliquid's
+   interval enum starts at 1m, so the server builds those from the trade stream and
+   they are live-only. See src/hyperliquid.ts. */
+var TIMEFRAMES = [
+  { label: '1s', sec: 1 },
+  { label: '5s', sec: 5 },
+  { label: '15s', sec: 15 },
+  { label: '1m', sec: 60 },
+  { label: '5m', sec: 300 },
+  { label: '15m', sec: 900 },
+  { label: '1h', sec: 3600 },
+  { label: '4h', sec: 14400 },
+  { label: '1d', sec: 86400 }
+];
+var TIMEFRAME_SEC = 60;
+var CANDLE_COUNT = 120;
+var CANDLE_COUNT_MIN = 20;
+var CANDLE_COUNT_MAX = 500;
+
+/* Direction colour. Down is deliberately darker than the approval gate's #ff3b30
+   so the gate stays the only alarm red on the page even though the chart now uses
+   red at all. */
+var CHART_UP = '#33ff66';
+var CHART_DOWN = '#cc3a30';
 
 var TOKEN = null;
 var STATE = null;
 var CANDLES = [];
+var CANDLE_META = { source: '', collected: 0, built: '', stale: false };
+var CANDLE_LAST_FETCH = 0;
+var CANDLE_FETCH_INFLIGHT = false;
 var SSE_SEEN_OPEN = false;
 var REFRESH_INFLIGHT = false;
 var REFRESH_QUEUED = false;
@@ -258,22 +283,61 @@ function renderProducts(s) {
   if (products.indexOf(current) !== -1) select.value = current;
 }
 
-function setChartMeta(source, count, fetchedAt, stale, error) {
+function timeframeLabel() {
+  for (var i = 0; i < TIMEFRAMES.length; i++) {
+    if (TIMEFRAMES[i].sec === TIMEFRAME_SEC) return TIMEFRAMES[i].label;
+  }
+  return TIMEFRAME_SEC + 's';
+}
+
+function renderTimeframes() {
+  var box = $('timeframes');
+  if (box.dataset.filled === '1') {
+    var kids = box.childNodes;
+    for (var k = 0; k < kids.length; k++) {
+      var on = Number(kids[k].dataset.sec) === TIMEFRAME_SEC;
+      kids[k].className = on ? 'tf on' : 'tf';
+    }
+    return;
+  }
+  box.textContent = '';
+  for (var i = 0; i < TIMEFRAMES.length; i++) {
+    var tf = TIMEFRAMES[i];
+    var b = el('button', tf.sec === TIMEFRAME_SEC ? 'tf on' : 'tf', tf.label);
+    b.type = 'button';
+    b.dataset.sec = String(tf.sec);
+    box.appendChild(b);
+  }
+  box.dataset.filled = '1';
+}
+
+function setChartMeta(error) {
   var meta = $('chart-meta');
   meta.textContent = '';
   if (error) {
     meta.appendChild(el('span', 'faint', 'no candle data: ' + error));
     return;
   }
-  meta.appendChild(el('span', 'faint', source + '  ' + GRANULARITY_SEC + 's  ' + count + ' candles  ' + clock(fetchedAt)));
-  if (stale) meta.appendChild(el('span', 'hi', '   STALE: source unreachable, showing last known'));
+  meta.appendChild(el('span', 'faint', CANDLE_META.source + '  ' + CANDLES.length + ' candles'));
+  if (CANDLE_META.built === 'trades') {
+    // Sub-minute history does not exist to be fetched, it accumulates. Say so,
+    // rather than letting a short chart read as a broken one.
+    var want = TIMEFRAME_SEC * CANDLE_COUNT;
+    if (CANDLE_META.collected < want) {
+      meta.appendChild(el('span', 'faint', '  building from live trades: ' + CANDLE_META.collected + 's of ' + want + 's'));
+    }
+  }
+  if (CANDLE_META.stale) meta.appendChild(el('span', 'hi', '   STALE: source unreachable, showing last known'));
 }
 
 async function refreshCandles() {
   var product = $('product').value;
   if (!product) return;
+  if (CANDLE_FETCH_INFLIGHT) return;
+  CANDLE_FETCH_INFLIGHT = true;
+  CANDLE_LAST_FETCH = Date.now();
   var url = '/api/candles?product=' + encodeURIComponent(product) +
-    '&granularity=' + GRANULARITY_SEC + '&limit=' + CANDLE_LIMIT;
+    '&granularity=' + TIMEFRAME_SEC + '&limit=' + CANDLE_COUNT;
   try {
     var res = await fetch(url, { headers: { accept: 'application/json' } });
     if (!res.ok) {
@@ -286,19 +350,46 @@ async function refreshCandles() {
       throw new Error((detail && detail.error) || ('candles returned ' + res.status));
     }
     CANDLES = await res.json();
-    setChartMeta(
-      res.headers.get('x-candle-source') || 'unknown',
-      CANDLES.length,
-      res.headers.get('x-candle-fetched-at') || '',
-      res.headers.get('x-candle-stale') === 'true',
-      null
-    );
+    CANDLE_META = {
+      source: res.headers.get('x-candle-source') || 'unknown',
+      collected: Number(res.headers.get('x-candle-collected') || 0),
+      built: res.headers.get('x-candle-built') || '',
+      stale: res.headers.get('x-candle-stale') === 'true'
+    };
+    setChartMeta(null);
     drawChart();
   } catch (err) {
     CANDLES = [];
     drawChart();
-    setChartMeta(null, 0, '', true, err.message || String(err));
+    setChartMeta(err.message || String(err));
+  } finally {
+    CANDLE_FETCH_INFLIGHT = false;
   }
+}
+
+/* The trade stream pushes on every batch. Sub-minute candles are served from
+   memory so they can refresh fast; a minute-and-above candle comes from the
+   exchange over REST and must not be refetched at trade rate. */
+function candlesPushed() {
+  var minGap = TIMEFRAME_SEC < 60 ? 250 : 5000;
+  if (Date.now() - CANDLE_LAST_FETCH < minGap) return;
+  void refreshCandles();
+}
+
+function setTimeframe(sec) {
+  if (sec === TIMEFRAME_SEC) return;
+  TIMEFRAME_SEC = sec;
+  CANDLES = [];
+  renderTimeframes();
+  drawChart();
+  void refreshCandles();
+}
+
+function setCandleCount(next) {
+  var clamped = Math.max(CANDLE_COUNT_MIN, Math.min(CANDLE_COUNT_MAX, Math.round(next)));
+  if (clamped === CANDLE_COUNT) return;
+  CANDLE_COUNT = clamped;
+  void refreshCandles();
 }
 
 function drawChart() {
@@ -315,7 +406,6 @@ function drawChart() {
   ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, monospace';
   ctx.textBaseline = 'middle';
 
-  var green = '#33ff66';
   var dim = 'rgba(51,255,102,0.45)';
   var faint = 'rgba(51,255,102,0.30)';
 
@@ -353,8 +443,10 @@ function drawChart() {
     var candle = CANDLES[j];
     var centre = Math.round(j * slot + slot / 2) + 0.5;
     var up = candle.c >= candle.o;
-    ctx.strokeStyle = up ? green : dim;
-    ctx.fillStyle = green;
+    // Direction is carried by hue now, not by fill. Both bodies are solid.
+    var colour = up ? CHART_UP : CHART_DOWN;
+    ctx.strokeStyle = colour;
+    ctx.fillStyle = colour;
     ctx.lineWidth = 1;
 
     ctx.beginPath();
@@ -365,9 +457,7 @@ function drawChart() {
     var top = Math.min(yOf(candle.o), yOf(candle.c));
     var bodyHeight = Math.max(1, Math.abs(yOf(candle.c) - yOf(candle.o)));
     var left = Math.round(centre - bodyWidth / 2) + 0.5;
-    // Up solid, down hollow: one hue, direction carried by fill and brightness.
-    if (up) ctx.fillRect(left, top, bodyWidth, bodyHeight);
-    else ctx.strokeRect(left, top, bodyWidth, bodyHeight);
+    ctx.fillRect(left, top, bodyWidth, bodyHeight);
   }
 
   // Y axis: ticks only, labels on the right, no grid lines.
@@ -396,7 +486,9 @@ function drawChart() {
     ctx.stroke();
     ctx.fillStyle = dim;
     ctx.textAlign = m === 0 ? 'left' : m === marks.length - 1 ? 'right' : 'center';
-    ctx.fillText(clock(CANDLES[index].t * 1000).slice(0, 5), x, padTop + plotHeight + 9);
+    // Seconds matter below the minute and are noise above it.
+    var stamp = clock(CANDLES[index].t * 1000);
+    ctx.fillText(TIMEFRAME_SEC < 60 ? stamp : stamp.slice(0, 5), x, padTop + plotHeight + 9);
   }
   ctx.textAlign = 'left';
 }
@@ -622,6 +714,7 @@ function openEvents() {
     }
     if (payload.type === 'state') refreshState();
     else if (payload.type === 'log' && payload.event) appendLog(payload.event);
+    else if (payload.type === 'candles') candlesPushed();
   });
 }
 
@@ -654,6 +747,50 @@ function wireProduct() {
   });
 }
 
+/* The only two things a human may do to this chart: pick a timeframe, and change
+   how many candles are on screen. No indicators, no drawing tools, no crosshair. */
+function wireTimeframes() {
+  $('timeframes').addEventListener('click', function (ev) {
+    var sec = ev.target && ev.target.dataset ? Number(ev.target.dataset.sec) : NaN;
+    if (Number.isFinite(sec) && sec > 0) setTimeframe(sec);
+  });
+}
+
+function wireCandleCount() {
+  var canvas = $('chart');
+  var dragging = false;
+  var startX = 0;
+  var startCount = 0;
+
+  canvas.addEventListener('mousedown', function (ev) {
+    dragging = true;
+    startX = ev.clientX;
+    startCount = CANDLE_COUNT;
+    canvas.classList.add('dragging');
+    ev.preventDefault();
+  });
+
+  window.addEventListener('mousemove', function (ev) {
+    if (!dragging) return;
+    // Drag left to pull more candles in, right to push them out. 2.5px per candle
+    // keeps a full sweep of the plot roughly a 3x change.
+    var next = startCount + (startX - ev.clientX) / 2.5;
+    setCandleCount(next);
+  });
+
+  window.addEventListener('mouseup', function () {
+    if (!dragging) return;
+    dragging = false;
+    canvas.classList.remove('dragging');
+  });
+
+  canvas.addEventListener('wheel', function (ev) {
+    // Same capability, second input. Not a new one.
+    ev.preventDefault();
+    setCandleCount(CANDLE_COUNT * (ev.deltaY > 0 ? 1.15 : 1 / 1.15));
+  }, { passive: false });
+}
+
 function wireResize() {
   var timer = null;
   window.addEventListener('resize', function () {
@@ -668,8 +805,11 @@ function wireResize() {
 
 async function boot() {
   layoutFrames();
+  renderTimeframes();
   wireKill();
   wireProduct();
+  wireTimeframes();
+  wireCandleCount();
   wireResize();
   try {
     TOKEN = (await getJson('/api/session')).token;
@@ -680,7 +820,11 @@ async function boot() {
   await refreshLog();
   openEvents();
   await refreshCandles();
-  setInterval(refreshCandles, CANDLE_POLL_MS);
+  // The trade stream drives the chart now. This interval is only a floor, so a
+  // dead socket or an idle book still refreshes the minute-and-above rail.
+  setInterval(function () {
+    if (Date.now() - CANDLE_LAST_FETCH > 15000) void refreshCandles();
+  }, 5000);
 }
 
 boot();
