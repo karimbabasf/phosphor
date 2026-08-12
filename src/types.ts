@@ -160,7 +160,11 @@ export type TransferLeg = {
 
 export type SwapDraft = {
   kind: 'swap';
-  venue: 'oneclick' | 'uniswap-v3';
+  // 'oneclick' and 'intents-native' are both NEAR Intents and they are not interchangeable:
+  // oneclick transfers wallet funds to a per-quote deposit address, intents-native signs an
+  // intent over a balance already held inside the intents.near verifier and transfers
+  // nothing. See the header of src/rails/intents-native.ts for which one to use.
+  venue: 'oneclick' | 'uniswap-v3' | 'intents-native';
   chain: ChainId; // origin chain
   toChain: ChainId; // same as chain for a same-chain DEX swap
   fromSymbol: string;

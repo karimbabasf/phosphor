@@ -34,6 +34,7 @@ import { uniswapRails } from './uniswap.ts';
 import { chainsWithDeployment, deploymentFor } from './uniswap-abi.ts';
 import { hlDepositRail, hlSpec } from './hyperliquid-deposit.ts';
 import { ONECLICK_COUNTERPARTY, oneClickRail } from './oneclick.ts';
+import { INTENTS_NATIVE_COUNTERPARTY, intentsNativeRail } from './intents-native.ts';
 
 export type RailKind = 'swap' | 'hl_deposit' | 'lp_add' | 'lp_remove';
 export type RailDraft = SwapDraft | HlDepositDraft | LpAddDraft | LpRemoveDraft;
@@ -68,7 +69,20 @@ function swapRail(deps: RailDeps): Rail<SwapDraft> {
     keysPath: deps.cfg.keysPath,
     tokens: deps.tokens,
   });
-  const pick = (draft: SwapDraft): Rail<SwapDraft> => (draft.venue === 'oneclick' ? oneclick : uniswap);
+  const intentsNative = intentsNativeRail({
+    network: deps.cfg.network,
+    keysPath: deps.cfg.keysPath,
+    tokens: deps.tokens,
+  });
+  // Explicit per venue, not a two-way test with a default. uniswap is the fallback because
+  // it was here first, and a new venue falling into it silently would route a draft meant
+  // for NEAR Intents into an on-chain DEX swap. Each rail still refuses a draft for another
+  // venue on its own, so this is a router and not the check.
+  const pick = (draft: SwapDraft): Rail<SwapDraft> => {
+    if (draft.venue === 'oneclick') return oneclick;
+    if (draft.venue === 'intents-native') return intentsNative;
+    return uniswap;
+  };
 
   return {
     kind: 'swap',
@@ -125,6 +139,12 @@ export function venueAllowlist(network: Network): string[] {
   // would replace its plain "NEAR Intents has no testnet" refusal with a misleading
   // "not on the allowlist".
   out.add(ONECLICK_COUNTERPARTY.toLowerCase());
+
+  // The intents-native rail is the opposite case, and it is the reason that rail exists: its
+  // counterparty is the verifier contract account itself, one fixed value for every swap
+  // forever, so this really is an address on a static list rather than a venue string
+  // standing in for one that cannot be listed. Same testnet reasoning as above.
+  out.add(INTENTS_NATIVE_COUNTERPARTY.toLowerCase());
 
   return [...out];
 }
