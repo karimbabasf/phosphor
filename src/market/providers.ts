@@ -1,11 +1,14 @@
 // Where candles come from, and how a request for one timeframe becomes a request a venue
 // will actually answer.
 //
-// Three rails, picked by what is being asked for rather than by a config flag:
+// Two rails, picked by which venue lists the market rather than by a config flag:
 //
-//   sub-minute  : no venue serves it, so it is built from the trade tape (src/market/seconds.ts)
-//   minute and up on a Hyperliquid listing : candleSnapshot, which serves deep history in one call
-//   minute and up on a Coinbase-only pair  : the candles endpoint, paged backward
+//   a Hyperliquid listing : candleSnapshot, which serves deep history in one call
+//   a Coinbase-only pair  : the candles endpoint, paged backward
+//
+// There is no sub-minute rail. No venue serves a candle under a minute, so one had to be
+// assembled from a trade tape, and the tape and the live stream were different venues,
+// which spliced two markets into one line. Removed 2026-08-13, floor is one minute.
 //
 // The paging matters for Coinbase and not for Hyperliquid, which is worth writing down
 // because it is not obvious. Measured 2026-08-13: Hyperliquid returns two thousand 1m bars
@@ -17,41 +20,34 @@
 import type { Candle } from '../types.ts';
 import type { Catalog, MarketRef } from './catalog.ts';
 import { chooseBase } from './aggregate.ts';
-import { coinbaseSeconds, type SecondsBackfill } from './seconds.ts';
 
 // What each venue will answer to natively. Anything else is folded from one of these.
 export const HYPERLIQUID_NATIVES = [60, 180, 300, 900, 1800, 3600, 7200, 14_400, 28_800, 43_200, 86_400, 259_200, 604_800];
 export const COINBASE_NATIVES = [60, 300, 900, 3600, 21_600, 86_400];
 
-// Sub-minute steps the trade tape is bucketed into. A target between these folds from the
-// finest one that divides it.
-export const SUB_MINUTE_NATIVES = [1, 5, 15, 30];
-
 const COINBASE_MAX_ROWS = 300;
+
+// A minute is the floor. See the note on MIN_TIMEFRAME_SEC in src/chart.ts.
+export const MIN_BASE_SEC = 60;
 
 export type BasePlan = {
   baseSec: number;
-  provider: MarketRef['provider'] | 'trades';
+  provider: MarketRef['provider'];
   ref: MarketRef | null;
   // Set when the ask could not be served exactly and something close was used instead.
   note: string | null;
 };
 
 /* Decide what to actually fetch for a requested timeframe.
-   Returns the base interval and the rail, leaving the folding to the store. */
+   Returns the base interval and the venue, leaving the folding to the store. */
 export function planBase(ref: MarketRef | null, targetSec: number): BasePlan {
-  if (targetSec < 60) {
-    const base = chooseBase(targetSec, SUB_MINUTE_NATIVES) ?? 1;
-    return { baseSec: base, provider: 'trades', ref, note: null };
-  }
+  // Belt and braces: the chart refuses anything under a minute before it reaches here.
+  const wanted = Math.max(MIN_BASE_SEC, targetSec);
 
   const natives = ref?.provider === 'coinbase' ? COINBASE_NATIVES : HYPERLIQUID_NATIVES;
-  const base = chooseBase(targetSec, natives);
-  if (base === null) {
-    return { baseSec: 60, provider: ref?.provider ?? 'hyperliquid', ref, note: 'nothing finer than 1m is served above the minute rail' };
-  }
+  const base = chooseBase(wanted, natives) ?? MIN_BASE_SEC;
 
-  const note = targetSec % base === 0 ? null : `${targetSec}s does not divide evenly by ${base}s, buckets may straddle`;
+  const note = wanted % base === 0 ? null : `${wanted}s does not divide evenly by ${base}s, buckets may straddle`;
   return { baseSec: base, provider: ref?.provider ?? 'hyperliquid', ref, note };
 }
 
@@ -95,14 +91,12 @@ export async function pageBackward(
 export type ProviderDeps = {
   catalog: Catalog;
   fetchImpl?: typeof fetch;
-  secondsBackfill?: SecondsBackfill;
   now?: () => number;
 };
 
 export function createProviders(deps: ProviderDeps) {
   const fetchImpl = deps.fetchImpl ?? fetch;
   const now = deps.now ?? (() => Date.now());
-  const seconds = deps.secondsBackfill ?? coinbaseSeconds({ fetchImpl, now });
 
   async function hyperliquidRange(coin: string, interval: string, startMs: number, endMs: number): Promise<Candle[]> {
     const res = await fetchImpl('https://api.hyperliquid.xyz/info', {
@@ -152,11 +146,6 @@ export function createProviders(deps: ProviderDeps) {
   /* The one function the store calls. Everything above is the routing behind it. */
   async function fetchWindow(product: string, baseSec: number, bars: number): Promise<Candle[]> {
     const nowSec = Math.floor(now() / 1000);
-
-    if (baseSec < 60) {
-      return seconds(product, baseSec, bars);
-    }
-
     const ref = deps.catalog.resolve(product);
 
     if (ref === null || ref.provider === 'hyperliquid') {

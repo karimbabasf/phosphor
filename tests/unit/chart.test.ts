@@ -33,9 +33,20 @@ function series(closes: number[], step = 60): Candle[] {
 
 test('an odd timeframe snaps to one the rails can serve', () => {
   assert.equal(snapTimeframe(47), 60);
-  assert.equal(snapTimeframe(3), 5);
+  assert.equal(snapTimeframe(3), 60, 'nothing under a minute exists any more, so it snaps up to the floor');
   assert.equal(snapTimeframe(90000), 86400);
   assert.equal(timeframeLabel(14400), '4h');
+});
+
+test('a sub-minute timeframe is refused, because no venue serves one', () => {
+  const chart = createChartStore('BTC-USD');
+  for (const tf of ['1s', '5s', '30s']) {
+    const out = chart.setView({ timeframe: tf }, 'agent');
+    assert.equal(out.ok, false, `${tf} should be refused`);
+    assert.match(String(out.error), /one minute floor/);
+  }
+  assert.equal(chart.setView({ granularitySec: 30 }, 'agent').ok, false);
+  assert.equal(chart.state().view.granularitySec, 60, 'and the view is left where it was');
 });
 
 test('pan is capped back and allowed a little past the newest bar', () => {

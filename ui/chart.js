@@ -46,7 +46,7 @@ var CHART = {
   rev: 0,
   view: { product: '', granularitySec: 60, barCount: 120, panOffset: 0, priceScale: { mode: 'auto' } },
   candles: [],
-  meta: { source: '', stale: false, built: '', collectedSec: 0, error: null },
+  meta: { source: '', stale: false, built: '', error: null },
   indicators: [],
   levels: [],
   marks: [],
@@ -125,7 +125,6 @@ function paneText(value) {
 function stampOf(tSec, granularity, withDate) {
   var d = new Date(tSec * 1000);
   if (withDate) return d.getDate() + ' ' + MONTHS[d.getMonth()];
-  if (granularity < 60) return pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
   if (granularity < 86400) return pad2(d.getHours()) + ':' + pad2(d.getMinutes());
   return d.getDate() + ' ' + MONTHS[d.getMonth()];
 }
@@ -524,14 +523,6 @@ function waitingState() {
     if (!CHART.view.product) return { head: 'CONNECTING', sub: 'waiting for the first chart payload', live: true };
     return { head: 'ACQUIRING ' + product + ' ' + tf, sub: 'waiting for the first candles', live: true };
   }
-  if (CHART.meta.built === 'trades') {
-    var want = CHART.view.granularitySec * Math.round(CHART.view.barCount);
-    return {
-      head: 'BUILDING ' + product + ' ' + tf,
-      sub: 'from live trades: ' + CHART.meta.collectedSec + 's of ' + want + 's',
-      live: true
-    };
-  }
   return {
     head: 'NO CANDLES ' + product + ' ' + tf,
     sub: (CHART.meta.source || 'the source') + ' returned nothing for this window',
@@ -655,7 +646,7 @@ function drawPriceGrid(ctx, L) {
    labels read 14:07 and 14:22 makes the reader do arithmetic to place anything. */
 function drawTimeGrid(ctx, L) {
   var granularity = CHART.view.granularitySec;
-  var step = TIME_STEPS[TIME_STEPS.length - 1];
+  var step = 0;
   for (var s = 0; s < TIME_STEPS.length; s++) {
     if (TIME_STEPS[s] < granularity) continue;
     if ((TIME_STEPS[s] / granularity) * L.slot >= GRID_TIME_GAP) {
@@ -663,6 +654,18 @@ function drawTimeGrid(ctx, L) {
       break;
     }
   }
+
+  /* Past the top of the ladder, or when even the widest step still packs the labels tighter
+     than they can be read, label every Nth bar instead of every bar on a clock boundary.
+     A weekly chart is the case that needs it: no round step above a week lands on a Monday
+     open, so the modulus below matches almost nothing, and the fallback of "the widest step"
+     matched EVERY bar and printed three hundred labels on top of each other. */
+  var everyN = 0;
+  if (step === 0 || (step / granularity) * L.slot < GRID_TIME_GAP) {
+    step = 0;
+    everyN = Math.max(1, Math.ceil(GRID_TIME_GAP / Math.max(0.01, L.slot)));
+  }
+
   var bottom = L.axisTop;
   ctx.lineWidth = 1 / DPR;
   ctx.strokeStyle = green(0.07);
@@ -672,7 +675,7 @@ function drawTimeGrid(ctx, L) {
   for (var i = L.start; i <= L.end; i++) {
     var candle = CHART.candles[i];
     if (!candle) continue;
-    if (candle.t % step !== 0) continue;
+    if (everyN > 0 ? i % everyN !== 0 : candle.t % step !== 0) continue;
     var x = L.xOf(i);
     if (x < 0 || x > L.plotWidth) continue;
     var day = Math.floor(candle.t / 86400);
@@ -1177,6 +1180,12 @@ function timeframeOf(sec) {
   for (var i = 0; i < CHART.timeframes.length; i++) {
     if (CHART.timeframes[i].sec === sec) return CHART.timeframes[i].label;
   }
+  // Anything off the button bar, which an agent can now ask for: 7m, 2h, 1w. Falling
+  // straight to seconds printed a weekly chart as "604800s".
+  if (sec % 604800 === 0) return sec / 604800 + 'w';
+  if (sec % 86400 === 0) return sec / 86400 + 'd';
+  if (sec % 3600 === 0) return sec / 3600 + 'h';
+  if (sec % 60 === 0) return sec / 60 + 'm';
   return sec + 's';
 }
 
@@ -1344,7 +1353,9 @@ function chartPushed(rev) {
 
 function candlesPushed() {
   if (CHART_DRAG) return;
-  var minGap = CHART.view.granularitySec < 60 ? 200 : 5000;
+  // The cache refreshes on its own schedule, so redrawing faster than that only redraws
+  // the same bars. See staleAfterSec in src/market/store.ts.
+  var minGap = 2000;
   if (Date.now() - CHART_FETCH.at < minGap) return;
   void refreshChart();
 }
@@ -1390,14 +1401,6 @@ function renderChartBar() {
   var meta = document.getElementById('chart-meta');
   if (!meta) return;
   var line = CHART.meta.source;
-  if (CHART.meta.built === 'trades') {
-    var want = CHART.view.granularitySec * Math.round(CHART.view.barCount);
-    if (CHART.meta.collectedSec < want) {
-      // Sub-minute history does not exist to be fetched, it accumulates. Say so, rather than
-      // letting a short chart read as a broken one.
-      line += '  building from live trades: ' + CHART.meta.collectedSec + 's of ' + want + 's';
-    }
-  }
   // Squeezed past the end of what the source will serve. The window is wider than the data,
   // which is a fact about the exchange and not a fault in the chart, so it is reported in the
   // same line as the source rather than left to look like bars that failed to draw.

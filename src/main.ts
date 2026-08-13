@@ -17,7 +17,7 @@ import { createRails, venueAllowlist } from './rails/index.ts';
 import { createLedger } from './ledger/index.ts';
 import { oneClickQuoter, syntheticQuoter, stubSigner, type TokensFile } from './intents.ts';
 import { coinbaseSource, krakenSource, cachedCandles } from './candles.ts';
-import { hyperliquidSource, hyperliquidLive } from './hyperliquid.ts';
+import { hyperliquidSource } from './hyperliquid.ts';
 import { createMarketData } from './market/index.ts';
 import { createProposalService } from './proposals.ts';
 import { createServer } from './server.ts';
@@ -74,9 +74,6 @@ const ledger = createLedger(cfg);
 // Coinbase stays as the fallback for the minute-and-above rail; Kraken behind it
 // is dropped here because cachedCandles takes one fallback and two is enough.
 const candles = cachedCandles(hyperliquidSource(), coinbaseSource());
-// Sub-minute candles have no REST source anywhere: they are bucketed from the
-// Hyperliquid trade stream in-process. See src/hyperliquid.ts.
-const live = hyperliquidLive();
 
 // The market data layer: the venue catalogue, the candle cache, and the folding that lets
 // any timeframe be asked for. It owns the render path now, which is what took the exchange
@@ -86,7 +83,6 @@ const live = hyperliquidLive();
 let marketUpdated: () => void = () => {};
 
 const market = createMarketData({
-  live,
   cachePath: path.join(cfg.dataDir, 'market-catalog.json'),
   onUpdate: () => marketUpdated(),
 });
@@ -186,7 +182,6 @@ const server = createServer({
   riskRows,
   candles,
   market,
-  live,
   proposals,
   getPolicy,
   setKill,
