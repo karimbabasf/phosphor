@@ -1,0 +1,590 @@
+/* ============================================================================
+   BASIC VIEW
+
+   The pro screen is a terminal. This one is deliberately not, and shares nothing
+   with it but the markup file and the approval code path. It is aimed at the
+   person who owns the money and does not trade: they open this to find out that
+   nothing bad happened, and close it again.
+
+   DNA
+     axes      warm / soft with one stark signal / vacant / round /
+               domestic-plain / near-still with one live tick / quiet
+     faces     Amulya (everything) + Sometype Mono (addresses only)
+     hue       warm device shell, one state-driven signal
+     signature THE CALM BAR: the band across the top of the window. Its thickness
+               and colour ARE the app's state. Calm is a hairline you stop
+               noticing; frozen is a slab you cannot miss. One thing to learn,
+               readable from across a room, no badge and no icon.
+
+   Light, not dark, and that is a decision rather than a default: a dark screen
+   full of numbers is the thing this reader said felt like somebody else's
+   software.
+   ============================================================================ */
+
+/* Self-hosted. The pro screen never loads these: it is monospace by design and
+   pulling a second family for a hidden screen would be 42KB nobody reads. */
+@font-face {
+  font-family: 'Amulya';
+  src: url('/fonts/amulya-var.woff2') format('woff2');
+  font-weight: 300 700;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Sometype Mono';
+  src: url('/fonts/sometype-mono.woff2') format('woff2');
+  font-weight: 400;
+  font-display: swap;
+}
+
+/* style.css pins html and body to the viewport height with overflow hidden, because the
+   pro screen is one non-scrolling deck. Basic is a document that scrolls, so both of them
+   have to be released, and html needs the paper colour too: at 100% height the body box
+   stops at the fold and the terminal's black ground paints the rest. */
+html:has(body[data-view='basic']) {
+  background: oklch(97.4% 0.006 76);
+  height: auto;
+  overflow: visible;
+}
+
+body[data-view='basic'] {
+  height: auto;
+  min-height: 100%;
+
+  /* ---- ground ---- */
+  --paper: oklch(97.4% 0.006 76);
+  --paper-sunk: oklch(94.4% 0.008 76);
+  --rule: oklch(89.5% 0.009 72);
+  --rule-firm: oklch(82% 0.011 72);
+
+  /* ---- ink ---- */
+  --ink: oklch(25% 0.013 62);
+  --ink-soft: oklch(47% 0.011 62);
+  --ink-faint: oklch(64% 0.009 66);
+
+  /* ---- the one signal, whose meaning is the app's state ---- */
+  --calm: oklch(56% 0.058 236);
+  --asking: oklch(67% 0.152 62);
+  --frozen: oklch(51% 0.187 27);
+  --rise: oklch(52% 0.094 152);
+
+  /* ---- geometry: round, two radii, nothing ad hoc ---- */
+  --r-control: 13px;
+  --r-surface: 19px;
+
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+
+  background: var(--paper);
+  color: var(--ink);
+  font-family: 'Amulya', ui-sans-serif, sans-serif;
+  /* wght is the only axis this file has: checked with fontTools, which reports
+     `wght 300-700` and nothing else. So setting wght alone resets no opsz here, and
+     the linter's warning about that is correct in general and wrong for this face.
+     letterlab reports the file as static, which is a woff2 decompression failure in
+     the tool rather than a fact about the font. */
+  font-variation-settings: 'wght' 380;
+  font-size: 17px;
+  line-height: 1.55;
+  letter-spacing: 0;
+  overflow-y: auto;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The page shell is sized for the terminal. Basic reads as a document. */
+body[data-view='basic'] #page {
+  display: block;
+  height: auto;
+  min-height: 100%;
+  overflow: visible;
+}
+
+.basic {
+  width: 100%;
+  max-width: 34rem;
+  margin: 0 auto;
+  /* Top padding clears the calm bar at its thickest, so a state change never
+     shifts a single line of text on the page. */
+  padding: 72px 24px 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 48px;
+}
+
+/* ---------- the calm bar ---------- */
+
+/* Fixed and full bleed: it belongs to the window, not to the column. Thickness
+   is the primary channel and colour is the second, so it still reads when the
+   colours do not (bright sun, cheap panel, colour blindness). */
+.basic-state {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--calm);
+  transition: height 220ms var(--ease-out), background-color 220ms var(--ease-out);
+  z-index: 10;
+}
+
+.basic-state[data-tone='working'] { height: 6px; background: var(--calm); }
+.basic-state[data-tone='asking'] { height: 10px; background: var(--asking); }
+.basic-state[data-tone='stopped'] { height: 6px; background: var(--ink-faint); }
+.basic-state[data-tone='frozen'],
+.basic-state[data-tone='broken'] { height: 14px; background: var(--frozen); }
+
+/* The one live thing on the screen, and only while a person is being asked to
+   decide something. Opacity only, so it cannot cost a frame. */
+.basic-state[data-tone='asking'] { animation: basic-breathe 2.4s var(--ease-out) infinite; }
+
+@keyframes basic-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+/* The hidden attribute is a UA `display: none`, and every author `display` here beats
+   it. An empty question box drew itself with two live buttons and no question before
+   this line existed, which on an approval screen is the worst possible way to be wrong. */
+.basic [hidden],
+.basic-state[hidden] { display: none !important; }
+
+/* ---------- wordmark ---------- */
+
+.basic-brand {
+  margin: 0 0 18px;
+  font-size: 12px;
+  font-variation-settings: 'wght' 545;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+/* ---------- the balance ---------- */
+
+.basic-money { margin: 0; }
+
+.basic-total {
+  margin: 0;
+  font-size: clamp(3.1rem, 8.5vw, 5rem);
+  font-variation-settings: 'wght' 585;
+  /* Off the round stops and off the convergence curve: tracking stops tightening
+     around 30px, so this is the flat end of the curve rather than a guess that
+     scales with size. */
+  letter-spacing: -0.022em;
+  line-height: 1.02;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+/* An unknown balance may not look like a figure. */
+.basic-total.unknown {
+  font-size: clamp(1.6rem, 4vw, 2.1rem);
+  font-variation-settings: 'wght' 425;
+  letter-spacing: -0.005em;
+  color: var(--ink-soft);
+}
+
+.basic-headline {
+  margin: 12px 0 0;
+  font-size: 1.3125rem;
+  font-variation-settings: 'wght' 425;
+  line-height: 1.4;
+  color: var(--ink-soft);
+  max-width: 30ch;
+}
+
+/* Only ever rendered when something is actually wrong, so it is allowed to be
+   the loudest thing under the balance. */
+.basic-places {
+  margin: 10px 0 0;
+  font-size: 1rem;
+  color: var(--ink-faint);
+}
+
+/* ---------- section label ---------- */
+
+.basic-label {
+  margin: 0 0 14px;
+  font-size: 12px;
+  font-variation-settings: 'wght' 545;
+  /* Capitals are drawn to sit beside lowercase and always want more room. */
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+/* ---------- what you own ---------- */
+
+.basic-holdings { margin: 0; }
+
+.basic-row {
+  display: grid;
+  /* The name takes the room, the two figures take what they need. Both are right
+     aligned, so the gap between them has to be wide enough that they do not read as
+     one number: on a dollar holding the quantity and the value are the SAME digits,
+     and at a 12px gap "1,204.00 $1,204.00" looked like a rendering fault. */
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  column-gap: 30px;
+  align-items: baseline;
+  padding: 13px 0;
+  border-top: 1px solid var(--rule);
+}
+
+.basic-row:last-child { border-bottom: 1px solid var(--rule); }
+
+.basic-row-name { color: var(--ink); }
+
+.basic-row-qty {
+  text-align: right;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.9375rem;
+}
+
+.basic-row-value {
+  text-align: right;
+  color: var(--ink);
+  font-variation-settings: 'wght' 505;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.basic-empty {
+  margin: 0;
+  padding: 13px 0;
+  border-top: 1px solid var(--rule);
+  color: var(--ink-faint);
+}
+
+/* ---------- the one price ---------- */
+
+/* Deliberately not a chart and deliberately not a card. A recessed band, so it
+   reads as a different KIND of fact from the holdings above it: those are yours,
+   this one is the world's. */
+.basic-price {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  padding: 20px 22px;
+  background: var(--paper-sunk);
+  border-radius: var(--r-surface);
+}
+
+.basic-price-name {
+  font-variation-settings: 'wght' 505;
+  color: var(--ink);
+}
+
+.basic-price-value {
+  font-size: 1.5rem;
+  font-variation-settings: 'wght' 545;
+  letter-spacing: -0.012em;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  margin-left: auto;
+}
+
+/* Sits under the price, not under the name: it is a fact about the figure. */
+.basic-price-change {
+  width: 100%;
+  text-align: right;
+  font-size: 0.9375rem;
+  color: var(--ink-soft);
+}
+
+.basic-price-change[data-direction='up'] { color: var(--rise); }
+.basic-price-change[data-direction='down'] { color: var(--frozen); }
+
+/* ---------- what happened ---------- */
+
+.basic-recent { margin: 0; }
+
+.basic-event {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  gap: 16px;
+  padding: 12px 0;
+  border-top: 1px solid var(--rule);
+}
+
+.basic-event:last-child { border-bottom: 1px solid var(--rule); }
+
+.basic-event-line {
+  color: var(--ink-soft);
+  font-size: 1rem;
+}
+
+.basic-event[data-outcome='blocked'] .basic-event-line { color: var(--ink); }
+
+.basic-event-time {
+  color: var(--ink-faint);
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ---------- the warning ---------- */
+
+/* The only place on this screen allowed a full colour field. It is the sentence
+   that says the app is not behaving the way the footer promises. */
+.basic-warning {
+  margin: 0;
+  padding: 18px 22px;
+  border-radius: var(--r-surface);
+  background: color-mix(in oklch, var(--frozen) 12%, var(--paper));
+  border: 1px solid color-mix(in oklch, var(--frozen) 34%, var(--paper));
+  color: var(--frozen);
+  font-variation-settings: 'wght' 465;
+  font-size: 1.0625rem;
+}
+
+/* ---------- the question ---------- */
+
+.basic-ask {
+  padding: 26px 24px 24px;
+  border-radius: var(--r-surface);
+  background: var(--paper-sunk);
+  /* Not a hairline plus a diffuse shadow. The tone step does the separating and
+     the border only firms the edge. */
+  border: 1px solid var(--rule-firm);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.basic-ask-headline {
+  margin: 0;
+  font-size: 1.375rem;
+  font-variation-settings: 'wght' 505;
+  line-height: 1.35;
+  letter-spacing: -0.008em;
+  color: var(--ink);
+}
+
+.basic-ask-after {
+  margin: 0;
+  color: var(--ink-soft);
+}
+
+.basic-facts {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  font-size: 1rem;
+  color: var(--ink-soft);
+}
+
+.basic-facts li { padding-left: 14px; text-indent: -14px; }
+.basic-facts li::before { content: '\00B7\00A0'; color: var(--ink-faint); }
+.basic-facts li.warn {
+  color: var(--frozen);
+  font-variation-settings: 'wght' 465;
+}
+.basic-facts li.warn::before { color: var(--frozen); }
+
+/* Where the money lands. Never truncated: a shortened address is a hidden fact
+   and this screen may not hide facts, however plain it is trying to be. */
+.basic-dests {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.basic-dest {
+  padding: 13px 15px;
+  border-radius: var(--r-control);
+  background: var(--paper);
+  border: 1px solid var(--rule);
+}
+
+.basic-dest.foreign,
+.basic-dest.quoter {
+  border-color: color-mix(in oklch, var(--frozen) 40%, var(--paper));
+  background: color-mix(in oklch, var(--frozen) 6%, var(--paper));
+}
+
+.basic-dest-label {
+  margin: 0 0 6px;
+  font-size: 0.9375rem;
+  color: var(--ink-soft);
+}
+
+.basic-dest.foreign .basic-dest-label,
+.basic-dest.quoter .basic-dest-label {
+  color: var(--frozen);
+  font-variation-settings: 'wght' 465;
+}
+
+/* The only monospace on the screen, because it is the only string a person
+   verifies character by character rather than reads. */
+.basic-dest-address {
+  margin: 0;
+  font-family: 'Sometype Mono', ui-monospace, monospace;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--ink-soft);
+  word-break: break-all;
+}
+
+/* ---------- controls ---------- */
+
+.basic-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+/* YES and NO carry EQUAL visual weight on purpose. Making the approving button
+   the heavier one is the standard pattern and it is wrong here: this screen
+   exists so that a person can decline, and a decline that looks like the
+   secondary action is a nudge dressed as a layout. */
+.basic-btn {
+  font: inherit;
+  font-size: 1.0625rem;
+  font-variation-settings: 'wght' 555;
+  letter-spacing: 0.01em;
+  padding: 15px 18px;
+  border-radius: var(--r-control);
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--rule-firm);
+  /* Layered, not flat: an inset top highlight and one tight key shadow. */
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 1px 2px rgba(41, 32, 24, 0.1);
+  cursor: pointer;
+  transition: transform 120ms var(--ease-out), box-shadow 120ms var(--ease-out),
+    background-color 120ms var(--ease-out);
+}
+
+@supports (text-box: trim-both cap alphabetic) {
+  /* Let the browser derive the optical centring from the face's own metrics.
+     A fixed nudge is wrong for some fonts: Amulya's own correction is negative,
+     so the usual "shift the label up" would push it further off. */
+  .basic-btn { text-box: trim-both cap alphabetic; }
+}
+
+.basic-btn:hover { background: color-mix(in oklch, var(--ink) 4%, var(--paper)); }
+
+.basic-btn:active {
+  transform: scale(0.97);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+
+.basic-btn:focus-visible {
+  outline: 2px solid var(--calm);
+  outline-offset: 2px;
+}
+
+.basic-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+  transform: none;
+}
+
+.basic-yes { border-color: color-mix(in oklch, var(--asking) 62%, var(--rule-firm)); }
+.basic-no { border-color: var(--rule-firm); }
+
+.basic-error {
+  margin: 0;
+  color: var(--frozen);
+  font-size: 1rem;
+}
+
+/* ---------- the promise, and the way out ---------- */
+
+.basic-footer {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 1rem;
+}
+
+.basic-stop {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding-top: 28px;
+  border-top: 1px solid var(--rule);
+}
+
+.basic-agent {
+  margin: 0;
+  color: var(--ink-faint);
+  font-size: 0.9375rem;
+}
+
+/* Sits last and far from YES, which is the one piece of the old screen's layout
+   worth keeping: the two most consequential buttons must never be adjacent. */
+.basic-kill {
+  color: var(--frozen);
+  border-color: color-mix(in oklch, var(--frozen) 34%, var(--paper));
+}
+
+.basic-kill[data-on='1'] {
+  color: var(--ink);
+  border-color: var(--rule-firm);
+}
+
+.basic-stop-confirm {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  font-size: 1rem;
+  color: var(--ink);
+}
+
+.basic-stop-confirm[hidden] { display: none; }
+
+/* ---------- waiting ---------- */
+
+/* The basic screen holds its own placeholders and dims them. It gets no blocks
+   and no word of its own: every sentence about money here is written by the
+   server, and "checking your balance" invented in the browser would be the one
+   sentence on the screen nothing tests. */
+body[data-view='basic'].waiting .basic-total,
+body[data-view='basic'].waiting .basic-headline {
+  color: var(--ink-faint);
+  animation: basic-dim 1.2s steps(1) infinite;
+}
+
+@keyframes basic-dim {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0.45; }
+}
+
+/* ---------- when a question is on screen ---------- */
+
+/* Everything that is not the question gets quieter, and the balance stops being
+   the biggest thing on the page. Nothing is hidden: a person mid-decision may
+   still want to see what they hold. */
+.basic[data-tone='asking'] { gap: 36px; }
+.basic[data-tone='asking'] .basic-total { font-size: clamp(2rem, 5vw, 2.6rem); }
+.basic[data-tone='asking'] .basic-headline { font-size: 1.0625rem; }
+
+/* ---------- reduced motion ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  body[data-view='basic'] * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* ---------- narrow ---------- */
+
+@media (max-width: 480px) {
+  .basic { padding: 64px 20px 56px; gap: 40px; }
+  .basic-row { grid-template-columns: 6fr 3fr 3fr; gap: 8px; }
+  .basic-row-qty { font-size: 0.875rem; }
+  .basic-actions { grid-template-columns: 1fr; }
+  /* The price drops to its own line here, so the change line follows it left rather
+     than staying pinned to an edge the figure no longer touches. */
+  .basic-price-value { margin-left: 0; width: 100%; }
+  .basic-price-change { text-align: left; }
+}

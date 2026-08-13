@@ -94,6 +94,20 @@ Spec: `docs/superpowers/specs/2026-08-12-phosphor-chart-v2.md`.
 - basic keeps red reserved for the safety gate: the warning line, a destination that is not the user's own wallet, and the stop confirmation. Nothing else
 - STOP EVERYTHING sits last in basic, visually separated from YES and NO, and takes two presses
 - basic must never state a balance it cannot back, shorten an address, or omit a destination the approval rests on
+- BASIC, NO TERMINAL VIBE. The basic screen shares no visual identity with pro: not the
+  monospace, not the green, not the black ground. Pro keeps all of it. Karim, 2026-08-12:
+  "no terminal vibe or anything".
+- BASIC, A PRICE TRACKER RATHER THAN A CHART. One coin, its price, and whether it is up or
+  down today. "just with a simple price tracker of a coin instead of the chart".
+- BASIC, THE WALLET SHOWS. What they own, listed by thing owned rather than by chain.
+  "wallet showing".
+- BASIC, A LOG OF HEADLINES. One short sentence per finished action and a clock time.
+  No developer message text, no tool calls. "super simpel log, just headlines I guess".
+- BASIC, NO EXTRA INFO. Anything the app says about itself while nothing is wrong comes off
+  the screen. "just super basic without any extra info".
+- BASIC MAY SCROLL, and the no-scrolling rule above is pro's alone. Compressing basic to fit
+  one screen is what produced the terminal density that was rejected.
+
 ## Goal behind the ask
 The owner sees the whole machine at once, with no scrolling: what the wallet holds, what governs
 it, and whether anything is waiting for a click. On testnet with the gate off he must also be
@@ -106,7 +120,8 @@ claims a human approved something when no human did. Desktop, 1440x900 and wider
 
 ## States that must work
 resting, pending, refusal, kill switch on, policy unreadable, agent connected, gate disabled,
-collapsed, basic resting, basic asking, basic frozen
+collapsed, basic resting, basic asking, basic frozen, basic resting (redesign),
+basic asking (redesign), basic gate disabled (redesign), basic empty wallet, basic at 390
 
 ## Added 2026-08-12: BASIC view (v0.3)
 
@@ -124,3 +139,30 @@ What basic is judged on:
 
 What basic must never do: state a balance it cannot back, shorten an address, or omit a
 destination the approval rests on.
+
+## Added 2026-08-12 (second pass): BASIC redesigned
+
+The first basic screen kept pro's monospace-green identity and was rejected for it. Karim,
+verbatim: "all I wanted was a super simple interface, no terminal vibe or anything, just with
+a simple price tracker of a coin instead of the chart, wallet showing, just super basic
+without any extra info. super simpel log, just headlines I guess".
+
+What that means, as requirements this page is judged against:
+- NO TERMINAL VIBE. Basic shares no visual identity with pro: not the monospace, not the green,
+  not the black ground. Pro keeps all of it. This is the whole point of the pass.
+- A PRICE TRACKER, NOT A CHART. One coin, its price, and whether it is up or down. The
+  candlestick chart is pro's answer to a question this reader did not ask.
+- THE WALLET SHOWS. What they own, by thing owned rather than by chain.
+- A LOG OF HEADLINES. One short sentence per finished action and nothing else. No developer
+  message text, no tool calls, no timestamps beyond a clock time.
+- NO EXTRA INFO. Anything the app says about itself while nothing is wrong comes off the screen.
+  "spread across 4 places, all normal" is the app talking about itself and is now silent unless
+  a chain actually failed.
+
+What basic still must never do, unchanged and not negotiable against "simple": state a balance
+it cannot back, shorten an address, or omit a destination the approval rests on. Simple means
+fewer words, never fewer facts about where the money goes. The approval question is therefore
+allowed to be the one dense thing on the page.
+
+Scrolling: basic MAY scroll. The no-scrolling rule at the top of this file is pro's, and it is
+what forced the first version to compress into a terminal in the first place.

@@ -331,6 +331,36 @@ export type BasicAsk = {
   facts: string[]; // short plain lines that may not be dropped
 };
 
+// One line of "what you own". Quantity and value are pre-formatted here for the same
+// reason every other sentence is: a number formatted in browser JavaScript is a claim
+// nothing tests. Pool positions collapse into the row for what they hold.
+export type BasicHolding = {
+  name: string; // plain: "US dollars (USDC)"
+  quantityLine: string; // "1,204.00"
+  valueLine: string; // "$1,204.00"
+  valueUsd: number; // for ordering and for tests to check the line against
+};
+
+// One coin, one price, one direction. Deliberately not a chart: this screen is read by
+// someone who wants to know whether the thing they hold is up or down today, and a
+// candlestick answers a question they did not ask.
+export type BasicPrice = {
+  name: string; // plain: "Ether"
+  symbol: string; // "ETH", kept because it is the verifiable half
+  priceLine: string; // "$3,184.22"
+  changeLine: string; // "up 1.4% today" | "down 0.8% today" | "level today"
+  direction: 'up' | 'down' | 'flat';
+};
+
+// A headline, not a log line. The sentence is composed from the proposal's own typed
+// draft, never from the audit event's developer-facing msg: that text is written for
+// whoever is debugging this and reads as noise to the person who owns the money.
+export type BasicRecent = {
+  headline: string; // "Moved $36.54 of your dollars into a Uniswap pool."
+  timeLine: string; // "2:14 pm"
+  outcome: 'done' | 'refused' | 'blocked';
+};
+
 export type BasicView = {
   tone: BasicTone;
   // null when unknown or stale. NEVER 0 as a stand-in: a zero and an unknown are
@@ -343,6 +373,11 @@ export type BasicView = {
   warning: string | null; // gate off, policy unreadable, kill switch, in plain words
   agentLine: string;
   footer: string;
+  // Empty while any chain is unread, for the same reason totalUsd goes null: a holdings
+  // list missing a chain looks exactly like a holdings list of someone who owns less.
+  holdings: BasicHolding[];
+  price: BasicPrice | null; // null whenever the price is unknown, never a stale figure
+  recent: BasicRecent[]; // newest first, capped; empty is a designed state, not a bug
 };
 
 // ---------- Audit ----------

@@ -786,7 +786,80 @@ function renderGate(s) {
 function applyViewMode(s) {
   // Server-driven only. The browser never decides which mode it is in, so a
   // stale or failed state read cannot silently simplify what a human sees.
-  $('page').dataset.view = s.view === 'basic' ? 'basic' : 'pro';
+  var mode = s.view === 'basic' ? 'basic' : 'pro';
+  $('page').dataset.view = mode;
+  // Also on body, because basic.css replaces the ground and the family, and both
+  // of those are set on body by style.css.
+  document.body.dataset.view = mode;
+}
+
+/* The holdings table. One row per thing owned; the server already merged the
+   chains together. Empty is a real state here, not a failure: a wallet with
+   nothing in it and a wallet nobody could read say different things, and the
+   server decides which by handing back an empty list or a null total. */
+function renderBasicHoldings(holdings, unknown) {
+  var section = $('basic-holdings');
+  var rows = $('basic-rows');
+  rows.textContent = '';
+
+  // Nothing to say while the total is unknown: a partial list of holdings looks
+  // exactly like the full holdings of someone who owns less.
+  if (unknown) {
+    section.hidden = true;
+    return;
+  }
+  section.hidden = false;
+
+  if (!holdings || holdings.length === 0) {
+    rows.appendChild(el('p', 'basic-empty', 'Nothing yet.'));
+    return;
+  }
+
+  for (var i = 0; i < holdings.length; i++) {
+    var h = holdings[i];
+    var row = el('div', 'basic-row');
+    row.appendChild(el('span', 'basic-row-name', h.name));
+    row.appendChild(el('span', 'basic-row-qty', h.quantityLine));
+    row.appendChild(el('span', 'basic-row-value', h.valueLine));
+    rows.appendChild(row);
+  }
+}
+
+function renderBasicPrice(price) {
+  var section = $('basic-price');
+  if (!price) {
+    // No price rather than the last one that worked. A stale figure and a current
+    // one look identical, and this reader has nothing to check it against.
+    section.hidden = true;
+    return;
+  }
+  section.hidden = false;
+  $('basic-price-name').textContent = price.name;
+  $('basic-price-value').textContent = price.priceLine;
+  var change = $('basic-price-change');
+  change.textContent = price.changeLine;
+  change.dataset.direction = price.direction;
+}
+
+function renderBasicRecent(recent) {
+  var section = $('basic-recent');
+  var list = $('basic-events');
+  list.textContent = '';
+
+  if (!recent || recent.length === 0) {
+    section.hidden = true;
+    return;
+  }
+  section.hidden = false;
+
+  for (var i = 0; i < recent.length; i++) {
+    var e = recent[i];
+    var row = el('div', 'basic-event');
+    row.dataset.outcome = e.outcome;
+    row.appendChild(el('span', 'basic-event-line', e.headline));
+    row.appendChild(el('span', 'basic-event-time', e.timeLine));
+    list.appendChild(row);
+  }
 }
 
 function basicDestNode(dest) {
@@ -843,10 +916,26 @@ function renderBasic(s) {
   // when the server refused to state one.
   total.classList.toggle('unknown', b.totalUsd === null);
 
-  $('basic-places').textContent = b.placesLine;
+  // The calm bar. Same tone the section carries, on an element that spans the
+  // window rather than the column.
+  $('basic-state').dataset.tone = b.tone;
+
+  // "spread across 4 places, all normal" is the app talking about itself while
+  // nothing is wrong, which is the noise this screen was rebuilt to remove. The
+  // line stays for the cases it was written for: a chain that would not answer,
+  // and a balance not yet recounted after a move.
+  var places = $('basic-places');
+  var worthSaying = b.totalUsd === null;
+  places.textContent = worthSaying ? b.placesLine : '';
+  places.hidden = !worthSaying;
+
   $('basic-headline').textContent = b.headline;
   $('basic-agent').textContent = b.agentLine;
   $('basic-footer').textContent = b.footer;
+
+  renderBasicHoldings(b.holdings, b.totalUsd === null);
+  renderBasicPrice(b.price);
+  renderBasicRecent(b.recent);
 
   var warning = $('basic-warning');
   warning.textContent = b.warning || '';

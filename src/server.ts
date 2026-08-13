@@ -32,6 +32,7 @@ import { fileURLToPath } from 'node:url';
 
 import type { AppConfig, Candle, ChainId, Policy, Proposal, ProposalService, RiskRow, ViewMode } from './types.ts';
 import { buildBasic } from './view/basic.ts';
+import type { PriceReading } from './view/basic.ts';
 import type { Audit } from './audit.ts';
 import type { Store } from './store.ts';
 import type { Ledger } from './ledger/index.ts';
@@ -65,10 +66,18 @@ const HEARTBEAT_MS = 15000; // SSE keepalive; doubles as a floor on state freshn
 const LOG_LIMIT_MAX = 2000;
 const CANDLE_LIMIT_MAX = 2000; // matches LIMITS.historyMax: the widest window the chart allows
 
+// The basic screen's price tracker. Hourly bars over a day: "today" for someone reading
+// a price is the last 24 hours, not the span since midnight in a timezone the exchange
+// does not share. Polled well below the rate any venue rate-limits.
+const PRICE_GRANULARITY_SEC = 3600;
+const PRICE_BARS = 24;
+const PRICE_POLL_MS = 30000;
+
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
+  '.woff2': 'font/woff2',
 };
 
 const CHAINS: readonly string[] = ['eth', 'base', 'arb', 'sol', 'near'];
@@ -202,6 +211,43 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   }, HEARTBEAT_MS);
   heartbeat.unref();
 
+  // ---------- the one price the basic screen tracks ----------
+  //
+  // buildState is synchronous and every caller depends on that, so the price is polled
+  // into a cache here rather than fetched inside the state build. A failed poll clears
+  // the cache instead of leaving the last good figure in place: a price with no
+  // timestamp beside it is indistinguishable from a current one, and the basic screen
+  // is read by someone who cannot tell. Same direction as every other refusal in
+  // src/view/basic.ts, which is to say less rather than something possibly untrue.
+  let priceReading: PriceReading = null;
+
+  async function pollPrice(): Promise<void> {
+    const product = chart.state().view.product;
+    try {
+      const load = await loadCandles(product, PRICE_GRANULARITY_SEC, PRICE_BARS);
+      const candles = load.candles ?? [];
+      const last = candles[candles.length - 1];
+      const first = candles[0];
+      if (last === undefined || first === undefined || !(first.o > 0)) {
+        priceReading = null;
+        return;
+      }
+      priceReading = {
+        product,
+        priceUsd: last.c,
+        changePct: ((last.c - first.o) / first.o) * 100,
+      };
+    } catch {
+      priceReading = null;
+    }
+  }
+
+  const priceTimer = setInterval(() => {
+    void pollPrice();
+  }, PRICE_POLL_MS);
+  priceTimer.unref();
+  void pollPrice();
+
   // ---------- responses ----------
 
   function sendJson(res: http.ServerResponse, status: number, payload: unknown): void {
@@ -239,7 +285,11 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       sendJson(res, 404, { error: 'not found' });
       return;
     }
-    res.writeHead(200, { 'content-type': type, 'content-length': body.length, 'cache-control': 'no-store' });
+    // The UI is served from disk on every request so an edit shows up on reload, but a
+    // font file is immutable content that would otherwise be refetched on every boot of
+    // the window and re-run the swap.
+    const cache = type === 'font/woff2' ? 'public, max-age=31536000, immutable' : 'no-store';
+    res.writeHead(200, { 'content-type': type, 'content-length': body.length, 'cache-control': cache });
     res.end(body);
   }
 
@@ -323,6 +373,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         agentsConnected: agentsConnected(),
         chainStatus: snapshot.chainStatus,
         selfAddresses: [...cfg.addresses.evm, ...cfg.addresses.solana, ...cfg.addresses.near],
+        price: priceReading,
       }),
     };
   }
@@ -1087,6 +1138,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     offStore();
     offAudit();
     clearInterval(heartbeat);
+    clearInterval(priceTimer);
     for (const client of sseClients) client.end();
     sseClients.clear();
   });
