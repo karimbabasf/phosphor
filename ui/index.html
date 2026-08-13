@@ -139,8 +139,18 @@
        when there is one. Every string in here is written by src/view/basic.ts and
        rendered verbatim: this file composes no sentence about money, for the same
        reason policy sentences are machine-rendered.
-       The STOP control sits last and far from YES on purpose. -->
+       The STOP control sits last and far from YES on purpose.
+
+       Two columns on a screen wide enough for them, cut along the reading order
+       rather than across it: everything that is YOURS goes down the left (the
+       balance, the question, what you own), and the record goes down the right
+       (what a coin costs, what happened, what the app promises, the way out). The
+       wrappers exist only to be columns and hold no ids, and under 1000px basic.css
+       dissolves them, so the markup order below is exactly what a phone reads top
+       to bottom with nothing reordered. -->
   <section id="basic" class="basic" data-tone="calm">
+
+    <div class="basic-col basic-col-yours">
 
     <div class="basic-money">
       <p class="basic-brand">PHOSPHOR</p>
@@ -175,6 +185,10 @@
       <div id="basic-rows"></div>
     </section>
 
+    </div>
+
+    <div class="basic-col basic-col-record">
+
     <!-- One coin, one price, one direction. The candlestick chart is the pro screen's
          answer to a question this reader did not ask. -->
     <section class="basic-price" id="basic-price" hidden>
@@ -198,6 +212,8 @@
         <button type="button" class="basic-btn basic-kill-yes" id="basic-kill-yes">YES, STOP</button>
         <button type="button" class="basic-btn basic-kill-cancel" id="basic-kill-cancel">Cancel</button>
       </p>
+    </div>
+
     </div>
 
   </section>

@@ -169,3 +169,34 @@ allowed to be the one dense thing on the page.
 
 Scrolling: basic MAY scroll. The no-scrolling rule at the top of this file is pro's, and it is
 what forced the first version to compress into a terminal in the first place.
+
+## Added 2026-08-12 (third pass): BASIC goes dark and stops scrolling
+
+Karim, verbatim: "inside phosphor basic mode, can you make it a dark color scheme please, and
+make it all fit on one screen like pro mode".
+
+Two lines above are reversed by this, and only these two:
+- **Dark, not light.** The second pass shipped warm paper because a dark screen full of numbers
+  was what read as somebody else's software. The ground is now a warm near-black at hue 68 with
+  the same ink ramp turned over. Every earlier line asking for a light ground no longer applies.
+- **Basic no longer scrolls.** "basic MAY scroll" and "compressing basic to fit one screen is
+  what produced the terminal density that was rejected" are both superseded. Basic is a
+  non-scrolling deck like pro: two columns, and a list that outgrows its box scrolls inside
+  itself. It falls back to the single scrolling column under 1000px wide or 640px tall.
+
+What did NOT change, and is what "like pro mode" does not mean:
+- NO TERMINAL VIBE still holds and is still the whole point of the second pass. Dark means a warm
+  brown-grey near-black, never pro's #0b0d0b with phosphor green on it. Basic keeps Amulya, the
+  round geometry, the calm bar, and one state-driven signal colour. It takes pro's LAYOUT rule,
+  not pro's identity.
+- Type stays large enough to read from normal sitting distance. Fitting one screen is done with
+  two columns and internal scrolling, never by shrinking the balance to a terminal figure.
+- Every contrast pair is measured against the new ground, not eyeballed: body ink 15.9:1,
+  secondary 9.1:1, the faint tier 5.5:1, and the red 5.6:1 on the ground and 4.9:1 on its own
+  washed field.
+- What basic must never do is unchanged: state a balance it cannot back, shorten an address, or
+  omit a destination the approval rests on. The left column scrolls as a column rather than the
+  question box scrolling inside itself, so YES and NO always sit below the facts they rest on.
+
+States to check on this pass: basic resting (dark), basic asking (dark), basic at 1440x900,
+basic at 390.

@@ -7,18 +7,26 @@
    nothing bad happened, and close it again.
 
    DNA
-     axes      warm / soft with one stark signal / vacant / round /
+     axes      warm / soft with one stark signal / vacant but bounded / round /
                domestic-plain / near-still with one live tick / quiet
      faces     Amulya (everything) + Sometype Mono (addresses only)
-     hue       warm device shell, one state-driven signal
+     hue       warm dark shell, one state-driven signal
      signature THE CALM BAR: the band across the top of the window. Its thickness
                and colour ARE the app's state. Calm is a hairline you stop
                noticing; frozen is a slab you cannot miss. One thing to learn,
                readable from across a room, no badge and no icon.
 
-   Light, not dark, and that is a decision rather than a default: a dark screen
-   full of numbers is the thing this reader said felt like somebody else's
-   software.
+   Dark, and warm rather than black (Karim, 2026-08-12: "make it a dark color
+   scheme"). The ground is a brown-grey near-black at hue 68, which is the same
+   warm family the light version used, turned over. It is deliberately NOT the pro
+   screen's #0b0d0b: that ground carries phosphor green and reads as a terminal,
+   which is the one thing this screen may never look like.
+
+   One screen, no page scroll (Karim, 2026-08-12: "make it all fit on one screen
+   like pro mode"). Two columns: what you have on the left, what has been happening
+   on the right. A list that outgrows its box scrolls inside itself, the way pro's
+   panels do. Under 1000px wide or 640px tall two columns of readable type do not
+   fit, and the screen goes back to being one scrolling document.
    ============================================================================ */
 
 /* Self-hosted. The pro screen never loads these: it is monospace by design and
@@ -37,36 +45,43 @@
   font-display: swap;
 }
 
-/* style.css pins html and body to the viewport height with overflow hidden, because the
-   pro screen is one non-scrolling deck. Basic is a document that scrolls, so both of them
-   have to be released, and html needs the paper colour too: at 100% height the body box
-   stops at the fold and the terminal's black ground paints the rest. */
-html:has(body[data-view='basic']) {
-  background: oklch(97.4% 0.006 76);
-  height: auto;
-  overflow: visible;
-}
+/* style.css pins html and body to the viewport with overflow hidden, because the pro
+   screen is one non-scrolling deck. Basic is that too now, so both pins stay and this
+   file only repaints the ground. The literal is the value of --ground below: custom
+   properties are declared on body, and html is above body. */
+html:has(body[data-view='basic']) { background: oklch(17.5% 0.008 68); }
 
 body[data-view='basic'] {
-  height: auto;
-  min-height: 100%;
+  height: 100%;
+  overflow: hidden;
 
-  /* ---- ground ---- */
-  --paper: oklch(97.4% 0.006 76);
-  --paper-sunk: oklch(94.4% 0.008 76);
-  --rule: oklch(89.5% 0.009 72);
-  --rule-firm: oklch(82% 0.011 72);
+  /* ---- ground ----
+     surface is LIGHTER than the ground, not darker. On paper a recessed band is
+     darker ink; on a near-black ground the same move goes to mud, so depth here is
+     built upward from the floor. */
+  --ground: oklch(17.5% 0.008 68);
+  --surface: oklch(22.5% 0.010 68);
+  --rule: oklch(30% 0.010 68);
+  --rule-firm: oklch(39% 0.012 68);
 
-  /* ---- ink ---- */
-  --ink: oklch(25% 0.013 62);
-  --ink-soft: oklch(47% 0.011 62);
-  --ink-faint: oklch(64% 0.009 66);
+  /* ---- ink ----
+     Measured against --ground and --surface before it was written down:
+     ink 15.9:1 and 14.4:1, ink-soft 9.1:1 and 8.2:1, ink-faint 5.5:1 and 5.0:1.
+     Grey-on-dark body copy that fails AA is the most common way a dark scheme is
+     wrong, and it is invisible to the person writing it on a good monitor. */
+  --ink: oklch(94% 0.007 82);
+  --ink-soft: oklch(77% 0.010 76);
+  --ink-faint: oklch(63.5% 0.011 72);
 
-  /* ---- the one signal, whose meaning is the app's state ---- */
-  --calm: oklch(56% 0.058 236);
-  --asking: oklch(67% 0.152 62);
-  --frozen: oklch(51% 0.187 27);
-  --rise: oklch(52% 0.094 152);
+  /* ---- the one signal, whose meaning is the app's state ----
+     Lifted and desaturated from their light-mode values: a dark ground needs a
+     lighter accent to carry the same weight, and the same hue at full chroma
+     vibrates against it. Red clears 4.5:1 on the ground AND on its own washed
+     field, which is where a warning colour usually quietly fails. */
+  --calm: oklch(72% 0.078 236);
+  --asking: oklch(80% 0.140 66);
+  --frozen: oklch(66% 0.180 25);
+  --rise: oklch(76% 0.130 155);
 
   /* ---- geometry: round, two radii, nothing ad hoc ---- */
   --r-control: 13px;
@@ -74,7 +89,7 @@ body[data-view='basic'] {
 
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
 
-  background: var(--paper);
+  background: var(--ground);
   color: var(--ink);
   font-family: 'Amulya', ui-sans-serif, sans-serif;
   /* wght is the only axis this file has: checked with fontTools, which reports
@@ -86,28 +101,74 @@ body[data-view='basic'] {
   font-size: 17px;
   line-height: 1.55;
   letter-spacing: 0;
-  overflow-y: auto;
   -webkit-font-smoothing: antialiased;
 }
 
-/* The page shell is sized for the terminal. Basic reads as a document. */
+/* The page shell is sized for the terminal's own padding. Basic sets its own. */
 body[data-view='basic'] #page {
   display: block;
-  height: auto;
-  min-height: 100%;
-  overflow: visible;
+  height: 100dvh;
+  max-width: none;
+  padding: 0;
+  overflow: hidden;
 }
 
+/* ---------- the deck ---------- */
+
+/* Two columns, 1.04 to 1 rather than a half and a half: the left one carries the
+   balance, the question and the wallet, so it gets the larger share, and an even
+   split would read as a template. Top padding clears the calm bar at its thickest,
+   so a state change never shifts a single line of text on the page.
+
+   The split follows the reading order rather than cutting across it: everything
+   that is YOURS goes down the left (what you have, what you are being asked), and
+   the record goes down the right (what a coin costs, what happened, what the app
+   promises, the way out). Read left then right and you have read the markup in
+   order, which is why the stacked fallback needs no reordering at all. */
 .basic {
-  width: 100%;
-  max-width: 34rem;
+  height: 100%;
+  max-width: 1480px;
   margin: 0 auto;
-  /* Top padding clears the calm bar at its thickest, so a state change never
-     shifts a single line of text on the page. */
-  padding: 72px 24px 64px;
+  padding: clamp(40px, 5.4vh, 68px) clamp(22px, 3vw, 48px) clamp(26px, 3.6vh, 44px);
+  display: grid;
+  grid-template-columns: minmax(0, 1.04fr) minmax(0, 1fr);
+  column-gap: clamp(34px, 5vw, 84px);
+}
+
+/* Each column is its own stack and its own scroll boundary. min-height: 0 is
+   load-bearing: without it a flex item refuses to shrink below its content and the
+   overflow lands on the page instead of inside the box. */
+.basic-col {
   display: flex;
   flex-direction: column;
-  gap: 48px;
+  gap: clamp(20px, 3.4vh, 44px);
+  min-height: 0;
+}
+
+/* Both columns can scroll, and neither normally does: the lists inside them shrink
+   and scroll internally first. The column scroll is the safety valve, and it only
+   opens when a question is so long that the wallet under it has already given up
+   all the room it has. It matters that the valve is on the COLUMN and not inside
+   the question box: YES and NO stay below the facts they rest on, and nothing on
+   this screen may put an approving button above the thing being approved. */
+.basic-col-yours,
+.basic-col-record { overflow-y: auto; }
+
+/* The two columns spend their spare height differently, because they are made of
+   different things. The left one is a heading and a list, so the list takes the
+   room and the spare height ends up under the last row. The right one is four
+   separate blocks, and stretching any one of them would open a hole in the middle
+   of the column: the log caps at four lines by design (src/view/basic.ts), so on a
+   tall screen there IS spare height and it belongs in the gaps between the blocks
+   rather than inside one of them. */
+.basic-col-record { justify-content: space-between; }
+
+/* Warm and thin. The terminal's ghost-green scrollbar belongs to the other screen. */
+.basic-col,
+#basic-rows,
+#basic-events {
+  scrollbar-width: thin;
+  scrollbar-color: var(--rule-firm) transparent;
 }
 
 /* ---------- the calm bar ---------- */
@@ -160,11 +221,17 @@ body[data-view='basic'] #page {
 
 /* ---------- the balance ---------- */
 
-.basic-money { margin: 0; }
+/* Never shrinks. The balance is what this screen is for, so anything else in the
+   column gives up room before it does. */
+.basic-money { margin: 0; flex: none; }
 
 .basic-total {
   margin: 0;
-  font-size: clamp(3.1rem, 8.5vw, 5rem);
+  /* Height is in the sum as well as width, because this screen now has to fit a
+     fixed viewport: a short laptop shrinks the balance instead of pushing the
+     holdings off the bottom. Lands near 68px at 1440x900, which is the size the
+     brief asks to be readable from normal sitting distance. */
+  font-size: clamp(2.5rem, 3.2vw + 2.4vh, 4.6rem);
   font-variation-settings: 'wght' 585;
   /* Off the round stops and off the convergence curve: tracking stops tightening
      around 30px, so this is the flat end of the curve rather than a guess that
@@ -185,7 +252,7 @@ body[data-view='basic'] #page {
 
 .basic-headline {
   margin: 12px 0 0;
-  font-size: 1.3125rem;
+  font-size: clamp(1.0625rem, 0.4vw + 1vh, 1.3125rem);
   font-variation-settings: 'wght' 425;
   line-height: 1.4;
   color: var(--ink-soft);
@@ -214,7 +281,25 @@ body[data-view='basic'] #page {
 
 /* ---------- what you own ---------- */
 
-.basic-holdings { margin: 0; }
+/* The heading stays put and the rows scroll under it. A wallet with twenty things
+   in it must not push the promise and the stop control off the screen, and a
+   heading that scrolls away leaves a column of figures nobody can name.
+
+   It takes the free height under the balance, and gives it back to a question when
+   one arrives, down to a floor of about two rows. Below that the column scrolls
+   instead: a wallet squeezed to a sliver is worse than a page that moves. */
+.basic-holdings {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 8rem;
+}
+
+#basic-rows {
+  overflow-y: auto;
+  min-height: 0;
+}
 
 .basic-row {
   display: grid;
@@ -257,8 +342,8 @@ body[data-view='basic'] #page {
 
 /* ---------- the one price ---------- */
 
-/* Deliberately not a chart and deliberately not a card. A recessed band, so it
-   reads as a different KIND of fact from the holdings above it: those are yours,
+/* Deliberately not a chart and deliberately not a card. A raised band, so it
+   reads as a different KIND of fact from the holdings opposite it: those are yours,
    this one is the world's. */
 .basic-price {
   display: flex;
@@ -266,8 +351,9 @@ body[data-view='basic'] #page {
   flex-wrap: wrap;
   gap: 6px 14px;
   padding: 20px 22px;
-  background: var(--paper-sunk);
+  background: var(--surface);
   border-radius: var(--r-surface);
+  flex: none;
 }
 
 .basic-price-name {
@@ -297,7 +383,23 @@ body[data-view='basic'] #page {
 
 /* ---------- what happened ---------- */
 
-.basic-recent { margin: 0; }
+/* Same shape as the wallet opposite it: fixed heading, scrolling body. It takes the
+   height between the price and the promise, and a hundred lines of log shrink it
+   rather than pushing STOP EVERYTHING off the bottom of the screen. */
+.basic-recent {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  /* Shrinks but never stretches: four lines of log are four lines of log, and a box
+     drawn taller than its content is how a hole gets into a column. */
+  flex: 0 1 auto;
+  min-height: 0;
+}
+
+#basic-events {
+  overflow-y: auto;
+  min-height: 0;
+}
 
 .basic-event {
   display: grid;
@@ -332,11 +434,12 @@ body[data-view='basic'] #page {
   margin: 0;
   padding: 18px 22px;
   border-radius: var(--r-surface);
-  background: color-mix(in oklch, var(--frozen) 12%, var(--paper));
-  border: 1px solid color-mix(in oklch, var(--frozen) 34%, var(--paper));
+  background: color-mix(in oklch, var(--frozen) 12%, var(--ground));
+  border: 1px solid color-mix(in oklch, var(--frozen) 34%, var(--ground));
   color: var(--frozen);
   font-variation-settings: 'wght' 465;
   font-size: 1.0625rem;
+  flex: none;
 }
 
 /* ---------- the question ---------- */
@@ -344,13 +447,17 @@ body[data-view='basic'] #page {
 .basic-ask {
   padding: 26px 24px 24px;
   border-radius: var(--r-surface);
-  background: var(--paper-sunk);
+  background: var(--surface);
   /* Not a hairline plus a diffuse shadow. The tone step does the separating and
      the border only firms the edge. */
   border: 1px solid var(--rule-firm);
   display: flex;
   flex-direction: column;
   gap: 14px;
+  /* Never shrinks. Everything else in this column may give up room to the question;
+     the question may not give up room to anything. */
+  flex: none;
+  max-width: 36rem;
 }
 
 .basic-ask-headline {
@@ -394,17 +501,19 @@ body[data-view='basic'] #page {
   gap: 12px;
 }
 
+/* Set back into the floor while the box around it is raised off it, which is the
+   only depth cue on this screen that survives the ground going dark. */
 .basic-dest {
   padding: 13px 15px;
   border-radius: var(--r-control);
-  background: var(--paper);
+  background: var(--ground);
   border: 1px solid var(--rule);
 }
 
 .basic-dest.foreign,
 .basic-dest.quoter {
-  border-color: color-mix(in oklch, var(--frozen) 40%, var(--paper));
-  background: color-mix(in oklch, var(--frozen) 6%, var(--paper));
+  border-color: color-mix(in oklch, var(--frozen) 40%, var(--ground));
+  background: color-mix(in oklch, var(--frozen) 6%, var(--ground));
 }
 
 .basic-dest-label {
@@ -450,11 +559,13 @@ body[data-view='basic'] #page {
   letter-spacing: 0.01em;
   padding: 15px 18px;
   border-radius: var(--r-control);
-  background: var(--paper);
+  background: var(--surface);
   color: var(--ink);
   border: 1px solid var(--rule-firm);
-  /* Layered, not flat: an inset top highlight and one tight key shadow. */
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 1px 2px rgba(41, 32, 24, 0.1);
+  /* Layered, not flat: an inset top highlight and one tight key shadow. The
+     highlight drops from 0.6 to 0.07 with the ground: a white line that read as a
+     lit edge on paper reads as a scratch on near-black. */
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 1px 2px rgba(0, 0, 0, 0.45);
   cursor: pointer;
   transition: transform 120ms var(--ease-out), box-shadow 120ms var(--ease-out),
     background-color 120ms var(--ease-out);
@@ -467,11 +578,11 @@ body[data-view='basic'] #page {
   .basic-btn { text-box: trim-both cap alphabetic; }
 }
 
-.basic-btn:hover { background: color-mix(in oklch, var(--ink) 4%, var(--paper)); }
+.basic-btn:hover { background: color-mix(in oklch, var(--ink) 9%, var(--surface)); }
 
 .basic-btn:active {
   transform: scale(0.97);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .basic-btn:focus-visible {
@@ -485,7 +596,7 @@ body[data-view='basic'] #page {
   transform: none;
 }
 
-.basic-yes { border-color: color-mix(in oklch, var(--asking) 62%, var(--rule-firm)); }
+.basic-yes { border-color: color-mix(in oklch, var(--asking) 52%, var(--rule-firm)); }
 .basic-no { border-color: var(--rule-firm); }
 
 .basic-error {
@@ -500,6 +611,7 @@ body[data-view='basic'] #page {
   margin: 0;
   color: var(--ink-soft);
   font-size: 1rem;
+  max-width: 46ch;
 }
 
 .basic-stop {
@@ -507,8 +619,9 @@ body[data-view='basic'] #page {
   flex-direction: column;
   align-items: flex-start;
   gap: 12px;
-  padding-top: 28px;
+  padding-top: clamp(16px, 2.4vh, 28px);
   border-top: 1px solid var(--rule);
+  flex: none;
 }
 
 .basic-agent {
@@ -521,7 +634,7 @@ body[data-view='basic'] #page {
    worth keeping: the two most consequential buttons must never be adjacent. */
 .basic-kill {
   color: var(--frozen);
-  border-color: color-mix(in oklch, var(--frozen) 34%, var(--paper));
+  border-color: color-mix(in oklch, var(--frozen) 34%, var(--surface));
 }
 
 .basic-kill[data-on='1'] {
@@ -562,9 +675,9 @@ body[data-view='basic'].waiting .basic-headline {
 
 /* Everything that is not the question gets quieter, and the balance stops being
    the biggest thing on the page. Nothing is hidden: a person mid-decision may
-   still want to see what they hold. */
-.basic[data-tone='asking'] { gap: 36px; }
-.basic[data-tone='asking'] .basic-total { font-size: clamp(2rem, 5vw, 2.6rem); }
+   still want to see what they hold, and the right column does not move at all. */
+.basic[data-tone='asking'] .basic-col { gap: clamp(16px, 2.4vh, 30px); }
+.basic[data-tone='asking'] .basic-total { font-size: clamp(1.9rem, 1.4vw + 1.4vh, 2.6rem); }
 .basic[data-tone='asking'] .basic-headline { font-size: 1.0625rem; }
 
 /* ---------- reduced motion ---------- */
@@ -574,6 +687,58 @@ body[data-view='basic'].waiting .basic-headline {
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* ---------- narrow, or short ---------- */
+
+/* Two columns of type this size need about 1000px, and the whole deck needs about
+   640px of height before the lists have nothing left to give. Past either edge the
+   screen goes back to what it was: one column, in reading order, that scrolls.
+   `display: contents` dissolves the two column wrappers so the sections become
+   direct children of the flex column again. Nothing is reordered: the columns were
+   cut along the reading order, so the markup order IS the phone order. */
+@media (max-width: 1000px), (max-height: 640px) {
+  html:has(body[data-view='basic']) { height: auto; overflow: visible; }
+
+  body[data-view='basic'] {
+    height: auto;
+    min-height: 100%;
+    overflow-y: auto;
+  }
+
+  body[data-view='basic'] #page {
+    height: auto;
+    min-height: 100%;
+    overflow: visible;
+  }
+
+  .basic {
+    display: flex;
+    flex-direction: column;
+    height: auto;
+    max-width: 34rem;
+    gap: 44px;
+    padding: 64px 22px 56px;
+  }
+
+  .basic-col { display: contents; }
+
+  /* The page carries the scroll again, so nothing scrolls inside itself and nothing
+     is pinned to a fold that no longer exists. */
+  .basic-col-yours,
+  .basic-col-record,
+  #basic-rows,
+  #basic-events {
+    overflow: visible;
+  }
+
+  .basic-holdings,
+  .basic-recent { min-height: 0; }
+
+  .basic-footer { margin-top: 0; }
+
+  .basic-total { font-size: clamp(3.1rem, 8.5vw, 5rem); }
+  .basic[data-tone='asking'] .basic-total { font-size: clamp(2rem, 5vw, 2.6rem); }
 }
 
 /* ---------- narrow ---------- */

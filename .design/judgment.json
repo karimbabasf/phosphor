@@ -1,10 +1,10 @@
 {
- "stamp": "bd28b6cc2e1b8fd9",
- "iteration": 12,
+ "stamp": "4104b87e5ac3e69b",
+ "iteration": 13,
  "firstFive": {
-  "what": "A terminal control panel for a crypto wallet held across five chains, with a red bar across the top saying every proposal is auto-approving because the approval gate is off on testnet",
-  "who": "The owner of the funds, supervising what a connected AI agent is allowed to do with them",
-  "action": "Read the wallet, or click APPROVE/REFUSE when the gate has something pending. With the gate disabled the honest answer is that there is no action, and the red bar is there to say so"
+  "what": "A dark two-column money screen: a $52,013.21 balance top left with the nine things it is made of listed under it, and down the right what one coin costs, the last four things that happened, a promise that nothing moves without a click, and a red STOP EVERYTHING",
+  "who": "The person who owns the money and does not trade, checking that nothing bad happened",
+  "action": "Read the balance and leave. When the assistant is asking, the question appears under the balance with YES, ALLOW IT and NO, and that becomes the one action"
  },
  "asked": [
   {
@@ -145,12 +145,12 @@
   {
    "requirement": "basic type is large: base around 21px, balance 64px at rest, buttons at least 56px tall, readable from normal sitting distance without leaning in",
    "met": true,
-   "ref": "base 21px, balance 64px at rest and 40px while asking, buttons min-height 60px, measured in the render"
+   "ref": "balance renders 68px at 1440x900 and 78px at 1920x1080 from clamp(2.5rem, 3.2vw + 2.4vh, 4.6rem); height is in the sum so a short laptop shrinks the figure instead of pushing the wallet off the deck. Base 17px, buttons 15px padding on a 1.0625rem label. Read at 1440x900, 1440x760 and 1920x1080"
   },
   {
    "requirement": "basic keeps the identity (phosphor green on near-black, same monospace, one hue) but drops the box-drawing frames and all panel chrome. Frames are pro's language, not basic's",
    "met": true,
-   "ref": "same --green/--bg/--mono tokens as pro; zero frame divs inside #basic; separation is hairline rules and whitespace"
+   "ref": "SUPERSEDED TWICE by the same person. The second pass killed the green and the monospace ('no terminal vibe or anything'); the third pass, 2026-08-12, turned the ground dark again but deliberately NOT pro's dark: --ground is oklch(17.5% 0.008 68), a warm brown-grey near-black, against pro's #0b0d0b carrying #33ff66. Zero green, zero monospace outside the destination address, zero box-drawing frames in #basic"
   },
   {
    "requirement": "basic is plain English throughout: no chain names as jargon, no contract address without a plain-words label, no bare symbols",
@@ -160,7 +160,7 @@
   {
    "requirement": "basic may scroll vertically. Single narrow column, max 640px, centred. The \"no page scrolling\" rule above applies to pro only",
    "met": true,
-   "ref": "single column, max-width 640px, margin 0 auto, overflow-y auto on .basic only; #page keeps its 100dvh no-scroll rule for pro"
+   "ref": "SUPERSEDED by Karim, 2026-08-12: 'make it all fit on one screen like pro mode'. Basic is now a non-scrolling deck: measured document.scrollHeight minus window.innerHeight is 0 at 1512x982, 1440x900, 1440x760, 1280x700 and 1024x680, with the wallet scrolling inside itself instead (216px to 386px of internal scroll at those sizes). The single scrolling column survives as the fallback under 1000px wide or 640px tall, verified at 1000x640 (1349px of page scroll) and shot at 390 and 768"
   },
   {
    "requirement": "basic keeps red reserved for the safety gate: the warning line, a destination that is not the user's own wallet, and the stop confirmation. Nothing else",
@@ -170,7 +170,7 @@
   {
    "requirement": "STOP EVERYTHING sits last in basic, visually separated from YES and NO, and takes two presses",
    "met": true,
-   "ref": "the stop block sits below a rule at the page foot and the confirm is hidden until pressed (display:flex was beating [hidden]; fixed and verified at 390 and 1440)"
+   "ref": "the stop block now sits at the foot of the RIGHT column while YES and NO are in the left one, so the two most consequential buttons are in different columns, and the confirm stays hidden until pressed. At 390 the columns dissolve and STOP is last in the scroll, below a rule. Read at 1440x900, 1024x680 and 390"
   },
   {
    "requirement": "basic must never state a balance it cannot back, shorten an address, or omit a destination the approval rests on",
@@ -256,7 +256,11 @@
   "basic gate disabled (redesign)": "Calm bar goes 14px red. Headline says the money is not protected, the warning box says the app moves money without asking. The two are no longer the same sentence, which is a bug this pass found and fixed",
   "basic empty wallet": "'Nothing yet.' under What you own, sections that have nothing to say stay hidden rather than drawing empty boxes",
   "basic at 390": "Buttons stack, addresses wrap inside their block, price value drops to its own line and its change line follows it left. No horizontal scroll",
-  "basic what happened populated": "Read at 1440 with four real refusals on it from the e2e run. This is the render that caught the zero-priced draft reading 'gathering money of your US dollars (USDT) onto Ethereum', which no test and no audit channel had flagged because every fixture priced above zero. Now 'gathering your US dollars (USDT) onto Ethereum' and covered by a test"
+  "basic what happened populated": "Read at 1440 with four real refusals on it from the e2e run. This is the render that caught the zero-priced draft reading 'gathering money of your US dollars (USDT) onto Ethereum', which no test and no audit channel had flagged because every fixture priced above zero. Now 'gathering your US dollars (USDT) onto Ethereum' and covered by a test",
+  "basic dark resting": "1440x900, 1440x760, 1512x982 and 1920x1080: warm near-black ground, balance top left over the nine wallet rows, price band top right over the log, promise and STOP at the foot of the right column. Page overflow measured at 0px on all four",
+  "basic dark asking": "1440x900 with a real pending consolidate proposal from /api/mcp: calm bar goes 10px amber and breathes, balance drops to 2.6rem, the question sits under it with four facts and the not-your-wallet destination in full, YES and NO both measured in view, and the wallet below it shrinks to its floor and scrolls",
+  "basic dark frozen": "1440x900 with the kill switch on: 14px red slab, 'You have frozen everything' in the red field at 4.9:1 on its own wash, the button reads LET THINGS MOVE AGAIN in neutral ink, everything still on one screen",
+  "basic dark squeezed": "1024x680 asking: the safety valve opens as designed. The left column scrolls rather than the question box, so YES and NO stay measured in view and the wallet heading is pushed below the fold instead of the buttons"
  },
  "driven": {
   "how": "real pointer input through playwright against the running app at 1440x900, reading CHART.view before and after each gesture, not synthetic events",
@@ -277,5 +281,10 @@
   "price tracker": "Polled server-side every 30s into a cache, because buildState is synchronous and every caller depends on that. A failed poll clears the cache rather than leaving the last good figure on screen"
  },
  "findings": [],
- "verdict": "pass"
+ "verdict": "pass",
+ "firstFivePro": {
+  "what": "A terminal control panel for a crypto wallet held across five chains, with a red bar across the top saying every proposal is auto-approving because the approval gate is off on testnet",
+  "who": "The owner of the funds, supervising what a connected AI agent is allowed to do with them",
+  "action": "Read the wallet, or click APPROVE/REFUSE when the gate has something pending. With the gate disabled the honest answer is that there is no action, and the red bar is there to say so"
+ }
 }
