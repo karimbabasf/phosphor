@@ -37,9 +37,23 @@ const EXPECTED_TOOLS = [
   'propose_lp_remove',
   'propose_policy_change',
   'propose_swap',
-  'set_view_mode',
   'wallet',
-];
+  // The chart surface, added by chart v2 (bfda00c). It registered ten tools without
+  // updating this list, so this check failed on main until now. Reads and view state
+  // only: none of them reaches the proposal path and none takes an address.
+  'chart_read',
+  'chart_measure',
+  'chart_scan',
+  'indicator_catalog',
+  'chart_set_view',
+  'chart_add_indicator',
+  'chart_remove_indicator',
+  'chart_level',
+  'chart_mark',
+  'chart_clear',
+  // Switches the window between basic and pro. Distinct from chart_set_view above.
+  'set_view_mode',
+].sort();
 
 const DEMO_TOTAL_STABLE_USD = 49878.15;
 const DEMO_ETH_USDT = 9200;
