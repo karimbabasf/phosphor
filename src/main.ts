@@ -18,6 +18,7 @@ import { createLedger } from './ledger/index.ts';
 import { oneClickQuoter, syntheticQuoter, stubSigner, type TokensFile } from './intents.ts';
 import { coinbaseSource, krakenSource, cachedCandles } from './candles.ts';
 import { hyperliquidSource, hyperliquidLive } from './hyperliquid.ts';
+import { createMarketData } from './market/index.ts';
 import { createProposalService } from './proposals.ts';
 import { createServer } from './server.ts';
 
@@ -76,6 +77,25 @@ const candles = cachedCandles(hyperliquidSource(), coinbaseSource());
 // Sub-minute candles have no REST source anywhere: they are bucketed from the
 // Hyperliquid trade stream in-process. See src/hyperliquid.ts.
 const live = hyperliquidLive();
+
+// The market data layer: the venue catalogue, the candle cache, and the folding that lets
+// any timeframe be asked for. It owns the render path now, which is what took the exchange
+// round trip out from in front of the first pixel. See src/market/index.ts.
+// Assigned once the server exists, because the server is what has the SSE clients to tell.
+// Until then a fill that lands simply has nobody to announce it to, which is correct.
+let marketUpdated: () => void = () => {};
+
+const market = createMarketData({
+  live,
+  cachePath: path.join(cfg.dataDir, 'market-catalog.json'),
+  onUpdate: () => marketUpdated(),
+});
+
+// The catalogue is what makes a symbol beyond the config list reachable. A cold start with
+// no network still runs: resolution falls back to the product id as typed.
+void market.refreshCatalog().catch((err: unknown) => {
+  console.error(`market catalogue unavailable, falling back to literal product ids: ${String(err)}`);
+});
 const quoter = cfg.mode === 'demo' ? syntheticQuoter() : oneClickQuoter(tokens);
 const signer = stubSigner();
 
@@ -165,6 +185,7 @@ const server = createServer({
   ledger,
   riskRows,
   candles,
+  market,
   live,
   proposals,
   getPolicy,
@@ -174,6 +195,10 @@ const server = createServer({
   getView,
   setView,
 });
+
+// A background fill that lands is worth exactly one SSE frame: the browser is holding the
+// previous candles and needs to be told there are better ones, not polled at.
+marketUpdated = () => server.broadcastCandles();
 
 server.listen(cfg.port, '127.0.0.1', () => {
   audit.append('app_start', `phosphor up on http://127.0.0.1:${cfg.port} (${cfg.mode} mode)`);

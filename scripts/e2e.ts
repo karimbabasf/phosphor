@@ -37,6 +37,10 @@ const EXPECTED_TOOLS = [
   'propose_lp_remove',
   'propose_policy_change',
   'propose_swap',
+  // Registered with the NEAR Intents rail and added to the injection suite's list, but
+  // missed here, so this check was one short. e2e is not part of npm test, which is why
+  // it stayed missed.
+  'propose_intents_deposit',
   'wallet',
   // The chart surface, added by chart v2 (bfda00c). It registered ten tools without
   // updating this list, so this check failed on main until now. Reads and view state
@@ -45,6 +49,9 @@ const EXPECTED_TOOLS = [
   'chart_measure',
   'chart_scan',
   'indicator_catalog',
+  // Finding a market to chart, added with the market data layer. Before it the chart
+  // could only open the handful of products named in config.json.
+  'market_search',
   'chart_set_view',
   'chart_add_indicator',
   'chart_remove_indicator',

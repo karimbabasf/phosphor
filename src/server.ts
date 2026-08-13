@@ -39,6 +39,7 @@ import type { Audit } from './audit.ts';
 import type { Store } from './store.ts';
 import type { Ledger } from './ledger/index.ts';
 import type { CandleService } from './candles.ts';
+import type { MarketData } from './market/index.ts';
 import type { LiveCandles } from './hyperliquid.ts';
 import { classify } from './composition.ts';
 import { buildWallet } from './wallet.ts';
@@ -67,6 +68,7 @@ const STATE_DEBOUNCE_MS = 120;
 const HEARTBEAT_MS = 15000; // SSE keepalive; doubles as a floor on state freshness
 const LOG_LIMIT_MAX = 2000;
 const CANDLE_LIMIT_MAX = 2000; // matches LIMITS.historyMax: the widest window the chart allows
+const CANDLE_PUSH_MS = 1000; // ceiling on how often a trade may ask the browser to redraw
 
 // The basic screen's price tracker. Hourly bars over a day: "today" for someone reading
 // a price is the last 24 hours, not the span since midnight in a timezone the exchange
@@ -107,6 +109,7 @@ const READ_TOOLS: readonly string[] = [
   'chart_measure',
   'chart_scan',
   'indicator_catalog',
+  'market_search',
 ];
 // Chart writes. They move no money, so they never reach the proposal path and never wait on
 // an approval. They are still audited like every other op: an agent that can change what the
@@ -128,6 +131,7 @@ export type ServerDeps = {
   ledger: Ledger;
   riskRows: RiskRow[];
   candles: CandleService;
+  market: MarketData;
   live: LiveCandles;
   proposals: ProposalService;
   getPolicy: () => Policy | null;
@@ -142,7 +146,7 @@ export type ServerDeps = {
 
 // http.Server plus an explicit push so the wiring layer can signal the UI after
 // a ledger refresh, which no store or audit subscription would otherwise catch.
-export type PhosphorServer = http.Server & { broadcastState(): void };
+export type PhosphorServer = http.Server & { broadcastState(): void; broadcastCandles(): void };
 
 type JsonBody = Record<string, unknown>;
 type BodyResult = { ok: true; value: JsonBody } | { ok: false; error: string };
@@ -177,7 +181,7 @@ function tokenMatches(supplied: unknown, expected: string): boolean {
 }
 
 export function createServer(deps: ServerDeps): PhosphorServer {
-  const { cfg, audit, store, ledger, riskRows, candles, live, proposals } = deps;
+  const { cfg, audit, store, ledger, riskRows, candles, market, live, proposals } = deps;
   const { getPolicy, setKill, agentSeen, agentsConnected, getView, setView } = deps;
 
   const token = crypto.randomBytes(24).toString('hex');
@@ -215,11 +219,25 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     for (const client of sseClients) sseSend(client, { type: 'log', event });
   });
 
-  // Trades push the chart instead of the chart polling for them. The live layer
-  // already coalesces to ~10/s, so a busy coin cannot flood the SSE channel.
-  live.onUpdate(() => {
-    for (const client of sseClients) sseSend(client, { type: 'candles' });
-  });
+  // Trades push the chart instead of the chart polling for them, but the push has to be
+  // rationed. Measured on a running app 2026-08-13: this fired about 1.4 times a second,
+  // and each one made every browser refetch the whole chart payload, which at the time
+  // meant a fresh Hyperliquid round trip apiece. That is roughly ninety exchange calls a
+  // minute to move one bar, and it is the reason the chart felt late.
+  //
+  // A trailing throttle caps it at one frame a second. Nothing is lost: the newest bar is
+  // still the newest bar, and a person cannot see the difference between 1Hz and 1.4Hz on
+  // a candle that takes a minute to close.
+  let candleFrame: NodeJS.Timeout | null = null;
+  function broadcastCandles(): void {
+    if (candleFrame !== null) return;
+    candleFrame = setTimeout(() => {
+      candleFrame = null;
+      for (const client of sseClients) sseSend(client, { type: 'candles' });
+    }, CANDLE_PUSH_MS);
+    candleFrame.unref();
+  }
+  live.onUpdate(() => broadcastCandles());
 
   const heartbeat = setInterval(() => {
     for (const client of sseClients) sseSend(client, { type: 'state' });
@@ -418,38 +436,39 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     built: string;
     collectedSec: number;
     fetchedAt: string;
+    // True while the window behind this read is still being filled, so the chart can say
+    // "filling" rather than showing a short series as though it were the whole story.
+    filling: boolean;
+    note: string | null;
   };
 
-  // One loader behind every candle surface: the legacy /api/candles route, the chart payload
-  // the browser renders, and every agent read. Two loaders would let the number the agent
-  // reads drift from the pixel the human sees.
-  async function loadCandles(product: string, granularitySec: number, limit: number): Promise<CandleLoad> {
-    // Keep the trade stream pointed at whatever the chart is showing. Cheap and
-    // idempotent, and it means the sub-minute book is already warm on a switch.
-    live.watch(product);
-
-    // Under a minute there is no exchange candle to fetch: Hyperliquid's interval
-    // enum starts at 1m and rejects anything smaller with a 422. Those candles are
-    // built here from the trade stream, so they are live-only and start empty.
-    if (granularitySec < 60) {
-      return {
-        candles: live.seconds(product, granularitySec, limit),
-        source: 'hyperliquid live trades',
-        stale: !live.connected(),
-        built: 'trades',
-        collectedSec: live.collectedSec(product),
-        fetchedAt: new Date().toISOString(),
-      };
-    }
-    const result = await candles.get(product, granularitySec, limit);
+  // One loader behind every candle surface, in two flavours that differ only in who waits.
+  //
+  // The render path must never wait. Before this, GET /api/chart awaited a Hyperliquid
+  // round trip before the browser could draw, and the trade stream asked it to do that
+  // about 1.4 times a second. Measured on the running app 2026-08-13: four sequential
+  // chart reads did not finish inside four minutes. Now a render reads memory and any
+  // refill happens behind it, announced over SSE when it lands.
+  //
+  // An agent still waits, because an empty array is a worse answer than a slow one when
+  // something is about to reason over it.
+  function readCandles(product: string, granularitySec: number, limit: number): CandleLoad {
+    const held = market.read(product, granularitySec, limit);
     return {
-      candles: result.candles,
-      source: result.source,
-      stale: result.stale,
-      built: 'candles',
-      collectedSec: 0,
-      fetchedAt: result.fetchedAt,
+      candles: held.candles,
+      source: held.source,
+      stale: held.stale,
+      built: held.baseSec < 60 ? 'trades' : 'candles',
+      collectedSec: held.coverageSec,
+      fetchedAt: new Date(Date.now() - held.ageSec * 1000).toISOString(),
+      filling: held.filling,
+      note: held.note,
     };
+  }
+
+  async function loadCandles(product: string, granularitySec: number, limit: number): Promise<CandleLoad> {
+    await market.warm(product, granularitySec, limit);
+    return readCandles(product, granularitySec, limit);
   }
 
   async function sendCandles(url: URL, res: http.ServerResponse): Promise<void> {
@@ -495,23 +514,12 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   // Everything the renderer needs in one round trip: the view, the candles, and every
   // indicator series already computed. The browser draws plots generically and never has to
   // know what an RSI is, which is what keeps the two sides from disagreeing.
-  async function chartPayload(): Promise<unknown> {
+  function chartPayload(): unknown {
     const state = chart.state();
-    let load: CandleLoad;
-    let error: string | null = null;
-    try {
-      load = await loadCandles(state.view.product, state.view.granularitySec, chart.historyNeeded());
-    } catch (err) {
-      error = errText(err);
-      load = {
-        candles: [],
-        source: 'unavailable',
-        stale: true,
-        built: '',
-        collectedSec: 0,
-        fetchedAt: new Date().toISOString(),
-      };
-    }
+    // Memory only, and it cannot throw: an outage shows the last good candles marked stale
+    // rather than an empty chart. This is the render path, so nothing here may await.
+    const load = readCandles(state.view.product, state.view.granularitySec, chart.historyNeeded());
+    const error: string | null = null;
     const computed = computeIndicators(state, load.candles);
     return {
       rev: state.rev,
@@ -524,6 +532,8 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         built: load.built,
         collectedSec: load.collectedSec,
         fetchedAt: load.fetchedAt,
+        filling: load.filling,
+        note: load.note,
         error,
       },
       indicators: computed.map(({ indicator, result }) => ({
@@ -750,6 +760,23 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       sendJson(res, 200, await chartRead());
       return;
     }
+    // What can be charted, so an agent can find a market before trying to open it rather
+    // than guessing at a product id and reading an error.
+    if (tool === 'market_search') {
+      const query = typeof args.query === 'string' ? args.query : '';
+      const limit = intParam(args.limit, 10, 50);
+      const exact = query === '' ? null : market.resolve(query);
+      sendJson(res, 200, {
+        query,
+        // The one it would open, when the query is unambiguous.
+        match: exact,
+        candidates: market.search(query, limit),
+        catalogLoadedAt: market.catalogLoadedAt(),
+        note: 'Any of these can be charted on any timeframe from 1s to 1w.',
+      });
+      return;
+    }
+
     if (tool === 'indicator_catalog') {
       sendJson(res, 200, {
         indicators: indicatorCatalog(),
@@ -828,7 +855,24 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     const args = asRecord(body.args);
 
     let outcome: { ok: boolean; notes: string[]; error?: string; id?: string; label?: string };
-    if (tool === 'chart_set_view') outcome = chart.setView(args, 'agent');
+    if (tool === 'chart_set_view') {
+      // Resolve what was asked for into what a venue lists, before the view records it.
+      // Without this the view stores the raw string, so "bitcoin" charts correctly and
+      // then labels itself BITCOIN, and an agent reading the view back gets a product id
+      // no venue would recognise.
+      const asked = typeof args.product === 'string' ? args.product.trim() : '';
+      if (asked !== '') {
+        const ref = market.resolve(asked);
+        if (ref === null) {
+          const near = market.search(asked, 5).map((m) => m.product);
+          const hint = near.length > 0 ? ` did you mean: ${near.join(', ')}` : '';
+          sendJson(res, 400, { error: `no market listed for "${asked}".${hint}` });
+          return;
+        }
+        args.product = ref.product;
+      }
+      outcome = chart.setView(args, 'agent');
+    }
     else if (tool === 'chart_add_indicator') outcome = chart.addIndicator(args, 'agent');
     else if (tool === 'chart_remove_indicator') outcome = chart.removeIndicator(String(args.id ?? args.type ?? ''));
     else if (tool === 'chart_level') outcome = chart.setLevel(args, 'agent');
@@ -1140,7 +1184,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       if (req.method === 'GET' || req.method === 'HEAD') {
         if (route === '/api/state') return sendJson(res, 200, buildState());
         if (route === '/api/candles') return await sendCandles(url, res);
-        if (route === '/api/chart') return sendJson(res, 200, await chartPayload());
+        if (route === '/api/chart') return sendJson(res, 200, chartPayload());
         if (route === '/api/log') {
           return sendJson(res, 200, audit.tail(intParam(url.searchParams.get('limit'), 200, LOG_LIMIT_MAX)));
         }
@@ -1197,5 +1241,5 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   };
   base.listen = localOnlyListen as unknown as typeof base.listen;
 
-  return Object.assign(base, { broadcastState });
+  return Object.assign(base, { broadcastState, broadcastCandles });
 }
