@@ -274,6 +274,11 @@ test('the tool surface cannot express an exfiltration target', async () => {
       'chart_level',
       'chart_mark',
       'chart_clear',
+      // Changes what the human sees, moves no money. It is on this list because a tool
+      // that can reshape the approval surface belongs in the injection suite even
+      // though it cannot name an address. Note it is NOT chart_set_view above: that
+      // one drives the chart's render state, this one switches basic against pro.
+      'set_view_mode',
     ].sort(),
   );
 

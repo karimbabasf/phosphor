@@ -62,7 +62,7 @@ async function sendHello(): Promise<void> {
   }
 }
 
-const server = new McpServer({ name: 'phosphor', version: '0.2.0' });
+const server = new McpServer({ name: 'phosphor', version: '0.3.0' });
 
 function registerRead(name: string, description: string, shape: Record<string, z.ZodTypeAny>): void {
   server.registerTool(name, { description, inputSchema: shape }, async (args) =>
@@ -85,8 +85,15 @@ function registerPropose(
 
 const CHAIN = z.enum(['eth', 'base', 'arb', 'sol', 'near']);
 
+// This sentence used to read "Execution only ever happens after a human approves in the
+// app window". That is false below the click threshold, where the policy engine decides
+// and the proposal executes immediately with decidedBy 'policy' (verified 2026-08-12: a
+// $60.64 lp_add). One shared constant put the same false claim on all six propose tools.
+//
+// A tool description is the whole interface an agent reasons from before it acts, so a
+// description that overstates the safety net is a defect in the safety net.
 const CANNOT_APPROVE =
-  'Returns a proposal id and simulation result. Execution only ever happens after a human approves in the app window; this tool cannot approve.';
+  'Returns a proposal id and simulation result. This tool cannot approve, refuse or execute anything. Whether a human is asked depends on the policy: proposals above the click threshold wait for a human click in the app window, and proposals below it are decided by the policy engine and may execute immediately.';
 
 registerRead(
   'balances',
@@ -272,6 +279,19 @@ registerPropose(
     positionId: z.string(),
     liquidityPct: z.number(), // 0..1 of the position
   },
+);
+
+// Neither a read nor a propose: it mutates, but it moves no money and gets no policy
+// verdict. What it does change is what a HUMAN sees before they decide, which is why
+// the description says so plainly rather than calling itself cosmetic.
+server.registerTool(
+  'set_view_mode',
+  {
+    description:
+      'Switches the app window between the detailed operator view (pro) and a simplified plain-English view written for someone non-technical (basic). This changes what the human sees before they approve anything, so it is refused while any proposal is waiting for a decision, and every switch is written to the audit log. It cannot approve, refuse or execute anything, and it moves no money.',
+    inputSchema: { mode: z.enum(['basic', 'pro']) },
+  },
+  async (args) => proxy({ op: 'set_view_mode', mode: args.mode }),
 );
 
 const transport = new StdioServerTransport();

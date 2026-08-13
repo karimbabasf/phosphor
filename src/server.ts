@@ -30,7 +30,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { AppConfig, Candle, ChainId, Policy, Proposal, ProposalService, RiskRow } from './types.ts';
+import type { AppConfig, Candle, ChainId, Policy, Proposal, ProposalService, RiskRow, ViewMode } from './types.ts';
+import { buildBasic } from './view/basic.ts';
 import type { Audit } from './audit.ts';
 import type { Store } from './store.ts';
 import type { Ledger } from './ledger/index.ts';
@@ -111,6 +112,8 @@ export type ServerDeps = {
   setKill: (on: boolean) => void;
   agentSeen: () => void;
   agentsConnected: () => number;
+  getView: () => ViewMode;
+  setView: (mode: ViewMode) => void;
 };
 
 // http.Server plus an explicit push so the wiring layer can signal the UI after
@@ -151,7 +154,7 @@ function tokenMatches(supplied: unknown, expected: string): boolean {
 
 export function createServer(deps: ServerDeps): PhosphorServer {
   const { cfg, audit, store, ledger, riskRows, candles, live, proposals } = deps;
-  const { getPolicy, setKill, agentSeen, agentsConnected } = deps;
+  const { getPolicy, setKill, agentSeen, agentsConnected, getView, setView } = deps;
 
   const token = crypto.randomBytes(24).toString('hex');
   audit.append('app_start', 'approval surface armed: browser approval token minted for this boot');
@@ -291,20 +294,36 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     const snapshot = ledger.snapshot();
     const composition = classify(snapshot, riskRows);
     const policy = getPolicy();
+    const wallet = buildWallet(snapshot, ledger.positions());
+    const list = proposals.list();
     return {
       ledger: snapshot,
       // wallet is what the UI renders; composition stays because the policy engine
       // reads byIssuer and freezableShare out of it.
-      wallet: buildWallet(snapshot, ledger.positions()),
+      wallet,
       composition,
       policy,
       gate: { required: gateRequired(cfg), banner: gateBanner(cfg) },
       network: cfg.network,
       sentences: sentencesOf(policy),
-      proposals: proposals.list(),
+      proposals: list,
       mode: cfg.mode,
       agents: { connected: agentsConnected() },
       candleProducts: cfg.candleProducts,
+      view: getView(),
+      // Computed in BOTH modes, deliberately. A view model that only exists in the mode
+      // that renders it is a view model nothing exercises while the app sits in its
+      // default state, which is where a regression would hide longest.
+      basic: buildBasic({
+        wallet,
+        proposals: list,
+        policyReadable: policy !== null,
+        killSwitch: policy?.killSwitch ?? false,
+        gateRequired: gateRequired(cfg),
+        agentsConnected: agentsConnected(),
+        chainStatus: snapshot.chainStatus,
+        selfAddresses: [...cfg.addresses.evm, ...cfg.addresses.solana, ...cfg.addresses.near],
+      }),
     };
   }
 
@@ -934,6 +953,47 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     }
   }
 
+  // The one piece of app state an agent writes directly, and the only agent-reachable
+  // thing that changes what a HUMAN sees. It moves no money and gets no policy verdict,
+  // so it is neither a read nor a propose.
+  //
+  // WHAT THE REFUSAL BELOW BUYS, EXACTLY. It stops the surface changing under a decision
+  // someone is in the middle of making: no moving the YES button while they read.
+  // It does NOT stop an agent choosing which surface a decision happens on, because
+  // nothing prevents calling this first and proposing after, and a proposal under the
+  // click threshold never becomes 'pending' at all (it goes straight to executed with
+  // decidedBy 'policy'). That ordering is inherent to agent-only switching, which is why
+  // the real control is that both modes render the same facts, asserted in
+  // tests/unit/basic-view.test.ts, not this refusal.
+  function handleSetViewMode(body: JsonBody, res: http.ServerResponse): void {
+    const mode = String(body.mode ?? '');
+    if (mode !== 'basic' && mode !== 'pro') {
+      sendJson(res, 400, { error: `mode must be basic or pro, got: ${mode || '(missing)'}` });
+      return;
+    }
+    const pending = proposals.list().filter((p) => p.status === 'pending');
+    if (pending.length > 0) {
+      audit.append(
+        'view_refused',
+        `agent asked for the ${mode} view while ${pending.length} proposal(s) await a human decision: refused`,
+        { mode, pending: pending.map((p) => p.id) },
+      );
+      sendJson(res, 409, {
+        error: 'the view cannot change while a proposal is waiting for a human decision',
+        pending: pending.map((p) => p.id),
+      });
+      return;
+    }
+    const previous = getView();
+    setView(mode as ViewMode);
+    audit.append('view_changed', `agent switched the app window from ${previous} to ${mode}`, {
+      from: previous,
+      to: mode,
+    });
+    broadcastState();
+    sendJson(res, 200, { ok: true, view: mode });
+  }
+
   async function handleMcp(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const parsed = await readBody(req);
     if (!parsed.ok) {
@@ -948,11 +1008,15 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         ? `read ${String(body.tool ?? '?')}`
         : op === 'propose'
           ? `propose ${String(body.kind ?? '?')}`
+          // 'view' is the chart's render state. 'set_view_mode' is which of the two
+          // screens the window shows. Two different things, deliberately named apart.
           : op === 'view'
             ? `chart ${String(body.tool ?? '?')}`
-            : op === 'hello'
-              ? `hello from ${String(body.client ?? 'unknown client')}`
-              : `unknown op ${op}`;
+            : op === 'set_view_mode'
+              ? `set_view_mode ${String(body.mode ?? '?')}`
+              : op === 'hello'
+                ? `hello from ${String(body.client ?? 'unknown client')}`
+                : `unknown op ${op}`;
     // Contract: every op is audit-logged before dispatch, arguments included verbatim.
     audit.append('tool_call', `agent: ${label}`, body);
 
@@ -974,7 +1038,11 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       await handleView(body, res);
       return;
     }
-    sendJson(res, 400, { error: `unknown op: ${op}. known ops: hello, read, propose, view` });
+    if (op === 'set_view_mode') {
+      handleSetViewMode(body, res);
+      return;
+    }
+    sendJson(res, 400, { error: `unknown op: ${op}. known ops: hello, read, propose, view, set_view_mode` });
   }
 
   // ---------- dispatch ----------

@@ -65,6 +65,8 @@ Two agents can connect at once. Both may read. Proposals queue, and each is appr
 | `src/candles.ts` | The candle service: caching, staleness marking, one interface over the source. |
 | `src/audit.ts` | Append-only JSONL. One line per event, never rewritten by the app. |
 | `src/store.ts` | Proposal persistence with subscribe/notify, re-created from disk on boot. |
+| `src/view/mode.ts` | Reads and writes the persisted view mode (`state/view.json`). Every failure path returns `pro`, because pro shows more and a corrupt file must never be why a human sees less. |
+| `src/view/basic.ts` | Pure `buildBasic()`. Every word on the basic screen is written here and nowhere else, so the two modes can be asserted to agree rather than assumed to. Refuses to state a balance it cannot back. |
 | `ui/` | One page, no framework, no build step. |
 
 `wallet.ts` and `composition.ts` look like duplicates and are not. The wallet answers "what do I

@@ -6,7 +6,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { Policy, RiskRow } from './types.ts';
+import type { Policy, RiskRow, ViewMode } from './types.ts';
+import { readViewMode, writeViewMode } from './view/mode.ts';
 import { loadConfig } from './config.ts';
 import { createAudit } from './audit.ts';
 import { createStore } from './store.ts';
@@ -109,6 +110,18 @@ function getPolicy(): Policy | null {
   return loadPolicy(cfg.dataDir);
 }
 
+// Held in memory and mirrored to disk, so a restart does not silently change what the
+// human is looking at. Read once on boot rather than per request: the file is the
+// durable copy, this is the live one.
+let viewMode: ViewMode = readViewMode(cfg.dataDir);
+function getView(): ViewMode {
+  return viewMode;
+}
+function setView(mode: ViewMode): void {
+  viewMode = mode;
+  writeViewMode(cfg.dataDir, mode);
+}
+
 function setKill(on: boolean): void {
   const p = getPolicy();
   if (p === null) {
@@ -133,6 +146,8 @@ const server = createServer({
   setKill,
   agentSeen,
   agentsConnected,
+  getView,
+  setView,
 });
 
 server.listen(cfg.port, '127.0.0.1', () => {

@@ -1,6 +1,6 @@
 {
-  "stamp": "5067088d99be48b9",
-  "iteration": 6,
+  "stamp": "60a85907bc14c8bc",
+  "iteration": 8,
   "firstFive": {
     "what": "A terminal control panel for a crypto wallet held across five chains, with a red bar across the top saying every proposal is auto-approving because the approval gate is off on testnet",
     "who": "The owner of the funds, supervising what a connected AI agent is allowed to do with them",
@@ -45,7 +45,7 @@
     {
       "requirement": "Policy and log are clearly collapsible. The control lives in the frame title in the box-drawing register, `[-]` expanded and `[+]` collapsed, and clicking the frame title toggles. Collapsed state persists per panel in localStorage. A collapsed panel releases its flex space to its siblings. The approval gate never collapses",
       "met": true,
-      "ref": "the frame titles are buttons whose text layoutFrames() draws: expanded ends '─────── [-] ─┐', collapsed becomes '├─ POLICY' ... '─────── [+] ─┤', tees instead of corners because there is no body below. Clicking toggles, aria-expanded follows, localStorage carries phosphor.collapse.policy and .log, and after a reload both panels came back collapsed. Space is genuinely released: with four pending proposals the gate body grew 414px to 560px when the log collapsed and all four became visible at once. .panel-gate carries no data-collapse and its frame title is a DIV, so the gate has no control to click"
+      "ref": "the frame titles are buttons whose text layoutFrames() draws: expanded ends '\u2500\u2500\u2500\u2500\u2500\u2500\u2500 [-] \u2500\u2510', collapsed becomes '\u251c\u2500 POLICY' ... '\u2500\u2500\u2500\u2500\u2500\u2500\u2500 [+] \u2500\u2524', tees instead of corners because there is no body below. Clicking toggles, aria-expanded follows, localStorage carries phosphor.collapse.policy and .log, and after a reload both panels came back collapsed. Space is genuinely released: with four pending proposals the gate body grew 414px to 560px when the log collapsed and all four became visible at once. .panel-gate carries no data-collapse and its frame title is a DIV, so the gate has no control to click"
     },
     {
       "requirement": "While the approval gate is disabled, a permanent unmissable line in the gate's own red (#ff3b30): GATE DISABLED - TESTNET - EVERY PROPOSAL AUTO-APPROVES",
@@ -131,6 +131,51 @@
       "requirement": "Terminal-dense character grid, not app-airy",
       "met": true,
       "ref": "13px mono at 1.35 line height unchanged. The wallet's 18 rows, the donut and the totals line all sit in one 46vh panel, and the deleted cost region went to the wallet rather than to whitespace"
+    },
+    {
+      "requirement": "v0.3: the page has two modes, switchable ONLY by the connected agent through the set_view_mode MCP tool. data-view on #page selects which renders. pro is everything above, unchanged",
+      "met": true,
+      "ref": "data-view on #page, set only from state.view in applyViewMode(); set_view_mode registered in src/mcp.ts, dispatched in handleMcp beside the chart's separate 'view' op; pro markup and CSS untouched"
+    },
+    {
+      "requirement": "Karim 2026-08-12: \"basic has to be super super simple, like as if it is made for a senior to be able to look at this and understand what exactly this is\". One balance, one question, two buttons, nothing else competing",
+      "met": true,
+      "ref": "one balance, one question, two buttons and nothing else. Verified in the 1440 and 390 renders: no table, no chart, no donut, no policy list, no log"
+    },
+    {
+      "requirement": "basic type is large: base around 21px, balance 64px at rest, buttons at least 56px tall, readable from normal sitting distance without leaning in",
+      "met": true,
+      "ref": "base 21px, balance 64px at rest and 40px while asking, buttons min-height 60px, measured in the render"
+    },
+    {
+      "requirement": "basic keeps the identity (phosphor green on near-black, same monospace, one hue) but drops the box-drawing frames and all panel chrome. Frames are pro's language, not basic's",
+      "met": true,
+      "ref": "same --green/--bg/--mono tokens as pro; zero frame divs inside #basic; separation is hairline rules and whitespace"
+    },
+    {
+      "requirement": "basic is plain English throughout: no chain names as jargon, no contract address without a plain-words label, no bare symbols",
+      "met": true,
+      "ref": "PLAIN_SYMBOL and PLAIN_CHAIN maps in src/view/basic.ts; every destination carries a plain-words label above the address; no bare symbol renders alone"
+    },
+    {
+      "requirement": "basic may scroll vertically. Single narrow column, max 640px, centred. The \"no page scrolling\" rule above applies to pro only",
+      "met": true,
+      "ref": "single column, max-width 640px, margin 0 auto, overflow-y auto on .basic only; #page keeps its 100dvh no-scroll rule for pro"
+    },
+    {
+      "requirement": "basic keeps red reserved for the safety gate: the warning line, a destination that is not the user's own wallet, and the stop confirmation. Nothing else",
+      "met": true,
+      "ref": "red appears on exactly three things in basic: the warning line, a not-your-wallet destination with its fact, and the stop confirmation"
+    },
+    {
+      "requirement": "STOP EVERYTHING sits last in basic, visually separated from YES and NO, and takes two presses",
+      "met": true,
+      "ref": "the stop block sits below a rule at the page foot and the confirm is hidden until pressed (display:flex was beating [hidden]; fixed and verified at 390 and 1440)"
+    },
+    {
+      "requirement": "basic must never state a balance it cannot back, shorten an address, or omit a destination the approval rests on",
+      "met": true,
+      "ref": "totalUsd goes null with 'still checking' on a stale chain and 'checking your new balance' when fetchedAt predates the newest execution; addresses render in full; destinations cover counterparty plus every simulation deposit address"
     }
   ],
   "goal": {
@@ -147,13 +192,17 @@
     "policy unreadable": "stubbed policy null: the red POLICY FILE UNREADABLE banner shows, status reads UNREADABLE, the policy panel shows the refusal line, and the wallet still renders all 18 rows",
     "agent connected": "stubbed agents.connected 2: status bar agent field reads '2 connected' at full brightness rather than the faint 'none'",
     "gate disabled": "live on this build: gate.required false and the banner bar renders inverted red at the top, gate frame title red, gate body explains the auto-approve",
-    "collapsed": "both panels collapsed to '├─ POLICY ─ [+] ─┤' lines, bodies and bottom frames hidden, state survived a reload, and the gate took the released room",
+    "collapsed": "both panels collapsed to '\u251c\u2500 POLICY \u2500 [+] \u2500\u2524' lines, bodies and bottom frames hidden, state survived a reload, and the gate took the released room",
     "chart empty": "candles [] renders 'no candle data' plus the reason from meta.error, and the layout is not built at all rather than being built against an empty range",
     "chart with panes": "five indicators driven in over MCP: two overlays on price, three panes under it, price pane still tallest at 1440 and at 390",
     "chart out of room": "the same five at 768, where the stacked box is fixed: the three panes are dropped and named on screen in candle red, and geometry.dropped reports them to the agent so a read never claims something is on screen when it is not",
-    "chart panned back": "panOffset above zero puts 'panned back N' and a '» live' control in the chart bar; clicking it returns to the newest bar",
+    "chart panned back": "panOffset above zero puts 'panned back N' and a '\u00bb live' control in the chart bar; clicking it returns to the newest bar",
     "chart stale": "the stale marker is written first in the chart bar, ahead of the source name, because that line truncates from the right and a warning must never be the part that is cut",
-    "chart level off screen": "a level drawn at price 0 while BTC is at 63,400 no longer flattens every candle into a hairline: levels are excluded from the automatic fit and an off-range one is pinned to the edge it went off with an arrow and its price. Found by looking at the render, not by the audit"
+    "chart level off screen": "a level drawn at price 0 while BTC is at 63,400 no longer flattens every candle into a hairline: levels are excluded from the automatic fit and an off-range one is pinned to the edge it went off with an arrow and its price. Found by looking at the render, not by the audit",
+    "basic resting": "driven and shot at 1440: balance, 'Your money is safe. Nothing is connected to it right now.', footer, STOP EVERYTHING alone at the foot, no ask block. Headline and agent line no longer repeat one sentence",
+    "basic asking": "driven and shot at 390/768/1440: ask block with headline, after-line, four facts, the destination in full, YES and NO. Both buttons above the fold at 1440x900 after the balance shrinks while asking",
+    "basic frozen": "driven and shot at 1440: red warning box, red 'Everything is frozen. Nothing can move.', agreeing footer, the button reads LET THINGS MOVE AGAIN, and placesLine drops 'all normal'",
+    "pro after the basic-view merge": "driven and shot at 1440 (.design/state-pro): the full chart v2 deck renders unchanged beside the wallet, policy and log, status bar reads v0.3, and the log carries the view_changed lines. The data-view CSS hides the deck only in basic"
   },
   "driven": {
     "how": "real pointer input through playwright against the running app at 1440x900, reading CHART.view before and after each gesture, not synthetic events",

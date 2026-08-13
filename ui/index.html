@@ -8,11 +8,14 @@
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-<main id="page">
+<!-- data-view is set by the server's state payload, never by the browser. The two
+     screens both live in this page: swapping an attribute keeps one SSE stream, one
+     session token and one approval code path, so the gate cannot drift between them. -->
+<main id="page" data-view="pro">
 
   <!-- 1. STATUS -->
   <header class="statusbar" id="statusbar">
-    <h1 class="ident">PHOSPHOR v0.2</h1>
+    <h1 class="ident">PHOSPHOR v0.3</h1>
     <span class="bar">&#9474;</span>
     <span class="field"><span class="k">held</span> <span class="v hi" id="stat-total">--</span> <span class="faint" id="stat-positions"></span></span>
     <span class="bar">&#9474;</span>
@@ -127,6 +130,54 @@
     </div>
 
   </div>
+
+  <!-- BASIC. One balance, one question, two buttons. Every string in here is written
+       by src/view/basic.ts and rendered verbatim: this file composes no sentence about
+       money, for the same reason policy sentences are machine-rendered.
+       The STOP control sits last and far from YES on purpose. -->
+  <section id="basic" class="basic" data-tone="calm">
+
+    <p class="basic-brand">PHOSPHOR</p>
+
+    <div class="basic-money">
+      <p class="basic-total" id="basic-total">--</p>
+      <p class="basic-places" id="basic-places"></p>
+    </div>
+
+    <p class="basic-warning" id="basic-warning" role="alert" hidden></p>
+
+    <p class="basic-headline" id="basic-headline">--</p>
+
+    <div class="basic-ask" id="basic-ask" hidden>
+      <p class="basic-ask-headline" id="basic-ask-headline"></p>
+      <p class="basic-ask-after" id="basic-ask-after"></p>
+
+      <ul class="basic-facts" id="basic-facts"></ul>
+
+      <!-- Where the money actually lands. Never truncated, never omitted: F2 shipped a
+           correct amount beside a solver-chosen address described as "your wallet". -->
+      <div class="basic-dests" id="basic-dests"></div>
+
+      <div class="basic-actions">
+        <button type="button" class="basic-btn basic-yes" id="basic-yes">YES, ALLOW IT</button>
+        <button type="button" class="basic-btn basic-no" id="basic-no">NO</button>
+      </div>
+      <p class="basic-error" id="basic-error" hidden></p>
+    </div>
+
+    <p class="basic-footer" id="basic-footer"></p>
+
+    <div class="basic-stop">
+      <p class="basic-agent" id="basic-agent"></p>
+      <button type="button" class="basic-btn basic-kill" id="basic-kill">STOP EVERYTHING</button>
+      <p class="basic-stop-confirm" id="basic-stop-confirm" hidden>
+        <span id="basic-stop-question">Are you sure?</span>
+        <button type="button" class="basic-btn basic-kill-yes" id="basic-kill-yes">YES, STOP</button>
+        <button type="button" class="basic-btn basic-kill-cancel" id="basic-kill-cancel">Cancel</button>
+      </p>
+    </div>
+
+  </section>
 
 </main>
 <!-- chart.js first: it only defines. app.js boots and calls chartBoot(). -->

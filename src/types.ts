@@ -11,6 +11,16 @@ export type Mode = 'demo' | 'live';
 // 'arb-sepolia' where a wallet should read ARB. One config field moves the whole app.
 export type Network = 'testnet' | 'mainnet';
 
+// Which of the two screens the app window is showing. 'pro' is the operator deck;
+// 'basic' is the plain-English screen written for someone non-technical.
+//
+// Persisted, because basic exists for a person who owns the money and is not
+// technical: an app restart that dumped them back into pro would be an escape hatch
+// Karim deliberately declined when he asked for agent-only switching. Every failure
+// to read the stored value falls back to 'pro', because pro shows more and a corrupt
+// file must never silently simplify what a human sees.
+export type ViewMode = 'basic' | 'pro';
+
 // ---------- Ledger ----------
 
 export type Holding = {
@@ -287,6 +297,54 @@ export type Proposal = {
   result?: { ok: boolean; detail: string };
 };
 
+// ---------- Basic view ----------
+// The whole basic screen as data. Built by src/view/basic.ts from the same state the
+// pro deck renders, so the two can be asserted to agree rather than assumed to.
+//
+// The rule this type exists to enforce: basic may render fewer WORDS, never fewer
+// FACTS about where the money goes. Amount is the field least likely to be wrong.
+// Destination is the one with a track record here (see F2: the amount was correct and
+// the funds went to a solver-chosen address while the screen said "your wallet").
+
+// Drives the one big sentence and the colour treatment. The browser maps it to a
+// class, so a tone nobody styled cannot silently render as unstyled text.
+export type BasicTone = 'calm' | 'asking' | 'working' | 'stopped' | 'frozen' | 'broken';
+
+// Where the funds actually land. 'quoter' means the venue minted the address rather
+// than the app choosing it, which is inherent to intent bridging and is exactly what
+// F2 hid. A quoter-chosen address may never be labelled as the user's own wallet.
+export type BasicDestination = {
+  label: string; // plain words: "an address the swap service chose, not your wallet"
+  address: string; // rendered in full, never truncated
+  chosenBy: 'app' | 'quoter';
+};
+
+export type BasicAsk = {
+  proposalId: string;
+  kind: WriteDraft['kind'];
+  headline: string; // "It wants to change $105.00 of your dollars into Ether."
+  afterLine: string; // "You would have $2,236.08 in dollars afterwards."
+  amountUsd: number; // MUST equal draft.amountUsd, the number evaluateRail governed on
+  symbols: string[]; // every token symbol the draft names
+  chains: string[]; // every chain the draft names
+  destinations: BasicDestination[]; // draft.counterparty plus every simulation deposit address
+  facts: string[]; // short plain lines that may not be dropped
+};
+
+export type BasicView = {
+  tone: BasicTone;
+  // null when unknown or stale. NEVER 0 as a stand-in: a zero and an unknown are
+  // indistinguishable on screen, and basic is aimed at someone who cannot tell.
+  totalUsd: number | null;
+  totalLine: string; // "$2,341.08" | "still checking" | "checking your new balance"
+  placesLine: string;
+  headline: string;
+  ask: BasicAsk | null;
+  warning: string | null; // gate off, policy unreadable, kill switch, in plain words
+  agentLine: string;
+  footer: string;
+};
+
 // ---------- Audit ----------
 
 export type LogEvent = {
@@ -305,6 +363,10 @@ export type LogEvent = {
     | 'kill_switch'
     | 'policy_changed'
     | 'chain_stale'
+    // A view change is a thing an agent did to what a human sees, so the transcript
+    // says so. 'view_refused' is the switch declined because a proposal was pending.
+    | 'view_changed'
+    | 'view_refused'
     | 'error';
   msg: string; // one human-readable line
   data?: unknown;

@@ -111,6 +111,47 @@ Note that the committed `config.json` template ships with `network: testnet` and
 `approvalGate: false`, because it is a testing template. Anyone pointing this at real money changes
 `network` to `mainnet`, at which point the flag stops being read at all.
 
+## The agent can change what the human sees (v0.3)
+
+`set_view_mode` switches the app window between the detailed operator view (`pro`) and a plain
+English view written for a non-technical reader (`basic`). Only the connected agent can call it.
+There is no keyboard shortcut, no button and no URL that lets the human switch back. That is a
+deliberate product decision, not an oversight.
+
+State it plainly, because it is a new capability pointed at the human rather than at the money:
+**the agent chooses which surface an approval decision happens on.**
+
+What limits it:
+
+- **The switch is refused while any proposal is `pending`** (HTTP 409, audited as `view_refused`).
+  The surface cannot change under a decision someone is in the middle of making.
+- **Both modes render the same facts.** `basic` may use fewer words; it may not show fewer facts
+  about where the money goes. `tests/unit/basic-view.test.ts` asserts that the basic ask carries
+  the draft's `amountUsd`, every token symbol, every chain, `draft.counterparty`, and every
+  `simulation.depositAddresses` entry, each labelled with who chose it, and that no address is
+  ever truncated.
+- **Every switch is in the audit log** as `view_changed`, with the mode it came from.
+- **It cannot approve, refuse, or execute.** The injection suite still asserts the whole tool-name
+  set, and `basic` calls the same `decide()` path the pro gate uses, so the two screens cannot
+  drift on what a click does.
+
+What is NOT claimed, because the overstated version is the one people quote later:
+
+- The 409 does **not** stop an agent choosing the surface. Nothing prevents calling
+  `set_view_mode` first, while nothing is pending, and proposing afterwards.
+- The 409 never fires at all on the sub-threshold path: a proposal under `humanClickAboveUsd`
+  goes straight to `executed` with `decidedBy: 'policy'` and is never `pending`.
+
+Agent-chosen ordering is inherent to agent-only switching. That is why the field-equality rule
+above is the real control and the 409 is only a convenience: whichever surface the agent picked,
+the human has to be looking at the same facts.
+
+One thing `basic` deliberately refuses to do: state a balance it cannot back. `totalUsd` goes
+null, and the screen says "still checking" or "checking your new balance", whenever a chain read
+failed or the newest `chainStatus.fetchedAt` predates the most recent executed proposal. The
+ledger cache serves pre-trade balances after a write while still reporting `stale: []`, and
+`basic` is aimed at a reader with nothing to cross-check against.
+
 ## Fail closed
 
 Every ambiguous state resolves toward moving nothing.

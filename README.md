@@ -97,7 +97,11 @@ Chart tools move a view, never funds.
 | `chart_mark` | A labelled moment on the time axis |
 | `chart_clear` | Clears indicators, levels, marks, everything the agent drew, or all of it |
 
-There is no `approve`, no `refuse`, no `kill`, no `dismiss` and no `execute` tool. There is also no
+| Display tool | Does |
+|---|---|
+| `set_view_mode` | Switches the window between the operator view (`pro`) and a plain-English view for a non-technical reader (`basic`). Moves no money. Refused while a proposal is waiting for a human decision, and every switch is audited. Not to be confused with `chart_set_view`, which drives the chart's render state inside pro |
+
+There is no `approve`, no `refuse`, no `kill`, no `dismiss` and no `execute` tool. `set_view_mode` changes what a human sees and nothing about what may move; `docs/security-model.md` says exactly what that does and does not buy. There is also no
 argument anywhere in the surface that names a recipient or destination, so an agent that has been
 talked into sending money to an attacker has no field in which to say where. Both properties are
 asserted by tests, not just by convention.
