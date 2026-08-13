@@ -692,6 +692,23 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     return found;
   }
 
+  // Who owns a balance held inside intents.near. This is deliberately not a per-chain wallet
+  // lookup: the verifier derives the account id from the erc191 signer, so it is our EVM
+  // address whatever chain the asset calls home. A SOL balance in there is owned by the EVM
+  // account, not by the Solana address we hold SOL at on Solana, and those are different
+  // strings for the same money.
+  function ourIntentsAddress(snapshot: LedgerSnapshot, problems: string[]): string {
+    const found = recipientFor('eth', snapshot);
+    if (found === null) {
+      problems.push(
+        'We hold no EVM address, and a balance inside intents.near is owned by the EVM account the ' +
+          'verifier derives from our signing key, so there is no account of ours to swap from.',
+      );
+      return '';
+    }
+    return found;
+  }
+
   function refuseDraft(kind: RailKind, draft: RailDraft, reasons: string[]): Promise<Proposal> {
     return land(newProposal(kind, draft, null, { outcome: 'refuse', reasons, rule: 'invalid_draft' }));
   }
@@ -768,7 +785,18 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     // as unsimulatable while omitting toChain failed asset lookup instead. No argument
     // combination worked. Note this is strictly narrowing: intents-native can now only ever
     // pay ourselves, which is what the rail already asserted in requireVenue.
-    const from = ourAddress(params.chain, snapshot, problems);
+    // `from` carried the same bug as `to` above, and it was found the same way: a swap that
+    // passed simulation and was refused at execution, after the policy engine had already
+    // allowed it. On intents-native, chain names the origin ASSET's home chain, not a wallet,
+    // for exactly the reason toChain does not name a destination wallet. Deriving `from` from
+    // params.chain authored a SOL-in-intents draft for our Solana address, which execute()
+    // refuses because the configured key is the EVM one. The pair was unsellable either way:
+    // chain 'sol' resolved the asset and the wrong owner, and any EVM chain resolved the right
+    // owner but could not name SOL at all.
+    const from =
+      venue === 'intents-native'
+        ? ourIntentsAddress(snapshot, problems)
+        : ourAddress(params.chain, snapshot, problems);
     const to =
       venue === 'intents-native' || params.chain === toChain
         ? from

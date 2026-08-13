@@ -48,6 +48,7 @@ import { createRails, venueAllowlist } from '../../src/rails/index.ts';
 import { chainsWithDeployment, deploymentFor } from '../../src/rails/uniswap-abi.ts';
 import { hlSpec } from '../../src/rails/hyperliquid-deposit.ts';
 import { ONECLICK_COUNTERPARTY } from '../../src/rails/oneclick.ts';
+import { INTENTS_NATIVE_COUNTERPARTY } from '../../src/rails/intents-native.ts';
 import { evaluate } from '../../src/policy/engine.ts';
 import { classify } from '../../src/composition.ts';
 
@@ -310,6 +311,110 @@ test('the app resolves every address in a rail draft, so the agent names none of
   assert.equal(remove.counterparty, ARB.positionManager);
   assert.equal(remove.chain, POSITION.chain, 'the chain comes from the position in the wallet');
   assert.ok(Math.abs(remove.amountUsd - POSITION_USD * 0.5) < 1e-9);
+});
+
+// toChain carries two different meanings and only one of them is a recipient. On an on-chain
+// venue it says where the output LANDS, so the draft has to resolve that chain's address. On
+// intents-native nothing lands on a chain at all: the proceeds are credited to our own account
+// inside the verifier, so toChain names only the destination ASSET's home chain. Resolving a
+// recipient from it regardless put a Solana address into a draft whose own rail requires
+// from === to, and that made the rail unreachable for every pair it exists to serve: naming
+// toChain failed the rail's identity check, omitting it failed asset lookup instead, and no
+// argument combination was left. Found by driving a real mainnet swap, not by a unit test,
+// because intents-native.ts was only ever tested below this seam.
+test('an intents-native swap is credited to our own account, whatever chain the output asset lives on', async () => {
+  const h = setup();
+
+  const p = await h.svc.proposeSwap({
+    venue: 'intents-native',
+    chain: 'arb',
+    toChain: 'sol',
+    fromSymbol: 'USDC',
+    toSymbol: 'SOL',
+    amountIn: 9,
+    minAmountOut: 0.1,
+  });
+  const draft = p.draft as SwapDraft;
+
+  assert.equal(draft.toChain, 'sol', 'toChain still names where the destination asset lives');
+  assert.equal(draft.from, SELF_EVM);
+  assert.equal(
+    draft.to,
+    draft.from,
+    'intents-native credits our own account inside the verifier; a cross-chain recipient makes the draft unsimulatable',
+  );
+  assert.equal(draft.counterparty, INTENTS_NATIVE_COUNTERPARTY);
+});
+
+// The origin half of the same mistake, and it survived the fix above because every test of it
+// swapped FROM an EVM chain, where the per-chain address and the verifier account happen to be
+// the same string. Selling a SOL balance held inside the verifier is where they diverge: chain
+// 'sol' is the only value that resolves nep141:sol.omft.near, and it resolved our Solana
+// address as the owner, so execute() refused a draft the policy engine had already allowed.
+// Found the same way as its sibling, by driving a real mainnet swap.
+test('an intents-native swap is authored by our EVM account even when the origin asset lives on solana', async () => {
+  const h = setup();
+
+  const p = await h.svc.proposeSwap({
+    venue: 'intents-native',
+    chain: 'sol',
+    toChain: 'arb',
+    fromSymbol: 'SOL',
+    toSymbol: 'USDC',
+    amountIn: 0.12,
+    minAmountOut: 9,
+  });
+  const draft = p.draft as SwapDraft;
+
+  assert.equal(draft.chain, 'sol', 'chain still names where the origin asset lives');
+  assert.equal(
+    draft.from,
+    SELF_EVM,
+    'intents.near derives the owner from the erc191 signer, so a SOL balance in there is owned by the EVM account',
+  );
+  assert.equal(draft.to, draft.from);
+});
+
+test('a non-intents swap still authors from the origin chain wallet', async () => {
+  const h = setup();
+
+  const p = await h.svc.proposeSwap({
+    venue: 'oneclick',
+    chain: 'sol',
+    toChain: 'arb',
+    fromSymbol: 'SOL',
+    toSymbol: 'USDC',
+    amountIn: 0.12,
+    minAmountOut: 9,
+  });
+  const draft = p.draft as SwapDraft;
+
+  assert.notEqual(
+    draft.from,
+    SELF_EVM,
+    'oneclick really does send SOL from the Solana wallet, so the carve-out must not reach it',
+  );
+});
+
+test('the intents-native carve-out is scoped to that venue and does not follow oneclick', async () => {
+  const h = setup();
+
+  const p = await h.svc.proposeSwap({
+    venue: 'oneclick',
+    chain: 'arb',
+    toChain: 'sol',
+    fromSymbol: 'USDC',
+    toSymbol: 'SOL',
+    amountIn: 9,
+    minAmountOut: 0.1,
+  });
+  const draft = p.draft as SwapDraft;
+
+  assert.notEqual(
+    draft.to,
+    draft.from,
+    'oneclick really does deliver to another chain, so it must still resolve that chain address',
+  );
 });
 
 test('a position id the wallet does not hold cannot be turned into a draft', async () => {
