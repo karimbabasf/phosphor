@@ -62,7 +62,7 @@ const MAX_BODY_BYTES = 1024 * 1024;
 const STATE_DEBOUNCE_MS = 120;
 const HEARTBEAT_MS = 15000; // SSE keepalive; doubles as a floor on state freshness
 const LOG_LIMIT_MAX = 2000;
-const CANDLE_LIMIT_MAX = 1000;
+const CANDLE_LIMIT_MAX = 2000; // matches LIMITS.historyMax: the widest window the chart allows
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',

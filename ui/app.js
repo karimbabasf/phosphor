@@ -38,6 +38,10 @@ var STATE = null;
 var SSE_SEEN_OPEN = false;
 var REFRESH_INFLIGHT = false;
 var REFRESH_QUEUED = false;
+/* Which panels have never had an answer yet. Not "is a request in flight": a panel that has
+   real numbers in it and is refreshing them must not fall back to blocks. */
+var WAITING = { state: true, log: true };
+var DONUT_ANIM = 0;
 
 /* ---------- small helpers ---------- */
 
@@ -223,6 +227,125 @@ function repeat(ch, n) {
   return out;
 }
 
+/* ---------- 0. waiting ---------- */
+
+/* Every panel on this page is empty until an answer comes back, and an empty panel and a
+   broken one look the same. So the boot paints each one with the shape of what is coming:
+   blocks where the numbers go, one row per row it expects. They are replaced by the first
+   render, never merged with it, so nothing here can survive into a panel that has data.
+
+   Blocks, not a sweeping gradient: this surface is a terminal and a skeleton that shimmers
+   would be the only soft thing on the page. The wave comes from a per-line delay on a hard
+   two-state blink instead, which is the same trick the cursor already uses. */
+function skelCell(width, cls) {
+  var span = el('span', cls ? 'skel ' + cls : 'skel', repeat('░', width));
+  span.setAttribute('aria-hidden', 'true');
+  return span;
+}
+
+function skelLine(index, width, cls) {
+  var line = el('div', cls || 'skelline');
+  line.style.setProperty('--i', String(index));
+  line.appendChild(skelCell(width));
+  return line;
+}
+
+function paintWaiting() {
+  document.body.classList.add('waiting');
+
+  var widths = [5, 7, 8, 9, 8, 5];
+  var tbody = $('wallet-rows');
+  tbody.textContent = '';
+  for (var r = 0; r < 5; r++) {
+    var tr = document.createElement('tr');
+    tr.style.setProperty('--i', String(r));
+    for (var c = 0; c < widths.length; c++) {
+      var td = el('td', c >= 2 ? 'num' : null);
+      td.appendChild(skelCell(widths[c]));
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+
+  var totals = $('wallet-total');
+  totals.textContent = '';
+  totals.appendChild(skelCell(28));
+
+  var readout = $('donut-readout');
+  readout.textContent = '';
+  readout.appendChild(skelLine(0, 9, 'line'));
+  readout.appendChild(skelLine(1, 7, 'line'));
+
+  var gate = $('gate');
+  gate.textContent = '';
+  gate.appendChild(skelLine(0, 34));
+  gate.appendChild(skelLine(1, 21));
+
+  var policy = $('policy-lines');
+  policy.textContent = '';
+  for (var p = 0; p < 4; p++) policy.appendChild(skelLine(p, 30 - p * 4, 'rule skelline'));
+
+  var log = $('log');
+  log.textContent = '';
+  // Plain skelline, not logline: the log's hanging indent would pull a block row 36ch off
+  // the left edge of the panel.
+  for (var g = 0; g < 8; g++) log.appendChild(skelLine(g, 46 - ((g * 7) % 20)));
+
+  drawDonutWaiting();
+}
+
+/* A panel stops waiting the moment its own answer lands, not when the last one does: the log
+   and the state come back separately and a panel that has its numbers should not sit under
+   blocks because a different fetch is slow. */
+function settled(which) {
+  if (!WAITING[which]) return;
+  WAITING[which] = false;
+  if (WAITING.state || WAITING.log) return;
+  document.body.classList.remove('waiting');
+}
+
+/* The donut has no rows to lay blocks over, so it waits as a ring with an arc running round
+   it. Same loop discipline as the chart: the tick stops itself as soon as the wait is over. */
+function drawDonutWaiting() {
+  if (DONUT_ANIM) window.cancelAnimationFrame(DONUT_ANIM);
+  DONUT_ANIM = 0;
+  if (!WAITING.state) return;
+
+  var canvas = $('donut');
+  var width = canvas.clientWidth;
+  var height = canvas.clientHeight;
+  if (!width || !height) return;
+  var dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(width * dpr);
+  canvas.height = Math.round(height * dpr);
+  var ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+
+  var cx = width / 2;
+  var cy = height / 2;
+  var outer = Math.min(width, height) / 2 - 5;
+  if (outer <= 6) return;
+  var mid = outer * (1 + DONUT_INNER) / 2;
+  var band = outer * (1 - DONUT_INNER);
+
+  ctx.lineWidth = band;
+  ctx.strokeStyle = 'rgba(51, 255, 102, 0.08)';
+  ctx.beginPath();
+  ctx.arc(cx, cy, mid, 0, Math.PI * 2);
+  ctx.stroke();
+
+  var still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var head = still ? -Math.PI / 2 : ((Date.now() % 1500) / 1500) * Math.PI * 2 - Math.PI / 2;
+  ctx.strokeStyle = 'rgba(51, 255, 102, 0.30)';
+  ctx.beginPath();
+  ctx.arc(cx, cy, mid, head, head + Math.PI / 3);
+  ctx.stroke();
+
+  if (still) return;
+  DONUT_ANIM = window.requestAnimationFrame(drawDonutWaiting);
+}
+
 /* ---------- 1. status ---------- */
 
 function renderStatus(s) {
@@ -380,6 +503,9 @@ function sliceColour(rank, count) {
 }
 
 function drawDonut() {
+  // Before the first wallet, the ring is the waiting animation's to own. This is the guard
+  // that keeps a window resize from wiping it back to an empty square.
+  if (WAITING.state) return drawDonutWaiting();
   var canvas = $('donut');
   DONUT_SLICES = [];
   DONUT_GEOM = null;
@@ -679,6 +805,9 @@ async function refreshState() {
   REFRESH_INFLIGHT = true;
   try {
     STATE = await getJson('/api/state');
+    // Settled before the renders, not after: drawDonut asks whether the panel is still
+    // waiting, and it must already have the answer by the time the wallet draws.
+    settled('state');
     // Wallet first: the status bar reports its total.
     renderWallet(STATE);
     renderStatus(STATE);
@@ -700,7 +829,9 @@ async function refreshState() {
 
 async function refreshLog() {
   try {
-    renderLog(await getJson('/api/log?limit=200'));
+    var events = await getJson('/api/log?limit=200');
+    settled('log');
+    renderLog(events);
   } catch (err) {
     alertLine('cannot read the log: ' + (err.message || String(err)));
   }
@@ -790,6 +921,9 @@ function wireResize() {
 
 async function boot() {
   applyCollapse();
+  // Before the first fetch, not after: the point of it is the second the page is on screen
+  // with nothing in it, and paint order is the whole feature.
+  paintWaiting();
   wireKill();
   wireCollapse();
   wireWallet();

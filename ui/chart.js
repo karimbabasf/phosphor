@@ -59,6 +59,10 @@ var CHART = {
    own echo and is ignored, which is what stops a round trip fighting the hand on the mouse. */
 var CHART_MY_REV = 0;
 var CHART_FIRST_LOAD = true;
+/* Nothing has come back from the server yet. Separate from CHART_FIRST_LOAD, which is about
+   who owns the view: this one is about whether the panel has anything true to draw. */
+var CHART_READY = false;
+var CHART_SKELETON = null;
 var CHART_LAYOUT = null;
 var CHART_HOVER = null; // {x, y, index}
 var CHART_HITS = []; // clickable rectangles built while drawing the hud
@@ -452,8 +456,7 @@ function drawScene() {
   var height = CHART_SIZE.h;
 
   if (!CHART.candles.length) {
-    ctx.fillStyle = green(0.3);
-    ctx.fillText(CHART.meta.error ? 'no candle data: ' + CHART.meta.error : 'no candle data', 2, 16);
+    drawWaiting(ctx, width, height);
     CHART_LAYOUT = null;
     return;
   }
@@ -470,6 +473,153 @@ function drawScene() {
   drawLevels(ctx, L);
   drawPanes(ctx, L);
   drawAxisFrame(ctx, L);
+}
+
+/* ---------- the waiting scene ---------- */
+
+/* An empty panel with "no candle data" in the corner reads as a chart that broke, not as one
+   that has not arrived. So while there is nothing to draw, the panel draws the chart it is
+   about to have: the axis frame, a ghost grid, and a run of skeleton bars that light up
+   behind a column sweeping left to right.
+
+   The bars come from one fixed pseudo-random walk, not a fresh one per frame. A skeleton that
+   reshuffles every 16ms is noise, and noise reads as broken too. */
+function skeletonBars(count) {
+  if (CHART_SKELETON && CHART_SKELETON.length === count) return CHART_SKELETON;
+  var bars = [];
+  var mid = 0.5;
+  var seed = 20260812;
+  for (var i = 0; i < count; i++) {
+    // xorshift32: same walk on every frame and every reload, no Math.random in a draw path.
+    seed ^= seed << 13;
+    seed ^= seed >>> 17;
+    seed ^= seed << 5;
+    seed |= 0;
+    var a = ((seed >>> 9) % 1000) / 1000;
+    var b = ((seed >>> 19) % 1000) / 1000;
+    mid = clampNum(mid + (a - 0.5) * 0.16, 0.16, 0.84);
+    var body = 0.012 + b * 0.05;
+    bars.push({ mid: mid, body: body, wick: body + 0.01 + a * 0.045 });
+  }
+  CHART_SKELETON = bars;
+  return bars;
+}
+
+function reducedMotion() {
+  return Boolean(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+}
+
+/* What the panel is waiting for, said in the words the rest of the bar uses. An error is a
+   state, not a wait: it says so and stops moving. */
+function waitingState() {
+  var product = CHART.view.product || 'MARKET';
+  var tf = timeframeOf(CHART.view.granularitySec);
+  if (CHART.meta.error) {
+    return { head: 'CHART UNREACHABLE', sub: CHART.meta.error + '  retrying', live: CHART_FETCH.inflight };
+  }
+  if (!CHART_READY) {
+    return { head: 'ACQUIRING ' + product + ' ' + tf, sub: 'waiting for the first candles', live: true };
+  }
+  if (CHART.meta.built === 'trades') {
+    var want = CHART.view.granularitySec * Math.round(CHART.view.barCount);
+    return {
+      head: 'BUILDING ' + product + ' ' + tf,
+      sub: 'from live trades: ' + CHART.meta.collectedSec + 's of ' + want + 's',
+      live: true
+    };
+  }
+  return {
+    head: 'NO CANDLES ' + product + ' ' + tf,
+    sub: (CHART.meta.source || 'the source') + ' returned nothing for this window',
+    live: CHART_FETCH.inflight
+  };
+}
+
+function drawWaiting(ctx, width, height) {
+  var state = waitingState();
+  var still = reducedMotion();
+  var plotWidth = Math.max(40, width - CHART_AXIS_W);
+  var bottom = height - AXIS_BOTTOM;
+  var top = PAD_TOP;
+  var area = Math.max(1, bottom - top);
+
+  // The frame first, so the panel has the shape of a chart before it has the contents of one.
+  ctx.lineWidth = 1 / DPR;
+  ctx.strokeStyle = green(0.07);
+  ctx.beginPath();
+  for (var g = 1; g < 5; g++) {
+    var y = hair(top + (area * g) / 5);
+    ctx.moveTo(0, y);
+    ctx.lineTo(plotWidth, y);
+  }
+  ctx.stroke();
+  ctx.strokeStyle = green(0.16);
+  ctx.beginPath();
+  ctx.moveTo(hair(plotWidth), top);
+  ctx.lineTo(hair(plotWidth), bottom);
+  ctx.moveTo(0, hair(bottom));
+  ctx.lineTo(width, hair(bottom));
+  ctx.stroke();
+
+  var slot = 7;
+  var count = Math.max(8, Math.floor((plotWidth - 8) / slot));
+  var bars = skeletonBars(count);
+  // One pass over a 2.2 second cycle, with the head running off both edges so the sweep
+  // enters and leaves rather than popping into existence at x=0.
+  var sweep = state.live && !still ? ((Date.now() % 2200) / 2200) * 1.3 - 0.15 : 2;
+  var bodyWidth = 3;
+
+  for (var i = 0; i < count; i++) {
+    var bar = bars[i];
+    var u = i / (count - 1);
+    var lead = sweep - u;
+    var alpha;
+    if (!state.live || still) alpha = 0.1;
+    else if (lead < 0) alpha = 0.04; // ahead of the sweep: barely there
+    else alpha = 0.1 + 0.42 * Math.exp(-(lead * 7) * (lead * 7));
+    var x = 6 + i * slot;
+    var cy = top + area * bar.mid;
+    ctx.strokeStyle = green(alpha * 0.8);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(hair(x), cy - area * bar.wick);
+    ctx.lineTo(hair(x), cy + area * bar.wick);
+    ctx.stroke();
+    ctx.fillStyle = green(alpha);
+    ctx.fillRect(Math.round(x - bodyWidth / 2), Math.round(cy - area * bar.body), bodyWidth, Math.max(1, Math.round(area * bar.body * 2)));
+  }
+
+  // The scan column itself, so the eye has one thing to follow instead of a field of flicker.
+  if (state.live && !still && sweep >= 0 && sweep <= 1) {
+    var sx = hair(6 + sweep * (count - 1) * slot);
+    ctx.strokeStyle = green(0.3);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(sx, top);
+    ctx.lineTo(sx, bottom);
+    ctx.stroke();
+  }
+
+  // The two lines sit on a cut-out of the background: the skeleton is behind them and text
+  // over a picket fence of bars is the one thing here that would be hard to read.
+  ctx.textAlign = 'center';
+  var cx = plotWidth / 2;
+  var midY = top + area / 2;
+  var block = state.live && !still && Date.now() % 1000 < 500 ? ' █' : '  ';
+  var headText = state.head + block;
+  var headWidth = ctx.measureText(headText).width;
+  var subWidth = ctx.measureText(state.sub).width;
+  ctx.fillStyle = C_BG;
+  ctx.fillRect(cx - Math.max(headWidth, subWidth) / 2 - 8, midY - 15, Math.max(headWidth, subWidth) + 16, 30);
+  ctx.fillStyle = CHART.meta.error ? red(0.9) : green(0.72);
+  ctx.fillText(headText, cx, midY - 6);
+  ctx.fillStyle = green(0.38);
+  ctx.fillText(state.sub, cx, midY + 8);
+  ctx.textAlign = 'left';
+
+  // The loop, and its own stop condition: the moment there is something true to draw, this
+  // scene is not reached and the frame chain ends by itself.
+  if (state.live && !still) chartInvalidate(true);
 }
 
 function drawPriceGrid(ctx, L) {
@@ -1010,6 +1160,7 @@ async function refreshChart() {
   }
   CHART_FETCH.inflight = true;
   CHART_FETCH.at = Date.now();
+  chartBusy(true);
   try {
     var res = await fetch('/api/chart', { headers: { accept: 'application/json' } });
     if (!res.ok) throw new Error('chart returned ' + res.status);
@@ -1020,6 +1171,7 @@ async function refreshChart() {
     chartInvalidate(true);
   } finally {
     CHART_FETCH.inflight = false;
+    chartBusy(false);
     if (CHART_FETCH.queued) {
       CHART_FETCH.queued = false;
       void refreshChart();
@@ -1027,7 +1179,18 @@ async function refreshChart() {
   }
 }
 
+/* The one thing on the bar that says a read is in flight. It lives next to the meta line
+   rather than inside it, because renderChartBar rebuilds that line from scratch and a
+   marker that disappears whenever the data it is waiting for arrives is no marker at all.
+   A chart that already has candles keeps them: this is the only sign of a refresh, which is
+   what stops a timeframe switch looking like a freeze. */
+function chartBusy(on) {
+  var node = document.getElementById('chart-wait');
+  if (node) node.hidden = !on;
+}
+
 function applyChart(payload) {
+  CHART_READY = true;
   CHART.rev = payload.rev;
   CHART.candles = payload.candles || [];
   CHART.meta = payload.meta || CHART.meta;
@@ -1038,6 +1201,9 @@ function applyChart(payload) {
   CHART.timeframes = payload.timeframes || [];
   CHART.agentObjects = payload.agentObjects || 0;
   CHART.lastDriver = payload.lastDriver || 'human';
+  if (payload.limits && typeof payload.limits.barCountMax === 'number') {
+    CHART_BARS = { min: payload.limits.barCountMin, max: payload.limits.barCountMax };
+  }
   /* Who owns the view. The hand in the window owns it while the hand is on it, and the only
      thing that may move the chart out from under that hand is the agent. Adopting the
      server's view on every refresh instead looks correct and is not: a refresh fired by our
@@ -1203,6 +1369,13 @@ function renderChartBar() {
       line += '  building from live trades: ' + CHART.meta.collectedSec + 's of ' + want + 's';
     }
   }
+  // Squeezed past the end of what the source will serve. The window is wider than the data,
+  // which is a fact about the exchange and not a fault in the chart, so it is reported in the
+  // same line as the source rather than left to look like bars that failed to draw.
+  var asked = Math.round(CHART.view.barCount);
+  if (CHART.candles.length && CHART.candles.length < asked) {
+    line += '  history ends at ' + CHART.candles.length + ' bars';
+  }
   if (CHART.view.panOffset > 0) line += '  panned back ' + Math.round(CHART.view.panOffset);
   meta.textContent = '';
   // Warnings first. This line gives up its width before the controls do, so anything that
@@ -1245,8 +1418,13 @@ function regionAt(point) {
   return 'plot';
 }
 
+/* The ceiling is the server's, taken from the payload rather than restated here, so a drag
+   that has run out of room stops where the write would have clamped it instead of springing
+   back a frame later. The pair below is only what holds before the first payload lands. */
+var CHART_BARS = { min: 10, max: 2000 };
+
 function setBarCount(next) {
-  CHART.view.barCount = clampNum(next, 20, 500);
+  CHART.view.barCount = clampNum(next, CHART_BARS.min, CHART_BARS.max);
 }
 
 function setPan(next) {
@@ -1370,7 +1548,12 @@ function wireChart() {
       scalePriceAbout(CHART_DRAG.anchorPrice, 1 + dy / 220);
       CHART_DRAG.y = ev.clientY;
     } else {
-      setBarCount(CHART_DRAG.barCount * (1 - dx / 320));
+      /* Drag the time axis and the axis follows the hand: pull it left and the window it
+         spans narrows onto fewer, wider bars, push it right and the window stretches and the
+         bars squeeze. The right edge is the anchor, so the other direction moves the axis
+         opposite to the pointer, which is the wrong way round however natural it looks in
+         the arithmetic. */
+      setBarCount(CHART_DRAG.barCount * (1 + dx / 320));
     }
     CHART_HOVER = null;
     chartInvalidate(true);

@@ -82,12 +82,17 @@ export const TIMEFRAMES: readonly { label: string; sec: number }[] = [
   { label: '1d', sec: 86400 },
 ];
 
+// The window is allowed to squeeze until the renderer stops being able to say anything, not
+// until a round number runs out. Two thousand one-minute bars is a day and a half on screen;
+// past that the bars are thinner than the hairline that separates them. What the window can
+// actually be filled with is a separate question, and the sources answer it: the chart draws
+// the history it was given and leaves the rest of the window empty rather than pretending.
 export const LIMITS = {
-  barCountMin: 20,
-  barCountMax: 500,
+  barCountMin: 10,
+  barCountMax: 2000,
   barCountDefault: 120,
   panMax: 400,
-  historyMax: 1000,
+  historyMax: 2000,
   fetchMargin: 30,
   maxOverlays: 8,
   maxPanes: 3,

@@ -2,7 +2,8 @@
    One hue: phosphor green on near-black. Hierarchy is brightness and opacity only.
    Red is reserved for the safety gate: pending approvals, refusals, breached
    shares, and the gate-disabled banner.
-   No radius, no shadow, no gradient, no transition. One animation: the cursor. */
+   No radius, no shadow, no gradient, no transition. Two animations: the cursor, and the
+   block wave that stands in for whatever has not arrived yet. */
 
 :root {
   --bg: #0b0d0b;
