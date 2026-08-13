@@ -55,6 +55,85 @@
     return { removed: removed, added: added };
   }
 
+  /* A rendered sentence that carries a LIST is the reason an approval box filled with
+     addresses. policyDiff holds sentences, not fields, so adding one destination to an
+     allowlist of seven makes one long string differ from another long string: diffOf then
+     correctly reports one line removed and one line added, and the screen prints all eight
+     addresses twice while the human hunts for the one that changed.
+
+     The approval box is where somebody decides whether to allow something. A reader who has to
+     spot one changed token inside twenty lines of hex is a reader who approves without
+     checking, so this is a safety property of the screen and not a tidiness preference.
+
+     Splitting on the first colon is enough: every sentence renderSentences writes puts the rule
+     name before it and the values after. Anything that does not fit that shape falls through
+     and is printed whole, which is the safe direction. */
+  function splitRule(line) {
+    var text = String(line);
+    var at = text.indexOf(':');
+    if (at === -1) return null;
+    var items = text.slice(at + 1).split(',');
+    var cleaned = [];
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i].trim().replace(/\.$/, '');
+      if (item.length > 0) cleaned.push(item);
+    }
+    if (cleaned.length < 2) return null;
+    return { label: text.slice(0, at).trim(), items: cleaned };
+  }
+
+  /* Pairs a removed sentence with the added sentence that replaced it, by rule name, and
+     reduces the pair to the items that actually moved. Returns entries the caller renders:
+     kind 'changed' carries a label plus item-level adds and drops, kind 'line' is a whole
+     sentence that had no partner and is shown as it always was. */
+  function refineDiff(diff) {
+    var out = [];
+    var removed = diff.removed.slice();
+    var added = diff.added.slice();
+    var usedAdded = {};
+
+    for (var r = 0; r < removed.length; r++) {
+      var beforeRule = splitRule(removed[r]);
+      var matched = -1;
+      if (beforeRule) {
+        for (var a = 0; a < added.length; a++) {
+          if (usedAdded[a]) continue;
+          var afterRule = splitRule(added[a]);
+          if (afterRule && afterRule.label === beforeRule.label) {
+            matched = a;
+            break;
+          }
+        }
+      }
+      if (matched === -1) {
+        out.push({ kind: 'line', sign: '-', text: removed[r] });
+        continue;
+      }
+      usedAdded[matched] = true;
+      var afterItems = splitRule(added[matched]).items;
+      var gained = [];
+      var lost = [];
+      var j;
+      for (j = 0; j < afterItems.length; j++) {
+        if (beforeRule.items.indexOf(afterItems[j]) === -1) gained.push(afterItems[j]);
+      }
+      for (j = 0; j < beforeRule.items.length; j++) {
+        if (afterItems.indexOf(beforeRule.items[j]) === -1) lost.push(beforeRule.items[j]);
+      }
+      out.push({
+        kind: 'changed',
+        label: beforeRule.label,
+        gained: gained,
+        lost: lost,
+        unchanged: afterItems.length - gained.length,
+      });
+    }
+    for (var k = 0; k < added.length; k++) {
+      if (!usedAdded[k]) out.push({ kind: 'line', sign: '+', text: added[k] });
+    }
+    return out;
+  }
+
   async function decide(route, id, buttons, errorNode, deps) {
     for (var i = 0; i < buttons.length; i++) buttons[i].disabled = true;
     errorNode.hidden = true;
@@ -88,13 +167,25 @@
       if (simulation.error) wrap.appendChild(el('div', 'sim red', simulation.error));
       if (simulation.policyDiff) {
         var diff = diffOf(simulation.policyDiff.before, simulation.policyDiff.after);
-        for (var r = 0; r < diff.removed.length; r++) {
-          wrap.appendChild(el('div', 'diff-before', '- ' + diff.removed[r]));
+        var entries = refineDiff(diff);
+        for (var e = 0; e < entries.length; e++) {
+          var entry = entries[e];
+          if (entry.kind === 'line') {
+            wrap.appendChild(el('div', entry.sign === '-' ? 'diff-before' : 'diff-after', entry.sign + ' ' + entry.text));
+            continue;
+          }
+          // The rule name, then only what moved. The count of what stayed is kept because
+          // "one added to seven" and "one added to nothing" are different decisions.
+          var kept = entry.unchanged === 1 ? '1 entry unchanged' : entry.unchanged + ' entries unchanged';
+          wrap.appendChild(el('div', 'sim', entry.label + '  (' + kept + ')'));
+          for (var g = 0; g < entry.lost.length; g++) {
+            wrap.appendChild(el('div', 'diff-before', '  - ' + entry.lost[g]));
+          }
+          for (var n = 0; n < entry.gained.length; n++) {
+            wrap.appendChild(el('div', 'diff-after', '  + ' + entry.gained[n]));
+          }
         }
-        for (var a = 0; a < diff.added.length; a++) {
-          wrap.appendChild(el('div', 'diff-after', '+ ' + diff.added[a]));
-        }
-        if (!diff.removed.length && !diff.added.length) {
+        if (!entries.length) {
           wrap.appendChild(el('div', 'diff-before', 'no visible rule change'));
         }
       }
@@ -160,5 +251,9 @@
     decide: decide,
     headlineFor: headlineFor,
     diffOf: diffOf,
+    // Exported to be tested directly. What it decides is how much of a rule change a human
+    // actually reads before clicking APPROVE, so it is worth asserting on rather than
+    // eyeballing on a screenshot.
+    refineDiff: refineDiff,
   };
 })(window);
