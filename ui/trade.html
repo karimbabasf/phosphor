@@ -214,6 +214,18 @@
       <!-- 7. MANDATE. Where every other trading interface puts a buy/sell ticket. The
            rows are built by the renderer; the shape it must produce is written out in
            trade.css above the .mrow rules. -->
+      <!-- 6a. APPROVALS. A pending proposal is what a mandate is before anyone agreed to
+           it, so the click sits directly above the panel it fills. Same renderer as the
+           pro window (ui/approvals.js): this screen shows no shorter a story than that
+           one before the same click. -->
+      <section class="panel panel-tgate">
+        <div class="frame frame-top" data-title="APPROVALS"></div>
+        <div class="pbody">
+          <div id="t-gate"></div>
+        </div>
+        <div class="frame frame-bottom"></div>
+      </section>
+
       <section class="panel panel-tmandate">
         <div class="frame frame-top" data-title="MANDATE"></div>
         <div class="pbody">
@@ -240,6 +252,7 @@
 <!-- chart.js defines the chart, trade-overlay.js defines what is drawn on top of it,
      trade.js boots and sets window.TRADE before asking the chart to redraw. -->
 <script src="/chart.js" defer></script>
+<script src="/approvals.js" defer></script>
 <script src="/trade-overlay.js" defer></script>
 <script src="/trade.js" defer></script>
 </body>

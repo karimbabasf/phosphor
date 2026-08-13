@@ -1148,99 +1148,9 @@ function renderPolicy(s) {
 
 /* ---------- 6. approval gate ---------- */
 
-function headlineFor(proposal) {
-  var draft = proposal.draft || {};
-  if (draft.kind === 'consolidate') {
-    var legs = (draft.legs || []).length;
-    return 'consolidate ' + draft.symbol + ' to ' + draft.toChain + '  ' + usd(draft.totalUsd) +
-      '  (' + legs + (legs === 1 ? ' leg)' : ' legs)');
-  }
-  if (draft.kind === 'policy_change') return 'policy change: ' + draft.sentence;
-  if (draft.kind === 'transfer' && draft.leg) {
-    return 'transfer ' + draft.leg.symbol + ' ' + draft.leg.fromChain + ' to ' + draft.leg.toChain +
-      '  ' + usd(draft.leg.amountUsd);
-  }
-  return String(proposal.kind);
-}
-
-function diffOf(before, after) {
-  var b = before || [];
-  var a = after || [];
-  var removed = [];
-  var added = [];
-  var i;
-  for (i = 0; i < b.length; i++) if (a.indexOf(b[i]) === -1) removed.push(b[i]);
-  for (i = 0; i < a.length; i++) if (b.indexOf(a[i]) === -1) added.push(a[i]);
-  return { removed: removed, added: added };
-}
-
-function pendingBlock(proposal) {
-  var wrap = el('div', 'pending');
-
-  var head = el('div');
-  head.appendChild(el('span', 'tag', 'PENDING  '));
-  head.appendChild(el('span', 'head', headlineFor(proposal)));
-  wrap.appendChild(head);
-  wrap.appendChild(el('div', 'meta', proposal.id + '   created ' + clock(proposal.createdAt)));
-
-  var simulation = proposal.simulation;
-  if (simulation) {
-    if (simulation.summary) {
-      var summaryLines = String(simulation.summary).split('\n');
-      for (var i = 0; i < summaryLines.length; i++) wrap.appendChild(el('div', 'sim', summaryLines[i]));
-    }
-    if (simulation.error) wrap.appendChild(el('div', 'sim red', simulation.error));
-    if (simulation.policyDiff) {
-      var diff = diffOf(simulation.policyDiff.before, simulation.policyDiff.after);
-      for (var r = 0; r < diff.removed.length; r++) {
-        wrap.appendChild(el('div', 'diff-before', '- ' + diff.removed[r]));
-      }
-      for (var a = 0; a < diff.added.length; a++) {
-        wrap.appendChild(el('div', 'diff-after', '+ ' + diff.added[a]));
-      }
-      if (!diff.removed.length && !diff.added.length) {
-        wrap.appendChild(el('div', 'diff-before', 'no visible rule change'));
-      }
-    }
-  }
-
-  var reasons = (proposal.verdict && proposal.verdict.reasons) || [];
-  for (var n = 0; n < reasons.length; n++) wrap.appendChild(el('div', 'reason', 'why: ' + reasons[n]));
-
-  var error = el('div', 'sim red');
-  error.hidden = true;
-
-  var approve = el('button', 'btn approve', '[ APPROVE ]');
-  approve.type = 'button';
-  var refuse = el('button', 'btn refuse', '[ REFUSE ]');
-  refuse.type = 'button';
-  approve.addEventListener('click', function () {
-    decide('/api/approve', proposal.id, [approve, refuse], error);
-  });
-  refuse.addEventListener('click', function () {
-    decide('/api/refuse', proposal.id, [approve, refuse], error);
-  });
-
-  var actions = el('div', 'actions');
-  actions.appendChild(approve);
-  actions.appendChild(refuse);
-  wrap.appendChild(actions);
-  wrap.appendChild(error);
-  return wrap;
-}
-
-async function decide(route, id, buttons, errorNode) {
-  for (var i = 0; i < buttons.length; i++) buttons[i].disabled = true;
-  errorNode.hidden = true;
-  try {
-    await postJson(route, { id: id, token: TOKEN });
-    await refreshState();
-  } catch (err) {
-    errorNode.textContent = err.message || String(err);
-    errorNode.hidden = false;
-    for (var j = 0; j < buttons.length; j++) buttons[j].disabled = false;
-  }
-}
+/* headlineFor, diffOf, pendingBlock and decide now live in ui/approvals.js, which the
+   trade window loads too. One renderer, so neither screen can show a thinner story than
+   the other before the same click. */
 
 /* The gate can be switched off on testnet, and a machine that approves for you
    has to say so where you cannot miss it. Rendered only from what the server
@@ -1253,29 +1163,23 @@ function renderGateBanner(s) {
   document.body.classList.toggle('gate-off', Boolean(banner));
 }
 
+/* How this page talks to the server, handed to the shared renderer. The token is read
+   through a function rather than passed by value: it is null until boot finishes, and a
+   captured null would outlive the fetch that fills it. */
+function approvalDeps() {
+  return {
+    postJson: postJson,
+    token: function () { return TOKEN; },
+    onDecided: refreshState,
+  };
+}
+
+function decide(route, id, buttons, errorNode) {
+  return APPROVALS.decide(route, id, buttons, errorNode, approvalDeps());
+}
+
 function renderGate(s) {
-  var box = $('gate');
-  box.textContent = '';
-  var pending = [];
-  var proposals = s.proposals || [];
-  for (var i = 0; i < proposals.length; i++) {
-    if (proposals[i].status === 'pending') pending.push(proposals[i]);
-  }
-  if (!pending.length) {
-    var empty = el('div', 'gate-empty', 'no pending approvals');
-    // An empty gate means two different things depending on whether the gate is
-    // on. Say which one this is.
-    if (s.gate && s.gate.required === false) {
-      empty.textContent = 'no pending approvals: ';
-      empty.appendChild(el('span', 'off', 'the gate is disabled, every proposal auto-approves'));
-    }
-    box.appendChild(empty);
-    return;
-  }
-  pending.sort(function (a, b) {
-    return a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0;
-  });
-  for (var j = 0; j < pending.length; j++) box.appendChild(pendingBlock(pending[j]));
+  APPROVALS.render($('gate'), s, approvalDeps());
 }
 
 /* ---------- 6b. basic view ----------

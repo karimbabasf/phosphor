@@ -262,8 +262,10 @@
   <div class="basic-state" id="basic-state" data-tone="calm" aria-hidden="true"></div>
 
 </main>
-<!-- chart.js first: it only defines. app.js boots and calls chartBoot(). -->
+<!-- chart.js first: it only defines. app.js boots and calls chartBoot(). approvals.js is
+     shared with the trade window so both draw a pending proposal from one renderer. -->
 <script src="/chart.js" defer></script>
+<script src="/approvals.js" defer></script>
 <script src="/app.js" defer></script>
 </body>
 </html>

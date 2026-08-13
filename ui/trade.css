@@ -503,10 +503,14 @@
   .panel-chart { order: 1; }
   .panel-trisk { order: 2; }
   .panel-tmarket { order: 3; }
-  .panel-tmandate { order: 4; }
-  .panel-tbook { order: 5; }
-  .panel-tfills { order: 6; }
-  .panel-tlog { order: 7; }
+  /* Approvals keeps its place above the mandate console here too. Every panel in this
+     block is numbered for the same reason: an unordered one takes order 0 and lands above
+     the chart, which is how a stacked screen ends up opening on a form instead of a price. */
+  .panel-tgate { order: 4; }
+  .panel-tmandate { order: 5; }
+  .panel-tbook { order: 6; }
+  .panel-tfills { order: 7; }
+  .panel-tlog { order: 8; }
 
   /* The caps above are viewport fractions, which stop meaning anything once the page scrolls:
      20vh of a scrolling page is an arbitrary slice and not a panel. Fills keeps one so a long

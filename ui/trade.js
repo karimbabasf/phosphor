@@ -1225,6 +1225,7 @@ async function refreshState() {
   try {
     POLICY = await getJson('/api/state');
     renderKill(POLICY);
+    renderGate(POLICY);
     // The mandate empty line names the kill switch when the kill switch is the reason.
     renderMandates(PAYLOAD);
   } catch (err) {
@@ -1236,6 +1237,22 @@ async function refreshState() {
       refreshState();
     }
   }
+}
+
+/* The gate, drawn by ui/approvals.js from the same /api/state this page already reads for
+   the kill switch. A trading screen is where the human already is, and sending them to the
+   other window to click APPROVE is how a proposal sits unread while the market moves.
+   The approval itself still needs the token, which is the same one every write here uses. */
+function renderGate(s) {
+  var box = $('t-gate');
+  if (!box) return;
+  APPROVALS.render(box, s, {
+    postJson: postJson,
+    token: function () { return TOKEN; },
+    // An approved mandate arms, and an armed mandate is a row in the panel below this one,
+    // so both surfaces are re-read rather than just the one that was clicked.
+    onDecided: function () { return Promise.all([refreshState(), refreshTrade()]); },
+  });
 }
 
 async function refreshLog() {
