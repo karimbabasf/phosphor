@@ -17,6 +17,14 @@
 // correct today. It bounds reaction time to the interval, which is fine for a strategy working
 // on minute bars and NOT fine for anything genuinely high frequency. The signing path is
 // unaffected either way, since that was never the slow part.
+//
+// Every read goes through the shared /info client rather than bare fetch, and that is a fix
+// rather than tidiness. Against a testnet that went to ~16s per call, this module's 2s poll
+// stacked eight requests per symbol and delivered no book at all, so an armed mandate sat
+// blind. The client bounds each request, merges the identical ones already in flight, and
+// stops asking a refusing venue. See src/hl/info.ts.
+
+import { createInfoClient, type InfoClient } from '../hl/info.ts';
 
 export type Book = {
   markPx: number;
@@ -30,21 +38,25 @@ export type Book = {
   assetId: number;
 };
 
-export type FeedDeps = { baseUrl: string; user: string; fetchImpl?: typeof fetch };
+export type FeedDeps = {
+  baseUrl: string;
+  user: string;
+  fetchImpl?: typeof fetch;
+  // Share one client across the process when there is one. Two clients means two backoff
+  // states and two views of whether the venue is answering, and the runner and the window
+  // disagreeing about that is exactly the confusion this is meant to end.
+  client?: InfoClient;
+};
 
 type MetaAsset = { name: string; szDecimals: number; maxLeverage: number };
 
 export function createFeed(deps: FeedDeps) {
-  const doFetch = deps.fetchImpl ?? fetch;
+  const client =
+    deps.client ?? createInfoClient({ baseUrl: deps.baseUrl, fetchImpl: deps.fetchImpl });
   let universe: MetaAsset[] | null = null;
 
-  async function info<T>(body: unknown): Promise<T> {
-    const res = await doFetch(`${deps.baseUrl}/info`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    return (await res.json()) as T;
+  function info<T>(body: unknown): Promise<T> {
+    return client.post<T>(body);
   }
 
   // Fetched once and held: asset ids and decimals do not change under a running process, and
@@ -112,5 +124,9 @@ export function createFeed(deps: FeedDeps) {
       });
       return active.leverage?.value ?? null;
     },
+
+    // Whether the venue is answering, and how slowly. Surfaced so a stalled feed shows up as
+    // a stalled feed on screen rather than as a bot that mysteriously does nothing.
+    health: () => client.health(),
   };
 }
