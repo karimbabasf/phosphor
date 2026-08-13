@@ -45,6 +45,9 @@ const EXPECTED_TOOLS = [
   'chart_measure',
   'chart_scan',
   'indicator_catalog',
+  // Finding a market to chart, added with the market data layer. Before it the chart
+  // could only open the handful of products named in config.json.
+  'market_search',
   'chart_set_view',
   'chart_add_indicator',
   'chart_remove_indicator',

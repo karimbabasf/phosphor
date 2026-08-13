@@ -61,7 +61,7 @@ more than 20% in anything that can freeze me."
 
 ## The tool surface
 
-Twenty-three tools, split three ways. Read tools execute directly and cannot move anything.
+Twenty-four tools, split three ways. Read tools execute directly and cannot move anything.
 Write tools never execute: they return a proposal id and a simulation result, and nothing else.
 Chart tools move a view, never funds.
 
@@ -90,7 +90,8 @@ Chart tools move a view, never funds.
 | `chart_measure` | Between two times, two prices, or one of each: change, bars, elapsed, the high and low the path took, worst drawdown |
 | `chart_scan` | Several timeframes at once without moving the chart: last, change, range, ATR, trend, time to close |
 | `indicator_catalog` | Every indicator it can draw, with parameters, defaults and ranges |
-| `chart_set_view` | Product, timeframe, bars on screen, how far back, price scale |
+| `market_search` | Finds a market by name. Takes "btc", "bitcoin", "wif" or "PEPE-USD" and returns the product id to open, plus near matches when the query is ambiguous |
+| `chart_set_view` | Product, timeframe, bars on screen, how far back, price scale. The product is anything either venue lists, and the timeframe is anything from `1s` to `1w`, including ones no venue serves natively like `7m` |
 | `chart_add_indicator` | SMA, EMA, WMA, VWAP, Bollinger, Donchian on the price; volume, RSI, MACD, ATR, Stochastic, OBV in their own pane |
 | `chart_remove_indicator` | Takes one off |
 | `chart_level` | A horizontal price line with a label |

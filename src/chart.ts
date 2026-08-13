@@ -13,6 +13,7 @@
 import type { Candle } from './types.ts';
 import { indicatorSpec, normaliseParams, warmupBars, pctChange, trueRange } from './indicators.ts';
 import type { IndicatorResult } from './indicators.ts';
+import { MAX_TIMEFRAME_SEC, parseTimeframe, formatTimeframe } from './market/aggregate.ts';
 
 export type PriceScale = { mode: 'auto' } | { mode: 'manual'; low: number; high: number };
 
@@ -67,6 +68,9 @@ export type ChartState = {
 
 export type Outcome = { ok: boolean; notes: string[]; error?: string; id?: string; label?: string };
 
+// The timeframe vocabulary lives in the market layer, because that is what has to serve it.
+export { MAX_TIMEFRAME_SEC, parseTimeframe, formatTimeframe };
+
 export const TIMEFRAMES: readonly { label: string; sec: number }[] = [
   { label: '1s', sec: 1 },
   { label: '5s', sec: 5 },
@@ -93,6 +97,12 @@ export const LIMITS = {
   barCountDefault: 120,
   panMax: 400,
   historyMax: 2000,
+  // The floor exists because asking only for what is on screen is what made history look
+  // broken. The default window is 120 bars, so the old request was about 150, and a pan to
+  // the left ran off the end of the data within one gesture. The rails serve two thousand
+  // bars in one call, the cache keeps them, and the fill happens behind the render, so
+  // depth now costs a background request rather than a wait.
+  historyFloor: 1500,
   fetchMargin: 30,
   maxOverlays: 8,
   maxPanes: 3,
@@ -226,22 +236,31 @@ export function createChartStore(initialProduct: string): {
       }
     }
 
+    // Any timeframe from a second to a week, not just the twelve on the button bar.
+    // The twelve are what a hand can click; an agent asked for 7m or 90s and used to be
+    // refused or silently snapped to something it did not ask for. The market layer folds
+    // a base interval the venue does serve into whatever was requested, so the enum is a
+    // convenience now and not a constraint. See src/market/aggregate.ts.
     if (typeof patch.granularitySec === 'number' && Number.isFinite(patch.granularitySec)) {
-      const snapped = snapTimeframe(patch.granularitySec);
-      if (snapped !== patch.granularitySec) {
-        notes.push(`granularity ${patch.granularitySec}s snapped to ${timeframeLabel(snapped)}`);
+      const asked = Math.floor(patch.granularitySec);
+      if (asked < 1 || asked > MAX_TIMEFRAME_SEC) {
+        return { ok: false, notes, error: `timeframe out of range: ${asked}s. between 1s and 1w` };
       }
-      if (snapped !== view.granularitySec) {
-        view.granularitySec = snapped;
+      if (asked !== view.granularitySec) {
+        view.granularitySec = asked;
         view.panOffset = 0;
       }
     } else if (typeof patch.timeframe === 'string') {
-      const found = TIMEFRAMES.find((tf) => tf.label === patch.timeframe);
-      if (found === undefined) {
-        return { ok: false, notes, error: `unknown timeframe: ${patch.timeframe}. known: ${TIMEFRAMES.map((t) => t.label).join(', ')}` };
+      const parsed = parseTimeframe(patch.timeframe);
+      if (parsed === null) {
+        return {
+          ok: false,
+          notes,
+          error: `unknown timeframe: ${patch.timeframe}. use a count and a unit, like 7m, 90s, 4h or 1w`,
+        };
       }
-      if (found.sec !== view.granularitySec) {
-        view.granularitySec = found.sec;
+      if (parsed !== view.granularitySec) {
+        view.granularitySec = parsed;
         view.panOffset = 0;
       }
     }
@@ -388,7 +407,7 @@ export function createChartStore(initialProduct: string): {
       if (need > warmup) warmup = need;
     }
     const want = state.view.barCount + Math.max(0, state.view.panOffset) + LIMITS.fetchMargin + warmup;
-    return Math.min(LIMITS.historyMax, Math.max(60, Math.ceil(want)));
+    return Math.min(LIMITS.historyMax, Math.max(LIMITS.historyFloor, Math.ceil(want)));
   }
 
   return {

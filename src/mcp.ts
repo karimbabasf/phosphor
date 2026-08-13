@@ -164,6 +164,11 @@ registerRead(
   'Lists every indicator this chart can draw, with its parameters, defaults, allowed ranges, and whether it overlays the price or takes its own pane. Call this before chart_add_indicator. Read-only, changes nothing.',
   {},
 );
+registerRead(
+  'market_search',
+  'Finds a market to chart. Takes anything a person would say ("btc", "bitcoin", "wif", "PEPE-USD") and returns the product id chart_set_view wants, plus near matches when the query is ambiguous. Every result can be charted on any timeframe from 1s to 1w. Read-only, changes nothing.',
+  { query: z.string(), limit: z.number().int().optional() },
+);
 
 function registerView(name: string, description: string, shape: Record<string, z.ZodTypeAny>): void {
   server.registerTool(name, { description, inputSchema: shape }, async (args) => proxy({ op: 'view', tool: name, args }));

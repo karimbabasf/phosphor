@@ -268,6 +268,12 @@ test('the tool surface cannot express an exfiltration target', async () => {
       'chart_measure',
       'chart_scan',
       'indicator_catalog',
+      // Looks up which markets exist so the chart can open one by name. It takes a search
+      // string and a result limit, reaches no proposal path, and names no address: the
+      // loop below holds it to that like every other tool. A free-text argument is worth
+      // a second look on this surface, and this one is only ever matched against a list
+      // of venue listings, never used to build a request to anywhere.
+      'market_search',
       'chart_set_view',
       'chart_add_indicator',
       'chart_remove_indicator',

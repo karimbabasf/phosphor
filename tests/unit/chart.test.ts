@@ -139,13 +139,26 @@ test('every change bumps the revision, and reporting geometry does not', () => {
   assert.equal(chart.rev(), start + 1);
 });
 
-test('history fetched grows with the longest indicator warmup', () => {
+test('history fetched covers the longest indicator warmup', () => {
   const chart = createChartStore('BTC-USD');
   chart.setView({ barCount: 120 }, 'human');
+  chart.addIndicator({ type: 'ema', params: { period: 200 } }, 'agent');
+
+  // The promise is that a 200 period line does not start in the middle of the screen.
+  // It used to be kept by fetching exactly the window plus the warmup, which meant the
+  // whole chart only ever held about 150 bars and a pan to the left ran off the end of
+  // the data. The floor keeps the same promise with room behind the left edge.
+  assert.ok(chart.historyNeeded() >= 120 + 200, 'the window and the warmup both fit');
+  assert.ok(chart.historyNeeded() >= LIMITS.historyFloor, 'and there is history behind the left edge');
+  assert.ok(chart.historyNeeded() <= LIMITS.historyMax);
+});
+
+test('history fetched still grows when a warmup asks for more than the floor', () => {
+  const chart = createChartStore('BTC-USD');
+  chart.setView({ barCount: 1600 }, 'human');
   const plain = chart.historyNeeded();
   chart.addIndicator({ type: 'ema', params: { period: 200 } }, 'agent');
-  // Without the extra history a 200 period line would start in the middle of the screen.
-  assert.ok(chart.historyNeeded() >= plain + 200, `${chart.historyNeeded()} should exceed ${plain + 200}`);
+  assert.ok(chart.historyNeeded() > plain, 'past the floor the warmup still moves the number');
   assert.ok(chart.historyNeeded() <= LIMITS.historyMax);
 });
 
@@ -158,11 +171,26 @@ test('switching product resets the window rather than carrying a stale price sca
   assert.equal(chart.state().view.priceScale.mode, 'auto');
 });
 
-test('an unknown timeframe is refused by name, not silently ignored', () => {
+test('a timeframe no venue serves natively is still charted', () => {
+  // This used to be refused. No venue has a 7m candle, but the market layer folds seven
+  // 1m bars into one, so there is no reason for the chart to say no. See src/market/aggregate.ts.
   const chart = createChartStore('BTC-USD');
   const out = chart.setView({ timeframe: '7m' }, 'agent');
+  assert.equal(out.ok, true);
+  assert.equal(chart.state().view.granularitySec, 420);
+
+  assert.equal(chart.setView({ timeframe: '90s' }, 'agent').ok, true);
+  assert.equal(chart.state().view.granularitySec, 90);
+});
+
+test('a timeframe that is not a timeframe is still refused, with a usable message', () => {
+  const chart = createChartStore('BTC-USD');
+  const out = chart.setView({ timeframe: 'banana' }, 'agent');
   assert.equal(out.ok, false);
-  assert.match(String(out.error), /known:/);
+  assert.match(String(out.error), /count and a unit/);
+
+  const tooBig = chart.setView({ granularitySec: 60 * 60 * 24 * 400 }, 'agent');
+  assert.equal(tooBig.ok, false, 'a year per bar is past anything the rails hold');
 });
 
 test('the ruler reports the path, not only the endpoints', () => {
