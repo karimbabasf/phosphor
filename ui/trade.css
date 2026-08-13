@@ -6,7 +6,21 @@
 
    One extension to the app's colour law, and only this one: red reaches the
    liquidation surface. Being taken by the venue is the same class of event as a
-   refused write, so it wears the same colour. Nothing else on this page is red. */
+   refused write, so it wears the same colour. Nothing else on this page is red.
+
+   The height budget, because it is the thing this page gets wrong when it is wrong.
+   Five panels share a viewport that never scrolls. The left column runs the chart
+   against one table, the right column runs three blocks, and the caps below are
+   written to sum UNDER the viewport rather than over it:
+
+     left    chart (grows)          + book 38vh
+     right   risk 44vh + approvals 24vh + history 22vh floor   = 90vh + frames
+
+   It was eight panels and 152vh of caps in a 100vh column, which is not a tuning
+   error: a panel carrying `grow` has flex-basis 0, so when the declared caps overrun
+   the column it is the growing panel that pays the whole overrun, and the log
+   rendered as a frame line with nothing under it. Every cap here is paired with a
+   scroll, and the growing panel has a floor it cannot be pushed below. */
 
 /* Digits that tick must not change width. The monospace stack gives that already, but
    a fallback face may not, and a column of numbers that jitters as it updates is a
@@ -15,11 +29,12 @@
 .rgrid dd,
 .rexp .v,
 .liq-line,
+.wall-line,
 .mbar-v,
 .mrow-head,
 .mrow-projected,
 #t-book-rows,
-#t-fill-rows {
+#t-history-rows {
   font-variant-numeric: tabular-nums;
 }
 
@@ -83,6 +98,23 @@
 .tablewrap::-webkit-scrollbar-track { background: transparent; }
 .tablewrap::-webkit-scrollbar-thumb { background: var(--green-ghost); }
 
+/* Every column says what it measures, on a second line under its name.
+
+   SIZE was the one column on this page whose unit appeared nowhere: it is coins, and it
+   read as a bare 0.0314 beside seven dollar figures. A number whose unit has to be
+   guessed from the figures around it is not a number anyone should act on with borrowed
+   money, so all of them say it. The unit line costs no width at all, which is the reason
+   it is under the name rather than in brackets after it. */
+.grid th .h-n { display: block; }
+
+.grid th .h-u {
+  display: block;
+  color: var(--green-ghost);
+  letter-spacing: 0.04em;
+  font-size: 11px;
+  line-height: 1.2;
+}
+
 /* ---------- 2. chart ---------- */
 
 /* A command line has to look like one. The prompt glyph is why the field can go without
@@ -142,23 +174,36 @@
    renderer needed to say so. */
 .noteline:has(#t-note:empty) { display: none; }
 
-/* ---------- 3. book, 4. fills ---------- */
+/* ---------- 3. book ---------- */
 
-/* Both tables are fixed height and scroll inside themselves, so the chart above them
-   keeps the height it grows into. The body does not scroll: the table inside it does. */
-.panel-tbook > .pbody,
-.panel-tfills > .pbody {
+/* Fixed height and scrolls inside itself, so the chart above it keeps the height it grows
+   into. The body does not scroll: the table inside it does.
+
+   38vh rather than the 30vh it had, because the panel it used to share the column with is
+   gone. A book of one position and two working orders is five rows and takes what it needs;
+   the cap is what a book of twenty rows runs into. */
+.panel-tbook > .pbody {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  max-height: 38vh;
 }
 
-.panel-tbook > .pbody { max-height: 30vh; }
-.panel-tfills > .pbody { max-height: 20vh; }
-
-.grid .c-mkt { width: 16ch; }
-.grid .c-side { width: 7ch; }
+/* Twelve, not sixteen: the widest thing this column ever holds is an order child row, and
+   `stop ETH` behind a three-character indent is eleven. The four characters it gives back
+   go to the figures, which is where the reading happens. */
+/* Wide enough for the name AND its unit line. A column sized to its figures alone printed
+   MARKET hard against SIDE with no gap between the two words, which is a header that reads
+   as one word and names neither column. */
+.grid .c-mkt { width: 12ch; }
+.grid .c-side { width: 11ch; }
 .grid .c-time { width: 10ch; }
+.grid .c-kind { width: 11ch; }
+.grid .c-hmkt { width: 9ch; }
+
+/* The unit line never wraps. Wrapped, it turns a two-line header into a three-line one and
+   the column names stop sitting on a common baseline. */
+.grid th .h-u { white-space: nowrap; }
 
 /* A position and the orders working under it are one block. The hairline is drawn above
    the position row only, so nothing is ever drawn between a position and its own
@@ -176,32 +221,74 @@
 
 #t-book-rows > tr.orow > td:first-child { padding-left: 3ch; }
 
-/* "Liquidations ringed": the venue closing a position for you is not a fill you chose,
-   and it is the liquidation surface, which is the one place red is allowed to reach. */
-#t-fill-rows > tr.liquidation > td {
-  color: var(--red-dim);
-  border-top: 1px solid var(--red-ghost);
-  border-bottom: 1px solid var(--red-ghost);
+/* The margin mode under the direction, one tier down: it qualifies the line above it rather
+   than standing beside it. */
+#t-book-rows .side-mode {
+  color: var(--green-faint);
+  font-size: 12px;
 }
 
-#t-fill-rows > tr.liquidation > td:first-child { border-left: 1px solid var(--red-ghost); }
-#t-fill-rows > tr.liquidation > td:last-child { border-right: 1px solid var(--red-ghost); }
+/* The profit split, subordinate to the position it belongs to the same way an order is, and
+   marked apart from one: an order is a live instruction and this is arithmetic about a
+   number on the line above. No rule over it, because it is not a new block. */
+#t-book-rows > tr.srow > td {
+  border-top: 0;
+  padding-left: 3ch;
+  color: var(--green-faint);
+  font-size: 12px;
+}
 
-/* ---------- 5. risk ---------- */
+/* The controls are pinned to the right edge and the figures scroll under them.
 
-/* Caps so a long book grows into a scroll rather than into the page. */
-.panel-trisk > .pbody { max-height: 42vh; }
+   Nine nowrap columns do not fit this column and never will: a position row carries six
+   dollar figures, a two-line profit split and two buttons. The table has always scrolled
+   sideways to hold them, and what was wrong was WHICH part went off the edge. CLOSE and
+   CANCEL ALL were the first things over the horizon on every screenshot, so the page kept
+   its numbers and lost the only controls that stop a position. Sticky puts that the right
+   way round: the numbers are what you scroll for, the brake is what has to be there.
 
-/* The market panel sits between risk and the mandate console, and it earns its place twice.
-   It carries facts no other panel does (oracle against mark, open interest, real volatility),
-   and it fills the height the mandate console does not need while nothing is armed, which is
-   the state this screen is in most of the time. */
-.panel-tmarket > .pbody { max-height: 30vh; }
+   Opaque, and opaque on a highlighted row too. The agent's highlight wash is translucent
+   by design, and translucency here would let the scrolling figures show straight through
+   the buttons. */
+.grid th.c-acts,
+.grid td.acts {
+  position: sticky;
+  right: 0;
+  background: var(--bg);
+  padding-left: 1ch;
+  border-left: 1px solid var(--green-ghost);
+}
 
-/* Two label/value pairs per line: four account figures in two rows, which leaves the
-   height in this panel to the liquidation block under them. */
+.grid th.c-acts { z-index: 2; }
+.grid td.acts { z-index: 1; }
+.grid tbody tr.hi-row td.acts { background: var(--bg); }
+
+/* Stacked, not side by side. Side by side the two controls were 249 pixels of a 702 pixel
+   table, more than the profit column and the entry price together, and every pixel of it was
+   taken from the figures. Stacked the column is as wide as its widest label and costs no
+   height at all, because the row it sits on is two lines high either way. */
+.grid td.acts .btn {
+  display: block;
+  width: 100%;
+  text-align: left;
+}
+
+/* ---------- 4. risk ---------- */
+
+/* The one panel that answers what this page is for, so it is the one panel allowed to be
+   long. It holds what were three panels: the account and its distance to the wall, the
+   instrument, and what the armed program may still do. Nothing in it is a table, which is
+   why it can live in the narrow column while both tables take the wide one. */
+.panel-trisk > .pbody { max-height: 44vh; }
+
+/* Two label/value pairs per line, and capped in characters rather than left to the panel.
+   Uncapped, each value flushed right against its own half of a 677px panel and every row
+   read as a label, thirty characters of nothing, then a figure. A measure is a typographic
+   quantity and not a container width: this is the same rule as body copy at 60 to 75
+   characters, applied to a grid of figures. */
 .rgrid {
   margin: 0;
+  max-width: 46ch;
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr) max-content minmax(0, 1fr);
   column-gap: 2ch;
@@ -218,13 +305,14 @@
   align-items: center;
   gap: 1ch;
   margin: 4px 0 0;
+  max-width: 46ch;
 }
 
 .rhealth .track { flex: 1 1 auto; min-width: 6ch; }
 
-/* The liquidation distance is the most important number on the page, so it gets the
-   only two kinds of weight this palette has: size, and the brightest tier. The rule
-   above it is there so the eye lands on this block and not on the figures above it. */
+/* The two walls. The liquidation distance is the most important number on the page, so it
+   gets the only two kinds of weight this palette has: size, and the brightest tier. The
+   rule above the block is there so the eye lands here and not on the figures above it. */
 .liq {
   margin-top: 6px;
   padding-top: 5px;
@@ -269,6 +357,21 @@
   background-color: transparent;
 }
 
+/* The second wall, directly under the venue's own, because the two are read together or not
+   at all. Set at the same size and one tier down: it is the same class of fact from a
+   different authority, and neither is asserted to come first. Phosphor and never red. A
+   stop-out is a decision somebody made on purpose; only the venue taking the position is the
+   liquidation surface, and red on this page means that and nothing else. */
+.wall-line {
+  margin: 4px 0 0;
+  font-size: 16px;
+  line-height: 1.25;
+  letter-spacing: 0.02em;
+  color: var(--green-dim);
+}
+
+#t-wall-price { color: var(--green-hi); }
+
 .rexp {
   margin-top: 6px;
   padding-top: 5px;
@@ -282,9 +385,20 @@
 .rexp .shock {
   margin-top: 2px;
   color: var(--green-dim);
+  max-width: 60ch;
 }
 
-/* ---------- 6. mandate ---------- */
+/* The instrument rather than the account. It was a titled panel of its own and it is four
+   ruled lines now: mark against oracle, the basis between them, what the carry costs, and
+   what the thing actually moves in an hour. That is the whole set a leveraged position is
+   read against. */
+.rmkt {
+  margin-top: 6px;
+  padding-top: 5px;
+  border-top: 1px solid var(--green-ghost);
+}
+
+/* ---------- 5. mandate, inside the risk panel ---------- */
 
 /* Every row in #t-mandate-list is built by ui/trade.js. The shape it must produce, so
    that the two files can be written apart:
@@ -312,18 +426,39 @@
    The renderer sets the width of .fill and adds .hot to the loss bar past its
    threshold. Nothing else here needs a class from it. */
 
-.mrow {
-  border: 1px solid var(--green-ghost);
-  padding: 4px 1ch 6px;
-  margin-bottom: 8px;
+.rmandate {
+  margin-top: 6px;
+  padding-top: 5px;
+  border-top: 1px solid var(--green-ghost);
 }
 
-/* The head is a row of independent facts (symbol, state, expiry, the stop-out price, a halt
-   reason, the rule that last fired) and each one is its own span. As a plain block those spans
-   butted straight together and printed "BTCARMEDExpires in 3h 11mMANDATE STOP-OUT at --", which
-   is not a styling nit: the state and the expiry became one unreadable word on the panel that
-   exists to say what a bot is allowed to do. A wrapping flex row with a real gap keeps them
-   separate at any width, and the divider makes the grouping visible rather than implied. */
+/* This block used to be a panel with a frame around it. Inside another panel a second
+   frame would be a box in a box, so the name is set the way the frames set theirs and
+   the rule above it does the separating. */
+.subhead {
+  margin: 0 0 3px;
+  color: var(--green-faint);
+  letter-spacing: 0.08em;
+}
+
+/* Ruled rather than boxed, for the same reason: the panel already has a border and a
+   second one inside it reads as a card. */
+.mrow {
+  padding: 0 0 4px;
+  margin-bottom: 6px;
+}
+
+.mrow + .mrow {
+  padding-top: 5px;
+  border-top: 1px solid var(--green-ghost);
+}
+
+/* The head is a row of independent facts (symbol, state, expiry, a halt reason) and each one
+   is its own span. As a plain block those spans butted straight together and printed
+   "BTCARMEDExpires in 3h 11m", which is not a styling nit: the state and the expiry became one
+   unreadable word on the panel that exists to say what a bot is allowed to do. A wrapping flex
+   row with a real gap keeps them separate at any width, and the divider makes the grouping
+   visible rather than implied. */
 .mrow-head {
   margin: 0;
   color: var(--green-hi);
@@ -365,7 +500,7 @@
   column-gap: 2ch;
 }
 
-/* Same rule as the risk panel one panel up: the price that ends the position is the
+/* Same rule as the liquidation block above it: the price that ends the position is the
    number in the block that gets size and the brightest tier. It takes the whole first
    line of the receipt and the three supporting figures sit under it. */
 .mrow-projected .proj-liq {
@@ -382,6 +517,12 @@
   grid-row: 2;
   min-width: 0;
 }
+
+/* The no-projection branch is a sentence and not a figure, so it takes the full width like
+   the price line does. Auto-placed it landed in one of three tracks, which squeezed
+   "Projection unavailable: the venue has not reported collateral." into a third of the
+   block and wrapped it over five lines. */
+.mrow-projected .proj-none { grid-column: 1 / -1; }
 
 .mrow-bars {
   margin: 5px 0 0;
@@ -428,33 +569,140 @@
    a comfortable target while the rest stay dense. */
 .mrow-actions .btn { padding: 2px 1ch; }
 
-/* ---------- 7. log ---------- */
+/* ---------- 6. approvals ---------- */
 
-/* The mandate console above it is the panel that grows; the log takes what is left and
-   scrolls its own lines. */
-.panel-tlog > .pbody { max-height: 24vh; }
+/* Capped, and this cap is the fix for the defect that emptied the log.
+
+   style.css caps `.panel-gate`, which is the PRO page's approvals panel. This page's is
+   `.panel-tgate` and was caught by neither rule, so a single pending proposal grew it to
+   380 pixels inside a column with no room to give. Nothing below it could hold its ground,
+   because the panel below it was the growing one and a growing panel's basis is zero. */
+.panel-tgate > .pbody { max-height: 24vh; }
+
+/* ---------- 7. history ---------- */
+
+/* One tape where there were three panels. FILLS, MANDATE and LOG were three views of one
+   sequence, and reading them meant looking in three places and reconciling three clocks.
+
+   It takes the height the two blocks above it do not need, and it has a floor. The floor is
+   the point: `.panel.grow` is `flex: 1`, which means `flex-basis: 0`, so a growing panel gets
+   its size out of leftover space and gets nothing at all when there is none. That is how this
+   column once shipped a titled frame with zero lines under it. A min-height cannot be shrunk
+   away, so the two capped panels above give up their room to it instead, into their own
+   scrolls, which is what a cap paired with a scroll is for. */
+.panel-thistory {
+  min-height: 22vh;
+}
+
+.panel-thistory > .pbody {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Fixed layout, and it is load-bearing rather than a preference.
+
+   An event row says what happened in one cell spanning the four columns a fill fills with
+   figures. Under automatic layout that cell's content is what sizes those columns, so one
+   log line carrying a UUID stretched PRICE to 412 pixels and SIZE to 288, and the table came
+   out 1,413 pixels wide inside a 661 pixel panel: every figure a fill reported was off the
+   right edge before anyone scrolled. Fixed layout takes the widths from the header row
+   instead, where they are declared, and a message too long for its cell is cut and carries
+   the whole of itself in the title. */
+/* The floor is the other half of the fix. Fixed layout does not overflow, it divides, so a
+   table told to be 100% of a phone gave its three figure columns seventeen pixels each and
+   printed prices as `$.1.$.`. A minimum in characters is the width below which this tape
+   stops being readable at all, and under it the wrapper scrolls sideways the way every other
+   nowrap table on this page does. Above it, which is every desktop, the 100% wins and nothing
+   about the desktop layout changes. */
+#t-history {
+  table-layout: fixed;
+  width: 100%;
+  min-width: 77ch;
+}
+
+/* KIND is what makes one table hold two shapes of row. A fill fills the figures; anything
+   else says what happened across them. Both start with the same three columns, so the tape
+   is scanned down time, kind and market whatever each row turns out to be. */
+#t-history-rows > tr > td { border-top: 1px solid var(--green-ghost); }
+#t-history-rows > tr:first-child > td { border-top: 0; }
+#t-history-rows .kind { color: var(--green-hi); letter-spacing: 0.06em; }
+
+/* An event is the app talking about itself rather than the venue reporting a trade, so it
+   sits one tier down and the fills stay the bright rows. */
+#t-history-rows > tr.ev > td { color: var(--green-dim); }
+#t-history-rows > tr.ev .kind { color: var(--green); }
+#t-history-rows .said { color: var(--green-dim); }
+
+/* A refused write and a failed execution are the safety gate speaking, which is the other
+   thing red is for on this app. */
+#t-history-rows > tr.bad .kind,
+#t-history-rows > tr.bad .said { color: var(--red-dim); }
+
+/* "Liquidations ringed": the venue closing a position for you is not a fill you chose,
+   and it is the liquidation surface, which is the one place red is allowed to reach. */
+#t-history-rows > tr.liquidation > td {
+  color: var(--red-dim);
+  border-top: 1px solid var(--red-ghost);
+  border-bottom: 1px solid var(--red-ghost);
+}
+
+#t-history-rows > tr.liquidation > td:first-child { border-left: 1px solid var(--red-ghost); }
+#t-history-rows > tr.liquidation > td:last-child { border-right: 1px solid var(--red-ghost); }
 
 /* Toggled by the renderer, so nothing above may set display on one of these and win. */
 [hidden] { display: none; }
 
+/* ---------- stacked fallback ---------- */
+
 /* Too narrow or too short for two columns: style.css already stacks the deck and lets
    the page scroll. Every cap set above has to lift with it, or a panel would scroll
-   inside a box that is itself inside a scrolling page. */
+   inside a box that is itself inside a scrolling page.
+
+   style.css cannot know the reading order this page wants once that happens. In source
+   order the panels are grouped into two columns, which is right side by side and wrong
+   stacked: it puts the whole tape between the chart and the risk panel, so answering "how
+   close am I to liquidation" means scrolling past a page of things that already happened.
+   `display: contents` dissolves both column boxes so every panel becomes a direct child of
+   the deck, which is what makes a single global order possible at all.
+
+   The order is what a person opening this on a narrow screen is actually asking, in
+   sequence: what is the price doing, how close am I to being liquidated, what needs a
+   decision, what do I hold, what happened. Nobody arms a bot from a phone; this is about
+   the answer still being reachable when someone looks. */
 @media (max-width: 1100px), (max-height: 620px) {
+  .deck > .col { display: contents; }
+
+  /* Every panel is numbered. An unordered one takes order 0 and lands above the chart,
+     which is how a stacked screen ends up opening on a form instead of a price. */
+  .panel-chart { order: 1; }
+  .panel-trisk { order: 2; }
+  .panel-tgate { order: 3; }
+  .panel-tbook { order: 4; }
+  .panel-thistory { order: 5; }
+
+  /* The caps above are viewport fractions, which stop meaning anything once the page
+     scrolls: 22vh of a scrolling page is an arbitrary slice and not a panel. */
   .panel-trisk > .pbody,
-  .panel-tmandate > .pbody,
-  .panel-tbook > .pbody,
-  .panel-tfills > .pbody,
-  .panel-tlog > .pbody {
-    max-height: none;
-    overflow: visible;
+  .panel-tgate > .pbody,
+  .panel-tbook > .pbody { max-height: none; overflow: visible; }
+
+  .panel-tbook > .pbody { display: block; }
+  .panel-thistory { min-height: 0; }
+
+  /* History keeps a cap so a long tape cannot become the whole page, and it restates its
+     containment in full. That is a fix rather than repetition: a height limit with visible
+     overflow is not a compromise between the two, it is the broken case, and it once
+     painted 550 pixels of rows straight through the panel underneath it. */
+  .panel-thistory > .pbody {
+    max-height: 40vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
   }
 
-  .panel-tbook > .pbody,
-  .panel-tfills > .pbody { display: block; }
-
-  /* Stacked, the page scrolls down but must still not scroll sideways: seven nowrap
-     columns wider than a phone scroll inside their own box, as the wallet does. */
+  /* Stacked, the page scrolls down but must still not scroll sideways: nowrap columns
+     wider than a phone scroll inside their own box, as the wallet does. */
   .tablewrap { overflow-x: auto; overflow-y: visible; }
 
   /* One pair per line, one bar per line, one figure per line: at this width the paired
@@ -468,69 +716,4 @@
   .mrow-projected .proj-margin { grid-row: auto; }
 
   .ovbar { row-gap: 2px; }
-}
-
-/* The mandate console takes the height its contents need and the log takes what is left.
-   It was the other way round, and it was wrong for the state this screen spends most of its
-   time in: nothing armed is one line of text, and giving that line the whole column left a
-   quarter of the page empty under it. An armed mandate is tall on its own, so it does not
-   need `grow` to claim room, it needs a ceiling so a program with many rules scrolls inside
-   its panel instead of pushing the log off the page. */
-.panel-tmandate > .pbody {
-  max-height: 56vh;
-  overflow-y: auto;
-}
-
-/* ---------- stacked fallback ---------- */
-
-/* style.css already stacks the deck into one column and lets the page scroll. What it cannot
-   know is the reading order this page wants once that happens.
-
-   In source order the panels are grouped into two columns, which is right side by side and
-   wrong stacked: it puts thirty rows of fill history between the chart and the risk panel, so
-   answering "how close am I to liquidation" means scrolling past a page of things that already
-   happened. `display: contents` dissolves both column boxes so every panel becomes a direct
-   child of the deck, which is what makes a single global order possible at all.
-
-   The order is what a person opening this on a narrow screen is actually asking, in sequence:
-   what is the price doing, how close am I to being liquidated, what is this market doing, what
-   is running, what do I hold. History and the log go last because they are the record rather
-   than the question. Nobody arms a bot from a phone; this is about the answer still being
-   reachable when someone looks. */
-@media (max-width: 1100px), (max-height: 620px) {
-  .deck > .col { display: contents; }
-
-  .panel-chart { order: 1; }
-  .panel-trisk { order: 2; }
-  .panel-tmarket { order: 3; }
-  /* Approvals keeps its place above the mandate console here too. Every panel in this
-     block is numbered for the same reason: an unordered one takes order 0 and lands above
-     the chart, which is how a stacked screen ends up opening on a form instead of a price. */
-  .panel-tgate { order: 4; }
-  .panel-tmandate { order: 5; }
-  .panel-tbook { order: 6; }
-  .panel-tfills { order: 7; }
-  .panel-tlog { order: 8; }
-
-  /* The caps above are viewport fractions, which stop meaning anything once the page scrolls:
-     20vh of a scrolling page is an arbitrary slice and not a panel. Fills keeps one so a long
-     history cannot become the whole page; everything else opens up to its content.
-
-     Fills restates its containment in full, and that is a fix rather than repetition. An
-     earlier block in this file releases every stacked panel to `overflow: visible` and
-     `display: block`, which is right for the panels that have no cap. Putting a max-height
-     back on one of them without also putting the clip back produced a box 338 pixels tall
-     painting 550 pixels of rows straight through the log underneath it. A height limit and
-     visible overflow is not a compromise between the two, it is the broken case. */
-  .panel-trisk > .pbody,
-  .panel-tmarket > .pbody,
-  .panel-tmandate > .pbody,
-  .panel-tbook > .pbody { max-height: none; overflow: visible; }
-
-  .panel-tfills > .pbody {
-    max-height: 40vh;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
 }

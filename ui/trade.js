@@ -20,13 +20,31 @@ var REFUSAL_TYPES = { policy_refused: 1, refused: 1, approve_attempt_rejected: 1
 var LOG_MAX_LINES = 400;
 var COLLAPSE_PREFIX = 'phosphor.collapse.';
 
+/* How many rows the tape keeps. Past this it is not history a person reads, it is a file,
+   and /api/log is where a file belongs. */
+var HISTORY_MAX_ROWS = 300;
+
+/* The manual controls on this page, by the name the server logs them under. A log line
+   carrying one of these acted on the book, so it belongs on this tape whatever else the
+   app was doing at the time. */
+var TRADE_ACTIONS = { close: 'close', cancel: 'cancel', cancel_all: 'cancel all', flatten: 'flatten', disarm: 'disarm' };
+
+/* The one proposal kind that reaches this venue. Every other kind the app can propose is
+   treasury (swap, deposit, withdraw, lp, consolidate, transfer) and belongs to the pro
+   window's TRANSACTIONS tab, which has the columns for it. Matching on the kind's own
+   name is why a withdrawal cannot land on this tape. */
+var MANDATE_KIND = 'mandate_arm';
+
 /* The closed overlay set, in the order src/trade/view.ts declares it. trade.html authors the
    buttons; this list is the fallback when the container is empty and the order they draw in. */
 var OVERLAY_NAMES = ['position', 'liquidation', 'stops', 'targets', 'orders', 'fills', 'mandateWall'];
 
-/* Column counts for the two tables, needed only by the rows that span the full width. */
+/* Column counts for the two tables, needed only by the rows that span the full width.
+   HISTORY_NUM_COLS is the run of columns a fill fills with figures; an event that is not a
+   fill says what happened across that run instead. */
 var BOOK_COLS = 9;
-var FILL_COLS = 8;
+var HISTORY_COLS = 7;
+var HISTORY_NUM_COLS = 4;
 
 /* Ten seconds of silence on an account subscription means the screen is behind the market.
    Hyperliquid pushes mark and account updates continuously, so a gap that size is a stall
@@ -45,6 +63,10 @@ var HOT_AT = 70;
 var TOKEN = null;
 var PAYLOAD = null;
 var POLICY = null;
+/* The audit tail as this page last saw it. HISTORY merges three sources that arrive on
+   three different channels, so the two that are not the payload are held here and the
+   whole tape is rebuilt whenever any of them moves. Newest first, the order it is read in. */
+var LOG_EVENTS = [];
 var COLLAPSE_MEM = {};
 var PENDING = {};
 var SSE_SEEN_OPEN = false;
@@ -87,12 +109,6 @@ function usd(n) {
   var v = Number(n);
   return (v < 0 ? '-' : '') + '$' +
     Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-function usdWhole(n) {
-  if (!known(n)) return '--';
-  var v = Number(n);
-  return (v < 0 ? '-' : '') + '$' + Math.round(Math.abs(v)).toLocaleString('en-US');
 }
 
 /* PnL and net exposure are read for their direction before their size, so the sign is always
@@ -159,12 +175,6 @@ function duration(ms) {
   var hours = Math.floor(minutes / 60);
   if (hours < 24) return hours + 'h ' + (minutes % 60) + 'm';
   return Math.floor(hours / 24) + 'd ' + (hours % 24) + 'h';
-}
-
-function padEnd(s, n) {
-  var out = String(s);
-  while (out.length < n) out += ' ';
-  return out;
 }
 
 function repeat(ch, n) {
@@ -448,7 +458,7 @@ function renderStatus(p) {
   setClass(setText('t-equity', usd(account.equityUsd)), 'stale', stale);
   setClass(setText('t-free', usd(account.freeUsd)), 'stale', stale);
   setClass($('t-book-rows'), 'stale', stale);
-  setClass($('t-fill-rows'), 'stale', stale);
+  setClass($('t-history-rows'), 'stale', stale);
 
   var feed = setText('t-feed', p ? feedText(venue, state) : '--');
   setClass(feed, 'hi', state === 'degraded');
@@ -553,15 +563,48 @@ function hideLiqLine(id, shut) {
   target.hidden = shut;
 }
 
+/* The share of the scale still standing between this position and the venue's wall.
+
+   This was inverted, and inverted the wrong way: it returned `1 - distance/scale`, so a
+   position far from its liquidation produced a negative fill, clamped to zero, and left the
+   bar showing its red track end to end. A live account 1,607 ATR clear of the wall drew the
+   picture of an account at it. The bar is a reverse meter by design (green covers red, and
+   the red still showing is the ground left to lose), so the fill IS the distance and never
+   the danger: full green far away, empty at the wall, which is also what the stylesheet
+   above it says out loud. */
 function liqFill(pos) {
-  if (known(pos.liqDistanceAtr)) return (1 - Number(pos.liqDistanceAtr) / LIQ_ATR_FULL) * 100;
-  if (known(pos.liqDistancePct)) return (1 - Number(pos.liqDistancePct) / LIQ_PCT_FULL) * 100;
+  if (known(pos.liqDistanceAtr)) return (Number(pos.liqDistanceAtr) / LIQ_ATR_FULL) * 100;
+  if (known(pos.liqDistancePct)) return (Number(pos.liqDistancePct) / LIQ_PCT_FULL) * 100;
   return null;
 }
 
-function renderLiqBlock(pos) {
+/* The wall the human approved, for whichever market the distance block is about. Only an
+   armed mandate has one: a program nobody armed is not holding a stop-out over anything. */
+function armedWall(p, coin) {
+  var list = (p && Array.isArray(p.mandates)) ? p.mandates : [];
+  var want = String(coin || '').toUpperCase();
+  for (var i = 0; i < list.length; i++) {
+    if (!list[i].armed) continue;
+    if (want && String(list[i].symbol).toUpperCase() !== want) continue;
+    return list[i].wallPx;
+  }
+  return null;
+}
+
+/* Both prices that can end a position, in one block.
+   The venue's liquidation and the mandate stop-out are the same class of fact from two
+   different authorities, and a screen that puts them in separate panels makes the reader
+   hold one in their head while they find the other. No ordering is asserted between them:
+   live numbers have put a stop-out at $1,133 under a liquidation at $1,422 and above one
+   on another day, so which comes first is a reading and never a layout. */
+function renderLiqBlock(pos, wallPx) {
   var ids = ['t-liq-price', 't-liq-pct', 't-liq-usd', 't-liq-atr', 't-liq-bar'];
   for (var i = 0; i < ids.length; i++) hideLiqLine(ids[i], !pos);
+  // Flat with a mandate armed there is still a wall to state, so the stop-out line is shown
+  // whenever a mandate holds one, on its own terms and not on the position's.
+  var wall = $('t-wall-line');
+  if (wall) wall.hidden = !known(wallPx);
+  setText('t-wall-price', price(wallPx));
   if (!pos) {
     setText('t-liq-price', '--');
     setText('t-liq-pct', '--');
@@ -601,7 +644,7 @@ function renderMarket(p) {
   if (empty) empty.hidden = m !== null;
   if (!m) {
     ['t-mkt-mark', 't-mkt-oracle', 't-mkt-spread', 't-mkt-premium', 't-mkt-funding',
-      't-mkt-funding8', 't-mkt-oi', 't-mkt-vol', 't-mkt-atr', 't-mkt-atrpct'].forEach(function (id) {
+      't-mkt-funding8', 't-mkt-atr', 't-mkt-atrpct'].forEach(function (id) {
       setText(id, '--');
     });
     return;
@@ -621,8 +664,9 @@ function renderMarket(p) {
   // printed rather than one converted silently, because an unlabelled funding number read on
   // the wrong period is off by a factor of eight.
   setText('t-mkt-funding8', known(m.fundingRateHourly) ? funding(Number(m.fundingRateHourly) * 8) : '--');
-  setText('t-mkt-oi', usdWhole(m.openInterestUsd));
-  setText('t-mkt-vol', usdWhole(m.volume24hUsd));
+  // Open interest and 24h volume used to print here. They describe the market's health and
+  // never this position's, and nothing a person does at this desk changes on either, so
+  // they went with the panel frame rather than into the panel that replaced it.
   setText('t-mkt-atr', price(m.atr));
   setText('t-mkt-atrpct', known(m.atr) && known(m.markPx) && Number(m.markPx) !== 0
     ? pct((Number(m.atr) / Number(m.markPx)) * 100)
@@ -655,28 +699,36 @@ function renderRisk(p) {
   if (!positions || (!positions.length && !settled)) {
     setText('t-risk-empty', 'No account data yet.');
     if (empty) empty.hidden = false;
-    renderLiqBlock(null);
+    renderLiqBlock(null, armedWall(p, d.symbol));
     return;
   }
   if (!positions.length) {
     setText('t-risk-empty', 'Nothing at risk. No open position.');
     if (empty) empty.hidden = false;
-    renderLiqBlock(null);
+    renderLiqBlock(null, armedWall(p, d.symbol));
     return;
   }
   if (empty) empty.hidden = true;
-  renderLiqBlock(riskPosition(positions, d.symbol));
+  var at = riskPosition(positions, d.symbol);
+  renderLiqBlock(at, armedWall(p, at ? at.coin : d.symbol));
 }
 
 /* ---------- 4. mandates ---------- */
 
-function meter(bound, text, percent, hot) {
+/* The four bounds, as the classes trade.css documents above the .mrow rules and not as a
+   near miss of them. This emitted .mbar-text and .mbar-track where the stylesheet draws
+   .mbar-k, .track and .fill, so nothing matched: the bounds rendered as four lines of
+   plain text with no meter at all, and the one rule that turns the loss bar red past its
+   threshold could never fire. A spent envelope is the thing on this page most worth
+   seeing before it is read, so the contract is kept here rather than loosened there. */
+function meter(bound, label, value, percent, hot) {
   var bar = el('div', 'mbar');
   bar.dataset.bound = bound;
-  bar.appendChild(el('div', 'mbar-text', text));
-  var track = el('div', 'mbar-track');
+  bar.appendChild(el('span', 'mbar-k', label));
+  var track = el('span', 'track');
   fillBar(track, percent);
   bar.appendChild(track);
+  bar.appendChild(el('span', 'mbar-v', value));
   if (hot) bar.classList.add('hot');
   return bar;
 }
@@ -736,14 +788,10 @@ function mandateRow(m, p) {
   // words, in the row, and DISARM stays enabled underneath it.
   head.appendChild(el('span', m.running ? 'state' : 'state red', m.running ? 'ARMED' : 'NOT RUNNING'));
   head.appendChild(el('span', 'meta', 'Expires in ' + duration(m.used ? m.used.msToExpiry : null)));
-  // Flat with a mandate armed there is no wall yet, so the price is unknown and prints as --
-  // rather than as a line drawn at a number that means nothing.
-  head.appendChild(el('span', 'meta', 'MANDATE STOP-OUT at ' + price(m.wallPx) + ', the loss you approved'));
+  // The stop-out price left this row for the risk block above it, beside the venue's own
+  // wall, because the two prices that can end a position are read together or not at all.
+  // What the last rule did left this row for HISTORY, where the rest of the sequence is.
   if (m.haltedReason) head.appendChild(el('span', 'meta red', String(m.haltedReason)));
-  if (m.lastRule) {
-    head.appendChild(el('span', 'meta',
-      clock(m.lastRule.at) + ' ' + String(m.lastRule.action) + ' ' + String(m.lastRule.id)));
-  }
   wrap.appendChild(head);
 
   // Agent-authored sentences, one line each, carried verbatim as text.
@@ -760,24 +808,27 @@ function mandateRow(m, p) {
   if (used) {
     bars.appendChild(meter(
       'notional',
-      'Used ' + usd(used.notionalUsd) + ' of ' + usd(env.maxNotionalUsd) + ' notional',
+      'notional',
+      usd(used.notionalUsd) + ' of ' + usd(env.maxNotionalUsd),
       share(used.notionalUsd, env.maxNotionalUsd),
       false
     ));
     var lost = share(used.lossUsd, env.maxLossUsd);
     bars.appendChild(meter(
       'loss',
-      'Lost ' + usd(used.lossUsd) + ' of ' + usd(env.maxLossUsd) + ' allowed',
+      'loss',
+      usd(used.lossUsd) + ' of ' + usd(env.maxLossUsd),
       lost,
       known(lost) && lost > HOT_AT
     ));
     bars.appendChild(meter(
       'orders',
-      count(used.ordersLastMin) + ' of ' + count(env.maxOrdersPerMin) + ' orders this minute',
+      'orders/min',
+      count(used.ordersLastMin) + ' of ' + count(env.maxOrdersPerMin),
       share(used.ordersLastMin, env.maxOrdersPerMin),
       false
     ));
-    bars.appendChild(meter('time', 'Expires in ' + duration(used.msToExpiry), lifeShare(m), false));
+    bars.appendChild(meter('time', 'expires', duration(used.msToExpiry), lifeShare(m), false));
   }
   wrap.appendChild(bars);
   wrap.appendChild(projectedBlock(m));
@@ -826,9 +877,25 @@ function pnlCell(pos) {
   setClass(head, 'up', known(net) && Number(net) >= 0);
   setClass(head, 'down', known(net) && Number(net) < 0);
   td.appendChild(head);
-  td.appendChild(el('div', 'pnl-parts',
-    'price ' + signedUsd(pos.pnlPriceUsd) + '  funding ' + signedUsd(pos.pnlFundingUsd)));
   return td;
+}
+
+/* The two parts of the result, on the row under the net rather than inside its cell.
+
+   Retail shows one PnL number. A position's result is price plus funding minus fees, and a
+   carry trade that is green on price can be red once it has paid for itself, so the net is
+   the headline and the two parts sit under it. They used to sit under it INSIDE the cell,
+   which made the profit column twenty-seven characters wide and pushed the controls off the
+   right of a table that already did not fit. The table has an idiom for a fact that belongs
+   to the position above it, and the orders already use it, so the split uses it too. */
+function splitRow(pos) {
+  if (!known(pos.pnlPriceUsd) && !known(pos.pnlFundingUsd)) return null;
+  var tr = el('tr', 'srow');
+  var td = el('td', 'faint',
+    'price ' + signedUsd(pos.pnlPriceUsd) + ', funding ' + signedUsd(pos.pnlFundingUsd));
+  td.colSpan = BOOK_COLS;
+  tr.appendChild(td);
+  return tr;
 }
 
 function positionRow(pos, p) {
@@ -837,11 +904,15 @@ function positionRow(pos, p) {
   markHighlight(tr, p, 'position', pos.coin);
   tr.appendChild(el('td', 'sym', String(pos.coin)));
 
+  // Direction and size of the bet on one line, the margin mode under it. As one line it was
+  // sixteen characters of a table that had none to spare, and cross against isolated is a
+  // different fact from 10x anyway: one says how much is borrowed, the other says whose
+  // collateral answers for it.
   var short = pos.side === 'short';
   var side = el('td', short ? 'side short' : 'side long');
-  side.appendChild(document.createTextNode(short ? 'SHORT' : 'LONG'));
-  side.appendChild(document.createTextNode(' ' + (known(pos.leverage) ? pos.leverage + 'x' : '--')));
-  if (pos.leverageType) side.appendChild(document.createTextNode(' ' + String(pos.leverageType)));
+  side.appendChild(el('div', 'side-dir',
+    (short ? 'SHORT' : 'LONG') + ' ' + (known(pos.leverage) ? pos.leverage + 'x' : '--')));
+  side.appendChild(el('div', 'side-mode', pos.leverageType ? String(pos.leverageType) : '--'));
   tr.appendChild(side);
 
   tr.appendChild(el('td', 'num', amount(pos.sizeCoin)));
@@ -851,8 +922,11 @@ function positionRow(pos, p) {
   tr.appendChild(el('td', 'num liq', price(pos.liqPx)));
   tr.appendChild(pnlCell(pos));
 
+  // Short labels, because this column is pinned to the right edge of a table that scrolls
+  // sideways under it and every character it spends is taken from the numbers. The
+  // confirmation dialog is where the full sentence belongs and already carries it.
   var acts = el('td', 'acts');
-  acts.appendChild(actionButton('[ CLOSE POSITION ]', 'close', { coin: String(pos.coin) }));
+  acts.appendChild(actionButton('[ CLOSE ]', 'close', { coin: String(pos.coin) }));
   acts.appendChild(actionButton('[ CANCEL ALL ]', 'cancel_all', { coin: String(pos.coin) }));
   tr.appendChild(acts);
   return tr;
@@ -900,6 +974,8 @@ function renderBook(p) {
   for (var i = 0; i < positions.length; i++) {
     var pos = positions[i];
     rows.appendChild(positionRow(pos, p));
+    var split = splitRow(pos);
+    if (split) rows.appendChild(split);
     var coin = String(pos.coin).toUpperCase();
     var mine = [];
     for (var j = 0; j < orders.length; j++) {
@@ -931,78 +1007,206 @@ function renderBook(p) {
   if (anything) rows.appendChild(flattenRow());
 }
 
-/* ---------- 6. fills ---------- */
+/* ---------- 6. history ---------- */
 
-function fillRow(f, p) {
-  var tr = el('tr', f.liquidation ? 'flrow liq' : 'flrow');
-  tr.dataset.tid = String(f.tid);
-  markHighlight(tr, p, 'fill', f.tid);
-  tr.appendChild(el('td', 'ts', clock(f.atMs)));
-  tr.appendChild(el('td', 'sym', String(f.coin)));
-  var side = el('td', f.side === 'sell' ? 'side short' : 'side long');
-  side.appendChild(document.createTextNode(String(f.side)));
-  // The venue closing this for you is not the same event as you closing it, and the two must
-  // never read alike.
-  if (f.liquidation) {
-    side.appendChild(document.createTextNode(' '));
-    side.appendChild(el('span', 'liq', 'LIQ'));
+/* One tape, three sources. Fills come from the venue through the trade payload, the mandate's
+   own lifecycle comes from the armed rows in that same payload, and everything a human or a
+   policy did comes from the audit log. They were three panels and they are one sequence: a
+   refusal at 14:31 and the fill that did not happen at 14:31 only mean something together.
+
+   Scoped to trading, and the scoping is the whole reason this can be one panel. The audit log
+   is the app's log, so it also carries treasury swaps, deposits and withdrawals, which have
+   different columns, a different ledger and their own tab on the pro window. Nothing reaches
+   this tape unless it named a market, named a trade action, or named the one proposal kind
+   that arms a program on this venue. */
+
+/* Which proposal ids on this log tail belong to a mandate. Only proposal_created spells the
+   kind out, so the id it carries is what lets the later lines about the same proposal (the
+   approval, the refusal at approval time, the execution) be recognised as trading rather than
+   as treasury. A proposal whose creation has already scrolled off the tail is not claimed:
+   dropping a mandate line is a gap, and calling a withdrawal a trade is a lie. */
+function mandateProposalIds(events) {
+  var ids = {};
+  for (var i = 0; i < events.length; i++) {
+    var ev = events[i];
+    if (ev.type !== 'proposal_created') continue;
+    if (String(ev.msg || '').indexOf(MANDATE_KIND) === -1) continue;
+    var id = ev.data && ev.data.id;
+    if (id) ids[String(id)] = true;
   }
+  return ids;
+}
+
+/* The short word this event goes under in the KIND column. Null means it is not this page's
+   business and never reaches the tape. */
+function historyKind(ev, mandateIds) {
+  var data = ev.data || {};
+  var action = data.action ? String(data.action) : null;
+  // A human pressed one of this page's buttons. tool_call is dropped on purpose: the server
+  // writes one before the action and one after it, and a tape that prints both says every
+  // manual close twice.
+  if (action && TRADE_ACTIONS[action]) {
+    if (ev.type === 'tool_call') return null;
+    if (ev.type === 'error' || ev.type === 'execution_failed') return 'failed';
+    return TRADE_ACTIONS[action];
+  }
+  if (action) return null;
+  var id = data.id ? String(data.id) : null;
+  var mine = Boolean(id && mandateIds[id]) || String(ev.msg || '').indexOf(MANDATE_KIND) !== -1;
+  if (ev.type === 'kill_switch') return 'kill';
+  if (!mine) return null;
+  if (ev.type === 'proposal_created') return 'proposed';
+  if (ev.type === 'approved') return 'approved';
+  if (REFUSAL_TYPES[ev.type]) return 'refused';
+  if (ev.type === 'executed') return 'armed';
+  if (ev.type === 'execution_failed') return 'failed';
+  return null;
+}
+
+/* A market name only when the event actually carries one. The log's data is unknown shape by
+   type, so nothing is inferred from the message text: an unnamed market prints as unknown. */
+function historyCoin(ev) {
+  var coin = ev.data && ev.data.coin;
+  return coin ? String(coin).toUpperCase() : null;
+}
+
+function fillEntry(f) {
+  return { at: Number(f.atMs) || 0, kind: f.liquidation ? 'liq' : 'fill', coin: String(f.coin), fill: f };
+}
+
+/* What the armed programs are doing, taken from the payload rather than from the log, because
+   the log never sees a rule fire: the runner acts on the venue directly and the mandate row is
+   where that shows up. Only armed mandates are read, so nothing here can duplicate the log's
+   record of a program that has already stood down. */
+function mandateEntries(p) {
+  var list = (p && Array.isArray(p.mandates)) ? p.mandates : [];
+  var out = [];
+  for (var i = 0; i < list.length; i++) {
+    var m = list[i];
+    if (!m.armed) continue;
+    var since = Date.parse(m.since);
+    if (isFinite(since)) {
+      out.push({
+        at: since,
+        kind: 'armed',
+        coin: String(m.symbol),
+        text: 'mandate ' + String(m.id) + ' armed: ' + usd(m.envelope ? m.envelope.maxNotionalUsd : null) +
+          ' notional, ' + usd(m.envelope ? m.envelope.maxLossUsd : null) + ' loss allowed'
+      });
+    }
+    if (m.lastRule) {
+      var fired = Date.parse(m.lastRule.at);
+      if (isFinite(fired)) {
+        out.push({
+          at: fired,
+          kind: 'fired',
+          coin: String(m.symbol),
+          text: 'rule ' + String(m.lastRule.id) + ': ' + String(m.lastRule.action)
+        });
+      }
+    }
+    // A halt has no timestamp of its own, so it is stamped now and sorts to the top, which is
+    // where a program that has stopped itself belongs anyway.
+    if (m.haltedReason) {
+      out.push({ at: Date.now(), kind: 'halted', coin: String(m.symbol), text: String(m.haltedReason), bad: true });
+    }
+  }
+  return out;
+}
+
+function logEntries(events) {
+  var mandateIds = mandateProposalIds(events);
+  var out = [];
+  for (var i = 0; i < events.length; i++) {
+    var ev = events[i];
+    var kind = historyKind(ev, mandateIds);
+    if (!kind) continue;
+    var at = Date.parse(ev.ts);
+    out.push({
+      at: isFinite(at) ? at : 0,
+      kind: kind,
+      coin: historyCoin(ev),
+      // The app's own sentence, agent-authored or venue-authored, carried verbatim as text.
+      text: String(ev.msg),
+      bad: Boolean(REFUSAL_TYPES[ev.type]) || kind === 'failed'
+    });
+  }
+  return out;
+}
+
+/* A fill row fills the numeric columns; every other event says what happened across them. Both
+   share TIME, KIND and MARKET, so the tape is scanned down those three whatever each row is. */
+function historyRow(entry, p) {
+  var f = entry.fill;
+  var tr = el('tr', f ? 'hrow' : 'hrow ev');
+  if (f) {
+    if (f.liquidation) tr.classList.add('liquidation');
+    tr.dataset.tid = String(f.tid);
+    markHighlight(tr, p, 'fill', f.tid);
+  }
+  if (entry.bad) tr.classList.add('bad');
+
+  tr.appendChild(el('td', 'ts', clock(entry.at)));
+  tr.appendChild(el('td', 'kind', entry.kind));
+  tr.appendChild(el('td', 'sym', entry.coin ? entry.coin : '--'));
+
+  if (!f) {
+    var said = el('td', 'said', entry.text);
+    said.colSpan = HISTORY_NUM_COLS;
+    // A tape does not wrap, so a long sentence is cut and the whole of it rides the title,
+    // which is an attribute holding text and never markup.
+    said.title = entry.text;
+    tr.appendChild(said);
+    return tr;
+  }
+
+  var side = el('td', f.side === 'sell' ? 'side short' : 'side long', String(f.side));
+  // The venue closing this for you is not the same event as you closing it, and the two must
+  // never read alike. The KIND column already says `liq`, and the row is ringed besides.
   tr.appendChild(side);
   tr.appendChild(el('td', 'num', price(f.px)));
   tr.appendChild(el('td', 'num', amount(f.sizeCoin)));
-  tr.appendChild(el('td', 'num', usd(f.notionalUsd)));
-  tr.appendChild(el('td', 'num', usd(f.feeUsd)));
   // Closed PnL is absent on an opening fill and on any fill the venue did not price, so it
   // stays unknown rather than becoming zero.
   tr.appendChild(el('td', 'num', signedUsd(f.closedPnlUsd)));
   return tr;
 }
 
-function renderFills(p) {
-  var rows = resetRows('t-fill-rows', 't-fills-empty');
+function renderHistory(p) {
+  var rows = resetRows('t-history-rows', 't-history-empty');
   if (!rows) return;
   var d = p || {};
-  var fills = (Array.isArray(d.fills) ? d.fills : []).slice();
-  fills.sort(function (a, b) {
-    return (b.atMs || 0) - (a.atMs || 0);
+  var entries = [];
+  var fills = Array.isArray(d.fills) ? d.fills : [];
+  for (var i = 0; i < fills.length; i++) entries.push(fillEntry(fills[i]));
+  entries = entries.concat(mandateEntries(p), logEntries(LOG_EVENTS));
+  entries.sort(function (a, b) {
+    return b.at - a.at;
   });
-  for (var i = 0; i < fills.length; i++) rows.appendChild(fillRow(fills[i], p));
-  var empty = $('t-fills-empty');
+  if (entries.length > HISTORY_MAX_ROWS) entries.length = HISTORY_MAX_ROWS;
+  for (var j = 0; j < entries.length; j++) rows.appendChild(historyRow(entries[j], p));
+
+  var empty = $('t-history-empty');
   if (empty) {
-    empty.textContent = p ? 'No fills yet.' : 'Waiting for the venue.';
-    empty.hidden = fills.length > 0;
+    // Before anything has answered, an empty tape is not yet a fact about the account.
+    empty.textContent = p ? 'Nothing yet. Fills, mandate events and refusals land here.' : 'Waiting for the venue.';
+    empty.hidden = entries.length > 0;
   }
-  if (!rows.childElementCount && !empty) rows.appendChild(spanRow(FILL_COLS, 'No fills yet.', 'flrow note'));
+  if (!entries.length && !empty) rows.appendChild(spanRow(HISTORY_COLS, 'Nothing yet.', 'hrow note'));
 }
 
-/* ---------- 7. log ---------- */
-
-function logLine(event) {
-  var line = el('div', REFUSAL_TYPES[event.type] ? 'logline refusal' : 'logline');
-  line.appendChild(el('span', 'ts', '[' + clock(event.ts) + '] '));
-  line.appendChild(el('span', 'type', padEnd(event.type, 25)));
-  line.appendChild(el('span', 'msg', event.msg));
-  return line;
-}
-
-function renderLog(events) {
-  var box = $('t-log');
-  if (!box) return;
-  box.textContent = '';
-  if (!events.length) {
-    box.appendChild(el('div', 'logline empty faint', 'Nothing yet.'));
-    return;
-  }
-  for (var i = 0; i < events.length; i++) box.appendChild(logLine(events[i]));
+/* The audit tail arrives whole on a refresh and one line at a time over SSE. Both land in the
+   same store and redraw the same tape, so a line pushed while the page is open sorts into the
+   sequence by its own timestamp instead of being stapled to the top of a different list. */
+function setLog(events) {
+  LOG_EVENTS = Array.isArray(events) ? events.slice(0, LOG_MAX_LINES) : [];
+  renderHistory(PAYLOAD);
 }
 
 function appendLog(event) {
-  var box = $('t-log');
-  if (!box) return;
-  var first = box.firstChild;
-  if (first && first.classList && first.classList.contains('empty')) box.textContent = '';
-  box.insertBefore(logLine(event), box.firstChild);
-  while (box.childElementCount > LOG_MAX_LINES) box.removeChild(box.lastChild);
+  LOG_EVENTS.unshift(event);
+  if (LOG_EVENTS.length > LOG_MAX_LINES) LOG_EVENTS.length = LOG_MAX_LINES;
+  renderHistory(PAYLOAD);
 }
 
 /* ---------- 8. note and overlays ---------- */
@@ -1175,7 +1379,7 @@ function renderAll(p) {
   renderMarket(p);
   renderMandates(p);
   renderBook(p);
-  renderFills(p);
+  renderHistory(p);
   renderNote(p);
   renderOverlays(p);
   layoutFrames();
@@ -1277,7 +1481,7 @@ function renderGate(s) {
 
 async function refreshLog() {
   try {
-    renderLog(await getJson('/api/log?limit=200'));
+    setLog(await getJson('/api/log?limit=200'));
   } catch (err) {
     alertLine('cannot read the log: ' + (err.message || String(err)));
   }

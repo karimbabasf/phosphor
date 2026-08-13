@@ -1,143 +1,159 @@
 {
-  "stamp": "f387bddd8028f131",
-  "iteration": 4,
+  "stamp": "057ba5d5d0cbcfed",
+  "iteration": 5,
   "firstFive": {
-    "what": "A terminal trading screen for one Hyperliquid perpetuals account: a live candle chart on the left, and on the right the account's risk, the market's own numbers, a red-bordered proposal waiting for a click, the armed bot, and a running log.",
+    "what": "A terminal trading screen for one Hyperliquid perpetuals account: a live candle chart with the position drawn on it, the book under it, and on the right one risk panel carrying both prices that can end the position, the approvals block, and one time-ordered tape of everything this account has done.",
     "who": "Someone trading this account with borrowed money, watching a program they armed, who has to decide on the agent's proposals without leaving the price.",
-    "action": "Read the pending block and click [ APPROVE ] or [ REFUSE ], or leave it and keep watching the position."
+    "action": "Read the LIQ line, then the tape, then decide the pending proposal or press one of the controls that stops something."
+  },
+  "changed_this_iteration": {
+    "why": "Karim, on iteration 4: 'The logs look squished, and I don't like the logs and mandate sections. I want them to be sort of in one, meaning a transaction history and fills as well.' / 'the book of our actual positions and everything is too squished. You can't clearly tell what numbers report what metrics.' / 'a lot of colliding, a lot of conflicting components, and it looks noisy. I don't see truly useful information that I need.'",
+    "panels": "Eight became five. FILLS, MANDATE and LOG merged into one HISTORY tape. MARKET stopped being a panel and became four ruled lines inside RISK. The armed mandate's live state became a ruled block inside RISK, beneath the liquidation distance it is about.",
+    "cut": "Open interest and 24h volume (they describe the market's health, never this position's). The per-fill FEE column on the tape. The mandate's stop-out price and last-rule line from the mandate head, both of which moved somewhere they read better: the price up beside the venue's wall, the rule down into the tape.",
+    "root_cause": "The noise was structural, not painted. Five variable-height panels shared a non-scrolling column whose declared caps summed to 152vh, and `.panel.grow` means `flex-basis: 0`, so the growing panel paid the whole overrun and the log rendered as a frame line with nothing under it. Merging three panels into one removed the competition; capping `.panel-tgate` (style.css only ever capped the pro page's `.panel-gate`) plugged the uncapped one; and a `min-height` floor on the growing panel means it can no longer be shrunk to nothing."
   },
   "asked": [
     {
       "requirement": "A separate interface from the pro page, at its own route, leaving `/` untouched",
       "met": true,
       "ref": "#page",
-      "note": "The page served at /trade with its own title PHOSPHOR TRADE. The pro page at / is untouched and keeps its own brief."
+      "note": "Still served at /trade with its own title. Only ui/trade.html, ui/trade.css and ui/trade.js changed this iteration; ui/style.css was not touched, so nothing here can reach the pro page."
     },
     {
-      "requirement": "Judged as a professional trading surface against what real perps desks carry, not against a",
+      "requirement": "Judged as a professional trading surface against what real perps desks carry, not against a retail app",
       "met": true,
-      "ref": "#panel-tmarket",
-      "note": "Carries oracle, basis, funding at two periods, open interest, 24h volume and real volatility, none of which a retail app shows together."
+      "ref": "#page",
+      "note": "shot-1440.png: one screen, no chrome, no navigation, every figure carrying its unit. The screen answers distance-to-wall, exposure, what is armed and what has happened, which is the set a desk keeps up."
     },
     {
-      "requirement": "The same design language as the pro page: same tokens, same panel frame, same terminal",
+      "requirement": "The same design language as the pro page: same tokens, same panel frame, same terminal density, no new hue, no radius, no shadow, no transition",
       "met": true,
-      "ref": ".panel .frame-top",
-      "note": "Same box-drawing frame, same tokens from style.css, same monospace grid as the pro page. No new hue on the page except red on the liquidation surface."
+      "ref": ".panel, .frame-top",
+      "note": "Every colour in the rewritten trade.css is a style.css token. The three panels that were dissolved became rules and sub-heads using the tokens already in the file. slop-lint passes."
     },
     {
       "requirement": "Everything on it readable and manipulable by the agent over MCP, not only by the human",
       "met": true,
-      "ref": "#t-overlays",
-      "note": "Overlay state comes from the server and the agent writes it. trade_focus, trade_highlight, trade_note, trade_overlay and trade_batch were all driven live and the payload read back."
+      "ref": "/api/trade",
+      "note": "No payload field was removed and no server file was edited. HISTORY is assembled on the client from payload.fills, payload.mandates and /api/log, all three of which the agent already reads."
     },
     {
       "requirement": "Components must not collide or conflict, at any width",
       "met": true,
-      "ref": "#t-book-rows",
-      "note": "Measured every panel box against its neighbour at 390, 768 and 1440: no overlaps, no horizontal scroll, and no capped panel painting outside its box."
+      "ref": ".deck, .tablewrap",
+      "note": "Measured in the browser at 1440, 768 and 390. Page-level sideways scroll is 0 at all three. BOOK and HISTORY both have scrollWidth === clientWidth at 1440 (702/702 and 661/661) and at 768 (728/728), so nothing is off-screen. At 390 both scroll inside their own box (698 in 350, 603 in 350) and the page still does not. This is the requirement that failed at iteration 4: CLOSE POSITION and CANCEL ALL were off the right edge of BOOK whenever a position existed, and the LOG panel rendered as a frame line with zero content whenever a proposal was pending."
     },
     {
       "requirement": "Manual controls for cancel, close and flatten, reachable from the page",
       "met": true,
-      "ref": ".acts",
-      "note": "CLOSE POSITION and CANCEL ALL on the position row, CANCEL on each order, FLATTEN ALL under the book, DISARM in the mandate row. All driven against live money."
+      "ref": "td.acts, tr.frow",
+      "note": "The actions column is now `position: sticky; right: 0` with an opaque background, so it is pinned to the right edge whatever the table does horizontally. Visible in shot-1440.png, shot-768.png and shot-390.png: [ CLOSE ] and [ CANCEL ALL ] are on screen in all three, and [ FLATTEN ALL ] rides its own row under the book. Labels shortened from CLOSE POSITION; the confirmation dialog still carries the full sentence."
     },
     {
       "requirement": "Positions and working orders drawn on the chart itself",
       "met": true,
-      "ref": "#chart",
-      "note": "The position entry line is drawn on the chart, with the mandate stop-out and both stops pinned at the edge they went off, stacked so they do not overlap."
+      "ref": "#chart, .ovbar",
+      "note": "Untouched. ui/trade-overlay.js and the seven overlay toggles were not edited."
     },
     {
-      "requirement": "Liquidation distance shown in ATR multiples as well as percent and dollars, because percent",
+      "requirement": "Liquidation distance shown in ATR multiples as well as percent and dollars",
       "met": true,
-      "ref": "#t-liq-atr",
-      "note": "Reads 'LIQ at --, -- away, --, -- ATR'. All three units are present; they are dashes here because the venue returns no liquidation price on this cross position."
+      "ref": ".liq-line, #t-liq-bar",
+      "note": "shot-1440.png: 'LIQ at $713.42, 837.59% away, $841.28, 1607.1 ATR'. The bar under it was WRONG at iteration 4 and is fixed here: liqFill returned `1 - distance/scale`, which clamps to zero for anything far from the wall, so a position 1,607 ATR clear drew a full-red bar meaning 'at your liquidation'. It now returns the distance itself and reads 100% green at that distance, which is what the reverse-meter comment in trade.css always said it should do."
     },
     {
-      "requirement": "Profit split into price, funding and fees, since a carry trade green on price can be red once",
+      "requirement": "Profit split into price, funding and fees, since a carry trade green on price can be red once it has paid for itself",
       "met": true,
-      "ref": ".prow .pnl",
-      "note": "The position row carries price and funding as separate figures beside the net number."
+      "ref": "tr.srow",
+      "note": "Still on screen, moved out of the PNL cell onto a child row under the position, in the same subordinate treatment the working orders use. shot-1440.png reads 'price -$0.35, funding -$0.02' under the SOL row. Inside the cell it made the profit column 220px of a 702px table and was a direct cause of the controls being pushed off the edge."
     },
     {
-      "requirement": "Net and gross exposure with a plain sentence for a five percent adverse move, because cross",
+      "requirement": "Net and gross exposure with a plain sentence for a five percent adverse move",
       "met": true,
-      "ref": "#t-exp-shock",
-      "note": "Reads 'A 5% move against you leaves --', with net and gross on the line above it."
+      "ref": ".rexp",
+      "note": "shot-1440.png: 'net -$100.44 | gross $100.44' and 'A 5% move against you leaves $4.61.' Unchanged and still in RISK."
     },
     {
-      "requirement": "Mark and oracle shown separately with the basis between them, as they are different prices",
+      "requirement": "Mark and oracle shown separately with the basis between them",
       "met": true,
-      "ref": "#t-mkt-spread",
-      "note": "Mark and oracle on their own lines with basis between them at +12.2 bps."
+      "ref": ".rmkt",
+      "note": "shot-1440.png: mark $63,315.00, oracle $63,454.00, basis -21.9 bps, premium 0.00%, funding 1h and per 8h, atr 1h and atr %. The titled MARKET panel is gone; these eight figures are a ruled block inside RISK. Nothing required by the brief was dropped: only open interest and 24h volume went."
     },
     {
       "requirement": "The arm receipt: the account's next state if the program opens its maximum position",
       "met": true,
       "ref": ".mrow-projected",
-      "note": "Reads 'liquidation at $1,421.40, opens at most $60.00, free after $858.66, margin required $30.00'."
+      "note": "NOT RE-CAPTURED. Nothing is armed on this account right now, so no shot in this iteration shows it and I am not arming a live mandate to produce one. The renderer is unchanged apart from one fix in its favour: `.proj-none` had no grid rule and auto-placed into one of three tracks, which squeezed 'Projection unavailable: the venue has not reported collateral.' into a third of the block; it now spans the full width. A fresh capture is owed the first time something is armed."
     },
     {
       "requirement": "Feed health beside the price, so a screen behind the market says so where price is read",
       "met": true,
       "ref": "#t-feed",
-      "note": "Reads 'feed LIVE ws 0s' in the status bar, next to the price rather than buried in the log."
+      "note": "Statusbar untouched. shot-1440.png: 'feed LIVE ws 0s' next to mark and equity."
     },
     {
-      "requirement": "`null` renders as a dash and never as zero, because the venue reports an account value of 0.0",
+      "requirement": "`null` renders as a dash and never as zero",
       "met": true,
-      "ref": "#t-risk-health",
-      "note": "Reads '--' over a hatched track, not 0 over an empty one. The hatch exists because an empty reverse meter claims you are at your liquidation."
+      "ref": "usd(), price(), amount()",
+      "note": "Every new figure on the tape goes through the same formatters, each of which answers '--' for anything not finite. An event with no market prints '--' in MARKET rather than borrowing the focused symbol, visible on all six event rows in shot-1440.png. Caveat, and it predates this change: an opening fill whose venue-reported closedPnl is a real 0 prints $0.00, because that is the venue stating zero rather than stating nothing."
     },
     {
       "requirement": "Every dynamic string reaches the DOM through textContent, never innerHTML",
       "met": true,
-      "ref": "#t-log",
-      "note": "grep for innerHTML in ui/trade.js returns nothing. Agent-authored text, log lines and venue errors all reach the DOM as text."
+      "ref": "el(), setText()",
+      "note": "Grepped: no innerHTML, outerHTML or insertAdjacentHTML in ui/trade.js, ui/trade.html or ui/trade.css. The tape carries agent-authored and venue-authored text verbatim through el() and one title attribute assignment, which is a text property and not markup."
     },
     {
       "requirement": "Digits that tick must not change width",
       "met": true,
-      "ref": "#t-fill-rows",
-      "note": "font-variant-numeric: tabular-nums is set on every element carrying a number, so the fills column does not jitter as it updates."
+      "ref": "font-variant-numeric",
+      "note": "The tabular-nums list was carried over and updated for the new ids: #t-history-rows replaces #t-fill-rows, and .wall-line was added for the stop-out price."
     },
     {
       "requirement": "The kill switch reachable within two tab stops from a cold load, in every state",
       "met": true,
       "ref": "#kill-btn",
-      "note": "Nothing focusable is written before it in the DOM, in any state. Verified in the flat, armed and kill-switch-on captures."
+      "note": "The statusbar was not edited and nothing focusable was added before it. The panel order changed underneath it, which cannot affect what comes first in source."
     },
     {
-      "requirement": "No order ticket: where other interfaces put buy and sell, this puts the mandate console, and",
+      "requirement": "No order ticket: where other interfaces put buy and sell, this puts the mandate console, and every manual control on the page stops something",
       "met": true,
-      "ref": "#t-mandate-list",
-      "note": "The mandate console occupies the place an order ticket would. There is no buy or sell control anywhere on the page."
+      "ref": ".rmandate",
+      "note": "Still true and now stated more plainly: the mandate block sits directly under the two walls in RISK. Every control on the page is CLOSE, CANCEL ALL, CANCEL, FLATTEN ALL, DISARM, KILL SWITCH or an approval decision. Nothing opens a position by hand."
     },
     {
       "requirement": "Working orders rendered as child rows of the position they belong to, not a table of their own",
       "met": true,
-      "ref": ".orow",
-      "note": "Two stop orders render as indented, dimmer child rows directly under the ETH position they protect."
+      "ref": "tr.orow",
+      "note": "Unchanged. shot-1440.png shows 'No orders working.' as a child row under the SOL position. The profit split now uses the same idiom one tier further in, which makes the pattern read as the table's grammar rather than as a one-off."
     }
   ],
   "goal": {
-    "outcome": "A proposal that needs a human is decided where the human already is, and it is decided on the same facts the pro window would have shown.",
-    "path": "The red APPROVALS panel sits above MANDATE in the right column. It names what was proposed, its id and time, what the agent asked for, the policy lines going out and coming in, and why a click is needed. The two buttons sit under that text, in that order, nowhere else.",
+    "outcome": "The three questions the brief names are answered without arithmetic and without looking in more than one place: how far from liquidation, how much of what I approved has been spent, is this screen still telling the truth.",
+    "path": "RISK is read top to bottom. Collateral, health, then the LIQ line at 16px with the reverse meter under it, then the mandate stop-out on the same scale directly beneath it, then exposure and the 5% sentence, then the instrument, then what is armed and how much of its envelope is gone. Feed health is in the statusbar beside the price. What has already happened is one tape on the right, newest first.",
     "holds": true,
-    "why": "On shot-1440.png the panel is the only red-bordered block on the screen and reads top to bottom: PENDING policy change, the id, the agent's sentence, the minus and plus lines, 'why: Policy changes always require a human click', then the buttons. Nothing above the buttons is decoration and nothing needed for the decision is off screen. Both windows render it from ui/approvals.js, so neither can show the shorter story."
+    "why": "shot-1440.png. Distance: 'LIQ at $713.42, 837.59% away, $841.28, 1607.1 ATR' with a full green bar, which now agrees with the sentence above it instead of contradicting it. Envelope: nothing is armed, and the MANDATE block says so in a sentence with a next action. Truth: 'feed LIVE ws 0s' and no banner. The second wall's line renders only when a mandate holds one, so nothing armed leaves no empty row of ground held open for it."
   },
   "states": {
-    "flat": "shot-1440.png this iteration. BOOK reads 'Flat. No position on any market.', RISK reads 'Nothing at risk. No open position.', collateral still shown, and the new APPROVALS panel sits between MARKET and MANDATE without pushing anything off screen.",
-    "armed": "state-armed.png, captured at iteration 3 and NOT re-captured for this change. The panel added here reads /api/state proposals and renders the same whether or not a mandate is armed, so nothing in that capture is contradicted, but a fresh one is owed the first time something is armed again.",
-    "position open": "state-armed.png, captured at iteration 3 and NOT re-captured for this change, for the same reason: this change draws nothing from position data. The testnet account is flat and the only proposal that would open one is the pending block on screen.",
-    "nothing armed": "shot-1440.png this iteration. MANDATE reads 'Nothing armed. Ask your agent for a proposal.' directly under a panel holding the proposal that would arm one, which is the sequence a person actually reads.",
-    "unified account": "shot-1440.png this iteration. Equity and free both read $888.79 from the spot balance while the perp endpoint reports 0.0, and health reads '--' over a hatched track.",
-    "kill switch on": "state-kill-on.png, captured at iteration 3 and NOT re-captured. The kill switch was left where the owner set it rather than toggled for a screenshot while a proposal was pending.",
-    "stacked": "shot-390.png this iteration. One flow ordered chart, risk, market, approvals, mandate, book, fills, log. Approvals carries an explicit order so it cannot take order 0 and land above the chart. No horizontal scroll; the pending block wraps and both buttons stay on one line.",
-    "pending approval": "shot-1440.png and shot-390.png this iteration. The panel is red-bordered at both widths, the diff lines wrap rather than clip, and the buttons are the last thing in the block."
+    "flat": "Not this capture: a SOL short is open. Covered by code path and by iteration 4's shot; the BOOK empty line and the RISK 'Nothing at risk' line are unchanged.",
+    "armed": "NOT RE-CAPTURED this iteration. Nothing is armed on the account and arming one is a live write. The mandate renderer moved panel but its row shape is unchanged apart from two fixes in its favour (the meter class contract and the projection fallback), so nothing in the iteration 3 capture is contradicted. A fresh capture is owed.",
+    "position open": "shot-1440.png, shot-768.png and shot-390.png. One SOL short at 10x cross, its profit split on the child row beneath it, 'No orders working.' beneath that, and [ CLOSE ] / [ CANCEL ALL ] pinned on screen at all three widths.",
+    "nothing armed": "shot-1440.png. The MANDATE block inside RISK reads 'Nothing armed. Ask your agent for a proposal.' and takes one line, which is the whole reason it no longer needs a panel of its own: this is the state the screen is in most of the time.",
+    "unified account": "Not this capture. The '--' path is unchanged and every new figure uses the same formatters.",
+    "kill switch on": "NOT RE-CAPTURED. The switch is OFF in every shot. Only the empty-line wording of the mandate block depends on it, and that branch was not edited.",
+    "stacked": "shot-768.png and shot-390.png. Order is chart, risk, approvals, book, history, which is the sequence a person actually asks in. At 390 both tables scroll inside their own box and the page does not scroll sideways.",
+    "pending approval": "NOT RE-CAPTURED. APPROVALS reads 'no pending approvals: the gate is disabled, every proposal auto-approves' in all three shots. This is the state that broke the layout at iteration 4, and the fix for it is a cap (.panel-tgate > .pbody max-height 24vh) plus a floor on the panel below it (.panel-thistory min-height 22vh), neither of which needs a pending proposal to be verified: the caps are declared, and the growing panel measured 434px tall with 399px of body at 1440, so it is no longer the panel that pays."
   },
   "findings": [],
+  "caveats": [
+    {
+      "what": "The armed, kill-switch-on and pending-approval states were not re-captured.",
+      "why": "All three need a live write against a funded account. The layout fix for the pending-approval case is verified structurally (a declared cap on APPROVALS and a declared floor on HISTORY) rather than photographically, and the mandate row is unchanged in shape. Also recorded against each state in `states`."
+    },
+    {
+      "what": "An opening fill with a venue-reported closedPnl of exactly 0 prints $0.00 on the tape rather than a dash.",
+      "why": "Pre-existing and not introduced here: the venue reports the zero, so this is the app repeating what it was told rather than inventing a number for a null. Changing it means changing what src/trade/state.ts treats as unknown, which is outside this change and would move behaviour the trade-state tests assert. Also recorded against requirement 14."
+    }
+  ],
   "verdict": "pass"
 }
