@@ -93,6 +93,7 @@ const runner = createRunnerHost({
     cfg.network === 'mainnet' ? 'https://api.hyperliquid.xyz' : 'https://api.hyperliquid-testnet.xyz',
   // Fail closed: a policy file that will not load reads as the kill switch being ON, so an
   // unreadable policy can never be the reason a bot was allowed to arm.
+  user: cfg.addresses.evm[0] ?? '',
   killSwitch: () => loadPolicy(cfg.dataDir)?.killSwitch ?? true,
   onEvent: (e) => {
     audit.append(

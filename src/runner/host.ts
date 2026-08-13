@@ -20,6 +20,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { MandateRunner } from '../rails/mandate.ts';
 import type { Mandate } from '../strategy/envelope.ts';
+import { createFeed } from './feed.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -37,6 +38,8 @@ export type HostDeps = {
   baseUrl: string;
   onEvent: (e: RunnerEvent) => void;
   killSwitch: () => boolean;
+  user: string; // the master account address; positions and collateral are read against it
+  pollMs?: number;
 };
 
 export function createRunnerHost(deps: HostDeps): MandateRunner & {
@@ -47,6 +50,38 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
   let child: ChildProcess | null = null;
   const armed = new Map<string, { mandate: Mandate; since: string }>();
   const recent: RunnerEvent[] = [];
+  const feed = createFeed({ baseUrl: deps.baseUrl, user: deps.user });
+  let pump: NodeJS.Timeout | null = null;
+
+  // Pushes market and account state to the child for every armed symbol.
+  //
+  // The app owns the read side so there is ONE view of the market across the process tree.
+  // Two independent readers would be two answers to "what is the position", and the one that
+  // signs would be the one that mattered while the one on screen disagreed.
+  async function pumpOnce(): Promise<void> {
+    const symbols = new Set([...armed.values()].map((a) => a.mandate.symbol));
+    for (const symbol of symbols) {
+      try {
+        const b = await feed.book(symbol);
+        if (b !== null && child !== null && child.connected) {
+          child.send({ cmd: 'book', symbol, book: b });
+        }
+      } catch (err) {
+        record({ type: 'error', id: null, message: `feed ${symbol}: ${err instanceof Error ? err.message : err}` });
+      }
+    }
+  }
+
+  function startPump(): void {
+    if (pump !== null) return;
+    pump = setInterval(() => void pumpOnce(), deps.pollMs ?? 2000);
+    pump.unref();
+  }
+
+  function stopPump(): void {
+    if (pump !== null) clearInterval(pump);
+    pump = null;
+  }
 
   function record(e: RunnerEvent): void {
     recent.push(e);
@@ -80,6 +115,7 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
       // which this repo already decided is worse than the safety being off.
       for (const [id] of armed) record({ type: 'disarmed', id, reason: `runner exited (${code})` });
       armed.clear();
+      stopPump();
       child = null;
     });
     child.stderr?.on('data', (b) => record({ type: 'error', id: null, message: String(b).trim() }));
@@ -95,6 +131,10 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
         const c = await ensureChild();
         c.send({ cmd: 'arm', mandate, program });
         armed.set(mandate.id, { mandate, since: new Date().toISOString() });
+        // One book pushed before the child can act, so its first tick reasons about the real
+        // market rather than the zeros it starts with.
+        await pumpOnce();
+        startPump();
         record({ type: 'armed', id: mandate.id, symbol: mandate.symbol });
         return { ok: true, detail: `armed ${mandate.id} on ${mandate.symbol}` };
       } catch (err) {
@@ -110,8 +150,9 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
       armed.delete(id);
       if (child !== null && child.connected) child.send({ cmd: 'disarm', id, reason });
       record({ type: 'disarmed', id, reason });
-      if (armed.size === 0 && child !== null) {
-        child.send({ cmd: 'shutdown' });
+      if (armed.size === 0) {
+        stopPump();
+        if (child !== null) child.send({ cmd: 'shutdown' });
       }
       return { ok: true, detail: `disarmed ${id}: ${reason}` };
     },
@@ -119,6 +160,7 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
     async stopAll(reason) {
       for (const [id] of armed) record({ type: 'disarmed', id, reason });
       armed.clear();
+      stopPump();
       if (child !== null) {
         // Ask first so it can flatten, then take the process out regardless. A kill switch that
         // depends on the thing it is killing being healthy is not a kill switch.
