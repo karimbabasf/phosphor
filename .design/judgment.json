@@ -1,6 +1,6 @@
 {
-  "stamp": "5067088d99be48b9",
-  "iteration": 6,
+  "stamp": "ba83ac54fca3af6d",
+  "iteration": 8,
   "firstFive": {
     "what": "A terminal control panel for a crypto wallet held across five chains, with a red bar across the top saying every proposal is auto-approving because the approval gate is off on testnet",
     "who": "The owner of the funds, supervising what a connected AI agent is allowed to do with them",
@@ -131,6 +131,26 @@
       "requirement": "Terminal-dense character grid, not app-airy",
       "met": true,
       "ref": "13px mono at 1.35 line height unchanged. The wallet's 18 rows, the donut and the totals line all sit in one 46vh panel, and the deleted cost region went to the wallet rather than to whitespace"
+    },
+    {
+      "requirement": "Trend lines from two anchors and zones between two prices, anchored in time and price so they hold through a pan and a zoom",
+      "met": true,
+      "ref": "Drew two trend lines and one zone over MCP in a single chart_batch call against live BTC-USD. Both render on the scene canvas from CHART.drawings. Anchors are {t,price} and are projected through L.yOf and L.indexAt every frame, so a pan or zoom moves the pixels and never the stored object. Confirmed on the 1440 shot: the two lines converge into a triangle and the filled band sits where its prices say."
+    },
+    {
+      "requirement": "A trend line extends to both plot edges rather than stopping at its anchors. A zone is a filled band at low alpha across the full plot",
+      "met": true,
+      "ref": "drawDrawings computes the line value at timeOfX(0) and timeOfX(plotWidth) and strokes between them inside a clipped rect, so both lines run edge to edge on the shot rather than ending at their anchor bars. The zone fills 0..plotWidth at green(0.12) and is clamped to the price pane, verified by a zone wider than the visible band filling the plot without leaking into the sub-pane area."
+    },
+    {
+      "requirement": "Labels sit at the right edge, where the line is heading, and carry [agent] when the agent drew them",
+      "met": true,
+      "ref": "The 1440 shot reads \"falling resistance [agent]\", \"rising support [agent]\" and \"demand [agent]\", all right-aligned at plotWidth-4. An earlier left-aligned zone label collided with the OHLC legend, which a zone reaching the top of the plot causes every time rather than rarely; moving it right cleared the legend, which the shot confirms."
+    },
+    {
+      "requirement": "No new hue and no new weight: agent drawings are phosphor green at a lower brightness tier, dotted, so red stays the approval gate alone and the gate remains the only alarm",
+      "met": true,
+      "ref": "Agent objects stroke at green(0.5) and fill at green(0.6) against green(0.7) and green(0.85) for human ones, with dash [2,3] matching the agent levels that already existed. No red is introduced on the chart: on the 1440 shot the only red is the gate banner and the down candles, both pre-existing."
     }
   ],
   "goal": {
@@ -161,8 +181,18 @@
     "zoom": "wheel in at 30% across: 120 bars to 88.2, panOffset moved 23.2 to 44.2 to hold the bar under the cursor. Wheel back out returns exactly to 120 and 23.2, which is the anchor maths agreeing with itself",
     "price scale": "right axis drag switches the scale to manual; double click on the plot returns it to auto and to live",
     "agent": "chart_set_view over MCP while the window was open moved it to 5m and 200 bars, and the window followed",
-    "race found and fixed": "the first pass snapped every gesture back. A refresh fired by the browser's own write landed before that write did, and the browser adopted the stale server view. The rule now: the hand in the window owns the view, the only thing that may move it is the agent, and the answer to our own write is applied from that answer rather than from a refresh"
+    "race found and fixed": "the first pass snapped every gesture back. A refresh fired by the browser's own write landed before that write did, and the browser adopted the stale server view. The rule now: the hand in the window owns the view, the only thing that may move it is the agent, and the answer to our own write is applied from that answer rather than from a refresh",
+    "agentDrawings": "One chart_batch call measured the 4h volume profile and drew its value area as a zone plus two trend lines, using $ref so the zone took its prices straight from the profile result. All three render on the 1440 shot with right-aligned [agent] labels. The 4h view the agent set while the window was closed is the view the shot shows, with [4h] lit in the timeframe row, which is the CHART_READY fix holding."
   },
   "findings": [],
-  "verdict": "pass"
+  "verdict": "pass",
+  "fixedThisIteration": [
+    {
+      "what": "An agent view change made while the window was closed was silently reverted when the window opened.",
+      "cause": "The canvas getting its initial size called queueChartPush, which posted the CHART.view literal (60s, 120 bars) before /api/chart had answered. That write won.",
+      "fix": "A CHART_READY flag, set in applyChart, makes queueChartPush a no-op until the first server payload has been applied.",
+      "evidence": "Set 4h/150 over MCP against a closed window: server held 14400s/150. Opened the page, waited 2s: still 14400s/150, where it previously fell to 60s/120. The human write-back still works: a real window resize afterwards left the view at 4h and posted fresh geometry (plotWidth 732, reportedAt 02:45:44).",
+      "note": "This was chart v2 code, fixed here rather than only reported because it defeats the promise this change depends on, that the agent and the human cannot disagree about what is on screen."
+    }
+  ]
 }

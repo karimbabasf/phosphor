@@ -41,6 +41,10 @@ var GRID_TIME_GAP = 96;
 
 var TIME_STEPS = [1, 5, 15, 30, 60, 300, 900, 1800, 3600, 7200, 14400, 21600, 43200, 86400, 604800];
 
+// False until the first /api/chart payload lands. Guards the view write-back: see
+// queueChartPush for what pushing before the server has been heard from costs.
+var CHART_READY = false;
+
 var CHART = {
   rev: 0,
   view: { product: '', granularitySec: 60, barCount: 120, panOffset: 0, priceScale: { mode: 'auto' } },
@@ -1116,6 +1120,8 @@ async function refreshChart() {
 }
 
 function applyChart(payload) {
+  // The server has now been heard from, so writing our view back is safe.
+  CHART_READY = true;
   CHART.rev = payload.rev;
   CHART.candles = payload.candles || [];
   CHART.meta = payload.meta || CHART.meta;
@@ -1155,6 +1161,19 @@ function applyChart(payload) {
    put a network round trip inside the drag loop, which is exactly what makes a chart feel
    slow. An agent reading mid-drag sees the last settled view, which is documented. */
 function queueChartPush() {
+  // Nothing is written back until the first server payload has been applied.
+  //
+  // Without this the canvas getting its initial size fires a push carrying the CHART.view
+  // literal at the top of this file, 1m and 120 bars, before /api/chart has answered. That
+  // push wins, so an agent that moved the chart while the window was closed watched its
+  // change silently revert the moment the human opened the window. Measured: set 4h with
+  // 150 bars over MCP against a closed window, server held 14400s/150, opening the page put
+  // it back to 60s/120.
+  //
+  // That defeats the decision the whole chart turns on, that state lives on the server so
+  // the agent and the human cannot disagree about what is on screen. The geometry this push
+  // also carries is not lost: the next invalidate after applyChart sends it.
+  if (!CHART_READY) return;
   if (CHART_PUSH) clearTimeout(CHART_PUSH);
   CHART_PUSH = setTimeout(pushChart, 150);
 }
