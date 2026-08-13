@@ -31,6 +31,16 @@ import { formatUnits, getAddress, isAddress } from 'viem';
 import type { Address } from 'viem';
 import { erc20TransferData, evmAddress, sendTx } from '../chain/evm.ts';
 import type { SendOutcome, SendParams } from '../chain/evm.ts';
+import {
+  TGAS,
+  ftStorageRegistered,
+  functionCall,
+  isNearAccountId,
+  looksLikeEvmAddress,
+  nearAccountId,
+  sendTx as nearSendTx,
+} from '../chain/near.ts';
+import type { NearSendOutcome, NearSendParams } from '../chain/near.ts';
 import type { ChainId, Network, Rail, RailResult, SimulationResult, SwapDraft } from '../types.ts';
 import { ONECLICK_TERMINAL, assetIdFor, oneClickClient, oneLine, toBaseUnits } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickStatus, TokensFile } from '../intents.ts';
@@ -42,9 +52,30 @@ export const NO_TESTNET_REASON =
   'has never been deployed on NEAR testnet, so this rail runs on mainnet only. To exercise a ' +
   'swap without mainnet money, use the Uniswap v3 rail against an anvil mainnet fork.';
 
-// The chains src/chain/evm.ts can sign for. Solana and NEAR origins are a different signer
-// and a different transfer; 1Click supports them, this rail does not.
+// The chains this rail can deposit from, by signer family.
+//
+// Every origin needs two things: a signer that can author its transactions, and a transfer
+// shape that moves a token to an address the solver picked. EVM origins get that from
+// src/chain/evm.ts and an ERC-20 transfer; NEAR gets it from src/chain/near.ts and a
+// NEP-141 ft_transfer. Solana is still absent because the signer is, which is the honest
+// reason and the one the refusal below gives.
 const EVM_ORIGINS: ChainId[] = ['eth', 'base', 'arb'];
+const NEAR_ORIGINS: ChainId[] = ['near'];
+
+function originFamily(chain: ChainId): 'evm' | 'near' | null {
+  if (EVM_ORIGINS.includes(chain)) return 'evm';
+  if (NEAR_ORIGINS.includes(chain)) return 'near';
+  return null;
+}
+
+// ft_transfer is one cross-contract hop and finishes well inside 30 TGas. The unburnt
+// remainder is refunded, so this is a ceiling and not a cost.
+const FT_TRANSFER_GAS = 30n * TGAS;
+
+// NEP-141 requires exactly one yoctoNEAR on any method that moves tokens. It is a
+// full-access-key assertion: a function-call key cannot attach a deposit, so this single
+// yocto is what stops a restricted key from moving somebody's balance.
+const ONE_YOCTO = 1n;
 
 // SwapDraft.counterparty is checked against the policy allowlist, and for a DEX that is the
 // router address. This rail has no fixed address to name: 1Click mints a fresh deposit
@@ -78,11 +109,28 @@ export const liveEvmPort: SwapEvmPort = {
   send: sendTx,
 };
 
+// The NEAR half of the same seam. storageRegistered is here rather than inside send because
+// it is a refusal the rail makes BEFORE signing: a NEP-141 transfer to an account with no
+// storage deposit on that token panics inside a receipt, and the tokens bounce back after a
+// transaction has already been paid for. Checking first turns that into a sentence.
+export type SwapNearPort = {
+  accountId(keysPath: string): string;
+  send(params: NearSendParams): Promise<NearSendOutcome>;
+  storageRegistered(network: Network, tokenId: string, accountId: string): Promise<boolean>;
+};
+
+export const liveNearPort: SwapNearPort = {
+  accountId: nearAccountId,
+  send: nearSendTx,
+  storageRegistered: (network, tokenId, accountId) => ftStorageRegistered(network, tokenId, accountId),
+};
+
 export type OneClickRailDeps = {
   network: Network;
   keysPath: string;
   tokens: TokensFile; // data/tokens.json: chain -> symbol -> { tokenId, decimals }
   evm?: SwapEvmPort;
+  near?: SwapNearPort;
   fetchImpl?: typeof fetch;
   client?: OneClickClient;
   sleepImpl?: (ms: number) => Promise<void>;
@@ -113,6 +161,7 @@ function baseUnits(value: unknown, field: string): bigint {
 export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
   const { network, keysPath, tokens } = deps;
   const evm = deps.evm ?? liveEvmPort;
+  const near = deps.near ?? liveNearPort;
   const client = deps.client ?? oneClickClient({ fetchImpl: deps.fetchImpl });
   const sleep = deps.sleepImpl ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const now = deps.now ?? Date.now;
@@ -126,7 +175,11 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
     destinationAsset: string;
     originDecimals: number;
     destDecimals: number;
-    originToken: Address;
+    // The contract holding the input token on the origin chain: an EVM address, or a NEAR
+    // account id. Kept as a string so one Plan covers both families; each branch of
+    // execute() narrows it back before it signs anything.
+    originToken: string;
+    family: 'evm' | 'near';
     amountBase: bigint;
     minOutBase: bigint;
   };
@@ -148,10 +201,11 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
   async function plan(draft: SwapDraft): Promise<Plan> {
     requireVenue(draft);
 
-    if (!EVM_ORIGINS.includes(draft.chain)) {
+    const family = originFamily(draft.chain);
+    if (family === null) {
       throw new Error(
-        `oneclick rail signs EVM ERC-20 transfers only, so it cannot deposit from ${draft.chain}. ` +
-          '1Click itself supports it; Phosphor has no signer for that chain.',
+        `oneclick rail cannot deposit from ${draft.chain}: Phosphor has no signer for that chain. ` +
+          '1Click itself supports it.',
       );
     }
 
@@ -159,8 +213,15 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
     const destInfo = tokens[draft.toChain]?.[draft.toSymbol];
     if (!originInfo) throw new Error(`no token registry entry for ${draft.fromSymbol} on ${draft.chain}`);
     if (!destInfo) throw new Error(`no token registry entry for ${draft.toSymbol} on ${draft.toChain}`);
-    if (!isAddress(originInfo.tokenId, { strict: false })) {
+
+    // Each family validates the token id its own way. Letting a NEAR account id through an
+    // EVM address check, or the reverse, is how a transfer gets built against a contract
+    // that does not exist on the chain being signed for.
+    if (family === 'evm' && !isAddress(originInfo.tokenId, { strict: false })) {
       throw new Error(`token registry entry for ${draft.fromSymbol} on ${draft.chain} is not an EVM address`);
+    }
+    if (family === 'near' && !isNearAccountId(originInfo.tokenId)) {
+      throw new Error(`token registry entry for ${draft.fromSymbol} on ${draft.chain} is not a NEAR account id`);
     }
 
     const list = await client.tokens();
@@ -174,7 +235,10 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
       destinationAsset,
       originDecimals: originInfo.decimals,
       destDecimals: destInfo.decimals,
-      originToken: getAddress(originInfo.tokenId),
+      // getAddress throws on a bad EVM checksum, which is the moment to stop. A NEAR account
+      // id is already lowercase and canonical, so it passes through as itself.
+      originToken: family === 'evm' ? getAddress(originInfo.tokenId) : originInfo.tokenId,
+      family,
       amountBase: toBaseUnits(draft.amountIn, originInfo.decimals),
       minOutBase: toBaseUnits(draft.minAmountOut, destInfo.decimals),
     };
@@ -215,6 +279,80 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
       `fee ${Number.isFinite(feeUsd) ? '$' + feeUsd.toFixed(4) : 'unknown'}, eta ~${Number(quote.timeEstimate)}s, ` +
         `solver floor ${oneLine(quote.minAmountOut, 40)} base units, draft floor ${draft.minAmountOut} ${draft.toSymbol}`,
     ];
+  }
+
+  // The deposit address is the one field in the whole flow we cannot verify the ownership
+  // of: the API picks it and no signature proves who holds it. That trust is inherent to the
+  // protocol. What is checkable is the SHAPE, and the shape has to be checked against the
+  // chain being signed for, because the two families are not interchangeable:
+  //
+  //   - An EVM origin must get a checksummed 20-byte address. getAddress throws on a
+  //     mixed-case address whose checksum is wrong, which is a corrupted address caught for
+  //     free before any money moves.
+  //   - A NEAR origin gets an account id, and in practice a 64-character hex implicit
+  //     account. Running that through viem's isAddress rejects it, correctly, which is the
+  //     precise reason this rail used to refuse every NEAR swap. The fix is a NEAR check,
+  //     not a weaker one: an EVM address reaching the NEAR branch is still refused here.
+  function checkDepositAddress(family: 'evm' | 'near', value: string): string {
+    if (family === 'evm') {
+      if (!isAddress(value, { strict: false })) {
+        throw new Error(`1click returned a deposit address that is not an EVM address: ${oneLine(value, 60)}`);
+      }
+      return getAddress(value);
+    }
+    if (!isNearAccountId(value)) {
+      throw new Error(`1click returned a deposit address that is not a NEAR account id: ${oneLine(value, 60)}`);
+    }
+    // A lowercased EVM address passes the account-id rule, because NEAR genuinely allows
+    // that name. Refusing the shape here is what makes "an EVM address is still refused on
+    // the NEAR branch" true for every casing rather than only for the checksummed one.
+    if (looksLikeEvmAddress(value)) {
+      throw new Error(`1click returned an EVM address where a NEAR account id belongs: ${oneLine(value, 60)}`);
+    }
+    return value;
+  }
+
+  // Normalised across both signers so execute() reads the same either way.
+  type Deposited = { ok: boolean; hash?: string; error?: string };
+
+  async function depositTransfer(draft: SwapDraft, p: Plan, depositAddress: string): Promise<Deposited> {
+    if (p.family === 'evm') {
+      return evm.send({
+        network,
+        chain: draft.chain,
+        keysPath,
+        to: p.originToken as Address,
+        data: erc20TransferData(depositAddress as Address, p.amountBase),
+      });
+    }
+
+    // A NEP-141 transfer to an account with no storage deposit on that token contract
+    // panics, the tokens bounce, and the transaction is still paid for. The deposit address
+    // is freshly minted by the solver, so this is a live question rather than a formality.
+    // Asking before signing turns a confusing on-chain failure into a sentence.
+    const registered = await near.storageRegistered(network, p.originToken, depositAddress);
+    if (!registered) {
+      return {
+        ok: false,
+        error:
+          `the deposit address ${depositAddress} has no storage deposit registered on ${p.originToken}, ` +
+          'so an ft_transfer to it would panic and bounce. Nothing was signed.',
+      };
+    }
+
+    return near.send({
+      network,
+      keysPath,
+      receiverId: p.originToken,
+      actions: [
+        functionCall(
+          'ft_transfer',
+          { receiver_id: depositAddress, amount: p.amountBase.toString() },
+          FT_TRANSFER_GAS,
+          ONE_YOCTO,
+        ),
+      ],
+    });
   }
 
   // ---------- the Rail surface ----------
@@ -276,7 +414,7 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
 
     // The draft names the wallet a human approved. If the configured key is a different
     // wallet, the refund address in the quote belongs to someone else.
-    const owner = evm.signerAddress(keysPath);
+    const owner = p.family === 'evm' ? evm.signerAddress(keysPath) : near.accountId(keysPath);
     if (draft.from.toLowerCase() !== owner.toLowerCase()) {
       throw new Error(`draft is authored for ${draft.from} but the configured key is ${owner}`);
     }
@@ -295,21 +433,17 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
     if (problems.length > 0) throw new Error(`live quote does not match the approved draft: ${problems.join('; ')}`);
 
     if (typeof quote.depositMemo === 'string' && quote.depositMemo !== '') {
-      throw new Error('the quote requires a deposit memo, which an ERC-20 transfer cannot carry; funds sent without it are lost');
+      throw new Error(
+        'the quote requires a deposit memo, which neither an ERC-20 transfer nor a NEP-141 ' +
+          'ft_transfer can carry; funds sent without it are lost',
+      );
     }
-    if (typeof quote.depositAddress !== 'string' || !isAddress(quote.depositAddress, { strict: false })) {
-      throw new Error(`1click returned no usable deposit address (got ${oneLine(quote.depositAddress, 60)})`);
+    if (typeof quote.depositAddress !== 'string') {
+      throw new Error(`1click returned no deposit address (got ${oneLine(quote.depositAddress, 60)})`);
     }
-    // Throws on a mixed-case address with a bad checksum, which is exactly when we want to stop.
-    const depositAddress = getAddress(quote.depositAddress);
 
-    const sent = await evm.send({
-      network,
-      chain: draft.chain,
-      keysPath,
-      to: p.originToken,
-      data: erc20TransferData(depositAddress, p.amountBase),
-    });
+    const depositAddress = checkDepositAddress(p.family, quote.depositAddress);
+    const sent = await depositTransfer(draft, p, depositAddress);
 
     if (!sent.ok) {
       // Nothing moved: the transfer either never broadcast or reverted on chain.

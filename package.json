@@ -8,6 +8,7 @@
     "app": "node src/main.ts",
     "mcp": "node src/mcp.ts",
     "keygen": "node scripts/keygen.ts",
+    "near:prove": "node scripts/near-prove.ts",
     "sweep": "node scripts/sweep.ts",
     "intents-balance": "node scripts/intents-balance.ts",
     "hl-agent": "node scripts/hl-agent.ts",

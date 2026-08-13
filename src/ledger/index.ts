@@ -12,6 +12,7 @@ import * as near from './near.ts';
 import { fetchIntentsHoldings, type IntentsRead } from './intents.ts';
 import { oneClickClient } from '../intents.ts';
 import { evmAddress } from '../chain/evm.ts';
+import { nearChainSpec } from '../chain/near.ts';
 import { readPositions } from '../rails/uniswap.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -32,20 +33,21 @@ const RPC_URLS: Record<Network, Record<ChainId, string>> = {
     base: 'https://base-rpc.publicnode.com',
     arb: 'https://arbitrum-one-rpc.publicnode.com',
     sol: 'https://api.mainnet-beta.solana.com',
-    // NOT rpc.mainnet.near.org. That host now answers EVERY request with HTTP 429 and a
-    // notice telling you to stop using it, so from the app's side each refresh threw, NEAR
-    // was marked stale and its holdings fell back to the last good read (empty on a fresh
-    // boot). A dead endpoint and an empty wallet looked identical, which is the same
+    // NEAR's endpoint comes from src/chain/near.ts so the reader and the signer can never
+    // point at different worlds. NOT rpc.mainnet.near.org: that host now answers EVERY
+    // request with HTTP 429 and a notice telling you to stop using it, so each refresh threw,
+    // NEAR was marked stale and its holdings fell back to the last good read (empty on a
+    // fresh boot). A dead endpoint and an empty wallet looked identical, which is the same
     // failure this file's network table was written to prevent. Verified 2026-08-13:
     // fastnear answers view_account for intents.near in ~200ms.
-    near: 'https://free.rpc.fastnear.com',
+    near: nearChainSpec('mainnet').rpcUrl,
   },
   testnet: {
     eth: 'https://ethereum-sepolia-rpc.publicnode.com',
     base: 'https://sepolia.base.org',
     arb: 'https://sepolia-rollup.arbitrum.io/rpc',
     sol: 'https://api.devnet.solana.com',
-    near: 'https://test.rpc.fastnear.com', // rpc.testnet.near.org is deprecated the same way
+    near: nearChainSpec('testnet').rpcUrl, // rpc.testnet.near.org is deprecated the same way
   },
 };
 

@@ -286,6 +286,23 @@ ships `sha3-256`, which is NIST FIPS 202: the same permutation with a different 
 returns a different digest and an address nobody holds the key to. Nothing about the wrong address
 looks wrong, and funds sent there are gone.
 
+There are two signers, one per chain family, and each is the only place its family is signed for:
+`src/chain/evm.ts` and `src/chain/near.ts`. NEAR is a different curve (ed25519), a different
+serialization (borsh), and a different transaction shape, so it does not fit behind the EVM one.
+It hand-rolls borsh where the EVM signer took a dependency, and the reason the answer differs is
+the failure mode rather than the effort: a wrong keccak silently derives an address nobody owns,
+while a wrong borsh produces a signature that does not verify against the body, so the RPC rejects
+the transaction and nothing moves. `near.ts` self-checks on the same principle as `keygen`, with
+RFC 8032 vector 1, two base58 vectors, sha256 of the empty string, and the borsh integer widths.
+
+`npm run near:prove` is the check that vectors cannot give you: it signs four real transactions on
+NEAR testnet (a Transfer, a storage deposit, a wrap, an unwrap) and leaves the account as it found
+it apart from about 0.0007 NEAR of gas. Two bugs came out of its first run that no unit test could
+have caught, both the same root cause: `send_tx` returns at `EXECUTED_OPTIMISTIC`, which is ahead
+of finality, so a read at `finality: final` straight afterwards returns the state from before the
+transaction. It made a successful wrap look like a silent failure, and it made a second send reuse
+a nonce the first had already spent.
+
 `keygen` therefore checks itself before it generates anything, on every run: the canonical
 Ethereum test key `0x4c0883a6...362318` must derive `0x2c7536E3605D9C16a7a3D7b1898e529396a65c23`,
 RFC 8032 ed25519 vector 1 must derive its published public key, and base58 must reproduce two
@@ -310,7 +327,8 @@ Still open, unrelated to keys:
 
 ## Test it
 
-    npm test          # 129 tests: policy engine, proposals, ledger, composition, cost, rails, injection
+    npm test          # 371 tests: policy engine, proposals, ledger, composition, cost, rails, signers, injection
+    npm run near:prove # signs four real transactions on NEAR testnet and checks the balances moved
     npm run e2e       # boots the app + a real MCP client, drives 20 checks, exits 0/1
     npx tsc --noEmit  # typecheck
 

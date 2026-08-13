@@ -42,7 +42,13 @@ import {
   intentsDepositPlan,
   intentsNativeRail,
 } from '../../src/rails/intents-native.ts';
-import type { GeneratedIntent, IntentsApiPort, IntentsSignerPort } from '../../src/rails/intents-native.ts';
+import type {
+  GeneratedIntent,
+  IntentsApiPort,
+  IntentsNearPort,
+  IntentsSignerPort,
+} from '../../src/rails/intents-native.ts';
+import type { NearSendParams } from '../../src/chain/near.ts';
 
 // ---------- fixtures ----------
 
@@ -739,7 +745,8 @@ test('the deposit plan sends to the fixed verifier account and credits our own a
   assert.equal(plan.call.args.receiver_id, INTENTS_VERIFIER);
   assert.equal(plan.call.args.amount, '100000000');
   // An empty msg would credit whichever NEAR account sent the tokens, which is not us.
-  assert.equal(plan.call.args.msg, OWNER);
+  // Lowercased, because the verifier parses msg as a NEAR account id and refuses capitals.
+  assert.equal(plan.call.args.msg, OWNER.toLowerCase());
   assert.equal(plan.call.attachedDepositYocto, '1');
 });
 
@@ -760,19 +767,188 @@ test('the deposit plan refuses an incomplete or empty deposit', () => {
   assert.throws(() => intentsDepositPlan({ intentsAccountId: OWNER, token: 'usdc.near', amountBase: 0n }), /positive amount/);
 });
 
-test('the deposit refuses to sign and says exactly why and what to run instead', () => {
-  const result = intentsDeposit({ intentsAccountId: OWNER, token: 'usdc.near', amountBase: 100000000n, network: 'mainnet' });
+// A stubbed NEAR signer. Records what would have been signed so the tests can assert the
+// destination and the credited account without a key or a network anywhere near them.
+// The EVM identity the deposit is credited to. Stubbed rather than read from a key file, so
+// no test can reach a real key by forgetting to override something.
+const depositSigner: IntentsSignerPort = {
+  address: () => OWNER,
+  signErc191: async () => 'unused in the deposit path',
+};
+
+function nearPortStub(over: Partial<IntentsNearPort> = {}) {
+  const sends: NearSendParams[] = [];
+  const port: IntentsNearPort = {
+    accountId: () => 'phosphor.near',
+    send: async (params) => {
+      sends.push(params);
+      return { ok: true, hash: 'GzRhr7585nMoskGxv5judyQTaCg1TZzaXULuyoCaQiSm', gasBurnt: '4000000000000' };
+    },
+    storageRegistered: async () => true,
+    ...over,
+  };
+  return { port, sends, signer: depositSigner };
+}
+
+test('the deposit is signed as an ft_transfer_call to the verifier, crediting our own account', async () => {
+  // This used to be a refusal: the app held an EVM key and this call is a NEAR transaction.
+  // src/chain/near.ts removed the reason, so the assertion is now about what gets signed.
+  const { port, sends } = nearPortStub();
+  const result = await intentsDeposit({
+    intentsAccountId: OWNER,
+    token: 'usdc.near',
+    amountBase: 100000000n,
+    network: 'mainnet',
+    keysPath: '/nonexistent/keys.json',
+    near: port,
+    signer: depositSigner,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(sends.length, 1);
+  assert.equal(sends[0].receiverId, 'usdc.near');
+
+  const action = sends[0].actions[0];
+  assert.equal(action.type, 'functionCall');
+  if (action.type !== 'functionCall') throw new Error('unreachable');
+  assert.equal(action.methodName, 'ft_transfer_call');
+  assert.equal(action.deposit, 1n, 'exactly one yoctoNEAR, as NEP-141 requires');
+  assert.deepEqual(action.args, {
+    receiver_id: INTENTS_VERIFIER,
+    amount: '100000000',
+    msg: OWNER.toLowerCase(),
+  });
+  assert.deepEqual(result.txids, ['GzRhr7585nMoskGxv5judyQTaCg1TZzaXULuyoCaQiSm']);
+});
+
+test('the credited account is lowercased, because the verifier rejects a checksummed address', async () => {
+  // OWNER comes from viem and is EIP-55 checksummed, which is the obvious thing to pass and
+  // the thing that breaks. intents.near parses msg as a NEAR account id and panics on the
+  // capitals: "the Account ID contains an invalid character 'D' at index 15". ft_on_transfer
+  // reverts, the tokens bounce, and the transaction is still paid for.
+  assert.notEqual(OWNER, OWNER.toLowerCase(), 'the fixture is checksummed, or this proves nothing');
+
+  const plan = intentsDepositPlan({ intentsAccountId: OWNER, token: 'usdc.near', amountBase: 1n });
+  assert.equal(plan.call.args.msg, OWNER.toLowerCase());
+  assert.equal(plan.intentsAccountId, OWNER.toLowerCase());
+
+  // And it reaches the signed action, not just the plan object.
+  const { port, sends, signer } = nearPortStub();
+  const result = await intentsDeposit({
+    intentsAccountId: OWNER,
+    token: 'usdc.near',
+    amountBase: 1n,
+    network: 'mainnet',
+    keysPath: '/nonexistent/keys.json',
+    near: port,
+    signer,
+  });
+  assert.equal(result.ok, true);
+  const action = sends[0].actions[0];
+  if (action.type !== 'functionCall') throw new Error('unreachable');
+  assert.equal((action.args as { msg: string }).msg, OWNER.toLowerCase());
+});
+
+test('an account id that cannot be one is refused rather than lowercased into nonsense', () => {
+  assert.throws(
+    () => intentsDepositPlan({ intentsAccountId: 'not an account', token: 'usdc.near', amountBase: 1n }),
+    /is not one/,
+  );
+});
+
+test('the deposit refuses to credit any account but the one this key can spend from', async () => {
+  // Pinning the verifier only fixes WHICH CONTRACT the tokens land in. msg fixes WHOSE
+  // balance they become inside it, and a deposit crediting somebody else is a total loss
+  // with a completely successful transaction to show for it.
+  const { port, sends } = nearPortStub();
+  const result = await intentsDeposit({
+    intentsAccountId: '0x000000000000000000000000000000000000dead',
+    token: 'usdc.near',
+    amountBase: 100n,
+    network: 'mainnet',
+    keysPath: '/nonexistent/keys.json',
+    near: port,
+    signer: { address: () => OWNER, signErc191: async () => 'unused' },
+  });
 
   assert.equal(result.ok, false);
-  assert.match(result.detail, /Phosphor holds an EVM key only/);
-  assert.match(result.detail, /ft_transfer_call on usdc\.near/);
-  assert.match(result.detail, /receiver_id intents\.near/);
-  assert.match(result.detail, /1 yoctoNEAR/);
-  assert.deepEqual(result.txids, []);
+  assert.match(result.detail, /refusing to credit/);
+  assert.match(result.detail, /an account we cannot spend from/);
+  assert.equal(sends.length, 0, 'nothing is signed when the credited account is not ours');
+});
 
-  const onTestnet = intentsDeposit({ intentsAccountId: OWNER, token: 'usdc.near', amountBase: 1n, network: 'testnet' });
+test('the deposit still refuses any destination but the verifier, now that it can sign', async () => {
+  // The destination check has to survive gaining a signer. It runs before the port is
+  // touched, so a bad verifier never reaches a key.
+  const { port, sends } = nearPortStub();
+  await assert.rejects(
+    () =>
+      intentsDeposit({
+        intentsAccountId: OWNER,
+        token: 'usdc.near',
+        amountBase: 1n,
+        network: 'mainnet',
+        keysPath: '/nonexistent/keys.json',
+        near: port,
+        // @ts-expect-error verifier is not part of the public arg shape; passing it proves
+        // the plan's own guard is what refuses rather than the type system.
+        verifier: 'attacker.near',
+      }),
+    /never taken from a quote or an API response/,
+  );
+  assert.equal(sends.length, 0);
+});
+
+test('the deposit refuses when the verifier has no storage on the token, before signing', async () => {
+  const { port, sends } = nearPortStub({ storageRegistered: async () => false });
+  const result = await intentsDeposit({
+    intentsAccountId: OWNER,
+    token: 'usdc.near',
+    amountBase: 1n,
+    network: 'mainnet',
+    keysPath: '/nonexistent/keys.json',
+    near: port,
+    signer: depositSigner,
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /no storage deposit registered/);
+  assert.match(result.detail, /Nothing was signed/);
+  assert.equal(sends.length, 0);
+});
+
+test('a failed deposit says the balance inside the verifier is unchanged', async () => {
+  const { port } = nearPortStub({
+    send: async () => ({ ok: false, error: 'a receipt failed on chain: not enough balance' }),
+  });
+  const result = await intentsDeposit({
+    intentsAccountId: OWNER,
+    token: 'usdc.near',
+    amountBase: 1n,
+    network: 'mainnet',
+    keysPath: '/nonexistent/keys.json',
+    near: port,
+    signer: depositSigner,
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /balance inside intents\.near is unchanged/);
+});
+
+test('the deposit refuses on testnet, where the verifier has never been deployed', async () => {
+  const { port, sends } = nearPortStub();
+  const onTestnet = await intentsDeposit({
+    intentsAccountId: OWNER,
+    token: 'usdc.near',
+    amountBase: 1n,
+    network: 'testnet',
+    keysPath: '/nonexistent/keys.json',
+    near: port,
+    signer: depositSigner,
+  });
   assert.equal(onTestnet.ok, false);
   assert.equal(onTestnet.detail, INTENTS_NO_TESTNET_REASON);
+  assert.equal(sends.length, 0, 'the network guard runs before anything else');
 });
 
 // ---------- what this rail does to the policy engine ----------
