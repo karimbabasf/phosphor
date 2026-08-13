@@ -50,6 +50,9 @@ export type AccountSnapshot = {
   withdrawableUsd: number | null;
   freeUsd: number | null;
   unified: boolean;
+  // False while clearinghouseState and activeAssetData still disagree about which kind of
+  // account this is. Every figure above is null until it is true.
+  accountKnown: boolean;
   positions: RawPosition[];
 };
 
@@ -244,6 +247,9 @@ export function createTradeFeed(deps: {
   let orders: RawOrder[] = [];
   let held: RawFill[] = [];
   let spot: SpotState | null = null;
+  // The last collateral figure ANY coin reported. Account-level, so it outlives the per-coin
+  // subscription that happened to deliver it. See onActiveAsset for why.
+  let lastAvailableUsd: number | null = null;
   let accountAtMs = 0;
 
   let socket: FeedSocket | null = null;
@@ -693,6 +699,12 @@ export function createTradeFeed(deps: {
     const available = Array.isArray(data.availableToTrade) ? num(data.availableToTrade[0]) : null;
     const markPx = num(data.markPx);
     activeAssets.set(coin, { availableUsd: available, markPx });
+    // Collateral is an ACCOUNT fact that the venue happens to deliver per coin: every coin on a
+    // unified account reports the same pool. Held separately from the per-coin map because that
+    // map is pruned when the human looks at a different market, and dropping the account's
+    // collateral because the chart changed symbol blanked the whole risk panel for the second it
+    // took the new coin to answer. The account did not change; only the subscription did.
+    if (available !== null) lastAvailableUsd = available;
     // A mark from here fills the gap before the first activeAssetCtx lands, and never overwrites
     // it: the context is the authority for market state.
     if (markPx !== null && !markets.has(coin)) {
@@ -750,7 +762,10 @@ export function createTradeFeed(deps: {
       if (asset.availableUsd === null) continue;
       best = best === null ? asset.availableUsd : Math.max(best, asset.availableUsd);
     }
-    return best;
+    // Falls back to the last figure any coin reported. Changing which market is on screen
+    // unsubscribes the old coin before the new one answers, and the account's collateral does
+    // not change because the chart did. Refreshed within the second by the new subscription.
+    return best ?? lastAvailableUsd;
   }
 
   // Two independent tells, either one is enough:
@@ -758,11 +773,24 @@ export function createTradeFeed(deps: {
   //   accountValue at exactly zero while activeAssetData still reports collateral to trade with
   // The first catches a funded unified account holding a position, the second catches one that
   // is flat. Neither reads as true on a plain perp account.
-  function detectUnified(): boolean {
-    if (clearing === null) return false;
+  //
+  // Three-valued on purpose: null is "not known yet", and it is not the same answer as false.
+  //
+  // The second tell needs activeAssetData, which arrives on a different message from
+  // clearinghouseState. In the window between them a two-valued version answered FALSE, so the
+  // account fell through to accountValue and a funded account reported an equity of zero. That
+  // is the exact failure this whole surface is built to avoid: an obviously wrong number gets
+  // questioned, a plausible one gets acted on, and zero equity on a flat account is plausible.
+  // Saying "not known yet" costs one render of dashes and cannot be misread.
+  function detectUnified(): boolean | null {
+    if (clearing === null) return null;
     if (clearing.rawUsd !== null && clearing.rawUsd < 0) return true;
     const available = bestAvailable();
-    return clearing.accountValueUsd === 0 && available !== null && available > 0;
+    if (available !== null && available > 0) return clearing.accountValueUsd === 0;
+    // A zero account value with nothing yet heard from activeAssetData is unreadable: it is
+    // either a flat unified account worth real money or an empty perp one worth nothing.
+    if (clearing.accountValueUsd === 0) return null;
+    return false;
   }
 
   function freeSpot(): number | null {
@@ -776,21 +804,30 @@ export function createTradeFeed(deps: {
     if (clearing === null) return null;
     const unified = detectUnified();
     const spotFree = freeSpot();
+    // Until it is known WHICH account this is, no figure derived from either reading can be
+    // published, because the two readings disagree and there is no way to say by how much.
+    const unknown = unified === null;
     return {
       atMs: accountAtMs,
       // On a unified account `accountValue` is position equity and `withdrawable` reads 0.0
       // while the account is funded, so both come from spot instead, and stay null until spot
       // answers rather than being reported as zero.
-      equityUsd: unified ? (spot === null ? null : spot.totalUsd) : clearing.accountValueUsd,
+      equityUsd: unknown ? null : unified ? (spot === null ? null : spot.totalUsd) : clearing.accountValueUsd,
       marginUsedUsd: clearing.marginUsedUsd,
       maintenanceUsd: clearing.maintenanceUsd,
-      withdrawableUsd: unified ? spotFree : clearing.withdrawableUsd,
-      freeUsd: unified
-        ? (bestAvailable() ?? spotFree)
-        : clearing.accountValueUsd === null || clearing.marginUsedUsd === null
-          ? null
-          : clearing.accountValueUsd - clearing.marginUsedUsd,
-      unified,
+      withdrawableUsd: unknown ? null : unified ? spotFree : clearing.withdrawableUsd,
+      freeUsd: unknown
+        ? null
+        : unified
+          ? (bestAvailable() ?? spotFree)
+          : clearing.accountValueUsd === null || clearing.marginUsedUsd === null
+            ? null
+            : clearing.accountValueUsd - clearing.marginUsedUsd,
+      // The caller sees `false` only once it is actually known to be false.
+      unified: unified === true,
+      // True while the account reading is still ambiguous, so the window can say "waiting for
+      // the venue" instead of drawing a funded account as empty.
+      accountKnown: !unknown,
       positions: positions.slice(),
     };
   }

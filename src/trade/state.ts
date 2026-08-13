@@ -193,6 +193,9 @@ export type TradePayload = {
     crossLeverage: number | null;
     healthPct: number | null;
     unified: boolean;
+    // False until the feed has settled which kind of account this is. While it is false every
+    // figure above is null, and the window says it is waiting rather than drawing zeros.
+    accountKnown: boolean;
     // Cross margin makes every position a term in every other position's liquidation price, so a
     // per-position view is incomplete by construction. These three are the book as one number.
     netNotionalUsd: number | null;
@@ -500,6 +503,7 @@ function accountFrom(s: AccountSnapshot | null, positions: Position[]): TradePay
       crossLeverage: null,
       healthPct: null,
       unified: false,
+      accountKnown: false,
       netNotionalUsd: null,
       grossNotionalUsd: null,
       equityAtFivePctAdverse: null,
@@ -507,6 +511,11 @@ function accountFrom(s: AccountSnapshot | null, positions: Position[]): TradePay
   }
 
   const unified = s.unified === true;
+  // Whether the feed has settled WHICH kind of account this is. clearinghouseState and
+  // activeAssetData arrive on separate messages, and in the window between them the two
+  // readings disagree by the whole balance. Publishing anything derived from either one during
+  // that window is how a funded account renders as an empty one on the first paint.
+  const accountKnown = s.accountKnown === true;
 
   // The incident. On a unified account with no perp position, clearinghouseState reports
   // accountValue exactly 0.0 and withdrawable 0.0 while the money sits at the account level. A
@@ -524,10 +533,15 @@ function accountFrom(s: AccountSnapshot | null, positions: Position[]): TradePay
 
   // What a five percent move against the book leaves. Computed against NET exposure, which is the
   // same as assuming every coin in the book moves together: a long hedged by a short shows little
-  // damage here, and would take more than this if the two came apart. Stated so nobody reads it
-  // as a floor. Null whenever equity is null, which includes every unified account.
+  // damage here and would take more than this if the two came apart. Stated so nobody reads it as
+  // a floor.
+  //
+  // Null on a unified account for the same reason the two ratios above are null. Subtracting a
+  // real loss from an equity figure that is not the account's money produces a sentence that
+  // sounds specific and is not true, and this is the one number on the panel a human reads as a
+  // plan.
   const equityAtFivePctAdverse =
-    equityUsd === null ? null : equityUsd - Math.abs(netNotionalUsd) * ADVERSE_MOVE;
+    unified || equityUsd === null ? null : equityUsd - Math.abs(netNotionalUsd) * ADVERSE_MOVE;
 
   // Both ratios are null on a unified account, and the reason is not the zero above.
   //
@@ -553,6 +567,7 @@ function accountFrom(s: AccountSnapshot | null, positions: Position[]): TradePay
     crossLeverage,
     healthPct,
     unified,
+    accountKnown,
     netNotionalUsd,
     grossNotionalUsd: notionalUsd,
     equityAtFivePctAdverse,

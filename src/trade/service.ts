@@ -87,6 +87,14 @@ export function createTradeService(deps: TradeServiceDeps): TradeService {
 
   feed.onUpdate(notify);
 
+  // Subscribed at construction rather than on the first render.
+  //
+  // watch() used to be called only from payload(), so the per-coin subscriptions did not exist
+  // until something asked for a payload, and the first thing to ask got a snapshot with no
+  // market and no collateral in it. That is the browser's very first paint. Subscribing here
+  // means the socket has been asking since boot and the first render has real numbers.
+  feed.watch([view.state().symbol]);
+
   // Every armed symbol, plus whatever the human is looking at. Watching only the armed ones
   // would leave the screen blank on a market the person is deciding about, which is exactly
   // when they want the numbers.
