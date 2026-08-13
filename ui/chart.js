@@ -46,10 +46,16 @@ var CHART = {
   rev: 0,
   view: { product: '', granularitySec: 60, barCount: 120, panOffset: 0, priceScale: { mode: 'auto' } },
   candles: [],
+  /* What the candles on screen actually are, which is not always what the controls ask for.
+     The view is a request and can run ahead of the data by a round trip, or sit on an
+     instrument the server has stopped serving. The legend names this instead, so a price
+     can never be printed under another market's name. */
+  dataView: null,
   meta: { source: '', stale: false, built: '', error: null },
   indicators: [],
   levels: [],
   marks: [],
+  trendlines: [],
   products: [],
   timeframes: [],
   agentObjects: 0,
@@ -72,6 +78,9 @@ var CHART_FRAME = 0;
 var CHART_SIZE = { w: 0, h: 0, dpr: 0 };
 var CHART_FETCH = { inflight: false, at: 0, queued: false };
 var CHART_PUSH = null; // debounce timer for writing the view back
+/* Writes of ours that are on the wire. A payload that left the server before our write
+   arrived cannot answer it, so it is not allowed to overrule the hand that just moved. */
+var CHART_PUSH_WAIT = 0;
 var CHART_DRAG = null;
 var CHART_AXIS_W = 62; // price axis width, measured from the labels it actually carries
 var DPR = 1;
@@ -470,6 +479,7 @@ function drawScene() {
   drawOverlayBands(ctx, L);
   drawCandles(ctx, L);
   drawOverlayLines(ctx, L);
+  drawTrendlines(ctx, L);
   drawLevels(ctx, L);
   drawPanes(ctx, L);
   drawAxisFrame(ctx, L);
@@ -929,6 +939,64 @@ function drawLevels(ctx, L) {
   }
 }
 
+/* A sloped line between two (time, price) anchors, extended forward to the right edge.
+
+   Two things differ from drawLevels and both are the reason this could not be faked with a
+   horizontal line. The x position comes from a FRACTIONAL bar index: indexOfTime rounds to
+   the containing bar, which is right for a mark that belongs to one candle, and wrong here
+   because rounding both ends visibly kinks a shallow slope. And the line is clipped to the
+   plot rectangle rather than skipped when an endpoint is off screen, so panning away from an
+   anchor leaves the line crossing the view instead of vanishing. */
+function drawTrendlines(ctx, L) {
+  if (!CHART.trendlines.length) return;
+  var granularity = CHART.view.granularitySec;
+  var candles = CHART.candles;
+  if (!candles.length) return;
+  var firstT = candles[0].t;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, L.priceTop, L.plotWidth, L.priceHeight);
+  ctx.clip();
+
+  for (var i = 0; i < CHART.trendlines.length; i++) {
+    var tl = CHART.trendlines[i];
+    var fromAgent = tl.source === 'agent';
+    var x1 = L.xOf((tl.t1 - firstT) / granularity);
+    var x2 = L.xOf((tl.t2 - firstT) / granularity);
+    var y1 = L.yOf(tl.p1);
+    var y2 = L.yOf(tl.p2);
+    if (x2 === x1) continue;
+
+    // Extend past the second anchor to the right edge: a trend line is a claim about what
+    // comes next, so stopping it at the last touch would hide the part worth looking at.
+    var slope = (y2 - y1) / (x2 - x1);
+    var endX = L.plotWidth;
+    var endY = y1 + slope * (endX - x1);
+
+    ctx.strokeStyle = green(fromAgent ? 0.5 : 0.7);
+    ctx.lineWidth = 1;
+    ctx.setLineDash(fromAgent ? [2, 3] : [6, 4]);
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(endX, endY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // The two anchors, so the eye can see what the line was fitted to rather than guessing.
+    ctx.fillStyle = green(fromAgent ? 0.6 : 0.85);
+    ctx.fillRect(Math.round(x1) - 2, Math.round(y1) - 2, 4, 4);
+    ctx.fillRect(Math.round(x2) - 2, Math.round(y2) - 2, 4, 4);
+
+    // Label rides the line at its second anchor, nudged off it so the text is not struck
+    // through by the line it names.
+    var labelY = clampNum(y2 - 7, L.priceTop + 9, L.priceTop + L.priceHeight - 3);
+    ctx.fillText(tl.label, clampNum(x2 + 5, 4, L.plotWidth - 90), labelY);
+  }
+
+  ctx.restore();
+}
+
 function drawMarks(ctx, L) {
   if (!CHART.marks.length) return;
   var granularity = CHART.view.granularitySec;
@@ -1111,13 +1179,19 @@ function drawLegend(ctx, L) {
   var up = candle.c >= candle.o;
   var change = candle.o !== 0 ? ((candle.c - candle.o) / candle.o) * 100 : 0;
 
+  // The name belongs to the bars being drawn, never to the request that may still be in
+  // flight. A window asking for one market while the payload on screen holds another is a
+  // second of a switch, or a write the server never took: either way the price under this
+  // name has to be the price this name means.
+  var identity = CHART.dataView || CHART.view;
+
   var x = 3;
   var y = PAD_TOP + 8;
   ctx.fillStyle = C_HI;
-  ctx.fillText(CHART.view.product, x, y);
-  x += ctx.measureText(CHART.view.product).width + 6;
+  ctx.fillText(identity.product, x, y);
+  x += ctx.measureText(identity.product).width + 6;
   ctx.fillStyle = green(0.5);
-  var tf = timeframeOf(CHART.view.granularitySec);
+  var tf = timeframeOf(identity.granularitySec);
   ctx.fillText(tf, x, y);
   x += ctx.measureText(tf).width + 10;
 
@@ -1227,6 +1301,13 @@ function chartBusy(on) {
   if (node) node.hidden = !on;
 }
 
+/* Whether a payload names a different market or a different bar length than the window is
+   asking for. Pan, zoom and price scale are deliberately not in here: those the hand owns. */
+function chartIdentityDiffers(view) {
+  if (!view) return false;
+  return view.product !== CHART.view.product || view.granularitySec !== CHART.view.granularitySec;
+}
+
 function applyChart(payload) {
   CHART_READY = true;
   CHART.rev = payload.rev;
@@ -1235,6 +1316,7 @@ function applyChart(payload) {
   CHART.indicators = payload.indicators || [];
   CHART.levels = payload.levels || [];
   CHART.marks = payload.marks || [];
+  CHART.trendlines = payload.trendlines || [];
   CHART.products = payload.products || [];
   CHART.timeframes = payload.timeframes || [];
   CHART.agentObjects = payload.agentObjects || 0;
@@ -1251,7 +1333,20 @@ function applyChart(payload) {
   if (CHART_FIRST_LOAD || (payload.lastDriver === 'agent' && CHART_DRAG === null && CHART_PUSH === null)) {
     CHART.view = payload.view;
     CHART_FIRST_LOAD = false;
+  } else if (chartIdentityDiffers(payload.view) && CHART_DRAG === null && CHART_PUSH === null && CHART_PUSH_WAIT === 0) {
+    /* Which instrument and which timeframe is not the human's to hold against the payload.
+       The candles here were read for the server's product, so a view still naming another
+       one puts one market's price under another market's name. A lost view write and a
+       restarted server both land here, lastDriver reading 'human' in each case, and that
+       used to leave the wrong name on the chart until the page was reloaded. Nothing of
+       ours is on the wire at this point, so the server is the answer. The whole view comes
+       across: another instrument shares nothing with the old one, which is the same
+       reasoning setView uses in src/chart.ts. */
+    CHART.view = payload.view;
   }
+  CHART.dataView = payload.view
+    ? { product: payload.view.product, granularitySec: payload.view.granularitySec }
+    : CHART.dataView;
 
   var last = CHART.candles.length ? CHART.candles[CHART.candles.length - 1] : null;
   CHART.meta.barCloseSec = last ? Math.max(0, last.t + CHART.view.granularitySec - Date.now() / 1000) : null;
@@ -1292,6 +1387,7 @@ async function pushChart(extra) {
   if (extra) {
     for (var key in extra) if (Object.prototype.hasOwnProperty.call(extra, key)) body[key] = extra[key];
   }
+  CHART_PUSH_WAIT++;
   try {
     var res = await fetch('/api/chart', {
       method: 'POST',
@@ -1307,8 +1403,11 @@ async function pushChart(extra) {
     if (extra) void refreshChart();
     else chartInvalidate(true);
   } catch (err) {
-    // A failed view write is not worth an alert line: the chart still draws, and the only
-    // cost is that an agent's read is one interaction behind.
+    // A failed view write is not worth an alert line: the chart still draws, and the window
+    // falls back to the server's view on the next read rather than keeping a name the
+    // server never accepted.
+  } finally {
+    CHART_PUSH_WAIT--;
   }
 }
 
