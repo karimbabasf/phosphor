@@ -13,7 +13,7 @@
 import type { Candle } from './types.ts';
 import { indicatorSpec, normaliseParams, warmupBars, pctChange, trueRange } from './indicators.ts';
 import type { IndicatorResult } from './indicators.ts';
-import { MAX_TIMEFRAME_SEC, parseTimeframe, formatTimeframe } from './market/aggregate.ts';
+import { MAX_TIMEFRAME_SEC, MIN_TIMEFRAME_SEC, parseTimeframe, formatTimeframe } from './market/aggregate.ts';
 
 export type PriceScale = { mode: 'auto' } | { mode: 'manual'; low: number; high: number };
 
@@ -69,13 +69,9 @@ export type ChartState = {
 export type Outcome = { ok: boolean; notes: string[]; error?: string; id?: string; label?: string };
 
 // The timeframe vocabulary lives in the market layer, because that is what has to serve it.
-export { MAX_TIMEFRAME_SEC, parseTimeframe, formatTimeframe };
+export { MAX_TIMEFRAME_SEC, MIN_TIMEFRAME_SEC, parseTimeframe, formatTimeframe };
 
 export const TIMEFRAMES: readonly { label: string; sec: number }[] = [
-  { label: '1s', sec: 1 },
-  { label: '5s', sec: 5 },
-  { label: '15s', sec: 15 },
-  { label: '30s', sec: 30 },
   { label: '1m', sec: 60 },
   { label: '5m', sec: 300 },
   { label: '15m', sec: 900 },
@@ -243,8 +239,8 @@ export function createChartStore(initialProduct: string): {
     // convenience now and not a constraint. See src/market/aggregate.ts.
     if (typeof patch.granularitySec === 'number' && Number.isFinite(patch.granularitySec)) {
       const asked = Math.floor(patch.granularitySec);
-      if (asked < 1 || asked > MAX_TIMEFRAME_SEC) {
-        return { ok: false, notes, error: `timeframe out of range: ${asked}s. between 1s and 1w` };
+      if (asked < MIN_TIMEFRAME_SEC || asked > MAX_TIMEFRAME_SEC) {
+        return { ok: false, notes, error: `timeframe out of range: ${asked}s. between 1m and 1w` };
       }
       if (asked !== view.granularitySec) {
         view.granularitySec = asked;
@@ -256,7 +252,14 @@ export function createChartStore(initialProduct: string): {
         return {
           ok: false,
           notes,
-          error: `unknown timeframe: ${patch.timeframe}. use a count and a unit, like 7m, 90s, 4h or 1w`,
+          error: `unknown timeframe: ${patch.timeframe}. use a count and a unit, like 7m, 4h or 1w`,
+        };
+      }
+      if (parsed < MIN_TIMEFRAME_SEC) {
+        return {
+          ok: false,
+          notes,
+          error: `${patch.timeframe} is below the one minute floor. no venue serves a candle under a minute`,
         };
       }
       if (parsed !== view.granularitySec) {
@@ -544,7 +547,7 @@ export function digestSeries(candles: Candle[], granularitySec: number, nowSec: 
 export type ReadArgs = {
   state: ChartState;
   candles: Candle[];
-  meta: { source: string; stale: boolean; built: string; collectedSec: number };
+  meta: { source: string; stale: boolean; built: string };
   computed: { indicator: ChartIndicator; result: IndicatorResult }[];
   nowSec: number;
 };
@@ -589,7 +592,6 @@ export function buildRead(args: ReadArgs): unknown {
       source: meta.source,
       stale: meta.stale,
       builtFrom: meta.built === 'trades' ? 'live trade stream (no exchange candle exists below 1m)' : 'exchange candles',
-      collectedSec: meta.collectedSec,
       barsLoaded: candles.length,
       oldestLoaded: candles.length > 0 ? isoOf((candles[0] as Candle).t) : null,
     },

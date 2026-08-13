@@ -26,6 +26,11 @@ const WEEK_OFFSET_SEC = 345_600;
 
 export const MAX_TIMEFRAME_SEC = 604_800;
 
+// The floor. No venue serves a candle under a minute, so anything faster had to be built
+// here from a trade tape, and the tape and the live stream were different venues, which
+// spliced two markets into one line. Removed 2026-08-13.
+export const MIN_TIMEFRAME_SEC = 60;
+
 /* "7m" -> 420, "90s" -> 90, "2h" -> 7200, "1w" -> 604800, "45" -> 45.
    Returns null rather than guessing, so the caller can say what it knows instead of
    charting something the human did not ask for. Months are refused on purpose: they are

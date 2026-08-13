@@ -40,7 +40,6 @@ import type { Store } from './store.ts';
 import type { Ledger } from './ledger/index.ts';
 import type { CandleService } from './candles.ts';
 import type { MarketData } from './market/index.ts';
-import type { LiveCandles } from './hyperliquid.ts';
 import { classify } from './composition.ts';
 import { buildWallet } from './wallet.ts';
 import { gateRequired, gateBanner } from './policy/gate.ts';
@@ -68,7 +67,7 @@ const STATE_DEBOUNCE_MS = 120;
 const HEARTBEAT_MS = 15000; // SSE keepalive; doubles as a floor on state freshness
 const LOG_LIMIT_MAX = 2000;
 const CANDLE_LIMIT_MAX = 2000; // matches LIMITS.historyMax: the widest window the chart allows
-const CANDLE_PUSH_MS = 1000; // ceiling on how often a trade may ask the browser to redraw
+const CANDLE_PUSH_MS = 1000; // how often the browser is told there may be a newer bar
 
 // The basic screen's price tracker. Hourly bars over a day: "today" for someone reading
 // a price is the last 24 hours, not the span since midnight in a timezone the exchange
@@ -132,7 +131,6 @@ export type ServerDeps = {
   riskRows: RiskRow[];
   candles: CandleService;
   market: MarketData;
-  live: LiveCandles;
   proposals: ProposalService;
   getPolicy: () => Policy | null;
   setKill: (on: boolean) => void;
@@ -181,7 +179,7 @@ function tokenMatches(supplied: unknown, expected: string): boolean {
 }
 
 export function createServer(deps: ServerDeps): PhosphorServer {
-  const { cfg, audit, store, ledger, riskRows, candles, market, live, proposals } = deps;
+  const { cfg, audit, store, ledger, riskRows, candles, market, proposals } = deps;
   const { getPolicy, setKill, agentSeen, agentsConnected, getView, setView } = deps;
 
   const token = crypto.randomBytes(24).toString('hex');
@@ -219,15 +217,14 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     for (const client of sseClients) sseSend(client, { type: 'log', event });
   });
 
-  // Trades push the chart instead of the chart polling for them, but the push has to be
-  // rationed. Measured on a running app 2026-08-13: this fired about 1.4 times a second,
-  // and each one made every browser refetch the whole chart payload, which at the time
-  // meant a fresh Hyperliquid round trip apiece. That is roughly ninety exchange calls a
-  // minute to move one bar, and it is the reason the chart felt late.
+  // Tell the browser to redraw on a fixed cadence rather than on every trade.
   //
-  // A trailing throttle caps it at one frame a second. Nothing is lost: the newest bar is
-  // still the newest bar, and a person cannot see the difference between 1Hz and 1.4Hz on
-  // a candle that takes a minute to close.
+  // This used to hang off the Hyperliquid trade websocket, which fired about 1.4 times a
+  // second and made every browser refetch the whole chart payload each time. That socket
+  // existed to build second candles; both are gone. A timer is the honest replacement,
+  // because what the browser is actually waiting for is the cache refreshing behind it,
+  // and that runs on its own schedule (see staleAfterSec in src/market/store.ts). Pushing
+  // faster than the cache refreshes only redraws the same bars.
   let candleFrame: NodeJS.Timeout | null = null;
   function broadcastCandles(): void {
     if (candleFrame !== null) return;
@@ -237,7 +234,10 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     }, CANDLE_PUSH_MS);
     candleFrame.unref();
   }
-  live.onUpdate(() => broadcastCandles());
+  const candleTick = setInterval(() => {
+    if (sseClients.size > 0) broadcastCandles();
+  }, CANDLE_PUSH_MS);
+  candleTick.unref();
 
   const heartbeat = setInterval(() => {
     for (const client of sseClients) sseSend(client, { type: 'state' });
@@ -434,7 +434,6 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     source: string;
     stale: boolean;
     built: string;
-    collectedSec: number;
     fetchedAt: string;
     // True while the window behind this read is still being filled, so the chart can say
     // "filling" rather than showing a short series as though it were the whole story.
@@ -458,8 +457,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       candles: held.candles,
       source: held.source,
       stale: held.stale,
-      built: held.baseSec < 60 ? 'trades' : 'candles',
-      collectedSec: held.coverageSec,
+      built: 'candles',
       fetchedAt: new Date(Date.now() - held.ageSec * 1000).toISOString(),
       filling: held.filling,
       note: held.note,
@@ -488,7 +486,6 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         'x-candle-stale': String(load.stale),
         'x-candle-fetched-at': load.fetchedAt,
         'x-candle-built': load.built,
-        'x-candle-collected': String(load.collectedSec),
       });
       res.end(body);
     } catch (err) {
@@ -530,7 +527,6 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         source: load.source,
         stale: load.stale,
         built: load.built,
-        collectedSec: load.collectedSec,
         fetchedAt: load.fetchedAt,
         filling: load.filling,
         note: load.note,
@@ -564,7 +560,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       return buildRead({
         state,
         candles: load.candles,
-        meta: { source: load.source, stale: load.stale, built: load.built, collectedSec: load.collectedSec },
+        meta: { source: load.source, stale: load.stale, built: load.built },
         computed: computeIndicators(state, load.candles),
         nowSec: Math.floor(Date.now() / 1000),
       });

@@ -120,7 +120,7 @@ test('the base to fetch is chosen from what the venue actually serves', () => {
   assert.equal(planBase(cb, 14_400).baseSec, 3600, 'Coinbase does not, so 4h folds from 1h');
   assert.equal(planBase(cb, 1800).baseSec, 900, 'Coinbase has no 30m, so it folds from 15m');
   assert.equal(planBase(hl, 420).baseSec, 60, '7m folds from 1m on either venue');
-  assert.equal(planBase(hl, 30).provider, 'trades', 'sub-minute leaves the candle rail entirely');
+  assert.equal(planBase(hl, 30).baseSec, 60, 'anything under a minute is clamped to the one minute floor');
 });
 
 test('the native tables match what the venues were measured to accept', () => {
