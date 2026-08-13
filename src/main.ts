@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import type { Policy, RiskRow } from './types.ts';
 import { loadConfig } from './config.ts';
 import { createAudit } from './audit.ts';
+import { createAgentTracker, AGENT_TIMEOUT_MS } from './agents.ts';
 import { createStore } from './store.ts';
 import { loadPolicy, savePolicy, defaultPolicy } from './policy/file.ts';
 import { renderSentences } from './policy/render.ts';
@@ -95,15 +96,15 @@ const proposals = createProposalService({
   dataDir: cfg.dataDir,
 });
 
-// Agent connection tracking: mcp.ts sends op:hello every 15s; connected means
-// a heartbeat within the last 45s.
-let lastHello = 0;
-function agentSeen(): void {
-  lastHello = Date.now();
-}
-function agentsConnected(): number {
-  return Date.now() - lastHello < 45_000 ? 1 : 0;
-}
+// Agent connection tracking: mcp.ts sends op:hello every 15s; connected means a
+// heartbeat within the last 45s. Only a state CHANGE is logged, see src/agents.ts.
+const agents = createAgentTracker(audit);
+const agentSeen = agents.seen;
+const agentsConnected = agents.connected;
+
+// A drop is silence, so nothing arrives to carry it. Without this poll the log
+// would show every connect and no disconnect, a worse record than none.
+setInterval(() => agents.sweep(), AGENT_TIMEOUT_MS / 3).unref();
 
 function getPolicy(): Policy | null {
   return loadPolicy(cfg.dataDir);

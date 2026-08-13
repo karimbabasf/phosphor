@@ -46,6 +46,10 @@ const UI_DIR = path.join(__dirname, '..', 'ui');
 
 const HOST = '127.0.0.1';
 const MAX_BODY_BYTES = 1024 * 1024;
+// Every label component on the MCP surface is caller-controlled and lands in an
+// append-only file. The body cap is 1 MB, so without this one request can write a
+// 1 MB log line, and a loop of them fills the disk the audit record lives on.
+const MAX_LABEL_CHARS = 64;
 const STATE_DEBOUNCE_MS = 120;
 const HEARTBEAT_MS = 15000; // SSE keepalive; doubles as a floor on state freshness
 const LOG_LIMIT_MAX = 2000;
@@ -80,7 +84,7 @@ export type ServerDeps = {
   proposals: ProposalService;
   getPolicy: () => Policy | null;
   setKill: (on: boolean) => void;
-  agentSeen: () => void;
+  agentSeen: (client: string) => void;
   agentsConnected: () => number;
 };
 
@@ -97,6 +101,13 @@ function errText(err: unknown): string {
 
 function asRecord(value: unknown): JsonBody {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as JsonBody) : {};
+}
+
+// Bound a caller-supplied string before it reaches a log label. Truncation is
+// enough here: the log is JSONL, so JSON.stringify already escapes newlines and
+// quotes, and no caller-controlled text is ever rendered as HTML.
+function capLabel(raw: string): string {
+  return raw.length <= MAX_LABEL_CHARS ? raw : `${raw.slice(0, MAX_LABEL_CHARS)}...`;
 }
 
 function intParam(raw: unknown, fallback: number, max: number): number {
@@ -647,23 +658,26 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     const body = parsed.value;
     const op = String(body.op ?? '');
 
-    const label =
-      op === 'read'
-        ? `read ${String(body.tool ?? '?')}`
-        : op === 'propose'
-          ? `propose ${String(body.kind ?? '?')}`
-          : op === 'hello'
-            ? `hello from ${String(body.client ?? 'unknown client')}`
-            : `unknown op ${op}`;
-    // Contract: every op is audit-logged before dispatch, arguments included verbatim.
-    audit.append('tool_call', `agent: ${label}`, body);
-
+    // Handled before the audit append, deliberately. A heartbeat is the transport
+    // saying it is alive: it takes no action, changes nothing, and anything on
+    // loopback can send it. Auditing every one buried the real events it sits
+    // between. Connection STATE changes are logged in main.ts instead.
     if (op === 'hello') {
-      agentSeen();
+      agentSeen(capLabel(String(body.client ?? 'unknown client')));
       broadcastState();
       sendJson(res, 200, { ok: true });
       return;
     }
+
+    const label =
+      op === 'read'
+        ? `read ${capLabel(String(body.tool ?? '?'))}`
+        : op === 'propose'
+          ? `propose ${capLabel(String(body.kind ?? '?'))}`
+          : `unknown op ${capLabel(op)}`;
+    // Contract: every op that DOES something is audit-logged before dispatch,
+    // arguments included verbatim.
+    audit.append('tool_call', `agent: ${label}`, body);
     if (op === 'read') {
       await handleRead(body, res);
       return;
