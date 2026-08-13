@@ -7,7 +7,8 @@
 // Pure function, no IO. LP positions are passed in rather than fetched here: the chain
 // readers own fetching, this owns presentation.
 
-import type { ChainId, LedgerSnapshot, LpPosition, WalletRow, WalletView } from './types.ts';
+import type { ChainId, LedgerSnapshot, LpPosition, WalletPlace, WalletRow, WalletView } from './types.ts';
+import type { IntentsRead } from './ledger/intents.ts';
 
 // Price per unit, derived from what the ledger already priced rather than re-fetched.
 // Stables land on ~1.0, natives on spot, and a zero balance cannot divide.
@@ -29,7 +30,11 @@ function lpValueUsd(pos: LpPosition, priceOf: (symbol: string) => number): numbe
   return sides + (pos.uncollectedFeesUsd ?? 0);
 }
 
-export function buildWallet(snapshot: LedgerSnapshot, positions: LpPosition[] = []): WalletView {
+export function buildWallet(
+  snapshot: LedgerSnapshot,
+  positions: LpPosition[] = [],
+  intents?: IntentsRead,
+): WalletView {
   // Symbol -> unit price, learned from the holdings themselves and topped up from the
   // snapshot's native price table for symbols held only inside a pool.
   const priceBySymbol = new Map<string, number>();
@@ -73,16 +78,40 @@ export function buildWallet(snapshot: LedgerSnapshot, positions: LpPosition[] = 
     };
   });
 
-  const rows = [...tokenRows, ...lpRows].sort((a, b) => b.valueUsd - a.valueUsd);
+  // A balance inside the intents.near verifier. It is priced off the same symbol map as
+  // everything else, so ETH held in the verifier and ETH held in the wallet agree about
+  // what an ETH is worth. An asset we have no price for keeps its quantity and values at
+  // zero rather than borrowing a number from somewhere it does not belong.
+  const intentsRows: WalletRow[] = (intents?.holdings ?? []).map(h => {
+    const priceUsd = priceOf(h.symbol);
+    return {
+      kind: 'intents',
+      chain: 'intents',
+      symbol: h.symbol,
+      tokenId: h.assetId,
+      quantity: h.amount,
+      priceUsd,
+      valueUsd: h.amount * priceUsd,
+      share: 0,
+      native: false,
+      intents: { accountId: h.accountId, assetId: h.assetId },
+    };
+  });
+
+  const rows = [...tokenRows, ...lpRows, ...intentsRows].sort((a, b) => b.valueUsd - a.valueUsd);
   const totalUsd = rows.reduce((sum, r) => sum + r.valueUsd, 0);
   for (const row of rows) row.share = totalUsd > 0 ? row.valueUsd / totalUsd : 0;
 
   const byChain: Record<string, number> = {};
   for (const row of rows) byChain[row.chain] = (byChain[row.chain] ?? 0) + row.valueUsd;
 
-  const stale = (Object.entries(snapshot.chainStatus) as Array<[ChainId, { ok: boolean }]>)
+  const stale: WalletPlace[] = (Object.entries(snapshot.chainStatus) as Array<[ChainId, { ok: boolean }]>)
     .filter(([, status]) => !status.ok)
     .map(([chain]) => chain);
+  // A verifier read that failed is stale for the same reason a chain read that failed is:
+  // showing no intents row would claim the deposit is gone. Only ever added when a read was
+  // actually attempted, so demo mode and testnet do not sprout a permanent STALE badge.
+  if (intents !== undefined && !intents.ok) stale.push('intents');
 
   return { rows, totalUsd, byChain, stale };
 }

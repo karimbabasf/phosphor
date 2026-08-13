@@ -93,6 +93,7 @@ async function boot(opts: { view?: ViewMode; proposals?: Proposal[] } = {}): Pro
     ledger: {
       snapshot,
       positions: (): LpPosition[] => [],
+      intents: () => undefined,
       refresh: async () => snapshot(),
       applyDemoTransfer: () => {},
     },

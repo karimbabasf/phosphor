@@ -377,7 +377,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     const snapshot = ledger.snapshot();
     const composition = classify(snapshot, riskRows);
     const policy = getPolicy();
-    const wallet = buildWallet(snapshot, ledger.positions());
+    const wallet = buildWallet(snapshot, ledger.positions(), ledger.intents());
     const list = proposals.list();
     return {
       ledger: snapshot,
@@ -710,7 +710,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       return;
     }
     if (tool === 'wallet') {
-      sendJson(res, 200, buildWallet(ledger.snapshot(), ledger.positions()));
+      sendJson(res, 200, buildWallet(ledger.snapshot(), ledger.positions(), ledger.intents()));
       return;
     }
     if (tool === 'policy_show') {

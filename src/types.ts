@@ -92,9 +92,18 @@ export type LpPosition = {
   uncollectedFeesUsd: number | null; // null when the venue cannot report it
 };
 
+// Where a wallet row physically sits. A balance inside the intents.near verifier is on no
+// chain: it is an entry on that contract's own ledger, and calling it 'near' would tell a
+// reader to look for it on NEAR where nothing will be found.
+//
+// Deliberately a DISPLAY axis only. LedgerSnapshot.chainStatus and everything the policy
+// engine reads stay strictly ChainId, so adding this cannot reach the per-chain gas floors
+// or the outbound rules. See the header of src/ledger/index.ts on adding an axis.
+export type WalletPlace = ChainId | 'intents';
+
 export type WalletRow = {
-  kind: 'token' | 'lp';
-  chain: ChainId;
+  kind: 'token' | 'lp' | 'intents';
+  chain: WalletPlace;
   symbol: string; // 'USDC', 'ETH', or 'USDC/WETH 0.05%' for a pool position
   tokenId: string;
   quantity: number;
@@ -103,13 +112,16 @@ export type WalletRow = {
   share: number; // 0..1 of wallet total
   native: boolean;
   lp?: LpPosition;
+  // Set on an intents row: the verifier's asset id and the account it credits, so a row
+  // can be reconciled against `npm run intents-balance` without guessing.
+  intents?: { accountId: string; assetId: string };
 };
 
 export type WalletView = {
   rows: WalletRow[]; // value descending
-  totalUsd: number; // everything: tokens, natives and LP
-  byChain: Record<string, number>; // chain -> usd
-  stale: ChainId[]; // chains whose last read failed; never silently zero
+  totalUsd: number; // everything: tokens, natives, LP and intents balances
+  byChain: Record<string, number>; // place -> usd
+  stale: WalletPlace[]; // places whose last read failed; never silently zero
 };
 
 // ---------- Policy ----------

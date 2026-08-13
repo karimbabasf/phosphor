@@ -67,6 +67,69 @@ test('a failed chain is reported stale rather than silently zeroed', () => {
   assert.deepEqual(buildWallet(snap).stale, ['sol']);
 });
 
+// ---------- balances held inside the intents.near verifier ----------
+
+const INTENTS_ETH = {
+  accountId: '0xabc',
+  assetId: 'nep141:eth.omft.near',
+  symbol: 'ETH',
+  originChain: 'eth',
+  amount: 2,
+  decimals: 18,
+};
+
+test('a verifier balance is a wallet row, placed at intents rather than on a chain', () => {
+  const snap = loadDemoLedger();
+  const wallet = buildWallet(snap, [], { holdings: [INTENTS_ETH], ok: true, fetchedAt: 'now' });
+
+  const rows = wallet.rows.filter(r => r.kind === 'intents');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].symbol, 'ETH');
+  assert.equal(rows[0].chain, 'intents', 'it is on no chain: calling it near would send you looking in the wrong place');
+  assert.equal(rows[0].quantity, 2);
+  assert.equal(rows[0].intents?.assetId, 'nep141:eth.omft.near');
+});
+
+test('verifier ETH and wallet ETH agree about what an ETH is worth', () => {
+  const snap = loadDemoLedger();
+  const wallet = buildWallet(snap, [], { holdings: [INTENTS_ETH], ok: true, fetchedAt: 'now' });
+
+  const onChain = wallet.rows.find(r => r.kind === 'token' && r.symbol === 'ETH' && r.native);
+  const inVerifier = wallet.rows.find(r => r.kind === 'intents');
+  assert.ok(onChain && inVerifier);
+  closeTo(inVerifier!.priceUsd, onChain!.priceUsd, 0.01);
+  closeTo(inVerifier!.valueUsd, 2 * onChain!.priceUsd, 0.01);
+});
+
+test('a verifier balance counts toward the total, which is the bug that started this', () => {
+  const snap = loadDemoLedger();
+  const before = buildWallet(snap);
+  const after = buildWallet(snap, [], { holdings: [INTENTS_ETH], ok: true, fetchedAt: 'now' });
+
+  assert.ok(after.totalUsd > before.totalUsd, 'money in the verifier is money held');
+  assert.ok(after.byChain.intents > 0, 'and it gets its own place in the breakdown');
+  closeTo(after.rows.reduce((s, r) => s + r.share, 0), 1, 0.0001);
+});
+
+test('a failed verifier read is stale, never an absent row', () => {
+  const wallet = buildWallet(loadDemoLedger(), [], {
+    holdings: [],
+    ok: false,
+    fetchedAt: 'now',
+    error: 'rpc down',
+  });
+  assert.ok(wallet.stale.includes('intents'), 'showing no row would claim the deposit is gone');
+});
+
+test('a wallet that never asked the verifier does not claim it went stale', () => {
+  // Demo mode and testnet: intents.near is not there to read, so there is nothing to mark.
+  assert.equal(buildWallet(loadDemoLedger()).stale.includes('intents'), false);
+  assert.equal(
+    buildWallet(loadDemoLedger(), [], { holdings: [], ok: true, fetchedAt: 'now' }).stale.includes('intents'),
+    false,
+  );
+});
+
 test('an empty wallet does not divide by zero', () => {
   const snap = { ...loadDemoLedger(), holdings: [] };
   const wallet = buildWallet(snap);

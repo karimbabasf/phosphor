@@ -9,6 +9,9 @@ import { loadDemoLedger } from './demo.ts';
 import * as evm from './evm.ts';
 import * as solana from './solana.ts';
 import * as near from './near.ts';
+import { fetchIntentsHoldings, type IntentsRead } from './intents.ts';
+import { oneClickClient } from '../intents.ts';
+import { evmAddress } from '../chain/evm.ts';
 import { readPositions } from '../rails/uniswap.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -29,14 +32,20 @@ const RPC_URLS: Record<Network, Record<ChainId, string>> = {
     base: 'https://base-rpc.publicnode.com',
     arb: 'https://arbitrum-one-rpc.publicnode.com',
     sol: 'https://api.mainnet-beta.solana.com',
-    near: 'https://rpc.mainnet.near.org',
+    // NOT rpc.mainnet.near.org. That host now answers EVERY request with HTTP 429 and a
+    // notice telling you to stop using it, so from the app's side each refresh threw, NEAR
+    // was marked stale and its holdings fell back to the last good read (empty on a fresh
+    // boot). A dead endpoint and an empty wallet looked identical, which is the same
+    // failure this file's network table was written to prevent. Verified 2026-08-13:
+    // fastnear answers view_account for intents.near in ~200ms.
+    near: 'https://free.rpc.fastnear.com',
   },
   testnet: {
     eth: 'https://ethereum-sepolia-rpc.publicnode.com',
     base: 'https://sepolia.base.org',
     arb: 'https://sepolia-rollup.arbitrum.io/rpc',
     sol: 'https://api.devnet.solana.com',
-    near: 'https://rpc.testnet.near.org',
+    near: 'https://test.rpc.fastnear.com', // rpc.testnet.near.org is deprecated the same way
   },
 };
 
@@ -53,6 +62,11 @@ export type Ledger = {
   // they are read from venue contracts rather than from token balances, and a venue
   // being down must not mark the whole chain stale.
   positions(): LpPosition[];
+  // What the intents.near verifier holds for this app. Separate from snapshot() for the
+  // same reason positions() is: it is not a chain balance, a verifier outage must not mark
+  // a chain stale, and it is undefined rather than empty when no read was attempted (demo
+  // mode, testnet, or no key), because "not asked" and "holds nothing" are different facts.
+  intents(): IntentsRead | undefined;
   refresh(): Promise<LedgerSnapshot>;
   applyDemoTransfer(leg: TransferLeg): void;
 };
@@ -111,6 +125,7 @@ function createDemoLedger(): Ledger {
   return {
     snapshot: () => current,
     positions: () => [], // the demo fixture holds no pool positions
+    intents: () => undefined, // demo mode signs nothing and deposits nothing
     refresh: async () => current, // fixture is static; nothing to re-fetch
     applyDemoTransfer,
   };
@@ -167,11 +182,15 @@ function priceHoldings(holdings: Holding[], prices: Record<string, number>): Hol
   });
 }
 
+// `prices` is a promise, not a value, and that is the point: a chain read does not depend
+// on a price to happen, only to be costed. Awaiting the price feed before starting any of
+// this made every refresh pay a Coinbase round trip before the first RPC left the machine.
+// The reads and the prices now run together and meet at the end.
 async function refreshEvmChain(
   chain: ChainId,
   cfg: AppConfig,
   tokens: TokenTable,
-  prices: Record<string, number>,
+  pricesPromise: Promise<Record<string, number>>,
   prevSnapshot: LedgerSnapshot,
   fetchImpl: typeof fetch,
 ): Promise<ChainRefreshResult> {
@@ -181,12 +200,20 @@ async function refreshEvmChain(
     return { holdings: [], status: { ok: true, fetchedAt }, transferCostUsd: 0 };
   }
   try {
+    // One batched round trip per address: token balances, native balance and gas price.
     const perAddress = await Promise.all(
-      addresses.map(addr => evm.fetchHoldings(chain, RPC_URLS[cfg.network][chain], addr, tokens[chain] ?? {}, fetchImpl)),
+      addresses.map(addr =>
+        evm.fetchChainState(chain, RPC_URLS[cfg.network][chain], addr, tokens[chain] ?? {}, fetchImpl),
+      ),
     );
-    const gasPriceWei = await evm.fetchGasPriceWei(RPC_URLS[cfg.network][chain], fetchImpl);
+    const prices = await pricesPromise;
+    const gasPriceWei = perAddress[0]?.gasPriceWei ?? 0n;
     const transferCostUsd = (Number(gasPriceWei) / 1e18) * EVM_TRANSFER_GAS_UNITS * (prices.ETH ?? 0);
-    return { holdings: perAddress.flat(), status: { ok: true, fetchedAt }, transferCostUsd };
+    return {
+      holdings: perAddress.flatMap(r => r.holdings),
+      status: { ok: true, fetchedAt },
+      transferCostUsd,
+    };
   } catch (err) {
     return {
       holdings: prevSnapshot.holdings.filter(h => h.chain === chain),
@@ -199,7 +226,7 @@ async function refreshEvmChain(
 async function refreshSolChain(
   cfg: AppConfig,
   tokens: TokenTable,
-  prices: Record<string, number>,
+  pricesPromise: Promise<Record<string, number>>,
   prevSnapshot: LedgerSnapshot,
   fetchImpl: typeof fetch,
 ): Promise<ChainRefreshResult> {
@@ -212,6 +239,7 @@ async function refreshSolChain(
     const perAddress = await Promise.all(
       addresses.map(addr => solana.fetchHoldings('sol', RPC_URLS[cfg.network].sol, addr, tokens.sol ?? {}, fetchImpl)),
     );
+    const prices = await pricesPromise;
     const transferCostUsd = SOL_TRANSFER_LAMPORTS * (prices.SOL ?? 0) * SOL_TRANSFER_SIGNATURES;
     return { holdings: perAddress.flat(), status: { ok: true, fetchedAt }, transferCostUsd };
   } catch (err) {
@@ -226,7 +254,7 @@ async function refreshSolChain(
 async function refreshNearChain(
   cfg: AppConfig,
   tokens: TokenTable,
-  prices: Record<string, number>,
+  pricesPromise: Promise<Record<string, number>>,
   prevSnapshot: LedgerSnapshot,
   fetchImpl: typeof fetch,
 ): Promise<ChainRefreshResult> {
@@ -239,6 +267,7 @@ async function refreshNearChain(
     const perAddress = await Promise.all(
       addresses.map(addr => near.fetchHoldings('near', RPC_URLS[cfg.network].near, addr, tokens.near ?? {}, fetchImpl)),
     );
+    const prices = await pricesPromise;
     const transferCostUsd = NEAR_TRANSFER_NATIVE * (prices.NEAR ?? 0);
     return { holdings: perAddress.flat(), status: { ok: true, fetchedAt }, transferCostUsd };
   } catch (err) {
@@ -271,9 +300,31 @@ async function refreshPositions(cfg: AppConfig, previous: LpPosition[]): Promise
   }
 }
 
+// The account id the intents.near verifier credits, derived from the KEY rather than from
+// config. src/rails/intents-deposit.ts credits `owner.toLowerCase()` and refuses a draft
+// naming anything else, so reading the same id is what makes the panel's number and the
+// rail's number the same number. Config could name an account this app cannot spend, and a
+// balance we cannot touch reported as ours is worse than no row at all.
+//
+// No key is a normal state, not an error: a read-only install has nothing deposited because
+// it cannot deposit. Returns null and the verifier is simply not read.
+function intentsAccountId(cfg: AppConfig): string | null {
+  try {
+    return evmAddress(cfg.keysPath).toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
 function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch): Ledger {
   const tokens = loadTokenTable(cfg.network);
   let livePositions: LpPosition[] = [];
+  // Shared client so the 186-entry token list is fetched once per process, not per refresh.
+  const oneClick = oneClickClient({ fetchImpl });
+  // intents.near is mainnet only: it has never been deployed on testnet, so there is
+  // nothing there to read and asking would produce a permanent stale badge.
+  const intentsAccount = cfg.network === 'mainnet' ? intentsAccountId(cfg) : null;
+  let liveIntents: IntentsRead | undefined;
   let current: LedgerSnapshot = {
     holdings: [],
     chainStatus: emptyChainStatus(),
@@ -282,17 +333,40 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch): Ledger {
     gas: Object.fromEntries(ALL_CHAINS.map(c => [c, { transferCostUsd: 0 }])) as Record<ChainId, { transferCostUsd: number }>,
   };
 
+  // A verifier read that fails keeps the last good holdings, exactly as a chain read does,
+  // and carries ok:false so the panel can mark it stale. Blanking the row would say the
+  // deposit is gone.
+  async function refreshIntents(): Promise<IntentsRead | undefined> {
+    if (intentsAccount === null) return undefined;
+    const read = await fetchIntentsHoldings({
+      rpcUrl: RPC_URLS[cfg.network].near,
+      accountId: intentsAccount,
+      tokenList: () => oneClick.tokens(),
+      fetchImpl,
+    });
+    if (!read.ok && liveIntents !== undefined) {
+      return { ...read, holdings: liveIntents.holdings };
+    }
+    return read;
+  }
+
   async function refresh(): Promise<LedgerSnapshot> {
-    const prices = await resolveLivePrices(fetchImpl, current.prices);
-    const [ethR, baseR, arbR, solR, nearR, positions] = await Promise.all([
-      refreshEvmChain('eth', cfg, tokens, prices, current, fetchImpl),
-      refreshEvmChain('base', cfg, tokens, prices, current, fetchImpl),
-      refreshEvmChain('arb', cfg, tokens, prices, current, fetchImpl),
-      refreshSolChain(cfg, tokens, prices, current, fetchImpl),
-      refreshNearChain(cfg, tokens, prices, current, fetchImpl),
+    // Started, not awaited. Everything below runs against this promise and joins it only
+    // where a dollar figure is actually needed.
+    const pricesPromise = resolveLivePrices(fetchImpl, current.prices);
+
+    const [ethR, baseR, arbR, solR, nearR, positions, intentsRead, prices] = await Promise.all([
+      refreshEvmChain('eth', cfg, tokens, pricesPromise, current, fetchImpl),
+      refreshEvmChain('base', cfg, tokens, pricesPromise, current, fetchImpl),
+      refreshEvmChain('arb', cfg, tokens, pricesPromise, current, fetchImpl),
+      refreshSolChain(cfg, tokens, pricesPromise, current, fetchImpl),
+      refreshNearChain(cfg, tokens, pricesPromise, current, fetchImpl),
       refreshPositions(cfg, livePositions),
+      refreshIntents(),
+      pricesPromise,
     ]);
     livePositions = positions;
+    liveIntents = intentsRead;
 
     const holdings = priceHoldings(
       [...ethR.holdings, ...baseR.holdings, ...arbR.holdings, ...solR.holdings, ...nearR.holdings],
@@ -320,6 +394,7 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch): Ledger {
     // Filled by refreshPositions on every refresh. Empty before the first one, which is
     // honest: nothing has been read, so nothing is claimed.
     positions: () => livePositions,
+    intents: () => liveIntents,
     refresh,
     applyDemoTransfer: () => {
       throw new Error('applyDemoTransfer is demo-mode only');

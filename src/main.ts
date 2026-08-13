@@ -206,8 +206,44 @@ server.listen(cfg.port, '127.0.0.1', () => {
 });
 
 // Ledger refresh loop. Demo mode is static between writes but the refresh also
-// re-marks chain staleness in live mode; 30s matches the plan.
-void ledger.refresh().catch(() => undefined);
+// re-marks chain staleness in live mode.
+//
+// The old shape was a bare 30s interval that did not tell anyone it had finished, so a
+// balance that changed waited up to 30s to be read and then up to another 15s for the SSE
+// heartbeat to mention it: 45s worst case to see money that had already arrived. The read
+// now pushes as soon as it lands, and the poll is the floor rather than the mechanism.
+const REFRESH_IDLE_MS = 15_000;
+
+// Two refreshes at once would be two sets of RPC calls racing to write the same snapshot,
+// and the loser's answer is the older one. A caller arriving mid-flight joins the read
+// already running instead of starting a second.
+let refreshing: Promise<void> | null = null;
+
+function refreshNow(): Promise<void> {
+  if (refreshing !== null) return refreshing;
+  refreshing = ledger
+    .refresh()
+    .then(() => {
+      server.broadcastState();
+    })
+    .catch(() => undefined)
+    .finally(() => {
+      refreshing = null;
+    });
+  return refreshing;
+}
+
+void refreshNow();
 setInterval(() => {
-  void ledger.refresh().catch(() => undefined);
-}, 30_000);
+  void refreshNow();
+}, REFRESH_IDLE_MS);
+
+// The moment money actually moves, read it back rather than waiting out the poll. This is
+// what makes a deposit or a swap show up as soon as it settles: the rails already announce
+// themselves on the audit log, so this needs no new seam and no rail has to remember to
+// call it. An intents deposit is exactly the case that used to look broken, because the
+// funds leave the wallet immediately and the balance that replaces them is one the app
+// only learns about on a refresh.
+audit.subscribe(event => {
+  if (event.type === 'executed') void refreshNow();
+});

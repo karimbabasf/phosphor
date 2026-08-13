@@ -157,6 +157,7 @@ function setup(over: { policy?: Policy; rails?: Spy; positions?: LpPosition[] } 
   const ledger: Ledger = {
     snapshot: () => snapshot,
     positions: () => positions,
+    intents: () => undefined,
     refresh: async () => snapshot,
     applyDemoTransfer: () => {
       throw new Error('applyDemoTransfer must never be called in live mode');
@@ -495,6 +496,7 @@ test('demo mode owns no rails, and a rail proposal there refuses instead of reac
     ledger: {
       snapshot: () => snapshot,
       positions: () => [],
+      intents: () => undefined,
       refresh: async () => snapshot,
       applyDemoTransfer: () => {},
     },

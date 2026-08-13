@@ -186,17 +186,22 @@ test('createLedger live mode: chains with no configured addresses report ok:true
 // ---------- ledger/evm.ts ----------
 
 test('evm.fetchHoldings decodes balanceOf hex and pads the address correctly', async () => {
+  // The reads go out as one JSON-RPC batch, so the mock answers an array of requests with
+  // an array of results keyed by id. `calls` is flattened to the individual requests: what
+  // this test is about is the encoding of each call, which the batching did not change.
   const calls: any[] = [];
+  const answer = (req: any) => {
+    if (req.method === 'eth_call') return '0x2540be400';
+    if (req.method === 'eth_getBalance') return '0xde0b6b3a7640000';
+    if (req.method === 'eth_gasPrice') return '0x4a817c800';
+    throw new Error('unexpected method ' + req.method);
+  };
   const mockFetch = (async (_url: any, init: any) => {
     const body = JSON.parse(init.body);
-    calls.push(body);
-    if (body.method === 'eth_call') {
-      return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: '0x2540be400' }), { status: 200 });
-    }
-    if (body.method === 'eth_getBalance') {
-      return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: '0xde0b6b3a7640000' }), { status: 200 });
-    }
-    throw new Error('unexpected method ' + body.method);
+    const batch = Array.isArray(body) ? body : [body];
+    for (const req of batch) calls.push(req);
+    const results = batch.map(req => ({ jsonrpc: '2.0', id: req.id, result: answer(req) }));
+    return new Response(JSON.stringify(Array.isArray(body) ? results : results[0]), { status: 200 });
   }) as typeof fetch;
 
   const address = '0x1111111111111111111111111111111111111111';
