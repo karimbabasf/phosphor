@@ -677,7 +677,8 @@ test('the deposit plan sends to the fixed verifier account and credits our own a
   assert.equal(plan.call.args.receiver_id, INTENTS_VERIFIER);
   assert.equal(plan.call.args.amount, '100000000');
   // An empty msg would credit whichever NEAR account sent the tokens, which is not us.
-  assert.equal(plan.call.args.msg, OWNER);
+  // Lowercased, because the verifier parses msg as a NEAR account id and refuses capitals.
+  assert.equal(plan.call.args.msg, OWNER.toLowerCase());
   assert.equal(plan.call.attachedDepositYocto, '1');
 });
 
@@ -744,8 +745,47 @@ test('the deposit is signed as an ft_transfer_call to the verifier, crediting ou
   if (action.type !== 'functionCall') throw new Error('unreachable');
   assert.equal(action.methodName, 'ft_transfer_call');
   assert.equal(action.deposit, 1n, 'exactly one yoctoNEAR, as NEP-141 requires');
-  assert.deepEqual(action.args, { receiver_id: INTENTS_VERIFIER, amount: '100000000', msg: OWNER });
+  assert.deepEqual(action.args, {
+    receiver_id: INTENTS_VERIFIER,
+    amount: '100000000',
+    msg: OWNER.toLowerCase(),
+  });
   assert.deepEqual(result.txids, ['GzRhr7585nMoskGxv5judyQTaCg1TZzaXULuyoCaQiSm']);
+});
+
+test('the credited account is lowercased, because the verifier rejects a checksummed address', async () => {
+  // OWNER comes from viem and is EIP-55 checksummed, which is the obvious thing to pass and
+  // the thing that breaks. intents.near parses msg as a NEAR account id and panics on the
+  // capitals: "the Account ID contains an invalid character 'D' at index 15". ft_on_transfer
+  // reverts, the tokens bounce, and the transaction is still paid for.
+  assert.notEqual(OWNER, OWNER.toLowerCase(), 'the fixture is checksummed, or this proves nothing');
+
+  const plan = intentsDepositPlan({ intentsAccountId: OWNER, token: 'usdc.near', amountBase: 1n });
+  assert.equal(plan.call.args.msg, OWNER.toLowerCase());
+  assert.equal(plan.intentsAccountId, OWNER.toLowerCase());
+
+  // And it reaches the signed action, not just the plan object.
+  const { port, sends, signer } = nearPortStub();
+  const result = await intentsDeposit({
+    intentsAccountId: OWNER,
+    token: 'usdc.near',
+    amountBase: 1n,
+    network: 'mainnet',
+    keysPath: '/nonexistent/keys.json',
+    near: port,
+    signer,
+  });
+  assert.equal(result.ok, true);
+  const action = sends[0].actions[0];
+  if (action.type !== 'functionCall') throw new Error('unreachable');
+  assert.equal((action.args as { msg: string }).msg, OWNER.toLowerCase());
+});
+
+test('an account id that cannot be one is refused rather than lowercased into nonsense', () => {
+  assert.throws(
+    () => intentsDepositPlan({ intentsAccountId: 'not an account', token: 'usdc.near', amountBase: 1n }),
+    /is not one/,
+  );
 });
 
 test('the deposit refuses to credit any account but the one this key can spend from', async () => {

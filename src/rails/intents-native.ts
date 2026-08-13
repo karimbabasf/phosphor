@@ -62,6 +62,7 @@ import {
   TGAS,
   ftStorageRegistered,
   functionCall,
+  isNearAccountId,
   nearAccountId,
   sendTx as nearSendTx,
 } from '../chain/near.ts';
@@ -511,15 +512,39 @@ export function intentsDepositPlan(args: {
   if (args.token.trim() === '') throw new Error('a deposit needs the NEP-141 token contract it moves');
   if (args.amountBase <= 0n) throw new Error(`a deposit must move a positive amount (got ${args.amountBase})`);
 
+  // msg is parsed by the verifier as a NEAR account id, and a NEAR account id is lowercase by
+  // definition. The Implicit Eth account is the EVM address, and the natural way to supply it
+  // is evmAddress(), which returns the EIP-55 CHECKSUMMED form with capitals in it. Handed
+  // that, intents.near panics while deserializing its own arguments:
+  //
+  //   the Account ID contains an invalid character 'D' at index 15
+  //
+  // ft_on_transfer then reverts, the tokens bounce back, and the transaction is still paid
+  // for. Verified against the live contract on 2026-08-13: the lowercased address returns a
+  // balance, the checksummed one is refused outright.
+  //
+  // Normalising here rather than at the call site is deliberate. This is the function that
+  // builds the call, so it is the place that can promise the call is well formed, and the
+  // caller most likely to get it wrong is the obvious one that passes a signer address
+  // straight through. Lowercasing is safe for every account id, not only EVM-shaped ones,
+  // because an uppercase character is invalid in all of them.
+  const intentsAccountId = args.intentsAccountId.trim().toLowerCase();
+  if (!isNearAccountId(intentsAccountId)) {
+    throw new Error(
+      `a deposit must be credited to a valid account id inside the verifier, and ` +
+        `${oneLine(args.intentsAccountId, 60)} is not one`,
+    );
+  }
+
   return {
     verifier,
-    intentsAccountId: args.intentsAccountId,
+    intentsAccountId,
     token: args.token,
     amountBase: args.amountBase.toString(),
     call: {
       contractId: args.token,
       method: 'ft_transfer_call',
-      args: { receiver_id: verifier, amount: args.amountBase.toString(), msg: args.intentsAccountId },
+      args: { receiver_id: verifier, amount: args.amountBase.toString(), msg: intentsAccountId },
       attachedDepositYocto: '1',
     },
   };
