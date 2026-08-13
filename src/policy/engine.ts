@@ -14,6 +14,7 @@
 
 import { z } from 'zod';
 import { classify } from '../composition.ts';
+import { isRailKind } from '../rails/index.ts';
 import type {
   ChainId,
   CompositionView,
@@ -116,8 +117,17 @@ function legsOf(draft: WriteDraft): TransferLeg[] {
 // falls through to 'nothing_to_move', which is fail-closed by design.
 type RailDraft = Extract<WriteDraft, { counterparty: string } | { kind: 'hl_deposit' }>;
 
+// The kind list comes from the rail registry rather than being repeated here.
+//
+// It WAS repeated here, and that cost an afternoon. Adding a fifth rail put the new kind in
+// the registry's list and left this copy at four, so the type above accepted the draft (it
+// matches structurally, on counterparty) while this guard rejected it. The draft fell past
+// the rail branch into the fund-move branch, found no legs, and was refused as
+// 'nothing_to_move': a refusal whose stated reason had nothing to do with the real cause.
+//
+// Same shape as every other real bug in this build. The value checked was not the value used.
 function isRailDraft(draft: WriteDraft): draft is RailDraft {
-  return draft.kind === 'swap' || draft.kind === 'hl_deposit' || draft.kind === 'lp_add' || draft.kind === 'lp_remove';
+  return isRailKind(draft.kind);
 }
 
 // Where the funds actually go. This is the address the allowlist has to bless, and it is
