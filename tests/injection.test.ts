@@ -23,6 +23,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 import type { EngineCtx } from '../src/policy/engine.ts';
+import { CAPABILITIES } from '../src/greeting.ts';
 import type { LogEvent, RiskRow, TransferLeg, WriteDraft } from '../src/types.ts';
 import { evaluate } from '../src/policy/engine.ts';
 import { classify } from '../src/composition.ts';
@@ -349,6 +350,30 @@ test('the tool surface cannot express an exfiltration target', async () => {
     const schemaText = JSON.stringify(tool.inputSchema);
     assert.doesNotMatch(schemaText, /recipient|destination/i, `tool ${tool.name} schema names a destination`);
     assert.doesNotMatch(tool.name, /recipient|destination/i);
+  }
+});
+
+// The greeting's capability index is the first thing an agent reads and the thing it trusts
+// instead of guessing, which makes drift in it worse than a missing entry: an index naming a
+// tool that does not exist teaches an agent to call something that will fail, and an index
+// missing a real tool hides a capability and sends the agent back to asking its human how.
+// Both directions are checked against the LIVE tool list rather than against a second list.
+test('the capability index and the real tool surface name the same tools', async () => {
+  assert.ok(client !== null);
+  const live = new Set((await client.listTools()).tools.map(t => t.name));
+
+  // Entries are written as the tool plus an optional operation, for example
+  // 'chart_batch op:draw', because which op to use is part of the answer. The tool is the
+  // first token.
+  const indexed = new Set(
+    CAPABILITIES.flatMap(group => group.items.map(item => item.tool.split(' ')[0])),
+  );
+
+  for (const tool of indexed) {
+    assert.ok(live.has(tool), `the capability index names ${tool}, which is not a registered tool`);
+  }
+  for (const tool of live) {
+    assert.ok(indexed.has(tool), `${tool} is a registered tool and no capability group mentions it`);
   }
 });
 

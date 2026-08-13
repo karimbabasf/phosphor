@@ -111,6 +111,15 @@ export type CapabilityGroup = { group: string; items: { tool: string; does: stri
 
 export const CAPABILITIES: readonly CapabilityGroup[] = [
   {
+    group: 'orient yourself',
+    items: [
+      {
+        tool: 'start',
+        does: 'this greeting, the live state and this index. Call it again whenever you lose your place, or after a long gap, because the network, the wallet and the pending decisions all move.',
+      },
+    ],
+  },
+  {
     group: 'switch the window',
     items: [
       { tool: 'switch', does: 'move the app between basic, pro and trading. One word is enough: "switch to trading".' },
@@ -188,6 +197,10 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
       { tool: 'propose_intents_deposit', does: 'fund the NEAR Intents balance from this app wallet. The funding step before a swap.' },
       { tool: 'propose_swap', does: 'swap inside NEAR Intents by signing an intent. Nothing moves on chain.' },
       { tool: 'propose_intents_withdraw', does: 'take a balance back out of Intents to this app wallet on eth, base or arb.' },
+      {
+        tool: 'propose_consolidate',
+        does: 'gather one stablecoin\'s scattered balances onto a single chain. UNPROVEN: this path has never run on a live chain, so treat a clean simulation as untested and say so when you propose it.',
+      },
       { tool: 'propose_policy_change', does: 'change the rules themselves. Always waits for a human click.' },
     ],
   },
