@@ -10,7 +10,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildBasic } from '../../src/view/basic.ts';
 import type { BasicInput } from '../../src/view/basic.ts';
-import type { ChainId, ChainStatus, Proposal, SwapDraft, WriteDraft } from '../../src/types.ts';
+import type { ChainId, ChainStatus, Proposal, SwapDraft, WalletRow, WriteDraft } from '../../src/types.ts';
 
 const SELF = '0x2dd9131edF3CC393B757463C85b2C870A6F3180a';
 const ROUTER = '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45';
@@ -36,6 +36,7 @@ function baseInput(over: Partial<BasicInput> = {}): BasicInput {
     agentsConnected: 1,
     chainStatus: chainStatus(),
     selfAddresses: [SELF],
+    price: null,
     ...over,
   };
 }
@@ -331,7 +332,34 @@ test('the gate being off warns even while a question is on screen', () => {
 test('a quiet screen with the gate off still shouts about it', () => {
   const view = buildBasic(baseInput({ gateRequired: false }));
   assert.equal(view.tone, 'broken');
-  assert.match(view.headline, /not asking you/);
+  // The alarm has to be on the screen. It is the warning that carries the words, and
+  // the tone that carries the colour, so this asserts both rather than one wording.
+  assert.match(view.warning!, /without asking you first/);
+  assert.match(view.headline, /not protecting it/);
+  assert.doesNotMatch(view.footer, /You will be asked before/);
+});
+
+// Found by looking at the rebuilt screen rather than at the object: the headline and
+// the warning were the same sentence written twice, which on a page with this much
+// space around it reads as a rendering fault rather than as emphasis. Same class of
+// bug as the agentLine duplication the file already guards against.
+test('the headline never restates the warning directly under it', () => {
+  const words = (s: string) => new Set(s.toLowerCase().replace(/[^a-z ]/g, '').split(/\s+/).filter((w) => w.length > 3));
+  for (const input of [
+    baseInput({ gateRequired: false }),
+    baseInput({ killSwitch: true }),
+    baseInput({ policyReadable: false }),
+  ]) {
+    const v = buildBasic(input);
+    assert.ok(v.warning !== null, 'this case should carry a warning');
+    const head = words(v.headline);
+    const warn = words(v.warning!);
+    const shared = [...head].filter((w) => warn.has(w));
+    assert.ok(
+      shared.length < Math.min(head.size, warn.size) * 0.6,
+      `headline and warning say the same thing:\n  ${v.headline}\n  ${v.warning}`,
+    );
+  }
 });
 
 test('no warning at all when everything is normal', () => {
@@ -376,4 +404,215 @@ test('nothing claims "all normal" while a warning is on screen', () => {
     assert.doesNotMatch(v.placesLine, /all normal/, `placesLine contradicts the warning: ${v.placesLine}`);
   }
   assert.match(buildBasic(baseInput()).placesLine, /all normal/);
+});
+
+// ---------- what you own ----------
+//
+// The holdings list is the one part of this screen that shows a number per THING
+// rather than one number for everything, so its failure mode is the same as the
+// total's: a list that is missing a chain looks exactly like the list of someone
+// who owns less, and this reader has nothing to check it against.
+
+function walletRow(over: Partial<WalletRow> = {}): WalletRow {
+  return {
+    kind: 'token',
+    chain: 'base',
+    symbol: 'USDC',
+    tokenId: 'base:usdc',
+    quantity: 100,
+    priceUsd: 1,
+    valueUsd: 100,
+    share: 0.1,
+    native: false,
+    ...over,
+  };
+}
+
+test('one row per thing owned, not one per chain', () => {
+  const v = buildBasic(
+    baseInput({
+      wallet: {
+        rows: [
+          walletRow({ chain: 'base', symbol: 'USDC', quantity: 700, valueUsd: 700 }),
+          walletRow({ chain: 'arb', symbol: 'USDC', quantity: 504, valueUsd: 504 }),
+          walletRow({ chain: 'eth', symbol: 'WETH', quantity: 0.31, valueUsd: 987.08 }),
+        ],
+        totalUsd: 2191.08,
+        byChain: { base: 700, arb: 504, eth: 987.08 },
+        stale: [],
+      },
+    }),
+  );
+
+  const names = v.holdings.map((h) => h.name);
+  assert.equal(names.filter((n) => n.includes('USDC')).length, 1, 'the same token on two chains is one row');
+  assert.equal(v.holdings.length, 2);
+
+  const dollars = v.holdings.find((h) => h.name.includes('USDC'))!;
+  assert.equal(dollars.valueUsd, 1204);
+  assert.equal(dollars.valueLine, '$1,204.00');
+  assert.equal(dollars.quantityLine, '1,204.00');
+});
+
+test('holdings sort by value and pool positions collapse into one line', () => {
+  const v = buildBasic(
+    baseInput({
+      wallet: {
+        rows: [
+          walletRow({ symbol: 'USDC', quantity: 10, valueUsd: 10 }),
+          walletRow({ kind: 'lp', symbol: 'USDC/WETH 0.05%', valueUsd: 300, quantity: 1 }),
+          walletRow({ kind: 'lp', symbol: 'USDC/WETH 0.30%', valueUsd: 120, quantity: 1 }),
+        ],
+        totalUsd: 430,
+        byChain: { base: 430 },
+        stale: [],
+      },
+    }),
+  );
+
+  assert.deepEqual(
+    v.holdings.map((h) => h.valueLine),
+    ['$420.00', '$10.00'],
+  );
+  // Two different pools summed to one quantity would be a number that means nothing,
+  // so the pool line carries a value and no quantity at all.
+  assert.equal(v.holdings[0]!.name, 'Money in Uniswap pools');
+  assert.equal(v.holdings[0]!.quantityLine, '');
+});
+
+test('holdings go empty exactly when the total goes unknown', () => {
+  const rows = [walletRow({ valueUsd: 100, quantity: 100 })];
+
+  const stale = buildBasic(
+    baseInput({ wallet: { rows, totalUsd: 100, byChain: { base: 100 }, stale: ['near'] } }),
+  );
+  assert.equal(stale.totalUsd, null);
+  assert.deepEqual(stale.holdings, [], 'a partial list is worse than no list');
+
+  const fine = buildBasic(baseInput({ wallet: { rows, totalUsd: 100, byChain: { base: 100 }, stale: [] } }));
+  assert.equal(fine.holdings.length, 1);
+});
+
+// ---------- the one price ----------
+
+test('the price refuses rather than shows a figure it does not have', () => {
+  assert.equal(buildBasic(baseInput({ price: null })).price, null);
+  assert.equal(buildBasic(baseInput({ price: { product: 'ETH-USD', priceUsd: 0, changePct: 1 } })).price, null);
+  assert.equal(
+    buildBasic(baseInput({ price: { product: 'ETH-USD', priceUsd: Number.NaN, changePct: 1 } })).price,
+    null,
+  );
+  assert.equal(
+    buildBasic(baseInput({ price: { product: 'ETH-USD', priceUsd: 3184.22, changePct: Number.NaN } })).price,
+    null,
+  );
+});
+
+test('the price says up, down, or level, and never draws an arrow on noise', () => {
+  const up = buildBasic(baseInput({ price: { product: 'ETH-USD', priceUsd: 3184.22, changePct: 1.44 } })).price!;
+  assert.equal(up.direction, 'up');
+  assert.equal(up.changeLine, 'up 1.4% today');
+  assert.equal(up.priceLine, '$3,184.22');
+  // The bare name for reading, the symbol kept because it is the verifiable half.
+  assert.equal(up.name, 'Ether');
+  assert.equal(up.symbol, 'ETH');
+
+  const down = buildBasic(baseInput({ price: { product: 'ETH-USD', priceUsd: 3000, changePct: -0.83 } })).price!;
+  assert.equal(down.direction, 'down');
+  assert.equal(down.changeLine, 'down 0.8% today');
+
+  // A twentieth of a percent is noise. An arrow drawn on it tells this reader that
+  // something happened when nothing did.
+  const flat = buildBasic(baseInput({ price: { product: 'BTC-USD', priceUsd: 61000, changePct: 0.05 } })).price!;
+  assert.equal(flat.direction, 'flat');
+  assert.equal(flat.changeLine, 'level today');
+});
+
+// ---------- what happened ----------
+
+test('a refusal never reads as a receipt', () => {
+  const v = buildBasic(
+    baseInput({
+      proposals: [
+        proposal({ id: 'a', status: 'executed', decidedAt: T0 }),
+        proposal({ id: 'b', status: 'refused', decidedAt: T1 }),
+        proposal({ id: 'c', status: 'policy_refused', decidedAt: T2 }),
+      ],
+    }),
+  );
+
+  assert.deepEqual(
+    v.recent.map((r) => r.outcome),
+    ['blocked', 'refused', 'done'],
+    'newest first',
+  );
+
+  const [blocked, refused, done] = v.recent;
+  assert.match(blocked!.headline, /^Your rules blocked /);
+  assert.match(refused!.headline, /^You said no to /);
+  // The one that actually happened is the only one in the past tense.
+  assert.match(done!.headline, /^Changed /);
+  for (const line of [blocked!.headline, refused!.headline]) {
+    assert.doesNotMatch(line, /^Changed /, 'a thing that did not happen may not be reported as one that did');
+  }
+});
+
+test('what happened lists only finished things, newest first, and is capped', () => {
+  // Distinct amounts so the ordering is readable off the headline rather than off a
+  // clock string that depends on the machine's timezone.
+  const many = [0, 1, 2, 3, 4, 5].map((i) =>
+    proposal({
+      id: `p-${i}`,
+      status: 'executed',
+      decidedAt: `2026-08-12T1${i}:00:00.000Z`,
+      draft: swapDraft({ amountUsd: (i + 1) * 10 }),
+    }),
+  );
+  const pending = proposal({ id: 'open', status: 'pending', draft: swapDraft({ amountUsd: 999 }) });
+  const v = buildBasic(baseInput({ proposals: [...many, pending] }));
+
+  assert.equal(v.recent.length, 4, 'a fifth line turns this section into a log');
+  // p-5 decided last, so it leads; p-2 is the oldest that still fits.
+  assert.deepEqual(
+    v.recent.map((r) => r.headline.match(/\$(\d+)\.00/)![1]),
+    ['60', '50', '40', '30'],
+  );
+  // The pending one is not here: it is on screen above as the question, and listing it
+  // in "what happened" would report a decision nobody has made yet.
+  assert.ok(
+    v.recent.every((r) => !r.headline.includes('999')),
+    'a pending proposal is not a thing that happened',
+  );
+});
+
+test('nothing has happened yet is a state, not an empty box', () => {
+  assert.deepEqual(buildBasic(baseInput()).recent, []);
+});
+
+// A draft can legitimately price at zero (nothing left to consolidate, which is then
+// refused). The first version substituted the word "money" for the missing figure and
+// rendered "gathering money of your US dollars (USDT) onto Ethereum" onto a live screen.
+// Every kind runs through amountClause now, which drops the clause instead.
+test('a zero-priced draft drops the money clause rather than wording around it', () => {
+  const kinds: WriteDraft[] = [
+    swapDraft({ amountUsd: 0 }),
+    { kind: 'consolidate', symbol: 'USDT', toChain: 'eth', totalUsd: 0, legs: [] } as unknown as WriteDraft,
+    { kind: 'hl_deposit', chain: 'arb', symbol: 'USDC', amount: 0, amountUsd: 0, bridge: ROUTER, from: SELF } as unknown as WriteDraft,
+  ];
+
+  for (const draft of kinds) {
+    for (const status of ['executed', 'refused', 'policy_refused'] as const) {
+      const v = buildBasic(baseInput({ proposals: [proposal({ draft, status, decidedAt: T1 })] }));
+      const line = v.recent[0]!.headline;
+      assert.doesNotMatch(line, /money of your/, `not English: ${line}`);
+      assert.doesNotMatch(line, /\$0\.00/, `a zero is the absence of an amount, not one: ${line}`);
+      assert.ok(line.trim().length > 0);
+    }
+  }
+
+  // And the clause is still there when there is a real figure to state.
+  const priced = buildBasic(
+    baseInput({ proposals: [proposal({ draft: swapDraft({ amountUsd: 105 }), status: 'executed', decidedAt: T1 })] }),
+  );
+  assert.match(priced.recent[0]!.headline, /\$105\.00 of your/);
 });

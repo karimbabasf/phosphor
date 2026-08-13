@@ -55,6 +55,7 @@ import {
   assetIdFor,
   oneClickClient,
   oneLine,
+  resolveAsset,
   toBaseUnits,
 } from '../intents.ts';
 import type { OneClickQuote, OneClickStatus, OneClickToken, TokensFile } from '../intents.ts';
@@ -87,17 +88,40 @@ export const INTENTS_NO_TESTNET_REASON =
   'which is the all-ones sentinel for an account that has never had code deployed, so there is no ' +
   'verifier contract to hold a balance or execute a signed intent. This rail runs on mainnet only.';
 
+// RETIRED as a blocker on 2026-08-13, kept as an exported string because the tests name it.
+//
+// This rail used to refuse at simulate() time without a partner API key, on the belief that
+// POST /v0/generate-intent and POST /v0/submit-intent both require X-API-Key. Re-tested
+// against the live API: an unauthenticated POST /v0/generate-intent with a real deposit
+// handle returns HTTP 201 and the erc191 payload. The 400s that produced the original
+// conclusion were body validation ("Missing required property 'type'", then "standard must
+// be one of ..."), which fire before any auth check and look identical to a rejection if you
+// stop at the status code.
+//
+// A key is still worth having, for the lower fee tier the README describes, so it is still
+// read and still sent when present. It is no longer a precondition, because a gate that
+// refuses a working rail is not a safety feature.
 export const INTENTS_NO_API_KEY_REASON =
-  'This rail needs a 1Click partner API key: POST /v0/generate-intent and POST /v0/submit-intent both ' +
-  `require an X-API-Key header and they are the entire swap path. Obtain a key from the NEAR Intents ` +
-  `Partners Portal (registration required, see https://docs.near-intents.org/integration/distribution-channels/` +
-  `1click-api/authentication) and put it in the ${INTENTS_API_KEY_ENV} environment variable. ` +
-  'Until then use the oneclick venue, which quotes and swaps unauthenticated.';
+  `No 1Click partner API key is set (${INTENTS_API_KEY_ENV}), so this swap runs on the public fee tier. ` +
+  'Quoting, intent generation and submission all work unauthenticated; a key only buys a better rate.';
 
 // A signed intent stays spendable until its deadline, so a server-chosen deadline far in the
-// future is a long window in which a signature we have already released can be replayed
-// against our balance. One hour is generous for a swap the API itself estimates at ~42s.
-const MAX_DEADLINE_MS = 60 * 60 * 1000;
+// future is a window in which a signature we have already released could be presented again.
+//
+// This was one hour, chosen as "generous for a swap the API estimates at ~42s". Measured
+// against the live API on 2026-08-13, generate-intent returns a deadline 72 hours out, so the
+// one-hour cap refused every honest payload and the rail could never have executed.
+//
+// Four days, and the reason it is safe to be this loose is that the deadline is not what
+// prevents replay: the nonce is. Every payload carries one, and intents.near tracks spent
+// nonces per account (verified 2026-08-13: the contract answers the view method
+// `is_nonce_used({account_id, nonce})`, which returned false for an unspent nonce), so a
+// second presentation of the same signed bytes is rejected however long the deadline runs.
+// The deadline only bounds how long a signature that was never submitted stays live, and
+// that signature authorises one fixed amount of one fixed asset to one fixed receiver, all
+// three of which are checked before signing. What the cap still catches is a payload with an
+// absurd or missing deadline, which is a sign the shape changed.
+const MAX_DEADLINE_MS = 4 * 24 * 60 * 60 * 1000;
 
 // ---------- base58, for the signature field ----------
 
@@ -219,9 +243,13 @@ export function intentsApi(deps: { apiKey: string; fetchImpl?: typeof fetch }): 
   const shared = oneClickClient({ fetchImpl: deps.fetchImpl });
 
   // The key goes in a header and nowhere else. It is never interpolated into a message, a
-  // thrown error or a returned detail string.
+  // thrown error or a returned detail string. An empty key means no header at all rather
+  // than an empty one: 'X-API-Key: ' is a malformed credential where its absence is a valid
+  // unauthenticated request, and the API answers the second one.
   function authHeaders(): Record<string, string> {
-    return { 'content-type': 'application/json', 'X-API-Key': deps.apiKey };
+    const headers: Record<string, string> = { 'content-type': 'application/json' };
+    if (deps.apiKey.trim() !== '') headers['X-API-Key'] = deps.apiKey;
+    return headers;
   }
 
   async function readJson(res: Response, what: string): Promise<Record<string, unknown>> {
@@ -243,6 +271,13 @@ export function intentsApi(deps: { apiKey: string; fetchImpl?: typeof fetch }): 
     // the whole swap inside the verifier: the input is already there, the output is credited
     // there, and a refund is credited there too. No leg of this touches a chain, which is
     // why there is no destination for the policy engine to be unable to check.
+    // Lowercased, and not as a formatting nicety. An intents account id derived from an EVM
+    // key IS the lowercase address: the API rejects the checksummed form of the very same
+    // address with HTTP 400 "recipient is not valid" (verified live 2026-08-13), and the
+    // verifier derives the id the same way when it checks an erc191 signature. Passing the
+    // checksummed form made every quote on this rail fail.
+    const account = params.account.toLowerCase();
+
     const body = {
       dry: params.dry,
       swapType: 'EXACT_INPUT',
@@ -251,9 +286,9 @@ export function intentsApi(deps: { apiKey: string; fetchImpl?: typeof fetch }): 
       destinationAsset: params.destinationAsset,
       amount: params.amount,
       depositType: 'INTENTS',
-      refundTo: params.account,
+      refundTo: account,
       refundType: 'INTENTS',
-      recipient: params.account,
+      recipient: account,
       recipientType: 'INTENTS',
       deadline,
     };
@@ -325,6 +360,10 @@ export type IntentPayloadExpectation = {
   minOutBase: bigint; // the least that may arrive
   now: number;
   maxDeadlineMs: number;
+  // The deposit handle from OUR quote. A 'transfer' intent names a receiver, and this is the
+  // only value it is allowed to name. Optional so the token_diff path, which has no receiver,
+  // does not have to invent one.
+  depositAddress?: string;
 };
 
 // Everything that has to be true about the payload before the key is touched.
@@ -403,8 +442,65 @@ export function checkIntentPayload(raw: unknown, expect: IntentPayloadExpectatio
   }
 
   const action = intents[0] as Record<string, unknown>;
+
+  // 1Click's depositType INTENTS flow returns a 'transfer', not a 'token_diff'. Verified
+  // against the live API 2026-08-13: generate-intent for a swap of an intents balance came
+  // back as {"intent":"transfer","receiver_id":"<the deposit handle of our own quote>",
+  // "tokens":{"<originAsset>":"<amountBase>"}}. Both shapes are accepted because both are
+  // real, and each is checked for what it can actually do wrong.
+  //
+  // WHAT SIGNING A TRANSFER MEANS, stated plainly because it is weaker than a token_diff and
+  // the difference is not visible in the code. A token_diff is atomic: the balance leaves and
+  // the proceeds arrive in one verifier operation, so a solver cannot take one without giving
+  // the other. A transfer is not: it hands the input to the solver's account, and the output
+  // arrives afterwards as a separate settlement. Between those two moments the funds are the
+  // solver's and the guarantee is the quote, not the contract.
+  //
+  // That is the same trust the oneclick rail takes when it sends money to a minted deposit
+  // address, and it is the trust the protocol is built on, so it is accepted rather than
+  // refused. What is NOT accepted is a transfer to anywhere other than the deposit handle of
+  // the very quote this draft was priced against: that binding is what stops a payload from
+  // moving our balance to an account of the server's choosing, and it is checked below.
+  if (action?.['intent'] === 'transfer') {
+    const receiver = action['receiver_id'];
+    if (expect.depositAddress === undefined || expect.depositAddress.trim() === '') {
+      return ['the intent is a transfer, but no deposit handle was supplied to check its receiver against'];
+    }
+    if (typeof receiver !== 'string' || receiver !== expect.depositAddress) {
+      return [
+        `the transfer sends our balance to ${oneLine(receiver, 60)}, not to ${oneLine(expect.depositAddress, 60)}, ` +
+          'the deposit handle of the quote this draft was priced against',
+      ];
+    }
+
+    const tokens = action['tokens'];
+    if (tokens === null || typeof tokens !== 'object' || Array.isArray(tokens)) {
+      return [`the transfer carries no tokens object (got ${oneLine(tokens, 60)})`];
+    }
+    const moved = tokens as Record<string, unknown>;
+    const movedKeys = Object.keys(moved);
+
+    // Exactly the input asset and nothing else. A second entry is a second balance leaving.
+    const extra = movedKeys.filter((k) => k !== expect.originAsset);
+    if (extra.length > 0) {
+      return [`the transfer also moves ${extra.map((k) => oneLine(k, 60)).join(', ')}, which the draft does not name`];
+    }
+    if (!movedKeys.includes(expect.originAsset)) {
+      return [`the transfer does not move ${oneLine(expect.originAsset, 60)}, which the draft names as the input`];
+    }
+
+    const amount = amountOf(moved[expect.originAsset], 'the transfer');
+    if (typeof amount === 'string') return [amount];
+    // A transfer states a positive amount leaving, where a token_diff states it as negative.
+    if (amount !== expect.amountBase) {
+      return [`the transfer moves ${amount.toString()} base units, not the ${expect.amountBase.toString()} the draft approved`];
+    }
+
+    return [];
+  }
+
   if (action?.['intent'] !== 'token_diff') {
-    return [`the intent is a ${oneLine(action?.['intent'], 40)}, not the token_diff a swap is made of`];
+    return [`the intent is a ${oneLine(action?.['intent'], 40)}, which is neither the token_diff nor the transfer a swap is made of`];
   }
 
   const diff = action['diff'];
@@ -596,12 +692,9 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
   const pollTimeoutMs = deps.pollTimeoutMs ?? 5 * 60_000;
   const maxDeadlineMs = deps.maxDeadlineMs ?? MAX_DEADLINE_MS;
 
-  const hasKey = deps.api !== undefined || (typeof apiKey === 'string' && apiKey.trim() !== '');
-  // The client is only built when there is a key to build it with, so a missing key can
-  // never reach the network as a 401.
-  const api =
-    deps.api ??
-    (hasKey ? intentsApi({ apiKey: apiKey as string, fetchImpl: deps.fetchImpl }) : null);
+  // The key is optional: it selects a fee tier, it does not authorise the calls. See the
+  // comment on INTENTS_NO_API_KEY_REASON for what was re-tested and when.
+  const api = deps.api ?? intentsApi({ apiKey: apiKey ?? '', fetchImpl: deps.fetchImpl });
 
   type Plan = {
     originAsset: string;
@@ -638,38 +731,38 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     }
   }
 
-  function requireUsable(): void {
-    if (!hasKey || api === null) throw new Error(INTENTS_NO_API_KEY_REASON);
-  }
+  // Nothing to require any more: the rail is usable without a key. Kept as a named no-op so
+  // the call sites still read as "check this is runnable here" and the next precondition has
+  // an obvious home.
+  function requireUsable(): void {}
 
   async function plan(draft: SwapDraft): Promise<Plan> {
     requireVenue(draft);
     requireUsable();
 
-    const originInfo = tokens[draft.chain]?.[draft.fromSymbol];
-    const destInfo = tokens[draft.toChain]?.[draft.toSymbol];
-    if (!originInfo) throw new Error(`no token registry entry for ${draft.fromSymbol} on ${draft.chain}`);
-    if (!destInfo) throw new Error(`no token registry entry for ${draft.toSymbol} on ${draft.toChain}`);
-
     // No EVM-origin restriction, unlike the oneclick rail. Nothing is signed on the origin
     // chain here, so the asset's home chain only has to be one the verifier holds a bridged
     // balance for; a base USDC to NEAR USDT swap needs no NEAR key and no Solana key.
+    //
+    // resolveAsset rather than assetIdFor, so a gas asset can be named. Inside the verifier a
+    // deposited ETH is nep141:eth.omft.near and a SOL is nep141:sol.omft.near, both perfectly
+    // ordinary balances; the only thing that made them unreachable was that data/tokens.json
+    // has no row for an asset with no contract address. Without this, the funding path could
+    // deposit ETH and no swap could ever spend it.
     const list = await (api as IntentsApiPort).tokens();
-    const originAsset = assetIdFor(draft.chain, originInfo.tokenId, list);
-    const destinationAsset = assetIdFor(draft.toChain, destInfo.tokenId, list);
-    if (!originAsset) throw new Error(`1click does not list ${draft.fromSymbol} on ${draft.chain}`);
-    if (!destinationAsset) throw new Error(`1click does not list ${draft.toSymbol} on ${draft.toChain}`);
-    if (originAsset === destinationAsset) {
+    const origin = resolveAsset(draft.chain, draft.fromSymbol, tokens, list);
+    const dest = resolveAsset(draft.toChain, draft.toSymbol, tokens, list);
+    if (origin.assetId === dest.assetId) {
       throw new Error(`${draft.fromSymbol} on ${draft.chain} and ${draft.toSymbol} on ${draft.toChain} are the same asset inside the verifier`);
     }
 
     return {
-      originAsset,
-      destinationAsset,
-      originDecimals: originInfo.decimals,
-      destDecimals: destInfo.decimals,
-      amountBase: toBaseUnits(draft.amountIn, originInfo.decimals),
-      minOutBase: toBaseUnits(draft.minAmountOut, destInfo.decimals),
+      originAsset: origin.assetId,
+      destinationAsset: dest.assetId,
+      originDecimals: origin.decimals,
+      destDecimals: dest.decimals,
+      amountBase: toBaseUnits(draft.amountIn, origin.decimals),
+      minOutBase: toBaseUnits(draft.minAmountOut, dest.decimals),
     };
   }
 
@@ -807,6 +900,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
       minOutBase: p.minOutBase,
       now: now(),
       maxDeadlineMs,
+      depositAddress,
     });
     if (payloadProblems.length > 0) {
       throw new Error(`refusing to sign the intent 1click generated: ${payloadProblems.join('; ')}`);

@@ -24,6 +24,9 @@
 import type {
   BasicAsk,
   BasicDestination,
+  BasicHolding,
+  BasicPrice,
+  BasicRecent,
   BasicTone,
   BasicView,
   ChainId,
@@ -32,6 +35,14 @@ import type {
   WalletView,
   WriteDraft,
 } from '../types.ts';
+
+// What the server managed to read about the one coin this screen tracks. Null rather
+// than a stale figure, and null rather than a zero: see the rule at the top of the file.
+export type PriceReading = {
+  product: string; // 'ETH-USD'
+  priceUsd: number;
+  changePct: number; // over the tracked window, not since some arbitrary epoch
+} | null;
 
 export type BasicInput = {
   wallet: WalletView;
@@ -44,7 +55,13 @@ export type BasicInput = {
   // Needed to tell "your own wallet" from any other address without guessing.
   // Guessing is what F2 did.
   selfAddresses: string[];
+  price: PriceReading;
 };
+
+// How many finished actions the screen is willing to list. Four is what fits above the
+// fold beside everything else; a fifth turns the section into a log, which is the thing
+// this screen exists not to be.
+const RECENT_MAX = 4;
 
 // Plain names for the symbols a non-technical reader will actually meet. The symbol
 // itself is always kept alongside the plain name: the plain name is the part they can
@@ -59,6 +76,9 @@ const PLAIN_SYMBOL: Record<string, string> = {
   ETH: 'Ether (ETH)',
   SOL: 'Solana (SOL)',
   NEAR: 'NEAR',
+  // Not held in any wallet this app reads, but the price tracker can be pointed at it,
+  // and "BTC" is the ticker rather than the name for the reader this screen is for.
+  BTC: 'Bitcoin (BTC)',
 };
 
 const PLAIN_CHAIN: Record<string, string> = {
@@ -192,6 +212,9 @@ function askHeadline(draft: WriteDraft, amountUsd: number): string {
   if (draft.kind === 'hl_deposit') {
     return `It wants to move ${amountClause(amountUsd)}your ${plainSymbol(draft.symbol)} to your Hyperliquid trading account.`;
   }
+  if (draft.kind === 'intents_deposit') {
+    return `It wants to move ${amountClause(amountUsd)}your ${plainSymbol(draft.symbol)} into a NEAR account this app holds for you, ready to trade.`;
+  }
   if (draft.kind === 'lp_add') {
     return `It wants to put ${amountClause(amountUsd)}your money into a Uniswap pool holding ${plainSymbol(draft.token0.symbol)} and ${plainSymbol(draft.token1.symbol)}.`;
   }
@@ -216,6 +239,11 @@ function askAfterLine(draft: WriteDraft, totalUsd: number | null, amountUsd: num
   if (draft.kind === 'policy_change') return 'This does not move any money. It changes a rule.';
   if (draft.kind === 'swap') return 'Your total stays about the same. This changes what you are holding, not how much.';
   if (draft.kind === 'hl_deposit') return 'The money stays yours. It moves to your trading account.';
+  // Deliberately not "it stays in your wallet". It does not: it leaves the wallet and is
+  // held for this app by the NEAR Intents contract, and getting it back on chain is a
+  // separate action. Saying so is the difference between an informed click and a surprise.
+  if (draft.kind === 'intents_deposit')
+    return 'The money stays yours, but it leaves your wallet and is held by the NEAR trading service. Bringing it back is a separate step.';
   if (draft.kind === 'lp_add') return `${money(amountUsd)} moves into the pool. You can take it back out later.`;
   if (draft.kind === 'lp_remove') return 'Money comes back out of the pool to you.';
   if (draft.kind === 'consolidate') return 'The money stays yours. It moves onto one chain.';
@@ -256,6 +284,170 @@ function buildAsk(proposal: Proposal, totalUsd: number | null, selfAddresses: st
     destinations,
     facts: factsOf(draft, amountUsd, destinations),
   };
+}
+
+// ---------- what you own ----------
+
+// A quantity is shown at the precision that distinguishes it, not at a fixed one.
+// "0.00" of Ether and "0.31" of Ether are different holdings; "1204.00" and
+// "1204.000000" are the same one, and the second is harder to read at a glance.
+function quantity(amount: number): string {
+  if (!Number.isFinite(amount)) return '0';
+  const abs = Math.abs(amount);
+  const digits = abs >= 1000 ? 2 : abs >= 1 ? 4 : 6;
+  return amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: digits });
+}
+
+// One row per THING OWNED, not one per chain. The same dollars sitting on four chains
+// is one holding to this reader; which chain each part sits on is a pro-screen fact and
+// putting it here was the "extra info" that made the first version unreadable.
+// Pool positions collapse together for the same reason: a quantity summed across two
+// different pools would be a number that means nothing.
+function buildHoldings(wallet: WalletView, unknown: boolean): BasicHolding[] {
+  if (unknown) return [];
+
+  const tokens = new Map<string, { qty: number; usd: number }>();
+  let poolUsd = 0;
+
+  for (const row of wallet.rows ?? []) {
+    if (row.kind === 'lp') {
+      poolUsd += row.valueUsd;
+      continue;
+    }
+    const key = row.symbol.toUpperCase();
+    const at = tokens.get(key) ?? { qty: 0, usd: 0 };
+    at.qty += row.quantity;
+    at.usd += row.valueUsd;
+    tokens.set(key, at);
+  }
+
+  const out: BasicHolding[] = [];
+  for (const [symbol, at] of tokens) {
+    out.push({
+      name: plainSymbol(symbol),
+      quantityLine: quantity(at.qty),
+      valueLine: money(at.usd),
+      valueUsd: at.usd,
+    });
+  }
+  if (poolUsd > 0) {
+    out.push({
+      name: 'Money in Uniswap pools',
+      quantityLine: '',
+      valueLine: money(poolUsd),
+      valueUsd: poolUsd,
+    });
+  }
+
+  return out.sort((a, b) => b.valueUsd - a.valueUsd);
+}
+
+// ---------- the one price ----------
+
+// plainSymbol keeps the ticker in parentheses because the ticker is the verifiable half.
+// The price line has the symbol on its own line already, so it takes the bare name.
+function bareName(symbol: string): string {
+  return plainSymbol(symbol).replace(/\s*\(.*\)$/, '');
+}
+
+function buildPrice(reading: PriceReading): BasicPrice | null {
+  if (reading === null) return null;
+  if (!Number.isFinite(reading.priceUsd) || reading.priceUsd <= 0) return null;
+  if (!Number.isFinite(reading.changePct)) return null;
+
+  const symbol = (reading.product.split('-')[0] ?? reading.product).toUpperCase();
+  const pct = Math.abs(reading.changePct).toFixed(1);
+
+  // A tenth of a percent either way is noise, and an arrow drawn on noise tells this
+  // reader that something happened when nothing did.
+  let direction: BasicPrice['direction'] = 'flat';
+  if (reading.changePct >= 0.1) direction = 'up';
+  else if (reading.changePct <= -0.1) direction = 'down';
+
+  const changeLine =
+    direction === 'flat' ? 'level today' : `${direction === 'up' ? 'up' : 'down'} ${pct}% today`;
+
+  return {
+    name: bareName(symbol),
+    symbol,
+    priceLine: `$${reading.priceUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+    changeLine,
+    direction,
+  };
+}
+
+// ---------- what happened ----------
+
+// Both of these run every figure through amountClause, the helper written further up for
+// exactly this: a draft can legitimately price at zero, and the money clause is DROPPED
+// rather than replaced with a word. Substituting "money" was tried and shipped a sentence
+// reading "gathering money of your US dollars (USDT) onto Ethereum", which is not English.
+// Found by reading the rendered screen with real refusals on it, not from the object.
+
+// Past tense, for something that actually happened.
+function didHeadline(draft: WriteDraft, amountUsd: number): string {
+  const amt = amountClause(amountUsd);
+  if (draft.kind === 'swap') {
+    return `Changed ${amt}your ${plainSymbol(draft.fromSymbol)} into ${plainSymbol(draft.toSymbol)}.`;
+  }
+  if (draft.kind === 'hl_deposit') return `Moved ${amt}your ${plainSymbol(draft.symbol)} to your Hyperliquid trading account.`;
+  if (draft.kind === 'lp_add') return `Put ${amt}your money into a Uniswap pool.`;
+  if (draft.kind === 'lp_remove') return 'Took money back out of a Uniswap pool.';
+  if (draft.kind === 'consolidate') return `Gathered ${amt}your ${plainSymbol(draft.symbol)} onto ${plainChain(draft.toChain)}.`;
+  if (draft.kind === 'transfer') return `Sent ${amt}your ${plainSymbol(draft.leg.symbol)} to another address.`;
+  return 'Changed one of your safety rules.';
+}
+
+// The same action as a thing that did NOT happen, so a refusal never reads as a receipt.
+function wantedPhrase(draft: WriteDraft, amountUsd: number): string {
+  const amt = amountClause(amountUsd);
+  if (draft.kind === 'swap') {
+    return `changing ${amt}your ${plainSymbol(draft.fromSymbol)} into ${plainSymbol(draft.toSymbol)}`;
+  }
+  if (draft.kind === 'hl_deposit') return `moving ${amt}your ${plainSymbol(draft.symbol)} to your Hyperliquid trading account`;
+  if (draft.kind === 'lp_add') return `putting ${amt}your money into a Uniswap pool`;
+  if (draft.kind === 'lp_remove') return 'taking money back out of a Uniswap pool';
+  if (draft.kind === 'consolidate') return `gathering ${amt}your ${plainSymbol(draft.symbol)} onto ${plainChain(draft.toChain)}`;
+  if (draft.kind === 'transfer') return `sending ${amt}your ${plainSymbol(draft.leg.symbol)} to another address`;
+  return 'changing one of your safety rules';
+}
+
+function clockTime(stamp: string | undefined): string {
+  const t = Date.parse(stamp ?? '');
+  if (!Number.isFinite(t)) return '';
+  return new Date(t)
+    .toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+    .toLowerCase();
+}
+
+// Built from the proposals, which are typed, and never from the audit event's msg field.
+// That text is written for whoever is debugging this app and reads as noise to the
+// person who owns the money.
+function buildRecent(proposals: Proposal[]): BasicRecent[] {
+  const finished = proposals.filter(
+    (p) => p.status === 'executed' || p.status === 'refused' || p.status === 'policy_refused',
+  );
+
+  finished.sort((a, b) => (b.decidedAt ?? b.createdAt).localeCompare(a.decidedAt ?? a.createdAt));
+
+  return finished.slice(0, RECENT_MAX).map((p) => {
+    const amount = amountUsdOf(p.draft);
+    if (p.status === 'executed') {
+      return { headline: didHeadline(p.draft, amount), timeLine: clockTime(p.decidedAt), outcome: 'done' as const };
+    }
+    if (p.status === 'refused') {
+      return {
+        headline: `You said no to ${wantedPhrase(p.draft, amount)}.`,
+        timeLine: clockTime(p.decidedAt),
+        outcome: 'refused' as const,
+      };
+    }
+    return {
+      headline: `Your rules blocked ${wantedPhrase(p.draft, amount)}.`,
+      timeLine: clockTime(p.decidedAt),
+      outcome: 'blocked' as const,
+    };
+  });
 }
 
 // ---------- the screen ----------
@@ -327,7 +519,9 @@ export function buildBasic(input: BasicInput): BasicView {
 
   if (killSwitch) {
     tone = 'frozen';
-    headline = 'Everything is frozen. Nothing can move.';
+    // Says what is true of the money. The warning below says what was done and by whom,
+    // and the two may not be the same sentence: see the headline/warning test.
+    headline = 'Your money is locked where it is.';
   } else if (!policyReadable) {
     tone = 'broken';
     headline = 'Something is wrong with the rules. Nothing can move.';
@@ -340,7 +534,11 @@ export function buildBasic(input: BasicInput): BasicView {
     headline = 'Working on it. Please wait.';
   } else if (!gateRequired) {
     tone = 'broken';
-    headline = 'WARNING: this app is not asking you before it moves money.';
+    // The warning below carries this fact in its own words. The headline says what is
+    // true of the money instead, so the screen is not the same sentence twice: on a
+    // page this spare, a restatement reads as a rendering fault rather than emphasis.
+    // Same reasoning as agentLine, and it only became visible once the screen had room.
+    headline = 'Your money is here, but this app is not protecting it.';
   } else if (settled !== null && settled.status === 'policy_refused') {
     tone = 'stopped';
     headline = refusalHeadline(settled);
@@ -381,5 +579,21 @@ export function buildBasic(input: BasicInput): BasicView {
   else if (!gateRequired) footer = 'You will NOT be asked before money moves.';
   else footer = 'You will be asked before anything moves.';
 
-  return { tone, totalUsd, totalLine, placesLine, headline, ask, warning, agentLine, footer };
+  return {
+    tone,
+    totalUsd,
+    totalLine,
+    placesLine,
+    headline,
+    ask,
+    warning,
+    agentLine,
+    footer,
+    // Tied to the same condition that nulls the total. A holdings list with a chain
+    // missing from it looks exactly like the holdings list of someone who owns less,
+    // and this reader has nothing to check it against.
+    holdings: buildHoldings(wallet, totalUsd === null),
+    price: buildPrice(input.price),
+    recent: buildRecent(proposals),
+  };
 }

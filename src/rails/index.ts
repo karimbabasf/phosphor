@@ -22,6 +22,7 @@
 import type {
   AppConfig,
   HlDepositDraft,
+  IntentsDepositDraft,
   LpAddDraft,
   LpRemoveDraft,
   Network,
@@ -35,11 +36,12 @@ import { chainsWithDeployment, deploymentFor } from './uniswap-abi.ts';
 import { hlDepositRail, hlSpec } from './hyperliquid-deposit.ts';
 import { ONECLICK_COUNTERPARTY, oneClickRail } from './oneclick.ts';
 import { INTENTS_NATIVE_COUNTERPARTY, intentsNativeRail } from './intents-native.ts';
+import { intentsDepositRail } from './intents-deposit.ts';
 
-export type RailKind = 'swap' | 'hl_deposit' | 'lp_add' | 'lp_remove';
-export type RailDraft = SwapDraft | HlDepositDraft | LpAddDraft | LpRemoveDraft;
+export type RailKind = 'swap' | 'hl_deposit' | 'intents_deposit' | 'lp_add' | 'lp_remove';
+export type RailDraft = SwapDraft | HlDepositDraft | IntentsDepositDraft | LpAddDraft | LpRemoveDraft;
 
-const RAIL_KINDS: readonly RailKind[] = ['swap', 'hl_deposit', 'lp_add', 'lp_remove'];
+const RAIL_KINDS: readonly RailKind[] = ['swap', 'hl_deposit', 'intents_deposit', 'lp_add', 'lp_remove'];
 
 export function isRailKind(kind: WriteDraft['kind']): kind is RailKind {
   return (RAIL_KINDS as readonly string[]).includes(kind);
@@ -101,6 +103,11 @@ export function createRails(deps: RailDeps): RailRegistry {
   const table: Record<RailKind, Rail> = {
     swap: swapRail(deps) as Rail,
     hl_deposit: hlDepositRail({ network: deps.cfg.network, keysPath: deps.cfg.keysPath }) as Rail,
+    intents_deposit: intentsDepositRail({
+      network: deps.cfg.network,
+      keysPath: deps.cfg.keysPath,
+      tokens: deps.tokens,
+    }) as Rail,
     lp_add: uniswap.lpAdd as Rail,
     lp_remove: uniswap.lpRemove as Rail,
   };

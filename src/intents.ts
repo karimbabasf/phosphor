@@ -52,6 +52,77 @@ export function assetIdFor(chain: ChainId, tokenId: string, list: OneClickToken[
   return match ? match.assetId : null;
 }
 
+// The gas asset of a chain, which assetIdFor cannot find because 1Click lists a native asset
+// with NO contractAddress field at all: native ETH on ethereum is
+// {assetId:'nep141:eth.omft.near', blockchain:'eth', symbol:'ETH'} and nothing else.
+// Verified against the live token list 2026-08-13.
+//
+// Matching therefore has to fall back to the symbol, which is remote text, so this is
+// deliberately stricter than assetIdFor in two ways. The symbol comes from OUR table below
+// and never from a caller, and an ambiguous list (two entries claiming to be the gas asset
+// of one chain) returns null rather than picking one. A native asset id decides where real
+// money goes, so "the answer was not unique" has to be a refusal and not a coin flip.
+export function nativeAssetIdFor(chain: ChainId, list: OneClickToken[]): string | null {
+  const blockchain = CHAIN_TO_BLOCKCHAIN[chain];
+  const spec = NATIVE_ASSET[chain];
+  if (spec === undefined) return null;
+  const matches = list.filter(
+    (t) =>
+      t.blockchain.toLowerCase() === blockchain &&
+      t.symbol === spec.symbol &&
+      (t.contractAddress === undefined || t.contractAddress === ''),
+  );
+  return matches.length === 1 ? matches[0].assetId : null;
+}
+
+// The gas asset per chain. A table in this repo, not a lookup on the wire: an agent naming
+// a symbol must not be able to make the app treat some other token as the thing it spends.
+// Decimals are the chain's own and are never read from the remote list either, because they
+// scale the amount that leaves the wallet.
+export const NATIVE_ASSET: Partial<Record<ChainId, { symbol: string; decimals: number }>> = {
+  eth: { symbol: 'ETH', decimals: 18 },
+  base: { symbol: 'ETH', decimals: 18 },
+  arb: { symbol: 'ETH', decimals: 18 },
+  sol: { symbol: 'SOL', decimals: 9 },
+  near: { symbol: 'NEAR', decimals: 24 },
+};
+
+// What src/ledger/evm.ts and src/ledger/near.ts already put in Holding.tokenId for the gas
+// asset. Kept here so a draft can name the native asset without inventing a second spelling.
+export const NATIVE_TOKEN_ID = 'native';
+
+// One place that turns "USDC on base" or "ETH on eth" into the pair a quote needs. The token
+// registry is tried first and the gas-asset table second, so a chain that lists a symbol
+// explicitly always wins over the fallback and no registry entry can be shadowed.
+//
+// It exists because both intents rails needed the same two-step lookup and neither could
+// express a gas asset without it: data/tokens.json holds ERC-20 contracts, and a native asset
+// has no contract to hold. Adding a 'native' row to that file instead was rejected because
+// src/ledger/evm.ts reads the same file to build balanceOf calls and would have sent
+// eth_call to the string "native".
+export function resolveAsset(
+  chain: ChainId,
+  symbol: string,
+  tokens: TokensFile,
+  list: OneClickToken[],
+): { assetId: string; decimals: number; native: boolean } {
+  const registry = tokens[chain]?.[symbol];
+  if (registry !== undefined) {
+    const assetId = assetIdFor(chain, registry.tokenId, list);
+    if (assetId === null) throw new Error(`1click does not list ${symbol} on ${chain}`);
+    return { assetId, decimals: registry.decimals, native: false };
+  }
+
+  const spec = NATIVE_ASSET[chain];
+  if (spec !== undefined && spec.symbol === symbol) {
+    const assetId = nativeAssetIdFor(chain, list);
+    if (assetId === null) throw new Error(`1click does not list native ${symbol} on ${chain} unambiguously`);
+    return { assetId, decimals: spec.decimals, native: true };
+  }
+
+  throw new Error(`no token registry entry for ${symbol} on ${chain}, and it is not that chain's gas asset`);
+}
+
 // ---------- amounts ----------
 
 // A JS number printed by String() switches to exponent form at 1e21 and below 1e-6.
@@ -171,6 +242,12 @@ function stringsOf(value: unknown): string[] {
   return value.filter((v): v is string => typeof v === 'string').map((v) => oneLine(v, 120));
 }
 
+// Where the output of a swap is delivered, and where a refund goes if it does not happen.
+// DESTINATION_CHAIN / ORIGIN_CHAIN mean an ordinary on-chain address. INTENTS means a
+// balance held inside the intents.near verifier under an account id, which is what a
+// "deposit onto NEAR Intents" is: no wallet on the other side, just a credited balance.
+export type OneClickEndpointType = 'DESTINATION_CHAIN' | 'ORIGIN_CHAIN' | 'INTENTS';
+
 export type OneClickQuoteParams = {
   dry: boolean;
   originAsset: string;
@@ -181,6 +258,13 @@ export type OneClickQuoteParams = {
   slippageToleranceBps?: number; // default 100 = 1%
   deadlineMs?: number; // how far ahead the request deadline sits; default 10 minutes
   referral?: string;
+  // The three routing fields, defaulted to the wallet-to-wallet shape the swap rail has
+  // always sent. They are options rather than constants because the deposit rail needs
+  // recipientType INTENTS, and they are named explicitly at every call site so that reading
+  // a rail tells you where its money ends up without reading this file.
+  recipientType?: OneClickEndpointType;
+  refundType?: OneClickEndpointType;
+  depositType?: OneClickEndpointType;
 };
 
 export type OneClickDeps = { fetchImpl?: typeof fetch };
@@ -217,13 +301,15 @@ export function oneClickClient(deps: OneClickDeps = {}): OneClickClient {
       destinationAsset: params.destinationAsset,
       amount: params.amount,
       refundTo: params.refundTo,
-      refundType: 'ORIGIN_CHAIN',
+      refundType: params.refundType ?? 'ORIGIN_CHAIN',
       recipient: params.recipient,
-      recipientType: 'DESTINATION_CHAIN',
-      // ORIGIN_CHAIN is the whole reason this rail needs no NEAR account and no NEP-413
-      // signing: the funds arrive by ordinary transfer. INTENTS would need both, plus a
-      // partner API key.
-      depositType: 'ORIGIN_CHAIN',
+      recipientType: params.recipientType ?? 'DESTINATION_CHAIN',
+      // depositType ORIGIN_CHAIN is why the swap rail needs no NEAR account and no message
+      // signing: the funds arrive by ordinary transfer, so the solver needs no authorisation
+      // from us beyond seeing the money. depositType INTENTS is the other case, where the
+      // input is a balance already inside the verifier and a signed intent releases it; that
+      // is src/rails/intents-native.ts and it passes this explicitly.
+      depositType: params.depositType ?? 'ORIGIN_CHAIN',
       deadline,
     };
     if (params.referral !== undefined) body.referral = params.referral;

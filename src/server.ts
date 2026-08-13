@@ -4,7 +4,9 @@
 // Approve, refuse and kill are the only mutating browser routes and every one of
 // them requires the per-boot token that GET /api/session hands out. Every /api/mcp
 // op is audit-logged as a tool_call before dispatch, and every rejected mutation is
-// audit-logged as approve_attempt_rejected.
+// audit-logged as approve_attempt_rejected. The one op that is not a tool_call is the
+// presence heartbeat: it is logged as agent_connected and agent_disconnected on the
+// edges, because a line every 15s buries the transcript it is meant to sit in.
 //
 // KNOWN HOLE, do not read the above as a boundary. This comment used to claim the
 // agent "has no path to its own approval: no token, no route". That is false and was
@@ -32,6 +34,7 @@ import { fileURLToPath } from 'node:url';
 
 import type { AppConfig, Candle, ChainId, Policy, Proposal, ProposalService, RiskRow, ViewMode } from './types.ts';
 import { buildBasic } from './view/basic.ts';
+import type { PriceReading } from './view/basic.ts';
 import type { Audit } from './audit.ts';
 import type { Store } from './store.ts';
 import type { Ledger } from './ledger/index.ts';
@@ -67,14 +70,33 @@ const LOG_LIMIT_MAX = 2000;
 const CANDLE_LIMIT_MAX = 2000; // matches LIMITS.historyMax: the widest window the chart allows
 const CANDLE_PUSH_MS = 1000; // ceiling on how often a trade may ask the browser to redraw
 
+// The basic screen's price tracker. Hourly bars over a day: "today" for someone reading
+// a price is the last 24 hours, not the span since midnight in a timezone the exchange
+// does not share. Polled well below the rate any venue rate-limits.
+const PRICE_GRANULARITY_SEC = 3600;
+const PRICE_BARS = 24;
+const PRICE_POLL_MS = 30000;
+
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
+  '.woff2': 'font/woff2',
 };
 
 const CHAINS: readonly string[] = ['eth', 'base', 'arb', 'sol', 'near'];
-const PROPOSE_KINDS: readonly string[] = ['consolidate', 'policy_change', 'swap', 'hl_deposit', 'lp_add', 'lp_remove'];
+// Display only: this feeds the "unknown propose kind" error message and gates nothing, so a
+// kind missing here is a misleading error rather than a dead tool. Keep it in step with the
+// if-chain in the propose handler anyway, since the message is how a caller finds the typo.
+const PROPOSE_KINDS: readonly string[] = [
+  'consolidate',
+  'policy_change',
+  'swap',
+  'hl_deposit',
+  'intents_deposit',
+  'lp_add',
+  'lp_remove',
+];
 const READ_TOOLS: readonly string[] = [
   'balances',
   'composition',
@@ -114,7 +136,9 @@ export type ServerDeps = {
   proposals: ProposalService;
   getPolicy: () => Policy | null;
   setKill: (on: boolean) => void;
-  agentSeen: () => void;
+  // Returns true only on the connect edge, so the caller logs an attach once per
+  // agent session instead of once per 15s heartbeat.
+  agentSeen: () => boolean;
   agentsConnected: () => number;
   getView: () => ViewMode;
   setView: (mode: ViewMode) => void;
@@ -220,6 +244,43 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   }, HEARTBEAT_MS);
   heartbeat.unref();
 
+  // ---------- the one price the basic screen tracks ----------
+  //
+  // buildState is synchronous and every caller depends on that, so the price is polled
+  // into a cache here rather than fetched inside the state build. A failed poll clears
+  // the cache instead of leaving the last good figure in place: a price with no
+  // timestamp beside it is indistinguishable from a current one, and the basic screen
+  // is read by someone who cannot tell. Same direction as every other refusal in
+  // src/view/basic.ts, which is to say less rather than something possibly untrue.
+  let priceReading: PriceReading = null;
+
+  async function pollPrice(): Promise<void> {
+    const product = chart.state().view.product;
+    try {
+      const load = await loadCandles(product, PRICE_GRANULARITY_SEC, PRICE_BARS);
+      const candles = load.candles ?? [];
+      const last = candles[candles.length - 1];
+      const first = candles[0];
+      if (last === undefined || first === undefined || !(first.o > 0)) {
+        priceReading = null;
+        return;
+      }
+      priceReading = {
+        product,
+        priceUsd: last.c,
+        changePct: ((last.c - first.o) / first.o) * 100,
+      };
+    } catch {
+      priceReading = null;
+    }
+  }
+
+  const priceTimer = setInterval(() => {
+    void pollPrice();
+  }, PRICE_POLL_MS);
+  priceTimer.unref();
+  void pollPrice();
+
   // ---------- responses ----------
 
   function sendJson(res: http.ServerResponse, status: number, payload: unknown): void {
@@ -257,7 +318,11 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       sendJson(res, 404, { error: 'not found' });
       return;
     }
-    res.writeHead(200, { 'content-type': type, 'content-length': body.length, 'cache-control': 'no-store' });
+    // The UI is served from disk on every request so an edit shows up on reload, but a
+    // font file is immutable content that would otherwise be refetched on every boot of
+    // the window and re-run the swap.
+    const cache = type === 'font/woff2' ? 'public, max-age=31536000, immutable' : 'no-store';
+    res.writeHead(200, { 'content-type': type, 'content-length': body.length, 'cache-control': cache });
     res.end(body);
   }
 
@@ -341,6 +406,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         agentsConnected: agentsConnected(),
         chainStatus: snapshot.chainStatus,
         selfAddresses: [...cfg.addresses.evm, ...cfg.addresses.solana, ...cfg.addresses.near],
+        price: priceReading,
       }),
     };
   }
@@ -882,8 +948,8 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     try {
       if (kind === 'swap') {
         const venueRaw = params.venue === undefined ? 'uniswap-v3' : String(params.venue);
-        if (venueRaw !== 'uniswap-v3' && venueRaw !== 'oneclick') {
-          problems.push('venue must be uniswap-v3 or oneclick');
+        if (venueRaw !== 'uniswap-v3' && venueRaw !== 'oneclick' && venueRaw !== 'intents-native') {
+          problems.push('venue must be uniswap-v3, oneclick or intents-native');
         }
         const chain = chainField(params, 'chain', problems);
         const toChain = params.toChain === undefined ? chain : chainField(params, 'toChain', problems);
@@ -898,7 +964,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         sendProposal(
           res,
           await proposals.proposeSwap({
-            venue: venueRaw as 'uniswap-v3' | 'oneclick',
+            venue: venueRaw as 'uniswap-v3' | 'oneclick' | 'intents-native',
             chain,
             toChain,
             fromSymbol,
@@ -916,6 +982,19 @@ export function createServer(deps: ServerDeps): PhosphorServer {
           return;
         }
         sendProposal(res, await proposals.proposeHlDeposit({ amount }));
+        return;
+      }
+      if (kind === 'intents_deposit') {
+        const chain = chainField(params, 'chain', problems);
+        // symbol is optional: absent means the chain's gas asset, which is the common case
+        // and the one the ERC-20 path could not serve.
+        const symbol = params.symbol === undefined ? undefined : strField(params, 'symbol', problems);
+        const amount = numField(params, 'amount', problems);
+        if (problems.length > 0) {
+          sendJson(res, 400, { error: problems.join('; ') });
+          return;
+        }
+        sendProposal(res, await proposals.proposeIntentsDeposit({ chain, symbol, amount }));
         return;
       }
       if (kind === 'lp_add') {
@@ -1047,6 +1126,21 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     const body = parsed.value;
     const op = String(body.op ?? '');
 
+    // The presence heartbeat is not a tool call, so it is answered before the
+    // append below and never enters the transcript. mcp.ts pings every 15s for
+    // the whole life of an agent session: on 2026-08-12, with two sessions open,
+    // 242 of 418 audit lines were heartbeats and the real calls were buried.
+    // Only the edges are worth a line, and agentSeen() reports them.
+    if (op === 'hello') {
+      // The client name is agent-controlled. It stays in data, where it is stored
+      // verbatim and rendered as data, and out of msg, where a crafted value could
+      // dress a heartbeat up as some other event in the log column.
+      if (agentSeen()) audit.append('agent_connected', 'an agent attached to phosphor', body);
+      broadcastState();
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
     const label =
       op === 'read'
         ? `read ${String(body.tool ?? '?')}`
@@ -1058,18 +1152,10 @@ export function createServer(deps: ServerDeps): PhosphorServer {
             ? `chart ${String(body.tool ?? '?')}`
             : op === 'set_view_mode'
               ? `set_view_mode ${String(body.mode ?? '?')}`
-              : op === 'hello'
-                ? `hello from ${String(body.client ?? 'unknown client')}`
-                : `unknown op ${op}`;
-    // Contract: every op is audit-logged before dispatch, arguments included verbatim.
+              : `unknown op ${op}`;
+    // Contract: every op that reads, proposes or moves the window is audit-logged
+    // before dispatch, arguments included verbatim.
     audit.append('tool_call', `agent: ${label}`, body);
-
-    if (op === 'hello') {
-      agentSeen();
-      broadcastState();
-      sendJson(res, 200, { ok: true });
-      return;
-    }
     if (op === 'read') {
       await handleRead(body, res);
       return;
@@ -1131,6 +1217,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     offStore();
     offAudit();
     clearInterval(heartbeat);
+    clearInterval(priceTimer);
     for (const client of sseClients) client.end();
     sseClients.clear();
   });

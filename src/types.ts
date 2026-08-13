@@ -188,6 +188,23 @@ export type SwapDraft = {
   quote: LegQuote | null;
 };
 
+// Moving funds from this wallet into the intents.near verifier, where they become a balance
+// the intents-native rail can swap. Not a SwapDraft: the asset does not change, and the far
+// side is an account id inside a contract rather than an address. See the header of
+// src/rails/intents-deposit.ts for why that distinction is load bearing on the tool surface.
+export type IntentsDepositDraft = {
+  kind: 'intents_deposit';
+  chain: ChainId; // origin chain, an EVM one; the app has no signer for the others
+  symbol: string;
+  tokenId: string; // 'native' for the gas asset, otherwise the ERC-20 contract
+  amount: number;
+  amountUsd: number;
+  minCredited: number; // the least that may be credited inside the verifier
+  from: string; // our wallet on the origin chain
+  intentsAccount: string; // who is credited inside intents.near: our own address, lowercased
+  counterparty: string; // must be on the policy allowlist
+};
+
 export type HlDepositDraft = {
   kind: 'hl_deposit';
   chain: ChainId; // 'arb' (Arbitrum Sepolia on testnet)
@@ -230,6 +247,7 @@ export type WriteDraft =
   | { kind: 'policy_change'; patch: PolicyPatch; sentence: string }
   | SwapDraft
   | HlDepositDraft
+  | IntentsDepositDraft
   | LpAddDraft
   | LpRemoveDraft;
 
@@ -331,6 +349,36 @@ export type BasicAsk = {
   facts: string[]; // short plain lines that may not be dropped
 };
 
+// One line of "what you own". Quantity and value are pre-formatted here for the same
+// reason every other sentence is: a number formatted in browser JavaScript is a claim
+// nothing tests. Pool positions collapse into the row for what they hold.
+export type BasicHolding = {
+  name: string; // plain: "US dollars (USDC)"
+  quantityLine: string; // "1,204.00"
+  valueLine: string; // "$1,204.00"
+  valueUsd: number; // for ordering and for tests to check the line against
+};
+
+// One coin, one price, one direction. Deliberately not a chart: this screen is read by
+// someone who wants to know whether the thing they hold is up or down today, and a
+// candlestick answers a question they did not ask.
+export type BasicPrice = {
+  name: string; // plain: "Ether"
+  symbol: string; // "ETH", kept because it is the verifiable half
+  priceLine: string; // "$3,184.22"
+  changeLine: string; // "up 1.4% today" | "down 0.8% today" | "level today"
+  direction: 'up' | 'down' | 'flat';
+};
+
+// A headline, not a log line. The sentence is composed from the proposal's own typed
+// draft, never from the audit event's developer-facing msg: that text is written for
+// whoever is debugging this and reads as noise to the person who owns the money.
+export type BasicRecent = {
+  headline: string; // "Moved $36.54 of your dollars into a Uniswap pool."
+  timeLine: string; // "2:14 pm"
+  outcome: 'done' | 'refused' | 'blocked';
+};
+
 export type BasicView = {
   tone: BasicTone;
   // null when unknown or stale. NEVER 0 as a stand-in: a zero and an unknown are
@@ -343,6 +391,11 @@ export type BasicView = {
   warning: string | null; // gate off, policy unreadable, kill switch, in plain words
   agentLine: string;
   footer: string;
+  // Empty while any chain is unread, for the same reason totalUsd goes null: a holdings
+  // list missing a chain looks exactly like a holdings list of someone who owns less.
+  holdings: BasicHolding[];
+  price: BasicPrice | null; // null whenever the price is unknown, never a stale figure
+  recent: BasicRecent[]; // newest first, capped; empty is a designed state, not a bug
 };
 
 // ---------- Audit ----------
@@ -352,7 +405,13 @@ export type LogEvent = {
   type:
     | 'app_start'
     | 'tool_call'
+    // The two edges of an agent session. The 15s heartbeat between them is not
+    // logged: it says nothing a reader of the transcript does not already know.
     | 'agent_connected'
+    | 'agent_disconnected'
+    // Written by a human-run compaction, never by the app. The log is append-only,
+    // so the one thing a removal owes its reader is a line saying it happened.
+    | 'audit_compacted'
     | 'proposal_created'
     | 'policy_refused'
     | 'approved'
@@ -429,6 +488,10 @@ export type SwapParams = {
 
 export type HlDepositParams = { amount: number }; // chain, token and bridge come from the network table
 
+// The credited account, the loss floor and the counterparty are all resolved by the app.
+// symbol defaults to the origin chain's gas asset, which is what "deposit $10 of ETH" means.
+export type IntentsDepositParams = { chain: ChainId; symbol?: string; amount: number };
+
 export type LpAddParams = {
   chain: ChainId;
   token0Symbol: string;
@@ -454,6 +517,7 @@ export type ProposalService = {
   proposePolicyChange(params: { patch: PolicyPatch; sentence: string }): Promise<Proposal>;
   proposeSwap(params: SwapParams): Promise<Proposal>;
   proposeHlDeposit(params: HlDepositParams): Promise<Proposal>;
+  proposeIntentsDeposit(params: IntentsDepositParams): Promise<Proposal>;
   proposeLpAdd(params: LpAddParams): Promise<Proposal>;
   proposeLpRemove(params: LpRemoveParams): Promise<Proposal>;
   approve(id: string): Promise<Proposal>; // human path only; executes on approval

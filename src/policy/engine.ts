@@ -116,8 +116,21 @@ function legsOf(draft: WriteDraft): TransferLeg[] {
 // falls through to 'nothing_to_move', which is fail-closed by design.
 type RailDraft = Extract<WriteDraft, { counterparty: string } | { kind: 'hl_deposit' }>;
 
+// This list is a second copy of the one in src/rails/index.ts, and it is deliberately not an
+// import: the engine is pure and must not depend on the rail registry, which reaches for
+// config, RPC hosts and deployment tables. The cost of that independence is that the two can
+// drift, and drift here is silent in a specific way worth naming: a kind added to the
+// registry but missing here does not throw, it falls through to 'nothing_to_move' and the
+// rail is refused forever. Fail-closed, but dead. tests/unit/rail-wiring.test.ts holds the
+// two lists equal so the drift is caught by a test rather than by a rail that never works.
 function isRailDraft(draft: WriteDraft): draft is RailDraft {
-  return draft.kind === 'swap' || draft.kind === 'hl_deposit' || draft.kind === 'lp_add' || draft.kind === 'lp_remove';
+  return (
+    draft.kind === 'swap' ||
+    draft.kind === 'hl_deposit' ||
+    draft.kind === 'intents_deposit' ||
+    draft.kind === 'lp_add' ||
+    draft.kind === 'lp_remove'
+  );
 }
 
 // Where the funds actually go. This is the address the allowlist has to bless, and it is
@@ -130,10 +143,20 @@ function counterpartyOf(draft: RailDraft): string {
 // Where the OUTPUT lands, which is a different question from who we hand the funds to.
 // A swap passes tokens through an allowlisted router and the router delivers them to
 // draft.to; allowlisting only the router says nothing about who receives the proceeds.
-// The other rail kinds have no such field: lp_add and lp_remove deliver to the signer,
-// and hl_deposit credits whoever sent. Returns null when the kind has no destination.
+// lp_add and lp_remove deliver to the signer and hl_deposit credits whoever sent, so those
+// have no such field. Returns null when the kind has no destination.
+//
+// intents_deposit has one and it is not an address on any chain: it is the account id
+// credited inside the verifier contract. Checking it here matters more than for a swap, not
+// less. A swap sending proceeds to a stranger is visible on chain and the money is at least
+// somewhere; a deposit credited to an account id we hold no key for is a balance that exists,
+// reads as a success, and can never be spent or withdrawn by anyone but its owner. The rail
+// checks this too, against the configured key. This is the same rule in the layer that does
+// not depend on which rail ran.
 function destinationOf(draft: RailDraft): string | null {
-  return draft.kind === 'swap' ? draft.to : null;
+  if (draft.kind === 'swap') return draft.to;
+  if (draft.kind === 'intents_deposit') return draft.intentsAccount;
+  return null;
 }
 
 function symbolOf(draft: WriteDraft): string {

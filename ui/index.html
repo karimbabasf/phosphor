@@ -6,6 +6,10 @@
 <title>PHOSPHOR</title>
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/basic.css">
+<!-- Only the display face is preloaded, and only because the balance is the first
+     thing read on the basic screen. The mono is for addresses inside a dialog. -->
+<link rel="preload" href="/fonts/amulya-var.woff2" as="font" type="font/woff2" crossorigin>
 </head>
 <body>
 <!-- data-view is set by the server's state payload, never by the browser. The two
@@ -131,22 +135,21 @@
 
   </div>
 
-  <!-- BASIC. One balance, one question, two buttons. Every string in here is written
-       by src/view/basic.ts and rendered verbatim: this file composes no sentence about
-       money, for the same reason policy sentences are machine-rendered.
+  <!-- BASIC. One balance, what you own, one price, what happened, and the question
+       when there is one. Every string in here is written by src/view/basic.ts and
+       rendered verbatim: this file composes no sentence about money, for the same
+       reason policy sentences are machine-rendered.
        The STOP control sits last and far from YES on purpose. -->
   <section id="basic" class="basic" data-tone="calm">
 
-    <p class="basic-brand">PHOSPHOR</p>
-
     <div class="basic-money">
+      <p class="basic-brand">PHOSPHOR</p>
       <p class="basic-total" id="basic-total">--</p>
+      <p class="basic-headline" id="basic-headline">--</p>
       <p class="basic-places" id="basic-places"></p>
     </div>
 
     <p class="basic-warning" id="basic-warning" role="alert" hidden></p>
-
-    <p class="basic-headline" id="basic-headline">--</p>
 
     <div class="basic-ask" id="basic-ask" hidden>
       <p class="basic-ask-headline" id="basic-ask-headline"></p>
@@ -165,6 +168,26 @@
       <p class="basic-error" id="basic-error" hidden></p>
     </div>
 
+    <!-- One row per thing owned, not one per chain. Which chain each part sits on
+         is a pro-screen fact. -->
+    <section class="basic-holdings" id="basic-holdings" hidden>
+      <h2 class="basic-label">What you own</h2>
+      <div id="basic-rows"></div>
+    </section>
+
+    <!-- One coin, one price, one direction. The candlestick chart is the pro screen's
+         answer to a question this reader did not ask. -->
+    <section class="basic-price" id="basic-price" hidden>
+      <span class="basic-price-name" id="basic-price-name"></span>
+      <span class="basic-price-value" id="basic-price-value"></span>
+      <span class="basic-price-change" id="basic-price-change"></span>
+    </section>
+
+    <section class="basic-recent" id="basic-recent" hidden>
+      <h2 class="basic-label">What happened</h2>
+      <div id="basic-events"></div>
+    </section>
+
     <p class="basic-footer" id="basic-footer"></p>
 
     <div class="basic-stop">
@@ -178,6 +201,11 @@
     </div>
 
   </section>
+
+  <!-- THE CALM BAR. Full bleed across the top of the window: its thickness and colour
+       are the whole state of the app. Presentational, and every state it reports is
+       also stated in words above, so it carries no aria role of its own. -->
+  <div class="basic-state" id="basic-state" data-tone="calm" aria-hidden="true"></div>
 
 </main>
 <!-- chart.js first: it only defines. app.js boots and calls chartBoot(). -->
