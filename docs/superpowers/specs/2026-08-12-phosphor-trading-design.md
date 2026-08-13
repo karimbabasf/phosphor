@@ -132,6 +132,66 @@ resolves its size and price through the envelope check before signing.
 The agent is the brains. This layer is hands and eyes. It does not detect patterns, because the
 agent decides what a pattern is. It answers questions and it draws.
 
+### Why this layer is the whole bet
+
+There is a public experiment that settles the question. nof1.ai's Alpha Arena, from October 2025,
+gave six models ten thousand dollars each of real capital and a live Hyperliquid trade API. Most
+lost badly: Claude Sonnet 4.5 and Gemini 2.5 Pro both worse than minus forty percent, Grok 4 around
+minus fifty-eight. Two finished positive, Qwen3 Max at plus twenty-two and DeepSeek V3.1 at plus
+five. Every one of them was handed raw numeric market state and an order endpoint, and none was
+given a measurement layer.
+
+The survey of connected trading tools says the same thing from the other side. There are at least
+eight community Hyperliquid MCP servers and no official one, all of them thin wrappers over the
+venue's endpoints, and **not one exposes an analysis primitive**. The industry built the order API
+eight times and the instrument zero times.
+
+So this layer is not a convenience around the execution engine. It is the part that decides whether
+any of this works.
+
+### The line between a measurement and a conclusion
+
+The distinction that keeps "the agent is the brains" true while still giving it real tools.
+
+A **measurement** is reproducible, parameterised, and carries no opinion. "These bars are swing
+highs at prominence 0.4 ATR." "Average true range sits in the 12th percentile of the last 252
+bars." "The volume point of control for this range is 4218.5." The agent decides what any of it
+means.
+
+A **conclusion** is the model's job and this layer never returns one. No "bullish reversal", no
+"head and shoulders forming", no signal, no score, no suggested trade. A layer that ships opinions
+replaces the judgment that is the reason to have an agent at all, and it is also how you get a
+product that is confidently wrong.
+
+Every primitive below is a measurement. Where an algorithm has a parameter that changes the answer,
+the answer says which parameter produced it, because a level that moves when you change the bin
+width and does not say so is a number pretending to be a fact.
+
+### Primitives
+
+Chosen from what a discretionary trader actually measures, with the failure modes that decide the
+implementation:
+
+- **Swing points**, by prominence rather than a naive rolling maximum. Prominence measures how far
+  a peak stands out from its surrounding baseline, which is what kills the micro-noise pivots a
+  plain local-max test keeps.
+- **Trend lines fitted from those pivots**, returned with their anchors so the agent can accept,
+  move or reject the fit rather than inherit it.
+- **Volatility regime**: average true range as a percentile rank over a stated lookback, bucketed.
+  This is the primitive that sets stop distance and position size, so it earns its place even
+  though the percentile is lookback-relative and will call a wild market normal if the window
+  covers a wilder one. The response says the window.
+- **Volume profile**: point of control and value area over a stated range. Bin width dominates the
+  result, volume and time-at-price disagree when size trades fast at one level, crypto has no
+  session so any daily anchor is arbitrary, and perp volume reflects positioning rather than
+  accepted value. All four are reasons to return the parameters beside the levels, not reasons to
+  skip the primitive.
+- **Level clustering** from pivot prices, so "where has this reacted before" is one call.
+- **Anchored volume-weighted average price**, anchored to a bar the agent picks.
+- **Range and consolidation detection**, returned as boundaries and a duration.
+- **Divergence** between price and any oscillator in the catalogue, returned as the two pivot pairs
+  that form it so the agent can check the claim.
+
 Built on one principle: **an analysis turn should cost one round trip.**
 
 ### The batch envelope
@@ -406,6 +466,14 @@ from execution, so a slow consumer cannot back-pressure an order.
 Backtesting as a product surface, though the evaluator is deterministic so replay is possible later.
 Multiple venues. Spot. Cross-symbol strategies, meaning one program covers one symbol in v1.
 Automatic strategy generation without a human reading it. Any form of copy trading or vaults.
+
+**A vision channel**, deliberately, and with a note against it. The research recommends pairing
+the numbers with a rendered image, because a model reads global shape and layout better from a
+picture than from a wall of values, and Karim's answer was that the API is what he wants. The
+numeric and primitive layers are the evidence either way; a picture would only help framing. If
+analysis quality disappoints in use, rendering the existing canvas server-side and returning it
+beside the measurements is the first thing to try, and the spec records that now so the option is
+not rediscovered later.
 
 ## Verification
 

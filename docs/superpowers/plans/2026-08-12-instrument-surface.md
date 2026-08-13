@@ -1991,7 +1991,7 @@ test('no op returns a signal, score or recommendation field', async () => {
     [
       { op: 'pivots', args: { product: 'ETH', granularitySec: 60, window: 2, minProminence: 1 } },
       { op: 'regime', args: { product: 'ETH', granularitySec: 60, period: 3, lookback: 10 } },
-      { op: 'range', args: { product: 'ETH', granularitySec: 60, lookback: 12, minContainment: 0.1 } },
+      { op: 'range', args: { product: 'ETH', granularitySec: 60, lookback: 12, maxEfficiency: 0.9 } },
     ],
     h,
   );
