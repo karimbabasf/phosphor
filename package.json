@@ -8,6 +8,7 @@
     "app": "node src/main.ts",
     "mcp": "node src/mcp.ts",
     "keygen": "node scripts/keygen.ts",
+    "near:prove": "node scripts/near-prove.ts",
     "sweep": "node scripts/sweep.ts",
     "test": "node --test tests/unit/*.test.ts tests/injection.test.ts",
     "e2e": "node scripts/e2e.ts",
