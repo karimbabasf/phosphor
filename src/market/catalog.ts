@@ -34,6 +34,10 @@ export type MarketRef = {
 export type Catalog = {
   refresh(): Promise<void>;
   resolve(query: string): MarketRef | null;
+  // The same symbol as one named venue lists it. Sub-minute candles need this: the trade
+  // tape only exists on Coinbase, and pricing a Hyperliquid perp off Coinbase spot trades
+  // splices two different markets into one line.
+  resolveOn(query: string, provider: Provider): MarketRef | null;
   search(query: string, limit?: number): MarketRef[];
   all(): MarketRef[];
   loadedAt(): string | null;
@@ -235,6 +239,13 @@ export function createCatalog(options?: {
     return pick(bySymbol.get(symbol) ?? [], quote);
   }
 
+  function resolveOn(query: string, provider: Provider): MarketRef | null {
+    const { symbol, quote } = normalizeQuery(query);
+    if (symbol === '') return null;
+    const onVenue = (bySymbol.get(symbol) ?? []).filter((c) => c.provider === provider);
+    return pick(onVenue, quote);
+  }
+
   /* Ranked candidates for a query that did not resolve cleanly, so an agent can offer a
      choice instead of charting the wrong asset. */
   function search(query: string, limit = 8): MarketRef[] {
@@ -274,6 +285,7 @@ export function createCatalog(options?: {
   return {
     refresh,
     resolve,
+    resolveOn,
     search,
     all: () => refs.slice(),
     loadedAt: () => (loadedAtMs === 0 ? null : new Date(loadedAtMs).toISOString()),

@@ -99,6 +99,19 @@ test('one venue being down still leaves a usable catalogue', async () => {
   assert.equal(catalog.resolve('pepe')?.provider, 'coinbase');
 });
 
+test('a symbol can be pinned to one venue, which is what stops a spliced series', () => {
+  // The bug this exists to prevent: sub-minute history comes from the Coinbase trade tape
+  // while the live stream is a Hyperliquid perp. Splicing them draws a clean chart with a
+  // step in it where the spot-perp basis lands, which reads as a real move and is not one.
+  return loaded().then((catalog) => {
+    assert.equal(catalog.resolve('btc')?.provider, 'hyperliquid', 'BTC prefers the perp venue overall');
+    assert.equal(catalog.resolveOn('btc', 'coinbase')?.provider, 'coinbase', 'but can be pinned to the tape venue');
+    assert.equal(catalog.resolveOn('btc', 'coinbase')?.product, 'BTC-USD');
+    assert.equal(catalog.resolveOn('wif', 'coinbase'), null, 'a perp-only coin has no tape venue, so seconds stay live-only');
+    assert.equal(catalog.resolveOn('pepe', 'hyperliquid'), null);
+  });
+});
+
 test('the base to fetch is chosen from what the venue actually serves', () => {
   const hl = { product: 'BTC-USD', provider: 'hyperliquid' as const, symbol: 'BTC', quote: 'USD', kind: 'perp' as const };
   const cb = { product: 'PEPE-USD', provider: 'coinbase' as const, symbol: 'PEPE', quote: 'USD', kind: 'spot' as const };

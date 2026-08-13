@@ -69,8 +69,8 @@ export function createMarketData(deps: MarketDeps = {}) {
   const live = deps.live;
 
   /* Keep the trade stream pointed at what is being charted, and fold whatever it has
-     collected into the cache. Cheap, in memory, and it means the newest second is always
-     present even when the trade tape backfill is still paging. */
+     collected into the cache. Only ever called for a series the live stream actually
+     prices: see the venue rule in plan(). */
   function pumpLive(product: string, baseSec: number): void {
     if (live === undefined || baseSec >= 60) return;
     live.watch(product);
@@ -78,20 +78,53 @@ export function createMarketData(deps: MarketDeps = {}) {
     if (built.length > 0) store.put(product, baseSec, built);
   }
 
+  /* Which venue answers, and on what interval.
+     The rule that matters is on the sub-minute rail: one series, one venue, never a
+     splice. The historical trade tape only exists on Coinbase, and the live trade stream
+     is Hyperliquid, so the obvious implementation pages Coinbase spot for the past and
+     streams a Hyperliquid perp for the present. Those are two different markets. It draws
+     as a clean chart with a step in the middle where the basis between them lands, which
+     is worse than a short chart because it looks like a real move.
+     So: if Coinbase lists it, the whole sub-minute series is Coinbase and the live stream
+     is left out of it. If only Hyperliquid lists it, there is no tape, and it stays
+     live-only with no history, which is the honest answer rather than a spliced one. */
   function plan(query: string, timeframe: string | number) {
+    const targetSec = parseTimeframe(timeframe) ?? 60;
     const ref = catalog.resolve(query);
     const product = ref?.product ?? query.toUpperCase();
-    const targetSec = parseTimeframe(timeframe) ?? 60;
+
+    if (targetSec < 60) {
+      const tape = catalog.resolveOn(query, 'coinbase');
+      if (tape !== null) {
+        const base = planBase(tape, targetSec);
+        const note =
+          ref !== null && ref.provider !== 'coinbase'
+            ? `seconds come from ${tape.product} on coinbase, the only venue here with a historical trade tape`
+            : base.note;
+        return { ref: tape, product: tape.product, fetchProduct: tape.product, targetSec, base: { ...base, note }, live: false };
+      }
+      const base = planBase(ref, targetSec);
+      return {
+        ref,
+        product,
+        fetchProduct: product,
+        targetSec,
+        base: { ...base, note: 'no historical trade tape for this market, so seconds start empty and fill from now' },
+        live: true,
+      };
+    }
+
     const base = planBase(ref, targetSec);
-    return { ref, product, targetSec, base };
+    return { ref, product, fetchProduct: product, targetSec, base, live: false };
   }
 
   /* The render path. Synchronous, never throws, never waits on a venue. */
   function read(query: string, timeframe: string | number, bars: number): MarketRead {
-    const { ref, product, targetSec, base } = plan(query, timeframe);
-    pumpLive(product, base.baseSec);
+    const plan_ = plan(query, timeframe);
+    const { ref, product, fetchProduct, targetSec, base } = plan_;
+    if (plan_.live) pumpLive(fetchProduct, base.baseSec);
 
-    const held = store.read(product, base.baseSec, targetSec, bars);
+    const held = store.read(fetchProduct, base.baseSec, targetSec, bars);
     const reached = coverageSec(held.candles, targetSec);
 
     // Say when the window could not be filled instead of drawing a short series as though
@@ -109,7 +142,14 @@ export function createMarketData(deps: MarketDeps = {}) {
       timeframe: formatTimeframe(targetSec),
       granularitySec: targetSec,
       baseSec: base.baseSec,
-      source: base.provider === 'trades' ? 'trade tape' : base.provider,
+      // Name the venue, not just the rail. A chart that says "trade tape" without saying
+      // whose tape is one splice away from being wrong and nobody noticing.
+      source:
+        base.provider !== 'trades'
+          ? base.provider
+          : plan_.live
+            ? 'hyperliquid live trades'
+            : 'coinbase trades',
       ageSec: held.ageSec,
       filling: held.filling,
       stale: held.error !== null || held.ageSec > staleAfterSec(base.baseSec) * 4,
@@ -123,9 +163,9 @@ export function createMarketData(deps: MarketDeps = {}) {
   /* The agent path. Waits for a cold cache, because an empty answer is worse than a slow
      one when something is going to reason over it. */
   async function warm(query: string, timeframe: string | number, bars: number): Promise<MarketRead> {
-    const { product, targetSec, base } = plan(query, timeframe);
-    pumpLive(product, base.baseSec);
-    await store.warm(product, base.baseSec, targetSec, bars);
+    const plan_ = plan(query, timeframe);
+    if (plan_.live) pumpLive(plan_.fetchProduct, plan_.base.baseSec);
+    await store.warm(plan_.fetchProduct, plan_.base.baseSec, plan_.targetSec, bars);
     return read(query, timeframe, bars);
   }
 
