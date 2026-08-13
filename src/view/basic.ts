@@ -212,6 +212,9 @@ function askHeadline(draft: WriteDraft, amountUsd: number): string {
   if (draft.kind === 'hl_deposit') {
     return `It wants to move ${amountClause(amountUsd)}your ${plainSymbol(draft.symbol)} to your Hyperliquid trading account.`;
   }
+  if (draft.kind === 'intents_deposit') {
+    return `It wants to move ${amountClause(amountUsd)}your ${plainSymbol(draft.symbol)} into a NEAR account this app holds for you, ready to trade.`;
+  }
   if (draft.kind === 'lp_add') {
     return `It wants to put ${amountClause(amountUsd)}your money into a Uniswap pool holding ${plainSymbol(draft.token0.symbol)} and ${plainSymbol(draft.token1.symbol)}.`;
   }
@@ -236,6 +239,11 @@ function askAfterLine(draft: WriteDraft, totalUsd: number | null, amountUsd: num
   if (draft.kind === 'policy_change') return 'This does not move any money. It changes a rule.';
   if (draft.kind === 'swap') return 'Your total stays about the same. This changes what you are holding, not how much.';
   if (draft.kind === 'hl_deposit') return 'The money stays yours. It moves to your trading account.';
+  // Deliberately not "it stays in your wallet". It does not: it leaves the wallet and is
+  // held for this app by the NEAR Intents contract, and getting it back on chain is a
+  // separate action. Saying so is the difference between an informed click and a surprise.
+  if (draft.kind === 'intents_deposit')
+    return 'The money stays yours, but it leaves your wallet and is held by the NEAR trading service. Bringing it back is a separate step.';
   if (draft.kind === 'lp_add') return `${money(amountUsd)} moves into the pool. You can take it back out later.`;
   if (draft.kind === 'lp_remove') return 'Money comes back out of the pool to you.';
   if (draft.kind === 'consolidate') return 'The money stays yours. It moves onto one chain.';

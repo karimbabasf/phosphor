@@ -9,6 +9,7 @@
     "mcp": "node src/mcp.ts",
     "keygen": "node scripts/keygen.ts",
     "sweep": "node scripts/sweep.ts",
+    "intents-balance": "node scripts/intents-balance.ts",
     "test": "node --test tests/unit/*.test.ts tests/injection.test.ts",
     "e2e": "node scripts/e2e.ts",
     "typecheck": "tsc --noEmit"

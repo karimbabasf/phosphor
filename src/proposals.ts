@@ -16,6 +16,8 @@ import type {
   HlDepositDraft,
   HlDepositParams,
   Holding,
+  IntentsDepositDraft,
+  IntentsDepositParams,
   LedgerSnapshot,
   LpAddDraft,
   LpAddParams,
@@ -53,6 +55,9 @@ import { VENUE as UNISWAP_VENUE } from './rails/uniswap.ts';
 import { chainsWithDeployment, deploymentFor, tokenFor } from './rails/uniswap-abi.ts';
 import { hlSpec } from './rails/hyperliquid-deposit.ts';
 import { ONECLICK_COUNTERPARTY } from './rails/oneclick.ts';
+import { INTENTS_DEPOSIT_COUNTERPARTY, minCreditedFor } from './rails/intents-deposit.ts';
+import { INTENTS_NATIVE_COUNTERPARTY } from './rails/intents-native.ts';
+import { NATIVE_ASSET, NATIVE_TOKEN_ID } from './intents.ts';
 
 const ALL_CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 const EVM_CHAINS: ChainId[] = ['eth', 'base', 'arb'];
@@ -735,7 +740,11 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
   async function proposeSwap(params: SwapParams): Promise<Proposal> {
     const snapshot = ledger.snapshot();
     const problems: string[] = [];
-    const venue = params.venue === 'oneclick' ? 'oneclick' : UNISWAP_VENUE;
+    // Explicit per venue, not a two-way test with a default, for the reason the rail router
+    // gives: a new venue falling through to uniswap silently would route a draft meant for
+    // NEAR Intents into an on-chain DEX swap.
+    const venue =
+      params.venue === 'oneclick' || params.venue === 'intents-native' ? params.venue : UNISWAP_VENUE;
     const toChain = params.toChain ?? params.chain;
 
     // Both sides are our own wallet. The agent picks the chains and the symbols; it has no
@@ -746,7 +755,9 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     const counterparty =
       venue === 'oneclick'
         ? ONECLICK_COUNTERPARTY
-        : resolve(() => String(deploymentFor(cfg.network, params.chain).router), problems, '');
+        : venue === 'intents-native'
+          ? INTENTS_NATIVE_COUNTERPARTY
+          : resolve(() => String(deploymentFor(cfg.network, params.chain).router), problems, '');
 
     const draft: SwapDraft = {
       kind: 'swap',
@@ -786,6 +797,47 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     };
 
     return problems.length > 0 ? refuseDraft('hl_deposit', draft, problems) : proposeRail('hl_deposit', draft);
+  }
+
+  // "Deposit $10 onto NEAR Intents." The agent names a chain, optionally a symbol, and an
+  // amount. Everything that decides where the money ends up is resolved here from the app's
+  // own state: the wallet it leaves, the account credited inside the verifier, the loss floor
+  // and the counterparty. There is deliberately no argument for any of them.
+  async function proposeIntentsDeposit(params: IntentsDepositParams): Promise<Proposal> {
+    const snapshot = ledger.snapshot();
+    const problems: string[] = [];
+    const from = ourAddress(params.chain, snapshot, problems);
+
+    // Default to the chain's gas asset, because that is what a bare "deposit $10 from
+    // ethereum" means and it is the case the ERC-20 path could not serve.
+    const native = NATIVE_ASSET[params.chain];
+    const symbol = params.symbol ?? native?.symbol ?? '';
+    if (symbol === '') {
+      problems.push(`No default asset for ${params.chain}, so the deposit has to name a symbol.`);
+    }
+    const tokenId = native !== undefined && symbol === native.symbol ? NATIVE_TOKEN_ID : symbol;
+
+    // The verifier derives an account id from the erc191 signer, and that id is the EVM
+    // address lowercased. Credit anything else and the balance is real but unspendable by
+    // this app, so it is derived here and never taken from a caller.
+    const intentsAccount = from.toLowerCase();
+
+    const draft: IntentsDepositDraft = {
+      kind: 'intents_deposit',
+      chain: params.chain,
+      symbol,
+      tokenId,
+      amount: params.amount,
+      amountUsd: usdOf(symbol, params.amount, snapshot),
+      minCredited: minCreditedFor(params.amount),
+      from,
+      intentsAccount,
+      counterparty: INTENTS_DEPOSIT_COUNTERPARTY,
+    };
+
+    return problems.length > 0
+      ? refuseDraft('intents_deposit', draft, problems)
+      : proposeRail('intents_deposit', draft);
   }
 
   async function proposeLpAdd(params: LpAddParams): Promise<Proposal> {
@@ -965,6 +1017,7 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     proposePolicyChange: (p) => serialise(() => proposePolicyChange(p)),
     proposeSwap: (p) => serialise(() => proposeSwap(p)),
     proposeHlDeposit: (p) => serialise(() => proposeHlDeposit(p)),
+    proposeIntentsDeposit: (p) => serialise(() => proposeIntentsDeposit(p)),
     proposeLpAdd: (p) => serialise(() => proposeLpAdd(p)),
     proposeLpRemove: (p) => serialise(() => proposeLpRemove(p)),
     // approve() executes, so it shares the queue: a human click landing next to an

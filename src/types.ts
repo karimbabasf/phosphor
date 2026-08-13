@@ -188,6 +188,23 @@ export type SwapDraft = {
   quote: LegQuote | null;
 };
 
+// Moving funds from this wallet into the intents.near verifier, where they become a balance
+// the intents-native rail can swap. Not a SwapDraft: the asset does not change, and the far
+// side is an account id inside a contract rather than an address. See the header of
+// src/rails/intents-deposit.ts for why that distinction is load bearing on the tool surface.
+export type IntentsDepositDraft = {
+  kind: 'intents_deposit';
+  chain: ChainId; // origin chain, an EVM one; the app has no signer for the others
+  symbol: string;
+  tokenId: string; // 'native' for the gas asset, otherwise the ERC-20 contract
+  amount: number;
+  amountUsd: number;
+  minCredited: number; // the least that may be credited inside the verifier
+  from: string; // our wallet on the origin chain
+  intentsAccount: string; // who is credited inside intents.near: our own address, lowercased
+  counterparty: string; // must be on the policy allowlist
+};
+
 export type HlDepositDraft = {
   kind: 'hl_deposit';
   chain: ChainId; // 'arb' (Arbitrum Sepolia on testnet)
@@ -230,6 +247,7 @@ export type WriteDraft =
   | { kind: 'policy_change'; patch: PolicyPatch; sentence: string }
   | SwapDraft
   | HlDepositDraft
+  | IntentsDepositDraft
   | LpAddDraft
   | LpRemoveDraft;
 
@@ -391,6 +409,9 @@ export type LogEvent = {
     // logged: it says nothing a reader of the transcript does not already know.
     | 'agent_connected'
     | 'agent_disconnected'
+    // Written by a human-run compaction, never by the app. The log is append-only,
+    // so the one thing a removal owes its reader is a line saying it happened.
+    | 'audit_compacted'
     | 'proposal_created'
     | 'policy_refused'
     | 'approved'
@@ -467,6 +488,10 @@ export type SwapParams = {
 
 export type HlDepositParams = { amount: number }; // chain, token and bridge come from the network table
 
+// The credited account, the loss floor and the counterparty are all resolved by the app.
+// symbol defaults to the origin chain's gas asset, which is what "deposit $10 of ETH" means.
+export type IntentsDepositParams = { chain: ChainId; symbol?: string; amount: number };
+
 export type LpAddParams = {
   chain: ChainId;
   token0Symbol: string;
@@ -492,6 +517,7 @@ export type ProposalService = {
   proposePolicyChange(params: { patch: PolicyPatch; sentence: string }): Promise<Proposal>;
   proposeSwap(params: SwapParams): Promise<Proposal>;
   proposeHlDeposit(params: HlDepositParams): Promise<Proposal>;
+  proposeIntentsDeposit(params: IntentsDepositParams): Promise<Proposal>;
   proposeLpAdd(params: LpAddParams): Promise<Proposal>;
   proposeLpRemove(params: LpRemoveParams): Promise<Proposal>;
   approve(id: string): Promise<Proposal>; // human path only; executes on approval
