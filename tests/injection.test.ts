@@ -260,6 +260,11 @@ test('the tool surface cannot express an exfiltration target', async () => {
       'propose_hl_deposit',
       'propose_lp_add',
       'propose_lp_remove',
+      // Arming a bot. The one proposal that grants STANDING authority rather than spending
+      // once, so it never auto-approves on any network. It takes a program, not code, and
+      // the grammar that program is written in has no verb that moves value off the venue
+      // and no field that names an address, which the loop below holds it to like the rest.
+      'propose_mandate',
       // The chart. These read and drive a view, never funds: none of them reaches the
       // proposal path, none takes an address, and the loop below holds them to it like
       // every other tool. They are on this surface because an agent that cannot see the

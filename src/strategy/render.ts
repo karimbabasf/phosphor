@@ -43,10 +43,11 @@ function duration(sec: number): string {
   return `${sec}s`;
 }
 
-// The quotes are the delimiter that keeps agent text visibly one field, so an inner quote is
-// doubled rather than dropped: the reader can still see exactly what was written, and the
-// wrapper cannot be closed early by the text inside it. Whitespace collapses for the same
-// reason, on top of the grammar already refusing control characters.
+// The quotes delimit agent text, so an inner quote is doubled rather than dropped: the reader
+// still sees exactly what was written, and the wrapper cannot be closed early by the text
+// inside it. The characters that actually carry structure here, the newline between rules and
+// the semicolon between actions, never reach this function: the grammar refuses both in a
+// display string, which is the only place that guarantee is worth anything.
 function quoted(s: string): string {
   return `"${s.replace(/\s+/g, ' ').trim().replace(/"/g, '""')}"`;
 }

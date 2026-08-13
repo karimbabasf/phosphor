@@ -12,8 +12,11 @@
 //   1. Every identifier is capped at a length no address fits in. An EVM address needs 42
 //      characters and a Solana one 44, and a chart handle like `tl_1` needs five. The cap is
 //      the guard; the name on the field is only a label, and a label guards nothing.
-//   2. Every free-text field refuses control characters. The text lands on an approval screen,
-//      and a newline inside one field would let it draw what looks like a second rule.
+//   2. Every free-text field refuses control characters and semicolons. The text lands on an
+//      approval screen where render.ts separates rules by line and actions by semicolon, so
+//      those are precisely the characters that let one field draw what looks like another.
+//      Refusing them at the door is stronger than escaping them at the screen, because the
+//      screen is not the only thing that will ever read a rendered line.
 //
 // Everything here is data. Nothing in this file signs, sends, holds state, or reads a price.
 
@@ -93,7 +96,7 @@ const displayText = z
   .string()
   .min(1)
   .max(TEXT_MAX)
-  .refine((s) => !hasControlChars(s), 'no control characters');
+  .refine((s) => !hasControlChars(s) && !s.includes(';'), 'no control characters and no semicolons');
 
 const symbol = z
   .string()

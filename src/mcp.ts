@@ -70,7 +70,7 @@ function registerRead(name: string, description: string, shape: Record<string, z
   );
 }
 
-type ProposeKind = 'consolidate' | 'policy_change' | 'swap' | 'hl_deposit' | 'lp_add' | 'lp_remove';
+type ProposeKind = 'consolidate' | 'policy_change' | 'swap' | 'hl_deposit' | 'lp_add' | 'lp_remove' | 'mandate_arm';
 
 function registerPropose(
   name: string,
@@ -320,6 +320,35 @@ registerPropose(
   'hl_deposit',
   `Proposes depositing USDC into this app's own Hyperliquid account through the Bridge2 contract. The chain, the token and the bridge address come from a per-network table, not from this call. ${CANNOT_APPROVE}`,
   { amount: z.number() },
+);
+
+registerPropose(
+  'propose_mandate',
+  'mandate_arm',
+  [
+    'Proposes ARMING A BOT on Hyperliquid perpetuals: a strategy program plus the envelope it must stay inside.',
+    'This is the one proposal that grants standing authority rather than spending once, so it ALWAYS waits for a',
+    'human click, on every network, even when the approval gate is disabled.',
+    '',
+    'The program is a closed grammar, not code. Conditions: price_above, price_below, price_cross_up,',
+    'price_cross_down, bar_close, position, pnl_pct, elapsed, and, or, not. Actions: open, add, reduce, close,',
+    'set_stop, set_target, cancel, stand_down, notify. A price reference can be a literal, or the id of something',
+    'you drew with chart_batch ({kind:"drawing", id:"tl_1"}), which is what lets a trend line become a trigger.',
+    '',
+    'The approval screen shows the program in plain English and the worst case in dollars, so write rules a person',
+    'can check against what you told them. There is no verb here that moves value off the venue.',
+    CANNOT_APPROVE,
+  ].join(' '),
+  {
+    symbol: z.string(),
+    program: z.unknown(),
+    maxNotionalUsd: z.number(),
+    maxLeverage: z.number(),
+    maxOrdersPerMin: z.number().int(),
+    maxLossUsd: z.number(),
+    expiresAt: z.string(),
+    allowedActions: z.array(z.string()),
+  },
 );
 
 registerPropose(

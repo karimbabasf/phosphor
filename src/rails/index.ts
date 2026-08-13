@@ -24,6 +24,7 @@ import type {
   HlDepositDraft,
   LpAddDraft,
   LpRemoveDraft,
+  MandateDraft,
   Network,
   Rail,
   SwapDraft,
@@ -35,11 +36,13 @@ import { chainsWithDeployment, deploymentFor } from './uniswap-abi.ts';
 import { hlDepositRail, hlSpec } from './hyperliquid-deposit.ts';
 import { ONECLICK_COUNTERPARTY, oneClickRail } from './oneclick.ts';
 import { INTENTS_NATIVE_COUNTERPARTY, intentsNativeRail } from './intents-native.ts';
+import { HYPERLIQUID_PERPS_COUNTERPARTY, mandateRail } from './mandate.ts';
+import type { MandateRunner } from './mandate.ts';
 
-export type RailKind = 'swap' | 'hl_deposit' | 'lp_add' | 'lp_remove';
-export type RailDraft = SwapDraft | HlDepositDraft | LpAddDraft | LpRemoveDraft;
+export type RailKind = 'swap' | 'hl_deposit' | 'lp_add' | 'lp_remove' | 'mandate_arm';
+export type RailDraft = SwapDraft | HlDepositDraft | LpAddDraft | LpRemoveDraft | MandateDraft;
 
-const RAIL_KINDS: readonly RailKind[] = ['swap', 'hl_deposit', 'lp_add', 'lp_remove'];
+const RAIL_KINDS: readonly RailKind[] = ['swap', 'hl_deposit', 'lp_add', 'lp_remove', 'mandate_arm'];
 
 export function isRailKind(kind: WriteDraft['kind']): kind is RailKind {
   return (RAIL_KINDS as readonly string[]).includes(kind);
@@ -59,6 +62,7 @@ export type RailRegistry = {
 export type RailDeps = {
   cfg: AppConfig;
   tokens: TokensFile; // data/tokens.json, for the 1Click asset id lookup
+  runner: MandateRunner; // owns the armed bots; the mandate rail only starts and stops them
 };
 
 // One rail for kind 'swap', routing on the draft's venue.
@@ -103,6 +107,7 @@ export function createRails(deps: RailDeps): RailRegistry {
     hl_deposit: hlDepositRail({ network: deps.cfg.network, keysPath: deps.cfg.keysPath }) as Rail,
     lp_add: uniswap.lpAdd as Rail,
     lp_remove: uniswap.lpRemove as Rail,
+    mandate_arm: mandateRail({ runner: deps.runner }) as Rail,
   };
 
   return {
@@ -145,6 +150,12 @@ export function venueAllowlist(network: Network): string[] {
   // forever, so this really is an address on a static list rather than a venue string
   // standing in for one that cannot be listed. Same testnet reasoning as above.
   out.add(INTENTS_NATIVE_COUNTERPARTY.toLowerCase());
+
+  // The perps venue, a third kind of entry again. A perp order hands funds to nobody: margin,
+  // position and profit all stay inside the Hyperliquid account the human already funded, so
+  // there is no destination to list. The venue string stands in so the destination check still
+  // has something to check rather than being skipped for this one rail.
+  out.add(HYPERLIQUID_PERPS_COUNTERPARTY.toLowerCase());
 
   return [...out];
 }

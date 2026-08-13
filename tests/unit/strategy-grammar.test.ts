@@ -141,27 +141,63 @@ test('agent text cannot carry a newline into the approval screen', () => {
 // `venue` and let an address through it.
 type JsonNode = Record<string, unknown>;
 
-function walk(node: unknown, visit: (key: string | null, value: JsonNode) => void, key: string | null = null): void {
-  if (node === null || typeof node !== 'object') return;
-  if (Array.isArray(node)) {
-    for (const item of node) walk(item, visit, key);
-    return;
+const schema = zodToJsonSchema(PROGRAM_SCHEMA, { name: 'Program' }) as JsonNode;
+
+// zod-to-json-schema emits a $ref the second time it meets the same sub-schema, so `text` and
+// `reason` share one node and only one of them is written out in full. A walk that stops at a
+// $ref checks half the surface and reports the other half as clean, which is the worst kind of
+// green. Following the pointer is what makes this test say what it claims to say.
+function resolveRef(pointer: string): JsonNode | null {
+  if (!pointer.startsWith('#/')) return null;
+  let node: unknown = schema;
+  for (const part of pointer.slice(2).split('/')) {
+    if (node === null || typeof node !== 'object') return null;
+    node = (node as JsonNode)[part.replace(/~1/g, '/').replace(/~0/g, '~')];
   }
-  const obj = node as JsonNode;
-  visit(key, obj);
-  const properties = obj.properties;
-  if (properties !== null && typeof properties === 'object') {
-    for (const [name, child] of Object.entries(properties as JsonNode)) walk(child, visit, name);
-  }
-  for (const field of ['items', 'anyOf', 'oneOf', 'allOf', 'additionalProperties', 'definitions']) {
-    const child = obj[field];
-    // definitions is a bag of named schemas, not a schema, so its keys are names and not
-    // property names. Passing null keeps them out of the property-name checks below.
-    if (child !== null && typeof child === 'object') walk(child, visit, field === 'definitions' ? null : key);
-  }
+  return node !== null && typeof node === 'object' ? (node as JsonNode) : null;
 }
 
-const schema = zodToJsonSchema(PROGRAM_SCHEMA, { name: 'Program' }) as JsonNode;
+function walkSchema(visit: (key: string | null, value: JsonNode) => void): void {
+  // Condition refers to itself, so the walk needs a stop. Keying on the pair means a shared
+  // sub-schema is still checked once under every property name that reaches it.
+  const seen = new Set<string>();
+
+  function walk(node: unknown, key: string | null): void {
+    if (node === null || typeof node !== 'object') return;
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item, key);
+      return;
+    }
+    const obj = node as JsonNode;
+
+    if (typeof obj.$ref === 'string') {
+      const mark = `${key ?? ''}|${obj.$ref}`;
+      if (seen.has(mark)) return;
+      seen.add(mark);
+      walk(resolveRef(obj.$ref), key);
+      return;
+    }
+
+    visit(key, obj);
+
+    const properties = obj.properties;
+    if (properties !== null && typeof properties === 'object') {
+      for (const [name, child] of Object.entries(properties as JsonNode)) walk(child, name);
+    }
+    // definitions is a bag of named schemas rather than a schema, so its keys are definition
+    // names and not property names. They enter the walk with a null key.
+    const definitions = obj.definitions;
+    if (definitions !== null && typeof definitions === 'object') {
+      for (const child of Object.values(definitions as JsonNode)) walk(child, null);
+    }
+    for (const field of ['items', 'anyOf', 'oneOf', 'allOf', 'additionalProperties']) {
+      const child = obj[field];
+      if (child !== null && typeof child === 'object') walk(child, key);
+    }
+  }
+
+  walk(schema, null);
+}
 
 test('no schema field is named or shaped like an address', () => {
   // The same list tests/injection.test.ts holds the MCP surface to.
@@ -172,11 +208,12 @@ test('no schema field is named or shaped like an address', () => {
   const patterns: string[] = [];
   const constants = new Set<string>();
 
-  walk(schema, (key, node) => {
+  walkSchema((key, node) => {
     if (key !== null) propertyNames.add(key.toLowerCase());
-    if (node.type === 'string') {
+    const enumerated = typeof node.const === 'string' || Array.isArray(node.enum);
+    if (node.type === 'string' && !enumerated) {
       if (typeof node.pattern === 'string') patterns.push(node.pattern);
-      // An unbounded string is the hole this test exists to find: it is a field that can hold
+      // An unbounded string is the hole this test exists to find: a field that can hold
       // anything, including 42 characters of address.
       const max = typeof node.maxLength === 'number' ? node.maxLength : Infinity;
       if (key !== null && max > 32) longStrings.push([key, max]);
@@ -203,7 +240,7 @@ test('no schema field is named or shaped like an address', () => {
   // order. Anything new in this list is a new place text can hide, so it has to be argued for
   // here rather than added quietly.
   assert.deepEqual(
-    longStrings.map(([name]) => name).sort(),
+    [...new Set(longStrings.map(([name]) => name))].sort(),
     ['reason', 'text'],
     `unexpected long string fields: ${JSON.stringify(longStrings)}`,
   );
@@ -217,7 +254,7 @@ test('no schema field is named or shaped like an address', () => {
 
 test('every object in the schema refuses unknown keys', () => {
   let objects = 0;
-  walk(schema, (_key, node) => {
+  walkSchema((_key, node) => {
     if (node.type !== 'object') return;
     objects += 1;
     assert.equal(node.additionalProperties, false, `an object in the schema accepts unknown keys: ${JSON.stringify(node.properties ?? {}).slice(0, 120)}`);

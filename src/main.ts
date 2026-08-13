@@ -18,6 +18,8 @@ import { oneClickQuoter, syntheticQuoter, stubSigner, type TokensFile } from './
 import { coinbaseSource, krakenSource, cachedCandles } from './candles.ts';
 import { hyperliquidSource, hyperliquidLive } from './hyperliquid.ts';
 import { createProposalService } from './proposals.ts';
+import { createRunnerHost } from './runner/host.ts';
+import { readApiWalletKey } from './runner/keys.ts';
 import { createServer } from './server.ts';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -78,10 +80,34 @@ const live = hyperliquidLive();
 const quoter = cfg.mode === 'demo' ? syntheticQuoter() : oneClickQuoter(tokens);
 const signer = stubSigner();
 
+// Owns the armed bots and the child process that runs them. Constructed before the rails
+// because the mandate rail only starts and stops it and holds no state of its own.
+//
+// The key it hands the child is the API wallet, never the master. Reading it lazily, at arm
+// time rather than at boot, means an install with no agent approved yet starts fine and fails
+// with a sentence that says what to do instead of failing at startup.
+const runner = createRunnerHost({
+  apiWalletKey: async () => await readApiWalletKey(cfg.keysPath),
+  isMainnet: cfg.network === 'mainnet',
+  baseUrl:
+    cfg.network === 'mainnet' ? 'https://api.hyperliquid.xyz' : 'https://api.hyperliquid-testnet.xyz',
+  // Fail closed: a policy file that will not load reads as the kill switch being ON, so an
+  // unreadable policy can never be the reason a bot was allowed to arm.
+  killSwitch: () => loadPolicy(cfg.dataDir)?.killSwitch ?? true,
+  onEvent: (e) => {
+    audit.append(
+      e.type === 'halted' || e.type === 'error' ? 'error' : 'executed',
+      `runner: ${e.type}${'id' in e && e.id !== null ? ` ${e.id}` : ''}` +
+        ('reason' in e ? `: ${e.reason}` : 'message' in e ? `: ${e.message}` : ''),
+      e,
+    );
+  },
+});
+
 // The dispatch table for swap, hyperliquid deposit and LP add/remove. Empty in demo
 // mode, where there is a fixture and no chain, so a rail proposal refuses rather than
 // reaching for an RPC and a private key.
-const rails = createRails({ cfg, tokens });
+const rails = createRails({ cfg, tokens, runner });
 
 const proposals = createProposalService({
   cfg,

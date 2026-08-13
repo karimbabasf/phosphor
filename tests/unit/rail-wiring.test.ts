@@ -418,11 +418,19 @@ function cfgFor(mode: AppConfig['mode']): AppConfig {
   };
 }
 
-test('the live registry holds all four rail kinds and nothing else', () => {
-  const tokens = JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'tokens.json'), 'utf8'));
-  const registry = createRails({ cfg: cfgFor('live'), tokens });
+// The mandate rail only starts and stops the runner, so a stub is enough here: this file is
+// about which rails the registry holds and what they refuse, not about arming anything.
+const stubRunner = {
+  arm: async () => ({ ok: true, detail: 'stub' }),
+  disarm: async () => ({ ok: true, detail: 'stub' }),
+  status: () => ({ armed: [], running: false }),
+};
 
-  assert.deepEqual(registry.kinds().sort(), ['hl_deposit', 'lp_add', 'lp_remove', 'swap']);
+test('the live registry holds every rail kind and nothing else', () => {
+  const tokens = JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'tokens.json'), 'utf8'));
+  const registry = createRails({ cfg: cfgFor('live'), tokens, runner: stubRunner });
+
+  assert.deepEqual(registry.kinds().sort(), ['hl_deposit', 'lp_add', 'lp_remove', 'mandate_arm', 'swap']);
   for (const kind of registry.kinds()) {
     const rail = registry.for({ kind } as WriteDraft);
     assert.ok(rail !== null, `no rail for ${kind}`);
@@ -441,7 +449,7 @@ test('the live registry holds all four rail kinds and nothing else', () => {
 
 test('demo mode owns no rails, and a rail proposal there refuses instead of reaching for a key', async () => {
   const tokens = JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'tokens.json'), 'utf8'));
-  const registry = createRails({ cfg: cfgFor('demo'), tokens });
+  const registry = createRails({ cfg: cfgFor('demo'), tokens, runner: stubRunner });
   assert.deepEqual(registry.kinds(), []);
   assert.equal(registry.for({ kind: 'swap' } as WriteDraft), null);
 

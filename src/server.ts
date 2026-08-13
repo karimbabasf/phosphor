@@ -75,7 +75,7 @@ const MIME: Record<string, string> = {
 };
 
 const CHAINS: readonly string[] = ['eth', 'base', 'arb', 'sol', 'near'];
-const PROPOSE_KINDS: readonly string[] = ['consolidate', 'policy_change', 'swap', 'hl_deposit', 'lp_add', 'lp_remove'];
+const PROPOSE_KINDS: readonly string[] = ['consolidate', 'policy_change', 'swap', 'hl_deposit', 'lp_add', 'lp_remove', 'mandate_arm'];
 const READ_TOOLS: readonly string[] = [
   'balances',
   'composition',
@@ -887,6 +887,37 @@ export function createServer(deps: ServerDeps): PhosphorServer {
             toSymbol,
             amountIn,
             minAmountOut,
+          }),
+        );
+        return;
+      }
+      if (kind === 'mandate_arm') {
+        const symbol = strField(params, 'symbol', problems);
+        const maxNotionalUsd = numField(params, 'maxNotionalUsd', problems);
+        const maxLeverage = numField(params, 'maxLeverage', problems);
+        const maxOrdersPerMin = numField(params, 'maxOrdersPerMin', problems);
+        const maxLossUsd = numField(params, 'maxLossUsd', problems);
+        const expiresAt = strField(params, 'expiresAt', problems);
+        const allowedActions = Array.isArray(params.allowedActions)
+          ? params.allowedActions.map((v) => String(v))
+          : [];
+        if (allowedActions.length === 0) problems.push('allowedActions must list at least one verb');
+        if (params.program === undefined) problems.push('program is required');
+        if (problems.length > 0) {
+          sendJson(res, 400, { error: problems.join('; ') });
+          return;
+        }
+        sendProposal(
+          res,
+          await proposals.proposeMandate({
+            symbol,
+            program: params.program,
+            maxNotionalUsd,
+            maxLeverage,
+            maxOrdersPerMin,
+            maxLossUsd,
+            expiresAt,
+            allowedActions,
           }),
         );
         return;
