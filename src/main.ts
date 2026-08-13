@@ -20,6 +20,7 @@ import { coinbaseSource, krakenSource, cachedCandles } from './candles.ts';
 import { hyperliquidSource } from './hyperliquid.ts';
 import { createMarketData } from './market/index.ts';
 import { createProposalService } from './proposals.ts';
+import { createAgents } from './agents.ts';
 import { createServer } from './server.ts';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -112,40 +113,23 @@ const proposals = createProposalService({
   dataDir: cfg.dataDir,
 });
 
-// Agent connection tracking: mcp.ts sends op:hello every 15s; connected means
-// a heartbeat within the last 45s, so three missed pings drop the light.
+// Who is driving, and the rule that only one thing may. The state, the TTL and the
+// one-at-a-time seat live in src/agents.ts; what lives here is the sweep that turns a
+// silent expiry into a line in the log and a push to the window.
 //
-// The heartbeat itself is deliberately absent from the audit log, and the edges
-// stand in for it: one agent_connected when an agent attaches, one
-// agent_disconnected when its pings stop. Two lines per session instead of 240
-// an hour, and the transcript still answers "was an agent attached at 19:52".
-const AGENT_TTL_MS = 45_000;
-let lastHello = 0;
-let agentAttached = false;
+// The heartbeat itself is deliberately absent from the audit log, and the edges stand in
+// for it: one agent_connected when an agent attaches, one agent_disconnected when it goes.
+// Two lines per session instead of 240 an hour, and the transcript still answers "was an
+// agent attached at 19:52".
+const agents = createAgents();
 
-// True only on the connect edge. The server logs the attach on that signal, so
-// the decision of what counts as connected lives here, next to the TTL.
-function agentSeen(): boolean {
-  const edge = !agentAttached;
-  lastHello = Date.now();
-  agentAttached = true;
-  return edge;
-}
-function agentsConnected(): number {
-  return Date.now() - lastHello < AGENT_TTL_MS ? 1 : 0;
-}
-
-// The drop has no request to ride on, so it is swept for. A stopped MCP process
-// cannot say goodbye, and a hung one would lie if it could: the absence of pings
-// is the honest signal.
-setInterval(() => {
-  if (!agentAttached || agentsConnected() === 1) return;
-  agentAttached = false;
-  audit.append('agent_disconnected', 'the agent stopped sending heartbeats', {
-    lastSeen: new Date(lastHello).toISOString(),
-    ttlMs: AGENT_TTL_MS,
-  });
-}, 15_000);
+// The drop is swept for because a killed MCP process has no request to ride on. mcp.ts does
+// send a bye on a clean shutdown, so this is the backstop for a SIGKILL rather than the
+// normal path, and it runs often enough that the backstop is still fast: the status bar
+// used to hold "connected" for up to a minute after an agent was terminated (45s TTL swept
+// every 15s, then up to another 15s waiting for an SSE state frame). Every part of that is
+// now shorter, and the push below is what closes the last of it.
+const AGENT_SWEEP_MS = 2_000;
 
 function getPolicy(): Policy | null {
   return loadPolicy(cfg.dataDir);
@@ -185,11 +169,22 @@ const server = createServer({
   proposals,
   getPolicy,
   setKill,
-  agentSeen,
-  agentsConnected,
+  agents,
   getView,
   setView,
 });
+
+setInterval(() => {
+  const gone = agents.sweep();
+  if (gone === null) return;
+  audit.append('agent_disconnected', 'the agent stopped sending heartbeats', {
+    client: gone.client,
+    lastSeen: gone.lastSeen,
+    ttlMs: gone.ttlMs,
+  });
+  // Without this the light stayed on until the next state frame, whatever the TTL said.
+  server.broadcastState();
+}, AGENT_SWEEP_MS);
 
 // A background fill that lands is worth exactly one SSE frame: the browser is holding the
 // previous candles and needs to be told there are better ones, not polled at.

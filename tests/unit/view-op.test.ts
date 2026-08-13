@@ -13,6 +13,7 @@ import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 
 import { createServer } from '../../src/server.ts';
+import { createAgents } from '../../src/agents.ts';
 import { createAudit } from '../../src/audit.ts';
 import { createStore } from '../../src/store.ts';
 import { defaultPolicy } from '../../src/policy/file.ts';
@@ -32,6 +33,15 @@ const CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 
 function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-viewop-'));
+}
+
+// These tests post ops with no session id, which is one occupant like any other: the first
+// op takes the free seat and the rest are the same session. Seating it up front keeps the
+// connect edge out of the audit assertions, which is what the old agentSeen stub did.
+function seatedAgents() {
+  const agents = createAgents();
+  agents.claim({ session: 'unnamed-session', client: 'test' });
+  return agents;
 }
 
 function snapshot(): LedgerSnapshot {
@@ -121,8 +131,8 @@ async function boot(opts: { view?: ViewMode; proposals?: Proposal[] } = {}): Pro
     },
     getPolicy: () => defaultPolicy(),
     setKill: () => {},
-    agentSeen: () => false, // already attached: no connect edge to log
-    agentsConnected: () => 1,
+    // A seat already held by this test's own session, so an op logs no connect edge.
+    agents: seatedAgents(),
     getView: () => view,
     setView: (mode) => {
       view = mode;

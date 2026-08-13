@@ -67,6 +67,53 @@ test('a failed chain is reported stale rather than silently zeroed', () => {
   assert.deepEqual(buildWallet(snap).stale, ['sol']);
 });
 
+// ---------- a wallet lists what you hold ----------
+//
+// Karim, 2026-08-13: "the actual list should only show us tokens we are holding. clearly".
+// The live wallet was 19 rows, 14 of them zero.
+
+test('a token with nothing in it is not a row, and the number dropped is still reported', () => {
+  const snap = loadDemoLedger();
+  const held = snap.holdings.filter(h => h.amount > 0).length;
+  snap.holdings.push({ chain: 'base', address: '0xself', symbol: 'PYUSD', tokenId: '0xpyusd', amount: 0, usd: 0, native: false });
+  snap.holdings.push({ chain: 'base', address: '0xself', symbol: 'USDS', tokenId: '0xusds', amount: 0, usd: 0, native: false });
+
+  const wallet = buildWallet(snap);
+  assert.equal(wallet.rows.some(r => r.quantity === 0 && r.kind === 'token'), false, 'no empty rows');
+  assert.equal(wallet.rows.length, held);
+  assert.equal(wallet.emptyCount, 2, 'a short list and a shallow read are different facts');
+});
+
+test('a token we hold but cannot price is still a row: the test is quantity, not value', () => {
+  const snap = loadDemoLedger();
+  snap.holdings.push({ chain: 'base', address: '0xself', symbol: 'WHO', tokenId: '0xwho', amount: 12, usd: 0, native: false });
+
+  const wallet = buildWallet(snap);
+  const row = wallet.rows.find(r => r.symbol === 'WHO');
+  assert.ok(row, 'dropping it would be the app deciding you own less than you do');
+  assert.equal(row!.quantity, 12);
+});
+
+test('an empty verifier balance is dropped like any other empty holding', () => {
+  const snap = loadDemoLedger();
+  const wallet = buildWallet(snap, [], {
+    holdings: [{ ...INTENTS_ETH, amount: 0 }],
+    ok: true,
+    fetchedAt: 'now',
+  });
+  assert.equal(wallet.rows.some(r => r.kind === 'intents'), false);
+  assert.equal(wallet.emptyCount, 1);
+});
+
+test('byChain only names places that hold something', () => {
+  const snap = loadDemoLedger();
+  // Everything on this chain is empty, so the chain itself has nothing to report.
+  snap.holdings = snap.holdings.filter(h => h.chain !== 'near');
+  snap.holdings.push({ chain: 'near', address: 'x.near', symbol: 'USDT', tokenId: 'usdt', amount: 0, usd: 0, native: false });
+  const wallet = buildWallet(snap);
+  assert.equal(Object.prototype.hasOwnProperty.call(wallet.byChain, 'near'), false, 'a zero total is a line of noise');
+});
+
 // ---------- balances held inside the intents.near verifier ----------
 
 const INTENTS_ETH = {

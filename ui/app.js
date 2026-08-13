@@ -5,25 +5,39 @@
 
 'use strict';
 
-var REFUSAL_TYPES = { policy_refused: 1, refused: 1, approve_attempt_rejected: 1 };
+/* A second agent turned away is a refusal like any other, and the log is where a refusal
+   is supposed to be visible. */
+var REFUSAL_TYPES = { policy_refused: 1, refused: 1, approve_attempt_rejected: 1, agent_rejected: 1 };
 var EPS = 1e-9;
 var LOG_MAX_LINES = 400;
 
 /* The chart's own state, timeframes and colours live in ui/chart.js. It is loaded first and
    keeps its view on the server, so an agent can read and drive the same chart. */
 
-/* Donut. One hue, brightness by rank: the biggest slice is the brightest. The
-   ramp stops short of --green-hi (hsl 136 100% 77.5%) so the hover highlight is
-   brighter than any resting slice and cannot be mistaken for one. */
-var DONUT_HUE = 135;
-var DONUT_L_TOP = 72;
-var DONUT_L_BOTTOM = 24;
-/* A straight rank ramp spends most of its range on slices too thin to see: with
-   eighteen positions the six that own the ring would separate by two points of
-   lightness each and read as one flat band. The ease front-loads the range onto
-   the ranks that are actually wide enough to tell apart. */
-var DONUT_L_EASE = 0.55;
-var DONUT_HI = '#8cffab';
+/* Donut. Karim, 2026-08-13: "a little more diverse color scheme". It used to be one hue
+   ramped by rank, which put eighteen positions on one green gradient and made the ring
+   unreadable below the top three: two points of lightness apart is not a difference you
+   can point at.
+
+   Still not a rainbow chart. These are CRT phosphor colours (P1 green, P3 amber, the
+   RGB triad), the biggest holding keeps the app's own green, and every one of them is
+   saturated enough to hold on a near-black ground. The table carries the same colour as
+   a chip per row, so the ring is decodable without a legend. */
+var DONUT_COLOURS = [
+  '#33ff66', /* phosphor green: the identity, and always the largest slice */
+  '#22d3ee', /* cyan */
+  '#ffb03a', /* amber */
+  '#ff5f8f', /* rose */
+  '#a78bfa', /* violet */
+  '#a3e635', /* lime */
+  '#2dd4a7', /* teal */
+  '#ffe45c', /* yellow */
+  '#ff8a3d', /* orange */
+  '#7aa2ff'  /* blue */
+];
+/* Past the tenth position the list wraps and each lap is darker, so slice 11 is a dark
+   green rather than a second bright one. Anything that deep into the ring is a sliver. */
+var DONUT_LAP_DIM = 0.42;
 var DONUT_INNER = 0.58;
 
 var COLLAPSE_PREFIX = 'phosphor.collapse.';
@@ -77,7 +91,23 @@ function pct(share) {
 function amount(n) {
   var v = Number(n);
   if (!isFinite(v)) return 'n/a';
+  // Dust is still held, and printing 0.00000085 ETH as "0" in a column headed QTY is the
+  // same lie the empty rows were. Four places is right for everything a person counts in;
+  // below that the number becomes its own scale.
+  if (v !== 0 && Math.abs(v) < 0.0001) {
+    var fixed = v.toFixed(8);
+    return Number(fixed) === 0 ? v.toPrecision(2) : fixed;
+  }
   return v.toLocaleString('en-US', { maximumFractionDigits: 4 });
+}
+
+/* A gas fee is often a fraction of a cent, and "$0.00" in a column headed GAS reads as
+   free. Same rule as price(): the precision follows the magnitude. */
+function usdSmall(n) {
+  var v = Number(n);
+  if (!isFinite(v)) return 'n/a';
+  if (v !== 0 && Math.abs(v) < 0.01) return '$' + v.toFixed(4);
+  return usd(v);
 }
 
 /* A wallet prices a stable at 1.00 and a cheap token at six places. One column
@@ -357,10 +387,15 @@ function renderStatus(s) {
   $('stat-total').textContent = usd(WALLET.totalUsd);
   $('stat-positions').textContent = count + (count === 1 ? ' position' : ' positions');
 
-  var connected = (s.agents && s.agents.connected) || 0;
+  // One agent at a time by design (src/agents.ts), so this says WHICH one rather than how
+  // many. The client name is agent-authored and arrives cleaned and capped by the server;
+  // it reaches the DOM through textContent like every other dynamic string on this page.
+  var agents = s.agents || {};
+  var holder = agents.holder || null;
   var agentNode = $('stat-agent');
-  agentNode.textContent = connected === 0 ? 'none' : connected === 1 ? 'connected' : connected + ' connected';
-  agentNode.className = connected === 0 ? 'v faint' : 'v';
+  agentNode.textContent = !agents.connected ? 'none' : holder ? holder.client : 'connected';
+  agentNode.className = !agents.connected ? 'v faint' : 'v';
+  agentNode.title = holder ? 'connected since ' + clock(holder.since) : 'no agent is connected';
 
   // Which world this is running against matters more than demo/live, and the
   // gate banner below only makes sense next to it.
@@ -435,10 +470,18 @@ function renderWallet(s) {
   tbody.textContent = '';
   for (var i = 0; i < WALLET.rows.length; i++) {
     var row = WALLET.rows[i];
+    if (stale[row.chain]) stale[row.chain] = 'shown';
     var tr = document.createElement('tr');
     tr.dataset.index = String(i);
     // An LP row carries the pair as its symbol and reads as one ordinary line.
-    tr.appendChild(el('td', 'token', row.symbol));
+    // The chip is what makes the ring readable: same colour, same rank, same row.
+    var token = el('td', 'token');
+    var chip = el('span', 'chip');
+    chip.style.background = sliceColour(i);
+    chip.setAttribute('aria-hidden', 'true');
+    token.appendChild(chip);
+    token.appendChild(document.createTextNode(row.symbol));
+    tr.appendChild(token);
     var chain = el('td', 'chain');
     chain.appendChild(document.createTextNode(row.chain));
     if (stale[row.chain]) {
@@ -453,7 +496,21 @@ function renderWallet(s) {
     tr.appendChild(el('td', hit ? 'num share breach' : 'num share', pct(row.share)));
     tbody.appendChild(tr);
   }
-  if (!WALLET.rows.length) {
+  // A place whose read failed holds an unknown amount, not zero, and the table no longer
+  // lists zeroes to hang a STALE badge on. It gets a line of its own instead: dropping
+  // empty rows must never turn "we could not look" into "there is nothing there".
+  for (var s = 0; s < WALLET.stale.length; s++) {
+    if (stale[WALLET.stale[s]] === 'shown') continue;
+    var unread = document.createElement('tr');
+    var unreadCell = el('td', 'faint');
+    unreadCell.colSpan = 6;
+    unreadCell.appendChild(el('span', 'stale', 'STALE'));
+    unreadCell.appendChild(document.createTextNode(' ' + WALLET.stale[s] + ' would not answer: holdings there are unknown, not zero'));
+    unread.appendChild(unreadCell);
+    tbody.appendChild(unread);
+  }
+
+  if (!WALLET.rows.length && !WALLET.stale.length) {
     var empty = document.createElement('tr');
     var cell = el('td', 'faint', 'wallet empty: nothing held on any chain');
     cell.colSpan = 6;
@@ -492,16 +549,108 @@ function renderWalletTotals(s) {
   if (WALLET.stale.length) {
     node.appendChild(el('span', 'hi', '   STALE: ' + WALLET.stale.join(', ')));
   }
+
+  // The list above is what is held. This is the only place that says how much was looked
+  // at and found empty, which is the difference between a short list and a shallow read.
+  var empty = Number(WALLET.emptyCount) || 0;
+  if (empty > 0) {
+    node.appendChild(el('span', 'faint', '   ' + empty + (empty === 1 ? ' token' : ' tokens') + ' empty, not listed'));
+  }
 }
 
 /* ---------- 2b. the donut ---------- */
 
-/* Rank, not category: the biggest slice is the brightest and the ramp falls to
-   the smallest. Same hue throughout, which is the whole page's rule. */
-function sliceColour(rank, count) {
-  var t = count < 2 ? 0 : Math.pow(rank / (count - 1), DONUT_L_EASE);
-  var lightness = DONUT_L_TOP - (DONUT_L_TOP - DONUT_L_BOTTOM) * t;
-  return 'hsl(' + DONUT_HUE + ', 100%, ' + lightness.toFixed(1) + '%)';
+function hexParts(hex) {
+  return [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
+}
+
+/* Mix toward black (k < 0) or toward white (k > 0). One helper for both, because a
+   palette needs to go darker for the second lap and brighter under the pointer. */
+function shade(hex, k) {
+  var p = hexParts(hex);
+  var target = k > 0 ? 255 : 0;
+  var amount = Math.abs(k);
+  var out = 'rgb(';
+  for (var i = 0; i < 3; i++) {
+    out += Math.round(p[i] + (target - p[i]) * amount) + (i < 2 ? ',' : ')');
+  }
+  return out;
+}
+
+/* Colour by rank: position 1 is phosphor green, then down the palette. Wrapping laps
+   darken, so a twelfth position never reads as brighter than the third. */
+function sliceColour(rank) {
+  var lap = Math.floor(rank / DONUT_COLOURS.length);
+  var base = DONUT_COLOURS[rank % DONUT_COLOURS.length];
+  return lap === 0 ? base : shade(base, -Math.min(0.8, lap * DONUT_LAP_DIM));
+}
+
+/* The Ethereum mark, drawn rather than fetched: this page loads no images and the one
+   font it preloads has no such glyph. Official proportions (a 256x417 box), scaled to
+   the height asked for, with the lower half at full ink and the upper half lighter so
+   the facets read at 12px. */
+function drawEthMark(ctx, x, y, height, colour) {
+  var s = height / 417;
+  var w = 256 * s;
+  var left = x;
+  var top = y - height / 2;
+  function poly(points, alpha) {
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = colour;
+    ctx.beginPath();
+    ctx.moveTo(left + points[0] * s, top + points[1] * s);
+    for (var i = 2; i < points.length; i += 2) ctx.lineTo(left + points[i] * s, top + points[i + 1] * s);
+    ctx.closePath();
+    ctx.fill();
+  }
+  poly([127.9, 0, 0, 212.3, 127.9, 287.9, 255.9, 212.3], 0.62);
+  poly([127.9, 312.2, 0, 236.6, 127.9, 416.9, 255.9, 236.6], 1);
+  ctx.globalAlpha = 1;
+  return w;
+}
+
+/* What one dollar of the total is worth in ETH. Read off the ledger's own price table,
+   with a held ETH row as the fallback. Never guessed: no price, no line. */
+function ethPrice() {
+  var prices = STATE && STATE.ledger ? STATE.ledger.prices : null;
+  if (prices && prices.ETH > 0) return prices.ETH;
+  for (var i = 0; i < WALLET.rows.length; i++) {
+    if (WALLET.rows[i].symbol === 'ETH' && WALLET.rows[i].priceUsd > 0) return WALLET.rows[i].priceUsd;
+  }
+  return 0;
+}
+
+function ethAmount(usdTotal) {
+  var price = ethPrice();
+  if (!(price > 0) || !(usdTotal > 0)) return null;
+  var v = usdTotal / price;
+  return v >= 1 ? v.toFixed(4) : v.toFixed(5);
+}
+
+/* The hole in the middle. Karim, 2026-08-13: not a rounded number. It is the total to
+   the cent, and under it the same total in ETH beside the Ethereum mark, because the
+   wallet is denominated in two things a person actually thinks in. */
+function drawDonutCentre(ctx, cx, cy, total) {
+  var eth = ethAmount(total);
+  var dollars = usd(total);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#8cffab';
+  ctx.font = '600 15px ui-monospace, SFMono-Regular, Menlo, monospace';
+  ctx.fillText(dollars, cx, eth === null ? cy : cy - 8);
+  if (eth === null) return;
+
+  ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, monospace';
+  var text = ' ' + eth;
+  var markHeight = 12;
+  var markWidth = (256 / 417) * markHeight;
+  var totalWidth = markWidth + ctx.measureText(text).width;
+  var left = cx - totalWidth / 2;
+  drawEthMark(ctx, left, cy + 10, markHeight, 'rgba(51, 255, 102, 0.82)');
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(51, 255, 102, 0.62)';
+  ctx.fillText(text, left + markWidth, cy + 10);
+  ctx.textAlign = 'center';
 }
 
 function drawDonut() {
@@ -558,13 +707,15 @@ function drawDonut() {
     ctx.arc(cx, cy, edge, angle + trim / 2, angle + sweep - trim / 2);
     ctx.arc(cx, cy, inner, angle + sweep - trim / 2, angle + trim / 2, true);
     ctx.closePath();
-    ctx.fillStyle = lit ? DONUT_HI : sliceColour(i, rows.length);
+    // Lit means the slice's OWN colour lifted toward white, not one shared highlight:
+    // with ten hues on the ring a single bright green would look like a different
+    // holding rather than like this one being pointed at.
+    ctx.fillStyle = lit ? shade(sliceColour(i), 0.45) : sliceColour(i);
     ctx.fill();
     angle += sweep;
   }
 
-  ctx.fillStyle = 'rgba(51, 255, 102, 0.62)';
-  ctx.fillText(usdWhole(WALLET.totalUsd), cx, cy);
+  drawDonutCentre(ctx, cx, cy, WALLET.totalUsd);
   ctx.textAlign = 'left';
 }
 
@@ -611,6 +762,358 @@ function setHover(index) {
   }
   drawDonut();
   renderReadout();
+}
+
+/* ---------- 2c. transactions ----------
+
+   The history of what this app actually did with the money: one row per executed
+   proposal, newest first. Everything in it is derived by the server from the proposal
+   store and the hashes the rails produced (src/transactions.ts); this file formats and
+   never computes, which is why a value here can be checked against the audit log line
+   for the same id.
+
+   Interactive means three things, and no more than three: the filters narrow the list,
+   a row expands in place to its full detail, and every address and hash is a link to the
+   explorer that owns it. No modal, no route: the brief allows neither. */
+
+var TX = { entries: [], gasPending: 0 };
+var TX_FILTER = 'all';
+var TX_OPEN = {};
+var TX_LOADED = false;
+
+var TX_FILTERS = [
+  { key: 'all', label: 'ALL' },
+  { key: 'swap', label: 'SWAPS' },
+  { key: 'deposit', label: 'DEPOSITS' },
+  { key: 'withdraw', label: 'WITHDRAWALS' },
+  { key: 'transfer', label: 'TRANSFERS' }
+];
+
+/* Addresses are shown short in the table and never short in the detail: a truncated
+   address is fine to point at and not enough to check. */
+function shortAddress(address) {
+  var a = String(address);
+  if (a.length <= 13) return a;
+  return a.slice(0, 6) + '…' + a.slice(-4);
+}
+
+function txTime(iso) {
+  var d = new Date(iso);
+  if (isNaN(d.getTime())) return String(iso);
+  var today = new Date();
+  var sameDay = d.toDateString() === today.toDateString();
+  return sameDay ? d.toTimeString().slice(0, 5) : (d.getMonth() + 1) + '/' + d.getDate();
+}
+
+/* What this move cost in gas, added up over its own transactions. Three outcomes, and
+   they are three different sentences: a figure, still reading, or nobody can tell us.
+   A move that only ever signed an intent burned no gas at all, which is a fourth. */
+function gasOf(entry) {
+  var totalUsd = 0;
+  var seen = false;
+  var pending = false;
+  var unknown = false;
+  for (var i = 0; i < entry.hashes.length; i++) {
+    var tx = entry.hashes[i];
+    if (tx.kind !== 'chain') continue;
+    if (tx.gas === null) {
+      if (tx.gasPending) pending = true;
+      else unknown = true;
+      continue;
+    }
+    seen = true;
+    if (tx.gas.feeUsd !== null) totalUsd += tx.gas.feeUsd;
+  }
+  return { usd: seen ? totalUsd : null, pending: pending, unknown: unknown, onChain: seen || pending || unknown };
+}
+
+/* A link, or plain text when the chain has no explorer we can name. Never a dead <a>:
+   a link that goes nowhere is worse than a value that does not pretend to be one. */
+function explorerLink(text, url, cls) {
+  if (!url) return el('span', cls, text);
+  var a = el('a', cls ? 'link ' + cls : 'link', text);
+  a.href = url;
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  a.title = url;
+  return a;
+}
+
+function partyCell(party, cls) {
+  var td = el('td', cls ? 'addr ' + cls : 'addr');
+  if (!party) {
+    td.appendChild(el('span', 'faint', '--'));
+    return td;
+  }
+  var node = explorerLink(shortAddress(party.address), party.url, party.self ? 'self' : '');
+  node.title = party.address + (party.self ? ' (our own wallet)' : '');
+  td.appendChild(node);
+  return td;
+}
+
+function movementOf(entry) {
+  if (!entry.sent) return entry.note || '--';
+  var sent = amount(entry.sent.amount) + ' ' + entry.sent.symbol;
+  if (!entry.received) return sent;
+  return sent + ' → ' + amount(entry.received.amount) + ' ' + entry.received.symbol;
+}
+
+function copyButton(text) {
+  var btn = el('button', 'copy', '[copy]');
+  btn.type = 'button';
+  btn.addEventListener('click', function (ev) {
+    ev.stopPropagation();
+    if (!navigator.clipboard) return;
+    navigator.clipboard.writeText(text).then(function () {
+      btn.textContent = '[copied]';
+      setTimeout(function () {
+        btn.textContent = '[copy]';
+      }, 1200);
+    }, function () {
+      btn.textContent = '[no]';
+    });
+  });
+  return btn;
+}
+
+function detailLine(label, node) {
+  var line = el('div', 'txd-line');
+  line.appendChild(el('span', 'txd-k', padEnd(label, 14)));
+  line.appendChild(node);
+  return line;
+}
+
+/* The expansion. Everything the row had to leave out: full addresses, every hash with
+   the gas it actually burned, the venue's own fee, and the verdict that let it through. */
+function txDetail(entry) {
+  var box = el('div', 'txd');
+
+  if (entry.detail) box.appendChild(el('div', 'txd-detail', entry.detail));
+
+  var parties = [entry.from, entry.to, entry.counterparty];
+  var labels = ['from', 'to', 'via'];
+  for (var p = 0; p < parties.length; p++) {
+    if (!parties[p]) continue;
+    var wrap = el('span', 'txd-addr');
+    wrap.appendChild(explorerLink(parties[p].address, parties[p].url, parties[p].self ? 'self' : ''));
+    if (parties[p].self) wrap.appendChild(el('span', 'faint', '  our own wallet'));
+    wrap.appendChild(copyButton(parties[p].address));
+    box.appendChild(detailLine(labels[p] + ' (' + parties[p].place + ')', wrap));
+  }
+
+  for (var h = 0; h < entry.hashes.length; h++) {
+    var tx = entry.hashes[h];
+    var line = el('span', 'txd-hash');
+    line.appendChild(explorerLink(tx.hash, tx.url, ''));
+    line.appendChild(copyButton(tx.hash));
+    box.appendChild(detailLine(tx.kind === 'intent' ? 'intent' : 'tx ' + tx.place, line));
+    if (tx.gas) {
+      var g = el('span', 'txd-gas');
+      g.appendChild(document.createTextNode(
+        Number(tx.gas.gasUsed).toLocaleString('en-US') + ' gas × ' +
+        (Number(tx.gas.gasPriceWei) / 1e9).toFixed(4) + ' gwei = ' +
+        tx.gas.feeNative.toFixed(8) + ' ' + tx.gas.feeSymbol +
+        (tx.gas.feeUsd === null ? '' : '  (' + usdSmall(tx.gas.feeUsd) + ')')
+      ));
+      if (tx.gas.status === 'reverted') g.appendChild(el('span', 'red', '  REVERTED'));
+      box.appendChild(detailLine('gas', g));
+    } else if (tx.kind === 'intent') {
+      // Not a gap in the data: an intent is signed, not broadcast, so there is no gas of
+      // ours to report and the fee that WAS paid is the solver's, below.
+      box.appendChild(detailLine('gas', el('span', 'faint', 'none: signed as an intent, settled by a solver')));
+    } else if (!tx.gasPending) {
+      box.appendChild(detailLine('gas', el('span', 'faint', 'unknown: no chain this app can reach has this hash')));
+    }
+  }
+
+  if (entry.venueFeeUsd !== null) {
+    box.appendChild(detailLine('venue fee', el('span', null, usd(entry.venueFeeUsd) + '  (quoted at approval)')));
+  }
+  if (entry.decidedBy) {
+    var decided = entry.decidedBy === 'human' ? 'a human clicked approve'
+      : entry.decidedBy === 'policy' ? 'the policy engine, under the click threshold'
+      : 'auto-approved: the approval gate was disabled';
+    box.appendChild(detailLine('decided by', el('span', null, decided)));
+  }
+  for (var r = 0; r < entry.reasons.length; r++) {
+    box.appendChild(detailLine(r === 0 ? 'why' : '', el('span', 'dim', entry.reasons[r])));
+  }
+  box.appendChild(detailLine('proposal', el('span', 'faint', entry.id)));
+  return box;
+}
+
+function txRow(entry) {
+  var tr = document.createElement('tr');
+  tr.className = 'txrow' + (entry.status === 'failed' ? ' failed' : '');
+  tr.dataset.id = entry.id;
+  tr.tabIndex = 0;
+  tr.setAttribute('role', 'button');
+  tr.setAttribute('aria-expanded', TX_OPEN[entry.id] ? 'true' : 'false');
+
+  tr.appendChild(el('td', 'time', txTime(entry.ts)));
+
+  var action = el('td', 'action');
+  action.appendChild(el('span', 'caret', TX_OPEN[entry.id] ? '▾ ' : '▸ '));
+  action.appendChild(document.createTextNode(entry.action));
+  if (entry.status === 'failed') action.appendChild(el('span', 'red', ' FAILED'));
+  if (entry.status === 'executing') action.appendChild(el('span', 'hi', ' RUNNING'));
+  tr.appendChild(action);
+
+  var move = el('td', 'move');
+  move.appendChild(document.createTextNode(movementOf(entry)));
+  // The route, and only the route. The venue is a word per row that pushes gas and the
+  // hash off the right edge, and it is one line down in the detail.
+  var route = entry.place === entry.toPlace ? entry.place : entry.place + '→' + entry.toPlace;
+  move.appendChild(el('span', 'faint', '  ' + route));
+  move.title = movementOf(entry) + '  ' + route + (entry.venue ? ' via ' + entry.venue : '');
+  tr.appendChild(move);
+
+  tr.appendChild(el('td', 'num', usd(entry.valueUsd)));
+  tr.appendChild(partyCell(entry.from, 'from'));
+  tr.appendChild(partyCell(entry.to));
+
+  var gas = gasOf(entry);
+  var gasCell = el('td', 'num gas');
+  if (gas.usd !== null) gasCell.appendChild(document.createTextNode(usdSmall(gas.usd)));
+  else if (gas.pending) gasCell.appendChild(el('span', 'faint', 'reading'));
+  else if (gas.unknown) gasCell.appendChild(el('span', 'faint', 'unknown'));
+  else gasCell.appendChild(el('span', 'faint', 'no gas'));
+  tr.appendChild(gasCell);
+
+  var txCell = el('td', 'txh');
+  if (!entry.hashes.length) txCell.appendChild(el('span', 'faint', '--'));
+  else {
+    txCell.appendChild(explorerLink(shortAddress(entry.hashes[0].hash), entry.hashes[0].url, ''));
+    if (entry.hashes.length > 1) txCell.appendChild(el('span', 'faint', ' +' + (entry.hashes.length - 1)));
+  }
+  tr.appendChild(txCell);
+  return tr;
+}
+
+function txMatches(entry) {
+  if (TX_FILTER === 'all') return true;
+  if (TX_FILTER === 'transfer') return entry.action === 'transfer' || entry.action === 'consolidate';
+  return entry.action === TX_FILTER;
+}
+
+function renderTransactions() {
+  var tbody = $('tx-rows');
+  tbody.textContent = '';
+  var shown = 0;
+  for (var i = 0; i < TX.entries.length; i++) {
+    var entry = TX.entries[i];
+    if (!txMatches(entry)) continue;
+    shown++;
+    tbody.appendChild(txRow(entry));
+    if (TX_OPEN[entry.id]) {
+      var open = document.createElement('tr');
+      open.className = 'txopen';
+      var cell = document.createElement('td');
+      cell.colSpan = 8;
+      cell.appendChild(txDetail(entry));
+      open.appendChild(cell);
+      tbody.appendChild(open);
+    }
+  }
+
+  if (!shown) {
+    var empty = document.createElement('tr');
+    var cell2 = el('td', 'faint', TX.entries.length
+      ? 'nothing under this filter'
+      : 'no transactions yet: nothing has been executed from this app');
+    cell2.colSpan = 8;
+    empty.appendChild(cell2);
+    tbody.appendChild(empty);
+  }
+
+  var meta = $('tx-meta');
+  meta.textContent = '';
+  meta.appendChild(document.createTextNode(shown + (shown === 1 ? ' transaction' : ' transactions')));
+  // Said out loud rather than left as a blank cell: a fee that has not been read yet and
+  // a fee of zero are different facts.
+  if (TX.gasPending > 0) meta.appendChild(el('span', 'faint', '   reading gas for ' + TX.gasPending + '...'));
+  $('tab-meta').textContent = TX.entries.length ? TX.entries.length + ' recorded' : '';
+}
+
+function renderTxFilters() {
+  var box = $('tx-filters');
+  box.textContent = '';
+  for (var i = 0; i < TX_FILTERS.length; i++) {
+    (function (filter) {
+      var btn = el('button', 'tf' + (TX_FILTER === filter.key ? ' on' : ''), filter.label);
+      btn.type = 'button';
+      btn.addEventListener('click', function () {
+        TX_FILTER = filter.key;
+        renderTxFilters();
+        renderTransactions();
+      });
+      box.appendChild(btn);
+    })(TX_FILTERS[i]);
+  }
+}
+
+async function refreshTransactions() {
+  try {
+    var payload = await getJson('/api/transactions');
+    TX = { entries: payload.entries || [], gasPending: payload.gasPending || 0 };
+    TX_LOADED = true;
+    renderTransactions();
+  } catch (err) {
+    alertLine('cannot read the transaction history: ' + (err.message || String(err)));
+  }
+}
+
+function wireTransactions() {
+  renderTxFilters();
+
+  var tbody = $('tx-rows');
+  function toggle(tr) {
+    if (!tr || !tr.dataset.id) return;
+    var id = tr.dataset.id;
+    if (TX_OPEN[id]) delete TX_OPEN[id];
+    else TX_OPEN[id] = true;
+    renderTransactions();
+  }
+  tbody.addEventListener('click', function (ev) {
+    // A click on a link is a click on the link, not on the row behind it.
+    if (ev.target.closest('a') || ev.target.closest('button')) return;
+    toggle(ev.target.closest ? ev.target.closest('tr.txrow') : null);
+  });
+  tbody.addEventListener('keydown', function (ev) {
+    if (ev.key !== 'Enter' && ev.key !== ' ') return;
+    var tr = ev.target.closest ? ev.target.closest('tr.txrow') : null;
+    if (!tr) return;
+    ev.preventDefault();
+    toggle(tr);
+  });
+}
+
+/* The two views of the wallet. The holdings pane keeps its canvas, so switching back
+   redraws it: a canvas that was display:none has no size to draw into. */
+function showWalletPane(pane) {
+  var holdings = pane !== 'activity';
+  $('pane-holdings').hidden = !holdings;
+  $('pane-activity').hidden = holdings;
+  $('tab-holdings').classList.toggle('on', holdings);
+  $('tab-activity').classList.toggle('on', !holdings);
+  $('tab-holdings').setAttribute('aria-selected', holdings ? 'true' : 'false');
+  $('tab-activity').setAttribute('aria-selected', holdings ? 'false' : 'true');
+  // The totals line belongs to the holdings: "14 tokens empty, not listed" under a list of
+  // transactions is a sentence about the wrong table.
+  $('wallet-total').hidden = !holdings;
+  if (holdings) drawDonut();
+  else if (!TX_LOADED) refreshTransactions();
+}
+
+function wireTabs() {
+  var tabs = document.querySelectorAll('.tab');
+  for (var i = 0; i < tabs.length; i++) {
+    (function (tab) {
+      tab.addEventListener('click', function () {
+        showWalletPane(tab.dataset.pane);
+      });
+    })(tabs[i]);
+  }
 }
 
 /* ---------- 3. chart ---------- */
@@ -1089,6 +1592,11 @@ function openEvents() {
     }
     if (payload.type === 'state') refreshState();
     else if (payload.type === 'log' && payload.event) appendLog(payload.event);
+    // Only refetched once the panel has been opened: a gas receipt landing behind a tab
+    // nobody is looking at is not worth a round trip.
+    else if (payload.type === 'transactions') {
+      if (TX_LOADED) refreshTransactions();
+    }
     else if (payload.type === 'candles') candlesPushed();
     // A chart change from an agent. Our own writes come back with a revision we already
     // know, and chartPushed drops those rather than repainting over the hand.
@@ -1160,6 +1668,8 @@ async function boot() {
   wireKill();
   wireCollapse();
   wireWallet();
+  wireTabs();
+  wireTransactions();
   wireResize();
   wireBasic();
   // The chart owns its own fetch loop and its own timers (see ui/chart.js), so it boots

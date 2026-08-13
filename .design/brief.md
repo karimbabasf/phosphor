@@ -110,6 +110,11 @@ Spec: `docs/superpowers/specs/2026-08-12-phosphor-chart-v2.md`.
 - Karim 2026-08-12: "make a loading animation for anything that is loading or not showing yet and especially if like candlesticks havent loaded in". Every panel that has no answer yet says so while it waits, the chart most of all, and every one of them stops the moment its own answer lands
 - Karim 2026-08-12: "on the x axis the controls for squeezing are reversed and I want to be able to squeeze as much as I want". Dragging the time axis follows the hand, and the window squeezes until the renderer runs out, not until a round number does
 - Karim 2026-08-12: "I want this tiny timer to not look like a price tag". The bar countdown under the last-price tag reads as a duration, not as a second label in the price column
+- Karim 2026-08-13: "the actual list should only show us tokens we are holding. clearly". An empty token is not a row. How many were empty is still stated, and a place whose read failed gets a line of its own rather than leaving with the zeroes
+- Karim 2026-08-13: "the donut thing should have a little more diverse color scheme". Rank-coloured from a fixed palette, largest slice keeping the app's own green, with a chip per table row as the key to it. This lifts the one-hue rule for the ring only
+- Karim 2026-08-13: "the actual non rounded number to the hundreth and maybe the total value in eth with the ether logo next to it". The donut's centre reads the exact total to the cent and the same total in ETH beside the Ethereum mark, drawn on the canvas
+- Karim 2026-08-13: "we also need a transaction history tab that allows us to simply view actual transactions. like swaps, deposits, transfers. clickable from and too addresses that take us to the exploreers. gas, value... interacctvi e". A TRANSACTIONS tab in the wallet panel: time, action, movement, value, from, to, gas, tx, every address and hash a link to the explorer that owns it, filters, and rows that expand in place. No modal and no route
+- Nothing on the surface may state a number it cannot back. A fee not yet read, a hash no reachable chain knows, and a move that burned no gas at all are three different words, never a blank or a zero
 ## Goal behind the ask
 The owner sees the whole machine at once, with no scrolling: what the wallet holds, what governs
 it, and whether anything is waiting for a click. On testnet with the gate off he must also be
@@ -200,3 +205,46 @@ What did NOT change, and is what "like pro mode" does not mean:
 
 States to check on this pass: basic resting (dark), basic asking (dark), basic at 1440x900,
 basic at 390.
+
+## Added 2026-08-13 (fourth pass): the wallet gets a history, and the donut gets colour
+
+Karim, verbatim: "fix the 'wallet tab. The donut thing should have a little more diverse color
+scheme and the actual list should only show us tokens we are holding. clearly. the policy look
+sgood for now and Ilike the log too but we also need a transaction history tab that allows us to
+simply view actual transactions. like swaps, deposits, transfers. clickable from and too
+addresses that take us to the exploreers. gas, value. IA mean everythign you wwould expect to see
+in a top of the level wallets transaction shistory tab. interacctvi e". Then: "i also want the
+number inside of the donut to not just be a boring numebr, but like the actual non rounded number
+to the hundreth and maybe the total value in eth with the ether logo next to it".
+
+PRO ONLY. Basic is untouched by this pass: it is written for someone who does not want a
+transaction history, and nothing here appears on that screen.
+
+Three lines above are reversed by this, and only these three:
+- **The donut is no longer one hue.** "one hue" and the rank-brightness ramp are superseded for
+  the ring only. It now carries a fixed palette of CRT phosphor colours, biggest slice first, and
+  the biggest slice keeps the app's own green. Everything ELSE on the pro screen is still one
+  hue: the rule is lifted for the chart that needed categorical colour, nowhere else.
+- **The wallet table has a colour chip per row.** It is the key to the ring, which is what makes
+  a multi-colour donut readable without a legend.
+- **"No click behaviour" in the wallet region is superseded.** Hover still links the ring and the
+  table both ways. What is new is a tab strip over the same panel and a history whose rows expand.
+
+Asked for, on top of what already stands:
+- The wallet list shows only what is actually held. An empty token is not a row. How many were
+  empty is still stated, because a short list and a shallow read are different facts. A place
+  whose read failed gets a line of its own rather than disappearing with the zeroes.
+- The donut's centre reads the exact total to the cent, never rounded, with the same total in ETH
+  under it beside the Ethereum mark. The mark is drawn on the canvas: this page loads no images.
+- A TRANSACTIONS tab beside HOLDINGS in the same panel, listing what this app actually did:
+  swaps, deposits, withdrawals, transfers. Time, action, movement, value, from, to, gas, tx.
+- Every address and every transaction hash is a link to the explorer that owns it. An intent hash
+  is not a chain transaction and gets no link, because no explorer resolves one.
+- Gas is the real receipt figure (gas used, gas price, fee in ETH and in USD), read back off the
+  chain. Not yet read, could not be read, and none was burned are three different words on the
+  surface, never a blank.
+- Interactive means three things and no more: the filters narrow the list, a row expands in place
+  to its full detail, and links go out. No modal, no route: the one-page rule still stands.
+
+States to check on this pass: pro holdings (donut with colour, chips, empty count), pro
+transactions (rows, one expanded, a failed row), pro at 1440x900, pro stacked under 1100px.

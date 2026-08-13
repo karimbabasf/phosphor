@@ -404,10 +404,10 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     const txids = result.txids ?? [];
     if (!result.ok) {
       audit.append('execution_failed', `${p.id}: ${result.detail}`, { id: p.id, txids });
-      return persist({ ...executing, status: 'failed', result: { ok: false, detail: result.detail } });
+      return persist({ ...executing, status: 'failed', result: { ok: false, detail: result.detail, txids } });
     }
     audit.append('executed', `${p.id}: ${result.detail}`, { id: p.id, txids });
-    return persist({ ...executing, status: 'executed', result: { ok: true, detail: result.detail } });
+    return persist({ ...executing, status: 'executed', result: { ok: true, detail: result.detail, txids } });
   }
 
   function legKey(leg: TransferLeg): string {
@@ -499,12 +499,12 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     if (failures.length > 0) {
       const detail = failures.join('; ');
       audit.append('execution_failed', `${p.id}: ${detail}`, { id: p.id, txids });
-      return persist({ ...executing, status: 'failed', result: { ok: false, detail } });
+      return persist({ ...executing, status: 'failed', result: { ok: false, detail, txids } });
     }
 
     const detail = `sent ${legs.length} leg(s): ${txids.join(', ')}`;
     audit.append('executed', `${p.id}: ${detail}`, { id: p.id, txids });
-    return persist({ ...executing, status: 'executed', result: { ok: true, detail } });
+    return persist({ ...executing, status: 'executed', result: { ok: true, detail, txids } });
   }
 
   async function applyPolicyChange(p: Proposal): Promise<Proposal> {

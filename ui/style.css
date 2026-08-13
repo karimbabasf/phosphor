@@ -289,6 +289,46 @@ body.log-collapsed .panel-gate > .pbody { max-height: none; }
   overflow: hidden;
 }
 
+/* The two views of the wallet. Same bracket idiom as the chart's timeframe strip, and
+   for the same reason: it stays a line of text on a terminal instead of becoming a tab
+   widget with a border and a background. */
+.tabs {
+  display: flex;
+  align-items: baseline;
+  gap: 1ch;
+  margin: 0 0 4px;
+  flex: none;
+}
+
+.tab {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--green-faint);
+  font: var(--fs) / var(--lh) var(--mono);
+  letter-spacing: 0.08em;
+  padding: 0 0.75ch;
+  cursor: pointer;
+}
+
+.tab:hover { color: var(--green); }
+.tab:focus-visible { outline: 1px dotted var(--green); outline-offset: 1px; }
+.tab.on { color: var(--green-hi); }
+.tab.on::before { content: '['; color: var(--green-ghost); }
+.tab.on::after { content: ']'; color: var(--green-ghost); }
+
+.tabmeta { margin-left: auto; }
+
+/* The colour that ties a row to its slice. A square of ink, not a swatch with a border:
+   the ring is the chart and this is only the key to it. */
+.grid td.token .chip {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 0.75ch;
+  vertical-align: baseline;
+}
+
 .wallet {
   display: flex;
   gap: 2ch;
@@ -393,6 +433,122 @@ body.log-collapsed .panel-gate > .pbody { max-height: none; }
   text-overflow: ellipsis;
   flex: none;
 }
+
+/* ---------- 2c. transactions ---------- */
+
+.txpane {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+/* display:flex here beats the browser's own [hidden] rule, so the hidden pane has to say
+   so itself. Without this both panes draw at once, on top of each other. Same for the
+   holdings pane, which .wallet gives a display of its own. */
+.txpane[hidden],
+.wallet[hidden] { display: none; }
+
+.txbar {
+  display: flex;
+  align-items: baseline;
+  gap: 1ch;
+  margin: 0 0 3px;
+  flex: none;
+}
+
+.txbar .meta { margin-left: auto; }
+
+/* Eight columns of monospace do not fit a narrow left column, so the table keeps its
+   width and scrolls sideways inside its own box. The page still never scrolls. */
+.txgrid {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+}
+
+.txgrid::-webkit-scrollbar { width: 6px; height: 6px; }
+.txgrid::-webkit-scrollbar-track { background: transparent; }
+.txgrid::-webkit-scrollbar-thumb { background: var(--green-ghost); }
+
+/* Fixed layout so the columns hold their widths and a long movement truncates instead of
+   pushing gas and the hash off the right edge. The minimum is what the eight columns need;
+   below that the box scrolls sideways rather than the page doing it. */
+.grid.tx {
+  table-layout: fixed;
+  width: 100%;
+  min-width: 104ch;
+}
+
+/* Seven columns hold content of a known width and are given exactly that, including the
+   1ch gutter every cell carries. MOVEMENT is deliberately the one with no width: in a fixed
+   layout it takes whatever is left, so a wider window spends its extra room on the numbers
+   that matter rather than on padding a timestamp. The 104ch minimum is those seven plus a
+   movement wide enough to read; under that the box scrolls sideways and the column that
+   goes off the edge is the hash, which is the one repeated in full one click away. */
+.grid.tx .c-time { width: 6ch; }
+.grid.tx .c-action { width: 15ch; }
+.grid.tx .c-value { width: 11ch; }
+.grid.tx .c-addr { width: 13ch; }
+.grid.tx .c-gas { width: 10ch; }
+.grid.tx .c-tx { width: 13ch; }
+
+/* Under about 1600px the left column cannot hold eight columns, and the one to give up is
+   FROM: in this app it is our own wallet on nearly every row, and the expansion states it
+   in full either way. TO, GAS and the hash are the three a reader is actually scanning for,
+   so they stay on screen rather than off the right edge behind a scrollbar. */
+@media (max-width: 1599px) {
+  .grid.tx { min-width: 91ch; }
+  .grid.tx .c-from,
+  .grid.tx td.from { display: none; }
+}
+
+.grid.tx td { padding-top: 1px; padding-bottom: 1px; }
+.grid.tx td.time { color: var(--green-ghost); }
+.grid.tx td.action { color: var(--green-hi); letter-spacing: 0.04em; }
+.grid.tx td.action .caret { color: var(--green-ghost); }
+.grid.tx td.move { color: var(--green); }
+.grid.tx td.gas { color: var(--green-dim); }
+
+/* The whole row is the control. Hover and focus say so; a caret in the action cell says
+   which way it is about to go. */
+.grid.tx tr.txrow { cursor: pointer; }
+.grid.tx tr.txrow:hover td { background: var(--green-wash); }
+.grid.tx tr.txrow:focus-visible { outline: 1px dotted var(--green); outline-offset: -1px; }
+.grid.tx tr.txrow.failed td.action { color: var(--red); }
+
+/* Links out. Underlined on hover only: eight underlined cells per row would read as a
+   web page rather than as a terminal. */
+.link { color: var(--green); text-decoration: none; }
+.link:hover { color: var(--green-hi); text-decoration: underline; }
+.link:focus-visible { outline: 1px dotted var(--green); outline-offset: 1px; }
+/* An address of ours reads differently from one that is not, everywhere it appears. */
+.link.self { color: var(--green-dim); }
+.link.self:hover { color: var(--green-hi); }
+
+/* The expansion. Indented under the row it belongs to, and it is the only place a full
+   address or a full hash appears. */
+.txopen > td { padding: 2px 1ch 6px 4ch; white-space: normal; }
+
+.txd { border-left: 1px solid var(--green-ghost); padding-left: 1ch; }
+.txd-detail { color: var(--green); white-space: pre-wrap; margin-bottom: 3px; }
+.txd-line { white-space: pre-wrap; word-break: break-all; color: var(--green-dim); }
+.txd-k { color: var(--green-faint); white-space: pre; }
+.txd-gas { font-variant-numeric: tabular-nums; }
+
+.copy {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--green-ghost);
+  font: var(--fs) / var(--lh) var(--mono);
+  padding: 0 0.5ch;
+  cursor: pointer;
+}
+
+.copy:hover { color: var(--green); }
+.copy:focus-visible { outline: 1px dotted var(--green); outline-offset: 1px; }
 
 /* ---------- 3. chart ---------- */
 
@@ -589,6 +745,10 @@ body.log-collapsed .panel-gate > .pbody { max-height: none; }
   /* Stacked, the page scrolls down but must still not scroll sideways: six
      nowrap columns wider than a phone scroll inside their own box. */
   .walletgrid { overflow-x: auto; overflow-y: visible; }
+  /* Same for the history, which is wider still. It keeps a cap on its own height so a
+     long list becomes a scroll inside the panel rather than a page nobody can leave. */
+  .txgrid { max-height: 50vh; }
+  .tabs, .txbar { flex-wrap: wrap; }
   .donutwrap { margin-bottom: 6px; }
   #donut { height: 180px; flex: none; }
   /* Same reason: the timeframe strip wraps rather than push the body out. */

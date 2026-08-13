@@ -42,6 +42,9 @@ import type { CandleService } from './candles.ts';
 import type { MarketData } from './market/index.ts';
 import { classify } from './composition.ts';
 import { buildWallet } from './wallet.ts';
+import type { AgentPresence } from './agents.ts';
+import { buildTransactions, createGasCache, evmCandidates } from './transactions.ts';
+import type { TxPlace } from './transactions.ts';
 import { gateRequired, gateBanner } from './policy/gate.ts';
 import { renderSentences } from './policy/render.ts';
 import {
@@ -136,10 +139,8 @@ export type ServerDeps = {
   proposals: ProposalService;
   getPolicy: () => Policy | null;
   setKill: (on: boolean) => void;
-  // Returns true only on the connect edge, so the caller logs an attach once per
-  // agent session instead of once per 15s heartbeat.
-  agentSeen: () => boolean;
-  agentsConnected: () => number;
+  // Who is driving, and the one-at-a-time rule. See src/agents.ts.
+  agents: AgentPresence;
   getView: () => ViewMode;
   setView: (mode: ViewMode) => void;
 };
@@ -182,7 +183,7 @@ function tokenMatches(supplied: unknown, expected: string): boolean {
 
 export function createServer(deps: ServerDeps): PhosphorServer {
   const { cfg, audit, store, ledger, riskRows, candles, market, proposals } = deps;
-  const { getPolicy, setKill, agentSeen, agentsConnected, getView, setView } = deps;
+  const { getPolicy, setKill, agents, getView, setView } = deps;
 
   const token = crypto.randomBytes(24).toString('hex');
   audit.append('app_start', 'approval surface armed: browser approval token minted for this boot');
@@ -207,6 +208,13 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     stateTimer.unref();
   }
 
+  // The history panel refetches on its own signal rather than on state, because a gas
+  // receipt landing changes one cell in a table nobody may even be looking at, and a state
+  // push redraws the wallet, the gate, the policy and the basic screen.
+  function broadcastTransactions(): void {
+    for (const client of sseClients) sseSend(client, { type: 'transactions' });
+  }
+
   // The revision rides along so the browser can tell an agent's change from the echo of its
   // own. It ignores anything at or below the rev its last write returned, which is what keeps
   // a server round trip from fighting the hand that is dragging the chart.
@@ -214,7 +222,11 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     for (const client of sseClients) sseSend(client, { type: 'chart', rev: chart.rev() });
   }
 
-  const offStore = store.subscribe(() => broadcastState());
+  // A proposal reaching 'executed' is both a balance change and a new line in the history.
+  const offStore = store.subscribe(() => {
+    broadcastState();
+    broadcastTransactions();
+  });
   const offAudit = audit.subscribe((event) => {
     for (const client of sseClients) sseSend(client, { type: 'log', event });
   });
@@ -393,7 +405,13 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       sentences: sentencesOf(policy),
       proposals: list,
       mode: cfg.mode,
-      agents: { connected: agentsConnected() },
+      // holder is agent-authored text (its client name) and is rendered as text, never as
+      // markup. It is here so the status bar can say WHICH agent holds the seat: "an agent
+      // is connected" is a weaker answer than "claude-code is connected, since 19:12".
+      agents: {
+        connected: agents.connected(),
+        holder: agents.holder(),
+      },
       candleProducts: cfg.candleProducts,
       view: getView(),
       // Computed in BOTH modes, deliberately. A view model that only exists in the mode
@@ -405,12 +423,64 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         policyReadable: policy !== null,
         killSwitch: policy?.killSwitch ?? false,
         gateRequired: gateRequired(cfg),
-        agentsConnected: agentsConnected(),
+        agentsConnected: agents.connected(),
         chainStatus: snapshot.chainStatus,
         selfAddresses: [...cfg.addresses.evm, ...cfg.addresses.solana, ...cfg.addresses.near],
         price: priceReading,
       }),
     };
+  }
+
+  // ---------- transaction history ----------
+  //
+  // Derived from the proposal store and the audit log on every request (see the header of
+  // src/transactions.ts). Gas is the one part that needs the chain, so it is read behind the
+  // response rather than in front of it: the panel draws immediately with whatever receipts
+  // are already cached, the rest are fetched, and the browser is told when they land.
+
+  const gasCache = createGasCache({ network: cfg.network, dataDir: cfg.dataDir });
+  let gasFilling = false;
+
+  function transactionsPayload(): { entries: ReturnType<typeof buildTransactions>; gasPending: number } {
+    const entries = buildTransactions({
+      proposals: proposals.list(),
+      events: audit.tail(LOG_LIMIT_MAX),
+      network: cfg.network,
+      selfAddresses: [...cfg.addresses.evm, ...cfg.addresses.solana, ...cfg.addresses.near],
+      gas: gasCache.all(),
+      tried: gasCache.triedAll(),
+    });
+    // Only what is still worth waiting for. A hash no chain we can reach has ever heard of
+    // is answered, not pending: an app that has run on two networks holds plenty of them.
+    let gasPending = 0;
+    for (const entry of entries) {
+      for (const tx of entry.hashes) if (tx.gasPending) gasPending += 1;
+    }
+    return { entries, gasPending };
+  }
+
+  // One fill at a time, and only for hashes nobody has read yet. A receipt is immutable, so
+  // this converges: every call after the last one has landed does no network work at all.
+  function fillGas(entries: ReturnType<typeof buildTransactions>): void {
+    if (gasFilling) return;
+    const wanted: Array<{ places: TxPlace[]; hash: string }> = [];
+    for (const entry of entries) {
+      for (const tx of entry.hashes) {
+        if (tx.gasPending) wanted.push({ places: evmCandidates(tx.place), hash: tx.hash });
+      }
+    }
+    if (wanted.length === 0) return;
+    gasFilling = true;
+    const prices = ledger.snapshot().prices;
+    void gasCache
+      .fill(wanted, symbol => prices[symbol] ?? 0)
+      .then(landed => {
+        if (landed > 0) broadcastTransactions();
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        gasFilling = false;
+      });
   }
 
   // ---------- browser routes ----------
@@ -1132,6 +1202,28 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     sendJson(res, 200, { ok: true, view: mode });
   }
 
+  // A second agent is refused for as long as the first one holds the seat, which can be
+  // hours, and it will keep trying: its heartbeat alone is one attempt every few seconds.
+  // One audit line per refused session, then silence. The refusal itself is never silent
+  // (every call gets the 409 and the reason), only the log is.
+  const rejectedSessions = new Set<string>();
+
+  function rejectSeat(error: string, body: JsonBody, res: http.ServerResponse): void {
+    const session = String(body.session ?? 'unnamed-session');
+    if (!rejectedSessions.has(session)) {
+      rejectedSessions.add(session);
+      audit.append('agent_rejected', 'a second agent tried to attach and was refused', {
+        op: String(body.op ?? ''),
+        client: body.client,
+        holder: agents.holder()?.client ?? null,
+      });
+    }
+    // seat:'busy' is the marker src/mcp.ts unwraps into a plain sentence for the agent.
+    // It is deliberately not "any 409": the view-mode refusal is also a 409 and must keep
+    // its JSON shape, which is what the e2e script and the browser both read.
+    sendJson(res, 409, { error, seat: 'busy' });
+  }
+
   async function handleMcp(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const parsed = await readBody(req);
     if (!parsed.ok) {
@@ -1142,19 +1234,46 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     const op = String(body.op ?? '');
 
     // The presence heartbeat is not a tool call, so it is answered before the
-    // append below and never enters the transcript. mcp.ts pings every 15s for
-    // the whole life of an agent session: on 2026-08-12, with two sessions open,
-    // 242 of 418 audit lines were heartbeats and the real calls were buried.
-    // Only the edges are worth a line, and agentSeen() reports them.
+    // append below and never enters the transcript. mcp.ts pings for the whole life
+    // of an agent session: on 2026-08-12, with two sessions open, 242 of 418 audit
+    // lines were heartbeats and the real calls were buried. Only the edges are worth
+    // a line, and the seat below reports them.
     if (op === 'hello') {
       // The client name is agent-controlled. It stays in data, where it is stored
       // verbatim and rendered as data, and out of msg, where a crafted value could
       // dress a heartbeat up as some other event in the log column.
-      if (agentSeen()) audit.append('agent_connected', 'an agent attached to phosphor', body);
+      const claim = agents.claim(body);
+      if (!claim.ok) {
+        rejectSeat(claim.error, body, res);
+        return;
+      }
+      if (claim.edge) audit.append('agent_connected', 'an agent attached to phosphor', body);
       broadcastState();
+      sendJson(res, 200, { ok: true, seat: 'held', since: claim.seat.since });
+      return;
+    }
+
+    // A clean shutdown, which is what makes the light go out the moment an agent is
+    // terminated rather than one TTL later. Only the holder can free its own seat.
+    if (op === 'bye') {
+      const freed = agents.release(body.session);
+      if (freed !== null) {
+        audit.append('agent_disconnected', 'the agent disconnected', { client: freed.client, since: freed.since });
+        broadcastState();
+      }
       sendJson(res, 200, { ok: true });
       return;
     }
+
+    // Every other op holds the seat or is refused. An op from a session that never said
+    // hello takes a free seat: an agent should not have to know about a handshake to be
+    // counted as connected, and something has to be attached for a tool call to exist.
+    const seat = agents.check(body);
+    if (!seat.ok) {
+      rejectSeat(seat.error, body, res);
+      return;
+    }
+    if (seat.edge) audit.append('agent_connected', 'an agent attached to phosphor', body);
 
     const label =
       op === 'read'
@@ -1187,7 +1306,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       handleSetViewMode(body, res);
       return;
     }
-    sendJson(res, 400, { error: `unknown op: ${op}. known ops: hello, read, propose, view, set_view_mode` });
+    sendJson(res, 400, { error: `unknown op: ${op}. known ops: hello, bye, read, propose, view, set_view_mode` });
   }
 
   // ---------- dispatch ----------
@@ -1202,6 +1321,11 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         if (route === '/api/chart') return sendJson(res, 200, chartPayload());
         if (route === '/api/log') {
           return sendJson(res, 200, audit.tail(intParam(url.searchParams.get('limit'), 200, LOG_LIMIT_MAX)));
+        }
+        if (route === '/api/transactions') {
+          const payload = transactionsPayload();
+          fillGas(payload.entries);
+          return sendJson(res, 200, payload);
         }
         if (route === '/api/session') return sendJson(res, 200, { token });
         if (route === '/api/events') return openEvents(req, res);

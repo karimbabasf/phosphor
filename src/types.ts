@@ -118,10 +118,14 @@ export type WalletRow = {
 };
 
 export type WalletView = {
-  rows: WalletRow[]; // value descending
+  rows: WalletRow[]; // value descending; only things actually held
   totalUsd: number; // everything: tokens, natives, LP and intents balances
   byChain: Record<string, number>; // place -> usd
   stale: WalletPlace[]; // places whose last read failed; never silently zero
+  // How many configured tokens came back with nothing in them. The rows are gone from
+  // the list (a wallet lists what you hold), but the number stays: "we looked at 19
+  // tokens and 14 were empty" and "we only looked at 5" are different facts.
+  emptyCount: number;
 };
 
 // ---------- Policy ----------
@@ -342,7 +346,10 @@ export type Proposal = {
   // clicked when no person did.
   decidedBy?: 'human' | 'policy' | 'gate_disabled';
   decidedAt?: string;
-  result?: { ok: boolean; detail: string };
+  // txids are the evidence: the hashes the rail broadcast or the intents it signed. They
+  // are also written to the audit log, but the log is compactable and this record is not,
+  // so the transaction history keeps its explorer links after a compaction.
+  result?: { ok: boolean; detail: string; txids?: string[] };
 };
 
 // ---------- Basic view ----------
@@ -435,10 +442,13 @@ export type LogEvent = {
   type:
     | 'app_start'
     | 'tool_call'
-    // The two edges of an agent session. The 15s heartbeat between them is not
+    // The two edges of an agent session. The heartbeat between them is not
     // logged: it says nothing a reader of the transcript does not already know.
     | 'agent_connected'
     | 'agent_disconnected'
+    // A second agent tried to drive the app while another one held the seat. One
+    // line per refused session, not per refused call: see src/agents.ts.
+    | 'agent_rejected'
     // Written by a human-run compaction, never by the app. The log is append-only,
     // so the one thing a removal owes its reader is a line saying it happened.
     | 'audit_compacted'

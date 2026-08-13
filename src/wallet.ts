@@ -98,7 +98,17 @@ export function buildWallet(
     };
   });
 
-  const rows = [...tokenRows, ...lpRows, ...intentsRows].sort((a, b) => b.valueUsd - a.valueUsd);
+  // A wallet lists what you hold. The configured token list is long and most of it is
+  // empty on any given day (19 rows, 14 of them zero, on 2026-08-13), and a list where
+  // three quarters of the lines are 0.0000 buries the five that are real.
+  //
+  // The test is quantity, not value: a token we hold but have no price for is still held,
+  // and dropping it would be the app deciding you own less than you do. A pool position is
+  // kept whatever it is worth, because the position exists on chain either way.
+  const held = [...tokenRows, ...lpRows, ...intentsRows].filter(r => r.kind === 'lp' || r.quantity > 0 || r.valueUsd > 0);
+  const emptyCount = tokenRows.length + intentsRows.length - held.filter(r => r.kind !== 'lp').length;
+
+  const rows = held.sort((a, b) => b.valueUsd - a.valueUsd);
   const totalUsd = rows.reduce((sum, r) => sum + r.valueUsd, 0);
   for (const row of rows) row.share = totalUsd > 0 ? row.valueUsd / totalUsd : 0;
 
@@ -113,5 +123,5 @@ export function buildWallet(
   // actually attempted, so demo mode and testnet do not sprout a permanent STALE badge.
   if (intents !== undefined && !intents.ok) stale.push('intents');
 
-  return { rows, totalUsd, byChain, stale };
+  return { rows, totalUsd, byChain, stale, emptyCount };
 }

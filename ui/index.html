@@ -68,12 +68,22 @@
         <div class="frame frame-bottom"></div>
       </section>
 
-      <!-- 3. WALLET: the whole bottom left. Donut on the left, table on the right,
-           one panel. The table scrolls inside itself so the donut stays put. -->
+      <!-- 3. WALLET: the whole bottom left. Two views of the same money in one panel,
+           switched by the strip at the top: what is held now, and what was done to it.
+           HOLDINGS is the donut and the table; TRANSACTIONS is the history. The strip
+           uses the same bracket idiom as the chart's timeframes, so it stays a line of
+           text on a terminal rather than becoming a tab widget.
+           Each pane scrolls inside itself, so the page still never scrolls. -->
       <section class="panel panel-wallet">
         <div class="frame frame-top" data-title="WALLET"></div>
         <div class="pbody">
-          <div class="wallet">
+          <p class="tabs" role="tablist" aria-label="wallet views">
+            <button type="button" class="tab on" id="tab-holdings" data-pane="holdings" role="tab" aria-selected="true" aria-controls="pane-holdings">HOLDINGS</button>
+            <button type="button" class="tab" id="tab-activity" data-pane="activity" role="tab" aria-selected="false" aria-controls="pane-activity">TRANSACTIONS</button>
+            <span class="tabmeta faint" id="tab-meta"></span>
+          </p>
+
+          <div class="wallet" id="pane-holdings" role="tabpanel" aria-labelledby="tab-holdings">
             <div class="donutwrap" id="donutwrap">
               <canvas id="donut"></canvas>
               <p class="readout" id="donut-readout">--</p>
@@ -94,6 +104,34 @@
               </table>
             </div>
           </div>
+
+          <!-- The history. Every row is derived from a proposal this app executed and the
+               hashes it produced; nothing here is authored. A row expands in place rather
+               than opening anything: the brief allows no modals and no routes. -->
+          <div class="txpane" id="pane-activity" role="tabpanel" aria-labelledby="tab-activity" hidden>
+            <p class="txbar">
+              <span class="tfs" id="tx-filters"></span>
+              <span class="meta faint" id="tx-meta">--</span>
+            </p>
+            <div class="txgrid" id="txgrid">
+              <table class="grid tx" id="tx-table">
+                <thead>
+                  <tr>
+                    <th class="c-time">TIME</th>
+                    <th class="c-action">ACTION</th>
+                    <th class="c-move">MOVEMENT</th>
+                    <th class="c-num c-value">VALUE</th>
+                    <th class="c-addr c-from">FROM</th>
+                    <th class="c-addr">TO</th>
+                    <th class="c-num c-gas">GAS</th>
+                    <th class="c-tx">TX</th>
+                  </tr>
+                </thead>
+                <tbody id="tx-rows"></tbody>
+              </table>
+            </div>
+          </div>
+
           <p class="totals" id="wallet-total">--</p>
         </div>
         <div class="frame frame-bottom"></div>

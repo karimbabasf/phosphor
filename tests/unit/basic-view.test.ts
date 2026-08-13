@@ -28,7 +28,7 @@ function chainStatus(fetchedAt = T2): Record<ChainId, ChainStatus> {
 
 function baseInput(over: Partial<BasicInput> = {}): BasicInput {
   return {
-    wallet: { rows: [], totalUsd: 2341.08, byChain: { arb: 2000, eth: 341.08 }, stale: [] },
+    wallet: { rows: [], totalUsd: 2341.08, byChain: { arb: 2000, eth: 341.08 }, stale: [], emptyCount: 0 },
     proposals: [],
     policyReadable: true,
     killSwitch: false,
@@ -87,7 +87,7 @@ const ELEVEN: Array<[string, BasicInput]> = [
   ['gate disabled', baseInput({ gateRequired: false })],
   ['policy unreadable', baseInput({ policyReadable: false })],
   ['no agent', baseInput({ agentsConnected: 0 })],
-  ['chain read failed', baseInput({ wallet: { rows: [], totalUsd: 0, byChain: {}, stale: ['near'] } })],
+  ['chain read failed', baseInput({ wallet: { rows: [], totalUsd: 0, byChain: {}, stale: ['near'], emptyCount: 0 } })],
 ];
 
 test('every one of the eleven states produces copy', () => {
@@ -127,7 +127,7 @@ test('a policy refusal says what was tried, that it was stopped, and that money 
 // ---------- what it refuses to say ----------
 
 test('a stale chain shows no number at all, never a zero', () => {
-  const view = buildBasic(baseInput({ wallet: { rows: [], totalUsd: 0, byChain: {}, stale: ['near'] } }));
+  const view = buildBasic(baseInput({ wallet: { rows: [], totalUsd: 0, byChain: {}, stale: ['near'], emptyCount: 0 } }));
   assert.equal(view.totalUsd, null);
   assert.match(view.totalLine, /still checking/);
   assert.ok(!view.totalLine.includes('0.00'), 'an unknown balance may not render as a zero');
@@ -440,6 +440,7 @@ test('one row per thing owned, not one per chain', () => {
         totalUsd: 2191.08,
         byChain: { base: 700, arb: 504, eth: 987.08 },
         stale: [],
+        emptyCount: 0,
       },
     }),
   );
@@ -466,6 +467,7 @@ test('holdings sort by value and pool positions collapse into one line', () => {
         totalUsd: 430,
         byChain: { base: 430 },
         stale: [],
+        emptyCount: 0,
       },
     }),
   );
@@ -484,12 +486,12 @@ test('holdings go empty exactly when the total goes unknown', () => {
   const rows = [walletRow({ valueUsd: 100, quantity: 100 })];
 
   const stale = buildBasic(
-    baseInput({ wallet: { rows, totalUsd: 100, byChain: { base: 100 }, stale: ['near'] } }),
+    baseInput({ wallet: { rows, totalUsd: 100, byChain: { base: 100 }, stale: ['near'], emptyCount: 0 } }),
   );
   assert.equal(stale.totalUsd, null);
   assert.deepEqual(stale.holdings, [], 'a partial list is worse than no list');
 
-  const fine = buildBasic(baseInput({ wallet: { rows, totalUsd: 100, byChain: { base: 100 }, stale: [] } }));
+  const fine = buildBasic(baseInput({ wallet: { rows, totalUsd: 100, byChain: { base: 100 }, stale: [], emptyCount: 0 } }));
   assert.equal(fine.holdings.length, 1);
 });
 

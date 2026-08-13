@@ -1,6 +1,6 @@
 {
- "stamp": "4104b87e5ac3e69b",
- "iteration": 13,
+ "stamp": "9b60b8c08432f2e9",
+ "iteration": 14,
  "firstFive": {
   "what": "A dark two-column money screen: a $52,013.21 balance top left with the nine things it is made of listed under it, and down the right what one coin costs, the last four things that happened, a promise that nothing moves without a click, and a red STOP EVERYTHING",
   "who": "The person who owns the money and does not trade, checking that nothing bad happened",
@@ -221,6 +221,31 @@
    "requirement": "Basic may render fewer words, never fewer facts about where money goes (unchanged, and it outranks 'simple')",
    "met": true,
    "ref": "The ask still renders every destination in full, never truncated, with quoter-chosen addresses labelled and coloured as not-your-wallet. tests/unit/basic-view.test.ts covers it. The question is the one dense thing on an otherwise vacant page, on purpose"
+  },
+  {
+   "requirement": "The wallet list shows only what is actually held, clearly, and still says how many were empty",
+   "met": true,
+   "ref": "buildWallet drops any token or verifier row with no quantity and no value and returns emptyCount. Live mainnet read on 2026-08-13 went from 19 rows to 5, and the totals line ends '14 tokens empty, not listed'. The test is quantity rather than value, so a held token with no price survives (tests/unit/wallet.test.ts). Dust prints as 0.00000085 rather than 0, because a QTY column reading 0 for something held is the same lie the empty rows were"
+  },
+  {
+   "requirement": "The donut carries a more diverse colour scheme",
+   "met": true,
+   "ref": "Ten CRT phosphor hues by rank, largest slice keeping the app's own #33ff66, wrapping laps darkened. The hover highlight is the slice's own colour lifted toward white rather than one shared green, and each table row carries a 7px chip of its slice colour so the ring is decodable without a legend. On the 1440 shot the five slices are green, cyan, amber, rose and violet and none can be mistaken for another"
+  },
+  {
+   "requirement": "The number inside the donut is the exact total to the hundredth, with the total in ETH and the Ethereum mark under it",
+   "met": true,
+   "ref": "Centre reads $14.73, not $15: usd() to two places, never usdWhole(). Under it the Ethereum mark drawn as canvas paths at official 256x417 proportions, then 0.00779. The ETH price comes from the ledger's own price table with a held ETH row as the fallback, and the line is omitted entirely when neither exists rather than guessed"
+  },
+  {
+   "requirement": "A transaction history tab: actual transactions, swaps, deposits, transfers, clickable from and to addresses to the explorers, gas, value, everything a top-level wallet history shows, interactive",
+   "met": true,
+   "ref": "A TRANSACTIONS tab beside HOLDINGS in the same panel, 17 real entries on the live app. Columns TIME, ACTION, MOVEMENT, VALUE, FROM, TO, GAS, TX. Addresses and hashes are links to the explorer that owns them (etherscan, basescan, arbiscan, solscan, nearblocks, per network). Gas is the receipt figure read back off the chain: 21000 gas at the recorded price, $0.0023, shown to four places so a sub-cent fee does not read as free. Interactive is three things and no more: five filters, a row that expands in place to full addresses, every hash, the gas arithmetic, the venue fee, who decided and why, and links out. No modal and no route, so the one-page rule stands"
+  },
+  {
+   "requirement": "Nothing on the surface may state a number it cannot back",
+   "met": true,
+   "ref": "An intent hash gets no explorer link, because none resolves one, and the row says 'no gas: signed as an intent, settled by a solver'. A hash no reachable chain knows reads 'unknown', a fee still being fetched reads 'reading', and a fill that the rail did not record is absent rather than backfilled from the approved floor. Four different states, four different words, no blanks"
   }
  ],
  "goal": {
@@ -230,6 +255,11 @@
   "why": "On the 1440x900 screenshot the banner is the only inverted block on an otherwise green-on-black page, 1416px wide at y=43, so the eye cannot route around it. The gate panel it refers to sits directly below it in the right column and carries the same red in its frame title, so the banner and the surface it disables read as one statement rather than as a stray warning"
  },
  "states": {
+  "holdings tab": "1440x900 default: donut in five colours, $14.73 and the ETH mark in the hole, five rows each with its chip, totals ending '14 tokens empty, not listed'. No page scroll",
+  "transactions tab": "clicked to TRANSACTIONS at 1440 and 1920: 17 rows newest first, three failed swaps in red, gas reading $0.0023 where a receipt was found, 'unknown' where no reachable chain has the hash, 'no gas' where only an intent was signed. At 1920 all eight columns fit; under 1600 the FROM column drops, because it is our own wallet on nearly every row and the expansion states it in full",
+  "transaction expanded": "clicked a withdraw row: the rail's own sentence, from/to/via at full length with copy buttons, the intent hash, the gas line, the venue fee, who decided and the policy reasons, then the proposal id. Indented under its row behind a ghost rule, no modal",
+  "history empty": "a store with nothing executed renders 'no transactions yet: nothing has been executed from this app'; a filter with no matches renders 'nothing under this filter'. Two different sentences, because they are two different facts",
+  "wallet read failed": "a stale place no longer disappears with the empty rows: it gets a line of its own reading 'STALE <chain> would not answer: holdings there are unknown, not zero'",
   "resting": "1440x900, no pending proposals: the gate reads 'no pending approvals: the gate is disabled, every proposal auto-approves', wallet 18 rows, no page scroll",
   "pending": "stubbed pending consolidate proposal: red-bordered PENDING block with APPROVE and REFUSE, simulation lines and the why line. With four of them and the log collapsed, all four fit",
   "refusal": "six approve_attempt_rejected lines render red in the log on the live page",

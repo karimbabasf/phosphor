@@ -6,6 +6,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -27,23 +28,44 @@ function resolvePort(): number {
 const BASE_URL = `http://127.0.0.1:${resolvePort()}`;
 const NOT_RUNNING = 'The control app is not running. Start it with: npm run app';
 
+// One id per MCP process, which is one id per agent session. It is what makes the app able
+// to tell two agents apart, and therefore able to let only one of them in. It is an
+// identifier and never an authorisation: see the KNOWN HOLE note at the top of
+// src/server.ts. A restart mints a new one, which is correct: it is a new session.
+const SESSION = randomUUID();
+
+// The app derives its expiry window from this number, so the two cannot drift apart. Five
+// seconds costs nothing on loopback and takes the worst-case "still shows connected" from
+// about a minute down to about twelve seconds when an agent is killed outright.
+const HELLO_MS = 5_000;
+const CLIENT = 'phosphor-mcp';
+
 function textResult(text: string) {
   return { content: [{ type: 'text' as const, text }] };
 }
 
-async function proxy(body: unknown) {
+async function proxy(body: Record<string, unknown>) {
   let res: Response;
   try {
     res = await fetch(`${BASE_URL}/api/mcp`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ ...body, session: SESSION, client: CLIENT }),
     });
   } catch {
     return textResult(NOT_RUNNING);
   }
   try {
     const json: unknown = await res.json();
+    // A refused seat is the one error worth surfacing as a sentence rather than as a JSON
+    // blob: the agent reading it has to understand that it is not connected and why, or it
+    // will read the refusal as the tool being broken and try something else. Keyed on the
+    // marker rather than on the status, because other 409s (a view change refused while a
+    // human is deciding) are answers whose shape their callers depend on.
+    const payload = json as { error?: unknown; seat?: unknown };
+    if (res.status === 409 && payload.seat === 'busy' && typeof payload.error === 'string') {
+      return textResult(payload.error);
+    }
     return textResult(JSON.stringify(json));
   } catch {
     return textResult(NOT_RUNNING);
@@ -55,10 +77,44 @@ async function sendHello(): Promise<void> {
     await fetch(`${BASE_URL}/api/mcp`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ op: 'hello', client: 'phosphor-mcp' }),
+      body: JSON.stringify({ op: 'hello', client: CLIENT, session: SESSION, intervalMs: HELLO_MS }),
     });
   } catch {
-    // app not reachable yet; the next heartbeat tries again in 15s
+    // app not reachable yet; the next heartbeat tries again
+  }
+}
+
+// The goodbye. A killed process cannot send one and the app's TTL covers that case, but
+// every ordinary exit CAN, and this is what makes the seat free itself and the light go out
+// the instant an agent is closed instead of one TTL later.
+let leaving = false;
+
+async function sendBye(): Promise<void> {
+  if (leaving) return;
+  leaving = true;
+  try {
+    // Bounded: a shutdown must not hang on an app that is already gone.
+    await fetch(`${BASE_URL}/api/mcp`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ op: 'bye', session: SESSION }),
+      signal: AbortSignal.timeout(1_000),
+    });
+  } catch {
+    // nothing to say goodbye to; the app's TTL sweeps the seat
+  }
+}
+
+// Both halves of how an MCP server dies: the harness closes stdin, or it signals. Adding a
+// signal listener overrides node's default exit, so each one exits explicitly.
+function wireShutdown(): void {
+  const leave = (code: number) => {
+    void sendBye().finally(() => process.exit(code));
+  };
+  process.stdin.on('end', () => leave(0));
+  process.stdin.on('close', () => leave(0));
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
+    process.on(signal, () => leave(0));
   }
 }
 
@@ -342,5 +398,11 @@ server.registerTool(
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
+// The transport's own close is the earliest and most reliable of the three shutdown
+// signals: it fires when the harness lets go of stdio, before any SIGTERM.
+transport.onclose = () => {
+  void sendBye().finally(() => process.exit(0));
+};
+wireShutdown();
 void sendHello();
-setInterval(sendHello, 15000);
+setInterval(sendHello, HELLO_MS);

@@ -65,9 +65,14 @@ Twenty-six tools, split three ways. Read tools execute directly and cannot move 
 Write tools never execute: they return a proposal id and a simulation result, and nothing else.
 Chart tools move a view, never funds.
 
+**One agent at a time.** The first MCP session to speak takes the seat and every other session
+is refused with the reason until it leaves. A session leaves by shutting down, or by going
+quiet for longer than two and a half heartbeats. Two agents driving one wallet used to look
+exactly like one agent, and neither of them knew about the other.
+
 | Read tool | Returns |
 |---|---|
-| `wallet` | Everything held, one row per token and per pool position: chain, quantity, price, value, share |
+| `wallet` | Everything held, one row per token and per pool position: chain, quantity, price, value, share. Only what is actually held; how many configured tokens came back empty is reported as a count |
 | `balances` | Raw holdings across every configured chain, with per-chain staleness |
 | `composition` | Shares by issuer and chain, freezable share, unclassified holdings |
 | `policy_show` | Current policy as plain-English sentences, or a notice that the file is unreadable |
