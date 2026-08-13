@@ -124,8 +124,60 @@ body {
   50%, 100% { opacity: 0; }
 }
 
+/* ---------- 0. waiting ---------- */
+
+/* A panel with nothing in it and a panel that broke look the same, so anything not here yet
+   is drawn as the shape of what is coming: blocks where the characters go. Hard two-state
+   blink with a per-row delay, which makes a wave travel down a panel. Not a gradient sweep:
+   that would be the only soft thing on this surface, and it would read as someone else's
+   design system. */
+.skel {
+  color: var(--green-ghost);
+  animation: waiting 1.2s steps(1) infinite;
+  animation-delay: calc(var(--i, 0) * 90ms);
+}
+
+.skelline {
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+@keyframes waiting {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0.3; }
+}
+
+/* The status bar has no rows to lay blocks over: its placeholders blink where the numbers
+   are going to be. */
+body.waiting .statusbar .v,
+body.waiting #kill-btn {
+  animation: waiting 1.2s steps(1) infinite;
+}
+
+/* The basic screen waits by holding its own placeholders and dimming them, and gets no
+   blocks and no word of its own. Every sentence about money on that screen is written by
+   the server (see the comment over the basic markup), and "checking your balance" would be
+   this file inventing one. A dash that breathes says the same thing and states nothing. */
+body.waiting .basic-total,
+body.waiting .basic-headline {
+  animation: waiting 1.6s steps(1) infinite;
+}
+
+/* A read is in flight over a panel that already has real candles in it. The chart keeps them
+   and this marches instead: a timeframe switch should look like work, not like a freeze. */
+.chartbar .wait { color: var(--green-faint); flex: none; }
+.chartbar .wait span { animation: waiting 0.72s steps(1) infinite; }
+.chartbar .wait span:nth-child(2) { animation-delay: 0.24s; }
+.chartbar .wait span:nth-child(3) { animation-delay: 0.48s; }
+
 @media (prefers-reduced-motion: reduce) {
-  .cursor { animation: none; }
+  .cursor,
+  .skel,
+  .chartbar .wait span,
+  body.waiting .statusbar .v,
+  body.waiting #kill-btn,
+  body.waiting .basic-total,
+  body.waiting .basic-headline { animation: none; }
 }
 
 .banner {
