@@ -102,9 +102,27 @@ if (body.status !== 'ok') {
 }
 
 // Written only after the venue accepted, so the file never claims an agent that does not exist.
+//
+// Atomically, because this file also holds the MASTER key. A plain write truncates before it
+// fills, so a crash or a full disk part way through would leave keys.json empty and the master
+// key gone with it: losing the funds without anyone attacking anything. Same tmp-then-rename
+// shape src/policy/file.ts already uses, and rename is atomic within a filesystem.
+//
+// The mode is set on the temp file and then asserted on the target. Passing `mode` to a write
+// of an EXISTING file is a no-op, so the 0600 this file already carries would have been
+// inherited rather than enforced, and inherited is not a guarantee.
 const keys = JSON.parse(fs.readFileSync(cfg.keysPath, 'utf8')) as Record<string, unknown>;
-keys.hyperliquidAgent = { address: agentAddress, privateKey: agentKey, name: agentName, approvedAt: new Date().toISOString() };
-fs.writeFileSync(cfg.keysPath, JSON.stringify(keys, null, 2) + '\n', { mode: 0o600 });
+keys.hyperliquidAgent = {
+  address: agentAddress,
+  privateKey: agentKey,
+  name: agentName,
+  approvedAt: new Date().toISOString(),
+};
+
+const tmpPath = `${cfg.keysPath}.${process.pid}.tmp`;
+fs.writeFileSync(tmpPath, JSON.stringify(keys, null, 2) + '\n', { mode: 0o600 });
+fs.renameSync(tmpPath, cfg.keysPath);
+fs.chmodSync(cfg.keysPath, 0o600);
 
 console.log(`approved. key written to ${cfg.keysPath} under hyperliquidAgent.`);
 console.log('this key can trade and cannot withdraw. the runner will pick it up on the next arm.');
