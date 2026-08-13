@@ -15,6 +15,7 @@ import type { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { EXPECTED_TOOLS_SORTED } from '../tests/tool-surface.ts';
 
 type Json = any;
 
@@ -24,43 +25,9 @@ const BASE = `http://127.0.0.1:${PORT}`;
 
 // The exact tool surface, sorted. An extra tool here is a new way for an agent to reach the
 // money, so the set is part of the contract and this check is a set comparison, not a count.
-const EXPECTED_TOOLS = [
-  'balances',
-  'candles',
-  'composition',
-  'log_tail',
-  'policy_show',
-  'proposal_status',
-  'propose_consolidate',
-  'propose_hl_deposit',
-  'propose_lp_add',
-  'propose_lp_remove',
-  'propose_policy_change',
-  'propose_swap',
-  // Registered with the NEAR Intents rail and added to the injection suite's list, but
-  // missed here, so this check was one short. e2e is not part of npm test, which is why
-  // it stayed missed.
-  'propose_intents_deposit',
-  'wallet',
-  // The chart surface, added by chart v2 (bfda00c). It registered ten tools without
-  // updating this list, so this check failed on main until now. Reads and view state
-  // only: none of them reaches the proposal path and none takes an address.
-  'chart_read',
-  'chart_measure',
-  'chart_scan',
-  'indicator_catalog',
-  // Finding a market to chart, added with the market data layer. Before it the chart
-  // could only open the handful of products named in config.json.
-  'market_search',
-  'chart_set_view',
-  'chart_add_indicator',
-  'chart_remove_indicator',
-  'chart_level',
-  'chart_mark',
-  'chart_clear',
-  // Switches the window between basic and pro. Distinct from chart_set_view above.
-  'set_view_mode',
-].sort();
+// One list, in tests/tool-surface.ts, shared with tests/injection.test.ts. This file kept its
+// own copy and it was stale for two whole features, because e2e is not part of `npm test`.
+const EXPECTED_TOOLS = [...EXPECTED_TOOLS_SORTED];
 
 const DEMO_TOTAL_STABLE_USD = 49878.15;
 const DEMO_ETH_USDT = 9200;
@@ -284,14 +251,19 @@ async function run(): Promise<void> {
   const proBefore = await getJson('/api/state');
   check('view starts in pro and a basic model is computed anyway', proBefore.view === 'pro' && Boolean(proBefore.basic), `view=${proBefore.view} basic=${Boolean(proBefore.basic)}`);
 
-  await callTool(client, 'set_view_mode', { mode: 'basic' });
+  await callTool(client, 'switch', { mode: 'basic' });
   const afterFlip = await getJson('/api/state');
-  check('set_view_mode over stdio flips what /api/state reports', afterFlip.view === 'basic', `view=${afterFlip.view}`);
+  check('switch over stdio flips what /api/state reports', afterFlip.view === 'basic', `view=${afterFlip.view}`);
+
+  // The third window, and the words a person actually says. Aliases resolve in the app rather
+  // than in src/mcp.ts, so this check covers both doors onto it.
+  await callTool(client, 'switch', { mode: 'trading' });
+  check('the alias "trading" reaches the trade window', (await getJson('/api/state')).view === 'trade', 'expected view=trade');
 
   const flipLogged = (await getJson('/api/log?limit=50') as unknown as Json[]).some(e => e.type === 'view_changed');
   check('the switch is written to the audit log', flipLogged, 'expected a view_changed line');
 
-  await callTool(client, 'set_view_mode', { mode: 'pro' });
+  await callTool(client, 'switch', { mode: 'pro' });
   check('it flips back', (await getJson('/api/state')).view === 'pro');
 
   // ---- the stranded chain refusal is a feature, not a bug ----
@@ -323,14 +295,19 @@ async function run(): Promise<void> {
   // With something actually pending, the two view-mode guarantees are checkable:
   // the switch is refused, and the basic model carries the real governed amount
   // rather than a label that merely says "basic".
-  const refusedFlip = await callTool(client, 'set_view_mode', { mode: 'basic' });
+  // The switch used to be REFUSED while a decision waited, so an agent could not move a human
+  // away from it. ui/approvals.js now draws the pending block on all three windows, so the
+  // decision travels with the human and the refusal guarded nothing. Disclosure replaced it:
+  // the switch goes through and reports what is still waiting.
+  const pendingFlip = await callTool(client, 'switch', { mode: 'basic' });
   check(
-    'set_view_mode is refused while a human decision is waiting',
-    String(refusedFlip.error ?? '').includes('waiting for a human decision'),
-    JSON.stringify(refusedFlip).slice(0, 140),
+    'a switch while a decision waits goes through and names what is pending',
+    Array.isArray(pendingFlip.pending) && pendingFlip.pending.length > 0 && String(pendingFlip.note ?? '').includes('await'),
+    JSON.stringify(pendingFlip).slice(0, 160),
   );
+  await callTool(client, 'switch', { mode: 'pro' });
   const stillPro = await getJson('/api/state');
-  check('the refused switch left the mode alone', stillPro.view === 'pro', `view=${stillPro.view}`);
+  check('and the window is where it was asked to be', stillPro.view === 'pro', `view=${stillPro.view}`);
 
   const basicAsk = (stillPro.basic as Json)?.ask as Json | null;
   const draftUsd = Number((proposal.simulation as Json)?.ok === true ? basicAsk?.amountUsd : NaN);

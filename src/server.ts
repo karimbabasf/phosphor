@@ -47,6 +47,9 @@ import type { AgentPresence } from './agents.ts';
 import { buildTransactions, createGasCache, evmCandidates } from './transactions.ts';
 import type { TxPlace } from './transactions.ts';
 import { gateRequired, gateBanner } from './policy/gate.ts';
+import { buildGreeting } from './greeting.ts';
+import { buildMandateCatalog } from './strategy/catalog.ts';
+import { VERSION } from './version.ts';
 import { renderSentences } from './policy/render.ts';
 import {
   buildRead,
@@ -111,6 +114,10 @@ const PROPOSE_KINDS: readonly string[] = [
   'mandate_arm',
 ];
 const READ_TOOLS: readonly string[] = [
+  // The handshake presentation: the banner a connecting agent prints, the live facts it
+  // prints beside it, and the index of everything it can do. A read like any other, so it
+  // takes the seat, gets audited and refuses a second agent exactly as every other call does.
+  'start',
   'balances',
   'composition',
   'wallet',
@@ -126,6 +133,10 @@ const READ_TOOLS: readonly string[] = [
   'market_search',
   'trade_read',
   'trade_batch',
+  // How to write a mandate. Opening a position is the one action that cannot be reached by
+  // reading a tool signature, because it takes a program rather than arguments, so the
+  // grammar has to be readable from the surface or an agent asks a human how.
+  'mandate_catalog',
 ];
 // Chart writes. They move no money, so they never reach the proposal path and never wait on
 // an approval. They are still audited like every other op: an agent that can change what the
@@ -814,6 +825,47 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     const tool = String(body.tool ?? '');
     const args = asRecord(body.args);
 
+    // What an agent calls the moment it attaches. Everything in it is read live, because a
+    // greeting that cannot say which network it is on is decoration, and an operator working
+    // the wrong world is the failure this whole app exists to make impossible.
+    if (tool === 'start') {
+      const snapshot = ledger.snapshot();
+      const wallet = buildWallet(snapshot, ledger.positions(), ledger.intents());
+      const policy = getPolicy();
+      const pending = proposals.list().filter((p) => p.status === 'pending');
+      const holder = agents.holder();
+      const greeting = buildGreeting(
+        {
+          network: cfg.network,
+          view: getView(),
+          totalUsd: wallet.totalUsd,
+          // Places actually holding something, which is what "across N chains" means to a
+          // reader. Counting configured chains instead would say 5 while 2 hold the money.
+          chainCount: Object.values(wallet.byChain).filter((usd) => usd > 0).length,
+          pendingCount: pending.length,
+          clickThresholdUsd: policy?.outbound.humanClickAboveUsd ?? null,
+          killSwitch: policy?.killSwitch ?? false,
+          gateRequired: gateRequired(cfg),
+          // The runner refuses mainnet outright (src/runner/main.ts), so this is a fact about
+          // the code rather than a setting, and the greeting states it as one.
+          tradingNetwork: 'testnet',
+          tradingAllowed: true,
+          holder: holder?.client ?? null,
+          emptyCount: wallet.emptyCount,
+        },
+        VERSION,
+      );
+      sendJson(res, 200, {
+        ...greeting,
+        pending: pending.map((p) => p.id),
+        stale: wallet.stale,
+      });
+      return;
+    }
+    if (tool === 'mandate_catalog') {
+      sendJson(res, 200, buildMandateCatalog());
+      return;
+    }
     if (tool === 'balances') {
       const snapshot = ledger.snapshot();
       const composition = classify(snapshot, riskRows);
@@ -1397,33 +1449,72 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   // decidedBy 'policy'). That ordering is inherent to agent-only switching, which is why
   // the real control is that both modes render the same facts, asserted in
   // tests/unit/basic-view.test.ts, not this refusal.
+  // Aliases exist because the switch is meant to cost one word. A human says "switch to
+  // trading", "go to hft", "back to simple"; an agent should not have to learn which of those
+  // is the enum member. Mapping them here rather than in src/mcp.ts keeps the shim stateless
+  // and means the /api/mcp path and the MCP path resolve a name identically.
+  const VIEW_ALIASES: Record<string, ViewMode> = {
+    basic: 'basic',
+    simple: 'basic',
+    plain: 'basic',
+    pro: 'pro',
+    operator: 'pro',
+    advanced: 'pro',
+    wallet: 'pro',
+    trade: 'trade',
+    trading: 'trade',
+    hft: 'trade',
+    perps: 'trade',
+    hyperliquid: 'trade',
+    chart: 'trade',
+  };
+
   function handleSetViewMode(body: JsonBody, res: http.ServerResponse): void {
-    const mode = String(body.mode ?? '');
-    if (mode !== 'basic' && mode !== 'pro') {
-      sendJson(res, 400, { error: `mode must be basic or pro, got: ${mode || '(missing)'}` });
-      return;
-    }
-    const pending = proposals.list().filter((p) => p.status === 'pending');
-    if (pending.length > 0) {
-      audit.append(
-        'view_refused',
-        `agent asked for the ${mode} view while ${pending.length} proposal(s) await a human decision: refused`,
-        { mode, pending: pending.map((p) => p.id) },
-      );
-      sendJson(res, 409, {
-        error: 'the view cannot change while a proposal is waiting for a human decision',
-        pending: pending.map((p) => p.id),
+    const raw = String(body.mode ?? '').trim().toLowerCase();
+    const mode = VIEW_ALIASES[raw];
+    if (mode === undefined) {
+      sendJson(res, 400, {
+        error: `mode must be basic, pro or trade, got: ${raw || '(missing)'}`,
+        accepted: Object.keys(VIEW_ALIASES),
       });
       return;
     }
+
+    // This used to refuse outright while any proposal was pending, so that an agent could not
+    // move a human away from a decision they were in the middle of. Commit 7b41af4 put the
+    // approval block on the trading window too, and ui/approvals.js now renders it on all
+    // three surfaces, so the reason the refusal existed no longer holds: the decision follows
+    // the human rather than being left behind on the screen they came from.
+    //
+    // What replaces it is disclosure, not silence. The pending ids ride back on the response
+    // and the tool description tells the agent to say the count out loud, because the basic
+    // screen shows one ask at a time and switching there with three waiting would otherwise
+    // quietly hide two of them.
+    const pending = proposals.list().filter((p) => p.status === 'pending');
     const previous = getView();
-    setView(mode as ViewMode);
+    if (mode === previous) {
+      sendJson(res, 200, { ok: true, view: mode, unchanged: true, pending: pending.map((p) => p.id) });
+      return;
+    }
+    setView(mode);
     audit.append('view_changed', `agent switched the app window from ${previous} to ${mode}`, {
       from: previous,
       to: mode,
+      pending: pending.map((p) => p.id),
     });
     broadcastState();
-    sendJson(res, 200, { ok: true, view: mode });
+    sendJson(res, 200, {
+      ok: true,
+      view: mode,
+      from: previous,
+      pending: pending.map((p) => p.id),
+      // Named rather than implied: an agent reading `pending: []` has to know that an empty
+      // array is the good case. A sentence it can repeat costs nothing and gets repeated.
+      note:
+        pending.length === 0
+          ? 'nothing is waiting for a human decision'
+          : `${pending.length} proposal(s) still await a human click, and they render on this window too`,
+    });
   }
 
   // A second agent is refused for as long as the first one holds the seat, which can be

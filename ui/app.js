@@ -1192,9 +1192,26 @@ function renderGate(s) {
    src/view/basic.ts and is rendered verbatim, which is what lets the two modes be
    asserted to agree in tests rather than assumed to. */
 
+/* The last view this page has seen, so a CHANGE can be told from a first sighting. Null
+   until the first state frame lands. */
+var lastSeenView = null;
+
 function applyViewMode(s) {
   // Server-driven only. The browser never decides which mode it is in, so a
   // stale or failed state read cannot silently simplify what a human sees.
+
+  /* 'trade' is a different PAGE, not a different rendering of this one, so the only way to
+     honour it is to go there. It fires on a transition and never on a first sighting: a
+     human who opened this page by hand while the app happened to be in trade mode must not
+     be thrown off the screen they deliberately asked for. An agent's switch is always a
+     transition, so the one-word switch still lands. */
+  if (s.view === 'trade' && lastSeenView !== null && lastSeenView !== 'trade') {
+    lastSeenView = s.view;
+    window.location.href = '/trade';
+    return;
+  }
+  lastSeenView = s.view;
+
   var mode = s.view === 'basic' ? 'basic' : 'pro';
   $('page').dataset.view = mode;
   // Also on body, because basic.css replaces the ground and the family, and both

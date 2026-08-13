@@ -46,9 +46,14 @@
   <p class="banner" id="t-banner-policy" role="alert" hidden></p>
   <p class="alert dim" id="t-alert" role="status" hidden></p>
 
-  <!-- Two columns: left is the market and what this account did in it, right is what
-       governs the account. Each column fills the viewport height; panels scroll inside
-       themselves, the page never does. -->
+  <!-- Five panels, two columns. Left is the market and what this account holds in it,
+       right is what governs the account and what it has already done.
+
+       It was eight, and eight was the defect: five variable-height panels shared one
+       non-scrolling column with height caps summing past 150vh, so whichever panel was
+       last paid for every other panel's overflow and rendered as an empty frame line.
+       Each column fills the viewport height; panels scroll inside themselves, the page
+       never does. -->
   <div class="deck">
 
     <div class="col">
@@ -95,7 +100,12 @@
 
       <!-- 3. BOOK. Working orders are child rows of the position they belong to, not a
            table of their own: a stop at 3200 is a property of the ETH long, not an
-           independent object. The renderer marks those child rows .orow. -->
+           independent object. The renderer marks those child rows .orow.
+
+           Every header carries its unit on a second line. SIZE was the one column with
+           no unit anywhere on the page and it is coins, which read as a bare 0.0314
+           beside seven dollar figures. A number whose unit has to be guessed is not a
+           number a person can act on, so all of them say it now. -->
       <section class="panel panel-tbook">
         <div class="frame frame-top" data-title="BOOK"></div>
         <div class="pbody">
@@ -103,15 +113,15 @@
             <table class="grid" id="t-book">
               <thead>
                 <tr>
-                  <th scope="col" class="c-mkt">MARKET</th>
-                  <th scope="col" class="c-side">SIDE</th>
-                  <th scope="col" class="c-num">SIZE</th>
-                  <th scope="col" class="c-num">NOTIONAL</th>
-                  <th scope="col" class="c-num">ENTRY</th>
-                  <th scope="col" class="c-num">MARK</th>
-                  <th scope="col" class="c-num">LIQ</th>
-                  <th scope="col" class="c-num">PNL</th>
-                  <th scope="col" class="c-acts">&nbsp;</th>
+                  <th scope="col" class="c-mkt"><span class="h-n">MARKET</span><span class="h-u">&nbsp;</span></th>
+                  <th scope="col" class="c-side"><span class="h-n">SIDE</span><span class="h-u">lev, mode</span></th>
+                  <th scope="col" class="c-num"><span class="h-n">SIZE</span><span class="h-u">coins</span></th>
+                  <th scope="col" class="c-num"><span class="h-n">NOTIONAL</span><span class="h-u">usd</span></th>
+                  <th scope="col" class="c-num"><span class="h-n">ENTRY</span><span class="h-u">usd</span></th>
+                  <th scope="col" class="c-num"><span class="h-n">MARK</span><span class="h-u">usd</span></th>
+                  <th scope="col" class="c-num"><span class="h-n">LIQ</span><span class="h-u">usd</span></th>
+                  <th scope="col" class="c-num"><span class="h-n">PNL</span><span class="h-u">usd, net</span></th>
+                  <th scope="col" class="c-acts"><span class="h-n">&nbsp;</span><span class="h-u">&nbsp;</span></th>
                 </tr>
               </thead>
               <tbody id="t-book-rows"></tbody>
@@ -122,38 +132,19 @@
         <div class="frame frame-bottom"></div>
       </section>
 
-      <!-- 4. FILLS. Under the book because it is the record of what the book did. -->
-      <section class="panel panel-tfills">
-        <div class="frame frame-top" data-title="FILLS"></div>
-        <div class="pbody">
-          <div class="tablewrap">
-            <table class="grid" id="t-fills">
-              <thead>
-                <tr>
-                  <th scope="col" class="c-time">TIME</th>
-                  <th scope="col" class="c-mkt">MARKET</th>
-                  <th scope="col" class="c-side">SIDE</th>
-                  <th scope="col" class="c-num">PRICE</th>
-                  <th scope="col" class="c-num">SIZE</th>
-                  <th scope="col" class="c-num">NOTIONAL</th>
-                  <th scope="col" class="c-num">FEE</th>
-                  <th scope="col" class="c-num">PNL</th>
-                </tr>
-              </thead>
-              <tbody id="t-fill-rows"></tbody>
-            </table>
-          </div>
-          <p class="empty" id="t-fills-empty" hidden>No fills yet.</p>
-        </div>
-        <div class="frame frame-bottom"></div>
-      </section>
-
     </div>
 
     <div class="col">
 
-      <!-- 5. RISK. The account figures first, then the number the page is built around:
-           how far this position is from the price at which the venue takes it. -->
+      <!-- 4. RISK. One panel, read top to bottom, answering the three questions this
+           page exists for: how far am I from the price that ends this, what is the book
+           worth against the account, and what is the bot allowed to do next.
+
+           MARKET and MANDATE used to be panels of their own. Neither needed a frame: the
+           instrument facts are four lines and the mandate is a block, and giving each of
+           them a titled box is what made the right column eight panels deep. They are
+           ruled sections in here now, which is the same information with three fewer
+           frames and no competition for height. -->
       <section class="panel panel-trisk">
         <div class="frame frame-top" data-title="RISK"></div>
         <div class="pbody">
@@ -168,9 +159,16 @@
             <span class="v" id="t-risk-health">--</span>
             <span class="track" id="t-risk-healthbar"><span class="fill"></span></span>
           </p>
+          <!-- The two walls, together and in that order deliberately. A position on
+               borrowed size has two prices that end it: the one the venue takes it at
+               and the one the human approved losing. Neither is asserted to come first,
+               because live numbers have put a stop-out below a liquidation and above it
+               on the same account. The venue's wall is the liquidation surface and wears
+               red; the approved wall is a decision, so it stays phosphor. -->
           <div class="liq">
             <p class="liq-line">LIQ at <span id="t-liq-price">--</span>, <span id="t-liq-pct">--</span> away, <span id="t-liq-usd">--</span>, <span id="t-liq-atr">--</span> ATR</p>
             <span class="track" id="t-liq-bar"><span class="fill"></span></span>
+            <p class="wall-line" id="t-wall-line">STOP-OUT at <span id="t-wall-price">--</span>, the loss you approved</p>
           </div>
           <!-- Cross margin makes every position a term in every other position's
                liquidation price, so the book gets an exposure line of its own. -->
@@ -183,38 +181,42 @@
             <p class="shock" id="t-exp-shock">--</p>
           </div>
           <p class="empty" id="t-risk-empty" hidden>Waiting for the venue.</p>
+
+          <!-- The instrument rather than the account. Mark and oracle are separated on
+               purpose: they are different prices with different jobs, mark decides a
+               liquidation and oracle decides funding, and the gap between them is the
+               one number that says the venue is under strain. Open interest and 24h
+               volume were here and are gone: they describe the market's health, not this
+               position's, and nothing on this desk is decided by either. -->
+          <div class="rmkt">
+            <dl class="rgrid">
+              <dt class="k">mark</dt><dd id="t-mkt-mark">--</dd>
+              <dt class="k">oracle</dt><dd id="t-mkt-oracle">--</dd>
+              <dt class="k">basis</dt><dd id="t-mkt-spread">--</dd>
+              <dt class="k">premium</dt><dd id="t-mkt-premium">--</dd>
+              <dt class="k">funding 1h</dt><dd id="t-mkt-funding">--</dd>
+              <dt class="k">per 8h</dt><dd id="t-mkt-funding8">--</dd>
+              <dt class="k">atr 1h</dt><dd id="t-mkt-atr">--</dd>
+              <dt class="k">atr %</dt><dd id="t-mkt-atrpct">--</dd>
+            </dl>
+            <p class="empty" id="t-market-empty" hidden>Waiting for the venue.</p>
+          </div>
+
+          <!-- Where every other trading interface puts a buy/sell ticket. This is state
+               and not history: what is armed right now, and how much of the envelope it
+               has already spent. What it DID is in HISTORY. The rows are built by the
+               renderer; the shape it must produce is written out in trade.css above the
+               .mrow rules. -->
+          <div class="rmandate">
+            <p class="subhead">MANDATE</p>
+            <div id="t-mandate-list"></div>
+            <p class="empty" id="t-mandate-empty" hidden>Nothing armed. Ask your agent for a proposal.</p>
+          </div>
         </div>
         <div class="frame frame-bottom"></div>
       </section>
 
-      <!-- 6. MARKET. The facts about the instrument rather than about the account.
-           Mark and oracle are separated on purpose: they are different prices with
-           different jobs, mark decides a liquidation and oracle decides funding, and
-           the gap between them is the one number that says the venue is under strain. -->
-      <section class="panel panel-tmarket">
-        <div class="frame frame-top" data-title="MARKET"></div>
-        <div class="pbody">
-          <dl class="rgrid">
-            <dt class="k">mark</dt><dd id="t-mkt-mark">--</dd>
-            <dt class="k">oracle</dt><dd id="t-mkt-oracle">--</dd>
-            <dt class="k">basis</dt><dd id="t-mkt-spread">--</dd>
-            <dt class="k">premium</dt><dd id="t-mkt-premium">--</dd>
-            <dt class="k">funding</dt><dd id="t-mkt-funding">--</dd>
-            <dt class="k">per 8h</dt><dd id="t-mkt-funding8">--</dd>
-            <dt class="k">open int</dt><dd id="t-mkt-oi">--</dd>
-            <dt class="k">24h vol</dt><dd id="t-mkt-vol">--</dd>
-            <dt class="k">atr 1h</dt><dd id="t-mkt-atr">--</dd>
-            <dt class="k">atr %</dt><dd id="t-mkt-atrpct">--</dd>
-          </dl>
-          <p class="empty" id="t-market-empty" hidden>Waiting for the venue.</p>
-        </div>
-        <div class="frame frame-bottom"></div>
-      </section>
-
-      <!-- 7. MANDATE. Where every other trading interface puts a buy/sell ticket. The
-           rows are built by the renderer; the shape it must produce is written out in
-           trade.css above the .mrow rules. -->
-      <!-- 6a. APPROVALS. A pending proposal is what a mandate is before anyone agreed to
+      <!-- 5. APPROVALS. A pending proposal is what a mandate is before anyone agreed to
            it, so the click sits directly above the panel it fills. Same renderer as the
            pro window (ui/approvals.js): this screen shows no shorter a story than that
            one before the same click. -->
@@ -226,20 +228,41 @@
         <div class="frame frame-bottom"></div>
       </section>
 
-      <section class="panel panel-tmandate">
-        <div class="frame frame-top" data-title="MANDATE"></div>
-        <div class="pbody">
-          <div id="t-mandate-list"></div>
-          <p class="empty" id="t-mandate-empty" hidden>Nothing armed. Ask your agent for a proposal.</p>
-        </div>
-        <div class="frame frame-bottom"></div>
-      </section>
+      <!-- 6. HISTORY. One time-ordered record of everything this account did on this
+           venue: fills, the manual controls, what the mandate fired, and every refusal
+           that stopped a trade. It was three panels (FILLS, MANDATE, LOG) and they were
+           three views of one sequence, which is why reading them meant looking in three
+           places and reconciling three clocks.
 
-      <!-- 7. LOG -->
-      <section class="panel panel-tlog grow">
-        <div class="frame frame-top" data-title="LOG"></div>
+           TIME, KIND and MARKET are shared by every row, so the tape scans down those
+           three columns whatever kind of event each row is. A fill fills the numeric
+           columns; anything else says what happened across them in words.
+
+           Scoped to trading. Treasury swaps and withdrawals are a different ledger with
+           different columns and they stay on the pro window's TRANSACTIONS tab. -->
+      <section class="panel panel-thistory grow">
+        <div class="frame frame-top" data-title="HISTORY"></div>
         <div class="pbody">
-          <div id="t-log" class="log" role="log"></div>
+          <div class="tablewrap">
+            <table class="grid" id="t-history">
+              <thead>
+                <tr>
+                  <th scope="col" class="c-time"><span class="h-n">TIME</span><span class="h-u">local</span></th>
+                  <th scope="col" class="c-kind"><span class="h-n">KIND</span><span class="h-u">event</span></th>
+                  <th scope="col" class="c-hmkt"><span class="h-n">MARKET</span><span class="h-u">&nbsp;</span></th>
+                  <th scope="col" class="c-side"><span class="h-n">SIDE</span><span class="h-u">&nbsp;</span></th>
+                  <th scope="col" class="c-num"><span class="h-n">PRICE</span><span class="h-u">usd</span></th>
+                  <th scope="col" class="c-num"><span class="h-n">SIZE</span><span class="h-u">coins</span></th>
+                  <!-- The fee column went with the panel merge. It is real money and it is
+                       already counted: a fill's fee is inside the position's profit split
+                       one panel over, and on a tape it was the column nobody read. -->
+                  <th scope="col" class="c-num"><span class="h-n">PNL</span><span class="h-u">usd, closed</span></th>
+                </tr>
+              </thead>
+              <tbody id="t-history-rows"></tbody>
+            </table>
+          </div>
+          <p class="empty" id="t-history-empty" hidden>Nothing yet.</p>
         </div>
         <div class="frame frame-bottom"></div>
       </section>

@@ -23,6 +23,8 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 import type { EngineCtx } from '../src/policy/engine.ts';
+import { CAPABILITIES } from '../src/greeting.ts';
+import { EXPECTED_TOOLS_SORTED } from './tool-surface.ts';
 import type { LogEvent, RiskRow, TransferLeg, WriteDraft } from '../src/types.ts';
 import { evaluate } from '../src/policy/engine.ts';
 import { classify } from '../src/composition.ts';
@@ -244,85 +246,8 @@ test('the tool surface cannot express an exfiltration target', async () => {
   // one, and a quietly reintroduced one, which is what this suite actually cares about.
   assert.deepEqual(
     tools.map(t => t.name).sort(),
-    [
-      'balances',
-      'candles',
-      'composition',
-      'wallet',
-      'log_tail',
-      'policy_show',
-      'proposal_status',
-      'propose_consolidate',
-      'propose_policy_change',
-      // The rails. Each one moves funds through a contract, and none of them takes an
-      // address: the loop below is what holds that to be true.
-      'propose_swap',
-      'propose_hl_deposit',
-      // Funds this app's own balance inside intents.near. It is the one rail whose far side
-      // is an account id rather than a chain address, which is exactly why it takes neither:
-      // the credited account is derived from our own key in proposals.ts and there is no
-      // argument here that can name it. The loop below holds that to be true.
-      'propose_intents_deposit',
-      // The way back out, and the only rail on this surface that pays money to an ordinary
-      // address on a chain. That makes it the sharpest test of the rule the loop below
-      // enforces: the wallet it pays into is read from config and re-derived by the rail,
-      // and there is no argument here that can name an address of any kind.
-      'propose_intents_withdraw',
-      'propose_lp_add',
-      'propose_lp_remove',
-      // Arming a bot. The one proposal that grants STANDING authority rather than spending
-      // once, so it never auto-approves on any network. It takes a program, not code, and
-      // the grammar that program is written in has no verb that moves value off the venue
-      // and no field that names an address, which the loop below holds it to like the rest.
-      'propose_mandate',
-      // The chart. These read and drive a view, never funds: none of them reaches the
-      // proposal path, none takes an address, and the loop below holds them to it like
-      // every other tool. They are on this surface because an agent that cannot see the
-      // price cannot reason about a swap it is about to propose.
-      'chart_read',
-      'chart_measure',
-      'chart_scan',
-      // The measurement instrument. It carries many operations in one call, so its
-      // arguments are enumerated in the schema rather than left as a free-form bag:
-      // the propertyNames walk below cannot see inside an open record, and a hole the
-      // scan cannot see is exactly what this test exists to prevent.
-      'chart_batch',
-      'indicator_catalog',
-      // Looks up which markets exist so the chart can open one by name. It takes a search
-      // string and a result limit, reaches no proposal path, and names no address: the
-      // loop below holds it to that like every other tool. A free-text argument is worth
-      // a second look on this surface, and this one is only ever matched against a list
-      // of venue listings, never used to build a request to anywhere.
-      'market_search',
-      'chart_set_view',
-      'chart_add_indicator',
-      'chart_remove_indicator',
-      'chart_level',
-      'chart_mark',
-      // The sloped line, added when a trend line turned out to be undrawable: a level is
-      // horizontal and a mark is vertical, so neither could express one. Four numbers and a
-      // label, all of them coordinates on a canvas. It reaches no proposal path and names no
-      // address, and the loop below holds it to that like every other tool.
-      'chart_trendline',
-      'chart_clear',
-      // Changes what the human sees, moves no money. It is on this list because a tool
-      // that can reshape the approval surface belongs in the injection suite even
-      // though it cannot name an address. Note it is NOT chart_set_view above: that
-      // one drives the chart's render state, this one switches basic against pro.
-      'set_view_mode',
-      // The trading surface. Reads answer "what is my situation"; writes change what is drawn
-      // and what is pointed at. What is NOT here is the point of listing them: there is no
-      // close, no cancel, no flatten and no disarm. Those live on /api/trade/action, which the
-      // agent's door does not open onto, so the capability is absent rather than guarded. This
-      // list failing is how a future change that adds one gets noticed.
-      'trade_read',
-      'trade_batch',
-      'trade_focus',
-      'trade_highlight',
-      'trade_overlay',
-      'trade_note',
-      'trade_clear',
-    ].sort(),
+    // One list, in tests/tool-surface.ts, shared with scripts/e2e.ts. Two copies drifted twice.
+    [...EXPECTED_TOOLS_SORTED],
   );
 
   for (const tool of tools) {
@@ -333,6 +258,30 @@ test('the tool surface cannot express an exfiltration target', async () => {
     const schemaText = JSON.stringify(tool.inputSchema);
     assert.doesNotMatch(schemaText, /recipient|destination/i, `tool ${tool.name} schema names a destination`);
     assert.doesNotMatch(tool.name, /recipient|destination/i);
+  }
+});
+
+// The greeting's capability index is the first thing an agent reads and the thing it trusts
+// instead of guessing, which makes drift in it worse than a missing entry: an index naming a
+// tool that does not exist teaches an agent to call something that will fail, and an index
+// missing a real tool hides a capability and sends the agent back to asking its human how.
+// Both directions are checked against the LIVE tool list rather than against a second list.
+test('the capability index and the real tool surface name the same tools', async () => {
+  assert.ok(client !== null);
+  const live = new Set((await client.listTools()).tools.map(t => t.name));
+
+  // Entries are written as the tool plus an optional operation, for example
+  // 'chart_batch op:draw', because which op to use is part of the answer. The tool is the
+  // first token.
+  const indexed = new Set(
+    CAPABILITIES.flatMap(group => group.items.map(item => item.tool.split(' ')[0])),
+  );
+
+  for (const tool of indexed) {
+    assert.ok(live.has(tool), `the capability index names ${tool}, which is not a registered tool`);
+  }
+  for (const tool of live) {
+    assert.ok(indexed.has(tool), `${tool} is a registered tool and no capability group mentions it`);
   }
 });
 

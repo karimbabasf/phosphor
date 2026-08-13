@@ -224,36 +224,84 @@ test('the flipped view carries the live proposal amount, not just the label', as
 
 // ---------- refusals ----------
 
-test('set_view_mode is refused while a proposal is pending, and changes nothing', async () => {
+// A pending proposal used to refuse the switch outright, so that an agent could not move a
+// human away from a decision they were in the middle of. Commit 7b41af4 put the approval block
+// on the trading window, and ui/approvals.js now draws it on all three surfaces, so the
+// decision travels with the human instead of being left behind on the screen they came from.
+// The refusal was therefore protecting against something that can no longer happen, while
+// standing directly in the way of the one-word switch.
+//
+// What replaces it is disclosure. These tests hold the switch to still REPORTING the pending
+// work, because the basic screen shows one ask at a time and a silent switch with three
+// waiting would hide two of them.
+test('a switch while a proposal is pending goes through and reports what is still waiting', async () => {
   const h = await boot({ view: 'pro', proposals: [pendingProposal()] });
   try {
     const res = await postMcp(h, { op: 'set_view_mode', mode: 'basic' });
-    assert.equal(res.status, 409);
-    assert.deepEqual(res.json.pending, ['p-pending']);
-    assert.equal((await state(h)).view, 'pro', 'a refused switch must leave the mode alone');
-    assert.ok(h.auditTypes().includes('view_refused'));
-    assert.ok(!h.auditTypes().includes('view_changed'));
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.json.pending, ['p-pending'], 'the pending work must ride back on the answer');
+    assert.match(String(res.json.note), /await/, 'the answer must say so in a sentence, not only in an array');
+    assert.equal((await state(h)).view, 'basic');
+    assert.ok(h.auditTypes().includes('view_changed'));
   } finally {
     await h.close();
   }
 });
 
-test('the refusal lifts once the proposal is no longer pending', async () => {
-  const h = await boot({ view: 'pro', proposals: [pendingProposal()] });
+test('a switch with nothing pending says so rather than returning a bare empty list', async () => {
+  const h = await boot({ view: 'pro' });
   try {
-    assert.equal((await postMcp(h, { op: 'set_view_mode', mode: 'basic' })).status, 409);
-    h.setProposals([{ ...pendingProposal(), status: 'executed', decidedAt: new Date().toISOString() }]);
-    assert.equal((await postMcp(h, { op: 'set_view_mode', mode: 'basic' })).status, 200);
-    assert.equal((await state(h)).view, 'basic');
+    const res = await postMcp(h, { op: 'set_view_mode', mode: 'trade' });
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.json.pending, []);
+    assert.match(String(res.json.note), /nothing is waiting/);
   } finally {
     await h.close();
+  }
+});
+
+test('trade is a real mode and the window can be sent to it', async () => {
+  const h = await boot({ view: 'pro' });
+  try {
+    assert.equal((await postMcp(h, { op: 'set_view_mode', mode: 'trade' })).status, 200);
+    assert.equal((await state(h)).view, 'trade');
+    assert.ok(h.auditTypes().includes('view_changed'));
+  } finally {
+    await h.close();
+  }
+});
+
+// One word is the requirement, so the words a person actually says all have to land. These are
+// resolved in the app rather than in src/mcp.ts so that both doors onto the app agree.
+test('the words a person says resolve to a mode', async () => {
+  for (const [said, expected] of [
+    ['trading', 'trade'],
+    ['hft', 'trade'],
+    ['perps', 'trade'],
+    ['hyperliquid', 'trade'],
+    ['simple', 'basic'],
+    ['operator', 'pro'],
+    // Case and stray spacing are the human typing, not a different intent.
+    ['  TRADING  ', 'trade'],
+    ['BASIC', 'basic'],
+  ] as const) {
+    const h = await boot({ view: 'pro' });
+    try {
+      const res = await postMcp(h, { op: 'set_view_mode', mode: said });
+      assert.equal(res.status, 200, `"${said}" should resolve`);
+      assert.equal((await state(h)).view, expected, `"${said}" should mean ${expected}`);
+    } finally {
+      await h.close();
+    }
   }
 });
 
 test('an unknown mode is refused and changes nothing', async () => {
   const h = await boot({ view: 'pro' });
   try {
-    for (const mode of ['expert', '', 'BASIC', 'null']) {
+    // 'BASIC' is no longer here: case folding is now deliberate, see the alias test above.
+    // What must still be refused is a mode that names nothing, however plausible it sounds.
+    for (const mode of ['expert', '', 'null', 'trade-mode', 'both']) {
       const res = await postMcp(h, { op: 'set_view_mode', mode });
       assert.equal(res.status, 400, `mode ${mode} should be refused`);
     }

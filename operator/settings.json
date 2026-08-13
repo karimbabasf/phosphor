@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "deny": [
+      "Edit",
+      "Write",
+      "NotebookEdit",
+      "Bash",
+      "PowerShell",
+      "Monitor",
+      "BashOutput",
+      "KillShell",
+      "Agent",
+      "Workflow",
+      "Read(~/.phosphor/**)"
+    ],
+    "allow": [
+      "mcp__phosphor__*",
+      "Read",
+      "Grep",
+      "Glob"
+    ],
+    "defaultMode": "default",
+    "disableBypassPermissionsMode": "disable"
+  }
+}

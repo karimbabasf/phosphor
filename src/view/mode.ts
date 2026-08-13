@@ -7,6 +7,8 @@
 // more than basic, so a missing, corrupt or unrecognised file must never be the reason
 // a human sees less than they would have. Failing toward the simplified screen would
 // be a silent downgrade of what someone is shown before they approve money movement.
+// 'trade' does not change that: it shows a different subject rather than more or less of
+// this one, so pro remains the only safe answer to "we could not tell".
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -20,7 +22,7 @@ function filePathFor(dataDir: string): string {
 }
 
 function isViewMode(value: unknown): value is ViewMode {
-  return value === 'basic' || value === 'pro';
+  return value === 'basic' || value === 'pro' || value === 'trade';
 }
 
 export function readViewMode(dataDir: string): ViewMode {
