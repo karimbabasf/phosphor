@@ -61,6 +61,8 @@ Two agents can connect at once. Both may read. Proposals queue, and each is appr
 | `src/policy/render.ts` | Policy to plain English. Pure and deterministic. |
 | `src/proposals.ts` | Simulate, evaluate, persist, and execute after approval. The only path to execution. |
 | `src/intents.ts` | NEAR Intents 1Click quotes, the synthetic quoter for demo mode, and the stub Signer. |
+| `src/chain/evm.ts` | The one place an EVM transaction is signed and broadcast. Rails hand it calldata; they never broadcast. |
+| `src/chain/near.ts` | The one place a NEAR transaction is signed and broadcast: borsh, ed25519, nonce and block hash, receipt-level failure detection. Also NEP-413 message signing. Separate from `evm.ts` because it is a different curve, serialization and transaction shape, not because of taste. |
 | `src/hyperliquid.ts` | Hyperliquid candles: native `candleSnapshot` at 1m and above, sub-minute bucketed in process from the trades websocket. |
 | `src/candles.ts` | The candle service: caching, staleness marking, one interface over the source. |
 | `src/audit.ts` | Append-only JSONL. One line per event, never rewritten by the app. |

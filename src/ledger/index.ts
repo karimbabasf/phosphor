@@ -9,6 +9,7 @@ import { loadDemoLedger } from './demo.ts';
 import * as evm from './evm.ts';
 import * as solana from './solana.ts';
 import * as near from './near.ts';
+import { nearChainSpec } from '../chain/near.ts';
 import { readPositions } from '../rails/uniswap.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -29,14 +30,18 @@ const RPC_URLS: Record<Network, Record<ChainId, string>> = {
     base: 'https://base-rpc.publicnode.com',
     arb: 'https://arbitrum-one-rpc.publicnode.com',
     sol: 'https://api.mainnet-beta.solana.com',
-    near: 'https://rpc.mainnet.near.org',
+    // NEAR's own endpoints come from src/chain/near.ts so the reader and the signer can
+    // never point at different worlds. rpc.mainnet.near.org and rpc.testnet.near.org, which
+    // used to be here, are now DEPRECATED: they answer -429 with "STOP USING IT NOW" instead
+    // of data, which marked the NEAR column stale rather than returning a balance.
+    near: nearChainSpec('mainnet').rpcUrl,
   },
   testnet: {
     eth: 'https://ethereum-sepolia-rpc.publicnode.com',
     base: 'https://sepolia.base.org',
     arb: 'https://sepolia-rollup.arbitrum.io/rpc',
     sol: 'https://api.devnet.solana.com',
-    near: 'https://rpc.testnet.near.org',
+    near: nearChainSpec('testnet').rpcUrl,
   },
 };
 
