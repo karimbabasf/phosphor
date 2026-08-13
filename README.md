@@ -61,7 +61,7 @@ more than 20% in anything that can freeze me."
 
 ## The tool surface
 
-Twenty-four tools, split three ways. Read tools execute directly and cannot move anything.
+Twenty-six tools, split three ways. Read tools execute directly and cannot move anything.
 Write tools never execute: they return a proposal id and a simulation result, and nothing else.
 Chart tools move a view, never funds.
 
