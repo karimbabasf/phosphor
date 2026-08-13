@@ -89,7 +89,12 @@ const PROPOSE_TARGET: Record<string, ActionTarget> = {
 };
 
 export function targetFor(op: string, tool: string, kind: string): ActionTarget {
-  if (op === 'view') return 'chart';
+  /* The `view` op is two different things wearing one name. Seven of its twelve tools are
+     `chart_*` and drive the price pane; the other five are `trade_*` and change what the
+     trading window is showing (focus, highlight, overlay, note, clear). Animating all twelve
+     as chart work drew the lathe for an action that never touched the chart.
+     The `trade_*` five are a change of what is on screen, which is what the iris is for. */
+  if (op === 'view') return tool.startsWith('trade_') ? 'view' : 'chart';
   if (op === 'set_view_mode') return 'view';
   // An unrecognised propose kind is still money moving, so it weighs rather than falling all
   // the way to the read stage: the server refuses it a moment later and the settle says so.

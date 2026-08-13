@@ -101,6 +101,12 @@ test('targetFor is total: an op nobody has heard of animates as the quietest thi
   // The window picks its animation from this and has no default of its own, so a gap here is
   // a blank stage rather than a wrong one.
   assert.equal(targetFor('view', 'chart_set_view', ''), 'chart');
+  assert.equal(targetFor('view', 'chart_trendline', ''), 'chart');
+  // The view op carries two unrelated families. The trade_* five change what the trading
+  // window shows and never touch the price pane, so they must not draw the lathe.
+  assert.equal(targetFor('view', 'trade_focus', ''), 'view');
+  assert.equal(targetFor('view', 'trade_overlay', ''), 'view');
+  assert.equal(targetFor('view', 'trade_clear', ''), 'view');
   assert.equal(targetFor('set_view_mode', '', 'trade'), 'view');
   assert.equal(targetFor('propose', '', 'policy_change'), 'policy');
   // Arming a mandate is the only propose kind that puts size in the market, so it is the only
