@@ -9,6 +9,7 @@
     "mcp": "node src/mcp.ts",
     "keygen": "node scripts/keygen.ts",
     "sweep": "node scripts/sweep.ts",
+    "hl-agent": "node scripts/hl-agent.ts",
     "test": "node --test tests/unit/*.test.ts tests/injection.test.ts",
     "e2e": "node scripts/e2e.ts",
     "typecheck": "tsc --noEmit"

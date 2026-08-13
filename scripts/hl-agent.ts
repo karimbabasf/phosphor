@@ -1,0 +1,110 @@
+// Approve an API wallet so the runner can trade, and write its key to the keys file.
+//
+// This is the one step that has to be taken by a human at a terminal, and it is deliberately
+// not reachable from the app, not a rail, and not an MCP tool. Same precedent as
+// scripts/hl-withdraw.ts: some things are exported as plain functions driven from scripts/
+// rather than given a surface an agent can call.
+//
+// The reason is the venue's own signing split. ApproveAgent is a USER-SIGNED action, so it
+// needs the master key, which is what makes the following true: an agent, or a compromised
+// runner holding an API wallet, can never mint itself more authority. It can trade with the
+// key it was given and it cannot create another one.
+//
+// What the resulting key can and cannot do, enforced by Hyperliquid and not by our code:
+//   CAN     place, cancel and modify orders, and set leverage
+//   CANNOT  withdraw, transfer USDC or spot assets, move between perp and spot, or approve
+//           another agent, because those resolve the account from the signature itself
+//
+// Run: node scripts/hl-agent.ts [--name phosphor-runner]
+//
+// Never reuses an address. The venue prunes a deregistered agent's nonce state, and a reused
+// address can then have previously signed actions replayed against it, so every run generates
+// a fresh key and the old one is simply abandoned.
+
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
+import { loadConfig } from '../src/config.ts';
+import { liveSignPort, SIGNATURE_CHAIN_ID, SIGNATURE_CHAIN_ID_HEX } from '../src/rails/hyperliquid-withdraw.ts';
+
+const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const cfg = loadConfig(root);
+
+if (cfg.network === 'mainnet') {
+  console.error('refused: this script is testnet only, matching the withdraw rail guard.');
+  process.exit(1);
+}
+
+const nameArg = process.argv.indexOf('--name');
+const agentName = nameArg > -1 ? String(process.argv[nameArg + 1]) : 'phosphor-runner';
+const API = 'https://api.hyperliquid-testnet.xyz';
+
+const agentKey = generatePrivateKey();
+const agentAddress = privateKeyToAccount(agentKey).address;
+const nonce = Date.now();
+
+// The user-signed scheme: real EIP-712 over the action's own fields, domain
+// HyperliquidSignTransaction, with the REAL chain id. Not the msgpack phantom-agent scheme the
+// runner uses for orders. Getting these two the wrong way round is the documented failure.
+const action = {
+  type: 'approveAgent',
+  hyperliquidChain: 'Testnet',
+  signatureChainId: SIGNATURE_CHAIN_ID_HEX,
+  agentAddress: agentAddress.toLowerCase(),
+  agentName,
+  nonce,
+};
+
+const typed = {
+  domain: {
+    name: 'HyperliquidSignTransaction',
+    version: '1',
+    chainId: SIGNATURE_CHAIN_ID,
+    verifyingContract: '0x0000000000000000000000000000000000000000',
+  },
+  types: {
+    'HyperliquidTransaction:ApproveAgent': [
+      { name: 'hyperliquidChain', type: 'string' },
+      { name: 'agentAddress', type: 'address' },
+      { name: 'agentName', type: 'string' },
+      { name: 'nonce', type: 'uint64' },
+    ],
+  },
+  primaryType: 'HyperliquidTransaction:ApproveAgent',
+  message: {
+    hyperliquidChain: 'Testnet',
+    agentAddress: agentAddress.toLowerCase(),
+    agentName,
+    nonce: BigInt(nonce),
+  },
+};
+
+const master = liveSignPort.address(cfg.keysPath);
+console.log(`master account : ${master}`);
+console.log(`new agent      : ${agentAddress}  (name: ${agentName})`);
+console.log('approving on testnet...');
+
+const signature = await liveSignPort.signTypedData(cfg.keysPath, typed as never);
+
+const res = await fetch(`${API}/exchange`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ action, nonce, signature }),
+});
+const body = (await res.json()) as { status?: string; response?: unknown };
+
+if (body.status !== 'ok') {
+  console.error('approval refused by the venue:', JSON.stringify(body));
+  console.error('the key was NOT written. Common cause: the master account has never deposited,');
+  console.error('and an account with no funds cannot register an agent.');
+  process.exit(1);
+}
+
+// Written only after the venue accepted, so the file never claims an agent that does not exist.
+const keys = JSON.parse(fs.readFileSync(cfg.keysPath, 'utf8')) as Record<string, unknown>;
+keys.hyperliquidAgent = { address: agentAddress, privateKey: agentKey, name: agentName, approvedAt: new Date().toISOString() };
+fs.writeFileSync(cfg.keysPath, JSON.stringify(keys, null, 2) + '\n', { mode: 0o600 });
+
+console.log(`approved. key written to ${cfg.keysPath} under hyperliquidAgent.`);
+console.log('this key can trade and cannot withdraw. the runner will pick it up on the next arm.');
