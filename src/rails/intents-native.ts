@@ -58,7 +58,13 @@ import {
   resolveAsset,
   toBaseUnits,
 } from '../intents.ts';
-import type { OneClickQuote, OneClickStatus, OneClickToken, TokensFile } from '../intents.ts';
+import type {
+  OneClickEndpointType,
+  OneClickQuote,
+  OneClickStatus,
+  OneClickToken,
+  TokensFile,
+} from '../intents.ts';
 
 // The verifier contract. This is the whole point of the rail: one fixed account that goes on
 // the policy allowlist once and stays there, unlike a deposit address minted per quote.
@@ -151,6 +157,38 @@ export function base58Encode(bytes: Uint8Array): string {
   return out;
 }
 
+// The other direction, added for src/rails/intents-withdraw.ts, which has to decide whether a
+// string in config.local.json is a real 32-byte Solana address before it sends money to it. A
+// length check on the text would pass a transposed or truncated key, and viem's address
+// helpers only know EVM hex.
+//
+// Returns null rather than throwing on anything that is not base58: the caller is validating,
+// not parsing, so "this is not an address" is an answer and not an exception.
+export function base58Decode(text: string): Uint8Array | null {
+  if (text === '') return null;
+
+  let n = 0n;
+  for (const ch of text) {
+    const digit = BASE58_ALPHABET.indexOf(ch);
+    if (digit < 0) return null;
+    n = n * 58n + BigInt(digit);
+  }
+
+  const body: number[] = [];
+  while (n > 0n) {
+    body.unshift(Number(n % 256n));
+    n /= 256n;
+  }
+
+  // The mirror of the encode side: a leading '1' is a zero byte the number cannot carry.
+  let zeros = 0;
+  for (const ch of text) {
+    if (ch !== '1') break;
+    zeros += 1;
+  }
+  return Uint8Array.from([...new Array<number>(zeros).fill(0), ...body]);
+}
+
 // viem returns a 65-byte signature with v in {27, 28}, the value Ethereum clients emit. The
 // verifier contract expects the recovery byte in {0, 1} and the docs call this out as a
 // client responsibility, so a signature normalised wrong is rejected on chain after the
@@ -219,9 +257,21 @@ export type IntentsQuoteParams = {
   originAsset: string;
   destinationAsset: string;
   amount: string; // base units, decimal integer string
-  account: string; // our Intents account id; refundTo and recipient are both this
+  account: string; // our Intents account id; refundTo is always this, and recipient by default
   slippageToleranceBps?: number;
   deadlineMs?: number;
+  // Where the OUTPUT lands. Omitted means the account, credited inside the verifier, which is
+  // every swap on this rail and the shape this client was written for. The withdraw rail is
+  // the one caller that names a chain address, and these two fields are the only thing in the
+  // whole flow that decides where the money ends up: the signed intent hands the input to a
+  // solver handle and says nothing about the far side, so the recipient lives in the quote and
+  // has to be checked against the echo the API returns. src/rails/intents-withdraw.ts does that.
+  //
+  // refundTo stays the account and refundType stays INTENTS in both cases. A withdrawal that
+  // fails should leave the balance where it already was, not push it onto a chain by another
+  // route.
+  recipient?: string;
+  recipientType?: OneClickEndpointType;
 };
 
 export type GeneratedIntent = { standard: string; payload: unknown; correlationId?: string };
@@ -267,16 +317,23 @@ export function intentsApi(deps: { apiKey: string; fetchImpl?: typeof fetch }): 
 
   async function quote(params: IntentsQuoteParams): Promise<{ quote: OneClickQuote; raw: unknown }> {
     const deadline = new Date(Date.now() + (params.deadlineMs ?? 10 * 60 * 1000)).toISOString();
-    // All three of depositType, refundType and recipientType are INTENTS. That is what keeps
-    // the whole swap inside the verifier: the input is already there, the output is credited
-    // there, and a refund is credited there too. No leg of this touches a chain, which is
-    // why there is no destination for the policy engine to be unable to check.
+    // depositType and refundType are always INTENTS: the input is already inside the verifier
+    // and a refund belongs back where it started. recipientType defaults to INTENTS too, which
+    // is what keeps a swap entirely inside the contract and leaves no chain destination for the
+    // policy engine to be unable to check.
     // Lowercased, and not as a formatting nicety. An intents account id derived from an EVM
     // key IS the lowercase address: the API rejects the checksummed form of the very same
     // address with HTTP 400 "recipient is not valid" (verified live 2026-08-13), and the
     // verifier derives the id the same way when it checks an erc191 signature. Passing the
     // checksummed form made every quote on this rail fail.
     const account = params.account.toLowerCase();
+
+    // The recipient is NOT lowercased when it is a chain address. An intents account id is
+    // canonically lowercase; a Solana address is base58 and case carries information, so
+    // lowercasing one produces a different address that the API happens to accept as
+    // well-formed. Only the caller knows which kind it passed, so it is passed through.
+    const recipientType = params.recipientType ?? 'INTENTS';
+    const recipient = params.recipient ?? account;
 
     const body = {
       dry: params.dry,
@@ -288,8 +345,8 @@ export function intentsApi(deps: { apiKey: string; fetchImpl?: typeof fetch }): 
       depositType: 'INTENTS',
       refundTo: account,
       refundType: 'INTENTS',
-      recipient: account,
-      recipientType: 'INTENTS',
+      recipient,
+      recipientType,
       deadline,
     };
 

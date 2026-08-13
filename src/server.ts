@@ -93,6 +93,7 @@ const PROPOSE_KINDS: readonly string[] = [
   'swap',
   'hl_deposit',
   'intents_deposit',
+  'intents_withdraw',
   'lp_add',
   'lp_remove',
 ];
@@ -991,6 +992,21 @@ export function createServer(deps: ServerDeps): PhosphorServer {
           return;
         }
         sendProposal(res, await proposals.proposeIntentsDeposit({ chain, symbol, amount }));
+        return;
+      }
+      if (kind === 'intents_withdraw') {
+        const chain = chainField(params, 'chain', problems);
+        // Same optional symbol as the deposit: absent means the destination chain's gas asset.
+        // There is no field here for the address, and there must never be one: the wallet the
+        // payout lands in is resolved from config by the proposal service and re-derived by the
+        // rail. tests/injection.test.ts holds this schema to that.
+        const symbol = params.symbol === undefined ? undefined : strField(params, 'symbol', problems);
+        const amount = numField(params, 'amount', problems);
+        if (problems.length > 0) {
+          sendJson(res, 400, { error: problems.join('; ') });
+          return;
+        }
+        sendProposal(res, await proposals.proposeIntentsWithdraw({ chain, symbol, amount }));
         return;
       }
       if (kind === 'lp_add') {

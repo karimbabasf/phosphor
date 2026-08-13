@@ -458,11 +458,18 @@ test('the policy engine recognises every kind the registry can dispatch', () => 
   }
 });
 
-test('the live registry holds all five rail kinds and nothing else', () => {
+test('the live registry holds all six rail kinds and nothing else', () => {
   const tokens = JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'tokens.json'), 'utf8'));
   const registry = createRails({ cfg: cfgFor('live'), tokens });
 
-  assert.deepEqual(registry.kinds().sort(), ['hl_deposit', 'intents_deposit', 'lp_add', 'lp_remove', 'swap']);
+  assert.deepEqual(registry.kinds().sort(), [
+    'hl_deposit',
+    'intents_deposit',
+    'intents_withdraw',
+    'lp_add',
+    'lp_remove',
+    'swap',
+  ]);
   for (const kind of registry.kinds()) {
     const rail = registry.for({ kind } as WriteDraft);
     assert.ok(rail !== null, `no rail for ${kind}`);

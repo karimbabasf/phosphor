@@ -140,7 +140,10 @@ function amountUsdOf(draft: WriteDraft): number {
 function symbolsOf(draft: WriteDraft): string[] {
   const out: string[] = [];
   if (draft.kind === 'swap') out.push(draft.fromSymbol, draft.toSymbol);
-  else if (draft.kind === 'hl_deposit') out.push(draft.symbol);
+  // Both intents kinds carry one symbol. The deposit was missing here, so its "What is
+  // involved" line came out blank on the one screen a human approves money from.
+  else if (draft.kind === 'hl_deposit' || draft.kind === 'intents_deposit' || draft.kind === 'intents_withdraw')
+    out.push(draft.symbol);
   else if (draft.kind === 'lp_add') out.push(draft.token0.symbol, draft.token1.symbol);
   else if (draft.kind === 'consolidate') out.push(draft.symbol);
   else if (draft.kind === 'transfer') out.push(draft.leg.symbol);
@@ -150,7 +153,8 @@ function symbolsOf(draft: WriteDraft): string[] {
 function chainsOf(draft: WriteDraft): string[] {
   const out: string[] = [];
   if (draft.kind === 'swap') out.push(draft.chain, draft.toChain);
-  else if (draft.kind === 'hl_deposit') out.push(draft.chain);
+  else if (draft.kind === 'hl_deposit' || draft.kind === 'intents_deposit' || draft.kind === 'intents_withdraw')
+    out.push(draft.chain);
   else if (draft.kind === 'lp_add' || draft.kind === 'lp_remove') out.push(draft.chain);
   else if (draft.kind === 'consolidate') out.push(draft.toChain, ...draft.legs.map((l) => l.fromChain));
   else if (draft.kind === 'transfer') out.push(draft.leg.fromChain, draft.leg.toChain);
@@ -179,6 +183,11 @@ function destinationsOf(proposal: Proposal, selfAddresses: string[]): BasicDesti
     push(draft.bridge, 'the Hyperliquid bridge contract, from the list this app keeps', 'app');
   } else if (draft.kind === 'lp_add' || draft.kind === 'lp_remove') {
     push(draft.counterparty, 'the Uniswap contract this app keeps on its approved list', 'app');
+  } else if (draft.kind === 'intents_withdraw') {
+    // The one draft that pays out to an ordinary address on a chain. Basic exists to say
+    // whose address that is, so it says it here rather than showing a withdrawal with no
+    // destination at all.
+    push(draft.to, isSelf(draft.to, selfAddresses) ? 'your own wallet' : NOT_YOURS, 'app');
   } else if (draft.kind === 'transfer') {
     const to = draft.leg.to;
     push(to, isSelf(to, selfAddresses) ? 'your own wallet' : NOT_YOURS, 'app');
@@ -215,6 +224,9 @@ function askHeadline(draft: WriteDraft, amountUsd: number): string {
   if (draft.kind === 'intents_deposit') {
     return `It wants to move ${amountClause(amountUsd)}your ${plainSymbol(draft.symbol)} into a NEAR account this app holds for you, ready to trade.`;
   }
+  if (draft.kind === 'intents_withdraw') {
+    return `It wants to bring ${amountClause(amountUsd)}your ${plainSymbol(draft.symbol)} back out of the NEAR trading service and into your ${plainChain(draft.chain)} wallet.`;
+  }
   if (draft.kind === 'lp_add') {
     return `It wants to put ${amountClause(amountUsd)}your money into a Uniswap pool holding ${plainSymbol(draft.token0.symbol)} and ${plainSymbol(draft.token1.symbol)}.`;
   }
@@ -244,6 +256,10 @@ function askAfterLine(draft: WriteDraft, totalUsd: number | null, amountUsd: num
   // separate action. Saying so is the difference between an informed click and a surprise.
   if (draft.kind === 'intents_deposit')
     return 'The money stays yours, but it leaves your wallet and is held by the NEAR trading service. Bringing it back is a separate step.';
+  // The one kind where money ARRIVES. Falling through to the transfer line would have told
+  // this reader they were about to have less, which is the opposite of what happens.
+  if (draft.kind === 'intents_withdraw')
+    return 'The money comes back into your own wallet, where you can spend it directly again.';
   if (draft.kind === 'lp_add') return `${money(amountUsd)} moves into the pool. You can take it back out later.`;
   if (draft.kind === 'lp_remove') return 'Money comes back out of the pool to you.';
   if (draft.kind === 'consolidate') return 'The money stays yours. It moves onto one chain.';

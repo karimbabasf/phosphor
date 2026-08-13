@@ -217,6 +217,23 @@ export type IntentsDepositDraft = {
   counterparty: string; // must be on the policy allowlist
 };
 
+// The way back out: a balance held inside intents.near leaves the verifier and lands in a
+// wallet on a real chain. The mirror of IntentsDepositDraft, and the only draft in the app
+// whose destination is an address on a chain this app may hold no key for. `to` is resolved
+// from config by the proposal service and re-derived by the rail; see the header of
+// src/rails/intents-withdraw.ts for why that is the whole safety story of this kind.
+export type IntentsWithdrawDraft = {
+  kind: 'intents_withdraw';
+  chain: ChainId; // where it lands, and whose bridged asset we are spending inside the verifier
+  symbol: string;
+  amount: number;
+  amountUsd: number;
+  minReceived: number; // the least that may arrive in the wallet
+  from: string; // our account id inside intents.near: the EVM address, lowercased
+  to: string; // our own wallet on `chain`; never named by a caller
+  counterparty: string; // must be on the policy allowlist
+};
+
 export type HlDepositDraft = {
   kind: 'hl_deposit';
   chain: ChainId; // 'arb' (Arbitrum Sepolia on testnet)
@@ -260,6 +277,7 @@ export type WriteDraft =
   | SwapDraft
   | HlDepositDraft
   | IntentsDepositDraft
+  | IntentsWithdrawDraft
   | LpAddDraft
   | LpRemoveDraft;
 
@@ -504,6 +522,11 @@ export type HlDepositParams = { amount: number }; // chain, token and bridge com
 // symbol defaults to the origin chain's gas asset, which is what "deposit $10 of ETH" means.
 export type IntentsDepositParams = { chain: ChainId; symbol?: string; amount: number };
 
+// Same shape, opposite direction, and the same silence about addresses. `chain` says where
+// the money lands; which wallet on that chain is our own is read from config and from the
+// key, never from this call.
+export type IntentsWithdrawParams = { chain: ChainId; symbol?: string; amount: number };
+
 export type LpAddParams = {
   chain: ChainId;
   token0Symbol: string;
@@ -530,6 +553,7 @@ export type ProposalService = {
   proposeSwap(params: SwapParams): Promise<Proposal>;
   proposeHlDeposit(params: HlDepositParams): Promise<Proposal>;
   proposeIntentsDeposit(params: IntentsDepositParams): Promise<Proposal>;
+  proposeIntentsWithdraw(params: IntentsWithdrawParams): Promise<Proposal>;
   proposeLpAdd(params: LpAddParams): Promise<Proposal>;
   proposeLpRemove(params: LpRemoveParams): Promise<Proposal>;
   approve(id: string): Promise<Proposal>; // human path only; executes on approval

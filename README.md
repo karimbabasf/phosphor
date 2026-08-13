@@ -82,6 +82,7 @@ Chart tools move a view, never funds.
 | `propose_lp_remove` | Pulls a share of a position this wallet holds, collecting its fees |
 | `propose_hl_deposit` | Deposits USDC into this app's own Hyperliquid account through Bridge2 |
 | `propose_intents_deposit` | Moves funds from this wallet into NEAR Intents, where they become a balance `intents.near` holds under this app's own account. Funds the `intents-native` swap venue. Deposits the chain's gas asset (native ETH) unless a symbol is given |
+| `propose_intents_withdraw` | Brings a balance back out of `intents.near` into one of this app's own wallets on `eth`, `base`, `arb` or `sol`. The way out of the `intents-native` venue. Withdraws the chain's gas asset unless a symbol is given. Which wallet is ours comes from `config.local.json`, never from the call |
 | `propose_consolidate` | Gathers a token's scattered balances onto one chain |
 | `propose_policy_change` | Proposes a patch to the policy rules |
 

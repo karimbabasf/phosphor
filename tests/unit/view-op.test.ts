@@ -110,6 +110,7 @@ async function boot(opts: { view?: ViewMode; proposals?: Proposal[] } = {}): Pro
       proposeSwap: async () => pendingProposal(),
       proposeHlDeposit: async () => pendingProposal(),
       proposeIntentsDeposit: async () => pendingProposal(),
+      proposeIntentsWithdraw: async () => pendingProposal(),
       proposeLpAdd: async () => pendingProposal(),
       proposeLpRemove: async () => pendingProposal(),
       approve: async () => pendingProposal(),

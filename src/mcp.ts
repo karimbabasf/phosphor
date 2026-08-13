@@ -76,6 +76,7 @@ type ProposeKind =
   | 'swap'
   | 'hl_deposit'
   | 'intents_deposit'
+  | 'intents_withdraw'
   | 'lp_add'
   | 'lp_remove';
 
@@ -271,6 +272,17 @@ registerPropose(
   'propose_intents_deposit',
   'intents_deposit',
   `Proposes depositing funds from this app's own wallet into NEAR Intents, where they become a balance held by the intents.near verifier under this app's own account. This is the funding step for propose_swap with venue intents-native, which can then swap that balance without moving anything on chain. Leaving symbol out deposits the origin chain's gas asset, so on eth that is native ETH. The asset does not change: this is custody moving, not a swap. Who gets credited is resolved by the app from its own key and cannot be named here. Mainnet only. ${CANNOT_APPROVE}`,
+  {
+    chain: CHAIN,
+    symbol: z.string().optional(),
+    amount: z.number(),
+  },
+);
+
+registerPropose(
+  'propose_intents_withdraw',
+  'intents_withdraw',
+  `Proposes withdrawing a balance held inside NEAR Intents back out to one of this app's own wallets on a real chain. The reverse of propose_intents_deposit, and the way a balance swapped with venue intents-native gets out of the verifier. chain says where the money lands: eth, base, arb or sol. Leaving symbol out withdraws that chain's gas asset, so on sol that is native SOL. Which wallet on that chain is ours is read from this app's own config and cannot be named here. Mainnet only. ${CANNOT_APPROVE}`,
   {
     chain: CHAIN,
     symbol: z.string().optional(),

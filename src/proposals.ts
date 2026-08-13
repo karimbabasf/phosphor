@@ -18,6 +18,8 @@ import type {
   Holding,
   IntentsDepositDraft,
   IntentsDepositParams,
+  IntentsWithdrawDraft,
+  IntentsWithdrawParams,
   LedgerSnapshot,
   LpAddDraft,
   LpAddParams,
@@ -57,6 +59,12 @@ import { hlSpec } from './rails/hyperliquid-deposit.ts';
 import { ONECLICK_COUNTERPARTY } from './rails/oneclick.ts';
 import { INTENTS_DEPOSIT_COUNTERPARTY, minCreditedFor } from './rails/intents-deposit.ts';
 import { INTENTS_NATIVE_COUNTERPARTY } from './rails/intents-native.ts';
+import {
+  INTENTS_WITHDRAW_COUNTERPARTY,
+  WITHDRAW_DESTINATIONS,
+  minReceivedFor,
+  ourWalletOn,
+} from './rails/intents-withdraw.ts';
 import { NATIVE_ASSET, NATIVE_TOKEN_ID } from './intents.ts';
 
 const ALL_CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
@@ -749,8 +757,22 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
 
     // Both sides are our own wallet. The agent picks the chains and the symbols; it has no
     // way to say who receives the output.
+    //
+    // toChain means two different things depending on the venue, and conflating them made the
+    // intents-native rail unreachable for every pair it exists to serve. On an on-chain venue
+    // it names where the output LANDS, so the recipient is that chain's address. On
+    // intents-native nothing lands on a chain at all: the proceeds are credited to our own
+    // account inside the verifier, so toChain names only the destination ASSET's home chain
+    // and the recipient stays the origin address. Deriving `to` from toChain regardless sent
+    // a sol address into a draft whose own rail requires from === to, so the swap was refused
+    // as unsimulatable while omitting toChain failed asset lookup instead. No argument
+    // combination worked. Note this is strictly narrowing: intents-native can now only ever
+    // pay ourselves, which is what the rail already asserted in requireVenue.
     const from = ourAddress(params.chain, snapshot, problems);
-    const to = params.chain === toChain ? from : ourAddress(toChain, snapshot, problems);
+    const to =
+      venue === 'intents-native' || params.chain === toChain
+        ? from
+        : ourAddress(toChain, snapshot, problems);
 
     const counterparty =
       venue === 'oneclick'
@@ -838,6 +860,78 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     return problems.length > 0
       ? refuseDraft('intents_deposit', draft, problems)
       : proposeRail('intents_deposit', draft);
+  }
+
+  async function proposeIntentsWithdraw(params: IntentsWithdrawParams): Promise<Proposal> {
+    const snapshot = ledger.snapshot();
+    const problems: string[] = [];
+
+    // The account whose balance is spent inside the verifier. Derived the same way the deposit
+    // rail credits it, from our own EVM address lowercased, so a deposit and the withdrawal
+    // that undoes it name the same account by construction. 'eth' only picks which chain's
+    // address row to read; the three EVM chains share one address.
+    const from = ourAddress('eth', snapshot, problems).toLowerCase();
+
+    // Where it lands. Read from config here and again inside the rail, which refuses a draft
+    // naming anything else. There is no argument that can reach this.
+    const to = ourWalletOn(params.chain, cfg.addresses) ?? '';
+    if (!WITHDRAW_DESTINATIONS.includes(params.chain)) {
+      problems.push(
+        `Withdrawals go to ${WITHDRAW_DESTINATIONS.join(', ')} only. A NEAR payout would go to an account id ` +
+          'nobody signed for.',
+      );
+    } else if (to === '') {
+      problems.push(`No ${params.chain} address is configured, so there is no wallet of ours to withdraw to.`);
+    }
+
+    const native = NATIVE_ASSET[params.chain];
+    const symbol = params.symbol ?? native?.symbol ?? '';
+    if (symbol === '') {
+      problems.push(`No default asset for ${params.chain}, so the withdrawal has to name a symbol.`);
+    }
+
+    // What the verifier actually holds, from the same read the wallet panel shows. A withdrawal
+    // for more than that gets signed, submitted and rejected by the contract: no money is lost,
+    // but the human learns nothing, so naming the number here is worth doing.
+    //
+    // It refuses only where it is CERTAIN, and that restraint is the point. The symbol and the
+    // chain on an intents holding are labels looked up in the 1Click token list, and
+    // src/ledger/intents.ts degrades them to the raw asset id at zero decimals when that list
+    // momentarily fails to load, which it does (seen live 2026-08-13). Keying a refusal on a
+    // label that can degrade would silently block every withdrawal whenever a remote list
+    // blipped, which is a worse failure than the one this check prevents. So: an empty verifier
+    // is unambiguous and refuses, a positively identified balance that is too small refuses and
+    // names itself, and anything else says nothing and lets the contract answer.
+    const read = ledger.intents();
+    if (read !== undefined && read.ok) {
+      if (read.holdings.length === 0) {
+        problems.push(`intents.near holds nothing for ${from}, so there is nothing to withdraw.`);
+      } else {
+        const held = read.holdings.find((h) => h.symbol === symbol && h.originChain === params.chain);
+        if (held !== undefined && held.amount < params.amount) {
+          problems.push(
+            `intents.near holds ${held.amount} ${symbol} from ${params.chain} for ${from}, which is less than ` +
+              `the ${params.amount} this would withdraw.`,
+          );
+        }
+      }
+    }
+
+    const draft: IntentsWithdrawDraft = {
+      kind: 'intents_withdraw',
+      chain: params.chain,
+      symbol,
+      amount: params.amount,
+      amountUsd: usdOf(symbol, params.amount, snapshot),
+      minReceived: minReceivedFor(params.amount),
+      from,
+      to,
+      counterparty: INTENTS_WITHDRAW_COUNTERPARTY,
+    };
+
+    return problems.length > 0
+      ? refuseDraft('intents_withdraw', draft, problems)
+      : proposeRail('intents_withdraw', draft);
   }
 
   async function proposeLpAdd(params: LpAddParams): Promise<Proposal> {
@@ -1018,6 +1112,7 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     proposeSwap: (p) => serialise(() => proposeSwap(p)),
     proposeHlDeposit: (p) => serialise(() => proposeHlDeposit(p)),
     proposeIntentsDeposit: (p) => serialise(() => proposeIntentsDeposit(p)),
+    proposeIntentsWithdraw: (p) => serialise(() => proposeIntentsWithdraw(p)),
     proposeLpAdd: (p) => serialise(() => proposeLpAdd(p)),
     proposeLpRemove: (p) => serialise(() => proposeLpRemove(p)),
     // approve() executes, so it shares the queue: a human click landing next to an

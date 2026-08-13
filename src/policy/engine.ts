@@ -128,6 +128,7 @@ function isRailDraft(draft: WriteDraft): draft is RailDraft {
     draft.kind === 'swap' ||
     draft.kind === 'hl_deposit' ||
     draft.kind === 'intents_deposit' ||
+    draft.kind === 'intents_withdraw' ||
     draft.kind === 'lp_add' ||
     draft.kind === 'lp_remove'
   );
@@ -153,9 +154,17 @@ function counterpartyOf(draft: RailDraft): string {
 // reads as a success, and can never be spent or withdrawn by anyone but its owner. The rail
 // checks this too, against the configured key. This is the same rule in the layer that does
 // not depend on which rail ran.
+// intents_withdraw is the sharpest case of all of them, and the reason this rule is worth
+// having twice. It is the only draft whose destination is an ordinary address on a chain the
+// app may hold no key for: a wrong one is not a balance stuck somewhere recoverable, it is
+// money in a stranger's wallet, settled. The rail re-derives the address from config and
+// refuses a mismatch; this is the same rule in the layer that does not depend on which rail
+// ran, and here it also asserts the address is one of ours rather than merely the one config
+// last said.
 function destinationOf(draft: RailDraft): string | null {
   if (draft.kind === 'swap') return draft.to;
   if (draft.kind === 'intents_deposit') return draft.intentsAccount;
+  if (draft.kind === 'intents_withdraw') return draft.to;
   return null;
 }
 

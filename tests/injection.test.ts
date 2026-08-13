@@ -263,6 +263,11 @@ test('the tool surface cannot express an exfiltration target', async () => {
       // the credited account is derived from our own key in proposals.ts and there is no
       // argument here that can name it. The loop below holds that to be true.
       'propose_intents_deposit',
+      // The way back out, and the only rail on this surface that pays money to an ordinary
+      // address on a chain. That makes it the sharpest test of the rule the loop below
+      // enforces: the wallet it pays into is read from config and re-derived by the rail,
+      // and there is no argument here that can name an address of any kind.
+      'propose_intents_withdraw',
       'propose_lp_add',
       'propose_lp_remove',
       // The chart. These read and drive a view, never funds: none of them reaches the

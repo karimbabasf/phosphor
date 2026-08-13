@@ -23,6 +23,7 @@ import type {
   AppConfig,
   HlDepositDraft,
   IntentsDepositDraft,
+  IntentsWithdrawDraft,
   LpAddDraft,
   LpRemoveDraft,
   Network,
@@ -37,11 +38,25 @@ import { hlDepositRail, hlSpec } from './hyperliquid-deposit.ts';
 import { ONECLICK_COUNTERPARTY, oneClickRail } from './oneclick.ts';
 import { INTENTS_NATIVE_COUNTERPARTY, intentsNativeRail } from './intents-native.ts';
 import { intentsDepositRail } from './intents-deposit.ts';
+import { intentsWithdrawRail } from './intents-withdraw.ts';
 
-export type RailKind = 'swap' | 'hl_deposit' | 'intents_deposit' | 'lp_add' | 'lp_remove';
-export type RailDraft = SwapDraft | HlDepositDraft | IntentsDepositDraft | LpAddDraft | LpRemoveDraft;
+export type RailKind = 'swap' | 'hl_deposit' | 'intents_deposit' | 'intents_withdraw' | 'lp_add' | 'lp_remove';
+export type RailDraft =
+  | SwapDraft
+  | HlDepositDraft
+  | IntentsDepositDraft
+  | IntentsWithdrawDraft
+  | LpAddDraft
+  | LpRemoveDraft;
 
-const RAIL_KINDS: readonly RailKind[] = ['swap', 'hl_deposit', 'intents_deposit', 'lp_add', 'lp_remove'];
+const RAIL_KINDS: readonly RailKind[] = [
+  'swap',
+  'hl_deposit',
+  'intents_deposit',
+  'intents_withdraw',
+  'lp_add',
+  'lp_remove',
+];
 
 export function isRailKind(kind: WriteDraft['kind']): kind is RailKind {
   return (RAIL_KINDS as readonly string[]).includes(kind);
@@ -107,6 +122,15 @@ export function createRails(deps: RailDeps): RailRegistry {
       network: deps.cfg.network,
       keysPath: deps.cfg.keysPath,
       tokens: deps.tokens,
+    }) as Rail,
+    // The only rail that is handed the address book. It pays out to a wallet on a real chain,
+    // so it re-derives the destination from config itself rather than trusting the draft that
+    // reaches it; see the header of intents-withdraw.ts.
+    intents_withdraw: intentsWithdrawRail({
+      network: deps.cfg.network,
+      keysPath: deps.cfg.keysPath,
+      tokens: deps.tokens,
+      addresses: deps.cfg.addresses,
     }) as Rail,
     lp_add: uniswap.lpAdd as Rail,
     lp_remove: uniswap.lpRemove as Rail,
