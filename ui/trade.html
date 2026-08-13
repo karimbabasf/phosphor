@@ -106,10 +106,12 @@
                   <th scope="col" class="c-mkt">MARKET</th>
                   <th scope="col" class="c-side">SIDE</th>
                   <th scope="col" class="c-num">SIZE</th>
+                  <th scope="col" class="c-num">NOTIONAL</th>
                   <th scope="col" class="c-num">ENTRY</th>
                   <th scope="col" class="c-num">MARK</th>
                   <th scope="col" class="c-num">LIQ</th>
                   <th scope="col" class="c-num">PNL</th>
+                  <th scope="col" class="c-acts">&nbsp;</th>
                 </tr>
               </thead>
               <tbody id="t-book-rows"></tbody>
@@ -131,8 +133,9 @@
                   <th scope="col" class="c-time">TIME</th>
                   <th scope="col" class="c-mkt">MARKET</th>
                   <th scope="col" class="c-side">SIDE</th>
-                  <th scope="col" class="c-num">SIZE</th>
                   <th scope="col" class="c-num">PRICE</th>
+                  <th scope="col" class="c-num">SIZE</th>
+                  <th scope="col" class="c-num">NOTIONAL</th>
                   <th scope="col" class="c-num">FEE</th>
                   <th scope="col" class="c-num">PNL</th>
                 </tr>
@@ -184,10 +187,34 @@
         <div class="frame frame-bottom"></div>
       </section>
 
-      <!-- 6. MANDATE. Where every other trading interface puts a buy/sell ticket. The
+      <!-- 6. MARKET. The facts about the instrument rather than about the account.
+           Mark and oracle are separated on purpose: they are different prices with
+           different jobs, mark decides a liquidation and oracle decides funding, and
+           the gap between them is the one number that says the venue is under strain. -->
+      <section class="panel panel-tmarket">
+        <div class="frame frame-top" data-title="MARKET"></div>
+        <div class="pbody">
+          <dl class="rgrid">
+            <dt class="k">mark</dt><dd id="t-mkt-mark">--</dd>
+            <dt class="k">oracle</dt><dd id="t-mkt-oracle">--</dd>
+            <dt class="k">basis</dt><dd id="t-mkt-spread">--</dd>
+            <dt class="k">premium</dt><dd id="t-mkt-premium">--</dd>
+            <dt class="k">funding</dt><dd id="t-mkt-funding">--</dd>
+            <dt class="k">per 8h</dt><dd id="t-mkt-funding8">--</dd>
+            <dt class="k">open int</dt><dd id="t-mkt-oi">--</dd>
+            <dt class="k">24h vol</dt><dd id="t-mkt-vol">--</dd>
+            <dt class="k">atr 1h</dt><dd id="t-mkt-atr">--</dd>
+            <dt class="k">atr %</dt><dd id="t-mkt-atrpct">--</dd>
+          </dl>
+          <p class="empty" id="t-market-empty" hidden>Waiting for the venue.</p>
+        </div>
+        <div class="frame frame-bottom"></div>
+      </section>
+
+      <!-- 7. MANDATE. Where every other trading interface puts a buy/sell ticket. The
            rows are built by the renderer; the shape it must produce is written out in
            trade.css above the .mrow rules. -->
-      <section class="panel panel-tmandate grow">
+      <section class="panel panel-tmandate">
         <div class="frame frame-top" data-title="MANDATE"></div>
         <div class="pbody">
           <div id="t-mandate-list"></div>
@@ -197,7 +224,7 @@
       </section>
 
       <!-- 7. LOG -->
-      <section class="panel panel-tlog">
+      <section class="panel panel-tlog grow">
         <div class="frame frame-top" data-title="LOG"></div>
         <div class="pbody">
           <div id="t-log" class="log" role="log"></div>

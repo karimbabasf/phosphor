@@ -116,3 +116,70 @@ claims a human approved something when no human did. Desktop, 1440x900 and wider
 ## States that must work
 resting, pending, refusal, kill switch on, policy unreadable, agent connected, gate disabled,
 collapsed
+
+---
+
+# Second surface: /trade (added 2026-08-12)
+
+The "one page, no routes" rule above still governs `/`, and it is unchanged. Karim asked for the
+Hyperliquid work to be packaged as its own interface (2026-08-12: "this trading with hyperliquid
+should introduce a trading interface... of course this has to keep the same design as the main pro
+page"). So the app now has two surfaces, each of them still one page that never scrolls.
+
+`/` is a custody screen: what you hold and what governs it. `/trade` is a position screen: what you
+are exposed to and what happens if price moves against it. Neither borrows the other's furniture.
+
+## Asked for
+- A professional trading interface, judged against what real perps desks actually carry, not
+  against a retail app
+- The same design language as the pro page: same tokens, same panel frame, same terminal density,
+  no new hue, no radius, no shadow, no transition
+- Everything on it manipulable by the agent as well as by the human
+- Components must not collide: one locked DOM contract, written before any markup existed
+- Manual controls for cancel, close and flatten, and positions drawn on the chart
+
+## The one idea it is built around
+Every position on borrowed size has two prices that end it. The **liquidation**, drawn by the
+venue. And the **mandate stop-out**, drawn by the human, where the loss they approved is reached
+and the bot stands down. No other trading interface can draw the second, because in no other
+interface does it exist: there is nothing to draw when authority was never bounded. Ours is always
+nearer than the venue's. Two lines on a chart, and they are the whole architecture.
+
+## Layout
+Status bar full width, then two columns. Left is the market and what this account did in it:
+CHART (grows), then BOOK, then FILLS. Right is what governs the account: RISK, MARKET, MANDATE,
+then LOG (grows). Working orders are child rows of the position they belong to, never a table of
+their own, because a stop at 3200 is a property of the ETH long and not an independent object.
+
+There is deliberately **no order ticket**. Where every other trading interface puts buy and sell,
+this one puts the mandate console. Every manual control on the page STOPS something.
+
+## What it must show that retail omits
+- Liquidation distance in three units at once: percent, dollars, and ATR multiples. The third is
+  the only one that answers "is that far?"
+- Profit split three ways: price, funding, fees. A carry trade green on price can be red once it
+  has paid for itself
+- Net and gross exposure, and what a five percent adverse move leaves. Cross margin makes every
+  position a term in every other position's liquidation price
+- Mark against oracle as a basis figure. Different prices with different jobs, and the gap is the
+  one number that says the venue is under strain
+- The arm receipt: the account's next state if the program opens its maximum position
+- Feed health beside the price, because a screen behind the market must say so where price is read
+
+## Colour law, one extension only
+Red reaches the liquidation surface: the liquidation line, its band, and a liquidation fill. Being
+taken by the venue is the same class of event as a refused write, so it wears the same colour. The
+mandate wall is bright phosphor and never red, because painting the guard rail the same colour as
+the cliff stops a person reading either.
+
+## Rules with teeth
+- `null` means unknown and renders as `--`. Never as 0, never blank. The venue reports an account
+  value of 0.0 on a funded unified account, and a screen that prints that zero as a fact tells a
+  person they hold nothing while they carry a position
+- Every dynamic string reaches the DOM through textContent. Never innerHTML, anywhere
+- Digits that tick must not change width: `font-variant-numeric: tabular-nums` on every number
+- KILL SWITCH is reachable within two tab stops from a cold load, in every state
+
+## States that must work
+waiting for the venue, venue degraded, offline, flat, nothing armed, armed and filling, halted,
+kill switch on, position near liquidation, stale account, unified account (health not computable)

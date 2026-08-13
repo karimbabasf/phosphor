@@ -78,6 +78,17 @@
   color: var(--green-ghost);
 }
 
+/* The command line carries two vocabularies on this page, not one. style.css gives it a fixed
+   ten characters because the pro page only ever types "ema 21" into it; here the longest real
+   command is "overlay mandateWall on", which is twenty-two. It grows and the source line beside
+   it gives up its width first, which is what that line was already built to do. */
+.chartbar #chart-cmd {
+  flex: 1 1 24ch;
+  min-width: 12ch;
+}
+
+.chartbar .meta { flex: 0 1 auto; }
+
 /* The overlay toggles are the same genus of control as the timeframe strip, so they are
    the same control: small text, the active one bracketed rather than boxed, and the row
    stays a line of text instead of becoming a toolbar. The renderer may report state as
@@ -166,6 +177,12 @@
 
 /* Caps so a long book grows into a scroll rather than into the page. */
 .panel-trisk > .pbody { max-height: 42vh; }
+
+/* The market panel sits between risk and the mandate console, and it earns its place twice.
+   It carries facts no other panel does (oracle against mark, open interest, real volatility),
+   and it fills the height the mandate console does not need while nothing is armed, which is
+   the state this screen is in most of the time. */
+.panel-tmarket > .pbody { max-height: 30vh; }
 
 /* Two label/value pairs per line: four account figures in two rows, which leaves the
    height in this panel to the liquidation block under them. */
@@ -407,4 +424,15 @@
   .mrow-projected .proj-margin { grid-row: auto; }
 
   .ovbar { row-gap: 2px; }
+}
+
+/* The mandate console takes the height its contents need and the log takes what is left.
+   It was the other way round, and it was wrong for the state this screen spends most of its
+   time in: nothing armed is one line of text, and giving that line the whole column left a
+   quarter of the page empty under it. An armed mandate is tall on its own, so it does not
+   need `grow` to claim room, it needs a ceiling so a program with many rules scrolls inside
+   its panel instead of pushing the log off the page. */
+.panel-tmandate > .pbody {
+  max-height: 56vh;
+  overflow-y: auto;
 }

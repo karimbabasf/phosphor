@@ -111,11 +111,18 @@ function price(n) {
   return '$' + v.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits });
 }
 
-/* The payload's *Pct fields arrive already in percent, unlike the pro page's shares, so this
-   prints the number it was given rather than multiplying it by a hundred. */
+/* Two scales arrive in the payload and they are not the same number. roePct and
+   liqDistancePct are already in percent, because src/trade/state.ts multiplies them by a
+   hundred when it builds them. healthPct is a share of equity clamped to zero and one. One
+   formatter each, named for what it takes, so neither is ever read on the other's scale. */
 function pct(n) {
   if (!known(n)) return '--';
   return Number(n).toFixed(2) + '%';
+}
+
+function pctOfShare(share) {
+  if (!known(share)) return '--';
+  return (Number(share) * 100).toFixed(2) + '%';
 }
 
 /* Funding is a rate per hour, a fraction of the position each hour. Two decimal places of
@@ -558,6 +565,58 @@ function renderLiqBlock(pos) {
   fillBar($('t-liq-bar'), liqFill(pos));
 }
 
+/* The instrument, as opposed to the account.
+
+   Mark and oracle get separate lines because they are separate prices doing separate jobs:
+   mark decides a liquidation and the profit on screen, oracle decides funding. They normally
+   sit within a few basis points of each other, and the moment they do not is the moment a
+   position can be liquidated at a price no exchange is trading at. That gap has no name on
+   most screens; here it is a line called basis.
+
+   The ATR pair is the same idea one level up. An absolute ATR means nothing without the price
+   beside it, so the percent is printed next to it: that single figure is what turns "twelve
+   percent from liquidation" into either a comfortable distance or a bad afternoon. */
+function renderMarket(p) {
+  var d = p || {};
+  var symbol = String(d.symbol || '').toUpperCase();
+  var list = d.markets || [];
+  var m = null;
+  for (var i = 0; i < list.length; i++) {
+    if (String(list[i].coin || '').toUpperCase() === symbol) { m = list[i]; break; }
+  }
+
+  var empty = $('t-market-empty');
+  if (empty) empty.hidden = m !== null;
+  if (!m) {
+    ['t-mkt-mark', 't-mkt-oracle', 't-mkt-spread', 't-mkt-premium', 't-mkt-funding',
+      't-mkt-funding8', 't-mkt-oi', 't-mkt-vol', 't-mkt-atr', 't-mkt-atrpct'].forEach(function (id) {
+      setText(id, '--');
+    });
+    return;
+  }
+
+  setText('t-mkt-mark', price(m.markPx));
+  setText('t-mkt-oracle', price(m.oraclePx));
+  // In basis points, because the number is small enough that percent renders it as 0.00 and a
+  // reader would conclude the two prices agree exactly.
+  var basis = known(m.oraclePx) && known(m.markPx) && Number(m.oraclePx) !== 0
+    ? ((Number(m.markPx) - Number(m.oraclePx)) / Number(m.oraclePx)) * 10000
+    : null;
+  setText('t-mkt-spread', known(basis) ? (basis > 0 ? '+' : '') + basis.toFixed(1) + ' bps' : '--');
+  setText('t-mkt-premium', pct(m.premiumPct));
+  setText('t-mkt-funding', funding(m.fundingRateHourly));
+  // The venue publishes an hourly rate; every exchange quotes an eight hour one. Both are
+  // printed rather than one converted silently, because an unlabelled funding number read on
+  // the wrong period is off by a factor of eight.
+  setText('t-mkt-funding8', known(m.fundingRateHourly) ? funding(Number(m.fundingRateHourly) * 8) : '--');
+  setText('t-mkt-oi', usdWhole(m.openInterestUsd));
+  setText('t-mkt-vol', usdWhole(m.volume24hUsd));
+  setText('t-mkt-atr', price(m.atr));
+  setText('t-mkt-atrpct', known(m.atr) && known(m.markPx) && Number(m.markPx) !== 0
+    ? pct((Number(m.atr) / Number(m.markPx)) * 100)
+    : '--');
+}
+
 function renderRisk(p) {
   var d = p || {};
   var account = d.account || {};
@@ -565,8 +624,8 @@ function renderRisk(p) {
   setText('t-risk-margin', usd(account.marginUsedUsd));
   setText('t-risk-free', usd(account.freeUsd));
   setText('t-risk-maint', usd(account.maintenanceUsd));
-  setText('t-risk-health', pct(account.healthPct));
-  fillBar($('t-risk-healthbar'), account.healthPct);
+  setText('t-risk-health', pctOfShare(account.healthPct));
+  fillBar($('t-risk-healthbar'), known(account.healthPct) ? Number(account.healthPct) * 100 : null);
 
   setText('t-exp-net', signedUsd(account.netNotionalUsd));
   setText('t-exp-gross', usd(account.grossNotionalUsd));
@@ -576,10 +635,12 @@ function renderRisk(p) {
   setText('t-exp-shock', 'A 5% move against you leaves ' + usd(account.equityAtFivePctAdverse) + '.');
 
   var positions = Array.isArray(d.positions) ? d.positions : null;
+  // accountKnown is false until the feed has settled what kind of account this is, and every
+  // figure above is null while it is. Flat and not-yet-known are different facts, so an
+  // unsettled account never gets the sentence that says there is nothing at risk.
+  var settled = account.accountKnown !== false;
   var empty = $('t-risk-empty');
-  if (!positions) {
-    // Not knowing yet is not the same fact as having nothing at risk, and the two lines say
-    // so differently.
+  if (!positions || (!positions.length && !settled)) {
     setText('t-risk-empty', 'No account data yet.');
     if (empty) empty.hidden = false;
     renderLiqBlock(null);
@@ -1099,6 +1160,7 @@ function renderAll(p) {
   renderStatus(p);
   renderVenueBanner(p);
   renderRisk(p);
+  renderMarket(p);
   renderMandates(p);
   renderBook(p);
   renderFills(p);
@@ -1286,35 +1348,59 @@ function wireProduct() {
   });
 }
 
-/* ux/flow.md's FORM table names one command input for the three view writes. Its id is not in
-   the spec's DOM contract, so it is bound only if trade.html carries it and the page works
-   without it. The vocabulary is closed, which is the rule the chart's command line follows
-   too: an unknown word is refused with the list rather than guessed at. */
+/* One command line, two vocabularies.
+
+   The input is `chart-cmd`, the same id the pro page uses, because ui/chart.js binds to it by
+   id for "ema 21" and this page loads that file unchanged. Rather than a second box beside it,
+   the trading verbs share it: "focus eth", "overlay fills on", "clear agent".
+
+   Bound in the CAPTURE phase, so this handler sees Enter before chart.js does. A word it
+   recognises is consumed with stopPropagation, and anything else is left alone to reach the
+   chart's own parser. Without the capture phase both handlers would fire on every line and one
+   of them would always be complaining about a command meant for the other.
+
+   The vocabulary is closed, like the chart's and like the strategy grammar: an unknown word is
+   refused with the alternatives rather than guessed at. */
 function wireCommand() {
-  var input = $('trade-cmd');
+  var input = $('chart-cmd');
   if (!input) return;
-  input.addEventListener('keydown', function (ev) {
-    if (ev.key !== 'Enter') return;
-    var words = String(input.value || '').trim().toLowerCase().split(/\s+/);
-    var head = words[0] || '';
-    if (head === 'focus' && words[1]) {
-      focusSymbol(words[1]);
-    } else if (head === 'overlay' && OVERLAY_NAMES.indexOf(words[1]) !== -1 &&
-      (words[2] === 'on' || words[2] === 'off')) {
-      sendView('overlay:' + words[1], { overlay: { name: words[1], on: words[2] === 'on' } }, null);
-    } else if (head === 'clear') {
-      var target = words[1] || 'agent';
-      if (['agent', 'all', 'highlights', 'note'].indexOf(target) === -1) {
+  input.addEventListener(
+    'keydown',
+    function (ev) {
+      if (ev.key !== 'Enter') return;
+      var words = String(input.value || '').trim().toLowerCase().split(/\s+/);
+      var head = words[0] || '';
+      if (head !== 'focus' && head !== 'overlay' && head !== 'clear') return;
+
+      /* From here the line is ours, so the chart never sees it. `clear` is deliberately in both
+         vocabularies and resolves here: on this page it means the agent's highlights and note,
+         which is what a person looking at a trading screen means by it. */
+      ev.stopPropagation();
+      ev.preventDefault();
+
+      if (head === 'focus' && words[1]) {
+        focusSymbol(words[1]);
+      } else if (
+        head === 'overlay' &&
+        OVERLAY_NAMES.indexOf(words[1]) !== -1 &&
+        (words[2] === 'on' || words[2] === 'off')
+      ) {
+        sendView('overlay:' + words[1], { overlay: { name: words[1], on: words[2] === 'on' } }, null);
+      } else if (head === 'clear') {
+        var target = words[1] || 'agent';
+        if (['agent', 'all', 'highlights', 'note'].indexOf(target) === -1) {
+          alertText('Not a command. Try: focus eth, overlay fills on, clear agent.');
+          return;
+        }
+        sendView('clear', { clear: target }, null);
+      } else {
         alertText('Not a command. Try: focus eth, overlay fills on, clear agent.');
         return;
       }
-      sendView('clear', { clear: target }, null);
-    } else {
-      alertText('Not a command. Try: focus eth, overlay fills on, clear agent.');
-      return;
-    }
-    input.value = '';
-  });
+      input.value = '';
+    },
+    true,
+  );
 }
 
 function wireResize() {
