@@ -96,6 +96,7 @@ Spec: `docs/superpowers/specs/2026-08-12-phosphor-chart-v2.md`.
 - basic must never state a balance it cannot back, shorten an address, or omit a destination the approval rests on
 - Karim 2026-08-12: "make a loading animation for anything that is loading or not showing yet and especially if like candlesticks havent loaded in". Every panel that has no answer yet says so while it waits, the chart most of all, and every one of them stops the moment its own answer lands
 - Karim 2026-08-12: "on the x axis the controls for squeezing are reversed and I want to be able to squeeze as much as I want". Dragging the time axis follows the hand, and the window squeezes until the renderer runs out, not until a round number does
+- Karim 2026-08-12: "I want this tiny timer to not look like a price tag". The bar countdown under the last-price tag reads as a duration, not as a second label in the price column
 ## Goal behind the ask
 The owner sees the whole machine at once, with no scrolling: what the wallet holds, what governs
 it, and whether anything is waiting for a click. On testnet with the gate off he must also be

@@ -1,6 +1,6 @@
 {
-  "stamp": "05bb0f38f3b2e00c",
-  "iteration": 9,
+  "stamp": "bd60d326546d0f7c",
+  "iteration": 10,
   "firstFive": {
     "what": "A terminal control panel for a crypto wallet held across five chains, with a red bar across the top saying every proposal is auto-approving because the approval gate is off on testnet",
     "who": "The owner of the funds, supervising what a connected AI agent is allowed to do with them",
@@ -186,6 +186,11 @@
       "requirement": "Karim 2026-08-12: \"on the x axis the controls for squeezing are reversed and I want to be able to squeeze as much as I want\". Dragging the time axis follows the hand, and the window squeezes until the renderer runs out, not until a round number does",
       "met": true,
       "ref": "real pointer drags on #chart-hud in the axis strip: right 220px took barCount 120 to 202, left 220px took 202 to 63. Repeated squeezes land on 2000 client and 2000 server with 2000 candles served, axis relabelled to 11 Aug / 12 Aug"
+    },
+    {
+      "requirement": "Karim 2026-08-12: \"I want this tiny timer to not look like a price tag\". The bar countdown under the last-price tag reads as a duration, not as a second label in the price column",
+      "met": true,
+      "ref": "3x crops of the axis at 20s and 11s to close: the countdown lost the tag left edge and the 11px face. It is a two-pixel rule across the tag width that empties toward the close, unlit track always full width, with the figure centred under it at 9px and unfilled. The tag is still the only filled block in the column. Dropped entirely under a 15s timeframe, where a rule would spend its life empty"
     }
   ],
   "goal": {
@@ -214,7 +219,8 @@
     "basic frozen": "driven and shot at 1440: red warning box, red 'Everything is frozen. Nothing can move.', agreeing footer, the button reads LET THINGS MOVE AGAIN, and placesLine drops 'all normal'",
     "pro after the basic-view merge": "driven and shot at 1440 (.design/state-pro): the full chart v2 deck renders unchanged beside the wallet, policy and log, status bar reads v0.3, and the log carries the view_changed lines. The data-view CSS hides the deck only in basic",
     "waiting": "every read held open 6s at 390, 768 and 1440: the chart draws a skeleton of candles lighting up behind a sweep with CONNECTING over it, every other panel carries block rows on a delayed blink, the donut carries a chasing arc, and the status bar dashes blink. No horizontal overflow at any of the three widths (scrollWidth equals clientWidth). Every skeleton is gone and body.waiting is off once the answers land",
-    "squeezed": "time axis dragged until it stops: 2000 one-minute bars, about a day and a half, bars thin but still drawn with the one-pixel floor, time grid switches to dates, price axis and last-price tag unchanged. The server agrees at 2000 and serves 2000 candles, so the window is full rather than half empty"
+    "squeezed": "time axis dragged until it stops: 2000 one-minute bars, about a day and a half, bars thin but still drawn with the one-pixel floor, time grid switches to dates, price axis and last-price tag unchanged. The server agrees at 2000 and serves 2000 candles, so the window is full rather than half empty",
+    "bar closing": "watched a 1m bar run down at 3x: rule lit a third of the width at 0:20 and a stub at 0:11 with the unlit track carrying the rest, figure stepping once a second under it. The reserved band in buildLayout still keeps the price grid labels off it"
   },
   "driven": {
     "how": "real pointer input through playwright against the running app at 1440x900, reading CHART.view before and after each gesture, not synthetic events",
