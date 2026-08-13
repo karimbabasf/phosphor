@@ -382,15 +382,62 @@ body.log-collapsed .panel-gate > .pbody { max-height: none; }
 .tf.on::before { content: '['; color: var(--green-ghost); }
 .tf.on::after { content: ']'; color: var(--green-ghost); }
 
-/* Cursor is set per region in app.js: grab on the plot, ns-resize on the price
-   axis, ew-resize on the time axis. Fluid: app.js reads clientWidth and redraws. */
-#chart {
-  display: block;
-  width: 100%;
-  flex: 1;
-  min-height: 120px;
-  cursor: grab;
+/* The indicator command line. A field, not a toolbar: it stays a line of text on a
+   terminal, and it takes the same words the agent uses over MCP. */
+#chart-cmd {
+  appearance: none;
+  background: transparent;
+  color: var(--green);
+  border: 0;
+  border-bottom: 1px solid var(--green-ghost);
+  font: var(--fs) / var(--lh) var(--mono);
+  padding: 0 0.5ch;
+  /* Fixed basis: the meta line beside it is the elastic one, not this. */
+  flex: 0 0 10ch;
+  min-width: 0;
 }
+
+/* Source, staleness and the agent's object count. It gives up its width first and
+   truncates rather than pushing the controls off the line. */
+.chartbar .meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#chart-cmd::placeholder { color: var(--green-ghost); }
+#chart-cmd:focus-visible { outline: none; border-bottom-color: var(--green); }
+
+/* Two canvases in one box. The scene draws candles and axes when the data or the view
+   changes; the hud draws the crosshair, the legend and the price tag on pointer move.
+   Redrawing five hundred candles to move a crosshair is what makes a chart feel slow.
+   Cursor is set per region in chart.js. Sized by chart.js from this element. */
+.chartwrap {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 132px;
+  width: 100%;
+}
+
+.chartwrap:focus-visible { outline: 1px dotted var(--green); outline-offset: -1px; }
+
+.chartwrap > canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Only the top canvas takes the pointer: one hit surface, no coordinate drift. */
+#chart { pointer-events: none; }
+#chart-hud { cursor: crosshair; touch-action: none; }
+
+/* Every sub-pane an indicator opens needs height from somewhere, and the wallet under it
+   scrolls inside itself already. chart.js sets --panes; three is the enforced maximum. */
+.panel-chart { flex-grow: calc(1 + var(--panes, 0) * 0.55); }
 
 /* ---------- 5. policy ---------- */
 
@@ -493,7 +540,10 @@ body.log-collapsed .panel-gate > .pbody { max-height: none; }
   #donut { height: 180px; flex: none; }
   /* Same reason: the timeframe strip wraps rather than push the body out. */
   .chartbar { flex-wrap: wrap; }
-  #chart { height: 180px; flex: none; }
+  /* Stacked, the box is fixed rather than elastic, so a pane has to be paid for in height
+     or every indicator would be dropped for room on every narrow window. */
+  .chartwrap { height: calc(220px + var(--panes, 0) * 78px); flex: none; }
+  .panel-chart { flex-grow: 0; }
   .log { max-height: 46vh; flex: none; }
 }
 

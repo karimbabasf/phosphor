@@ -30,7 +30,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { AppConfig, ChainId, Policy, Proposal, ProposalService, RiskRow } from './types.ts';
+import type { AppConfig, Candle, ChainId, Policy, Proposal, ProposalService, RiskRow } from './types.ts';
 import type { Audit } from './audit.ts';
 import type { Store } from './store.ts';
 import type { Ledger } from './ledger/index.ts';
@@ -40,6 +40,19 @@ import { classify } from './composition.ts';
 import { buildWallet } from './wallet.ts';
 import { gateRequired, gateBanner } from './policy/gate.ts';
 import { renderSentences } from './policy/render.ts';
+import {
+  buildRead,
+  createChartStore,
+  digestSeries,
+  LIMITS as CHART_LIMITS,
+  measure as measureChart,
+  snapTimeframe,
+  TIMEFRAMES,
+  timeframeLabel,
+} from './chart.ts';
+import type { ChartGeometry, ChartIndicator, ChartState } from './chart.ts';
+import { indicatorCatalog, indicatorSpec } from './indicators.ts';
+import type { IndicatorResult } from './indicators.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_DIR = path.join(__dirname, '..', 'ui');
@@ -67,7 +80,23 @@ const READ_TOOLS: readonly string[] = [
   'log_tail',
   'candles',
   'proposal_status',
+  'chart_read',
+  'chart_measure',
+  'chart_scan',
+  'indicator_catalog',
 ];
+// Chart writes. They move no money, so they never reach the proposal path and never wait on
+// an approval. They are still audited like every other op: an agent that can change what the
+// human sees while that human approves a transfer is a surface, not a decoration.
+const VIEW_TOOLS: readonly string[] = [
+  'chart_set_view',
+  'chart_add_indicator',
+  'chart_remove_indicator',
+  'chart_level',
+  'chart_mark',
+  'chart_clear',
+];
+const SCAN_TIMEFRAMES_MAX = 6;
 
 export type ServerDeps = {
   cfg: AppConfig;
@@ -130,6 +159,10 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   const sseClients = new Set<http.ServerResponse>();
   let stateTimer: NodeJS.Timeout | null = null;
 
+  // Chart state is server-side on purpose: see the header of src/chart.ts. The browser
+  // renders it and writes its own pan and zoom back.
+  const chart = createChartStore(cfg.candleProducts[0] ?? 'BTC-USD');
+
   function sseSend(res: http.ServerResponse, payload: unknown): void {
     res.write(`data: ${JSON.stringify(payload)}\n\n`);
   }
@@ -141,6 +174,13 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       for (const client of sseClients) sseSend(client, { type: 'state' });
     }, STATE_DEBOUNCE_MS);
     stateTimer.unref();
+  }
+
+  // The revision rides along so the browser can tell an agent's change from the echo of its
+  // own. It ignores anything at or below the rev its last write returned, which is what keeps
+  // a server round trip from fighting the hand that is dragging the chart.
+  function broadcastChart(): void {
+    for (const client of sseClients) sseSend(client, { type: 'chart', rev: chart.rev() });
   }
 
   const offStore = store.subscribe(() => broadcastState());
@@ -286,10 +326,19 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     res.on('error', drop);
   }
 
-  async function sendCandles(url: URL, res: http.ServerResponse): Promise<void> {
-    const product = url.searchParams.get('product') ?? cfg.candleProducts[0] ?? 'BTC-USD';
-    const granularity = intParam(url.searchParams.get('granularity'), 60, 86400);
-    const limit = intParam(url.searchParams.get('limit'), 120, CANDLE_LIMIT_MAX);
+  type CandleLoad = {
+    candles: Candle[];
+    source: string;
+    stale: boolean;
+    built: string;
+    collectedSec: number;
+    fetchedAt: string;
+  };
+
+  // One loader behind every candle surface: the legacy /api/candles route, the chart payload
+  // the browser renders, and every agent read. Two loaders would let the number the agent
+  // reads drift from the pixel the human sees.
+  async function loadCandles(product: string, granularitySec: number, limit: number): Promise<CandleLoad> {
     // Keep the trade stream pointed at whatever the chart is showing. Cheap and
     // idempotent, and it means the sub-minute book is already warm on a switch.
     live.watch(product);
@@ -297,40 +346,182 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     // Under a minute there is no exchange candle to fetch: Hyperliquid's interval
     // enum starts at 1m and rejects anything smaller with a 422. Those candles are
     // built here from the trade stream, so they are live-only and start empty.
-    if (granularity < 60) {
-      const built = live.seconds(product, granularity, limit);
-      const body = JSON.stringify(built);
-      res.writeHead(200, {
-        'content-type': 'application/json; charset=utf-8',
-        'content-length': Buffer.byteLength(body),
-        'cache-control': 'no-store',
-        'x-candle-source': 'hyperliquid live trades',
-        'x-candle-stale': String(!live.connected()),
-        'x-candle-fetched-at': new Date().toISOString(),
-        'x-candle-built': 'trades',
-        'x-candle-collected': String(live.collectedSec(product)),
-      });
-      res.end(body);
-      return;
+    if (granularitySec < 60) {
+      return {
+        candles: live.seconds(product, granularitySec, limit),
+        source: 'hyperliquid live trades',
+        stale: !live.connected(),
+        built: 'trades',
+        collectedSec: live.collectedSec(product),
+        fetchedAt: new Date().toISOString(),
+      };
     }
+    const result = await candles.get(product, granularitySec, limit);
+    return {
+      candles: result.candles,
+      source: result.source,
+      stale: result.stale,
+      built: 'candles',
+      collectedSec: 0,
+      fetchedAt: result.fetchedAt,
+    };
+  }
 
+  async function sendCandles(url: URL, res: http.ServerResponse): Promise<void> {
+    const product = url.searchParams.get('product') ?? cfg.candleProducts[0] ?? 'BTC-USD';
+    const granularity = intParam(url.searchParams.get('granularity'), 60, 86400);
+    const limit = intParam(url.searchParams.get('limit'), 120, CANDLE_LIMIT_MAX);
     try {
-      const result = await candles.get(product, granularity, limit);
+      const load = await loadCandles(product, granularity, limit);
       // Body is Candle[] per the contract; the staleness marker the chart region
       // needs rides in headers so the body shape stays exactly what was specified.
-      const body = JSON.stringify(result.candles);
+      const body = JSON.stringify(load.candles);
       res.writeHead(200, {
         'content-type': 'application/json; charset=utf-8',
         'content-length': Buffer.byteLength(body),
         'cache-control': 'no-store',
-        'x-candle-source': result.source,
-        'x-candle-stale': String(result.stale),
-        'x-candle-fetched-at': result.fetchedAt,
+        'x-candle-source': load.source,
+        'x-candle-stale': String(load.stale),
+        'x-candle-fetched-at': load.fetchedAt,
+        'x-candle-built': load.built,
+        'x-candle-collected': String(load.collectedSec),
       });
       res.end(body);
     } catch (err) {
       sendJson(res, 502, { error: errText(err) });
     }
+  }
+
+  // ---------- chart ----------
+
+  function computeIndicators(
+    state: ChartState,
+    series: Candle[],
+  ): { indicator: ChartIndicator; result: IndicatorResult }[] {
+    const out: { indicator: ChartIndicator; result: IndicatorResult }[] = [];
+    for (const indicator of state.indicators) {
+      const spec = indicatorSpec(indicator.type);
+      if (spec === undefined) continue;
+      out.push({ indicator, result: spec.compute(series, indicator.params) });
+    }
+    return out;
+  }
+
+  // Everything the renderer needs in one round trip: the view, the candles, and every
+  // indicator series already computed. The browser draws plots generically and never has to
+  // know what an RSI is, which is what keeps the two sides from disagreeing.
+  async function chartPayload(): Promise<unknown> {
+    const state = chart.state();
+    let load: CandleLoad;
+    let error: string | null = null;
+    try {
+      load = await loadCandles(state.view.product, state.view.granularitySec, chart.historyNeeded());
+    } catch (err) {
+      error = errText(err);
+      load = {
+        candles: [],
+        source: 'unavailable',
+        stale: true,
+        built: '',
+        collectedSec: 0,
+        fetchedAt: new Date().toISOString(),
+      };
+    }
+    const computed = computeIndicators(state, load.candles);
+    return {
+      rev: state.rev,
+      lastDriver: state.lastDriver,
+      view: state.view,
+      candles: load.candles,
+      meta: {
+        source: load.source,
+        stale: load.stale,
+        built: load.built,
+        collectedSec: load.collectedSec,
+        fetchedAt: load.fetchedAt,
+        error,
+      },
+      indicators: computed.map(({ indicator, result }) => ({
+        id: indicator.id,
+        type: indicator.type,
+        label: indicator.label,
+        pane: indicator.pane,
+        source: indicator.source,
+        plots: result.plots,
+        guides: result.guides,
+        range: result.range,
+        state: result.state,
+      })),
+      levels: state.levels,
+      marks: state.marks,
+      agentObjects: chart.agentObjects(),
+      products: cfg.candleProducts,
+      timeframes: TIMEFRAMES,
+      limits: CHART_LIMITS,
+    };
+  }
+
+  // The agent's view of the same thing: no arrays of pixels, every number in context.
+  async function chartRead(): Promise<unknown> {
+    const state = chart.state();
+    try {
+      const load = await loadCandles(state.view.product, state.view.granularitySec, chart.historyNeeded());
+      return buildRead({
+        state,
+        candles: load.candles,
+        meta: { source: load.source, stale: load.stale, built: load.built, collectedSec: load.collectedSec },
+        computed: computeIndicators(state, load.candles),
+        nowSec: Math.floor(Date.now() / 1000),
+      });
+    } catch (err) {
+      return {
+        error: errText(err),
+        product: state.view.product,
+        timeframe: timeframeLabel(state.view.granularitySec),
+        rev: state.rev,
+      };
+    }
+  }
+
+  // The browser's own pan and zoom coming home. It carries the approval token like every
+  // other browser write, not because a view change is dangerous, but so there stays exactly
+  // one door per caller: the window uses this, an agent uses /api/mcp.
+  async function handleChartWrite(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    const parsed = await readBody(req);
+    if (!parsed.ok) return sendJson(res, 400, { error: parsed.error });
+    const body = parsed.value;
+    if (!sameOrigin(req)) return sendJson(res, 403, { error: 'cross-origin chart write refused' });
+    if (!tokenMatches(body.token, token)) return sendJson(res, 403, { error: 'invalid approval token' });
+
+    if (body.geometry !== null && typeof body.geometry === 'object') {
+      chart.setGeometry(body.geometry as ChartGeometry);
+    }
+    let notes: string[] = [];
+    if (body.view !== null && typeof body.view === 'object') {
+      const outcome = chart.setView(body.view as Record<string, unknown>, 'human');
+      if (!outcome.ok) return sendJson(res, 400, { error: outcome.error });
+      notes = outcome.notes;
+    }
+    // The window's own command line. The human gets the same vocabulary as the agent, so
+    // the chart is not a surface only an agent can change.
+    if (body.addIndicator !== null && typeof body.addIndicator === 'object') {
+      const outcome = chart.addIndicator(body.addIndicator as Record<string, unknown>, 'human');
+      if (!outcome.ok) return sendJson(res, 400, { error: outcome.error, notes: outcome.notes });
+      notes = notes.concat(outcome.notes);
+    }
+    if (typeof body.removeIndicator === 'string') {
+      const outcome = chart.removeIndicator(body.removeIndicator);
+      if (!outcome.ok) return sendJson(res, 400, { error: outcome.error });
+    }
+    if (typeof body.clear === 'string') {
+      const outcome = chart.clear(body.clear);
+      if (!outcome.ok) return sendJson(res, 400, { error: outcome.error });
+    }
+    broadcastChart();
+    // The resulting view goes back with the answer. The window applies it from here rather
+    // than from a refresh, because a refresh it fired itself can land before this write does
+    // and snap the gesture the human just made back to where it started.
+    sendJson(res, 200, { ok: true, rev: chart.rev(), view: chart.state().view, notes });
   }
 
   // Absent Origin (curl, the e2e script) is allowed; a foreign one is not. Paired
@@ -470,7 +661,112 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       sendJson(res, 200, proposal);
       return;
     }
+    if (tool === 'chart_read') {
+      sendJson(res, 200, await chartRead());
+      return;
+    }
+    if (tool === 'indicator_catalog') {
+      sendJson(res, 200, {
+        indicators: indicatorCatalog(),
+        limits: {
+          overlaysOnPrice: CHART_LIMITS.maxOverlays,
+          subPanes: CHART_LIMITS.maxPanes,
+          note: 'A sub-pane request past the maximum is refused with the reason, never squeezed in.',
+        },
+        timeframes: TIMEFRAMES.map((tf) => tf.label),
+      });
+      return;
+    }
+    if (tool === 'chart_measure') {
+      const view = chart.state().view;
+      try {
+        const load = await loadCandles(view.product, view.granularitySec, chart.historyNeeded());
+        sendJson(res, 200, {
+          product: view.product,
+          timeframe: timeframeLabel(view.granularitySec),
+          ...(measureChart({
+            candles: load.candles,
+            granularitySec: view.granularitySec,
+            fromTime: numOrUndefined(args.fromTime),
+            toTime: numOrUndefined(args.toTime),
+            fromPrice: numOrUndefined(args.fromPrice),
+            toPrice: numOrUndefined(args.toPrice),
+          }) as Record<string, unknown>),
+        });
+      } catch (err) {
+        sendJson(res, 502, { error: errText(err) });
+      }
+      return;
+    }
+    if (tool === 'chart_scan') {
+      const view = chart.state().view;
+      const product = typeof args.product === 'string' && args.product.trim().length > 0 ? args.product.trim().toUpperCase() : view.product;
+      const asked = Array.isArray(args.timeframes) ? args.timeframes : ['5m', '15m', '1h', '4h', '1d'];
+      const wanted: number[] = [];
+      for (const entry of asked.slice(0, SCAN_TIMEFRAMES_MAX)) {
+        const found = TIMEFRAMES.find((tf) => tf.label === String(entry));
+        wanted.push(found === undefined ? snapTimeframe(Number(entry)) : found.sec);
+      }
+      const bars = intParam(args.bars, 120, CANDLE_LIMIT_MAX);
+      const nowSec = Math.floor(Date.now() / 1000);
+      const rows: unknown[] = [];
+      for (const sec of wanted) {
+        try {
+          const load = await loadCandles(product, sec, bars);
+          rows.push({ ...digestSeries(load.candles, sec, nowSec), source: load.source, stale: load.stale });
+        } catch (err) {
+          rows.push({ timeframe: timeframeLabel(sec), granularitySec: sec, error: errText(err) });
+        }
+      }
+      sendJson(res, 200, {
+        product,
+        scannedAt: new Date(nowSec * 1000).toISOString(),
+        barsPerTimeframe: bars,
+        // Deliberately does not touch the view: a scan is a question, not a instruction to
+        // move the chart the human is looking at.
+        chartUnchanged: true,
+        timeframes: rows,
+      });
+      return;
+    }
     sendJson(res, 400, { error: `unknown read tool: ${tool}. known tools: ${READ_TOOLS.join(', ')}` });
+  }
+
+  function numOrUndefined(raw: unknown): number | undefined {
+    return typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
+  }
+
+  // ---------- chart writes from the agent ----------
+
+  async function handleView(body: JsonBody, res: http.ServerResponse): Promise<void> {
+    const tool = String(body.tool ?? '');
+    const args = asRecord(body.args);
+
+    let outcome: { ok: boolean; notes: string[]; error?: string; id?: string; label?: string };
+    if (tool === 'chart_set_view') outcome = chart.setView(args, 'agent');
+    else if (tool === 'chart_add_indicator') outcome = chart.addIndicator(args, 'agent');
+    else if (tool === 'chart_remove_indicator') outcome = chart.removeIndicator(String(args.id ?? args.type ?? ''));
+    else if (tool === 'chart_level') outcome = chart.setLevel(args, 'agent');
+    else if (tool === 'chart_mark') outcome = chart.setMark(args, 'agent');
+    else if (tool === 'chart_clear') outcome = chart.clear(String(args.what ?? 'agent'));
+    else {
+      sendJson(res, 400, { error: `unknown view tool: ${tool}. known tools: ${VIEW_TOOLS.join(', ')}` });
+      return;
+    }
+
+    if (!outcome.ok) {
+      sendJson(res, 400, { error: outcome.error, notes: outcome.notes });
+      return;
+    }
+    broadcastChart();
+    // Answer with the chart as it now stands. An agent that has to call chart_read after
+    // every write spends two round trips learning what its own change did.
+    sendJson(res, 200, {
+      ok: true,
+      id: outcome.id,
+      notes: outcome.notes,
+      chart: await chartRead(),
+    });
   }
 
   // What the agent gets back from any propose: the id to poll, what the policy decided,
@@ -652,9 +948,11 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         ? `read ${String(body.tool ?? '?')}`
         : op === 'propose'
           ? `propose ${String(body.kind ?? '?')}`
-          : op === 'hello'
-            ? `hello from ${String(body.client ?? 'unknown client')}`
-            : `unknown op ${op}`;
+          : op === 'view'
+            ? `chart ${String(body.tool ?? '?')}`
+            : op === 'hello'
+              ? `hello from ${String(body.client ?? 'unknown client')}`
+              : `unknown op ${op}`;
     // Contract: every op is audit-logged before dispatch, arguments included verbatim.
     audit.append('tool_call', `agent: ${label}`, body);
 
@@ -672,7 +970,11 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       await handlePropose(body, res);
       return;
     }
-    sendJson(res, 400, { error: `unknown op: ${op}. known ops: hello, read, propose` });
+    if (op === 'view') {
+      await handleView(body, res);
+      return;
+    }
+    sendJson(res, 400, { error: `unknown op: ${op}. known ops: hello, read, propose, view` });
   }
 
   // ---------- dispatch ----------
@@ -684,6 +986,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       if (req.method === 'GET' || req.method === 'HEAD') {
         if (route === '/api/state') return sendJson(res, 200, buildState());
         if (route === '/api/candles') return await sendCandles(url, res);
+        if (route === '/api/chart') return sendJson(res, 200, await chartPayload());
         if (route === '/api/log') {
           return sendJson(res, 200, audit.tail(intParam(url.searchParams.get('limit'), 200, LOG_LIMIT_MAX)));
         }
@@ -694,6 +997,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       }
       if (req.method === 'POST') {
         if (route === '/api/mcp') return await handleMcp(req, res);
+        if (route === '/api/chart') return await handleChartWrite(req, res);
         if (route === '/api/approve' || route === '/api/refuse' || route === '/api/kill') {
           return await handleMutation(route, req, res);
         }

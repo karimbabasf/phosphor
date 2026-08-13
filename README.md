@@ -61,8 +61,9 @@ more than 20% in anything that can freeze me."
 
 ## The tool surface
 
-Thirteen tools, split hard. Read tools execute directly and cannot move anything. Write tools
-never execute: they return a proposal id and a simulation result, and nothing else.
+Twenty-three tools, split three ways. Read tools execute directly and cannot move anything.
+Write tools never execute: they return a proposal id and a simulation result, and nothing else.
+Chart tools move a view, never funds.
 
 | Read tool | Returns |
 |---|---|
@@ -83,10 +84,31 @@ never execute: they return a proposal id and a simulation result, and nothing el
 | `propose_consolidate` | Gathers a token's scattered balances onto one chain |
 | `propose_policy_change` | Proposes a patch to the policy rules |
 
+| Chart tool | Does |
+|---|---|
+| `chart_read` | The whole chart in one object: visible time range in epoch and ISO, seconds until this bar closes, current bar OHLCV, change and range over the window, the price scale and decimal precision in use, every indicator with its last values and a plain sentence, the levels and marks, and the pixel geometry |
+| `chart_measure` | Between two times, two prices, or one of each: change, bars, elapsed, the high and low the path took, worst drawdown |
+| `chart_scan` | Several timeframes at once without moving the chart: last, change, range, ATR, trend, time to close |
+| `indicator_catalog` | Every indicator it can draw, with parameters, defaults and ranges |
+| `chart_set_view` | Product, timeframe, bars on screen, how far back, price scale |
+| `chart_add_indicator` | SMA, EMA, WMA, VWAP, Bollinger, Donchian on the price; volume, RSI, MACD, ATR, Stochastic, OBV in their own pane |
+| `chart_remove_indicator` | Takes one off |
+| `chart_level` | A horizontal price line with a label |
+| `chart_mark` | A labelled moment on the time axis |
+| `chart_clear` | Clears indicators, levels, marks, everything the agent drew, or all of it |
+
 There is no `approve`, no `refuse`, no `kill`, no `dismiss` and no `execute` tool. There is also no
 argument anywhere in the surface that names a recipient or destination, so an agent that has been
 talked into sending money to an attacker has no field in which to say where. Both properties are
 asserted by tests, not just by convention.
+
+The chart tools do not touch money and do not go near the approval gate, but they are audited like
+every other call, because an agent that can change what the human sees while that human decides on
+a transfer is a surface. Three things hold it: everything an agent draws is labelled `[agent]` by
+the server after the label the agent supplied, agent lines are dotted where a human's are dashed,
+and the chart bar carries a count with a one-click clear. An agent can never alter a candle, and a
+price line it draws is excluded from the automatic price fit, so one absurd level cannot flatten
+the chart into a hairline.
 
 ## How a proposal gets decided
 
@@ -304,6 +326,34 @@ safety gate that does not visually shout is a safety bug.
 | ![Policy file unreadable](docs/screenshots/policy-unreadable.png) | ![Resting state](docs/screenshots/resting.png) |
 | Corrupt policy file: every write refused until a human repairs it | Resting: nothing pending, nothing to decide |
 
+### The chart
+
+![The chart with two overlays, an RSI pane, an agent price line and the crosshair](docs/screenshots/chart.png)
+
+Two stacked canvases, one pointer surface. The scene canvas draws candles, grids and axes and
+redraws only when the data or the view changes; the hud canvas draws the crosshair, the legend, the
+last price tag and the countdown, and redraws on pointer move. Moving the mouse repaints an almost
+empty canvas instead of five hundred candles, which is most of why it keeps up with a drag.
+
+    drag the plot          pan, in fractional bars, so it tracks the pointer
+    drag up or down        takes the price scale off auto and shifts it
+    wheel                  zoom about the cursor: the bar under it stays under it
+    shift-wheel, trackpad  pan sideways
+    drag the right axis    scale price about the price under the pointer
+    drag the bottom axis   squeeze or spread the bars
+    double click           resets the axis under the pointer, or returns to live
+    arrows, + and -, 0     pan, zoom, back to live
+    the ind field          ema 21, bbands 20 2.5, remove rsi, clear
+
+The `ind` field is a command line rather than a toolbar, and it takes the same words the agent uses
+over MCP. Indicators that need their own pane get one, up to three, with the price pane held to a
+150px floor: past that the chart refuses the pane and says why, and a window too short to hold what
+is already there drops panes and names them on screen. It never quietly squeezes.
+
+The view state lives on the server, in `src/chart.ts`, not in the browser. That is what lets an
+agent read the chart and drive it while the window may not even be open, and it means the number
+the agent reads and the pixel the human sees come from one implementation.
+
 ## Layout
 
     src/main.ts        app process: state owner, HTTP + UI on 127.0.0.1:4177
@@ -316,7 +366,10 @@ safety gate that does not visually shout is a safety bug.
     scripts/keygen.ts  testnet keypairs, written outside the working copy
     scripts/sweep.ts   secret sweep over the tracked tree and the git history
     src/candles.ts     Coinbase/Kraken candle sources behind one interface
-    ui/                one page, seven regions, no framework, no build
+    src/chart.ts       chart view state, the agent read model, the ruler
+    src/indicators.ts  indicator maths, pure, index aligned with the candles
+    ui/                one page, six regions, no framework, no build
+    ui/chart.js        the chart engine: two canvases, one pointer surface
     state/             policy.json, proposals.json, audit.jsonl (append-only)
 
 ## Docs
@@ -327,6 +380,8 @@ safety gate that does not visually shout is a safety bug.
   rules, the approval token, what the injection suite proves, and the honest v1 limits.
 - [Design spec](docs/superpowers/specs/2026-08-11-phosphor-design.md): the original spec, including
   the decisions that were weighed and the scope that was cut.
+- [Chart v2](docs/superpowers/specs/2026-08-12-phosphor-chart-v2.md): why the chart state is on the
+  server, how the two canvases split the work, and the rule that nothing gets squeezed.
 
 Not a wallet, not an exchange, not a custodian. Holds your own keys locally and never anyone
 else's funds. No accounts, no server, no hosted component, no telemetry.

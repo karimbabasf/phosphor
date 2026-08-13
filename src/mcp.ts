@@ -122,6 +122,88 @@ registerRead(
   { id: z.string() },
 );
 
+// ---------- the chart ----------
+//
+// Reading and driving the chart moves no money, so none of this goes near the approval gate.
+// It is still audited like every other call, and everything written here is labelled [agent]
+// on the surface a human uses to decide whether to approve a transfer.
+
+registerRead(
+  'chart_read',
+  'Returns everything about the chart as it currently stands: product, timeframe, the visible time range in epoch seconds and ISO, seconds until the current bar closes, the current bar OHLCV, the change and range across the window, the price scale and the decimal precision in use, every indicator with its last values and a one-line state, the price levels and marks, and the on-screen geometry so you can tell whether what you asked for is readable. Read-only, changes nothing.',
+  {},
+);
+registerRead(
+  'chart_measure',
+  'Measures between two points on the chart: absolute and percent change, bars and elapsed time between them, the high and low the path actually took, and the worst drawdown along the way. Give two times, two prices, or one of each; anything left out defaults to the oldest loaded bar and the newest. Read-only, changes nothing.',
+  {
+    fromTime: z.number().optional(),
+    toTime: z.number().optional(),
+    fromPrice: z.number().optional(),
+    toPrice: z.number().optional(),
+  },
+);
+registerRead(
+  'chart_scan',
+  'Reads several timeframes at once without moving the chart: last price, change, high and low, range, ATR in price and percent, trend, and seconds until each bar closes. Use this to hold a multi-timeframe picture instead of switching the view back and forth. Read-only, changes nothing.',
+  {
+    product: z.string().optional(),
+    timeframes: z.array(z.string()).optional(),
+    bars: z.number().int().optional(),
+  },
+);
+registerRead(
+  'indicator_catalog',
+  'Lists every indicator this chart can draw, with its parameters, defaults, allowed ranges, and whether it overlays the price or takes its own pane. Call this before chart_add_indicator. Read-only, changes nothing.',
+  {},
+);
+
+function registerView(name: string, description: string, shape: Record<string, z.ZodTypeAny>): void {
+  server.registerTool(name, { description, inputSchema: shape }, async (args) => proxy({ op: 'view', tool: name, args }));
+}
+
+const CHART_ANSWER = 'Returns the full chart read after the change, so no follow-up call is needed.';
+
+registerView(
+  'chart_set_view',
+  `Changes what the chart shows: product, timeframe, how many bars are on screen, how far back the window sits, and the price scale. Pass live:true to jump back to the newest bar. Omit a field to leave it alone. ${CHART_ANSWER}`,
+  {
+    product: z.string().optional(),
+    timeframe: z.string().optional().describe('one of 1s 5s 15s 30s 1m 5m 15m 30m 1h 4h 8h 1d'),
+    barCount: z.number().optional().describe('bars across the plot, 20 to 500'),
+    panOffset: z.number().optional().describe('bars back from the newest; 0 is live'),
+    live: z.boolean().optional(),
+    priceScale: z.enum(['auto']).optional(),
+    priceLow: z.number().optional(),
+    priceHigh: z.number().optional(),
+  },
+);
+registerView(
+  'chart_add_indicator',
+  `Adds an indicator. Overlays draw on the price pane; RSI, MACD, ATR, Stochastic, OBV and volume take their own pane under it. Three sub-panes and eight overlays are the maximum, and a request past that is refused with the reason rather than squeezed in. ${CHART_ANSWER}`,
+  {
+    type: z.string().describe('sma, ema, wma, vwap, bbands, donchian, volume, rsi, macd, atr, stoch, obv'),
+    params: z.object({}).passthrough().optional().describe('for example {"period": 50}; defaults apply when omitted'),
+  },
+);
+registerView('chart_remove_indicator', `Removes an indicator by its id or its type. ${CHART_ANSWER}`, {
+  id: z.string().optional(),
+  type: z.string().optional(),
+});
+registerView(
+  'chart_level',
+  `Draws a horizontal price line with a label, for a level worth watching. The label is shown to the human tagged [agent]. ${CHART_ANSWER}`,
+  { price: z.number(), label: z.string().optional() },
+);
+registerView(
+  'chart_mark',
+  `Marks a moment in time on the chart with a label, for example when something was executed. The label is shown to the human tagged [agent]. ${CHART_ANSWER}`,
+  { t: z.number().describe('unix timestamp in seconds'), label: z.string().optional() },
+);
+registerView('chart_clear', `Clears what is on the chart. ${CHART_ANSWER}`, {
+  what: z.enum(['indicators', 'levels', 'marks', 'agent', 'all']).optional().default('agent'),
+});
+
 registerPropose(
   'propose_consolidate',
   'consolidate',

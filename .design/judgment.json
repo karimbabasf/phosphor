@@ -1,6 +1,6 @@
 {
-  "stamp": "6e045de452136af8",
-  "iteration": 4,
+  "stamp": "5067088d99be48b9",
+  "iteration": 6,
   "firstFive": {
     "what": "A terminal control panel for a crypto wallet held across five chains, with a red bar across the top saying every proposal is auto-approving because the approval gate is off on testnet",
     "who": "The owner of the funds, supervising what a connected AI agent is allowed to do with them",
@@ -88,9 +88,39 @@
       "ref": "chart meta reads 'hyperliquid 120 candles', nine timeframes from 1s to 1d. Left column order measured as .panel-chart then .panel-wallet, the wallet running to the bottom of the column at y=890 of 900"
     },
     {
-      "requirement": "Chart handles like TradingView: drag the plot to pan through history, drag the right axis to compress or expand the price scale, drag the bottom axis to compress or expand the time scale, wheel to zoom time, double click either axis to reset it. No indicators, no drawing tools, no crosshair",
+      "requirement": "Reads as a professional trading chart: price and time grids on round values and round clock times, one decimal precision everywhere, a legend with OHLC and the change for the bar under the pointer",
       "met": true,
-      "ref": "unchanged from the passing v1 build: wireChartControls still binds plot pan, price-axis and time-axis drags, wheel zoom and double-click reset, with per-region cursors. Not re-driven this iteration because nothing in the chart path was touched"
+      "ref": "1440 render: horizontal grid at 63,400 / 63,600 and time labels at 17:30, 18:00, 18:30, 19:00, all round. Legend row reads BTC-USD 1m O 63,433 H 63,452 L 63,433 C 63,452 +0.03%, coloured by direction. Grid, tag, crosshair and legend all take L.decimals from one place"
+    },
+    {
+      "requirement": "The price is readable without looking for it: a filled tag at the last close coloured by direction, the countdown under it, a dashed line across the plot",
+      "met": true,
+      "ref": "1440 render: filled green tag reading 63,452 on the price axis with 0:17 under it, dashed line across the plot at that price. The grid label that would have sat behind the tag is suppressed by L.reserved, so nothing overprints the one number that matters"
+    },
+    {
+      "requirement": "A crosshair with its price on the right axis and its time under the plot, snapped to the bar on x and free on y. Reverses the earlier no-crosshair line",
+      "met": true,
+      "ref": "drawCrosshair on the hud layer: dashed vertical at the bar centre from CHART_HOVER.index, free horizontal at the pointer, an inverted price block on the axis and a time block under the plot. Not visible in a static shot because it needs a pointer"
+    },
+    {
+      "requirement": "Handles like TradingView and at pointer latency: fractional pan, wheel zoom about the cursor, price scale about the price under the pointer, bottom axis squeeze, vertical drag off auto, double click reset, keyboard",
+      "met": true,
+      "ref": "pointer events with capture on the hud canvas, all of it coalesced into one rAF; the scene only redraws on data or view change, so a crosshair move repaints an almost empty canvas. zoomAboutX holds the bar under the pointer, scalePriceAbout holds the price under it, currentRange makes two moves inside one frame both land. Backing store only reallocated on a real size change"
+    },
+    {
+      "requirement": "Indicators without the chart looking compressed: overlays on price, six kinds in their own panes, three sub-panes and eight overlays maximum, 150px price floor, and a refusal or a drop said on screen rather than a squeeze",
+      "met": true,
+      "ref": "1440 render carries EMA 50 and BB 20/2 on price with VOLUME, RSI 14 and MACD 12/26/9 in panes under it, price pane still the tallest thing on screen. A fourth pane over MCP returns the refusal naming the three to remove (tests/unit/chart.test.ts). 768 render, where the box is 220px, drops all three and prints 'no room for: VOLUME, RSI 14, MACD 12/26/9' in candle red rather than shrinking them"
+    },
+    {
+      "requirement": "The control surface is a command line, not a toolbar: ema 21, bbands 20 2.5, remove rsi, clear",
+      "met": true,
+      "ref": "one input in the chart bar labelled ind, placeholder ema 21, underlined rather than boxed so the row stays a line of text. parseCommand maps the same words the MCP tools take"
+    },
+    {
+      "requirement": "An agent can read, measure, scan and drive the chart, and everything it draws is attributed",
+      "met": true,
+      "ref": "1440 render: every indicator legend reads [agent] EMA 50, the level line is dotted rather than solid and labelled [agent] watch this, and the chart bar reads 'agent drew 6 [clear]'. The tag is added server-side in src/chart.ts after the label the agent supplied, so the agent cannot write its way out of it"
     },
     {
       "requirement": "Policy as plain sentences, never JSON",
@@ -117,7 +147,21 @@
     "policy unreadable": "stubbed policy null: the red POLICY FILE UNREADABLE banner shows, status reads UNREADABLE, the policy panel shows the refusal line, and the wallet still renders all 18 rows",
     "agent connected": "stubbed agents.connected 2: status bar agent field reads '2 connected' at full brightness rather than the faint 'none'",
     "gate disabled": "live on this build: gate.required false and the banner bar renders inverted red at the top, gate frame title red, gate body explains the auto-approve",
-    "collapsed": "both panels collapsed to '├─ POLICY ─ [+] ─┤' lines, bodies and bottom frames hidden, state survived a reload, and the gate took the released room"
+    "collapsed": "both panels collapsed to '├─ POLICY ─ [+] ─┤' lines, bodies and bottom frames hidden, state survived a reload, and the gate took the released room",
+    "chart empty": "candles [] renders 'no candle data' plus the reason from meta.error, and the layout is not built at all rather than being built against an empty range",
+    "chart with panes": "five indicators driven in over MCP: two overlays on price, three panes under it, price pane still tallest at 1440 and at 390",
+    "chart out of room": "the same five at 768, where the stacked box is fixed: the three panes are dropped and named on screen in candle red, and geometry.dropped reports them to the agent so a read never claims something is on screen when it is not",
+    "chart panned back": "panOffset above zero puts 'panned back N' and a '» live' control in the chart bar; clicking it returns to the newest bar",
+    "chart stale": "the stale marker is written first in the chart bar, ahead of the source name, because that line truncates from the right and a warning must never be the part that is cut",
+    "chart level off screen": "a level drawn at price 0 while BTC is at 63,400 no longer flattens every candle into a hairline: levels are excluded from the automatic fit and an off-range one is pinned to the edge it went off with an arrow and its price. Found by looking at the render, not by the audit"
+  },
+  "driven": {
+    "how": "real pointer input through playwright against the running app at 1440x900, reading CHART.view before and after each gesture, not synthetic events",
+    "pan": "press, twelve moves, release: panOffset 0 to 23.2 and it holds after release",
+    "zoom": "wheel in at 30% across: 120 bars to 88.2, panOffset moved 23.2 to 44.2 to hold the bar under the cursor. Wheel back out returns exactly to 120 and 23.2, which is the anchor maths agreeing with itself",
+    "price scale": "right axis drag switches the scale to manual; double click on the plot returns it to auto and to live",
+    "agent": "chart_set_view over MCP while the window was open moved it to 5m and 200 bars, and the window followed",
+    "race found and fixed": "the first pass snapped every gesture back. A refresh fired by the browser's own write landed before that write did, and the browser adopted the stale server view. The rule now: the hand in the window owns the view, the only thing that may move it is the agent, and the answer to our own write is applied from that answer rather than from a refresh"
   },
   "findings": [],
   "verdict": "pass"
