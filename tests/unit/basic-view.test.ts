@@ -271,6 +271,54 @@ test('a policy change says plainly that it moves no money', () => {
   assert.match(view.ask!.headline, /raise the cap/);
 });
 
+// ---------- both found by driving the app, not by an assertion ----------
+
+test('the most recent decision wins, not the most alarming one', () => {
+  // Ranking terminal states by status meant a human refusal at 02:15 was reported as
+  // an unrelated policy refusal from 02:13. The person pressed NO and the screen told
+  // them about something else entirely.
+  const older = proposal({ id: 'older', status: 'policy_refused', decidedAt: T0 });
+  const newer = proposal({ id: 'newer', status: 'refused', decidedAt: T2 });
+  const view = buildBasic(baseInput({ proposals: [older, newer] }));
+  assert.match(view.headline, /You said no/);
+  assert.equal(view.tone, 'calm');
+
+  // And the other way round: a policy refusal that really is the latest still leads.
+  const flipped = buildBasic(
+    baseInput({
+      proposals: [proposal({ id: 'a', status: 'refused', decidedAt: T0 }), proposal({ id: 'b', status: 'policy_refused', decidedAt: T2 })],
+    }),
+  );
+  assert.match(flipped.headline, /Phosphor stopped it/);
+  assert.equal(flipped.tone, 'stopped');
+});
+
+test('a zero amount is never rendered as a money figure', () => {
+  // A consolidate with nothing left to gather prices at 0 and gets refused. "tried to
+  // gather $0.00 of your dollars" tells this reader nothing at all.
+  const draft: WriteDraft = { kind: 'consolidate', legs: [], totalUsd: 0, toChain: 'eth', symbol: 'USDT' };
+  const view = buildBasic(baseInput({ proposals: [proposal({ draft, kind: 'consolidate', status: 'policy_refused', decidedAt: T1 })] }));
+  assert.ok(!view.headline.includes('$0.00'), `headline still prints a zero figure: ${view.headline}`);
+  assert.match(view.headline, /Phosphor stopped it/);
+  assert.match(view.headline, /USDT/);
+});
+
+test('a positive amount is still rendered in full', () => {
+  const view = buildBasic(baseInput({ proposals: [proposal()] }));
+  assert.match(view.ask!.headline, /\$105\.00/);
+});
+
+test('no two lines on the screen are the same sentence', () => {
+  // The headline and the agent line both read "No assistant is connected right now."
+  // On a screen this spare, the same words twice reads as a rendering fault.
+  for (const [name, input] of ELEVEN) {
+    const v = buildBasic(input);
+    const lines = [v.headline, v.placesLine, v.agentLine, v.footer, v.warning, v.ask?.headline, v.ask?.afterLine]
+      .filter((l): l is string => typeof l === 'string' && l.trim().length > 0);
+    assert.equal(new Set(lines).size, lines.length, `${name} renders a duplicated sentence: ${JSON.stringify(lines)}`);
+  }
+});
+
 // ---------- warnings ----------
 
 test('the gate being off warns even while a question is on screen', () => {
@@ -293,4 +341,39 @@ test('no warning at all when everything is normal', () => {
 test('the footer promises nothing moves without a press, but only when asking', () => {
   assert.match(buildBasic(baseInput({ proposals: [proposal()] })).footer, /Nothing moves unless you press YES/);
   assert.doesNotMatch(buildBasic(baseInput()).footer, /press YES/);
+});
+
+// Found by opening the page rather than by any assertion: the footer promised
+// "You will be asked before anything moves" directly under a warning saying the
+// gate was off. Two sentences contradicting each other is worse than either one,
+// and worst on this screen, where the reader has no third source to break the tie.
+test('the footer never contradicts the warning above it', () => {
+  const gateOff = buildBasic(baseInput({ gateRequired: false }));
+  assert.match(gateOff.warning!, /without asking you first/);
+  assert.match(gateOff.footer, /NOT be asked/);
+  assert.doesNotMatch(gateOff.footer, /^You will be asked/);
+
+  const frozen = buildBasic(baseInput({ killSwitch: true }));
+  assert.doesNotMatch(frozen.footer, /You will be asked/);
+
+  const broken = buildBasic(baseInput({ policyReadable: false }));
+  assert.doesNotMatch(broken.footer, /You will be asked/);
+
+  // And the normal case still makes the promise it is allowed to make.
+  assert.match(buildBasic(baseInput()).footer, /You will be asked before anything moves/);
+});
+
+test('nothing claims "all normal" while a warning is on screen', () => {
+  // Same class as the footer bug, found the same way. "all normal" reads as a claim
+  // about the whole app, so it cannot sit under a red box saying everything is frozen.
+  for (const input of [
+    baseInput({ killSwitch: true }),
+    baseInput({ policyReadable: false }),
+    baseInput({ gateRequired: false }),
+  ]) {
+    const v = buildBasic(input);
+    assert.ok(v.warning !== null, 'this case should carry a warning');
+    assert.doesNotMatch(v.placesLine, /all normal/, `placesLine contradicts the warning: ${v.placesLine}`);
+  }
+  assert.match(buildBasic(baseInput()).placesLine, /all normal/);
 });

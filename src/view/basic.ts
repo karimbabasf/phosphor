@@ -177,25 +177,34 @@ function destinationsOf(proposal: Proposal, selfAddresses: string[]): BasicDesti
   return out;
 }
 
+// "$0.00" is not an amount, it is the absence of one, and a refusal reading "tried to
+// gather $0.00 of your dollars" tells this reader nothing. A draft can legitimately
+// price at zero (nothing left to consolidate, which is then refused), so the money
+// clause is dropped rather than printed as a figure.
+function amountClause(amountUsd: number): string {
+  return amountUsd > 0 ? `${money(amountUsd)} of ` : '';
+}
+
 function askHeadline(draft: WriteDraft, amountUsd: number): string {
   if (draft.kind === 'swap') {
-    return `It wants to change ${money(amountUsd)} of your ${plainSymbol(draft.fromSymbol)} into ${plainSymbol(draft.toSymbol)}.`;
+    return `It wants to change ${amountClause(amountUsd)}your ${plainSymbol(draft.fromSymbol)} into ${plainSymbol(draft.toSymbol)}.`;
   }
   if (draft.kind === 'hl_deposit') {
-    return `It wants to move ${money(amountUsd)} of your ${plainSymbol(draft.symbol)} to your Hyperliquid trading account.`;
+    return `It wants to move ${amountClause(amountUsd)}your ${plainSymbol(draft.symbol)} to your Hyperliquid trading account.`;
   }
   if (draft.kind === 'lp_add') {
-    return `It wants to put ${money(amountUsd)} of your money into a Uniswap pool holding ${plainSymbol(draft.token0.symbol)} and ${plainSymbol(draft.token1.symbol)}.`;
+    return `It wants to put ${amountClause(amountUsd)}your money into a Uniswap pool holding ${plainSymbol(draft.token0.symbol)} and ${plainSymbol(draft.token1.symbol)}.`;
   }
   if (draft.kind === 'lp_remove') {
     const pct = Math.round(draft.liquidityPct * 100);
-    return `It wants to take ${pct}% of one of your Uniswap pool positions back out, worth about ${money(amountUsd)}.`;
+    const worth = amountUsd > 0 ? `, worth about ${money(amountUsd)}` : '';
+    return `It wants to take ${pct}% of one of your Uniswap pool positions back out${worth}.`;
   }
   if (draft.kind === 'consolidate') {
-    return `It wants to gather ${money(amountUsd)} of your ${plainSymbol(draft.symbol)} onto ${plainChain(draft.toChain)}.`;
+    return `It wants to gather ${amountClause(amountUsd)}your ${plainSymbol(draft.symbol)} onto ${plainChain(draft.toChain)}.`;
   }
   if (draft.kind === 'transfer') {
-    return `It wants to send ${money(amountUsd)} of your ${plainSymbol(draft.leg.symbol)} to another address.`;
+    return `It wants to send ${amountClause(amountUsd)}your ${plainSymbol(draft.leg.symbol)} to another address.`;
   }
   return `It wants to change one of your safety rules: "${draft.sentence}".`;
 }
@@ -294,15 +303,21 @@ export function buildBasic(input: BasicInput): BasicView {
   } else if (staleAfterWrite) {
     placesLine = 'The last change has not been counted yet.';
   } else {
-    placesLine = `spread across ${placeCount} ${placeCount === 1 ? 'place' : 'places'}. all normal.`;
+    // "all normal" is a claim about the whole app to this reader, not just about the
+    // chain reads, so it is dropped whenever a warning is on screen. Otherwise the
+    // page reads "all normal" directly under a red box saying everything is frozen.
+    const abnormal = killSwitch || !policyReadable || !gateRequired;
+    placesLine = `spread across ${placeCount} ${placeCount === 1 ? 'place' : 'places'}.${abnormal ? '' : ' all normal.'}`;
   }
 
   // --- state ---
   const pending = newestBy(proposals, ['pending']);
   const working = newestBy(proposals, ['approved', 'executing']);
-  const refused = newestBy(proposals, ['policy_refused']);
-  const done = newestBy(proposals, ['executed']);
-  const saidNo = newestBy(proposals, ['refused']);
+  // One bucket for every finished outcome, so the MOST RECENT one wins.
+  // Ranking these by status instead of by time meant a human refusal at 02:15 was
+  // reported as an unrelated policy refusal from 02:13: the person pressed NO and
+  // the screen told them about something else. Found by pressing the button.
+  const settled = newestBy(proposals, ['executed', 'refused', 'policy_refused']);
 
   // Most dangerous first. Kill switch and an unreadable policy both mean nothing can
   // move at all, so they outrank a question the human cannot act on anyway.
@@ -326,18 +341,20 @@ export function buildBasic(input: BasicInput): BasicView {
   } else if (!gateRequired) {
     tone = 'broken';
     headline = 'WARNING: this app is not asking you before it moves money.';
-  } else if (refused !== null) {
+  } else if (settled !== null && settled.status === 'policy_refused') {
     tone = 'stopped';
-    headline = refusalHeadline(refused);
-  } else if (done !== null) {
-    tone = 'calm';
-    headline = totalUsd === null ? 'Done. Checking your new balance.' : `Done. You now have ${money(totalUsd)}.`;
-  } else if (saidNo !== null) {
+    headline = refusalHeadline(settled);
+  } else if (settled !== null && settled.status === 'refused') {
     tone = 'calm';
     headline = 'You said no. Nothing moved.';
+  } else if (settled !== null) {
+    tone = 'calm';
+    headline = totalUsd === null ? 'Done. Checking your new balance.' : `Done. You now have ${money(totalUsd)}.`;
   } else if (agentsConnected === 0) {
     tone = 'calm';
-    headline = 'No assistant is connected right now.';
+    // Deliberately not the same sentence as agentLine below. On a screen this spare,
+    // the same words twice reads as a rendering fault rather than as emphasis.
+    headline = 'Your money is safe. Nothing is connected to it right now.';
   } else {
     tone = 'calm';
     headline = 'Your money is safe. Nothing is happening.';
@@ -350,14 +367,19 @@ export function buildBasic(input: BasicInput): BasicView {
   else if (!policyReadable) warning = 'The safety rules cannot be read, so every move is being refused.';
   else if (!gateRequired) warning = 'This app is set to move money without asking you first.';
 
-  const agentLine = agentsConnected > 0 ? 'An assistant is connected.' : 'No assistant is connected right now.';
+  const agentLine = agentsConnected > 0 ? 'An assistant is connected.' : 'No assistant is connected.';
 
-  const footer =
-    ask !== null
-      ? 'Nothing moves unless you press YES.'
-      : killSwitch
-        ? 'Nothing can move while everything is frozen.'
-        : 'You will be asked before anything moves.';
+  // The footer is a promise about what happens next, so it has to agree with the
+  // warning directly above it. An earlier version said "You will be asked before
+  // anything moves" on a screen whose warning said the gate was off. Two sentences
+  // contradicting each other is worse than either one alone, and worst here, because
+  // the reader has no third source to break the tie.
+  let footer: string;
+  if (ask !== null) footer = 'Nothing moves unless you press YES.';
+  else if (killSwitch) footer = 'Nothing can move while everything is frozen.';
+  else if (!policyReadable) footer = 'Nothing can move until the rules are fixed.';
+  else if (!gateRequired) footer = 'You will NOT be asked before money moves.';
+  else footer = 'You will be asked before anything moves.';
 
   return { tone, totalUsd, totalLine, placesLine, headline, ask, warning, agentLine, footer };
 }

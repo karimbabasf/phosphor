@@ -552,3 +552,271 @@ body.log-collapsed .panel-gate > .pbody { max-height: none; }
   .logline { padding-left: 0; text-indent: 0; }
   .logline .msg { display: block; padding-left: 2ch; }
 }
+
+/* ============================================================================
+   BASIC VIEW
+   Same hue, same monospace, no box-drawing frames. The identity survives; the
+   density does not. Base type is ~1.6x pro and the balance is ~5x, because the
+   reader this screen exists for is not leaning into the monitor.
+
+   Red stays reserved for the safety gate, so the ask block and the stop control
+   are the only things here allowed to use it.
+   ============================================================================ */
+
+/* The mode swap. Server-driven: app.js copies state.view onto #page and nothing
+   else in the browser is allowed to set it. */
+#page[data-view='basic'] .deck,
+#page[data-view='basic'] .statusbar,
+#page[data-view='basic'] .banner,
+#page[data-view='basic'] .alert { display: none; }
+#page[data-view='pro'] #basic { display: none; }
+
+.basic {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  width: 100%;
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 40px 24px 48px;
+  font-size: 21px;
+  line-height: 1.5;
+}
+
+.basic p { margin: 0; }
+
+.basic-brand {
+  color: var(--green-faint);
+  font-size: 14px;
+  letter-spacing: 0.28em;
+}
+
+/* --- the balance --- */
+
+.basic-total {
+  color: var(--green-hi);
+  font-size: 64px;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+  word-break: break-word;
+}
+
+/* "still checking" must not read like a number. Smaller and dimmer says
+   "no answer yet" without any extra words. */
+.basic-total.unknown {
+  color: var(--green-dim);
+  font-size: 36px;
+}
+
+.basic-places {
+  margin-top: 8px !important;
+  color: var(--green-dim);
+  font-size: 18px;
+}
+
+/* --- state --- */
+
+.basic-headline {
+  font-size: 28px;
+  line-height: 1.35;
+  color: var(--green-hi);
+}
+
+.basic[data-tone='stopped'] .basic-headline,
+.basic[data-tone='frozen'] .basic-headline,
+.basic[data-tone='broken'] .basic-headline { color: var(--red); }
+
+.basic[data-tone='working'] .basic-headline { color: var(--green-dim); }
+
+.basic-warning {
+  border: 2px solid var(--red);
+  padding: 14px 16px;
+  color: var(--red);
+  font-size: 19px;
+}
+
+/* --- the ask --- */
+
+.basic-ask {
+  border-top: 2px solid var(--green-ghost);
+  border-bottom: 2px solid var(--green-ghost);
+  padding: 26px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.basic-ask-headline {
+  font-size: 26px;
+  line-height: 1.4;
+  color: var(--green-hi);
+}
+
+.basic-ask-after { color: var(--green-dim); }
+
+.basic-facts {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 18px;
+  color: var(--green-dim);
+}
+
+.basic-facts li::before { content: '- '; color: var(--green-faint); }
+
+/* A fact that says the money is not going where the reader assumes is the one
+   line on this screen most likely to stop a bad approval. It gets the red. */
+.basic-facts li.warn { color: var(--red); }
+.basic-facts li.warn::before { color: var(--red); }
+
+/* --- destinations --- */
+
+.basic-dests {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.basic-dest {
+  border-left: 3px solid var(--green-ghost);
+  padding-left: 14px;
+}
+
+.basic-dest.quoter,
+.basic-dest.foreign { border-left-color: var(--red); }
+
+.basic-dest-label { font-size: 19px; }
+.basic-dest.quoter .basic-dest-label,
+.basic-dest.foreign .basic-dest-label { color: var(--red); }
+
+/* Full address, wrapped rather than shortened. A truncated address is a hidden
+   fact, and hiding facts is the one thing this screen may not do. */
+.basic-dest-address {
+  margin-top: 4px !important;
+  color: var(--green-faint);
+  font-size: 15px;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+/* --- buttons --- */
+
+.basic-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 6px;
+}
+
+.basic-btn {
+  font: inherit;
+  font-size: 22px;
+  min-height: 60px;
+  padding: 14px 20px;
+  width: 100%;
+  max-width: 420px;
+  background: transparent;
+  color: var(--green);
+  border: 2px solid var(--green);
+  cursor: pointer;
+  text-align: center;
+}
+
+.basic-btn:focus-visible { outline: 3px solid var(--green-hi); outline-offset: 3px; }
+
+.basic-yes {
+  background: var(--green);
+  color: var(--bg);
+  border-color: var(--green);
+}
+
+.basic-no { color: var(--green-dim); border-color: var(--green-ghost); }
+
+.basic-btn[disabled] { opacity: 0.45; cursor: default; }
+
+.basic-error { color: var(--red); font-size: 18px; }
+
+/* --- stop --- */
+
+.basic-footer {
+  color: var(--green-dim);
+  font-size: 18px;
+}
+
+.basic-stop {
+  margin-top: auto;
+  padding-top: 32px;
+  border-top: 2px solid var(--green-ghost);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.basic-agent { color: var(--green-faint); font-size: 16px; }
+
+/* Deliberately not red at rest: it is not an alarm until it is pressed, and a
+   permanently red control on this screen would train the reader to ignore red. */
+.basic-kill {
+  color: var(--green-dim);
+  border-color: var(--green-ghost);
+  font-size: 18px;
+  min-height: 52px;
+  max-width: 320px;
+}
+
+.basic-stop-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  color: var(--red);
+  font-size: 19px;
+}
+
+.basic-kill-yes {
+  background: var(--red);
+  color: var(--bg);
+  border-color: var(--red);
+  max-width: 320px;
+}
+
+.basic-kill-cancel {
+  color: var(--green-dim);
+  border-color: var(--green-ghost);
+  max-width: 320px;
+}
+
+@media (max-width: 560px) {
+  .basic { font-size: 19px; padding: 28px 18px 36px; gap: 24px; }
+  .basic-total { font-size: 46px; }
+  .basic-headline { font-size: 24px; }
+  .basic-ask-headline { font-size: 22px; }
+  .basic-btn { max-width: none; }
+}
+
+/* [hidden] loses to an explicit display, and both .basic-ask and
+   .basic-stop-confirm set display: flex. Without this the stop confirmation
+   renders permanently, so the screen shows STOP EVERYTHING and "Are you sure?"
+   at the same time. Caught by looking at the page, not by any assertion. */
+.basic-ask[hidden],
+.basic-stop-confirm[hidden],
+.basic-actions[hidden],
+.basic-dests[hidden] { display: none !important; }
+
+/* When the assistant is asking, the question is the job and the balance is
+   context. Shrinking it here is what keeps YES and NO above the fold on a
+   900px-tall screen, which matters more for this reader than for a pro one. */
+.basic[data-tone='asking'] { gap: 20px; }
+.basic[data-tone='asking'] .basic-total { font-size: 40px; }
+.basic[data-tone='asking'] .basic-headline { font-size: 21px; color: var(--green-dim); }
+.basic[data-tone='asking'] .basic-ask { padding: 20px 0; gap: 14px; }
+.basic[data-tone='asking'] .basic-money { margin-bottom: -4px; }
+
+/* Dim enough to stay secondary to the label, bright enough to read.
+   The label is the fact a person can act on; the address is the receipt. */
+.basic-dest-address { color: var(--green-dim); font-size: 16px; }

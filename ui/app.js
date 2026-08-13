@@ -647,6 +647,144 @@ function renderGate(s) {
   for (var j = 0; j < pending.length; j++) box.appendChild(pendingBlock(pending[j]));
 }
 
+/* ---------- 6b. basic view ----------
+
+   NOTE ON NAMES: applyView() and setViewCount() further up this file are the
+   CHART's candle window and have nothing to do with view mode. Everything here
+   is prefixed basic* or ViewMode for that reason.
+
+   This section composes no sentence about money. Every string comes from
+   src/view/basic.ts and is rendered verbatim, which is what lets the two modes be
+   asserted to agree in tests rather than assumed to. */
+
+function applyViewMode(s) {
+  // Server-driven only. The browser never decides which mode it is in, so a
+  // stale or failed state read cannot silently simplify what a human sees.
+  $('page').dataset.view = s.view === 'basic' ? 'basic' : 'pro';
+}
+
+function basicDestNode(dest) {
+  var foreign = dest.chosenBy === 'quoter' || dest.label.indexOf('NOT your wallet') !== -1;
+  var wrap = el('div', 'basic-dest' + (dest.chosenBy === 'quoter' ? ' quoter' : foreign ? ' foreign' : ''));
+  wrap.appendChild(el('p', 'basic-dest-label', dest.label));
+  // Full address, wrapped by CSS. Never shortened: a truncated address is a
+  // hidden fact and this screen may not hide facts.
+  wrap.appendChild(el('p', 'basic-dest-address', dest.address));
+  return wrap;
+}
+
+function renderBasicAsk(ask) {
+  var box = $('basic-ask');
+  if (!ask) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  $('basic-ask-headline').textContent = ask.headline;
+  $('basic-ask-after').textContent = ask.afterLine;
+
+  var facts = $('basic-facts');
+  facts.textContent = '';
+  for (var i = 0; i < (ask.facts || []).length; i++) {
+    var text = ask.facts[i];
+    var warn = /not your own wallet|chosen by the swap service/.test(text);
+    facts.appendChild(el('li', warn ? 'warn' : '', text));
+  }
+
+  var dests = $('basic-dests');
+  dests.textContent = '';
+  for (var d = 0; d < (ask.destinations || []).length; d++) {
+    dests.appendChild(basicDestNode(ask.destinations[d]));
+  }
+
+  var yes = $('basic-yes');
+  var no = $('basic-no');
+  yes.disabled = false;
+  no.disabled = false;
+  yes.dataset.id = ask.proposalId;
+  no.dataset.id = ask.proposalId;
+  $('basic-error').hidden = true;
+}
+
+function renderBasic(s) {
+  var b = s.basic;
+  if (!b) return;
+  $('basic').dataset.tone = b.tone;
+
+  var total = $('basic-total');
+  total.textContent = b.totalLine;
+  // An unknown balance must not look like a figure. b.totalUsd is null exactly
+  // when the server refused to state one.
+  total.classList.toggle('unknown', b.totalUsd === null);
+
+  $('basic-places').textContent = b.placesLine;
+  $('basic-headline').textContent = b.headline;
+  $('basic-agent').textContent = b.agentLine;
+  $('basic-footer').textContent = b.footer;
+
+  var warning = $('basic-warning');
+  warning.textContent = b.warning || '';
+  warning.hidden = !b.warning;
+
+  var frozen = Boolean(s.policy && s.policy.killSwitch);
+  var kill = $('basic-kill');
+  kill.dataset.on = frozen ? '1' : '0';
+  kill.textContent = frozen ? 'LET THINGS MOVE AGAIN' : 'STOP EVERYTHING';
+
+  renderBasicAsk(b.ask);
+}
+
+function wireBasic() {
+  var yes = $('basic-yes');
+  var no = $('basic-no');
+  var error = $('basic-error');
+
+  // The same decide() the pro gate calls. One approval code path in both modes,
+  // so the two screens cannot drift on what a click actually does.
+  yes.addEventListener('click', function () {
+    if (yes.dataset.id) decide('/api/approve', yes.dataset.id, [yes, no], error);
+  });
+  no.addEventListener('click', function () {
+    if (no.dataset.id) decide('/api/refuse', no.dataset.id, [yes, no], error);
+  });
+
+  // Two presses, and the confirm is a real control rather than window.confirm,
+  // because a native dialog is the easiest thing on this screen to dismiss by reflex.
+  var kill = $('basic-kill');
+  var confirm = $('basic-stop-confirm');
+  var killYes = $('basic-kill-yes');
+  var killCancel = $('basic-kill-cancel');
+
+  function closeConfirm() {
+    confirm.hidden = true;
+    kill.hidden = false;
+  }
+
+  kill.addEventListener('click', function () {
+    var on = kill.dataset.on !== '1';
+    $('basic-stop-question').textContent = on
+      ? 'Are you sure? Nothing will be able to move until you turn this back on.'
+      : 'Let things move again?';
+    kill.hidden = true;
+    confirm.hidden = false;
+  });
+  killCancel.addEventListener('click', closeConfirm);
+  killYes.addEventListener('click', async function () {
+    killYes.disabled = true;
+    try {
+      await postJson('/api/kill', { on: kill.dataset.on !== '1', token: TOKEN });
+      await refreshState();
+      closeConfirm();
+    } catch (err) {
+      error.textContent = err.message || String(err);
+      error.hidden = false;
+      closeConfirm();
+    } finally {
+      killYes.disabled = false;
+    }
+  });
+}
+
 /* ---------- 7. log ---------- */
 
 function logLine(event) {
@@ -685,6 +823,10 @@ async function refreshState() {
     renderPolicy(STATE);
     renderGateBanner(STATE);
     renderGate(STATE);
+    // Basic renders on every state read regardless of mode, so switching into it
+    // never shows a frame of stale or empty copy.
+    renderBasic(STATE);
+    applyViewMode(STATE);
     layoutFrames();
     alertLine(null);
   } catch (err) {
@@ -794,6 +936,7 @@ async function boot() {
   wireCollapse();
   wireWallet();
   wireResize();
+  wireBasic();
   try {
     TOKEN = (await getJson('/api/session')).token;
   } catch (err) {

@@ -85,6 +85,15 @@ Spec: `docs/superpowers/specs/2026-08-12-phosphor-chart-v2.md`.
 - Policy as plain sentences, never JSON
 - Terminal-dense character grid, not app-airy
 
+- v0.3: the page has two modes, switchable ONLY by the connected agent through the set_view_mode MCP tool. data-view on #page selects which renders. pro is everything above, unchanged
+- Karim 2026-08-12: "basic has to be super super simple, like as if it is made for a senior to be able to look at this and understand what exactly this is". One balance, one question, two buttons, nothing else competing
+- basic type is large: base around 21px, balance 64px at rest, buttons at least 56px tall, readable from normal sitting distance without leaning in
+- basic keeps the identity (phosphor green on near-black, same monospace, one hue) but drops the box-drawing frames and all panel chrome. Frames are pro's language, not basic's
+- basic is plain English throughout: no chain names as jargon, no contract address without a plain-words label, no bare symbols
+- basic may scroll vertically. Single narrow column, max 640px, centred. The "no page scrolling" rule above applies to pro only
+- basic keeps red reserved for the safety gate: the warning line, a destination that is not the user's own wallet, and the stop confirmation. Nothing else
+- STOP EVERYTHING sits last in basic, visually separated from YES and NO, and takes two presses
+- basic must never state a balance it cannot back, shorten an address, or omit a destination the approval rests on
 ## Goal behind the ask
 The owner sees the whole machine at once, with no scrolling: what the wallet holds, what governs
 it, and whether anything is waiting for a click. On testnet with the gate off he must also be
@@ -97,4 +106,21 @@ claims a human approved something when no human did. Desktop, 1440x900 and wider
 
 ## States that must work
 resting, pending, refusal, kill switch on, policy unreadable, agent connected, gate disabled,
-collapsed
+collapsed, basic resting, basic asking, basic frozen
+
+## Added 2026-08-12: BASIC view (v0.3)
+
+The page now has two modes, switchable ONLY by the connected agent through the `set_view_mode`
+MCP tool. `data-view` on `#page` selects which one renders.
+
+  once" DO NOT apply to it. Karim, 2026-08-12: "basic has to be super super simple, like as if it
+  is made for a senior to be able to look at this and understand what exactly this is".
+
+What basic is judged on:
+  who is not leaning into the monitor has to be able to read it from normal sitting distance.
+  no ASCII rules, no panel chrome. The frames are pro's language, not basic's.
+  plain-words label, no symbols standing alone.
+  own wallet, and the stop confirmation. Nothing else may use it.
+
+What basic must never do: state a balance it cannot back, shorten an address, or omit a
+destination the approval rests on.
