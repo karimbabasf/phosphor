@@ -26,6 +26,7 @@ var C_DOWN = '#cc3a30';
 var C_HI = '#8cffab';
 
 var CHART_FONT = '11px ui-monospace, SFMono-Regular, Menlo, monospace';
+var CHART_FONT_SMALL = '9px ui-monospace, SFMono-Regular, Menlo, monospace';
 var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /* Geometry, in CSS pixels. PRICE_MIN is the promise that nothing gets squeezed: a pane that
@@ -518,6 +519,9 @@ function waitingState() {
     return { head: 'CHART UNREACHABLE', sub: CHART.meta.error + '  retrying', live: CHART_FETCH.inflight };
   }
   if (!CHART_READY) {
+    // Before the first payload there is no product and no timeframe to name, and naming the
+    // defaults would put a market on screen that nobody has confirmed is the one being read.
+    if (!CHART.view.product) return { head: 'CONNECTING', sub: 'waiting for the first chart payload', live: true };
     return { head: 'ACQUIRING ' + product + ' ' + tf, sub: 'waiting for the first candles', live: true };
   }
   if (CHART.meta.built === 'trades') {
@@ -1009,10 +1013,35 @@ function drawLastPrice(ctx, L) {
   ctx.fillStyle = C_BG;
   ctx.fillText(text, L.plotWidth + 5, boxTop + 8);
 
+  /* The countdown is not a second price and must not read as one. Sharing the tag's left edge
+     and its type size was the whole problem: two numbers in one column, stacked, and the eye
+     files the lower one as another tag. So it hangs off the tag as something running out,
+     which is what it is: a rule that empties toward the close, and the figure under it at
+     nine pixels, centred, unfilled. Nothing in the price column is allowed to look filled
+     except the price. */
   var closesIn = CHART.meta.barCloseSec;
   if (typeof closesIn === 'number' && closesIn >= 0) {
-    ctx.fillStyle = green(0.45);
-    ctx.fillText(countdownText(closesIn), L.plotWidth + 5, boxTop + 24);
+    var left = L.plotWidth + 1;
+    var wide = L.padRight - 1;
+    var ruleTop = boxTop + 18;
+    // Under fifteen seconds to a bar the rule has nothing to show that the stepping figure
+    // does not already say, and it would spend most of its life empty.
+    if (CHART.view.granularitySec >= 15) {
+      // The unlit track carries the whole width at every moment. Without it the last few
+      // seconds are a stub floating under the tag, which reads as a stray mark rather than
+      // as a rule that has nearly emptied.
+      ctx.fillStyle = green(0.14);
+      ctx.fillRect(left, ruleTop, wide, 2);
+      var run = clampNum(closesIn / CHART.view.granularitySec, 0, 1) * wide;
+      ctx.fillStyle = up ? green(0.38) : red(0.5);
+      ctx.fillRect(left, ruleTop, Math.max(1, Math.round(run)), 2);
+    }
+    ctx.font = CHART_FONT_SMALL;
+    ctx.fillStyle = green(0.4);
+    ctx.textAlign = 'center';
+    ctx.fillText(countdownText(closesIn), left + wide / 2, ruleTop + 7);
+    ctx.textAlign = 'left';
+    ctx.font = CHART_FONT;
   }
 }
 

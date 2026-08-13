@@ -97,14 +97,39 @@ const proposals = createProposalService({
 });
 
 // Agent connection tracking: mcp.ts sends op:hello every 15s; connected means
-// a heartbeat within the last 45s.
+// a heartbeat within the last 45s, so three missed pings drop the light.
+//
+// The heartbeat itself is deliberately absent from the audit log, and the edges
+// stand in for it: one agent_connected when an agent attaches, one
+// agent_disconnected when its pings stop. Two lines per session instead of 240
+// an hour, and the transcript still answers "was an agent attached at 19:52".
+const AGENT_TTL_MS = 45_000;
 let lastHello = 0;
-function agentSeen(): void {
+let agentAttached = false;
+
+// True only on the connect edge. The server logs the attach on that signal, so
+// the decision of what counts as connected lives here, next to the TTL.
+function agentSeen(): boolean {
+  const edge = !agentAttached;
   lastHello = Date.now();
+  agentAttached = true;
+  return edge;
 }
 function agentsConnected(): number {
-  return Date.now() - lastHello < 45_000 ? 1 : 0;
+  return Date.now() - lastHello < AGENT_TTL_MS ? 1 : 0;
 }
+
+// The drop has no request to ride on, so it is swept for. A stopped MCP process
+// cannot say goodbye, and a hung one would lie if it could: the absence of pings
+// is the honest signal.
+setInterval(() => {
+  if (!agentAttached || agentsConnected() === 1) return;
+  agentAttached = false;
+  audit.append('agent_disconnected', 'the agent stopped sending heartbeats', {
+    lastSeen: new Date(lastHello).toISOString(),
+    ttlMs: AGENT_TTL_MS,
+  });
+}, 15_000);
 
 function getPolicy(): Policy | null {
   return loadPolicy(cfg.dataDir);

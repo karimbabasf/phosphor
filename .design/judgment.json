@@ -1,10 +1,10 @@
 {
- "stamp": "f4bcfabce27fb85d",
- "iteration": 9,
+ "stamp": "bd60d326546d0f7c",
+ "iteration": 11,
  "firstFive": {
-  "what": "A money screen. A large balance in dollars, a list of what that balance is made of, one coin's price, and a short list of what the app has done. Warm off-white paper, one quiet sans, a thin coloured band across the very top",
-  "who": "The person who owns the money and does not trade. They are not leaning into the monitor",
-  "action": "Read the balance and leave. If the app is asking to move money, a question appears with YES and NO under it. STOP EVERYTHING sits at the bottom, deliberately far from YES"
+  "what": "A terminal control panel for a crypto wallet held across five chains, with a red bar across the top saying every proposal is auto-approving because the approval gate is off on testnet",
+  "who": "The owner of the funds, supervising what a connected AI agent is allowed to do with them",
+  "action": "Read the wallet, or click APPROVE/REFUSE when the gate has something pending. With the gate disabled the honest answer is that there is no action, and the red bar is there to say so"
  },
  "asked": [
   {
@@ -178,6 +178,21 @@
    "ref": "totalUsd goes null with 'still checking' on a stale chain and 'checking your new balance' when fetchedAt predates the newest execution; addresses render in full; destinations cover counterparty plus every simulation deposit address"
   },
   {
+   "requirement": "Karim 2026-08-12: \"make a loading animation for anything that is loading or not showing yet and especially if like candlesticks havent loaded in\". Every panel that has no answer yet says so while it waits, the chart most of all, and every one of them stops the moment its own answer lands",
+   "met": true,
+   "ref": "wait-390/768/1440 captures with the reads held open: chart draws skeleton candles filling in behind a scan column under CONNECTING / waiting for the first chart payload, wallet table five block rows, totals, donut readout, gate, policy and log all blocked out, donut ring with a chasing arc, status bar dashes blinking. After the answers land: body.waiting off, 0 .skel nodes left, 1 rAF request in 1.5s idle"
+  },
+  {
+   "requirement": "Karim 2026-08-12: \"on the x axis the controls for squeezing are reversed and I want to be able to squeeze as much as I want\". Dragging the time axis follows the hand, and the window squeezes until the renderer runs out, not until a round number does",
+   "met": true,
+   "ref": "real pointer drags on #chart-hud in the axis strip: right 220px took barCount 120 to 202, left 220px took 202 to 63. Repeated squeezes land on 2000 client and 2000 server with 2000 candles served, axis relabelled to 11 Aug / 12 Aug"
+  },
+  {
+   "requirement": "Karim 2026-08-12: \"I want this tiny timer to not look like a price tag\". The bar countdown under the last-price tag reads as a duration, not as a second label in the price column",
+   "met": true,
+   "ref": "3x crops of the axis at 20s and 11s to close: the countdown lost the tag left edge and the 11px face. It is a two-pixel rule across the tag width that empties toward the close, unlit track always full width, with the figure centred under it at 9px and unfilled. The tag is still the only filled block in the column. Dropped entirely under a 15s timeframe, where a rule would spend its life empty"
+  },
+  {
    "requirement": "NO TERMINAL VIBE. Basic shares no visual identity with pro (Karim, 2026-08-12: 'no terminal vibe or anything')",
    "met": true,
    "ref": "Zero monospace outside the destination address block, zero green, light warm ground instead of black. basic.css is a separate stylesheet and the old .basic rules were deleted from style.css rather than overridden, so pro's terminal identity cannot leak in. Faces are Amulya (self-hosted variable, picked off a rendered specimen sheet) and Sometype Mono for addresses only"
@@ -209,10 +224,10 @@
   }
  ],
  "goal": {
-  "outcome": "A non-technical owner opens the app and knows within a couple of seconds that their money is where they left it, or that it is not",
-  "path": "Calm bar colour and thickness at the top, then the balance, then the sentence under it. Everything else is optional reading",
+  "outcome": "The owner sees the whole machine at once with no scrolling, and on testnet with the gate off he cannot miss that nothing is waiting for his click because everything is auto-approving",
+  "path": "Open the page. The red bar is the first thing above the fold and it states the gate is disabled. Under it, the left column is what he holds and the right column is what governs it, all without a scroll",
   "holds": true,
-  "why": "The balance is the largest thing on the page by a factor of three and the first thing the eye lands on. The state band is above it and readable without reading any words at all. In the asking state the balance steps down and the question takes the page, which is the only time this screen wants to be read rather than glanced at"
+  "why": "On the 1440x900 screenshot the banner is the only inverted block on an otherwise green-on-black page, 1416px wide at y=43, so the eye cannot route around it. The gate panel it refers to sits directly below it in the right column and carries the same red in its frame title, so the banner and the surface it disables read as one statement rather than as a stray warning"
  },
  "states": {
   "resting": "1440x900, no pending proposals: the gate reads 'no pending approvals: the gate is disabled, every proposal auto-approves', wallet 18 rows, no page scroll",
@@ -233,6 +248,9 @@
   "basic asking": "driven and shot at 390/768/1440: ask block with headline, after-line, four facts, the destination in full, YES and NO. Both buttons above the fold at 1440x900 after the balance shrinks while asking",
   "basic frozen": "driven and shot at 1440: red warning box, red 'Everything is frozen. Nothing can move.', agreeing footer, the button reads LET THINGS MOVE AGAIN, and placesLine drops 'all normal'",
   "pro after the basic-view merge": "driven and shot at 1440 (.design/state-pro): the full chart v2 deck renders unchanged beside the wallet, policy and log, status bar reads v0.3, and the log carries the view_changed lines. The data-view CSS hides the deck only in basic",
+  "waiting": "every read held open 6s at 390, 768 and 1440: the chart draws a skeleton of candles lighting up behind a sweep with CONNECTING over it, every other panel carries block rows on a delayed blink, the donut carries a chasing arc, and the status bar dashes blink. No horizontal overflow at any of the three widths (scrollWidth equals clientWidth). Every skeleton is gone and body.waiting is off once the answers land",
+  "squeezed": "time axis dragged until it stops: 2000 one-minute bars, about a day and a half, bars thin but still drawn with the one-pixel floor, time grid switches to dates, price axis and last-price tag unchanged. The server agrees at 2000 and serves 2000 candles, so the window is full rather than half empty",
+  "bar closing": "watched a 1m bar run down at 3x: rule lit a third of the width at 0:20 and a stub at 0:11 with the unlit track carrying the rest, figure stepping once a second under it. The reserved band in buildLayout still keeps the price grid labels off it",
   "basic resting (redesign)": "Balance, holdings, one price, what happened, footer promise, stop control. Calm bar is a 3px slate hairline. Screenshotted at 1440 and read",
   "basic asking (redesign)": "Calm bar goes 10px amber and breathes. Balance drops to ~2.6rem, the question box takes the page with facts, both destinations in full, YES and NO at equal visual weight. Screenshotted at 1440 and 390 and read",
   "basic gate disabled (redesign)": "Calm bar goes 14px red. Headline says the money is not protected, the warning box says the app moves money without asking. The two are no longer the same sentence, which is a bug this pass found and fixed",
@@ -246,6 +264,8 @@
   "price scale": "right axis drag switches the scale to manual; double click on the plot returns it to auto and to live",
   "agent": "chart_set_view over MCP while the window was open moved it to 5m and 200 bars, and the window followed",
   "race found and fixed": "the first pass snapped every gesture back. A refresh fired by the browser's own write landed before that write did, and the browser adopted the stale server view. The rule now: the hand in the window owns the view, the only thing that may move it is the agent, and the answer to our own write is applied from that answer rather than from a refresh",
+  "timeAxis": "press in the axis strip, eight moves, release, reading CHART.view.barCount either side: right 220px 120 to 202 (squeeze), left 220px 202 to 63 (stretch). The direction is the one the hand expects with the right edge anchored, and it is the opposite of what shipped",
+  "squeeze": "twelve 280px squeezes in a row: client 2000, server 2000, limits.barCountMax 2000, 2000 candles in the payload. Nothing springs back, because the client reads the ceiling out of the payload instead of restating it",
   "found by looking, not by the audit": [
    "The question box rendered EMPTY with two live buttons in it. The hidden attribute is a UA display:none and .basic-ask sets display:flex, which beats it. On an approval screen this is the worst available bug and no automated channel caught it",
    "A black band below the fold: style.css pins html and body to 100% height with overflow hidden for the pro deck, so a scrolling basic document painted the terminal ground under itself",

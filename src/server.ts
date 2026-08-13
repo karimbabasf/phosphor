@@ -4,7 +4,9 @@
 // Approve, refuse and kill are the only mutating browser routes and every one of
 // them requires the per-boot token that GET /api/session hands out. Every /api/mcp
 // op is audit-logged as a tool_call before dispatch, and every rejected mutation is
-// audit-logged as approve_attempt_rejected.
+// audit-logged as approve_attempt_rejected. The one op that is not a tool_call is the
+// presence heartbeat: it is logged as agent_connected and agent_disconnected on the
+// edges, because a line every 15s buries the transcript it is meant to sit in.
 //
 // KNOWN HOLE, do not read the above as a boundary. This comment used to claim the
 // agent "has no path to its own approval: no token, no route". That is false and was
@@ -119,7 +121,9 @@ export type ServerDeps = {
   proposals: ProposalService;
   getPolicy: () => Policy | null;
   setKill: (on: boolean) => void;
-  agentSeen: () => void;
+  // Returns true only on the connect edge, so the caller logs an attach once per
+  // agent session instead of once per 15s heartbeat.
+  agentSeen: () => boolean;
   agentsConnected: () => number;
   getView: () => ViewMode;
   setView: (mode: ViewMode) => void;
@@ -1054,6 +1058,21 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     const body = parsed.value;
     const op = String(body.op ?? '');
 
+    // The presence heartbeat is not a tool call, so it is answered before the
+    // append below and never enters the transcript. mcp.ts pings every 15s for
+    // the whole life of an agent session: on 2026-08-12, with two sessions open,
+    // 242 of 418 audit lines were heartbeats and the real calls were buried.
+    // Only the edges are worth a line, and agentSeen() reports them.
+    if (op === 'hello') {
+      // The client name is agent-controlled. It stays in data, where it is stored
+      // verbatim and rendered as data, and out of msg, where a crafted value could
+      // dress a heartbeat up as some other event in the log column.
+      if (agentSeen()) audit.append('agent_connected', 'an agent attached to phosphor', body);
+      broadcastState();
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
     const label =
       op === 'read'
         ? `read ${String(body.tool ?? '?')}`
@@ -1065,18 +1084,10 @@ export function createServer(deps: ServerDeps): PhosphorServer {
             ? `chart ${String(body.tool ?? '?')}`
             : op === 'set_view_mode'
               ? `set_view_mode ${String(body.mode ?? '?')}`
-              : op === 'hello'
-                ? `hello from ${String(body.client ?? 'unknown client')}`
-                : `unknown op ${op}`;
-    // Contract: every op is audit-logged before dispatch, arguments included verbatim.
+              : `unknown op ${op}`;
+    // Contract: every op that reads, proposes or moves the window is audit-logged
+    // before dispatch, arguments included verbatim.
     audit.append('tool_call', `agent: ${label}`, body);
-
-    if (op === 'hello') {
-      agentSeen();
-      broadcastState();
-      sendJson(res, 200, { ok: true });
-      return;
-    }
     if (op === 'read') {
       await handleRead(body, res);
       return;
