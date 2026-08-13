@@ -25,8 +25,9 @@ import type { RiskRow } from '../../src/types.ts';
 import { toBaseUnits, oneLine } from '../../src/intents.ts';
 import type { OneClickToken, TokensFile } from '../../src/intents.ts';
 import { NO_TESTNET_REASON, ONECLICK_COUNTERPARTY, oneClickRail } from '../../src/rails/oneclick.ts';
-import type { SwapEvmPort } from '../../src/rails/oneclick.ts';
+import type { SwapEvmPort, SwapNearPort } from '../../src/rails/oneclick.ts';
 import type { SendOutcome, SendParams } from '../../src/chain/evm.ts';
+import type { NearSendOutcome, NearSendParams } from '../../src/chain/near.ts';
 import type { Network, SwapDraft } from '../../src/types.ts';
 
 // ---------- fixtures ----------
@@ -39,12 +40,20 @@ const TX_HASH = '0xd5a06833f3e299cce32a957e4078d473d14954b3aa9ec55cd966abc527015
 
 const ERC20 = parseAbi(['function transfer(address,uint256) returns (bool)']);
 
+// The NEAR account the NEAR-origin tests sign as, and a real deposit address minted by the
+// live API for a NEAR-origin quote on 2026-08-13 and never funded. It is a 64-character hex
+// implicit account: the exact shape viem's isAddress refuses, which is why this rail used to
+// reject every NEAR swap.
+const NEAR_OWNER = 'demo.testnet';
+const NEAR_DEPOSIT = 'aec6b4afd08c0ace0f392c4d1b8aa9c44ce9bbd558903c4b702ce1cb1ea941b2';
+const NEAR_TX_HASH = 'GzRhr7585nMoskGxv5judyQTaCg1TZzaXULuyoCaQiSm';
+
 const tokensFixture: TokensFile = {
   eth: {},
   base: { USDC: { tokenId: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', decimals: 6 } },
   arb: { USDT: { tokenId: '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9', decimals: 6 } },
   sol: {},
-  near: {},
+  near: { wNEAR: { tokenId: 'wrap.near', decimals: 24 } },
 };
 
 const oneClickTokens: OneClickToken[] = [
@@ -61,6 +70,15 @@ const oneClickTokens: OneClickToken[] = [
     blockchain: 'arb',
     symbol: 'USDT',
     contractAddress: '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9',
+  },
+  // The live list has no native NEAR asset at all: NEAR trades as wrap.near at 24 decimals,
+  // which is why a NEAR-origin swap is an ft_transfer and never a bare Transfer action.
+  {
+    assetId: 'nep141:wrap.near',
+    decimals: 24,
+    blockchain: 'near',
+    symbol: 'wNEAR',
+    contractAddress: 'wrap.near',
   },
 ];
 
@@ -123,7 +141,9 @@ type Harness = {
   depositSubmits: Record<string, unknown>[];
   statusCalls: string[];
   sends: SendParams[];
+  nearSends: NearSendParams[];
   evm: SwapEvmPort;
+  near: SwapNearPort;
 };
 
 function harness(
@@ -132,6 +152,8 @@ function harness(
     quoteStatus?: number;
     statuses?: unknown[]; // one payload per /v0/status call; the last one repeats
     send?: SendOutcome;
+    nearSend?: NearSendOutcome;
+    nearRegistered?: boolean;
   } = {},
 ): Harness {
   const quoteBodies: Record<string, unknown>[] = [];
@@ -168,15 +190,33 @@ function harness(
     },
   };
 
-  return { fetchImpl, quoteBodies, depositSubmits, statusCalls, sends, evm };
+  const nearSends: NearSendParams[] = [];
+  const near: SwapNearPort = {
+    accountId: () => NEAR_OWNER,
+    send: async (params) => {
+      nearSends.push(params);
+      return (
+        options.nearSend ?? {
+          ok: true,
+          hash: NEAR_TX_HASH,
+          explorer: 'https://nearblocks.io/txns/' + NEAR_TX_HASH,
+          gasBurnt: '1936658108112',
+        }
+      );
+    },
+    storageRegistered: async () => options.nearRegistered ?? true,
+  };
+
+  return { fetchImpl, quoteBodies, depositSubmits, statusCalls, sends, nearSends, evm, near };
 }
 
 function railOf(h: Harness, network: Network = 'mainnet') {
   return oneClickRail({
     network,
-    keysPath: '/nonexistent/keys.json', // never read: evm.signerAddress is stubbed
+    keysPath: '/nonexistent/keys.json', // never read: the signer ports are stubbed
     tokens: tokensFixture,
     evm: h.evm,
+    near: h.near,
     fetchImpl: h.fetchImpl,
     sleepImpl: async () => {}, // no real waiting; maxPolls bounds the loop
     pollIntervalMs: 1,
@@ -386,7 +426,7 @@ test('execute refuses a quote that needs a deposit memo an ERC-20 transfer canno
 test('execute refuses a deposit address that is not an address', async () => {
   const h = harness({ quote: quoteBody({ depositAddress: 'send it to intents.near instead' }) });
 
-  await assert.rejects(() => railOf(h).execute(draftOf()), /no usable deposit address/);
+  await assert.rejects(() => railOf(h).execute(draftOf()), /not an EVM address/);
   assert.equal(h.sends.length, 0);
 });
 
@@ -408,9 +448,154 @@ test('execute refuses a draft whose counterparty is an address rather than the v
 });
 
 test('execute refuses an origin chain Phosphor cannot sign for', async () => {
+  // Solana is the remaining one: 1Click lists it, and Phosphor has no Solana signer. NEAR
+  // used to be refused by this same rule and is now a supported origin, so the refusal has
+  // to name the missing signer rather than name EVM as the only possibility.
   const h = harness();
-  await assert.rejects(() => railOf(h).execute(draftOf({ chain: 'sol' })), /signs EVM ERC-20 transfers only/);
+  await assert.rejects(() => railOf(h).execute(draftOf({ chain: 'sol' })), /no signer for that chain/);
   assert.equal(h.sends.length, 0);
+});
+
+// ---------- NEAR as an origin chain ----------
+//
+// The rail refused every one of these until src/chain/near.ts existed. The refusal was
+// correct at the time and is the thing being removed here, so each test states what has to
+// be true for the removal to be safe rather than only that a swap now happens.
+
+function nearDraft(over: Partial<SwapDraft> = {}): SwapDraft {
+  return draftOf({
+    chain: 'near',
+    toChain: 'arb',
+    fromSymbol: 'wNEAR',
+    toSymbol: 'USDT',
+    amountIn: 10,
+    amountUsd: 16.4,
+    minAmountOut: 16,
+    from: NEAR_OWNER,
+    to: OWNER,
+    ...over,
+  });
+}
+
+function nearQuote(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return quoteBody({
+    amountIn: toBaseUnits(10, 24).toString(),
+    amountInFormatted: '10.0',
+    amountInUsd: '16.50',
+    minAmountIn: toBaseUnits(10, 24).toString(),
+    amountOut: '16412974',
+    amountOutFormatted: '16.412974',
+    amountOutUsd: '16.41',
+    minAmountOut: toBaseUnits(16, 6).toString(),
+    depositAddress: NEAR_DEPOSIT,
+    ...over,
+  });
+}
+
+test('a NEAR origin deposits with a NEP-141 ft_transfer, not an ERC-20 transfer', async () => {
+  const h = harness({ quote: nearQuote() });
+  const result = await railOf(h).execute(nearDraft());
+
+  assert.equal(result.ok, true);
+  assert.equal(h.sends.length, 0, 'nothing went through the EVM signer');
+  assert.equal(h.nearSends.length, 1);
+
+  const sent = h.nearSends[0];
+  // The transaction goes to the TOKEN contract, and the deposit address is an argument.
+  // Sending to the deposit address directly would be a bare NEAR transfer of the gas asset,
+  // not a transfer of the token the quote is for.
+  assert.equal(sent.receiverId, 'wrap.near');
+  assert.equal(sent.actions.length, 1);
+
+  const action = sent.actions[0];
+  assert.equal(action.type, 'functionCall');
+  if (action.type !== 'functionCall') throw new Error('unreachable');
+  assert.equal(action.methodName, 'ft_transfer');
+  assert.deepEqual(action.args, { receiver_id: NEAR_DEPOSIT, amount: toBaseUnits(10, 24).toString() });
+  // Exactly one yoctoNEAR. NEP-141 requires it on any balance-moving method as proof the
+  // signer holds a full-access key; zero is rejected by the token contract.
+  assert.equal(action.deposit, 1n);
+  assert.ok(action.gas > 0n);
+});
+
+test('a NEAR deposit address is accepted as an account id where an EVM address is refused', async () => {
+  // The same 64-hex value that viem's isAddress rejects. This is the whole bug: the rail
+  // validated every deposit address as an EVM address, so a correct NEAR one looked invalid.
+  const h = harness({ quote: nearQuote() });
+  const result = await railOf(h).execute(nearDraft());
+  assert.equal(result.ok, true);
+
+  const action = h.nearSends[0].actions[0];
+  if (action.type !== 'functionCall') throw new Error('unreachable');
+  assert.equal((action.args as { receiver_id: string }).receiver_id, NEAR_DEPOSIT);
+});
+
+test('an EVM address returned for a NEAR origin is refused, so the check was narrowed and not removed', async () => {
+  const h = harness({ quote: nearQuote({ depositAddress: DEPOSIT }) });
+  await assert.rejects(() => railOf(h).execute(nearDraft()), /not a NEAR account id/);
+  assert.equal(h.nearSends.length, 0);
+  assert.equal(h.sends.length, 0);
+});
+
+test('a LOWERCASED EVM address is refused too, not just the checksummed one', async () => {
+  // The checksummed form above is refused because it has capitals in it, which is luck
+  // rather than a check. Lowercased, an EVM address is 42 characters of lowercase
+  // alphanumeric and therefore a structurally valid NEAR account id: the account-id rule
+  // alone lets it straight through to an ft_transfer.
+  const h = harness({ quote: nearQuote({ depositAddress: DEPOSIT.toLowerCase() }) });
+  await assert.rejects(() => railOf(h).execute(nearDraft()), /EVM address where a NEAR account id belongs/);
+  assert.equal(h.nearSends.length, 0);
+});
+
+test('a deposit address with no storage on the token is refused before anything is signed', async () => {
+  // An ft_transfer to an unregistered account panics inside a receipt: the tokens bounce and
+  // the transaction is still paid for. The failure reads like a transfer bug and is not one,
+  // so the rail asks first and says so in words.
+  const h = harness({ quote: nearQuote(), nearRegistered: false });
+  const result = await railOf(h).execute(nearDraft());
+
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /no storage deposit registered/);
+  assert.match(result.detail, /Nothing was signed/);
+  assert.equal(h.nearSends.length, 0);
+});
+
+test('a NEAR draft signed by a different account than the draft names is refused', async () => {
+  const h = harness({ quote: nearQuote() });
+  await assert.rejects(
+    () => railOf(h).execute(nearDraft({ from: 'someone-else.near' })),
+    /but the configured key is/,
+  );
+  assert.equal(h.nearSends.length, 0);
+});
+
+test('a NEAR quote is priced at 24 decimals without losing yocto to a double', async () => {
+  const h = harness({ quote: nearQuote() });
+  const sim = await railOf(h).simulate(nearDraft());
+  assert.equal(sim.ok, true);
+
+  // 10 NEAR is 1e25 yocto. A double cannot hold that exactly, so the amount in the quote
+  // request has to come from the decimal-string path rather than amount * 10 ** decimals.
+  const body = h.quoteBodies[0] as { amount: string; originAsset: string };
+  assert.equal(body.amount, '10000000000000000000000000');
+  assert.equal(body.originAsset, 'nep141:wrap.near');
+});
+
+test('a NEAR origin still refuses on testnet, because Intents has no testnet', async () => {
+  // The signer works on testnet. The venue does not exist there, and having a working
+  // signer must not turn that into an attempted swap against a host that is not real.
+  const h = harness({ quote: nearQuote() });
+  await assert.rejects(() => railOf(h, 'testnet').execute(nearDraft()), /has no testnet/);
+  assert.equal(h.nearSends.length, 0);
+});
+
+test('a failed NEAR deposit reports that no funds left the wallet', async () => {
+  const h = harness({ quote: nearQuote(), nearSend: { ok: false, error: 'a receipt failed on chain: not registered' } });
+  const result = await railOf(h).execute(nearDraft());
+
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /No funds left the wallet/);
+  assert.equal(h.statusCalls.length, 0);
 });
 
 // ---------- execute, after the money has moved ----------
