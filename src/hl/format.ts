@@ -96,3 +96,29 @@ function stripTrailingZeros(fixed: string): string {
   if (!fixed.includes('.')) return fixed;
   return fixed.replace(/0+$/, '').replace(/\.$/, '');
 }
+
+// Round a computed price to something the venue will actually accept.
+//
+// This exists because formatPrice is a GUARD, not a converter: it throws on an invalid price
+// rather than rounding, so that a bot can never silently fill at a price nobody approved. That
+// leaves the caller responsible for arriving with a valid one, and an aggressive limit derived
+// from mark times a slippage factor essentially never is. The first live order this code ever
+// attempted died exactly here: 63980.30999999999 against BTC, which allows one decimal.
+//
+// Two limits bind at once and the tighter wins: at most `maxDecimals` decimal places, and at
+// most 5 significant figures. For a five-figure price like BTC the significant-figure rule bites
+// first and the answer is an integer, which the venue always accepts regardless of figures.
+//
+// Direction matters and is not a rounding preference. An aggressive BUY limit is the most it may
+// pay, so it rounds DOWN; an aggressive SELL limit is the least it may accept, so it rounds UP.
+// Rounding the other way would push the fill past the bound the human approved, which is the one
+// outcome this whole path exists to prevent.
+export function roundToValidPrice(px: number, szDecimals: number, isPerp: boolean, isBuy: boolean): number {
+  const maxDecimals = (isPerp ? 6 : 8) - szDecimals;
+  const whole = Math.floor(Math.abs(px)).toString().length;
+  const bySigFigs = 5 - whole;
+  const decimals = Math.max(0, Math.min(maxDecimals, bySigFigs));
+  const f = 10 ** decimals;
+  // Buy rounds down, sell rounds up: never past the bound.
+  return (isBuy ? Math.floor(px * f) : Math.ceil(px * f)) / f;
+}

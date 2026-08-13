@@ -305,6 +305,27 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
   // Single exit for a freshly evaluated proposal. This is the only place a proposal can become
   // executed without a human, and only on verdict allow.
   async function land(p: Proposal): Promise<Proposal> {
+    // Arming a bot is never auto-approved, and 'allow' is the path that has to be closed.
+    //
+    // The carve-out further down covers needs_approval, which is what a LARGE mandate produces.
+    // A small one comes back 'allow' because it sits under the click threshold, and the first
+    // live arm went straight to executed with nobody having clicked anything. The threshold is
+    // a rule about how much money one action moves, and a mandate does not move money when it
+    // is approved: it grants standing authority to move money later, repeatedly, with no human
+    // in the loop. A $30 cap is not a small spend, it is an unattended trader with a $30 cap.
+    //
+    // So the outcome is downgraded here rather than in the engine, which stays a pure function
+    // of policy and draft, and the reason is recorded so the human reads why it is waiting.
+    if (p.kind === 'mandate_arm' && p.verdict.outcome === 'allow') {
+      p = {
+        ...p,
+        verdict: {
+          outcome: 'needs_approval',
+          reasons: [...p.verdict.reasons, 'Arming a bot always needs a human click, whatever the size.'],
+        },
+      };
+    }
+
     if (p.verdict.outcome === 'refuse') {
       const refused: Proposal = { ...p, status: 'policy_refused', decidedBy: 'policy', decidedAt: nowIso() };
       audit.append('proposal_created', `${p.kind} proposal ${p.id} refused by policy: ${p.verdict.rule}`, {

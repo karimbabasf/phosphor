@@ -27,6 +27,7 @@ import { emptyMemory, evaluate } from '../strategy/evaluate.ts';
 import type { MarketState, RuleMemory } from '../strategy/evaluate.ts';
 import type { Action, Program, Ref } from '../strategy/grammar.ts';
 import { createExchange, aggressiveLimitPrice, newCloid } from '../hl/exchange.ts';
+import { roundToValidPrice } from '../hl/format.ts';
 import { distanceToLiquidationPct, liquidationPrice } from '../hl/liquidation.ts';
 
 const KEY = process.env.PHOSPHOR_HL_KEY as `0x${string}` | undefined;
@@ -149,10 +150,13 @@ async function place(a: Armed, symbol: string, action: Action): Promise<void> {
 
     const isBuy = action.do === 'open' ? action.side === 'long' : b.positionSide !== 'short';
     const entry = action.entry;
-    const px =
+    const raw =
       entry.type === 'market'
         ? aggressiveLimitPrice(b.markPx, isBuy, entry.maxSlippageBps)
         : (resolveRef(entry.ref) ?? b.markPx);
+    // Rounded here, toward the side that cannot breach the bound. formatPrice throws on an
+    // invalid price by design, so arriving valid is the caller's job.
+    const px = roundToValidPrice(raw, b.szDecimals, true, isBuy);
     const size = action.sizeUsd / px;
 
     await ex.order([
@@ -178,10 +182,11 @@ async function place(a: Armed, symbol: string, action: Action): Promise<void> {
     const isBuy = b.positionSide === 'short'; // closing a short is a buy
     const fraction = action.do === 'close' ? 1 : action.fraction;
     const exit = action.do === 'close' ? action.exit : action.exit;
-    const px =
+    const raw =
       exit.type === 'market'
         ? aggressiveLimitPrice(b.markPx, isBuy, exit.maxSlippageBps)
         : (resolveRef(exit.ref) ?? b.markPx);
+    const px = roundToValidPrice(raw, b.szDecimals, true, isBuy);
 
     await ex.order([
       {
@@ -201,8 +206,10 @@ async function place(a: Armed, symbol: string, action: Action): Promise<void> {
   }
 
   if (action.do === 'set_stop' || action.do === 'set_target') {
-    const px = resolveRef(action.ref);
-    if (px === null || b.positionSide === 'flat') return;
+    const ref = resolveRef(action.ref);
+    if (ref === null || b.positionSide === 'flat') return;
+    // A stop for a long triggers below and sells, so it rounds as a sell would.
+    const px = roundToValidPrice(ref, b.szDecimals, true, b.positionSide === 'short');
     await ex.trigger([
       {
         assetId: b.assetId,
