@@ -122,7 +122,7 @@ async function boot(opts: { view?: ViewMode; proposals?: Proposal[] } = {}): Pro
     },
     getPolicy: () => defaultPolicy(),
     setKill: () => {},
-    agentSeen: () => {},
+    agentSeen: () => false, // already attached: no connect edge to log
     agentsConnected: () => 1,
     getView: () => view,
     setView: (mode) => {

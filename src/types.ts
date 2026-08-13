@@ -352,7 +352,10 @@ export type LogEvent = {
   type:
     | 'app_start'
     | 'tool_call'
+    // The two edges of an agent session. The 15s heartbeat between them is not
+    // logged: it says nothing a reader of the transcript does not already know.
     | 'agent_connected'
+    | 'agent_disconnected'
     | 'proposal_created'
     | 'policy_refused'
     | 'approved'
