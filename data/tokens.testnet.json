@@ -1,6 +1,7 @@
 {
   "_comment": "TESTNET token registry, kept separate from tokens.json (mainnet) because they are genuinely different documents rather than two rows of one. Every address here was verified live on 2026-08-12 by reading it, not by copying a doc. Decimals were verified behaviourally: at these values the balances come out as sane numbers, where wrong decimals produce absurd ones.",
-  "_chains": "Only arb (Arbitrum Sepolia, 421614) is populated. The other chains have testnet deployments but none were verified, and an unverified contract address in a balance reader means the wallet silently reports zero for a funded account.",
+  "_chains": "arb (Arbitrum Sepolia, 421614) and near (NEAR testnet) are populated. eth, base and sol have testnet deployments but none were verified, and an unverified contract address in a balance reader means the wallet silently reports zero for a funded account.",
+  "_near": "Both NEAR entries were verified on 2026-08-12 by calling ft_metadata on the contract itself, which self-reports decimals 6, and by calling ft_balance_of for an account with no storage registered, which answers \"0\" rather than erroring. These are the community fakes contracts: anyone can mint, so total supply is meaningless and they are worth nothing.",
   "eth": {},
   "base": {},
   "arb": {
@@ -9,5 +10,8 @@
     "USDC2": { "tokenId": "0x1baAbB04529D43a73232B713C0FE471f7c7334d5", "decimals": 6 }
   },
   "sol": {},
-  "near": {}
+  "near": {
+    "USDC": { "tokenId": "usdc.fakes.testnet", "decimals": 6 },
+    "USDT": { "tokenId": "usdt.fakes.testnet", "decimals": 6 }
+  }
 }

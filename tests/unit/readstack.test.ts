@@ -317,3 +317,71 @@ test('near.fetchHoldings decodes ft_balance_of byte-array response and view_acco
   closeTo(native!.amount, 1, 1e-9);
   assert.equal(native!.symbol, 'NEAR');
 });
+
+// An implicit NEAR account does not exist on chain until something funds it, and the RPC says so
+// with cause.name UNKNOWN_ACCOUNT while leaving message as the generic "Server error". That is a
+// definitive answer (the balance is zero), not a failed read, and reporting it as a failure marks
+// the whole chain stale and blames the wrong thing.
+test('near.fetchHoldings reads an account that does not exist as zero, not as a failed chain', async () => {
+  const mockFetch = (async (_url: any, init: any) => {
+    const body = JSON.parse(init.body);
+    if (body.params?.request_type === 'view_account') {
+      return new Response(
+        JSON.stringify({
+          error: { name: 'HANDLER_ERROR', cause: { name: 'UNKNOWN_ACCOUNT', info: {} }, code: -32000, message: 'Server error' },
+        }),
+        { status: 200 },
+      );
+    }
+    throw new Error('unexpected near query');
+  }) as typeof fetch;
+
+  const holdings = await nearFetchHoldings('near', 'https://rpc.example', 'never-funded.testnet', {}, mockFetch);
+
+  const native = holdings.find(h => h.native);
+  assert.ok(native, 'a nonexistent account still reports a NEAR row');
+  assert.equal(native!.amount, 0);
+});
+
+test('near.fetchHoldings still throws on a real rpc failure, and names the cause instead of "Server error"', async () => {
+  const mockFetch = (async (_url: any, init: any) => {
+    const body = JSON.parse(init.body);
+    if (body.params?.request_type === 'view_account') {
+      return new Response(
+        JSON.stringify({
+          error: { name: 'HANDLER_ERROR', cause: { name: 'UNAVAILABLE_SHARD', info: {} }, code: -32000, message: 'Server error' },
+        }),
+        { status: 200 },
+      );
+    }
+    throw new Error('unexpected near query');
+  }) as typeof fetch;
+
+  await assert.rejects(
+    () => nearFetchHoldings('near', 'https://rpc.example', 'karim-demo.near', {}, mockFetch),
+    (err: Error) => err.message.includes('UNAVAILABLE_SHARD'),
+  );
+});
+
+// A missing token CONTRACT is a bad token table, not an empty wallet, so it must stay loud.
+test('near.fetchHoldings does not swallow UNKNOWN_ACCOUNT raised by a missing token contract', async () => {
+  const mockFetch = (async (_url: any, init: any) => {
+    const body = JSON.parse(init.body);
+    if (body.params?.method_name === 'ft_balance_of') {
+      return new Response(
+        JSON.stringify({
+          error: { name: 'HANDLER_ERROR', cause: { name: 'UNKNOWN_ACCOUNT', info: {} }, code: -32000, message: 'Server error' },
+        }),
+        { status: 200 },
+      );
+    }
+    if (body.params?.request_type === 'view_account') {
+      return new Response(JSON.stringify({ result: { amount: (10n ** 24n).toString() } }), { status: 200 });
+    }
+    throw new Error('unexpected near query');
+  }) as typeof fetch;
+
+  await assert.rejects(() =>
+    nearFetchHoldings('near', 'https://rpc.example', 'karim-demo.near', { USDC: { tokenId: 'nope.testnet', decimals: 6 } }, mockFetch),
+  );
+});
