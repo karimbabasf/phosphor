@@ -1,0 +1,532 @@
+/* PHOSPHOR trading surface. Loaded by /trade only, after style.css and on top of it.
+
+   Every colour here is one of the tokens style.css declares on :root. No new hue, no
+   radius, no shadow, no gradient, no transition, no animation. The pro page never
+   loads this file, so nothing in it can reach the pro page.
+
+   One extension to the app's colour law, and only this one: red reaches the
+   liquidation surface. Being taken by the venue is the same class of event as a
+   refused write, so it wears the same colour. Nothing else on this page is red. */
+
+/* Digits that tick must not change width. The monospace stack gives that already, but
+   a fallback face may not, and a column of numbers that jitters as it updates is a
+   column nobody reads twice. Stated on everything that carries a number. */
+.statusbar .v,
+.rgrid dd,
+.rexp .v,
+.liq-line,
+.mbar-v,
+.mrow-head,
+.mrow-projected,
+#t-book-rows,
+#t-fill-rows {
+  font-variant-numeric: tabular-nums;
+}
+
+/* trade.js draws the box-drawing line into the frames, the same way app.js does on the
+   pro page. Until it has run, and if it ever fails, an empty frame would leave a panel
+   with no name at all. The title is drawn by the stylesheet in the meantime; the rule
+   stops matching the moment the script writes the line in. */
+.frame-top:empty::before { content: "\250C\2500 " attr(data-title) " \2500"; }
+.frame-bottom:empty::before { content: "\2514\2500"; }
+
+/* ---------- shared parts ---------- */
+
+/* The one meter primitive on this page: a track with a filled span inside it, used by
+   the health bar, the liquidation bar and the four mandate bounds. The renderer sets
+   the width of .fill as a percentage and touches nothing else. */
+.track {
+  display: block;
+  height: 6px;
+  border: 1px solid var(--green-ghost);
+  overflow: hidden;
+}
+
+.track > .fill {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: var(--green-dim);
+}
+
+/* An unknown reading is not a reading of zero. An empty track beside "health --" says health is
+   at zero, which claims the account is at its liquidation when the truth is that the venue has
+   not published what the figure needs. That is the normal case on a unified account, not an
+   edge one. Hatched, so it reads as "no signal" at a glance and can never be mistaken for a bar
+   that has emptied. */
+.track.unknown {
+  border-style: dashed;
+  background-image: repeating-linear-gradient(
+    135deg,
+    var(--green-ghost) 0 1px,
+    transparent 1px 5px
+  );
+}
+
+/* Every empty state names its next action, so it is a line of text and not a shrug. */
+.empty {
+  margin: 4px 0 0;
+  color: var(--green-faint);
+}
+
+/* The head stays put and the rows scroll under it, as the pro page's wallet does. This
+   is also the sideways escape hatch: nowrap columns wider than the panel scroll here
+   rather than widening the page. */
+.tablewrap {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.tablewrap::-webkit-scrollbar { width: 6px; height: 6px; }
+.tablewrap::-webkit-scrollbar-track { background: transparent; }
+.tablewrap::-webkit-scrollbar-thumb { background: var(--green-ghost); }
+
+/* ---------- 2. chart ---------- */
+
+/* A command line has to look like one. The prompt glyph is why the field can go without
+   a visible label and still not read as a mystery box. */
+.chartbar .prompt {
+  flex: none;
+  color: var(--green-ghost);
+}
+
+/* The command line carries two vocabularies on this page, not one. style.css gives it a fixed
+   ten characters because the pro page only ever types "ema 21" into it; here the longest real
+   command is "overlay mandateWall on", which is twenty-two. It grows and the source line beside
+   it gives up its width first, which is what that line was already built to do. */
+.chartbar #chart-cmd {
+  flex: 1 1 24ch;
+  min-width: 12ch;
+}
+
+.chartbar .meta { flex: 0 1 auto; }
+
+/* The overlay toggles are the same genus of control as the timeframe strip, so they are
+   the same control: small text, the active one bracketed rather than boxed, and the row
+   stays a line of text instead of becoming a toolbar. The renderer may report state as
+   .on (which style.css already draws) or as aria-pressed; both are read. */
+.ovbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 0.5ch;
+  margin: 0 0 4px;
+  flex: none;
+}
+
+.ov[aria-pressed="true"] { color: var(--green-hi); }
+.ov[aria-pressed="true"]::before { content: '['; color: var(--green-ghost); }
+.ov[aria-pressed="true"]::after { content: ']'; color: var(--green-ghost); }
+
+.noteline {
+  display: flex;
+  align-items: baseline;
+  gap: 1ch;
+  margin: 4px 0 0;
+  flex: none;
+}
+
+.noteline .src { flex: none; color: var(--green-faint); }
+
+.noteline .note {
+  min-width: 0;
+  color: var(--green-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Nothing pinned means no empty row of ground held open for it, and no class from the
+   renderer needed to say so. */
+.noteline:has(#t-note:empty) { display: none; }
+
+/* ---------- 3. book, 4. fills ---------- */
+
+/* Both tables are fixed height and scroll inside themselves, so the chart above them
+   keeps the height it grows into. The body does not scroll: the table inside it does. */
+.panel-tbook > .pbody,
+.panel-tfills > .pbody {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.panel-tbook > .pbody { max-height: 30vh; }
+.panel-tfills > .pbody { max-height: 20vh; }
+
+.grid .c-mkt { width: 16ch; }
+.grid .c-side { width: 7ch; }
+.grid .c-time { width: 10ch; }
+
+/* A position and the orders working under it are one block. The hairline is drawn above
+   the position row only, so nothing is ever drawn between a position and its own
+   orders, and the group reads as a group without a tree glyph. */
+#t-book-rows > tr:not(.orow) > td { border-top: 1px solid var(--green-ghost); }
+#t-book-rows > tr:first-child > td { border-top: 0; }
+#t-book-rows > tr:not(.orow) > td:first-child { color: var(--green-hi); }
+
+/* Subordinate three ways at once: indented past the market column, one brightness tier
+   down, and set smaller. An order is a property of the position above it, not a peer. */
+#t-book-rows > tr.orow > td {
+  color: var(--green-faint);
+  font-size: 12px;
+}
+
+#t-book-rows > tr.orow > td:first-child { padding-left: 3ch; }
+
+/* "Liquidations ringed": the venue closing a position for you is not a fill you chose,
+   and it is the liquidation surface, which is the one place red is allowed to reach. */
+#t-fill-rows > tr.liquidation > td {
+  color: var(--red-dim);
+  border-top: 1px solid var(--red-ghost);
+  border-bottom: 1px solid var(--red-ghost);
+}
+
+#t-fill-rows > tr.liquidation > td:first-child { border-left: 1px solid var(--red-ghost); }
+#t-fill-rows > tr.liquidation > td:last-child { border-right: 1px solid var(--red-ghost); }
+
+/* ---------- 5. risk ---------- */
+
+/* Caps so a long book grows into a scroll rather than into the page. */
+.panel-trisk > .pbody { max-height: 42vh; }
+
+/* The market panel sits between risk and the mandate console, and it earns its place twice.
+   It carries facts no other panel does (oracle against mark, open interest, real volatility),
+   and it fills the height the mandate console does not need while nothing is armed, which is
+   the state this screen is in most of the time. */
+.panel-tmarket > .pbody { max-height: 30vh; }
+
+/* Two label/value pairs per line: four account figures in two rows, which leaves the
+   height in this panel to the liquidation block under them. */
+.rgrid {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) max-content minmax(0, 1fr);
+  column-gap: 2ch;
+}
+
+.rgrid dd {
+  margin: 0;
+  text-align: right;
+  color: var(--green);
+}
+
+.rhealth {
+  display: flex;
+  align-items: center;
+  gap: 1ch;
+  margin: 4px 0 0;
+}
+
+.rhealth .track { flex: 1 1 auto; min-width: 6ch; }
+
+/* The liquidation distance is the most important number on the page, so it gets the
+   only two kinds of weight this palette has: size, and the brightest tier. The rule
+   above it is there so the eye lands on this block and not on the figures above it. */
+.liq {
+  margin-top: 6px;
+  padding-top: 5px;
+  border-top: 1px solid var(--green-ghost);
+}
+
+.liq-line {
+  margin: 0 0 4px;
+  font-size: 16px;
+  line-height: 1.25;
+  letter-spacing: 0.02em;
+  color: var(--green-dim);
+}
+
+#t-liq-price { color: var(--green-hi); }
+#t-liq-pct,
+#t-liq-usd,
+#t-liq-atr { color: var(--green); }
+
+/* Distance remaining, not distance travelled: the green is the ground still under the
+   position, the red behind it is what the venue takes. Price moving in shrinks the
+   green and grows the red, which is the shape of the danger rather than a label
+   describing it. Taller than the other tracks for the same reason. */
+#t-liq-bar {
+  height: 9px;
+  border-color: var(--red-ghost);
+  background: var(--red-ghost);
+}
+
+#t-liq-bar > .fill { background: var(--green); }
+
+/* The liquidation bar is a REVERSE meter: the track is red and the green fill covers it, so the
+   red showing through is the distance you have left to lose. That makes an unknown reading the
+   most dangerous state on the page, because a zero-width fill leaves the track fully red and
+   says you are AT your liquidation. The venue returns a null liquidation price on a cross
+   position routinely, so this is a normal state and not a rare one.
+
+   Neutralised and hatched: no red, no implied reading. The `.unknown` class comes from fillBar
+   in ui/trade.js, and this rule carries the id so it beats the red above it. */
+#t-liq-bar.unknown {
+  border-color: var(--green-ghost);
+  background-color: transparent;
+}
+
+.rexp {
+  margin-top: 6px;
+  padding-top: 5px;
+  border-top: 1px solid var(--green-ghost);
+}
+
+.rexp p { margin: 0; }
+.rexp .v { color: var(--green); }
+
+/* A sentence a human reads, not a numeric column: it wraps and it is left aligned. */
+.rexp .shock {
+  margin-top: 2px;
+  color: var(--green-dim);
+}
+
+/* ---------- 6. mandate ---------- */
+
+/* Every row in #t-mandate-list is built by ui/trade.js. The shape it must produce, so
+   that the two files can be written apart:
+
+     <div class="mrow">
+       <p class="mrow-head">symbol, state, expiry</p>
+       <div class="mrow-english">the program, one sentence per line</div>
+       <div class="mrow-projected">
+         <span class="proj-size">..</span>
+         <span class="proj-liq">..</span>
+         <span class="proj-free">..</span>
+         <span class="proj-margin">..</span>
+       </div>
+       <div class="mrow-bars">
+         <span class="mbar" data-bound="notional">
+           <span class="mbar-k">notional</span>
+           <span class="track"><span class="fill" style="width:NN%"></span></span>
+           <span class="mbar-v">used n of n</span>
+         </span>
+         ... and the same for loss, orders, time
+       </div>
+       <p class="mrow-actions"><button type="button" class="btn">[ DISARM ]</button></p>
+     </div>
+
+   The renderer sets the width of .fill and adds .hot to the loss bar past its
+   threshold. Nothing else here needs a class from it. */
+
+.mrow {
+  border: 1px solid var(--green-ghost);
+  padding: 4px 1ch 6px;
+  margin-bottom: 8px;
+}
+
+/* The head is a row of independent facts (symbol, state, expiry, the stop-out price, a halt
+   reason, the rule that last fired) and each one is its own span. As a plain block those spans
+   butted straight together and printed "BTCARMEDExpires in 3h 11mMANDATE STOP-OUT at --", which
+   is not a styling nit: the state and the expiry became one unreadable word on the panel that
+   exists to say what a bot is allowed to do. A wrapping flex row with a real gap keeps them
+   separate at any width, and the divider makes the grouping visible rather than implied. */
+.mrow-head {
+  margin: 0;
+  color: var(--green-hi);
+  letter-spacing: 0.06em;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 1.5ch;
+}
+
+.mrow-head > span + span::before {
+  content: "\2502";
+  color: var(--green-ghost);
+  margin-right: 1.5ch;
+  letter-spacing: 0;
+}
+
+/* Policy as plain sentences, never JSON, so the lines keep the breaks the author put
+   in them and a long one wraps rather than widening the panel. */
+.mrow-english {
+  margin: 3px 0 0;
+  color: var(--green);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The arm receipt: what becomes true if this fills, printed before the click. Inset,
+   washed and ruled down its edge so it never reads as part of the meters under it.
+   This block is a forecast; those are a record, and the difference has to be legible
+   without reading either. */
+.mrow-projected {
+  margin: 5px 0 0;
+  padding: 3px 1ch;
+  border-left: 2px solid var(--green-faint);
+  background: var(--green-wash);
+  color: var(--green-dim);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  column-gap: 2ch;
+}
+
+/* Same rule as the risk panel one panel up: the price that ends the position is the
+   number in the block that gets size and the brightest tier. It takes the whole first
+   line of the receipt and the three supporting figures sit under it. */
+.mrow-projected .proj-liq {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  font-size: 15px;
+  line-height: 1.25;
+  color: var(--green-hi);
+}
+
+.mrow-projected .proj-size,
+.mrow-projected .proj-free,
+.mrow-projected .proj-margin {
+  grid-row: 2;
+  min-width: 0;
+}
+
+.mrow-bars {
+  margin: 5px 0 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 2ch;
+  row-gap: 2px;
+}
+
+.mbar {
+  display: flex;
+  align-items: center;
+  gap: 1ch;
+  min-width: 0;
+}
+
+.mbar-k {
+  flex: 0 0 9ch;
+  color: var(--green-faint);
+}
+
+.mbar .track { flex: 1 1 auto; min-width: 4ch; }
+
+.mbar-v {
+  flex: none;
+  color: var(--green-dim);
+  white-space: nowrap;
+}
+
+/* The loss bound is the only one of the four whose ceiling costs money, so it is the
+   only one that changes colour. Scoped to the loss bar on purpose: red means one thing
+   on this page, and a renderer that put .hot on the clock could not break that. */
+.mbar.hot[data-bound="loss"] .fill { background: var(--red); }
+.mbar.hot[data-bound="loss"] .track { border-color: var(--red-ghost); }
+.mbar.hot[data-bound="loss"] .mbar-v { color: var(--red); }
+
+.mrow-actions {
+  margin: 6px 0 0;
+  display: flex;
+  gap: 2ch;
+}
+
+/* Every control on this page STOPS something, and the one that stops a running bot gets
+   a comfortable target while the rest stay dense. */
+.mrow-actions .btn { padding: 2px 1ch; }
+
+/* ---------- 7. log ---------- */
+
+/* The mandate console above it is the panel that grows; the log takes what is left and
+   scrolls its own lines. */
+.panel-tlog > .pbody { max-height: 24vh; }
+
+/* Toggled by the renderer, so nothing above may set display on one of these and win. */
+[hidden] { display: none; }
+
+/* Too narrow or too short for two columns: style.css already stacks the deck and lets
+   the page scroll. Every cap set above has to lift with it, or a panel would scroll
+   inside a box that is itself inside a scrolling page. */
+@media (max-width: 1100px), (max-height: 620px) {
+  .panel-trisk > .pbody,
+  .panel-tmandate > .pbody,
+  .panel-tbook > .pbody,
+  .panel-tfills > .pbody,
+  .panel-tlog > .pbody {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .panel-tbook > .pbody,
+  .panel-tfills > .pbody { display: block; }
+
+  /* Stacked, the page scrolls down but must still not scroll sideways: seven nowrap
+     columns wider than a phone scroll inside their own box, as the wallet does. */
+  .tablewrap { overflow-x: auto; overflow-y: visible; }
+
+  /* One pair per line, one bar per line, one figure per line: at this width the paired
+     columns would each be a few characters wide. */
+  .rgrid { grid-template-columns: max-content minmax(0, 1fr); }
+  .mrow-bars { grid-template-columns: minmax(0, 1fr); }
+  .mrow-projected { grid-template-columns: minmax(0, 1fr); }
+
+  .mrow-projected .proj-size,
+  .mrow-projected .proj-free,
+  .mrow-projected .proj-margin { grid-row: auto; }
+
+  .ovbar { row-gap: 2px; }
+}
+
+/* The mandate console takes the height its contents need and the log takes what is left.
+   It was the other way round, and it was wrong for the state this screen spends most of its
+   time in: nothing armed is one line of text, and giving that line the whole column left a
+   quarter of the page empty under it. An armed mandate is tall on its own, so it does not
+   need `grow` to claim room, it needs a ceiling so a program with many rules scrolls inside
+   its panel instead of pushing the log off the page. */
+.panel-tmandate > .pbody {
+  max-height: 56vh;
+  overflow-y: auto;
+}
+
+/* ---------- stacked fallback ---------- */
+
+/* style.css already stacks the deck into one column and lets the page scroll. What it cannot
+   know is the reading order this page wants once that happens.
+
+   In source order the panels are grouped into two columns, which is right side by side and
+   wrong stacked: it puts thirty rows of fill history between the chart and the risk panel, so
+   answering "how close am I to liquidation" means scrolling past a page of things that already
+   happened. `display: contents` dissolves both column boxes so every panel becomes a direct
+   child of the deck, which is what makes a single global order possible at all.
+
+   The order is what a person opening this on a narrow screen is actually asking, in sequence:
+   what is the price doing, how close am I to being liquidated, what is this market doing, what
+   is running, what do I hold. History and the log go last because they are the record rather
+   than the question. Nobody arms a bot from a phone; this is about the answer still being
+   reachable when someone looks. */
+@media (max-width: 1100px), (max-height: 620px) {
+  .deck > .col { display: contents; }
+
+  .panel-chart { order: 1; }
+  .panel-trisk { order: 2; }
+  .panel-tmarket { order: 3; }
+  .panel-tmandate { order: 4; }
+  .panel-tbook { order: 5; }
+  .panel-tfills { order: 6; }
+  .panel-tlog { order: 7; }
+
+  /* The caps above are viewport fractions, which stop meaning anything once the page scrolls:
+     20vh of a scrolling page is an arbitrary slice and not a panel. Fills keeps one so a long
+     history cannot become the whole page; everything else opens up to its content.
+
+     Fills restates its containment in full, and that is a fix rather than repetition. An
+     earlier block in this file releases every stacked panel to `overflow: visible` and
+     `display: block`, which is right for the panels that have no cap. Putting a max-height
+     back on one of them without also putting the clip back produced a box 338 pixels tall
+     painting 550 pixels of rows straight through the log underneath it. A height limit and
+     visible overflow is not a compromise between the two, it is the broken case. */
+  .panel-trisk > .pbody,
+  .panel-tmarket > .pbody,
+  .panel-tmandate > .pbody,
+  .panel-tbook > .pbody { max-height: none; overflow: visible; }
+
+  .panel-tfills > .pbody {
+    max-height: 40vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+}

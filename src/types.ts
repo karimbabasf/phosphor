@@ -274,6 +274,33 @@ export type LpRemoveDraft = {
   counterparty: string; // position manager; must be on the policy allowlist
 };
 
+// Arming a strategy. The odd one out among the drafts, and deliberately so: it moves no money
+// at the moment it is approved. What it does is grant STANDING authority to a program that will
+// move money later, at machine speed, with no human in the loop for each order.
+//
+// It rides the draft path anyway rather than opening a second trust path, which buys the gate,
+// the audit log, the policy engine and the approval panel for free. amountUsd is the maximum
+// notional the mandate can put at risk, so the existing budget rules govern how big a bot can
+// be without a new rule being written.
+//
+// Note what is absent, matching every other rail: no address, no recipient, no contract. The
+// program the agent wrote cannot name a destination because the grammar has no verb that moves
+// value off the venue.
+export type MandateDraft = {
+  kind: 'mandate_arm';
+  symbol: string;
+  program: unknown; // validated by src/strategy/grammar.ts at propose time, never trusted raw
+  programHash: string;
+  maxNotionalUsd: number;
+  maxLeverage: number;
+  maxOrdersPerMin: number;
+  maxLossUsd: number;
+  expiresAt: string;
+  allowedActions: string[];
+  amountUsd: number; // equals maxNotionalUsd; the field name the policy engine reads
+  counterparty: string; // the venue itself: a perp order moves nothing to a new address
+};
+
 export type WriteDraft =
   | { kind: 'consolidate'; legs: TransferLeg[]; totalUsd: number; toChain: ChainId; symbol: string }
   | { kind: 'transfer'; leg: TransferLeg } // engine supports it; no MCP tool exposes it in v1
@@ -283,7 +310,8 @@ export type WriteDraft =
   | IntentsDepositDraft
   | IntentsWithdrawDraft
   | LpAddDraft
-  | LpRemoveDraft;
+  | LpRemoveDraft
+  | MandateDraft;
 
 // One rail per feature, each owning exactly one module under src/rails/. The dispatch
 // table in proposals.ts is the only place that knows they all exist, which is what lets
@@ -552,6 +580,19 @@ export type LpAddParams = {
 // value. An id we do not already hold is refused rather than resolved.
 export type LpRemoveParams = { positionId: string; liquidityPct: number };
 
+// No address, no recipient, no contract. The agent names a symbol, a size and a shape, and
+// everything about WHERE the money is resolves from the app's own config and the venue table.
+export type MandateParams = {
+  symbol: string;
+  program: unknown; // validated against the grammar before a draft exists
+  maxNotionalUsd: number;
+  maxLeverage: number;
+  maxOrdersPerMin: number;
+  maxLossUsd: number;
+  expiresAt: string;
+  allowedActions: string[];
+};
+
 export type ProposalService = {
   proposeConsolidate(params: {
     toChain: ChainId;
@@ -564,6 +605,7 @@ export type ProposalService = {
   proposeHlDeposit(params: HlDepositParams): Promise<Proposal>;
   proposeIntentsDeposit(params: IntentsDepositParams): Promise<Proposal>;
   proposeIntentsWithdraw(params: IntentsWithdrawParams): Promise<Proposal>;
+  proposeMandate(params: MandateParams): Promise<Proposal>;
   proposeLpAdd(params: LpAddParams): Promise<Proposal>;
   proposeLpRemove(params: LpRemoveParams): Promise<Proposal>;
   approve(id: string): Promise<Proposal>; // human path only; executes on approval

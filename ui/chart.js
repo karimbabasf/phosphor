@@ -42,6 +42,10 @@ var GRID_TIME_GAP = 96;
 
 var TIME_STEPS = [1, 5, 15, 30, 60, 300, 900, 1800, 3600, 7200, 14400, 21600, 43200, 86400, 604800];
 
+// False until the first /api/chart payload lands. Guards the view write-back: see
+// queueChartPush for what pushing before the server has been heard from costs.
+var CHART_READY = false;
+
 var CHART = {
   rev: 0,
   view: { product: '', granularitySec: 60, barCount: 120, panOffset: 0, priceScale: { mode: 'auto' } },
@@ -55,7 +59,7 @@ var CHART = {
   indicators: [],
   levels: [],
   marks: [],
-  trendlines: [],
+  drawings: [],
   products: [],
   timeframes: [],
   agentObjects: 0,
@@ -479,8 +483,14 @@ function drawScene() {
   drawOverlayBands(ctx, L);
   drawCandles(ctx, L);
   drawOverlayLines(ctx, L);
-  drawTrendlines(ctx, L);
   drawLevels(ctx, L);
+  // After the levels so a zone's fill sits under the horizontal lines rather than washing
+  // them out, and before the panes so nothing leaks into a sub-pane's box.
+  drawDrawings(ctx, L);
+  // The trading page's account overlays: entries, liquidation, the mandate wall, working
+  // orders, fills. Defined in ui/trade-overlay.js, which only the trading page loads, so on
+  // the pro page this is one typeof check and the chart is exactly what it was before.
+  if (typeof drawTradeOverlays === 'function') drawTradeOverlays(ctx, L);
   drawPanes(ctx, L);
   drawAxisFrame(ctx, L);
 }
@@ -939,65 +949,88 @@ function drawLevels(ctx, L) {
   }
 }
 
-/* A sloped line between two (time, price) anchors, extended forward to the right edge.
-
-   Two things differ from drawLevels and both are the reason this could not be faked with a
-   horizontal line. The x position comes from a FRACTIONAL bar index: indexOfTime rounds to
-   the containing bar, which is right for a mark that belongs to one candle, and wrong here
-   because rounding both ends visibly kinks a shallow slope. And the line is clipped to the
-   plot rectangle rather than skipped when an endpoint is off screen, so panning away from an
-   anchor leaves the line crossing the view instead of vanishing. */
-function drawTrendlines(ctx, L) {
-  if (!CHART.trendlines.length) return;
+// Trend lines and zones the agent drew, or the human did. These are stored by TIME and
+// PRICE rather than by pixel, so they stay where they belong through a pan and a zoom, and
+// so the value the agent measured against is the value drawn here. One computation, two
+// consumers: the number in the agent's answer and the pixel on this canvas cannot disagree.
+//
+// No new hue. Red belongs to the approval gate alone, so an agent drawing is the same
+// phosphor green at a lower brightness tier, dotted the way agent levels already are.
+function drawDrawings(ctx, L) {
+  var list = CHART.drawings;
+  if (!list || !list.length) return;
   var granularity = CHART.view.granularitySec;
   var candles = CHART.candles;
   if (!candles.length) return;
   var firstT = candles[0].t;
 
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(0, L.priceTop, L.plotWidth, L.priceHeight);
-  ctx.clip();
-
-  for (var i = 0; i < CHART.trendlines.length; i++) {
-    var tl = CHART.trendlines[i];
-    var fromAgent = tl.source === 'agent';
-    var x1 = L.xOf((tl.t1 - firstT) / granularity);
-    var x2 = L.xOf((tl.t2 - firstT) / granularity);
-    var y1 = L.yOf(tl.p1);
-    var y2 = L.yOf(tl.p2);
-    if (x2 === x1) continue;
-
-    // Extend past the second anchor to the right edge: a trend line is a claim about what
-    // comes next, so stopping it at the last touch would hide the part worth looking at.
-    var slope = (y2 - y1) / (x2 - x1);
-    var endX = L.plotWidth;
-    var endY = y1 + slope * (endX - x1);
-
-    ctx.strokeStyle = green(fromAgent ? 0.5 : 0.7);
-    ctx.lineWidth = 1;
-    ctx.setLineDash(fromAgent ? [2, 3] : [6, 4]);
-    ctx.beginPath();
-    ctx.moveTo(x1, y1);
-    ctx.lineTo(endX, endY);
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    // The two anchors, so the eye can see what the line was fitted to rather than guessing.
-    ctx.fillStyle = green(fromAgent ? 0.6 : 0.85);
-    ctx.fillRect(Math.round(x1) - 2, Math.round(y1) - 2, 4, 4);
-    ctx.fillRect(Math.round(x2) - 2, Math.round(y2) - 2, 4, 4);
-
-    // Label rides the line at its second anchor, nudged off it so the text is not struck
-    // through by the line it names. The right clamp is the MEASURED width, not a guess: a
-    // fixed margin was 90px against a label that runs past 130, so the clip rectangle cut
-    // "rising support" to "rising sup" and the drawing looked broken rather than tight.
-    var labelY = clampNum(y2 - 7, L.priceTop + 9, L.priceTop + L.priceHeight - 3);
-    var labelWidth = ctx.measureText(tl.label).width;
-    ctx.fillText(tl.label, clampNum(x2 + 5, 4, Math.max(4, L.plotWidth - labelWidth - 4)), labelY);
+  // A drawing's price at a given time. Two anchors at one instant have no slope, so they
+  // read as horizontal: finite beats correct here, since a NaN would vanish silently.
+  function valueAt(line, tSec) {
+    var dt = line.b.t - line.a.t;
+    if (dt === 0) return line.a.price;
+    return line.a.price + ((line.b.price - line.a.price) / dt) * (tSec - line.a.t);
+  }
+  function timeOfX(x) {
+    return firstT + L.indexAt(x) * granularity;
   }
 
-  ctx.restore();
+  var top = L.priceTop;
+  var bottom = L.priceTop + L.priceHeight;
+
+  for (var i = 0; i < list.length; i++) {
+    var d = list[i];
+    var fromAgent = d.source === 'agent';
+    var label = d.label + (fromAgent ? ' [agent]' : '');
+
+    if (d.kind === 'zone' && d.zone) {
+      var yHigh = L.yOf(d.zone.high);
+      var yLow = L.yOf(d.zone.low);
+      var boxTop = Math.max(top, Math.min(yHigh, yLow));
+      var boxBottom = Math.min(bottom, Math.max(yHigh, yLow));
+      if (boxBottom <= top || boxTop >= bottom) continue;
+      ctx.fillStyle = green(0.12);
+      ctx.fillRect(0, boxTop, L.plotWidth, boxBottom - boxTop);
+      ctx.fillStyle = green(fromAgent ? 0.6 : 0.85);
+      // Right-aligned, like the trend line labels. Left-aligning collided with the OHLC
+      // legend whenever a zone reached the top of the plot, which is exactly what a wide
+      // zone does, so the collision was the common case rather than an edge one.
+      ctx.textAlign = 'right';
+      ctx.fillText(label, L.plotWidth - 4, boxTop + 11);
+      ctx.textAlign = 'left';
+      continue;
+    }
+
+    if (!d.line) continue;
+    // Extended to both plot edges: a trend line that stopped at its anchors would be a
+    // segment, and the whole reason to draw one is where it goes next.
+    var x0 = 0;
+    var x1 = L.plotWidth;
+    var y0 = L.yOf(valueAt(d.line, timeOfX(x0)));
+    var y1 = L.yOf(valueAt(d.line, timeOfX(x1)));
+    if ((y0 < top && y1 < top) || (y0 > bottom && y1 > bottom)) continue;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, top, L.plotWidth, L.priceHeight);
+    ctx.clip();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = green(fromAgent ? 0.5 : 0.7);
+    ctx.setLineDash(fromAgent ? [2, 3] : [6, 4]);
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y1);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+
+    // The label rides the right end, where the line is heading.
+    var labelY = Math.max(top + 10, Math.min(bottom - 3, y1 - 5));
+    ctx.fillStyle = green(fromAgent ? 0.6 : 0.85);
+    ctx.textAlign = 'right';
+    ctx.fillText(label, L.plotWidth - 4, labelY);
+    ctx.textAlign = 'left';
+  }
 }
 
 function drawMarks(ctx, L) {
@@ -1312,6 +1345,7 @@ function chartIdentityDiffers(view) {
 }
 
 function applyChart(payload) {
+  // The server has now been heard from, so writing our view back is safe.
   CHART_READY = true;
   CHART.rev = payload.rev;
   CHART.candles = payload.candles || [];
@@ -1319,7 +1353,7 @@ function applyChart(payload) {
   CHART.indicators = payload.indicators || [];
   CHART.levels = payload.levels || [];
   CHART.marks = payload.marks || [];
-  CHART.trendlines = payload.trendlines || [];
+  CHART.drawings = payload.drawings || [];
   CHART.products = payload.products || [];
   CHART.timeframes = payload.timeframes || [];
   CHART.agentObjects = payload.agentObjects || 0;
@@ -1368,6 +1402,19 @@ function applyChart(payload) {
    put a network round trip inside the drag loop, which is exactly what makes a chart feel
    slow. An agent reading mid-drag sees the last settled view, which is documented. */
 function queueChartPush() {
+  // Nothing is written back until the first server payload has been applied.
+  //
+  // Without this the canvas getting its initial size fires a push carrying the CHART.view
+  // literal at the top of this file, 1m and 120 bars, before /api/chart has answered. That
+  // push wins, so an agent that moved the chart while the window was closed watched its
+  // change silently revert the moment the human opened the window. Measured: set 4h with
+  // 150 bars over MCP against a closed window, server held 14400s/150, opening the page put
+  // it back to 60s/120.
+  //
+  // That defeats the decision the whole chart turns on, that state lives on the server so
+  // the agent and the human cannot disagree about what is on screen. The geometry this push
+  // also carries is not lost: the next invalidate after applyChart sends it.
+  if (!CHART_READY) return;
   if (CHART_PUSH) clearTimeout(CHART_PUSH);
   CHART_PUSH = setTimeout(pushChart, 150);
 }

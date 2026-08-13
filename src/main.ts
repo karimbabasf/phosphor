@@ -21,6 +21,11 @@ import { hyperliquidSource } from './hyperliquid.ts';
 import { createMarketData } from './market/index.ts';
 import { createProposalService } from './proposals.ts';
 import { createAgents } from './agents.ts';
+import { createRunnerHost } from './runner/host.ts';
+import { readApiWalletKey } from './runner/keys.ts';
+import { createTradeService } from './trade/service.ts';
+import { createInfoClient } from './hl/info.ts';
+import { atr } from './analysis/regime.ts';
 import { createServer } from './server.ts';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -96,10 +101,35 @@ void market.refreshCatalog().catch((err: unknown) => {
 const quoter = cfg.mode === 'demo' ? syntheticQuoter() : oneClickQuoter(tokens);
 const signer = stubSigner();
 
+// Owns the armed bots and the child process that runs them. Constructed before the rails
+// because the mandate rail only starts and stops it and holds no state of its own.
+//
+// The key it hands the child is the API wallet, never the master. Reading it lazily, at arm
+// time rather than at boot, means an install with no agent approved yet starts fine and fails
+// with a sentence that says what to do instead of failing at startup.
+const runner = createRunnerHost({
+  apiWalletKey: async () => await readApiWalletKey(cfg.keysPath),
+  isMainnet: cfg.network === 'mainnet',
+  baseUrl:
+    cfg.network === 'mainnet' ? 'https://api.hyperliquid.xyz' : 'https://api.hyperliquid-testnet.xyz',
+  // Fail closed: a policy file that will not load reads as the kill switch being ON, so an
+  // unreadable policy can never be the reason a bot was allowed to arm.
+  user: cfg.addresses.evm[0] ?? '',
+  killSwitch: () => loadPolicy(cfg.dataDir)?.killSwitch ?? true,
+  onEvent: (e) => {
+    audit.append(
+      e.type === 'halted' || e.type === 'error' ? 'error' : 'executed',
+      `runner: ${e.type}${'id' in e && e.id !== null ? ` ${e.id}` : ''}` +
+        ('reason' in e ? `: ${e.reason}` : 'message' in e ? `: ${e.message}` : ''),
+      e,
+    );
+  },
+});
+
 // The dispatch table for swap, hyperliquid deposit and LP add/remove. Empty in demo
 // mode, where there is a fixture and no chain, so a rail proposal refuses rather than
 // reaching for an RPC and a private key.
-const rails = createRails({ cfg, tokens });
+const rails = createRails({ cfg, tokens, runner });
 
 const proposals = createProposalService({
   cfg,
@@ -156,7 +186,71 @@ function setKill(on: boolean): void {
   p.killSwitch = on;
   savePolicy(cfg.dataDir, p);
   audit.append('kill_switch', on ? 'kill switch ON: all writes refused' : 'kill switch off');
+
+  // Stop what is already running, not just what tries to start next.
+  //
+  // The switch used to be consulted only when a mandate armed, so flipping it while a bot held
+  // a position refused future proposals and left the bot trading: the one situation a kill
+  // switch exists for. Both paths run, because they fail differently. setKilled asks the child
+  // to flatten and stop, which is the clean exit and needs the child to be healthy. stopAll
+  // does not care whether it is healthy and takes the process out regardless.
+  runner.setKilled(on);
+  if (on) void runner.stopAll('kill switch');
 }
+
+// ATR per coin, refreshed on a slow timer and served from a cache.
+//
+// The risk panel asks for this while it renders, and rendering must not wait on a network read.
+// Volatility on an hourly bar is also not a number that changes meaningfully inside a minute,
+// so a cache costs nothing real and a synchronous read is what the caller actually needs.
+// Fourteen periods of hourly bars is the standard Wilder window, which is what the chart draws.
+const atrCache = new Map<string, number>();
+
+async function refreshAtr(): Promise<void> {
+  for (const product of cfg.candleProducts) {
+    try {
+      const load = await candles.get(product, 3600, 120);
+      const series = atr(load.candles, 14);
+      const last = series[series.length - 1];
+      if (last !== null && last !== undefined && Number.isFinite(last)) {
+        atrCache.set(product.split('-')[0].toUpperCase(), last);
+      }
+    } catch {
+      // A market whose candles will not load keeps whatever it had, and the surface reports
+      // the distance in the two units that do not need it. Missing is better than stale-wrong.
+    }
+  }
+}
+
+function atrForCoin(coin: string): number | null {
+  return atrCache.get(coin.toUpperCase()) ?? null;
+}
+
+void refreshAtr();
+setInterval(() => void refreshAtr(), 300_000).unref?.();
+
+// The trading surface. Reads over a websocket rather than a poll, because Hyperliquid's own
+// rate-limit guidance is that a chatty /info loop blows the weight budget long before orders do,
+// and a trading screen refreshing positions, orders, fills, mark and funding is that loop.
+//
+// The ATR it uses for the liquidation-distance figure comes from the same indicator engine the
+// chart draws with, on purpose. Two implementations of volatility would mean the risk panel and
+// the candles could disagree about how much a market moves, and the person would have no way to
+// tell which one was lying.
+const tradeInfo = createInfoClient({
+  baseUrl:
+    cfg.network === 'mainnet' ? 'https://api.hyperliquid.xyz' : 'https://api.hyperliquid-testnet.xyz',
+});
+
+const trade = createTradeService({
+  wsUrl: cfg.network === 'mainnet' ? 'wss://api.hyperliquid.xyz/ws' : 'wss://api.hyperliquid-testnet.xyz/ws',
+  user: cfg.addresses.evm[0] ?? '',
+  info: tradeInfo,
+  runner,
+  products: cfg.candleProducts,
+  atrFor: (coin) => atrForCoin(coin),
+  initialSymbol: (cfg.candleProducts[0] ?? 'BTC-USD').split('-')[0],
+});
 
 const server = createServer({
   cfg,
@@ -172,6 +266,7 @@ const server = createServer({
   agents,
   getView,
   setView,
+  trade,
 });
 
 setInterval(() => {
@@ -189,6 +284,10 @@ setInterval(() => {
 // A background fill that lands is worth exactly one SSE frame: the browser is holding the
 // previous candles and needs to be told there are better ones, not polled at.
 marketUpdated = () => server.broadcastCandles();
+
+// The feed moving is the only thing that makes the trading surface change without anyone
+// touching it, so it is what drives the push. Coalesced by the feed already.
+trade.onUpdate(() => server.broadcastState());
 
 server.listen(cfg.port, '127.0.0.1', () => {
   audit.append('app_start', `phosphor up on http://127.0.0.1:${cfg.port} (${cfg.mode} mode)`);

@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PHOSPHOR TRADE</title>
+<link rel="icon" href="data:,">
+<!-- style.css first and unchanged: it carries the tokens, the panel frame and the
+     stacked fallback. trade.css only adds what this page has that the pro page does not. -->
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/trade.css">
+</head>
+<body>
+<main id="page">
+
+  <!-- 1. STATUS. The brake is the only control in this bar, and nothing focusable is
+       written before it, so it is the first thing the keyboard reaches in every state.
+       That is the budget from ux/flow.md: the primary action on a trading surface is
+       the brake, not the accelerator. -->
+  <header class="statusbar" id="statusbar">
+    <h1 class="ident">PHOSPHOR TRADE</h1>
+    <span class="bar">&#9474;</span>
+    <span class="field"><span class="v hi" id="t-symbol">--</span></span>
+    <span class="bar">&#9474;</span>
+    <span class="field"><span class="k">mark</span> <span class="v" id="t-mark">--</span></span>
+    <span class="bar">&#9474;</span>
+    <span class="field"><span class="k">funding</span> <span class="v" id="t-funding">--</span></span>
+    <span class="bar">&#9474;</span>
+    <span class="field"><span class="k">equity</span> <span class="v hi" id="t-equity">--</span></span>
+    <span class="bar">&#9474;</span>
+    <span class="field"><span class="k">free</span> <span class="v" id="t-free">--</span></span>
+    <span class="bar">&#9474;</span>
+    <!-- The feed indicator sits next to the price rather than in the log, because a
+         screen that has fallen behind the market has to say so where the price is read. -->
+    <span class="field"><span class="k">feed</span> <span class="v" id="t-feed" role="status">--</span></span>
+    <span class="bar">&#9474;</span>
+    <span class="field"><span class="k">agent</span> <span class="v" id="t-agent">--</span></span>
+    <button type="button" id="kill-btn" class="btn">[ KILL SWITCH: -- ]</button>
+    <span class="cursor" aria-hidden="true">&#9608;</span>
+  </header>
+
+  <!-- The venue banner is an alert: the screen no longer agreeing with the market is
+       the one thing a watching human must not miss. Both banners are filled by the
+       renderer with the venue's own words, so neither carries text here. -->
+  <p class="banner" id="t-banner-venue" role="alert" hidden></p>
+  <p class="banner" id="t-banner-policy" role="alert" hidden></p>
+  <p class="alert dim" id="t-alert" role="status" hidden></p>
+
+  <!-- Two columns: left is the market and what this account did in it, right is what
+       governs the account. Each column fills the viewport height; panels scroll inside
+       themselves, the page never does. -->
+  <div class="deck">
+
+    <div class="col">
+
+      <!-- 2. CHART. Same ids as the pro page: ui/chart.js binds to them by id and the
+           file is shared, so this panel is the pro page's chart with the account drawn
+           on top of it by trade-overlay.js. -->
+      <section class="panel panel-chart grow" id="panel-chart">
+        <div class="frame frame-top" data-title="CHART"></div>
+        <div class="pbody">
+          <p class="chartbar">
+            <label class="k" for="product">market</label>
+            <select id="product"></select>
+            <span class="tfs" id="timeframes"></span>
+            <span class="prompt" aria-hidden="true">&gt;</span>
+            <input id="chart-cmd" type="text" autocomplete="off" spellcheck="false"
+                   placeholder="focus eth" aria-label="What should the chart show?">
+            <span class="meta dim" id="chart-meta">--</span>
+          </p>
+          <!-- The seven overlays. aria-pressed carries the state the server ships with:
+               the risk overlays start on, and the two noisy ones start off. -->
+          <p class="ovbar" id="t-overlays" role="group" aria-label="chart overlays">
+            <button type="button" class="tf ov" data-overlay="position" aria-pressed="true">position</button>
+            <button type="button" class="tf ov" data-overlay="liquidation" aria-pressed="true">liquidation</button>
+            <button type="button" class="tf ov" data-overlay="stops" aria-pressed="true">stops</button>
+            <button type="button" class="tf ov" data-overlay="targets" aria-pressed="true">targets</button>
+            <button type="button" class="tf ov" data-overlay="orders" aria-pressed="true">orders</button>
+            <button type="button" class="tf ov" data-overlay="fills" aria-pressed="false">fills</button>
+            <button type="button" class="tf ov" data-overlay="mandateWall" aria-pressed="true">mandateWall</button>
+          </p>
+          <div class="chartwrap" id="chartwrap" tabindex="0" role="img"
+               aria-label="price chart: drag to pan, wheel to zoom, arrow keys to move, 0 for live">
+            <canvas id="chart"></canvas>
+            <canvas id="chart-hud"></canvas>
+          </div>
+          <!-- One line of the agent's own reasoning, pinned under the chart it is about.
+               Attribution is written beside it and never inferred. -->
+          <p class="noteline">
+            <span class="src" id="t-note-src"></span><span class="note" id="t-note"></span>
+          </p>
+        </div>
+        <div class="frame frame-bottom"></div>
+      </section>
+
+      <!-- 3. BOOK. Working orders are child rows of the position they belong to, not a
+           table of their own: a stop at 3200 is a property of the ETH long, not an
+           independent object. The renderer marks those child rows .orow. -->
+      <section class="panel panel-tbook">
+        <div class="frame frame-top" data-title="BOOK"></div>
+        <div class="pbody">
+          <div class="tablewrap">
+            <table class="grid" id="t-book">
+              <thead>
+                <tr>
+                  <th scope="col" class="c-mkt">MARKET</th>
+                  <th scope="col" class="c-side">SIDE</th>
+                  <th scope="col" class="c-num">SIZE</th>
+                  <th scope="col" class="c-num">NOTIONAL</th>
+                  <th scope="col" class="c-num">ENTRY</th>
+                  <th scope="col" class="c-num">MARK</th>
+                  <th scope="col" class="c-num">LIQ</th>
+                  <th scope="col" class="c-num">PNL</th>
+                  <th scope="col" class="c-acts">&nbsp;</th>
+                </tr>
+              </thead>
+              <tbody id="t-book-rows"></tbody>
+            </table>
+          </div>
+          <p class="empty" id="t-book-empty" hidden>Flat. No position on any market.</p>
+        </div>
+        <div class="frame frame-bottom"></div>
+      </section>
+
+      <!-- 4. FILLS. Under the book because it is the record of what the book did. -->
+      <section class="panel panel-tfills">
+        <div class="frame frame-top" data-title="FILLS"></div>
+        <div class="pbody">
+          <div class="tablewrap">
+            <table class="grid" id="t-fills">
+              <thead>
+                <tr>
+                  <th scope="col" class="c-time">TIME</th>
+                  <th scope="col" class="c-mkt">MARKET</th>
+                  <th scope="col" class="c-side">SIDE</th>
+                  <th scope="col" class="c-num">PRICE</th>
+                  <th scope="col" class="c-num">SIZE</th>
+                  <th scope="col" class="c-num">NOTIONAL</th>
+                  <th scope="col" class="c-num">FEE</th>
+                  <th scope="col" class="c-num">PNL</th>
+                </tr>
+              </thead>
+              <tbody id="t-fill-rows"></tbody>
+            </table>
+          </div>
+          <p class="empty" id="t-fills-empty" hidden>No fills yet.</p>
+        </div>
+        <div class="frame frame-bottom"></div>
+      </section>
+
+    </div>
+
+    <div class="col">
+
+      <!-- 5. RISK. The account figures first, then the number the page is built around:
+           how far this position is from the price at which the venue takes it. -->
+      <section class="panel panel-trisk">
+        <div class="frame frame-top" data-title="RISK"></div>
+        <div class="pbody">
+          <dl class="rgrid">
+            <dt class="k">equity</dt><dd id="t-risk-equity">--</dd>
+            <dt class="k">margin</dt><dd id="t-risk-margin">--</dd>
+            <dt class="k">free</dt><dd id="t-risk-free">--</dd>
+            <dt class="k">maint</dt><dd id="t-risk-maint">--</dd>
+          </dl>
+          <p class="rhealth">
+            <span class="k">health</span>
+            <span class="v" id="t-risk-health">--</span>
+            <span class="track" id="t-risk-healthbar"><span class="fill"></span></span>
+          </p>
+          <div class="liq">
+            <p class="liq-line">LIQ at <span id="t-liq-price">--</span>, <span id="t-liq-pct">--</span> away, <span id="t-liq-usd">--</span>, <span id="t-liq-atr">--</span> ATR</p>
+            <span class="track" id="t-liq-bar"><span class="fill"></span></span>
+          </div>
+          <!-- Cross margin makes every position a term in every other position's
+               liquidation price, so the book gets an exposure line of its own. -->
+          <div class="rexp">
+            <p class="expline">
+              <span class="k">net</span> <span class="v" id="t-exp-net">--</span>
+              <span class="bar">&#9474;</span>
+              <span class="k">gross</span> <span class="v" id="t-exp-gross">--</span>
+            </p>
+            <p class="shock" id="t-exp-shock">--</p>
+          </div>
+          <p class="empty" id="t-risk-empty" hidden>Waiting for the venue.</p>
+        </div>
+        <div class="frame frame-bottom"></div>
+      </section>
+
+      <!-- 6. MARKET. The facts about the instrument rather than about the account.
+           Mark and oracle are separated on purpose: they are different prices with
+           different jobs, mark decides a liquidation and oracle decides funding, and
+           the gap between them is the one number that says the venue is under strain. -->
+      <section class="panel panel-tmarket">
+        <div class="frame frame-top" data-title="MARKET"></div>
+        <div class="pbody">
+          <dl class="rgrid">
+            <dt class="k">mark</dt><dd id="t-mkt-mark">--</dd>
+            <dt class="k">oracle</dt><dd id="t-mkt-oracle">--</dd>
+            <dt class="k">basis</dt><dd id="t-mkt-spread">--</dd>
+            <dt class="k">premium</dt><dd id="t-mkt-premium">--</dd>
+            <dt class="k">funding</dt><dd id="t-mkt-funding">--</dd>
+            <dt class="k">per 8h</dt><dd id="t-mkt-funding8">--</dd>
+            <dt class="k">open int</dt><dd id="t-mkt-oi">--</dd>
+            <dt class="k">24h vol</dt><dd id="t-mkt-vol">--</dd>
+            <dt class="k">atr 1h</dt><dd id="t-mkt-atr">--</dd>
+            <dt class="k">atr %</dt><dd id="t-mkt-atrpct">--</dd>
+          </dl>
+          <p class="empty" id="t-market-empty" hidden>Waiting for the venue.</p>
+        </div>
+        <div class="frame frame-bottom"></div>
+      </section>
+
+      <!-- 7. MANDATE. Where every other trading interface puts a buy/sell ticket. The
+           rows are built by the renderer; the shape it must produce is written out in
+           trade.css above the .mrow rules. -->
+      <section class="panel panel-tmandate">
+        <div class="frame frame-top" data-title="MANDATE"></div>
+        <div class="pbody">
+          <div id="t-mandate-list"></div>
+          <p class="empty" id="t-mandate-empty" hidden>Nothing armed. Ask your agent for a proposal.</p>
+        </div>
+        <div class="frame frame-bottom"></div>
+      </section>
+
+      <!-- 7. LOG -->
+      <section class="panel panel-tlog grow">
+        <div class="frame frame-top" data-title="LOG"></div>
+        <div class="pbody">
+          <div id="t-log" class="log" role="log"></div>
+        </div>
+        <div class="frame frame-bottom"></div>
+      </section>
+
+    </div>
+
+  </div>
+
+</main>
+<!-- chart.js defines the chart, trade-overlay.js defines what is drawn on top of it,
+     trade.js boots and sets window.TRADE before asking the chart to redraw. -->
+<script src="/chart.js" defer></script>
+<script src="/trade-overlay.js" defer></script>
+<script src="/trade.js" defer></script>
+</body>
+</html>

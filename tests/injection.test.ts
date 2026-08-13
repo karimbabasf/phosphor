@@ -270,6 +270,11 @@ test('the tool surface cannot express an exfiltration target', async () => {
       'propose_intents_withdraw',
       'propose_lp_add',
       'propose_lp_remove',
+      // Arming a bot. The one proposal that grants STANDING authority rather than spending
+      // once, so it never auto-approves on any network. It takes a program, not code, and
+      // the grammar that program is written in has no verb that moves value off the venue
+      // and no field that names an address, which the loop below holds it to like the rest.
+      'propose_mandate',
       // The chart. These read and drive a view, never funds: none of them reaches the
       // proposal path, none takes an address, and the loop below holds them to it like
       // every other tool. They are on this surface because an agent that cannot see the
@@ -277,6 +282,11 @@ test('the tool surface cannot express an exfiltration target', async () => {
       'chart_read',
       'chart_measure',
       'chart_scan',
+      // The measurement instrument. It carries many operations in one call, so its
+      // arguments are enumerated in the schema rather than left as a free-form bag:
+      // the propertyNames walk below cannot see inside an open record, and a hole the
+      // scan cannot see is exactly what this test exists to prevent.
+      'chart_batch',
       'indicator_catalog',
       // Looks up which markets exist so the chart can open one by name. It takes a search
       // string and a result limit, reaches no proposal path, and names no address: the
@@ -300,6 +310,18 @@ test('the tool surface cannot express an exfiltration target', async () => {
       // though it cannot name an address. Note it is NOT chart_set_view above: that
       // one drives the chart's render state, this one switches basic against pro.
       'set_view_mode',
+      // The trading surface. Reads answer "what is my situation"; writes change what is drawn
+      // and what is pointed at. What is NOT here is the point of listing them: there is no
+      // close, no cancel, no flatten and no disarm. Those live on /api/trade/action, which the
+      // agent's door does not open onto, so the capability is absent rather than guarded. This
+      // list failing is how a future change that adds one gets noticed.
+      'trade_read',
+      'trade_batch',
+      'trade_focus',
+      'trade_highlight',
+      'trade_overlay',
+      'trade_note',
+      'trade_clear',
     ].sort(),
   );
 

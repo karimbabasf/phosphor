@@ -82,6 +82,24 @@ Spec: `docs/superpowers/specs/2026-08-12-phosphor-chart-v2.md`.
 - An agent connected over MCP can read the chart, measure it, scan several timeframes, and drive
   the view, the indicators, the price levels and the time marks. Everything it draws is tagged
   `[agent]`, drawn dotted rather than solid, counted in the chart bar, and clearable in one click
+
+### Drawn objects, added 2026-08-12
+Spec: `docs/superpowers/specs/2026-08-12-phosphor-trading-design.md`.
+
+The chart stops being a picture and becomes the shared coordinate system between the human, the
+agent and the bot. The agent draws a trend line, Karim sees that exact line, and a strategy later
+triggers off that same line by its id. One object, three consumers.
+
+- Trend lines from two anchors and zones between two prices, alongside the levels and marks that
+  already exist. Anchored in time and price, never in pixels, so they hold their place through a
+  pan and a zoom
+- A trend line extends to both plot edges rather than stopping at its anchors, because the reason
+  to draw one is where it goes next. A zone is a filled band at low alpha across the full plot
+- Labels sit at the right edge, where the line is heading, and carry `[agent]` when the agent drew
+  them. Left-aligned labels collided with the OHLC legend, which a wide zone triggers every time
+- No new hue and no new weight. An agent drawing is the same phosphor green at a lower brightness
+  tier, dotted like the agent levels already are, so red stays exclusively the approval gate's and
+  the gate remains the only alarm on the page
 - Policy as plain sentences, never JSON
 - Terminal-dense character grid, not app-airy
 

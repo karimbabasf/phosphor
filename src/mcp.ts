@@ -134,7 +134,8 @@ type ProposeKind =
   | 'intents_deposit'
   | 'intents_withdraw'
   | 'lp_add'
-  | 'lp_remove';
+  | 'lp_remove'
+  | 'mandate_arm';
 
 function registerPropose(
   name: string,
@@ -230,8 +231,82 @@ registerRead(
 );
 registerRead(
   'market_search',
-  'Finds a market to chart. Takes anything a person would say ("btc", "bitcoin", "wif", "PEPE-USD") and returns the product id chart_set_view wants, plus near matches when the query is ambiguous. Every result can be charted on any timeframe from 1s to 1w. Read-only, changes nothing.',
+  'Finds a market to chart. Takes anything a person would say ("btc", "bitcoin", "wif", "PEPE-USD") and returns the product id chart_set_view wants, plus near matches when the query is ambiguous. Every result can be charted on any timeframe from 1m to 1w. Read-only, changes nothing.',
   { query: z.string(), limit: z.number().int().optional() },
+);
+registerRead(
+  'chart_batch',
+  [
+    'The measurement instrument: many chart questions and drawings in ONE call.',
+    'Each entry is { op, args, as }. A later entry can use an earlier one with "$ref:<as>.<field>",',
+    'so drawing a line and measuring against it is a single call. One failing entry does not stop the rest.',
+    '',
+    'Seeing: candles, history_page (walks back through history on a cursor, no limit on how far).',
+    'Measuring: pivots (swing points by prominence), levels (where price reacted before),',
+    'regime (volatility percentile), atr, volume_profile (point of control and value area),',
+    'vwap (anchored to a bar you choose), range (Kaufman efficiency), divergence, indicator_series.',
+    'Geometry: trendline_fit, trendline_at (what a drawn line is worth at any time),',
+    'trendline_touches (every bar that came within a tolerance of it).',
+    'Drawing: draw (trendline or zone), drawings_list, drawings_remove, drawings_clear.',
+    '',
+    'Anything drawn appears on the human chart tagged [agent] and keeps a stable id.',
+    'Every result is a MEASUREMENT with the parameters that produced it. This tool returns no',
+    'signals, scores or trade suggestions: you do the reading, it does the measuring.',
+    'Omit product or granularitySec to measure whatever the chart is currently showing.',
+  ].join(' '),
+  {
+    ops: z.array(
+      z.object({
+        op: z.string(),
+        // Every argument this surface accepts, named. An open record would have been
+        // shorter and would have put a hole in the guarantee tests/injection.test.ts
+        // exists to hold: that scan walks schema property names looking for an
+        // exfiltration target, and it cannot see inside a free-form bag. Enumerating the
+        // keys keeps the absence of an address provable rather than merely true, and it
+        // has the second benefit of telling the agent which arguments exist.
+        args: z
+          .object({
+            product: z.string().optional(),
+            granularitySec: z.number().optional(),
+            bars: z.number().int().optional(),
+            // pivots, levels, trend line fitting
+            window: z.number().optional(),
+            minProminence: z.number().optional(),
+            tolerance: z.number().optional(),
+            kind: z.enum(['high', 'low', 'trendline', 'zone']).optional(),
+            // regime, atr
+            period: z.number().optional(),
+            lookback: z.number().optional(),
+            // volume profile
+            bins: z.number().int().optional(),
+            valueAreaPct: z.number().optional(),
+            // vwap
+            anchorIndex: z.number().int().optional(),
+            // range
+            maxEfficiency: z.number().optional(),
+            // indicator series and divergence
+            indicator: z.string().optional(),
+            plot: z.string().optional(),
+            params: z.record(z.number()).optional(),
+            // drawing. Anchors are time and price, never pixels and never an address.
+            label: z.string().optional(),
+            a: z.object({ t: z.number(), price: z.number() }).optional(),
+            b: z.object({ t: z.number(), price: z.number() }).optional(),
+            low: z.number().optional(),
+            high: z.number().optional(),
+            // referring to something already drawn
+            id: z.string().optional(),
+            t: z.number().optional(),
+            // history paging
+            cursor: z.number().optional(),
+            limit: z.number().int().optional(),
+            source: z.enum(['agent', 'all']).optional(),
+          })
+          .optional(),
+        as: z.string().optional(),
+      }),
+    ),
+  },
 );
 
 function registerView(name: string, description: string, shape: Record<string, z.ZodTypeAny>): void {
@@ -289,6 +364,113 @@ registerView(
 );
 registerView('chart_clear', `Clears what is on the chart. ${CHART_ANSWER}`, {
   what: z.enum(['indicators', 'levels', 'marks', 'trendlines', 'agent', 'all']).optional().default('agent'),
+});
+
+// ---------- the trading surface ----------
+//
+// Reads answer "what is my situation". Writes change what is drawn and what is pointed at,
+// and nothing else. There is deliberately no tool here that closes a position, cancels an
+// order, flattens or disarms: those are the human's controls on the window, reachable only
+// from a route this door does not open onto. The capability is ABSENT rather than guarded,
+// which is a stronger property than a check, because a check can be wrong.
+
+const TRADE_ANSWER = 'Returns the trading surface as it now stands, so no follow-up read is needed.';
+
+registerRead(
+  'trade_read',
+  [
+    'The whole trading situation in one call: account health, every open position with how far it',
+    'sits from liquidation, working orders including stops and targets, recent fills, and every armed',
+    'mandate with how much of its approved bounds it has already spent.',
+    '',
+    'Liquidation distance comes in three units because only the third one answers the question.',
+    'Twelve percent sounds far and is not, on something that moves eight percent a day. The ATR',
+    'multiple is the number that means something.',
+    '',
+    'Unknown is reported as null and never as zero. On a unified account the venue reports an',
+    'account value that is not the account\'s money, so the health figures derived from it come back',
+    'null on purpose: a wrong risk number is worse than a missing one.',
+    'Read-only, changes nothing.',
+  ].join(' '),
+  { symbol: z.string().optional().describe('limit to one market; omit for everything') },
+);
+
+registerRead(
+  'trade_batch',
+  [
+    'Several trading reads in one round trip, the same shape as chart_batch.',
+    'Each entry is { op, args, as }, and a later entry can use an earlier one with "$ref:<as>.<field>".',
+    'One failing entry does not stop the rest.',
+    '',
+    'Ops: account, positions, orders, fills, mandates, market, venue_health.',
+    'Read-only, changes nothing.',
+  ].join(' '),
+  {
+    ops: z.array(
+      z.object({
+        op: z.string(),
+        // Enumerated for the same reason chart_batch enumerates: tests/injection.test.ts walks
+        // schema property names looking for somewhere an address could be smuggled, and it
+        // cannot see inside a free-form record. Naming every key keeps the absence of an
+        // address structural rather than merely true.
+        args: z
+          .object({
+            symbol: z.string().optional(),
+            coin: z.string().optional(),
+            id: z.string().optional(),
+            limit: z.number().int().optional(),
+            sinceMs: z.number().optional(),
+          })
+          .optional(),
+        as: z.string().optional(),
+      }),
+    ),
+  },
+);
+
+registerView(
+  'trade_focus',
+  `Points the trading surface at one market. The chart follows. ${TRADE_ANSWER}`,
+  { symbol: z.string() },
+);
+
+registerView(
+  'trade_highlight',
+  [
+    'Points at one row on the human\'s screen and says why, in a note they read.',
+    '',
+    'This is the trend line generalised. A line you draw makes a PRICE addressable between you, the',
+    'human and the bot; a highlight makes a ROW addressable. Saying "the ETH position is the one at',
+    'risk" leaves a person hunting; highlighting it puts you both demonstrably on the same object.',
+    '',
+    'Highlights expire, because a pointer that outlives its reason still looks current.',
+    TRADE_ANSWER,
+  ].join(' '),
+  {
+    kind: z.enum(['position', 'order', 'fill', 'mandate', 'rule']),
+    id: z.string().describe('the row id: a coin for a position, an oid for an order, a mandate id'),
+    note: z.string().optional().describe('why this row, in one line the human reads'),
+    ttlSec: z.number().optional().describe('how long it stays, default 300, maximum 3600'),
+  },
+);
+
+registerView(
+  'trade_overlay',
+  `Turns one chart overlay on or off: the entry line, the liquidation, the mandate stop-out wall, working stops, targets, resting orders, or your own fills. ${TRADE_ANSWER}`,
+  {
+    name: z.enum(['position', 'liquidation', 'stops', 'targets', 'orders', 'fills', 'mandateWall']),
+    on: z.boolean(),
+  },
+);
+
+registerView(
+  'trade_note',
+  `Pins one line of your own reasoning to the trading surface, tagged [agent], where the human sees it beside their position. For the thesis, not for status. ${TRADE_ANSWER}`,
+  { text: z.string().describe('one line, 240 characters at most') },
+);
+
+registerView('trade_clear', `Removes what you put on the trading surface. ${TRADE_ANSWER}`, {
+  what: z.enum(['agent', 'highlights', 'note', 'all']).optional().default('agent'),
 });
 
 registerPropose(
@@ -354,6 +536,35 @@ registerPropose(
     chain: CHAIN,
     symbol: z.string().optional(),
     amount: z.number(),
+  },
+);
+
+registerPropose(
+  'propose_mandate',
+  'mandate_arm',
+  [
+    'Proposes ARMING A BOT on Hyperliquid perpetuals: a strategy program plus the envelope it must stay inside.',
+    'This is the one proposal that grants standing authority rather than spending once, so it ALWAYS waits for a',
+    'human click, on every network, even when the approval gate is disabled.',
+    '',
+    'The program is a closed grammar, not code. Conditions: price_above, price_below, price_cross_up,',
+    'price_cross_down, bar_close, position, pnl_pct, elapsed, and, or, not. Actions: open, add, reduce, close,',
+    'set_stop, set_target, cancel, stand_down, notify. A price reference can be a literal, or the id of something',
+    'you drew with chart_batch ({kind:"drawing", id:"tl_1"}), which is what lets a trend line become a trigger.',
+    '',
+    'The approval screen shows the program in plain English and the worst case in dollars, so write rules a person',
+    'can check against what you told them. There is no verb here that moves value off the venue.',
+    CANNOT_APPROVE,
+  ].join(' '),
+  {
+    symbol: z.string(),
+    program: z.unknown(),
+    maxNotionalUsd: z.number(),
+    maxLeverage: z.number(),
+    maxOrdersPerMin: z.number().int(),
+    maxLossUsd: z.number(),
+    expiresAt: z.string(),
+    allowedActions: z.array(z.string()),
   },
 );
 

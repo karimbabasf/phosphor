@@ -26,6 +26,8 @@ import type {
   LpPosition,
   LpRemoveDraft,
   LpRemoveParams,
+  MandateDraft,
+  MandateParams,
   Policy,
   PolicyPatch,
   Proposal,
@@ -66,6 +68,8 @@ import {
   ourWalletOn,
 } from './rails/intents-withdraw.ts';
 import { NATIVE_ASSET, NATIVE_TOKEN_ID } from './intents.ts';
+import { HYPERLIQUID_PERPS_COUNTERPARTY } from './rails/mandate.ts';
+import { actionVerbs, programHash, validateProgram } from './strategy/grammar.ts';
 
 const ALL_CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 const EVM_CHAINS: ChainId[] = ['eth', 'base', 'arb'];
@@ -314,6 +318,27 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
   // Single exit for a freshly evaluated proposal. This is the only place a proposal can become
   // executed without a human, and only on verdict allow.
   async function land(p: Proposal): Promise<Proposal> {
+    // Arming a bot is never auto-approved, and 'allow' is the path that has to be closed.
+    //
+    // The carve-out further down covers needs_approval, which is what a LARGE mandate produces.
+    // A small one comes back 'allow' because it sits under the click threshold, and the first
+    // live arm went straight to executed with nobody having clicked anything. The threshold is
+    // a rule about how much money one action moves, and a mandate does not move money when it
+    // is approved: it grants standing authority to move money later, repeatedly, with no human
+    // in the loop. A $30 cap is not a small spend, it is an unattended trader with a $30 cap.
+    //
+    // So the outcome is downgraded here rather than in the engine, which stays a pure function
+    // of policy and draft, and the reason is recorded so the human reads why it is waiting.
+    if (p.kind === 'mandate_arm' && p.verdict.outcome === 'allow') {
+      p = {
+        ...p,
+        verdict: {
+          outcome: 'needs_approval',
+          reasons: [...p.verdict.reasons, 'Arming a bot always needs a human click, whatever the size.'],
+        },
+      };
+    }
+
     if (p.verdict.outcome === 'refuse') {
       const refused: Proposal = { ...p, status: 'policy_refused', decidedBy: 'policy', decidedAt: nowIso() };
       audit.append('proposal_created', `${p.kind} proposal ${p.id} refused by policy: ${p.verdict.rule}`, {
@@ -343,7 +368,15 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
       // maxPerTransactionUsd from $10,000 to $999,999 and the file on disk changed.
       // The policy file is also shared with mainnet, so a testnet convenience that can
       // widen it is a mainnet hole wearing a testnet label.
-      if (gateRequired(cfg) || p.kind === 'policy_change') return persist(p);
+      // 'mandate_arm' joins policy_change for the same reason, one step further out. A policy
+      // change lets the agent rewrite the limits. A mandate lets it run inside them without a
+      // human seeing each order, which is standing authority rather than one spend. Auto
+      // approving that on a gate-off testnet would mean the agent both authors a bot and arms
+      // it, and the program is the one artifact whose whole point is that a person read it
+      // first. Editing a program means arming again, which means another click.
+      if (gateRequired(cfg) || p.kind === 'policy_change' || p.kind === 'mandate_arm') {
+        return persist(p);
+      }
 
       // The gate is off, which only ever happens on testnet: gateRequired() ignores this
       // flag entirely on mainnet. Karim asked for no safeguards while testing, and until
@@ -962,6 +995,57 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
       : proposeRail('intents_withdraw', draft);
   }
 
+  async function proposeMandate(params: MandateParams): Promise<Proposal> {
+    const problems: string[] = [];
+
+    // The program is validated HERE, before a draft exists, so an invalid one never reaches
+    // the approval screen. A human clicking on a program the app could not parse would be
+    // approving something nobody, including the app, has read.
+    const parsed = validateProgram(params.program);
+    if (!parsed.ok) problems.push(...parsed.errors);
+
+    if (!Number.isFinite(params.maxNotionalUsd) || params.maxNotionalUsd <= 0) {
+      problems.push('maxNotionalUsd must be a positive number');
+    }
+    if (!Number.isFinite(params.maxLossUsd) || params.maxLossUsd <= 0) {
+      problems.push('maxLossUsd must be a positive number');
+    }
+    // A mandate that cannot lose less than it can hold is not a bounded mandate.
+    if (params.maxLossUsd > params.maxNotionalUsd) {
+      problems.push('maxLossUsd cannot exceed maxNotionalUsd');
+    }
+    if (Number.isNaN(Date.parse(params.expiresAt))) problems.push('expiresAt must be an ISO timestamp');
+    else if (Date.parse(params.expiresAt) <= Date.now()) problems.push('expiresAt is already in the past');
+
+    const draft: MandateDraft = {
+      kind: 'mandate_arm',
+      symbol: params.symbol,
+      program: params.program,
+      programHash: parsed.ok ? programHash(parsed.program) : '',
+      maxNotionalUsd: params.maxNotionalUsd,
+      maxLeverage: params.maxLeverage,
+      maxOrdersPerMin: params.maxOrdersPerMin,
+      maxLossUsd: params.maxLossUsd,
+      expiresAt: params.expiresAt,
+      // Intersected with what the program actually uses, so a mandate cannot grant a verb the
+      // program never asked for. Granting spare authority "just in case" is how an envelope
+      // stops describing the thing inside it.
+      allowedActions: parsed.ok
+        ? actionVerbs(parsed.program).filter((v) => params.allowedActions.includes(v))
+        : [],
+      // The maximum notional IS the amount at risk, and it is what the budget rules read.
+      amountUsd:
+        Number.isFinite(params.maxNotionalUsd) && params.maxNotionalUsd > 0
+          ? params.maxNotionalUsd
+          : Infinity,
+      counterparty: HYPERLIQUID_PERPS_COUNTERPARTY,
+    };
+
+    return problems.length > 0
+      ? refuseDraft('mandate_arm', draft, problems)
+      : proposeRail('mandate_arm', draft);
+  }
+
   async function proposeLpAdd(params: LpAddParams): Promise<Proposal> {
     const snapshot = ledger.snapshot();
     const problems: string[] = [];
@@ -1141,6 +1225,7 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     proposeHlDeposit: (p) => serialise(() => proposeHlDeposit(p)),
     proposeIntentsDeposit: (p) => serialise(() => proposeIntentsDeposit(p)),
     proposeIntentsWithdraw: (p) => serialise(() => proposeIntentsWithdraw(p)),
+    proposeMandate: (p) => serialise(() => proposeMandate(p)),
     proposeLpAdd: (p) => serialise(() => proposeLpAdd(p)),
     proposeLpRemove: (p) => serialise(() => proposeLpRemove(p)),
     // approve() executes, so it shares the queue: a human click landing next to an

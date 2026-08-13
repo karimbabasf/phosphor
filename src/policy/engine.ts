@@ -14,6 +14,7 @@
 
 import { z } from 'zod';
 import { classify } from '../composition.ts';
+import { isRailKind } from '../rails/kinds.ts';
 import type {
   ChainId,
   CompositionView,
@@ -116,22 +117,20 @@ function legsOf(draft: WriteDraft): TransferLeg[] {
 // falls through to 'nothing_to_move', which is fail-closed by design.
 type RailDraft = Extract<WriteDraft, { counterparty: string } | { kind: 'hl_deposit' }>;
 
-// This list is a second copy of the one in src/rails/index.ts, and it is deliberately not an
-// import: the engine is pure and must not depend on the rail registry, which reaches for
-// config, RPC hosts and deployment tables. The cost of that independence is that the two can
-// drift, and drift here is silent in a specific way worth naming: a kind added to the
-// registry but missing here does not throw, it falls through to 'nothing_to_move' and the
-// rail is refused forever. Fail-closed, but dead. tests/unit/rail-wiring.test.ts holds the
-// two lists equal so the drift is caught by a test rather than by a rail that never works.
+// The kind list is not repeated here, and it does not come from the rail registry either.
+//
+// Repeating it cost an afternoon: a kind added to the registry and missing from the copy here
+// did not throw, it fell past the rail branch into the fund-move branch, found no legs, and
+// was refused as 'nothing_to_move'. A refusal whose stated reason had nothing to do with the
+// real cause. The value checked was not the value used, which is the shape of every real bug
+// in this build.
+//
+// Importing the registry instead would fix the drift and break something else: the engine is
+// the part that decides whether money moves, and it stays pure, with no config, RPC host or
+// deployment table in its module graph. ../rails/kinds.ts is the list on its own, importing
+// no runtime code, so both sides read the same one and neither pulls in the other.
 function isRailDraft(draft: WriteDraft): draft is RailDraft {
-  return (
-    draft.kind === 'swap' ||
-    draft.kind === 'hl_deposit' ||
-    draft.kind === 'intents_deposit' ||
-    draft.kind === 'intents_withdraw' ||
-    draft.kind === 'lp_add' ||
-    draft.kind === 'lp_remove'
-  );
+  return isRailKind(draft.kind);
 }
 
 // Where the funds actually go. This is the address the allowlist has to bless, and it is

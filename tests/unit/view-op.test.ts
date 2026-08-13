@@ -13,6 +13,7 @@ import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 
 import { createServer } from '../../src/server.ts';
+import { createTradeView } from '../../src/trade/view.ts';
 import { createAgents } from '../../src/agents.ts';
 import { createAudit } from '../../src/audit.ts';
 import { createStore } from '../../src/store.ts';
@@ -121,6 +122,7 @@ async function boot(opts: { view?: ViewMode; proposals?: Proposal[] } = {}): Pro
       proposeHlDeposit: async () => pendingProposal(),
       proposeIntentsDeposit: async () => pendingProposal(),
       proposeIntentsWithdraw: async () => pendingProposal(),
+      proposeMandate: async () => pendingProposal(),
       proposeLpAdd: async () => pendingProposal(),
       proposeLpRemove: async () => pendingProposal(),
       approve: async () => pendingProposal(),
@@ -136,6 +138,18 @@ async function boot(opts: { view?: ViewMode; proposals?: Proposal[] } = {}): Pro
     getView: () => view,
     setView: (mode) => {
       view = mode;
+    },
+    // The trading surface is not what this test drives, so everything that would reach the
+    // venue is inert. The view is the real one rather than a fake: it is pure and cheap, and
+    // a stubbed shape here would be asserting against something the server never sees.
+    trade: {
+      view: createTradeView('BTC'),
+      payload: () => ({}) as never,
+      read: () => ({}),
+      batch: () => [],
+      action: async () => ({ ok: false, detail: 'no venue in this test' }),
+      onUpdate: () => {},
+      stop: () => {},
     },
   });
 

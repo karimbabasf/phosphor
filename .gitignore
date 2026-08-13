@@ -14,3 +14,4 @@ state/
 .design/audit.json
 .playwright-mcp/
 *-startup.png
+node_modules

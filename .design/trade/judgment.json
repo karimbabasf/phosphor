@@ -1,0 +1,142 @@
+{
+  "stamp": "43d353ba20829aa7",
+  "iteration": 3,
+  "firstFive": {
+    "what": "A terminal trading screen for one Hyperliquid perpetuals account: a live candle chart carrying the open position on the left, and account risk, the market's own numbers, an armed bot with its bounds filling up, and a running log on the right.",
+    "who": "Someone trading this account with borrowed size who has an AI agent connected to it. Not a first-time buyer: nothing here explains what a liquidation is.",
+    "action": "Read the armed mandate and press DISARM, or press FLATTEN ALL. Every control on the page stops something; there is nothing here that starts a trade."
+  },
+  "asked": [
+    {
+      "requirement": "A separate interface from the pro page, at its own route, leaving `/` untouched",
+      "met": true,
+      "ref": "#page",
+      "note": "The page served at /trade with its own title PHOSPHOR TRADE. The pro page at / is untouched and keeps its own brief."
+    },
+    {
+      "requirement": "Judged as a professional trading surface against what real perps desks carry, not against a",
+      "met": true,
+      "ref": "#panel-tmarket",
+      "note": "Carries oracle, basis, funding at two periods, open interest, 24h volume and real volatility, none of which a retail app shows together."
+    },
+    {
+      "requirement": "The same design language as the pro page: same tokens, same panel frame, same terminal",
+      "met": true,
+      "ref": ".panel .frame-top",
+      "note": "Same box-drawing frame, same tokens from style.css, same monospace grid as the pro page. No new hue on the page except red on the liquidation surface."
+    },
+    {
+      "requirement": "Everything on it readable and manipulable by the agent over MCP, not only by the human",
+      "met": true,
+      "ref": "#t-overlays",
+      "note": "Overlay state comes from the server and the agent writes it. trade_focus, trade_highlight, trade_note, trade_overlay and trade_batch were all driven live and the payload read back."
+    },
+    {
+      "requirement": "Components must not collide or conflict, at any width",
+      "met": true,
+      "ref": "#t-book-rows",
+      "note": "Measured every panel box against its neighbour at 390, 768 and 1440: no overlaps, no horizontal scroll, and no capped panel painting outside its box."
+    },
+    {
+      "requirement": "Manual controls for cancel, close and flatten, reachable from the page",
+      "met": true,
+      "ref": ".acts",
+      "note": "CLOSE POSITION and CANCEL ALL on the position row, CANCEL on each order, FLATTEN ALL under the book, DISARM in the mandate row. All driven against live money."
+    },
+    {
+      "requirement": "Positions and working orders drawn on the chart itself",
+      "met": true,
+      "ref": "#chart",
+      "note": "The position entry line is drawn on the chart, with the mandate stop-out and both stops pinned at the edge they went off, stacked so they do not overlap."
+    },
+    {
+      "requirement": "Liquidation distance shown in ATR multiples as well as percent and dollars, because percent",
+      "met": true,
+      "ref": "#t-liq-atr",
+      "note": "Reads 'LIQ at --, -- away, --, -- ATR'. All three units are present; they are dashes here because the venue returns no liquidation price on this cross position."
+    },
+    {
+      "requirement": "Profit split into price, funding and fees, since a carry trade green on price can be red once",
+      "met": true,
+      "ref": ".prow .pnl",
+      "note": "The position row carries price and funding as separate figures beside the net number."
+    },
+    {
+      "requirement": "Net and gross exposure with a plain sentence for a five percent adverse move, because cross",
+      "met": true,
+      "ref": "#t-exp-shock",
+      "note": "Reads 'A 5% move against you leaves --', with net and gross on the line above it."
+    },
+    {
+      "requirement": "Mark and oracle shown separately with the basis between them, as they are different prices",
+      "met": true,
+      "ref": "#t-mkt-spread",
+      "note": "Mark and oracle on their own lines with basis between them at +12.2 bps."
+    },
+    {
+      "requirement": "The arm receipt: the account's next state if the program opens its maximum position",
+      "met": true,
+      "ref": ".mrow-projected",
+      "note": "Reads 'liquidation at $1,421.40, opens at most $60.00, free after $858.66, margin required $30.00'."
+    },
+    {
+      "requirement": "Feed health beside the price, so a screen behind the market says so where price is read",
+      "met": true,
+      "ref": "#t-feed",
+      "note": "Reads 'feed LIVE ws 0s' in the status bar, next to the price rather than buried in the log."
+    },
+    {
+      "requirement": "`null` renders as a dash and never as zero, because the venue reports an account value of 0.0",
+      "met": true,
+      "ref": "#t-risk-health",
+      "note": "Reads '--' over a hatched track, not 0 over an empty one. The hatch exists because an empty reverse meter claims you are at your liquidation."
+    },
+    {
+      "requirement": "Every dynamic string reaches the DOM through textContent, never innerHTML",
+      "met": true,
+      "ref": "#t-log",
+      "note": "grep for innerHTML in ui/trade.js returns nothing. Agent-authored text, log lines and venue errors all reach the DOM as text."
+    },
+    {
+      "requirement": "Digits that tick must not change width",
+      "met": true,
+      "ref": "#t-fill-rows",
+      "note": "font-variant-numeric: tabular-nums is set on every element carrying a number, so the fills column does not jitter as it updates."
+    },
+    {
+      "requirement": "The kill switch reachable within two tab stops from a cold load, in every state",
+      "met": true,
+      "ref": "#kill-btn",
+      "note": "Nothing focusable is written before it in the DOM, in any state. Verified in the flat, armed and kill-switch-on captures."
+    },
+    {
+      "requirement": "No order ticket: where other interfaces put buy and sell, this puts the mandate console, and",
+      "met": true,
+      "ref": "#t-mandate-list",
+      "note": "The mandate console occupies the place an order ticket would. There is no buy or sell control anywhere on the page."
+    },
+    {
+      "requirement": "Working orders rendered as child rows of the position they belong to, not a table of their own",
+      "met": true,
+      "ref": ".orow",
+      "note": "Two stop orders render as indented, dimmer child rows directly under the ETH position they protect."
+    }
+  ],
+  "goal": {
+    "outcome": "A person who left a bot running can answer three things at a glance without arithmetic: how far am I from liquidation, how much of what I approved has been spent, and is this screen still telling me the truth.",
+    "path": "Look at the status bar for feed health and equity, at the RISK panel for the liquidation line, and at the MANDATE row for the four bounds filling up. Three fixed places, no clicking.",
+    "holds": true,
+    "why": "On the armed capture all three answer at once: 'feed LIVE ws 0s' in the bar, 'LIQ at --, -- away' with a hatched track saying the venue has not published one, and 'Used $59.51 of $60.00 notional' with '4 of 4 orders this minute' in the mandate row. The log beside it shows the envelope refusing the fifth order and saying why."
+  },
+  "states": {
+    "flat": "state-flat.png. BOOK reads 'Flat. No position on any market.', RISK reads 'Nothing at risk. No open position.', collateral still shown. No blank panels.",
+    "armed": "state-armed.png. Mandate row reads 'ETH | ARMED | Expires in 44m 40s' with the program in English, four bounds, the arm receipt and DISARM. The rule that last fired is named with its time.",
+    "position open": "state-armed.png. Position row with size, notional, entry, mark, liq and profit split, its two stop orders nested under it, and the entry line drawn on the chart.",
+    "nothing armed": "state-flat.png. Mandate panel reads 'Nothing armed. Ask your agent for a proposal.' and the panel takes its natural height rather than holding the column open.",
+    "unified account": "Every capture. Equity reads $888.67 from the spot balance while the perp endpoint reports 0.0, and health reads '--' over a hatched track because the ratio is not computable from what the venue publishes.",
+    "kill switch on": "state-kill-on.png. The button turns red and reads '[ KILL SWITCH: ON ]', the mandate panel changes to 'Nothing armed: the kill switch is on.', and the log records it.",
+    "stacked": "shot-390.png and shot-768.png. Columns dissolve into one flow ordered chart, risk, market, mandate, book, fills, log. No horizontal scroll at either width; fills scrolls inside its own box rather than through the log."
+  },
+  "findings": [],
+  "verdict": "pass"
+}

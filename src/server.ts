@@ -40,6 +40,7 @@ import type { Store } from './store.ts';
 import type { Ledger } from './ledger/index.ts';
 import type { CandleService } from './candles.ts';
 import type { MarketData } from './market/index.ts';
+import type { TradeService } from './trade/service.ts';
 import { classify } from './composition.ts';
 import { buildWallet } from './wallet.ts';
 import type { AgentPresence } from './agents.ts';
@@ -60,6 +61,10 @@ import {
 import type { ChartGeometry, ChartIndicator, ChartState } from './chart.ts';
 import { indicatorCatalog, indicatorSpec } from './indicators.ts';
 import type { IndicatorResult } from './indicators.ts';
+import { createDrawingStore } from './drawings.ts';
+import { createHistory } from './history.ts';
+import { runBatch } from './batch.ts';
+import { analysisHandlers } from './analysis/index.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_DIR = path.join(__dirname, '..', 'ui');
@@ -99,6 +104,7 @@ const PROPOSE_KINDS: readonly string[] = [
   'intents_withdraw',
   'lp_add',
   'lp_remove',
+  'mandate_arm',
 ];
 const READ_TOOLS: readonly string[] = [
   'balances',
@@ -111,8 +117,11 @@ const READ_TOOLS: readonly string[] = [
   'chart_read',
   'chart_measure',
   'chart_scan',
+  'chart_batch',
   'indicator_catalog',
   'market_search',
+  'trade_read',
+  'trade_batch',
 ];
 // Chart writes. They move no money, so they never reach the proposal path and never wait on
 // an approval. They are still audited like every other op: an agent that can change what the
@@ -125,7 +134,18 @@ const VIEW_TOOLS: readonly string[] = [
   'chart_mark',
   'chart_trendline',
   'chart_clear',
+  // The trading surface's writes. Same category as the chart's: they change what is drawn and
+  // what is pointed at, and none of them places, cancels or sizes anything. The verbs that do
+  // move a position are on /api/trade/action, which this door does not open onto.
+  'trade_focus',
+  'trade_highlight',
+  'trade_overlay',
+  'trade_note',
+  'trade_clear',
 ];
+// Human-only controls on the trading window. Each one only ever reduces exposure, which is why
+// none of them waits on an approval and none is reachable from the agent's door.
+const TRADE_ACTIONS: readonly string[] = ['disarm', 'cancel', 'cancel_all', 'close', 'flatten'];
 const SCAN_TIMEFRAMES_MAX = 6;
 
 export type ServerDeps = {
@@ -143,6 +163,7 @@ export type ServerDeps = {
   agents: AgentPresence;
   getView: () => ViewMode;
   setView: (mode: ViewMode) => void;
+  trade: TradeService;
 };
 
 // http.Server plus an explicit push so the wiring layer can signal the UI after
@@ -183,7 +204,7 @@ function tokenMatches(supplied: unknown, expected: string): boolean {
 
 export function createServer(deps: ServerDeps): PhosphorServer {
   const { cfg, audit, store, ledger, riskRows, candles, market, proposals } = deps;
-  const { getPolicy, setKill, agents, getView, setView } = deps;
+  const { getPolicy, setKill, agents, getView, setView, trade } = deps;
 
   const token = crypto.randomBytes(24).toString('hex');
   audit.append('app_start', 'approval surface armed: browser approval token minted for this boot');
@@ -194,6 +215,18 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   // Chart state is server-side on purpose: see the header of src/chart.ts. The browser
   // renders it and writes its own pan and zoom back.
   const chart = createChartStore(cfg.candleProducts[0] ?? 'BTC-USD');
+
+  // Trend lines and zones the agent drew. Levels and marks stay in the chart store above;
+  // these are the object kinds it does not carry, kept in their own store so the two files
+  // never contend for the same state.
+  const drawings = createDrawingStore();
+
+  // History paging shares loadCandles, so a bar the agent walks back to is the same bar the
+  // chart would have drawn had the human panned there.
+  const history = createHistory(async (product, granularitySec, endSec, limit) => {
+    const load = await loadCandles(product, granularitySec, limit);
+    return load.candles.filter((c) => c.t < endSec);
+  });
 
   function sseSend(res: http.ServerResponse, payload: unknown): void {
     res.write(`data: ${JSON.stringify(payload)}\n\n`);
@@ -220,6 +253,13 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   // a server round trip from fighting the hand that is dragging the chart.
   function broadcastChart(): void {
     for (const client of sseClients) sseSend(client, { type: 'chart', rev: chart.rev() });
+  }
+
+  // The trading surface's own channel. It carries the revision and nothing else, exactly like
+  // the chart's: the browser refetches, so a payload that grew would not silently become a
+  // second copy of the truth travelling down a different pipe.
+  function broadcastTrade(): void {
+    for (const client of sseClients) sseSend(client, { type: 'trade', rev: trade.view.rev() });
   }
 
   // A proposal reaching 'executed' is both a balance change and a new line in the history.
@@ -617,8 +657,11 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       })),
       levels: state.levels,
       marks: state.marks,
-      trendlines: state.trendlines,
-      agentObjects: chart.agentObjects(),
+      // Trend lines and zones live in their own store beside the chart's levels and marks.
+      // They reach the browser on the same payload so the human sees exactly the objects
+      // the agent is measuring against, which is the whole point of drawing them there.
+      drawings: drawings.list(),
+      agentObjects: chart.agentObjects() + drawings.list().filter((d) => d.source === 'agent').length,
       products: cfg.candleProducts,
       timeframes: TIMEFRAMES,
       limits: CHART_LIMITS,
@@ -841,11 +884,35 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         match: exact,
         candidates: market.search(query, limit),
         catalogLoadedAt: market.catalogLoadedAt(),
-        note: 'Any of these can be charted on any timeframe from 1s to 1w.',
+        note: 'Any of these can be charted on any timeframe from 1m to 1w.',
       });
       return;
     }
 
+    if (tool === 'chart_batch') {
+      const ops = Array.isArray(args.ops) ? args.ops : [];
+      const view = chart.state().view;
+      const results = await runBatch(
+        ops as { op: string; args?: Record<string, unknown>; as?: string }[],
+        analysisHandlers({
+          // The chart's own product and timeframe are the defaults, so an op that names
+          // neither measures what the human is currently looking at.
+          candles: async (product, granularitySec, limit) =>
+            (await loadCandles(product || view.product, granularitySec, limit)).candles,
+          history,
+          drawings,
+        }),
+      );
+      // A drawing op changes what the window shows, so the browser is told the same way a
+      // chart mutation tells it. Reads alone leave the rev alone and repaint nothing.
+      if (results.some((r) => r.ok && r.op.startsWith('draw'))) broadcastChart();
+      sendJson(res, 200, {
+        product: view.product,
+        timeframe: timeframeLabel(view.granularitySec),
+        results,
+      });
+      return;
+    }
     if (tool === 'indicator_catalog') {
       sendJson(res, 200, {
         indicators: indicatorCatalog(),
@@ -910,7 +977,93 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       });
       return;
     }
+    if (tool === 'trade_read') {
+      const symbol = typeof args.symbol === 'string' ? args.symbol : undefined;
+      sendJson(res, 200, trade.read(symbol));
+      return;
+    }
+    if (tool === 'trade_batch') {
+      sendJson(res, 200, trade.batch(Array.isArray(args.ops) ? (args.ops as unknown[]) : []));
+      return;
+    }
     sendJson(res, 400, { error: `unknown read tool: ${tool}. known tools: ${READ_TOOLS.join(', ')}` });
+  }
+
+  // The human's controls on the trading window. Deliberately NOT reachable from /api/mcp: the
+  // agent has no verb for closing a position, and the way that is guaranteed is that the door
+  // it knocks on does not open onto this function. A check could be wrong; an absence cannot.
+  async function handleTradeAction(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    const parsed = await readBody(req);
+    if (!parsed.ok) return sendJson(res, 400, { error: parsed.error });
+    const body = parsed.value;
+    if (!sameOrigin(req)) return sendJson(res, 403, { error: 'cross-origin request refused' });
+    if (!tokenMatches(body.token, token)) {
+      audit.append('approve_attempt_rejected', 'POST /api/trade/action rejected: bad approval token', {
+        action: String(body.action ?? ''),
+        tokenPresent: typeof body.token === 'string' && body.token.length > 0,
+      });
+      return sendJson(res, 403, { error: 'invalid approval token' });
+    }
+
+    const action = String(body.action ?? '');
+    if (!TRADE_ACTIONS.includes(action)) {
+      return sendJson(res, 400, { error: `unknown action: ${action}. known: ${TRADE_ACTIONS.join(', ')}` });
+    }
+
+    const id = typeof body.id === 'string' ? body.id : undefined;
+    const coin = typeof body.coin === 'string' ? body.coin : undefined;
+    audit.append('tool_call', `human: ${action}${id ? ` ${id}` : ''}${coin ? ` ${coin}` : ''}`, {
+      action,
+      id,
+      coin,
+    });
+
+    try {
+      const result = await trade.action({ action, id, coin });
+      audit.append(result.ok ? 'executed' : 'error', `${action}: ${result.detail}`, { action, id, coin });
+      broadcastTrade();
+      broadcastState();
+      sendJson(res, result.ok ? 200 : 400, result);
+    } catch (err) {
+      audit.append('error', `${action} failed: ${errText(err)}`);
+      sendJson(res, 500, { ok: false, detail: errText(err) });
+    }
+  }
+
+  // The window's own view writes, the mirror of handleChartWrite. Same reasoning: one door per
+  // caller, so the browser uses this and an agent uses /api/mcp, and both land in one place.
+  async function handleTradeWrite(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    const parsed = await readBody(req);
+    if (!parsed.ok) return sendJson(res, 400, { error: parsed.error });
+    const body = parsed.value;
+    if (!sameOrigin(req)) return sendJson(res, 403, { error: 'cross-origin trade write refused' });
+    if (!tokenMatches(body.token, token)) return sendJson(res, 403, { error: 'invalid approval token' });
+
+    const notes: string[] = [];
+    for (const [key, apply] of [
+      ['focus', (a: Record<string, unknown>) => trade.view.setFocus(a, 'human')],
+      ['overlay', (a: Record<string, unknown>) => trade.view.setOverlay(a, 'human')],
+      ['note', (a: Record<string, unknown>) => trade.view.setNote(a, 'human')],
+    ] as const) {
+      const arg = body[key];
+      if (arg === undefined || arg === null || typeof arg !== 'object') continue;
+      const out = apply(arg as Record<string, unknown>);
+      if (!out.ok) return sendJson(res, 400, { error: out.error });
+      notes.push(...out.notes);
+    }
+    if (typeof body.clear === 'string') {
+      const out = trade.view.clear(body.clear);
+      if (!out.ok) return sendJson(res, 400, { error: out.error });
+      notes.push(...out.notes);
+    }
+    if (typeof body.focus === 'object' && body.focus !== null) {
+      const symbol = String((body.focus as Record<string, unknown>).symbol ?? '').toUpperCase();
+      const match = cfg.candleProducts.find((p) => p.split('-')[0].toUpperCase() === symbol);
+      if (match !== undefined) chart.setView({ product: match }, 'human');
+      broadcastChart();
+    }
+    broadcastTrade();
+    sendJson(res, 200, { ok: true, notes });
   }
 
   function numOrUndefined(raw: unknown): number | undefined {
@@ -941,6 +1094,35 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         args.product = ref.product;
       }
       outcome = chart.setView(args, 'agent');
+    }
+
+    // The trading surface's writes answer with the trading surface, the same way the chart's
+    // answer with the chart: an agent that has to read after every write pays two round trips
+    // to learn what its own change did.
+    if (tool.startsWith('trade_')) {
+      let out: { ok: boolean; notes: string[]; error?: string };
+      if (tool === 'trade_focus') out = trade.view.setFocus(args, 'agent');
+      else if (tool === 'trade_highlight') out = trade.view.highlight(args, 'agent');
+      else if (tool === 'trade_overlay') out = trade.view.setOverlay(args, 'agent');
+      else if (tool === 'trade_note') out = trade.view.setNote(args, 'agent');
+      else out = trade.view.clear(String(args.what ?? 'agent'));
+
+      if (!out.ok) {
+        sendJson(res, 400, { error: out.error, notes: out.notes });
+        return;
+      }
+      // Focus moves the chart with it. A trading screen whose position panel and whose candles
+      // disagree about which market is on screen is the one bug on this surface a person would
+      // not catch, because both halves look right on their own.
+      if (tool === 'trade_focus') {
+        const symbol = String(args.symbol ?? '').toUpperCase();
+        const match = cfg.candleProducts.find((p) => p.split('-')[0].toUpperCase() === symbol);
+        if (match !== undefined) chart.setView({ product: match }, 'agent');
+      }
+      broadcastTrade();
+      broadcastChart();
+      sendJson(res, 200, { ok: true, notes: out.notes, trade: trade.read() });
+      return;
     }
     else if (tool === 'chart_add_indicator') outcome = chart.addIndicator(args, 'agent');
     else if (tool === 'chart_remove_indicator') outcome = chart.removeIndicator(String(args.id ?? args.type ?? ''));
@@ -1041,6 +1223,37 @@ export function createServer(deps: ServerDeps): PhosphorServer {
             toSymbol,
             amountIn,
             minAmountOut,
+          }),
+        );
+        return;
+      }
+      if (kind === 'mandate_arm') {
+        const symbol = strField(params, 'symbol', problems);
+        const maxNotionalUsd = numField(params, 'maxNotionalUsd', problems);
+        const maxLeverage = numField(params, 'maxLeverage', problems);
+        const maxOrdersPerMin = numField(params, 'maxOrdersPerMin', problems);
+        const maxLossUsd = numField(params, 'maxLossUsd', problems);
+        const expiresAt = strField(params, 'expiresAt', problems);
+        const allowedActions = Array.isArray(params.allowedActions)
+          ? params.allowedActions.map((v) => String(v))
+          : [];
+        if (allowedActions.length === 0) problems.push('allowedActions must list at least one verb');
+        if (params.program === undefined) problems.push('program is required');
+        if (problems.length > 0) {
+          sendJson(res, 400, { error: problems.join('; ') });
+          return;
+        }
+        sendProposal(
+          res,
+          await proposals.proposeMandate({
+            symbol,
+            program: params.program,
+            maxNotionalUsd,
+            maxLeverage,
+            maxOrdersPerMin,
+            maxLossUsd,
+            expiresAt,
+            allowedActions,
           }),
         );
         return;
@@ -1327,14 +1540,20 @@ export function createServer(deps: ServerDeps): PhosphorServer {
           fillGas(payload.entries);
           return sendJson(res, 200, payload);
         }
+        if (route === '/api/trade') return sendJson(res, 200, trade.payload());
         if (route === '/api/session') return sendJson(res, 200, { token });
         if (route === '/api/events') return openEvents(req, res);
         if (route.startsWith('/api/')) return sendJson(res, 404, { error: `unknown route: ${route}` });
+        // The second surface. A bare /trade is the page; everything else still resolves as a
+        // file, so the two pages share one static root and one stylesheet.
+        if (route === '/trade' || route === '/trade/') return serveStatic('/trade.html', res);
         return serveStatic(route, res);
       }
       if (req.method === 'POST') {
         if (route === '/api/mcp') return await handleMcp(req, res);
         if (route === '/api/chart') return await handleChartWrite(req, res);
+        if (route === '/api/trade') return await handleTradeWrite(req, res);
+        if (route === '/api/trade/action') return await handleTradeAction(req, res);
         if (route === '/api/approve' || route === '/api/refuse' || route === '/api/kill') {
           return await handleMutation(route, req, res);
         }

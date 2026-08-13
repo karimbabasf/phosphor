@@ -19,18 +19,7 @@
 //      which is better than a rail reaching for an RPC and a private key that the demo
 //      user never meant to involve.
 
-import type {
-  AppConfig,
-  HlDepositDraft,
-  IntentsDepositDraft,
-  IntentsWithdrawDraft,
-  LpAddDraft,
-  LpRemoveDraft,
-  Network,
-  Rail,
-  SwapDraft,
-  WriteDraft,
-} from '../types.ts';
+import type { AppConfig, Network, Rail, SwapDraft, WriteDraft } from '../types.ts';
 import type { TokensFile } from '../intents.ts';
 import { uniswapRails } from './uniswap.ts';
 import { chainsWithDeployment, deploymentFor } from './uniswap-abi.ts';
@@ -39,32 +28,16 @@ import { ONECLICK_COUNTERPARTY, oneClickRail } from './oneclick.ts';
 import { INTENTS_NATIVE_COUNTERPARTY, intentsNativeRail } from './intents-native.ts';
 import { intentsDepositRail } from './intents-deposit.ts';
 import { intentsWithdrawRail } from './intents-withdraw.ts';
+import { HYPERLIQUID_PERPS_COUNTERPARTY, mandateRail } from './mandate.ts';
+import type { MandateRunner } from './mandate.ts';
+import { isRailDraft, isRailKind, RAIL_KINDS } from './kinds.ts';
+import type { RailDraft, RailKind } from './kinds.ts';
 
-export type RailKind = 'swap' | 'hl_deposit' | 'intents_deposit' | 'intents_withdraw' | 'lp_add' | 'lp_remove';
-export type RailDraft =
-  | SwapDraft
-  | HlDepositDraft
-  | IntentsDepositDraft
-  | IntentsWithdrawDraft
-  | LpAddDraft
-  | LpRemoveDraft;
-
-const RAIL_KINDS: readonly RailKind[] = [
-  'swap',
-  'hl_deposit',
-  'intents_deposit',
-  'intents_withdraw',
-  'lp_add',
-  'lp_remove',
-];
-
-export function isRailKind(kind: WriteDraft['kind']): kind is RailKind {
-  return (RAIL_KINDS as readonly string[]).includes(kind);
-}
-
-export function isRailDraft(draft: WriteDraft): draft is RailDraft {
-  return isRailKind(draft.kind);
-}
+// The kinds themselves live in ./kinds.ts, which imports no runtime code, so the policy
+// engine can share this list without also importing every rail's RPC and config. Re-exported
+// here because the registry has always been where the rest of the app reaches for them.
+export type { RailDraft, RailKind };
+export { isRailDraft, isRailKind, RAIL_KINDS };
 
 export type RailRegistry = {
   // The rail that owns this draft, or null when none does: consolidate, transfer and
@@ -76,6 +49,7 @@ export type RailRegistry = {
 export type RailDeps = {
   cfg: AppConfig;
   tokens: TokensFile; // data/tokens.json, for the 1Click asset id lookup
+  runner: MandateRunner; // owns the armed bots; the mandate rail only starts and stops them
 };
 
 // One rail for kind 'swap', routing on the draft's venue.
@@ -134,6 +108,7 @@ export function createRails(deps: RailDeps): RailRegistry {
     }) as Rail,
     lp_add: uniswap.lpAdd as Rail,
     lp_remove: uniswap.lpRemove as Rail,
+    mandate_arm: mandateRail({ runner: deps.runner }) as Rail,
   };
 
   return {
@@ -176,6 +151,12 @@ export function venueAllowlist(network: Network): string[] {
   // forever, so this really is an address on a static list rather than a venue string
   // standing in for one that cannot be listed. Same testnet reasoning as above.
   out.add(INTENTS_NATIVE_COUNTERPARTY.toLowerCase());
+
+  // The perps venue, a third kind of entry again. A perp order hands funds to nobody: margin,
+  // position and profit all stay inside the Hyperliquid account the human already funded, so
+  // there is no destination to list. The venue string stands in so the destination check still
+  // has something to check rather than being skipped for this one rail.
+  out.add(HYPERLIQUID_PERPS_COUNTERPARTY.toLowerCase());
 
   return [...out];
 }

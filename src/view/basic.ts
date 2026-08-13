@@ -241,6 +241,12 @@ function askHeadline(draft: WriteDraft, amountUsd: number): string {
   if (draft.kind === 'transfer') {
     return `It wants to send ${amountClause(amountUsd)}your ${plainSymbol(draft.leg.symbol)} to another address.`;
   }
+  // The one ask that is permission rather than a payment, so the sentence has to say what it
+  // is allowed to do later, not what it moves now. The two numbers are the whole envelope:
+  // the most it can be holding, and the loss that ends it.
+  if (draft.kind === 'mandate_arm') {
+    return `It wants standing permission to trade ${plainSymbol(draft.symbol)} on its own, holding at most ${money(draft.maxNotionalUsd)} at a time and stopping for good once it has lost ${money(draft.maxLossUsd)}.`;
+  }
   return `It wants to change one of your safety rules: "${draft.sentence}".`;
 }
 

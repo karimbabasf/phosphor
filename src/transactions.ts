@@ -141,6 +141,10 @@ const ACTIONS: Record<WriteDraft['kind'], TxEntry['action'] | null> = {
   lp_remove: 'lp remove',
   // Not a transaction. It moves no money and it is already a line in the log.
   policy_change: null,
+  // Arming grants standing authority; it moves nothing itself. What the armed bot then does
+  // arrives here as its own entries, which is the only honest way to show it: the mandate is
+  // the permission, not the spend.
+  mandate_arm: null,
 };
 
 const EVM_HASH = /^0x[0-9a-fA-F]{64}$/;
