@@ -157,6 +157,80 @@ registerRead(
   'Lists every indicator this chart can draw, with its parameters, defaults, allowed ranges, and whether it overlays the price or takes its own pane. Call this before chart_add_indicator. Read-only, changes nothing.',
   {},
 );
+registerRead(
+  'chart_batch',
+  [
+    'The measurement instrument: many chart questions and drawings in ONE call.',
+    'Each entry is { op, args, as }. A later entry can use an earlier one with "$ref:<as>.<field>",',
+    'so drawing a line and measuring against it is a single call. One failing entry does not stop the rest.',
+    '',
+    'Seeing: candles, history_page (walks back through history on a cursor, no limit on how far).',
+    'Measuring: pivots (swing points by prominence), levels (where price reacted before),',
+    'regime (volatility percentile), atr, volume_profile (point of control and value area),',
+    'vwap (anchored to a bar you choose), range (Kaufman efficiency), divergence, indicator_series.',
+    'Geometry: trendline_fit, trendline_at (what a drawn line is worth at any time),',
+    'trendline_touches (every bar that came within a tolerance of it).',
+    'Drawing: draw (trendline or zone), drawings_list, drawings_remove, drawings_clear.',
+    '',
+    'Anything drawn appears on the human chart tagged [agent] and keeps a stable id.',
+    'Every result is a MEASUREMENT with the parameters that produced it. This tool returns no',
+    'signals, scores or trade suggestions: you do the reading, it does the measuring.',
+    'Omit product or granularitySec to measure whatever the chart is currently showing.',
+  ].join(' '),
+  {
+    ops: z.array(
+      z.object({
+        op: z.string(),
+        // Every argument this surface accepts, named. An open record would have been
+        // shorter and would have put a hole in the guarantee tests/injection.test.ts
+        // exists to hold: that scan walks schema property names looking for an
+        // exfiltration target, and it cannot see inside a free-form bag. Enumerating the
+        // keys keeps the absence of an address provable rather than merely true, and it
+        // has the second benefit of telling the agent which arguments exist.
+        args: z
+          .object({
+            product: z.string().optional(),
+            granularitySec: z.number().optional(),
+            bars: z.number().int().optional(),
+            // pivots, levels, trend line fitting
+            window: z.number().optional(),
+            minProminence: z.number().optional(),
+            tolerance: z.number().optional(),
+            kind: z.enum(['high', 'low', 'trendline', 'zone']).optional(),
+            // regime, atr
+            period: z.number().optional(),
+            lookback: z.number().optional(),
+            // volume profile
+            bins: z.number().int().optional(),
+            valueAreaPct: z.number().optional(),
+            // vwap
+            anchorIndex: z.number().int().optional(),
+            // range
+            maxEfficiency: z.number().optional(),
+            // indicator series and divergence
+            indicator: z.string().optional(),
+            plot: z.string().optional(),
+            params: z.record(z.number()).optional(),
+            // drawing. Anchors are time and price, never pixels and never an address.
+            label: z.string().optional(),
+            a: z.object({ t: z.number(), price: z.number() }).optional(),
+            b: z.object({ t: z.number(), price: z.number() }).optional(),
+            low: z.number().optional(),
+            high: z.number().optional(),
+            // referring to something already drawn
+            id: z.string().optional(),
+            t: z.number().optional(),
+            // history paging
+            cursor: z.number().optional(),
+            limit: z.number().int().optional(),
+            source: z.enum(['agent', 'all']).optional(),
+          })
+          .optional(),
+        as: z.string().optional(),
+      }),
+    ),
+  },
+);
 
 function registerView(name: string, description: string, shape: Record<string, z.ZodTypeAny>): void {
   server.registerTool(name, { description, inputSchema: shape }, async (args) => proxy({ op: 'view', tool: name, args }));

@@ -53,6 +53,10 @@ import {
 import type { ChartGeometry, ChartIndicator, ChartState } from './chart.ts';
 import { indicatorCatalog, indicatorSpec } from './indicators.ts';
 import type { IndicatorResult } from './indicators.ts';
+import { createDrawingStore } from './drawings.ts';
+import { createHistory } from './history.ts';
+import { runBatch } from './batch.ts';
+import { analysisHandlers } from './analysis/index.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_DIR = path.join(__dirname, '..', 'ui');
@@ -83,6 +87,7 @@ const READ_TOOLS: readonly string[] = [
   'chart_read',
   'chart_measure',
   'chart_scan',
+  'chart_batch',
   'indicator_catalog',
 ];
 // Chart writes. They move no money, so they never reach the proposal path and never wait on
@@ -162,6 +167,18 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   // Chart state is server-side on purpose: see the header of src/chart.ts. The browser
   // renders it and writes its own pan and zoom back.
   const chart = createChartStore(cfg.candleProducts[0] ?? 'BTC-USD');
+
+  // Trend lines and zones the agent drew. Levels and marks stay in the chart store above;
+  // these are the object kinds it does not carry, kept in their own store so the two files
+  // never contend for the same state.
+  const drawings = createDrawingStore();
+
+  // History paging shares loadCandles, so a bar the agent walks back to is the same bar the
+  // chart would have drawn had the human panned there.
+  const history = createHistory(async (product, granularitySec, endSec, limit) => {
+    const load = await loadCandles(product, granularitySec, limit);
+    return load.candles.filter((c) => c.t < endSec);
+  });
 
   function sseSend(res: http.ServerResponse, payload: unknown): void {
     res.write(`data: ${JSON.stringify(payload)}\n\n`);
@@ -663,6 +680,30 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     }
     if (tool === 'chart_read') {
       sendJson(res, 200, await chartRead());
+      return;
+    }
+    if (tool === 'chart_batch') {
+      const ops = Array.isArray(args.ops) ? args.ops : [];
+      const view = chart.state().view;
+      const results = await runBatch(
+        ops as { op: string; args?: Record<string, unknown>; as?: string }[],
+        analysisHandlers({
+          // The chart's own product and timeframe are the defaults, so an op that names
+          // neither measures what the human is currently looking at.
+          candles: async (product, granularitySec, limit) =>
+            (await loadCandles(product || view.product, granularitySec, limit)).candles,
+          history,
+          drawings,
+        }),
+      );
+      // A drawing op changes what the window shows, so the browser is told the same way a
+      // chart mutation tells it. Reads alone leave the rev alone and repaint nothing.
+      if (results.some((r) => r.ok && r.op.startsWith('draw'))) broadcastChart();
+      sendJson(res, 200, {
+        product: view.product,
+        timeframe: timeframeLabel(view.granularitySec),
+        results,
+      });
       return;
     }
     if (tool === 'indicator_catalog') {

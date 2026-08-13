@@ -267,6 +267,11 @@ test('the tool surface cannot express an exfiltration target', async () => {
       'chart_read',
       'chart_measure',
       'chart_scan',
+      // The measurement instrument. It carries many operations in one call, so its
+      // arguments are enumerated in the schema rather than left as a free-form bag:
+      // the propertyNames walk below cannot see inside an open record, and a hole the
+      // scan cannot see is exactly what this test exists to prevent.
+      'chart_batch',
       'indicator_catalog',
       'chart_set_view',
       'chart_add_indicator',
