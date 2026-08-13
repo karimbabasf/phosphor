@@ -471,7 +471,11 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       })),
       levels: state.levels,
       marks: state.marks,
-      agentObjects: chart.agentObjects(),
+      // Trend lines and zones live in their own store beside the chart's levels and marks.
+      // They reach the browser on the same payload so the human sees exactly the objects
+      // the agent is measuring against, which is the whole point of drawing them there.
+      drawings: drawings.list(),
+      agentObjects: chart.agentObjects() + drawings.list().filter((d) => d.source === 'agent').length,
       products: cfg.candleProducts,
       timeframes: TIMEFRAMES,
       limits: CHART_LIMITS,
