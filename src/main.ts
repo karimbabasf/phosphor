@@ -287,7 +287,17 @@ marketUpdated = () => server.broadcastCandles();
 
 // The feed moving is the only thing that makes the trading surface change without anyone
 // touching it, so it is what drives the push. Coalesced by the feed already.
-trade.onUpdate(() => server.broadcastState());
+//
+// BOTH channels, and the second one is the bug fix. This called broadcastState alone, and the
+// trading window does not listen to state: ui/trade.js refetches the position book on
+// {type:'trade'} and nothing else. So a fill arriving on the websocket repainted no position,
+// no PnL and no health bar. It corrected on the next unrelated 'trade' frame, which in
+// practice was the agent's next tool call, which is why the staleness read as "a couple of
+// seconds" and was really unbounded: on a quiet agent the book could sit wrong indefinitely.
+trade.onUpdate(() => {
+  server.broadcastState();
+  server.broadcastTrade();
+});
 
 server.listen(cfg.port, '127.0.0.1', () => {
   audit.append('app_start', `phosphor up on http://127.0.0.1:${cfg.port} (${cfg.mode} mode)`);

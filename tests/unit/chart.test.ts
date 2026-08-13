@@ -314,3 +314,74 @@ test('trendlines obey the clear targets, including the human way out of agent dr
   chart.clear('trendlines');
   assert.equal(chart.state().trendlines.length, 0);
 });
+
+// The symbol switch, with the patch the BROWSER actually sends.
+//
+// The test above this one passes and always did, because it sends `{product}` alone. The real
+// client never sends that: ui/chart.js pushChart serialises the WHOLE view on every change,
+// so a symbol switch arrives carrying the outgoing instrument's pan and price scale in the
+// same object. The reset ran and then those two fields wrote themselves straight back over
+// it, which is both of the complaints about this chart, from one line each.
+test('a full-view push on a symbol switch cannot carry the old price scale across', () => {
+  const chart = createChartStore('BTC-USD');
+  // The human drags the price axis on BTC, so the scale is manual and in the 63k band.
+  chart.setView({ priceLow: 63000, priceHigh: 64000 }, 'human');
+  assert.equal(chart.state().view.priceScale.mode, 'manual');
+
+  // Exactly what pushChart builds: every field, including the ones describing the old market.
+  const out = chart.setView(
+    {
+      product: 'sol-usd',
+      granularitySec: 60,
+      barCount: 120,
+      panOffset: 0,
+      priceScale: 'manual',
+      priceLow: 63000,
+      priceHigh: 64000,
+    },
+    'human',
+  );
+
+  assert.equal(out.ok, true);
+  assert.equal(chart.state().view.product, 'SOL-USD');
+  // SOL trades near 150. A 63k axis draws every candle off the pane, which is "off-scale".
+  assert.equal(chart.state().view.priceScale.mode, 'auto');
+  assert.ok(out.ok && out.notes.some((n) => n.includes('price scale ignored')), 'and it says why');
+});
+
+test('a full-view push on a symbol switch cannot carry a stale pan across', () => {
+  // This one bites even in auto mode. Panned back on a long series and switched to a shorter
+  // one, the right edge goes negative, start passes end, no candle is scanned, and the domain
+  // falls through to the degenerate 0..1 fallback in buildLayout. That is "compressed".
+  const chart = createChartStore('BTC-USD');
+  chart.setView({ panOffset: 300 }, 'human');
+  assert.equal(chart.state().view.panOffset, 300);
+
+  const out = chart.setView(
+    { product: 'sol-usd', granularitySec: 60, barCount: 120, panOffset: 300, priceScale: 'auto' },
+    'human',
+  );
+
+  assert.equal(chart.state().view.panOffset, 0);
+  assert.ok(out.ok && out.notes.some((n) => n.includes('panOffset ignored')));
+});
+
+test('a pan sent WITHOUT a symbol change is still honoured', () => {
+  // The guard is scoped to the switch itself. An agent that pans deliberately must still pan,
+  // or the fix above would have cost a feature to buy a bug.
+  const chart = createChartStore('BTC-USD');
+  const out = chart.setView({ panOffset: 40 }, 'agent');
+  assert.equal(out.ok, true);
+  assert.equal(chart.state().view.panOffset, 40);
+  assert.ok(out.ok && !out.notes.some((n) => n.includes('ignored')));
+});
+
+test('re-sending the SAME product is not a switch, so the window is left alone', () => {
+  // pushChart names the product on every write, including a plain zoom. Treating every push
+  // that mentions a product as a switch would reset the view on every drag.
+  const chart = createChartStore('BTC-USD');
+  chart.setView({ panOffset: 25, priceLow: 100, priceHigh: 200 }, 'human');
+  chart.setView({ product: 'BTC-USD', panOffset: 25, priceScale: 'manual', priceLow: 100, priceHigh: 200 }, 'human');
+  assert.equal(chart.state().view.panOffset, 25);
+  assert.equal(chart.state().view.priceScale.mode, 'manual');
+});

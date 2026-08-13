@@ -278,16 +278,32 @@ export function createTradeFeed(deps: {
 
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let notifyTimer: ReturnType<typeof setTimeout> | null = null;
+  let pendingNotify = false;
   let pingTimer: ReturnType<typeof setInterval> | null = null;
   let spotTimer: ReturnType<typeof setInterval> | null = null;
 
   function notify(): void {
     // Coalesce: a busy market pushes several messages per second and every listener hop costs
     // an SSE write to every browser attached to the surface.
-    if (notifyTimer) return;
-    notifyTimer = setTimeout(() => {
+    //
+    // LEADING edge, then a trailing sweep. This used to be trailing only, which meant every
+    // event paid the full window even when it was the first thing to happen in minutes: a
+    // lone fill on an idle account waited NOTIFY_MS for a coalescer that had nothing to
+    // coalesce it with. Firing first and suppressing after keeps the burst cap exactly as it
+    // was (still at most one fan-out per window) while a fill on a quiet account is now
+    // immediate, which is the case a person is actually watching for.
+    if (notifyTimer) {
+      pendingNotify = true;
+      return;
+    }
+    for (const fn of listeners) fn();
+    notifyTimer = setTimeout(function sweep() {
       notifyTimer = null;
-      for (const fn of listeners) fn();
+      if (!pendingNotify) return;
+      pendingNotify = false;
+      // Something arrived inside the window. Fire once for all of it, and open a fresh
+      // window, so a sustained stream still settles at one fan-out per NOTIFY_MS.
+      notify();
     }, NOTIFY_MS);
   }
 

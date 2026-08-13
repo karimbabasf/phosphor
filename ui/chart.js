@@ -185,7 +185,10 @@ function decimalsFor(span, candles, from, to) {
 /* One layout object per scene draw, reused by the hud and by hit testing, so what is drawn
    and what the pointer hits cannot drift apart. */
 function buildLayout(width, height, ctx) {
-  var view = CHART.view;
+  /* Mid-tween this is a blend of where the view was and where it is going. Everywhere else in
+     the file that needs the view for a WRITE still reads CHART.view, which is already the
+     target: see tweenedView above for why the two are deliberately different. */
+  var view = tweenedView();
   var candles = CHART.candles;
 
   var overlays = [];
@@ -354,7 +357,13 @@ function buildLayout(width, height, ctx) {
     ctx.measureText(priceText(low, decimals)).width
   );
   var wanted = clampNum(Math.ceil(widest) + 12, 48, 104);
-  if (Math.abs(wanted - CHART_AXIS_W) > 2) {
+  /* The axis is measured from the frame just drawn and applied to the next one, which is fine
+     for a static chart and visibly wrong during a tween: a price magnitude crossing a digit
+     boundary makes the whole plot width step sideways a frame late, mid-motion. So while a
+     tween runs the axis may only GROW. It settles to the real width on the frame after the
+     tween lands, by which point nothing is moving for it to drag. */
+  var shrinking = wanted < CHART_AXIS_W;
+  if (Math.abs(wanted - CHART_AXIS_W) > 2 && !(CHART_TWEEN && shrinking)) {
     CHART_AXIS_W = wanted;
     CHART_DIRTY.scene = true;
   }
@@ -404,6 +413,7 @@ function chartInvalidate(scene) {
 
 function chartFrame() {
   CHART_FRAME = 0;
+  var running = tweenStep();
   if (chartResize()) CHART_DIRTY.scene = true;
   if (CHART_DIRTY.scene) {
     CHART_DIRTY.scene = false;
@@ -413,6 +423,120 @@ function chartFrame() {
     CHART_DIRTY.hud = false;
     drawHud();
   }
+  /* The rAF above is self-cancelling: chartFrame clears CHART_FRAME on entry and nothing
+     re-arms it, which is correct for a chart that only redraws on input. A tween is the one
+     thing here that has to keep drawing with no input at all, so it re-arms its own loop and
+     stops the moment it lands. */
+  if (running) chartInvalidate(true);
+}
+
+/* ---------- the view tween ----------
+
+   The agent moves this chart, and until now every move it made was an instant assignment: the
+   window was at 120 bars and then it was at 400, with no frame in between. On a surface whose
+   whole claim is that you watch a machine work, a jump cut is the one thing that reads as the
+   screen being redrawn rather than the instrument being driven.
+
+   What is tweened is deliberately small. The pan, the zoom, and a manual price scale are the
+   three things that are the SAME data seen through a different window, so interpolating them
+   is honest: every intermediate frame is a real view of real candles. The product and the
+   timeframe are not tweened and must not be, because the candles themselves change. Sliding
+   BTC's bars into SOL's would be an animation of something that never happened. Those two
+   clear the pane and let the existing waiting skeleton carry the gap, and the auto-fit in
+   src/chart.ts is what makes the new instrument land correctly scaled instead of off-axis.
+
+   Timing is the servo kind: quick off the mark, hard settle, no overshoot. There is no easing
+   token on this surface to borrow (--ease-out is basic-only) and none is introduced: this
+   lives in the canvas, alongside the drag and the wheel, which have always moved continuously
+   without reading as a second design language. */
+
+var CHART_TWEEN = null;
+var TWEEN_MS = 320;
+
+function easeServo(t) {
+  /* easeOutCubic. Reaches 90% in the first half, then settles. */
+  var u = 1 - t;
+  return 1 - u * u * u;
+}
+
+/* Only the three window fields, and only when both ends agree on the price mode. A change of
+   mode (auto to manual or back) snaps, because the two are different meanings of the axis and
+   a blend between them is not a view anyone asked for. */
+function startViewTween(next) {
+  if (!next) return false;
+  if (reducedMotion()) return false;
+  var from = CHART.view;
+  if (!from || from.product !== next.product) return false;
+  if (from.granularitySec !== next.granularitySec) return false;
+  var fromMode = from.priceScale ? from.priceScale.mode : 'auto';
+  var nextMode = next.priceScale ? next.priceScale.mode : 'auto';
+  if (fromMode !== nextMode) return false;
+
+  var manual = fromMode === 'manual';
+  var moved =
+    from.barCount !== next.barCount ||
+    from.panOffset !== next.panOffset ||
+    (manual && (from.priceScale.low !== next.priceScale.low || from.priceScale.high !== next.priceScale.high));
+  if (!moved) return false;
+
+  CHART_TWEEN = {
+    t0: (window.performance && performance.now ? performance.now() : Date.now()),
+    ms: TWEEN_MS,
+    manual: manual,
+    barCount0: from.barCount,
+    panOffset0: from.panOffset,
+    low0: manual ? from.priceScale.low : 0,
+    high0: manual ? from.priceScale.high : 0,
+    to: next
+  };
+  chartInvalidate(true);
+  return true;
+}
+
+/* Advances the clock and returns whether another frame is owed. The tween holds only the
+   START values plus the target: CHART.view is set to the target the moment the tween begins,
+   so anything that reads the view for a write (pushChart, chart_read) sees where the chart is
+   GOING, never a half-way number that was never a real request. */
+function tweenStep() {
+  if (!CHART_TWEEN) return false;
+  var now = window.performance && performance.now ? performance.now() : Date.now();
+  var t = (now - CHART_TWEEN.t0) / CHART_TWEEN.ms;
+  if (t >= 1) {
+    CHART_TWEEN = null;
+    CHART_DIRTY.scene = true;
+    return false;
+  }
+  CHART_DIRTY.scene = true;
+  return true;
+}
+
+/* The view buildLayout should draw this frame. Mid-tween it is a blend; otherwise it is just
+   the view. Nothing else in the file may read CHART.view for geometry, or the tween will draw
+   half its pane at the target and half at the start. */
+function tweenedView() {
+  if (!CHART_TWEEN) return CHART.view;
+  var now = window.performance && performance.now ? performance.now() : Date.now();
+  var raw = (now - CHART_TWEEN.t0) / CHART_TWEEN.ms;
+  var e = easeServo(raw < 0 ? 0 : raw > 1 ? 1 : raw);
+  var to = CHART_TWEEN.to;
+  var mix = function (a, b) {
+    return a + (b - a) * e;
+  };
+  var scale = { mode: 'auto' };
+  if (CHART_TWEEN.manual) {
+    scale = {
+      mode: 'manual',
+      low: mix(CHART_TWEEN.low0, to.priceScale.low),
+      high: mix(CHART_TWEEN.high0, to.priceScale.high)
+    };
+  }
+  return {
+    product: to.product,
+    granularitySec: to.granularitySec,
+    barCount: mix(CHART_TWEEN.barCount0, to.barCount),
+    panOffset: mix(CHART_TWEEN.panOffset0, to.panOffset),
+    priceScale: scale
+  };
 }
 
 /* The backing store is only reallocated when the element actually changed size. Doing it per
@@ -1368,6 +1492,12 @@ function applyChart(payload) {
      back. The server's answer to our own write is applied in pushChart, where it is an
      answer and not a race. */
   if (CHART_FIRST_LOAD || (payload.lastDriver === 'agent' && CHART_DRAG === null && CHART_PUSH === null)) {
+    /* The agent moving the chart is the one case worth animating, and the first load is the
+       one case that must not be: there is no previous window to travel from, only an empty
+       pane. startViewTween decides for itself whether the change is even animatable (same
+       instrument, same timeframe, same price mode) and returns false when it is not, so the
+       assignment below always happens and the tween is purely how it is drawn on the way. */
+    if (!CHART_FIRST_LOAD) startViewTween(payload.view);
     CHART.view = payload.view;
     CHART_FIRST_LOAD = false;
   } else if (chartIdentityDiffers(payload.view) && CHART_DRAG === null && CHART_PUSH === null && CHART_PUSH_WAIT === 0) {
@@ -1814,6 +1944,12 @@ function wireChart() {
   if (product) {
     product.addEventListener('change', function () {
       CHART.view.product = product.value;
+      /* The timeframe handler below has always reset the pan and this one never did, which is
+         half of why a symbol switch drew off-scale. The server drops both fields on a product
+         change now, but resetting here too means the pane is correct on the very first frame
+         rather than on the round trip back, and the tween has a sane place to start from. */
+      CHART.view.panOffset = 0;
+      CHART.view.priceScale = { mode: 'auto' };
       CHART.candles = [];
       chartInvalidate(true);
       void pushChart({});

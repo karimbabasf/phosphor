@@ -241,6 +241,11 @@ export function createChartStore(initialProduct: string): {
     const notes: string[] = [];
     const view = state.view;
 
+    // Set when THIS patch changes the instrument. The pan and the price scale carried in the
+    // same patch describe the instrument being left, so they are dropped below rather than
+    // applied on top of the reset this branch just did.
+    let switchedProduct = false;
+
     if (typeof patch.product === 'string' && patch.product.trim().length > 0) {
       const next = patch.product.trim().toUpperCase();
       if (next !== view.product) {
@@ -249,6 +254,7 @@ export function createChartStore(initialProduct: string): {
         // carries over except how many bars are on screen.
         view.panOffset = 0;
         view.priceScale = { mode: 'auto' };
+        switchedProduct = true;
       }
     }
 
@@ -294,8 +300,27 @@ export function createChartStore(initialProduct: string): {
       view.barCount = clamped;
     }
 
+    // The two fields below used to undo the product reset above, in the same call, because the
+    // browser pushes the WHOLE view on any change (ui/chart.js pushChart) and not a minimal
+    // patch. Switching BTC to SOL therefore arrived as {product:'SOL-USD', panOffset:300,
+    // priceLow:63000, priceHigh:64000}: the reset ran, then line-for-line the old instrument's
+    // window was written back over it. Two visible failures came out of that, and they are the
+    // two complaints about this chart.
+    //
+    //   Manual scale carried across. SOL trades near 150 and the axis still spanned 63k, so
+    //   every candle drew off the pane. This is "off-scale".
+    //
+    //   Stale pan carried across, which happens even in auto mode. Panned 300 bars back on
+    //   BTC and switched to a shorter SOL series, the right edge goes negative, start passes
+    //   end, no candle is scanned, and the domain falls through to the degenerate 0..1
+    //   fallback in buildLayout. This is "compressed".
+    //
+    // A patch that changes the instrument cannot also be describing that instrument's window,
+    // because the caller wrote it while looking at a different one. Dropped, with a note, so
+    // an agent that meant it can see why it did not take and ask again in a second call.
     if (typeof patch.panOffset === 'number' && Number.isFinite(patch.panOffset)) {
-      view.panOffset = clampPan(patch.panOffset, view.barCount);
+      if (switchedProduct) notes.push('panOffset ignored: it described the previous instrument');
+      else view.panOffset = clampPan(patch.panOffset, view.barCount);
     }
     if (patch.live === true) view.panOffset = 0;
 
@@ -305,7 +330,8 @@ export function createChartStore(initialProduct: string): {
       const low = Math.min(patch.priceLow, patch.priceHigh);
       const high = Math.max(patch.priceLow, patch.priceHigh);
       if (!(high > low)) return { ok: false, notes, error: 'priceHigh must be above priceLow' };
-      view.priceScale = { mode: 'manual', low, high };
+      if (switchedProduct) notes.push('price scale ignored: it described the previous instrument');
+      else view.priceScale = { mode: 'manual', low, high };
     }
 
     bump(source);

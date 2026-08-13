@@ -1461,6 +1461,14 @@ async function refreshState() {
     // Settled before the renders, not after: drawDonut asks whether the panel is still
     // waiting, and it must already have the answer by the time the wallet draws.
     settled('state');
+    /* The standing half of agent presence: what is open right now, as opposed to the
+       transitions the SSE channel carries. A window that loaded while a swap was already in
+       flight has never seen that swap's 'start' frame, and without this it would show a
+       machine at rest through the whole of it. MECHANISM.hydrate ignores this the moment a
+       live frame arrives, so a stale snapshot can never cancel a wind. */
+    if (typeof MECHANISM !== 'undefined' && MECHANISM && STATE && STATE.agents) {
+      MECHANISM.hydrate(STATE.agents.working || []);
+    }
     // Wallet first: the status bar reports its total.
     renderWallet(STATE);
     renderStatus(STATE);
@@ -1522,10 +1530,47 @@ function openEvents() {
     // A chart change from an agent. Our own writes come back with a revision we already
     // know, and chartPushed drops those rather than repainting over the hand.
     else if (payload.type === 'chart') chartPushed(payload.rev);
+    // What the agent is doing right now. Guarded because this page must still boot if
+    // mechanism.js failed to load: the machine is the one panel nothing else depends on.
+    else if (payload.type === 'agent' && payload.action) {
+      if (typeof MECHANISM !== 'undefined' && MECHANISM) MECHANISM.push(payload);
+    }
   });
 }
 
 /* ---------- wiring ---------- */
+
+/* Start a fresh agent in a new terminal, and take the seat off whatever held it.
+
+   The window could already STOP an agent in three ways and start one in none, so the first
+   step of using this product was leaving it. The confirm is not ceremony: the agent that gets
+   dropped may be mid-conversation, and losing that is not recoverable from here.
+
+   The response is not awaited for effect on this page. The seat change arrives as a state
+   push and the new agent announces itself on its first heartbeat, so the bar updates through
+   the same path it always does rather than through a special case for this button. */
+function wireSummon() {
+  var btn = document.getElementById('summon-btn');
+  if (!btn) return;
+  btn.addEventListener('click', async function () {
+    if (SUMMON_PENDING) return;
+    if (!window.confirm('Start a new agent in a terminal window? Any agent connected now is dropped and loses its conversation.')) return;
+    SUMMON_PENDING = true;
+    btn.disabled = true;
+    try {
+      var answer = await postJson('/api/summon', { token: TOKEN });
+      alertLine(answer && answer.dropped
+        ? 'new agent starting; dropped ' + answer.dropped
+        : 'new agent starting in a terminal window');
+    } catch (err) {
+      alertLine('summon failed: ' + (err.message || String(err)));
+    } finally {
+      SUMMON_PENDING = false;
+      btn.disabled = false;
+    }
+  });
+}
+var SUMMON_PENDING = false;
 
 function wireKill() {
   $('kill-btn').addEventListener('click', async function () {
@@ -1587,6 +1632,7 @@ async function boot() {
   // with nothing in it, and paint order is the whole feature.
   paintWaiting();
   wireKill();
+  wireSummon();
   wireCollapse();
   wireWallet();
   wireTabs();

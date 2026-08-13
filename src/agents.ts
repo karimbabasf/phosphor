@@ -25,7 +25,9 @@ export type AgentSeat = {
 };
 
 export type SeatOk = { ok: true; seat: AgentSeat; edge: boolean };
-export type SeatBusy = { ok: false; seat: AgentSeat; error: string };
+// `revoked` marks the one refusal an agent must not retry through. Every other busy answer
+// means "wait, somebody else is driving"; this one means "you have been replaced, stop".
+export type SeatBusy = { ok: false; seat: AgentSeat | null; error: string; revoked?: boolean };
 export type SeatResult = SeatOk | SeatBusy;
 
 export type AgentPresence = {
@@ -37,6 +39,11 @@ export type AgentPresence = {
   check(params: { session?: unknown; client?: unknown }): SeatResult;
   // A clean shutdown. Only the holder can release, so a stale bye cannot evict a live agent.
   release(session: unknown): AgentSeat | null;
+  // The human replacing the agent, from the window. Frees the seat AND revokes the session,
+  // which are two different things and both are needed: freeing alone would let the evicted
+  // proxy simply take the seat back on its next heartbeat, five seconds later, because a free
+  // seat is claimable by whoever asks first and it asks constantly.
+  evict(): AgentSeat | null;
   // Turns lazy expiry into an event. Returns the seat that just went cold, once.
   sweep(): AgentSeat | null;
   holder(): AgentSeat | null;
@@ -66,8 +73,15 @@ function ttlFrom(intervalMs: unknown): number {
   return Math.min(MAX_TTL_MS, Math.max(MIN_TTL_MS, Math.round(n * 2.5)));
 }
 
+// How long an evicted session stays refused. It only has to outlive the evicted proxy's own
+// exit, which happens on its very next heartbeat, so this is a wide margin and not a policy.
+// Bounded rather than permanent because a session id could in principle be reused by a fresh
+// process, and a map that only ever grows in a long-lived app is a leak.
+const REVOKE_MS = 300_000;
+
 export function createAgents(now: () => number = Date.now): AgentPresence {
   let seat: AgentSeat | null = null;
+  const revoked = new Map<string, number>();
 
   function expired(s: AgentSeat): boolean {
     return now() - Date.parse(s.lastSeen) >= s.ttlMs;
@@ -108,6 +122,26 @@ export function createAgents(now: () => number = Date.now): AgentPresence {
     // is refused while somebody else does.
     const session = clean(params.session, 'unnamed-session', 64);
     const client = clean(params.client, 'unnamed agent', 48);
+
+    // Checked before the seat, deliberately. An evicted session that arrives while the seat
+    // happens to be free must still be refused, or the replacement it was evicted for would
+    // lose the race to it: the old proxy is already pinging on a five second loop while the
+    // new terminal is still starting a shell.
+    const until = revoked.get(session);
+    if (until !== undefined) {
+      if (now() < until) {
+        return {
+          ok: false,
+          seat: null,
+          revoked: true,
+          error:
+            'this session has been replaced from the phosphor window. A newer agent now holds ' +
+            'the seat. Stop and let this connection close; do not retry.',
+        };
+      }
+      revoked.delete(session);
+    }
+
     const current = live();
     if (current === null) {
       return take(session, client, claiming ? ttlFrom(params.intervalMs) : DEFAULT_TTL_MS);
@@ -126,6 +160,17 @@ export function createAgents(now: () => number = Date.now): AgentPresence {
       if (current === null) return null;
       if (current.session !== clean(session, 'unnamed-session', 64)) return null;
       seat = null;
+      return current;
+    },
+    evict() {
+      const at = now();
+      for (const [session, until] of revoked) if (at >= until) revoked.delete(session);
+      const current = live();
+      // The seat is cleared whether or not anyone held it, so a summon always leaves a clean
+      // seat for the agent it is about to start.
+      const held = seat;
+      seat = null;
+      if (held !== null) revoked.set(held.session, at + REVOKE_MS);
       return current;
     },
     sweep() {

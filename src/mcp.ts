@@ -64,6 +64,14 @@ async function proxy(body: Record<string, unknown>) {
     // marker rather than on the status, because other 409s (a view change refused while a
     // human is deciding) are answers whose shape their callers depend on.
     const payload = json as { error?: unknown; seat?: unknown };
+    // Replaced from the window. This is the one refusal that is not an answer to the agent:
+    // the human has started a different agent on purpose and this process is meant to go
+    // away. Returning the sentence instead would leave a live MCP server attached to a
+    // conversation that no longer drives anything, which is exactly the state the summon
+    // button exists to end.
+    if (res.status === 409 && payload.seat === 'revoked') {
+      quitReplaced(typeof payload.error === 'string' ? payload.error : 'replaced from the phosphor window');
+    }
     if (res.status === 409 && payload.seat === 'busy' && typeof payload.error === 'string') {
       return textResult(payload.error);
     }
@@ -73,13 +81,36 @@ async function proxy(body: Record<string, unknown>) {
   }
 }
 
+/* Stop, because a newer agent now holds the seat.
+ *
+ * stderr and not stdout: stdout is the MCP transport and anything written there that is not a
+ * protocol frame corrupts the stream the client is parsing. The client shows stderr, so this
+ * is what the person in the old terminal actually reads.
+ *
+ * Exit 0, not an error code. Being replaced is the outcome the human asked for by pressing the
+ * button; a non-zero exit would have the client report a crashed MCP server and offer to
+ * restart it, which is the one thing that must not happen here. */
+function quitReplaced(reason: string): never {
+  process.stderr.write(`phosphor: ${reason}\n`);
+  process.exit(0);
+}
+
 async function sendHello(): Promise<void> {
   try {
-    await fetch(`${BASE_URL}/api/mcp`, {
+    const res = await fetch(`${BASE_URL}/api/mcp`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ op: 'hello', client: CLIENT, session: SESSION, intervalMs: HELLO_MS }),
     });
+    // The heartbeat is what makes an eviction land promptly: it runs every HELLO_MS whether or
+    // not the agent is doing anything, so a replaced session stops within one interval instead
+    // of lingering until the model happens to call a tool.
+    if (res.status === 409) {
+      const payload = (await res.json()) as { seat?: unknown; error?: unknown };
+      if (payload.seat === 'revoked') {
+        quitReplaced(typeof payload.error === 'string' ? payload.error : 'replaced from the phosphor window');
+      }
+    }
   } catch {
     // app not reachable yet; the next heartbeat tries again
   }

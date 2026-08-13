@@ -717,3 +717,38 @@
 
   .ovbar { row-gap: 2px; }
 }
+
+/* ---------- the panel the agent is working on ----------
+
+   Set by markTargetPanel in trade.js for exactly as long as an agent action against this panel
+   is open, which is an unpredictable length: the model thinks in another process and the work
+   behind a call can be a chain round trip. So this is a loop with no duration, stopped by an
+   event, and it reuses `waiting` from style.css rather than introducing a keyframe. That
+   keyframe is steps(1) two-state opacity, which is the entire motion vocabulary of this
+   surface, and the alternative (a fade, a pulse, a border colour transition) would be the
+   first eased thing on the page. */
+
+.panel.armed > .frame-top {
+  color: var(--green-hi);
+  animation: waiting 1.2s steps(1) infinite;
+}
+
+/* A value the agent just changed, held bright for one beat by trade.js and then released. Not
+   an animation at all: a class goes on, a timer takes it off, and the colour is a token swap.
+   It is listed here beside the armed rule because the two are read together. */
+.grid td.changed,
+.rgrid dd.changed,
+.mechline .changed { color: var(--green-hi); }
+
+@media (prefers-reduced-motion: reduce) {
+  /* style.css and basic.css both enumerate their animated selectors rather than wildcarding,
+     so anything added here is unguarded until it is named here too. The mark itself stays:
+     losing the blink must not lose the information about which panel is under the agent's
+     hand, so the frame title simply holds bright instead of blinking. */
+  .panel.armed > .frame-top { animation: none; }
+}
+
+/* A tape line inside its freshness hold. See markFresh in trade.js for why this is a held
+   colour and not a blink: a fill is the expected outcome of something you asked for, and an
+   alarm grammar on an expected outcome trains the eye to ignore it. */
+.grid tr.fresh td { color: var(--green-hi); }

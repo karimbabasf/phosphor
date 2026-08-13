@@ -43,6 +43,10 @@ import type { MarketData } from './market/index.ts';
 import type { TradeService } from './trade/service.ts';
 import { classify } from './composition.ts';
 import { buildWallet } from './wallet.ts';
+import { createAgentActionStore, targetFor } from './agent-action.ts';
+import type { ActionOutcome } from './agent-action.ts';
+import { summonAgent } from './summon.ts';
+import type { SummonOutcome } from './summon.ts';
 import type { AgentPresence } from './agents.ts';
 import { buildTransactions, createGasCache, evmCandidates } from './transactions.ts';
 import type { TxPlace } from './transactions.ts';
@@ -71,6 +75,9 @@ import { analysisHandlers } from './analysis/index.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_DIR = path.join(__dirname, '..', 'ui');
+// Where a summoned agent is started. Derived from this file's own location and never from a
+// request: see the security note at the top of src/summon.ts.
+const PROJECT_DIR = path.join(__dirname, '..');
 
 const HOST = '127.0.0.1';
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -179,17 +186,60 @@ export type ServerDeps = {
   getView: () => ViewMode;
   setView: (mode: ViewMode) => void;
   trade: TradeService;
+  // Injected only so a test can drive the summon route without a Terminal window opening on
+  // whoever is running the suite. Defaults to the real thing.
+  summon?: (cwd: string) => Promise<SummonOutcome>;
 };
 
 // http.Server plus an explicit push so the wiring layer can signal the UI after
 // a ledger refresh, which no store or audit subscription would otherwise catch.
-export type PhosphorServer = http.Server & { broadcastState(): void; broadcastCandles(): void };
+// broadcastTrade is on this surface because the venue feed is the one thing that changes the
+// trading window without anyone touching the app, and until it was exported the feed could
+// only reach the window through broadcastState, which the trading page does not listen to.
+export type PhosphorServer = http.Server & {
+  broadcastState(): void;
+  broadcastCandles(): void;
+  broadcastTrade(): void;
+};
 
 type JsonBody = Record<string, unknown>;
 type BodyResult = { ok: true; value: JsonBody } | { ok: false; error: string };
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+// One short line the window can print beside the machine: what this call changes, said before
+// the work runs. Only the fields that are legible at a glance, and only from arguments that
+// are already on the wire. Anything unrecognised returns '' and the window prints the label
+// alone, which is the honest fallback: a made-up summary of an unknown tool would be worse
+// than none on a surface that moves money.
+const DETAIL_CHARS = 56;
+
+function describeArgs(op: string, body: Record<string, unknown>): string {
+  const str = (k: string): string => (typeof body[k] === 'string' ? (body[k] as string) : '');
+  const num = (k: string): string => (typeof body[k] === 'number' ? String(body[k]) : '');
+  let out = '';
+  if (op === 'view') {
+    const parts: string[] = [];
+    if (str('product')) parts.push(str('product'));
+    if (num('granularitySec')) parts.push(`${num('granularitySec')}s`);
+    if (str('kind')) parts.push(str('kind'));
+    if (str('name')) parts.push(str('name'));
+    out = parts.join(' ');
+  } else if (op === 'propose') {
+    const parts: string[] = [];
+    if (str('coin') || str('symbol')) parts.push(str('coin') || str('symbol'));
+    if (str('side')) parts.push(str('side'));
+    if (num('size')) parts.push(num('size'));
+    if (num('usd')) parts.push(`$${num('usd')}`);
+    out = parts.join(' ');
+  } else if (op === 'set_view_mode') {
+    out = str('mode');
+  } else if (op === 'read') {
+    out = str('product') || str('coin') || '';
+  }
+  return out.length > DETAIL_CHARS ? `${out.slice(0, DETAIL_CHARS - 1)}…` : out;
 }
 
 function asRecord(value: unknown): JsonBody {
@@ -254,11 +304,22 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     res.write(`data: ${JSON.stringify(payload)}\n\n`);
   }
 
+  // LEADING edge, then a trailing sweep, for the same reason as the feed's own coalescer in
+  // src/trade/feed-ws.ts: trailing-only made the FIRST change of a quiet minute pay the full
+  // debounce, and the first change is the one someone is watching for. The burst cap is
+  // unchanged at one frame per STATE_DEBOUNCE_MS.
+  let statePending = false;
   function broadcastState(): void {
-    if (stateTimer !== null) return;
-    stateTimer = setTimeout(() => {
+    if (stateTimer !== null) {
+      statePending = true;
+      return;
+    }
+    for (const client of sseClients) sseSend(client, { type: 'state' });
+    stateTimer = setTimeout(function sweep() {
       stateTimer = null;
-      for (const client of sseClients) sseSend(client, { type: 'state' });
+      if (!statePending) return;
+      statePending = false;
+      broadcastState();
     }, STATE_DEBOUNCE_MS);
     stateTimer.unref();
   }
@@ -285,6 +346,18 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   }
 
   // A proposal reaching 'executed' is both a balance change and a new line in the history.
+  // What the agent is doing RIGHT NOW. Its own frame rather than a reuse of 'log': the log
+  // channel is consumed by appendLog on both pages, and piggybacking would tie the window's
+  // animation to the audit renderer, so a change to how a line reads would change how the
+  // machine moves. Never debounced. The whole point of this channel is that it is the first
+  // thing to arrive, and a coalescer would spend the only latency it has to give.
+  const agentActions = createAgentActionStore();
+  const offAgentActions = agentActions.subscribe((event) => {
+    for (const client of sseClients) {
+      sseSend(client, { type: 'agent', phase: event.phase, action: event.action });
+    }
+  });
+
   const offStore = store.subscribe(() => {
     broadcastState();
     broadcastTransactions();
@@ -473,6 +546,12 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       agents: {
         connected: agents.connected(),
         holder: agents.holder(),
+        // What the agent is doing at this instant, not what it has done. A window that
+        // reloads mid-action would otherwise show a machine at rest while a swap is still in
+        // flight, because the 'start' frame it needed went out before the page existed. The
+        // SSE channel carries the transitions; this carries the standing state, and a client
+        // needs both to be correct at any moment it happens to attach.
+        working: agentActions.open(),
       },
       candleProducts: cfg.candleProducts,
       view: getView(),
@@ -789,6 +868,31 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         tokenPresent: typeof body.token === 'string' && body.token.length > 0,
       });
       sendJson(res, parsed.ok ? 403 : 400, { error: parsed.ok ? 'invalid approval token' : reason });
+      return;
+    }
+
+    if (route === '/api/summon') {
+      /* Order matters and it is not the obvious one. The seat is taken away FIRST and the
+         terminal is opened second, because the old proxy heartbeats every five seconds and a
+         terminal takes longer than that to start a shell: open first and the outgoing agent
+         wins the race for the seat its replacement was summoned to take. */
+      const dropped = agents.evict();
+      if (dropped !== null) {
+        audit.append('agent_disconnected', `the human replaced ${dropped.client} from the window`, {
+          client: dropped.client,
+          since: dropped.since,
+          reason: 'summon',
+        });
+      }
+      broadcastState();
+      const outcome = await (deps.summon ?? summonAgent)(PROJECT_DIR);
+      if (!outcome.ok) {
+        audit.append('error', `summon failed: ${outcome.error}`, { reason: outcome.error });
+        sendJson(res, 500, { error: outcome.error, dropped: dropped?.client ?? null });
+        return;
+      }
+      audit.append('app_start', `summoned a new agent in ${outcome.how}`, { how: outcome.how });
+      sendJson(res, 200, { ok: true, how: outcome.how, dropped: dropped?.client ?? null });
       return;
     }
 
@@ -1523,8 +1627,20 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   // (every call gets the 409 and the reason), only the log is.
   const rejectedSessions = new Set<string>();
 
-  function rejectSeat(error: string, body: JsonBody, res: http.ServerResponse): void {
+  function rejectSeat(error: string, body: JsonBody, res: http.ServerResponse, revoked = false): void {
     const session = String(body.session ?? 'unnamed-session');
+    if (revoked) {
+      // A replaced agent is not a second agent that showed up: the human took the seat off it
+      // on purpose. It gets its own marker so the proxy exits instead of reporting a busy
+      // seat to a model that would then keep asking. Not deduplicated by session either,
+      // because there is exactly one of these per eviction.
+      audit.append('agent_disconnected', 'a replaced agent was refused and told to stop', {
+        op: String(body.op ?? ''),
+        client: body.client,
+      });
+      sendJson(res, 409, { error, seat: 'revoked' });
+      return;
+    }
     if (!rejectedSessions.has(session)) {
       rejectedSessions.add(session);
       audit.append('agent_rejected', 'a second agent tried to attach and was refused', {
@@ -1559,7 +1675,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       // dress a heartbeat up as some other event in the log column.
       const claim = agents.claim(body);
       if (!claim.ok) {
-        rejectSeat(claim.error, body, res);
+        rejectSeat(claim.error, body, res, claim.revoked === true);
         return;
       }
       if (claim.edge) audit.append('agent_connected', 'an agent attached to phosphor', body);
@@ -1585,7 +1701,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     // counted as connected, and something has to be attached for a tool call to exist.
     const seat = agents.check(body);
     if (!seat.ok) {
-      rejectSeat(seat.error, body, res);
+      rejectSeat(seat.error, body, res, seat.revoked === true);
       return;
     }
     if (seat.edge) audit.append('agent_connected', 'an agent attached to phosphor', body);
@@ -1605,23 +1721,41 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     // Contract: every op that reads, proposes or moves the window is audit-logged
     // before dispatch, arguments included verbatim.
     audit.append('tool_call', `agent: ${capLabel(label)}`, body);
-    if (op === 'read') {
-      await handleRead(body, res);
-      return;
+
+    // The window starts moving HERE, before a single line of the work is dispatched. This is
+    // the earliest instant Phosphor can possibly know an agent intends something: the MCP
+    // server is a stdio proxy, so the model's own thinking happens in another process and
+    // arrives already finished, as one whole call. There is nothing before this to show.
+    //
+    // Which is exactly why the animation must not be timed. It winds while the action is
+    // open and releases on the settle below, so a 200ms read and an 8s swap wear the same
+    // choreography and neither of them looks wrong.
+    const action = agentActions.begin({
+      op,
+      tool: String(body.tool ?? body.kind ?? body.mode ?? '?'),
+      label: capLabel(label),
+      target: targetFor(op, String(body.tool ?? ''), String(body.kind ?? '')),
+      detail: describeArgs(op, body),
+    });
+    // The four handlers each return on their own and there is no chokepoint on the way out,
+    // so the settle is a finally. An action that winds and never releases is worse than one
+    // that never started, and a handler that throws is precisely when that would happen.
+    let outcome: ActionOutcome = 'ok';
+    try {
+      if (op === 'read') return await handleRead(body, res);
+      if (op === 'propose') return await handlePropose(body, res);
+      if (op === 'view') return await handleView(body, res);
+      if (op === 'set_view_mode') return handleSetViewMode(body, res);
+      outcome = 'refused';
+      sendJson(res, 400, {
+        error: `unknown op: ${op}. known ops: hello, bye, read, propose, view, set_view_mode`,
+      });
+    } catch (err) {
+      outcome = 'error';
+      throw err;
+    } finally {
+      agentActions.end(action, outcome);
     }
-    if (op === 'propose') {
-      await handlePropose(body, res);
-      return;
-    }
-    if (op === 'view') {
-      await handleView(body, res);
-      return;
-    }
-    if (op === 'set_view_mode') {
-      handleSetViewMode(body, res);
-      return;
-    }
-    sendJson(res, 400, { error: `unknown op: ${op}. known ops: hello, bye, read, propose, view, set_view_mode` });
   }
 
   // ---------- dispatch ----------
@@ -1656,7 +1790,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         if (route === '/api/chart') return await handleChartWrite(req, res);
         if (route === '/api/trade') return await handleTradeWrite(req, res);
         if (route === '/api/trade/action') return await handleTradeAction(req, res);
-        if (route === '/api/approve' || route === '/api/refuse' || route === '/api/kill') {
+        if (route === '/api/approve' || route === '/api/refuse' || route === '/api/kill' || route === '/api/summon') {
           return await handleMutation(route, req, res);
         }
         return sendJson(res, 404, { error: `unknown route: ${route}` });
@@ -1701,5 +1835,5 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   };
   base.listen = localOnlyListen as unknown as typeof base.listen;
 
-  return Object.assign(base, { broadcastState, broadcastCandles });
+  return Object.assign(base, { broadcastState, broadcastCandles, broadcastTrade });
 }

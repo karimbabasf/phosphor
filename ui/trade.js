@@ -1184,7 +1184,12 @@ function renderHistory(p) {
     return b.at - a.at;
   });
   if (entries.length > HISTORY_MAX_ROWS) entries.length = HISTORY_MAX_ROWS;
-  for (var j = 0; j < entries.length; j++) rows.appendChild(historyRow(entries[j], p));
+  markFresh(entries);
+  for (var j = 0; j < entries.length; j++) {
+    var row = historyRow(entries[j], p);
+    if (isFresh(entries[j])) row.classList.add('fresh');
+    rows.appendChild(row);
+  }
 
   var empty = $('t-history-empty');
   if (empty) {
@@ -1193,6 +1198,58 @@ function renderHistory(p) {
     empty.hidden = entries.length > 0;
   }
   if (!entries.length && !empty) rows.appendChild(spanRow(HISTORY_COLS, 'Nothing yet.', 'hrow note'));
+}
+
+/* A line that just landed, held bright for a beat.
+
+   This tape is rebuilt whole on every render and, since the feed started driving the trading
+   channel, that is now several times a second on a moving market. So freshness cannot be "was
+   it in the last render": the row would flash for one frame and be gone. It is held on a clock
+   instead, keyed by the entry, and every rebuild in that window redraws it bright.
+
+   Deliberately not an animation. The grammar here is steps(1) opacity and there was a version
+   of this that blinked; a fill blinking on a tape reads as an alarm, and a fill is not an
+   alarm, it is the normal outcome of the thing you asked for. A brightness tier held and then
+   released says "this is new" once, in the vocabulary the rest of the page already uses. */
+var FRESH_MS = 1400;
+var FRESH_UNTIL = {};
+var FRESH_SEEN_AT = 0;
+var FRESH_TIMER = null;
+
+function freshKey(entry) {
+  return String(entry.at) + '|' + (entry.kind || '') + '|' + (entry.market || '');
+}
+
+function markFresh(entries) {
+  var now = Date.now();
+  var newest = FRESH_SEEN_AT;
+  for (var i = 0; i < entries.length; i++) {
+    var at = entries[i].at;
+    if (at > newest) newest = at;
+    /* Only entries that appeared AFTER the last thing this window had already seen. Without
+       this the first render after a reload would light the whole tape. */
+    if (FRESH_SEEN_AT > 0 && at > FRESH_SEEN_AT) FRESH_UNTIL[freshKey(entries[i])] = now + FRESH_MS;
+  }
+  FRESH_SEEN_AT = newest;
+
+  var live = false;
+  for (var key in FRESH_UNTIL) {
+    if (!Object.prototype.hasOwnProperty.call(FRESH_UNTIL, key)) continue;
+    if (FRESH_UNTIL[key] <= now) delete FRESH_UNTIL[key];
+    else live = true;
+  }
+  /* One render is owed after the last hold expires, or the newest line would stay bright until
+     something else happened to redraw the tape. */
+  if (live && FRESH_TIMER === null) {
+    FRESH_TIMER = window.setTimeout(function () {
+      FRESH_TIMER = null;
+      renderHistory(PAYLOAD);
+    }, FRESH_MS + 60);
+  }
+}
+
+function isFresh(entry) {
+  return FRESH_UNTIL[freshKey(entry)] > Date.now();
 }
 
 /* The audit tail arrives whole on a refresh and one line at a time over SSE. Both land in the
@@ -1431,6 +1488,13 @@ async function refreshState() {
     followViewMode(POLICY);
     renderKill(POLICY);
     renderGate(POLICY);
+    /* The standing half of agent presence. The SSE channel carries the transitions and this
+       carries the state, and a window that attached mid-action has only ever seen the second
+       one: without this a reload during a swap shows a machine at rest while the swap is
+       still running, which is the one lie this panel exists to prevent. */
+    if (typeof MECHANISM !== 'undefined' && MECHANISM && POLICY && POLICY.agents) {
+      MECHANISM.hydrate(POLICY.agents.working || []);
+    }
     // The mandate empty line names the kill switch when the kill switch is the reason.
     renderMandates(PAYLOAD);
   } catch (err) {
@@ -1512,19 +1576,104 @@ function openEvents() {
     // A chart change from an agent. Our own writes come back with a revision we already know,
     // and chartPushed drops those rather than repainting over the hand.
     else if (payload.type === 'chart') chartPushed(payload.rev);
+    // What the agent is doing right now, as opposed to what it has already done. The
+    // mechanism owns the animation; this page only forwards and marks the target panel.
+    else if (payload.type === 'agent' && payload.action) agentPushed(payload);
   });
-  // The spec names the event 'trade' and the pro page's channel puts the kind in the JSON
-  // body. Both are accepted, because a surface that silently stops updating is the one
-  // failure this page cannot have.
-  stream.addEventListener('trade', function () {
-    refreshTrade();
-  });
+  // There was a second listener here for a NAMED 'trade' event, described as a belt-and-braces
+  // path in case the JSON body one stopped firing. It could never have fired: the server
+  // writes bare `data:` frames with no `event:` field (src/server.ts sseSend), so every frame
+  // arrives as 'message' and a named listener is unreachable. Removed rather than left in
+  // place, because a fallback that cannot run is worse than none: it reads as covered.
+}
+
+/* The mechanism is a separate module so this file keeps its one job, which is the panels.
+   Guarded because trade.js must still boot if mechanism.js failed to load. */
+function agentPushed(payload) {
+  if (typeof MECHANISM !== 'undefined' && MECHANISM && typeof MECHANISM.push === 'function') {
+    MECHANISM.push(payload);
+  }
+  markTargetPanel(payload);
+}
+
+/* Which panel the agent is currently acting on, said on the panel itself.
+
+   The mechanism shows THAT something is happening; this shows WHERE. Without it a person
+   reads the machine, learns an order is in flight, and then has to work out for themselves
+   which of the five boxes is about to change.
+
+   The whole effect is one class, and the class only re-times the `waiting` keyframe that
+   style.css already owns. No transition, no transform, no new easing: the frame title of the
+   target panel blinks on the same steps(1) two-state opacity every other waiting thing on
+   this surface uses. That is the grammar, and matching it is why this reads as the same
+   product rather than a second design language bolted on.
+
+   'read' and 'view' are deliberately unmapped. Seventeen of the thirty-six tools are reads,
+   several fire per turn, and a frame that strobes on every balance check trains the eye to
+   ignore the one that matters. */
+var TARGET_PANELS = {
+  chart: 'panel-chart',
+  order: 'panel-tbook',
+  policy: 'panel-trisk',
+  account: 'panel-trisk'
+};
+var ARMED = {};
+
+function markTargetPanel(payload) {
+  var action = payload.action;
+  var id = TARGET_PANELS[action.target];
+  if (!id) return;
+  var el = document.getElementById(id) || document.querySelector('.' + id);
+  if (!el) return;
+
+  if (payload.phase === 'start') {
+    ARMED[id] = (ARMED[id] || 0) + 1;
+    el.classList.add('armed');
+    return;
+  }
+  /* Counted rather than toggled: two agent actions can be open on one panel at once, and a
+     plain toggle would have the first settle turn the mark off while the second is still
+     running. */
+  ARMED[id] = Math.max(0, (ARMED[id] || 1) - 1);
+  if (ARMED[id] === 0) el.classList.remove('armed');
 }
 
 /* ---------- wiring ---------- */
 
 /* Listeners are attached once, to parents that outlive every redraw. The rows underneath are
    rebuilt on every event and carry no listeners of their own. */
+
+/* Start a fresh agent in a new terminal, and take the seat off whatever held it.
+
+   The window could already STOP an agent in three ways and start one in none, so the first
+   step of using this product was leaving it. The confirm is not ceremony: the agent that gets
+   dropped may be mid-conversation, and losing that is not recoverable from here.
+
+   The response is not awaited for effect on this page. The seat change arrives as a state
+   push and the new agent announces itself on its first heartbeat, so the bar updates through
+   the same path it always does rather than through a special case for this button. */
+function wireSummon() {
+  var btn = document.getElementById('summon-btn');
+  if (!btn) return;
+  btn.addEventListener('click', async function () {
+    if (SUMMON_PENDING) return;
+    if (!window.confirm('Start a new agent in a terminal window? Any agent connected now is dropped and loses its conversation.')) return;
+    SUMMON_PENDING = true;
+    btn.disabled = true;
+    try {
+      var answer = await postJson('/api/summon', { token: TOKEN });
+      alertLine(answer && answer.dropped
+        ? 'new agent starting; dropped ' + answer.dropped
+        : 'new agent starting in a terminal window');
+    } catch (err) {
+      alertLine('summon failed: ' + (err.message || String(err)));
+    } finally {
+      SUMMON_PENDING = false;
+      btn.disabled = false;
+    }
+  });
+}
+var SUMMON_PENDING = false;
 
 function wireKill() {
   var btn = $('kill-btn');
@@ -1670,6 +1819,7 @@ function wireResize() {
 async function boot() {
   applyCollapse();
   wireKill();
+  wireSummon();
   wireCollapse();
   wireRows('t-book-rows');
   wireRows('t-mandate-list');

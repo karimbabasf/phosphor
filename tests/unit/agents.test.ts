@@ -136,3 +136,74 @@ test('a re-hello from the holder may change its name but never the seat it holds
   assert.equal(again.ok && again.seat.since, since, 'the session did not start again');
   assert.equal(agents.holder()?.client, 'claude-code v2');
 });
+
+// Eviction: the human replacing the agent from the window.
+//
+// Freeing the seat is the obvious half and it is not enough on its own. The evicted proxy
+// heartbeats every five seconds and a terminal takes longer than that to start a shell, so a
+// seat that is merely free gets taken straight back by the agent that was just replaced.
+test('evict frees the seat and reports who was dropped', () => {
+  const { agents } = clockFrom(1000);
+  agents.claim({ session: 'old', client: 'claude-code', intervalMs: 5000 });
+  const dropped = agents.evict();
+  assert.equal(dropped?.client, 'claude-code');
+  assert.equal(agents.connected(), 0);
+  assert.equal(agents.holder(), null);
+});
+
+test('an evicted session is refused even though the seat is now free', () => {
+  const { agents } = clockFrom(1000);
+  agents.claim({ session: 'old', client: 'claude-code', intervalMs: 5000 });
+  agents.evict();
+  const again = agents.claim({ session: 'old', client: 'claude-code', intervalMs: 5000 });
+  assert.equal(again.ok, false);
+  assert.equal(again.ok === false && again.revoked, true);
+  assert.equal(agents.connected(), 0, 'and it did not take the seat back');
+});
+
+test('the replacement gets the seat, and is not blocked by the eviction', () => {
+  const { agents } = clockFrom(1000);
+  agents.claim({ session: 'old', client: 'claude-code', intervalMs: 5000 });
+  agents.evict();
+  const fresh = agents.claim({ session: 'new', client: 'claude-code', intervalMs: 5000 });
+  assert.equal(fresh.ok, true);
+  assert.equal(agents.holder()?.session, 'new');
+});
+
+test('an ordinary op from an evicted session is refused too, not just a hello', () => {
+  // check() is the path every tool call takes. If only claim() were guarded, a replaced agent
+  // could keep working as long as it never said hello again.
+  const { agents } = clockFrom(1000);
+  agents.claim({ session: 'old', client: 'claude-code', intervalMs: 5000 });
+  agents.evict();
+  const op = agents.check({ session: 'old', client: 'claude-code' });
+  assert.equal(op.ok, false);
+  assert.equal(op.ok === false && op.revoked, true);
+});
+
+test('a revoked session is forgiven once its window passes', () => {
+  // Bounded rather than permanent: a session id could be reused by a fresh process, and a map
+  // that only grows in a long-lived app is a leak.
+  const { agents, advance } = clockFrom(1000);
+  agents.claim({ session: 'old', client: 'claude-code', intervalMs: 5000 });
+  agents.evict();
+  advance(300_001);
+  const later = agents.claim({ session: 'old', client: 'claude-code', intervalMs: 5000 });
+  assert.equal(later.ok, true);
+});
+
+test('evicting an empty seat is not an error and still leaves it claimable', () => {
+  const { agents } = clockFrom(1000);
+  assert.equal(agents.evict(), null);
+  assert.equal(agents.claim({ session: 'new', client: 'x', intervalMs: 5000 }).ok, true);
+});
+
+test('a busy refusal is NOT marked revoked, because that one is worth retrying', () => {
+  // The proxy exits on `revoked` and reports a sentence on `busy`. Conflating them would have
+  // a second agent kill itself for arriving at a bad moment.
+  const { agents } = clockFrom(1000);
+  agents.claim({ session: 'a', client: 'first', intervalMs: 5000 });
+  const second = agents.claim({ session: 'b', client: 'second', intervalMs: 5000 });
+  assert.equal(second.ok, false);
+  assert.equal(second.ok === false && second.revoked, undefined);
+});
