@@ -83,7 +83,18 @@ const MIME: Record<string, string> = {
 };
 
 const CHAINS: readonly string[] = ['eth', 'base', 'arb', 'sol', 'near'];
-const PROPOSE_KINDS: readonly string[] = ['consolidate', 'policy_change', 'swap', 'hl_deposit', 'lp_add', 'lp_remove'];
+// Display only: this feeds the "unknown propose kind" error message and gates nothing, so a
+// kind missing here is a misleading error rather than a dead tool. Keep it in step with the
+// if-chain in the propose handler anyway, since the message is how a caller finds the typo.
+const PROPOSE_KINDS: readonly string[] = [
+  'consolidate',
+  'policy_change',
+  'swap',
+  'hl_deposit',
+  'intents_deposit',
+  'lp_add',
+  'lp_remove',
+];
 const READ_TOOLS: readonly string[] = [
   'balances',
   'composition',
