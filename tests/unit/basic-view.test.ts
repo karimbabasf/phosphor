@@ -588,3 +588,31 @@ test('what happened lists only finished things, newest first, and is capped', ()
 test('nothing has happened yet is a state, not an empty box', () => {
   assert.deepEqual(buildBasic(baseInput()).recent, []);
 });
+
+// A draft can legitimately price at zero (nothing left to consolidate, which is then
+// refused). The first version substituted the word "money" for the missing figure and
+// rendered "gathering money of your US dollars (USDT) onto Ethereum" onto a live screen.
+// Every kind runs through amountClause now, which drops the clause instead.
+test('a zero-priced draft drops the money clause rather than wording around it', () => {
+  const kinds: WriteDraft[] = [
+    swapDraft({ amountUsd: 0 }),
+    { kind: 'consolidate', symbol: 'USDT', toChain: 'eth', totalUsd: 0, legs: [] } as unknown as WriteDraft,
+    { kind: 'hl_deposit', chain: 'arb', symbol: 'USDC', amount: 0, amountUsd: 0, bridge: ROUTER, from: SELF } as unknown as WriteDraft,
+  ];
+
+  for (const draft of kinds) {
+    for (const status of ['executed', 'refused', 'policy_refused'] as const) {
+      const v = buildBasic(baseInput({ proposals: [proposal({ draft, status, decidedAt: T1 })] }));
+      const line = v.recent[0]!.headline;
+      assert.doesNotMatch(line, /money of your/, `not English: ${line}`);
+      assert.doesNotMatch(line, /\$0\.00/, `a zero is the absence of an amount, not one: ${line}`);
+      assert.ok(line.trim().length > 0);
+    }
+  }
+
+  // And the clause is still there when there is a real figure to state.
+  const priced = buildBasic(
+    baseInput({ proposals: [proposal({ draft: swapDraft({ amountUsd: 105 }), status: 'executed', decidedAt: T1 })] }),
+  );
+  assert.match(priced.recent[0]!.headline, /\$105\.00 of your/);
+});

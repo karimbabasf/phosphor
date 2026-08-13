@@ -370,31 +370,37 @@ function buildPrice(reading: PriceReading): BasicPrice | null {
 
 // ---------- what happened ----------
 
+// Both of these run every figure through amountClause, the helper written further up for
+// exactly this: a draft can legitimately price at zero, and the money clause is DROPPED
+// rather than replaced with a word. Substituting "money" was tried and shipped a sentence
+// reading "gathering money of your US dollars (USDT) onto Ethereum", which is not English.
+// Found by reading the rendered screen with real refusals on it, not from the object.
+
 // Past tense, for something that actually happened.
 function didHeadline(draft: WriteDraft, amountUsd: number): string {
-  const amt = amountUsd > 0 ? money(amountUsd) : 'money';
+  const amt = amountClause(amountUsd);
   if (draft.kind === 'swap') {
-    return `Changed ${amt} of your ${plainSymbol(draft.fromSymbol)} into ${plainSymbol(draft.toSymbol)}.`;
+    return `Changed ${amt}your ${plainSymbol(draft.fromSymbol)} into ${plainSymbol(draft.toSymbol)}.`;
   }
-  if (draft.kind === 'hl_deposit') return `Moved ${amt} to your Hyperliquid trading account.`;
-  if (draft.kind === 'lp_add') return `Put ${amt} into a Uniswap pool.`;
+  if (draft.kind === 'hl_deposit') return `Moved ${amt}your ${plainSymbol(draft.symbol)} to your Hyperliquid trading account.`;
+  if (draft.kind === 'lp_add') return `Put ${amt}your money into a Uniswap pool.`;
   if (draft.kind === 'lp_remove') return 'Took money back out of a Uniswap pool.';
-  if (draft.kind === 'consolidate') return `Gathered ${amt} of your ${plainSymbol(draft.symbol)} onto ${plainChain(draft.toChain)}.`;
-  if (draft.kind === 'transfer') return `Sent ${amt} to another address.`;
+  if (draft.kind === 'consolidate') return `Gathered ${amt}your ${plainSymbol(draft.symbol)} onto ${plainChain(draft.toChain)}.`;
+  if (draft.kind === 'transfer') return `Sent ${amt}your ${plainSymbol(draft.leg.symbol)} to another address.`;
   return 'Changed one of your safety rules.';
 }
 
 // The same action as a thing that did NOT happen, so a refusal never reads as a receipt.
 function wantedPhrase(draft: WriteDraft, amountUsd: number): string {
-  const amt = amountUsd > 0 ? money(amountUsd) : 'money';
+  const amt = amountClause(amountUsd);
   if (draft.kind === 'swap') {
-    return `changing ${amt} of your ${plainSymbol(draft.fromSymbol)} into ${plainSymbol(draft.toSymbol)}`;
+    return `changing ${amt}your ${plainSymbol(draft.fromSymbol)} into ${plainSymbol(draft.toSymbol)}`;
   }
-  if (draft.kind === 'hl_deposit') return `moving ${amt} to your Hyperliquid trading account`;
-  if (draft.kind === 'lp_add') return `putting ${amt} into a Uniswap pool`;
+  if (draft.kind === 'hl_deposit') return `moving ${amt}your ${plainSymbol(draft.symbol)} to your Hyperliquid trading account`;
+  if (draft.kind === 'lp_add') return `putting ${amt}your money into a Uniswap pool`;
   if (draft.kind === 'lp_remove') return 'taking money back out of a Uniswap pool';
-  if (draft.kind === 'consolidate') return `gathering ${amt} of your ${plainSymbol(draft.symbol)} onto ${plainChain(draft.toChain)}`;
-  if (draft.kind === 'transfer') return `sending ${amt} to another address`;
+  if (draft.kind === 'consolidate') return `gathering ${amt}your ${plainSymbol(draft.symbol)} onto ${plainChain(draft.toChain)}`;
+  if (draft.kind === 'transfer') return `sending ${amt}your ${plainSymbol(draft.leg.symbol)} to another address`;
   return 'changing one of your safety rules';
 }
 

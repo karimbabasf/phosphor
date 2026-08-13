@@ -1,6 +1,6 @@
 {
- "stamp": "bd60d326546d0f7c",
- "iteration": 11,
+ "stamp": "bd28b6cc2e1b8fd9",
+ "iteration": 12,
  "firstFive": {
   "what": "A terminal control panel for a crypto wallet held across five chains, with a red bar across the top saying every proposal is auto-approving because the approval gate is off on testnet",
   "who": "The owner of the funds, supervising what a connected AI agent is allowed to do with them",
@@ -255,7 +255,8 @@
   "basic asking (redesign)": "Calm bar goes 10px amber and breathes. Balance drops to ~2.6rem, the question box takes the page with facts, both destinations in full, YES and NO at equal visual weight. Screenshotted at 1440 and 390 and read",
   "basic gate disabled (redesign)": "Calm bar goes 14px red. Headline says the money is not protected, the warning box says the app moves money without asking. The two are no longer the same sentence, which is a bug this pass found and fixed",
   "basic empty wallet": "'Nothing yet.' under What you own, sections that have nothing to say stay hidden rather than drawing empty boxes",
-  "basic at 390": "Buttons stack, addresses wrap inside their block, price value drops to its own line and its change line follows it left. No horizontal scroll"
+  "basic at 390": "Buttons stack, addresses wrap inside their block, price value drops to its own line and its change line follows it left. No horizontal scroll",
+  "basic what happened populated": "Read at 1440 with four real refusals on it from the e2e run. This is the render that caught the zero-priced draft reading 'gathering money of your US dollars (USDT) onto Ethereum', which no test and no audit channel had flagged because every fixture priced above zero. Now 'gathering your US dollars (USDT) onto Ethereum' and covered by a test"
  },
  "driven": {
   "how": "real pointer input through playwright against the running app at 1440x900, reading CHART.view before and after each gesture, not synthetic events",
@@ -270,7 +271,8 @@
    "The question box rendered EMPTY with two live buttons in it. The hidden attribute is a UA display:none and .basic-ask sets display:flex, which beats it. On an approval screen this is the worst available bug and no automated channel caught it",
    "A black band below the fold: style.css pins html and body to 100% height with overflow hidden for the pro deck, so a scrolling basic document painted the terminal ground under itself",
    "The headline and the warning box were the same sentence written twice. Invisible on the old dense screen, reads as a rendering fault once there is space around it. Fixed in the copy and now covered by a test",
-   "Quantity and value were 12px apart and both right aligned, so a dollar holding rendered '1,204.00 $1,204.00' and looked like a duplicated number"
+   "Quantity and value were 12px apart and both right aligned, so a dollar holding rendered '1,204.00 $1,204.00' and looked like a duplicated number",
+   "A zero-priced draft substituted the word 'money' for the missing figure and produced 'gathering money of your US dollars (USDT) onto Ethereum'. The file already had amountClause for this, which drops the clause instead of wording around it. Every kind runs through it now"
   ],
   "price tracker": "Polled server-side every 30s into a cache, because buildState is synchronous and every caller depends on that. A failed poll clears the cache rather than leaving the last good figure on screen"
  },
