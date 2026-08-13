@@ -476,6 +476,10 @@ function drawScene() {
   // After the levels so a zone's fill sits under the horizontal lines rather than washing
   // them out, and before the panes so nothing leaks into a sub-pane's box.
   drawDrawings(ctx, L);
+  // The trading page's account overlays: entries, liquidation, the mandate wall, working
+  // orders, fills. Defined in ui/trade-overlay.js, which only the trading page loads, so on
+  // the pro page this is one typeof check and the chart is exactly what it was before.
+  if (typeof drawTradeOverlays === 'function') drawTradeOverlays(ctx, L);
   drawPanes(ctx, L);
   drawAxisFrame(ctx, L);
 }
