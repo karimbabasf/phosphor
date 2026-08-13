@@ -144,6 +144,16 @@ function setKill(on: boolean): void {
   p.killSwitch = on;
   savePolicy(cfg.dataDir, p);
   audit.append('kill_switch', on ? 'kill switch ON: all writes refused' : 'kill switch off');
+
+  // Stop what is already running, not just what tries to start next.
+  //
+  // The switch used to be consulted only when a mandate armed, so flipping it while a bot held
+  // a position refused future proposals and left the bot trading: the one situation a kill
+  // switch exists for. Both paths run, because they fail differently. setKilled asks the child
+  // to flatten and stop, which is the clean exit and needs the child to be healthy. stopAll
+  // does not care whether it is healthy and takes the process out regardless.
+  runner.setKilled(on);
+  if (on) void runner.stopAll('kill switch');
 }
 
 const server = createServer({

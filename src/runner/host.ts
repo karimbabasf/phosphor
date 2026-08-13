@@ -41,6 +41,7 @@ export type HostDeps = {
 
 export function createRunnerHost(deps: HostDeps): MandateRunner & {
   stopAll(reason: string): Promise<void>;
+  setKilled(on: boolean): void;
   events(): RunnerEvent[];
 } {
   let child: ChildProcess | null = null;
@@ -127,6 +128,13 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
           if (doomed.connected || doomed.exitCode === null) doomed.kill('SIGKILL');
         }, 3000).unref();
       }
+    },
+
+    // Pushed to the child so its supervisor sees the switch every tick. stopAll is still the
+    // one that guarantees the outcome, because it does not depend on the child being healthy;
+    // this makes the child stop cleanly and flat when it IS healthy, which is the better exit.
+    setKilled(on: boolean): void {
+      if (child !== null && child.connected) child.send({ cmd: 'kill', on });
     },
 
     status: () => ({

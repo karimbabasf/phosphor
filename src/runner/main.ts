@@ -21,6 +21,7 @@
 // the position AND keeps the maintenance margin, so getting out early is worth real money.
 
 import { checkEnvelope } from '../strategy/envelope.ts';
+import { programHash } from '../strategy/grammar.ts';
 import type { Mandate, RunState } from '../strategy/envelope.ts';
 import { emptyMemory, evaluate } from '../strategy/evaluate.ts';
 import type { MarketState, RuleMemory } from '../strategy/evaluate.ts';
@@ -45,10 +46,22 @@ type Armed = {
   prevMarkPx: number;
   ordersInLastMin: number[];  // timestamps, trimmed to the trailing minute
   realisedUsd: number;
+  // Notional this runner has ORDERED but the feed has not confirmed yet.
+  //
+  // Without it the cap is bypassable inside a single tick: several rules can fire together,
+  // each envelope check reads positionUsd from the book, and the book only moves when the
+  // venue answers. Three opens of $500 against a $1,000 cap all saw a flat position and all
+  // passed. Counting what is already in flight is what makes the cap mean the same thing on
+  // the first order of a tick and the third.
+  inFlightUsd: number;
+  // The leverage this runner has actually SET on the venue, as opposed to the number in the
+  // program. Null until it has been set once.
+  venueLeverage: number | null;
 };
 
 const armed = new Map<string, Armed>();
 let stopping = false;
+let killed = false;
 
 function send(e: unknown): void {
   if (typeof process.send === 'function') process.send(e);
@@ -78,13 +91,17 @@ function runState(a: Armed, symbol: string): RunState {
     nowMs: Date.now(),
     armedAtMs: a.armedAtMs,
     symbol,
-    positionUsd: b?.positionUsd ?? 0,
+    positionUsd: (b?.positionUsd ?? 0) + a.inFlightUsd,
     positionSide: b?.positionSide ?? 'flat',
     entryAtMs: a.entryAtMs,
     realisedUsd: a.realisedUsd,
     unrealisedUsd: b?.unrealisedUsd ?? 0,
     ordersInLastMin: a.ordersInLastMin.length,
-    programHash: a.mandate.programHash,
+    // Hashed from the program this process is HOLDING, not copied off the mandate. Copying
+    // it made the identity check compare the mandate to itself, so it could never fail and
+    // defended nothing. This is what makes "the thing running is the thing that was read"
+    // an assertion rather than a comment.
+    programHash: programHash(a.program),
   };
 }
 
@@ -120,6 +137,16 @@ async function place(a: Armed, symbol: string, action: Action): Promise<void> {
   // resting limit. There is no market order on a book: the aggressive form is a bound, and a
   // fill worse than the bound simply does not happen.
   if (action.do === 'open' || action.do === 'add') {
+    // The borrowed multiple the human approved has to be the one the venue uses. It is an
+    // ACCOUNT setting there, not an order field, so an order placed without setting it runs at
+    // whatever the account was last left at. The approval screen said 3x; the account could be
+    // at 20x, which is a different position with a much closer liquidation and the same words
+    // on screen. Set it before the first order and refuse to trade if that fails.
+    if (action.do === 'open' && a.venueLeverage !== action.leverage) {
+      await ex.updateLeverage(b.assetId, true, action.leverage);
+      a.venueLeverage = action.leverage;
+    }
+
     const isBuy = action.do === 'open' ? action.side === 'long' : b.positionSide !== 'short';
     const entry = action.entry;
     const px =
@@ -141,6 +168,7 @@ async function place(a: Armed, symbol: string, action: Action): Promise<void> {
       },
     ]);
     a.ordersInLastMin.push(Date.now());
+    a.inFlightUsd += action.sizeUsd;
     if (a.entryAtMs === null) a.entryAtMs = Date.now();
     return;
   }
@@ -211,6 +239,16 @@ async function flatten(id: string, reason: string): Promise<void> {
 async function supervise(id: string, a: Armed): Promise<boolean> {
   const s = runState(a, a.mandate.symbol);
   const b = book.get(a.mandate.symbol);
+
+  // The kill switch is checked HERE, every tick, not only when something arms. It used to be
+  // consulted once at arm time, which meant flipping it in the window stopped nothing that was
+  // already running: the one moment a kill switch exists for. The app pushes its state over
+  // IPC and the host also kills this process outright, so the switch works whether or not this
+  // loop is healthy.
+  if (killed) {
+    await flatten(id, 'kill switch');
+    return true;
+  }
 
   const loss = -(s.realisedUsd + s.unrealisedUsd);
   if (loss >= a.mandate.maxLossUsd) {
@@ -308,7 +346,14 @@ process.on('message', async (msg: Record<string, unknown>) => {
       prevMarkPx: 0,
       ordersInLastMin: [],
       realisedUsd: 0,
+      inFlightUsd: 0,
+      venueLeverage: null,
     });
+    return;
+  }
+
+  if (cmd === 'kill') {
+    killed = msg.on === true;
     return;
   }
 
@@ -318,6 +363,11 @@ process.on('message', async (msg: Record<string, unknown>) => {
   }
 
   if (cmd === 'book') {
+    // A confirmed position supersedes what we thought was in flight. Clearing it here rather
+    // than on a timer means the cap is briefly pessimistic and never optimistic, which is the
+    // safe direction for this particular number to be wrong in.
+    for (const a of armed.values()) if (a.mandate.symbol === String(msg.symbol)) a.inFlightUsd = 0;
+
     // The app owns the market feed and forwards it, so there is one websocket for the whole
     // process tree rather than two views of the same market that can disagree.
     book.set(String(msg.symbol), msg.book as Book);
