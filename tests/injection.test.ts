@@ -24,6 +24,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 
 import type { EngineCtx } from '../src/policy/engine.ts';
 import { CAPABILITIES } from '../src/greeting.ts';
+import { EXPECTED_TOOLS_SORTED } from './tool-surface.ts';
 import type { LogEvent, RiskRow, TransferLeg, WriteDraft } from '../src/types.ts';
 import { evaluate } from '../src/policy/engine.ts';
 import { classify } from '../src/composition.ts';
@@ -245,101 +246,8 @@ test('the tool surface cannot express an exfiltration target', async () => {
   // one, and a quietly reintroduced one, which is what this suite actually cares about.
   assert.deepEqual(
     tools.map(t => t.name).sort(),
-    [
-      // The handshake presentation: the banner an agent prints on connect and the index of
-      // every capability it has. It is on this list because it is the first thing an agent
-      // reads and therefore the highest-leverage place to put a lie: text here shapes what
-      // the agent believes it may do. It names no address and reaches no proposal path, and
-      // the loop below holds it to that like every other tool.
-      'start',
-      'balances',
-      'candles',
-      'composition',
-      'wallet',
-      'log_tail',
-      'policy_show',
-      'proposal_status',
-      'propose_consolidate',
-      'propose_policy_change',
-      // The rails. Each one moves funds through a contract, and none of them takes an
-      // address: the loop below is what holds that to be true.
-      //
-      // propose_hl_deposit, propose_lp_add and propose_lp_remove were removed from this
-      // surface deliberately: none had been run on a live chain, and an unproven fund-moving
-      // rail is not something to find the edges of with real money. The rails still exist and
-      // a human can still drive them. If any of the three reappears in this list, that is this
-      // test doing its job, and the question to ask is whether it has been proven since.
-      'propose_swap',
-      // Funds this app's own balance inside intents.near. It is the one rail whose far side
-      // is an account id rather than a chain address, which is exactly why it takes neither:
-      // the credited account is derived from our own key in proposals.ts and there is no
-      // argument here that can name it. The loop below holds that to be true.
-      'propose_intents_deposit',
-      // The way back out, and the only rail on this surface that pays money to an ordinary
-      // address on a chain. That makes it the sharpest test of the rule the loop below
-      // enforces: the wallet it pays into is read from config and re-derived by the rail,
-      // and there is no argument here that can name an address of any kind.
-      'propose_intents_withdraw',
-      // Arming a bot. The one proposal that grants STANDING authority rather than spending
-      // once, so it never auto-approves on any network. It takes a program, not code, and
-      // the grammar that program is written in has no verb that moves value off the venue
-      // and no field that names an address, which the loop below holds it to like the rest.
-      'propose_mandate',
-      // The chart. These read and drive a view, never funds: none of them reaches the
-      // proposal path, none takes an address, and the loop below holds them to it like
-      // every other tool. They are on this surface because an agent that cannot see the
-      // price cannot reason about a swap it is about to propose.
-      'chart_read',
-      'chart_measure',
-      'chart_scan',
-      // The measurement instrument. It carries many operations in one call, so its
-      // arguments are enumerated in the schema rather than left as a free-form bag:
-      // the propertyNames walk below cannot see inside an open record, and a hole the
-      // scan cannot see is exactly what this test exists to prevent.
-      'chart_batch',
-      'indicator_catalog',
-      // Looks up which markets exist so the chart can open one by name. It takes a search
-      // string and a result limit, reaches no proposal path, and names no address: the
-      // loop below holds it to that like every other tool. A free-text argument is worth
-      // a second look on this surface, and this one is only ever matched against a list
-      // of venue listings, never used to build a request to anywhere.
-      'market_search',
-      'chart_set_view',
-      'chart_add_indicator',
-      'chart_remove_indicator',
-      'chart_level',
-      'chart_mark',
-      // The sloped line, added when a trend line turned out to be undrawable: a level is
-      // horizontal and a mark is vertical, so neither could express one. Four numbers and a
-      // label, all of them coordinates on a canvas. It reaches no proposal path and names no
-      // address, and the loop below holds it to that like every other tool.
-      'chart_trendline',
-      'chart_clear',
-      // Changes what the human sees, moves no money. It is on this list because a tool
-      // that can reshape the approval surface belongs in the injection suite even
-      // though it cannot name an address. Note it is NOT chart_set_view above: that
-      // one drives the chart's render state, this one moves between the three windows.
-      // Renamed from set_view_mode because the requirement is that switching costs one
-      // word, and an agent looking for how to "switch to trading" finds `switch`.
-      'switch',
-      // The trading surface. Reads answer "what is my situation"; writes change what is drawn
-      // and what is pointed at. What is NOT here is the point of listing them: there is no
-      // close, no cancel, no flatten and no disarm. Those live on /api/trade/action, which the
-      // agent's door does not open onto, so the capability is absent rather than guarded. This
-      // list failing is how a future change that adds one gets noticed.
-      'trade_read',
-      'trade_batch',
-      // The mandate grammar, as data. It is the answer to "how do I open a position" and
-      // therefore a place a lie would be believed and acted on, which is why it belongs in
-      // this suite. It returns a closed vocabulary and worked examples, names no address and
-      // reaches no proposal path, and the loop below holds it to that like every other tool.
-      'mandate_catalog',
-      'trade_focus',
-      'trade_highlight',
-      'trade_overlay',
-      'trade_note',
-      'trade_clear',
-    ].sort(),
+    // One list, in tests/tool-surface.ts, shared with scripts/e2e.ts. Two copies drifted twice.
+    [...EXPECTED_TOOLS_SORTED],
   );
 
   for (const tool of tools) {
