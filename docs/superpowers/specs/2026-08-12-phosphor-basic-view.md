@@ -124,10 +124,10 @@ New module `src/view/mode.ts`, holding `readViewMode(dataDir)` and `writeViewMod
 
 ## The new tool
 
-`set_view({ mode })`, registered in `src/mcp.ts` as a new op. Thirteen tools becomes fourteen.
+`set_view_mode({ mode })`, registered in `src/mcp.ts` as a new op. Thirteen tools becomes fourteen.
 
 It is not a read (it mutates) and not a propose (it moves no money and gets no policy verdict),
-so `handleMcp` gains a third branch: `op: 'set_view'`.
+so `handleMcp` gains a third branch: `op: 'set_view_mode'`.
 
 Server behaviour:
 
@@ -144,7 +144,7 @@ The 409 guarantees: **the surface cannot change under a decision the human is in
 making.** That is real and it is worth having.
 
 The 409 does NOT guarantee that the agent cannot choose which surface a decision happens on.
-Nothing stops `set_view` being called first, while no proposal is pending, and the proposal being
+Nothing stops `set_view_mode` being called first, while no proposal is pending, and the proposal being
 made after. It also never fires on the sub-threshold path at all: a proposal under
 `humanClickAboveUsd` goes straight to `executed` with `decidedBy: 'policy'` and is never `pending`
 (verified 2026-08-12, a $60.64 `lp_add`).
@@ -156,7 +156,7 @@ survive either ordering.
 - Otherwise: write, audit `view_changed`, `broadcastState()`, return `{ ok: true, view }`.
 
 Every switch is in the log because a view change is a thing an agent did, and the transcript
-should say so. `set_view` gets no approve path, and `tests/injection.test.ts` keeps asserting
+should say so. `set_view_mode` gets no approve path, and `tests/injection.test.ts` keeps asserting
 the sorted tool-name set (never the count, per the v0.2 lesson).
 
 ### The description is part of the security surface
@@ -166,7 +166,7 @@ in the app window; this tool cannot approve." That is false below the click thre
 add executed immediately with `decidedBy: 'policy'`. The behaviour is right, the sentence is
 wrong, and the description is the only thing an agent reads before deciding how to act.
 
-So `set_view`'s description states what it actually does and does not soften it:
+So `set_view_mode`'s description states what it actually does and does not soften it:
 
 > Switches the app window between the detailed operator view and a simplified view written for
 > someone non-technical. This changes what the human sees before they approve anything, so it is
@@ -177,7 +177,7 @@ This is not one tool. `CANNOT_APPROVE` is a single shared constant in `src/mcp.t
 into all six propose descriptions, so every write tool on the surface carries the same false
 sentence. One edit fixes all six.
 
-**Scope call:** this spec fixes it. Adding an honest `set_view` description directly above six
+**Scope call:** this spec fixes it. Adding an honest `set_view_mode` description directly above six
 dishonest siblings, in the same file, in the same commit, is not a defensible place to stop. The
 constant becomes:
 
@@ -284,9 +284,9 @@ Testing the switch is what failed last time. These test the consequence.
    and that the token symbols in `headline` match the ones pro renders.
 3. `tests/unit/view-mode.test.ts`: persistence round trip, default `pro`, unparseable file
    falls back to `pro`.
-4. **Refuse while pending:** create a pending proposal, call `set_view`, assert `409`, assert
+4. **Refuse while pending:** create a pending proposal, call `set_view_mode`, assert `409`, assert
    the stored mode did not change, assert a `view_refused` line in the audit log.
-5. **End to end, through a real MCP client:** call `set_view` over stdio, then `GET /api/state`,
+5. **End to end, through a real MCP client:** call `set_view_mode` over stdio, then `GET /api/state`,
    and assert both that `view === 'basic'` and that `basic.ask.headline` contains the live
    proposal's real amount. Not `readViewMode() === 'basic'`.
 6. `tests/injection.test.ts`: sorted tool-name set updated to fourteen names.

@@ -4,7 +4,7 @@
 
 **Goal:** Add a `basic` view mode to Phosphor, a plain-English screen built to get one safe yes or no out of a non-technical person, switchable only by the connected agent.
 
-**Architecture:** The server computes a `BasicView` model in TypeScript from the same state the pro view already renders, and ships it inside `/api/state`. The browser holds both templates in one page and swaps them with a `data-view` attribute. A new `set_view` MCP op writes the mode, refuses while any proposal is pending, and audits every switch.
+**Architecture:** The server computes a `BasicView` model in TypeScript from the same state the pro view already renders, and ships it inside `/api/state`. The browser holds both templates in one page and swaps them with a `data-view` attribute. A new `set_view_mode` MCP op writes the mode, refuses while any proposal is pending, and audits every switch.
 
 **Tech Stack:** Node 24 native TypeScript type stripping (no build step), erasable TS only, `node --test`, zod for MCP schemas, vanilla ES5-flavoured browser JS, hand-written CSS.
 
@@ -28,17 +28,17 @@
 | `src/types.ts` (modify) | `ViewMode`, `BasicTone`, `BasicAsk`, `BasicView`; two new `LogEvent` types |
 | `src/view/mode.ts` (create) | Read and write the persisted mode. Nothing else. |
 | `src/view/basic.ts` (create) | Pure `buildBasic(input)`. All plain-English copy lives here and nowhere else. |
-| `src/server.ts` (modify) | Two fields in `buildState()`, one `set_view` branch in `handleMcp()` |
+| `src/server.ts` (modify) | Two fields in `buildState()`, one `set_view_mode` branch in `handleMcp()` |
 | `src/main.ts` (modify) | Load the mode on boot, pass getter and setter into `createServer` |
-| `src/mcp.ts` (modify) | Register `set_view`, bump version |
+| `src/mcp.ts` (modify) | Register `set_view_mode`, bump version |
 | `ui/index.html` (modify) | `data-view` on `#page`, a `#basic` section, version bump |
 | `ui/style.css` (modify) | Basic scale and the mode swap |
 | `ui/app.js` (modify) | `renderBasic(s)`, `applyViewMode(s)`, basic decide and stop wiring |
 | `tests/unit/view-mode.test.ts` (create) | Persistence round trip and fallbacks |
 | `tests/unit/basic-view.test.ts` (create) | All eleven states, the agreement test, the staleness rules |
-| `tests/unit/state.test.ts` (modify) | `/api/state` carries `view` and `basic`; `set_view` refused while pending |
-| `tests/injection.test.ts` (modify) | Sorted tool-name set gains `set_view` |
-| `scripts/e2e.ts` (modify) | Drive `set_view` over a real MCP client, assert the consequence |
+| `tests/unit/state.test.ts` (modify) | `/api/state` carries `view` and `basic`; `set_view_mode` refused while pending |
+| `tests/injection.test.ts` (modify) | Sorted tool-name set gains `set_view_mode` |
+| `scripts/e2e.ts` (modify) | Drive `set_view_mode` over a real MCP client, assert the consequence |
 
 ---
 
@@ -246,7 +246,7 @@ git commit -m "buildBasic: the whole basic screen as one pure function"
 
 ---
 
-### Task 3: Server wiring and the set_view op
+### Task 3: Server wiring and the set_view_mode op
 
 **Files:**
 - Modify: `src/server.ts`, `src/main.ts`
@@ -254,7 +254,7 @@ git commit -m "buildBasic: the whole basic screen as one pure function"
 
 **Interfaces:**
 - Consumes: `readViewMode`/`writeViewMode` (Task 1), `buildBasic` (Task 2)
-- Produces: `ServerDeps` gains `getView(): ViewMode` and `setView(mode: ViewMode): void`; `/api/state` gains `view` and `basic`; `handleMcp` accepts `{ op: 'set_view', mode }`
+- Produces: `ServerDeps` gains `getView(): ViewMode` and `setView(mode: ViewMode): void`; `/api/state` gains `view` and `basic`; `handleMcp` accepts `{ op: 'set_view_mode', mode }`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -266,16 +266,16 @@ test('/api/state carries the view mode and a basic model in both modes', async (
   assert.ok(state.basic, 'basic must be computed even when pro is rendering');
 });
 
-test('set_view flips the mode and the next state read shows it', async () => {
+test('set_view_mode flips the mode and the next state read shows it', async () => {
   const s = await bootTestServer({ view: 'pro' });
-  const res = await postMcp(s, { op: 'set_view', mode: 'basic' });
+  const res = await postMcp(s, { op: 'set_view_mode', mode: 'basic' });
   assert.equal(res.status, 200);
   assert.equal((await getJson(s, '/api/state')).view, 'basic');
 });
 
-test('set_view is refused while a proposal is pending, and changes nothing', async () => {
+test('set_view_mode is refused while a proposal is pending, and changes nothing', async () => {
   const s = await bootTestServer({ view: 'pro', pending: swapProposal() });
-  const res = await postMcp(s, { op: 'set_view', mode: 'basic' });
+  const res = await postMcp(s, { op: 'set_view_mode', mode: 'basic' });
   assert.equal(res.status, 409);
   assert.equal((await getJson(s, '/api/state')).view, 'pro');
   assert.ok(auditTypes(s).includes('view_refused'));
@@ -283,7 +283,7 @@ test('set_view is refused while a proposal is pending, and changes nothing', asy
 
 test('an unknown mode is refused and changes nothing', async () => {
   const s = await bootTestServer({ view: 'pro' });
-  assert.equal((await postMcp(s, { op: 'set_view', mode: 'expert' })).status, 400);
+  assert.equal((await postMcp(s, { op: 'set_view_mode', mode: 'expert' })).status, 400);
   assert.equal((await getJson(s, '/api/state')).view, 'pro');
 });
 ```
@@ -295,7 +295,7 @@ Expected: FAIL on the new tests, existing ones still pass.
 
 - [ ] **Step 3: Implement**
 
-In `buildState()`, add `view: getView()` and `basic: buildBasic({...})`. In `handleMcp`, add the `set_view` branch after `propose`, keeping the existing contract that every op is audit-logged before dispatch. Add `set_view` to the op list in the unknown-op error string. Wire `getView`/`setView` through `main.ts` from `readViewMode(cfg.dataDir)`.
+In `buildState()`, add `view: getView()` and `basic: buildBasic({...})`. In `handleMcp`, add the `set_view_mode` branch after `propose`, keeping the existing contract that every op is audit-logged before dispatch. Add `set_view_mode` to the op list in the unknown-op error string. Wire `getView`/`setView` through `main.ts` from `readViewMode(cfg.dataDir)`.
 
 - [ ] **Step 4: Run the full unit suite**
 
@@ -306,7 +306,7 @@ Expected: all pass. The pre-existing count was 327; expect it higher, and no fai
 
 ```bash
 git add src/server.ts src/main.ts tests/unit/state.test.ts
-git commit -m "set_view, refused while a human is mid-decision"
+git commit -m "set_view_mode, refused while a human is mid-decision"
 ```
 
 ---
@@ -318,29 +318,29 @@ git commit -m "set_view, refused while a human is mid-decision"
 - Test: `tests/injection.test.ts`
 
 **Interfaces:**
-- Consumes: the `set_view` op from Task 3
-- Produces: a fourteenth tool named `set_view`
+- Consumes: the `set_view_mode` op from Task 3
+- Produces: a fourteenth tool named `set_view_mode`
 
 - [ ] **Step 1: Update the tool-name-set assertion**
 
-`injection.test.ts` asserts a sorted name set, never a count. Add `set_view` to the expected array.
+`injection.test.ts` asserts a sorted name set, never a count. Add `set_view_mode` to the expected array.
 
 - [ ] **Step 2: Run and watch it fail**
 
 Run: `node --test tests/injection.test.ts`
-Expected: FAIL, the actual set lacks `set_view`.
+Expected: FAIL, the actual set lacks `set_view_mode`.
 
 - [ ] **Step 3: Register the tool**
 
 ```ts
 server.registerTool(
-  'set_view',
+  'set_view_mode',
   {
     description:
       "Switches the app window between the detailed operator view and a simplified view written for someone non-technical. This changes what the human sees before they approve anything, so it is refused while any proposal is waiting for a decision, and every switch is written to the audit log. It cannot approve, refuse or execute anything.",
     inputSchema: { mode: z.enum(['basic', 'pro']) },
   },
-  async (args) => proxy({ op: 'set_view', mode: args.mode }),
+  async (args) => proxy({ op: 'set_view_mode', mode: args.mode }),
 );
 ```
 
@@ -358,7 +358,7 @@ const CANNOT_APPROVE =
   'Returns a proposal id and simulation result. This tool cannot approve, refuse or execute anything. Whether a human is asked depends on the policy: proposals above the click threshold wait for a human click in the app window, and proposals below it are decided by the policy engine and may execute immediately.';
 ```
 
-Scope call, flagged in the final report. Shipping an honest `set_view` description directly above
+Scope call, flagged in the final report. Shipping an honest `set_view_mode` description directly above
 six dishonest siblings in the same file and the same commit is not a defensible place to stop.
 
 - [ ] **Step 5: Run the injection suite**
@@ -370,7 +370,7 @@ Expected: PASS, and the existing assertion that no tool schema carries a destina
 
 ```bash
 git add src/mcp.ts tests/injection.test.ts
-git commit -m "set_view on the tool surface, described honestly"
+git commit -m "set_view_mode on the tool surface, described honestly"
 ```
 
 ---
@@ -418,11 +418,11 @@ git commit -m "The basic screen: one balance, one question, two buttons"
 
 - [ ] **Step 1: Add the checks**
 
-Drive `set_view` over stdio through the real MCP client the script already builds, not over HTTP. Then:
+Drive `set_view_mode` over stdio through the real MCP client the script already builds, not over HTTP. Then:
 
 1. `GET /api/state` shows `view === 'basic'`.
 2. `state.basic.ask.headline` contains the live proposal's real amount.
-3. With a proposal pending, `set_view` returns 409 and the mode is unchanged.
+3. With a proposal pending, `set_view_mode` returns 409 and the mode is unchanged.
 4. The audit log holds a `view_changed` line.
 
 Check 2 is the one that matters. A flag that changes only what the app says about itself is the exact defect this repo already shipped once.
@@ -474,7 +474,7 @@ git commit -m "v0.3: docs, and the security model says what the agent can now do
 
 ## Self-Review
 
-**Spec coverage:** Types → Task 1, 2. Mode persistence → Task 1. `buildBasic` and the eleven states → Task 2. Both staleness rules → Task 2. State payload → Task 3. `set_view` including refuse-while-pending → Task 3, 4. Honest description → Task 4. Frontend → Task 5. Tests 1 through 6 of the spec → Tasks 1, 2, 3, 4, 6. Test 7 (ui-gate) → Task 5. Docs → Task 7. Version → Tasks 4, 5, 7. No gaps.
+**Spec coverage:** Types → Task 1, 2. Mode persistence → Task 1. `buildBasic` and the eleven states → Task 2. Both staleness rules → Task 2. State payload → Task 3. `set_view_mode` including refuse-while-pending → Task 3, 4. Honest description → Task 4. Frontend → Task 5. Tests 1 through 6 of the spec → Tasks 1, 2, 3, 4, 6. Test 7 (ui-gate) → Task 5. Docs → Task 7. Version → Tasks 4, 5, 7. No gaps.
 
 **Placeholders:** None. Every step names its file, its command and its expected result.
 
