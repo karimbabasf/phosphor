@@ -356,6 +356,9 @@ export type LogEvent = {
     // logged: it says nothing a reader of the transcript does not already know.
     | 'agent_connected'
     | 'agent_disconnected'
+    // Written by a human-run compaction, never by the app. The log is append-only,
+    // so the one thing a removal owes its reader is a line saying it happened.
+    | 'audit_compacted'
     | 'proposal_created'
     | 'policy_refused'
     | 'approved'
