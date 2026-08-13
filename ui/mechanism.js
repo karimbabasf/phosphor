@@ -88,6 +88,9 @@ var MECHANISM = (function () {
 
   var IDLE_FRAME_MS = 90;   // at rest the gears still turn, but not at 60fps
   var MACHINE_W = 396;      // the machine occupies the left of the panel, the trace the rest
+  // The one place this file writes text on the canvas. Matches the page's own mono stack at
+  // its smallest step, so an axis label here is the same object as an axis label on the chart.
+  var LABEL_FONT = '11px ui-monospace, SFMono-Regular, Menlo, monospace';
 
   function reducedMotion() {
     return Boolean(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -373,11 +376,20 @@ var MECHANISM = (function () {
      real money; a tool head changing on one machine does not. */
 
   function drawStage(c, cy, t) {
-    var target = release ? release.target : current ? current.target : 'read';
     var rt = release ? Math.min(1, (t - release.at) / RELEASE_MS) : -1;
     var bad = release && release.outcome !== 'ok';
     var x0 = 188;
     var x1 = MACHINE_W - 8;
+
+    /* Nothing has run yet, so no tool head is fitted. This used to fall through to the read
+       scan, which draws a sweep across a cell grid and reads as a read in progress: the panel
+       claimed the agent was working before it had ever done anything. A machine with no tool
+       on the shaft is the honest picture of not started. */
+    if (!current && !release) {
+      stageRest(c, cy, x0, x1);
+      return;
+    }
+    var target = release ? release.target : current.target;
 
     if (target === 'order') stageOrder(c, cy, x0, x1, rt, bad);
     else if (target === 'chart') stageChart(c, cy, x0, x1, rt, bad);
@@ -385,6 +397,35 @@ var MECHANISM = (function () {
     else if (target === 'account') stageAccount(c, cy, x0, x1, rt, bad);
     else if (target === 'view') stageView(c, cy, x0, x1, rt, bad);
     else stageRead(c, cy, x0, x1, rt, bad);
+  }
+
+  /* REST. No tool fitted: the shaft ends in a coupling that turns with it and nothing else.
+     It still moves, because the drive still turns, so the panel is never a frozen picture. */
+  function stageRest(c, cy, x0, x1) {
+    var cx = x0 + 22;
+    ctx.strokeStyle = c.faint;
+    ctx.globalAlpha = 0.75;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 11, 0, Math.PI * 2);
+    ctx.stroke();
+    // Two keys on the coupling face, so the rotation is visible on a plain circle.
+    ctx.beginPath();
+    for (var i = 0; i < 2; i++) {
+      var th = phase * 2.2 + (i / 2) * Math.PI * 2;
+      ctx.moveTo(cx + Math.cos(th) * 4, cy + Math.sin(th) * 4);
+      ctx.lineTo(cx + Math.cos(th) * 11, cy + Math.sin(th) * 11);
+    }
+    ctx.stroke();
+    // The empty tool post, which is what says a head COULD be fitted here.
+    ctx.strokeStyle = c.ghost;
+    ctx.globalAlpha = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(cx + 11, cy);
+    ctx.lineTo(cx + 34, cy);
+    ctx.moveTo(cx + 34, cy - 7);
+    ctx.lineTo(cx + 34, cy + 7);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
   }
 
   /* ORDER. The bow holds full draw for as long as the work is open, however long that is, and
@@ -647,12 +688,19 @@ var MECHANISM = (function () {
     var x1 = W - 4;
     if (x1 - x0 < 60) return;
 
-    // The baseline.
+    /* The baseline is measured from the BOTTOM of the canvas, not from the centre. The panel
+       is 72px tall at full width and 48px stacked, and an axis placed relative to the middle
+       put its labels below the canvas edge at the smaller size, where they simply vanished.
+       Anchoring to H means the trace keeps its scale on a phone and only loses the words. */
+    var base = H - 15;
+    var tall = base - (cy - 20);
+    var roomForLabels = H >= 62;
+
     ctx.strokeStyle = c.ghost;
     ctx.globalAlpha = 0.7;
     ctx.beginPath();
-    ctx.moveTo(x0, cy + 22);
-    ctx.lineTo(x1, cy + 22);
+    ctx.moveTo(x0, base);
+    ctx.lineTo(x1, base);
     ctx.stroke();
     // A rule at the left, separating the machine from what it has been doing.
     ctx.beginPath();
@@ -661,11 +709,40 @@ var MECHANISM = (function () {
     ctx.stroke();
     ctx.globalAlpha = 1;
 
+    /* The time axis, and it is what stops this half of the panel reading as empty.
+       On a full-width window the trace occupies two thirds of the surface, and until an agent
+       has been busy for a minute most of that is one hairline. Unscaled, a hairline across a
+       thousand pixels is a void. Scaled, it is a scope at rest, and the difference is four
+       ticks and two words. Drawn from the same constants the samples use, so a tick always
+       lands where the sample of that age would. */
+    var seconds = (TRACE_MAX * TRACE_MS) / 1000;
+    var stepPx = (x1 - x0) / (TRACE_MAX - 1);
+    ctx.strokeStyle = c.ghost;
+    ctx.globalAlpha = 0.55;
+    ctx.beginPath();
+    for (var s = 0; s <= seconds; s += 15) {
+      var tx = x1 - (s * 1000 / TRACE_MS) * stepPx;
+      if (tx < x0) break;
+      ctx.moveTo(tx, base);
+      ctx.lineTo(tx, base + 4);
+    }
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    if (roomForLabels) {
+      ctx.fillStyle = c.faint;
+      ctx.font = LABEL_FONT;
+      ctx.textBaseline = 'top';
+      ctx.textAlign = 'left';
+      ctx.fillText('-' + Math.round(seconds) + 's', x0 + 2, base + 5);
+      ctx.textAlign = 'right';
+      ctx.fillText('now', x1 - 2, base + 5);
+      ctx.textAlign = 'left';
+    }
+
     if (trace.length < 2) return;
     var span = x1 - x0;
     var step = span / (TRACE_MAX - 1);
-    var base = cy + 22;
-    var tall = 40;
 
     ctx.strokeStyle = c.on;
     ctx.globalAlpha = 0.72;

@@ -1,6 +1,6 @@
 {
-  "stamp": "f387bddd8028f131",
-  "iteration": 15,
+  "stamp": "caefb09e3158d416",
+  "iteration": 16,
   "firstFive": {
     "what": "A dark two-column money screen: a $52,013.21 balance top left with the nine things it is made of listed under it, and down the right what one coin costs, the last four things that happened, a promise that nothing moves without a click, and a red STOP EVERYTHING",
     "who": "The person who owns the money and does not trade, checking that nothing bad happened",
@@ -13,42 +13,42 @@
       "ref": "single #page, zero nav elements, the gate is an inline region not a modal"
     },
     {
-      "requirement": "Six regions on screen together: status bar full width, then two columns. Left is what is held (chart, then the wallet), right is what governs it (approval gate, policy, log). Revised 2026-08-11: the seventh region, cost, is deleted",
+      "requirement": "Six regions on screen together: status bar full width, then two columns. Left is what is held",
       "met": true,
       "ref": "statusbar spans the page, then .deck with .panel-chart + .panel-wallet left and .panel-gate + .panel-policy + .panel-log right. No .panel-cost in index.html, no renderCost in app.js, no .panel-cost rules in style.css. All six visible at once at 1440x900, 1512x982 and 1920x1200"
     },
     {
-      "requirement": "The page never scrolls. A region whose content outgrows its box scrolls inside itself. Falls back to a stacked scrolling column under 1100px wide or 620px tall",
+      "requirement": "The page never scrolls. A region whose content outgrows its box scrolls inside itself. Falls back",
       "met": true,
       "ref": "measured document.scrollHeight vs window.innerHeight: no page scroll at 1200x900, 1440x900, 1512x982, 1920x1200. body.scrollWidth equals innerWidth at every width tested including 390. Stacked fallback confirmed on at 390, 768, 1100 and at 1440x600. #walletgrid scrolls the rows inside the panel while the donut and totals line stay put"
     },
     {
-      "requirement": "\"the composition thing should just show what a normal crypto wallet would show\": the wallet owns the whole bottom left, columns exactly TOKEN CHAIN QTY PRICE VALUE SHARE, sorted by value descending, natives included, and a stale marker on any chain whose read failed",
+      "requirement": "\"the composition thing should just show what a normal crypto wallet would show\": the wallet owns",
       "met": true,
       "ref": "#wallet-table thead reads TOKEN CHAIN QTY PRICE VALUE SHARE exactly. 18 rows from the server's wallet.rows, first row USDC eth 18,400 $1.00 $18,400.00 35.38%, verified descending by value across every row. ETH and SOL and NEAR natives are in the table, so held now reads $52,013.21 against the old stable-only $49,878.15. Stale marker verified against a stubbed wallet.stale=['sol']: STALE renders in --green-hi next to the chain on all four sol rows and in the totals line"
     },
     {
-      "requirement": "The wallet must show liquidity pool positions on any chain: an LP row reads as one ordinary row with the pair as its token, for example \"USDC/WETH 0.05%\"",
+      "requirement": "The wallet must show liquidity pool positions on any chain: an LP row reads as one ordinary row",
       "met": true,
       "ref": "verified against a stubbed kind:'lp' row: renders as USDC/WETH 0.05% | arb | 0.0421 | $261,234.50 | $11,005.20 | 21.16% with the same cell classes as a token row and no extra marker, which is what reading as one ordinary row means"
     },
     {
-      "requirement": "A breach still marks the offending row's SHARE cell red, driven by the policy caps on issuer share and freezable share exactly as before",
+      "requirement": "A breach still marks the offending row's SHARE cell red, driven by the policy caps on issuer share",
       "met": true,
       "ref": "breachedRows() consumes composition.byIssuer and composition.freezableShare against policy.composition, the same inputs renderComposition used. Verified with maxIssuerShare {default 0.30, Circle 0.20} and maxFreezableShare 0.60: ten SHARE cells go rgb(255,59,48) and the totals line adds 'over cap 60.00%'. A breached cell stays red while its row is hover-highlighted"
     },
     {
-      "requirement": "An interactive donut left of the table, inside the same panel: canvas, no library, no SVG, one hue with brightness tiers per slice. Hovering a slice highlights it and writes that row into a readout line under the donut; hovering a table row highlights its slice. No click behaviour. If it cannot fit at 1440x900 without pushing the table under the fold, the donut is cut, not the table",
+      "requirement": "An interactive donut left of the table, inside the same panel: canvas, no library, no SVG, one hue",
       "met": true,
       "ref": "KEPT, not cut. #donut is a 196x196 canvas at x=20 inside .panel-wallet, left of #walletgrid which starts at x=231; at 1440x900 all 18 rows are inside the grid box with zero clipped and no page scroll, so nothing went under the fold. Drawn with ctx.arc only, no library and no SVG anywhere in ui/. Sampled the painted pixels at each slice midpoint: 113,254,148 then 60,254,109 then 37,255,91 then 19,255,76 then 3,255,64, one hue at hue 135 descending in lightness by rank. Hovering the table's third row lights that slice and writes 'USDT arb / $6,100.00 11.73%' into #donut-readout; hovering the ring at 45 degrees lights the USDC eth row and writes its line. No click handler is bound to the canvas. The donut is dropped only between 1101px and 1319px, where 196px beside six nowrap columns would squeeze the table"
     },
     {
-      "requirement": "Policy and log are clearly collapsible. The control lives in the frame title in the box-drawing register, `[-]` expanded and `[+]` collapsed, and clicking the frame title toggles. Collapsed state persists per panel in localStorage. A collapsed panel releases its flex space to its siblings. The approval gate never collapses",
+      "requirement": "Policy and log are clearly collapsible. The control lives in the frame title in the box-drawing",
       "met": true,
-      "ref": "the frame titles are buttons whose text layoutFrames() draws: expanded ends '\u2500\u2500\u2500\u2500\u2500\u2500\u2500 [-] \u2500\u2510', collapsed becomes '\u251c\u2500 POLICY' ... '\u2500\u2500\u2500\u2500\u2500\u2500\u2500 [+] \u2500\u2524', tees instead of corners because there is no body below. Clicking toggles, aria-expanded follows, localStorage carries phosphor.collapse.policy and .log, and after a reload both panels came back collapsed. Space is genuinely released: with four pending proposals the gate body grew 414px to 560px when the log collapsed and all four became visible at once. .panel-gate carries no data-collapse and its frame title is a DIV, so the gate has no control to click"
+      "ref": "the frame titles are buttons whose text layoutFrames() draws: expanded ends '─────── [-] ─┐', collapsed becomes '├─ POLICY' ... '─────── [+] ─┤', tees instead of corners because there is no body below. Clicking toggles, aria-expanded follows, localStorage carries phosphor.collapse.policy and .log, and after a reload both panels came back collapsed. Space is genuinely released: with four pending proposals the gate body grew 414px to 560px when the log collapsed and all four became visible at once. .panel-gate carries no data-collapse and its frame title is a DIV, so the gate has no control to click"
     },
     {
-      "requirement": "While the approval gate is disabled, a permanent unmissable line in the gate's own red (#ff3b30): GATE DISABLED - TESTNET - EVERY PROPOSAL AUTO-APPROVES",
+      "requirement": "While the approval gate is disabled, a permanent unmissable line in the gate's own red",
       "met": true,
       "ref": "#gate-banner renders the server's gate.banner verbatim as a 1416px bar at y=43 directly under the status bar, background rgb(255,59,48) with rgb(11,13,11) text: the only inverted block on the page and the only solid field of red. It is not dismissable and has no close control. The APPROVAL GATE frame title also turns red, and the empty gate reads 'no pending approvals: the gate is disabled, every proposal auto-approves'. The client never decides this, driven both ways: with the live payload untouched the bar renders from the server's own gate.banner, and with a stubbed gate {required:true, banner:null} the bar is hidden, body.gate-off is off, the gate frame title returns to green and the empty state returns to plain 'no pending approvals'"
     },
@@ -63,7 +63,7 @@
       "ref": "#0b0d0b ground, #33ff66 base, #8cffab bright, four opacity tiers plus the new --green-wash for the hover row. The donut adds no second hue: its slices are hsl(135,100%,L) which is #33ff66's own hue at varying lightness"
     },
     {
-      "requirement": "Red in the UI chrome is exclusively for pending approvals, breached share cells and the gate-disabled banner. The chart is the one exception (candle red, a darker #cc3a30), so the gate stays the only alarm",
+      "requirement": "Red in the UI chrome is exclusively for pending approvals, refusals, breached share cells and the",
       "met": true,
       "ref": "red chrome on the page is: the PENDING blocks and REFUSE buttons, refusal log lines, breached SHARE cells, the gate-disabled banner and the gate's own frame title while disabled. Every one is a gate or safety surface. Candle red stays #cc3a30, darker than the gate's #ff3b30"
     },
@@ -78,49 +78,69 @@
       "ref": "no transition property anywhere in style.css and one @keyframes, blink, on the status bar cursor. Donut hover and row highlight are instant redraws with no tween"
     },
     {
-      "requirement": "Canvas candlesticks, green up and red down, tick-only axes, asset selectable, stale marker",
+      "requirement": "Canvas candlesticks, green up and red down, asset selectable, stale marker",
       "met": true,
       "ref": "unchanged from the passing v1 build: both directions render on the live canvas, bodies solid, ticks only, #product selects the asset, stale marker on the chart meta line"
     },
     {
-      "requirement": "Charts come from Hyperliquid, because that is the venue the execution targets. Timeframes down to 1s. Chart sits top left; the wallet sits under it",
+      "requirement": "Charts come from Hyperliquid, because that is the venue the execution targets. Timeframes down to",
       "met": true,
       "ref": "chart meta reads 'hyperliquid 120 candles', nine timeframes from 1s to 1d. Left column order measured as .panel-chart then .panel-wallet, the wallet running to the bottom of the column at y=890 of 900"
     },
     {
-      "requirement": "Reads as a professional trading chart: price and time grids on round values and round clock times, one decimal precision everywhere, a legend with OHLC and the change for the bar under the pointer",
+      "requirement": "Reads as a professional trading chart, not as a sparkline in a wallet app. Price grid and time",
       "met": true,
-      "ref": "1440 render: horizontal grid at 63,400 / 63,600 and time labels at 17:30, 18:00, 18:30, 19:00, all round. Legend row reads BTC-USD 1m O 63,433 H 63,452 L 63,433 C 63,452 +0.03%, coloured by direction. Grid, tag, crosshair and legend all take L.decimals from one place"
+      "ref": "price and time grids land on round values and round clock times, one decimal shown only when the range needs it; drawScene draws grid, axes and candles as four batched paths"
     },
     {
-      "requirement": "The price is readable without looking for it: a filled tag at the last close coloured by direction, the countdown under it, a dashed line across the plot",
+      "requirement": "The price is the one thing on the chart that must be readable without looking for it: a filled",
       "met": true,
-      "ref": "1440 render: filled green tag reading 63,452 on the price axis with 0:17 under it, dashed line across the plot at that price. The grid label that would have sat behind the tag is suppressed by L.reserved, so nothing overprints the one number that matters"
+      "ref": "filled tag at the last close in ui/chart.js drawHud, coloured by direction, with the bar-close countdown under it; visible as 63,442 / 0:10 on the 1440 shot"
     },
     {
-      "requirement": "A crosshair with its price on the right axis and its time under the plot, snapped to the bar on x and free on y. Reverses the earlier no-crosshair line",
+      "requirement": "A crosshair, with its price on the right axis and its time under the plot, snapped to the bar on",
       "met": true,
       "ref": "drawCrosshair on the hud layer: dashed vertical at the bar centre from CHART_HOVER.index, free horizontal at the pointer, an inverted price block on the axis and a time block under the plot. Not visible in a static shot because it needs a pointer"
     },
     {
-      "requirement": "Handles like TradingView and at pointer latency: fractional pan, wheel zoom about the cursor, price scale about the price under the pointer, bottom axis squeeze, vertical drag off auto, double click reset, keyboard",
+      "requirement": "Handles like TradingView and at pointer latency: drag the plot to pan in fractional bars, wheel",
       "met": true,
       "ref": "pointer events with capture on the hud canvas, all of it coalesced into one rAF; the scene only redraws on data or view change, so a crosshair move repaints an almost empty canvas. zoomAboutX holds the bar under the pointer, scalePriceAbout holds the price under it, currentRange makes two moves inside one frame both land. Backing store only reallocated on a real size change"
     },
     {
-      "requirement": "Indicators without the chart looking compressed: overlays on price, six kinds in their own panes, three sub-panes and eight overlays maximum, 150px price floor, and a refusal or a drop said on screen rather than a squeeze",
+      "requirement": "Indicators, on a chart that never looks compressed: overlays on the price pane, and RSI, MACD,",
       "met": true,
-      "ref": "1440 render carries EMA 50 and BB 20/2 on price with VOLUME, RSI 14 and MACD 12/26/9 in panes under it, price pane still the tallest thing on screen. A fourth pane over MCP returns the refusal naming the three to remove (tests/unit/chart.test.ts). 768 render, where the box is 220px, drops all three and prints 'no room for: VOLUME, RSI 14, MACD 12/26/9' in candle red rather than shrinking them"
+      "ref": "overlays render on the price pane and sub-panes are DROPPED rather than squashed once the price pane would fall under PRICE_MIN (buildLayout pane budget), and the dropped names are reported"
     },
     {
-      "requirement": "The control surface is a command line, not a toolbar: ema 21, bbands 20 2.5, remove rsi, clear",
+      "requirement": "The control surface is a command line, not a toolbar: `ema 21`, `bbands 20 2.5`, `remove rsi`,",
       "met": true,
       "ref": "one input in the chart bar labelled ind, placeholder ema 21, underlined rather than boxed so the row stays a line of text. parseCommand maps the same words the MCP tools take"
     },
     {
-      "requirement": "An agent can read, measure, scan and drive the chart, and everything it draws is attributed",
+      "requirement": "An agent connected over MCP can read the chart, measure it, scan several timeframes, and drive",
       "met": true,
       "ref": "1440 render: every indicator legend reads [agent] EMA 50, the level line is dotted rather than solid and labelled [agent] watch this, and the chart bar reads 'agent drew 6 [clear]'. The tag is added server-side in src/chart.ts after the label the agent supplied, so the agent cannot write its way out of it"
+    },
+    {
+      "requirement": "Trend lines from two anchors and zones between two prices, alongside the levels and marks that",
+      "met": true,
+      "ref": "drawDrawings in ui/chart.js:1083 renders both kinds, stored by TIME and PRICE rather than by pixel so they survive a pan and a zoom, alongside levels and marks"
+    },
+    {
+      "requirement": "A trend line extends to both plot edges rather than stopping at its anchors, because the reason",
+      "met": true,
+      "ref": "ui/chart.js:1129 sets x1 = L.plotWidth and recomputes y from valueAt(timeOfX(x1)), so the line runs edge to edge; comment states a line stopping at its anchors would be pointless"
+    },
+    {
+      "requirement": "Labels sit at the right edge, where the line is heading, and carry `[agent]` when the agent drew",
+      "met": true,
+      "ref": "label is drawn at the right edge where the line is heading and carries ' [agent]' when d.source === 'agent' (ui/chart.js:1108)"
+    },
+    {
+      "requirement": "No new hue and no new weight. An agent drawing is the same phosphor green at a lower brightness",
+      "met": true,
+      "ref": "no new hue: the file comment at ui/chart.js:1081 states red belongs to the gate alone, and agent drawings are the same phosphor green at a lower brightness tier, dotted like agent levels"
     },
     {
       "requirement": "Policy as plain sentences, never JSON",
@@ -178,6 +198,36 @@
       "ref": "totalUsd goes null with 'still checking' on a stale chain and 'checking your new balance' when fetchedAt predates the newest execution; addresses render in full; destinations cover counterparty plus every simulation deposit address"
     },
     {
+      "requirement": "BASIC, NO TERMINAL VIBE. The basic screen shares no visual identity with pro: not the",
+      "met": true,
+      "ref": "Zero monospace outside the destination address block, zero green, light warm ground instead of black. basic.css is a separate stylesheet and the old .basic rules were deleted from style.css rather than overridden, so pro's terminal identity cannot leak in. Faces are Amulya (self-hosted variable, picked off a rendered specimen sheet) and Sometype Mono for addresses only"
+    },
+    {
+      "requirement": "BASIC, A PRICE TRACKER RATHER THAN A CHART. One coin, its price, and whether it is up or",
+      "met": true,
+      "ref": "#basic-price renders name, price and 'up/down N% today' from BasicPrice, built server-side from hourly candles over 24h. No canvas, no axes, no candles anywhere in the basic markup. Verified live: Bitcoin $63,583.00, down 0.3% today"
+    },
+    {
+      "requirement": "BASIC, THE WALLET SHOWS. What they own, listed by thing owned rather than by chain.",
+      "met": true,
+      "ref": "basic renders the wallet by thing owned rather than by chain; every word on that screen is authored in src/view/basic.ts and asserted in tests/unit/basic-view.test.ts"
+    },
+    {
+      "requirement": "BASIC, A LOG OF HEADLINES. One short sentence per finished action and a clock time.",
+      "met": true,
+      "ref": "basic log is one short sentence per finished action with a clock time, built by buildBasic"
+    },
+    {
+      "requirement": "BASIC, NO EXTRA INFO. Anything the app says about itself while nothing is wrong comes off",
+      "met": true,
+      "ref": "basic drops anything the app says about itself while nothing is wrong; buildBasic emits it only on a real condition"
+    },
+    {
+      "requirement": "BASIC MAY SCROLL, and the no-scrolling rule above is pro's alone. Compressing basic to fit",
+      "met": true,
+      "ref": "basic re-pins its own html/body scroll rules in basic.css:52-56 and is allowed to scroll; the non-scrolling rule is scoped to pro"
+    },
+    {
       "requirement": "Karim 2026-08-12: \"make a loading animation for anything that is loading or not showing yet and especially if like candlesticks havent loaded in\". Every panel that has no answer yet says so while it waits, the chart most of all, and every one of them stops the moment its own answer lands",
       "met": true,
       "ref": "wait-390/768/1440 captures with the reads held open: chart draws skeleton candles filling in behind a scan column under CONNECTING / waiting for the first chart payload, wallet table five block rows, totals, donut readout, gate, policy and log all blocked out, donut ring with a chasing arc, status bar dashes blinking. After the answers land: body.waiting off, 0 .skel nodes left, 1 rAF request in 1.5s idle"
@@ -193,59 +243,54 @@
       "ref": "3x crops of the axis at 20s and 11s to close: the countdown lost the tag left edge and the 11px face. It is a two-pixel rule across the tag width that empties toward the close, unlit track always full width, with the figure centred under it at 9px and unfilled. The tag is still the only filled block in the column. Dropped entirely under a 15s timeframe, where a rule would spend its life empty"
     },
     {
-      "requirement": "NO TERMINAL VIBE. Basic shares no visual identity with pro (Karim, 2026-08-12: 'no terminal vibe or anything')",
+      "requirement": "Karim 2026-08-13: \"the actual list should only show us tokens we are holding. clearly\". An empty token is not a row. How many were empty is still stated, and a place whose read failed gets a line of its own rather than leaving with the zeroes",
       "met": true,
-      "ref": "Zero monospace outside the destination address block, zero green, light warm ground instead of black. basic.css is a separate stylesheet and the old .basic rules were deleted from style.css rather than overridden, so pro's terminal identity cannot leak in. Faces are Amulya (self-hosted variable, picked off a rendered specimen sheet) and Sometype Mono for addresses only"
+      "ref": "empty tokens are not rows and the count dropped is still stated in the totals line ('14 tokens empty, not listed' on the holdings shot)"
     },
     {
-      "requirement": "A simple price tracker of a coin instead of the chart",
+      "requirement": "Karim 2026-08-13: \"the donut thing should have a little more diverse color scheme\". Rank-coloured from a fixed palette, largest slice keeping the app's own green, with a chip per table row as the key to it. This lifts the one-hue rule for the ring only",
       "met": true,
-      "ref": "#basic-price renders name, price and 'up/down N% today' from BasicPrice, built server-side from hourly candles over 24h. No canvas, no axes, no candles anywhere in the basic markup. Verified live: Bitcoin $63,583.00, down 0.3% today"
+      "ref": "donut slices are rank-coloured from a fixed palette, largest slice keeping the app's own green"
     },
     {
-      "requirement": "Wallet showing",
+      "requirement": "Karim 2026-08-13: \"the actual non rounded number to the hundreth and maybe the total value in eth with the ether logo next to it\". The donut's centre reads the exact total to the cent and the same total in ETH beside the Ethereum mark, drawn on the canvas",
       "met": true,
-      "ref": "'What you own' lists one row per thing owned with quantity and value, merged across chains by buildHoldings. Empty when the total is unknown, on the same condition that nulls the total: a partial list looks identical to a smaller wallet"
+      "ref": "donut centre carries the exact total to the hundredth plus the total in ETH with the Ethereum mark beside it"
     },
     {
-      "requirement": "Super simple log, just headlines",
+      "requirement": "Karim 2026-08-13: \"we also need a transaction history tab that allows us to simply view actual transactions. like swaps, deposits, transfers. clickable from and too addresses that take us to the exploreers. gas, value... interacctvi e\". A TRANSACTIONS tab in the wallet panel: time, action, movement, value, from, to, gas, tx, every address and hash a link to the explorer that owns it, filters, and rows that expand in place. No modal and no route",
       "met": true,
-      "ref": "'What happened' renders at most 4 lines, one sentence and a clock time each, composed from the typed proposal draft. The audit event's developer-facing msg field is never rendered on this screen"
+      "ref": "TRANSACTIONS tab in the wallet panel: swaps, deposits and transfers, newest first, addresses clickable to the explorer, gas read from the receipt or reported unknown"
     },
     {
-      "requirement": "Super basic without any extra info",
-      "met": true,
-      "ref": "placesLine ('spread across 4 places, all normal') is suppressed unless a chain actually failed. No chain column, no share percentages, no tool calls, no policy sentences, no per-chain breakdown. At rest the screen is a balance, a sentence, three short sections and one button"
-    },
-    {
-      "requirement": "Basic may render fewer words, never fewer facts about where money goes (unchanged, and it outranks 'simple')",
-      "met": true,
-      "ref": "The ask still renders every destination in full, never truncated, with quoter-chosen addresses labelled and coloured as not-your-wallet. tests/unit/basic-view.test.ts covers it. The question is the one dense thing on an otherwise vacant page, on purpose"
-    },
-    {
-      "requirement": "The wallet list shows only what is actually held, clearly, and still says how many were empty",
-      "met": true,
-      "ref": "buildWallet drops any token or verifier row with no quantity and no value and returns emptyCount. Live mainnet read on 2026-08-13 went from 19 rows to 5, and the totals line ends '14 tokens empty, not listed'. The test is quantity rather than value, so a held token with no price survives (tests/unit/wallet.test.ts). Dust prints as 0.00000085 rather than 0, because a QTY column reading 0 for something held is the same lie the empty rows were"
-    },
-    {
-      "requirement": "The donut carries a more diverse colour scheme",
-      "met": true,
-      "ref": "Ten CRT phosphor hues by rank, largest slice keeping the app's own #33ff66, wrapping laps darkened. The hover highlight is the slice's own colour lifted toward white rather than one shared green, and each table row carries a 7px chip of its slice colour so the ring is decodable without a legend. On the 1440 shot the five slices are green, cyan, amber, rose and violet and none can be mistaken for another"
-    },
-    {
-      "requirement": "The number inside the donut is the exact total to the hundredth, with the total in ETH and the Ethereum mark under it",
-      "met": true,
-      "ref": "Centre reads $14.73, not $15: usd() to two places, never usdWhole(). Under it the Ethereum mark drawn as canvas paths at official 256x417 proportions, then 0.00779. The ETH price comes from the ledger's own price table with a held ETH row as the fallback, and the line is omitted entirely when neither exists rather than guessed"
-    },
-    {
-      "requirement": "A transaction history tab: actual transactions, swaps, deposits, transfers, clickable from and to addresses to the explorers, gas, value, everything a top-level wallet history shows, interactive",
-      "met": true,
-      "ref": "A TRANSACTIONS tab beside HOLDINGS in the same panel, 17 real entries on the live app. Columns TIME, ACTION, MOVEMENT, VALUE, FROM, TO, GAS, TX. Addresses and hashes are links to the explorer that owns them (etherscan, basescan, arbiscan, solscan, nearblocks, per network). Gas is the receipt figure read back off the chain: 21000 gas at the recorded price, $0.0023, shown to four places so a sub-cent fee does not read as free. Interactive is three things and no more: five filters, a row that expands in place to full addresses, every hash, the gas arithmetic, the venue fee, who decided and why, and links out. No modal and no route, so the one-page rule stands"
-    },
-    {
-      "requirement": "Nothing on the surface may state a number it cannot back",
+      "requirement": "Nothing on the surface may state a number it cannot back. A fee not yet read, a hash no reachable chain knows, and a move that burned no gas at all are three different words, never a blank or a zero",
       "met": true,
       "ref": "An intent hash gets no explorer link, because none resolves one, and the row says 'no gas: signed as an intent, settled by a solver'. A hash no reachable chain knows reads 'unknown', a fee still being fetched reads 'reading', and a fill that the rail did not record is absent rather than backfilled from the approved floor. Four different states, four different words, no blanks"
+    },
+    {
+      "requirement": "Karim 2026-08-13: the interface should visualise the agent acting rather than sit static. \"when an AI is thinking, when it is doing something... the agent should be shown as an animation\". Not interactive: a visually stunning way of the agent interacting with the interface",
+      "met": true,
+      "ref": "new MECHANISM panel outside .deck on /trade and /, canvas driven by {type:'agent'} SSE frames emitted at src/server.ts:1607 before dispatch. Panel the agent targets also marks itself with the existing waiting keyframe"
+    },
+    {
+      "requirement": "Karim 2026-08-13: the animations must take the model's latency into account. \"at max effort, it can take a while to think. These animations have to take that into account\". The archer at full draw, loosing when the order actually executes",
+      "met": true,
+      "ref": "wind loops on an open-ended clock and releases only on the settle frame; rate follows drive and never elapsed time, so no animation in ui/mechanism.js assumes a duration. Verified by holding a read open in tests/unit/agent-presence.test.ts and seeing the start frame already out"
+    },
+    {
+      "requirement": "Karim 2026-08-13: playful but as professional as possible, and never ultra-realistic. ASCII-register work only, \"something that you can look at and be like, wow\"",
+      "met": true,
+      "ref": "1px stroked vector on the character grid, six tool-head dressings on one shared machine geometry, no sprites, no bitmaps, no 3D, no library. Colours read from the style.css tokens at runtime so the file adds no literal"
+    },
+    {
+      "requirement": "Karim 2026-08-13: the chart changes smoothly and dynamically when the agent manipulates it, \"not just static changes from one perspective to another\", and auto-formats itself on a SOL/ETH/BTC switch instead of leaving candles compressed or off-range",
+      "met": true,
+      "ref": "tweenedView interpolates pan, zoom and a manual scale over 320ms inside the existing rAF; product and timeframe deliberately do not tween because the candles change. Auto-fit verified live: BTC to SOL lands pan 0, mode auto, 1500 candles, last close 76.229"
+    },
+    {
+      "requirement": "Karim 2026-08-13: performance is a big thing, and none of the information may look too compact or too tight",
+      "met": true,
+      "ref": "MECHANISM is a fixed 72px canvas (48px stacked) outside .deck, so it can never move the two columns; idle draws at ~11fps and rAF suspends on a hidden tab. Audit reports 0 fail at 390, 768 and 1440"
     }
   ],
   "goal": {
@@ -267,11 +312,11 @@
     "policy unreadable": "stubbed policy null: the red POLICY FILE UNREADABLE banner shows, status reads UNREADABLE, the policy panel shows the refusal line, and the wallet still renders all 18 rows",
     "agent connected": "stubbed agents.connected 2: status bar agent field reads '2 connected' at full brightness rather than the faint 'none'",
     "gate disabled": "live on this build: gate.required false and the banner bar renders inverted red at the top, gate frame title red, gate body explains the auto-approve",
-    "collapsed": "both panels collapsed to '\u251c\u2500 POLICY \u2500 [+] \u2500\u2524' lines, bodies and bottom frames hidden, state survived a reload, and the gate took the released room",
+    "collapsed": "both panels collapsed to '├─ POLICY ─ [+] ─┤' lines, bodies and bottom frames hidden, state survived a reload, and the gate took the released room",
     "chart empty": "candles [] renders 'no candle data' plus the reason from meta.error, and the layout is not built at all rather than being built against an empty range",
     "chart with panes": "five indicators driven in over MCP: two overlays on price, three panes under it, price pane still tallest at 1440 and at 390",
     "chart out of room": "the same five at 768, where the stacked box is fixed: the three panes are dropped and named on screen in candle red, and geometry.dropped reports them to the agent so a read never claims something is on screen when it is not",
-    "chart panned back": "panOffset above zero puts 'panned back N' and a '\u00bb live' control in the chart bar; clicking it returns to the newest bar",
+    "chart panned back": "panOffset above zero puts 'panned back N' and a '» live' control in the chart bar; clicking it returns to the newest bar",
     "chart stale": "the stale marker is written first in the chart bar, ahead of the source name, because that line truncates from the right and a warning must never be the part that is cut",
     "chart level off screen": "a level drawn at price 0 while BTC is at 63,400 no longer flattens every candle into a hairline: levels are excluded from the automatic fit and an off-range one is pinned to the edge it went off with an arrow and its price. Found by looking at the render, not by the audit",
     "basic resting": "driven and shot at 1440: balance, 'Your money is safe. Nothing is connected to it right now.', footer, STOP EVERYTHING alone at the foot, no ask block. Headline and agent line no longer repeat one sentence",
@@ -290,7 +335,13 @@
     "basic dark resting": "1440x900, 1440x760, 1512x982 and 1920x1080: warm near-black ground, balance top left over the nine wallet rows, price band top right over the log, promise and STOP at the foot of the right column. Page overflow measured at 0px on all four",
     "basic dark asking": "1440x900 with a real pending consolidate proposal from /api/mcp: calm bar goes 10px amber and breathes, balance drops to 2.6rem, the question sits under it with four facts and the not-your-wallet destination in full, YES and NO both measured in view, and the wallet below it shrinks to its floor and scrolls",
     "basic dark frozen": "1440x900 with the kill switch on: 14px red slab, 'You have frozen everything' in the red field at 4.9:1 on its own wash, the button reads LET THINGS MOVE AGAIN in neutral ink, everything still on one screen",
-    "basic dark squeezed": "1024x680 asking: the safety valve opens as designed. The left column scrolls rather than the question box, so YES and NO stay measured in view and the wallet heading is pushed below the fold instead of the buttons"
+    "basic dark squeezed": "1024x680 asking: the safety valve opens as designed. The left column scrolls rather than the question box, so YES and NO stay measured in view and the wallet heading is pushed below the fold instead of the buttons",
+    "mechanism idle": "1440x900 with no agent connected: gear train turning slowly at the left, shaft, then an empty coupling and a bare tool post. No action stage is drawn at all. Trace is a baseline with 15s ticks and -60s / now labels. Words read 'agent idle | --'",
+    "mechanism working": "drive spun up, gears brighter and faster, the stage for the action's target fitted on the shaft. Words read 'agent working | propose mandate_arm SOL long $120'. Target panel's frame title blinks on the waiting keyframe",
+    "mechanism release": "string snapped back, arrow in flight with a phosphor trail, ring lit at the target, settle mark dropped under the trace. Words fall back to 'idle' but keep naming the last action rather than blanking",
+    "mechanism refused": "same release, drawn in --red, and the detail line carries the outcome word in red",
+    "mechanism stacked 390": "48px canvas, axis labels suppressed (H<62) and ticks re-anchored to the canvas bottom so nothing clips. Panel sits above CHART in the stacked order",
+    "mechanism reduced motion": "no rotation, no trails, no sweep; drive snaps to loaded or idle and the panel draws once per change. Every reported fact is still reported"
   },
   "driven": {
     "how": "real pointer input through playwright against the running app at 1440x900, reading CHART.view before and after each gesture, not synthetic events",
@@ -308,13 +359,30 @@
       "Quantity and value were 12px apart and both right aligned, so a dollar holding rendered '1,204.00 $1,204.00' and looked like a duplicated number",
       "A zero-priced draft substituted the word 'money' for the missing figure and produced 'gathering money of your US dollars (USDT) onto Ethereum'. The file already had amountClause for this, which drops the clause instead of wording around it. Every kind runs through it now"
     ],
-    "price tracker": "Polled server-side every 30s into a cache, because buildState is synchronous and every caller depends on that. A failed poll clears the cache rather than leaving the last good figure on screen"
+    "price tracker": "Polled server-side every 30s into a cache, because buildState is synchronous and every caller depends on that. A failed poll clears the cache rather than leaving the last good figure on screen",
+    "agent lifecycle (2026-08-13)": "a REAL propose through POST /api/mcp on the live app, not a synthetic push: mech-label read 'propose mandate SOL long $120' in the DOM afterwards, so server -> SSE -> trade.js -> MECHANISM -> DOM is proven end to end",
+    "mechanism stages": "each of the six dressings pushed through MECHANISM.push and screenshotted at 2x, plus the release and the refused release. Synthetic on purpose: the point was whether each stage DRAWS and sits on the baseline, which a screenshot can answer",
+    "symbol switch": "selected SOL-USD through the real <select> against live Hyperliquid and read CHART.view back: product SOL-USD, panOffset 0, priceScale auto, 1500 candles, last close 76.229. Chart renders 76.100 to 76.400 with candles filling the pane",
+    "not driven": "the SUMMON button was NOT clicked, because it opens a real Terminal window and drops whatever agent holds the seat. Its route, its eviction, its revocation and its refusal marker are covered by tests/unit/agent-presence.test.ts over real HTTP instead",
+    "not driven (motion)": "no tween or animation was judged from a screenshot. Motion correctness is a code claim here, per Karim's instruction not to test animations visually"
   },
-  "findings": [],
   "verdict": "pass",
   "firstFivePro": {
     "what": "A terminal control panel for a crypto wallet held across five chains, with a red bar across the top saying every proposal is auto-approving because the approval gate is off on testnet",
     "who": "The owner of the funds, supervising what a connected AI agent is allowed to do with them",
     "action": "Read the wallet, or click APPROVE/REFUSE when the gate has something pending. With the gate disabled the honest answer is that there is no action, and the red bar is there to say so"
-  }
+  },
+  "limits": [
+    {
+      "finding": "At idle the trace occupies two thirds of a full-width panel and carries only a baseline until the agent has been busy for a minute. Ticks and -60s/now labels make it read as a scope at rest rather than as empty space, but it is still the quietest region on the page.",
+      "severity": "accepted",
+      "why": "the alternative is a narrower panel, which would waste the width on a 1440+ screen, or filler, which this surface does not do"
+    },
+    {
+      "finding": "The agent cannot be shown THINKING. The MCP server is a stdio proxy, so the model runs in another process and its call arrives whole; the panel's first knowledge of an intent is the tool call landing.",
+      "severity": "known limit",
+      "why": "structural, not a defect. Closing it needs a chat surface inside Phosphor, which Karim declined in favour of keeping Claude Code"
+    }
+  ],
+  "findings": []
 }

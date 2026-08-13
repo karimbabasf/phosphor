@@ -133,6 +133,12 @@ triggers off that same line by its id. One object, three consumers.
 - Karim 2026-08-13: "the actual non rounded number to the hundreth and maybe the total value in eth with the ether logo next to it". The donut's centre reads the exact total to the cent and the same total in ETH beside the Ethereum mark, drawn on the canvas
 - Karim 2026-08-13: "we also need a transaction history tab that allows us to simply view actual transactions. like swaps, deposits, transfers. clickable from and too addresses that take us to the exploreers. gas, value... interacctvi e". A TRANSACTIONS tab in the wallet panel: time, action, movement, value, from, to, gas, tx, every address and hash a link to the explorer that owns it, filters, and rows that expand in place. No modal and no route
 - Nothing on the surface may state a number it cannot back. A fee not yet read, a hash no reachable chain knows, and a move that burned no gas at all are three different words, never a blank or a zero
+- Karim 2026-08-13: the interface should visualise the agent acting rather than sit static. "when an AI is thinking, when it is doing something... the agent should be shown as an animation". Not interactive: a visually stunning way of the agent interacting with the interface
+- Karim 2026-08-13: the animations must take the model's latency into account. "at max effort, it can take a while to think. These animations have to take that into account". The archer at full draw, loosing when the order actually executes
+- Karim 2026-08-13: playful but as professional as possible, and never ultra-realistic. ASCII-register work only, "something that you can look at and be like, wow"
+- Karim 2026-08-13: the chart changes smoothly and dynamically when the agent manipulates it, "not just static changes from one perspective to another", and auto-formats itself on a SOL/ETH/BTC switch instead of leaving candles compressed or off-range
+- Karim 2026-08-13: performance is a big thing, and none of the information may look too compact or too tight
+
 ## Goal behind the ask
 The owner sees the whole machine at once, with no scrolling: what the wallet holds, what governs
 it, and whether anything is waiting for a click. On testnet with the gate off he must also be
