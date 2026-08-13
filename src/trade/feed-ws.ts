@@ -22,9 +22,11 @@
 //
 // The unified-account trap, found live and already written down in src/runner/feed.ts:
 // clearinghouseState is the legacy perp-only view. On a unified account with no position it
-// reports accountValue 0.0; with a position open it reports position equity only, and
-// totalRawUsd goes negative because perp margin is drawn from the spot balance. `withdrawable`
-// reads 0.0 either way. So on such an account the perp view is never the account's money.
+// reports accountValue 0.0; with a position open it reports position equity only. totalRawUsd is
+// the position's cash leg, so it goes negative on a long, which spends to buy, and POSITIVE on a
+// short, which sells first: it is a tell for one direction and not the other, which is how a
+// unified account holding a short read as a plain perp one. `withdrawable` reads 0.0 either way.
+// So on such an account the perp view is never the account's money.
 // activeAssetData is the authority for what there is to trade with, spotClearinghouseState holds
 // the balance that backs it, and `unified` on the snapshot tells the caller which reading it has.
 
@@ -140,6 +142,19 @@ const DEFAULT_MAX_FILLS = 200;
 // Spot backs perp margin on a unified account and no subscription carries it, so it is the one
 // number this client polls. Every 30s is 40 weight per minute against a budget of 1200.
 const SPOT_REFRESH_MS = 30_000;
+
+// How far above the perp account value the collateral to trade with has to sit before it cannot
+// have come from the perp pot. Close every position on a plain perp account and accountValue is
+// what is left to trade with, so anything above it is held somewhere the perp view cannot see.
+// One percent absorbs the skew between two messages read at different instants, and no amount of
+// skew produces a spot balance.
+const POT_SKEW = 0.01;
+
+// How far the venue's own liquidation price may sit from the one the perp pot implies before the
+// pot stops being believable as the collateral behind it. The live gap this exists to catch is
+// 92x. Twice is far enough out that a maintenance ratio blended over several positions cannot
+// manufacture one on an account that is genuinely perp-only.
+const LIQ_DISAGREEMENT = 2;
 
 type AssetMeta = { assetId: number; szDecimals: number | null; maxLeverage: number | null };
 
@@ -768,11 +783,60 @@ export function createTradeFeed(deps: {
     return best ?? lastAvailableUsd;
   }
 
-  // Two independent tells, either one is enough:
-  //   totalRawUsd below zero, which is the perp side borrowing its margin from the spot balance
-  //   accountValue at exactly zero while activeAssetData still reports collateral to trade with
-  // The first catches a funded unified account holding a position, the second catches one that
-  // is flat. Neither reads as true on a plain perp account.
+  // The equity the venue is holding the open positions against, read back out of the liquidation
+  // price it published for them.
+  //
+  // Liquidation is the price where equity meets maintenance margin. For a short that is
+  //   equity - size * (liqPx - markPx) = mmf * size * liqPx
+  // and for a long the same with the direction of the loss flipped, where mmf is maintenance over
+  // notional and size * markPx is the notional reported beside it. Rearranged, each position's
+  // liquidation price names the equity it was priced against.
+  //
+  // On a plain perp account that comes back equal to accountValue, because the perp pot is the
+  // only collateral there is. Far above it is the venue pricing against money the perp view
+  // cannot see.
+  //
+  // `sole` is whether the answer is exact. Maintenance margin is reported for the account and
+  // never per position, so with one cross position open the ratio is that position's own, and
+  // with two it is a blend of assets whose maximum leverages differ. A blend is enough to refuse
+  // to answer and not enough to answer.
+  function collateralBehindLiq(): { usd: number; sole: boolean } | null {
+    if (clearing === null || clearing.maintenanceUsd === null || clearing.maintenanceUsd <= 0) return null;
+    // Cross only. crossMaintenanceMarginUsed covers the cross book, and an isolated position's
+    // notional in the denominator would understate the ratio for every position in it.
+    const cross = positions.filter((p) => p.leverageType === 'cross');
+    let notional = 0;
+    for (const p of cross) notional += Math.abs(p.positionValueUsd);
+    if (notional <= 0) return null;
+    const mmf = clearing.maintenanceUsd / notional;
+
+    let best: number | null = null;
+    for (const p of cross) {
+      if (p.liqPx === null || p.liqPx <= 0) continue;
+      const size = Math.abs(p.szi);
+      const own = Math.abs(p.positionValueUsd);
+      if (size === 0 || own === 0) continue;
+      const usd = p.szi < 0 ? size * p.liqPx * (1 + mmf) - own : own - size * p.liqPx * (1 - mmf);
+      // The most collateral any one position implies. They agree on a plain perp account, and
+      // the largest is the strongest statement about where the money is.
+      best = best === null ? usd : Math.max(best, usd);
+    }
+    return best === null ? null : { usd: best, sole: cross.length === 1 };
+  }
+
+  // Three independent tells, any one of them is enough:
+  //   totalRawUsd below zero, which is the perp side borrowing to buy against the spot balance
+  //   more collateral to trade with than the whole perp pot could supply
+  //   a venue liquidation price the perp pot cannot explain
+  //
+  // The first is direction-dependent and that is why it is not sufficient. totalRawUsd is the
+  // position's cash leg: a long spends USD and drives it below zero, a SHORT sells first and
+  // drives it up. A unified account holding a short reports it at +110 while its perp pot is
+  // worth 9.65 and its money, 888 of it, is in spot. That account read as a plain perp account
+  // and the panel published a liquidation 4.6 percent away against the venue's 838.
+  //
+  // The second is the general form of the old flat-account tell, which only ever fired on
+  // accountValue exactly 0.0. Collateral above the entire perp pot cannot have come from it.
   //
   // Three-valued on purpose: null is "not known yet", and it is not the same answer as false.
   //
@@ -785,11 +849,26 @@ export function createTradeFeed(deps: {
   function detectUnified(): boolean | null {
     if (clearing === null) return null;
     if (clearing.rawUsd !== null && clearing.rawUsd < 0) return true;
+    const pot = clearing.accountValueUsd;
     const available = bestAvailable();
-    if (available !== null && available > 0) return clearing.accountValueUsd === 0;
-    // A zero account value with nothing yet heard from activeAssetData is unreadable: it is
-    // either a flat unified account worth real money or an empty perp one worth nothing.
-    if (clearing.accountValueUsd === 0) return null;
+    if (available !== null && available > 0) {
+      // Collateral with nothing to measure it against.
+      if (pot === null) return null;
+      // A pot worth nothing while there is collateral to trade with. The flat unified account
+      // lands here, and so does one whose positions have eaten the whole perp value.
+      if (pot <= 0) return true;
+      if (available > pot * (1 + POT_SKEW)) return true;
+    } else if (pot === 0) {
+      // A zero account value with nothing yet heard from activeAssetData is unreadable: it is
+      // either a flat unified account worth real money or an empty perp one worth nothing.
+      return null;
+    }
+    // The only tell that needs no second message, which is what makes it the one that covers the
+    // first paint after every reconnect and any account whose coin nobody is watching.
+    const behind = collateralBehindLiq();
+    if (behind !== null && pot !== null && behind.usd > Math.max(pot, 0) * LIQ_DISAGREEMENT) {
+      return behind.sole ? true : null;
+    }
     return false;
   }
 
