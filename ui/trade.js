@@ -1224,6 +1224,7 @@ async function refreshState() {
   STATE_INFLIGHT = true;
   try {
     POLICY = await getJson('/api/state');
+    followViewMode(POLICY);
     renderKill(POLICY);
     renderGate(POLICY);
     // The mandate empty line names the kill switch when the kill switch is the reason.
@@ -1237,6 +1238,25 @@ async function refreshState() {
       refreshState();
     }
   }
+}
+
+/* The other half of the one-word switch. ui/app.js sends the custody page here when the view
+   becomes 'trade'; this sends it back when the view becomes anything else.
+
+   Transition only, never on a first sighting, for the same reason as its sibling: a human who
+   typed /trade while the app sat in pro must keep the page they asked for. LAST_SEEN_VIEW is
+   null until the first state frame, so the first frame only records. */
+var LAST_SEEN_VIEW = null;
+
+function followViewMode(s) {
+  if (!s || typeof s.view !== 'string') return;
+  var view = s.view;
+  if (view !== 'trade' && LAST_SEEN_VIEW !== null && LAST_SEEN_VIEW === 'trade') {
+    LAST_SEEN_VIEW = view;
+    window.location.href = '/';
+    return;
+  }
+  LAST_SEEN_VIEW = view;
 }
 
 /* The gate, drawn by ui/approvals.js from the same /api/state this page already reads for

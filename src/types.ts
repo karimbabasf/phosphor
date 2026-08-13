@@ -19,7 +19,12 @@ export type Network = 'testnet' | 'mainnet';
 // Karim deliberately declined when he asked for agent-only switching. Every failure
 // to read the stored value falls back to 'pro', because pro shows more and a corrupt
 // file must never silently simplify what a human sees.
-export type ViewMode = 'basic' | 'pro';
+// Which of the three windows the app is showing. 'trade' arrived last and is a different
+// KIND of member from the other two: basic and pro are two renderings of the same treasury
+// screen, while trade is a separate page (/trade) with its own feed. It lives in the same
+// union anyway, because from the outside all three answer one question, "where is the human
+// looking", and one union is what lets one tool move between them.
+export type ViewMode = 'basic' | 'pro' | 'trade';
 
 // ---------- Ledger ----------
 

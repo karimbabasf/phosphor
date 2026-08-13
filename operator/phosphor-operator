@@ -1,0 +1,32 @@
+#!/bin/sh
+# Start a Claude Code session that can drive phosphor and cannot change it.
+# Loads operator/settings.json, connects src/mcp.ts as the only MCP server.
+set -eu
+
+command -v node >/dev/null 2>&1 || { echo "phosphor-operator: node is required (Node 24+)" >&2; exit 1; }
+command -v claude >/dev/null 2>&1 || { echo "phosphor-operator: the claude CLI is required" >&2; exit 1; }
+
+# Resolve the repo from this script's own real path, so the profile runs from any
+# directory and through a symlink on PATH. Line 1 is the repo, line 2 the MCP config.
+resolved=$(node -e '
+const { realpathSync } = require("node:fs");
+const { dirname, join, resolve } = require("node:path");
+const repo = resolve(dirname(realpathSync(process.argv[1])), "..");
+const mcp = { mcpServers: { phosphor: { command: process.execPath, args: [join(repo, "src", "mcp.ts")] } } };
+process.stdout.write(repo + "\n" + JSON.stringify(mcp) + "\n");
+' "$0")
+
+repo=$(printf '%s\n' "$resolved" | sed -n 1p)
+mcp_config=$(printf '%s\n' "$resolved" | sed -n 2p)
+
+[ -f "$repo/operator/settings.json" ] || { echo "phosphor-operator: operator/settings.json is missing" >&2; exit 1; }
+
+# The repo becomes the working directory: the operator reads the code it drives, and nothing else.
+cd "$repo"
+
+exec claude \
+  --settings "$repo/operator/settings.json" \
+  --mcp-config "$mcp_config" \
+  --strict-mcp-config \
+  --permission-mode default \
+  "$@"

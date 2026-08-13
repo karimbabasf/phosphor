@@ -245,6 +245,12 @@ test('the tool surface cannot express an exfiltration target', async () => {
   assert.deepEqual(
     tools.map(t => t.name).sort(),
     [
+      // The handshake presentation: the banner an agent prints on connect and the index of
+      // every capability it has. It is on this list because it is the first thing an agent
+      // reads and therefore the highest-leverage place to put a lie: text here shapes what
+      // the agent believes it may do. It names no address and reaches no proposal path, and
+      // the loop below holds it to that like every other tool.
+      'start',
       'balances',
       'candles',
       'composition',
@@ -256,8 +262,13 @@ test('the tool surface cannot express an exfiltration target', async () => {
       'propose_policy_change',
       // The rails. Each one moves funds through a contract, and none of them takes an
       // address: the loop below is what holds that to be true.
+      //
+      // propose_hl_deposit, propose_lp_add and propose_lp_remove were removed from this
+      // surface deliberately: none had been run on a live chain, and an unproven fund-moving
+      // rail is not something to find the edges of with real money. The rails still exist and
+      // a human can still drive them. If any of the three reappears in this list, that is this
+      // test doing its job, and the question to ask is whether it has been proven since.
       'propose_swap',
-      'propose_hl_deposit',
       // Funds this app's own balance inside intents.near. It is the one rail whose far side
       // is an account id rather than a chain address, which is exactly why it takes neither:
       // the credited account is derived from our own key in proposals.ts and there is no
@@ -268,8 +279,6 @@ test('the tool surface cannot express an exfiltration target', async () => {
       // enforces: the wallet it pays into is read from config and re-derived by the rail,
       // and there is no argument here that can name an address of any kind.
       'propose_intents_withdraw',
-      'propose_lp_add',
-      'propose_lp_remove',
       // Arming a bot. The one proposal that grants STANDING authority rather than spending
       // once, so it never auto-approves on any network. It takes a program, not code, and
       // the grammar that program is written in has no verb that moves value off the venue
@@ -308,8 +317,10 @@ test('the tool surface cannot express an exfiltration target', async () => {
       // Changes what the human sees, moves no money. It is on this list because a tool
       // that can reshape the approval surface belongs in the injection suite even
       // though it cannot name an address. Note it is NOT chart_set_view above: that
-      // one drives the chart's render state, this one switches basic against pro.
-      'set_view_mode',
+      // one drives the chart's render state, this one moves between the three windows.
+      // Renamed from set_view_mode because the requirement is that switching costs one
+      // word, and an agent looking for how to "switch to trading" finds `switch`.
+      'switch',
       // The trading surface. Reads answer "what is my situation"; writes change what is drawn
       // and what is pointed at. What is NOT here is the point of listing them: there is no
       // close, no cancel, no flatten and no disarm. Those live on /api/trade/action, which the

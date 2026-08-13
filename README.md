@@ -416,6 +416,19 @@ the agent reads and the pixel the human sees come from one implementation.
 Not a wallet, not an exchange, not a custodian. Holds your own keys locally and never anyone
 else's funds. No accounts, no server, no hosted component, no telemetry.
 
+## The operator profile
+
+A second agent role, shipped opt-in under [operator/](operator/). The session that drives phosphor
+does not also develop it: `operator/settings.json` denies every built-in file writer and command
+runner, and the key file, while allowing `Read` and every `mcp__phosphor__*` tool, so the whole
+tool surface still works.
+
+    ./operator/phosphor-operator
+
+A denied bare tool name is removed from the model's context, so an operator has no editor to be
+talked into using, in any permission mode. It is not installed at `.claude/settings.json`, so your
+own development sessions in this directory are untouched. Detail in [operator/README.md](operator/README.md).
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
