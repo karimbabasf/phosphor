@@ -20,6 +20,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { MandateRunner } from '../rails/mandate.ts';
 import type { Mandate } from '../strategy/envelope.ts';
+import type { Program } from '../strategy/grammar.ts';
 import { createFeed } from './feed.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -30,7 +31,20 @@ export type RunnerEvent =
   | { type: 'fill'; id: string; symbol: string; side: string; sizeUsd: number; price: number }
   | { type: 'position'; id: string; symbol: string; sizeUsd: number; side: string; entryPx: number; liqPx: number | null; unrealisedUsd: number }
   | { type: 'halted'; id: string; reason: string }
+  // Which rule fired. The window shows it so a person can see WHY the bot acted, not only that
+  // it did, which is the difference between watching a program and trusting one.
+  | { type: 'rule'; id: string; ruleId: string; at: string }
+  | { type: 'manual_result'; requestId: string; ok: boolean; detail: string }
   | { type: 'error'; id: string | null; message: string };
+
+// A button on the trading window: cancel one order, cancel every order on a market, close a
+// position, or stop everything and close everything. All four only reduce, which is why none of
+// them consults an envelope and none of them waits on an approval.
+export type ManualAction = {
+  verb: 'cancel' | 'cancel_all' | 'close' | 'flatten';
+  cancels?: { assetId: number; oid: number }[];
+  coin?: string;
+};
 
 export type HostDeps = {
   apiWalletKey: () => Promise<`0x${string}` | null>;
@@ -46,12 +60,23 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
   stopAll(reason: string): Promise<void>;
   setKilled(on: boolean): void;
   events(): RunnerEvent[];
+  manual(action: ManualAction): Promise<{ ok: boolean; detail: string }>;
+  feedHealth(): ReturnType<ReturnType<typeof createFeed>['health']>;
+  armedDetail(): { mandate: Mandate; program: Program | null; since: string }[];
 } {
   let child: ChildProcess | null = null;
-  const armed = new Map<string, { mandate: Mandate; since: string }>();
+  // The program is held beside the mandate, not because this process runs it (the child does),
+  // but because the trading window renders it in English. Reading it back off the child would
+  // mean the screen showing a copy of the program rather than the program, and "the thing on
+  // screen is the thing running" is the property the whole approval step depends on.
+  const armed = new Map<string, { mandate: Mandate; program: Program | null; since: string }>();
   const recent: RunnerEvent[] = [];
   const feed = createFeed({ baseUrl: deps.baseUrl, user: deps.user });
   let pump: NodeJS.Timeout | null = null;
+  // Human actions in flight, keyed by the id sent to the child. Held here so an HTTP request
+  // can await the venue's answer rather than returning "sent" and leaving the person to guess.
+  const pending = new Map<string, (r: { ok: boolean; detail: string }) => void>();
+  let manualSeq = 0;
 
   // Pushes market and account state to the child for every armed symbol.
   //
@@ -108,7 +133,20 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     });
 
-    child.on('message', (m) => record(m as RunnerEvent));
+    child.on('message', (m) => {
+      const e = m as RunnerEvent;
+      // A manual result answers one waiting HTTP request rather than going to the log as an
+      // event nobody asked for. It is still recorded, because a human closing a position is
+      // exactly the kind of thing the audit trail exists for.
+      if (e.type === 'manual_result') {
+        const settle = pending.get(e.requestId);
+        if (settle !== undefined) {
+          pending.delete(e.requestId);
+          settle({ ok: e.ok, detail: e.detail });
+        }
+      }
+      record(e);
+    });
     child.on('exit', (code) => {
       // Anything armed when the child dies is no longer armed, whatever the exit code. Leaving
       // a mandate listed as live after its executor is gone would misreport the safety state,
@@ -130,7 +168,7 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
       try {
         const c = await ensureChild();
         c.send({ cmd: 'arm', mandate, program });
-        armed.set(mandate.id, { mandate, since: new Date().toISOString() });
+        armed.set(mandate.id, { mandate, program: program as Program | null, since: new Date().toISOString() });
         // One book pushed before the child can act, so its first tick reasons about the real
         // market rather than the zeros it starts with.
         await pumpOnce();
@@ -179,10 +217,55 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
       if (child !== null && child.connected) child.send({ cmd: 'kill', on });
     },
 
+    // A button on the trading window. Runs in the child because the child is the only process
+    // in the tree holding a key that can place an order, and signing a human's close in the app
+    // would put a second copy of that key in a second process for no gain.
+    //
+    // The kill switch is NOT consulted. Every verb here only reduces, and a kill switch that
+    // stopped a person closing their own position would be a trap rather than a brake.
+    async manual(action: ManualAction): Promise<{ ok: boolean; detail: string }> {
+      // Close and flatten need the market data the pump pushes, so a child that has just
+      // started has to be fed once before it can act on anything.
+      let c: ChildProcess;
+      try {
+        c = await ensureChild();
+      } catch (err) {
+        return { ok: false, detail: err instanceof Error ? err.message : String(err) };
+      }
+      if (action.verb === 'close' || action.verb === 'flatten') await pumpOnce();
+
+      manualSeq += 1;
+      const requestId = `mn_${manualSeq}`;
+      return await new Promise((resolve) => {
+        // A child that dies mid-action would otherwise leave the browser's button disabled
+        // forever waiting on a reply that is never coming.
+        const timer = setTimeout(() => {
+          if (pending.delete(requestId)) {
+            resolve({ ok: false, detail: 'the runner did not answer within 15s' });
+          }
+        }, 15_000);
+        if (typeof timer.unref === 'function') timer.unref();
+        pending.set(requestId, (r) => {
+          clearTimeout(timer);
+          resolve(r);
+        });
+        c.send({ cmd: 'manual', action: { ...action, requestId } });
+      });
+    },
+
     status: () => ({
       armed: [...armed.entries()].map(([id, v]) => ({ id, symbol: v.mandate.symbol, since: v.since })),
       running: child !== null && child.connected,
     }),
+
+    // The same set as status(), with the bounds and the program itself. The trading window
+    // needs both: the envelope to draw how much of it has been spent, and the program to show
+    // the human the sentences they approved.
+    armedDetail: () => [...armed.values()].map((v) => ({ mandate: v.mandate, program: v.program, since: v.since })),
+
+    // Whether the venue is answering the app's own reads, and how slowly. The trading window
+    // shows this: a screen that is behind the market must say so rather than looking current.
+    feedHealth: () => feed.health(),
 
     events: () => [...recent],
   };

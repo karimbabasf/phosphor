@@ -305,9 +305,54 @@ MandateRow = { id, symbol, armed, running, since, expiresAt, programHash,
 ```
 
 **`null` means unknown and is never rendered as zero.** This is a hard rule and it comes from a
-real incident: `clearinghouseState` reports `accountValue: 0.0` on a unified account holding
-real money, and a screen that prints that zero as a fact is a screen that says you have nothing
-while you are carrying a leveraged position.
+real incident: reading `clearinghouseState` on this account showed `accountValue: 0.0` while it
+held 889 USDC, and believing that zero cost a needless bridge deposit.
+
+### The unified-account correction
+
+Checking that incident against the live venue showed the original diagnosis was only half
+right, and the wrong half is the dangerous one.
+
+`accountValue` is exactly `0.0` only when a unified account holds **no perp position**. That is
+the case that was observed and it is the harmless one. **With a position open the number is
+non-zero and still not the account's money.** The perp side draws collateral from spot, so
+`totalRawUsd` goes negative and the identity `accountValue = totalRawUsd + totalNtlPos` holds
+exactly: what comes back is position equity, not what the account is worth. `withdrawable`
+reads `0.0` on such an account too.
+
+A zero that is obviously wrong gets questioned. A plausible number that is wrong gets acted on.
+So the rule for this surface is stronger than "do not print the zero":
+
+> When the account is unified, `healthPct` and `crossLeverage` derived from `accountValue` are
+> **`null`**, not a number. A risk panel showing a wrong health ratio is worse than one showing
+> no health ratio, because the human trades on it.
+
+Detection is `totalRawUsd < 0`, or `accountValue` zero while `activeAssetData` reports available
+collateral. The real balance lives in `spotClearinghouseState` (`total` includes what backs perp
+margin; `hold` is the reserved part). There is no single endpoint for whole-account health on a
+unified account: the venue publishes the formula as `computeUnifiedAccountRatio`, the maximum
+over collateral tokens of `crossMargin / (spotTotal - isolatedMargin)`, with maintenance being
+`crossMaintenanceMarginUsed` per dex plus isolated `marginUsed`.
+
+### Venue details that are easy to get wrong
+
+All verified against the live API rather than taken from the documentation.
+
+- `frontendOpenOrders`, not `openOrders`, for the REST read. Plain `openOrders` omits **every**
+  trigger field, so stops and targets arrive looking like ordinary limits.
+- On a trigger order, `limitPx` is a ten percent slippage bound, **not** the line. The line is
+  `triggerPx`, and triggers fire on the **mark** price.
+- `metaAndAssetCtxs` returns contexts aligned **positionally** with `universe`, carrying no coin
+  key. Zipping them wrongly attributes one coin's mark price to another, silently.
+- `liquidationPx` can be `null` on a cross position. Every distance derived from it is then null
+  as well. This is the most likely real null on the whole payload.
+- Fills key on `tid`. `hash` is frequently all zeroes. A liquidation is the **presence** of a
+  `liquidation` object, not a boolean field.
+- The websocket `candle` message is one object, not an array, and its values are strings.
+- `pong` carries no `data` key.
+- `ctx.funding` is the **hourly** rate, not the eight-hour figure exchanges usually quote.
+- There is no per-position maintenance field: it is `positionValue / (2 * maxLeverage)` of the
+  active margin tier.
 
 ### DOM contract for `ui/trade.html` and `ui/trade.js`
 
@@ -353,12 +398,50 @@ op view  trade_focus, trade_highlight, trade_overlay, trade_note, trade_clear
 no verb for it": the capability is absent from the agent's door rather than guarded behind a
 check inside it.
 
+## What a pro surface has that a retail one omits
+
+Measured from Hyperliquid's own app, dYdX v4 and Binance Futures opened side by side, plus the
+desktop conventions of TT and Bloomberg. Four of the findings change this design; they are
+folded in above and listed here with their reasoning.
+
+**The order ticket's real job is the receipt, not the form.** Every professional tool previews
+the account's next state before you commit: if this fills, your liquidation moves here, your
+free collateral becomes this. Phosphor has no ticket, so that job lands on the mandate console
+at approval time. The ARM screen shows the account **as it would be** if the program opened its
+maximum position, not merely the program's own text. This is the single most valuable thing the
+survey turned up and it fits the mandate model better than it fits a ticket, because a mandate
+is exactly a bounded claim about a future state.
+
+**Funding is money and is almost never shown as money.** Retail apps print a rate. A position's
+profit splits three ways, into price, funding and fees, and a carry trade that looks green on
+price can be red once it has paid for itself. `cumFunding.sinceOpen` is already on the venue's
+position object. The book panel splits profit into its three parts.
+
+**Cross margin makes every position a term in every other position's liquidation price.** A
+per-position view is therefore incomplete by construction. The risk panel carries net and gross
+notional and one plain sentence: what a five percent move against the book does to equity.
+
+**Numbers must not jitter.** Proportional digits that change width as they tick are the reason
+professional blotters are unreadable in the retail apps. Monospace gives this for free and
+`font-variant-numeric: tabular-nums` makes it explicit and survives a font fallback.
+
 ## What this does not do
 
-- **No order book or depth ladder.** A resting-order ladder serves a market maker or a scalper
-  reading queue position. This surface is for a human and an agent agreeing on a thesis over
-  minute-and-above bars, and the ladder would be the busiest thing on screen while changing no
-  decision either of them makes. The tape is available from the venue if that changes.
+- **No order book or depth ladder.** The survey's answer was specific and it is followed: at
+  minute-and-above horizons a ladder is not a decision input. The visible levels on a typical
+  market span a fraction of a percent while an hourly candle covers a hundred times that, and
+  resting depth is free to cancel, so it promises nothing. It remains an execution instrument
+  rather than an analysis one.
+
+  What is worth having from the book is not the ladder but **one number**: what it costs to fill
+  this size right now. A mandate that permits twenty basis points of slippage, next to a book
+  that charges thirty-four to fill its maximum notional, is a mandate that will not do what its
+  author thinks. **Named as the next thing to build** rather than built here, because it needs
+  an `l2Book` subscription this surface does not otherwise want.
+- **No manual order entry.** Stated above, and it is the point rather than a gap.
+- **No hotkeys yet.** The survey found no perps web app has them and that professional desktop
+  tools have had them for twenty years. The one that matters here is a key for the kill switch.
+  Named, not built.
 - **No manual order entry.** Stated above, and it is the point rather than a gap.
 - **No mobile layout beyond not breaking.** The pro page's fallback (stacked, scrolling, under
   1100px) applies. Nobody arms a leveraged bot from a phone.

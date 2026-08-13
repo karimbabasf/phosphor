@@ -20,6 +20,9 @@ import { hyperliquidSource, hyperliquidLive } from './hyperliquid.ts';
 import { createProposalService } from './proposals.ts';
 import { createRunnerHost } from './runner/host.ts';
 import { readApiWalletKey } from './runner/keys.ts';
+import { createTradeService } from './trade/service.ts';
+import { createInfoClient } from './hl/info.ts';
+import { atr } from './analysis/regime.ts';
 import { createServer } from './server.ts';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -157,6 +160,60 @@ function setKill(on: boolean): void {
   if (on) void runner.stopAll('kill switch');
 }
 
+// ATR per coin, refreshed on a slow timer and served from a cache.
+//
+// The risk panel asks for this while it renders, and rendering must not wait on a network read.
+// Volatility on an hourly bar is also not a number that changes meaningfully inside a minute,
+// so a cache costs nothing real and a synchronous read is what the caller actually needs.
+// Fourteen periods of hourly bars is the standard Wilder window, which is what the chart draws.
+const atrCache = new Map<string, number>();
+
+async function refreshAtr(): Promise<void> {
+  for (const product of cfg.candleProducts) {
+    try {
+      const load = await candles.get(product, 3600, 120);
+      const series = atr(load.candles, 14);
+      const last = series[series.length - 1];
+      if (last !== null && last !== undefined && Number.isFinite(last)) {
+        atrCache.set(product.split('-')[0].toUpperCase(), last);
+      }
+    } catch {
+      // A market whose candles will not load keeps whatever it had, and the surface reports
+      // the distance in the two units that do not need it. Missing is better than stale-wrong.
+    }
+  }
+}
+
+function atrForCoin(coin: string): number | null {
+  return atrCache.get(coin.toUpperCase()) ?? null;
+}
+
+void refreshAtr();
+setInterval(() => void refreshAtr(), 300_000).unref?.();
+
+// The trading surface. Reads over a websocket rather than a poll, because Hyperliquid's own
+// rate-limit guidance is that a chatty /info loop blows the weight budget long before orders do,
+// and a trading screen refreshing positions, orders, fills, mark and funding is that loop.
+//
+// The ATR it uses for the liquidation-distance figure comes from the same indicator engine the
+// chart draws with, on purpose. Two implementations of volatility would mean the risk panel and
+// the candles could disagree about how much a market moves, and the person would have no way to
+// tell which one was lying.
+const tradeInfo = createInfoClient({
+  baseUrl:
+    cfg.network === 'mainnet' ? 'https://api.hyperliquid.xyz' : 'https://api.hyperliquid-testnet.xyz',
+});
+
+const trade = createTradeService({
+  wsUrl: cfg.network === 'mainnet' ? 'wss://api.hyperliquid.xyz/ws' : 'wss://api.hyperliquid-testnet.xyz/ws',
+  user: cfg.addresses.evm[0] ?? '',
+  info: tradeInfo,
+  runner,
+  products: cfg.candleProducts,
+  atrFor: (coin) => atrForCoin(coin),
+  initialSymbol: (cfg.candleProducts[0] ?? 'BTC-USD').split('-')[0],
+});
+
 const server = createServer({
   cfg,
   audit,
@@ -170,7 +227,12 @@ const server = createServer({
   setKill,
   agentSeen,
   agentsConnected,
+  trade,
 });
+
+// The feed moving is the only thing that makes the trading surface change without anyone
+// touching it, so it is what drives the push. Coalesced by the feed already.
+trade.onUpdate(() => server.broadcastState());
 
 server.listen(cfg.port, '127.0.0.1', () => {
   audit.append('app_start', `phosphor up on http://127.0.0.1:${cfg.port} (${cfg.mode} mode)`);

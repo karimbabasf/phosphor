@@ -226,6 +226,95 @@ async function place(a: Armed, symbol: string, action: Action): Promise<void> {
   }
 }
 
+// ---------- the human's own controls ----------
+//
+// Cancel, close and flatten are the buttons on the trading window. They run HERE, in the child,
+// rather than in the app, and that is a key-handling decision rather than a convenience.
+//
+// This process is the only one in the tree that holds the API wallet. Signing a human's close
+// in the app would mean a second process holding a key that can place orders, which doubles the
+// surface for no gain. The app already talks to this one over IPC, so the button borrows the
+// signer that is already here.
+//
+// None of these consult an envelope, and that is correct rather than an oversight. Every verb
+// below only ever REDUCES: it cancels resting orders or closes into flat. The envelope exists
+// to bound what a program may do on its own; a human reducing their own exposure is the thing
+// the envelope is protecting, not a thing it needs to rule on. Same reasoning as the envelope
+// already letting a close through after a breach.
+//
+// The order lists arrive from the app rather than being read here. The app owns the feed, so
+// asking the venue a second time from this process would be a second answer to a question that
+// already has one, and the two could disagree about what is resting.
+type ManualMsg = {
+  verb: 'cancel' | 'cancel_all' | 'close' | 'flatten';
+  requestId: string;
+  cancels?: { assetId: number; oid: number }[];
+  coin?: string;
+};
+
+async function closeCoin(coin: string): Promise<string> {
+  const b = book.get(coin);
+  if (b === undefined) return `${coin}: no market data, nothing sent`;
+  if (b.positionSide === 'flat') return `${coin}: already flat`;
+  const ex = requireExchange();
+  const isBuy = b.positionSide === 'short';
+  // A wide bound on purpose. This is a human pressing close, so the intent is out, not out at a
+  // good price, and a fill that does not happen because the bound was tight is the worse
+  // outcome. It is still a bound: there is no unbounded order anywhere in this file.
+  const px = roundToValidPrice(aggressiveLimitPrice(b.markPx, isBuy, 100), b.szDecimals, true, isBuy);
+  await ex.order([
+    {
+      assetId: b.assetId,
+      isBuy,
+      price: px,
+      size: b.positionUsd / px,
+      reduceOnly: true,
+      tif: 'Ioc',
+      szDecimals: b.szDecimals,
+      cloid: newCloid(),
+    },
+  ]);
+  return `${coin}: close sent at ${px}`;
+}
+
+async function manual(msg: ManualMsg): Promise<void> {
+  const done = (ok: boolean, detail: string) =>
+    send({ type: 'manual_result', requestId: msg.requestId, ok, detail });
+  try {
+    if (msg.verb === 'cancel' || msg.verb === 'cancel_all') {
+      const cancels = msg.cancels ?? [];
+      if (cancels.length === 0) return done(true, 'nothing working to cancel');
+      await requireExchange().cancel(cancels);
+      return done(true, `cancelled ${cancels.length} order(s)`);
+    }
+
+    if (msg.verb === 'close') {
+      if (msg.coin === undefined) return done(false, 'close needs a coin');
+      return done(true, await closeCoin(msg.coin));
+    }
+
+    // Flatten is the big red one: stop every bot AND close every position. Bots are stopped
+    // FIRST, because closing while a program is still armed invites it to open the position
+    // straight back on its next tick.
+    for (const [id] of [...armed]) {
+      armed.delete(id);
+      send({ type: 'disarmed', id, reason: 'flatten' });
+    }
+    const results: string[] = [];
+    for (const [coin, b] of book) {
+      if (b.positionSide === 'flat') continue;
+      try {
+        results.push(await closeCoin(coin));
+      } catch (err) {
+        results.push(`${coin}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    return done(true, results.length === 0 ? 'nothing open, every bot stopped' : results.join('; '));
+  } catch (err) {
+    done(false, err instanceof Error ? err.message : String(err));
+  }
+}
+
 async function flatten(id: string, reason: string): Promise<void> {
   const a = armed.get(id);
   if (a === undefined) return;
@@ -308,6 +397,14 @@ async function tick(): Promise<void> {
       };
 
       const out = evaluate(a.program, market, runState(a, symbol), a.memory);
+      // Which rule fired, reported so the window can say WHY something happened rather than
+      // only that it did. The evaluator stamps every rule it fires with this tick's clock, so
+      // the ones matching nowMs are exactly the ones that just fired.
+      for (const [ruleId, firedAt] of Object.entries(out.memory.firedAtMs)) {
+        if (firedAt === market.nowMs) {
+          send({ type: 'rule', id, ruleId, at: new Date(firedAt).toISOString() });
+        }
+      }
       a.memory = out.memory;
       a.prevMarkPx = b.markPx;
 
@@ -361,6 +458,11 @@ process.on('message', async (msg: Record<string, unknown>) => {
 
   if (cmd === 'kill') {
     killed = msg.on === true;
+    return;
+  }
+
+  if (cmd === 'manual') {
+    await manual(msg.action as ManualMsg);
     return;
   }
 

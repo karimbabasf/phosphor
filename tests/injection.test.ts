@@ -284,6 +284,18 @@ test('the tool surface cannot express an exfiltration target', async () => {
       'chart_level',
       'chart_mark',
       'chart_clear',
+      // The trading surface. Reads answer "what is my situation"; writes change what is drawn
+      // and what is pointed at. What is NOT here is the point of listing them: there is no
+      // close, no cancel, no flatten and no disarm. Those live on /api/trade/action, which the
+      // agent's door does not open onto, so the capability is absent rather than guarded. This
+      // list failing is how a future change that adds one gets noticed.
+      'trade_read',
+      'trade_batch',
+      'trade_focus',
+      'trade_highlight',
+      'trade_overlay',
+      'trade_note',
+      'trade_clear',
     ].sort(),
   );
 
