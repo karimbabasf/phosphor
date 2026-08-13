@@ -12,3 +12,5 @@ state/
 .superpowers/
 .design/*.png
 .design/audit.json
+.playwright-mcp/
+*-startup.png

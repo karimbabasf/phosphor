@@ -342,6 +342,36 @@ test('a blank key sends no X-API-Key header, and a real one sends exactly it', a
   assert.equal(seen[0]['X-API-Key'], 'secret-key');
 });
 
+// An intents account id derived from an EVM key IS the lowercase address, and quote() has
+// always lowercased it for exactly that reason. generate-intent did not, so a swap quoted for
+// the lowercase id then asked for an intent under the checksummed one and the API refused the
+// pair. Verified live 2026-08-13 against one deposit handle: lowercase 201, checksummed HTTP
+// 400 {"message":"Internal error generating intent"}. The message names a server fault and
+// means a rejected argument, so this survived to a real mainnet execution.
+test('generate-intent sends the lowercase account id, whatever case the signer address arrives in', async () => {
+  const bodies: Array<Record<string, unknown>> = [];
+  const fetchImpl: typeof fetch = async (_url, init) => {
+    bodies.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
+    return new Response(JSON.stringify({ intent: { standard: 'erc191', payload: payloadOf() } }), {
+      status: 201,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+
+  const checksummed = '0x1111111111111111111111111111111111111111';
+  await intentsApi({ apiKey: '', fetchImpl }).generateIntent({
+    signerId: checksummed,
+    depositAddress: HANDLE,
+  });
+
+  assert.equal(bodies.length, 1);
+  assert.equal(
+    bodies[0]['signerId'],
+    checksummed.toLowerCase(),
+    'the checksummed form is a different account id to this API and it rejects the request',
+  );
+});
+
 // ---------- guard 3: the verifier account is a constant, never a response ----------
 
 test('the counterparty is the fixed verifier account and a draft naming anything else is refused', async () => {

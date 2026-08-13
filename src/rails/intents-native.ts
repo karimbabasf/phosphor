@@ -362,13 +362,21 @@ export function intentsApi(deps: { apiKey: string; fetchImpl?: typeof fetch }): 
   }
 
   async function generateIntent(params: { signerId: string; depositAddress: string }): Promise<GeneratedIntent> {
+    // Lowercased for the same reason quote() lowercases the account, and missing here was a
+    // fix applied to one path and not the other. An intents account id derived from an EVM key
+    // IS the lowercase address, but signer.address() hands back the CHECKSUMMED form, so the
+    // quote was created for the lowercase id and the intent was requested for the checksummed
+    // one. Verified live 2026-08-13 against the same deposit handle: lowercase returns 201 and
+    // checksummed returns HTTP 400 {"message":"Internal error generating intent"}. That message
+    // reads as a server fault and is really a rejected argument, which is why this cost a swap
+    // execution to find rather than a glance at the error.
     const res = await fetchImpl(`${ONECLICK_BASE}/v0/generate-intent`, {
       method: 'POST',
       headers: authHeaders(),
       body: JSON.stringify({
         type: 'swap_transfer',
         standard: INTENTS_SIGNING_STANDARD,
-        signerId: params.signerId,
+        signerId: params.signerId.toLowerCase(),
         depositAddress: params.depositAddress,
       }),
     });
