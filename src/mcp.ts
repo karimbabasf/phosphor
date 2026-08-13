@@ -220,8 +220,19 @@ registerView(
   `Marks a moment in time on the chart with a label, for example when something was executed. The label is shown to the human tagged [agent]. ${CHART_ANSWER}`,
   { t: z.number().describe('unix timestamp in seconds'), label: z.string().optional() },
 );
+registerView(
+  'chart_trendline',
+  `Draws a sloped line through two points in time, for a trend, a channel edge or any support that is not flat. Each endpoint is a time and a price, so anchor them to the swing highs or lows the line is meant to touch; the line is drawn between them and extended onwards. Use chart_level instead when the line is horizontal. The label is shown to the human tagged [agent]. ${CHART_ANSWER}`,
+  {
+    t1: z.number().describe('unix timestamp in seconds of the first anchor'),
+    p1: z.number().describe('price of the first anchor'),
+    t2: z.number().describe('unix timestamp in seconds of the second anchor'),
+    p2: z.number().describe('price of the second anchor'),
+    label: z.string().optional(),
+  },
+);
 registerView('chart_clear', `Clears what is on the chart. ${CHART_ANSWER}`, {
-  what: z.enum(['indicators', 'levels', 'marks', 'agent', 'all']).optional().default('agent'),
+  what: z.enum(['indicators', 'levels', 'marks', 'trendlines', 'agent', 'all']).optional().default('agent'),
 });
 
 registerPropose(

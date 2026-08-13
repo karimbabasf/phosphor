@@ -989,9 +989,12 @@ function drawTrendlines(ctx, L) {
     ctx.fillRect(Math.round(x2) - 2, Math.round(y2) - 2, 4, 4);
 
     // Label rides the line at its second anchor, nudged off it so the text is not struck
-    // through by the line it names.
+    // through by the line it names. The right clamp is the MEASURED width, not a guess: a
+    // fixed margin was 90px against a label that runs past 130, so the clip rectangle cut
+    // "rising support" to "rising sup" and the drawing looked broken rather than tight.
     var labelY = clampNum(y2 - 7, L.priceTop + 9, L.priceTop + L.priceHeight - 3);
-    ctx.fillText(tl.label, clampNum(x2 + 5, 4, L.plotWidth - 90), labelY);
+    var labelWidth = ctx.measureText(tl.label).width;
+    ctx.fillText(tl.label, clampNum(x2 + 5, 4, Math.max(4, L.plotWidth - labelWidth - 4)), labelY);
   }
 
   ctx.restore();

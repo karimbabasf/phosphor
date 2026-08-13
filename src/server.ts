@@ -120,6 +120,7 @@ const VIEW_TOOLS: readonly string[] = [
   'chart_remove_indicator',
   'chart_level',
   'chart_mark',
+  'chart_trendline',
   'chart_clear',
 ];
 const SCAN_TIMEFRAMES_MAX = 6;
@@ -546,6 +547,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       })),
       levels: state.levels,
       marks: state.marks,
+      trendlines: state.trendlines,
       agentObjects: chart.agentObjects(),
       products: cfg.candleProducts,
       timeframes: TIMEFRAMES,
@@ -874,6 +876,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     else if (tool === 'chart_remove_indicator') outcome = chart.removeIndicator(String(args.id ?? args.type ?? ''));
     else if (tool === 'chart_level') outcome = chart.setLevel(args, 'agent');
     else if (tool === 'chart_mark') outcome = chart.setMark(args, 'agent');
+    else if (tool === 'chart_trendline') outcome = chart.setTrendline(args, 'agent');
     else if (tool === 'chart_clear') outcome = chart.clear(String(args.what ?? 'agent'));
     else {
       sendJson(res, 400, { error: `unknown view tool: ${tool}. known tools: ${VIEW_TOOLS.join(', ')}` });

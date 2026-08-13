@@ -289,6 +289,11 @@ test('the tool surface cannot express an exfiltration target', async () => {
       'chart_remove_indicator',
       'chart_level',
       'chart_mark',
+      // The sloped line, added when a trend line turned out to be undrawable: a level is
+      // horizontal and a mark is vertical, so neither could express one. Four numbers and a
+      // label, all of them coordinates on a canvas. It reaches no proposal path and names no
+      // address, and the loop below holds it to that like every other tool.
+      'chart_trendline',
       'chart_clear',
       // Changes what the human sees, moves no money. It is on this list because a tool
       // that can reshape the approval surface belongs in the injection suite even

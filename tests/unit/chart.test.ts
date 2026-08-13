@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 
 import type { Candle } from '../../src/types.ts';
 import {
+  buildRead,
   clampPan,
   createChartStore,
   digestSeries,
@@ -238,4 +239,78 @@ test('a digest of nothing says so instead of inventing a trend', () => {
   const digest = digestSeries([], 60, 1_700_000_000);
   assert.equal(digest.trend, 'no data');
   assert.equal(digest.last, null);
+});
+
+// The third drawing primitive. A level is horizontal and a mark is vertical, so before this
+// the chart could name a price or a moment but not a trend, which is the commonest thing
+// anyone draws. These tests pin the parts that are easy to get wrong once and never notice:
+// the endpoints are stored oldest first, a zero-width line is refused instead of dividing by
+// zero in the renderer, and the read reports where the line sits NOW rather than making the
+// caller redo the arithmetic from two anchors.
+test('a trendline keeps both endpoints and reports its slope and where it sits now', () => {
+  const chart = createChartStore('SOL-USD');
+  const t0 = 1_700_000_000;
+
+  const out = chart.setTrendline({ t1: t0, p1: 100, t2: t0 + 3600, p2: 101, label: 'support' }, 'agent');
+  assert.equal(out.ok, true);
+
+  const tl = chart.state().trendlines[0];
+  assert.equal(tl?.p1, 100);
+  assert.equal(tl?.p2, 101);
+  assert.equal(tl?.label, '[agent] support');
+  assert.equal(chart.agentObjects(), 1, 'the human is told the agent drew something');
+
+  // Three hourly bars, so the newest sits an hour past the second anchor and the line should
+  // read 102 there: extended forward, not stopped at the last touch.
+  const candles = series([100, 101, 102], 3600).map((c, i) => ({ ...c, t: t0 + i * 3600 }));
+  const view = buildRead({
+    state: chart.state(),
+    candles,
+    meta: { source: 'test', stale: false, built: 'test' },
+    computed: [],
+    nowSec: t0 + 2 * 3600,
+  }) as { trendlines: { direction: string; slopePerHour: number; priceNow: number | null }[] };
+  const read = view.trendlines[0];
+  assert.equal(read?.direction, 'rising');
+  assert.ok(Math.abs((read?.slopePerHour ?? 0) - 1) < 1e-9);
+  assert.ok(Math.abs((read?.priceNow ?? 0) - 102) < 1e-9, 'the line is extended past its second anchor');
+});
+
+test('a trendline given its endpoints backwards stores them oldest first', () => {
+  const chart = createChartStore('SOL-USD');
+  const t0 = 1_700_000_000;
+
+  chart.setTrendline({ t1: t0 + 3600, p1: 101, t2: t0, p2: 100 }, 'agent');
+
+  const tl = chart.state().trendlines[0];
+  assert.equal(tl?.t1, t0, 'the older anchor is first whichever order it arrived in');
+  assert.equal(tl?.p1, 100);
+  assert.equal(tl?.t2, t0 + 3600);
+  assert.equal(tl?.p2, 101);
+});
+
+test('a trendline with one time for both endpoints is refused, not drawn vertical', () => {
+  const chart = createChartStore('SOL-USD');
+  const t0 = 1_700_000_000;
+
+  const out = chart.setTrendline({ t1: t0, p1: 100, t2: t0, p2: 110 }, 'agent');
+
+  assert.equal(out.ok, false);
+  assert.match(String(out.error), /chart_mark/, 'the refusal names the tool that does want one moment');
+  assert.equal(chart.state().trendlines.length, 0);
+});
+
+test('trendlines obey the clear targets, including the human way out of agent drawings', () => {
+  const chart = createChartStore('SOL-USD');
+  const t0 = 1_700_000_000;
+
+  chart.setTrendline({ t1: t0, p1: 100, t2: t0 + 3600, p2: 101 }, 'agent');
+  chart.setTrendline({ t1: t0, p1: 90, t2: t0 + 3600, p2: 91 }, 'human');
+
+  chart.clear('agent');
+  assert.equal(chart.state().trendlines.length, 1, 'clearing agent drawings leaves the human theirs');
+  assert.equal(chart.state().trendlines[0]?.source, 'human');
+
+  chart.clear('trendlines');
+  assert.equal(chart.state().trendlines.length, 0);
 });

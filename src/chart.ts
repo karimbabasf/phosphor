@@ -42,6 +42,22 @@ export type ChartIndicator = {
 export type ChartLevel = { id: string; price: number; label: string; source: Source };
 export type ChartMark = { id: string; t: number; label: string; source: Source };
 
+// A sloped line between two points in time. The third drawing primitive, and the one that
+// took an actual request to notice was missing: a level is a horizontal line and a mark is a
+// vertical one, so between them they could describe a support price or a moment but never a
+// trend, which is the commonest thing anyone draws on a chart. Anchored to (time, price)
+// pairs rather than to bar indices, so panning and changing timeframe move it with the data
+// instead of leaving it stuck to the screen.
+export type ChartTrendline = {
+  id: string;
+  t1: number;
+  p1: number;
+  t2: number;
+  p2: number;
+  label: string;
+  source: Source;
+};
+
 // What the browser reports back about its own size, so the agent can tell whether what it
 // asked for is actually readable rather than assuming it is.
 export type ChartGeometry = {
@@ -60,6 +76,7 @@ export type ChartState = {
   indicators: ChartIndicator[];
   levels: ChartLevel[];
   marks: ChartMark[];
+  trendlines: ChartTrendline[];
   geometry: ChartGeometry | null;
   rev: number;
   lastDriver: Source;
@@ -104,6 +121,7 @@ export const LIMITS = {
   maxPanes: 3,
   maxLevels: 24,
   maxMarks: 24,
+  maxTrendlines: 12,
 };
 
 export function timeframeLabel(sec: number): string {
@@ -176,6 +194,7 @@ export function createChartStore(initialProduct: string): {
   removeIndicator(ref: string): Outcome;
   setLevel(args: Record<string, unknown>, source: Source): Outcome;
   setMark(args: Record<string, unknown>, source: Source): Outcome;
+  setTrendline(args: Record<string, unknown>, source: Source): Outcome;
   clear(what: string): Outcome;
   setGeometry(geometry: ChartGeometry): void;
   agentObjects(): number;
@@ -192,6 +211,7 @@ export function createChartStore(initialProduct: string): {
     indicators: [],
     levels: [],
     marks: [],
+    trendlines: [],
     geometry: null,
     rev: 1,
     lastDriver: 'human',
@@ -378,22 +398,61 @@ export function createChartStore(initialProduct: string): {
     return { ok: true, notes: [], id };
   }
 
+  function setTrendline(args: Record<string, unknown>, source: Source): Outcome {
+    const t1 = Number(args.t1);
+    const p1 = Number(args.p1);
+    const t2 = Number(args.t2);
+    const p2 = Number(args.p2);
+    for (const [name, value] of [['t1', t1], ['p1', p1], ['t2', t2], ['p2', p2]] as const) {
+      if (!Number.isFinite(value)) {
+        return { ok: false, notes: [], error: `${name} must be a finite number; a trendline needs both endpoints as (time, price)` };
+      }
+    }
+    // Two anchors at the same instant describe a vertical line, which is a mark, and the
+    // renderer would divide by zero working out the slope. Refusing names the tool that does
+    // want that rather than drawing something misleading.
+    if (t1 === t2) {
+      return { ok: false, notes: [], error: 'a trendline needs two different times; for a vertical line at one moment use chart_mark' };
+    }
+    if (state.trendlines.length >= LIMITS.maxTrendlines) {
+      return { ok: false, notes: [], error: `${LIMITS.maxTrendlines} trendlines is the maximum. Clear some with chart_clear.` };
+    }
+    // Stored oldest endpoint first, so the renderer and the read never have to care which
+    // order the two anchors arrived in.
+    const flip = t2 < t1;
+    const id = nextId('trend');
+    state.trendlines.push({
+      id,
+      t1: Math.round(flip ? t2 : t1),
+      p1: flip ? p2 : p1,
+      t2: Math.round(flip ? t1 : t2),
+      p2: flip ? p1 : p2,
+      label: tag(String(args.label ?? '') || 'trendline', source),
+      source,
+    });
+    bump(source);
+    return { ok: true, notes: [], id };
+  }
+
   function clear(what: string): Outcome {
     const key = String(what ?? 'all').toLowerCase().trim();
     if (key === 'indicators') state.indicators = [];
     else if (key === 'levels') state.levels = [];
     else if (key === 'marks') state.marks = [];
+    else if (key === 'trendlines') state.trendlines = [];
     else if (key === 'agent') {
       // The human's one-click way out of anything the agent put on the surface.
       state.indicators = state.indicators.filter((i) => i.source !== 'agent');
       state.levels = state.levels.filter((l) => l.source !== 'agent');
       state.marks = state.marks.filter((m) => m.source !== 'agent');
+      state.trendlines = state.trendlines.filter((t) => t.source !== 'agent');
     } else if (key === 'all') {
       state.indicators = [];
       state.levels = [];
       state.marks = [];
+      state.trendlines = [];
     } else {
-      return { ok: false, notes: [], error: `unknown target: ${key}. known: indicators, levels, marks, agent, all` };
+      return { ok: false, notes: [], error: `unknown target: ${key}. known: indicators, levels, marks, trendlines, agent, all` };
     }
     bump('human');
     return { ok: true, notes: [`cleared ${key}`] };
@@ -422,6 +481,7 @@ export function createChartStore(initialProduct: string): {
     removeIndicator,
     setLevel,
     setMark,
+    setTrendline,
     clear,
     setGeometry(geometry: ChartGeometry): void {
       // Geometry is a report about the renderer, not a change to the chart, so it does not
@@ -432,7 +492,8 @@ export function createChartStore(initialProduct: string): {
       return (
         state.indicators.filter((i) => i.source === 'agent').length +
         state.levels.filter((l) => l.source === 'agent').length +
-        state.marks.filter((m) => m.source === 'agent').length
+        state.marks.filter((m) => m.source === 'agent').length +
+        state.trendlines.filter((t) => t.source === 'agent').length
       );
     },
   };
@@ -655,6 +716,27 @@ export function buildRead(args: ReadArgs): unknown {
       side: newest === null ? null : l.price > newest.c ? 'above price' : 'below price',
     })),
     marks: state.marks.map((m) => ({ id: m.id, label: m.label, source: m.source, epochSec: m.t, iso: isoOf(m.t) })),
+
+    // priceNow and distanceFromLastPct are the whole reason to read a trendline back: a
+    // sloped line's useful value is where it sits at this instant, and recomputing that from
+    // two anchors is exactly the arithmetic the reader should not have to repeat. Extended
+    // past its second anchor, which is what makes it a trend line rather than a segment.
+    trendlines: state.trendlines.map((tl) => {
+      const slopePerSec = (tl.p2 - tl.p1) / (tl.t2 - tl.t1);
+      const priceNow = newest === null ? null : tl.p1 + slopePerSec * (newest.t - tl.t1);
+      return {
+        id: tl.id,
+        label: tl.label,
+        source: tl.source,
+        from: { epochSec: tl.t1, iso: isoOf(tl.t1), price: tl.p1 },
+        to: { epochSec: tl.t2, iso: isoOf(tl.t2), price: tl.p2 },
+        slopePerHour: slopePerSec * 3600,
+        direction: tl.p2 > tl.p1 ? 'rising' : tl.p2 < tl.p1 ? 'falling' : 'flat',
+        priceNow,
+        distanceFromLastPct: newest === null || priceNow === null ? null : pctChange(newest.c, priceNow),
+        side: newest === null || priceNow === null ? null : priceNow > newest.c ? 'above price' : 'below price',
+      };
+    }),
 
     geometry: state.geometry,
     rev: state.rev,
