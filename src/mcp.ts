@@ -456,6 +456,23 @@ registerRead(
 );
 
 registerRead(
+  'mandate_catalog',
+  [
+    'READ THIS BEFORE propose_mandate. It is how you open a position without asking anyone how.',
+    '',
+    'This app has no discretionary order: nothing opens except when an armed mandate rule fires. So',
+    'opening a trade means writing a program in a closed grammar, and this returns that whole grammar',
+    'with worked examples you can adapt: every condition, every action, how to reference a price, a',
+    'trend line you drew or an indicator, what each envelope field caps, and the traps.',
+    '',
+    'The examples are real programs, checked against the validator by the test suite, so one can be',
+    'copied and edited rather than composed from scratch. One of them turns a line you drew into the',
+    'trigger, which is what makes drawing and trading one system rather than two.',
+    'Read-only, changes nothing.',
+  ].join(' '),
+  {},
+);
+registerRead(
   'trade_batch',
   [
     'Several trading reads in one round trip, the same shape as chart_batch.',

@@ -48,6 +48,7 @@ import { buildTransactions, createGasCache, evmCandidates } from './transactions
 import type { TxPlace } from './transactions.ts';
 import { gateRequired, gateBanner } from './policy/gate.ts';
 import { buildGreeting } from './greeting.ts';
+import { buildMandateCatalog } from './strategy/catalog.ts';
 import { VERSION } from './version.ts';
 import { renderSentences } from './policy/render.ts';
 import {
@@ -132,6 +133,10 @@ const READ_TOOLS: readonly string[] = [
   'market_search',
   'trade_read',
   'trade_batch',
+  // How to write a mandate. Opening a position is the one action that cannot be reached by
+  // reading a tool signature, because it takes a program rather than arguments, so the
+  // grammar has to be readable from the surface or an agent asks a human how.
+  'mandate_catalog',
 ];
 // Chart writes. They move no money, so they never reach the proposal path and never wait on
 // an approval. They are still audited like every other op: an agent that can change what the
@@ -855,6 +860,10 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         pending: pending.map((p) => p.id),
         stale: wallet.stale,
       });
+      return;
+    }
+    if (tool === 'mandate_catalog') {
+      sendJson(res, 200, buildMandateCatalog());
       return;
     }
     if (tool === 'balances') {

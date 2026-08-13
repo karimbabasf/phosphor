@@ -195,6 +195,10 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
     group: 'trade the venue',
     items: [
       {
+        tool: 'mandate_catalog',
+        does: 'READ FIRST. The whole mandate grammar with worked, validated examples you can adapt: conditions, actions, how to reference a trend line you drew, what each envelope field caps, and the traps. This app has no discretionary order, so this is how a position gets opened at all.',
+      },
+      {
         tool: 'propose_mandate',
         does: 'arm a bot on hyperliquid perpetuals: a rule program plus the envelope it must stay inside. This is the only tool that grants standing authority, so it ALWAYS waits for a human click.',
       },

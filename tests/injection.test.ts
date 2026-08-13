@@ -328,6 +328,11 @@ test('the tool surface cannot express an exfiltration target', async () => {
       // list failing is how a future change that adds one gets noticed.
       'trade_read',
       'trade_batch',
+      // The mandate grammar, as data. It is the answer to "how do I open a position" and
+      // therefore a place a lie would be believed and acted on, which is why it belongs in
+      // this suite. It returns a closed vocabulary and worked examples, names no address and
+      // reaches no proposal path, and the loop below holds it to that like every other tool.
+      'mandate_catalog',
       'trade_focus',
       'trade_highlight',
       'trade_overlay',
