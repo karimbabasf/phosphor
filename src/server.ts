@@ -71,6 +71,10 @@ const UI_DIR = path.join(__dirname, '..', 'ui');
 
 const HOST = '127.0.0.1';
 const MAX_BODY_BYTES = 1024 * 1024;
+// Every label component on the MCP surface is caller-controlled and lands in an
+// append-only file. The body cap is 1 MB, so without this one request can write a
+// 1 MB log line, and a loop of them fills the disk the audit record lives on.
+const MAX_LABEL_CHARS = 64;
 const STATE_DEBOUNCE_MS = 120;
 const HEARTBEAT_MS = 15000; // SSE keepalive; doubles as a floor on state freshness
 const LOG_LIMIT_MAX = 2000;
@@ -179,6 +183,13 @@ function errText(err: unknown): string {
 
 function asRecord(value: unknown): JsonBody {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as JsonBody) : {};
+}
+
+// Bound a caller-supplied string before it reaches a log label. Truncation is
+// enough here: the log is JSONL, so JSON.stringify already escapes newlines and
+// quotes, and no caller-controlled text is ever rendered as HTML.
+function capLabel(raw: string): string {
+  return raw.length <= MAX_LABEL_CHARS ? raw : `${raw.slice(0, MAX_LABEL_CHARS)}...`;
 }
 
 function intParam(raw: unknown, fallback: number, max: number): number {
@@ -1502,7 +1513,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
               : `unknown op ${op}`;
     // Contract: every op that reads, proposes or moves the window is audit-logged
     // before dispatch, arguments included verbatim.
-    audit.append('tool_call', `agent: ${label}`, body);
+    audit.append('tool_call', `agent: ${capLabel(label)}`, body);
     if (op === 'read') {
       await handleRead(body, res);
       return;

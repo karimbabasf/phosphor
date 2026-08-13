@@ -211,6 +211,13 @@ function harness(
 }
 
 function railOf(h: Harness, network: Network = 'mainnet') {
+  // A virtual clock, not the real one. sleepImpl returns immediately, so with now() left on
+  // Date.now the 5ms deadline was being measured against wall time the test was never going
+  // to spend: on a loaded machine the poll loop hit that deadline after two calls instead of
+  // reaching the third status, and 'polls to SUCCESS' failed for a reason that had nothing to
+  // do with the code under test. Advancing the clock by exactly the interval the rail asked
+  // to sleep for makes the loop bound deterministic on any machine.
+  let clock = 0;
   return oneClickRail({
     network,
     keysPath: '/nonexistent/keys.json', // never read: the signer ports are stubbed
@@ -218,7 +225,10 @@ function railOf(h: Harness, network: Network = 'mainnet') {
     evm: h.evm,
     near: h.near,
     fetchImpl: h.fetchImpl,
-    sleepImpl: async () => {}, // no real waiting; maxPolls bounds the loop
+    sleepImpl: async (ms: number) => {
+      clock += ms;
+    },
+    now: () => clock,
     pollIntervalMs: 1,
     pollTimeoutMs: 5,
   });
