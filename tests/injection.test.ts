@@ -258,6 +258,11 @@ test('the tool surface cannot express an exfiltration target', async () => {
       // address: the loop below is what holds that to be true.
       'propose_swap',
       'propose_hl_deposit',
+      // Funds this app's own balance inside intents.near. It is the one rail whose far side
+      // is an account id rather than a chain address, which is exactly why it takes neither:
+      // the credited account is derived from our own key in proposals.ts and there is no
+      // argument here that can name it. The loop below holds that to be true.
+      'propose_intents_deposit',
       'propose_lp_add',
       'propose_lp_remove',
       // The chart. These read and drive a view, never funds: none of them reaches the

@@ -37,6 +37,7 @@ import {
   base58Encode,
   checkIntentPayload,
   erc191SignatureField,
+  intentsApi,
   intentsDeposit,
   intentsDepositPlan,
   intentsNativeRail,
@@ -270,38 +271,75 @@ test('simulate refuses on testnet without pricing a swap that cannot run', async
   assert.equal(h.quotes.length, 0);
 });
 
-// ---------- guard 2: the API key ----------
+// ---------- guard 2: the API key is a fee tier, not a permission ----------
+//
+// These three tests used to assert the opposite: that no key meant refuse at simulate, refuse
+// at execute, and treat blank as absent. That contract was wrong about the API. Re-tested
+// against the live service on 2026-08-13, an unauthenticated POST /v0/generate-intent with a
+// real deposit handle returns HTTP 201 and the erc191 payload. The original conclusion came
+// from 400s that are body validation and fire before any auth check.
+//
+// What is tested now is what the code must actually do: run without a key, and send the
+// header only when there is one to send.
 
-test('a missing API key refuses at simulate, naming what to obtain and where', async () => {
-  const result = await keylessRail().simulate(draftOf());
+test('a keyless rail prices a swap instead of refusing it', async () => {
+  const h = harness();
+  const rail = intentsNativeRail({
+    network: 'mainnet',
+    keysPath: '/nonexistent/keys.json',
+    tokens: tokensFixture,
+    apiKey: '',
+    api: h.api,
+    signer: h.signer,
+    now: () => NOW,
+  });
 
-  assert.equal(result.ok, false);
-  assert.equal(result.error, INTENTS_NO_API_KEY_REASON);
-  assert.match(result.summary, /generate-intent/);
-  assert.match(result.summary, /submit-intent/);
-  assert.match(result.summary, /X-API-Key/);
-  assert.match(result.summary, /Partners Portal/);
-  assert.match(result.summary, new RegExp(INTENTS_API_KEY_ENV));
-  // It names the rail that works without one, so the refusal has a next step.
-  assert.match(result.summary, /oneclick/);
+  const result = await rail.simulate(draftOf());
+  assert.equal(result.ok, true, result.summary);
+  assert.equal(h.quotes.length, 1);
 });
 
-test('a missing API key refuses at execute too, before anything is signed', async () => {
-  await assert.rejects(() => keylessRail().execute(draftOf()), /partner API key/);
+test('a keyless rail signs and submits, because the key was never what authorised it', async () => {
+  const h = harness();
+  const rail = intentsNativeRail({
+    network: 'mainnet',
+    keysPath: '/nonexistent/keys.json',
+    tokens: tokensFixture,
+    apiKey: '',
+    api: h.api,
+    signer: h.signer,
+    now: () => NOW,
+    sleepImpl: async () => {},
+    pollIntervalMs: 1,
+    pollTimeoutMs: 5,
+  });
+
+  const result = await rail.execute(draftOf());
+  assert.equal(result.ok, true, result.detail);
+  assert.equal(h.submitted.length, 1);
 });
 
-test('a blank API key is treated as no key, not as a key', async () => {
-  for (const apiKey of ['', '   ']) {
-    const rail = intentsNativeRail({
-      network: 'mainnet',
-      keysPath: '/nonexistent/keys.json',
-      tokens: tokensFixture,
-      apiKey,
-      signer: harness().signer,
+test('a blank key sends no X-API-Key header, and a real one sends exactly it', async () => {
+  const seen: Array<Record<string, string>> = [];
+  const fetchImpl: typeof fetch = async (_url, init) => {
+    seen.push((init?.headers ?? {}) as Record<string, string>);
+    return new Response(JSON.stringify({ intent: { standard: 'erc191', payload: payloadOf() } }), {
+      status: 201,
+      headers: { 'content-type': 'application/json' },
     });
-    const result = await rail.simulate(draftOf());
-    assert.equal(result.error, INTENTS_NO_API_KEY_REASON, `apiKey ${JSON.stringify(apiKey)}`);
+  };
+
+  for (const apiKey of ['', '   ']) {
+    seen.length = 0;
+    await intentsApi({ apiKey, fetchImpl }).generateIntent({ signerId: OWNER, depositAddress: HANDLE });
+    assert.equal(seen.length, 1);
+    // An empty credential is not the same request as no credential, and only one of them works.
+    assert.ok(!('X-API-Key' in seen[0]), `apiKey ${JSON.stringify(apiKey)} still sent the header`);
   }
+
+  seen.length = 0;
+  await intentsApi({ apiKey: 'secret-key', fetchImpl }).generateIntent({ signerId: OWNER, depositAddress: HANDLE });
+  assert.equal(seen[0]['X-API-Key'], 'secret-key');
 });
 
 // ---------- guard 3: the verifier account is a constant, never a response ----------
@@ -409,7 +447,7 @@ test('checkIntentPayload refuses an action that is not a swap at all', () => {
   const payload = payloadOf({ intents: [{ intent: 'add_public_key', public_key: 'ed25519:attacker' }] });
   const problems = checkIntentPayload(payload, expectation);
   assert.equal(problems.length, 1);
-  assert.match(problems[0], /is a add_public_key, not the token_diff a swap is made of/);
+  assert.match(problems[0], /is a add_public_key, which is neither the token_diff nor the transfer/);
 });
 
 test('checkIntentPayload refuses a payload authored for a different signer', () => {

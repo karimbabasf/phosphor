@@ -842,8 +842,8 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     try {
       if (kind === 'swap') {
         const venueRaw = params.venue === undefined ? 'uniswap-v3' : String(params.venue);
-        if (venueRaw !== 'uniswap-v3' && venueRaw !== 'oneclick') {
-          problems.push('venue must be uniswap-v3 or oneclick');
+        if (venueRaw !== 'uniswap-v3' && venueRaw !== 'oneclick' && venueRaw !== 'intents-native') {
+          problems.push('venue must be uniswap-v3, oneclick or intents-native');
         }
         const chain = chainField(params, 'chain', problems);
         const toChain = params.toChain === undefined ? chain : chainField(params, 'toChain', problems);
@@ -858,7 +858,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         sendProposal(
           res,
           await proposals.proposeSwap({
-            venue: venueRaw as 'uniswap-v3' | 'oneclick',
+            venue: venueRaw as 'uniswap-v3' | 'oneclick' | 'intents-native',
             chain,
             toChain,
             fromSymbol,
@@ -876,6 +876,19 @@ export function createServer(deps: ServerDeps): PhosphorServer {
           return;
         }
         sendProposal(res, await proposals.proposeHlDeposit({ amount }));
+        return;
+      }
+      if (kind === 'intents_deposit') {
+        const chain = chainField(params, 'chain', problems);
+        // symbol is optional: absent means the chain's gas asset, which is the common case
+        // and the one the ERC-20 path could not serve.
+        const symbol = params.symbol === undefined ? undefined : strField(params, 'symbol', problems);
+        const amount = numField(params, 'amount', problems);
+        if (problems.length > 0) {
+          sendJson(res, 400, { error: problems.join('; ') });
+          return;
+        }
+        sendProposal(res, await proposals.proposeIntentsDeposit({ chain, symbol, amount }));
         return;
       }
       if (kind === 'lp_add') {

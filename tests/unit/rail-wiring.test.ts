@@ -48,6 +48,8 @@ import { createRails, venueAllowlist } from '../../src/rails/index.ts';
 import { chainsWithDeployment, deploymentFor } from '../../src/rails/uniswap-abi.ts';
 import { hlSpec } from '../../src/rails/hyperliquid-deposit.ts';
 import { ONECLICK_COUNTERPARTY } from '../../src/rails/oneclick.ts';
+import { evaluate } from '../../src/policy/engine.ts';
+import { classify } from '../../src/composition.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.dirname(path.dirname(__dirname));
@@ -418,11 +420,48 @@ function cfgFor(mode: AppConfig['mode']): AppConfig {
   };
 }
 
-test('the live registry holds all four rail kinds and nothing else', () => {
+test('the policy engine recognises every kind the registry can dispatch', () => {
+  // src/policy/engine.ts keeps its own hardcoded list of rail kinds so it can stay pure and
+  // free of the registry's config and RPC dependencies. That independence is deliberate; the
+  // drift it allows is not. A kind the registry dispatches but the engine does not recognise
+  // falls through to 'nothing_to_move' and is refused forever, which is fail-closed and also
+  // completely dead. This test is what makes that a red build instead of a mystery.
   const tokens = JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'tokens.json'), 'utf8'));
   const registry = createRails({ cfg: cfgFor('live'), tokens });
 
-  assert.deepEqual(registry.kinds().sort(), ['hl_deposit', 'lp_add', 'lp_remove', 'swap']);
+  for (const kind of registry.kinds()) {
+    // amountUsd 0 rather than a bare {kind}: every rail kind then refuses at 'invalid_amount'
+    // without needing a valid shape per kind, and 'invalid_amount' is reached only by a draft
+    // the engine already routed into evaluateRail. That is the discriminator this test wants.
+    const verdict = evaluate({ kind, amountUsd: 0 } as WriteDraft, {
+      policy: defaultPolicy(),
+      composition: classify(
+        { holdings: [], chainStatus: {}, mode: 'live', prices: {}, gas: {} } as never,
+        [],
+      ),
+      holdings: [],
+      selfAddresses: [],
+      sessionSpentUsd: 0,
+      risk: [],
+      prices: {},
+    } as never);
+
+    // The draft is a bare {kind} with no amount, so every kind must refuse. What matters is
+    // WHICH refusal: 'nothing_to_move' means the engine never recognised it as a rail at all.
+    assert.equal(verdict.outcome, 'refuse', `${kind} should refuse a bare draft`);
+    assert.notEqual(
+      (verdict as { rule: string }).rule,
+      'nothing_to_move',
+      `the policy engine does not recognise rail kind '${kind}': add it to isRailDraft in src/policy/engine.ts`,
+    );
+  }
+});
+
+test('the live registry holds all five rail kinds and nothing else', () => {
+  const tokens = JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'tokens.json'), 'utf8'));
+  const registry = createRails({ cfg: cfgFor('live'), tokens });
+
+  assert.deepEqual(registry.kinds().sort(), ['hl_deposit', 'intents_deposit', 'lp_add', 'lp_remove', 'swap']);
   for (const kind of registry.kinds()) {
     const rail = registry.for({ kind } as WriteDraft);
     assert.ok(rail !== null, `no rail for ${kind}`);

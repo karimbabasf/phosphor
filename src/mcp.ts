@@ -70,7 +70,14 @@ function registerRead(name: string, description: string, shape: Record<string, z
   );
 }
 
-type ProposeKind = 'consolidate' | 'policy_change' | 'swap' | 'hl_deposit' | 'lp_add' | 'lp_remove';
+type ProposeKind =
+  | 'consolidate'
+  | 'policy_change'
+  | 'swap'
+  | 'hl_deposit'
+  | 'intents_deposit'
+  | 'lp_add'
+  | 'lp_remove';
 
 function registerPropose(
   name: string,
@@ -236,9 +243,9 @@ registerPropose('propose_policy_change', 'policy_change', `Proposes a change to 
 registerPropose(
   'propose_swap',
   'swap',
-  `Proposes swapping one token for another. venue uniswap-v3 swaps on a single chain through the verified router; venue oneclick swaps across chains through NEAR Intents (mainnet only). Both sides stay in this app's own wallet. ${CANNOT_APPROVE}`,
+  `Proposes swapping one token for another. venue uniswap-v3 swaps on a single chain through the verified router; venue oneclick swaps wallet funds across chains through NEAR Intents (mainnet only); venue intents-native swaps a balance already deposited inside intents.near, signing an intent instead of moving anything on chain, and needs propose_intents_deposit to have funded it first (mainnet only). Both sides stay in this app's own wallet. ${CANNOT_APPROVE}`,
   {
-    venue: z.enum(['uniswap-v3', 'oneclick']).optional().default('uniswap-v3'),
+    venue: z.enum(['uniswap-v3', 'oneclick', 'intents-native']).optional().default('uniswap-v3'),
     chain: CHAIN,
     toChain: CHAIN.optional(),
     fromSymbol: z.string(),
@@ -253,6 +260,17 @@ registerPropose(
   'hl_deposit',
   `Proposes depositing USDC into this app's own Hyperliquid account through the Bridge2 contract. The chain, the token and the bridge address come from a per-network table, not from this call. ${CANNOT_APPROVE}`,
   { amount: z.number() },
+);
+
+registerPropose(
+  'propose_intents_deposit',
+  'intents_deposit',
+  `Proposes depositing funds from this app's own wallet into NEAR Intents, where they become a balance held by the intents.near verifier under this app's own account. This is the funding step for propose_swap with venue intents-native, which can then swap that balance without moving anything on chain. Leaving symbol out deposits the origin chain's gas asset, so on eth that is native ETH. The asset does not change: this is custody moving, not a swap. Who gets credited is resolved by the app from its own key and cannot be named here. Mainnet only. ${CANNOT_APPROVE}`,
+  {
+    chain: CHAIN,
+    symbol: z.string().optional(),
+    amount: z.number(),
+  },
 );
 
 registerPropose(

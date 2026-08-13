@@ -60,7 +60,8 @@ Two agents can connect at once. Both may read. Proposals queue, and each is appr
 | `src/policy/file.ts` | Load, validate and save `state/policy.json`. Returns null on anything it cannot trust. |
 | `src/policy/render.ts` | Policy to plain English. Pure and deterministic. |
 | `src/proposals.ts` | Simulate, evaluate, persist, and execute after approval. The only path to execution. |
-| `src/intents.ts` | NEAR Intents 1Click quotes, the synthetic quoter for demo mode, and the stub Signer. |
+| `src/intents.ts` | NEAR Intents 1Click quotes, asset id resolution (registry first, then the gas-asset table), the synthetic quoter for demo mode, and the stub Signer. |
+| `src/rails/intents-deposit.ts` | Moves wallet funds INTO `intents.near` so the `intents-native` venue has something to swap. The only rail that sends a chain's own gas asset, so the only one that has to reserve gas before it spends. |
 | `src/hyperliquid.ts` | Hyperliquid candles: native `candleSnapshot` at 1m and above, sub-minute bucketed in process from the trades websocket. |
 | `src/candles.ts` | The candle service: caching, staleness marking, one interface over the source. |
 | `src/audit.ts` | Append-only JSONL. One line per event, never rewritten by the app. |
