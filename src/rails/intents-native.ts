@@ -58,6 +58,14 @@ import {
   toBaseUnits,
 } from '../intents.ts';
 import type { OneClickQuote, OneClickStatus, OneClickToken, TokensFile } from '../intents.ts';
+import {
+  TGAS,
+  ftStorageRegistered,
+  functionCall,
+  nearAccountId,
+  sendTx as nearSendTx,
+} from '../chain/near.ts';
+import type { NearSendOutcome, NearSendParams } from '../chain/near.ts';
 
 // The verifier contract. This is the whole point of the rail: one fixed account that goes on
 // the policy allowlist once and stays there, unlike a deposit address minted per quote.
@@ -517,38 +525,114 @@ export function intentsDepositPlan(args: {
   };
 }
 
-// Why this refuses rather than signs, and it is not a stub.
+// ft_transfer_call is one hop further than ft_transfer: the token contract calls
+// ft_on_transfer on the verifier and waits for the callback that says how much was accepted.
+// 100 TGas covers the round trip with room to spare, and the unburnt remainder is refunded.
+const FT_TRANSFER_CALL_GAS = 100n * TGAS;
+
+// The seam, same shape as the one in oneclick.ts so both rails stub NEAR the same way.
+export type IntentsNearPort = {
+  accountId(keysPath: string): string;
+  send(params: NearSendParams): Promise<NearSendOutcome>;
+  storageRegistered(network: Network, tokenId: string, accountId: string): Promise<boolean>;
+};
+
+export const liveIntentsNearPort: IntentsNearPort = {
+  accountId: nearAccountId,
+  send: nearSendTx,
+  storageRegistered: (network, tokenId, accountId) => ftStorageRegistered(network, tokenId, accountId),
+};
+
+// Funds the rail by signing the deposit, which is the step that used to be impossible.
 //
-// The verifier's deposit interface is ft_transfer_call on a NEP-141 token contract, which is
-// a NEAR transaction. Phosphor holds one key and it is an EVM key: src/chain/evm.ts is the
-// only signer in the app and it cannot author a NEAR transaction. So the honest deposit is
-// the exact call, with its destination checked against the fixed verifier account, handed to
-// a human to run from a NEAR wallet.
+// This function used to refuse on principle and the principle was sound at the time: the
+// verifier's deposit interface is ft_transfer_call on a NEP-141 contract, that is a NEAR
+// transaction, and the app held an EVM key and no NEAR signer. So it built the exact call,
+// checked its destination, and handed it to a human to run from a NEAR wallet.
 //
-// The alternative was bridging in from an EVM chain through a 1Click ORIGIN_CHAIN quote with
-// recipientType INTENTS. That works and needs no NEAR key, but it funds the rail through a
-// freshly minted per-quote deposit address, which is the exact unverifiable destination this
-// rail exists to remove. Reintroducing it inside the funding step would make the rail's whole
-// claim false, so it is named here as a choice rather than taken quietly.
-export function intentsDeposit(args: {
+// src/chain/near.ts removes the reason. What does NOT change is the property the refusal was
+// protecting: the destination is still the fixed verifier account from a constant in this
+// module, checked by intentsDepositPlan before anything is signed, and never read out of an
+// API response. The alternative that was rejected then is still rejected now, and for the
+// same reason: funding this rail through a 1Click ORIGIN_CHAIN quote would route the money
+// via a freshly minted per-quote deposit address, which is the exact unverifiable
+// destination this rail exists to remove.
+//
+// The account being credited is msg, and it is the EVM address rather than the NEAR account
+// that signs. That is deliberate: an ECDSA key gets an Implicit Eth account inside the
+// verifier whose id is the address itself, and that is the identity the erc191 intents in
+// this rail are signed for. An empty msg would credit the NEAR account that sent the tokens,
+// and the rail would then sign intents against a balance it does not have.
+export async function intentsDeposit(args: {
   intentsAccountId: string;
   token: string;
   amountBase: bigint;
   network: Network;
-}): RailResult {
+  keysPath: string;
+  near?: IntentsNearPort;
+  signer?: IntentsSignerPort;
+}): Promise<RailResult> {
   if (args.network !== 'mainnet') {
     return { ok: false, detail: INTENTS_NO_TESTNET_REASON, txids: [] };
   }
+
+  // Builds the call and throws if it is pointed anywhere but the verifier. Runs first, so a
+  // bad destination never reaches a key.
   const plan = intentsDepositPlan(args);
+  const near = args.near ?? liveIntentsNearPort;
+  const signer = args.signer ?? liveIntentsSigner;
+
+  // Pinning the verifier is only half the destination. The other half is msg, which decides
+  // WHICH account inside the verifier gets the credit, and a deposit credited to somebody
+  // else is a total loss of the amount with a perfectly successful transaction to show for
+  // it. The contract address was already checked against a constant; this checks the
+  // credited account against the key that is about to sign, so neither half of "where the
+  // money goes" is taken from a caller unchallenged.
+  const ours = signer.address(args.keysPath);
+  if (plan.intentsAccountId.toLowerCase() !== ours.toLowerCase()) {
+    return {
+      ok: false,
+      detail:
+        `refusing to credit ${oneLine(plan.intentsAccountId, 60)}: this key's Implicit Eth account inside ` +
+        `${plan.verifier} is ${ours}, so a deposit crediting anything else funds an account we cannot spend from.`,
+      txids: [],
+    };
+  }
+
+  const registered = await near.storageRegistered(args.network, plan.token, plan.verifier);
+  if (!registered) {
+    return {
+      ok: false,
+      detail:
+        `${plan.verifier} has no storage deposit registered on ${plan.token}, so ft_transfer_call would ` +
+        'panic and the tokens would bounce. Nothing was signed.',
+      txids: [],
+    };
+  }
+
+  const sent = await near.send({
+    network: args.network,
+    keysPath: args.keysPath,
+    receiverId: plan.call.contractId,
+    actions: [
+      functionCall(plan.call.method, plan.call.args, FT_TRANSFER_CALL_GAS, BigInt(plan.call.attachedDepositYocto)),
+    ],
+  });
+
+  if (!sent.ok) {
+    return {
+      ok: false,
+      detail: `deposit failed: ${oneLine(sent.error ?? 'unknown error')}. The balance inside ${plan.verifier} is unchanged.`,
+      txids: sent.hash !== undefined ? [sent.hash] : [],
+    };
+  }
+
   return {
-    ok: false,
+    ok: true,
     detail:
-      `deposit not signed: Phosphor holds an EVM key only and this call is a NEAR transaction. ` +
-      `Run it from a NEAR wallet holding the tokens: ${plan.call.method} on ${plan.call.contractId} with ` +
-      `receiver_id ${plan.call.args.receiver_id}, amount ${plan.call.args.amount}, msg ${plan.call.args.msg}, ` +
-      `attaching 1 yoctoNEAR. The destination is the fixed verifier account and was checked before this ` +
-      `was built. Once it lands, swaps on this rail need no transfer at all.`,
-    txids: [],
+      `deposited ${plan.amountBase} base units of ${plan.token} into ${plan.verifier}, credited to ` +
+      `${plan.intentsAccountId}; tx ${sent.hash}. Swaps on this rail now need no transfer at all.`,
+    txids: sent.hash !== undefined ? [sent.hash] : [],
   };
 }
 
