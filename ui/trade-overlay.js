@@ -97,13 +97,21 @@ function tradeLine(ctx, L, spec) {
   var top = L.priceTop;
   var bottom = L.priceTop + L.priceHeight;
   if (y < top || y > bottom) {
-    ctx.fillStyle = tradeRgba(spec.colour, 0.55);
-    ctx.fillText(
-      (y < top ? '↑ ' : '↓ ') + spec.label + ' ' + priceText(spec.price, L.decimals),
-      4,
-      y < top ? top + 6 : bottom - 6
-    );
-    return null;
+    /* Off the pane. The label is RETURNED rather than drawn here, pinned to the edge it went
+       off, so it joins the same stacking pass as everything else.
+
+       Drawing it here was the bug: every off-range object printed at one fixed y, so a stop
+       below the window and a mandate wall below it after that printed on top of each other and
+       came out as "1 STOP $29.20 P 1,860.00 1,133.3". Off-range is the NORMAL case for a
+       mandate wall, which sits a long way down when the loss allowance is generous relative to
+       the position, so this is the common path and not an edge one. */
+    return {
+      y: y < top ? top + 6 : bottom - 6,
+      label: (y < top ? '↑ ' : '↓ ') + spec.label,
+      price: spec.price,
+      colour: spec.colour,
+      offRange: true
+    };
   }
   ctx.strokeStyle = tradeRgba(spec.colour, spec.alpha === undefined ? 0.85 : spec.alpha);
   ctx.lineWidth = spec.width || 1;

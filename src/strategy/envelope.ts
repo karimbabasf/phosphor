@@ -67,8 +67,26 @@ function addedNotionalUsd(a: Action): number {
   return 0;
 }
 
+// Everything that puts an order on the venue's book, which is what the rate limit is about.
+//
+// set_stop and set_target were missing, and the gap is not theoretical: a rule reading "when
+// position is long: set stop at 1860" fires on every tick, and it placed ten identical trigger
+// orders in ten seconds while the panel truthfully read "0 of 4 orders this minute". A trigger
+// is an order. The venue counts it against the account's rate limit and against the thousand
+// open orders it allows, so this has to count it too.
+//
+// cancel stays out on purpose. The venue deliberately allows a larger cancel budget than an
+// order budget so an account can always cancel its way out of trouble, and a rate limit that
+// stopped a program withdrawing its own orders would be a trap rather than a bound.
 function placesOrder(a: Action): boolean {
-  return a.do === 'open' || a.do === 'add' || a.do === 'reduce' || a.do === 'close';
+  return (
+    a.do === 'open' ||
+    a.do === 'add' ||
+    a.do === 'reduce' ||
+    a.do === 'close' ||
+    a.do === 'set_stop' ||
+    a.do === 'set_target'
+  );
 }
 
 const refuse = (reason: string, halt: boolean): Ruling => ({ allow: false, halt, reason });

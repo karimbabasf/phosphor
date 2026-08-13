@@ -49,6 +49,20 @@
   background: var(--green-dim);
 }
 
+/* An unknown reading is not a reading of zero. An empty track beside "health --" says health is
+   at zero, which claims the account is at its liquidation when the truth is that the venue has
+   not published what the figure needs. That is the normal case on a unified account, not an
+   edge one. Hatched, so it reads as "no signal" at a glance and can never be mistaken for a bar
+   that has emptied. */
+.track.unknown {
+  border-style: dashed;
+  background-image: repeating-linear-gradient(
+    135deg,
+    var(--green-ghost) 0 1px,
+    transparent 1px 5px
+  );
+}
+
 /* Every empty state names its next action, so it is a line of text and not a shrug. */
 .empty {
   margin: 4px 0 0;
@@ -242,6 +256,19 @@
 
 #t-liq-bar > .fill { background: var(--green); }
 
+/* The liquidation bar is a REVERSE meter: the track is red and the green fill covers it, so the
+   red showing through is the distance you have left to lose. That makes an unknown reading the
+   most dangerous state on the page, because a zero-width fill leaves the track fully red and
+   says you are AT your liquidation. The venue returns a null liquidation price on a cross
+   position routinely, so this is a normal state and not a rare one.
+
+   Neutralised and hatched: no red, no implied reading. The `.unknown` class comes from fillBar
+   in ui/trade.js, and this rule carries the id so it beats the red above it. */
+#t-liq-bar.unknown {
+  border-color: var(--green-ghost);
+  background-color: transparent;
+}
+
 .rexp {
   margin-top: 6px;
   padding-top: 5px;
@@ -291,10 +318,27 @@
   margin-bottom: 8px;
 }
 
+/* The head is a row of independent facts (symbol, state, expiry, the stop-out price, a halt
+   reason, the rule that last fired) and each one is its own span. As a plain block those spans
+   butted straight together and printed "BTCARMEDExpires in 3h 11mMANDATE STOP-OUT at --", which
+   is not a styling nit: the state and the expiry became one unreadable word on the panel that
+   exists to say what a bot is allowed to do. A wrapping flex row with a real gap keeps them
+   separate at any width, and the divider makes the grouping visible rather than implied. */
 .mrow-head {
   margin: 0;
   color: var(--green-hi);
   letter-spacing: 0.06em;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 1.5ch;
+}
+
+.mrow-head > span + span::before {
+  content: "\2502";
+  color: var(--green-ghost);
+  margin-right: 1.5ch;
+  letter-spacing: 0;
 }
 
 /* Policy as plain sentences, never JSON, so the lines keep the breaks the author put
@@ -435,4 +479,54 @@
 .panel-tmandate > .pbody {
   max-height: 56vh;
   overflow-y: auto;
+}
+
+/* ---------- stacked fallback ---------- */
+
+/* style.css already stacks the deck into one column and lets the page scroll. What it cannot
+   know is the reading order this page wants once that happens.
+
+   In source order the panels are grouped into two columns, which is right side by side and
+   wrong stacked: it puts thirty rows of fill history between the chart and the risk panel, so
+   answering "how close am I to liquidation" means scrolling past a page of things that already
+   happened. `display: contents` dissolves both column boxes so every panel becomes a direct
+   child of the deck, which is what makes a single global order possible at all.
+
+   The order is what a person opening this on a narrow screen is actually asking, in sequence:
+   what is the price doing, how close am I to being liquidated, what is this market doing, what
+   is running, what do I hold. History and the log go last because they are the record rather
+   than the question. Nobody arms a bot from a phone; this is about the answer still being
+   reachable when someone looks. */
+@media (max-width: 1100px), (max-height: 620px) {
+  .deck > .col { display: contents; }
+
+  .panel-chart { order: 1; }
+  .panel-trisk { order: 2; }
+  .panel-tmarket { order: 3; }
+  .panel-tmandate { order: 4; }
+  .panel-tbook { order: 5; }
+  .panel-tfills { order: 6; }
+  .panel-tlog { order: 7; }
+
+  /* The caps above are viewport fractions, which stop meaning anything once the page scrolls:
+     20vh of a scrolling page is an arbitrary slice and not a panel. Fills keeps one so a long
+     history cannot become the whole page; everything else opens up to its content.
+
+     Fills restates its containment in full, and that is a fix rather than repetition. An
+     earlier block in this file releases every stacked panel to `overflow: visible` and
+     `display: block`, which is right for the panels that have no cap. Putting a max-height
+     back on one of them without also putting the clip back produced a box 338 pixels tall
+     painting 550 pixels of rows straight through the log underneath it. A height limit and
+     visible overflow is not a compromise between the two, it is the broken case. */
+  .panel-trisk > .pbody,
+  .panel-tmarket > .pbody,
+  .panel-tmandate > .pbody,
+  .panel-tbook > .pbody { max-height: none; overflow: visible; }
+
+  .panel-tfills > .pbody {
+    max-height: 40vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
 }

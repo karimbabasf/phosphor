@@ -55,10 +55,19 @@ type Armed = {
   // passed. Counting what is already in flight is what makes the cap mean the same thing on
   // the first order of a tick and the third.
   inFlightUsd: number;
+  // When the oldest still-unconfirmed order was sent, and the position notional the last book
+  // reported. Together they are what lets in-flight size be RETIRED correctly instead of
+  // discarded. See the 'book' handler for the incident that made both necessary.
+  inFlightSinceMs: number;
+  lastPositionUsd: number;
   // The leverage this runner has actually SET on the venue, as opposed to the number in the
   // program. Null until it has been set once.
   venueLeverage: number | null;
 };
+
+// An order the venue never confirms would otherwise hold its size in flight forever and wedge
+// the mandate. Long enough that a slow fill is not mistaken for a lost one.
+const IN_FLIGHT_TTL_MS = 30_000;
 
 const armed = new Map<string, Armed>();
 let stopping = false;
@@ -159,21 +168,39 @@ async function place(a: Armed, symbol: string, action: Action): Promise<void> {
     const px = roundToValidPrice(raw, b.szDecimals, true, isBuy);
     const size = action.sizeUsd / px;
 
-    await ex.order([
-      {
-        assetId: b.assetId,
-        isBuy,
-        price: px,
-        size,
-        reduceOnly: false,
-        tif: entry.type === 'market' ? 'Ioc' : entry.postOnly === true ? 'Alo' : 'Gtc',
-        szDecimals: b.szDecimals,
-        cloid: newCloid(),
-      },
-    ]);
-    a.ordersInLastMin.push(Date.now());
+    // Counted BEFORE the await, not after.
+    //
+    // This is the order that matters. Placing an order is a network call taking hundreds of
+    // milliseconds, and counting it afterwards leaves a window in which every concurrent check
+    // reads a rate of zero and a position of flat. Live, that window let eight orders out
+    // against a four-per-minute limit and built a $238 position under a $60 cap. Incrementing
+    // first makes the state pessimistic while the order is in doubt, which is the only safe
+    // direction for these two numbers to be wrong in.
+    const now = Date.now();
+    a.ordersInLastMin.push(now);
+    if (a.inFlightUsd === 0) a.inFlightSinceMs = now;
     a.inFlightUsd += action.sizeUsd;
-    if (a.entryAtMs === null) a.entryAtMs = Date.now();
+    if (a.entryAtMs === null) a.entryAtMs = now;
+
+    try {
+      await ex.order([
+        {
+          assetId: b.assetId,
+          isBuy,
+          price: px,
+          size,
+          reduceOnly: false,
+          tif: entry.type === 'market' ? 'Ioc' : entry.postOnly === true ? 'Alo' : 'Gtc',
+          szDecimals: b.szDecimals,
+          cloid: newCloid(),
+        },
+      ]);
+    } catch (err) {
+      // A rejected order holds no size, so its reservation is given back. The rate count is
+      // NOT given back: the venue was asked, and a rate limit exists to bound how often we ask.
+      a.inFlightUsd = Math.max(0, a.inFlightUsd - action.sizeUsd);
+      throw err;
+    }
     return;
   }
 
@@ -208,6 +235,10 @@ async function place(a: Armed, symbol: string, action: Action): Promise<void> {
   if (action.do === 'set_stop' || action.do === 'set_target') {
     const ref = resolveRef(action.ref);
     if (ref === null || b.positionSide === 'flat') return;
+    // Counted like any other order, and counted before the await for the same reason. A trigger
+    // is an order on the venue's book: it spends the account's rate budget and its open-order
+    // allowance. Ten identical stops went out in ten seconds while the rate counter read zero.
+    a.ordersInLastMin.push(Date.now());
     // A stop for a long triggers below and sells, so it rounds as a sell would.
     const px = roundToValidPrice(ref, b.szDecimals, true, b.positionSide === 'short');
     await ex.trigger([
@@ -451,6 +482,8 @@ process.on('message', async (msg: Record<string, unknown>) => {
       ordersInLastMin: [],
       realisedUsd: 0,
       inFlightUsd: 0,
+      inFlightSinceMs: 0,
+      lastPositionUsd: 0,
       venueLeverage: null,
     });
     return;
@@ -472,10 +505,34 @@ process.on('message', async (msg: Record<string, unknown>) => {
   }
 
   if (cmd === 'book') {
-    // A confirmed position supersedes what we thought was in flight. Clearing it here rather
-    // than on a timer means the cap is briefly pessimistic and never optimistic, which is the
-    // safe direction for this particular number to be wrong in.
-    for (const a of armed.values()) if (a.mandate.symbol === String(msg.symbol)) a.inFlightUsd = 0;
+    // In-flight size is RETIRED by how much the position actually grew, never discarded.
+    //
+    // This used to set inFlightUsd to zero on every book, on the reasoning that a confirmed
+    // position supersedes what we thought was in flight. That reasoning has a hole: the book
+    // arrives every couple of seconds and the venue takes time to reflect a fill, so a book
+    // showing a position that has not caught up yet would zero the reservation while the orders
+    // behind it were still live. The next tick then saw a flat account and full headroom and
+    // opened again. Live, that is how a $60 cap ended up holding $238.
+    //
+    // Subtracting the observed growth keeps the sum honest whether the book is current or
+    // stale: what the venue has confirmed stops being in flight, and what it has not stays
+    // reserved. The TTL is the backstop for an order that is never confirmed at all, which
+    // would otherwise hold its size forever and wedge the mandate.
+    const nextBook = msg.book as Book;
+    for (const a of armed.values()) {
+      if (a.mandate.symbol !== String(msg.symbol)) continue;
+      const grew = Math.max(0, nextBook.positionUsd - a.lastPositionUsd);
+      a.inFlightUsd = Math.max(0, a.inFlightUsd - grew);
+      a.lastPositionUsd = nextBook.positionUsd;
+      if (a.inFlightUsd > 0 && Date.now() - a.inFlightSinceMs > IN_FLIGHT_TTL_MS) {
+        send({
+          type: 'error',
+          id: a.mandate.id,
+          message: `releasing ${a.inFlightUsd.toFixed(2)} of unconfirmed size after ${IN_FLIGHT_TTL_MS / 1000}s`,
+        });
+        a.inFlightUsd = 0;
+      }
+    }
 
     // The app owns the market feed and forwards it, so there is one websocket for the whole
     // process tree rather than two views of the same market that can disagree.
@@ -497,7 +554,26 @@ process.on('message', async (msg: Record<string, unknown>) => {
   if (cmd === 'shutdown') process.exit(0);
 });
 
-const timer = setInterval(() => void tick(), 250);
+// One tick at a time, always.
+//
+// setInterval does not wait for an async callback, and a tick that places an order spends
+// hundreds of milliseconds inside a network call. At 250ms that meant up to eight ticks running
+// at once, every one of them having read the order rate and the position before any of the
+// others had changed either. The envelope was not bypassed by a bad rule; it was asked eight
+// questions about the same instant and truthfully answered yes to all of them.
+//
+// This is the classic shape of the bug and it is worth naming: a guard on shared state is only
+// a guard if the state cannot be read concurrently with its own update. Serialising the loop is
+// what makes every check in it mean what it says.
+let ticking = false;
+
+const timer = setInterval(() => {
+  if (ticking) return;
+  ticking = true;
+  void tick().finally(() => {
+    ticking = false;
+  });
+}, 250);
 timer.unref?.();
 
 send({ type: 'error', id: null, message: `runner up, ${IS_MAINNET ? 'MAINNET REFUSED' : 'testnet'}` });

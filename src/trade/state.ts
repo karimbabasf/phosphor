@@ -667,6 +667,7 @@ function mandateRowFrom(
   s: MandateStatus,
   pos: Position | undefined,
   fills: Fill[],
+  orders: Order[],
   nowMs: number,
   markPx: number | null,
   freeUsd: number | null,
@@ -680,9 +681,21 @@ function mandateRowFrom(
   const net = s.realisedUsd + unrealisedUsd;
   const lossUsd = net < 0 ? -net : 0;
 
-  const ordersLastMin = fills.filter(
-    (f) => f.mandateId === m.id && nowMs - f.atMs < ORDER_RATE_WINDOW_MS,
-  ).length;
+  // Orders PLACED in the window, which is what the envelope actually limits.
+  //
+  // This counted fills alone, and the two are not the same number. A trigger order never fills
+  // until its price is reached, so a rule placing a stop every tick put a hundred orders on the
+  // venue while this meter truthfully read "0 of 4 orders this minute". A bound whose own gauge
+  // measures something else is not a bound anyone can watch.
+  //
+  // Working orders are added to the fills, and it is still an estimate rather than a ledger:
+  // an order placed and cancelled inside the window leaves no trace in either list. It errs low,
+  // which is worth saying out loud, and the envelope's own counter in the runner is the one that
+  // actually refuses. This is the human's view of it, not the enforcement.
+  const recent = (atMs: number) => nowMs - atMs < ORDER_RATE_WINDOW_MS;
+  const ordersLastMin =
+    fills.filter((f) => f.mandateId === m.id && recent(f.atMs)).length +
+    orders.filter((o) => o.coin.toUpperCase() === m.symbol.toUpperCase() && recent(o.atMs)).length;
 
   const expiryMs = Date.parse(m.expiresAt);
   // Clamped at zero: an expired mandate has no time left rather than negative time. An expiry
@@ -803,6 +816,7 @@ export function buildTradePayload(deps: {
       m,
       byCoin.get(m.mandate.symbol),
       fills,
+      orders,
       deps.nowMs,
       ctx === null ? null : finite(ctx.markPx),
       account.freeUsd,

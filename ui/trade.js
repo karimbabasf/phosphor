@@ -374,6 +374,16 @@ function share(used, cap) {
 
 /* One meter, filled by percentage on its inner span. The span is made once and reused, so a
    redraw moves a width instead of rebuilding the DOM under the pointer. */
+/* A meter with an unknown value is NOT a meter reading zero.
+
+   An empty track beside "health --" is read as health at zero, which on a risk panel is the
+   single worst thing this page could imply: it says you are at your liquidation when the truth
+   is that nobody has told us yet. It happens on every unified account, where health is not
+   computable from what the venue publishes, so it is the common case rather than an edge one.
+
+   The track carries a class instead, and trade.css draws it as unreadable rather than as empty.
+   Same rule as every number on this page: unknown has its own appearance and never borrows
+   zero's. */
 function fillBar(node, percent) {
   if (!node) return;
   var span = node.firstElementChild;
@@ -381,7 +391,9 @@ function fillBar(node, percent) {
     span = el('span');
     node.appendChild(span);
   }
-  span.style.width = (known(percent) ? Math.max(0, Math.min(100, Number(percent))) : 0).toFixed(1) + '%';
+  var unknown = !known(percent);
+  node.classList.toggle('unknown', unknown);
+  span.style.width = unknown ? '0%' : Math.max(0, Math.min(100, Number(percent))).toFixed(1) + '%';
 }
 
 /* The empty line may be authored inside the tbody as a row or beside the table; the DOM

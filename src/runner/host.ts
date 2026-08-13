@@ -145,6 +145,12 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
           settle({ ok: e.ok, detail: e.detail });
         }
       }
+      // The child can stop a mandate on its own: a halt, or a flatten the human pressed. When
+      // it does, this map has to follow, or the window keeps listing a bot as armed after the
+      // process running it has let it go. Observed live: FLATTEN closed the position and the
+      // screen still showed two armed mandates. Misreporting the safety state is the one thing
+      // this repo has already decided is worse than the safety being off.
+      if (e.type === 'halted' || e.type === 'disarmed') armed.delete(e.id);
       record(e);
     });
     child.on('exit', (code) => {
