@@ -37,6 +37,7 @@ const EXPECTED_TOOLS = [
   'propose_lp_remove',
   'propose_policy_change',
   'propose_swap',
+  'set_view_mode',
   'wallet',
 ];
 
@@ -252,6 +253,26 @@ async function run(): Promise<void> {
     `${top?.issuer}/${top?.symbol}/${top?.chain} share=${(Number(top?.share) * 100).toFixed(2)}%`,
   );
 
+  // ---- view mode, driven over stdio like any other tool ----
+  //
+  // The check that matters is the LAST one: that the flipped view carries the live
+  // proposal's real amount. v0.2 shipped a gate flag whose only call site populated a
+  // browser payload, so the app displayed a state it was not in. Asserting the label
+  // flipped would reproduce that mistake exactly.
+
+  const proBefore = await getJson('/api/state');
+  check('view starts in pro and a basic model is computed anyway', proBefore.view === 'pro' && Boolean(proBefore.basic), `view=${proBefore.view} basic=${Boolean(proBefore.basic)}`);
+
+  await callTool(client, 'set_view_mode', { mode: 'basic' });
+  const afterFlip = await getJson('/api/state');
+  check('set_view_mode over stdio flips what /api/state reports', afterFlip.view === 'basic', `view=${afterFlip.view}`);
+
+  const flipLogged = (await getJson('/api/log?limit=50') as unknown as Json[]).some(e => e.type === 'view_changed');
+  check('the switch is written to the audit log', flipLogged, 'expected a view_changed line');
+
+  await callTool(client, 'set_view_mode', { mode: 'pro' });
+  check('it flips back', (await getJson('/api/state')).view === 'pro');
+
   // ---- the stranded chain refusal is a feature, not a bug ----
   // Default fromChains sweeps every chain, which includes NEAR, and NEAR deliberately holds
   // 0.001 NEAR of gas in the demo fixture. The engine refuses the whole proposal rather than
@@ -276,6 +297,26 @@ async function run(): Promise<void> {
     'propose_consolidate arb+sol to eth lands pending with a simulation',
     proposal.status === 'pending' && proposal.verdict?.outcome === 'needs_approval' && proposal.simulation?.ok === true,
     `id=${proposalId} status=${proposal.status} verdict=${proposal.verdict?.outcome}`,
+  );
+
+  // With something actually pending, the two view-mode guarantees are checkable:
+  // the switch is refused, and the basic model carries the real governed amount
+  // rather than a label that merely says "basic".
+  const refusedFlip = await callTool(client, 'set_view_mode', { mode: 'basic' });
+  check(
+    'set_view_mode is refused while a human decision is waiting',
+    String(refusedFlip.error ?? '').includes('waiting for a human decision'),
+    JSON.stringify(refusedFlip).slice(0, 140),
+  );
+  const stillPro = await getJson('/api/state');
+  check('the refused switch left the mode alone', stillPro.view === 'pro', `view=${stillPro.view}`);
+
+  const basicAsk = (stillPro.basic as Json)?.ask as Json | null;
+  const draftUsd = Number((proposal.simulation as Json)?.ok === true ? basicAsk?.amountUsd : NaN);
+  check(
+    'the basic view carries the live proposal amount, not just a label',
+    basicAsk !== null && Number.isFinite(draftUsd) && draftUsd > 0 && String(basicAsk?.headline ?? '').includes('$'),
+    `amountUsd=${basicAsk?.amountUsd} headline=${String(basicAsk?.headline ?? '').slice(0, 80)}`,
   );
 
   const before = await getJson('/api/state');
