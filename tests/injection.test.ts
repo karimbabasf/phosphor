@@ -260,6 +260,20 @@ test('the tool surface cannot express an exfiltration target', async () => {
       'propose_hl_deposit',
       'propose_lp_add',
       'propose_lp_remove',
+      // The chart. These read and drive a view, never funds: none of them reaches the
+      // proposal path, none takes an address, and the loop below holds them to it like
+      // every other tool. They are on this surface because an agent that cannot see the
+      // price cannot reason about a swap it is about to propose.
+      'chart_read',
+      'chart_measure',
+      'chart_scan',
+      'indicator_catalog',
+      'chart_set_view',
+      'chart_add_indicator',
+      'chart_remove_indicator',
+      'chart_level',
+      'chart_mark',
+      'chart_clear',
     ].sort(),
   );
 

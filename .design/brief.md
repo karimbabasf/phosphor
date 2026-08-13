@@ -51,13 +51,37 @@ Superseded on 2026-08-11 by `docs/superpowers/specs/2026-08-11-phosphor-testnet-
   stays the only alarm
 - No rounded corners, shadows, gradients, icons, illustration; box-drawing characters for separation
 - No animation except cursor blink and appending log lines
-- Canvas candlesticks, green up and red down, tick-only axes, asset selectable, stale marker
+- Canvas candlesticks, green up and red down, asset selectable, stale marker
 - Charts come from Hyperliquid, because that is the venue the execution targets. Timeframes down to
   1s. Chart sits top left; the wallet sits under it
-- Chart handles like TradingView: drag the plot to pan through history, drag the right axis to
-  compress or expand the price scale, drag the bottom axis to compress or expand the time scale,
-  wheel to zoom time, double click either axis to reset it. No indicators, no drawing tools, no
-  crosshair
+
+### Chart, revised 2026-08-12 (Karim: "it has to feel like I am using TradingView")
+
+This section replaces the earlier chart handles bullet and its "no indicators, no crosshair" line.
+Spec: `docs/superpowers/specs/2026-08-12-phosphor-chart-v2.md`.
+
+- Reads as a professional trading chart, not as a sparkline in a wallet app. Price grid and time
+  grid on round values and round clock times, one decimal precision everywhere on the surface,
+  a legend carrying OHLC and the change for the bar under the pointer
+- The price is the one thing on the chart that must be readable without looking for it: a filled
+  tag on the price axis at the last close, coloured by direction, with the countdown to the bar
+  closing under it, and a dashed line across the plot at that price
+- A crosshair, with its price on the right axis and its time under the plot, snapped to the bar on
+  x and free on y. This reverses the earlier "no crosshair"
+- Handles like TradingView and at pointer latency: drag the plot to pan in fractional bars, wheel
+  to zoom about the cursor so the bar under the pointer stays under it, drag the right axis to
+  scale price about the price under the pointer, drag the bottom axis to squeeze or spread bars,
+  drag the plot vertically to take the price scale off auto, double click to reset the axis under
+  the pointer, arrow keys and +/- and 0 from the keyboard
+- Indicators, on a chart that never looks compressed: overlays on the price pane, and RSI, MACD,
+  ATR, Stochastic, OBV and volume in their own panes under it. Three sub-panes and eight overlays
+  are the maximum, the price pane has a 150px floor, and a pane that does not fit is refused or
+  dropped **with the reason said on screen**, never squeezed in
+- The control surface is a command line, not a toolbar: `ema 21`, `bbands 20 2.5`, `remove rsi`,
+  `clear`. The same words the agent uses over MCP
+- An agent connected over MCP can read the chart, measure it, scan several timeframes, and drive
+  the view, the indicators, the price levels and the time marks. Everything it draws is tagged
+  `[agent]`, drawn dotted rather than solid, counted in the chart bar, and clearable in one click
 - Policy as plain sentences, never JSON
 - Terminal-dense character grid, not app-airy
 

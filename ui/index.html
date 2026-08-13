@@ -36,17 +36,26 @@
 
     <div class="col">
 
-      <!-- 2. CHART: top left, everything else moves down under it -->
-      <section class="panel panel-chart grow">
+      <!-- 2. CHART: top left, everything else moves down under it.
+           Two stacked canvases: the scene redraws on data, the hud redraws on the pointer.
+           The control surface is a command line, not a toolbar: the same words the agent
+           uses over MCP, typed. -->
+      <section class="panel panel-chart grow" id="panel-chart">
         <div class="frame frame-top" data-title="CHART"></div>
         <div class="pbody">
           <p class="chartbar">
             <label class="k" for="product">product</label>
             <select id="product"></select>
             <span class="tfs" id="timeframes"></span>
+            <label class="k" for="chart-cmd">ind</label>
+            <input id="chart-cmd" type="text" autocomplete="off" spellcheck="false" placeholder="ema 21" aria-label="add an indicator, for example: ema 21">
             <span class="meta dim" id="chart-meta">--</span>
           </p>
-          <canvas id="chart" height="180"></canvas>
+          <div class="chartwrap" id="chartwrap" tabindex="0" role="img"
+               aria-label="price chart: drag to pan, wheel to zoom, arrow keys to move, 0 for live">
+            <canvas id="chart"></canvas>
+            <canvas id="chart-hud"></canvas>
+          </div>
         </div>
         <div class="frame frame-bottom"></div>
       </section>
@@ -119,6 +128,8 @@
   </div>
 
 </main>
+<!-- chart.js first: it only defines. app.js boots and calls chartBoot(). -->
+<script src="/chart.js" defer></script>
 <script src="/app.js" defer></script>
 </body>
 </html>
