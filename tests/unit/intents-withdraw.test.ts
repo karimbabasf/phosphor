@@ -36,7 +36,9 @@ import {
 
 const OWNER = getAddress('0x1111111111111111111111111111111111111111');
 const ACCOUNT = OWNER.toLowerCase();
-// The app's real Solana wallet, and a real-but-different one to stand in for a stranger.
+// Two public constants standing in for a wallet and a stranger: the wrapped SOL mint and the
+// system program. Never a real wallet, because a test fixture is published the moment it is
+// committed, and an address in a public repo links this project to whoever holds it.
 const SOL_WALLET = 'So11111111111111111111111111111111111111112';
 const SOL_STRANGER = '11111111111111111111111111111111';
 // The deposit handle a live INTENTS quote returned: 64 hex, an account id inside the verifier
@@ -393,7 +395,7 @@ test('no configured wallet on the destination chain refuses instead of falling b
 });
 
 test('an EVM wallet that disagrees with the key is refused', async () => {
-  const other = getAddress('0x1111111111111111111111111111111111111111');
+  const other = getAddress('0x4444444444444444444444444444444444444444');
   const { rail } = railOf({}, { addresses: { evm: [other], solana: [SOL_WALLET], near: [] } });
   const summary = await refusal(
     rail,
@@ -565,7 +567,7 @@ test('a forged counterparty is refused before anything else happens', async () =
 
 test('a draft spending another account is refused', async () => {
   const { rail, calls } = railOf();
-  const summary = await refusal(rail, draftOf({ from: '0x1111111111111111111111111111111111111111' }));
+  const summary = await refusal(rail, draftOf({ from: '0x4444444444444444444444444444444444444444' }));
   assert.match(summary, /but the configured key is/);
   assert.equal(calls.quotes.length, 0, 'the account is checked before the network is touched');
 });

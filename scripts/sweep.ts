@@ -119,6 +119,29 @@ const KNOWN_PUBLIC_CONSTANTS = new Map<string, string>([
   // they are an ASSERTION about output, and are worthless to anyone who has them.
   ['8363524c799e90ce9bc41022f7c39b4e9bdba786e5f9c72b20e43e1462c37cf9', 'expected signature r from the SDK fixture'],
   ['58b1411a775938b83e29182e8ef74975f9054c8e97ebf5ec2dc8d51bfc893881', 'expected signature s from the SDK fixture'],
+  // The RFC 8032 vector again, in NEAR's base58 encoding rather than hex. The seed and public
+  // key above are the same key written the other way, and tests/unit/near-chain.test.ts needs
+  // this form because that is the shape a NEAR keys file actually holds. Allowing one encoding
+  // of a published constant and tripping on the other would only teach a reader to ignore the
+  // sweep, which is the failure mode a security check cannot afford.
+  ['49W385L4rePHy6PAaQUovbD2aacgN4HsKXSMeUzRg4fmwXszN91JuMFrQRj3vMDpZuRF3ZknQBuRBoWQJEfXstMw', 'RFC 8032 ed25519 test vector 1 secret, base58, tests/unit/near-chain.test.ts'],
+  ['ed25519:49W385L4rePHy6PAaQUovbD2aacgN4HsKXSMeUzRg4fmwXszN91JuMFrQRj3vMDpZuRF3ZknQBuRBoWQJEfXstMw', 'RFC 8032 ed25519 test vector 1 secret, NEAR prefixed form'],
+  ['ed25519:FVen3X669xLzsi6N2V91DoiyzHzg1uAgqiT8jZ9nS96Z', 'RFC 8032 ed25519 test vector 1 public key, NEAR prefixed form'],
+  // sha256 of the empty string, the NIST vector. src/chain/near.ts asserts it on every boot to
+  // prove the hash in use is really sha256, the same way keygen proves keccak256.
+  ['e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', 'NIST sha256 of the empty string, src/chain/near.ts self check'],
+  // Two DIGESTS, which are outputs rather than inputs. Each is what its test computes from
+  // fixed inputs on the same line, so the value is an assertion about behaviour and is
+  // worthless to anyone holding it. They trip only because a digest is 32 bytes of hex, which
+  // is exactly the shape of a key: the pattern working, not failing.
+  ['541d8d72f5be9fff46961907b996638b37dc2efba9fe865e35684c5526592c57', 'expected NEAR transaction digest, tests/unit/near-chain.test.ts'],
+  ['58909135e0c2d203cce3f7f0ff53d44ee2851fffe37c9d1f569ebcc83f2d5c4c', 'expected NEP-413 digest, tests/unit/near-chain.test.ts'],
+  // NEAR implicit accounts and 1Click deposit handles are 64 hex, the same shape again. Both
+  // of these are public identifiers INSIDE the verifier, not addresses on a chain and not
+  // keys: an implicit account id is a public key written as hex, and a deposit handle is the
+  // account a solver told us to credit. Neither can spend anything.
+  ['aec6b4afd08c0ace0f392c4d1b8aa9c44ce9bbd558903c4b702ce1cb1ea941b2', 'NEAR implicit account example, tests/unit/near-chain.test.ts and oneclick.test.ts'],
+  ['a7d101a893efccc5e560badd89b55325c99a4da76f2ec584d6a355415e388058', 'deposit handle from a live 1Click quote, tests/unit/intents-withdraw.test.ts'],
 ]);
 
 // A 32 byte key drawn from a CSPRNG uses nearly every hex character. A run that uses four or

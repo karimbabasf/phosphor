@@ -382,7 +382,7 @@ test('a draft crediting an account we cannot spend is refused before anything is
   const h = harness();
   // A real balance, credited to an id this app holds no key for, is unrecoverable: it is not
   // lost on chain, it is owned by somebody else inside the verifier.
-  const draft = draftOf({ intentsAccount: '0x1111111111111111111111111111111111111111' });
+  const draft = draftOf({ intentsAccount: '0x4444444444444444444444444444444444444444' });
 
   await assert.rejects(() => railOf(h).execute(draft), /unrecoverable/);
   assert.equal(h.sends.length, 0);
