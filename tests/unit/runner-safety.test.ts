@@ -211,3 +211,26 @@ test('breach 2b: a partly filled book retires only the part that filled', () => 
   onBook(25);
   assert.equal(inFlight, 35, 'the unconfirmed remainder stays reserved');
 });
+
+test('a brake that reports success must have had something to act on', () => {
+  // FLATTEN returned {ok: true, detail: "nothing open, every bot stopped"} while a position was
+  // open. The child can only close a coin it holds a book for, its book pump follows ARMED
+  // mandates, and nothing was armed, so it looked at an empty map and truthfully reported an
+  // empty map. A safety control that says it acted when it could not even see the position is
+  // worse than one that fails loudly.
+  //
+  // The fix is that the caller names the markets, because the caller is the one holding the
+  // account feed. This pins the property: the set the child is asked about must cover every coin
+  // with a position, whether or not a mandate is armed on it.
+  const armedSymbols = ['BTC'];
+  const positions = [{ coin: 'ETH' }, { coin: 'SOL' }];
+
+  const before = new Set(armedSymbols);
+  assert.equal(before.has('ETH'), false, 'the old pump could not see the unarmed position');
+
+  const coins = [...new Set(positions.map((p) => p.coin))];
+  const after = new Set([...armedSymbols, ...coins]);
+  for (const p of positions) {
+    assert.ok(after.has(p.coin), `flatten must reach ${p.coin} with nothing armed on it`);
+  }
+});

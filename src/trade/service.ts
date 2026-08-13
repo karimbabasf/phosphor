@@ -236,7 +236,14 @@ export function createTradeService(deps: TradeServiceDeps): TradeService {
         return await deps.runner.disarm(id, 'stopped by the human');
       }
 
-      if (action === 'flatten') return await deps.runner.manual({ verb: 'flatten' });
+      if (action === 'flatten') {
+        // Name every market currently holding a position. The runner child can only close a
+        // coin it has a book for, and its book pump follows ARMED mandates, so a flatten with
+        // nothing armed would otherwise reach an empty book and report success having closed
+        // nothing. Observed live, which is the worst way to learn that a brake reports itself.
+        const coins = [...new Set(payload().positions.map((p) => coinOf(p.coin)))];
+        return await deps.runner.manual({ verb: 'flatten', coins });
+      }
 
       if (action === 'close') {
         if (coin === undefined) return { ok: false, detail: 'close needs a market' };

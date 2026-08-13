@@ -44,6 +44,11 @@ export type ManualAction = {
   verb: 'cancel' | 'cancel_all' | 'close' | 'flatten';
   cancels?: { assetId: number; oid: number }[];
   coin?: string;
+  // Which markets flatten has to look at. The child can only close a coin it holds a book for,
+  // and the book pump only runs for ARMED symbols, so with nothing armed the child's book is
+  // empty and flatten found nothing to do. It said so, cheerfully, while a position was open.
+  // The caller names the coins because the caller is the one with the account feed.
+  coins?: string[];
 };
 
 export type HostDeps = {
@@ -83,8 +88,8 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
   // The app owns the read side so there is ONE view of the market across the process tree.
   // Two independent readers would be two answers to "what is the position", and the one that
   // signs would be the one that mattered while the one on screen disagreed.
-  async function pumpOnce(): Promise<void> {
-    const symbols = new Set([...armed.values()].map((a) => a.mandate.symbol));
+  async function pumpOnce(extra: string[] = []): Promise<void> {
+    const symbols = new Set([...[...armed.values()].map((a) => a.mandate.symbol), ...extra]);
     for (const symbol of symbols) {
       try {
         const b = await feed.book(symbol);
@@ -238,7 +243,13 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
       } catch (err) {
         return { ok: false, detail: err instanceof Error ? err.message : String(err) };
       }
-      if (action.verb === 'close' || action.verb === 'flatten') await pumpOnce();
+      // Feed the child a book for every market it is about to be asked to close, including the
+      // ones no mandate is armed on. Without this, a flatten with nothing armed reaches a child
+      // whose book is empty, finds no position, and reports success having closed nothing.
+      if (action.verb === 'close' || action.verb === 'flatten') {
+        const wanted = action.verb === 'close' && action.coin !== undefined ? [action.coin] : (action.coins ?? []);
+        await pumpOnce(wanted);
+      }
 
       manualSeq += 1;
       const requestId = `mn_${manualSeq}`;
