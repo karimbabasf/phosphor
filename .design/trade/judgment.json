@@ -1,6 +1,7 @@
 {
-  "stamp": "057ba5d5d0cbcfed",
-  "iteration": 5,
+  "stamp": "2a9e548ec7a7d481",
+  "iteration": 6,
+  "restamp": "Iteration 6 is a re-stamp, not a new change. No file under ui/ was edited between iteration 5 and this: the source hash moved because ui/approvals.js was committed on the branch by another hand (the APPROVALS block now renders a compact policy diff instead of printing the allowlist twice), and the gate hashes the whole --src ui tree. Re-rendered and re-read at 1440, 768 and 390: APPROVALS reads as one line, no wall of addresses, and the panel geometry underneath it is unchanged.",
   "firstFive": {
     "what": "A terminal trading screen for one Hyperliquid perpetuals account: a live candle chart with the position drawn on it, the book under it, and on the right one risk panel carrying both prices that can end the position, the approvals block, and one time-ordered tape of everything this account has done.",
     "who": "Someone trading this account with borrowed money, watching a program they armed, who has to decide on the agent's proposals without leaving the price.",
