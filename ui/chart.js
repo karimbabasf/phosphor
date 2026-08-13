@@ -518,6 +518,9 @@ function waitingState() {
     return { head: 'CHART UNREACHABLE', sub: CHART.meta.error + '  retrying', live: CHART_FETCH.inflight };
   }
   if (!CHART_READY) {
+    // Before the first payload there is no product and no timeframe to name, and naming the
+    // defaults would put a market on screen that nobody has confirmed is the one being read.
+    if (!CHART.view.product) return { head: 'CONNECTING', sub: 'waiting for the first chart payload', live: true };
     return { head: 'ACQUIRING ' + product + ' ' + tf, sub: 'waiting for the first candles', live: true };
   }
   if (CHART.meta.built === 'trades') {

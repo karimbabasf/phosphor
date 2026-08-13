@@ -238,7 +238,9 @@ function repeat(ch, n) {
    would be the only soft thing on the page. The wave comes from a per-line delay on a hard
    two-state blink instead, which is the same trick the cursor already uses. */
 function skelCell(width, cls) {
-  var span = el('span', cls ? 'skel ' + cls : 'skel', repeat('░', width));
+  // Half-shade, not the light one: at a quarter of the ink the blocks fall under the dimmest
+  // real text on the page and stop reading as a placeholder at all.
+  var span = el('span', cls ? 'skel ' + cls : 'skel', repeat('▒', width));
   span.setAttribute('aria-hidden', 'true');
   return span;
 }
@@ -1071,6 +1073,11 @@ async function boot() {
   wireWallet();
   wireResize();
   wireBasic();
+  // The chart owns its own fetch loop and its own timers (see ui/chart.js), so it boots
+  // before the awaits below rather than after them. Booting it last left the largest panel
+  // on the page as a black rectangle for as long as the wallet read took, which is the one
+  // place a reader is most likely to read a wait as a failure.
+  chartBoot();
   try {
     TOKEN = (await getJson('/api/session')).token;
   } catch (err) {
@@ -1079,8 +1086,6 @@ async function boot() {
   await refreshState();
   await refreshLog();
   openEvents();
-  // The chart owns its own fetch loop and its own timers; see ui/chart.js.
-  chartBoot();
 }
 
 boot();
