@@ -142,8 +142,14 @@ are exposed to and what happens if price moves against it. Neither borrows the o
 Every position on borrowed size has two prices that end it. The **liquidation**, drawn by the
 venue. And the **mandate stop-out**, drawn by the human, where the loss they approved is reached
 and the bot stands down. No other trading interface can draw the second, because in no other
-interface does it exist: there is nothing to draw when authority was never bounded. Ours is always
-nearer than the venue's. Two lines on a chart, and they are the whole architecture.
+interface does it exist: there is nothing to draw when authority was never bounded. Two lines on
+a chart, and they are the whole architecture.
+
+Corrected 2026-08-13 after watching real numbers: the human's wall is NOT always the nearer one.
+The two are computed against different quantities, so a generous loss allowance on a small
+position puts the stop-out far below the venue's liquidation. Observed live: stop-out at $1,133
+against a projected liquidation at $1,422. The page draws both and asserts no ordering, which is
+the honest version and the more useful one.
 
 ## Layout
 Status bar full width, then two columns. Left is the market and what this account did in it:

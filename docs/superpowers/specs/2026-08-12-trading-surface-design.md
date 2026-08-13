@@ -28,9 +28,29 @@ line, because in no other interface does it exist.** There is nothing to draw wh
 never bounded: you gave an app your keys, or you clicked buy yourself, and either way the only
 wall is the exchange's.
 
-Phosphor can draw both. The human's wall is always nearer than the venue's, because a mandate
-whose maximum loss exceeds its own notional is refused at propose time. That is the whole
-architecture rendered as two lines on a chart, and it is what the page is built around.
+Phosphor can draw both. That is the whole architecture rendered as two lines on a chart, and it
+is what the page is built around.
+
+### A correction to that claim, found by looking at real numbers
+
+An earlier draft of this document said the human's wall is **always** nearer than the venue's,
+because a mandate whose maximum loss exceeds its own notional is refused at propose time. That
+is wrong, and the first armed mandate on live data showed it.
+
+A mandate capped at $60 notional with a $12 loss allowance, holding a $30 position, put its
+stop-out at **$1,133** while the projected liquidation for the same account sat at **$1,422**.
+The venue's wall was nearer by three hundred dollars of price.
+
+The reason is that the two walls are computed against different quantities. The liquidation
+follows the margin behind the position **actually held**; the stop-out follows the loss
+allowance spread over that same position, so a generous allowance on a small position puts it a
+very long way down. The propose-time guard compares the loss cap to the **maximum** notional,
+which says nothing about the position that ends up open.
+
+What is true is narrower and still worth the page: **the human's wall exists at all.** Whether
+it bites first depends on the numbers, and that is precisely why the surface draws both rather
+than asserting an ordering. Where it lands is a fact about a particular mandate and the reader
+should be able to see it, not be told a rule that holds only sometimes.
 
 Everything else on the screen is in service of that or is ordinary competence.
 

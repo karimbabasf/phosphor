@@ -1,6 +1,6 @@
 {
-  "stamp": "f547a8d47eac214c",
-  "iteration": 1,
+  "stamp": "43d353ba20829aa7",
+  "iteration": 2,
   "surface": "/trade",
   "note": "This file now judges the TRADING page. The pro page's iteration-8 judgment is kept verbatim in .design/judgment-pro-page.json; the gate holds one judgment per source tree and both pages share ui/, so the two cannot both live here.",
   "firstFive": {
@@ -19,16 +19,19 @@
   "goal": "A person who has left a bot running can look at this and answer three questions without doing arithmetic: how far am I from being liquidated, how much of what I approved has been spent, and is the screen still telling me the truth.",
   "states": {
     "seen": [
-      "flat, nothing armed, feed live (the default, and what all three shots show)",
-      "unified account where health is not computable, rendering as a dash",
-      "venue answering over websocket with sub-second age",
+      "flat, nothing armed, feed live",
+      "ARMED with an open position, the mandate console showing its program in English, its four bounds and the arm receipt",
+      "working stop orders nested as child rows under the position they protect",
+      "a mandate halted by its own notional cap, with the reason in the row",
+      "unified account where health is not computable, rendering as a dash over a hatched track",
+      "a cross position where the venue returns no liquidation price, so the reverse bar is neutralised rather than fully red",
+      "FLATTEN, DISARM and CANCEL ALL driven against live money from the page's own controls",
       "stacked fallback at 768 and at 390"
     ],
     "notSeen": [
-      "an open position, so the entry line, the liquidation line and its red band have never been drawn against real data",
-      "an armed mandate, so the four consumption meters, the arm receipt and the mandate wall have never been drawn against real data",
       "a degraded or offline venue banner",
-      "a liquidation fill and its ring"
+      "a liquidation fill and its ring",
+      "a mandate wall drawn INSIDE the visible price range: on every real mandate so far it has sat far below the window and rendered as an edge tag"
     ]
   },
   "driven": [
@@ -37,7 +40,10 @@
     "measured scrollWidth against clientWidth at all three: no horizontal scroll anywhere",
     "scrolled to the fills and log boundary at 390 and looked at it, twice, before and after the fix",
     "checked every capped panel for content painting outside its box: none",
-    "drove trade_focus, trade_highlight, trade_note, trade_overlay and trade_batch over the agent's own door and read the payload back"
+    "drove trade_focus, trade_highlight, trade_note, trade_overlay and trade_batch over the agent's own door and read the payload back",
+    "armed a real mandate on testnet twice, watched it fill, and read the envelope back",
+    "flattened a live position, cancelled 104 live orders, disarmed a live mandate",
+    "compared the two walls against real numbers, which is what disproved the spec's own claim"
   ],
   "findings": [
     {
@@ -78,20 +84,70 @@
       "fixed": false
     },
     {
-      "what": "I have never seen this page with a position or an armed mandate on it.",
+      "what": "A mandate capped at $60 built a $238 position with 8 orders in one second, on live money.",
+      "severity": "critical",
+      "why": "Two causes. setInterval does not wait for an async callback, so eight 250ms ticks ran concurrently through a network call, each reading the order rate and the position before any other had incremented either. And the book handler zeroed in-flight size on every book, so a book that had not caught up with a fill handed the headroom straight back. The loop is serialised, counters increment before the await, and in-flight size is retired by observed position growth with a timeout backstop.",
+      "fixed": true,
+      "note": "Found only by arming a real mandate and looking at the panel. 630 passing tests did not catch it, because every one of them called the checker sequentially."
+    },
+    {
+      "what": "Trigger orders were not counted as orders, and the panel's order meter counted fills rather than orders placed.",
       "severity": "high",
-      "why": "Every overlay this page exists for, the entry line, the liquidation line and band, and the mandate wall, has been unit tested and never once rendered against a real position. The two walls are the idea the whole surface is built around and I have not looked at them. No amount of the rest being right substitutes for that.",
+      "why": "A rule setting a stop every tick put 104 trigger orders on the venue while the meter read '0 of 4 orders this minute'. set_stop and set_target now count in the envelope and in the runner, and the meter adds working orders to fills. Cancel deliberately still does not count: the venue allows a larger cancel budget on purpose so an account can always cancel its way out.",
+      "fixed": true
+    },
+    {
+      "what": "The liquidation bar rendered fully red when the liquidation price is unknown.",
+      "severity": "high",
+      "why": "It is a reverse meter: red track, green fill covering it. A zero-width fill therefore says you are AT your liquidation. The venue returns a null liquidation price on a cross position routinely, so this was the normal state and not a rare one. Neutralised and hatched.",
+      "fixed": true
+    },
+    {
+      "what": "The mandate head printed as one unreadable word: BTCARMEDExpires in 3h 11mMANDATE STOP-OUT at --",
+      "severity": "medium",
+      "why": "A block of adjacent inline spans with no gap. It is a wrapping flex row with a divider now. Not a styling nit: the state and the expiry became one word on the panel that exists to say what a bot may do.",
+      "fixed": true
+    },
+    {
+      "what": "Off-range chart labels all printed at the same edge position and overlapped.",
+      "severity": "medium",
+      "why": "An off-pane line drew its own label at a fixed y instead of joining the stacking pass, so a stop below the window and a mandate wall below that came out as '1 STOP $29.20 P 1,860.00 1,133.3'. Off-range is the NORMAL case for a mandate wall, not an edge one. It returns its label to the stacker now.",
+      "fixed": true
+    },
+    {
+      "what": "After FLATTEN, the page still listed two mandates as armed.",
+      "severity": "medium",
+      "why": "The child stops a mandate on its own during a flatten or a halt, and the host's map did not follow. Misreporting the safety state is the one thing this repo has already decided is worse than the safety being off.",
+      "fixed": true
+    },
+    {
+      "what": "The spec claimed the human's wall is ALWAYS nearer than the venue's. It is not.",
+      "severity": "medium",
+      "why": "Observed live: stop-out at $1,133 against a projected liquidation at $1,422. The two are computed against different quantities, so a generous loss allowance on a small position puts the stop-out a long way down. The claim is corrected in the spec and the brief; the page draws both and asserts no ordering.",
+      "fixed": true,
+      "note": "This was wrong in my own design document and only real numbers exposed it."
+    },
+    {
+      "what": "The chart's source label truncates to 'hype...' at 1440.",
+      "severity": "low",
+      "why": "It gives up width first by design so the controls stay on the line. Left alone deliberately.",
+      "fixed": false
+    },
+    {
+      "what": "The app was found alive but not listening on its port once, after repeated restarts.",
+      "severity": "low",
+      "why": "Not reproduced on a clean start and no crash trace was written. Recorded rather than claimed as fixed, because I do not know what it was.",
       "fixed": false
     }
   ],
-  "verdict": "Ship the surface, with the last finding stated plainly rather than buried. What is on screen is correct, dense, legible at three widths, and demonstrably drivable by the agent. What is not established is the state the page was built for: nothing has been armed on it and nothing has been held on it, so its most important pixels are unproven.",
+  "verdict": "pass",
   "fixedThisIteration": [
-    "fills painting through the log at 390",
-    "book and fills column headers matched to the renderer, NOTIONAL added to both",
-    "unknown meters hatched instead of drawn as zero",
-    "one shared command line, trade verbs in the capture phase",
-    "MARKET panel added, grow moved from the mandate console to the log",
-    "stacked order is now chart, risk, market, mandate, book, fills, log",
-    "command input widened for the longer trading vocabulary"
+    "the live envelope breach: serialised tick, counters before the await, in-flight retired by observed growth",
+    "trigger orders counted as orders, and the meter counting orders placed rather than fills",
+    "the liquidation bar neutralised when the reading is unknown",
+    "mandate head spaced into a wrapping row with dividers",
+    "off-range chart labels joined to the stacking pass",
+    "the host's armed map cleared when the child halts or flattens",
+    "the two-walls claim corrected in the spec and the brief"
   ]
 }
