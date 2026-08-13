@@ -1,0 +1,296 @@
+// Basic view is the screen a non-technical person makes a money decision on, so these
+// tests are mostly about what it REFUSES to say: no fabricated balance, no truncated
+// address, no destination left off, and never a zero standing in for an unknown.
+//
+// The sharpest one is "renders every destination the approval rests on". Asserting the
+// amount alone would not have caught F2, where the amount was correct and the funds
+// went to a solver-chosen deposit address behind the words "your wallet".
+
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { buildBasic } from '../../src/view/basic.ts';
+import type { BasicInput } from '../../src/view/basic.ts';
+import type { ChainId, ChainStatus, Proposal, SwapDraft, WriteDraft } from '../../src/types.ts';
+
+const SELF = '0x2dd9131edF3CC393B757463C85b2C870A6F3180a';
+const ROUTER = '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45';
+const SOLVER = '0x1111111111111111111111111111111111111111';
+const STRANGER = '0x9999999999999999999999999999999999999999';
+
+const T0 = '2026-08-12T10:00:00.000Z';
+const T1 = '2026-08-12T11:00:00.000Z';
+const T2 = '2026-08-12T12:00:00.000Z';
+
+function chainStatus(fetchedAt = T2): Record<ChainId, ChainStatus> {
+  const one: ChainStatus = { ok: true, fetchedAt };
+  return { eth: one, base: one, arb: one, sol: one, near: one };
+}
+
+function baseInput(over: Partial<BasicInput> = {}): BasicInput {
+  return {
+    wallet: { rows: [], totalUsd: 2341.08, byChain: { arb: 2000, eth: 341.08 }, stale: [] },
+    proposals: [],
+    policyReadable: true,
+    killSwitch: false,
+    gateRequired: true,
+    agentsConnected: 1,
+    chainStatus: chainStatus(),
+    selfAddresses: [SELF],
+    ...over,
+  };
+}
+
+function swapDraft(over: Partial<SwapDraft> = {}): SwapDraft {
+  return {
+    kind: 'swap',
+    venue: 'uniswap-v3',
+    chain: 'arb',
+    toChain: 'arb',
+    fromSymbol: 'USDC',
+    toSymbol: 'WETH',
+    amountIn: 105,
+    amountUsd: 105,
+    minAmountOut: 0.02,
+    from: SELF,
+    to: SELF,
+    counterparty: ROUTER,
+    quote: null,
+    ...over,
+  };
+}
+
+function proposal(over: Partial<Proposal> = {}): Proposal {
+  const draft: WriteDraft = over.draft ?? swapDraft();
+  return {
+    id: 'p-1',
+    kind: draft.kind,
+    createdAt: T1,
+    status: 'pending',
+    draft,
+    simulation: null,
+    verdict: { outcome: 'needs_approval', reasons: ['above the click threshold'] },
+    ...over,
+  };
+}
+
+// ---------- the eleven states ----------
+
+const ELEVEN: Array<[string, BasicInput]> = [
+  ['resting', baseInput()],
+  ['asking', baseInput({ proposals: [proposal()] })],
+  ['working', baseInput({ proposals: [proposal({ status: 'executing' })] })],
+  ['executed', baseInput({ proposals: [proposal({ status: 'executed', decidedAt: T1 })] })],
+  ['human refused', baseInput({ proposals: [proposal({ status: 'refused', decidedAt: T1 })] })],
+  ['policy refused', baseInput({ proposals: [proposal({ status: 'policy_refused', decidedAt: T1 })] })],
+  ['kill switch', baseInput({ killSwitch: true })],
+  ['gate disabled', baseInput({ gateRequired: false })],
+  ['policy unreadable', baseInput({ policyReadable: false })],
+  ['no agent', baseInput({ agentsConnected: 0 })],
+  ['chain read failed', baseInput({ wallet: { rows: [], totalUsd: 0, byChain: {}, stale: ['near'] } })],
+];
+
+test('every one of the eleven states produces copy', () => {
+  for (const [name, input] of ELEVEN) {
+    const view = buildBasic(input);
+    assert.ok(view.headline.trim().length > 0, `${name} rendered an empty headline`);
+    assert.ok(view.footer.trim().length > 0, `${name} rendered an empty footer`);
+    assert.ok(view.totalLine.trim().length > 0, `${name} rendered an empty total line`);
+    assert.ok(view.agentLine.trim().length > 0, `${name} rendered an empty agent line`);
+  }
+});
+
+test('each state lands on the tone the spec assigns it', () => {
+  const toneOf = (name: string) => buildBasic(ELEVEN.find(([n]) => n === name)![1]).tone;
+  assert.equal(toneOf('resting'), 'calm');
+  assert.equal(toneOf('asking'), 'asking');
+  assert.equal(toneOf('working'), 'working');
+  assert.equal(toneOf('policy refused'), 'stopped');
+  assert.equal(toneOf('kill switch'), 'frozen');
+  assert.equal(toneOf('gate disabled'), 'broken');
+  assert.equal(toneOf('policy unreadable'), 'broken');
+});
+
+test('the kill switch outranks everything, including a pending question', () => {
+  const view = buildBasic(baseInput({ killSwitch: true, proposals: [proposal()] }));
+  assert.equal(view.tone, 'frozen');
+  assert.equal(view.ask, null, 'a frozen app must not present a button that cannot work');
+});
+
+test('a policy refusal says what was tried, that it was stopped, and that money did not move', () => {
+  const view = buildBasic(baseInput({ proposals: [proposal({ status: 'policy_refused', decidedAt: T1 })] }));
+  assert.match(view.headline, /Phosphor stopped it/);
+  assert.match(view.headline, /did not move/);
+  assert.match(view.headline, /105/, 'the refusal has to name the amount that was tried');
+});
+
+// ---------- what it refuses to say ----------
+
+test('a stale chain shows no number at all, never a zero', () => {
+  const view = buildBasic(baseInput({ wallet: { rows: [], totalUsd: 0, byChain: {}, stale: ['near'] } }));
+  assert.equal(view.totalUsd, null);
+  assert.match(view.totalLine, /still checking/);
+  assert.ok(!view.totalLine.includes('0.00'), 'an unknown balance may not render as a zero');
+});
+
+test('a balance read before the last execution is not stated as fact', () => {
+  // The ledger cache serves pre-trade balances after a write and still reports stale: [].
+  const view = buildBasic(
+    baseInput({
+      proposals: [proposal({ status: 'executed', decidedAt: T2 })],
+      chainStatus: chainStatus(T0), // fetched an hour BEFORE the execution
+    }),
+  );
+  assert.equal(view.totalUsd, null);
+  assert.match(view.totalLine, /checking your new balance/);
+});
+
+test('a balance read after the last execution is stated normally', () => {
+  const view = buildBasic(
+    baseInput({
+      proposals: [proposal({ status: 'executed', decidedAt: T0 })],
+      chainStatus: chainStatus(T2),
+    }),
+  );
+  assert.equal(view.totalUsd, 2341.08);
+  assert.match(view.totalLine, /2,341\.08/);
+});
+
+test('a swap never claims the total goes down, because a swap does not reduce it', () => {
+  const view = buildBasic(baseInput({ proposals: [proposal()] }));
+  assert.match(view.ask!.afterLine, /stays about the same/);
+  assert.ok(!/left afterwards/.test(view.ask!.afterLine), 'a swap must not fabricate a post-balance');
+});
+
+// ---------- the control that matters ----------
+
+test('the ask carries the same USD the policy engine governed on', () => {
+  const draft = swapDraft({ amountUsd: 105 });
+  const view = buildBasic(baseInput({ proposals: [proposal({ draft })] }));
+  assert.equal(view.ask?.amountUsd, draft.amountUsd);
+  assert.match(view.ask!.headline, /105/);
+  assert.match(view.ask!.headline, /WETH/);
+});
+
+test('basic renders every destination the approval rests on', () => {
+  const draft = swapDraft({ counterparty: ROUTER });
+  const p = proposal({ draft, simulation: { ok: true, summary: '', depositAddresses: [{ leg: 'leg0', address: SOLVER }] } });
+  const view = buildBasic(baseInput({ proposals: [p] }));
+  const shown = view.ask!.destinations.map((d) => d.address.toLowerCase());
+  assert.ok(shown.includes(ROUTER.toLowerCase()), 'the counterparty must be rendered');
+  assert.ok(shown.includes(SOLVER.toLowerCase()), 'the quoter-chosen deposit address must be rendered');
+
+  const solver = view.ask!.destinations.find((d) => d.address.toLowerCase() === SOLVER.toLowerCase())!;
+  assert.equal(solver.chosenBy, 'quoter');
+  // Two halves, because "not your wallet" contains "your wallet" and a substring check
+  // would pass the exact sentence F2 shipped while failing the correct one. The label
+  // must not CLAIM ownership, and it must actively DENY it.
+  assert.doesNotMatch(solver.label, /^your /i, 'a quoter address may never be called the user wallet');
+  assert.match(solver.label, /\bnot your\b/i, 'a quoter address must actively say it is not the user wallet');
+  assert.ok(
+    view.ask!.facts.some((f) => /chosen by the swap service/.test(f)),
+    'the quoter-chosen address needs a plain-words fact, not just a label',
+  );
+});
+
+test('an output address that is not the user wallet is called out as such', () => {
+  const view = buildBasic(baseInput({ proposals: [proposal({ draft: swapDraft({ to: STRANGER }) })] }));
+  const stranger = view.ask!.destinations.find((d) => d.address.toLowerCase() === STRANGER.toLowerCase())!;
+  assert.match(stranger.label, /NOT your wallet/);
+  assert.ok(view.ask!.facts.some((f) => /not your own wallet/.test(f)));
+});
+
+test('the user own wallet is labelled as such when it really is theirs', () => {
+  const view = buildBasic(baseInput({ proposals: [proposal({ draft: swapDraft({ to: SELF }) })] }));
+  const own = view.ask!.destinations.find((d) => d.address.toLowerCase() === SELF.toLowerCase())!;
+  assert.equal(own.label, 'your own wallet');
+});
+
+test('basic never truncates an address it shows', () => {
+  const ELLIPSIS = String.fromCharCode(0x2026);
+  const p = proposal({ simulation: { ok: true, summary: '', depositAddresses: [{ leg: 'leg0', address: SOLVER }] } });
+  const view = buildBasic(baseInput({ proposals: [p] }));
+  assert.ok(view.ask!.destinations.length > 0);
+  for (const d of view.ask!.destinations) {
+    assert.ok(!d.address.includes('...') && !d.address.includes(ELLIPSIS), 'addresses render in full');
+    assert.equal(d.address.length >= 40, true, 'a shortened address is a hidden fact');
+  }
+});
+
+test('every symbol and chain the draft names survives into basic', () => {
+  const draft = swapDraft({ fromSymbol: 'USDC', toSymbol: 'WETH', chain: 'arb', toChain: 'arb' });
+  const view = buildBasic(baseInput({ proposals: [proposal({ draft })] }));
+  assert.deepEqual([...view.ask!.symbols].sort(), ['USDC', 'WETH']);
+  assert.deepEqual(view.ask!.chains, ['arb']);
+});
+
+test('every draft kind produces a headline that names its amount', () => {
+  const drafts: WriteDraft[] = [
+    swapDraft(),
+    { kind: 'hl_deposit', chain: 'arb', symbol: 'USDC', amount: 20, amountUsd: 20, from: SELF, bridge: ROUTER },
+    {
+      kind: 'lp_add',
+      chain: 'arb',
+      venue: 'uniswap-v3',
+      poolId: '0xpool',
+      token0: { symbol: 'USDC', tokenId: '0xa', amount: 30, decimals: 6 },
+      token1: { symbol: 'WETH', tokenId: '0xb', amount: 0.01, decimals: 18 },
+      feeTier: 500,
+      tickLower: -100,
+      tickUpper: 100,
+      amountUsd: 60.64,
+      from: SELF,
+      counterparty: ROUTER,
+    },
+    {
+      kind: 'lp_remove',
+      chain: 'arb',
+      venue: 'uniswap-v3',
+      positionId: '3643',
+      liquidityPct: 0.5,
+      amountUsd: 42.5,
+      from: SELF,
+      counterparty: ROUTER,
+    },
+    { kind: 'policy_change', patch: {}, sentence: 'never hold more than 20% in anything freezable' },
+  ];
+  for (const draft of drafts) {
+    const view = buildBasic(baseInput({ proposals: [proposal({ draft, kind: draft.kind })] }));
+    assert.ok(view.ask !== null, `${draft.kind} produced no ask`);
+    assert.ok(view.ask!.headline.trim().length > 0, `${draft.kind} produced an empty headline`);
+    assert.equal(view.ask!.kind, draft.kind);
+    if (draft.kind !== 'policy_change') {
+      assert.match(view.ask!.headline, /\$/, `${draft.kind} headline must name money`);
+    }
+  }
+});
+
+test('a policy change says plainly that it moves no money', () => {
+  const draft: WriteDraft = { kind: 'policy_change', patch: {}, sentence: 'raise the cap to $999,999' };
+  const view = buildBasic(baseInput({ proposals: [proposal({ draft, kind: 'policy_change' })] }));
+  assert.match(view.ask!.afterLine, /does not move any money/);
+  assert.match(view.ask!.headline, /raise the cap/);
+});
+
+// ---------- warnings ----------
+
+test('the gate being off warns even while a question is on screen', () => {
+  const view = buildBasic(baseInput({ gateRequired: false, proposals: [proposal()] }));
+  assert.equal(view.tone, 'asking', 'the question is still what the human must act on');
+  assert.ok(view.warning !== null);
+  assert.match(view.warning!, /without asking you first/);
+});
+
+test('a quiet screen with the gate off still shouts about it', () => {
+  const view = buildBasic(baseInput({ gateRequired: false }));
+  assert.equal(view.tone, 'broken');
+  assert.match(view.headline, /not asking you/);
+});
+
+test('no warning at all when everything is normal', () => {
+  assert.equal(buildBasic(baseInput()).warning, null);
+});
+
+test('the footer promises nothing moves without a press, but only when asking', () => {
+  assert.match(buildBasic(baseInput({ proposals: [proposal()] })).footer, /Nothing moves unless you press YES/);
+  assert.doesNotMatch(buildBasic(baseInput()).footer, /press YES/);
+});
