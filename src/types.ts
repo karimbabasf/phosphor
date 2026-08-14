@@ -496,7 +496,11 @@ export type LogEvent = {
     | 'policy_changed'
     | 'chain_stale'
     // A view change is a thing an agent did to what a human sees, so the transcript
-    // says so. 'view_refused' is the switch declined because a proposal was pending.
+    // says so. 'view_refused' is HISTORICAL: the switch used to be declined while a
+    // proposal was pending, and nothing emits it now that the approval block renders
+    // on all three windows. It stays in the union because the log is append-only and
+    // tail() casts rather than validates, so an existing audit.jsonl can still hold
+    // these lines. Removing it would make the type lie about the file.
     | 'view_changed'
     | 'view_refused'
     | 'error';

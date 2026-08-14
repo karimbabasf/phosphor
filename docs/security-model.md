@@ -113,18 +113,24 @@ Note that the committed `config.json` template ships with `network: testnet` and
 
 ## The agent can change what the human sees (v0.3)
 
-`set_view_mode` switches the app window between the detailed operator view (`pro`) and a plain
-English view written for a non-technical reader (`basic`). Only the connected agent can call it.
-There is no keyboard shortcut, no button and no URL that lets the human switch back. That is a
-deliberate product decision, not an oversight.
+`switch` moves the app window between the detailed operator view (`pro`), a plain English view
+written for a non-technical reader (`basic`), and the trading surface (`trade`). Only the
+connected agent can call it. Within the main page there is no keyboard shortcut and no button
+that lets the human move between `pro` and `basic`; that is a deliberate product decision, not an
+oversight. The trading window is a separate page at `/trade`, so a human who opens that URL by
+hand gets it, and both pages navigate on a transition rather than on a first sighting, so opening
+it by hand is not immediately undone.
 
-State it plainly, because it is a new capability pointed at the human rather than at the money:
+State it plainly, because it is a capability pointed at the human rather than at the money:
 **the agent chooses which surface an approval decision happens on.**
 
 What limits it:
 
-- **The switch is refused while any proposal is `pending`** (HTTP 409, audited as `view_refused`).
-  The surface cannot change under a decision someone is in the middle of making.
+- **The approval block renders on all three windows** (`ui/approvals.js`), so a switch moves the
+  decision with the human instead of leaving it behind on the screen they came from.
+- **The pending ids ride back on the response**, and the tool description tells the agent to say
+  the count out loud. This matters most on `basic`, which shows one ask at a time: switching there
+  with three waiting would otherwise quietly hide two of them.
 - **Both modes render the same facts.** `basic` may use fewer words; it may not show fewer facts
   about where the money goes. `tests/unit/basic-view.test.ts` asserts that the basic ask carries
   the draft's `amountUsd`, every token symbol, every chain, `draft.counterparty`, and every
@@ -137,10 +143,15 @@ What limits it:
 
 What is NOT claimed, because the overstated version is the one people quote later:
 
-- The 409 does **not** stop an agent choosing the surface. Nothing prevents calling
-  `set_view_mode` first, while nothing is pending, and proposing afterwards.
-- The 409 never fires at all on the sub-threshold path: a proposal under `humanClickAboveUsd`
-  goes straight to `executed` with `decidedBy: 'policy'` and is never `pending`.
+- **There is no longer a refusal on a pending proposal, and that is deliberate.** Earlier versions
+  returned HTTP 409 (audited as `view_refused`) while anything was `pending`. Once the approval
+  block shipped on all three windows the reason for it no longer held, so it was removed rather
+  than kept as a control that sounded protective and was not. Nothing emits `view_refused` today;
+  the type survives only because the audit log is append-only and old files can still contain it.
+- The old 409 never stopped an agent choosing the surface anyway: nothing prevented switching
+  first, while nothing was pending, and proposing afterwards.
+- It never fired at all on the sub-threshold path: a proposal under `humanClickAboveUsd` goes
+  straight to `executed` with `decidedBy: 'policy'` and is never `pending`.
 
 Agent-chosen ordering is inherent to agent-only switching. That is why the field-equality rule
 above is the real control and the 409 is only a convenience: whichever surface the agent picked,

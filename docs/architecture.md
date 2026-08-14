@@ -11,7 +11,7 @@ never be able to approve its own actions.
                  v
     +---------------------------+
     | src/mcp.ts                |   no state, no keys, no files, no approval path
-    | stdio MCP server          |   9 tools, every call becomes one POST
+    | stdio MCP server          |   36 tools, every call becomes one POST
     +---------------------------+
                  |
                  | HTTP POST /api/mcp  ->  127.0.0.1:4177
@@ -42,7 +42,12 @@ between processes, not between the agent and the machine. An agent that can also
 fetch the token from `/api/session` and post it, which is an open hole at the time of writing and is
 documented in full in [the security model](security-model.md#the-honest-v1-boundary).
 
-Two agents can connect at once. Both may read. Proposals queue, and each is approved separately.
+**One agent at a time.** The first MCP session to speak takes the seat, and every other session is
+refused with the reason until it leaves. A session leaves by shutting down, or by going quiet for
+longer than two and a half heartbeats. This replaced an earlier design where two agents could both
+connect and read: two agents driving one wallet looked exactly like one agent, and neither of them
+knew about the other. `src/agents.ts` owns the seat. Proposals still queue, and each is approved
+separately.
 
 ## Module map
 
@@ -71,7 +76,22 @@ Two agents can connect at once. Both may read. Proposals queue, and each is appr
 | `src/store.ts` | Proposal persistence with subscribe/notify, re-created from disk on boot. |
 | `src/view/mode.ts` | Reads and writes the persisted view mode (`state/view.json`). Every failure path returns `pro`, because pro shows more and a corrupt file must never be why a human sees less. |
 | `src/view/basic.ts` | Pure `buildBasic()`. Every word on the basic screen is written here and nowhere else, so the two modes can be asserted to agree rather than assumed to. Refuses to state a balance it cannot back. |
-| `ui/` | One page, no framework, no build step. |
+| `src/greeting.ts` | The connect-time greeting and the index of everything an agent can do, carried into the model's context by the MCP handshake's `instructions`. The role arrives without anyone prompting for it. |
+| `src/agents.ts` | Who is driving, and the rule that only one thing may: the seat, its heartbeat TTL, eviction and revocation. |
+| `src/summon.ts` | Starts a fresh agent in a terminal window, wired to this app. The window could already stop an agent; this is how it starts one. |
+| `src/rails/` | The rail registry: the one table that knows every rail exists. `swap` maps to one rail that dispatches on venue, so two venues can share a kind without pushing the pair into every call site. |
+| `src/rails/mandate.ts` | The perps rail. Arming a mandate is the only way a position is opened, and it always waits for a human click because it grants standing authority rather than doing one thing. |
+| `src/strategy/` | The grammar an agent may write and the runner will execute (`grammar.ts`), what the envelope caps (`envelope.ts`), the evaluator (`evaluate.ts`), the worked examples handed to the agent (`catalog.ts`) and the plain-English renderer. Anything not in the grammar cannot happen. |
+| `src/runner/` | The only code in phosphor that places an order. No model runs in this process: it holds an agent-authored program and a human-approved envelope, and does what they say. |
+| `src/hl/` | Hyperliquid: action signing, msgpack, the order format the venue accepts rather than rejects, info reads and liquidation maths. |
+| `src/trade/` | The trading surface: raw venue state in, one payload out. Everything the browser draws on `/trade` is a view of that function's output. |
+| `src/analysis/` | The measurements behind `chart_batch`: pivots, levels, regime, ATR, volume profile, VWAP, range, divergence, trend-line fitting. `index.ts` is a table of one line per op and must stay one. |
+| `src/batch.ts` | Many operations, one round trip. The agent's latency is turns, not milliseconds, so a later entry can reference an earlier one by name. |
+| `src/drawings.ts` | The objects that make the chart a shared coordinate system: the agent draws one, the human sees it, and a strategy program refers to it by id. |
+| `src/history.ts` | Backward paging through candle history. The cursor is a timestamp rather than an offset, because the venue's endpoint is keyed that way. |
+| `src/chart.ts` | Chart view state, the agent read model, and the ruler. Server-side, so the number the agent reads and the pixel the human sees come from one implementation. |
+| `src/indicators.ts` | Indicator maths. Pure, index-aligned with the candles. |
+| `ui/` | Three windows (`index.html` for pro and basic, `trade.html` for the trading surface), no framework, no build step. `approvals.js` renders the approval block identically on all three. |
 
 `wallet.ts` and `composition.ts` look like duplicates and are not. The wallet answers "what do I
 hold", so it includes natives and LP positions. Composition answers "what is my money made of, and
@@ -143,9 +163,10 @@ chains through bridges means trusting O(N) different systems; supporting them th
 trusting one. For an app whose entire pitch is that the dangerous path is narrow and auditable,
 widening it by a factor of N to save a few basis points is the wrong trade.
 
-The second reason is that it does not need revisiting later. Perps through the same rail into
-Hyperliquid are out of scope here, but they are on the other side of a rail decision already made,
-so scope can grow without the execution path being rebuilt.
+The second reason is that it did not need revisiting later, and that has now been tested rather
+than assumed. Perps on Hyperliquid were out of scope when this was written and are since built:
+they arrived as another rail (`src/rails/mandate.ts`) on the other side of a rail decision already
+made, and the execution path was not rebuilt to take them.
 
 Consequence worth naming: intents settle asynchronously (request a quote, send to a deposit address,
 poll for status). Execution is therefore a poll, not a return value, and the audit log is the record

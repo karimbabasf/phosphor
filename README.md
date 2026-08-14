@@ -4,10 +4,15 @@ A local app that holds your wallet state, chain connections and policy, and cont
 exposes an MCP server. An agent you already pay for (Claude Code, Codex, anything speaking MCP)
 connects and drives it. The app is the car, the agent is the person with the key.
 
-You say "swap 20 USDC into WETH" or "put $50 into the pool". The agent turns that into a
-proposal. The app prices it, runs it through your policy, and either executes it or waits for
-your click. Three things it can do: swap, provide and withdraw liquidity, and deposit to
-Hyperliquid. All four proposal paths have run end to end on Arbitrum Sepolia.
+You say "swap 20 USDC into WETH" or "short SOL if it loses this trend line". The agent turns that
+into a proposal. The app prices it, runs it through your policy, and either executes it or waits
+for your click. What an agent can propose: a swap inside NEAR Intents, funding that balance and
+taking it back out, gathering a stablecoin onto one chain, a change to the policy itself, and
+arming a rule-driven bot on Hyperliquid perpetuals.
+
+Uniswap v3 liquidity and the Hyperliquid bridge deposit are implemented, tested and drivable by a
+human, but they are deliberately not tools an agent is handed: neither has run on a live chain,
+and an unproven fund-moving rail is not one to discover the edges of with real money.
 
 The agent can read everything and propose actions. It can never approve, never execute, and never
 touch policy without a human click in the app window. The policy engine enforces authored rules at
@@ -55,15 +60,21 @@ Connect an agent (Claude Code):
 
     claude mcp add phosphor -- node ~/Developer/phosphor/src/mcp.ts
 
-Then ask it things. "What do I hold?" "Swap 20 USDC into WETH on arb." "Put $50 into the
-USDC/WETH pool." "Pull half my liquidity out." "Deposit 10 into Hyperliquid." "Never let me hold
-more than 20% in anything that can freeze me."
+Then ask it things. "What do I hold?" "Swap 20 USDC into WETH." "Move 50 into Intents and swap it
+there." "Switch to trading." "Show me BTC on the 4 hour and mark the range." "Short SOL at 10x if
+it loses that trend line, and cap me at $200." "Never let me hold more than 20% in anything that
+can freeze me."
 
 ## The tool surface
 
-Twenty-six tools, split three ways. Read tools execute directly and cannot move anything.
-Write tools never execute: they return a proposal id and a simulation result, and nothing else.
-Chart tools move a view, never funds.
+Thirty-six tools, in five families. Read tools execute directly and cannot move anything. Write
+tools never execute: they return a proposal id and a simulation result, and nothing else. Chart
+and trading tools move a view or a marker, never funds. Display tools move the window.
+
+An agent that connects is handed all of this at once. `start` returns the greeting, the live
+state and an index of every tool grouped by what a person would actually ask for, so an agent
+never has to ask a human how to operate the app. The role rides in the MCP handshake itself, in
+the server's `instructions`, so it arrives without anyone prompting for it.
 
 **One agent at a time.** The first MCP session to speak takes the seat and every other session
 is refused with the reason until it leaves. A session leaves by shutting down, or by going
@@ -72,6 +83,7 @@ exactly like one agent, and neither of them knew about the other.
 
 | Read tool | Returns |
 |---|---|
+| `start` | The greeting, the live state and the index of everything this door opens onto, grouped by intent. Call it again after a long gap: the network, the wallet and the pending decisions all move |
 | `wallet` | Everything held, one row per token and per pool position: chain, quantity, price, value, share. Only what is actually held; how many configured tokens came back empty is reported as a count |
 | `balances` | Raw holdings across every configured chain, with per-chain staleness |
 | `composition` | Shares by issuer and chain, freezable share, unclassified holdings |
@@ -83,17 +95,24 @@ exactly like one agent, and neither of them knew about the other.
 | Write tool | Does |
 |---|---|
 | `propose_swap` | Swaps one token for another. Venue `uniswap-v3` on one chain, `oneclick` across chains from the wallet, `intents-native` inside `intents.near` over an already-deposited balance |
-| `propose_lp_add` | Supplies a Uniswap v3 pool over a tick range |
-| `propose_lp_remove` | Pulls a share of a position this wallet holds, collecting its fees |
-| `propose_hl_deposit` | Deposits USDC into this app's own Hyperliquid account through Bridge2 |
 | `propose_intents_deposit` | Moves funds from this wallet into NEAR Intents, where they become a balance `intents.near` holds under this app's own account. Funds the `intents-native` swap venue. Deposits the chain's gas asset (native ETH) unless a symbol is given |
 | `propose_intents_withdraw` | Brings a balance back out of `intents.near` into one of this app's own wallets on `eth`, `base`, `arb` or `sol`. The way out of the `intents-native` venue. Withdraws the chain's gas asset unless a symbol is given. Which wallet is ours comes from `config.local.json`, never from the call |
-| `propose_consolidate` | Gathers a token's scattered balances onto one chain |
-| `propose_policy_change` | Proposes a patch to the policy rules |
+| `propose_consolidate` | Gathers a token's scattered balances onto one chain. Unproven: this path has never run on a live chain, and the tool description says so, so a clean simulation is not evidence it works |
+| `propose_policy_change` | Proposes a patch to the policy rules. Always waits for a human click |
+| `propose_mandate` | Arms a rule-driven bot on Hyperliquid perpetuals: a rule program plus the envelope it may never leave. The only tool that grants standing authority, so it always waits for a human click |
+
+Three write tools were deliberately removed from this door and are not coming back on their own.
+`propose_lp_add`, `propose_lp_remove` and `propose_hl_deposit` are still implemented under
+`src/rails/`, still tested, and still drivable by a human. None has run on a live chain, and the
+wallet read after an `lp_add` is known to serve pre-trade balances while claiming nothing is
+stale, so sizing a second move off the first is already wrong on that path. They are absent
+rather than guarded, on purpose: a check can be wrong, but a capability that was never
+registered cannot be called at all.
 
 | Chart tool | Does |
 |---|---|
 | `chart_read` | The whole chart in one object: visible time range in epoch and ISO, seconds until this bar closes, current bar OHLCV, change and range over the window, the price scale and decimal precision in use, every indicator with its last values and a plain sentence, the levels and marks, and the pixel geometry |
+| `chart_batch` | The instrument, and the one to reach for when the question is analytical: pivots, levels, regime, ATR, volume profile, VWAP, range, divergence, trend-line fit, trend-line value at a time, trend-line touches, history paging. Many questions in one call, and a later entry can reference an earlier one by name, so a fitted trend line can be measured against without a round trip |
 | `chart_measure` | Between two times, two prices, or one of each: change, bars, elapsed, the high and low the path took, worst drawdown |
 | `chart_scan` | Several timeframes at once without moving the chart: last, change, range, ATR, trend, time to close |
 | `indicator_catalog` | Every indicator it can draw, with parameters, defaults and ranges |
@@ -101,15 +120,38 @@ exactly like one agent, and neither of them knew about the other.
 | `chart_set_view` | Product, timeframe, bars on screen, how far back, price scale. The product is anything either venue lists, and the timeframe is anything from `1m` to `1w`, including ones no venue serves natively like `7m`. A minute is the floor: no venue serves a candle under one, and building them here meant assembling a line out of two different markets |
 | `chart_add_indicator` | SMA, EMA, WMA, VWAP, Bollinger, Donchian on the price; volume, RSI, MACD, ATR, Stochastic, OBV in their own pane |
 | `chart_remove_indicator` | Takes one off |
-| `chart_level` | A horizontal price line with a label |
+| `chart_level` | A horizontal price line with a label, for when the level is flat |
+| `chart_trendline` | A sloped line through two time-and-price anchors, for when it is not. Zones are drawn through `chart_batch` |
 | `chart_mark` | A labelled moment on the time axis |
 | `chart_clear` | Clears indicators, levels, marks, everything the agent drew, or all of it |
 
+| Trading tool | Does |
+|---|---|
+| `trade_read` | The book as it stands: account health, positions with liquidation distance, working orders, recent fills, armed mandates |
+| `trade_batch` | Account, positions, orders, fills, mandates, market and venue health in one round trip |
+| `trade_focus` | Points the trading surface at one market. The chart follows |
+| `trade_highlight` | Highlights one row and says why, so the agent and the human are looking at the same object |
+| `trade_overlay` | Toggles entry, liquidation, stops, targets, orders, fills and the mandate wall |
+| `trade_note` | Pins one line of the agent's reasoning where the human can see it |
+| `trade_clear` | Removes what the agent put on the surface |
+| `mandate_catalog` | The whole mandate grammar with worked, validated examples: conditions, actions, how to reference a trend line already drawn, what each envelope field caps, and the traps. There is no discretionary order in this app, so this is how a position gets opened at all |
+
+There is no tool that closes a position and no tool that places a discretionary order. A position
+is opened and exited by a mandate a human armed, which is the same argument the write surface
+makes: the way to stop an agent doing something with real money is to never hand it the verb.
+
 | Display tool | Does |
 |---|---|
-| `set_view_mode` | Switches the window between the operator view (`pro`) and a plain-English view for a non-technical reader (`basic`). Moves no money. Refused while a proposal is waiting for a human decision, and every switch is audited. Not to be confused with `chart_set_view`, which drives the chart's render state inside pro |
+| `switch` | Moves the window between the plain-English view (`basic`), the operator view (`pro`) and the trading surface (`trade`). Moves no money, and every switch is audited. Named `switch` rather than `set_view_mode` because the whole requirement is that changing window costs one word: an agent hunting for how to "switch to trading" finds it immediately, and did not reliably find `set_view_mode`. Aliases (trading, hft, perps, simple) resolve in the app, so both doors agree. Not to be confused with `chart_set_view`, which drives the chart's render state inside pro |
 
-There is no `approve`, no `refuse`, no `kill`, no `dismiss` and no `execute` tool. `set_view_mode` changes what a human sees and nothing about what may move; `docs/security-model.md` says exactly what that does and does not buy. There is also no
+A switch used to be refused outright while a proposal was pending, so an agent could not move a
+human away from a decision they were in the middle of. The approval block now renders on all three
+windows, so the decision follows the human instead of being left behind, and the refusal was
+removed. What replaces it is disclosure rather than silence: the pending ids ride back on the
+response and the tool description tells the agent to say the count out loud, because the basic
+screen shows one ask at a time and switching there with three waiting would otherwise hide two.
+
+There is no `approve`, no `refuse`, no `kill`, no `dismiss` and no `execute` tool. `switch` changes what a human sees and nothing about what may move; `docs/security-model.md` says exactly what that does and does not buy. There is also no
 argument anywhere in the surface that names a recipient or destination, so an agent that has been
 talked into sending money to an attacker has no field in which to say where. Both properties are
 asserted by tests, not just by convention.
@@ -345,10 +387,21 @@ human approval or a recorded `allow` verdict.
 
 ## The window
 
-One page, seven regions, no framework and no build: status bar (total held, agent connection,
-policy state, kill switch), composition, cost, chart, policy sentences, approval gate, log. System
-monospace, near-black and green, with red reserved for pending approvals and refusals, because a
-safety gate that does not visually shout is a safety bug.
+Three windows, no framework and no build, and an agent moves between them with `switch`.
+
+**pro**, the operator view, is one page in seven regions: status bar (total held, agent
+connection, policy state, kill switch), chart, wallet with its composition donut, activity and
+transactions, policy sentences, approval gate, log. **basic** is the same app rewritten for a
+non-technical reader, computed server-side in `src/view/basic.ts` so every word a person reads is
+written in one place. **trade** is the trading surface: positions with liquidation distance,
+working orders, fills and armed mandates.
+
+The approval block renders identically on all three, which is what let the pending-proposal
+refusal be removed: a decision follows the human between windows instead of being left behind on
+the screen they came from.
+
+System monospace, near-black and green, with red reserved for pending approvals and refusals,
+because a safety gate that does not visually shout is a safety bug.
 
 | ![Approval gate with a pending proposal](docs/screenshots/pending.png) | ![Kill switch on](docs/screenshots/kill-switch.png) |
 |---|---|
@@ -387,19 +440,36 @@ the agent reads and the pixel the human sees come from one implementation.
 ## Layout
 
     src/main.ts        app process: state owner, HTTP + UI on 127.0.0.1:4177
+    src/server.ts      the approval surface, the JSON routes, the SSE stream, /api/mcp
     src/mcp.ts         stdio MCP server, thin proxy to the app, no approval path
+    src/greeting.ts    the connect-time greeting and the index of everything an agent can do
+    src/agents.ts      who is driving, and the rule that only one thing may
+    src/summon.ts      start a fresh agent in a terminal, wired to this app
     src/policy/        engine (pure) + policy file + sentence renderer
     src/proposals.ts   simulate, evaluate, persist, execute after approval
+    src/rails/         the rail registry: uniswap, oneclick, intents, hyperliquid, mandate
+    src/chain/         the only places phosphor signs: evm.ts and near.ts
     src/ledger/        evm, solana, near readers + demo fixtures
     src/composition.ts risk classification against data/risk-table.json
     src/intents.ts     1Click quotes, synthetic quoter, stub signer
-    scripts/keygen.ts  testnet keypairs, written outside the working copy
-    scripts/sweep.ts   secret sweep over the tracked tree and the git history
-    src/candles.ts     Coinbase/Kraken candle sources behind one interface
     src/chart.ts       chart view state, the agent read model, the ruler
     src/indicators.ts  indicator maths, pure, index aligned with the candles
-    ui/                one page, six regions, no framework, no build
+    src/analysis/      the measurements: pivots, levels, regime, vwap, range, divergence
+    src/drawings.ts    the objects that make the chart a shared coordinate system
+    src/batch.ts       many operations, one round trip, because latency is turns not ms
+    src/market/        the candle cache and the catalog: why the chart stops being late
+    src/hl/            hyperliquid: signing, msgpack, order format, liquidation maths
+    src/trade/         the trading surface: raw venue state in, one payload out
+    src/runner/        the only code that places an order. No model runs in this process
+    src/strategy/      the grammar an agent may write and the runner will execute
+    src/view/          the basic screen as one pure function, and the mode itself
+    scripts/keygen.ts  testnet keypairs, written outside the working copy
+    scripts/sweep.ts   secret sweep over the tracked tree and the git history
+    ui/                three windows, no framework, no build
     ui/chart.js        the chart engine: two canvases, one pointer surface
+    ui/trade.js        the trading window
+    ui/approvals.js    the approval block, rendered identically on all three windows
+    operator/          the opt-in operator profile: an agent that drives but cannot develop
     state/             policy.json, proposals.json, audit.jsonl (append-only)
 
 ## Docs

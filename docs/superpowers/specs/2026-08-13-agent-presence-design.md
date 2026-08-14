@@ -3,6 +3,18 @@
 Date: 2026-08-13
 Surfaces: `/trade` and `/` (pro). Basic view is out of scope and must not change.
 
+> **STATUS: BUILT, THEN REMOVED THE SAME DAY (`f572972`).** Karim saw it and wanted none of it:
+> the MECHANISM panel, the `{type:'agent'}` SSE channel, the panel arming and the brightness hold
+> are all gone, removed outright rather than hidden behind a flag, because a panel nobody wants is
+> not a setting. This document is kept as the record of why the work was done, not as a
+> description of the app.
+>
+> Three things in here survived and are still live, because they were asked for in their own
+> right: the **position-latency fix** (the feed drives `broadcastTrade` as well as
+> `broadcastState`, so a fill repaints the position panel instead of waiting for the agent's next
+> tool call), the **chart tween and symbol-switch auto-fit**, and **SUMMON**, whole. Read sections
+> on those as current. Read everything about the mechanism panel as history.
+
 ## The problem
 
 Phosphor is an interface you drive through an agent, but the window only ever shows results.
