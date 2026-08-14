@@ -278,6 +278,9 @@
 </main>
 <!-- chart.js defines the chart, trade-overlay.js defines what is drawn on top of it,
      trade.js boots and sets window.TRADE before asking the chart to redraw. -->
+<!-- First, and deliberately: it runs the arriving half of a mode switch from its own body,
+     so the cover is standing before the browser paints this page for the first time. -->
+<script src="/transition.js" defer></script>
 <script src="/chart.js" defer></script>
 <script src="/approvals.js" defer></script>
 <script src="/trade-overlay.js" defer></script>

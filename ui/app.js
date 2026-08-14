@@ -1196,6 +1196,31 @@ function renderGate(s) {
    until the first state frame lands. */
 var lastSeenView = null;
 
+/* What the DOM is actually showing, which is not the same question as what the server last
+   said. A change is dressed by ui/transition.js and lands about a third of a second after it
+   is announced, so during a fall these two disagree on purpose. Null until the first frame,
+   which is how the first sighting is told from a switch: a page that has just opened shows
+   its mode outright rather than raining onto it. */
+var appliedMode = null;
+
+/* Missing only if /transition.js failed to load. Switching modes then still has to work, so
+   the fallback runs the change on the spot and the screen cuts, exactly as it used to. */
+function rain() {
+  return window.PHOSPHOR_RAIN || { swap: function (f) { f(); }, leave: function (f) { f(); } };
+}
+
+function setViewModeNow(mode) {
+  $('page').dataset.view = mode;
+  // Also on body, because basic.css replaces the ground and the family, and both
+  // of those are set on body by style.css.
+  document.body.dataset.view = mode;
+  /* The panel frames are box-drawing characters measured against the live layout, and the
+     two modes do not lay out the same. refreshState() calls layoutFrames() right after this
+     function returns, which was enough while the change was synchronous; behind a fall it
+     would measure the mode that is leaving. */
+  layoutFrames();
+}
+
 function applyViewMode(s) {
   // Server-driven only. The browser never decides which mode it is in, so a
   // stale or failed state read cannot silently simplify what a human sees.
@@ -1207,16 +1232,24 @@ function applyViewMode(s) {
      transition, so the one-word switch still lands. */
   if (s.view === 'trade' && lastSeenView !== null && lastSeenView !== 'trade') {
     lastSeenView = s.view;
-    window.location.href = '/trade';
+    rain().leave(function () {
+      window.location.href = '/trade';
+    });
     return;
   }
   lastSeenView = s.view;
 
   var mode = s.view === 'basic' ? 'basic' : 'pro';
-  $('page').dataset.view = mode;
-  // Also on body, because basic.css replaces the ground and the family, and both
-  // of those are set on body by style.css.
-  document.body.dataset.view = mode;
+  if (mode === appliedMode) return;
+  var first = appliedMode === null;
+  appliedMode = mode;
+  if (first) {
+    setViewModeNow(mode);
+    return;
+  }
+  rain().swap(function () {
+    setViewModeNow(mode);
+  });
 }
 
 /* The holdings table. One row per thing owned; the server already merged the

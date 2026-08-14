@@ -1457,7 +1457,17 @@ function followViewMode(s) {
   var view = s.view;
   if (view !== 'trade' && LAST_SEEN_VIEW !== null && LAST_SEEN_VIEW === 'trade') {
     LAST_SEEN_VIEW = view;
-    window.location.href = '/';
+    /* Dressed by ui/transition.js, and it has to be the same fall the custody page uses on
+       the way here or the round trip reads as two different products. Absent that file the
+       navigation still happens, it just cuts. */
+    var rain = window.PHOSPHOR_RAIN;
+    if (rain) {
+      rain.leave(function () {
+        window.location.href = '/';
+      });
+    } else {
+      window.location.href = '/';
+    }
     return;
   }
   LAST_SEEN_VIEW = view;

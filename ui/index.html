@@ -268,6 +268,9 @@
 </main>
 <!-- chart.js first: it only defines. app.js boots and calls chartBoot(). approvals.js is
      shared with the trade window so both draw a pending proposal from one renderer. -->
+<!-- First, and deliberately: it runs the arriving half of a mode switch from its own body,
+     so the cover is standing before the browser paints this page for the first time. -->
+<script src="/transition.js" defer></script>
 <script src="/chart.js" defer></script>
 <script src="/approvals.js" defer></script>
 <script src="/app.js" defer></script>

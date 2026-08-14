@@ -1,5 +1,5 @@
 {
-  "stamp": "2a9e548ec7a7d481",
+  "stamp": "5a008952a5859db7",
   "iteration": 6,
   "restamp": "Iteration 6 is a re-stamp, not a new change. No file under ui/ was edited between iteration 5 and this: the source hash moved because ui/approvals.js was committed on the branch by another hand (the APPROVALS block now renders a compact policy diff instead of printing the allowlist twice), and the gate hashes the whole --src ui tree. Re-rendered and re-read at 1440, 768 and 390: APPROVALS reads as one line, no wall of addresses, and the panel geometry underneath it is unchanged.",
   "firstFive": {
@@ -127,6 +127,12 @@
       "met": true,
       "ref": "tr.orow",
       "note": "Unchanged. shot-1440.png shows 'No orders working.' as a child row under the SOL position. The profit split now uses the same idiom one tier further in, which makes the pattern read as the table's grammar rather than as a one-off."
+    },
+    {
+      "requirement": "Karim 2026-08-14: a mode switch is not a cut. Arriving at this window and leaving it are the two halves of one fall of terminal characters that started on the other page",
+      "met": true,
+      "ref": "canvas[aria-hidden] appended by ui/transition.js",
+      "note": "Both halves run here. followViewMode in ui/trade.js hands the navigation to PHOSPHOR_RAIN.leave, which covers this window before going, and transition.js consumes the handoff on arrival and clears from a covered first frame. Not in shot-1440.png, which is this window at rest and carries nothing of it. Photographed mid-arrival at ../switch-arrive.jpg. Verified end to end in a real browser: the flag was written on the custody page, the navigation fired under a held cover, and this page consumed the flag on its own load."
     }
   ],
   "goal": {

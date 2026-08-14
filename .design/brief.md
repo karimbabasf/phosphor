@@ -143,6 +143,12 @@ ASCII-register machine) were built, shipped and then deleted at his word. Kept h
 than as bullets so the count stays honest and the history does not vanish. What survived from that
 round is the summon button, the position-latency fix, and the two requirements that follow.
 
+Asked for on 2026-08-14, the day after that deletion, and not a return of it: what was thrown out
+was a panel that sat on the screen and animated at rest. This is a transition, it exists only while
+a mode is changing, and it leaves nothing behind.
+- Karim 2026-08-14: "when switching between modes, i want it not to be just a switch, it should be animated... like the smatrix terminal screensaver, like I want a whole bunch of ascii figures like waterfall down and then the new screen or wahtever mode I switched to appears". Every mode change, basic to pro and either of them to the trading window, falls into a screen of terminal characters and the mode that was asked for is standing behind it when the rain clears
+- Karim 2026-08-14: "make sure this doesnt mess with performance". Nothing exists at rest: no canvas, no timer, no rAF between switches. The fall costs a fraction of one frame while it plays, and the change it dresses can never be delayed or lost by it
+
 ## Goal behind the ask
 The owner sees the whole machine at once, with no scrolling: what the wallet holds, what governs
 it, and whether anything is waiting for a click. On testnet with the gate off he must also be

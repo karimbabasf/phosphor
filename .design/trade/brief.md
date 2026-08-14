@@ -42,6 +42,9 @@ furniture, and each is still one page that never scrolls.
 - No order ticket: where other interfaces put buy and sell, this puts the mandate console, and
   every manual control on the page stops something
 - Working orders rendered as child rows of the position they belong to, not a table of their own
+- Karim 2026-08-14: a mode switch is not a cut. Arriving at this window and leaving it are the two
+  halves of one fall of terminal characters that started on the other page, so this window opens
+  already covered by it and clears from under it
 
 ## The one idea
 A position on borrowed size has two prices that end it: the liquidation the venue draws, and the

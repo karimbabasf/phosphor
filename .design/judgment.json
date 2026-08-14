@@ -1,5 +1,5 @@
 {
-  "stamp": "2e7a84b40a379f77",
+  "stamp": "5a008952a5859db7",
   "iteration": 17,
   "firstFive": {
     "what": "A dark two-column money screen: a $52,013.21 balance top left with the nine things it is made of listed under it, and down the right what one coin costs, the last four things that happened, a promise that nothing moves without a click, and a red STOP EVERYTHING",
@@ -276,6 +276,16 @@
       "requirement": "Karim 2026-08-13: performance is a big thing, and none of the information may look too compact or too tight",
       "met": true,
       "ref": "the agent-presence canvas and its rAF are gone entirely; the page is back to the chart's own single rAF. Audit reports 0 fail at 390, 768 and 1440"
+    },
+    {
+      "requirement": "Karim 2026-08-14: switching modes should not be a cut, a screen of ascii characters waterfalls down like the matrix screensaver and the mode he switched to is behind it",
+      "met": true,
+      "ref": "ui/transition.js, entered from applyViewMode in ui/app.js and followViewMode in ui/trade.js. Not visible in shot-1440.png and that is the point: at rest the page carries nothing of it. Photographed mid-fall instead, on both windows, at .design/switch-cover.jpg, .design/switch-reveal.jpg and .design/switch-arrive.jpg"
+    },
+    {
+      "requirement": "Karim 2026-08-14: \"make sure this doesnt mess with performance\"",
+      "met": true,
+      "ref": "no canvas, timer or rAF exists between switches, so the resting cost is zero and shot-1440.png is byte-identical in structure to the render before this change. Measured while playing at 3024x1964, the size of his own panel: 0.4ms median and 0.8ms p95 per frame against a 16.7ms budget, 585 glyphs a frame over 195 columns"
     }
   ],
   "goal": {
@@ -356,6 +366,16 @@
       "finding": "The agent-presence layer (MECHANISM panel, gears, action stages, activity trace, panel arming, tape-line freshness) was built and then deleted at Karim's word on 2026-08-13. Nothing on this surface now reports that the agent is mid-action; the log line after the fact is the only signal, as it was before.",
       "severity": "withdrawn by the owner",
       "why": "he saw it, kept the summon button and the performance, and wanted the animation completely out"
+    },
+    {
+      "finding": "The mode-switch fall cannot be captured by this gate. look.mjs enters a state with click, hover, fill, wait or press, and there is no control that switches mode: the switch is agent-driven through MCP only. So the four channels judge the three windows at rest, which is the correct thing for them to judge, and the fall itself was verified another way: 13 unit tests over ui/transition.js in tests/unit/transition-ui.test.ts, and three captures taken with the page clock under test control, filed here as switch-*.jpg.",
+      "severity": "structural, not a defect",
+      "why": "an effect that exists for 1010ms during an event nothing on the page can trigger is outside what a static capture can see. Recorded here rather than under findings, which is the queue of things to fix."
+    },
+    {
+      "finding": "Requirement 13, no animation except the cursor blink and appending log lines, still reads as written and still holds: it is a rule about the DOM, and the fall is a canvas that exists only while a mode is changing. style.css has one @keyframes and no transition property, unchanged by this work.",
+      "severity": "reads as a contradiction, is not one",
+      "why": "the split was decided on 2026-08-13 for the chart and the same line is drawn here: the DOM keeps the law, continuous motion lives on a raster surface"
     }
   ],
   "findings": []
