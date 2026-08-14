@@ -1,0 +1,24 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>PH0SPHOR</title>
+<style>
+  @font-face {
+    font-family: 'Expose';
+    src: url('https://cdn.fontshare.com/wf/T2A367UCJGB6GAZ4WCL3XCCUBIMPYB77/KQQLILLRNU7AKC37AXIKYCPE3RYUAWJA/GZCWMSL56JZWKHAFJII2BVH4QQ6GBZMT.woff2') format('woff2');
+    font-weight: 400 900;
+    font-display: block;
+  }
+  html, body { margin: 0; background: #ddd; }
+  #out { display: block; max-width: 100%; }
+</style>
+<canvas id="out"></canvas>
+<script src="draw.js"></script>
+<script>
+window.render = (async () => {
+  const c = document.getElementById('out');
+  await document.fonts.load('600 700px Expose', 'PH0SPHOR');
+  await document.fonts.ready;
+  const info = drawMark(c, { size: 700, weight: 600, slashOvershoot: 0.65, cutGap: 0.34 });
+  return { ...info, dataURL: c.toDataURL('image/png') };
+})();
+</script>

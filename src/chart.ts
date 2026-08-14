@@ -132,6 +132,24 @@ export function timeframeLabel(sec: number): string {
   return `${sec}s`;
 }
 
+/* One entry of a chart_scan timeframe list, resolved to seconds, or null if it is not a
+   timeframe at all.
+ *
+ * The button-bar list stops at 1d, so matching against TIMEFRAMES alone cannot see `1w`. The
+ * scan handler used to fall back to snapTimeframe(Number(entry)) for a miss, and Number('1w')
+ * is NaN: every comparison inside the snap is then false, so it returned the first entry in the
+ * list and a weekly scan silently answered with a MINUTE chart under whatever label was asked
+ * for. Nothing downstream could tell that the higher timeframe had never been read.
+ *
+ * Null rather than a nearest guess, because the caller needs to be able to say "that is not a
+ * timeframe" out loud. Snapping is right for a number that is merely unservable (47 seconds);
+ * it is wrong for a string that was never understood. */
+export function resolveScanTimeframe(entry: string | number): number | null {
+  const found = TIMEFRAMES.find((tf) => tf.label === String(entry));
+  if (found !== undefined) return found.sec;
+  return parseTimeframe(entry);
+}
+
 // Snap to a timeframe the data rails can actually serve. An agent that asks for 47 seconds
 // gets the nearest real one and is told, rather than a chart of nothing.
 export function snapTimeframe(sec: number): number {

@@ -70,7 +70,7 @@ import {
   digestSeries,
   LIMITS as CHART_LIMITS,
   measure as measureChart,
-  parseTimeframe,
+  resolveScanTimeframe,
   TIMEFRAMES,
   timeframeLabel,
 } from './chart.ts';
@@ -1137,13 +1137,8 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       // here: nothing downstream can tell that the bias timeframe was never read.
       const plan: ({ sec: number } | { bad: string })[] = [];
       for (const entry of asked.slice(0, SCAN_TIMEFRAMES_MAX)) {
-        const found = TIMEFRAMES.find((tf) => tf.label === String(entry));
-        if (found !== undefined) {
-          plan.push({ sec: found.sec });
-          continue;
-        }
-        const parsed = parseTimeframe(entry as string | number);
-        plan.push(parsed === null ? { bad: String(entry) } : { sec: parsed });
+        const sec = resolveScanTimeframe(entry as string | number);
+        plan.push(sec === null ? { bad: String(entry) } : { sec });
       }
       const bars = intParam(args.bars, 120, CANDLE_LIMIT_MAX);
       const nowSec = Math.floor(Date.now() / 1000);
