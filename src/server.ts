@@ -45,6 +45,7 @@ import type {
 } from './types.ts';
 import { buildBasic } from './view/basic.ts';
 import type { PriceReading } from './view/basic.ts';
+import { readCoins, writeCoins, MAX_COINS, MIN_COINS } from './view/coins.ts';
 import type { Audit } from './audit.ts';
 import type { Store } from './store.ts';
 import type { Ledger } from './ledger/index.ts';
@@ -69,7 +70,7 @@ import {
   digestSeries,
   LIMITS as CHART_LIMITS,
   measure as measureChart,
-  snapTimeframe,
+  parseTimeframe,
   TIMEFRAMES,
   timeframeLabel,
 } from './chart.ts';
@@ -109,7 +110,11 @@ const PRICE_POLL_MS = 30000;
 // 2026-08-14: "btc, sol, and eth"). Fixed, and deliberately NOT the pro chart's
 // product: the two screens are read by two different people, and the owner's three
 // prices should not change because a trader typed a ticker into the other window.
-const BASIC_PRODUCTS = ['BTC-USD', 'SOL-USD', 'ETH-USD'];
+// The coins the basic screen tracks live in src/view/coins.ts, because the owner can ask
+// the assistant to change them and the answer outlives the process. Deliberately NOT the
+// pro chart's product either way: the two screens are read by two different people, and
+// the owner's prices should not change because a trader typed a ticker in the other
+// window.
 // How far back the basic screen's "what the assistant did" list is willing to look for
 // five distinct sentences. Runs collapse, so an assistant that read the wallet two
 // hundred times in a row still fills one line, and past this it shows fewer lines rather
@@ -386,7 +391,11 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   //
   // One coin failing clears that coin and nothing else. Three prices behind one flag
   // would mean a Solana outage blanking the Bitcoin line, which is a lie about Bitcoin.
-  let priceReadings: PriceReading[] = BASIC_PRODUCTS.map(() => null);
+  // Held in memory and mirrored to disk, the same shape as the view mode above it: the
+  // file is the durable copy, this is the live one, and it is read once on boot rather
+  // than per poll.
+  let basicCoins: string[] = readCoins(cfg.dataDir);
+  let priceReadings: PriceReading[] = basicCoins.map(() => null);
 
   async function readPrice(product: string): Promise<PriceReading> {
     try {
@@ -409,7 +418,13 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   }
 
   async function pollPrice(): Promise<void> {
-    priceReadings = await Promise.all(BASIC_PRODUCTS.map(readPrice));
+    // Read into a local first. The list can change under this await when the assistant is
+    // asked for a different coin, and assigning a three-coin result into a screen that now
+    // shows two would put a price under the wrong name.
+    const coins = [...basicCoins];
+    const readings = await Promise.all(coins.map(readPrice));
+    if (coins.join() !== basicCoins.join()) return;
+    priceReadings = readings;
   }
 
   const priceTimer = setInterval(() => {
@@ -1112,15 +1127,36 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       const view = chart.state().view;
       const product = typeof args.product === 'string' && args.product.trim().length > 0 ? args.product.trim().toUpperCase() : view.product;
       const asked = Array.isArray(args.timeframes) ? args.timeframes : ['5m', '15m', '1h', '4h', '1d'];
-      const wanted: number[] = [];
+      // TIMEFRAMES is the button bar (1m to 1d), not the set of legal timeframes. Matching only
+      // against it and then snapping the miss meant `1w` fell to snapTimeframe(Number('1w')),
+      // and Number('1w') is NaN, so every comparison in the snap was false and it returned the
+      // FIRST entry: 1m. A weekly scan silently answered with a minute chart, labelled as if
+      // that was what had been asked for. parseTimeframe is what chart_set_view already uses and
+      // it handles 1w, 7d, 90m and bare seconds. An entry it cannot read is now refused by name
+      // rather than substituted, because a wrong answer that looks right is the worst outcome
+      // here: nothing downstream can tell that the bias timeframe was never read.
+      const plan: ({ sec: number } | { bad: string })[] = [];
       for (const entry of asked.slice(0, SCAN_TIMEFRAMES_MAX)) {
         const found = TIMEFRAMES.find((tf) => tf.label === String(entry));
-        wanted.push(found === undefined ? snapTimeframe(Number(entry)) : found.sec);
+        if (found !== undefined) {
+          plan.push({ sec: found.sec });
+          continue;
+        }
+        const parsed = parseTimeframe(entry as string | number);
+        plan.push(parsed === null ? { bad: String(entry) } : { sec: parsed });
       }
       const bars = intParam(args.bars, 120, CANDLE_LIMIT_MAX);
       const nowSec = Math.floor(Date.now() / 1000);
       const rows: unknown[] = [];
-      for (const sec of wanted) {
+      for (const step of plan) {
+        if ('bad' in step) {
+          rows.push({
+            timeframe: step.bad,
+            error: `${step.bad} is not a timeframe. Use <count><unit> with unit m, h, d or w, from 1m up to 1w.`,
+          });
+          continue;
+        }
+        const sec = step.sec;
         try {
           const load = await loadCandles(product, sec, bars);
           rows.push({ ...digestSeries(load.candles, sec, nowSec), source: load.source, stale: load.stale });
@@ -1574,6 +1610,70 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     chart: 'trade',
   };
 
+  // The coins the basic screen tracks. Karim, 2026-08-14: "if I don't want Bitcoin, on
+  // Ether it changes to whatever I ask it to change it to, and it's saved as my current
+  // favorites". The eye on that screen tells the owner this can be asked for, so the ask
+  // has to work: a tooltip promising a capability that does not exist is the same class of
+  // fault as a balance the app cannot back.
+  //
+  // Names go through the market catalog rather than being trusted, so "bitcoin", "btc" and
+  // "BTC-USD" all land on one product id and a coin nothing can chart is refused with the
+  // reason rather than accepted into a screen that would then show a blank row forever.
+  async function handleSetBasicCoins(body: JsonBody, res: http.ServerResponse): Promise<void> {
+    const raw = Array.isArray(body.coins) ? body.coins : [];
+    const asked = raw.map((c) => String(c ?? '').trim()).filter((c) => c.length > 0);
+
+    if (asked.length < MIN_COINS || asked.length > MAX_COINS) {
+      sendJson(res, 400, {
+        error: `the basic screen shows ${MIN_COINS} to ${MAX_COINS} coins, got ${asked.length}`,
+        coins: basicCoins,
+      });
+      return;
+    }
+
+    const resolved: string[] = [];
+    const unknown: string[] = [];
+    for (const name of asked) {
+      const ref = market.resolve(name);
+      if (ref === null) unknown.push(name);
+      else if (!resolved.includes(ref.product)) resolved.push(ref.product);
+    }
+    if (unknown.length > 0) {
+      sendJson(res, 400, {
+        error: `not a market this app can chart: ${unknown.join(', ')}`,
+        coins: basicCoins,
+        hint: 'read market_search to find the id, then set that',
+      });
+      return;
+    }
+
+    const previous = basicCoins;
+    if (previous.join() === resolved.join()) {
+      sendJson(res, 200, { ok: true, coins: resolved, unchanged: true });
+      return;
+    }
+
+    basicCoins = resolved;
+    writeCoins(cfg.dataDir, resolved);
+    // Blank rather than stale while the new coins are fetched. The screen renders a coin
+    // it has no price for as absent, so the band goes short for one poll instead of
+    // showing the old coin's figure under the new coin's name.
+    priceReadings = resolved.map(() => null);
+    audit.append('view_changed', `agent set the basic screen coins to ${resolved.join(', ')}`, {
+      from: previous,
+      to: resolved,
+    });
+    broadcastState();
+    await pollPrice();
+    broadcastState();
+    sendJson(res, 200, {
+      ok: true,
+      coins: resolved,
+      from: previous,
+      note: 'saved. this is what the basic screen shows until it is asked to change again',
+    });
+  }
+
   function handleSetViewMode(body: JsonBody, res: http.ServerResponse): void {
     const raw = String(body.mode ?? '').trim().toLowerCase();
     const mode = VIEW_ALIASES[raw];
@@ -1718,7 +1818,9 @@ export function createServer(deps: ServerDeps): PhosphorServer {
             ? `chart ${String(body.tool ?? '?')}`
             : op === 'set_view_mode'
               ? `set_view_mode ${String(body.mode ?? '?')}`
-              : `unknown op ${op}`;
+              : op === 'set_basic_coins'
+                ? `set_basic_coins ${(Array.isArray(body.coins) ? body.coins : []).join(' ')}`
+                : `unknown op ${op}`;
     // Contract: every op that reads, proposes or moves the window is audit-logged
     // before dispatch, arguments included verbatim.
     audit.append('tool_call', `agent: ${capLabel(label)}`, body);
@@ -1739,7 +1841,13 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       handleSetViewMode(body, res);
       return;
     }
-    sendJson(res, 400, { error: `unknown op: ${op}. known ops: hello, bye, read, propose, view, set_view_mode` });
+    if (op === 'set_basic_coins') {
+      await handleSetBasicCoins(body, res);
+      return;
+    }
+    sendJson(res, 400, {
+      error: `unknown op: ${op}. known ops: hello, bye, read, propose, view, set_view_mode, set_basic_coins`,
+    });
   }
 
   // ---------- dispatch ----------

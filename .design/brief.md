@@ -155,7 +155,10 @@ carries which earlier lines it reverses.
 - Karim 2026-08-14: "balance with a donut chart". A ring beside what is owned, one colour chip per row as its key, every arc drawn from a share computed in src/view/basic.ts so the picture and the figures under it come from one number
 - Karim 2026-08-14: "btc, sol, and eth with a basic chart, not candles, just a single line". Three rows, each with a price, a direction, and one line over the same 24 hours the percentage is measured over. A coin that could not be read is absent, never present and blank
 - Karim 2026-08-14: "history for transactions and agent actions separate". Two lists a column apart: what happened to the money under the balance, what the assistant did under the prices. Both composed from typed events, never from the audit line's developer text
-- Karim 2026-08-14: "stick in some of the logos of the chains... white ones... with no background. maybe use those for the chain and the token is unneded". One mark per chain beside each coin, none per token, drawn on the canvas like pro's Ethereum mark because this page loads no images
+- Karim 2026-08-14: "stick in some of the logos of the chains... white ones... with no background. maybe use those for the chain and the token is unneded". One mark per chain beside each coin, none per token, and no image is fetched for any of them
+- Karim 2026-08-14, on the first cut of those marks: "they look a little bit wonky ... I want official pictures". The marks are the official outlines as path data, not shapes drawn by hand from a description of them
+- Karim 2026-08-14: "change the title for that entire block to be 'Market'... and have an eye in a circle that you can hover over with your mouse. It tells you that you can ask your agent to change the tokens being shown". The heading is MARKET, the eye takes focus as well as hover, and the sentence it shows is true: the coins are the owner's to pick
+- Karim 2026-08-14: "if I don't want Bitcoin, on Ether it changes to whatever I ask it to change it to, and it's saved as my current favorites". The assistant sets the list through one tool, names resolve through the market catalog, and the choice is written to disk and survives a restart
 
 ## Goal behind the ask
 The owner sees the whole machine at once, with no scrolling: what the wallet holds, what governs
@@ -333,3 +336,36 @@ Asked for, on top of what already stands:
 States to check on this pass: basic resting (ring, three lines, both histories), basic asking
 (the question pushes the wallet down and the right column does not move), basic at 1440x900,
 basic at 1280x720, basic at 390.
+
+## Added 2026-08-14 (sixth pass): the marks are official, and the coins are a choice
+
+Two asks on top of the fifth pass, the same day.
+
+**The marks.** Karim: "they look a little bit wonky ... I want official pictures". The first cut
+drew Bitcoin and Solana by hand from a stem, some lobes and a few ticks. A logo is a shape people
+already know, so an approximation of one is not a simplification, it is a wrong drawing. All three
+are now the official outlines as path data on a 24-box, rendered as inline SVG filled with
+currentColor. One line of the fifth pass is reversed by this and only this one: the marks are no
+longer drawn on the canvas. The rule they were on the canvas FOR still holds, because the rule is
+about what this page LOADS and markup loads nothing. Inline SVG also made them exact at any size
+and deleted the redraw-on-resize a canvas needed. The Bitcoin disc is set 2px smaller than the
+other two: it fills its box where the diamond does not, and matching the boxes made it read larger.
+
+**The eye.** The block is headed MARKET, with an eye beside it whose sentence is "Ask your
+assistant to show different coins here. It remembers what you pick." It is a button, not an icon:
+hover is not reachable by keyboard and this screen's reader is the least likely person to own a
+mouse habit. The note sits BESIDE the eye rather than under it, because under it it covered the
+first price, and covering a number to explain the block it is in is a poor trade.
+
+**What the eye promises has to be true.** A tooltip claiming a capability the app does not have is
+the same class of fault as a balance the app cannot back, so the ask behind it is built: `watch` in
+src/mcp.ts, `set_basic_coins` on the wire, names resolved through the market catalog so "bitcoin",
+"btc" and "BTC-USD" all land on one product id, and the list written to state/coins.json so it
+survives a restart. One to four coins, which is what the band holds beside a wallet without the
+history underneath giving up the room it needs. A coin the app cannot chart is refused with the
+reason rather than accepted into a row that would then be blank forever, and every unreadable or
+half-good file falls back to BTC, SOL and ETH: a screen with no prices looks exactly like a screen
+whose prices could not be read.
+
+States to check on this pass: basic resting with the official marks, the eye's note on hover and on
+keyboard focus, four coins including one with no mark of its own, basic at 390.

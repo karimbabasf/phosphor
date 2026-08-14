@@ -71,6 +71,9 @@ export const EXPECTED_TOOLS: readonly string[] = [
   // Moves the window between the three surfaces. Named `switch` rather than set_view_mode
   // because the requirement is that switching costs one word.
   'switch',
+  // Picks the coins the basic screen tracks and saves the choice. Named for what the human
+  // says, like `switch`. It changes what a human sees and reaches no rail and no money.
+  'watch',
   // The trading surface. Reads answer "what is my situation"; writes change what is drawn and
   // what is pointed at. What is NOT here is the point: there is no close, no cancel, no flatten
   // and no disarm. Those live on /api/trade/action, which this door does not open onto, so the

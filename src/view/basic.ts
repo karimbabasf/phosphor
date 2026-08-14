@@ -581,6 +581,9 @@ function actionLine(event: LogEvent): string | null {
       ? 'Switched this window to the simple screen.'
       : 'Switched this window to the detailed screen.';
   }
+  // The one action on this list the owner asked for out loud, so it is worth its own
+  // sentence rather than falling through to nothing.
+  if (op === 'set_basic_coins') return 'Changed which coins this screen shows.';
   return null;
 }
 

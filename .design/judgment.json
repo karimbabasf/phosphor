@@ -310,7 +310,22 @@
     {
       "requirement": "Fifth pass: chain logos, white, no background, one per chain and none per token",
       "met": true,
-      "ref": "BTC, SOL and ETH marks drawn on canvas in --ink-soft. No image files exist on the machine and the page loads no images, so they are drawn like pro Ethereum mark"
+      "ref": "one mark per row, filled with the row ink through currentColor, no image request on the page"
+    },
+    {
+      "requirement": "Sixth pass: official marks, not shapes drawn by hand",
+      "met": true,
+      "ref": ".basic-price-mark is inline SVG carrying the official 24-box outline for BTC, SOL and ETH"
+    },
+    {
+      "requirement": "Sixth pass: the block is headed MARKET, with an eye beside it that says the coins can be changed by asking the assistant",
+      "met": true,
+      "ref": "#basic-eye, a focusable button beside the MARKET label, and #basic-eye-note shown on hover AND on keyboard focus, placed beside the eye so it covers no price"
+    },
+    {
+      "requirement": "Sixth pass: the assistant can change the coins and the choice is saved",
+      "met": true,
+      "ref": "watch in src/mcp.ts -> set_basic_coins -> state/coins.json, verified by setting SOL/ETH/NEAR/BTC and restarting"
     }
   ],
   "goal": {

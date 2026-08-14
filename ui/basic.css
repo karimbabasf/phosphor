@@ -417,6 +417,92 @@ body[data-view='basic'] #page {
   flex: none;
 }
 
+/* The heading line. The label keeps the same size and colour as the two opposite it, so
+   the eye is the only new thing here rather than a new kind of heading. */
+.basic-market {
+  margin: 0 0 4px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.basic-market .basic-label { margin: 0; }
+
+/* The note is anchored to the EYE, not to the heading line, so where it lands does not
+   depend on how wide the word MARKET happens to be. */
+.basic-eyewrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Quiet at rest and never a target you have to hunt for: 26px of hit area around a 15px
+   drawing, which is what makes it usable by someone whose hand is not steady. */
+.basic-eye {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  background: none;
+  border: 0;
+  border-radius: 50%;
+  color: var(--ink-faint);
+  cursor: help;
+  font: inherit;
+}
+
+.basic-eye svg {
+  width: 15px;
+  height: 15px;
+  /* The ring and the lid are drawn, the pupil is filled: an eye that is filled all through
+     is a dot, and a dot beside a heading reads as a bullet. */
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+}
+
+.basic-eye .pupil { fill: currentColor; stroke: none; }
+
+.basic-eye:hover,
+.basic-eye:focus-visible { color: var(--ink); }
+
+.basic-eye:focus-visible {
+  outline: 2px solid var(--calm);
+  outline-offset: 2px;
+}
+
+/* The sentence. Held out of the flow so a block of running text cannot appear inside a
+   heading row and push three prices down the screen. */
+.basic-eye-note {
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  width: max-content;
+  max-width: 34ch;
+  padding: 11px 14px;
+  background: color-mix(in oklch, var(--ink) 12%, var(--surface));
+  border: 1px solid var(--rule-firm);
+  border-radius: var(--r-control);
+  color: var(--ink);
+  font-size: 0.9375rem;
+  line-height: 1.4;
+  /* Hidden from sight AND from a screen reader's tab order until it is asked for, but
+     still reachable by aria-describedby, which is why it is not display: none. */
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 120ms var(--ease-out), visibility 120ms;
+}
+
+.basic-eye:hover + .basic-eye-note,
+.basic-eye:focus-visible + .basic-eye-note,
+.basic-eye-note:hover {
+  opacity: 1;
+  visibility: visible;
+}
+
 /* Mark, name, then the figures on the right, and the line between them. The line is
    given a fixed column rather than a flexible one: a chart that changes width between
    two rows reads as two different charts. */
@@ -431,13 +517,21 @@ body[data-view='basic'] #page {
 
 .basic-prices .basic-price:last-child { border-bottom: 0; }
 
-/* The chain mark. Drawn on the canvas by app.js, in the row's own ink: this page
-   loads no images, which is also why it can be white on nothing at any size. */
+/* The chain mark: the official outline as inline SVG, filled with the row's own ink.
+   No file is fetched for it, so the no-images rule still holds, and currentColor means
+   the palette lives here rather than in a second copy inside app.js. */
 .basic-price-mark {
   width: 22px;
   height: 22px;
   color: var(--ink-soft);
+  fill: currentColor;
+  /* Optical, not mathematical. The three official outlines fill their 24-box by
+     different amounts, and a Bitcoin disc set to the same box as the Ethereum diamond
+     reads as the larger of the two. */
+  display: block;
 }
+
+.basic-price[data-mark='btc'] .basic-price-mark { width: 20px; height: 20px; }
 
 .basic-price-name {
   font-variation-settings: 'wght' 505;
@@ -902,4 +996,13 @@ body[data-view='basic'].waiting .basic-headline {
   .basic-price { grid-template-columns: 20px minmax(0, 1fr) auto; }
   .basic-spark { display: none; }
   .basic-price-figures { min-width: 0; }
+
+  /* No room beside the eye at this width, so the note drops under it and is held inside
+     the band rather than running off the edge of the screen. */
+  .basic-eye-note {
+    left: 0;
+    top: calc(100% + 8px);
+    transform: none;
+    max-width: min(34ch, 62vw);
+  }
 }

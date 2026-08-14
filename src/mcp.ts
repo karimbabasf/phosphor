@@ -787,6 +787,41 @@ server.registerTool(
   async (args) => proxy({ op: 'set_view_mode', mode: args.mode }),
 );
 
+// The other thing on the basic screen a human can ask to change, and the screen says so
+// itself: the eye beside MARKET tells them these coins are theirs to pick. Karim,
+// 2026-08-14: "if I don't want Bitcoin, on Ether it changes to whatever I ask it to change
+// it to, and it's saved as my current favorites".
+//
+// Named `watch` for the same reason `switch` is not `set_view_mode`: it is what the human
+// says. "watch solana instead of bitcoin" has to find it in one hop.
+//
+// It replaces the whole list rather than adding to it, because that is what the sentence
+// means: someone naming two coins wants those two, not those two plus whatever was there.
+server.registerTool(
+  'watch',
+  {
+    description: [
+      'Sets which coins the basic screen tracks, and saves the choice: it survives restarts and is',
+      'the human\'s own list. Call this when they say "watch X", "show me X instead of Y", "drop',
+      'bitcoin" or name the coins they care about while looking at the simple screen.',
+      '',
+      'Pass the WHOLE list, not the change: it replaces what is there. To drop one of three, send the',
+      'other two. One to four coins, and any name the catalog knows works (bitcoin, btc and BTC-USD',
+      'all resolve). A coin this app cannot chart is refused with the reason, so read market_search',
+      'first if a name is unusual.',
+      '',
+      'This changes what a human sees and nothing else. It moves no money, gets no policy verdict,',
+      'and cannot approve, refuse or execute anything. Every change is written to the audit log.',
+    ].join(' '),
+    inputSchema: {
+      coins: z
+        .array(z.string())
+        .describe('one to four coin names or product ids, as the complete list to show, e.g. ["BTC-USD","SOL-USD","ETH-USD"]'),
+    },
+  },
+  async (args) => proxy({ op: 'set_basic_coins', coins: args.coins }),
+);
+
 const transport = new StdioServerTransport();
 await server.connect(transport);
 // The transport's own close is the earliest and most reliable of the three shutdown

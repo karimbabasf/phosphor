@@ -251,7 +251,29 @@
          but "and before now?" is a question they do ask. Rows are built by app.js
          because a coin that could not be read is absent rather than blank. -->
     <section class="basic-prices" id="basic-prices" hidden>
-      <h2 class="basic-label">What coins cost</h2>
+      <p class="basic-market">
+        <span class="basic-label">Market</span>
+        <!-- The eye says these three coins are a CHOICE, which is the one thing about this
+             block a reader would never guess. A button and not a bare icon: it takes focus,
+             so the sentence is reachable by keyboard and not only by a hovering mouse.
+             What it promises is real, and it is `watch` in src/mcp.ts. -->
+        <span class="basic-eyewrap">
+          <button type="button" class="basic-eye" id="basic-eye" aria-describedby="basic-eye-note"
+                  aria-label="what this shows">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <circle cx="12" cy="12" r="10.25"></circle>
+              <path d="M4.6 12c1.9-2.9 4.4-4.35 7.4-4.35S17.5 9.1 19.4 12c-1.9 2.9-4.4 4.35-7.4 4.35S6.5 14.9 4.6 12Z"></path>
+              <circle class="pupil" cx="12" cy="12" r="1.95"></circle>
+            </svg>
+          </button>
+          <!-- Beside the eye, not under it: under it the sentence sat on top of the first
+               price, and covering a number to explain the block it is in is a poor trade.
+               The heading line is empty to the right, so the note costs nothing there. -->
+          <span class="basic-eye-note" id="basic-eye-note" role="tooltip">
+            Ask your assistant to show different coins here. It remembers what you pick.
+          </span>
+        </span>
+      </p>
       <div id="basic-price-rows"></div>
     </section>
 

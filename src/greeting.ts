@@ -127,6 +127,10 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
     group: 'switch the window',
     items: [
       { tool: 'switch', does: 'move the app between basic, pro and trading. One word is enough: "switch to trading".' },
+      {
+        tool: 'watch',
+        does: 'set which coins the basic screen tracks, and save the choice. Send the WHOLE list, one to four: to drop one of three, send the other two. The screen tells its owner this can be asked for, so expect the ask.',
+      },
     ],
   },
   {
