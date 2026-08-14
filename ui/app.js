@@ -1461,14 +1461,6 @@ async function refreshState() {
     // Settled before the renders, not after: drawDonut asks whether the panel is still
     // waiting, and it must already have the answer by the time the wallet draws.
     settled('state');
-    /* The standing half of agent presence: what is open right now, as opposed to the
-       transitions the SSE channel carries. A window that loaded while a swap was already in
-       flight has never seen that swap's 'start' frame, and without this it would show a
-       machine at rest through the whole of it. MECHANISM.hydrate ignores this the moment a
-       live frame arrives, so a stale snapshot can never cancel a wind. */
-    if (typeof MECHANISM !== 'undefined' && MECHANISM && STATE && STATE.agents) {
-      MECHANISM.hydrate(STATE.agents.working || []);
-    }
     // Wallet first: the status bar reports its total.
     renderWallet(STATE);
     renderStatus(STATE);
@@ -1530,11 +1522,6 @@ function openEvents() {
     // A chart change from an agent. Our own writes come back with a revision we already
     // know, and chartPushed drops those rather than repainting over the hand.
     else if (payload.type === 'chart') chartPushed(payload.rev);
-    // What the agent is doing right now. Guarded because this page must still boot if
-    // mechanism.js failed to load: the machine is the one panel nothing else depends on.
-    else if (payload.type === 'agent' && payload.action) {
-      if (typeof MECHANISM !== 'undefined' && MECHANISM) MECHANISM.push(payload);
-    }
   });
 }
 

@@ -50,41 +50,6 @@
   <p class="banner" id="t-banner-policy" role="alert" hidden></p>
   <p class="alert dim" id="t-alert" role="status" hidden></p>
 
-  <!-- MECHANISM. The agent's body, and the one panel that is about the machine rather than
-       the market. Everything else here reports what already happened; a log line is appended
-       once and never changes, so nothing else on this page can say "something is happening
-       right now", which is the state a person driving through an agent spends most of their
-       time in.
-
-       Outside .deck on purpose: it is the drive shaft the two columns hang off, it must not
-       compete with the chart for column height, and a fixed height means it can never thrash
-       the layout underneath it. Collapsible, because on a small screen the panels below it
-       are worth more than it is.
-
-       The canvas is the motion. style.css:5 sets the law of this surface (no transition, two
-       steps(1) animations) and this does not break it: it puts the movement where this page
-       has always had movement, in a pane, alongside the chart. See ui/mechanism.js. -->
-  <section class="panel panel-mech" id="panel-mech">
-    <div class="frame frame-top" data-title="MECHANISM" data-collapse="mech"></div>
-    <div class="pbody">
-      <div class="mechwrap" id="mechwrap" role="img"
-           aria-label="agent activity: the drive train turns while the agent is working">
-        <canvas id="mech"></canvas>
-      </div>
-      <!-- The words are DOM and not canvas: canvas text cannot be selected, cannot be read by
-           a screen reader, and blurs at fractional DPR. The live region is why a person who
-           cannot see the machine still learns the agent started something. -->
-      <p class="mechline" role="status">
-        <span class="k">agent</span>
-        <span class="v dim" id="mech-state">idle</span>
-        <span class="bar">&#9474;</span>
-        <span class="v" id="mech-label">--</span>
-        <span class="dim" id="mech-detail"></span>
-      </p>
-    </div>
-    <div class="frame frame-bottom"></div>
-  </section>
-
   <!-- Five panels, two columns. Left is the market and what this account holds in it,
        right is what governs the account and what it has already done.
 
@@ -316,7 +281,6 @@
 <script src="/chart.js" defer></script>
 <script src="/approvals.js" defer></script>
 <script src="/trade-overlay.js" defer></script>
-<script src="/mechanism.js" defer></script>
 <script src="/trade.js" defer></script>
 </body>
 </html>

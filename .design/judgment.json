@@ -1,6 +1,6 @@
 {
-  "stamp": "caefb09e3158d416",
-  "iteration": 16,
+  "stamp": "2e7a84b40a379f77",
+  "iteration": 17,
   "firstFive": {
     "what": "A dark two-column money screen: a $52,013.21 balance top left with the nine things it is made of listed under it, and down the right what one coin costs, the last four things that happened, a promise that nothing moves without a click, and a red STOP EVERYTHING",
     "who": "The person who owns the money and does not trade, checking that nothing bad happened",
@@ -268,29 +268,14 @@
       "ref": "An intent hash gets no explorer link, because none resolves one, and the row says 'no gas: signed as an intent, settled by a solver'. A hash no reachable chain knows reads 'unknown', a fee still being fetched reads 'reading', and a fill that the rail did not record is absent rather than backfilled from the approved floor. Four different states, four different words, no blanks"
     },
     {
-      "requirement": "Karim 2026-08-13: the interface should visualise the agent acting rather than sit static. \"when an AI is thinking, when it is doing something... the agent should be shown as an animation\". Not interactive: a visually stunning way of the agent interacting with the interface",
-      "met": true,
-      "ref": "new MECHANISM panel outside .deck on /trade and /, canvas driven by {type:'agent'} SSE frames emitted at src/server.ts:1607 before dispatch. Panel the agent targets also marks itself with the existing waiting keyframe"
-    },
-    {
-      "requirement": "Karim 2026-08-13: the animations must take the model's latency into account. \"at max effort, it can take a while to think. These animations have to take that into account\". The archer at full draw, loosing when the order actually executes",
-      "met": true,
-      "ref": "wind loops on an open-ended clock and releases only on the settle frame; rate follows drive and never elapsed time, so no animation in ui/mechanism.js assumes a duration. Verified by holding a read open in tests/unit/agent-presence.test.ts and seeing the start frame already out"
-    },
-    {
-      "requirement": "Karim 2026-08-13: playful but as professional as possible, and never ultra-realistic. ASCII-register work only, \"something that you can look at and be like, wow\"",
-      "met": true,
-      "ref": "1px stroked vector on the character grid, six tool-head dressings on one shared machine geometry, no sprites, no bitmaps, no 3D, no library. Colours read from the style.css tokens at runtime so the file adds no literal"
-    },
-    {
       "requirement": "Karim 2026-08-13: the chart changes smoothly and dynamically when the agent manipulates it, \"not just static changes from one perspective to another\", and auto-formats itself on a SOL/ETH/BTC switch instead of leaving candles compressed or off-range",
       "met": true,
-      "ref": "tweenedView interpolates pan, zoom and a manual scale over 320ms inside the existing rAF; product and timeframe deliberately do not tween because the candles change. Auto-fit verified live: BTC to SOL lands pan 0, mode auto, 1500 candles, last close 76.229"
+      "ref": "tweenedView in ui/chart.js interpolates pan, zoom and a manual scale over 320ms inside the existing rAF; product and timeframe do not tween because the candles change. Auto-fit verified live: BTC to SOL lands pan 0, mode auto, candles filling the pane"
     },
     {
       "requirement": "Karim 2026-08-13: performance is a big thing, and none of the information may look too compact or too tight",
       "met": true,
-      "ref": "MECHANISM is a fixed 72px canvas (48px stacked) outside .deck, so it can never move the two columns; idle draws at ~11fps and rAF suspends on a hidden tab. Audit reports 0 fail at 390, 768 and 1440"
+      "ref": "the agent-presence canvas and its rAF are gone entirely; the page is back to the chart's own single rAF. Audit reports 0 fail at 390, 768 and 1440"
     }
   ],
   "goal": {
@@ -336,12 +321,7 @@
     "basic dark asking": "1440x900 with a real pending consolidate proposal from /api/mcp: calm bar goes 10px amber and breathes, balance drops to 2.6rem, the question sits under it with four facts and the not-your-wallet destination in full, YES and NO both measured in view, and the wallet below it shrinks to its floor and scrolls",
     "basic dark frozen": "1440x900 with the kill switch on: 14px red slab, 'You have frozen everything' in the red field at 4.9:1 on its own wash, the button reads LET THINGS MOVE AGAIN in neutral ink, everything still on one screen",
     "basic dark squeezed": "1024x680 asking: the safety valve opens as designed. The left column scrolls rather than the question box, so YES and NO stay measured in view and the wallet heading is pushed below the fold instead of the buttons",
-    "mechanism idle": "1440x900 with no agent connected: gear train turning slowly at the left, shaft, then an empty coupling and a bare tool post. No action stage is drawn at all. Trace is a baseline with 15s ticks and -60s / now labels. Words read 'agent idle | --'",
-    "mechanism working": "drive spun up, gears brighter and faster, the stage for the action's target fitted on the shaft. Words read 'agent working | propose mandate_arm SOL long $120'. Target panel's frame title blinks on the waiting keyframe",
-    "mechanism release": "string snapped back, arrow in flight with a phosphor trail, ring lit at the target, settle mark dropped under the trace. Words fall back to 'idle' but keep naming the last action rather than blanking",
-    "mechanism refused": "same release, drawn in --red, and the detail line carries the outcome word in red",
-    "mechanism stacked 390": "48px canvas, axis labels suppressed (H<62) and ticks re-anchored to the canvas bottom so nothing clips. Panel sits above CHART in the stacked order",
-    "mechanism reduced motion": "no rotation, no trails, no sweep; drive snaps to loaded or idle and the panel draws once per change. Every reported fact is still reported"
+    "status bar": "1440x900: KILL SWITCH and SUMMON AGENT are the only two controls in the bar, in that order, and nothing focusable is written before the brake"
   },
   "driven": {
     "how": "real pointer input through playwright against the running app at 1440x900, reading CHART.view before and after each gesture, not synthetic events",
@@ -360,11 +340,10 @@
       "A zero-priced draft substituted the word 'money' for the missing figure and produced 'gathering money of your US dollars (USDT) onto Ethereum'. The file already had amountClause for this, which drops the clause instead of wording around it. Every kind runs through it now"
     ],
     "price tracker": "Polled server-side every 30s into a cache, because buildState is synchronous and every caller depends on that. A failed poll clears the cache rather than leaving the last good figure on screen",
-    "agent lifecycle (2026-08-13)": "a REAL propose through POST /api/mcp on the live app, not a synthetic push: mech-label read 'propose mandate SOL long $120' in the DOM afterwards, so server -> SSE -> trade.js -> MECHANISM -> DOM is proven end to end",
-    "mechanism stages": "each of the six dressings pushed through MECHANISM.push and screenshotted at 2x, plus the release and the refused release. Synthetic on purpose: the point was whether each stage DRAWS and sits on the baseline, which a screenshot can answer",
     "symbol switch": "selected SOL-USD through the real <select> against live Hyperliquid and read CHART.view back: product SOL-USD, panOffset 0, priceScale auto, 1500 candles, last close 76.229. Chart renders 76.100 to 76.400 with candles filling the pane",
     "not driven": "the SUMMON button was NOT clicked, because it opens a real Terminal window and drops whatever agent holds the seat. Its route, its eviction, its revocation and its refusal marker are covered by tests/unit/agent-presence.test.ts over real HTTP instead",
-    "not driven (motion)": "no tween or animation was judged from a screenshot. Motion correctness is a code claim here, per Karim's instruction not to test animations visually"
+    "not driven (motion)": "no tween or animation was judged from a screenshot. Motion correctness is a code claim here, per Karim's instruction not to test animations visually",
+    "summon route": "not clicked, because it opens a real Terminal window and drops whatever agent holds the seat. Route, eviction, revocation and the refusal marker are covered over real HTTP in tests/unit/summon-route.test.ts"
   },
   "verdict": "pass",
   "firstFivePro": {
@@ -374,14 +353,9 @@
   },
   "limits": [
     {
-      "finding": "At idle the trace occupies two thirds of a full-width panel and carries only a baseline until the agent has been busy for a minute. Ticks and -60s/now labels make it read as a scope at rest rather than as empty space, but it is still the quietest region on the page.",
-      "severity": "accepted",
-      "why": "the alternative is a narrower panel, which would waste the width on a 1440+ screen, or filler, which this surface does not do"
-    },
-    {
-      "finding": "The agent cannot be shown THINKING. The MCP server is a stdio proxy, so the model runs in another process and its call arrives whole; the panel's first knowledge of an intent is the tool call landing.",
-      "severity": "known limit",
-      "why": "structural, not a defect. Closing it needs a chat surface inside Phosphor, which Karim declined in favour of keeping Claude Code"
+      "finding": "The agent-presence layer (MECHANISM panel, gears, action stages, activity trace, panel arming, tape-line freshness) was built and then deleted at Karim's word on 2026-08-13. Nothing on this surface now reports that the agent is mid-action; the log line after the fact is the only signal, as it was before.",
+      "severity": "withdrawn by the owner",
+      "why": "he saw it, kept the summon button and the performance, and wanted the animation completely out"
     }
   ],
   "findings": []

@@ -41,32 +41,6 @@
   <p class="banner" id="policy-banner" hidden>POLICY FILE UNREADABLE: ALL WRITES REFUSED</p>
   <p class="alert dim" id="alert" hidden></p>
 
-  <!-- MECHANISM. Same panel, same renderer, same reason as the trading window: everything
-       else on this page reports what already happened, and none of it can say that something
-       is happening right now. On this surface that gap is longer, not shorter: a swap or an
-       LP write is real chain work, tens of seconds, and until now the only sign of it was a
-       row that eventually changed. See ui/mechanism.js.
-
-       Outside .deck so it cannot take height from the two columns, and fixed height so it can
-       never move them. -->
-  <section class="panel panel-mech" id="panel-mech">
-    <div class="frame frame-top" data-title="MECHANISM" data-collapse="mech"></div>
-    <div class="pbody">
-      <div class="mechwrap" id="mechwrap" role="img"
-           aria-label="agent activity: the drive train turns while the agent is working">
-        <canvas id="mech"></canvas>
-      </div>
-      <p class="mechline" role="status">
-        <span class="k">agent</span>
-        <span class="v dim" id="mech-state">idle</span>
-        <span class="bar">&#9474;</span>
-        <span class="v" id="mech-label">--</span>
-        <span class="dim" id="mech-detail"></span>
-      </p>
-    </div>
-    <div class="frame frame-bottom"></div>
-  </section>
-
   <!-- Two columns: left is what is held, right is what governs it.
        Each column fills the viewport height; panels scroll inside, the page never does. -->
   <div class="deck">
@@ -296,7 +270,6 @@
      shared with the trade window so both draw a pending proposal from one renderer. -->
 <script src="/chart.js" defer></script>
 <script src="/approvals.js" defer></script>
-<script src="/mechanism.js" defer></script>
 <script src="/app.js" defer></script>
 </body>
 </html>

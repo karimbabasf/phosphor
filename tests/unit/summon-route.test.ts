@@ -1,11 +1,12 @@
-// Agent presence over the wire: the frames the window animates from, and the button that
-// replaces the agent.
+// The summon route: start a fresh agent in a terminal, and take the seat off whatever held it.
 //
 // Driven against a real server over real HTTP, for the reason written at the top of
-// view-op.test.ts: a store with the right shape and no call site passes its own unit test and
-// changes no behaviour. The invariant that matters here is an ordering one, and ordering only
-// exists on the wire. `start` has to reach the browser BEFORE the work is dispatched, because
-// the whole design turns on the window moving at the first instant the intent is known.
+// view-op.test.ts: a function with the right shape and no call site passes its own unit test
+// and changes no behaviour. The half that matters here is the seat, and the seat only exists
+// on the wire.
+//
+// The spawn itself is injected. A suite that opened a Terminal window on whoever ran it would
+// be its own kind of defect, so the AppleScript is asserted separately in summon.test.ts.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -57,9 +58,7 @@ type Harness = {
   summonCalls: () => number;
 };
 
-/** `slowRead` lets a test hold a tool call open, which is the only way to observe that the
- *  start frame is already out while the work is still running. */
-async function boot(opts: { summon?: (cwd: string) => Promise<SummonOutcome>; slowRead?: () => Promise<void> } = {}): Promise<Harness> {
+async function boot(opts: { summon?: (cwd: string) => Promise<SummonOutcome> } = {}): Promise<Harness> {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-presence-'));
   const audit = createAudit(dataDir);
   const store = createStore(dataDir);
@@ -91,10 +90,7 @@ async function boot(opts: { summon?: (cwd: string) => Promise<SummonOutcome>; sl
       applyDemoTransfer: () => {},
     },
     candles: {
-      get: async () => {
-        if (opts.slowRead) await opts.slowRead();
-        return { candles: [], stale: false, source: 'test', fetchedAt: new Date().toISOString() };
-      },
+      get: async () => ({ candles: [], stale: false, source: 'test', fetchedAt: new Date().toISOString() }),
       spot: async () => 1,
     },
     market: createMarketData({
@@ -147,38 +143,6 @@ async function boot(opts: { summon?: (cwd: string) => Promise<SummonOutcome>; sl
   };
 }
 
-/** Reads SSE frames off /api/events until `want` agent frames have arrived or time runs out.
- *  Real parsing of the real stream: the browser gets bare `data:` lines and so does this. */
-async function agentFrames(h: Harness, want: number, fire: () => Promise<unknown>): Promise<any[]> {
-  const ac = new AbortController();
-  const res = await fetch(`${h.url}/api/events`, { signal: ac.signal });
-  const reader = (res.body as ReadableStream<Uint8Array>).getReader();
-  const decoder = new TextDecoder();
-  const frames: any[] = [];
-  let buf = '';
-
-  const pump = (async () => {
-    while (frames.length < want) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      const parts = buf.split('\n\n');
-      buf = parts.pop() ?? '';
-      for (const part of parts) {
-        const line = part.split('\n').find((l) => l.startsWith('data: '));
-        if (!line) continue;
-        const payload = JSON.parse(line.slice(6));
-        if (payload.type === 'agent') frames.push(payload);
-      }
-    }
-  })();
-
-  await fire();
-  await Promise.race([pump, new Promise((r) => setTimeout(r, 4000))]);
-  ac.abort();
-  return frames;
-}
-
 function post(h: Harness, route: string, body: unknown): Promise<Response> {
   return fetch(`${h.url}${route}`, {
     method: 'POST',
@@ -186,102 +150,6 @@ function post(h: Harness, route: string, body: unknown): Promise<Response> {
     body: JSON.stringify(body),
   });
 }
-
-test('a tool call produces a start frame and then a settle frame, in that order', async () => {
-  const h = await boot();
-  try {
-    const frames = await agentFrames(h, 2, () =>
-      post(h, '/api/mcp', { op: 'read', tool: 'balances', session: 's1', client: 'test' }),
-    );
-    assert.equal(frames.length, 2, 'both edges reached the browser');
-    assert.equal(frames[0].phase, 'start');
-    assert.equal(frames[1].phase, 'settle');
-    assert.equal(frames[0].action.id, frames[1].action.id, 'and they are the same action');
-    assert.equal(frames[0].action.label, 'read balances');
-    assert.equal(frames[0].action.target, 'read');
-    assert.equal(frames[1].action.outcome, 'ok');
-    assert.ok(typeof frames[1].action.ms === 'number');
-  } finally {
-    await h.close();
-  }
-});
-
-test('the start frame is out BEFORE the work finishes, which is the whole point', async () => {
-  // The read is held open. If the start frame only went out on completion, nothing would
-  // arrive until the gate below is released, and the window would have animated nothing
-  // during the exact interval it exists to cover.
-  let release = () => {};
-  const held = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const h = await boot({ slowRead: () => held });
-  try {
-    const frames = await agentFrames(h, 1, async () => {
-      void post(h, '/api/mcp', { op: 'read', tool: 'candles', product: 'BTC-USD', session: 's1', client: 'test' });
-    });
-    assert.equal(frames.length, 1);
-    assert.equal(frames[0].phase, 'start', 'the window is already moving while the call is in flight');
-  } finally {
-    release();
-    await h.close();
-  }
-});
-
-test('a refused op still settles, so a wind-up can never be left running', async () => {
-  const h = await boot();
-  try {
-    const frames = await agentFrames(h, 2, () => post(h, '/api/mcp', { op: 'nonsense', session: 's1', client: 'test' }));
-    assert.equal(frames.length, 2);
-    assert.equal(frames[1].phase, 'settle');
-    assert.equal(frames[1].action.outcome, 'refused');
-  } finally {
-    await h.close();
-  }
-});
-
-test('a chart write animates as chart, and carries what changed', async () => {
-  const h = await boot();
-  try {
-    const frames = await agentFrames(h, 1, () =>
-      post(h, '/api/mcp', {
-        op: 'view',
-        tool: 'chart_set_view',
-        product: 'ETH-USD',
-        granularitySec: 900,
-        session: 's1',
-        client: 'test',
-      }),
-    );
-    assert.equal(frames[0].action.target, 'chart');
-    // The detail is what the window prints beside the machine, so it has to be legible at a
-    // glance rather than a dump of the arguments.
-    assert.equal(frames[0].action.detail, 'ETH-USD 900s');
-  } finally {
-    await h.close();
-  }
-});
-
-test('/api/state carries what is open, so a reloading window still winds', async () => {
-  let release = () => {};
-  const held = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const h = await boot({ slowRead: () => held });
-  try {
-    void post(h, '/api/mcp', { op: 'read', tool: 'candles', product: 'BTC-USD', session: 's1', client: 'test' });
-    await new Promise((r) => setTimeout(r, 120));
-    const state = (await (await fetch(`${h.url}/api/state`)).json()) as any;
-    assert.equal(state.agents.working.length, 1, 'a window attaching now learns the read is in flight');
-    assert.equal(state.agents.working[0].target, 'read');
-    release();
-    await new Promise((r) => setTimeout(r, 120));
-    const after = (await (await fetch(`${h.url}/api/state`)).json()) as any;
-    assert.equal(after.agents.working.length, 0);
-  } finally {
-    release();
-    await h.close();
-  }
-});
 
 test('summon needs the token, and without it nothing is spawned and nobody is dropped', async () => {
   const h = await boot();

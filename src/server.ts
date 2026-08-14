@@ -43,8 +43,6 @@ import type { MarketData } from './market/index.ts';
 import type { TradeService } from './trade/service.ts';
 import { classify } from './composition.ts';
 import { buildWallet } from './wallet.ts';
-import { createAgentActionStore, targetFor } from './agent-action.ts';
-import type { ActionOutcome } from './agent-action.ts';
 import { summonAgent } from './summon.ts';
 import type { SummonOutcome } from './summon.ts';
 import type { AgentPresence } from './agents.ts';
@@ -209,39 +207,6 @@ function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-// One short line the window can print beside the machine: what this call changes, said before
-// the work runs. Only the fields that are legible at a glance, and only from arguments that
-// are already on the wire. Anything unrecognised returns '' and the window prints the label
-// alone, which is the honest fallback: a made-up summary of an unknown tool would be worse
-// than none on a surface that moves money.
-const DETAIL_CHARS = 56;
-
-function describeArgs(op: string, body: Record<string, unknown>): string {
-  const str = (k: string): string => (typeof body[k] === 'string' ? (body[k] as string) : '');
-  const num = (k: string): string => (typeof body[k] === 'number' ? String(body[k]) : '');
-  let out = '';
-  if (op === 'view') {
-    const parts: string[] = [];
-    if (str('product')) parts.push(str('product'));
-    if (num('granularitySec')) parts.push(`${num('granularitySec')}s`);
-    if (str('kind')) parts.push(str('kind'));
-    if (str('name')) parts.push(str('name'));
-    out = parts.join(' ');
-  } else if (op === 'propose') {
-    const parts: string[] = [];
-    if (str('coin') || str('symbol')) parts.push(str('coin') || str('symbol'));
-    if (str('side')) parts.push(str('side'));
-    if (num('size')) parts.push(num('size'));
-    if (num('usd')) parts.push(`$${num('usd')}`);
-    out = parts.join(' ');
-  } else if (op === 'set_view_mode') {
-    out = str('mode');
-  } else if (op === 'read') {
-    out = str('product') || str('coin') || '';
-  }
-  return out.length > DETAIL_CHARS ? `${out.slice(0, DETAIL_CHARS - 1)}…` : out;
-}
-
 function asRecord(value: unknown): JsonBody {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as JsonBody) : {};
 }
@@ -346,18 +311,6 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   }
 
   // A proposal reaching 'executed' is both a balance change and a new line in the history.
-  // What the agent is doing RIGHT NOW. Its own frame rather than a reuse of 'log': the log
-  // channel is consumed by appendLog on both pages, and piggybacking would tie the window's
-  // animation to the audit renderer, so a change to how a line reads would change how the
-  // machine moves. Never debounced. The whole point of this channel is that it is the first
-  // thing to arrive, and a coalescer would spend the only latency it has to give.
-  const agentActions = createAgentActionStore();
-  const offAgentActions = agentActions.subscribe((event) => {
-    for (const client of sseClients) {
-      sseSend(client, { type: 'agent', phase: event.phase, action: event.action });
-    }
-  });
-
   const offStore = store.subscribe(() => {
     broadcastState();
     broadcastTransactions();
@@ -546,12 +499,6 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       agents: {
         connected: agents.connected(),
         holder: agents.holder(),
-        // What the agent is doing at this instant, not what it has done. A window that
-        // reloads mid-action would otherwise show a machine at rest while a swap is still in
-        // flight, because the 'start' frame it needed went out before the page existed. The
-        // SSE channel carries the transitions; this carries the standing state, and a client
-        // needs both to be correct at any moment it happens to attach.
-        working: agentActions.open(),
       },
       candleProducts: cfg.candleProducts,
       view: getView(),
@@ -1722,40 +1669,23 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     // before dispatch, arguments included verbatim.
     audit.append('tool_call', `agent: ${capLabel(label)}`, body);
 
-    // The window starts moving HERE, before a single line of the work is dispatched. This is
-    // the earliest instant Phosphor can possibly know an agent intends something: the MCP
-    // server is a stdio proxy, so the model's own thinking happens in another process and
-    // arrives already finished, as one whole call. There is nothing before this to show.
-    //
-    // Which is exactly why the animation must not be timed. It winds while the action is
-    // open and releases on the settle below, so a 200ms read and an 8s swap wear the same
-    // choreography and neither of them looks wrong.
-    const action = agentActions.begin({
-      op,
-      tool: String(body.tool ?? body.kind ?? body.mode ?? '?'),
-      label: capLabel(label),
-      target: targetFor(op, String(body.tool ?? ''), String(body.kind ?? '')),
-      detail: describeArgs(op, body),
-    });
-    // The four handlers each return on their own and there is no chokepoint on the way out,
-    // so the settle is a finally. An action that winds and never releases is worse than one
-    // that never started, and a handler that throws is precisely when that would happen.
-    let outcome: ActionOutcome = 'ok';
-    try {
-      if (op === 'read') return await handleRead(body, res);
-      if (op === 'propose') return await handlePropose(body, res);
-      if (op === 'view') return await handleView(body, res);
-      if (op === 'set_view_mode') return handleSetViewMode(body, res);
-      outcome = 'refused';
-      sendJson(res, 400, {
-        error: `unknown op: ${op}. known ops: hello, bye, read, propose, view, set_view_mode`,
-      });
-    } catch (err) {
-      outcome = 'error';
-      throw err;
-    } finally {
-      agentActions.end(action, outcome);
+    if (op === 'read') {
+      await handleRead(body, res);
+      return;
     }
+    if (op === 'propose') {
+      await handlePropose(body, res);
+      return;
+    }
+    if (op === 'view') {
+      await handleView(body, res);
+      return;
+    }
+    if (op === 'set_view_mode') {
+      handleSetViewMode(body, res);
+      return;
+    }
+    sendJson(res, 400, { error: `unknown op: ${op}. known ops: hello, bye, read, propose, view, set_view_mode` });
   }
 
   // ---------- dispatch ----------
