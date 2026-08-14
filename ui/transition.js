@@ -96,17 +96,39 @@
   var MAX_DPR = 2; // a 3rd or 4th device pixel buys nothing on glyphs this small and costs area
   var MIN_SPEED = 150; // rows per second, before the depth tier scales it
   var MAX_SPEED = 340;
-  var MAX_FILL = 8; // most rows one column may deposit in a frame, however long that frame was
+  /* Most rows one column may deposit in a frame, however long that frame was. Capped by what
+     the ring can still remember, so a stalled frame never deposits a character the screen
+     did not show. */
+  var MAX_FILL = 6;
 
   /* Frames an arriving run is stepped through before it is first drawn, so it lands in the
      state the leaving page's run was in rather than starting from an empty screen. One cover
      at 60fps, which is what the other page actually ran. */
   var PRIME_FRAMES = 30;
 
-  /* The leading rows of a column, redrawn from scratch every frame. This is where the head
-     ramp and the shimmer both come from, and it is bounded because everything behind it is
-     handed to the tail buffer and never touched again. */
+  /* The leading rows of a column, re-rendered every frame so the ramp can be drawn. This is
+     bounded because everything behind it is handed to the tail buffer and never touched
+     again. */
   var HOT_ROWS = 5;
+
+  /* A character belongs to the ROW it was drawn on, not to the frame. Each column keeps the
+     glyphs for the rows still inside its hot zone, and the hot pass renders those rather
+     than rolling new ones.
+
+     Karim, on the first cut of this second pass: "there is a tiny bit of flickering that I
+     don't like". It was mine and it was new. Re-rendering the hot zone every frame is right,
+     but rolling a fresh character into every one of those cells every frame is not: about
+     675 glyphs were changing 60 times a second, which is a boil rather than a shimmer. The
+     first pass never did it because it wrote each glyph into the tail buffer once and never
+     touched it again. The ring keeps that property and still lets the ramp be redrawn.
+
+     Long enough to hold every row from the head down to the one being deposited, plus one. */
+  var RING = HOT_ROWS + 2;
+
+  /* Odds per column per frame that one row behind the head takes a new character. This is
+     the shimmer, and it is the whole of it: roughly ten glyphs a frame across the screen
+     rather than every one of them. */
+  var SHIMMER = 0.08;
 
   /* Three depth tiers: speed scale, brightness scale, and how many of the slots get it.
      Near columns are faster and brighter, which is the whole of the parallax here. */
@@ -401,14 +423,21 @@
         gutterRun = 0;
       }
 
+      var chars = new Array(RING);
+      for (var c = 0; c < RING; c++) chars[c] = glyph();
+
       var col = {
         y: y,
         depth: d,
         speed: (MIN_SPEED + Math.random() * (MAX_SPEED - MIN_SPEED)) * DEPTH[d].speed,
         row: Math.floor(y),
         // The last row handed to the tail buffer. Everything between here and the head is
-        // the hot zone and is redrawn from scratch every frame.
+        // the hot zone, re-rendered every frame so the ramp can be drawn over it.
         deposited: Math.floor(y) - HOT_ROWS,
+        // The characters standing on the rows the head has most recently crossed, and the
+        // last row that was given one.
+        chars: chars,
+        filled: Math.floor(y) - 1,
       };
       cols[i] = col;
       byDepth[d].push(i);
@@ -451,18 +480,29 @@
 
     /* The glow buffer is a sixth of the device surface and is drawn in the same CSS pixels
        as everything else, so the frame loop never converts a coordinate. */
-    var gw = Math.max(1, Math.round(pw * GLOW_SCALE));
-    var gh = Math.max(1, Math.round(ph * GLOW_SCALE));
-    run.glow.width = gw;
-    run.glow.height = gh;
-    var gk = run.dpr * GLOW_SCALE;
-    run.gctx.setTransform(gk, 0, 0, gk, 0, 0);
+    run.glow.width = Math.max(1, Math.round(pw * GLOW_SCALE));
+    run.glow.height = Math.max(1, Math.round(ph * GLOW_SCALE));
+    /* Identity, deliberately, unlike the other two contexts. A mark this small at a
+       fractional offset is antialiased differently on every row it steps through, and its
+       brightness pulses with the coverage. The marks are rounded to whole buffer pixels
+       instead, which is the second half of the flicker Karim saw and the one on the
+       brightest thing on the screen. */
+    run.gctx.setTransform(1, 0, 0, 1, 0, 0);
+    run.gk = run.dpr * GLOW_SCALE;
 
     buildColumns(run);
   }
 
   function glyph() {
     return GLYPHS.charAt((Math.random() * GLYPHS.length) | 0);
+  }
+
+  /* The ring is indexed by screen row, so a character stays where it was put as the head
+     moves off it. Rows go negative above the top edge, which is why the remainder is folded
+     rather than used raw. */
+  function ringIdx(row) {
+    var i = row % RING;
+    return i < 0 ? i + RING : i;
   }
 
   /* Advance every column, hand whatever has fallen out of the hot zone to the tail buffer,
@@ -499,12 +539,26 @@
           col.y = -Math.random() * 14;
           col.row = Math.floor(col.y);
           col.deposited = col.row - HOT_ROWS;
+          col.filled = col.row - 1;
           col.depth = pickDepth();
           col.speed = (MIN_SPEED + Math.random() * (MAX_SPEED - MIN_SPEED)) * DEPTH[col.depth].speed;
         } else {
           col.y = rows + 1; // parked off the bottom, drawn no more
           col.row = rows + 1;
         }
+      }
+
+      /* One new character per row the head has just landed on, and none for the rows it left
+         behind. That is the whole of the flicker fix: what is on a row was decided when the
+         head reached it. */
+      var fillFrom = col.filled + 1;
+      if (col.row - fillFrom >= RING) fillFrom = col.row - RING + 1;
+      for (var fr = fillFrom; fr <= col.row; fr++) col.chars[ringIdx(fr)] = glyph();
+      col.filled = col.row;
+
+      // The shimmer, one row at a time and never the head, which is new anyway.
+      if (HOT_ROWS > 1 && Math.random() < SHIMMER) {
+        col.chars[ringIdx(col.row - 1 - ((Math.random() * (HOT_ROWS - 1)) | 0))] = glyph();
       }
     }
 
@@ -526,7 +580,9 @@
         var first = col.deposited + 1;
         if (target - first >= MAX_FILL) first = target - MAX_FILL + 1;
         for (var r = first; r <= target; r++) {
-          if (r >= 0 && r < rows) ctx.fillText(glyph(), ids[n] * run.cellW, r * run.rowH);
+          // The character the screen already showed on that row, not a new one. A glyph that
+          // changes as it freezes is a flicker at the hot zone's own edge.
+          if (r >= 0 && r < rows) ctx.fillText(col.chars[ringIdx(r)], ids[n] * run.cellW, r * run.rowH);
         }
         col.deposited = target;
       }
@@ -573,10 +629,13 @@
     ctx.globalCompositeOperation = 'source-over';
   }
 
-  /* The leading rows of every column, re-rolled from scratch every frame. This is three
-     things at once and none of them can be had from the tail buffer: the ramp that makes the
-     head findable, the shimmer that makes the front crawl, and the heads the bloom is built
-     from. It is drawn straight onto the visible canvas, so nothing here accumulates. */
+  /* The leading rows of every column, re-rendered every frame. Two things here cannot be had
+     from the tail buffer: the ramp that makes the head findable, and the heads the bloom is
+     built from. It is drawn straight onto the visible canvas, so nothing accumulates.
+
+     The CHARACTERS come from each column's ring and are not re-rolled here. Only the colour
+     and the alpha change from frame to frame, which is the difference between a fall that
+     shimmers and one that boils. */
   function hot(run, p) {
     var ctx = run.ctx;
     var gctx = run.gctx;
@@ -588,7 +647,7 @@
     var col;
     var row;
 
-    gctx.clearRect(0, 0, run.w, run.h);
+    gctx.clearRect(0, 0, run.glow.width, run.glow.height);
     gctx.fillStyle = run.colours.glow;
 
     ctx.setTransform(run.dpr, 0, 0, run.dpr, 0, 0);
@@ -605,7 +664,7 @@
           col = cols[i];
           row = col.row - k;
           if (row < 0 || row >= rows) continue;
-          ctx.fillText(glyph(), i * cellW, row * rowH);
+          ctx.fillText(col.chars[ringIdx(row)], i * cellW, row * rowH);
         }
       }
     }
@@ -614,15 +673,16 @@
        character is barely a pixel across and a mark of the same size is the same smear once
        it has been scaled back up. Narrow, and a row and a half tall, so the glow sits on the
        tip and leans the way the column is going rather than washing the whole hot zone. */
+    var gk = run.gk;
     var gx = cellW * (1 - GLOW_W) * 0.5;
-    var gw = cellW * GLOW_W;
-    var gh = rowH * GLOW_H;
+    var gw = Math.max(2, Math.round(cellW * GLOW_W * gk));
+    var gh = Math.max(3, Math.round(rowH * GLOW_H * gk));
     for (i = 0; i < cols.length; i++) {
       col = cols[i];
       row = col.row;
       if (row < 0 || row >= rows) continue;
       gctx.globalAlpha = DEPTH[col.depth].light;
-      gctx.fillRect(i * cellW + gx, (row - 0.35) * rowH, gw, gh);
+      gctx.fillRect(Math.round((i * cellW + gx) * gk), Math.round((row - 0.35) * rowH * gk), gw, gh);
     }
     gctx.globalAlpha = 1;
 
