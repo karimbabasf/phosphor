@@ -101,11 +101,19 @@ a level, because divergence in open space fails repeatedly in strong trends.
 **9. The no-trade gate, numeric.** Declare `NO TRADE` if **any** holds:
    - Nearest structural stop is closer than 0.75 ATR. The stop is inside noise.
    - Best target under the structure gives less than 1.5R.
-   - Range efficiency below 0.25 on the structure TF and price in the middle third of the range.
-     That is the boring chop day, and boredom trades cost more than bad trades.
+   - Price sits between 0.40 and 0.60 of the range **and** there is no level within 1.5 ATR to
+     work against. Directionless with nothing to lean on is the day to skip.
    - Bias and structure TF disagree and price sits between their decisive levels.
-   - The setup needs a level that has never been tested.
+   - The invalidation level has fewer than 2 reactions **and** is not a range extreme. A range
+     boundary is structural even on its first test.
    - Account heat is at its limit, or a correlated open position makes this the same bet twice.
+
+   **Calibrate a threshold against the measurement before trusting it.** An earlier version of
+   this gate declined on `range.efficiency < 0.25`, which measured as true in 98 percent of cases
+   because `detectRange` only returns ranges under `maxEfficiency` 0.3 in the first place. The
+   rule read like a filter and behaved like a ban, and it cut exactly the setups that were
+   working. Before any number becomes a gate, look at where that number actually sits across a
+   few hundred bars. A threshold nothing clears is not conservative, it is broken.
 
 **10. Size in R, then draw it.** Stop comes from structure and is then widened to the ATR floor,
 never the reverse, and never a stop picked because the loss feels tolerable. Size = risk dollars
@@ -132,6 +140,28 @@ Then say in one line what you drew. `MARKED: 4 levels, rising support, sweep at 
 
 Clean up with `chart_clear` before drawing a new thesis. Do not leave three sessions of lines on
 one chart.
+
+The whole read is three round trips, not thirty. Measure everything at once, then draw
+everything at once, and let `$ref` carry the fitted line straight into the drawing:
+
+```json
+{"name": "chart_batch", "arguments": {"ops": [
+  {"op": "atr",            "args": {"granularitySec": 14400, "bars": 400, "period": 14}, "as": "a"},
+  {"op": "levels",         "args": {"granularitySec": 14400, "bars": 400, "window": 3, "minProminence": 900, "tolerance": 600}, "as": "tight"},
+  {"op": "levels",         "args": {"granularitySec": 14400, "bars": 400, "window": 3, "minProminence": 900, "tolerance": 1200}, "as": "loose"},
+  {"op": "range",          "args": {"granularitySec": 14400, "bars": 400, "lookback": 60, "maxEfficiency": 0.3}},
+  {"op": "volume_profile", "args": {"granularitySec": 14400, "bars": 400, "bins": 40, "valueAreaPct": 0.7}},
+  {"op": "regime",         "args": {"granularitySec": 14400, "bars": 400, "period": 14, "lookback": 252}},
+  {"op": "trendline_fit",  "args": {"granularitySec": 14400, "bars": 400, "window": 3, "kind": "low"}, "as": "fit"},
+  {"op": "draw",           "args": {"kind": "trendline", "label": "rising support", "a": {"t": 1786200000, "price": 61200}, "b": {"t": 1786600000, "price": 62400}}, "as": "line"},
+  {"op": "trendline_touches", "args": {"id": "$ref:line.id", "tolerance": 600, "bars": 400}}
+]}}
+```
+
+Two things that call is doing on purpose: `tight` and `loose` are the two-tolerance check, and
+the touch count comes back in the same round trip as the line, so you never draw a trendline and
+then discover it had two touches. `$ref:<as>.<field>` must be the **entire** argument string;
+`"level at $ref:x.price"` stays literal text.
 
 ## The output
 
@@ -215,6 +245,36 @@ Latency here is round trips, not milliseconds. Three calls answer almost every q
 `trade_batch` for the book and positioning, `chart_scan` for the three timeframes, one
 `chart_batch` carrying every measurement and then the whole markup with `$ref`. An agent that
 issues one call per measurement is not being thorough, it is being slow.
+
+## What the benchmark actually showed
+
+180 point-in-time replays on real bars, 2017 to 2026, 90 episodes balanced across 9 regimes,
+with the asset, the date and the price level hidden. Full method and numbers are in the global copy of this skill at
+`~/.claude/skills/phosphor-analysis/references/benchmark.md`. Read this before you trust any rule above more than it has earned.
+
+**Proven, and these are compliance facts rather than outcome noise:**
+- The 0.75 ATR stop floor holds: 0 of 65 stops landed inside the noise floor, against 3 of 83
+  without the skill. The rule is followed when it is written down.
+- Max drawdown fell from 18.9R to 7.1R, a 62 percent cut, on the same episodes.
+- Planned reward to risk improved from a 2.00 median to 2.23.
+- On the episodes where both arms traded, the skill's calls came out 0.140R better each
+  (paired t 0.535, n=43). Directionally real, statistically not proven.
+
+**Not proven, and do not claim it:**
+- **This skill does not demonstrate an edge.** Average outcome was -0.036R per episode. A
+  two-line 20-bar momentum rule scored +0.170R on the identical set. At this sample size no arm
+  is distinguishable from zero, every t-stat sits under 1, and the arms swap rank between the
+  first and second half of the sample.
+- **The no-trade gate did not select well.** On the 25 episodes it declined, an unguided agent
+  averaged +0.317R; on the 57 it kept, that agent averaged -0.181R. Some of that is a confound,
+  since random entry had positive expectancy in this sample and any filter looks bad against
+  drift, but the declines still cost more than random declines would have. Treat the gate as a
+  drawdown tool, which it demonstrably is, not as an alpha tool.
+- **Conviction does not predict outcome.** Across every arm, the calls rated 4 out of 5 did no
+  better than the calls rated 2. Report conviction if asked, never size on it.
+
+The honest summary: this skill makes the analysis disciplined, the risk bounded and the output
+usable. It has not been shown to make the calls right. Say so if asked.
 
 ## The trap this skill exists to stop
 
