@@ -489,7 +489,11 @@
   background: var(--red-ghost);
 }
 
-#t-liq-bar > .fill { background: var(--green-dim); }
+/* Opaque, and it has to be: --green-dim is a translucent token, so on this bar alone the red
+   ground shows through its own cover and a position a long way from its wall painted olive.
+   The mass came off the bar's size instead, from nine pixels running the full panel to four
+   held to the panel's measure, which is about a seventh of the ink. */
+#t-liq-bar > .fill { background: var(--green); }
 
 /* The liquidation bar is a REVERSE meter: the track is red and the green fill covers it, so the
    red showing through is the distance you have left to lose. That makes an unknown reading the

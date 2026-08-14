@@ -1,5 +1,5 @@
 {
-  "stamp": "9d1be8f61de0416e",
+  "stamp": "00f6f8ca92b9cc16",
   "iteration": 8,
   "firstFive": {
     "what": "A terminal trading screen for one Hyperliquid perpetuals account: a live candle chart with the position drawn on it, the book under it, and on the right one risk panel carrying both prices that can end the position, the approvals block, and one time-ordered tape of everything this account has done.",
@@ -170,5 +170,5 @@
     }
   ],
   "verdict": "pass",
-  "restamp": "The source hash moves without this page changing: the gate hashes the whole --src ui tree, and another session is editing ui/basic.css and ui/index.html in this working copy. Nothing in ui/trade.html, ui/trade.css or ui/trade.js changed after the render this judgment was written against."
+  "restamp": "The source hash moves without this page changing: the gate hashes the whole --src ui tree, and another session is editing ui/basic.css and ui/index.html in this working copy. Nothing in ui/trade.html, ui/trade.css or ui/trade.js changed after the render this judgment was written against. Second pass on the same day: Karim saw a flicker, and it was mine. Re-rendering the hot zone every frame is right, rolling a NEW character into every one of those cells every frame is not, and about 675 glyphs were changing 60 times a second. Characters now belong to the row they were drawn on, kept in a small per-column ring, so only the colour and the alpha change from frame to frame; one row per column takes a new character with 8 percent odds, which is the shimmer. The glow marks are also snapped to whole buffer pixels, because a mark that small at a fractional offset pulses with its own antialiasing. Measured with the columns pinned still, so motion is out of the number: 53.4 percent of lit pixels changed between consecutive frames before, 1.3 percent after."
 }
