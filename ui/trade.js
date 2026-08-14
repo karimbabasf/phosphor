@@ -42,7 +42,7 @@ var OVERLAY_NAMES = ['position', 'liquidation', 'stops', 'targets', 'orders', 'f
 /* Column counts for the two tables, needed only by the rows that span the full width.
    HISTORY_NUM_COLS is the run of columns a fill fills with figures; an event that is not a
    fill says what happened across that run instead. */
-var BOOK_COLS = 9;
+var BOOK_COLS = 7;
 var HISTORY_COLS = 7;
 var HISTORY_NUM_COLS = 4;
 
@@ -107,6 +107,10 @@ function known(n) {
 function usd(n) {
   if (!known(n)) return '--';
   var v = Number(n);
+  // A figure that rounds to nothing is nothing, and it never carries a sign. A funding
+  // accrual of -0.0004 printed as `-$0.00`, which reads as a loss the account has not made
+  // and, on a signed figure, as a direction it is not moving in.
+  if (Math.abs(v) < 0.005) v = 0;
   return (v < 0 ? '-' : '') + '$' +
     Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
@@ -115,7 +119,7 @@ function usd(n) {
    printed, including the plus. */
 function signedUsd(n) {
   if (!known(n)) return '--';
-  return (Number(n) > 0 ? '+' : '') + usd(n);
+  return (Number(n) >= 0.005 ? '+' : '') + usd(n);
 }
 
 /* One column holds a four figure mark and a sub-cent alt, so the precision follows the
@@ -139,6 +143,29 @@ function pct(n) {
 function pctOfShare(share) {
   if (!known(share)) return '--';
   return (Number(share) * 100).toFixed(2) + '%';
+}
+
+/* A distance to a wall, where precision follows magnitude the way price() already does it.
+   A live account printed `1705.38% away` and `3998.3 ATR`: two decimal places on a figure
+   in the thousands is four characters of noise on the one number this page is read for, and
+   the thousands separator it lacked is what tells a reader at a glance that the number has
+   four digits rather than three. Under ten percent the decimals are the whole point, and
+   that is the only case where the position is actually close to the wall. */
+function distancePct(n) {
+  if (!known(n)) return '--';
+  var v = Number(n);
+  var a = Math.abs(v);
+  var digits = a >= 100 ? 0 : a >= 10 ? 1 : 2;
+  return v.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits }) + '%';
+}
+
+function atrCount(n) {
+  if (!known(n)) return '--';
+  var v = Number(n);
+  return v.toLocaleString('en-US', {
+    minimumFractionDigits: Math.abs(v) >= 100 ? 0 : 1,
+    maximumFractionDigits: Math.abs(v) >= 100 ? 0 : 1
+  });
 }
 
 /* Funding is a rate per hour, a fraction of the position each hour. Two decimal places of
@@ -542,27 +569,6 @@ function renderVenueBanner(p) {
 
 /* ---------- 3. risk ---------- */
 
-/* The DOM contract names the five distance nodes and no wrapper around them, and the copy
-   puts static words beside each one ("LIQ at <price>, <n>% away"). Hiding the span alone
-   would leave those words with nothing after them, so the line holding the span is hidden
-   instead. Guarded: a line that also carries the collateral figures or the empty sentence is
-   left alone, because the risk panel keeps showing free collateral when it is flat. */
-function holdsKeeper(node) {
-  if (!node.querySelector) return true;
-  return Boolean(node.querySelector(
-    '#t-risk-equity, #t-risk-margin, #t-risk-free, #t-risk-maint, #t-risk-empty,' +
-    '#t-exp-net, #t-exp-gross, #t-exp-shock'
-  ));
-}
-
-function hideLiqLine(id, shut) {
-  var node = $(id);
-  if (!node) return;
-  var target = node.parentElement;
-  if (!target || target === document.body || holdsKeeper(target)) target = node;
-  target.hidden = shut;
-}
-
 /* The share of the scale still standing between this position and the venue's wall.
 
    This was inverted, and inverted the wrong way: it returned `1 - distance/scale`, so a
@@ -597,14 +603,22 @@ function armedWall(p, coin) {
    hold one in their head while they find the other. No ordering is asserted between them:
    live numbers have put a stop-out at $1,133 under a liquidation at $1,422 and above one
    on another day, so which comes first is a reading and never a layout. */
+/* One wrapper hides the whole reading, rather than each figure walking up to find a line of
+   its own to hide. The walk this replaces got the bar wrong: the bar's parent IS the block,
+   so hiding the bar hid the section and took the stop-out line down with it, on exactly the
+   account the stop-out line exists for. */
 function renderLiqBlock(pos, wallPx) {
-  var ids = ['t-liq-price', 't-liq-pct', 't-liq-usd', 't-liq-atr', 't-liq-bar'];
-  for (var i = 0; i < ids.length; i++) hideLiqLine(ids[i], !pos);
+  var body = $('t-liq-body');
+  if (body) body.hidden = !pos;
   // Flat with a mandate armed there is still a wall to state, so the stop-out line is shown
   // whenever a mandate holds one, on its own terms and not on the position's.
   var wall = $('t-wall-line');
   if (wall) wall.hidden = !known(wallPx);
   setText('t-wall-price', price(wallPx));
+  // Neither wall exists: the section goes with its contents rather than heading an empty
+  // block. The account block below says what is true instead, in a sentence.
+  var block = $('t-liq-block');
+  if (block) block.hidden = !pos && !known(wallPx);
   if (!pos) {
     setText('t-liq-price', '--');
     setText('t-liq-pct', '--');
@@ -614,9 +628,9 @@ function renderLiqBlock(pos, wallPx) {
     return;
   }
   setText('t-liq-price', price(pos.liqPx));
-  setText('t-liq-pct', pct(pos.liqDistancePct));
+  setText('t-liq-pct', distancePct(pos.liqDistancePct));
   setText('t-liq-usd', usd(pos.liqDistanceUsd));
-  setText('t-liq-atr', known(pos.liqDistanceAtr) ? Number(pos.liqDistanceAtr).toFixed(1) : '--');
+  setText('t-liq-atr', atrCount(pos.liqDistanceAtr));
   fillBar($('t-liq-bar'), liqFill(pos));
 }
 
@@ -680,15 +694,27 @@ function renderRisk(p) {
   setText('t-risk-margin', usd(account.marginUsedUsd));
   setText('t-risk-free', usd(account.freeUsd));
   setText('t-risk-maint', usd(account.maintenanceUsd));
-  setText('t-risk-health', pctOfShare(account.healthPct));
-  fillBar($('t-risk-healthbar'), known(account.healthPct) ? Number(account.healthPct) * 100 : null);
+  // An unpublished health gets words and no meter at all. A hatched track beside `health --`
+  // reads as a broken widget rather than as a missing reading, and on a unified account,
+  // where the venue does not publish what the figure needs, that is the normal state and
+  // not an edge one.
+  var healthKnown = known(account.healthPct);
+  setClass(setText('t-risk-health', healthKnown ? pctOfShare(account.healthPct) : 'not published'),
+    'faint', !healthKnown);
+  var healthBar = $('t-risk-healthbar');
+  if (healthBar) healthBar.hidden = !healthKnown;
+  fillBar(healthBar, healthKnown ? Number(account.healthPct) * 100 : null);
 
   setText('t-exp-net', signedUsd(account.netNotionalUsd));
   setText('t-exp-gross', usd(account.grossNotionalUsd));
   // A sentence, not a figure: a bare number here reads as a balance rather than as what is
   // left after a move that has not happened yet. The line is never hidden, because the
-  // absence of this number is itself news on a unified account.
-  setText('t-exp-shock', 'A 5% move against you leaves ' + usd(account.equityAtFivePctAdverse) + '.');
+  // absence of this number is itself news on a unified account. Absent, it says what is
+  // missing: the sentence used to end "leaves --.", which reads as a broken template rather
+  // than as a fact the venue has not published.
+  setText('t-exp-shock', known(account.equityAtFivePctAdverse)
+    ? 'A 5% move against you leaves ' + usd(account.equityAtFivePctAdverse) + '.'
+    : 'A 5% move against you: the venue has not published enough to say.');
 
   var positions = Array.isArray(d.positions) ? d.positions : null;
   // accountKnown is false until the feed has settled what kind of account this is, and every
@@ -873,7 +899,7 @@ function pnlCell(pos) {
   // With no split reported, the venue's own unrealised number is the honest headline. The
   // two are never mixed: a price-only figure labelled net would be the wrong number.
   var net = split ? pos.pnlNetUsd : pos.unrealisedUsd;
-  var head = el('div', 'pnl-net', signedUsd(net) + '  ' + pct(pos.roePct));
+  var head = el('div', 'pnl-net', signedUsd(net) + ' ' + pct(pos.roePct));
   setClass(head, 'up', known(net) && Number(net) >= 0);
   setClass(head, 'down', known(net) && Number(net) < 0);
   td.appendChild(head);
@@ -890,6 +916,14 @@ function pnlCell(pos) {
    to the position above it, and the orders already use it, so the split uses it too. */
 function splitRow(pos) {
   if (!known(pos.pnlPriceUsd) && !known(pos.pnlFundingUsd)) return null;
+  // Nothing to split. With no funding paid and a price part equal to the net, this line
+  // reprints the figure on the row above it, and that repetition is what made one position
+  // take three lines of the book. Funding is never the hidden one: any carry that has
+  // actually moved brings the line straight back.
+  var carry = known(pos.pnlFundingUsd) ? Number(pos.pnlFundingUsd) : 0;
+  var priced = known(pos.pnlPriceUsd) ? Number(pos.pnlPriceUsd) : null;
+  var net = known(pos.pnlNetUsd) ? Number(pos.pnlNetUsd) : null;
+  if (Math.abs(carry) < 0.005 && priced !== null && net !== null && Math.abs(priced - net) < 0.005) return null;
   var tr = el('tr', 'srow');
   var td = el('td', 'faint',
     'price ' + signedUsd(pos.pnlPriceUsd) + ', funding ' + signedUsd(pos.pnlFundingUsd));
@@ -898,27 +932,28 @@ function splitRow(pos) {
   return tr;
 }
 
-function positionRow(pos, p) {
+function positionRow(pos, p, working) {
   var tr = el('tr', 'prow');
   tr.dataset.coin = String(pos.coin);
   markHighlight(tr, p, 'position', pos.coin);
   tr.appendChild(el('td', 'sym', String(pos.coin)));
 
-  // Direction and size of the bet on one line, the margin mode under it. As one line it was
-  // sixteen characters of a table that had none to spare, and cross against isolated is a
-  // different fact from 10x anyway: one says how much is borrowed, the other says whose
-  // collateral answers for it.
+  // Direction, leverage and margin mode on one line: `SHORT 10x cross`. The mode had a line
+  // of its own under the direction, which made every position row two lines tall before its
+  // orders and its profit split added any more, and the two are not peers anyway: cross
+  // against isolated qualifies the leverage sitting next to it.
   var short = pos.side === 'short';
   var side = el('td', short ? 'side short' : 'side long');
-  side.appendChild(el('div', 'side-dir',
+  side.appendChild(el('span', 'side-dir',
     (short ? 'SHORT' : 'LONG') + ' ' + (known(pos.leverage) ? pos.leverage + 'x' : '--')));
-  side.appendChild(el('div', 'side-mode', pos.leverageType ? String(pos.leverageType) : '--'));
+  // `iso`, because `isolated` is three characters longer than the whole column can spare
+  // and it is the trader's own shorthand for it, not an invention of this page.
+  var mode = pos.leverageType ? String(pos.leverageType) : '--';
+  side.appendChild(el('span', 'side-mode', mode === 'isolated' ? 'iso' : mode));
   tr.appendChild(side);
 
-  tr.appendChild(el('td', 'num', amount(pos.sizeCoin)));
   tr.appendChild(el('td', 'num', usd(pos.notionalUsd)));
   tr.appendChild(el('td', 'num', price(pos.entryPx)));
-  tr.appendChild(el('td', 'num', price(pos.markPx)));
   tr.appendChild(el('td', 'num liq', price(pos.liqPx)));
   tr.appendChild(pnlCell(pos));
 
@@ -927,38 +962,49 @@ function positionRow(pos, p) {
   // confirmation dialog is where the full sentence belongs and already carries it.
   var acts = el('td', 'acts');
   acts.appendChild(actionButton('[ CLOSE ]', 'close', { coin: String(pos.coin) }));
-  acts.appendChild(actionButton('[ CANCEL ALL ]', 'cancel_all', { coin: String(pos.coin) }));
+  // CANCEL ALL cancels this market's working orders, so it is drawn when there are some to
+  // cancel. On a position with nothing resting under it, it was a control that could only
+  // ever do nothing, wearing the widest label in the narrowest column on the page. Drawn
+  // too when the venue has not answered about orders: unknown is not the same as none, and
+  // a brake is not the thing to remove on a guess.
+  if (working) acts.appendChild(actionButton('[ CANCEL ALL ]', 'cancel_all', { coin: String(pos.coin) }));
   tr.appendChild(acts);
   return tr;
 }
 
+/* Seven cells, matching the position row above it column for column. An order's quantity
+   rides its SIDE cell (`sell 0.66`) now that the book carries no coin column: the position
+   above it is measured in dollars, but a resting instruction is placed in coins and losing
+   that would leave a stop nobody could size. */
 function orderRow(o, p) {
   var tr = el('tr', 'orow');
   tr.dataset.oid = String(o.oid);
   markHighlight(tr, p, 'order', o.oid);
   tr.appendChild(el('td', 'nest', String(o.role || o.kind) + ' ' + String(o.coin)));
-  tr.appendChild(el('td', o.side === 'sell' ? 'side short' : 'side long', String(o.side)));
-  tr.appendChild(el('td', 'num', amount(o.sizeCoin)));
+  tr.appendChild(el('td', o.side === 'sell' ? 'side short' : 'side long',
+    String(o.side) + ' ' + amount(o.sizeCoin)));
   tr.appendChild(el('td', 'num', usd(o.notionalUsd)));
   tr.appendChild(el('td', 'num', price(o.kind === 'trigger' ? o.triggerPx : o.px)));
-  tr.appendChild(el('td', 'faint', o.tif ? String(o.tif) : '--'));
-  tr.appendChild(el('td', 'faint', String(o.kind)));
-  tr.appendChild(el('td', 'faint', (o.reduceOnly ? 'reduce-only ' : '') + clock(o.atMs)));
+  tr.appendChild(el('td', 'faint', String(o.kind) + (o.tif ? ' ' + String(o.tif) : '')));
+  // `reduce`, not `reduce-only`: the pair with a timestamp beside it is twenty characters in a
+  // nineteen character column, and the flag is the half a reader needs.
+  tr.appendChild(el('td', 'faint', (o.reduceOnly ? 'reduce ' : '') + clock(o.atMs)));
   var acts = el('td', 'acts');
   acts.appendChild(actionButton('[ CANCEL ]', 'cancel', { id: String(o.oid) }));
   tr.appendChild(acts);
   return tr;
 }
 
-/* FLATTEN ALL has no home of its own in the DOM contract and it is a book-wide control, so it
-   rides the last row of the book, under the positions it would close. */
-function flattenRow() {
-  var tr = el('tr', 'frow');
-  var td = el('td');
-  td.colSpan = BOOK_COLS;
-  td.appendChild(actionButton('[ FLATTEN ALL ]', 'flatten', {}));
-  tr.appendChild(td);
-  return tr;
+/* FLATTEN ALL is a book-wide control and it lives in the panel footer, under the table and
+   outside it. It used to ride the last row of the table, which put the one control that
+   closes every position and stops every bot inside the box that scrolls: on a long book it
+   was below the fold, and on a short one it read as one more position. */
+function renderFlatten(anything) {
+  var foot = $('t-book-foot');
+  if (!foot) return;
+  foot.textContent = '';
+  if (anything) foot.appendChild(actionButton('[ FLATTEN ALL ]', 'flatten', {}));
+  foot.hidden = !anything;
 }
 
 function renderBook(p) {
@@ -973,9 +1019,6 @@ function renderBook(p) {
 
   for (var i = 0; i < positions.length; i++) {
     var pos = positions[i];
-    rows.appendChild(positionRow(pos, p));
-    var split = splitRow(pos);
-    if (split) rows.appendChild(split);
     var coin = String(pos.coin).toUpperCase();
     var mine = [];
     for (var j = 0; j < orders.length; j++) {
@@ -983,9 +1026,15 @@ function renderBook(p) {
       placed[String(orders[j].oid)] = true;
       mine.push(orders[j]);
     }
+    rows.appendChild(positionRow(pos, p, mine.length > 0 || !ordersKnown));
+    var split = splitRow(pos);
+    if (split) rows.appendChild(split);
     for (var k = 0; k < mine.length; k++) rows.appendChild(orderRow(mine[k], p));
+    // A position with nothing resting under it used to get a row saying "No orders
+    // working.". The absent child row already says it, and on a book of several positions
+    // that was one grey line of nothing per position. The venue not having answered keeps
+    // its row: unknown is news, and none is not.
     if (!ordersKnown) rows.appendChild(spanRow(BOOK_COLS, 'orders unavailable', 'orow note'));
-    else if (!mine.length) rows.appendChild(spanRow(BOOK_COLS, 'No orders working.', 'orow note'));
   }
 
   // A resting entry belongs to no position yet, so it sorts to the bottom under its own line
@@ -1004,7 +1053,7 @@ function renderBook(p) {
     empty.textContent = p ? 'Flat. No position on any market.' : 'Waiting for the venue.';
     empty.hidden = anything;
   }
-  if (anything) rows.appendChild(flattenRow());
+  renderFlatten(anything);
 }
 
 /* ---------- 6. history ---------- */

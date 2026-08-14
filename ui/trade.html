@@ -106,10 +106,25 @@
            table of their own: a stop at 3200 is a property of the ETH long, not an
            independent object. The renderer marks those child rows .orow.
 
-           Every header carries its unit on a second line. SIZE was the one column with
-           no unit anywhere on the page and it is coins, which read as a bare 0.0314
-           beside seven dollar figures. A number whose unit has to be guessed is not a
-           number a person can act on, so all of them say it now. -->
+           Seven columns, and the count is the fix rather than a consequence of it. Nine
+           nowrap columns have never fitted half of a 1440 screen: the table was 918px of
+           content in a 739px panel, so the browser divided the space instead and clipped
+           the head of every column in it (`NOTIONA`, `SIZE co:`, `$1,35...`, `[ CLOS`).
+           A blotter whose own headings are cut off is not read at a glance at any density.
+
+           Two columns left, and both were the ones that could:
+           - MARK is on this page three other times: the status bar, the MARKET block, and
+             the last-price tag on the chart.
+           - SIZE in coins is what an order ticket is denominated in, and this page has no
+             order ticket by design. Everything that governs this account, the mandate caps,
+             net and gross exposure, the whole risk panel, is denominated in dollars, and
+             NOTIONAL is that number. Coin quantities are still on every fill in HISTORY and
+             on every working order below its position.
+
+           One line of header, not two. Six of the nine used to print `usd` under a column
+           where every cell already begins with a $, which is a second storey of grey saying
+           nothing six times. The unit is drawn only where the figure does not carry it. -->
+
       <section class="panel panel-tbook">
         <div class="frame frame-top" data-title="BOOK"></div>
         <div class="pbody">
@@ -117,21 +132,25 @@
             <table class="grid" id="t-book">
               <thead>
                 <tr>
-                  <th scope="col" class="c-mkt"><span class="h-n">MARKET</span><span class="h-u">&nbsp;</span></th>
-                  <th scope="col" class="c-side"><span class="h-n">SIDE</span><span class="h-u">lev, mode</span></th>
-                  <th scope="col" class="c-num"><span class="h-n">SIZE</span><span class="h-u">coins</span></th>
-                  <th scope="col" class="c-num"><span class="h-n">NOTIONAL</span><span class="h-u">usd</span></th>
-                  <th scope="col" class="c-num"><span class="h-n">ENTRY</span><span class="h-u">usd</span></th>
-                  <th scope="col" class="c-num"><span class="h-n">MARK</span><span class="h-u">usd</span></th>
-                  <th scope="col" class="c-num"><span class="h-n">LIQ</span><span class="h-u">usd</span></th>
-                  <th scope="col" class="c-num"><span class="h-n">PNL</span><span class="h-u">usd, net</span></th>
-                  <th scope="col" class="c-acts"><span class="h-n">&nbsp;</span><span class="h-u">&nbsp;</span></th>
+                  <th scope="col" class="c-mkt"><span class="h-n">MARKET</span></th>
+                  <th scope="col" class="c-side"><span class="h-n">SIDE</span></th>
+                  <th scope="col" class="c-num c-notional"><span class="h-n">NOTIONAL</span></th>
+                  <th scope="col" class="c-num c-entry"><span class="h-n">ENTRY</span></th>
+                  <th scope="col" class="c-num c-liq"><span class="h-n">LIQ</span></th>
+                  <th scope="col" class="c-num c-pnl"><span class="h-n">PNL</span><span class="h-u">net</span></th>
+                  <th scope="col" class="c-acts"></th>
                 </tr>
               </thead>
               <tbody id="t-book-rows"></tbody>
             </table>
           </div>
           <p class="empty" id="t-book-empty" hidden>Flat. No position on any market.</p>
+          <!-- The book-wide brake, under the book and outside it. It rode the last row of
+               the table, which put the one control that closes everything inside the box
+               that scrolls: on a book of twenty rows it was below the fold, and it read as
+               a twenty-first position. It is a footer of the panel now, so it holds still
+               and it is never mistaken for data. -->
+          <p class="bookfoot" id="t-book-foot" hidden></p>
         </div>
         <div class="frame frame-bottom"></div>
       </section>
@@ -149,42 +168,64 @@
            them a titled box is what made the right column eight panels deep. They are
            ruled sections in here now, which is the same information with three fewer
            frames and no competition for height. -->
+      <!-- Four named sections, in the order the questions are asked, each one opening on
+           a ruled label in the same register as the panel frames. Unlabelled, this panel
+           was twenty figures separated by hairlines: four blocks that looked alike, so
+           the reader had to work out which block they were in before reading a number in
+           it. A block that says its own name costs one line and is what makes the panel
+           legible at a glance. -->
       <section class="panel panel-trisk">
         <div class="frame frame-top" data-title="RISK"></div>
         <div class="pbody">
-          <dl class="rgrid">
-            <dt class="k">equity</dt><dd id="t-risk-equity">--</dd>
-            <dt class="k">margin</dt><dd id="t-risk-margin">--</dd>
-            <dt class="k">free</dt><dd id="t-risk-free">--</dd>
-            <dt class="k">maint</dt><dd id="t-risk-maint">--</dd>
-          </dl>
-          <p class="rhealth">
-            <span class="k">health</span>
-            <span class="v" id="t-risk-health">--</span>
-            <span class="track" id="t-risk-healthbar"><span class="fill"></span></span>
-          </p>
-          <!-- The two walls, together and in that order deliberately. A position on
-               borrowed size has two prices that end it: the one the venue takes it at
-               and the one the human approved losing. Neither is asserted to come first,
-               because live numbers have put a stop-out below a liquidation and above it
-               on the same account. The venue's wall is the liquidation surface and wears
-               red; the approved wall is a decision, so it stays phosphor. -->
-          <div class="liq">
-            <p class="liq-line">LIQ at <span id="t-liq-price">--</span>, <span id="t-liq-pct">--</span> away, <span id="t-liq-usd">--</span>, <span id="t-liq-atr">--</span> ATR</p>
-            <span class="track" id="t-liq-bar"><span class="fill"></span></span>
+
+          <!-- The two walls, first and together, deliberately. This is the question the
+               page exists to answer, so it opens the panel and takes the only large type
+               on it. A position on borrowed size has two prices that end it: the one the
+               venue takes it at and the one the human approved losing. Neither is
+               asserted to come first, because live numbers have put a stop-out below a
+               liquidation and above it on the same account. The venue's wall is the
+               liquidation surface and wears red; the approved wall is a decision, so it
+               stays phosphor.
+
+               Every supporting figure carries a word. "LIQ at $1,353.12, 1705.38% away,
+               $843.59, 3998.3 ATR" was one comma-run of four numbers, three of which
+               were never named: a reader had to already know the line to read it. -->
+          <div class="liq" id="t-liq-block">
+            <p class="rsec">LIQUIDATION</p>
+            <div id="t-liq-body">
+              <p class="liq-head"><span id="t-liq-pct">--</span><span class="liq-away">away</span></p>
+              <p class="liq-sub">
+                <span class="lf"><span class="k">at</span> <span id="t-liq-price">--</span></span>
+                <span class="lf"><span class="k">room</span> <span id="t-liq-usd">--</span></span>
+                <span class="lf"><span class="k">or</span> <span id="t-liq-atr">--</span> ATR</span>
+              </p>
+              <span class="track" id="t-liq-bar"><span class="fill"></span></span>
+            </div>
             <p class="wall-line" id="t-wall-line">STOP-OUT at <span id="t-wall-price">--</span>, the loss you approved</p>
           </div>
-          <!-- Cross margin makes every position a term in every other position's
-               liquidation price, so the book gets an exposure line of its own. -->
-          <div class="rexp">
-            <p class="expline">
-              <span class="k">net</span> <span class="v" id="t-exp-net">--</span>
-              <span class="bar">&#9474;</span>
-              <span class="k">gross</span> <span class="v" id="t-exp-gross">--</span>
+
+          <!-- The account. Cross margin makes every position a term in every other
+               position's liquidation price, so net and gross exposure are an account
+               fact and sit in here with the collateral rather than in a block of their
+               own between the walls and the instrument. -->
+          <div class="racct">
+            <p class="rsec">ACCOUNT</p>
+            <dl class="rgrid">
+              <dt class="k">equity</dt><dd id="t-risk-equity">--</dd>
+              <dt class="k">margin</dt><dd id="t-risk-margin">--</dd>
+              <dt class="k">free</dt><dd id="t-risk-free">--</dd>
+              <dt class="k">maint</dt><dd id="t-risk-maint">--</dd>
+              <dt class="k">net</dt><dd id="t-exp-net">--</dd>
+              <dt class="k">gross</dt><dd id="t-exp-gross">--</dd>
+            </dl>
+            <p class="rhealth">
+              <span class="k">health</span>
+              <span class="v" id="t-risk-health">--</span>
+              <span class="track" id="t-risk-healthbar"><span class="fill"></span></span>
             </p>
             <p class="shock" id="t-exp-shock">--</p>
+            <p class="empty" id="t-risk-empty" hidden>Waiting for the venue.</p>
           </div>
-          <p class="empty" id="t-risk-empty" hidden>Waiting for the venue.</p>
 
           <!-- The instrument rather than the account. Mark and oracle are separated on
                purpose: they are different prices with different jobs, mark decides a
@@ -193,6 +234,7 @@
                volume were here and are gone: they describe the market's health, not this
                position's, and nothing on this desk is decided by either. -->
           <div class="rmkt">
+            <p class="rsec">MARKET</p>
             <dl class="rgrid">
               <dt class="k">mark</dt><dd id="t-mkt-mark">--</dd>
               <dt class="k">oracle</dt><dd id="t-mkt-oracle">--</dd>
@@ -212,7 +254,7 @@
                renderer; the shape it must produce is written out in trade.css above the
                .mrow rules. -->
           <div class="rmandate">
-            <p class="subhead">MANDATE</p>
+            <p class="rsec">MANDATE</p>
             <div id="t-mandate-list"></div>
             <p class="empty" id="t-mandate-empty" hidden>Nothing armed. Ask your agent for a proposal.</p>
           </div>
@@ -251,16 +293,16 @@
             <table class="grid" id="t-history">
               <thead>
                 <tr>
-                  <th scope="col" class="c-time"><span class="h-n">TIME</span><span class="h-u">local</span></th>
-                  <th scope="col" class="c-kind"><span class="h-n">KIND</span><span class="h-u">event</span></th>
-                  <th scope="col" class="c-hmkt"><span class="h-n">MARKET</span><span class="h-u">&nbsp;</span></th>
-                  <th scope="col" class="c-side"><span class="h-n">SIDE</span><span class="h-u">&nbsp;</span></th>
-                  <th scope="col" class="c-num"><span class="h-n">PRICE</span><span class="h-u">usd</span></th>
-                  <th scope="col" class="c-num"><span class="h-n">SIZE</span><span class="h-u">coins</span></th>
+                  <th scope="col" class="c-time"><span class="h-n">TIME</span></th>
+                  <th scope="col" class="c-kind"><span class="h-n">KIND</span></th>
+                  <th scope="col" class="c-hmkt"><span class="h-n">MARKET</span></th>
+                  <th scope="col" class="c-side"><span class="h-n">SIDE</span></th>
+                  <th scope="col" class="c-num"><span class="h-n">PRICE</span></th>
+                  <th scope="col" class="c-num c-size"><span class="h-n">SIZE</span><span class="h-u">coins</span></th>
                   <!-- The fee column went with the panel merge. It is real money and it is
                        already counted: a fill's fee is inside the position's profit split
                        one panel over, and on a tape it was the column nobody read. -->
-                  <th scope="col" class="c-num"><span class="h-n">PNL</span><span class="h-u">usd, closed</span></th>
+                  <th scope="col" class="c-num c-pnl"><span class="h-n">PNL</span><span class="h-u">closed</span></th>
                 </tr>
               </thead>
               <tbody id="t-history-rows"></tbody>

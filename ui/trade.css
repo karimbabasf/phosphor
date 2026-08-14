@@ -27,9 +27,10 @@
    column nobody reads twice. Stated on everything that carries a number. */
 .statusbar .v,
 .rgrid dd,
-.rexp .v,
-.liq-line,
+.liq-head,
+.liq-sub,
 .wall-line,
+.rhealth .v,
 .mbar-v,
 .mrow-head,
 .mrow-projected,
@@ -64,11 +65,15 @@
   background: var(--green-dim);
 }
 
-/* An unknown reading is not a reading of zero. An empty track beside "health --" says health is
-   at zero, which claims the account is at its liquidation when the truth is that the venue has
-   not published what the figure needs. That is the normal case on a unified account, not an
-   edge one. Hatched, so it reads as "no signal" at a glance and can never be mistaken for a bar
-   that has emptied. */
+/* An unknown reading is not a reading of zero. An empty track says the meter is at its floor,
+   which on the liquidation bar claims the account is AT its wall when the truth is that the
+   venue has not published what the figure needs. Hatched, so it reads as "no signal" and can
+   never be mistaken for a bar that has emptied.
+
+   Health does not come here any more. A hatched track beside `health --` was read as a broken
+   widget rather than as a missing reading, and on a unified account that state is the norm, so
+   the renderer drops the meter and writes the words instead. This is for the bar that has a
+   red ground under it and therefore cannot simply be left empty. */
 .track.unknown {
   border-style: dashed;
   background-image: repeating-linear-gradient(
@@ -98,21 +103,22 @@
 .tablewrap::-webkit-scrollbar-track { background: transparent; }
 .tablewrap::-webkit-scrollbar-thumb { background: var(--green-ghost); }
 
-/* Every column says what it measures, on a second line under its name.
+/* One line of header, and the unit only where the figures do not already carry it.
 
-   SIZE was the one column on this page whose unit appeared nowhere: it is coins, and it
-   read as a bare 0.0314 beside seven dollar figures. A number whose unit has to be
-   guessed from the figures around it is not a number anyone should act on with borrowed
-   money, so all of them say it. The unit line costs no width at all, which is the reason
-   it is under the name rather than in brackets after it. */
-.grid th .h-n { display: block; }
+   Every column used to print its unit on a second line under its name. Most of them said
+   `usd` over a column where every cell already begins with a $, so the head of both tables
+   was two storeys of grey saying nothing twice, and the column names stopped being the
+   thing the eye landed on. The unit survives only where the figure does not carry it: SIZE
+   on the tape is coins beside dollar figures, and PNL is net on one table and closed on the
+   other. Those say it inline, one tier down, on the same line as the name. */
+.grid th .h-n { display: inline; }
 
 .grid th .h-u {
-  display: block;
+  display: inline;
+  margin-left: 0.6ch;
   color: var(--green-ghost);
-  letter-spacing: 0.04em;
-  font-size: 11px;
-  line-height: 1.2;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
 }
 
 /* ---------- 2. chart ---------- */
@@ -189,28 +195,99 @@
   max-height: 38vh;
 }
 
-/* Twelve, not sixteen: the widest thing this column ever holds is an order child row, and
-   `stop ETH` behind a three-character indent is eleven. The four characters it gives back
-   go to the figures, which is where the reading happens. */
-/* Wide enough for the name AND its unit line. A column sized to its figures alone printed
-   MARKET hard against SIDE with no gap between the two words, which is a header that reads
-   as one word and names neither column. */
-.grid .c-mkt { width: 12ch; }
-.grid .c-side { width: 11ch; }
-.grid .c-time { width: 10ch; }
-.grid .c-kind { width: 11ch; }
-.grid .c-hmkt { width: 9ch; }
+/* The left column carries the blotter and the right carries prose, so the deck is split in
+   the blotter's favour on this page and on this page only. At the even-ish 1.06 the pro
+   page uses, the figures a person came to read were the part that went over the edge. */
+.deck { grid-template-columns: 1.30fr 1fr; }
 
-/* The unit line never wraps. Wrapped, it turns a two-line header into a three-line one and
-   the column names stop sitting on a common baseline. */
+/* Every column width is declared and the floor is their exact sum, which is the whole fix
+   for the clipping. Fixed layout does not overflow, it DIVIDES: an undeclared column is
+   given whatever is left over, and with a table told to be 100% of a panel too narrow for
+   it, "left over" was less than the heading. That is how a blotter came to print `NOTIONA`
+   and `[ CLOS`. Declared and floored, the columns keep their size and the wrapper scrolls
+   under them if a viewport ever gets narrower than the sum.
+
+     11 + 16 + 12 + 12 + 12 + 19 + 16 = 98ch = 767px, in a 772px panel at 1440.
+
+   Widths are also what stops the columns moving as the numbers tick: under automatic layout
+   a mark that gained a digit shifted every column to its right. */
+#t-book {
+  table-layout: fixed;
+  width: 100%;
+  min-width: 98ch;
+}
+
+/* Eleven, because the widest thing this column holds is an order child row and `stop ETH`
+   behind a three-character indent is eleven. */
+#t-book .c-mkt { width: 11ch; }
+/* Direction, leverage and margin mode on one line: `SHORT 10x cross`. */
+#t-book .c-side { width: 16ch; }
+/* Twelve is ten characters of `$62,955.00` and the two of gutter around them. */
+#t-book .c-notional,
+#t-book .c-entry,
+#t-book .c-liq { width: 12ch; }
+/* The result and its return, `-$1,234.56 -2.04%`, plus the gutter. */
+#t-book .c-pnl { width: 19ch; }
+/* Sized to `[ CANCEL ALL ]`, which is the widest label the app has. Every character of this
+   column is taken from the figures beside it, so it is the one place the bracket buttons give
+   up their inner padding and their tracking: the brackets are the affordance here, not the
+   box around them. Without this the label overran its own column by a pixel and the app
+   printed `[ CANCEL AL`, on the control that cancels orders. */
+#t-book .c-acts { width: 16ch; }
+#t-book td.acts { padding-left: 0.5ch; padding-right: 0; }
+#t-book td.acts .btn { padding: 0 0.25ch; letter-spacing: 0.02em; }
+
+/* HISTORY declares its own, and must: the tape shares .c-side with the blotter and was
+   inheriting the sixteen characters a position row needs to say `SHORT 10x cross` for a
+   column that only ever holds `sell`. That was 86 wasted pixels of a panel where PNL was
+   being clipped.
+
+     9 + 11 + 8 + 7 + 12 + 12 + 13 = 72ch = 564px, in a 590px panel at 1440.
+
+   The floor itself is set with the rest of #t-history in section 7, where it was already
+   declared: two floors on one table is one floor and a dead rule. */
+#t-history .c-time { width: 9ch; }
+#t-history .c-kind { width: 11ch; }
+#t-history .c-hmkt { width: 8ch; }
+#t-history .c-side { width: 7ch; }
+#t-history .c-num { width: 12ch; }
+#t-history .c-pnl { width: 13ch; }
+
+/* The unit never wraps onto a line of its own. */
 .grid th .h-u { white-space: nowrap; }
+
+/* Right-aligned columns need a gutter on their left or two of them read as one number.
+   The table's own padding is on the right, which is the side that already has a gap. */
+.grid .c-num, .grid td.num { padding-left: 1ch; }
 
 /* A position and the orders working under it are one block. The hairline is drawn above
    the position row only, so nothing is ever drawn between a position and its own
    orders, and the group reads as a group without a tree glyph. */
 #t-book-rows > tr:not(.orow) > td { border-top: 1px solid var(--green-ghost); }
 #t-book-rows > tr:first-child > td { border-top: 0; }
-#t-book-rows > tr:not(.orow) > td:first-child { color: var(--green-hi); }
+
+/* The eight figures on a position row are not eight facts of equal weight, and drawn at
+   one brightness they read as a wall. Three tiers, and the ranking is what a person
+   opening this window is actually asking:
+
+     brightest  the market, and what the position is worth right now
+     base       what the position IS: direction, size, and the price that ends it
+     dim        the arithmetic behind those: notional, entry, mark
+
+   This is the whole reason the panel felt crowded. Nothing was removed to fix it. */
+#t-book-rows > tr.prow > td { color: var(--green-dim); }
+#t-book-rows > tr.prow > td.sym { color: var(--green-hi); }
+#t-book-rows > tr.prow > td.side,
+#t-book-rows > tr.prow > td.liq { color: var(--green); }
+
+/* The result of the position, which is the number the row is read for. It is the brightest
+   thing on the row and everything supporting it is two tiers down, which is enough: set
+   larger as well, `-$1,234.56 -2.04%` stops fitting the column, and a clipped profit is a
+   worse outcome than an unemphasised one. Never red either: red on this page means the
+   venue took the position or the gate refused a write, and a position that is merely down
+   has done neither. */
+#t-book-rows .pnl-net { color: var(--green-hi); }
+#t-book-rows .pnl-net.down { color: var(--green); }
 
 /* Subordinate three ways at once: indented past the market column, one brightness tier
    down, and set smaller. An order is a property of the position above it, not a peer. */
@@ -220,12 +297,15 @@
 }
 
 #t-book-rows > tr.orow > td:first-child { padding-left: 3ch; }
+#t-book-rows > tr.ohead > td { color: var(--green-faint); }
 
-/* The margin mode under the direction, one tier down: it qualifies the line above it rather
-   than standing beside it. */
+/* The margin mode beside the direction rather than under it. As its own line it made
+   every position row two lines tall before the profit split added a third, and cross
+   against isolated is a qualifier on the leverage sitting next to it, not a fact that
+   earns a line of its own. */
 #t-book-rows .side-mode {
+  margin-left: 1ch;
   color: var(--green-faint);
-  font-size: 12px;
 }
 
 /* The profit split, subordinate to the position it belongs to the same way an order is, and
@@ -273,6 +353,16 @@
   text-align: left;
 }
 
+/* The book-wide brake, in the panel and under the table rather than inside it. As the
+   last row of the table it scrolled away with the rows and read as one more position;
+   here it holds still, which is what a control that closes everything has to do. */
+.bookfoot {
+  flex: none;
+  margin: 4px 0 0;
+  padding-top: 4px;
+  border-top: 1px solid var(--green-ghost);
+}
+
 /* ---------- 4. risk ---------- */
 
 /* The one panel that answers what this page is for, so it is the one panel allowed to be
@@ -280,6 +370,31 @@
    instrument, and what the armed program may still do. Nothing in it is a table, which is
    why it can live in the narrow column while both tables take the wide one. */
 .panel-trisk > .pbody { max-height: 44vh; }
+
+/* A section label sitting on its own rule, in the register the panel frames already use:
+   `ACCOUNT ─────────────`. This panel holds four blocks and used to separate them with
+   bare hairlines, so all four looked alike and a reader had to work out which block a
+   figure belonged to before they could read it. A name on the rule costs one line and is
+   the difference between twenty numbers and four answers.
+
+   The rule is part of the label, so nothing else in this panel draws one. */
+.rsec {
+  display: flex;
+  align-items: center;
+  gap: 1ch;
+  margin: 9px 0 3px;
+  color: var(--green-faint);
+  letter-spacing: 0.16em;
+  font-size: 11px;
+}
+
+.rsec::after {
+  content: "";
+  flex: 1 1 auto;
+  border-top: 1px solid var(--green-ghost);
+}
+
+.panel-trisk > .pbody > :first-child > .rsec { margin-top: 0; }
 
 /* Two label/value pairs per line, and capped in characters rather than left to the panel.
    Uncapped, each value flushed right against its own half of a 677px panel and every row
@@ -308,41 +423,73 @@
   max-width: 46ch;
 }
 
+.rhealth .k { flex: 0 0 auto; }
 .rhealth .track { flex: 1 1 auto; min-width: 6ch; }
 
-/* The two walls. The liquidation distance is the most important number on the page, so it
-   gets the only two kinds of weight this palette has: size, and the brightest tier. The
-   rule above the block is there so the eye lands here and not on the figures above it. */
-.liq {
-  margin-top: 6px;
-  padding-top: 5px;
-  border-top: 1px solid var(--green-ghost);
+/* A health the venue has not published gets no meter at all. It used to get a hatched
+   one, and a hatched bar beside `health --` reads as a broken widget rather than as a
+   missing reading: the diagonals at six pixels are indistinguishable from corruption.
+   The renderer hides the track and writes what is missing in words instead, which is the
+   same rule the rest of this page follows for a null. */
+.rhealth .v { color: var(--green); }
+.rhealth .v.faint { color: var(--green-faint); }
+
+/* The two walls, and the one place on this page allowed to be large.
+
+   A position on borrowed size is read for one number before any other: how far is it from
+   the price that ends it. That number is the only thing on the panel set above body size,
+   and every figure supporting it carries the word that says what it is. */
+.liq { margin: 0; }
+
+.liq-head {
+  margin: 0;
+  font-size: 26px;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+  color: var(--green-hi);
 }
 
-.liq-line {
-  margin: 0 0 4px;
-  font-size: 16px;
-  line-height: 1.25;
-  letter-spacing: 0.02em;
+/* The unit of the headline, set at reading size beside it so the figure keeps the weight
+   and the word does not shout. */
+.liq-head .liq-away {
+  margin-left: 1ch;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  color: var(--green-faint);
+}
+
+/* Held to the same measure as every other figure block in this panel. Run to the full
+   width of a 620px column, three labelled figures separated by three characters read as
+   one sentence with gaps in it rather than as three facts. */
+.liq-sub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 3ch;
+  margin: 3px 0 6px;
+  max-width: 46ch;
   color: var(--green-dim);
 }
 
-#t-liq-price { color: var(--green-hi); }
-#t-liq-pct,
-#t-liq-usd,
-#t-liq-atr { color: var(--green); }
+.liq-sub .k { margin-right: 0.75ch; }
+#t-liq-price { color: var(--green); }
 
 /* Distance remaining, not distance travelled: the green is the ground still under the
    position, the red behind it is what the venue takes. Price moving in shrinks the
    green and grows the red, which is the shape of the danger rather than a label
-   describing it. Taller than the other tracks for the same reason. */
+   describing it.
+
+   The fill is a tier down from full phosphor. At full brightness and full width, which is
+   what a position far from its wall draws, a nine pixel bar of #33ff66 was the loudest
+   object on a page whose only alarm is meant to be the approval gate: the safest possible
+   state was rendering as the most urgent one. */
 #t-liq-bar {
-  height: 9px;
+  height: 4px;
+  max-width: 46ch;
   border-color: var(--red-ghost);
   background: var(--red-ghost);
 }
 
-#t-liq-bar > .fill { background: var(--green); }
+#t-liq-bar > .fill { background: var(--green-dim); }
 
 /* The liquidation bar is a REVERSE meter: the track is red and the green fill covers it, so the
    red showing through is the distance you have left to lose. That makes an unknown reading the
@@ -358,45 +505,31 @@
 }
 
 /* The second wall, directly under the venue's own, because the two are read together or not
-   at all. Set at the same size and one tier down: it is the same class of fact from a
-   different authority, and neither is asserted to come first. Phosphor and never red. A
-   stop-out is a decision somebody made on purpose; only the venue taking the position is the
-   liquidation surface, and red on this page means that and nothing else. */
+   at all. It is the same class of fact from a different authority and neither is asserted
+   to come first, so it sits at reading size under the headline rather than competing with
+   it: two numbers at twenty-six pixels is two headlines and no answer. Phosphor and never
+   red. A stop-out is a decision somebody made on purpose; only the venue taking the
+   position is the liquidation surface, and red on this page means that and nothing else. */
 .wall-line {
-  margin: 4px 0 0;
-  font-size: 16px;
-  line-height: 1.25;
-  letter-spacing: 0.02em;
+  margin: 5px 0 0;
   color: var(--green-dim);
 }
 
 #t-wall-price { color: var(--green-hi); }
 
-.rexp {
-  margin-top: 6px;
-  padding-top: 5px;
-  border-top: 1px solid var(--green-ghost);
-}
-
-.rexp p { margin: 0; }
-.rexp .v { color: var(--green); }
-
 /* A sentence a human reads, not a numeric column: it wraps and it is left aligned. */
-.rexp .shock {
-  margin-top: 2px;
+.shock {
+  margin: 4px 0 0;
   color: var(--green-dim);
   max-width: 60ch;
 }
 
-/* The instrument rather than the account. It was a titled panel of its own and it is four
-   ruled lines now: mark against oracle, the basis between them, what the carry costs, and
-   what the thing actually moves in an hour. That is the whole set a leveraged position is
-   read against. */
-.rmkt {
-  margin-top: 6px;
-  padding-top: 5px;
-  border-top: 1px solid var(--green-ghost);
-}
+/* The instrument rather than the account, and one tier down as a block: mark against
+   oracle, the basis between them, what the carry costs, and what the thing actually moves
+   in an hour. That is the whole set a leveraged position is read against, and none of it
+   is a fact about this account, so it must not draw the eye before the two blocks that
+   are. */
+.rmkt .rgrid dd { color: var(--green-dim); }
 
 /* ---------- 5. mandate, inside the risk panel ---------- */
 
@@ -426,23 +559,9 @@
    The renderer sets the width of .fill and adds .hot to the loss bar past its
    threshold. Nothing else here needs a class from it. */
 
-.rmandate {
-  margin-top: 6px;
-  padding-top: 5px;
-  border-top: 1px solid var(--green-ghost);
-}
-
-/* This block used to be a panel with a frame around it. Inside another panel a second
-   frame would be a box in a box, so the name is set the way the frames set theirs and
-   the rule above it does the separating. */
-.subhead {
-  margin: 0 0 3px;
-  color: var(--green-faint);
-  letter-spacing: 0.08em;
-}
-
-/* Ruled rather than boxed, for the same reason: the panel already has a border and a
-   second one inside it reads as a card. */
+/* Ruled rather than boxed: the panel already has a border and a second one inside it
+   reads as a card. The rule and the name are the .rsec above the block, the same way
+   every other section of this panel opens. */
 .mrow {
   padding: 0 0 4px;
   margin-bottom: 6px;
@@ -615,10 +734,12 @@
    stops being readable at all, and under it the wrapper scrolls sideways the way every other
    nowrap table on this page does. Above it, which is every desktop, the 100% wins and nothing
    about the desktop layout changes. */
+/* 72, down from 77, and the drop is the column widths in section 3 rather than a squeeze:
+   the tape was inheriting the blotter's sixteen-character SIDE column to hold `sell`. */
 #t-history {
   table-layout: fixed;
   width: 100%;
-  min-width: 77ch;
+  min-width: 72ch;
 }
 
 /* KIND is what makes one table hold two shapes of row. A fill fills the figures; anything
@@ -671,6 +792,11 @@
    decision, what do I hold, what happened. Nobody arms a bot from a phone; this is about
    the answer still being reachable when someone looks. */
 @media (max-width: 1100px), (max-height: 620px) {
+  /* Restated, and it has to be. style.css collapses the deck to one column inside its own
+     copy of this query, but the split this file declares for the blotter is outside a query
+     and in the later stylesheet, so it would win and stack the panels into two columns of
+     half a phone. */
+  .deck { grid-template-columns: 1fr; }
   .deck > .col { display: contents; }
 
   /* Every panel is numbered. An unordered one takes order 0 and lands above the chart,
@@ -689,6 +815,14 @@
 
   .panel-tbook > .pbody { display: block; }
   .panel-thistory { min-height: 0; }
+
+  /* Stacked, the blotter sizes to its content instead of to its declared columns. Those
+     widths are a desktop budget: they sum to 98ch, which is wider than a stacked panel at
+     768, so the table scrolled sideways and the profit column was the part that ended up
+     under the sticky brake. Content-sized it is about 81ch and fits without scrolling at
+     all. The reason for fixed layout is that columns must not move as the numbers tick,
+     and nobody watches a ticking blotter on a phone. */
+  #t-book { table-layout: auto; min-width: 0; }
 
   /* History keeps a cap so a long tape cannot become the whole page, and it restates its
      containment in full. That is a fix rather than repetition: a height limit with visible

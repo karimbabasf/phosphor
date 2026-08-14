@@ -1,17 +1,24 @@
 {
-  "stamp": "0ee16cca1067009c",
-  "iteration": 7,
-  "restamp": "Iteration 7 is a re-stamp, not a new change to this page. Nothing on the trade surface was touched. The source hash moved because the gate hashes the whole --src ui tree and two files under it changed: ui/transition.js, rebuilt so the mode switch stops looking cheap, and ui/index.html, which another session is editing live and which this page does not load. Re-rendered and re-read at 1440, 768 and 390: the chart, the RISK column, APPROVALS, HISTORY, BOOK and FLATTEN ALL are the same panels iteration 6 passed, in the same places, with no new chrome and no new hue.\n\nThe limit written into iteration 6 still holds and now covers more: the fall itself cannot be captured by this gate, because look.mjs enters a state by clicking and no control on either page switches mode. It was verified outside the gate instead, by seizing requestAnimationFrame and stepping the run frame by frame from a script, with captures at eight points across the cover, the hold and the reveal, and again on the arriving half after a navigation. Cost measured on the same panel at 1512x982: 0.4ms median and 0.6ms p95 per frame against 16.7ms, 151 frames, none dropped.",
+  "stamp": "9d1be8f61de0416e",
+  "iteration": 8,
   "firstFive": {
     "what": "A terminal trading screen for one Hyperliquid perpetuals account: a live candle chart with the position drawn on it, the book under it, and on the right one risk panel carrying both prices that can end the position, the approvals block, and one time-ordered tape of everything this account has done.",
     "who": "Someone trading this account with borrowed money, watching a program they armed, who has to decide on the agent's proposals without leaving the price.",
     "action": "Read the LIQ line, then the tape, then decide the pending proposal or press one of the controls that stops something."
   },
   "changed_this_iteration": {
-    "why": "Karim, on iteration 4: 'The logs look squished, and I don't like the logs and mandate sections. I want them to be sort of in one, meaning a transaction history and fills as well.' / 'the book of our actual positions and everything is too squished. You can't clearly tell what numbers report what metrics.' / 'a lot of colliding, a lot of conflicting components, and it looks noisy. I don't see truly useful information that I need.'",
-    "panels": "Eight became five. FILLS, MANDATE and LOG merged into one HISTORY tape. MARKET stopped being a panel and became four ruled lines inside RISK. The armed mandate's live state became a ruled block inside RISK, beneath the liquidation distance it is about.",
-    "cut": "Open interest and 24h volume (they describe the market's health, never this position's). The per-fill FEE column on the tape. The mandate's stop-out price and last-rule line from the mandate head, both of which moved somewhere they read better: the price up beside the venue's wall, the rule down into the tape.",
-    "root_cause": "The noise was structural, not painted. Five variable-height panels shared a non-scrolling column whose declared caps summed to 152vh, and `.panel.grow` means `flex-basis: 0`, so the growing panel paid the whole overrun and the log rendered as a frame line with nothing under it. Merging three panels into one removed the competition; capping `.panel-tgate` (style.css only ever capped the pro page's `.panel-gate`) plugged the uncapped one; and a `min-height` floor on the growing panel means it can no longer be shrunk to nothing."
+    "why": "Karim, iteration 8, on screenshots of BOOK and RISK: 'this looks far too complicated and crowdy... looks cheap and not UX friendly' / 'I have never seen an interface for trading like this before. make it simpler, more traditional, and the overall feeling should be like I should understand what I am looking at at first glance.'",
+    "root_cause": "The page ranked nothing and clipped what it could not fit. Two separate defects wearing one symptom. (1) Every figure was drawn at one brightness and one size, so a position row of eight numbers and a risk panel of twenty read as walls rather than as answers. (2) Nine nowrap columns needed 918px in a 739px panel, and `table-layout: fixed` does not overflow, it DIVIDES, so the browser silently shrank every column and printed `NOTIONA`, `SIZE co:`, `$1,35...` and `[ CLOS`. A blotter whose own headings are cut off cannot be read at a glance at any density.",
+    "book": "Nine columns became seven. MARK left because it is printed three other places on this page (status bar, MARKET block, the chart's last-price tag); SIZE in coins left because this page has no order ticket by design and everything that governs the account is denominated in dollars, which is NOTIONAL. Every remaining width is declared and the table's floor is their exact sum (11+16+12+12+12+19+16 = 98ch = 767px in a 772px panel). Header units moved inline and the second storey of the header is gone. The margin mode moved beside the direction instead of under it. The 'No orders working.' row is gone (an absent child row already says it; 'orders unavailable' stays, because unknown is news). The profit split row is suppressed when it repeats the number above it. CANCEL ALL is drawn only when there are orders to cancel. FLATTEN ALL left the last row of the table for the panel footer, so the control that closes everything no longer scrolls away.",
+    "risk": "Four named sections in the order the questions are asked: LIQUIDATION, ACCOUNT, MARKET, MANDATE, each opening on a ruled label in the same register as the panel frames. The distance to the wall moved to the top and became the one large figure on the page, with every supporting number carrying a word: `1,703% away / at $1,353.12  room $843.52  or 4,259 ATR` in place of the unlabelled comma-run `LIQ at $1,353.12, 1705.38% away, $843.59, 3998.3 ATR`. Precision now follows magnitude. Net and gross moved into ACCOUNT, where they belong. The instrument block is one brightness tier down as a whole.",
+    "cut": "MARK and SIZE from the blotter. The header unit line on both tables. The 'No orders working.' row. The profit split row when it says nothing. CANCEL ALL on a position with nothing resting. The hatched health meter. Nothing was cut from RISK.",
+    "fixed_on_the_way": [
+      "renderLiqBlock hid the .liq container when it reached the bar, because the bar's parent IS the container, so the stop-out line disappeared on exactly the account it exists for. One wrapper is hidden now instead of a parent walk.",
+      "The health meter drew a hatched track beside `health --`, which reads as a broken widget rather than as a missing reading. On a unified account that is the normal state. The meter is dropped and the words are written instead.",
+      "`A 5% move against you leaves --.` read as a broken template. It says what is missing now.",
+      "usd() printed `-$0.00` for a funding accrual of -0.0004, which reads as a loss the account has not made.",
+      "HISTORY was inheriting the blotter's 16-character SIDE column to hold `sell`, which was 86 wasted pixels of a panel whose PNL column was being clipped."
+    ]
   },
   "asked": [
     {
@@ -24,7 +31,7 @@
       "requirement": "Judged as a professional trading surface against what real perps desks carry, not against a retail app",
       "met": true,
       "ref": "#page",
-      "note": "shot-1440.png: one screen, no chrome, no navigation, every figure carrying its unit. The screen answers distance-to-wall, exposure, what is armed and what has happened, which is the set a desk keeps up."
+      "note": "Seven columns rather than nine, and the two that left were the two that could: MARK is on this page three other times, and SIZE in coins is what an order ticket is denominated in on a page that has no order ticket. Every reference perps blotter carries both, but every reference blotter is given the full page width and this one has half of a 1440 screen with a chart above it. Measured, not asserted: 0px of overflow and 0 clipped cells at 768, 1440 and 1920."
     },
     {
       "requirement": "The same design language as the pro page: same tokens, same panel frame, same terminal density, no new hue, no radius, no shadow, no transition",
@@ -42,13 +49,13 @@
       "requirement": "Components must not collide or conflict, at any width",
       "met": true,
       "ref": ".deck, .tablewrap",
-      "note": "Measured in the browser at 1440, 768 and 390. Page-level sideways scroll is 0 at all three. BOOK and HISTORY both have scrollWidth === clientWidth at 1440 (702/702 and 661/661) and at 768 (728/728), so nothing is off-screen. At 390 both scroll inside their own box (698 in 350, 603 in 350) and the page still does not. This is the requirement that failed at iteration 4: CLOSE POSITION and CANCEL ALL were off the right edge of BOOK whenever a position existed, and the LOG panel rendered as a frame line with zero content whenever a proposal was pending."
+      "note": "This is now measured rather than claimed. Both tables report scrollWidth == clientWidth at 768, 1440 and 1920, no cell reports scrollWidth > clientWidth except the event rows that span columns by design, and the document reports no horizontal scroll at any of the three. Before this iteration the blotter overflowed its panel by 179px at 1440 and the browser absorbed it by shrinking columns until the headings were cut."
     },
     {
       "requirement": "Manual controls for cancel, close and flatten, reachable from the page",
       "met": true,
       "ref": "td.acts, tr.frow",
-      "note": "The actions column is now `position: sticky; right: 0` with an opaque background, so it is pinned to the right edge whatever the table does horizontally. Visible in shot-1440.png, shot-768.png and shot-390.png: [ CLOSE ] and [ CANCEL ALL ] are on screen in all three, and [ FLATTEN ALL ] rides its own row under the book. Labels shortened from CLOSE POSITION; the confirmation dialog still carries the full sentence."
+      "note": "All three reachable. CLOSE is on every position row and stays pinned as the table scrolls. CANCEL is on every working order. CANCEL ALL is drawn on the position row when that market has orders resting, or when the venue has not answered about orders, and is not drawn when there is provably nothing to cancel. FLATTEN ALL moved out of the last table row into the panel footer, which is a gain for the brake rather than a loss: it no longer scrolls out of view on a long book."
     },
     {
       "requirement": "Positions and working orders drawn on the chart itself",
@@ -60,19 +67,19 @@
       "requirement": "Liquidation distance shown in ATR multiples as well as percent and dollars",
       "met": true,
       "ref": ".liq-line, #t-liq-bar",
-      "note": "shot-1440.png: 'LIQ at $713.42, 837.59% away, $841.28, 1607.1 ATR'. The bar under it was WRONG at iteration 4 and is fixed here: liqFill returned `1 - distance/scale`, which clamps to zero for anything far from the wall, so a position 1,607 ATR clear drew a full-red bar meaning 'at your liquidation'. It now returns the distance itself and reads 100% green at that distance, which is what the reverse-meter comment in trade.css always said it should do."
+      "note": "All three, and each one now carries the word that says what it is: `1,703% away`, then `at $1,353.12`, `room $843.52`, `or 4,259 ATR`. Precision follows magnitude, so the ATR count reads 4,259 rather than 4259.3 and the percent reads 1,703% rather than 1705.38%. Under ten percent, which is the only case where the position is actually close, the decimals come back."
     },
     {
       "requirement": "Profit split into price, funding and fees, since a carry trade green on price can be red once it has paid for itself",
       "met": true,
       "ref": "tr.srow",
-      "note": "Still on screen, moved out of the PNL cell onto a child row under the position, in the same subordinate treatment the working orders use. shot-1440.png reads 'price -$0.35, funding -$0.02' under the SOL row. Inside the cell it made the profit column 220px of a 702px table and was a direct cause of the controls being pushed off the edge."
+      "note": "Unchanged when there is something to split, suppressed when there is not. With no funding paid and a price part equal to the net, the split line reprinted the figure on the row above it, and that repetition is a third of what made one position take three lines. Any carry that has actually moved brings the line straight back."
     },
     {
       "requirement": "Net and gross exposure with a plain sentence for a five percent adverse move",
       "met": true,
       "ref": ".rexp",
-      "note": "shot-1440.png: 'net -$100.44 | gross $100.44' and 'A 5% move against you leaves $4.61.' Unchanged and still in RISK."
+      "note": "Both moved into ACCOUNT, where they are account facts rather than a block of their own between the walls and the instrument. The sentence no longer ends on a dash when the venue has not published the figure; it says so."
     },
     {
       "requirement": "Mark and oracle shown separately with the basis between them",
@@ -96,7 +103,7 @@
       "requirement": "`null` renders as a dash and never as zero",
       "met": true,
       "ref": "usd(), price(), amount()",
-      "note": "Every new figure on the tape goes through the same formatters, each of which answers '--' for anything not finite. An event with no market prints '--' in MARKET rather than borrowing the focused symbol, visible on all six event rows in shot-1440.png. Caveat, and it predates this change: an opening fill whose venue-reported closedPnl is a real 0 prints $0.00, because that is the venue stating zero rather than stating nothing."
+      "note": "Still true, and health is now more explicit rather than less: it prints `not published` instead of `--` and drops its meter entirely, because a hatched bar beside a dash was read as a broken widget. usd() now treats a value that rounds to nothing as nothing and drops the sign, so a funding accrual of -0.0004 no longer prints as `-$0.00`. That is a rounding display, not a null."
     },
     {
       "requirement": "Every dynamic string reaches the DOM through textContent, never innerHTML",
@@ -108,7 +115,7 @@
       "requirement": "Digits that tick must not change width",
       "met": true,
       "ref": "font-variant-numeric",
-      "note": "The tabular-nums list was carried over and updated for the new ids: #t-history-rows replaces #t-fill-rows, and .wall-line was added for the stop-out price."
+      "note": "Stronger than before. Both tables declare every column width and floor the table at their sum, so a mark that gains a digit can no longer move the columns to its right. tabular-nums is still on everything that carries a number."
     },
     {
       "requirement": "The kill switch reachable within two tab stops from a cold load, in every state",
@@ -126,7 +133,7 @@
       "requirement": "Working orders rendered as child rows of the position they belong to, not a table of their own",
       "met": true,
       "ref": "tr.orow",
-      "note": "Unchanged. shot-1440.png shows 'No orders working.' as a child row under the SOL position. The profit split now uses the same idiom one tier further in, which makes the pattern read as the table's grammar rather than as a one-off."
+      "note": "Unchanged as a structure. An order's coin quantity moved into its SIDE cell (`sell 0.66`) now that the blotter carries no coin column, so a resting stop is still sized on the row that shows it."
     },
     {
       "requirement": "Karim 2026-08-14: a mode switch is not a cut. Arriving at this window and leaving it are the two halves of one fall of terminal characters that started on the other page",
@@ -137,30 +144,31 @@
   ],
   "goal": {
     "outcome": "The three questions the brief names are answered without arithmetic and without looking in more than one place: how far from liquidation, how much of what I approved has been spent, is this screen still telling the truth.",
-    "path": "RISK is read top to bottom. Collateral, health, then the LIQ line at 16px with the reverse meter under it, then the mandate stop-out on the same scale directly beneath it, then exposure and the 5% sentence, then the instrument, then what is armed and how much of its envelope is gone. Feed health is in the statusbar beside the price. What has already happened is one tape on the right, newest first.",
+    "path": "RISK is read top to bottom and each block says its own name. LIQUIDATION first, because that is the question the page exists for: the distance is the only figure on the panel set above body size, and the price, the dollars of room and the ATR count sit under it, each behind a word. ACCOUNT second: collateral, exposure, health, and the 5% sentence. MARKET third, one tier down, because it is context and not a fact about this account. MANDATE last. BOOK is one line per position, ranked in three tiers: the market and the profit brightest, direction size and the price that ends it at base, the arithmetic behind them dim.",
     "holds": true,
-    "why": "shot-1440.png. Distance: 'LIQ at $713.42, 837.59% away, $841.28, 1607.1 ATR' with a full green bar, which now agrees with the sentence above it instead of contradicting it. Envelope: nothing is armed, and the MANDATE block says so in a sentence with a next action. Truth: 'feed LIVE ws 0s' and no banner. The second wall's line renders only when a mandate holds one, so nothing armed leaves no empty row of ground held open for it."
+    "why": "shot-1440.png. Distance: `1,703% away`, then `at $1,353.12  room $843.52  or 4,259 ATR`, over a 4px reverse meter that no longer outshouts the approval gate. Envelope: nothing is armed and the MANDATE block says so in one line. Truth: `feed LIVE ws 0s` in the status bar and `health not published` where the venue has published nothing, which is a sentence rather than a hatched bar. The blotter reads as one line: SOL, SHORT 10x cross, $49.52, $74.91, $1,353.12, -$0.09 -1.55%, [ CLOSE ]."
   },
   "states": {
     "flat": "Not this capture: a SOL short is open. Covered by code path and by iteration 4's shot; the BOOK empty line and the RISK 'Nothing at risk' line are unchanged.",
     "armed": "NOT RE-CAPTURED this iteration. Nothing is armed on the account and arming one is a live write. The mandate renderer moved panel but its row shape is unchanged apart from two fixes in its favour (the meter class contract and the projection fallback), so nothing in the iteration 3 capture is contradicted. A fresh capture is owed.",
-    "position open": "shot-1440.png, shot-768.png and shot-390.png. One SOL short at 10x cross, its profit split on the child row beneath it, 'No orders working.' beneath that, and [ CLOSE ] / [ CANCEL ALL ] pinned on screen at all three widths.",
+    "position open": "shot-1440.png, shot-768.png and shot-390.png. One SOL short at 10x cross on one row, with its profit split beneath it only because funding has moved. [ CLOSE ] is pinned; [ CANCEL ALL ] is absent because nothing is resting; [ FLATTEN ALL ] is in the panel footer.",
     "nothing armed": "shot-1440.png. The MANDATE block inside RISK reads 'Nothing armed. Ask your agent for a proposal.' and takes one line, which is the whole reason it no longer needs a panel of its own: this is the state the screen is in most of the time.",
-    "unified account": "Not this capture. The '--' path is unchanged and every new figure uses the same formatters.",
+    "unified account": "Not re-captured with a live unified account, but the two paths that account exercises are the ones this iteration changed and both were verified against the live null: health renders `not published` with no meter, and the 5% sentence says the venue has not published enough to say. Both are in shot-1440.png right now.",
     "kill switch on": "NOT RE-CAPTURED. The switch is OFF in every shot. Only the empty-line wording of the mandate block depends on it, and that branch was not edited.",
-    "stacked": "shot-768.png and shot-390.png. Order is chart, risk, approvals, book, history, which is the sequence a person actually asks in. At 390 both tables scroll inside their own box and the page does not scroll sideways.",
+    "stacked": "shot-768.png and shot-390.png. Order is chart, risk, approvals, book, history. At 768 the blotter sizes to its content instead of to its desktop column budget and fits without scrolling; at 390 both tables scroll inside their own box and the page does not scroll sideways. The deck split this page declares for the blotter is restated inside the stacked query, because it lives in the later stylesheet and outside a media query and would otherwise beat the one-column rule in style.css.",
     "pending approval": "NOT RE-CAPTURED. APPROVALS reads 'no pending approvals: the gate is disabled, every proposal auto-approves' in all three shots. This is the state that broke the layout at iteration 4, and the fix for it is a cap (.panel-tgate > .pbody max-height 24vh) plus a floor on the panel below it (.panel-thistory min-height 22vh), neither of which needs a pending proposal to be verified: the caps are declared, and the growing panel measured 434px tall with 399px of body at 1440, so it is no longer the panel that pays."
   },
   "findings": [],
   "caveats": [
     {
-      "what": "The armed, kill-switch-on and pending-approval states were not re-captured.",
-      "why": "All three need a live write against a funded account. The layout fix for the pending-approval case is verified structurally (a declared cap on APPROVALS and a declared floor on HISTORY) rather than photographically, and the mandate row is unchanged in shape. Also recorded against each state in `states`."
+      "what": "MARK and SIZE were removed from the blotter.",
+      "why": "Nine nowrap columns have never fitted half of a 1440 screen and the browser was resolving it by clipping the headings. Both are recoverable in one line each (a th plus a td), and putting either back costs about 12 characters of column that would have to come from somewhere else."
     },
     {
-      "what": "An opening fill with a venue-reported closedPnl of exactly 0 prints $0.00 on the tape rather than a dash.",
-      "why": "Pre-existing and not introduced here: the venue reports the zero, so this is the app repeating what it was told rather than inventing a number for a null. Changing it means changing what src/trade/state.ts treats as unknown, which is outside this change and would move behaviour the trade-state tests assert. Also recorded against requirement 14."
+      "what": "The armed, kill-switch-on and pending-approval states were not re-captured.",
+      "why": "All three need a live write against a funded account. The mandate block, the approval gate and the kill switch were not edited this iteration beyond the section label above the mandate block."
     }
   ],
-  "verdict": "pass"
+  "verdict": "pass",
+  "restamp": "The source hash moves without this page changing: the gate hashes the whole --src ui tree, and another session is editing ui/basic.css and ui/index.html in this working copy. Nothing in ui/trade.html, ui/trade.css or ui/trade.js changed after the render this judgment was written against."
 }
