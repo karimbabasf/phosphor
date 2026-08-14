@@ -134,14 +134,50 @@
     return out;
   }
 
+  /* The approval token this module has refreshed for itself, or null while the page's own is
+     believed good. The token is minted once per app boot (src/server.ts) and each page reads it
+     once at load, so ANY restart leaves an open page holding one the server has never heard of.
+     ui/trade.js already cures that for a trade action (reportWriteFailure, trade.js:1280); the
+     approval path was missed, so every further click resent the dead token and the box repeated
+     "invalid approval token" without ever naming the cure. Observed 2026-08-14: 26 rejections
+     against one proposal across three restarts, every one of them with a token present.
+
+     Held here rather than written back into the page's own TOKEN because this module cannot
+     assign another script's variable, and because both pages share this one path. */
+  var refreshed = null;
+
+  async function refreshToken() {
+    try {
+      var res = await fetch('/api/session', { headers: { accept: 'application/json' } });
+      if (!res.ok) return false;
+      var body = await res.json();
+      if (typeof body.token !== 'string' || body.token.length === 0) return false;
+      refreshed = body.token;
+      return true;
+    } catch (err) {
+      return false;
+    }
+  }
+
   async function decide(route, id, buttons, errorNode, deps) {
     for (var i = 0; i < buttons.length; i++) buttons[i].disabled = true;
     errorNode.hidden = true;
     try {
-      await deps.postJson(route, { id: id, token: deps.token() });
+      await deps.postJson(route, { id: id, token: refreshed !== null ? refreshed : deps.token() });
       await deps.onDecided();
     } catch (err) {
-      errorNode.textContent = err.message || String(err);
+      var message = (err && err.message) || String(err);
+      /* A dead token is refreshed and the click is deliberately NOT replayed. Approval is a
+         physical human decision, and re-sending one on the human's behalf would let a click
+         aimed at a token the server had already forgotten arm a bot with nobody deciding a
+         second time. That is the exact property this screen exists to hold, so the cure stops
+         at making the NEXT click work and says so. */
+      if (/token/i.test(message)) {
+        message = (await refreshToken())
+          ? 'The app restarted, so this page was holding a dead approval token. It has been refreshed: click again to decide.'
+          : 'Approval token is stale and could not be refreshed. Reload the page.';
+      }
+      errorNode.textContent = message;
       errorNode.hidden = false;
       // Re-enable only on failure. A click that landed leaves the buttons dead until the
       // refresh removes the block, so a second click cannot ride on a stale render.

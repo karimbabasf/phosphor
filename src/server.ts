@@ -807,12 +807,22 @@ export function createServer(deps: ServerDeps): PhosphorServer {
           : null;
 
     if (reason !== null) {
-      // The supplied token itself never enters the audit log.
+      // The supplied token itself never enters the audit log. Its SHA-256 prefix does, and that
+      // is the difference between "a token was rejected" and "which client is holding which
+      // token": two rejections sharing a fingerprint are one stale page retrying, and a
+      // fingerprint that matches no boot this app has served is a client that never had one.
+      // The same argument covers origin and agent: a rejection that cannot say who sent it
+      // cannot tell a human reloading a dead tab apart from something hammering the endpoint.
+      const supplied = typeof body.token === 'string' ? body.token : '';
       audit.append('approve_attempt_rejected', `POST ${route} rejected: ${reason}`, {
         route,
         id,
         reason,
-        tokenPresent: typeof body.token === 'string' && body.token.length > 0,
+        tokenPresent: supplied.length > 0,
+        tokenFp: supplied === '' ? null : crypto.createHash('sha256').update(supplied).digest('hex').slice(0, 12),
+        expectedFp: crypto.createHash('sha256').update(token).digest('hex').slice(0, 12),
+        origin: req.headers.origin ?? '(absent)',
+        agent: String(req.headers['user-agent'] ?? '(absent)').slice(0, 120),
       });
       sendJson(res, parsed.ok ? 403 : 400, { error: parsed.ok ? 'invalid approval token' : reason });
       return;
