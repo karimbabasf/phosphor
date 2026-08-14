@@ -1190,29 +1190,16 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     const tool = String(body.tool ?? '');
     const args = asRecord(body.args);
 
-    let outcome: { ok: boolean; notes: string[]; error?: string; id?: string; label?: string };
-    if (tool === 'chart_set_view') {
-      // Resolve what was asked for into what a venue lists, before the view records it.
-      // Without this the view stores the raw string, so "bitcoin" charts correctly and
-      // then labels itself BITCOIN, and an agent reading the view back gets a product id
-      // no venue would recognise.
-      const asked = typeof args.product === 'string' ? args.product.trim() : '';
-      if (asked !== '') {
-        const ref = market.resolve(asked);
-        if (ref === null) {
-          const near = market.search(asked, 5).map((m) => m.product);
-          const hint = near.length > 0 ? ` did you mean: ${near.join(', ')}` : '';
-          sendJson(res, 400, { error: `no market listed for "${asked}".${hint}` });
-          return;
-        }
-        args.product = ref.product;
-      }
-      outcome = chart.setView(args, 'agent');
-    }
-
     // The trading surface's writes answer with the trading surface, the same way the chart's
     // answer with the chart: an agent that has to read after every write pays two round trips
     // to learn what its own change did.
+    //
+    // Answered FIRST, and that placement is the fix rather than tidying. This block used to sit
+    // in the middle of the chart chain, which cut that chain in two: chart_set_view matched the
+    // `if` above it, set `outcome`, then fell into the second chain, matched nothing there, and
+    // was refused by the final else as an "unknown view tool: chart_set_view" that the same
+    // sentence went on to list as known. Every chart write below the split worked; the one
+    // above it was unreachable, and the error blamed the caller for the server's own break.
     if (tool.startsWith('trade_')) {
       let out: { ok: boolean; notes: string[]; error?: string };
       if (tool === 'trade_focus') out = trade.view.setFocus(args, 'agent');
@@ -1238,7 +1225,26 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       sendJson(res, 200, { ok: true, notes: out.notes, trade: trade.read() });
       return;
     }
-    else if (tool === 'chart_add_indicator') outcome = chart.addIndicator(args, 'agent');
+
+    let outcome: { ok: boolean; notes: string[]; error?: string; id?: string; label?: string };
+    if (tool === 'chart_set_view') {
+      // Resolve what was asked for into what a venue lists, before the view records it.
+      // Without this the view stores the raw string, so "bitcoin" charts correctly and
+      // then labels itself BITCOIN, and an agent reading the view back gets a product id
+      // no venue would recognise.
+      const asked = typeof args.product === 'string' ? args.product.trim() : '';
+      if (asked !== '') {
+        const ref = market.resolve(asked);
+        if (ref === null) {
+          const near = market.search(asked, 5).map((m) => m.product);
+          const hint = near.length > 0 ? ` did you mean: ${near.join(', ')}` : '';
+          sendJson(res, 400, { error: `no market listed for "${asked}".${hint}` });
+          return;
+        }
+        args.product = ref.product;
+      }
+      outcome = chart.setView(args, 'agent');
+    } else if (tool === 'chart_add_indicator') outcome = chart.addIndicator(args, 'agent');
     else if (tool === 'chart_remove_indicator') outcome = chart.removeIndicator(String(args.id ?? args.type ?? ''));
     else if (tool === 'chart_level') outcome = chart.setLevel(args, 'agent');
     else if (tool === 'chart_mark') outcome = chart.setMark(args, 'agent');

@@ -1020,7 +1020,13 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     const draft: MandateDraft = {
       kind: 'mandate_arm',
       symbol: params.symbol,
-      program: params.program,
+      // The PARSED program, not the raw one. A program that arrived as JSON text validates
+      // (validateProgram accepts that wire) but would be stored as a string, and everything
+      // downstream reads this field: the approval screen renders it in English, the runner is
+      // armed from it, the hash is taken over it. Storing what was actually understood is what
+      // keeps "the thing on screen is the thing running" true when the two arrived in
+      // different shapes.
+      program: parsed.ok ? parsed.program : params.program,
       programHash: parsed.ok ? programHash(parsed.program) : '',
       maxNotionalUsd: params.maxNotionalUsd,
       maxLeverage: params.maxLeverage,

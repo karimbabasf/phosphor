@@ -227,7 +227,21 @@ export const PROGRAM_SCHEMA: z.ZodType<Program> = z
   });
 
 export function validateProgram(raw: unknown): { ok: true; program: Program } | { ok: false; errors: string[] } {
-  const parsed = PROGRAM_SCHEMA.safeParse(raw);
+  // A program that arrived as JSON TEXT is still a program. An MCP client with no type to
+  // serialise an object argument against sends it quoted, and the answer that produced,
+  // "(root): Expected object, received string", named the caller for a fault in the schema.
+  // src/mcp.ts now types the field, so that door is shut; this accepts the older wire anyway,
+  // because /api/mcp and the e2e script can each send one and a quoted program is unambiguous.
+  // Parsed here rather than at one door so every door agrees on what a program is.
+  let input: unknown = raw;
+  if (typeof raw === 'string') {
+    try {
+      input = JSON.parse(raw) as unknown;
+    } catch {
+      return { ok: false, errors: ['(root): program arrived as text that is not JSON'] };
+    }
+  }
+  const parsed = PROGRAM_SCHEMA.safeParse(input);
   if (parsed.success) return { ok: true, program: parsed.data };
   const errors = parsed.error.issues.map((issue) => {
     const where = issue.path.length > 0 ? issue.path.join('.') : '(root)';

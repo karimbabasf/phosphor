@@ -107,11 +107,22 @@ const signer = stubSigner();
 // The key it hands the child is the API wallet, never the master. Reading it lazily, at arm
 // time rather than at boot, means an install with no agent approved yet starts fine and fails
 // with a sentence that says what to do instead of failing at startup.
+// Hyperliquid is TESTNET in this build, and that is a fact about the code rather than a setting.
+// The runner refuses mainnet outright (src/runner/main.ts), the greeting states it as a fact
+// (src/server.ts) and the strategy catalog tells every agent so (src/strategy/catalog.ts). Only
+// this file disagreed: it derived the three Hyperliquid URLs from cfg.network, which is
+// `mainnet` here because the WALLET side of this app runs on mainnet, and that one word split
+// the app in half. The window read a mainnet account holding $0.000002 while the 888 the
+// account actually holds sits on testnet, and the runner was handed MAINNET=1 and refused to
+// arm anything at all, so a mandate could be written and never fire. Two constants, so the
+// panel a human reads and the runner that trades cannot be looking at different accounts.
+const HL_BASE_URL = 'https://api.hyperliquid-testnet.xyz';
+const HL_WS_URL = 'wss://api.hyperliquid-testnet.xyz/ws';
+
 const runner = createRunnerHost({
   apiWalletKey: async () => await readApiWalletKey(cfg.keysPath),
-  isMainnet: cfg.network === 'mainnet',
-  baseUrl:
-    cfg.network === 'mainnet' ? 'https://api.hyperliquid.xyz' : 'https://api.hyperliquid-testnet.xyz',
+  isMainnet: false,
+  baseUrl: HL_BASE_URL,
   // Fail closed: a policy file that will not load reads as the kill switch being ON, so an
   // unreadable policy can never be the reason a bot was allowed to arm.
   user: cfg.addresses.evm[0] ?? '',
@@ -237,13 +248,10 @@ setInterval(() => void refreshAtr(), 300_000).unref?.();
 // chart draws with, on purpose. Two implementations of volatility would mean the risk panel and
 // the candles could disagree about how much a market moves, and the person would have no way to
 // tell which one was lying.
-const tradeInfo = createInfoClient({
-  baseUrl:
-    cfg.network === 'mainnet' ? 'https://api.hyperliquid.xyz' : 'https://api.hyperliquid-testnet.xyz',
-});
+const tradeInfo = createInfoClient({ baseUrl: HL_BASE_URL });
 
 const trade = createTradeService({
-  wsUrl: cfg.network === 'mainnet' ? 'wss://api.hyperliquid.xyz/ws' : 'wss://api.hyperliquid-testnet.xyz/ws',
+  wsUrl: HL_WS_URL,
   user: cfg.addresses.evm[0] ?? '',
   info: tradeInfo,
   runner,
