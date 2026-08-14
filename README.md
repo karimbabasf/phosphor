@@ -1,5 +1,12 @@
 # phosphor
 
+> [!WARNING]
+> **Alpha software that moves real money.** No third-party audit, no warranty, no liability. You
+> hold your own keys, on-chain transactions are final, and the policy engine and approval gate are
+> engineering goals rather than guarantees. Read [DISCLAIMER.md](DISCLAIMER.md) and
+> [docs/security-model.md](docs/security-model.md) before you point it at mainnet. Nothing here is
+> financial advice.
+
 A local app that holds your wallet state, chain connections and policy, and contains no AI. It
 exposes an MCP server. An agent you already pay for (Claude Code, Codex, anything speaking MCP)
 connects and drives it. The app is the car, the agent is the person with the key.
@@ -482,9 +489,13 @@ the agent reads and the pixel the human sees come from one implementation.
   the decisions that were weighed and the scope that was cut.
 - [Chart v2](docs/superpowers/specs/2026-08-12-phosphor-chart-v2.md): why the chart state is on the
   server, how the two canvases split the work, and the rule that nothing gets squeezed.
+- [Disclaimer](DISCLAIMER.md): the risk of running it, what it is not, and what you are responsible
+  for.
+- [Security](SECURITY.md): how to report a vulnerability privately, and what is in scope.
 
 Not a wallet, not an exchange, not a custodian. Holds your own keys locally and never anyone
-else's funds. No accounts, no server, no hosted component, no telemetry.
+else's funds. No accounts, no server, no hosted component, no telemetry. Not a broker, not a money
+transmitter, and not financial advice: see [DISCLAIMER.md](DISCLAIMER.md).
 
 ## The operator profile
 
