@@ -82,6 +82,11 @@ export const EXPECTED_TOOLS: readonly string[] = [
   'trade_overlay',
   'trade_note',
   'trade_clear',
+  // The only tool answered inside the shim instead of proxied to the app. It reads an enabled
+  // skill file off this machine and returns its text, which is why it needs no app state and
+  // why it still works while another agent holds the seat. It moves nothing and, like every
+  // other read here, cannot reach a rail.
+  'skill',
 ];
 
 export const EXPECTED_TOOLS_SORTED: readonly string[] = [...EXPECTED_TOOLS].sort();

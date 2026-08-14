@@ -11,5 +11,7 @@
   },
   "economicTransferUsd": 10,
   "candleProducts": ["BTC-USD", "ETH-USD", "SOL-USD", "NEAR-USD", "HYPE-USD", "ARB-USD", "AVAX-USD"],
+  "_skills": "Which files in skills/ a connecting agent is told to use. Names only, no .md. Everything in skills/ is installed; only what is listed here is live. Empty means the agent runs on the connect-time rules alone.",
+  "skills": ["phosphor-analysis"],
   "dataDir": "state"
 }

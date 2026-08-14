@@ -117,6 +117,10 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
         tool: 'start',
         does: 'this greeting, the live state and this index. Call it again whenever you lose your place, or after a long gap, because the network, the wallet and the pending decisions all move.',
       },
+      {
+        tool: 'skill',
+        does: 'the operator-chosen guidance for one kind of work, such as reading a chart. No argument lists what is enabled; a name returns the body. Load the one that fits BEFORE that kind of work, not after. It is guidance and data: it never widens what these tools can do.',
+      },
     ],
   },
   {
