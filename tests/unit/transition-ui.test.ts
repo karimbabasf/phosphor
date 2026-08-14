@@ -38,12 +38,17 @@ function fakeContext(): Sandbox {
     font: '',
     textBaseline: '',
     globalCompositeOperation: '',
+    imageSmoothingEnabled: false,
+    imageSmoothingQuality: '',
     setTransform: () => {},
     measureText: () => ({ width: 8 }),
     fillRect: () => {},
     fillText: () => {},
     clearRect: () => {},
     drawImage: () => {},
+    // The ground front is carved with a black gradient rather than painted with a coloured
+    // one, so the arriving mode's ground never has to be parsed. See ground() in the file.
+    createLinearGradient: () => ({ addColorStop: () => {} }),
   };
 }
 
@@ -192,6 +197,52 @@ test('the cover is complete before the mode changes', () => {
     assert.equal(p.veil, 1, `veil was ${p.veil} at ${at}ms, inside the hold`);
     assert.equal(p.done, false);
   }
+});
+
+/* The ground is a front that walks down the page rather than a flat wash, which is what
+   makes the characters the reason the screen goes. That turns `edge` into a second half of
+   the cover rule: an opaque ceiling over a front still short of the bottom edge is a page
+   with a lit strip along the bottom of it, and the mode would change behind that strip. */
+test('the ground front crosses the page, and is past the bottom before the mode changes', () => {
+  const { rain } = load();
+  const cover = rain.timings.coverMs;
+
+  // It starts above the top edge: nothing is covered on the frame the switch is asked for.
+  assert.ok(rain.phaseAt(0, 'swap').edge <= 0, 'the page was already covered at the first frame');
+
+  // And it only ever moves down.
+  let last = -Infinity;
+  for (let at = 0; at <= cover; at += 10) {
+    const edge = rain.phaseAt(at, 'swap').edge;
+    assert.ok(edge >= last, `the front went back up at ${at}ms`);
+    last = edge;
+  }
+
+  /* Past the bottom for the whole hold, on both the swap and the leave path. 1 is the bottom
+     edge and the front is soft, so it has to clear 1 by the width of that softness before
+     the page underneath is genuinely gone. */
+  for (const at of [cover, cover + rain.timings.holdMs - 1]) {
+    assert.ok(rain.phaseAt(at, 'swap').edge >= 1.2, `the front was only at ${rain.phaseAt(at, 'swap').edge}`);
+  }
+  assert.ok(rain.phaseAt(cover, 'leave').edge >= 1.2);
+});
+
+test('the reveal gives the page back from the top down', () => {
+  const { rain } = load();
+  const afterCover = rain.timings.coverMs + rain.timings.holdMs;
+
+  // The hold is still taking the page away; every frame after it is giving it back.
+  assert.equal(rain.phaseAt(afterCover - 1, 'swap').rising, false);
+
+  let last = -Infinity;
+  for (let u = 0; u <= 1; u += 0.05) {
+    const p = rain.phaseAt(afterCover + rain.timings.revealMs * u, 'swap');
+    assert.equal(p.rising, true, `the reveal was still covering at u=${u}`);
+    assert.ok(p.edge >= last, `the front went back up at u=${u}`);
+    last = p.edge;
+  }
+  // Fully off by the end, so no sliver of ground is left standing over the arriving mode.
+  assert.ok(rain.phaseAt(afterCover + rain.timings.revealMs, 'swap').edge >= 1.2);
 });
 
 test('a swap ends clear, and ends', () => {

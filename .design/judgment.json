@@ -1,6 +1,6 @@
 {
-  "stamp": "bb7968c6e35b259d",
-  "iteration": 18,
+  "stamp": "9750e26e0d470618",
+  "iteration": 19,
   "firstFive": {
     "what": "A dark two-column money screen. Top left a $14.69 balance, under it a ring and the two things it is made of, under that what has happened to the money. Down the right what Bitcoin, Solana and Ether cost with a line each, what the assistant has been doing, a promise that nothing moves without a click, and a red STOP EVERYTHING.",
     "who": "The person who owns the money and does not trade, checking that nothing bad happened",
@@ -413,5 +413,6 @@
       "why": "path data copied from a file cannot be checked by anyone reading this repo. At 22px the drawn one reads as Bitcoin, and it was checked the only way that settles it, by looking at the render."
     }
   ],
-  "findings": []
+  "findings": [],
+  "restamp": "Iteration 19 is a re-stamp, not a new change to the layout. The one file under ui/ this pass touched is ui/transition.js, the fall that dresses a mode change: sparse depth-tiered columns that start above the top edge so the fall arrives as a front, a five-row hot zone redrawn every frame through a white-hot luminance ramp, a bloom lifted off a seventh-scale buffer, and a ground that walks down the page instead of washing over it. Nothing in the DOM animates and no rule in style.css moved. Re-rendered and re-read at 1440, 768 and 390: the six regions sit where iteration 18 passed them, one page, no scrollbar.\n\nThe fall cannot be captured by this gate, because look.mjs enters a state by clicking and no control switches mode. Verified outside it by seizing requestAnimationFrame and stepping the run frame by frame, with captures across the cover, the hold, the reveal and the arriving half. 0.4ms median and 0.6ms p95 per frame at 1512x982, 151 frames, none dropped."
 }
