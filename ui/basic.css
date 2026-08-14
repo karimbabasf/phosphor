@@ -83,6 +83,21 @@ body[data-view='basic'] {
   --frozen: oklch(66% 0.180 25);
   --rise: oklch(76% 0.130 155);
 
+  /* ---- the ring, which is the one place this screen holds more than one colour ----
+     "One state-driven signal" is what the four above are for, and a ring drawn in one
+     hue is a ring nobody can read: the same reason pro's fourth pass lifted the rule for
+     its donut and nowhere else. These stay UNDER the signal colours rather than beside
+     them: chroma 0.04 to 0.075 against 0.13 to 0.18, so a slice can never be mistaken for
+     the app telling you something, and none of them sits on a signal's hue. Order is
+     biggest slice first. Everything past the fifth is the ground's own grey, because
+     "the rest" is not a category and should not look like one. */
+  --slice-1: oklch(74% 0.075 82);
+  --slice-2: oklch(67% 0.070 40);
+  --slice-3: oklch(71% 0.058 196);
+  --slice-4: oklch(64% 0.065 300);
+  --slice-5: oklch(77% 0.045 120);
+  --slice-rest: oklch(52% 0.014 68);
+
   /* ---- geometry: round, two radii, nothing ad hoc ---- */
   --r-control: 13px;
   --r-surface: 19px;
@@ -154,19 +169,21 @@ body[data-view='basic'] #page {
 .basic-col-yours,
 .basic-col-record { overflow-y: auto; }
 
-/* The two columns spend their spare height differently, because they are made of
-   different things. The left one is a heading and a list, so the list takes the
-   room and the spare height ends up under the last row. The right one is four
-   separate blocks, and stretching any one of them would open a hole in the middle
-   of the column: the log caps at four lines by design (src/view/basic.ts), so on a
-   tall screen there IS spare height and it belongs in the gaps between the blocks
-   rather than inside one of them. */
-.basic-col-record { justify-content: space-between; }
+/* Both columns hold their spare height in the MIDDLE, not at the bottom. Every block
+   on this screen is a fixed amount of content: three prices, two short lists, a wallet
+   that is as long as the wallet is. Stretching one of them to fill a tall screen opens
+   a hole inside a box; letting the last one hang leaves half a column empty under it,
+   which is what the fifth pass looked like before the ring got a bottom edge to sit on.
+   So the first block anchors the top of each column, the last anchors the bottom, and
+   the four of them line up across the deck. */
+.basic-col-record,
+.basic-col-yours { justify-content: space-between; }
 
 /* Warm and thin. The terminal's ghost-green scrollbar belongs to the other screen. */
 .basic-col,
 #basic-rows,
-#basic-events {
+#basic-events,
+#basic-actions {
   scrollbar-width: thin;
   scrollbar-color: var(--rule-firm) transparent;
 }
@@ -285,41 +302,87 @@ body[data-view='basic'] #page {
    in it must not push the promise and the stop control off the screen, and a
    heading that scrolls away leaves a column of figures nobody can name.
 
-   It takes the free height under the balance, and gives it back to a question when
-   one arrives, down to a floor of about two rows. Below that the column scrolls
-   instead: a wallet squeezed to a sliver is worse than a page that moves. */
+   It gives its height back to a question when one arrives, down to a floor of about
+   two rows. Below that the column scrolls instead: a wallet squeezed to a sliver is
+   worse than a page that moves. It does not STRETCH, because the ring beside it is a
+   fixed size and a box drawn twice as tall as its own picture is a hole. */
 .basic-holdings {
   margin: 0;
   display: flex;
   flex-direction: column;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-height: 8rem;
+}
+
+/* The ring on the left, the rows on the right. The ring takes a fixed column: it is a
+   picture of the rows beside it, and a picture that changes size when a row appears
+   reads as a second thing happening. */
+.basic-wallet {
+  display: grid;
+  grid-template-columns: 148px minmax(0, 1fr);
+  align-items: start;
+  gap: clamp(18px, 2vw, 30px);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.basic-donutwrap {
+  width: 148px;
+  height: 148px;
+}
+
+#basic-donut {
+  width: 148px;
+  height: 148px;
+  display: block;
 }
 
 #basic-rows {
   overflow-y: auto;
   min-height: 0;
+  /* The rows scroll and the ring does not, so the box that scrolls is the one that
+     needs the height, and it can never be taller than the ring's column allows. */
+  max-height: 100%;
 }
 
 .basic-row {
   display: grid;
-  /* The name takes the room, the two figures take what they need. Both are right
-     aligned, so the gap between them has to be wide enough that they do not read as
-     one number: on a dollar holding the quantity and the value are the SAME digits,
-     and at a 12px gap "1,204.00 $1,204.00" looked like a rendering fault. */
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  column-gap: 30px;
+  /* The chip is the key to the ring, then the name takes the room and the two figures
+     take what they need. Both figures are right aligned, so the gap between them has to
+     be wide enough that they do not read as one number: on a dollar holding the quantity
+     and the value are the SAME digits, and at a 12px gap "1,204.00 $1,204.00" looked
+     like a rendering fault. */
+  grid-template-columns: 10px minmax(0, 1fr) auto auto;
+  column-gap: 14px;
   align-items: baseline;
   padding: 13px 0;
   border-top: 1px solid var(--rule);
 }
 
+/* The one place two rows are told apart by colour alone, which is why the name, the
+   quantity and the value are all still on the row: the chip is a way back to the ring,
+   never the only way to know what a slice is. */
+.basic-row-chip {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--slice-rest);
+  /* Baseline alignment puts a square on the text baseline, which reads as falling off
+     the line. This lifts it onto the middle of the first line of the name. */
+  transform: translateY(1px);
+}
+
+
 .basic-row:last-child { border-bottom: 1px solid var(--rule); }
 
 .basic-row-name { color: var(--ink); }
 
+/* The chip sits close to the name it labels, so the row's own gap is small. The two
+   figures put the rest of the old 30px back as padding: they are the pair that must not
+   read as one number. */
 .basic-row-qty {
   text-align: right;
+  padding-left: 16px;
   color: var(--ink-faint);
   font-variant-numeric: tabular-nums;
   font-size: 0.9375rem;
@@ -327,6 +390,7 @@ body[data-view='basic'] #page {
 
 .basic-row-value {
   text-align: right;
+  padding-left: 16px;
   color: var(--ink);
   font-variation-settings: 'wght' 505;
   font-variant-numeric: tabular-nums;
@@ -340,20 +404,39 @@ body[data-view='basic'] #page {
   color: var(--ink-faint);
 }
 
-/* ---------- the one price ---------- */
+/* ---------- the three prices ---------- */
 
-/* Deliberately not a chart and deliberately not a card. A raised band, so it
-   reads as a different KIND of fact from the holdings opposite it: those are yours,
-   this one is the world's. */
-.basic-price {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 6px 14px;
-  padding: 20px 22px;
+/* One raised band holding three rows, so the block reads as a different KIND of fact
+   from the holdings opposite it: those are yours, these are the world's. Three cards
+   would have made three of them, and three cards of one thing is a dashboard. */
+.basic-prices {
+  margin: 0;
+  padding: 16px 22px 6px;
   background: var(--surface);
   border-radius: var(--r-surface);
   flex: none;
+}
+
+/* Mark, name, then the figures on the right, and the line between them. The line is
+   given a fixed column rather than a flexible one: a chart that changes width between
+   two rows reads as two different charts. */
+.basic-price {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) 108px auto;
+  align-items: center;
+  gap: 0 14px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.basic-prices .basic-price:last-child { border-bottom: 0; }
+
+/* The chain mark. Drawn on the canvas by app.js, in the row's own ink: this page
+   loads no images, which is also why it can be white on nothing at any size. */
+.basic-price-mark {
+  width: 22px;
+  height: 22px;
+  color: var(--ink-soft);
 }
 
 .basic-price-name {
@@ -361,52 +444,84 @@ body[data-view='basic'] #page {
   color: var(--ink);
 }
 
+/* The line. It carries the direction colour, and app.js reads that colour off this
+   element rather than holding a second copy of the palette in JavaScript. */
+.basic-spark {
+  width: 108px;
+  height: 30px;
+  color: var(--ink-faint);
+}
+
+.basic-price[data-direction='up'] .basic-spark { color: var(--rise); }
+.basic-price[data-direction='down'] .basic-spark { color: var(--frozen); }
+
+.basic-price-figures {
+  text-align: right;
+  min-width: 8.5rem;
+}
+
 .basic-price-value {
-  font-size: 1.5rem;
+  display: block;
+  font-size: 1.25rem;
   font-variation-settings: 'wght' 545;
   letter-spacing: -0.012em;
   font-variant-numeric: tabular-nums;
   color: var(--ink);
-  margin-left: auto;
 }
 
 /* Sits under the price, not under the name: it is a fact about the figure. */
 .basic-price-change {
-  width: 100%;
-  text-align: right;
+  display: block;
   font-size: 0.9375rem;
   color: var(--ink-soft);
 }
 
-.basic-price-change[data-direction='up'] { color: var(--rise); }
-.basic-price-change[data-direction='down'] { color: var(--frozen); }
+.basic-price[data-direction='up'] .basic-price-change { color: var(--rise); }
+.basic-price[data-direction='down'] .basic-price-change { color: var(--frozen); }
 
-/* ---------- what happened ---------- */
+/* ---------- what happened, and what the assistant did ---------- */
 
-/* Same shape as the wallet opposite it: fixed heading, scrolling body. It takes the
-   height between the price and the promise, and a hundred lines of log shrink it
-   rather than pushing STOP EVERYTHING off the bottom of the screen. */
-.basic-recent {
+/* One list per COLUMN rather than two lists side by side. Side by side they fitted, and
+   they still read as one table with a gap in it; a column apart they cannot be confused,
+   and each one lands under the thing it is about: money under the balance, the assistant
+   under the prices it was looking at.
+
+   Same shape as the wallet above it: fixed heading, scrolling body. A hundred lines shrink
+   the body rather than pushing STOP EVERYTHING off the bottom of the screen. */
+.basic-hist {
   margin: 0;
   display: flex;
   flex-direction: column;
-  /* Shrinks but never stretches: four lines of log are four lines of log, and a box
-     drawn taller than its content is how a hole gets into a column. */
+  /* Shrinks but never stretches: five lines of history are five lines, and a box drawn
+     taller than its content is how a hole gets into a column. */
   flex: 0 1 auto;
   min-height: 0;
 }
 
-#basic-events {
+#basic-events,
+#basic-actions {
   overflow-y: auto;
   min-height: 0;
 }
 
+/* A list cut off mid-sentence reads as a rendering fault, not as "there is more". The
+   fade says which one it is. app.js sets data-more only when the box actually overflows,
+   so a list that fits keeps its last line at full strength: an always-on fade would dim
+   the newest thing that happened for no reason. */
+#basic-events[data-more='1'],
+#basic-actions[data-more='1'] {
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent);
+}
+
 .basic-event {
   display: grid;
-  grid-template-columns: 1fr auto;
+  /* Three columns, always, even when the count is empty: a row whose grid changes shape
+     when a number appears puts the clock on its own line, which is what the first cut of
+     the collapsed-run line did. */
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: baseline;
-  gap: 16px;
-  padding: 12px 0;
+  gap: 10px;
+  padding: 11px 0;
   border-top: 1px solid var(--rule);
 }
 
@@ -424,6 +539,22 @@ body[data-view='basic'] #page {
   font-size: 0.875rem;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/* How many times a collapsed run happened. Quieter than the sentence and quieter than
+   the clock: it is the least important of the three and must not read as a quantity of
+   money. */
+.basic-event-repeat {
+  color: var(--ink-faint);
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* An empty list beside a full one. Hiding it instead would move the other list across
+   the column every time the first thing happened. */
+.basic-hist .basic-empty {
+  padding-top: 11px;
+  border-top: 1px solid var(--rule);
 }
 
 /* ---------- the warning ---------- */
@@ -727,13 +858,26 @@ body[data-view='basic'].waiting .basic-headline {
      is pinned to a fold that no longer exists. */
   .basic-col-yours,
   .basic-col-record,
+  .basic-wallet,
   #basic-rows,
-  #basic-events {
+  #basic-events,
+  #basic-actions {
     overflow: visible;
   }
 
   .basic-holdings,
-  .basic-recent { min-height: 0; }
+  .basic-hist { min-height: 0; }
+
+  /* One column of type this narrow cannot hold a ring beside a list, and it cannot
+     hold two lists beside each other either. Both go back to being stacked, in the
+     same order they are read. */
+  .basic-wallet {
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: center;
+    gap: 24px;
+  }
+
+  #basic-rows { width: 100%; max-height: none; }
 
   .basic-footer { margin-top: 0; }
 
@@ -745,11 +889,17 @@ body[data-view='basic'].waiting .basic-headline {
 
 @media (max-width: 480px) {
   .basic { padding: 64px 20px 56px; gap: 40px; }
-  .basic-row { grid-template-columns: 6fr 3fr 3fr; gap: 8px; }
+  .basic-row { grid-template-columns: 10px 6fr 3fr 3fr; column-gap: 8px; }
+  .basic-row-qty,
+  .basic-row-value { padding-left: 8px; }
   .basic-row-qty { font-size: 0.875rem; }
   .basic-actions { grid-template-columns: 1fr; }
-  /* The price drops to its own line here, so the change line follows it left rather
-     than staying pinned to an edge the figure no longer touches. */
-  .basic-price-value { margin-left: 0; width: 100%; }
-  .basic-price-change { text-align: left; }
+
+  /* The line is the first thing to go: at this width it would be about forty pixels
+     wide, and forty pixels of a day is a shape that means nothing. The price and the
+     direction are the facts, and they both stay. */
+  .basic-prices { padding: 16px 18px 6px; }
+  .basic-price { grid-template-columns: 20px minmax(0, 1fr) auto; }
+  .basic-spark { display: none; }
+  .basic-price-figures { min-width: 0; }
 }

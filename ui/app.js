@@ -1219,6 +1219,10 @@ function setViewModeNow(mode) {
      function returns, which was enough while the change was synchronous; behind a fall it
      would measure the mode that is leaving. */
   layoutFrames();
+  /* Basic's ring, marks and lines are canvases, and a canvas in the mode that is not on
+     screen has no box: everything drawn into it while pro was up went nowhere. This is
+     the first moment it has a size, so it is the moment to draw. */
+  if (mode === 'basic') redrawBasicCanvases();
 }
 
 function applyViewMode(s) {
@@ -1252,6 +1256,83 @@ function applyViewMode(s) {
   });
 }
 
+/* The last basic view this page drew, kept because three of its parts are canvases.
+   A canvas is wiped by a resize and there is no state on it to restore from, so the
+   redraw needs the numbers again. Null until the first frame. */
+var lastBasic = null;
+
+/* Sizes a canvas to the box CSS gave it and hands back a context already scaled, so
+   everything below draws in CSS pixels. Returns null when the canvas has no box yet,
+   which happens on the mode that is not on screen: drawing into a zero-width canvas
+   throws nothing and shows nothing, and getting it back on the switch is what the
+   redraw in setViewModeNow is for. */
+function basicCanvas(canvas) {
+  if (!canvas) return null;
+  var rect = canvas.getBoundingClientRect();
+  if (rect.width < 2 || rect.height < 2) return null;
+  var dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(rect.width * dpr);
+  canvas.height = Math.round(rect.height * dpr);
+  var ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, rect.width, rect.height);
+  return { ctx: ctx, w: rect.width, h: rect.height };
+}
+
+/* The ring. It is the holdings list as a picture: same rows, same order, and the chip
+   on each row is the key between them. Shares come from the server (BasicHolding.share)
+   rather than from a sum done here, so the ring cannot disagree with the figures under
+   it. Five slices and a rest, because a sixth slice on a 148px ring is a hairline. */
+var BASIC_SLICES = 5;
+
+function sliceColour(index) {
+  var name = index < BASIC_SLICES ? '--slice-' + (index + 1) : '--slice-rest';
+  return getComputedStyle(document.body).getPropertyValue(name).trim();
+}
+
+function drawBasicDonut(holdings) {
+  var fit = basicCanvas($('basic-donut'));
+  if (fit === null) return;
+  var ctx = fit.ctx;
+  var cx = fit.w / 2;
+  var cy = fit.h / 2;
+  var outer = Math.min(cx, cy) - 2;
+  var width = Math.max(14, outer * 0.30);
+  var radius = outer - width / 2;
+
+  // An empty or unreadable wallet still gets a ring, in the ground's own grey. A blank
+  // square where a picture was reads as a failure to draw rather than as nothing owned.
+  var rows = holdings || [];
+  var total = 0;
+  for (var i = 0; i < rows.length; i++) total += rows[i].share || 0;
+  if (rows.length === 0 || !(total > 0)) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.strokeStyle = getComputedStyle(document.body).getPropertyValue('--rule').trim();
+    ctx.lineWidth = width;
+    ctx.stroke();
+    return;
+  }
+
+  // From twelve o'clock, clockwise, biggest first: the same order as the rows, so the
+  // eye can walk down the list and around the ring together.
+  var from = -Math.PI / 2;
+  for (var j = 0; j < rows.length; j++) {
+    var share = rows[j].share || 0;
+    if (share <= 0) continue;
+    var to = from + share * Math.PI * 2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, from, to);
+    ctx.strokeStyle = sliceColour(j);
+    ctx.lineWidth = width;
+    // Butt caps, deliberately: a round cap on a 1% slice draws a lozenge wider than the
+    // share it stands for, which is a picture that overstates a number.
+    ctx.lineCap = 'butt';
+    ctx.stroke();
+    from = to;
+  }
+}
+
 /* The holdings table. One row per thing owned; the server already merged the
    chains together. Empty is a real state here, not a failure: a wallet with
    nothing in it and a wallet nobody could read say different things, and the
@@ -1271,53 +1352,273 @@ function renderBasicHoldings(holdings, unknown) {
 
   if (!holdings || holdings.length === 0) {
     rows.appendChild(el('p', 'basic-empty', 'Nothing yet.'));
+    drawBasicDonut([]);
     return;
   }
 
   for (var i = 0; i < holdings.length; i++) {
     var h = holdings[i];
     var row = el('div', 'basic-row');
+    var chip = el('span', 'basic-row-chip');
+    chip.style.background = sliceColour(i);
+    row.appendChild(chip);
     row.appendChild(el('span', 'basic-row-name', h.name));
     row.appendChild(el('span', 'basic-row-qty', h.quantityLine));
     row.appendChild(el('span', 'basic-row-value', h.valueLine));
     rows.appendChild(row);
   }
+  drawBasicDonut(holdings);
 }
 
-function renderBasicPrice(price) {
-  var section = $('basic-price');
-  if (!price) {
-    // No price rather than the last one that worked. A stale figure and a current
-    // one look identical, and this reader has nothing to check it against.
-    section.hidden = true;
-    return;
+/* ---------- the chain marks ----------
+
+   Drawn, never loaded: this page loads no images, which is also what lets a mark be
+   white on nothing at any size and take the row's own ink colour. Each is drawn inside
+   a 24 by 24 box and scaled, so the three sit on one baseline at one weight.
+
+   drawEthMark further up this file is pro's, in its own proportions and its own two
+   tones. This one is the same geometry flattened to a single colour, because a two-tone
+   mark beside two flat ones reads as the odd one out. */
+function markEth(ctx, s, colour) {
+  ctx.fillStyle = colour;
+  function poly(points, alpha) {
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    ctx.moveTo(points[0] * s, points[1] * s);
+    for (var i = 2; i < points.length; i += 2) ctx.lineTo(points[i] * s, points[i + 1] * s);
+    ctx.closePath();
+    ctx.fill();
   }
-  section.hidden = false;
-  $('basic-price-name').textContent = price.name;
-  $('basic-price-value').textContent = price.priceLine;
-  var change = $('basic-price-change');
-  change.textContent = price.changeLine;
-  change.dataset.direction = price.direction;
+  // 24-box, from the 256x417 original: x scaled by 24/256, y centred on the box.
+  poly([12, 1, 2.6, 13.2, 12, 17.6, 21.4, 13.2], 0.7);
+  poly([12, 19, 2.6, 14.6, 12, 23, 21.4, 14.6], 1);
+  ctx.globalAlpha = 1;
 }
 
-function renderBasicRecent(recent) {
-  var section = $('basic-recent');
-  var list = $('basic-events');
+/* Three bars, each sheared the way the Solana mark is, top and bottom leaning one way
+   and the middle the other. */
+function markSol(ctx, s, colour) {
+  ctx.fillStyle = colour;
+  function bar(top, lean) {
+    ctx.beginPath();
+    ctx.moveTo((3 + Math.max(lean, 0) * 3) * s, top * s);
+    ctx.lineTo((21 + Math.min(lean, 0) * 3) * s, top * s);
+    ctx.lineTo((18 + Math.min(lean, 0) * 3) * s, (top + 4) * s);
+    ctx.lineTo((6 + Math.max(lean, 0) * 3) * s, (top + 4) * s);
+    ctx.closePath();
+    ctx.fill();
+  }
+  bar(3, 1);
+  bar(10, -1);
+  bar(17, 1);
+}
+
+/* The B with two strokes through it. Built from a stem, two lobes and four ticks
+   rather than from path data copied out of a file nobody here can check. */
+function markBtc(ctx, s, colour) {
+  ctx.fillStyle = colour;
+  ctx.strokeStyle = colour;
+  ctx.lineWidth = 2.6 * s;
+  ctx.lineCap = 'butt';
+
+  // The two ticks above and below, which are what make it Bitcoin rather than a B.
+  ctx.beginPath();
+  ctx.moveTo(10 * s, 1.5 * s);
+  ctx.lineTo(10 * s, 22.5 * s);
+  ctx.moveTo(15 * s, 1.5 * s);
+  ctx.lineTo(15 * s, 22.5 * s);
+  ctx.stroke();
+
+  // The letter, drawn over them: stem, then two lobes closing to the right.
+  ctx.beginPath();
+  ctx.moveTo(5 * s, 4 * s);
+  ctx.lineTo(14 * s, 4 * s);
+  ctx.bezierCurveTo(19 * s, 4 * s, 19.5 * s, 11 * s, 14 * s, 11 * s);
+  ctx.lineTo(15 * s, 11 * s);
+  ctx.bezierCurveTo(21 * s, 11 * s, 20.5 * s, 20 * s, 14 * s, 20 * s);
+  ctx.lineTo(5 * s, 20 * s);
+  ctx.closePath();
+  ctx.fill();
+
+  // The counters, punched back out in the ground's colour. Two of them, because a B
+  // with one hole is a D.
+  ctx.globalCompositeOperation = 'destination-out';
+  ctx.beginPath();
+  ctx.moveTo(9 * s, 6.6 * s);
+  ctx.lineTo(13.6 * s, 6.6 * s);
+  ctx.bezierCurveTo(16.2 * s, 6.6 * s, 16.2 * s, 8.9 * s, 13.6 * s, 8.9 * s);
+  ctx.lineTo(9 * s, 8.9 * s);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(9 * s, 13.4 * s);
+  ctx.lineTo(14 * s, 13.4 * s);
+  ctx.bezierCurveTo(17.2 * s, 13.4 * s, 17.2 * s, 17.4 * s, 14 * s, 17.4 * s);
+  ctx.lineTo(9 * s, 17.4 * s);
+  ctx.closePath();
+  ctx.fill();
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+function drawChainMark(canvas, kind) {
+  var fit = basicCanvas(canvas);
+  if (fit === null) return;
+  // The colour comes off the element, so the palette stays in basic.css and this file
+  // holds no second copy of it.
+  var colour = getComputedStyle(canvas).color;
+  var s = Math.min(fit.w, fit.h) / 24;
+  if (kind === 'eth') return markEth(fit.ctx, s, colour);
+  if (kind === 'sol') return markSol(fit.ctx, s, colour);
+  if (kind === 'btc') return markBtc(fit.ctx, s, colour);
+}
+
+/* The line. One stroke over the same 24 hours the percentage beside it is measured
+   over, so the two can never disagree. No axis, no grid, no fill: the figures are the
+   facts and this is their shape. */
+function drawSpark(canvas, points) {
+  var fit = basicCanvas(canvas);
+  if (fit === null || !points || points.length < 2) return;
+  var ctx = fit.ctx;
+
+  var low = points[0];
+  var high = points[0];
+  for (var i = 1; i < points.length; i++) {
+    if (points[i] < low) low = points[i];
+    if (points[i] > high) high = points[i];
+  }
+
+  var pad = 3;
+  var span = high - low;
+  var width = fit.w - pad * 2;
+  var height = fit.h - pad * 2;
+  ctx.beginPath();
+  for (var j = 0; j < points.length; j++) {
+    var x = pad + (width * j) / (points.length - 1);
+    // A day that did not move is a straight line through the middle, not a line pinned
+    // to the floor of the box: dividing by a zero span would put it there.
+    var y = span > 0 ? pad + height - ((points[j] - low) / span) * height : pad + height / 2;
+    if (j === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.strokeStyle = getComputedStyle(canvas).color;
+  ctx.lineWidth = 1.75;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.stroke();
+}
+
+/* Three coins, or however many could be read. A coin the server could not price is
+   absent from the list rather than present and blank: no price is a fact, and the last
+   price that worked would be a stale figure with nothing beside it saying so. */
+function renderBasicPrices(prices) {
+  var section = $('basic-prices');
+  var list = $('basic-price-rows');
   list.textContent = '';
 
-  if (!recent || recent.length === 0) {
+  if (!prices || prices.length === 0) {
     section.hidden = true;
     return;
   }
   section.hidden = false;
 
-  for (var i = 0; i < recent.length; i++) {
-    var e = recent[i];
-    var row = el('div', 'basic-event');
-    row.dataset.outcome = e.outcome;
-    row.appendChild(el('span', 'basic-event-line', e.headline));
-    row.appendChild(el('span', 'basic-event-time', e.timeLine));
+  for (var i = 0; i < prices.length; i++) {
+    var p = prices[i];
+    var row = el('div', 'basic-price');
+    row.dataset.direction = p.direction;
+
+    var mark = document.createElement('canvas');
+    mark.className = 'basic-price-mark';
+    mark.setAttribute('aria-hidden', 'true');
+    row.appendChild(mark);
+
+    row.appendChild(el('span', 'basic-price-name', p.name));
+
+    var spark = document.createElement('canvas');
+    spark.className = 'basic-spark';
+    // The line carries no fact the row does not already state in words, so it is not
+    // announced twice: the price and the direction beside it are the readable version.
+    spark.setAttribute('aria-hidden', 'true');
+    row.appendChild(spark);
+
+    var figures = el('span', 'basic-price-figures');
+    figures.appendChild(el('span', 'basic-price-value', p.priceLine));
+    figures.appendChild(el('span', 'basic-price-change', p.changeLine));
+    row.appendChild(figures);
+
     list.appendChild(row);
+
+    // After the row is in the document: both canvases take their size from CSS, and
+    // a canvas that is not laid out yet has no box to be sized against.
+    drawChainMark(mark, p.mark);
+    drawSpark(spark, p.points);
+  }
+}
+
+function basicEventRow(line, timeLine, repeat) {
+  var row = el('div', 'basic-event');
+  row.appendChild(el('span', 'basic-event-line', line));
+  // Always appended, empty when it happened once: the row is a three-column grid and a
+  // row that grows a column when a number arrives puts the clock on its own line.
+  row.appendChild(el('span', 'basic-event-repeat', repeat > 1 ? repeat + ' times' : ''));
+  row.appendChild(el('span', 'basic-event-time', timeLine));
+  return row;
+}
+
+/* Whether either list has more in it than its box shows. Read after the rows are in the
+   document, because the answer is a measurement and there is nothing to measure before
+   that. Called again on a resize: the boxes change height and the answer with them. */
+function markHistoryOverflow() {
+  var lists = [$('basic-events'), $('basic-actions')];
+  for (var i = 0; i < lists.length; i++) {
+    var list = lists[i];
+    if (!list) continue;
+    list.dataset.more = list.scrollHeight > list.clientHeight + 1 ? '1' : '';
+  }
+}
+
+/* The two histories, one per column. Each hides on its own when it has nothing in it:
+   they are in different columns, so an empty one leaves nothing behind and moves nothing
+   across. Empty is a real state here, not a failure, and it is a common one on a screen
+   whose whole point is that most days nothing happens. */
+function renderBasicHistory(recent, actions) {
+  var events = $('basic-events');
+  var acts = $('basic-actions');
+  events.textContent = '';
+  acts.textContent = '';
+
+  var moves = recent || [];
+  var did = actions || [];
+  $('basic-moves').hidden = moves.length === 0;
+  $('basic-doings').hidden = did.length === 0;
+
+  for (var i = 0; i < moves.length; i++) {
+    var e = moves[i];
+    var row = basicEventRow(e.headline, e.timeLine, 1);
+    row.dataset.outcome = e.outcome;
+    events.appendChild(row);
+  }
+
+  for (var j = 0; j < did.length; j++) {
+    var a = did[j];
+    acts.appendChild(basicEventRow(a.line, a.timeLine, a.repeat));
+  }
+
+  markHistoryOverflow();
+}
+
+/* Everything on this screen that is a canvas, redrawn from the last state. Called on a
+   resize and on the switch INTO basic: a canvas in a hidden mode has no box, so what it
+   drew while the other screen was up was nothing. */
+function redrawBasicCanvases() {
+  if (lastBasic === null) return;
+  if (document.body.dataset.view !== 'basic') return;
+  markHistoryOverflow();
+  drawBasicDonut(lastBasic.totalUsd === null ? [] : lastBasic.holdings);
+  var rows = $('basic-price-rows').children;
+  var prices = lastBasic.prices || [];
+  for (var i = 0; i < rows.length && i < prices.length; i++) {
+    drawChainMark(rows[i].querySelector('.basic-price-mark'), prices[i].mark);
+    drawSpark(rows[i].querySelector('.basic-spark'), prices[i].points);
   }
 }
 
@@ -1392,9 +1693,10 @@ function renderBasic(s) {
   $('basic-agent').textContent = b.agentLine;
   $('basic-footer').textContent = b.footer;
 
+  lastBasic = b;
   renderBasicHoldings(b.holdings, b.totalUsd === null);
-  renderBasicPrice(b.price);
-  renderBasicRecent(b.recent);
+  renderBasicPrices(b.prices);
+  renderBasicHistory(b.recent, b.actions);
 
   var warning = $('basic-warning');
   warning.textContent = b.warning || '';
@@ -1642,6 +1944,9 @@ function wireResize() {
       timer = null;
       layoutFrames();
       drawDonut();
+      // Basic's canvases go with it. Whichever mode is up, the other one's canvases are
+      // sized from a box it does not have yet, so each redraws for itself.
+      redrawBasicCanvases();
     }, 120);
   });
 }

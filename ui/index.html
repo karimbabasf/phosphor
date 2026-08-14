@@ -177,7 +177,7 @@
 
   </div>
 
-  <!-- BASIC. One balance, what you own, one price, what happened, and the question
+  <!-- BASIC. One balance, what you own, three prices, what happened, and the question
        when there is one. Every string in here is written by src/view/basic.ts and
        rendered verbatim: this file composes no sentence about money, for the same
        reason policy sentences are machine-rendered.
@@ -221,27 +221,46 @@
     </div>
 
     <!-- One row per thing owned, not one per chain. Which chain each part sits on
-         is a pro-screen fact. -->
+         is a pro-screen fact. The ring is the same rows as a picture: it says how the
+         money divides, the rows say into what, and the chip is the key between them. -->
     <section class="basic-holdings" id="basic-holdings" hidden>
       <h2 class="basic-label">What you own</h2>
-      <div id="basic-rows"></div>
+      <div class="basic-wallet">
+        <div class="basic-donutwrap"><canvas id="basic-donut" aria-hidden="true"></canvas></div>
+        <div id="basic-rows"></div>
+      </div>
+    </section>
+
+    <!-- Half of the history. It sits in this column and not the other one because it is
+         about YOUR money, which is what this column is: the total, the things it is made
+         of, and what has been done to it. The assistant's half is opposite. Karim,
+         2026-08-14: "history for transactions and agent actions separate" -- two columns
+         is as separate as this page can make two lists. -->
+    <section class="basic-hist" id="basic-moves" hidden>
+      <h2 class="basic-label">What happened to your money</h2>
+      <div id="basic-events"></div>
     </section>
 
     </div>
 
     <div class="basic-col basic-col-record">
 
-    <!-- One coin, one price, one direction. The candlestick chart is the pro screen's
-         answer to a question this reader did not ask. -->
-    <section class="basic-price" id="basic-price" hidden>
-      <span class="basic-price-name" id="basic-price-name"></span>
-      <span class="basic-price-value" id="basic-price-value"></span>
-      <span class="basic-price-change" id="basic-price-change"></span>
+    <!-- Three coins, each with a price, a direction, and the shape of the last day
+         behind it. A LINE, never a candlestick (Karim, 2026-08-14: "just a single
+         line"): the candles are pro's answer to a question this reader did not ask,
+         but "and before now?" is a question they do ask. Rows are built by app.js
+         because a coin that could not be read is absent rather than blank. -->
+    <section class="basic-prices" id="basic-prices" hidden>
+      <h2 class="basic-label">What coins cost</h2>
+      <div id="basic-price-rows"></div>
     </section>
 
-    <section class="basic-recent" id="basic-recent" hidden>
-      <h2 class="basic-label">What happened</h2>
-      <div id="basic-events"></div>
+    <!-- The other half of the history: an assistant reading and looking, which is a
+         different kind of fact from money moving. Folded into one list, four real
+         movements sat under twenty balance checks. -->
+    <section class="basic-hist" id="basic-doings" hidden>
+      <h2 class="basic-label">What the assistant did</h2>
+      <div id="basic-actions"></div>
     </section>
 
     <p class="basic-footer" id="basic-footer"></p>

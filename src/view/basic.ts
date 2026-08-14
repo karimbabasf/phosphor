@@ -22,6 +22,7 @@
 // Both fail toward saying less rather than toward stating a stale number as fact.
 
 import type {
+  BasicAction,
   BasicAsk,
   BasicDestination,
   BasicHolding,
@@ -31,17 +32,19 @@ import type {
   BasicView,
   ChainId,
   ChainStatus,
+  LogEvent,
   Proposal,
   WalletView,
   WriteDraft,
 } from '../types.ts';
 
-// What the server managed to read about the one coin this screen tracks. Null rather
+// What the server managed to read about one of the coins this screen tracks. Null rather
 // than a stale figure, and null rather than a zero: see the rule at the top of the file.
 export type PriceReading = {
   product: string; // 'ETH-USD'
   priceUsd: number;
   changePct: number; // over the tracked window, not since some arbitrary epoch
+  closes: number[]; // the same window as a series, oldest first, for the line
 } | null;
 
 export type BasicInput = {
@@ -55,13 +58,32 @@ export type BasicInput = {
   // Needed to tell "your own wallet" from any other address without guessing.
   // Guessing is what F2 did.
   selfAddresses: string[];
-  price: PriceReading;
+  // One per tracked coin, in the order the screen shows them. A null in the array is a
+  // coin that could not be read, and it drops out rather than rendering blank.
+  prices: PriceReading[];
+  // The audit tail, for the assistant's half of the history. Typed events only: the
+  // sentences are composed from the event kind and its arguments, never from msg.
+  events: LogEvent[];
 };
 
 // How many finished actions the screen is willing to list. Four is what fits above the
 // fold beside everything else; a fifth turns the section into a log, which is the thing
 // this screen exists not to be.
 const RECENT_MAX = 4;
+
+// The assistant's half of the history. One more than the money half because the two lists
+// sit side by side and an assistant is chattier than a wallet, and no more than that
+// because a sixth line makes it a log again. Runs collapse before this cap applies, so
+// five lines here are five DIFFERENT things.
+const ACTION_MAX = 5;
+
+// Which mark the browser draws beside a coin. Only the three this screen tracks: a mark
+// nobody drew is worse than no mark, and the drawing lives in ui/app.js.
+const MARK: Record<string, BasicPrice['mark']> = {
+  BTC: 'btc',
+  ETH: 'eth',
+  SOL: 'sol',
+};
 
 // Plain names for the symbols a non-technical reader will actually meet. The symbol
 // itself is always kept alongside the plain name: the plain name is the part they can
@@ -350,6 +372,7 @@ function buildHoldings(wallet: WalletView, unknown: boolean): BasicHolding[] {
       quantityLine: quantity(at.qty),
       valueLine: money(at.usd),
       valueUsd: at.usd,
+      share: 0,
     });
   }
   if (poolUsd > 0) {
@@ -358,18 +381,37 @@ function buildHoldings(wallet: WalletView, unknown: boolean): BasicHolding[] {
       quantityLine: '',
       valueLine: money(poolUsd),
       valueUsd: poolUsd,
+      share: 0,
     });
   }
 
-  return out.sort((a, b) => b.valueUsd - a.valueUsd);
+  out.sort((a, b) => b.valueUsd - a.valueUsd);
+
+  // Against the sum of the rows, not against wallet.totalUsd. They are the same number
+  // whenever both are readable, and when they are not, a ring whose slices do not close
+  // is a drawing of an arithmetic error. The ring says how the rows below it divide up.
+  const sum = out.reduce((total, row) => total + row.valueUsd, 0);
+  if (sum > 0) for (const row of out) row.share = row.valueUsd / sum;
+
+  return out;
 }
 
-// ---------- the one price ----------
+// ---------- the three prices ----------
 
 // plainSymbol keeps the ticker in parentheses because the ticker is the verifiable half.
 // The price line has the symbol on its own line already, so it takes the bare name.
 function bareName(symbol: string): string {
   return plainSymbol(symbol).replace(/\s*\(.*\)$/, '');
+}
+
+// A line needs two points to be a line, and every point on it has to be a real close.
+// One NaN in the middle of the series draws a spike that reads as a crash, so a series
+// with a hole in it is dropped whole and the row shows a price with no line under it.
+function series(closes: number[] | undefined): number[] {
+  const raw = closes ?? [];
+  if (raw.length < 2) return [];
+  for (const close of raw) if (!Number.isFinite(close) || close <= 0) return [];
+  return raw;
 }
 
 function buildPrice(reading: PriceReading): BasicPrice | null {
@@ -389,13 +431,29 @@ function buildPrice(reading: PriceReading): BasicPrice | null {
   const changeLine =
     direction === 'flat' ? 'level today' : `${direction === 'up' ? 'up' : 'down'} ${pct}% today`;
 
+  // Bitcoin at $64,210.37 and Solana at $142.08 both want two decimals; a coin priced
+  // under a dollar wants more, and rounding it to $0.00 would be the same failure as
+  // printing a zero for an unknown.
+  const digits = reading.priceUsd >= 1 ? 2 : 6;
+
   return {
     name: bareName(symbol),
     symbol,
-    priceLine: `$${reading.priceUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+    mark: MARK[symbol] ?? null,
+    priceLine: `$${reading.priceUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: digits })}`,
     changeLine,
     direction,
+    points: series(reading.closes),
   };
+}
+
+function buildPrices(readings: PriceReading[]): BasicPrice[] {
+  const out: BasicPrice[] = [];
+  for (const reading of readings ?? []) {
+    const price = buildPrice(reading);
+    if (price !== null) out.push(price);
+  }
+  return out;
 }
 
 // ---------- what happened ----------
@@ -470,6 +528,80 @@ function buildRecent(proposals: Proposal[]): BasicRecent[] {
       outcome: 'blocked' as const,
     };
   });
+}
+
+// ---------- what the assistant did ----------
+
+// The audit log stores its arguments as unknown, so every field is read defensively:
+// one bad line in a file this app appends to forever must not empty the list.
+function field(data: unknown, key: string): string {
+  if (typeof data !== 'object' || data === null) return '';
+  const value = (data as Record<string, unknown>)[key];
+  return typeof value === 'string' ? value : '';
+}
+
+// What a read was actually looking at, in the reader's own terms. Grouped rather than
+// named one by one: "chart_scan" and "chart_measure" are one fact to this reader, and
+// seventeen tool names on a screen written for a senior is the pro screen's log.
+function readLine(tool: string): string {
+  if (tool === 'wallet' || tool === 'balances' || tool === 'composition' || tool === 'start') {
+    return 'Looked at what you own.';
+  }
+  if (tool === 'policy_show') return 'Read your safety rules.';
+  if (tool === 'log_tail' || tool === 'proposal_status') return 'Looked at what has happened here.';
+  if (tool === 'trade_read' || tool === 'trade_batch') return 'Looked at its trading account.';
+  if (tool === 'mandate_catalog') return 'Looked up what it is allowed to trade.';
+  if (tool.startsWith('chart_') || tool === 'candles' || tool === 'market_search' || tool === 'indicator_catalog') {
+    return 'Looked at prices.';
+  }
+  return 'Looked something up.';
+}
+
+// One sentence per event, or null for an event this reader has no use for. Returning null
+// rather than a vaguer sentence is the same choice made everywhere else in this file: the
+// list is short, so a line that says nothing costs one that would have.
+function actionLine(event: LogEvent): string | null {
+  if (event.type === 'agent_connected') return 'An assistant connected.';
+  if (event.type === 'agent_disconnected') return 'The assistant disconnected.';
+  if (event.type === 'agent_rejected') return 'Another assistant tried to take over. It was turned away.';
+  if (event.type !== 'tool_call') return null;
+
+  // The one discriminator that is typed rather than prose. A human pressing a button in
+  // the trade window is also logged as a tool_call, and this list is what the ASSISTANT
+  // did: putting the owner's own clicks in it would tell them a machine did those.
+  const op = field(event.data, 'op');
+  if (op === 'read') return readLine(field(event.data, 'tool'));
+  // The money half of the history already carries every proposal, by outcome. This line is
+  // the moment of asking, which is a thing the assistant did and the other list cannot show
+  // until it is decided.
+  if (op === 'propose') return 'Asked your permission to move money.';
+  if (op === 'view') return 'Changed what the detailed screen shows.';
+  if (op === 'set_view_mode') {
+    return field(event.data, 'mode') === 'basic'
+      ? 'Switched this window to the simple screen.'
+      : 'Switched this window to the detailed screen.';
+  }
+  return null;
+}
+
+// Newest first, runs collapsed. The audit tail arrives newest first (src/audit.ts
+// reverses it), and collapsing a run means collapsing NEIGHBOURS: two wallet reads with a
+// proposal between them are two separate things that happened, and merging them across
+// the proposal would put the newest time on the oldest event.
+function buildActions(events: LogEvent[]): BasicAction[] {
+  const out: BasicAction[] = [];
+  for (const event of events ?? []) {
+    const line = actionLine(event);
+    if (line === null) continue;
+    const last = out[out.length - 1];
+    if (last !== undefined && last.line === line) {
+      last.repeat += 1;
+      continue;
+    }
+    if (out.length === ACTION_MAX) break;
+    out.push({ line, timeLine: clockTime(event.ts), repeat: 1 });
+  }
+  return out;
 }
 
 // ---------- the screen ----------
@@ -615,7 +747,8 @@ export function buildBasic(input: BasicInput): BasicView {
     // missing from it looks exactly like the holdings list of someone who owns less,
     // and this reader has nothing to check it against.
     holdings: buildHoldings(wallet, totalUsd === null),
-    price: buildPrice(input.price),
+    prices: buildPrices(input.prices),
     recent: buildRecent(proposals),
+    actions: buildActions(input.events),
   };
 }

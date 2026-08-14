@@ -149,6 +149,14 @@ a mode is changing, and it leaves nothing behind.
 - Karim 2026-08-14: "when switching between modes, i want it not to be just a switch, it should be animated... like the smatrix terminal screensaver, like I want a whole bunch of ascii figures like waterfall down and then the new screen or wahtever mode I switched to appears". Every mode change, basic to pro and either of them to the trading window, falls into a screen of terminal characters and the mode that was asked for is standing behind it when the rain clears
 - Karim 2026-08-14: "make sure this doesnt mess with performance". Nothing exists at rest: no canvas, no timer, no rAF between switches. The fall costs a fraction of one frame while it plays, and the change it dresses can never be delayed or lost by it
 
+Asked for on 2026-08-14, for the BASIC screen only. The fifth pass; the prose section further down
+carries which earlier lines it reverses.
+- Karim 2026-08-14: "just one page, no scrolling". Basic stays a non-scrolling deck at 1440x900 and at 1280x720. The two history lists scroll inside themselves, and a list holding more than its box shows fades at the cut rather than slicing a sentence in half
+- Karim 2026-08-14: "balance with a donut chart". A ring beside what is owned, one colour chip per row as its key, every arc drawn from a share computed in src/view/basic.ts so the picture and the figures under it come from one number
+- Karim 2026-08-14: "btc, sol, and eth with a basic chart, not candles, just a single line". Three rows, each with a price, a direction, and one line over the same 24 hours the percentage is measured over. A coin that could not be read is absent, never present and blank
+- Karim 2026-08-14: "history for transactions and agent actions separate". Two lists a column apart: what happened to the money under the balance, what the assistant did under the prices. Both composed from typed events, never from the audit line's developer text
+- Karim 2026-08-14: "stick in some of the logos of the chains... white ones... with no background. maybe use those for the chain and the token is unneded". One mark per chain beside each coin, none per token, drawn on the canvas like pro's Ethereum mark because this page loads no images
+
 ## Goal behind the ask
 The owner sees the whole machine at once, with no scrolling: what the wallet holds, what governs
 it, and whether anything is waiting for a click. On testnet with the gate off he must also be
@@ -282,3 +290,46 @@ Asked for, on top of what already stands:
 
 States to check on this pass: pro holdings (donut with colour, chips, empty count), pro
 transactions (rows, one expanded, a failed row), pro at 1440x900, pro stacked under 1100px.
+
+## Added 2026-08-14 (fifth pass): BASIC gets a ring, three lines, and a second history
+
+Karim, verbatim: "ij kets fix the basic view. What do I want to see on it, just one page, no
+scrolling. 'history' for transactions and agent actions separate. balance with a donut chart.
+and then btc, sol, and eth with a basic chart, not candles, just a single line." Then: "if you
+can stick in some of the logos of the chains and tokens that would be greate, i think we have
+white ones somewhere on our computer with no background. maybe use those for the chain and the
+token is unneded".
+
+BASIC ONLY. Pro is untouched by this pass.
+
+Two lines above are reversed by this, and only these two:
+- **A price tracker is now three prices, each with a line.** "A PRICE TRACKER, NOT A CHART" and
+  "one coin, one price, one direction" are superseded. It is BTC, SOL and ETH, and each carries a
+  single line over the same 24 hours the percentage beside it is measured over. Still not a
+  candlestick: the candles stay pro's answer to a question this reader did not ask, but "and
+  before now?" turned out to be a question they do ask. A coin that could not be read is absent
+  from the list, never present and blank.
+- **"A log of headlines" is two lists, not one.** "No tool calls" is superseded for the second
+  list only. What happened to the MONEY sits under the balance in the left column; what the
+  ASSISTANT did sits under the prices in the right one. A column apart, because side by side
+  they still read as one table with a gap in it. The sentences are still composed from the typed
+  event and never from the audit line's developer text, which is what "no tool calls" was for.
+
+Asked for, on top of what already stands:
+- The balance gets a ring beside the list of what is owned, with a colour chip per row as its
+  key. Shares are computed in src/view/basic.ts, never in the browser: the ring and the figures
+  under it are drawn from one number.
+- The ring is the one place this screen holds more than one colour, and the palette sits UNDER
+  the four state colours rather than beside them (chroma 0.04-0.075 against 0.13-0.18, and no
+  slice on a signal's hue), so a slice can never read as the app telling you something.
+- A chain mark beside each coin. DRAWN on the canvas, like pro's Ethereum mark and for the same
+  reason: this page loads no images. No white logo files were found anywhere on the machine, and
+  a drawn mark is white on nothing at any size, which is what was actually asked for. One mark
+  per chain and none per token, as asked.
+- Still one screen and still no page scroll. The lists scroll inside themselves, and a list with
+  more in it than its box shows fades at the cut, because a sentence sliced in half reads as a
+  rendering fault rather than as "there is more".
+
+States to check on this pass: basic resting (ring, three lines, both histories), basic asking
+(the question pushes the wallet down and the right column does not move), basic at 1440x900,
+basic at 1280x720, basic at 390.

@@ -32,7 +32,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { AppConfig, Candle, ChainId, Policy, Proposal, ProposalService, RiskRow, ViewMode } from './types.ts';
+import type {
+  AppConfig,
+  Candle,
+  ChainId,
+  LogEvent,
+  Policy,
+  Proposal,
+  ProposalService,
+  RiskRow,
+  ViewMode,
+} from './types.ts';
 import { buildBasic } from './view/basic.ts';
 import type { PriceReading } from './view/basic.ts';
 import type { Audit } from './audit.ts';
@@ -95,6 +105,16 @@ const CANDLE_PUSH_MS = 1000; // how often the browser is told there may be a new
 const PRICE_GRANULARITY_SEC = 3600;
 const PRICE_BARS = 24;
 const PRICE_POLL_MS = 30000;
+// The three coins the basic screen tracks, in the order it shows them (Karim,
+// 2026-08-14: "btc, sol, and eth"). Fixed, and deliberately NOT the pro chart's
+// product: the two screens are read by two different people, and the owner's three
+// prices should not change because a trader typed a ticker into the other window.
+const BASIC_PRODUCTS = ['BTC-USD', 'SOL-USD', 'ETH-USD'];
+// How far back the basic screen's "what the assistant did" list is willing to look for
+// five distinct sentences. Runs collapse, so an assistant that read the wallet two
+// hundred times in a row still fills one line, and past this it shows fewer lines rather
+// than reading further: the list is a glance, not the log.
+const BASIC_EVENT_SCAN = 300;
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -315,7 +335,16 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     broadcastState();
     broadcastTransactions();
   });
+  // The basic screen's second history list is built from the audit tail, and buildState
+  // runs on every broadcast and every heartbeat. audit.tail() re-reads the whole file from
+  // disk by design, and that file is append-only forever, so calling it per state build
+  // would make the state payload get slower every day the app runs. The newest events are
+  // kept in memory instead: seeded once here, appended by the same subscription that feeds
+  // the pro log, and bounded.
+  const recentEvents: LogEvent[] = audit.tail(BASIC_EVENT_SCAN);
   const offAudit = audit.subscribe((event) => {
+    recentEvents.unshift(event);
+    if (recentEvents.length > BASIC_EVENT_SCAN) recentEvents.length = BASIC_EVENT_SCAN;
     for (const client of sseClients) sseSend(client, { type: 'log', event });
   });
 
@@ -346,35 +375,41 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   }, HEARTBEAT_MS);
   heartbeat.unref();
 
-  // ---------- the one price the basic screen tracks ----------
+  // ---------- the three prices the basic screen tracks ----------
   //
-  // buildState is synchronous and every caller depends on that, so the price is polled
+  // buildState is synchronous and every caller depends on that, so prices are polled
   // into a cache here rather than fetched inside the state build. A failed poll clears
-  // the cache instead of leaving the last good figure in place: a price with no
+  // that coin instead of leaving the last good figure in place: a price with no
   // timestamp beside it is indistinguishable from a current one, and the basic screen
   // is read by someone who cannot tell. Same direction as every other refusal in
   // src/view/basic.ts, which is to say less rather than something possibly untrue.
-  let priceReading: PriceReading = null;
+  //
+  // One coin failing clears that coin and nothing else. Three prices behind one flag
+  // would mean a Solana outage blanking the Bitcoin line, which is a lie about Bitcoin.
+  let priceReadings: PriceReading[] = BASIC_PRODUCTS.map(() => null);
 
-  async function pollPrice(): Promise<void> {
-    const product = chart.state().view.product;
+  async function readPrice(product: string): Promise<PriceReading> {
     try {
       const load = await loadCandles(product, PRICE_GRANULARITY_SEC, PRICE_BARS);
       const candles = load.candles ?? [];
       const last = candles[candles.length - 1];
       const first = candles[0];
-      if (last === undefined || first === undefined || !(first.o > 0)) {
-        priceReading = null;
-        return;
-      }
-      priceReading = {
+      if (last === undefined || first === undefined || !(first.o > 0)) return null;
+      return {
         product,
         priceUsd: last.c,
         changePct: ((last.c - first.o) / first.o) * 100,
+        // The window the change is measured over, as a series. The same 24 bars behind
+        // both figures, so the line and the percentage can never disagree on screen.
+        closes: candles.map((candle) => candle.c),
       };
     } catch {
-      priceReading = null;
+      return null;
     }
+  }
+
+  async function pollPrice(): Promise<void> {
+    priceReadings = await Promise.all(BASIC_PRODUCTS.map(readPrice));
   }
 
   const priceTimer = setInterval(() => {
@@ -514,7 +549,10 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         agentsConnected: agents.connected(),
         chainStatus: snapshot.chainStatus,
         selfAddresses: [...cfg.addresses.evm, ...cfg.addresses.solana, ...cfg.addresses.near],
-        price: priceReading,
+        prices: priceReadings,
+        // The assistant's half of the history: the same events the pro screen's log
+        // carries, rendered as sentences instead of as log lines. See buildActions.
+        events: recentEvents,
       }),
     };
   }

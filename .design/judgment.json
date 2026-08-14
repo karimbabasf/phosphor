@@ -1,8 +1,8 @@
 {
-  "stamp": "5a008952a5859db7",
-  "iteration": 17,
+  "stamp": "bb7968c6e35b259d",
+  "iteration": 18,
   "firstFive": {
-    "what": "A dark two-column money screen: a $52,013.21 balance top left with the nine things it is made of listed under it, and down the right what one coin costs, the last four things that happened, a promise that nothing moves without a click, and a red STOP EVERYTHING",
+    "what": "A dark two-column money screen. Top left a $14.69 balance, under it a ring and the two things it is made of, under that what has happened to the money. Down the right what Bitcoin, Solana and Ether cost with a line each, what the assistant has been doing, a promise that nothing moves without a click, and a red STOP EVERYTHING.",
     "who": "The person who owns the money and does not trade, checking that nothing bad happened",
     "action": "Read the balance and leave. When the assistant is asking, the question appears under the balance with YES, ALLOW IT and NO, and that becomes the one action"
   },
@@ -286,6 +286,31 @@
       "requirement": "Karim 2026-08-14: \"make sure this doesnt mess with performance\"",
       "met": true,
       "ref": "no canvas, timer or rAF exists between switches, so the resting cost is zero and shot-1440.png is byte-identical in structure to the render before this change. Measured while playing at 3024x1964, the size of his own panel: 0.4ms median and 0.8ms p95 per frame against a 16.7ms budget, 585 glyphs a frame over 195 columns"
+    },
+    {
+      "requirement": "Fifth pass: one page, no page scroll",
+      "met": true,
+      "ref": "documentElement.scrollHeight equals innerHeight at 1440x900 and at 1280x720; the two lists scroll inside themselves and fade at the cut"
+    },
+    {
+      "requirement": "Fifth pass: the balance gets a donut",
+      "met": true,
+      "ref": "148px ring beside the holdings rows, one chip per row as its key, arcs drawn from BasicHolding.share so the ring and the figures come from one number"
+    },
+    {
+      "requirement": "Fifth pass: BTC, SOL and ETH with a single line each, not candles",
+      "met": true,
+      "ref": "three rows in one raised band, each with a 24-point polyline over the same window the percentage is measured over. No candles, no axis, no fill"
+    },
+    {
+      "requirement": "Fifth pass: transactions and agent actions as separate histories",
+      "met": true,
+      "ref": "WHAT HAPPENED TO YOUR MONEY in the left column under the wallet, WHAT THE ASSISTANT DID in the right under the prices. Different columns, different headings, composed from typed events not from audit msg text"
+    },
+    {
+      "requirement": "Fifth pass: chain logos, white, no background, one per chain and none per token",
+      "met": true,
+      "ref": "BTC, SOL and ETH marks drawn on canvas in --ink-soft. No image files exist on the machine and the page loads no images, so they are drawn like pro Ethereum mark"
     }
   ],
   "goal": {
@@ -376,6 +401,16 @@
       "finding": "Requirement 13, no animation except the cursor blink and appending log lines, still reads as written and still holds: it is a rule about the DOM, and the fall is a canvas that exists only while a mode is changing. style.css has one @keyframes and no transition property, unchanged by this work.",
       "severity": "reads as a contradiction, is not one",
       "why": "the split was decided on 2026-08-13 for the chart and the same line is drawn here: the DOM keeps the law, continuous motion lives on a raster surface"
+    },
+    {
+      "finding": "No white chain logo files exist anywhere on the machine (searched Developer, Downloads, Pictures, Documents, Desktop and Extra to depth 7). The three marks are drawn on the canvas instead.",
+      "severity": "answered differently than asked",
+      "why": "a drawn mark is monochrome on nothing at any size, which is what white-with-no-background means in practice, and it keeps the rule that this page loads no images. If the files turn up, each mark is one function to swap."
+    },
+    {
+      "finding": "The Bitcoin mark is built from a stem, two lobes and four ticks rather than from official path data.",
+      "severity": "cosmetic",
+      "why": "path data copied from a file cannot be checked by anyone reading this repo. At 22px the drawn one reads as Bitcoin, and it was checked the only way that settles it, by looking at the render."
     }
   ],
   "findings": []

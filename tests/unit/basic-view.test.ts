@@ -9,8 +9,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildBasic } from '../../src/view/basic.ts';
-import type { BasicInput } from '../../src/view/basic.ts';
-import type { ChainId, ChainStatus, Proposal, SwapDraft, WalletRow, WriteDraft } from '../../src/types.ts';
+import type { BasicInput, PriceReading } from '../../src/view/basic.ts';
+import type {
+  ChainId,
+  ChainStatus,
+  LogEvent,
+  Proposal,
+  SwapDraft,
+  WalletRow,
+  WriteDraft,
+} from '../../src/types.ts';
 
 const SELF = '0x2dd9131edF3CC393B757463C85b2C870A6F3180a';
 const ROUTER = '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45';
@@ -36,9 +44,23 @@ function baseInput(over: Partial<BasicInput> = {}): BasicInput {
     agentsConnected: 1,
     chainStatus: chainStatus(),
     selfAddresses: [SELF],
-    price: null,
+    prices: [],
+    events: [],
     ...over,
   };
+}
+
+// A 24-bar window that rises, so a series is present without every test writing one out.
+function closes(last: number): number[] {
+  return Array.from({ length: 24 }, (_, i) => last * (0.94 + (i * 0.06) / 23));
+}
+
+function reading(over: Partial<NonNullable<PriceReading>> = {}): PriceReading {
+  return { product: 'ETH-USD', priceUsd: 3184.22, changePct: 1.44, closes: closes(3184.22), ...over };
+}
+
+function toolCall(ts: string, data: Record<string, unknown>): LogEvent {
+  return { ts, type: 'tool_call', msg: 'agent: something a developer reads', data };
 }
 
 function swapDraft(over: Partial<SwapDraft> = {}): SwapDraft {
@@ -476,6 +498,17 @@ test('holdings sort by value and pool positions collapse into one line', () => {
     v.holdings.map((h) => h.valueLine),
     ['$420.00', '$10.00'],
   );
+
+  // The ring is drawn from these, and a ring whose slices do not close is a drawing of an
+  // arithmetic error. They are shares of the rows, which is what the ring sits beside.
+  assert.deepEqual(
+    v.holdings.map((h) => h.share),
+    [420 / 430, 10 / 430],
+  );
+  assert.equal(
+    v.holdings.reduce((sum, h) => sum + h.share, 0),
+    1,
+  );
   // Two different pools summed to one quantity would be a number that means nothing,
   // so the pool line carries a value and no quantity at all.
   assert.equal(v.holdings[0]!.name, 'Money in Uniswap pools');
@@ -495,39 +528,163 @@ test('holdings go empty exactly when the total goes unknown', () => {
   assert.equal(fine.holdings.length, 1);
 });
 
-// ---------- the one price ----------
+// ---------- the three prices ----------
 
-test('the price refuses rather than shows a figure it does not have', () => {
-  assert.equal(buildBasic(baseInput({ price: null })).price, null);
-  assert.equal(buildBasic(baseInput({ price: { product: 'ETH-USD', priceUsd: 0, changePct: 1 } })).price, null);
-  assert.equal(
-    buildBasic(baseInput({ price: { product: 'ETH-USD', priceUsd: Number.NaN, changePct: 1 } })).price,
-    null,
+test('a price refuses rather than shows a figure it does not have', () => {
+  assert.deepEqual(buildBasic(baseInput({ prices: [null] })).prices, []);
+  assert.deepEqual(buildBasic(baseInput({ prices: [reading({ priceUsd: 0 })] })).prices, []);
+  assert.deepEqual(buildBasic(baseInput({ prices: [reading({ priceUsd: Number.NaN })] })).prices, []);
+  assert.deepEqual(buildBasic(baseInput({ prices: [reading({ changePct: Number.NaN })] })).prices, []);
+});
+
+// One coin failing must not blank the other two. Three prices behind one flag would mean
+// a Solana outage taking the Bitcoin line off the screen, which is a lie about Bitcoin.
+test('one unreadable coin drops out and the others stay', () => {
+  const view = buildBasic(
+    baseInput({
+      prices: [reading({ product: 'BTC-USD', priceUsd: 64210.37 }), null, reading()],
+    }),
   );
-  assert.equal(
-    buildBasic(baseInput({ price: { product: 'ETH-USD', priceUsd: 3184.22, changePct: Number.NaN } })).price,
-    null,
+  assert.deepEqual(
+    view.prices.map((p) => p.symbol),
+    ['BTC', 'ETH'],
   );
 });
 
-test('the price says up, down, or level, and never draws an arrow on noise', () => {
-  const up = buildBasic(baseInput({ price: { product: 'ETH-USD', priceUsd: 3184.22, changePct: 1.44 } })).price!;
+test('a price says up, down, or level, and never draws an arrow on noise', () => {
+  const up = buildBasic(baseInput({ prices: [reading()] })).prices[0]!;
   assert.equal(up.direction, 'up');
   assert.equal(up.changeLine, 'up 1.4% today');
   assert.equal(up.priceLine, '$3,184.22');
   // The bare name for reading, the symbol kept because it is the verifiable half.
   assert.equal(up.name, 'Ether');
   assert.equal(up.symbol, 'ETH');
+  assert.equal(up.mark, 'eth');
 
-  const down = buildBasic(baseInput({ price: { product: 'ETH-USD', priceUsd: 3000, changePct: -0.83 } })).price!;
+  const down = buildBasic(baseInput({ prices: [reading({ priceUsd: 3000, changePct: -0.83 })] })).prices[0]!;
   assert.equal(down.direction, 'down');
   assert.equal(down.changeLine, 'down 0.8% today');
 
   // A twentieth of a percent is noise. An arrow drawn on it tells this reader that
   // something happened when nothing did.
-  const flat = buildBasic(baseInput({ price: { product: 'BTC-USD', priceUsd: 61000, changePct: 0.05 } })).price!;
+  const flat = buildBasic(
+    baseInput({ prices: [reading({ product: 'BTC-USD', priceUsd: 61000, changePct: 0.05 })] }),
+  ).prices[0]!;
   assert.equal(flat.direction, 'flat');
   assert.equal(flat.changeLine, 'level today');
+  assert.equal(flat.mark, 'btc');
+});
+
+// The line is the fifth-pass addition and it is drawn from these numbers, so a hole in
+// them is a spike on screen that reads as a crash. A series with a hole is dropped whole.
+test('the line is dropped rather than drawn through a hole in it', () => {
+  const holed = closes(3184.22);
+  holed[7] = Number.NaN;
+  assert.deepEqual(buildBasic(baseInput({ prices: [reading({ closes: holed })] })).prices[0]!.points, []);
+
+  const negative = closes(3184.22);
+  negative[3] = -1;
+  assert.deepEqual(buildBasic(baseInput({ prices: [reading({ closes: negative })] })).prices[0]!.points, []);
+
+  // One point is a dot, not a line, and the price figure already says where it is now.
+  assert.deepEqual(buildBasic(baseInput({ prices: [reading({ closes: [3184.22] })] })).prices[0]!.points, []);
+
+  // A good series survives whole and in order: the browser scales it, it does not filter it.
+  const good = buildBasic(baseInput({ prices: [reading()] })).prices[0]!;
+  assert.equal(good.points.length, 24);
+  assert.deepEqual(good.points, closes(3184.22));
+});
+
+// A coin priced under a dollar rounds to $0.00 at two decimals, which is the same failure
+// as printing a zero for an unknown: it states a figure that is not true.
+test('a sub-dollar price keeps the digits that make it a number', () => {
+  const view = buildBasic(baseInput({ prices: [reading({ product: 'PEPE-USD', priceUsd: 0.00001234 })] }));
+  assert.equal(view.prices[0]!.priceLine, '$0.000012');
+  // Nothing has been drawn for it, so it says so rather than borrowing another coin's mark.
+  assert.equal(view.prices[0]!.mark, null);
+});
+
+// ---------- what the assistant did ----------
+
+test('the assistant list is composed from the event, never from its developer text', () => {
+  const view = buildBasic(
+    baseInput({
+      events: [
+        toolCall(T2, { op: 'read', tool: 'wallet' }),
+        toolCall(T1, { op: 'read', tool: 'policy_show' }),
+        { ts: T0, type: 'agent_connected', msg: 'an agent attached to phosphor' },
+      ],
+    }),
+  );
+  assert.deepEqual(
+    view.actions.map((a) => a.line),
+    ['Looked at what you own.', 'Read your safety rules.', 'An assistant connected.'],
+  );
+  for (const action of view.actions) {
+    assert.doesNotMatch(action.line, /agent:|tool_call|phosphor/i, 'no developer text reaches this screen');
+  }
+});
+
+// Nine identical sentences is a log, which is the thing this screen exists not to be.
+test('a run of the same action collapses to one line that counts itself', () => {
+  const events: LogEvent[] = [];
+  for (let i = 0; i < 9; i += 1) events.push(toolCall(T2, { op: 'read', tool: 'balances' }));
+  events.push(toolCall(T1, { op: 'propose', kind: 'swap' }));
+
+  const view = buildBasic(baseInput({ events }));
+  assert.equal(view.actions.length, 2);
+  assert.equal(view.actions[0]!.line, 'Looked at what you own.');
+  assert.equal(view.actions[0]!.repeat, 9);
+  assert.equal(view.actions[1]!.repeat, 1);
+
+  // The newest time in the run, not the oldest: the run is reported as of when it last
+  // happened. Derived rather than written out, so the assertion is not about a timezone.
+  const one = buildBasic(baseInput({ events: [toolCall(T2, { op: 'read', tool: 'balances' })] }));
+  assert.equal(view.actions[0]!.timeLine, one.actions[0]!.timeLine);
+});
+
+// Only neighbours collapse. Two reads with a proposal between them are two things that
+// happened, and merging them across the proposal puts the newest time on the oldest event.
+test('a run is broken by anything that happened inside it', () => {
+  const view = buildBasic(
+    baseInput({
+      events: [
+        toolCall(T2, { op: 'read', tool: 'wallet' }),
+        toolCall(T1, { op: 'propose', kind: 'swap' }),
+        toolCall(T0, { op: 'read', tool: 'wallet' }),
+      ],
+    }),
+  );
+  assert.equal(view.actions.length, 3);
+  assert.deepEqual(
+    view.actions.map((a) => a.repeat),
+    [1, 1, 1],
+  );
+});
+
+// A human pressing a button in the trade window is logged as a tool_call too. This list is
+// what the ASSISTANT did: the owner's own clicks in it would tell them a machine did those.
+test('a human pressing a button is not reported as something the assistant did', () => {
+  const view = buildBasic(
+    baseInput({
+      events: [
+        { ts: T2, type: 'tool_call', msg: 'human: cancel abc', data: { action: 'cancel', id: 'abc' } },
+        { ts: T1, type: 'kill_switch', msg: 'kill switch on' },
+        toolCall(T0, { op: 'read', tool: 'wallet' }),
+      ],
+    }),
+  );
+  assert.deepEqual(
+    view.actions.map((a) => a.line),
+    ['Looked at what you own.'],
+  );
+});
+
+test('the assistant list caps, and an empty one is a designed state', () => {
+  const tools = ['wallet', 'policy_show', 'log_tail', 'trade_read', 'mandate_catalog', 'candles', 'chart_read'];
+  const events = tools.map((tool) => toolCall(T2, { op: 'read', tool }));
+  assert.equal(buildBasic(baseInput({ events })).actions.length, 5);
+  assert.deepEqual(buildBasic(baseInput()).actions, []);
 });
 
 // ---------- what happened ----------

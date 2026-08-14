@@ -427,17 +427,27 @@ export type BasicHolding = {
   quantityLine: string; // "1,204.00"
   valueLine: string; // "$1,204.00"
   valueUsd: number; // for ordering and for tests to check the line against
+  // 0..1 of the total. The ring is drawn from this rather than from a sum the browser
+  // did for itself: every figure about money on this screen is computed in one place.
+  share: number;
 };
 
-// One coin, one price, one direction. Deliberately not a chart: this screen is read by
-// someone who wants to know whether the thing they hold is up or down today, and a
-// candlestick answers a question they did not ask.
+// One coin, one price, one direction, and the shape of the last day behind it.
+// A LINE, never a candlestick. Karim, 2026-08-14: "btc, sol, and eth with a basic
+// chart, not candles, just a single line". A candlestick answers a question this
+// reader did not ask; the line answers the one they did, which is "and before now?".
 export type BasicPrice = {
   name: string; // plain: "Ether"
   symbol: string; // "ETH", kept because it is the verifiable half
+  // Which chain mark the browser draws beside the name. Drawn, not loaded: this page
+  // still loads no images. null means draw nothing rather than draw a guess.
+  mark: 'btc' | 'eth' | 'sol' | null;
   priceLine: string; // "$3,184.22"
   changeLine: string; // "up 1.4% today" | "down 0.8% today" | "level today"
   direction: 'up' | 'down' | 'flat';
+  // Closes over the tracked window, oldest first. Empty when the history could not be
+  // read, which draws no line at all: a flat line and an unread one look identical.
+  points: number[];
 };
 
 // A headline, not a log line. The sentence is composed from the proposal's own typed
@@ -447,6 +457,23 @@ export type BasicRecent = {
   headline: string; // "Moved $36.54 of your dollars into a Uniswap pool."
   timeLine: string; // "2:14 pm"
   outcome: 'done' | 'refused' | 'blocked';
+};
+
+// What the ASSISTANT did, which is a different list from what happened to the money.
+// Karim, 2026-08-14: "history for transactions and agent actions separate". Reading and
+// looking are most of what an assistant does, and folding them into the money list made
+// four real movements sit under twenty balance checks.
+//
+// Composed from the typed audit event and its arguments, never from its msg field, for
+// the same reason BasicRecent is composed from the proposal: that text is written for
+// whoever is debugging this app and reads as noise to the person who owns the money.
+export type BasicAction = {
+  line: string; // "Looked at what you own."
+  timeLine: string; // "2:14 pm", of the most recent one in the run
+  // A run of the same action collapses to one line carrying its count. An assistant that
+  // read the wallet nine times produces nine identical sentences, and nine identical
+  // sentences is a log, which is the thing this screen exists not to be.
+  repeat: number; // 1 when it happened once
 };
 
 export type BasicView = {
@@ -464,8 +491,12 @@ export type BasicView = {
   // Empty while any chain is unread, for the same reason totalUsd goes null: a holdings
   // list missing a chain looks exactly like a holdings list of someone who owns less.
   holdings: BasicHolding[];
-  price: BasicPrice | null; // null whenever the price is unknown, never a stale figure
+  // The three coins this screen tracks, in the order they are read: BTC, SOL, ETH.
+  // A coin whose price could not be read is ABSENT rather than present and blank, for
+  // the same reason totalUsd goes null: an unknown and a zero look identical on screen.
+  prices: BasicPrice[];
   recent: BasicRecent[]; // newest first, capped; empty is a designed state, not a bug
+  actions: BasicAction[]; // the other half of the history: what the assistant did
 };
 
 // ---------- Audit ----------
