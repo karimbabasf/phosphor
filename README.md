@@ -1,4 +1,7 @@
-# phosphor
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="brand/phosphor-wordmark-dark.png">
+  <img src="brand/phosphor-wordmark.png" alt="PH0SPHOR" width="480">
+</picture>
 
 > [!WARNING]
 > **Alpha software that moves real money.** No third-party audit, no warranty, no liability. You
