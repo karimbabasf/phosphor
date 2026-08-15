@@ -1285,7 +1285,10 @@ function basicCanvas(canvas) {
    it. Five slices and a rest, because a sixth slice on a 148px ring is a hairline. */
 var BASIC_SLICES = 5;
 
-function sliceColour(index) {
+// Named apart from sliceColour deliberately. Both are top-level declarations in one
+// classic script, so the later one would win for every caller, and the donut above
+// feeds its result to shade(), which parses hex and cannot read an oklch string.
+function basicSliceColour(index) {
   var name = index < BASIC_SLICES ? '--slice-' + (index + 1) : '--slice-rest';
   return getComputedStyle(document.body).getPropertyValue(name).trim();
 }
@@ -1323,7 +1326,7 @@ function drawBasicDonut(holdings) {
     var to = from + share * Math.PI * 2;
     ctx.beginPath();
     ctx.arc(cx, cy, radius, from, to);
-    ctx.strokeStyle = sliceColour(j);
+    ctx.strokeStyle = basicSliceColour(j);
     ctx.lineWidth = width;
     // Butt caps, deliberately: a round cap on a 1% slice draws a lozenge wider than the
     // share it stands for, which is a picture that overstates a number.
@@ -1360,7 +1363,7 @@ function renderBasicHoldings(holdings, unknown) {
     var h = holdings[i];
     var row = el('div', 'basic-row');
     var chip = el('span', 'basic-row-chip');
-    chip.style.background = sliceColour(i);
+    chip.style.background = basicSliceColour(i);
     row.appendChild(chip);
     row.appendChild(el('span', 'basic-row-name', h.name));
     row.appendChild(el('span', 'basic-row-qty', h.quantityLine));
