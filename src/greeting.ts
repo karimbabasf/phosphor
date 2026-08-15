@@ -229,7 +229,7 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
 
 // Stated as rules rather than as prose, because this is the part an agent must not paraphrase
 // itself out of. Each one is a fact about what the code does, not an aspiration.
-export const OPERATING_RULES: readonly string[] = [
+const OPERATING_RULES: readonly string[] = [
   'You drive this app. You do not develop it. Do not edit, write or run code in the Phosphor repository. If something needs to change, say so and let a human open a development session.',
   'You cannot approve your own actions. Approval is a physical click in the app window, on a surface this door does not open onto.',
   'Write tools propose. They do not execute. Whether a human is asked depends on the policy, and proposals under the click threshold are decided by the policy engine.',

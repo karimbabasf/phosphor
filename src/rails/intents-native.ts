@@ -52,7 +52,6 @@ import type { Network, Rail, RailResult, SimulationResult, SwapDraft } from '../
 import {
   ONECLICK_BASE,
   ONECLICK_TERMINAL,
-  assetIdFor,
   oneClickClient,
   oneLine,
   resolveAsset,
@@ -723,7 +722,7 @@ export type IntentsNearPort = {
   storageRegistered(network: Network, tokenId: string, accountId: string): Promise<boolean>;
 };
 
-export const liveIntentsNearPort: IntentsNearPort = {
+const liveIntentsNearPort: IntentsNearPort = {
   accountId: nearAccountId,
   send: nearSendTx,
   storageRegistered: (network, tokenId, accountId) => ftStorageRegistered(network, tokenId, accountId),

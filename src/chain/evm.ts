@@ -155,7 +155,7 @@ export function erc20TransferData(to: Address, amount: bigint): Hex {
   return encodeFunctionData({ abi: ERC20, functionName: 'transfer', args: [to, amount] });
 }
 
-export function erc20ApproveData(spender: Address, amount: bigint): Hex {
+function erc20ApproveData(spender: Address, amount: bigint): Hex {
   return encodeFunctionData({ abi: ERC20, functionName: 'approve', args: [spender, amount] });
 }
 

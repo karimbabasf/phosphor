@@ -261,17 +261,6 @@ function writeAction(w: Borsh, action: NearAction): void {
     .u128(action.deposit);
 }
 
-// A one-line description of what an action does, for the audit log and the approval gate.
-// Deliberately not JSON.stringify of the whole thing: a human reading a log line needs the
-// destination and the amount, not an args blob.
-export function describeAction(action: NearAction, receiverId: string): string {
-  if (action.type === 'transfer') {
-    return `transfer ${formatNear(action.deposit)} NEAR to ${receiverId}`;
-  }
-  const attached = action.deposit > 0n ? `, attaching ${action.deposit} yocto` : '';
-  return `call ${action.methodName} on ${receiverId}${attached}`;
-}
-
 export function formatNear(yocto: bigint): string {
   const whole = yocto / YOCTO_PER_NEAR;
   const fraction = (yocto % YOCTO_PER_NEAR).toString().padStart(24, '0').replace(/0+$/, '');
@@ -437,7 +426,7 @@ export function randomNep413Nonce(): Uint8Array {
 // sits where a transaction's signer_id length would be, and no account id is 2.1 billion
 // bytes long, so a signed message can never be parsed as a transaction and the reverse holds
 // too. This is the standard NEAR Intents accepts as `nep413`.
-export const NEP413_PREFIX = 2 ** 31 + 413; // 2147484061
+const NEP413_PREFIX = 2 ** 31 + 413; // 2147484061
 
 export function nep413Digest(payload: Nep413Payload): Uint8Array {
   if (payload.nonce.length !== 32) {
@@ -645,7 +634,7 @@ export async function sendTx(params: NearSendParams): Promise<NearSendOutcome> {
 
 // ---------- reads a rail needs before it signs ----------
 
-export async function viewCall(
+async function viewCall(
   network: Network,
   contractId: string,
   method: string,

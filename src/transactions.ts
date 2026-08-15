@@ -447,7 +447,7 @@ export function buildTransactions(params: BuildParams): TxEntry[] {
 
 // Keyed by hash alone, not by chain: the whole point of the read is to find out which chain
 // the hash is on, so the key cannot assume the answer.
-export function gasKey(hash: string): string {
+function gasKey(hash: string): string {
   return hash.toLowerCase();
 }
 

@@ -14,7 +14,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { getAddress } from 'viem';
-import type { Address } from 'viem';
 
 import type { IntentsDepositDraft, Network } from '../../src/types.ts';
 import type { OneClickClient, OneClickQuote, OneClickToken, TokensFile } from '../../src/intents.ts';

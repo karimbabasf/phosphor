@@ -25,10 +25,10 @@ export type Example = {
 // allowedActions from the program itself, and checkEnvelope tests allowedActions before it
 // lets any verb through, including the safety ones. A program whose rules only open therefore
 // arms a bot that CANNOT CLOSE.
-export const EXIT_RULE =
+const EXIT_RULE =
   'Every program must contain an exit. allowedActions is derived from the verbs your rules actually use, and the envelope refuses any verb not in that list, including close and cancel. A program that only opens arms a bot that cannot get flat. Always include a close or reduce rule, and normally a set_stop.';
 
-export const REFS = [
+const REFS = [
   { form: '{ "kind": "price", "value": 152.4 }', means: 'a literal price.' },
   {
     form: '{ "kind": "drawing", "id": "tl_1" }',
@@ -41,7 +41,7 @@ export const REFS = [
   },
 ];
 
-export const CONDITIONS = [
+const CONDITIONS = [
   { op: 'price_above', fields: '{ ref }', means: 'mark price is above the reference right now.' },
   { op: 'price_below', fields: '{ ref }', means: 'mark price is below the reference right now.' },
   { op: 'price_cross_up', fields: '{ ref }', means: 'price crossed the reference upward since the last check. An edge, not a state.' },
@@ -71,14 +71,14 @@ export const ACTIONS = [
   { do: 'notify', fields: '{ text }', means: 'tell the human something. Moves nothing.' },
 ];
 
-export const ENTRIES = [
+const ENTRIES = [
   { form: '{ "type": "market", "maxSlippageBps": 50 }', means: 'cross the spread, refusing worse than 50 bps of slippage.' },
   { form: '{ "type": "limit", "ref": {...}, "postOnly": true }', means: 'rest at a reference. postOnly refuses to take.' },
 ];
 
 // The envelope is what the human actually approves. The program says what the bot tries; these
 // say what it can never exceed however the program is written.
-export const ENVELOPE = [
+const ENVELOPE = [
   { field: 'symbol', means: 'the market, for example "SOL". One mandate, one market.' },
   { field: 'maxNotionalUsd', means: 'the largest position it may hold, in dollars. This is the number the policy engine prices the whole mandate at.' },
   { field: 'maxLeverage', means: 'the largest multiple. Set at the venue as an ACCOUNT setting, not per order, so this is enforced rather than requested.' },
@@ -88,7 +88,7 @@ export const ENVELOPE = [
   { field: 'allowedActions', means: 'the verbs it may use. Derive it from the program (every verb the rules use) and read EXIT_RULE before you do.' },
 ];
 
-export const TRAPS = [
+const TRAPS = [
   EXIT_RULE,
   'propose_mandate ALWAYS waits for a human click, on every network, even where the approval gate is off. It grants standing authority rather than spending once, so there is no threshold that skips it. Expect to wait, and tell the human what you asked for in plain words.',
   'Trading is testnet only in this build. The runner refuses mainnet outright, so a mandate is never armed against real money here.',

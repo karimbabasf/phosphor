@@ -119,7 +119,7 @@ export type SwapNearPort = {
   storageRegistered(network: Network, tokenId: string, accountId: string): Promise<boolean>;
 };
 
-export const liveNearPort: SwapNearPort = {
+const liveNearPort: SwapNearPort = {
   accountId: nearAccountId,
   send: nearSendTx,
   storageRegistered: (network, tokenId, accountId) => ftStorageRegistered(network, tokenId, accountId),

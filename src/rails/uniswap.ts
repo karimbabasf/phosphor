@@ -433,7 +433,7 @@ async function quoteTier(network: Network, chain: ChainId, tokenIn: Address, tok
 
 // Quote every tier and take the best fill. The draft names no fee tier, and picking one by
 // convention would silently route through a pool 20x thinner than the one next to it.
-export async function bestQuote(network: Network, chain: ChainId, tokenIn: Address, tokenOut: Address, amountIn: bigint): Promise<SwapQuote> {
+async function bestQuote(network: Network, chain: ChainId, tokenIn: Address, tokenOut: Address, amountIn: bigint): Promise<SwapQuote> {
   const settled = await Promise.allSettled(FEE_TIERS.map(fee => quoteTier(network, chain, tokenIn, tokenOut, amountIn, fee)));
   let best: SwapQuote | null = null;
   for (const outcome of settled) {

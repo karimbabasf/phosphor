@@ -31,7 +31,7 @@ export type Outcome = { ok: boolean; notes: string[]; error?: string };
 
 // The row kinds that can be pointed at. Each one is something the trading page renders as a
 // list with stable ids, which is the whole requirement for being addressable.
-export const HIGHLIGHT_KINDS = ['position', 'order', 'fill', 'mandate', 'rule'] as const;
+const HIGHLIGHT_KINDS = ['position', 'order', 'fill', 'mandate', 'rule'] as const;
 export type HighlightKind = (typeof HIGHLIGHT_KINDS)[number];
 
 // What the chart may draw on top of price. Every one of these is a fact about the account
@@ -71,11 +71,11 @@ export type TradeViewState = {
   lastChangeAt: string;
 };
 
-export const HIGHLIGHT_TTL_DEFAULT_SEC = 300;
+const HIGHLIGHT_TTL_DEFAULT_SEC = 300;
 // Five minutes is already generous for "look at this". An hour-long pointer is a decoration.
 export const HIGHLIGHT_TTL_MAX_SEC = 3600;
-export const HIGHLIGHT_MAX = 24;
-export const NOTE_MAX_CHARS = 240;
+const HIGHLIGHT_MAX = 24;
+const NOTE_MAX_CHARS = 240;
 
 // Risk overlays start ON. A liquidation line the human has to switch on is a liquidation line
 // they learn about after it mattered. The two that start off are the noisy ones: a page of

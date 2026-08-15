@@ -16,7 +16,7 @@ import { renderSentences } from './policy/render.ts';
 import { createRails, venueAllowlist } from './rails/index.ts';
 import { createLedger } from './ledger/index.ts';
 import { oneClickQuoter, syntheticQuoter, stubSigner, type TokensFile } from './intents.ts';
-import { coinbaseSource, krakenSource, cachedCandles } from './candles.ts';
+import { coinbaseSource, cachedCandles } from './candles.ts';
 import { hyperliquidSource } from './hyperliquid.ts';
 import { createMarketData } from './market/index.ts';
 import { createProposalService } from './proposals.ts';

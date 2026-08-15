@@ -126,7 +126,7 @@ const TOKENS: Record<Network, Partial<Record<ChainId, TokenInfo[]>>> = {
   },
 };
 
-export function tokensFor(network: Network, chain: ChainId): TokenInfo[] {
+function tokensFor(network: Network, chain: ChainId): TokenInfo[] {
   return TOKENS[network][chain] ?? [];
 }
 

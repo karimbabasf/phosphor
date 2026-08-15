@@ -184,7 +184,7 @@ export function priceDecimals(span: number, reference: number): number {
 
 // How many decimals the venue itself quotes in. A span-derived precision alone rounds
 // 63,434.5 to 63,434 on a wide window, which is the last price reading a digit short.
-export function tickDecimals(candles: Candle[]): number {
+function tickDecimals(candles: Candle[]): number {
   let most = 0;
   for (let i = Math.max(0, candles.length - 20); i < candles.length; i++) {
     const text = String((candles[i] as Candle).c);
@@ -863,7 +863,7 @@ export function measure(args: MeasureArgs): unknown {
   };
 }
 
-export function humanDuration(sec: number): string {
+function humanDuration(sec: number): string {
   if (sec < 60) return `${Math.round(sec)}s`;
   if (sec < 3600) return `${Math.round(sec / 60)}m`;
   if (sec < 86400) return `${(sec / 3600).toFixed(1)}h`;

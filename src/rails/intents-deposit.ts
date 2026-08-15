@@ -117,7 +117,7 @@ export type DepositEvmPort = {
   estimateNativeSendGas(network: Network, chain: ChainId, from: Address, to: Address, value: bigint): Promise<bigint>;
 };
 
-export const liveDepositEvmPort: DepositEvmPort = {
+const liveDepositEvmPort: DepositEvmPort = {
   signerAddress: evmAddress,
   send: sendTx,
   async nativeBalance(network, chain, address) {

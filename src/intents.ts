@@ -203,7 +203,7 @@ export type OneClickStatusName =
   | 'REFUNDED'
   | 'FAILED';
 
-export const ONECLICK_STATUSES: readonly OneClickStatusName[] = [
+const ONECLICK_STATUSES: readonly OneClickStatusName[] = [
   'PENDING_DEPOSIT',
   'KNOWN_DEPOSIT_TX',
   'INCOMPLETE_DEPOSIT',

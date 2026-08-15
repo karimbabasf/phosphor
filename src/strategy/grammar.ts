@@ -107,7 +107,7 @@ const symbol = z
 const usdAmount = z.number().finite().positive();
 const fraction = z.number().gt(0).max(1);
 
-export const REF_SCHEMA: z.ZodType<Ref> = z.discriminatedUnion('kind', [
+const REF_SCHEMA: z.ZodType<Ref> = z.discriminatedUnion('kind', [
   // A price ref is a level on the chart, so it is positive by construction. Positivity is
   // load-bearing rather than cosmetic: render.ts divides by an entry price to work out how far
   // a stop sits from it.
@@ -116,7 +116,7 @@ export const REF_SCHEMA: z.ZodType<Ref> = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('indicator'), id: identifier, plot: identifier.optional() }).strict(),
 ]);
 
-export const CONDITION_SCHEMA: z.ZodType<Condition> = z.lazy(() =>
+const CONDITION_SCHEMA: z.ZodType<Condition> = z.lazy(() =>
   z.discriminatedUnion('op', [
     z
       .object({
@@ -147,14 +147,14 @@ export const CONDITION_SCHEMA: z.ZodType<Condition> = z.lazy(() =>
   ]),
 );
 
-export const ENTRY_SCHEMA: z.ZodType<Entry> = z.discriminatedUnion('type', [
+const ENTRY_SCHEMA: z.ZodType<Entry> = z.discriminatedUnion('type', [
   z
     .object({ type: z.literal('market'), maxSlippageBps: z.number().int().min(0).max(MAX_SLIPPAGE_BPS) })
     .strict(),
   z.object({ type: z.literal('limit'), ref: REF_SCHEMA, postOnly: z.boolean().optional() }).strict(),
 ]);
 
-export const ACTION_SCHEMA: z.ZodType<Action> = z.discriminatedUnion('do', [
+const ACTION_SCHEMA: z.ZodType<Action> = z.discriminatedUnion('do', [
   z
     .object({
       do: z.literal('open'),
@@ -176,7 +176,7 @@ export const ACTION_SCHEMA: z.ZodType<Action> = z.discriminatedUnion('do', [
   z.object({ do: z.literal('notify'), text: displayText }).strict(),
 ]);
 
-export const RULE_SCHEMA: z.ZodType<Rule> = z
+const RULE_SCHEMA: z.ZodType<Rule> = z
   .object({
     id: identifier,
     when: CONDITION_SCHEMA,

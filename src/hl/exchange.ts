@@ -128,7 +128,7 @@ export function buildCancelAction(cancels: { assetId: number; oid: number }[]): 
   return { type: 'cancel', cancels: cancels.map((c) => ({ a: c.assetId, o: c.oid })) };
 }
 
-export function buildCancelByCloidAction(cancels: { assetId: number; cloid: string }[]): unknown {
+function buildCancelByCloidAction(cancels: { assetId: number; cloid: string }[]): unknown {
   return { type: 'cancelByCloid', cancels: cancels.map((c) => ({ asset: c.assetId, cloid: c.cloid })) };
 }
 

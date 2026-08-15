@@ -927,7 +927,7 @@ function money(v: number | null): string {
 
 // Every bound the mandate has, sorted by how much of it is gone. The first one is the answer to
 // "what stops this bot first", which is the question the row exists to answer.
-function boundsFor(row: MandateRow, nowMs: number): TradeBound[] {
+function boundsFor(row: MandateRow): TradeBound[] {
   const windowMs = Date.parse(row.expiresAt) - Date.parse(row.since);
   const timeCap = Number.isFinite(windowMs) && windowMs > 0 ? windowMs : null;
   const timeUsed = timeCap === null || row.used.msToExpiry === null ? null : timeCap - row.used.msToExpiry;
@@ -1000,7 +1000,6 @@ export function buildTradeRead(payload: TradePayload): TradeRead {
     newestFillMs === null
       ? 0
       : payload.fills.filter((f) => newestFillMs - f.atMs < ORDER_RATE_WINDOW_MS).length;
-  const nowMs = newestFillMs === null ? Date.parse(payload.mandates[0]?.since ?? '') : newestFillMs;
 
   return {
     symbol: payload.symbol,
@@ -1066,7 +1065,7 @@ export function buildTradeRead(payload: TradePayload): TradeRead {
       })),
     },
     mandates: payload.mandates.map((m) => {
-      const bounds = boundsFor(m, Number.isFinite(nowMs) ? nowMs : Date.parse(m.since));
+      const bounds = boundsFor(m);
       const top = bounds[0];
       return {
         id: m.id,

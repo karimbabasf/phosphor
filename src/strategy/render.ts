@@ -63,7 +63,7 @@ function renderEntry(e: Entry): string {
   return e.postOnly === true ? `limit at ${renderRef(e.ref)}, post only` : `limit at ${renderRef(e.ref)}`;
 }
 
-export function renderCondition(c: Condition): string {
+function renderCondition(c: Condition): string {
   switch (c.op) {
     case 'price_above':
       return `price above ${renderRef(c.ref)}`;
@@ -94,7 +94,7 @@ export function renderCondition(c: Condition): string {
   }
 }
 
-export function renderAction(a: Action): string {
+function renderAction(a: Action): string {
   switch (a.do) {
     case 'open':
       return `open ${a.side} ${usd(a.sizeUsd)} at ${a.leverage}x, ${renderEntry(a.entry)}`;

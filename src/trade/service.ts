@@ -13,7 +13,7 @@
 
 import { createTradeView, type TradeViewState } from './view.ts';
 import { buildTradePayload, buildTradeRead, type TradePayload } from './state.ts';
-import { createTradeFeed, type TradeFeed } from './feed-ws.ts';
+import { createTradeFeed } from './feed-ws.ts';
 import type { InfoClient } from '../hl/info.ts';
 import type { ManualAction, RunnerEvent } from '../runner/host.ts';
 import type { Mandate } from '../strategy/envelope.ts';

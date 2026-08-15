@@ -28,7 +28,7 @@ export const COINBASE_NATIVES = [60, 300, 900, 3600, 21_600, 86_400];
 const COINBASE_MAX_ROWS = 300;
 
 // A minute is the floor. See the note on MIN_TIMEFRAME_SEC in src/chart.ts.
-export const MIN_BASE_SEC = 60;
+const MIN_BASE_SEC = 60;
 
 export type BasePlan = {
   baseSec: number;

@@ -28,10 +28,8 @@ import type { OneClickQuote, OneClickToken, TokensFile } from '../../src/intents
 import { venueAllowlist } from '../../src/rails/index.ts';
 
 import {
-  INTENTS_API_KEY_ENV,
   INTENTS_NATIVE_COUNTERPARTY,
   INTENTS_NATIVE_VENUE,
-  INTENTS_NO_API_KEY_REASON,
   INTENTS_NO_TESTNET_REASON,
   INTENTS_VERIFIER,
   base58Encode,
@@ -227,18 +225,6 @@ function railOf(h: Harness, network: Network = 'mainnet') {
     sleepImpl: async () => {},
     pollIntervalMs: 1,
     pollTimeoutMs: 5,
-  });
-}
-
-// A rail with no API key and no injected api port: the production shape when nobody has a key.
-function keylessRail(network: Network = 'mainnet') {
-  return intentsNativeRail({
-    network,
-    keysPath: '/nonexistent/keys.json',
-    tokens: tokensFixture,
-    apiKey: '',
-    signer: harness().signer,
-    now: () => NOW,
   });
 }
 

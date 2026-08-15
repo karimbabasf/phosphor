@@ -111,7 +111,7 @@ const PLAIN_CHAIN: Record<string, string> = {
   near: 'NEAR',
 };
 
-export function plainSymbol(symbol: string): string {
+function plainSymbol(symbol: string): string {
   return PLAIN_SYMBOL[symbol.toUpperCase()] ?? symbol;
 }
 

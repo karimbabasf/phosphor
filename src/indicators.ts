@@ -595,8 +595,6 @@ export function trueRange(candles: Candle[]): number[] {
 
 const BY_TYPE = new Map<string, IndicatorSpec>(SPECS.map((s) => [s.type, s]));
 
-export const INDICATOR_TYPES: readonly string[] = SPECS.map((s) => s.type);
-
 export function indicatorSpec(type: string): IndicatorSpec | undefined {
   return BY_TYPE.get(type.toLowerCase().trim());
 }

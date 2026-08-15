@@ -62,7 +62,7 @@ const HL_WITHDRAW_NETWORKS: Record<Network, HlWithdrawSpec> = {
   },
 };
 
-export function hlWithdrawSpec(network: Network): HlWithdrawSpec {
+function hlWithdrawSpec(network: Network): HlWithdrawSpec {
   const spec = HL_WITHDRAW_NETWORKS[network];
   if (spec === undefined) throw new Error(`no Hyperliquid withdraw spec for network ${JSON.stringify(network)}`);
   return spec;
@@ -104,7 +104,7 @@ export const USD_CLASS_TRANSFER_TYPES = {
   ],
 } as const;
 
-export const USDC_DECIMALS = 6;
+const USDC_DECIMALS = 6;
 
 // Measured, not assumed. The docs quote $1 on the mainnet page and say nothing about testnet, so
 // this was read off nine real testnet withdrawals in userNonFundingLedgerUpdates: every one

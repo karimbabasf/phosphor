@@ -44,7 +44,7 @@ function configValue(root: string): unknown {
 // becomes a file read that nobody reviewed.
 const SAFE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
-export function skillsDir(root: string): string {
+function skillsDir(root: string): string {
   return path.join(root, 'skills');
 }
 

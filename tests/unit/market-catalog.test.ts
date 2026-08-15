@@ -20,7 +20,7 @@ const CB_PRODUCTS = [
 ];
 
 function stubFetch(): typeof fetch {
-  return (async (input: string | URL, init?: RequestInit) => {
+  return (async (input: string | URL, _init?: RequestInit) => {
     const url = String(input);
     if (url.includes('hyperliquid')) {
       return { ok: true, json: async () => HL_META, text: async () => '', headers: new Headers() };

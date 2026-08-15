@@ -36,7 +36,7 @@ export type MandateRunner = {
   status(): { armed: { id: string; symbol: string; since: string }[]; running: boolean };
 };
 
-export function mandateToEnvelope(d: MandateDraft, id: string): Mandate {
+function mandateToEnvelope(d: MandateDraft, id: string): Mandate {
   return {
     id,
     programHash: d.programHash,

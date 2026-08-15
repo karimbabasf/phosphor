@@ -49,7 +49,7 @@ export function coinOf(product: string): string {
   return product.split('-')[0].toUpperCase();
 }
 
-export function nativeInterval(granularitySec: number): string | null {
+function nativeInterval(granularitySec: number): string | null {
   for (const [secs, label] of NATIVE_INTERVALS) {
     if (secs === granularitySec) return label;
   }
