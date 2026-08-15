@@ -3,8 +3,8 @@
 The official Phosphor wordmark, and the script that draws it.
 
 - `phosphor-wordmark.png` (3949 x 1088), the logo.
-- `phosphor-headquarters.png` (2480 x 3508), the same mark with a "headquarters" line under it,
-  laid out on A4 portrait at 300 dpi. Prints at 210 x 297 mm with a 17 mm side margin.
+- `phosphor-headquarters.png` (3508 x 2480), the same mark with a "headquarters" line under it,
+  laid out on A4 landscape at 300 dpi. Prints at 297 x 210 mm with a 24 mm side margin.
 
 Both are black `#000` on white `#fff`. The app runs green on near-black; these are the inverted
 mark, for light and print contexts.
@@ -43,6 +43,6 @@ Needs a local Brave and `playwright-core`. Both come from the machine, not from 
 There is no test suite. Check it by eye against these numbers, which `build.mjs` prints:
 
     wordmark      W 3949  H 1088  stroke 91  gap 31  cuts 7  slashAngle 56
-    headquarters  page 2480x3508  markSize 434  cap 309  subPx 117  marginSide 199
+    headquarters  page 3508x2480  markSize 614  cap 437  subPx 166  marginSide 281
 
 A changed `stroke` or `slashAngle` means the font failed to load and a fallback face was used.

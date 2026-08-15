@@ -1,8 +1,9 @@
 // The wall version: the mark and one line under it, laid out on an A4 sheet.
-const A4 = { w: 2480, h: 3508 };   // 210 x 297 mm at 300 dpi
+const A4          = { w: 2480, h: 3508 };   // 210 x 297 mm at 300 dpi
+const A4_LANDSCAPE = { w: 3508, h: 2480 };  // the same sheet turned
 
 const POSTER_DEFAULTS = {
-  page: A4,
+  page: A4_LANDSCAPE,
   markWidth: 0.72,    // the mark's ink, as a fraction of the sheet width
   text: 'headquarters',
   family: 'Menlo',

@@ -17,7 +17,7 @@ window.render = (async () => {
   await document.fonts.ready;
   const info = drawPoster(c,
     { weight: 600, slashOvershoot: 0.65, cutGap: 0.34 },
-    { markWidth: 0.84, subSize: 0.38, gap: 0.62, optical: 0.46 });
+    { page: A4_LANDSCAPE, markWidth: 0.84, subSize: 0.38, gap: 0.62, optical: 0.46 });
   return { ...info, dataURL: c.toDataURL('image/png') };
 })();
 </script>
