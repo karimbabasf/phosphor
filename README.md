@@ -1,14 +1,20 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="brand/phosphor-wordmark-dark.png">
-  <img src="brand/phosphor-wordmark.png" alt="PH0SPHOR" width="480">
-</picture>
+<p align="center">
+  <img src="brand/phosphor-wordmark.png" alt="PH0SPHOR" width="860" />
+</p>
 
-> [!WARNING]
-> **Alpha software that moves real money.** No third-party audit, no warranty, no liability. You
-> hold your own keys, on-chain transactions are final, and the policy engine and approval gate are
-> engineering goals rather than guarantees. Read [DISCLAIMER.md](DISCLAIMER.md) and
-> [docs/security-model.md](docs/security-model.md) before you point it at mainnet. Nothing here is
-> financial advice.
+<p align="center">
+  <b>The app is the car. The agent is the person with the key.</b><br/>
+  Local wallet, chain and policy control that any MCP agent can drive, and none can approve.
+</p>
+
+<p align="center">
+  <a href="DISCLAIMER.md"><img src="https://img.shields.io/badge/status-alpha-ff3b30?style=flat-square" alt="Alpha software that moves real money" /></a>
+  <img src="https://img.shields.io/badge/license-MIT-33ff66?style=flat-square" alt="MIT license" />
+  <img src="https://img.shields.io/badge/no%20AI-in%20the%20execution%20path-0b0d0b?style=flat-square" alt="No AI in the execution path" />
+  <img src="https://img.shields.io/badge/built%20with-MCP%20%C2%B7%20TypeScript%20%C2%B7%20viem-1b6f3a?style=flat-square" alt="Built with MCP, TypeScript, and viem" />
+</p>
+
+---
 
 A local app that holds your wallet state, chain connections and policy, and contains no AI. It
 exposes an MCP server. An agent you already pay for (Claude Code, Codex, anything speaking MCP)
@@ -516,3 +522,12 @@ own development sessions in this directory are untouched. Detail in [operator/RE
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+---
+
+> [!WARNING]
+> **Alpha software that moves real money.** No third-party audit, no warranty, no liability. You
+> hold your own keys, on-chain transactions are final, and the policy engine and approval gate are
+> engineering goals rather than guarantees. Read [DISCLAIMER.md](DISCLAIMER.md) and
+> [docs/security-model.md](docs/security-model.md) before you point it at mainnet. Nothing here is
+> financial advice.

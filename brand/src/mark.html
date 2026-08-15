@@ -18,11 +18,7 @@ window.render = (async () => {
   const c = document.getElementById('out');
   await document.fonts.load('600 700px Expose', 'PH0SPHOR');
   await document.fonts.ready;
-  // Colours come from the URL so one page draws both marks: black on white for print and
-  // light contexts, phosphor green on near-black for the screen the app actually runs on.
-  const q = new URLSearchParams(location.search);
-  const ink = { fg: q.get('fg') || '#000', bg: q.get('bg') || '#fff' };
-  const info = drawMark(c, { size: 700, weight: 600, slashOvershoot: 0.65, cutGap: 0.34, ...ink });
-  return { ...info, ...ink, dataURL: c.toDataURL('image/png') };
+  const info = drawMark(c, { size: 700, weight: 600, slashOvershoot: 0.65, cutGap: 0.34 });
+  return { ...info, dataURL: c.toDataURL('image/png') };
 })();
 </script>

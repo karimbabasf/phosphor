@@ -2,16 +2,12 @@
 
 The official Phosphor wordmark, and the script that draws it.
 
-- `phosphor-wordmark.png` (3949 x 1088), the logo, black `#000` on white `#fff`.
-- `phosphor-wordmark-dark.png` (3949 x 1088), the same geometry in the app's own colours,
-  phosphor green `#33ff66` on near-black `#0b0d0b`. The README serves this one to readers on a
-  dark theme.
-- `phosphor-headquarters.png` (3508 x 2480), the black mark with a "headquarters" line under it,
+- `phosphor-wordmark.png` (3949 x 1088), the logo.
+- `phosphor-headquarters.png` (3508 x 2480), the same mark with a "headquarters" line under it,
   laid out on A4 landscape at 300 dpi. Prints at 297 x 210 mm with a 24 mm side margin.
 
-The black-on-white pair is the inverted mark, for light and print contexts. Colour is the only
-thing that separates the two wordmarks: both come off the same page, so the geometry cannot drift
-between them.
+Both are black `#000` on white `#fff`. The app runs green on near-black; these are the inverted
+mark, for light and print contexts.
 
 ## What the mark is
 
@@ -38,18 +34,15 @@ Needs a local Brave and `playwright-core`. Both come from the machine, not from 
 `BROWSER` and `PW` below default to the paths this was built with.
 
     node build.mjs mark.html ../phosphor-wordmark.png
-    node build.mjs mark.html ../phosphor-wordmark-dark.png --fg '#33ff66' --bg '#0b0d0b'
     node build.mjs hq.html ../phosphor-headquarters.png
 
-`build.mjs` writes the PNG and prints the geometry it measured. `--fg` and `--bg` reach the page
-on the query string and default to black on white.
+`build.mjs` writes the PNG and prints the geometry it measured.
 
 ## Test it
 
 There is no test suite. Check it by eye against these numbers, which `build.mjs` prints:
 
     wordmark      W 3949  H 1088  stroke 91  gap 31  cuts 7  slashAngle 56
-    dark          W 3949  H 1088  stroke 91  gap 31  cuts 7  slashAngle 56
     headquarters  page 3508x2480  markSize 614  cap 437  subPx 166  marginSide 281
 
 A changed `stroke` or `slashAngle` means the font failed to load and a fallback face was used.
