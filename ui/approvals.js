@@ -41,6 +41,16 @@
       return 'transfer ' + draft.leg.symbol + ' ' + draft.leg.fromChain + ' to ' + draft.leg.toChain +
         '  ' + usd(draft.leg.amountUsd);
     }
+    // A swap's VENUE decides its custody and its on-chain vs off-chain nature, so it belongs in
+    // the headline, not buried one line down in a simulation string the eye skips. Same-chain
+    // reads "on arb"; cross-chain reads "arb to sol" so the two chains are both visible.
+    if (draft.kind === 'swap') {
+      var where = draft.chain === draft.toChain
+        ? 'on ' + draft.chain
+        : draft.chain + ' to ' + draft.toChain;
+      return 'swap ' + draft.fromSymbol + ' to ' + draft.toSymbol + ' ' + where +
+        ' via ' + draft.venue + '  ' + usd(draft.amountUsd);
+    }
     return String(proposal.kind);
   }
 

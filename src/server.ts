@@ -861,10 +861,24 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   // Absent Origin (curl, the e2e script) is allowed; a foreign one is not. Paired
   // with the Host check this blunts drive-by and DNS-rebinding POSTs from a page
   // the human happens to have open in the same browser.
-  function sameOrigin(req: http.IncomingMessage): boolean {
+  // The Host header, on its own. A browser that has been pointed at this loopback service by a
+  // DNS-rebinding page sends the ATTACKER's domain here, not 127.0.0.1: after the rebind the tab
+  // still thinks it is talking to evil.com, so Host is evil.com. Refusing a non-loopback Host is
+  // what closes rebinding for the READ routes too (/api/state, /api/session, /api/events), which
+  // sameOrigin never guarded because they carry no Origin. An absent Host is a Host-less HTTP/1.0
+  // client (curl, the e2e script), a local tool and not a browser, so it is allowed: a browser
+  // cannot omit it. The app binds to 127.0.0.1 only, so no legitimate request arrives under any
+  // other name anyway; this only rejects the forged ones.
+  function hostIsLocal(req: http.IncomingMessage): boolean {
     const host = String(req.headers.host ?? '');
+    if (host === '') return true;
     const hostname = host.split(':')[0];
-    if (hostname !== HOST && hostname !== 'localhost') return false;
+    return hostname === HOST || hostname === 'localhost';
+  }
+
+  function sameOrigin(req: http.IncomingMessage): boolean {
+    if (!hostIsLocal(req)) return false;
+    const host = String(req.headers.host ?? '');
     const origin = req.headers.origin;
     if (origin === undefined || origin === 'null') return true;
     return origin === `http://${host}`;
@@ -1430,9 +1444,24 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         }
         const chain = chainField(params, 'chain', problems);
         const toChain = params.toChain === undefined ? chain : chainField(params, 'toChain', problems);
+        // uniswap-v3 is an on-chain DEX and cannot cross chains. Caught HERE, at draft time, with
+        // a message that names the fix, rather than deep in the rail as "no verified deployment"
+        // that reads like a missing config. This is also the guard against the silent default: a
+        // cross-chain swap that names no venue defaults to uniswap-v3 and lands here, told to pick
+        // oneclick or intents-native, instead of building an on-chain draft nobody asked for.
+        if (venueRaw === 'uniswap-v3' && chain !== toChain) {
+          problems.push(
+            `uniswap-v3 is a same-chain venue and cannot swap ${chain} to ${toChain}. ` +
+              'For a cross-chain swap set venue to "oneclick" or "intents-native".',
+          );
+        }
         const fromSymbol = strField(params, 'fromSymbol', problems);
         const toSymbol = strField(params, 'toSymbol', problems);
         const amountIn = numField(params, 'amountIn', problems);
+        // A negative or zero input has no honest swap. Rejected at the edge so it never reaches
+        // usdOf, where a negative amount became "$Infinity ... cannot be checked against a limit"
+        // and only failed closed by accident of the arithmetic.
+        if (amountIn <= 0) problems.push('amountIn must be greater than 0');
         const minAmountOut = numField(params, 'minAmountOut', problems);
         if (problems.length > 0) {
           sendJson(res, 400, { error: problems.join('; ') });
@@ -1778,6 +1807,20 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   }
 
   async function handleMcp(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    // The money surface gets the same cross-origin guard the approval and trade routes already
+    // carry. handleMcp is where an agent proposes and, under the click threshold, executes, so a
+    // page that could POST here blind (classic CSRF: a cross-origin fetch still sends Origin) was
+    // the one mutating route a browser could drive. sameOrigin refuses a foreign Origin, and the
+    // seat is not a credential, so this is what stands between a web page and a swap. An absent
+    // Origin (the MCP proxy over stdio->HTTP, curl, the e2e script) is still allowed.
+    if (!sameOrigin(req)) {
+      audit.append('agent_rejected', 'an /api/mcp call was refused as cross-origin', {
+        origin: req.headers.origin ?? '(absent)',
+        host: req.headers.host ?? '(absent)',
+      });
+      sendJson(res, 403, { error: 'cross-origin request refused' });
+      return;
+    }
     const parsed = await readBody(req);
     if (!parsed.ok) {
       sendJson(res, 400, { error: parsed.error });
@@ -1886,6 +1929,13 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     const url = new URL(req.url ?? '/', `http://${HOST}`);
     const route = url.pathname;
     try {
+      // First gate, before any route: refuse a forged Host. This is the one line that closes
+      // DNS-rebinding for the whole surface, reads included, so a page cannot rebind its own
+      // domain to 127.0.0.1 and then read the wallet and the session token as same-origin.
+      if (!hostIsLocal(req)) {
+        sendJson(res, 403, { error: 'request refused: this app answers only on 127.0.0.1' });
+        return;
+      }
       if (req.method === 'GET' || req.method === 'HEAD') {
         if (route === '/api/state') return sendJson(res, 200, buildState());
         if (route === '/api/candles') return await sendCandles(url, res);
