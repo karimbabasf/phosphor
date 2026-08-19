@@ -310,6 +310,10 @@ trade.onUpdate(() => {
 server.listen(cfg.port, '127.0.0.1', () => {
   audit.append('app_start', `phosphor up on http://127.0.0.1:${cfg.port} (${cfg.mode} mode)`);
   console.log(`phosphor: http://127.0.0.1:${cfg.port} (${cfg.mode} mode)`);
+  // Say where the signing key is read from, every boot. The path only, never a byte of the key.
+  // "I don't know where my private key is" should not survive a single startup. `npm run
+  // keys:where` prints the same, with permissions, on demand.
+  console.log(`phosphor: signing key at ${cfg.keysPath}`);
 });
 
 // Ledger refresh loop. Demo mode is static between writes but the refresh also

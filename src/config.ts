@@ -36,6 +36,23 @@ function env(...names: string[]): string | undefined {
   return undefined;
 }
 
+// Where the key lives when nothing overrides it. Two goals, both asked for: the key should be
+// TIED TO THIS PROJECT rather than one global ~/.phosphor/keys.json blob shared by everything,
+// and an existing setup must not break. So the default prefers a per-project directory keyed by
+// the repo's own folder name, and falls back to the legacy global file when that is still where
+// the key lives, so no migration is forced. A fresh setup gets a per-project key from the start.
+// It stays OUTSIDE the working copy either way, so assertOutsideRepo still holds. An explicit
+// PHOSPHOR_KEYS or a keysPath in config overrides all of this.
+function defaultKeysPath(baseDir: string): string {
+  const home = os.homedir();
+  const slug = path.basename(baseDir) || 'default';
+  const perProject = path.join(home, '.phosphor', slug, 'keys.json');
+  const legacy = path.join(home, '.phosphor', 'keys.json');
+  if (fs.existsSync(perProject)) return perProject;
+  if (fs.existsSync(legacy)) return legacy; // an existing global key keeps working, no migration
+  return perProject; // nothing yet: a new key is created project-local, not global
+}
+
 // Private keys inside a git working copy are one `git add -f` away from being published.
 // Keeping them outside it is the structural guarantee, not the .gitignore entry.
 function assertOutsideRepo(keysPath: string, root: string): void {
@@ -78,7 +95,7 @@ export function loadConfig(root?: string): AppConfig {
   const dataDirInput = env('PHOSPHOR_DATA_DIR', 'ACC_DATA_DIR') ?? parsed.dataDir ?? 'state';
   const dataDir = path.resolve(baseDir, dataDirInput);
 
-  const keysInput = env('PHOSPHOR_KEYS') ?? parsed.keysPath ?? path.join(os.homedir(), '.phosphor', 'keys.json');
+  const keysInput = env('PHOSPHOR_KEYS') ?? parsed.keysPath ?? defaultKeysPath(baseDir);
   const keysPath = path.resolve(keysInput.replace(/^~(?=$|\/)/, os.homedir()));
   assertOutsideRepo(keysPath, baseDir);
 

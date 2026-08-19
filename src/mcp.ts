@@ -655,9 +655,14 @@ const MAINNET_ONLY =
 registerPropose(
   'propose_swap',
   'swap',
-  `Proposes swapping one token for another inside NEAR Intents, by signing an intent rather than moving anything on chain. The balance must already be in the verifier, so propose_intents_deposit is the funding step that comes first. Both sides stay under this app's own account.
+  `Proposes swapping one token for another. The VENUE decides what actually happens, and they are not interchangeable, so name it:
+- 'intents-native': signs an intent over a balance ALREADY inside the intents.near verifier, moving nothing on chain. propose_intents_deposit is the funding step first. This is the only venue where chain/toChain name the ASSET's home chain rather than a wallet, so sol and near are meaningful here.
+- 'oneclick': a cross-chain swap that transfers wallet funds to a per-quote NEAR Intents deposit address. Use for moving between chains.
+- 'uniswap-v3': an on-chain DEX swap, SAME CHAIN ONLY, out of this app's EVM wallet. chain must equal toChain; sol and near are not on-chain venues here.
 
-IMPORTANT: chain and toChain name the ASSET's home chain, never a wallet. A balance inside intents.near is owned by the account the verifier derives from this app's EVM signer whatever chain the asset calls home, so chain: 'sol' means "the SOL-flavoured balance held in the verifier", not "my Solana wallet". That is why sol and near are accepted here while the deposit and withdrawal tools take EVM only. ${MAINNET_ONLY} ${CANNOT_APPROVE}`,
+If you omit venue it defaults to 'uniswap-v3', so a cross-chain swap (chain != toChain) MUST name 'oneclick' or 'intents-native' or it is refused. A refusal names the venue to use.
+
+IMPORTANT: for 'intents-native', chain: 'sol' means "the SOL-flavoured balance held in the verifier", not "my Solana wallet". ${MAINNET_ONLY} ${CANNOT_APPROVE}`,
   {
     chain: CHAIN,
     toChain: CHAIN.optional(),
@@ -665,6 +670,12 @@ IMPORTANT: chain and toChain name the ASSET's home chain, never a wallet. A bala
     toSymbol: z.string(),
     amountIn: z.number(),
     minAmountOut: z.number(),
+    venue: z
+      .enum(['uniswap-v3', 'oneclick', 'intents-native'])
+      .optional()
+      .describe(
+        "which rail: 'uniswap-v3' (on-chain, same-chain), 'oneclick' or 'intents-native' (both NEAR Intents, cross-chain). Omitting it means uniswap-v3, so a cross-chain swap must name one of the intents venues.",
+      ),
   },
 );
 
