@@ -48,6 +48,16 @@ import type { TokenInfo } from './uniswap-abi.ts';
 
 export const VENUE = 'uniswap-v3';
 
+// The floor sanity bound. minAmountOut is the only slippage protection on a swap, and it comes
+// off the wire from an agent that may be hijacked. The tool surface deliberately has no field
+// for a recipient, so exfiltration was meant to be impossible; a floor set near zero is the way
+// out, because the agent never names the attacker, it names a price at which the attacker takes
+// the money on a sandwich. Nothing else catches it: the policy engine budgets the INPUT dollars
+// and never sees the floor, and simulate() only refuses a floor set too HIGH. So a floor more
+// than this far below the app's OWN quote is refused here. Generous on purpose (a real swap's
+// floor is a percent or two below the quote, never twenty), so it rejects the absurd without
+// touching the legitimate. A tighter, policy-configurable slippage is the follow-up.
+const MAX_SLIPPAGE_BPS = 2000;
 const MIN_TICK = -887272;
 const MAX_TICK = 887272;
 const Q96 = 1n << 96n;
@@ -518,7 +528,27 @@ async function planSwap(cfg: AppConfig, draft: SwapDraft): Promise<SwapPlan> {
   const amountIn = toBaseUnits(draft.amountIn, tokenIn.decimals);
   const minOut = toBaseUnits(draft.minAmountOut, tokenOut.decimals);
   const quote = await bestQuote(cfg.network, draft.chain, tokenIn.address, tokenOut.address, amountIn);
+  // minOut and quote.amountOut are both base units of tokenOut, so this compares exactly, no
+  // decimals in the way. A floor below `MAX_SLIPPAGE_BPS` under the quote is not a floor.
+  if (floorTooLow(quote.amountOut, minOut, MAX_SLIPPAGE_BPS)) {
+    throw new Error(
+      `minAmountOut ${fmt(minOut, tokenOut.decimals, tokenOut.symbol)} is more than ` +
+        `${MAX_SLIPPAGE_BPS / 100}% below the ${fmt(quote.amountOut, tokenOut.decimals, tokenOut.symbol)} ` +
+        `this swap quotes: a floor that low is an invitation to a sandwich, not slippage protection.`,
+    );
+  }
   return { tokenIn, tokenOut, amountIn, minOut, quote, recipient: addr(draft.to, 'draft.to') };
+}
+
+// The floor-too-low test, pure so it can be asserted without a live quoter. A caller-supplied
+// slippage floor (minOut) more than maxSlippageBps below the app's own quote (quoteOut) is not
+// slippage protection: it is a price at which a sandwich takes the funds. Both arguments are
+// base units of the same token, so the comparison is exact. A zero or absent quote is not
+// judged (there is nothing to compare against, and the higher-floor check catches that path).
+export function floorTooLow(quoteOut: bigint, minOut: bigint, maxSlippageBps: number): boolean {
+  if (quoteOut <= 0n) return false;
+  const limit = (quoteOut * BigInt(10_000 - maxSlippageBps)) / 10_000n;
+  return minOut < limit;
 }
 
 export function uniswapSwapRail(cfg: AppConfig): Rail<SwapDraft> {
