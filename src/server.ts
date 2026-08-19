@@ -273,6 +273,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
 
   const sseClients = new Set<http.ServerResponse>();
   let stateTimer: NodeJS.Timeout | null = null;
+  let activityTimer: NodeJS.Timeout | null = null;
 
   // Chart state is server-side on purpose: see the header of src/chart.ts. The browser
   // renders it and writes its own pan and zoom back.
@@ -333,6 +334,27 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   // second copy of the truth travelling down a different pipe.
   function broadcastTrade(): void {
     for (const client of sseClients) sseSend(client, { type: 'trade', rev: trade.view.rev() });
+  }
+
+  // The presence light's live pulse. Deliberately NOT a state broadcast: a read changes no
+  // money, so making every agent read refetch and repaint the whole wallet would be a lot of
+  // work to move one dot. This carries nothing (the browser already knows the agent is
+  // connected) and only says "a tool call just happened now", which is all the light needs to
+  // brighten and restart its own dull timer. Coalesced so a burst of rapid reads is one frame.
+  let activityPending = false;
+  function broadcastActivity(): void {
+    if (activityTimer !== null) {
+      activityPending = true;
+      return;
+    }
+    for (const client of sseClients) sseSend(client, { type: 'activity' });
+    activityTimer = setTimeout(function sweep() {
+      activityTimer = null;
+      if (!activityPending) return;
+      activityPending = false;
+      broadcastActivity();
+    }, STATE_DEBOUNCE_MS);
+    activityTimer.unref();
   }
 
   // A proposal reaching 'executed' is both a balance change and a new line in the history.
@@ -549,6 +571,10 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       agents: {
         connected: agents.connected(),
         holder: agents.holder(),
+        // The most recent tool call, so a browser that just loaded (or reconnected and missed
+        // the live 'activity' pings below) can seed its presence light from state alone rather
+        // than waiting for the next op to know whether the agent is working.
+        lastActivityAt: agents.activityAt(),
       },
       candleProducts: cfg.candleProducts,
       view: getView(),
@@ -1800,7 +1826,16 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       rejectSeat(seat.error, body, res, seat.revoked === true);
       return;
     }
-    if (seat.edge) audit.append('agent_connected', 'an agent attached to phosphor', body);
+    if (seat.edge) {
+      audit.append('agent_connected', 'an agent attached to phosphor', body);
+      // An agent that took the seat on its first op (no hello) is connected NOW. Push state so
+      // the window's `agent` field and presence light say so at once rather than at the next
+      // heartbeat up to a TTL later. The hello path already does this; this covers the rest.
+      broadcastState();
+    }
+    // A granted tool call is the agent working. Tell the window so its presence light shines
+    // now rather than at the next state push, which for a pure read would never come.
+    broadcastActivity();
 
     const label =
       op === 'read'

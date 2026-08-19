@@ -775,3 +775,28 @@ body.log-collapsed .panel-gate > .pbody { max-height: none; }
 #page[data-view='basic'] .alert { display: none; }
 #page[data-view='pro'] #basic { display: none; }
 
+
+/* ---- agent presence light (ui/presence.js) ---- */
+/* The orb sits in the status bar next to the `agent` field. The row aligns on the baseline,
+   so the orb centres itself against it. Fixed 16px; the canvas backing store is sized by JS. */
+.agent-orb {
+  align-self: center;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-left: 1px;
+}
+
+/* The pulse strip is a short fixed panel under the log. It does not grow, so the log keeps the
+   leftover height. Zero padding so the phosphor trail bleeds to the frame. */
+.panel-pulse { flex: none; }
+.panel-pulse > .pbody {
+  height: 42px;
+  padding: 0;
+  background: var(--bg);
+}
+#agent-pulse {
+  display: block;
+  width: 100%;
+  height: 100%;
+}

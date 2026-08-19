@@ -35,6 +35,9 @@
     <span class="field"><span class="k">feed</span> <span class="v" id="t-feed" role="status">--</span></span>
     <span class="bar">&#9474;</span>
     <span class="field"><span class="k">agent</span> <span class="v" id="t-agent">--</span></span>
+    <!-- The presence light: same one the pro window carries. Shines while the agent works,
+         dulls when it is idle. Presentational, mirrors the `agent` field, so aria-hidden. -->
+    <canvas class="agent-orb" id="agent-orb" aria-hidden="true"></canvas>
     <button type="button" id="kill-btn" class="btn">[ KILL SWITCH: -- ]</button>
     <!-- Written AFTER the brake, deliberately. The comment above this bar states the rule:
          nothing focusable comes before the kill switch, so the keyboard reaches the thing
@@ -326,6 +329,9 @@
 <script src="/chart.js" defer></script>
 <script src="/approvals.js" defer></script>
 <script src="/trade-overlay.js" defer></script>
+<!-- Before trade.js: exposes window.PhosphorPresence, driven from state and the SSE
+     'activity' event. Self-contained and presentational. -->
+<script src="/presence.js" defer></script>
 <script src="/trade.js" defer></script>
 </body>
 </html>

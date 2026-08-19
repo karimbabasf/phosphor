@@ -43,6 +43,17 @@ export function appleQuote(value: string): string {
   return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
+// The first thing the summoned agent is told to do. A CONSTANT, never anything from the
+// request: it is embedded in the command exactly like `claude` itself is, so it changes the
+// "nothing from the request reaches the command line" property not at all. It exists because a
+// bare `claude` starts and then SITS: the MCP handshake loads the "call start first" rule in
+// front of the model, but the model takes no turn until a human types, so the greeting a user
+// summoned to see never appears until they type something themselves. This is that first turn,
+// pre-typed, so clicking summon shows the banner instead of an empty prompt.
+const FIRST_PROMPT =
+  'Connect to Phosphor and show me the greeting now: call the start tool and print its banner ' +
+  'verbatim inside a code block, then wait for my instructions.';
+
 /**
  * The AppleScript that opens the window. Pure, so a test can read the exact text that would
  * run without a terminal ever appearing.
@@ -50,13 +61,14 @@ export function appleQuote(value: string): string {
  * `claude` is invoked bare rather than by absolute path on purpose: on this machine it is a
  * shell function that adds `--effort max`, defined in the user's profile. `do script` runs a
  * login shell, so the function is in scope; an absolute path to the binary would silently
- * bypass it and start a weaker agent than the one the user configured.
+ * bypass it and start a weaker agent than the user configured. The fixed FIRST_PROMPT is
+ * passed as claude's first argument so the agent acts the moment the window opens.
  */
 export function summonScript(cwd: string): string {
   return [
     'tell application "Terminal"',
     '  activate',
-    `  do script ${appleQuote(`cd ${shellQuote(cwd)} && claude`)}`,
+    `  do script ${appleQuote(`cd ${shellQuote(cwd)} && claude ${shellQuote(FIRST_PROMPT)}`)}`,
     'end tell',
   ].join('\n');
 }
