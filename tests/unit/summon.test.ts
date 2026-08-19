@@ -28,16 +28,26 @@ test('applescript quoting escapes the backslash before the quote, not after', ()
   assert.equal(appleQuote('a\\"b'), '"a\\\\\\"b"');
 });
 
-test('the script cds to the project and runs claude, and nothing else', () => {
+test('the script cds to the project and runs claude with the fixed first prompt, and nothing else', () => {
   const script = summonScript('/Users/k/phosphor');
   assert.equal(
     script,
-    ['tell application "Terminal"', '  activate', '  do script "cd \'/Users/k/phosphor\' && claude"', 'end tell'].join('\n'),
+    [
+      'tell application "Terminal"',
+      '  activate',
+      '  do script "cd \'/Users/k/phosphor\' && claude \'Connect to Phosphor and show me the greeting now: ' +
+        "call the start tool and print its banner verbatim inside a code block, then wait for my instructions.'\"",
+      'end tell',
+    ].join('\n'),
   );
   // Bare `claude`, never an absolute path: on this machine it is a shell function that adds
   // --effort max, and `do script` runs a login shell so the function is in scope. Resolving
   // the binary directly would silently start a weaker agent than the user configured.
   assert.ok(!script.includes('/bin/claude'));
+  // The prompt is the ONLY thing after `claude`, and it is a fixed literal: no request input
+  // reaches the command line, so the summon still hands the terminal nothing it could not do
+  // itself. The prompt carries no single quote, so it stays one shell word.
+  assert.ok(script.includes("&& claude 'Connect to Phosphor"));
 });
 
 test('a hostile path is quoted into inertness rather than executed', () => {
@@ -56,10 +66,22 @@ test('a hostile path is quoted into inertness rather than executed', () => {
   assert.ok(literal.startsWith('"') && literal.endsWith('"'));
   const shell = literal.slice(1, -1).replace(/\\(["\\])/g, '$1');
 
-  // Undo the shell quoting: the whole path is one word, and '\'' is a literal quote.
-  assert.ok(shell.startsWith(`cd '`) && shell.endsWith(`' && claude`));
-  const word = shell.slice(4, -' && claude'.length - 1);
+  // Undo the shell quoting: the whole path is one word, and '\'' is a literal quote. The line
+  // is now `cd '<path>' && claude '<fixed prompt>'`, so the path is the word between `cd '` and
+  // the fixed ` && claude '...'` tail. The marker is distinctive and cannot appear inside the
+  // shell-quoted path, so the first occurrence is the real separator.
+  const marker = `' && claude '`;
+  const idx = shell.indexOf(marker);
+  assert.ok(shell.startsWith(`cd '`) && idx !== -1, 'still exactly cd <one word> && claude <prompt>');
+  const word = shell.slice(4, idx);
   assert.equal(word.replace(/'\\''/g, `'`), hostile, 'the path arrives intact and inert');
+  // Whatever the path was, the command after it is the fixed prompt and nothing the path could
+  // inject: the tail is a single quoted literal with no request input in it.
+  assert.equal(
+    shell.slice(idx + marker.length),
+    "Connect to Phosphor and show me the greeting now: call the start tool and print its banner " +
+      "verbatim inside a code block, then wait for my instructions.'",
+  );
 });
 
 test('a path with a control character is refused, not escaped', () => {
