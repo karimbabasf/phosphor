@@ -48,6 +48,14 @@ export type AgentPresence = {
   sweep(): AgentSeat | null;
   holder(): AgentSeat | null;
   connected(): number;
+  // The epoch-ms of the most recent REAL op (a tool call), or null if none this run. It is
+  // the "is the agent actually working right now" signal the window's presence light reads:
+  // heartbeats (op 'hello') do not touch it, so a connected-but-idle agent reports an old
+  // timestamp and the light dulls, while a burst of reads and proposes keeps it fresh and the
+  // light shines. This is deliberately recency, not an in-flight counter: the truth the human
+  // wants is "did the thing I asked for just cause activity", and a call that starts brightens
+  // the light for the whole window whether it takes 40ms or 4s.
+  activityAt(): number | null;
 };
 
 // A client that names no interval is an older src/mcp.ts pinging every 15s. Its TTL has to
@@ -81,6 +89,7 @@ const REVOKE_MS = 300_000;
 
 export function createAgents(now: () => number = Date.now): AgentPresence {
   let seat: AgentSeat | null = null;
+  let lastActivity: number | null = null;
   const revoked = new Map<string, number>();
 
   function expired(s: AgentSeat): boolean {
@@ -154,7 +163,15 @@ export function createAgents(now: () => number = Date.now): AgentPresence {
 
   return {
     claim: (params) => resolve(params, true),
-    check: (params) => resolve(params, false),
+    check: (params) => {
+      const result = resolve(params, false);
+      // Stamped only on a granted op. A refused check is a SECOND agent being turned away,
+      // not the holder working, so lighting the presence light on it would report the wrong
+      // session's activity. hello/bye never reach here (handleMcp answers them first), so
+      // this counts tool calls and nothing else.
+      if (result.ok) lastActivity = now();
+      return result;
+    },
     release(session: unknown) {
       const current = live();
       if (current === null) return null;
@@ -181,5 +198,6 @@ export function createAgents(now: () => number = Date.now): AgentPresence {
     },
     holder: () => live(),
     connected: () => (live() === null ? 0 : 1),
+    activityAt: () => lastActivity,
   };
 }

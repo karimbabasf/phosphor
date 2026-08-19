@@ -1006,3 +1006,13 @@ body[data-view='basic'].waiting .basic-headline {
     max-width: min(34ch, 62vw);
   }
 }
+
+/* Start the assistant from the calm screen. A calm accent, not the amber of a pending
+   decision nor the red of the stop below it: starting help is neither a question nor a brake. */
+.basic-summon {
+  color: var(--ink);
+  border-color: color-mix(in oklch, var(--calm) 46%, var(--rule-firm));
+}
+.basic-summon:hover {
+  border-color: color-mix(in oklch, var(--calm) 64%, var(--rule-firm));
+}

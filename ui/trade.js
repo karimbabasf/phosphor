@@ -1477,6 +1477,11 @@ async function refreshState() {
   STATE_INFLIGHT = true;
   try {
     POLICY = await getJson('/api/state');
+    // Feed the presence light: seat state plus when the agent last did real work. Live
+    // 'activity' pings keep it bright between state pushes; this seeds it on load.
+    if (window.PhosphorPresence && POLICY.agents) {
+      PhosphorPresence.setState(POLICY.agents.connected, POLICY.agents.lastActivityAt);
+    }
     followViewMode(POLICY);
     renderKill(POLICY);
     renderGate(POLICY);
@@ -1566,6 +1571,9 @@ function openEvents() {
     }
     if (payload.type === 'trade') refreshTrade();
     else if (payload.type === 'state') refreshState();
+    // A tool call just happened: brighten the presence light now. It dulls itself when the
+    // calls stop. Carries nothing, so there is nothing to refetch.
+    else if (payload.type === 'activity') { if (window.PhosphorPresence) PhosphorPresence.note(); }
     else if (payload.type === 'log' && payload.event) appendLog(payload.event);
     else if (payload.type === 'candles') candlesPushed();
     // A chart change from an agent. Our own writes come back with a revision we already know,

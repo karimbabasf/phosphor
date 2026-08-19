@@ -24,6 +24,10 @@
     <span class="field"><span class="k">held</span> <span class="v hi" id="stat-total">--</span> <span class="faint" id="stat-positions"></span></span>
     <span class="bar">&#9474;</span>
     <span class="field"><span class="k">agent</span> <span class="v" id="stat-agent">--</span></span>
+    <!-- The presence light: shines while the agent is working, dulls when it goes quiet, a
+         faint ghost when none is connected. Purely presentational, and everything it says is
+         also in the `agent` field beside it, so it is aria-hidden. See ui/presence.js. -->
+    <canvas class="agent-orb" id="agent-orb" aria-hidden="true"></canvas>
     <span class="bar">&#9474;</span>
     <span class="field"><span class="k">policy</span> <span class="v" id="stat-policy">--</span></span>
     <span class="bar">&#9474;</span>
@@ -173,6 +177,18 @@
         <div class="frame frame-bottom"></div>
       </section>
 
+      <!-- 8. AGENT PULSE. A small oscilloscope under the log: the second half of the presence
+           signal, the moving thing that keeps a working window from ever reading as frozen.
+           It draws the same working/idle/disconnected state as the orb, so it needs no words
+           of its own. See ui/presence.js. -->
+      <section class="panel panel-pulse">
+        <div class="frame frame-top" data-title="AGENT PULSE"></div>
+        <div class="pbody">
+          <canvas id="agent-pulse" class="pulsestrip" aria-hidden="true"></canvas>
+        </div>
+        <div class="frame frame-bottom"></div>
+      </section>
+
     </div>
 
   </div>
@@ -289,6 +305,9 @@
 
     <div class="basic-stop">
       <p class="basic-agent" id="basic-agent"></p>
+      <!-- Start the assistant without leaving this screen. Same /api/summon the pro window
+           uses; worded plainly because this screen never says "agent". -->
+      <button type="button" class="basic-btn basic-summon" id="basic-summon">START THE ASSISTANT</button>
       <button type="button" class="basic-btn basic-kill" id="basic-kill">STOP EVERYTHING</button>
       <p class="basic-stop-confirm" id="basic-stop-confirm" hidden>
         <span id="basic-stop-question">Are you sure?</span>
@@ -314,6 +333,9 @@
 <script src="/transition.js" defer></script>
 <script src="/chart.js" defer></script>
 <script src="/approvals.js" defer></script>
+<!-- Before app.js: it exposes window.PhosphorPresence, which app.js drives from state and the
+     SSE 'activity' event. Self-contained and presentational. -->
+<script src="/presence.js" defer></script>
 <script src="/app.js" defer></script>
 </body>
 </html>

@@ -396,6 +396,9 @@ function renderStatus(s) {
   agentNode.textContent = !agents.connected ? 'none' : holder ? holder.client : 'connected';
   agentNode.className = !agents.connected ? 'v faint' : 'v';
   agentNode.title = holder ? 'connected since ' + clock(holder.since) : 'no agent is connected';
+  // Feed the presence light: whether an agent holds the seat, and when it last did real work.
+  // Live 'activity' pings (below) keep it bright between state pushes; this seeds it on load.
+  if (window.PhosphorPresence) PhosphorPresence.setState(agents.connected, agents.lastActivityAt);
 
   // Which world this is running against matters more than demo/live, and the
   // gate banner below only makes sense next to it.
@@ -1664,6 +1667,15 @@ function wireBasic() {
     if (no.dataset.id) decide('/api/refuse', no.dataset.id, [yes, no], error);
   });
 
+  // Start the assistant without leaving the calm screen. Same /api/summon the pro window uses,
+  // worded plainly because this screen never says "agent".
+  var summon = $('basic-summon');
+  if (summon) {
+    summon.addEventListener('click', function () {
+      runSummon(summon, 'Start the assistant in a new window? Any assistant connected now is stopped.');
+    });
+  }
+
   // Two presses, and the confirm is a real control rather than window.confirm,
   // because a native dialog is the easiest thing on this screen to dismiss by reflex.
   var kill = $('basic-kill');
@@ -1787,6 +1799,9 @@ function openEvents() {
       return;
     }
     if (payload.type === 'state') refreshState();
+    // The agent just made a tool call. Brighten the presence light now; it dulls itself when
+    // the calls stop. Carries nothing, so there is nothing to refetch.
+    else if (payload.type === 'activity') { if (window.PhosphorPresence) PhosphorPresence.note(); }
     else if (payload.type === 'log' && payload.event) appendLog(payload.event);
     // Only refetched once the panel has been opened: a gas receipt landing behind a tab
     // nobody is looking at is not worth a round trip.
@@ -1811,25 +1826,32 @@ function openEvents() {
    The response is not awaited for effect on this page. The seat change arrives as a state
    push and the new agent announces itself on its first heartbeat, so the bar updates through
    the same path it always does rather than through a special case for this button. */
+/* One summon path, called from the pro button and the basic START button. The seat change
+   arrives as a state push and the new agent announces itself on its first heartbeat, so the
+   bar updates through the same path it always does rather than a special case for the button. */
+async function runSummon(btn, question) {
+  if (SUMMON_PENDING) return;
+  if (question && !window.confirm(question)) return;
+  SUMMON_PENDING = true;
+  btn.disabled = true;
+  try {
+    var answer = await postJson('/api/summon', { token: TOKEN });
+    alertLine(answer && answer.dropped
+      ? 'new agent starting; dropped ' + answer.dropped
+      : 'new agent starting in a terminal window');
+  } catch (err) {
+    alertLine('summon failed: ' + (err.message || String(err)));
+  } finally {
+    SUMMON_PENDING = false;
+    btn.disabled = false;
+  }
+}
+
 function wireSummon() {
   var btn = document.getElementById('summon-btn');
   if (!btn) return;
-  btn.addEventListener('click', async function () {
-    if (SUMMON_PENDING) return;
-    if (!window.confirm('Start a new agent in a terminal window? Any agent connected now is dropped and loses its conversation.')) return;
-    SUMMON_PENDING = true;
-    btn.disabled = true;
-    try {
-      var answer = await postJson('/api/summon', { token: TOKEN });
-      alertLine(answer && answer.dropped
-        ? 'new agent starting; dropped ' + answer.dropped
-        : 'new agent starting in a terminal window');
-    } catch (err) {
-      alertLine('summon failed: ' + (err.message || String(err)));
-    } finally {
-      SUMMON_PENDING = false;
-      btn.disabled = false;
-    }
+  btn.addEventListener('click', function () {
+    runSummon(btn, 'Start a new agent in a terminal window? Any agent connected now is dropped and loses its conversation.');
   });
 }
 var SUMMON_PENDING = false;
