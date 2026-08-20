@@ -98,10 +98,6 @@ interface Harness {
   posts: Any[];
   globeCalls: string[];
   badge: Any;
-  flatGlobes: Any[];
-  webglGlobes: Any[];
-  drives: string[];
-  traced: Any[];
   tick(ms: number): void;
   find(cls: string): Any;
   rows(): string[];
@@ -109,24 +105,10 @@ interface Harness {
   phase(): string | null;
 }
 
-function load(
-  opts: {
-    startFails?: string;
-    driver?: Any;
-    veilNeverFires?: boolean;
-    intro?: Any;
-    /** A browser that can hold a WebGL context, so the panel gets the three.js globe. */
-    webgl?: boolean;
-    /** The badge's trace, which only the terminal surfaces ask for. */
-    trace?: boolean;
-  } = {},
-): Harness {
+function load(opts: { startFails?: string; driver?: Any; veilNeverFires?: boolean; intro?: Any } = {}): Harness {
   const created: Any[] = [];
   const posts: Any[] = [];
   const globes: Any[] = [];
-  const webglGlobes: Any[] = [];
-  const drives: string[] = [];
-  const traced: Any[] = [];
   const timers: Array<{ id: number; at: number; fn: () => void }> = [];
   let now = 0;
   let nextTimer = 1;
@@ -197,39 +179,6 @@ function load(
       return globe;
     },
   };
-  /* The three.js globe, which is the one the panel prefers. It is a separate stub from the one
-     above rather than a flag on it, because the whole point of the switch is that the panel
-     asks for this file first and takes the flat globe's answer when it does not get one.
-     create() returning null is not a stub convenience: it is what ui/warden-globe.js really
-     does when a canvas cannot hold a WebGL context, which is the fallback this pins down. */
-  if (opts.webgl !== undefined) {
-    sandbox.PhosphorWardenGlobe = {
-      create: () => {
-        if (!opts.webgl) return null;
-        const calls: string[] = [];
-        let on = false;
-        const globe: Any = {
-          calls,
-          drive: null,
-          start: () => { if (on) return; on = true; calls.push('start'); },
-          stop: () => { on = false; calls.push('stop'); },
-          tune: (next: Any) => { globe.drive = next; },
-          running: () => on,
-        };
-        webglGlobes.push(globe);
-        return globe;
-      },
-    };
-  }
-  /* The status-bar light, which also draws the badge's trace. Only `drive` and `trace` are
-     recorded: everything else on that object is the MCP seat, and the seat is exactly what
-     this panel must never reach for. */
-  sandbox.PhosphorPresence = {
-    trace: (canvas: Any) => { traced.push(canvas); },
-    drive: (state: string) => { drives.push(state); },
-    note: () => { throw new Error('the agent panel told the seat light a tool call happened'); },
-    setState: () => { throw new Error('the agent panel wrote the seat state'); },
-  };
   sandbox.PHOSPHOR_RAIN = {
     // The panel hands the fall a host and a callback; the callback is the swap. Fired at once
     // here, which is the same thing the real file does when animation is unavailable.
@@ -247,7 +196,7 @@ function load(
 
   const root = makeNode('div', created);
   const chat = sandbox.PhosphorChat;
-  chat.mount(root, { intro: opts.intro ?? ['one', 'two', 'three'], veil: 'rain', trace: opts.trace });
+  chat.mount(root, { intro: opts.intro ?? ['one', 'two', 'three'], veil: 'rain' });
 
   function walk(node: Any, out: Any[]): Any[] {
     out.push(node);
@@ -274,14 +223,9 @@ function load(
     root,
     created,
     posts,
-    // The idle globe is the first one the panel builds and the badge is the second, whichever
-    // file answered for them.
-    globeCalls: (webglGlobes[0] ?? globes[0]).calls,
-    badge: webglGlobes[1] ?? globes[1],
-    flatGlobes: globes,
-    webglGlobes,
-    drives,
-    traced,
+    // The idle globe is the first one the panel builds and the badge is the second.
+    globeCalls: globes[0].calls,
+    badge: globes[1],
     facts: () =>
       all()
         .filter((n: Any) => n.className === 'chat-intro-fact')
@@ -812,66 +756,4 @@ test('the record says the human stopped the answer', () => {
   assert.deepEqual(h.rows().at(-1), '|the human stopped this answer');
   const row = h.find('chat-list').children.at(-1);
   assert.equal(row.className, 'chat-row chat-status', 'as a status line, which is the dim one');
-});
-
-/* ---------- which globe, and the line beside it ----------
-
-   The panel draws Warden's real three.js globe, and it draws the 2D one when a canvas cannot
-   hold a WebGL context. Those two tests are here rather than in a rendering test because the
-   thing that must not break is not how either globe looks: it is that this window, which holds
-   an approval button, never shows an empty box because a GPU said no. */
-
-test('the three.js globe is the one the panel asks for first', () => {
-  const h = load({ webgl: true });
-
-  assert.equal(h.webglGlobes.length, 2, 'both globes came from the WebGL file');
-  assert.equal(h.flatGlobes.length, 0, 'and the 2D file was not asked at all');
-});
-
-test('a canvas that cannot hold a WebGL context still gets a globe', () => {
-  // create() returning null is what ui/warden-globe.js does when the probe fails: an old
-  // driver, a refused context, a build that shipped without ui/vendor.
-  const h = load({ webgl: false });
-
-  assert.equal(h.flatGlobes.length, 2, 'the 2D globe answered for both');
-  assert.equal(h.globeCalls.at(-1), 'start', 'and the idle one is turning, not sitting blank');
-});
-
-test('a browser with neither globe file still opens the agent', () => {
-  const h = load();
-  h.chat.push({ kind: 'status', state: 'starting' });
-  h.tick(1000);
-  h.chat.push({ kind: 'status', state: 'ready' });
-
-  assert.equal(h.phase(), 'live', 'the panel reached the phase a person can type in');
-});
-
-test('the trace is built only where it is asked for', () => {
-  const plain = load();
-  assert.equal(plain.traced.length, 0, 'the calm screen got no oscilloscope');
-  assert.equal(plain.created.filter((n) => n.className === 'chat-badge-trace').length, 0);
-
-  const scoped = load({ trace: true });
-  assert.equal(scoped.traced.length, 1, 'and the terminal handed its canvas over');
-  assert.equal(scoped.traced[0].id, 'agent-pulse');
-});
-
-test('the trace is told the driver state, and told when there is no driver', () => {
-  const h = load({ trace: true });
-  assert.deepEqual(h.drives.at(-1), '', 'an idle panel has no driver to draw');
-
-  h.chat.push({ kind: 'status', state: 'starting' });
-  assert.equal(h.drives.at(-1), 'starting');
-  h.tick(1000);
-  h.chat.push({ kind: 'status', state: 'thinking' });
-  assert.equal(h.drives.at(-1), 'thinking');
-  h.chat.push({ kind: 'status', state: 'ready' });
-  assert.equal(h.drives.at(-1), 'ready');
-
-  /* The one that matters. When the driver goes, the line goes with it: the badge is on its way
-     off the screen, and a trace still drawing a live wave beside a globe that has gone would be
-     the panel saying an agent is working when none is. */
-  h.chat.push({ kind: 'status', state: 'stopped' });
-  h.tick(2000);
-  assert.equal(h.drives.at(-1), '', 'the trace was told the driver had gone');
 });

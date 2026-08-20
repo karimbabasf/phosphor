@@ -1907,9 +1907,6 @@ function mountChat() {
     /* The character fall, the same one every other change on this surface runs through.
        ui/basic.css states why the calm screen is handed 'fade' instead. */
     veil: 'rain',
-    /* The oscilloscope trace out of the badge, the same as the pro deck. This window is a
-       terminal all the way down; the calm screen is the one that does not ask for a scope. */
-    trace: true,
     colorVar: '--green',
     startLabel: 'START THE AGENT',
     idleNote: 'no agent is running',

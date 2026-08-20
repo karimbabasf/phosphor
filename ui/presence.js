@@ -25,26 +25,16 @@
  *   idle          connected but quiet for longer             -> dull, still (it is there, resting)
  *   disconnected  no agent holds the seat                    -> a faint ghost, no motion
  *
- * It renders two things, and THEY DO NOT READ THE SAME FACT. Both are optional and each is
- * handled alone:
- *   #agent-orb     the ball in the status bar. The seat, as described above: any agent,
- *                  anywhere, including one this window never started.
- *   #agent-pulse   the oscilloscope trace running left out of the agent panel's badge. It is
- *                  the globe's own line, so it says what the globe beside it says: how hard
- *                  THIS PANEL'S DRIVER is working. ui/driver-chat.js builds the canvas, hands
- *                  it here, and reports the driver state; nothing about the seat reaches it.
- *
- * Keeping those two apart is the whole reason they are worth having on one screen. A ball in
- * the chrome that answers "is anything working" and a line out of the globe that answers "is
- * the thing I started working" are two different answers. Two lights saying the same sentence
- * would be one light and a decoration.
+ * It renders two things when their canvases are on the page (each optional, handled alone):
+ *   #agent-orb     the ball in the status bar
+ *   #agent-pulse   the oscilloscope strip under the log, the "something alive" that fills the
+ *                  gap so a busy window is never a dead one. Neither window carries this
+ *                  canvas right now, so today the orb is the whole of what gets drawn.
  *
  * Driven entirely from outside through window.PhosphorPresence:
  *   note()                     a tool call just happened NOW (from the SSE 'activity' event)
  *   setState(connected, at)    the seat state from /api/state (also seeds the last-activity
  *                              clock so a fresh page load is right before any event arrives)
- *   trace(canvas)              the agent panel offering its badge's trace canvas
- *   drive(state)               that panel's driver state, or '' when there is no driver
  */
 (function () {
   'use strict';
@@ -72,29 +62,9 @@
   // ---- state, set from outside ----
   var connected = false;
   var lastActivity = 0; // epoch ms of the last known tool call
-  var driver = ''; // the agent panel's driver state, or '' when that panel has no driver
-
-  /* WHAT THE TRACE DRAWS, PER DRIVER STATE, and it is the same three the badge globe knows
-     (BADGE_DRIVE in ui/driver-chat.js). `hz` is how quickly the wave crosses the strip and
-     `amp` is how far it reaches, so `thinking` is a signal and `ready` is a resting ripple.
-     There is no fourth: every other driver state takes the whole badge off the screen, and a
-     line drawn for a driver that is gone is a line nobody sees. */
-  var TRACE = {
-    thinking: { hz: 7.5, amp: 0.72, lit: 1 },
-    starting: { hz: 4.4, amp: 0.34, lit: 0.7 },
-    ready: { hz: 2.2, amp: 0.12, lit: 0.45 },
-  };
-  var FLAT = { hz: 2.2, amp: 0.02, lit: 0.1 };
-
-  function traceState() {
-    var t = TRACE[driver];
-    return t && typeof t.hz === 'number' ? t : FLAT;
-  }
 
   // ---- eased render values, so a state change glides rather than snaps ----
-  var bright = 0.14; // the orb's brightness, lerped toward the target for the seat state
-  var lit = 0.1; // the trace's own brightness, lerped toward the target for the driver state
-  var phase = 0; // the trace's accumulated wave position, so a speed change carries on
+  var bright = 0.14; // current brightness, lerped toward the target for the state
   var spinAngle = 0; // the orb's rotating sheen
   var samples = null; // the strip's scrolling ring buffer of wave heights
   var lastT = null; // perf clock of the previous frame, for dt
@@ -172,45 +142,36 @@
     }
   }
 
-  function drawStrip(dt) {
+  function drawStrip(w, dt) {
     var box = fit(strip, stripCtx);
-    // A strip inside a hidden badge has no box worth drawing into, and the frames spent on it
-    // would be frames nobody can see. It comes back on the phase that puts the badge up.
-    if (!box || box.w < 2 || box.h < 2) return;
+    if (!box) return;
     var ctx = stripCtx;
     var n = Math.max(2, Math.round(box.w));
     if (!samples || samples.length !== n) {
       samples = new Array(n);
       for (var i = 0; i < n; i++) samples[i] = 0;
     }
-    var state = traceState();
-    /* Advance the scroll: push one new height on the right, drop the oldest on the left. The
-       new height is a wave whose speed and reach are the driver's state.
-       The phase is ACCUMULATED rather than read off the clock, for the reason the globe
-       accumulates its turn: a wave positioned at elapsed*hz jumps sideways the instant the
-       agent starts writing, because the faster wave says it should already be somewhere else. */
-    phase += dt * state.hz;
+    // Advance the scroll: push one new height on the right, drop the oldest on the left. The
+    // new height is a wave whose amplitude is the state. Working is a lively signal; idle is a
+    // low resting ripple; disconnected flatlines.
+    var phase = (performance.now() / 1000) * (w ? 7.5 : 2.2);
+    var amp = w ? 0.72 : connected ? 0.12 : 0.03;
     var h = Math.sin(phase) * 0.6 + Math.sin(phase * 2.3 + 1.1) * 0.4;
     samples.shift();
-    samples.push(h * state.amp);
+    samples.push(h * amp);
 
-    /* Phosphor trail: fade the whole strip a little each frame instead of clearing, so the
-       crest leaves a decaying glow behind it, the same decay the app is named for.
-       The fade takes ALPHA away rather than painting the app's background over the top. Both
-       leave the same trail, but a strip that paints its own ground is a dark rectangle sitting
-       on whatever it was laid over, and this one is laid over the agent panel rather than
-       inside a box of its own. destination-out subtracts, so the canvas stays transparent and
-       the panel behind it is the only ground there is. */
+    // Phosphor trail: fade the whole strip a little each frame instead of clearing, so the
+    // crest leaves a decaying glow behind it, the same decay the app is named for.
     ctx.setTransform(window.devicePixelRatio || 1, 0, 0, window.devicePixelRatio || 1, 0, 0);
-    ctx.globalCompositeOperation = 'destination-out';
-    ctx.fillStyle = 'rgba(0,0,0,0.28)';
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = 'rgba(11,13,11,0.28)';
     ctx.fillRect(0, 0, box.w, box.h);
 
     var mid = box.h / 2;
     var reach = box.h * 0.42;
     ctx.globalCompositeOperation = 'lighter';
     ctx.lineWidth = 1;
-    ctx.strokeStyle = rgba(0.14 + 0.7 * lit);
+    ctx.strokeStyle = rgba(0.14 + 0.7 * bright * (w ? 1 : 0.5));
     ctx.beginPath();
     for (var x = 0; x < n; x++) {
       var y = mid - samples[x] * reach;
@@ -218,12 +179,10 @@
       else ctx.lineTo(x, y);
     }
     ctx.stroke();
-    /* A brighter head on the leading edge so the eye follows the live end, and it is on the
-       RIGHT because that is where the globe is: the line reads as something the globe is
-       drawing out behind it rather than as a chart being filled from the left. */
+    // A brighter head on the leading edge so the eye follows the live end.
     var hy = mid - samples[n - 1] * reach;
     var head = ctx.createRadialGradient(n - 1, hy, 0, n - 1, hy, 6);
-    head.addColorStop(0, rgba(0.9 * lit));
+    head.addColorStop(0, rgba(0.9 * bright));
     head.addColorStop(1, rgba(0));
     ctx.fillStyle = head;
     ctx.beginPath();
@@ -240,30 +199,20 @@
     var w = working();
     // Target brightness by state, eased (Warden lerps its glow the same way).
     var target = w ? 1 : connected ? 0.5 : 0.14;
-    var ease = 1 - Math.exp(-6 * dt);
-    bright += (target - bright) * ease;
-    lit += (traceState().lit - lit) * ease;
+    bright += (target - bright) * (1 - Math.exp(-6 * dt));
 
     var t = now / 1000;
     var wave = Math.sin(t * 2.2); // the shared Warden wave
     spinAngle += dt * 2.4 * (w ? 1.35 : 1); // 1.35x while working, Warden's spin multiplier
 
     if (orbCtx) drawOrb(w, wave);
-    if (stripCtx) drawStrip(dt);
+    if (stripCtx) drawStrip(w, dt);
 
-    raf = requestAnimationFrame(frame);
+    requestAnimationFrame(frame);
   }
 
-  // Only run the loop if there is something to draw. The trace can arrive later than this file
-  // does, because the agent panel builds its own canvas, so start() is idempotent and the
-  // adoption below calls it again.
-  var raf = 0;
-  function start() {
-    if (raf || (!orbCtx && !stripCtx)) return;
-    lastT = null;
-    raf = requestAnimationFrame(frame);
-  }
-  start();
+  // Only run the loop if there is something to draw.
+  if (orbCtx || stripCtx) requestAnimationFrame(frame);
 
   window.PhosphorPresence = {
     // A tool call happened now. Client clock, which on a loopback app is the server's clock.
@@ -275,25 +224,6 @@
       connected = !!isConnected;
       if (typeof at === 'number' && at > lastActivity) lastActivity = at;
       if (!connected) lastActivity = 0; // a dropped agent is idle at once, not IDLE_MS later
-    },
-    /* The agent panel offering the canvas it built for its badge. Adopted rather than found,
-       because that canvas does not exist when this file runs: the panel is mounted later. */
-    trace: function (canvas) {
-      strip = canvas || null;
-      stripCtx = strip && strip.getContext ? strip.getContext('2d') : null;
-      samples = null;
-      start();
-    },
-    /* That panel's driver state: 'thinking', 'starting', 'ready', or '' for no driver. It is
-       the panel's own process and never the seat, which is what keeps this line and the ball
-       in the status bar from becoming two opinions about one fact. */
-    drive: function (state) {
-      var next = typeof state === 'string' ? state : '';
-      if (next === driver) return;
-      driver = next;
-      // A driver that has gone takes its wave with it, so the next one starts on a flat line
-      // rather than inheriting the last one's crest.
-      if (!TRACE[driver] || typeof TRACE[driver].hz !== 'number') samples = null;
     },
   };
 })();

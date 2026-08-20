@@ -458,14 +458,9 @@
      page can end up showing a shorter version of the same thing. -->
 <script src="/overlay.js" defer></script>
 <script src="/deck-views.js" defer></script>
-<!-- Both before driver-chat.js, which picks one of them at mount: warden-globe.js draws the
-     real three.js body and agent-globe.js is the 2D fallback the panel takes when a canvas
-     cannot hold a WebGL context. Both are self-contained, presentational, and read no state.
-     The switch is GLOBE in driver-chat.js; agent-globe.js loads either way, because it is the
-     answer when the other one cannot run. Nothing here fetches three.js: warden-globe.js
-     imports it from /vendor only once a globe is actually put on screen. -->
+<!-- Before driver-chat.js: it exposes window.PhosphorGlobe, which the agent panel turns in
+     its idle phase. Self-contained, presentational, and it reads no state of its own. -->
 <script src="/agent-globe.js" defer></script>
-<script src="/warden-globe.js" defer></script>
 <!-- Before trade.js, which calls splitBoot(): the draggable gutters between the
      panels, and the sizes a person left them at. -->
 <script src="/split.js" defer></script>
