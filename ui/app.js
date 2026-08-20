@@ -1737,14 +1737,50 @@ function appendLog(event) {
 
 /* ---------- refresh and events ---------- */
 
+/* The ETag of the state we are currently showing. Held in memory only, so a reload always
+   starts from a full read and can never inherit a stale one. */
+var STATE_ETAG = null;
+
+/* A state read that can come back "nothing changed".
+   The server pushes a state signal on a timer whether or not anything moved, and the body is
+   byte-identical almost every time. Asking conditionally turns that case into a 304, and the
+   caller skips the rebuild instead of repainting identical pixels. Returns null for unchanged. */
+async function getState() {
+  var headers = { accept: 'application/json' };
+  if (STATE_ETAG) headers['if-none-match'] = STATE_ETAG;
+  var res = await fetch('/api/state', { headers: headers });
+  if (res.status === 304) return null;
+  if (!res.ok) throw new Error('/api/state returned ' + res.status);
+  // Read the tag from the response we are about to apply, so the two can never drift apart.
+  STATE_ETAG = res.headers.get('etag');
+  return res.json();
+}
+
+/* Set when a state signal arrived with the window hidden, so the way back is a real read. */
+var STATE_MISSED_WHILE_HIDDEN = false;
+
 async function refreshState() {
+  /* A hidden window is minimised or on another Space: there is nothing to paint, and the timers
+     that drive this keep firing regardless. Note that a signal came and answer it on the way
+     back, so what appears when the window returns is current rather than whatever was last drawn. */
+  if (document.hidden) {
+    STATE_MISSED_WHILE_HIDDEN = true;
+    return;
+  }
   if (REFRESH_INFLIGHT) {
     REFRESH_QUEUED = true;
     return;
   }
   REFRESH_INFLIGHT = true;
   try {
-    STATE = await getJson('/api/state');
+    var next = await getState();
+    if (next === null) {
+      // Unchanged. The round trip still succeeded, so the app is demonstrably reachable and any
+      // earlier "cannot reach" line should clear exactly as it would after a full read.
+      alertLine(null);
+      return;
+    }
+    STATE = next;
     // Settled before the renders, not after: drawDonut asks whether the panel is still
     // waiting, and it must already have the answer by the time the wallet draws.
     settled('state');
@@ -1770,6 +1806,14 @@ async function refreshState() {
     }
   }
 }
+
+/* The other half of the rule above: coming back into view is itself a reason to read.
+   Only when something was actually missed, so merely switching Spaces costs nothing. */
+document.addEventListener('visibilitychange', function () {
+  if (document.hidden || !STATE_MISSED_WHILE_HIDDEN) return;
+  STATE_MISSED_WHILE_HIDDEN = false;
+  refreshState();
+});
 
 async function refreshLog() {
   try {

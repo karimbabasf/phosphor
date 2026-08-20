@@ -467,6 +467,38 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     res.end(body);
   }
 
+  // As sendJson, but the caller may ask whether anything changed since last time.
+  //
+  // State is pushed on a timer whether or not it moved: the heartbeat below fires every
+  // HEARTBEAT_MS, and the ledger refresh in main.ts broadcasts on every pass. The browser
+  // answers each one by refetching 54KB and rebuilding the wallet, the policy and the basic
+  // screen, and measured on a running instance those bodies are byte-identical, so the rebuild
+  // repaints exactly what was already there.
+  //
+  // The ETag lets that case cost a 304: no body, no parse, no DOM teardown, no layout. Nothing
+  // about freshness changes, because the request still happens on every signal. Only the redraw
+  // is skipped, and only when the bytes match.
+  //
+  // no-store stays. The browser's own HTTP cache must not hold a wallet balance; the conditional
+  // request here is driven by an ETag the page holds in memory and loses on reload.
+  function sendJsonConditional(req: http.IncomingMessage, res: http.ServerResponse, payload: unknown): void {
+    const body = JSON.stringify(payload);
+    // Not a security boundary, just a change detector, so speed beats collision resistance.
+    const etag = `"${crypto.createHash('sha1').update(body).digest('base64')}"`;
+    if (req.headers['if-none-match'] === etag) {
+      res.writeHead(304, { etag, 'cache-control': 'no-store' });
+      res.end();
+      return;
+    }
+    res.writeHead(200, {
+      'content-type': 'application/json; charset=utf-8',
+      'content-length': Buffer.byteLength(body),
+      'cache-control': 'no-store',
+      etag,
+    });
+    res.end(body);
+  }
+
   function serveStatic(pathname: string, res: http.ServerResponse): void {
     let rel: string;
     try {
@@ -1937,7 +1969,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         return;
       }
       if (req.method === 'GET' || req.method === 'HEAD') {
-        if (route === '/api/state') return sendJson(res, 200, buildState());
+        if (route === '/api/state') return sendJsonConditional(req, res, buildState());
         if (route === '/api/candles') return await sendCandles(url, res);
         if (route === '/api/chart') return sendJson(res, 200, chartPayload());
         if (route === '/api/log') {
