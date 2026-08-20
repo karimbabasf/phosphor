@@ -654,6 +654,25 @@ function renderLiqBlock(pos, wallPx) {
     setText('t-liq-pct', '--');
     setText('t-liq-usd', '--');
     setText('t-liq-atr', '--');
+    // Flat, so the readout is back and empty. Without this the sentence from the last position
+    // outlives the position it was about.
+    if ($('t-liq-body')) $('t-liq-body').hidden = false;
+    if ($('t-liq-none')) $('t-liq-none').hidden = true;
+    fillBar($('t-liq-bar'), null);
+    return;
+  }
+  /* A wall exists and nothing can reach it, which is not the same as no wall and not the same
+     as a far one. state.ts has already blanked the three distances for this case, so without
+     this branch the section prints "-- away, at 84636" and reads as a panel that lost half its
+     numbers. The sentence replaces the whole readout rather than sitting beside it: the venue's
+     price is still on the payload for anyone reading the log, and on screen beside the words
+     "no wall in reach" it only invites the reader to work out whether the two agree. */
+  var reachable = pos.liqReachable !== false;
+  var body = $('t-liq-body');
+  var none = $('t-liq-none');
+  if (body) body.hidden = !reachable;
+  if (none) none.hidden = reachable;
+  if (!reachable) {
     fillBar($('t-liq-bar'), null);
     return;
   }
@@ -1859,17 +1878,27 @@ function wireDeckBar() {
 /* The agent panel, under the book. driver-chat.js owns everything inside it, including the
    rule that it never renders an approval: the gate is one column over.
 
-   Every line of the intro is a true statement about the agent being started, checked against
+   Every fact in the intro is a true statement about the agent being started, checked against
    operator/driver.settings.json and against the runtime check in src/driver.ts: the deny list
    there takes Bash, Read, Write, WebFetch and WebSearch away, and assertSurface kills the
    session if the tool list the child announces holds anything outside mcp__phosphor__. It is
-   a boot print, not a loading animation, so what it says has to keep being true. */
-var AGENT_INTRO = [
-  'PHOSPHOR // AGENT LINK',
-  'spawning a local agent under this window',
-  'tool surface: phosphor only, checked on connect',
-  'no shell, no files, no web of its own',
-];
+   a boot print, not a loading animation, so what it says has to keep being true.
+
+   THE SHAPE CHANGED AND THE CONTENT DID NOT. The three facts below are the three lines this
+   used to print, as label and value: driver-chat.js draws them as one card whose values sit
+   beside their labels on a wide panel and under them on a narrow one, which is the only way a
+   print like this survives a column a person can drag. "web of its own" is precise and is not
+   padding: the agent holds no WebFetch and no WebSearch, and phosphor's own research tool,
+   which does leave this machine, announces itself as "reading the news" when it runs. */
+var AGENT_INTRO = {
+  mark: 'PHOSPHOR',
+  title: 'AGENT LINK',
+  facts: [
+    { label: 'proc', value: 'a local agent, spawned under this window' },
+    { label: 'tools', value: 'phosphor only, checked on connect' },
+    { label: 'denied', value: 'shell, files, web of its own' },
+  ],
+};
 
 function mountChat() {
   if (!window.PhosphorChat) return;

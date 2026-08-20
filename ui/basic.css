@@ -474,11 +474,129 @@ body[data-view='basic'] #page {
   font-size: 0.9375rem;
 }
 
-/* The intro, while the assistant starts. Every line of it is a true statement about what
-   is being started, so it is quiet rather than hidden. */
+/* The intro in its fallback shape: plain rows, which is what driver-chat.js prints when it is
+   handed an array of strings instead of a card. Every line of it is a true statement about
+   what is being started, so it is quiet rather than hidden. */
 .basic-chat .chat-boot .chat-text {
   color: var(--ink-soft);
   font-size: 0.9375rem;
+}
+
+/* ---- booting: the boot card ----
+
+   The same card the pro deck prints, and it shares nothing with it but its shape: this one is
+   a rounded panel in sentence case on the ground colour, and the deck's is a ruled box in a
+   terminal face. It says what is being started before it starts, because the thing being
+   started is a program that will be asked to touch money, and a person is owed that in plain
+   words rather than in a spinner.
+
+   IT HOLDS AT ANY WIDTH WITHOUT MEASURING ONE. Each fact is a flex row that wraps, so its
+   value sits beside its label while there is room and drops under it when there is not. That
+   is the whole of it: no breakpoint, because this panel is resized by the window and by the
+   sheet opening over it, and a card that changed shape at a breakpoint would snap as it went
+   past. */
+.basic-chat .chat-intro {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  padding: 14px 16px 15px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-control);
+  background: var(--ground);
+  animation: basic-globe-in 260ms var(--ease-out);
+}
+
+.basic-chat .chat-intro-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.basic-chat .chat-intro-mark {
+  flex: none;
+  font-size: 0.9375rem;
+  font-variation-settings: 'wght' 585;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+
+/* The elastic piece, and the reason the header needs no width of its own. It is also the
+   first thing to give: a header too narrow for all three shortens the rule to nothing before
+   it makes the title wrap, because a short rule still reads as a rule and half a wrapped
+   title does not read as anything. */
+.basic-chat .chat-intro-rule {
+  flex: 1 1 1rem;
+  min-width: 0;
+  height: 0;
+  border-top: 1px solid var(--rule);
+}
+
+.basic-chat .chat-intro-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 0.9375rem;
+  text-align: right;
+  color: var(--ink-faint);
+}
+
+/* The assistant coming up, as one thin bar filling left to right. It is the only thing on
+   this screen that reports progress, and it reports real progress: it moves when a fact
+   lands, not on a timer of its own. */
+.basic-chat .chat-intro-track {
+  height: 3px;
+  border-radius: 999px;
+  background: var(--rule);
+  overflow: hidden;
+}
+
+.basic-chat .chat-intro-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--calm);
+  transition: clip-path 320ms var(--ease-out);
+}
+
+.basic-chat .chat-intro-facts {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.basic-chat .chat-intro-fact {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 12px;
+  opacity: 0;
+  transform: translateY(3px);
+  transition: opacity 260ms var(--ease-out), transform 260ms var(--ease-out);
+}
+
+.basic-chat .chat-intro-fact[data-in] {
+  opacity: 1;
+  transform: none;
+}
+
+/* A minimum rather than a width, so a label longer than the column takes the room it needs
+   and pushes its own value along instead of being cut off in the middle of a word. */
+.basic-chat .chat-intro-label {
+  flex: none;
+  min-width: 6.5rem;
+  font-size: 0.9375rem;
+  color: var(--ink-faint);
+}
+
+/* The basis is where a value gives up its place beside the label and takes a line of its own:
+   below about fourteen rems of room it would be setting two words a line, which is harder to
+   read than the same sentence under its label. */
+.basic-chat .chat-intro-value {
+  flex: 1 1 14rem;
+  min-width: 0;
+  margin: 0;
+  font-size: 0.9375rem;
+  color: var(--ink);
+  overflow-wrap: anywhere;
 }
 
 .basic-chat .chat-error .chat-who,
@@ -522,17 +640,77 @@ body[data-view='basic'] #page {
   outline-offset: 2px;
 }
 
-/* ---- the bar ---- */
+/* ---- the assistant's light ----
 
+   The same globe the idle phase draws, at forty-four pixels in the corner, and it is the one
+   thing on this screen that says the assistant is working without a word: it turns and glows
+   while an answer is being written, slows and dims while it waits, and stands still when
+   there is nothing running. ui/driver-chat.js says how fast and how bright.
+
+   It is not a control, it decides nothing, and it is aria-hidden: everything it carries is
+   also in the state word at the foot of the panel, which is the one a screen reader gets.
+   Blue, never amber: amber on this screen means a question waiting for an answer, and an
+   assistant that is merely busy is not that.
+
+   IT GETS A STRIP, IT DOES NOT FLOAT OVER ONE. A light sitting on top of a scrolling column
+   cuts a word in half every time the reader is anywhere but the bottom. So the transcript
+   starts below it, and only in the two phases the light is up. */
+.basic-chat .chat-badge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 40px;
+  height: 40px;
+  pointer-events: none;
+}
+
+.basic-chat[data-phase='booting'] .chat-list,
+.basic-chat[data-phase='live'] .chat-list { margin-top: 40px; }
+
+.basic-chat .chat-badge[hidden] { display: none; }
+
+.basic-chat .chat-badge-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* The glow, as a wash under the wireframe rather than a filter on it: opacity is the only
+   thing that moves between the states. */
+.basic-chat .chat-badge::before {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in oklch, var(--calm) 20%, transparent), transparent 68%);
+  opacity: 0;
+  transition: opacity 360ms var(--ease-out);
+}
+
+.basic-chat[data-driver-state='ready'] .chat-badge::before { opacity: 0.45; }
+.basic-chat[data-driver-state='thinking'] .chat-badge::before { opacity: 1; }
+
+/* ---- the bar, which is now the composer's bottom row ---- */
+
+/* It used to float between the transcript and the input with a rule of its own, which put
+   three separate baselines at the foot of the panel and left the field looking like an
+   afterthought under them. It sits inside the field's own box now: one object, two halves. */
 .basic-chat .chat-bar {
   flex: none;
   display: flex;
+  /* Both stops are whole phrases and ui/app.js says why neither may be shortened to "Stop", so
+     at a narrow window the row cannot hold them: it wanted 409px of a 138px card and put the
+     state word, both stops and Send outside the rounded edge. The row wraps, and every line
+     ends where Send does. The auto margin on the state word still holds the left of its own. */
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
   gap: 12px;
-  margin-top: 14px;
-  padding-top: 14px;
+  padding: 10px 4px 0;
   border-top: 1px solid var(--rule);
 }
+
+.basic-chat .chat-bar[hidden] { display: none; }
 
 .basic-chat .chat-state {
   margin-right: auto;
@@ -590,6 +768,7 @@ body[data-view='basic'] #page {
    answer is where the press that asked it was, and the bar never changes height. */
 .basic-chat .chat-confirm {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   animation: basic-globe-in 200ms var(--ease-out);
@@ -607,30 +786,77 @@ body[data-view='basic'] #page {
 
 /* ---- the prompt ---- */
 
+/* ONE BOX. Karim, 2026-08-20: "the text box is weird." The field, the state word and both
+   stops are one object with one border and one focus ring, which is how every composer this
+   person already uses is built. The ring goes on the box rather than on the input, because
+   the box is what they are aiming at. */
 .basic-chat .chat-form {
   flex: none;
   display: flex;
-  gap: 10px;
-  margin-top: 12px;
-}
-
-.basic-chat .chat-input {
-  flex: 1 1 auto;
-  min-width: 0;
-  font: inherit;
-  font-size: 1rem;
-  padding: 12px 15px;
+  flex-direction: column;
+  /* How much room the composer has is a fact about this card, not about the window: on the pro
+     deck the same box is a column somebody can drag. So the sizes below are asked of the box
+     itself, the way ui/trade.css asks the rail how wide it is. Named, because two stylesheets
+     are live in this document and an unnamed query answers to whichever container is nearest. */
+  container: composer / inline-size;
+  gap: 4px;
+  margin-top: 14px;
+  padding: 12px 11px 10px;
   border-radius: var(--r-control);
   background: var(--ground);
   border: 1px solid var(--rule-firm);
+  transition: border-color 200ms var(--ease-out);
+}
+
+.basic-chat .chat-form:focus-within { border-color: var(--calm); }
+
+.basic-chat .chat-input {
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  font-size: 1rem;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
   color: var(--ink);
 }
 
 .basic-chat .chat-input::placeholder { color: var(--ink-faint); }
+.basic-chat .chat-input:focus { outline: none; }
 
-.basic-chat .chat-input:focus {
-  outline: 2px solid var(--calm);
-  outline-offset: 1px;
+/* Send is the affirmative one and ends the row, past the stop. */
+.basic-chat .chat-send { margin-left: 0; }
+
+/* ---- the composer, narrowed ----
+
+   Wrapping alone is not enough here. "Stop this answer" is 159px of control and the card is
+   138px wide at the floor, so the widest label is wider than the line it would wrap onto and
+   the button would hang out of the card on its own. The controls come down instead, in two
+   steps, each sized so the longest label still fits the narrowest line it can land on. This
+   is the one thing on this screen allowed to get smaller: the words are load-bearing and the
+   padding around them is not. */
+
+@container composer (max-width: 430px) {
+  .basic-chat .chat-btn {
+    padding: 10px 12px;
+    font-size: 0.875rem;
+  }
+
+  /* Same reason as the pro deck's: the question is a sentence and the two answers are
+     controls, and a wrap that fits YES on one line and CANCEL on the next reads as two
+     unrelated buttons. The sentence takes the line, the pair takes the one under it. */
+  .basic-chat .chat-confirm-q { flex-basis: 100%; }
+}
+
+@container composer (max-width: 250px) {
+  .basic-chat .chat-btn {
+    padding: 9px 8px;
+    font-size: 0.8125rem;
+  }
+
+  /* Twelve pixels between controls is a twelfth of the card at this width. */
+  .basic-chat .chat-bar { gap: 8px; }
+  .basic-chat .chat-confirm { gap: 8px; }
 }
 
 /* Motion, refused. The dissolve keeps its opacity and loses its blur, because a blur is a
@@ -640,7 +866,12 @@ body[data-view='basic'] #page {
 @media (prefers-reduced-motion: reduce) {
   .basic-chat .chat-globe,
   .basic-chat .chat-jump,
+  .basic-chat .chat-intro,
   .basic-chat .chat-confirm { animation: none; }
+  /* The card keeps its fades and loses its moves. Being told that a fact arrived is
+     information; travelling three pixels to say it is not. */
+  .basic-chat .chat-intro-fact { transform: none; transition: opacity 260ms var(--ease-out); }
+  .basic-chat .chat-intro-fill { transition: none; }
   .basic-chat .chat-globe,
   .basic-chat .chat-btn { transition: none; }
   .basic-chat .chat-globe:active,
@@ -1381,3 +1612,36 @@ body[data-view='basic'].waiting .basic-headline {
 /* Start a SECOND assistant, in its own terminal window, from inside the "Your assistant"
    fold. A calm accent, not the amber of a pending decision nor the red of the brake:
    starting help is neither a question nor a stop. */
+/* ---------- the transcript, given three voices ----------
+
+   Karim, 2026-08-20: "no creativity" about how the output was drawn. The same fix as the
+   deck's, said in this screen's own language rather than the terminal's: no green, no
+   brackets, and weight doing the work that brightness does over there. */
+
+/* The answer is the thing on this screen, so it carries a rule and the full text colour. */
+.basic-chat .chat-agent {
+  border-left: 2px solid var(--rule-firm);
+  padding-left: 14px;
+  margin-left: -2px;
+}
+
+/* Work the assistant did, marked rather than named. A column of small marks reads as a list
+   of things happening; the word "ran" four times reads as a paragraph. */
+.basic-chat .chat-tool .chat-who {
+  text-align: center;
+  font-size: 8px;
+}
+
+/* THE FIGURES. A balance, a percentage, a price: the three things a person came to find. In
+   a proportional face weight is available, so this is the one place on this screen where a
+   heavier weight carries meaning instead of decoration. */
+.basic-chat .chat-fig {
+  font-weight: inherit;
+  font-variation-settings: 'wght' 600;
+  color: var(--ink);
+}
+
+/* Same rule as the deck's, same reason: a control that wraps its own label looks broken, and
+   the composer's row is as narrow as this panel ever gets. */
+.basic-chat .chat-btn { white-space: nowrap; }
+.basic-chat .chat-state { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

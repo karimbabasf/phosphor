@@ -9,10 +9,24 @@
  * dress each of them in their own language without this file knowing which screen it is on:
  *
  *   idle      no agent. The globe turns, and the whole layer is one button that starts one.
- *   booting   the intro prints while the child process comes up. No input box yet: there is
- *             nothing on the other end of it to read what gets typed.
+ *   booting   the intro card prints while the child process comes up. No input box yet: there
+ *             is nothing on the other end of it to read what gets typed.
  *   live      the transcript and the prompt box. This is the phase the panel exists for.
  *   closing   the stop was confirmed. The panel is taken apart on screen and comes back idle.
+ *
+ * THE SAME GLOBE, TWICE, ANSWERING TWO QUESTIONS. ui/agent-globe.js draws both of them.
+ * The big one fills the idle phase and says NO AGENT IS RUNNING HERE, which is why the whole
+ * layer around it is the button that starts one. The badge is forty pixels in the corner of a
+ * booting or live panel and says THIS PANEL'S DRIVER IS UP, plus how hard it is working, and
+ * it says it without a word: quick and bright while the agent writes, slow and dim while it
+ * waits. There is no third setting. A stopped agent is not a dull badge, it is the big globe.
+ * They are never on screen together and exactly one of them is ever turning; setGlobes below
+ * is the only function allowed to touch either.
+ *
+ * NEITHER OF THEM IS THE SEAT LIGHT. #agent-orb in the pro and trade status bar is a filled
+ * ball, and it is lit whenever ANY agent holds the MCP seat, including one running in a
+ * terminal this window never started (ui/presence.js). Both globes here are wireframe, both
+ * sit inside the panel, and both know about exactly one process: the driver this panel owns.
  *
  * THE RULE THAT DOES NOT BEND. Every string this file puts on screen is agent-authored or
  * human-authored text, and it reaches the DOM through textContent, never innerHTML. That is
@@ -190,6 +204,38 @@ var PhosphorChat = (function () {
       .trim();
   }
 
+  /* THE FIGURES ARE THE POINT, so the figures are lit.
+     An agent answer here is not prose with numbers in it, it is numbers with prose holding
+     them together: "ETH-USD on the 15 minute with EMA(21) drawn. Last 2293.5, EMA at 2272.58
+     and rising, price 0.92% above it." Rendered flat, a person has to read the sentence to
+     find the three things they actually wanted, every time. Lit, they can take the figure at
+     a glance and read the sentence only if it surprises them. That is what a terminal is FOR,
+     and this app had been throwing it away on the one surface where a model does the talking.
+
+     Four kinds, and no more: money, percentages, bare numbers, and instrument names. Anything
+     cleverer starts guessing, and a highlight on the wrong word is worse than none.
+
+     STILL textContent, every piece. This builds element nodes and sets their text; no string
+     on this path is ever parsed as markup, which is the rule the whole file is written to. */
+  var FIGURE = /(\$[\d,]+(?:\.\d+)?|[+-]?\d[\d,]*\.?\d*%|\b[A-Z]{2,6}-[A-Z]{2,6}\b|\b[A-Z]{2,5}\b(?=\s|[.,)]|$)|\b\d[\d,]*(?:\.\d+)?\b)/g;
+
+  function litText(cls, body) {
+    var node = el('span', cls);
+    var last = 0;
+    var m;
+    FIGURE.lastIndex = 0;
+    while ((m = FIGURE.exec(body)) !== null) {
+      /* A zero-length match would spin here forever. It cannot happen with this pattern and
+         the guard costs one line, which is the right price for a loop in a render path. */
+      if (m.index === FIGURE.lastIndex) { FIGURE.lastIndex += 1; continue; }
+      if (m.index > last) node.appendChild(document.createTextNode(body.slice(last, m.index)));
+      node.appendChild(el('b', 'chat-fig', m[0]));
+      last = m.index + m[0].length;
+    }
+    if (last < body.length) node.appendChild(document.createTextNode(body.slice(last)));
+    return node;
+  }
+
   function renderEvent(list, event) {
     var row = null;
     if (event.kind === 'said') {
@@ -201,10 +247,14 @@ var PhosphorChat = (function () {
       if (body === '') return; /* a turn that was nothing but a fence is not a message */
       row = el('div', 'chat-row chat-agent');
       row.appendChild(el('span', 'chat-who', 'agent'));
-      row.appendChild(el('span', 'chat-text', body));
+      row.appendChild(litText('chat-text', body));
     } else if (event.kind === 'tool') {
+      /* A tool call is a thing happening, not a thing said, so it is drawn as a mark and a
+         phrase rather than as another line of conversation. The mark is what makes a run of
+         them read as a list of work: four dim rows with a column of blocks down the left is
+         a machine doing things, and four dim rows without it is a paragraph nobody reads. */
       row = el('div', 'chat-row chat-tool');
-      row.appendChild(el('span', 'chat-who', 'ran'));
+      row.appendChild(el('span', 'chat-who', '\u25AA'));
       row.appendChild(el('span', 'chat-text', toolLabel(event.name)));
     } else if (event.kind === 'tool_result') {
       return; /* The result is visible in the app's own state. A second line saying it
@@ -263,30 +313,121 @@ var PhosphorChat = (function () {
   }
 
   /* ---------- the intro ----------
-     A boot print, not a loading spinner. Every line of it is a true statement about the agent
-     being started: the timing is cosmetic, the content is not.
+     A boot print, not a loading spinner. Every fact in it is a true statement about the agent
+     being started, checked against operator/driver.settings.json and against assertSurface in
+     src/driver.ts: the timing is cosmetic, the content is not.
+
+     ONE CARD, NOT FOUR LINES. Printed as rows it was four lonely sentences floating over the
+     box you type in, and there is no width to write four sentences for: ui/split.js lets a
+     person drag this panel from 240 pixels to half the window and back, continuously. So the
+     print is one object with a header, a bar that fills as the link is made, and the facts as
+     a definition list. Each fact is its own flex row that wraps, so the value sits beside its
+     label when there is room and drops under it when there is not, and THAT WRAP IS THE WHOLE
+     RESPONSIVE STORY. No media query and no container query is any use here: a drag does not
+     stop at the breakpoints, and a card that changed shape at one would snap in the middle of
+     the gesture. The frame is drawn in CSS borders for the same reason: box-drawing characters
+     hold a rectangle at exactly one column count and break at every other.
+
+     THE PLAIN ARRAY STILL PRINTS, and it is not a legacy path. A panel that can only render a
+     card is a panel nobody can drive with a line of text, and both the test harness and anyone
+     poking at this from a console hand it three strings.
 
      IT IS ALLOWED TO FINISH. The driver reports ready on the child's spawn event, which lands
      in a few tens of milliseconds, so cutting the print off at ready meant one line of it was
-     ever seen. Ready arriving mid-print is remembered instead, and the last line hands over.
-     Four lines at 130ms is half a second, which is a beat and not a wait, and nothing is held
+     ever seen. Ready arriving mid-print is remembered instead, and the last step hands over.
+     Four steps at 130ms is half a second, which is a beat and not a wait, and nothing is held
      back by it: the box a person types into opens the moment the print ends, and the child has
      been up the whole time. */
+
+  /* Two shapes in, one shape out. The card is what the three windows mount; a plain array is
+     the fallback above. Anything else, including an empty card, falls back to one true line. */
+  function normalizeIntro(intro) {
+    if (typeof intro === 'string') return { lines: [intro] };
+    if (Array.isArray(intro)) return { lines: intro.slice() };
+    if (intro && intro.facts && intro.facts.length) {
+      return { mark: intro.mark || '', title: intro.title || '', facts: intro.facts.slice() };
+    }
+    return { lines: ['starting a local agent'] };
+  }
+
+  /* The card, built once and revealed a fact at a time. Every string here goes in through
+     el()'s textContent like every other string in this file: the card is a shape, not a
+     document, and nothing it renders came from the agent. */
+  function introCard(spec) {
+    var card = el('div', 'chat-intro');
+
+    var head = el('div', 'chat-intro-head');
+    head.appendChild(el('span', 'chat-intro-mark', spec.mark));
+    // The elastic piece. It is a border in CSS, so it fills whatever is left at any width.
+    head.appendChild(el('span', 'chat-intro-rule'));
+    head.appendChild(el('span', 'chat-intro-title', spec.title));
+    card.appendChild(head);
+
+    var track = el('div', 'chat-intro-track');
+    var fill = el('span', 'chat-intro-fill');
+    /* Clipped from the right rather than sized, because a width animation is a layout
+       animation and this one runs while rows are landing next to it. */
+    fill.style.clipPath = 'inset(0 100% 0 0)';
+    track.appendChild(fill);
+    card.appendChild(track);
+
+    var facts = el('dl', 'chat-intro-facts');
+    var rows = [];
+    for (var i = 0; i < spec.facts.length; i++) {
+      var row = el('div', 'chat-intro-fact');
+      row.appendChild(el('dt', 'chat-intro-label', spec.facts[i].label));
+      row.appendChild(el('dd', 'chat-intro-value', spec.facts[i].value));
+      facts.appendChild(row);
+      rows.push(row);
+    }
+    card.appendChild(facts);
+
+    return { node: card, fill: fill, rows: rows };
+  }
+
+  /* One thunk per beat, so the timer below does not care which shape it is printing. The card
+     lands on the first beat and a fact on each one after it, which is the same four beats the
+     four lines used to take. */
+  function introSteps(mount) {
+    var spec = mount.intro;
+    var steps = [];
+    var i;
+    if (spec.lines) {
+      for (i = 0; i < spec.lines.length; i++) {
+        steps.push((function (line) {
+          return function () { renderEvent(mount.list, { kind: 'boot', text: line }); };
+        })(spec.lines[i]));
+      }
+      return steps;
+    }
+    var card = introCard(spec);
+    steps.push(function () { mount.list.appendChild(card.node); });
+    for (i = 0; i < card.rows.length; i++) {
+      steps.push((function (row, done) {
+        return function () {
+          row.setAttribute('data-in', '1');
+          card.fill.style.clipPath = 'inset(0 ' + (100 - Math.round((done / card.rows.length) * 100)) + '% 0 0)';
+        };
+      })(card.rows[i], i + 1));
+    }
+    return steps;
+  }
+
   function printIntro(mount) {
     stopIntro(mount);
-    var lines = mount.intro;
+    var steps = introSteps(mount);
     var i = 0;
     function step() {
       if (mount.phase !== 'booting') {
         mount.introTimer = 0;
         return;
       }
-      if (i >= lines.length) {
+      if (i >= steps.length) {
         mount.introTimer = 0;
         if (mount.liveWhenPrinted) goLive(mount);
         return;
       }
-      renderEvent(mount.list, { kind: 'boot', text: lines[i] });
+      steps[i]();
       follow(mount);
       i += 1;
       mount.introTimer = setTimeout(step, INTRO_STEP_MS);
@@ -309,12 +450,109 @@ var PhosphorChat = (function () {
     try { mount.input.focus(); } catch (err) {}
   }
 
+  /* ---------- the two globes ----------
+
+     WHAT THE BADGE SAYS, PER DRIVER STATE. It is a status light, so it says everything with
+     two numbers: how fast it turns and how loud it is. `thinking` is the one it exists for,
+     and it is the only state that is unmistakably ALIVE at a glance from across a desk.
+     `gain` multiplies whatever the surface asked for at mount, so the calm screen's louder
+     globe stays the louder one in every state.
+
+     THREE STATES AND NO FOURTH, AND THE MISSING ONE IS DELIBERATE. The badge used to carry a
+     dull, still setting for `stopped`, `off` and `failed`, and nobody could ever have seen it:
+     all three send the panel to idle, where the badge is hidden and the big globe is the whole
+     answer. So the badge is a light for a running driver and nothing else. "No agent" is said
+     once, by a globe that fills the panel and asks to be pressed, and a second quieter version
+     of the same sentence in the corner is worse than one answer: a reader who finds both has
+     to work out which of them is current.
+     These three are also exactly the states that can outlive a setGlobes call while the panel
+     is lit, because setState sends every other one to idle before it returns. */
+  var BADGE_DRIVE = {
+    thinking: { rate: 2.4, gain: 1.5 },
+    starting: { rate: 1.7, gain: 1 },
+    ready: { rate: 0.5, gain: 0.8 },
+  };
+
+  /* EXACTLY ONE GLOBE TURNS, and this is the only function that starts or stops either. The
+     idle globe is the whole panel; the badge is forty pixels of the live one. They are never
+     on screen together, and two rAF loops on one panel is a battery bill nobody can see.
+     It is written as stop-the-other-first-then-start-the-one rather than as a check afterwards
+     because the two are woken by different events (a phase change and a driver state change),
+     and an invariant that depends on the order those arrive in is not an invariant. */
+  function setGlobes(mount) {
+    var idle = mount.phase === 'idle';
+    var lit = mount.phase === 'booting' || mount.phase === 'live';
+    mount.badge.hidden = !lit;
+
+    if (idle) {
+      mount.badgeOrb.stop();
+      mount.orb.start();
+      return;
+    }
+    mount.orb.stop();
+    if (!lit) {
+      mount.badgeOrb.stop();
+      return;
+    }
+    /* A state with no setting means a driver that is gone, which under a lit panel is the one
+       tick between that news arriving and setState landing the panel on the globe. Nothing is
+       drawn for it: the badge is already on its way off the screen, and a frame held in a
+       corner about to be hidden is a frame nobody sees.
+       typeof, not truthiness, for the reason toolLabel gives above: the state is a string off
+       the wire, and a lookup on a plain object hands back Object.prototype's own members for
+       one named `constructor`. */
+    var drive = BADGE_DRIVE[mount.driverState];
+    if (!drive || typeof drive.rate !== 'number') {
+      mount.badgeOrb.stop();
+      return;
+    }
+    mount.badgeOrb.tune(drive);
+    mount.badgeOrb.start();
+  }
+
   /* ---------- phases ---------- */
+
+  /* NO PHASE MAY STRAND. Karim, 2026-08-20: "once i stop the agent it doesnt quit it and show
+     the globe like I wanted, it simply just removes the text input bar."
+     That is this panel with no way out of a transient phase, and both of them had the same
+     hole. `closing` hands the return to the globe to an animation callback, so a veil that
+     never fires its action leaves the form hidden, the globe hidden and a dead transcript on
+     screen, which is exactly the description. `booting` waits for a status that arrives over
+     the event stream, so a stream that dropped between the press and the answer leaves the
+     intro printed and nothing else, which looks the same.
+     Neither is worth diagnosing while a person is standing in front of it. Each transient
+     phase now carries its own deadline, and when it passes the panel lands on the globe: the
+     one state anybody can act from. The veil still owns the landing when it works, and this
+     only ever fires when it did not.
+     closing is comfortably past the fall's own run (520ms cover, then the mode change).
+     booting is long because it is waiting on a process to spawn, and a false alarm there
+     would take a working session off the screen. */
+  var LAND_MS = { closing: 1400, booting: 30000 };
+  var LAND_REASON = {
+    closing: '',
+    booting: 'the agent did not come up',
+  };
 
   function setPhase(mount, next) {
     if (mount.phase === next) return;
     mount.phase = next;
     mount.root.setAttribute('data-phase', next);
+
+    /* Armed on the way in and cleared on the way out, so a phase that ends normally never
+       leaves a timer behind to fire at the next one. idle() re-enters this function, which is
+       what clears the timer that called it. */
+    if (mount.landTimer) {
+      clearTimeout(mount.landTimer);
+      mount.landTimer = 0;
+    }
+    if (LAND_MS[next]) {
+      mount.landTimer = setTimeout(function () {
+        mount.landTimer = 0;
+        if (mount.phase !== next) return;
+        mount.reason = mount.reason || LAND_REASON[next];
+        idle(mount);
+      }, LAND_MS[next]);
+    }
 
     var live = next === 'live';
     mount.form.hidden = !live;
@@ -328,16 +566,16 @@ var PhosphorChat = (function () {
       if (next !== 'live') mount.liveWhenPrinted = false;
     }
 
-    if (next === 'idle') {
-      mount.orb.start();
-      mount.jump.hidden = true;
-    } else {
-      mount.orb.stop();
-    }
+    if (next === 'idle') mount.jump.hidden = true;
+    setGlobes(mount);
   }
 
   function setState(mount, next, detail) {
     mount.root.setAttribute('data-driver-state', next);
+    /* Read by setGlobes, and set before anything below can change the phase, so the badge is
+       never a state behind the word beside it. */
+    mount.driverState = next;
+    setGlobes(mount);
     mount.status.textContent =
       next === 'thinking' ? 'working' : next === 'starting' ? 'connecting' : detail ? detail : next;
     // There is an answer to stop only while one is being written.
@@ -467,9 +705,23 @@ var PhosphorChat = (function () {
     jump.type = 'button';
     jump.hidden = true;
 
+    /* THE LINK LIGHT. Karim, 2026-08-20: "a warden globe that glows and is animated when
+       working and dull when stopped." The same globe the idle phase fills the panel with, in
+       the corner of the live one, so the panel has one motif used twice rather than two
+       pictures that nearly agree.
+       It is not a control and it never becomes one: no listener, aria-hidden because the state
+       it carries is already spoken by the state word in the bar, and pointer-events off in
+       both stylesheets so a click meant for the transcript underneath still lands there. */
+    var badge = el('span', 'chat-badge');
+    badge.setAttribute('aria-hidden', 'true');
+    var badgeCanvas = el('canvas', 'chat-badge-canvas');
+    badge.appendChild(badgeCanvas);
+    badge.hidden = true;
+
     stage.appendChild(globe);
     stage.appendChild(list);
     stage.appendChild(jump);
+    stage.appendChild(badge);
 
     var status = el('span', 'chat-state', 'off');
     status.setAttribute('role', 'status');
@@ -495,6 +747,15 @@ var PhosphorChat = (function () {
     confirm.appendChild(yes);
     confirm.appendChild(no);
 
+    /* ONE BOX. Karim, 2026-08-20: "the text box is weird."
+       It was three things stacked loose at the foot of a tall column: a state word floating on
+       its own line, a STOP AGENT button beside it with nothing to sit on, and an input under
+       both. Three baselines, no edge, and the one control a person is meant to use without
+       being told to was the least visible of them.
+       Now the state and both stops are the bottom row INSIDE the field's own border, which is
+       how every composer a person already uses is built. It also fixes a real problem rather
+       than only a look: the box has one focus ring, so tabbing into it lands somewhere, and
+       the destructive control sits at the far end of a row rather than floating next to text. */
     var bar = el('div', 'chat-bar');
     bar.appendChild(status);
     bar.appendChild(halt);
@@ -511,11 +772,11 @@ var PhosphorChat = (function () {
     var send = el('button', 'chat-btn chat-send', options.sendLabel || 'SEND');
     send.type = 'submit';
     form.appendChild(input);
-    form.appendChild(send);
+    form.appendChild(bar);
+    bar.appendChild(send);
     form.hidden = true;
 
     root.appendChild(stage);
-    root.appendChild(bar);
     root.appendChild(form);
 
     var record = {
@@ -525,6 +786,7 @@ var PhosphorChat = (function () {
       sub: sub,
       list: list,
       jump: jump,
+      badge: badge,
       bar: bar,
       form: form,
       input: input,
@@ -535,24 +797,41 @@ var PhosphorChat = (function () {
       yes: yes,
       no: no,
       phase: 'idle',
+      driverState: 'off',
       pinned: true,
       introTimer: 0,
+      landTimer: 0,
       liveWhenPrinted: false,
       reason: '',
       idleNote: options.idleNote || 'no agent is running',
-      intro: options.intro || ['starting a local agent'],
+      intro: normalizeIntro(options.intro),
       veil: options.veil === 'fade' ? 'fade' : 'rain',
+      /* The gain the surface asked for, forwarded. The calm screen's blue is a low-chroma
+         token and lands dimmer than the terminal's green at the same alpha, which is what
+         ui/app.js is compensating for when it hands this panel a number. */
       orb: window.PhosphorGlobe
-        ? PhosphorGlobe.create(canvas, { colorVar: options.colorVar || '--green' })
+        ? PhosphorGlobe.create(canvas, { colorVar: options.colorVar || '--green', gain: options.gain })
+        : null,
+      /* minRadius 0 because the floor in agent-globe.js is there to stop the panel-filling
+         globe shrinking to a dot, and this one IS a dot. */
+      badgeOrb: window.PhosphorGlobe
+        ? PhosphorGlobe.create(badgeCanvas, { colorVar: options.colorVar || '--green', gain: options.gain, minRadius: 0 })
         : null,
     };
-    /* A browser with no 2d context still gets a working panel: the globe is the only thing
-       that goes, and the button around it is what actually starts the agent. */
-    if (!record.orb) record.orb = { start: function () {}, stop: function () {}, running: function () { return false; } };
+    /* A browser with no 2d context still gets a working panel: the globes are the only thing
+       that goes, and the button around the idle one is what actually starts the agent. */
+    var deadGlobe = function () {
+      return {
+        start: function () {}, stop: function () {}, tune: function () {},
+        running: function () { return false; },
+      };
+    };
+    if (!record.orb) record.orb = deadGlobe();
+    if (!record.badgeOrb) record.badgeOrb = deadGlobe();
 
     root.setAttribute('data-phase', 'idle');
     root.setAttribute('data-driver-state', 'off');
-    record.orb.start();
+    setGlobes(record);
 
     globe.addEventListener('click', function () {
       if (record.phase !== 'idle') return;
@@ -646,12 +925,13 @@ var PhosphorChat = (function () {
      conversation comes back to the conversation rather than to the globe, which is the only
      reason the transcript lives on the server at all.
 
-     THE APP STARTS ITS OWN AGENT AT BOOT (see autostart in src/server.ts), so by the time this
-     page paints the driver is usually already up and the press that would have printed the
-     intro never happened. A driver that is running and has not said or done anything yet is
-     exactly that case, and it gets the intro anyway: the window is opening, which is what the
-     print is about. A reload in the middle of a real conversation is not that case and goes
-     straight back to the transcript. */
+     WITH NO AGENT THE ANSWER IS THE GLOBE, and that is the ordinary case now: autostart is off
+     by default (see src/main.ts), so the app opens with nothing running and the press is the
+     user's. The two cases below are the other ones. A driver that is up and has not said or
+     done anything yet gets the intro anyway, because either the window was reopened onto an
+     agent it did not start or `driver.autostart` is on, and both are the window opening, which
+     is what the print is about. A reload in the middle of a real conversation is neither, and
+     goes straight back to the transcript. */
   function load() {
     fetch('/api/session')
       .then(function (r) { return r.json(); })

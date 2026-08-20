@@ -69,10 +69,18 @@ function makeNode(tag: string, created: Any[]): Any {
       for (const fn of node.listeners[kind] ?? []) fn({ preventDefault() {}, stopPropagation() {}, ...ev });
     },
     get firstChild() { return node.children[0] ?? null; },
-    get childElementCount() { return node.children.length; },
+    /* Element children only, the way the real property counts. Text nodes are children here
+       too, and counting them would make the transcript cap fire on the wrong number. */
+    get childElementCount() { return node.children.filter((c: Any) => c.tagName !== '#TEXT').length; },
     /* A real setter, because the panel empties the transcript by assigning '' to it and a
-       plain field would have kept every row while reporting none. */
-    get textContent() { return text; },
+       plain field would have kept every row while reporting none.
+       The getter walks the children, because an agent answer is no longer one string: it is a
+       run of text nodes and lit <b> elements, and a getter that returned only this node's own
+       text would report the answer as empty. */
+    get textContent() {
+      if (node.children.length === 0) return text;
+      return node.children.map((c: Any) => c.textContent).join('');
+    },
     set textContent(value: string) {
       text = String(value);
       for (const c of node.children) c.parentNode = null;
@@ -89,22 +97,32 @@ interface Harness {
   created: Any[];
   posts: Any[];
   globeCalls: string[];
+  badge: Any;
   tick(ms: number): void;
   find(cls: string): Any;
   rows(): string[];
+  facts(): string[];
   phase(): string | null;
 }
 
-function load(opts: { startFails?: string; driver?: Any } = {}): Harness {
+function load(opts: { startFails?: string; driver?: Any; veilNeverFires?: boolean; intro?: Any } = {}): Harness {
   const created: Any[] = [];
   const posts: Any[] = [];
-  const globeCalls: string[] = [];
+  const globes: Any[] = [];
   const timers: Array<{ id: number; at: number; fn: () => void }> = [];
   let now = 0;
   let nextTimer = 1;
 
   const document: Any = {
     createElement: (tag: string) => makeNode(tag, created),
+    /* Real text nodes. The panel builds the agent's answer as text nodes with lit <b> elements
+       between them rather than as one string, which is how it highlights a figure without ever
+       putting a string into the DOM as markup. A harness without this cannot see that. */
+    createTextNode: (value: string) => {
+      const n = makeNode('#text', created);
+      n.textContent = String(value);
+      return n;
+    },
     addEventListener: () => {},
     removeEventListener: () => {},
     hidden: false,
@@ -136,17 +154,40 @@ function load(opts: { startFails?: string; driver?: Any } = {}): Harness {
     },
   };
   sandbox.window = sandbox;
+  /* One record per globe, in the order the panel creates them: the idle one that fills the
+     panel, then the badge in the corner of the live one. A stub that reported `running: true`
+     forever was fine while there was one globe and is not fine now: the panel is entitled to
+     ask which of the two is turning, and the answer has to be true. */
   sandbox.PhosphorGlobe = {
-    create: () => ({
-      start: () => globeCalls.push('start'),
-      stop: () => globeCalls.push('stop'),
-      running: () => true,
-    }),
+    create: () => {
+      const calls: string[] = [];
+      let on = false;
+      const globe: Any = {
+        calls,
+        drive: null,
+        start: () => { if (on) return; on = true; calls.push('start'); },
+        stop: () => { on = false; calls.push('stop'); },
+        /* A tripwire, and the one method here the real object does not have. ui/agent-globe.js
+           dropped `hold` with the badge's dull state, so a panel that reached for it would
+           throw in a browser and print a stack about an undefined function. Recorded instead,
+           so the test below fails with the reason rather than with the symptom. */
+        hold: () => { on = false; calls.push('hold'); },
+        tune: (next: Any) => { globe.drive = next; },
+        running: () => on,
+      };
+      globes.push(globe);
+      return globe;
+    },
   };
   sandbox.PHOSPHOR_RAIN = {
     // The panel hands the fall a host and a callback; the callback is the swap. Fired at once
     // here, which is the same thing the real file does when animation is unavailable.
-    swap: (apply: () => void) => apply(),
+    // veilNeverFires is the failure this panel has to survive rather than an exotic case: a
+    // canvas run that throws, a tab that is thrown away mid-fall, any reason the action never
+    // gets called. The panel may not depend on an animation to reach a state a person can use.
+    swap: (apply: () => void) => {
+      if (!opts.veilNeverFires) apply();
+    },
     playing: () => false,
   };
 
@@ -155,7 +196,7 @@ function load(opts: { startFails?: string; driver?: Any } = {}): Harness {
 
   const root = makeNode('div', created);
   const chat = sandbox.PhosphorChat;
-  chat.mount(root, { intro: ['one', 'two', 'three'], veil: 'rain' });
+  chat.mount(root, { intro: opts.intro ?? ['one', 'two', 'three'], veil: 'rain' });
 
   function walk(node: Any, out: Any[]): Any[] {
     out.push(node);
@@ -168,12 +209,27 @@ function load(opts: { startFails?: string; driver?: Any } = {}): Harness {
     return hit;
   }
 
+  function all(): Any[] {
+    const out: Any[] = [];
+    (function walkAll(node: Any) {
+      out.push(node);
+      for (const c of node.children) walkAll(c);
+    })(root);
+    return out;
+  }
+
   return {
     chat,
     root,
     created,
     posts,
-    globeCalls,
+    // The idle globe is the first one the panel builds and the badge is the second.
+    globeCalls: globes[0].calls,
+    badge: globes[1],
+    facts: () =>
+      all()
+        .filter((n: Any) => n.className === 'chat-intro-fact')
+        .map((n: Any) => (n.getAttribute('data-in') ? '+ ' : '- ') + n.children.map((c: Any) => c.textContent).join(': ')),
     tick(ms: number) {
       const until = now + ms;
       for (;;) {
@@ -223,8 +279,19 @@ test('no string reaches the DOM as markup', () => {
   const nasty = '<img src=x onerror="alert(1)">';
   h.chat.push({ kind: 'text', text: nasty });
   const row = h.find('chat-list').children.at(-1);
-  assert.equal(row.children[1].textContent, nasty, 'the tag is held as text, exactly as written');
-  assert.equal(row.children[1].children.length, 0, 'and it built no elements');
+  const body = row.children[1];
+  assert.equal(body.textContent, nasty, 'the tag is held as text, exactly as written');
+  /* The answer is built as a run of text nodes with lit <b> elements between them, which is how
+     a figure is highlighted without a string ever being parsed. So "it built no elements" is no
+     longer the invariant; "it built nothing but those two kinds" is, and it is the stronger one:
+     an <img> reaching this list would fail here whether it came from a string or from code. */
+  for (const child of body.children) {
+    const kind = child.tagName === '#TEXT' ? '#text' : child.tagName + '.' + child.className;
+    assert.ok(
+      kind === '#text' || kind === 'B.chat-fig',
+      `the answer built a ${kind}, and the only things allowed in it are text and a lit figure`,
+    );
+  }
 });
 
 test('markdown markers are taken off, and the text is kept', () => {
@@ -289,6 +356,46 @@ test('stopping asks first, and only the second press sends anything', async () =
   assert.equal(h.posts.filter((p) => p.action === 'stop').length, 1);
   assert.equal(h.phase(), 'idle', 'and it always ends on the globe');
   assert.equal(h.find('chat-list').children.length, 0);
+});
+
+/* Karim, 2026-08-20: "once i stop the agent it doesnt quit it and show the globe like I
+   wanted, it simply just removes the text input bar."
+   That is a panel stuck in `closing`: the form is hidden, the globe is hidden, and the dead
+   transcript is still standing. It happens whenever the fall does not call back, and the panel
+   had nothing else that could put it right, because setState refuses to act while closing so
+   the veil can own the landing. It still owns it when it works. These two are the floor. */
+test('a stop lands on the globe even when the fall never calls back', async () => {
+  const h = load({ veilNeverFires: true });
+  h.chat.push({ kind: 'status', state: 'starting' });
+  h.tick(1000);
+  h.chat.push({ kind: 'status', state: 'ready' });
+  h.chat.push({ kind: 'text', text: 'a line worth losing' });
+
+  h.find('chat-stop').fire('click');
+  h.find('chat-confirm-yes').fire('click');
+  await flush();
+  assert.equal(h.phase(), 'closing', 'the fall is asked for and is holding the panel');
+
+  // The server says the session is gone while the panel is mid-teardown, which is the exact
+  // moment the old code dropped the fact on the floor.
+  h.chat.push({ kind: 'status', state: 'stopped' });
+  h.tick(2000);
+  assert.equal(h.phase(), 'idle', 'and it is on the globe anyway');
+  assert.equal(h.find('chat-globe').hidden, false);
+  assert.equal(h.find('chat-list').children.length, 0, 'with the dead conversation cleared');
+});
+
+test('a start that never reports lands on the globe with a reason, not on a printed intro', () => {
+  const h = load();
+  h.find('chat-globe').fire('click');
+  h.tick(1000);
+  assert.equal(h.phase(), 'booting', 'the intro prints while the process comes up');
+
+  // Nothing else ever arrives: the event stream dropped, or the child never announced itself.
+  h.tick(30000);
+  assert.equal(h.phase(), 'idle');
+  assert.equal(h.find('chat-globe').hidden, false);
+  assert.equal(h.find('chat-globe-sub').textContent, 'the agent did not come up');
 });
 
 test('the globe turns only while the panel is idle', () => {
@@ -360,6 +467,17 @@ test('a reload in the middle of a conversation goes back to the conversation, no
   assert.equal(h.phase(), 'live');
   h.tick(1000);
   assert.deepEqual(h.rows(), ['you|what do I hold?', 'agent|Nothing on any chain.']);
+  /* The panel is put back live one statement before the driver state arrives, which is the one
+     moment the badge is up with nothing to report. It draws NOTHING there rather than a dull
+     held frame: a light that spins before anything is known is a light that lies, and a light
+     dimmed to mean "no agent" is the big globe's sentence said quietly in a corner. The state
+     lands in the same synchronous turn, so what a person sees is a badge that starts turning. */
+  assert.deepEqual(
+    h.badge.calls,
+    ['stop', 'stop', 'start'],
+    'blank while the state is unknown, turning the moment it lands, and never held dull',
+  );
+  assert.equal(h.badge.running(), true, 'and it is turning again once the state lands');
 });
 
 /** Up, live, and with an answer being written. Three of the four tests below need this. */
@@ -417,6 +535,182 @@ test('escape in the prompt box stops the answer, and passes through when there i
   await flush();
   assert.equal(h.posts.length, 1, 'nothing was sent');
   assert.equal(stopped, 1, 'and the key was left alone');
+});
+
+/* ---------- the boot card ----------
+   The intro is the app's own statement about the process it just started, and every fact in it
+   is checked against operator/driver.settings.json and against assertSurface in src/driver.ts.
+   So what these two pin is not that it looks like a card: it is that the facts a window handed
+   the panel are the facts on screen, and that a panel handed three plain strings still prints
+   three plain rows. The second is not a legacy path. It is what a harness and a console can
+   drive, and a panel that can only render a card is a panel nobody can drive by hand. */
+
+const CARD = {
+  mark: 'PHOSPHOR',
+  title: 'AGENT LINK',
+  facts: [
+    { label: 'process', value: 'a local agent, spawned under this window' },
+    { label: 'tools', value: 'phosphor only, checked on connect' },
+    { label: 'denied', value: 'shell, files, web of its own' },
+  ],
+};
+
+test('the boot card prints its facts, one per beat, and the bar fills with them', () => {
+  const h = load({ intro: CARD });
+  h.chat.push({ kind: 'status', state: 'starting' });
+
+  // Beat one is the card itself: the frame is on screen and no fact has landed in it yet.
+  assert.equal(h.find('chat-intro-mark').textContent, 'PHOSPHOR');
+  assert.equal(h.find('chat-intro-title').textContent, 'AGENT LINK');
+  assert.deepEqual(h.facts(), [
+    '- process: a local agent, spawned under this window',
+    '- tools: phosphor only, checked on connect',
+    '- denied: shell, files, web of its own',
+  ]);
+  assert.equal(h.find('chat-intro-fill').style.clipPath, 'inset(0 100% 0 0)', 'nothing is linked yet');
+
+  h.tick(140);
+  assert.equal(h.facts()[0].charAt(0), '+', 'the first fact lands on the next beat');
+  assert.equal(h.facts()[1].charAt(0), '-', 'and only the first');
+  assert.equal(h.find('chat-intro-fill').style.clipPath, 'inset(0 67% 0 0)');
+
+  h.tick(1000);
+  assert.deepEqual(h.facts().map((f: string) => f.charAt(0)), ['+', '+', '+']);
+  assert.equal(h.find('chat-intro-fill').style.clipPath, 'inset(0 0% 0 0)', 'the link is made');
+
+  // One card, not three rows: the whole print is a single child of the transcript.
+  assert.equal(h.find('chat-list').children.length, 1);
+});
+
+test('the card is one element and holds no control', () => {
+  const h = load({ intro: CARD });
+  h.chat.push({ kind: 'status', state: 'starting' });
+  h.tick(1000);
+
+  const card = h.find('chat-list').children[0];
+  assert.equal(card.className, 'chat-intro');
+  function walk(node: Any, out: Any[]): Any[] {
+    out.push(node);
+    for (const c of node.children) walk(c, out);
+    return out;
+  }
+  const tags = walk(card, []).map((n: Any) => n.tagName);
+  assert.equal(tags.includes('BUTTON'), false, 'the panel may never render a control that decides anything');
+  assert.equal(tags.includes('A'), false);
+  assert.equal(tags.includes('INPUT'), false);
+});
+
+test('a panel handed three plain strings still prints three plain rows', () => {
+  const h = load(); // the default intro is ['one', 'two', 'three']
+  h.chat.push({ kind: 'status', state: 'starting' });
+  h.tick(1000);
+  assert.deepEqual(h.rows(), ['|one', '|two', '|three']);
+  assert.equal(h.facts().length, 0, 'and builds no card at all');
+});
+
+/* ---------- the link light ----------
+   Karim, 2026-08-20: "a warden globe that glows and is animated when working and dull when
+   stopped." It is a status light, so what it has to get right is the state, and there is one
+   thing under it that costs real battery: whether it is turning. A badge that keeps turning
+   after the agent has stopped is the whole failure.
+
+   THE DULL HALF OF THAT SENTENCE IS THE BIG GLOBE, not a dull badge. `stopped`, `off` and
+   `failed` all send the panel to idle, where the badge is hidden and a globe that fills the
+   panel is the answer, so a dimmed badge could only ever have been drawn into a corner nobody
+   was looking at. The badge now has three settings, one per state a lit panel can be in, and
+   anything else takes it off the screen. */
+
+test('the badge has one setting per state a lit panel can be in, and no dull fourth', () => {
+  const h = load();
+  assert.equal(h.find('chat-badge').hidden, true, 'there is no link to report while the globe is the panel');
+  assert.equal(h.badge.running(), false);
+
+  h.chat.push({ kind: 'status', state: 'starting' });
+  assert.equal(h.find('chat-badge').hidden, false, 'it is up as soon as something is coming up');
+  assert.equal(h.badge.running(), true);
+
+  h.tick(1000);
+  h.chat.push({ kind: 'status', state: 'ready' });
+  const waiting = h.badge.drive;
+  assert.equal(h.badge.running(), true, 'alive, but quiet');
+
+  h.chat.push({ kind: 'status', state: 'thinking' });
+  assert.ok(h.badge.drive.rate > waiting.rate, 'working turns faster than waiting');
+  assert.ok(h.badge.drive.gain > waiting.gain, 'and burns brighter');
+
+  h.chat.push({ kind: 'status', state: 'ready' });
+  assert.deepEqual(h.badge.drive, waiting, 'and drops straight back when the turn ends');
+});
+
+test('a stopped agent costs no frames, and the light is put away with the panel', () => {
+  const h = load();
+  h.chat.push({ kind: 'status', state: 'starting' });
+  h.tick(1000);
+  h.chat.push({ kind: 'status', state: 'thinking' });
+  assert.equal(h.badge.running(), true);
+
+  // failed leaves the phase on the globe, which is where a dead process belongs.
+  h.chat.push({ kind: 'status', state: 'failed', detail: 'the agent stopped' });
+  h.tick(2000);
+  assert.equal(h.phase(), 'idle');
+  assert.equal(h.badge.running(), false, 'nothing is turning in a corner nobody can see');
+  assert.equal(h.find('chat-badge').hidden, true);
+  assert.equal(
+    h.badge.calls.includes('hold'),
+    false,
+    'a dead driver takes the badge off the screen; it never holds a dull frame in a hidden corner',
+  );
+});
+
+/* The state that used to exist and could not be reached: every way an agent can end sends the
+   panel to the globe, so there is no path on which a dimmed badge is on screen. Driven the way
+   a real stop drives it, one route per ending, because the three do not share a branch. */
+test('every way an agent ends puts the badge away rather than dimming it', async () => {
+  for (const ending of ['stopped', 'off', 'failed']) {
+    const h = load();
+    h.chat.push({ kind: 'status', state: 'starting' });
+    h.tick(1000);
+    h.chat.push({ kind: 'status', state: 'thinking' });
+    assert.equal(h.badge.running(), true, `${ending}: the badge is up while the agent works`);
+
+    h.chat.push({ kind: 'status', state: ending });
+    h.tick(2000);
+    assert.equal(h.phase(), 'idle', `${ending}: lands on the globe`);
+    assert.equal(h.find('chat-badge').hidden, true, `${ending}: and the badge is gone with it`);
+    assert.equal(h.badge.calls.includes('hold'), false, `${ending}: never dimmed and kept`);
+    assert.equal(h.badge.running(), false, `${ending}: and never left turning`);
+  }
+
+  // The human's own stop, which is the route through the veil rather than through a status.
+  const h = load();
+  h.chat.push({ kind: 'status', state: 'starting' });
+  h.tick(1000);
+  h.chat.push({ kind: 'status', state: 'ready' });
+  h.find('chat-stop').fire('click');
+  h.find('chat-confirm-yes').fire('click');
+  h.tick(2000);
+  await flush();
+  assert.equal(h.phase(), 'idle', 'a confirmed stop lands on the globe');
+  assert.equal(h.find('chat-badge').hidden, true);
+  assert.equal(h.badge.calls.includes('hold'), false);
+});
+
+test('exactly one globe turns, whatever the panel is doing', () => {
+  const h = load();
+  const idle = () => h.globeCalls.at(-1) === 'start';
+  const both = () => idle() && h.badge.running();
+
+  assert.equal(both(), false);
+  h.chat.push({ kind: 'status', state: 'starting' });
+  assert.equal(both(), false, 'the idle globe went the moment the badge arrived');
+  h.tick(1000);
+  h.chat.push({ kind: 'status', state: 'thinking' });
+  assert.equal(both(), false);
+  h.chat.push({ kind: 'status', state: 'stopped' });
+  h.tick(2000);
+  assert.equal(both(), false, 'and the badge went the moment the idle globe came back');
+  assert.equal(idle(), true);
+  assert.equal(h.badge.running(), false);
 });
 
 test('the record says the human stopped the answer', () => {

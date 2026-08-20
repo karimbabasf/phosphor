@@ -52,14 +52,14 @@ var SPLIT_DOUBLE_MS = 400; /* two presses this close together are one double cli
  */
 var SPLIT_PAGES = {
   pro: {
-    'deck-a': {
-      axis: 'x', sign: 1, min: 240,
-      pane: '.col-agent', host: '.deck', prop: '--deck-a',
-      give: '.col-mid', giveMin: 380,
-    },
-    'deck-c': {
+    /* The agent is on the RIGHT, so dragging right makes it smaller: sign -1. The name is
+       deck-agent rather than the old deck-a on purpose. A stored width from the layout where
+       the agent was the LEFT column would be read back and applied to a column on the other
+       side of the screen, which is not a size anybody chose. A new name is how that entry
+       gets left behind instead of misapplied. */
+    'deck-agent': {
       axis: 'x', sign: -1, min: 240,
-      pane: '.col-rail', host: '.deck', prop: '--deck-c',
+      pane: '.col-agent', host: '.deck', prop: '--deck-agent',
       give: '.col-mid', giveMin: 380,
     },
     /* The wallet is the sized one and the chart is the give, never the other way round: the
@@ -71,23 +71,21 @@ var SPLIT_PAGES = {
       pane: '.panel-wallet', host: '.panel-wallet', prop: '--split-h',
       give: '#panel-chart', giveMin: 200,
     },
-    /* The gate takes from the rail's spare room, not from the policy panel. Policy is
-       collapsed by default and a collapsed panel has nothing left to give. */
-    'gate-policy': {
-      axis: 'y', sign: 1, min: 96,
-      pane: '.panel-gate', host: '.panel-gate', prop: '--split-h',
-      give: '.rail-slack', giveMin: 0,
-    },
   },
   trade: {
-    'deck-a': {
-      axis: 'x', sign: 1, min: 240,
-      pane: '.col-agent', host: '.deck', prop: '--deck-a',
+    /* The trading page keeps its rail: liquidation distance, account health and the tape are
+       not chrome and a perpetuals screen without them is a worse screen. What it takes from
+       the pro deck is the ORDER. The agent is the last column here too, so "the chat is on
+       the right" is true on every screen in this app. Renamed for the same reason as the pro
+       deck's: a stored width for a column that has moved is not a size anybody chose. */
+    'deck-agent': {
+      axis: 'x', sign: -1, min: 240,
+      pane: '.col-agent', host: '.deck', prop: '--deck-agent',
       give: '.col-mid', giveMin: 380,
     },
-    'deck-c': {
+    'deck-rail': {
       axis: 'x', sign: -1, min: 240,
-      pane: '.col-rail', host: '.deck', prop: '--deck-c',
+      pane: '.col-rail', host: '.deck', prop: '--deck-rail',
       give: '.col-mid', giveMin: 380,
     },
     'chart-book': {

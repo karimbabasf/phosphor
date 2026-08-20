@@ -32,6 +32,10 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 const DEFAULT_PORT: u16 = 4177;
 const READY_TIMEOUT: Duration = Duration::from_secs(45);
+/// What the control app gets to shut itself and its agent down in before it is taken out. It
+/// needs one SIGTERM round trip of its own (see TERM_GRACE_MS in src/driver.ts), so this is
+/// that plus room, and it is short enough that a quit still feels like a quit.
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
 const PROBE_TIMEOUT: Duration = Duration::from_millis(700);
 const COPY_MCP_ID: &str = "copy-mcp-config";
 
@@ -41,13 +45,36 @@ const COPY_MCP_ID: &str = "copy-mcp-config";
 struct Backend(Mutex<Option<Child>>);
 
 impl Backend {
+    /// Asked to leave, then made to leave.
+    ///
+    /// This used to be `child.kill()` and nothing else, which on unix is SIGKILL and only
+    /// SIGKILL. A process cannot clean up after a signal it never receives, and the control
+    /// app has real cleanup to do: the agent it spawns is a DETACHED Claude Code process, kept
+    /// detached on purpose so the whole group can be signalled at once. SIGKILL the backend and
+    /// that group is orphaned to launchd, still running, still holding several hundred
+    /// megabytes, with no window left that could stop it. Every quit leaked one and they
+    /// accumulated until the machine was rebooted.
+    ///
+    /// So SIGTERM first, which src/driver.ts handles by taking its own child down and waiting
+    /// for it to be gone, and SIGKILL only as the backstop for a backend that will not leave.
     fn kill(&self) {
-        if let Ok(mut guard) = self.lock_or_recover() {
-            if let Some(mut child) = guard.take() {
-                let _ = child.kill();
-                let _ = child.wait();
+        let Ok(mut guard) = self.lock_or_recover() else {
+            return;
+        };
+        let Some(mut child) = guard.take() else {
+            return;
+        };
+        request_stop(&child);
+        let deadline = Instant::now() + SHUTDOWN_GRACE;
+        while Instant::now() < deadline {
+            match child.try_wait() {
+                Ok(Some(_)) => return,
+                Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+                Err(_) => break,
             }
         }
+        let _ = child.kill();
+        let _ = child.wait();
     }
 
     // A panic elsewhere must not be able to strand the child process, so a poisoned lock is
@@ -59,6 +86,21 @@ impl Backend {
         }
     }
 }
+
+/// SIGTERM to the control app, so it can take the agent it spawned down before it goes.
+#[cfg(unix)]
+fn request_stop(child: &Child) {
+    // SAFETY: kill(2) with a pid this process owns and a valid signal. A child that has already
+    // exited returns ESRCH, which is the outcome asked for rather than an error.
+    unsafe {
+        libc::kill(child.id() as libc::pid_t, libc::SIGTERM);
+    }
+}
+
+/// Windows has no SIGTERM. The graceful half of the shutdown is a unix story, and the wait
+/// below still gives a child that is leaving on its own the time to finish.
+#[cfg(not(unix))]
+fn request_stop(_child: &Child) {}
 
 /// Where the app keeps everything it writes. The bundle is read-only, so state, the audit log,
 /// the policy file and config.local.json all live here instead. Keys are not among them: they

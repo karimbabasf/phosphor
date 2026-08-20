@@ -123,44 +123,48 @@ function applied(h: Any): number | null {
 
 test('the approval gate has a floor, and a drag that asks for zero lands on it', () => {
   const s = load();
-  // The rail's spare room is generous and the gate is holding one proposal.
-  const h = handle(s, 'pro', 'gate-policy', { pane: 200, give: 300 });
+  // The trading page is the only deck with a gate panel now: the custody deck's gate became a
+  // strip above the whole window on 2026-08-20, which has no handle and therefore no floor to
+  // be dragged under. The rule it was protecting is unchanged and stronger there, see
+  // tests/unit/deck-layout-ui.test.ts.
+  const h = handle(s, 'trade', 'gate-tape', { pane: 200, give: 300 });
   s.splitBegin(h, 400);
 
   // The pointer is thrown at the top of the window: everything above the handle, gone.
   s.splitApply(h, s.splitAt(h, -2000));
 
-  assert.equal(applied(h), s.SPLIT_PAGES.pro['gate-policy'].min, 'the gate stops at its floor');
+  assert.equal(applied(h), s.SPLIT_PAGES.trade['gate-tape'].min, 'the gate stops at its floor');
   assert.ok(applied(h)! >= 96, 'and the floor is a gate still readable with its buttons on screen');
 });
 
-test('the gate floor is the biggest floor on either deck, and both decks have one', () => {
+test('every handle on either deck has a floor, and the gate has the biggest', () => {
   const s = load();
   for (const page of ['pro', 'trade']) {
     for (const id of Object.keys(s.SPLIT_PAGES[page])) {
       assert.ok(s.SPLIT_PAGES[page][id].min > 0, page + '.' + id + ' has a floor');
     }
   }
-  assert.equal(s.SPLIT_PAGES.pro['gate-policy'].min, 96);
   assert.equal(s.SPLIT_PAGES.trade['gate-tape'].min, 96);
 });
 
 test('a pane cannot be grown past the point where its neighbour hits its own floor', () => {
   const s = load();
-  // The agent column is 300 wide and the middle column has 500: the middle's floor is 380,
-  // so there are 120 pixels to take and not one more.
-  const h = handle(s, 'pro', 'deck-a', { pane: 300, give: 500 });
+  // The agent column is 300 wide and the chart column has 500: the chart's floor is 380, so
+  // there are 120 pixels to take and not one more. The agent sits on the RIGHT, so the drag
+  // that grows it runs left, which is why the signs here read backwards from the old layout.
+  const h = handle(s, 'pro', 'deck-agent', { pane: 300, give: 500 });
   s.splitBegin(h, 0);
 
-  assert.equal(s.splitAt(h, 60), 360, 'a small drag moves the boundary one for one');
-  assert.equal(s.splitAt(h, 5000), 420, 'a big one stops where the chart column would be squeezed');
-  assert.equal(s.splitAt(h, -5000), 240, 'and the other way, at the agent column own floor');
+  assert.equal(s.splitAt(h, -60), 360, 'a small drag moves the boundary one for one');
+  assert.equal(s.splitAt(h, -5000), 420, 'a big one stops where the chart column would be squeezed');
+  assert.equal(s.splitAt(h, 5000), 240, 'and the other way, at the agent column own floor');
 });
 
 test('a handle whose pointer runs the other way still grows the right pane', () => {
   const s = load();
-  // deck-c is the right rail: dragging the pointer LEFT makes it wider.
-  const h = handle(s, 'pro', 'deck-c', { pane: 300, give: 500 });
+  // The trading deck keeps a rail between the chart and the agent. It is a right-hand pane
+  // like the agent, so dragging the pointer LEFT makes it wider.
+  const h = handle(s, 'trade', 'deck-rail', { pane: 300, give: 500 });
   s.splitBegin(h, 0);
 
   assert.equal(s.splitAt(h, -60), 360, 'left widens the rail');
@@ -195,16 +199,16 @@ test('a size survives a reload, and a reset forgets it', () => {
 
 test('a stored size that no longer fits is clamped, and the stored one is left alone', () => {
   const storage = makeStorage();
-  storage.setItem('phosphor.split.pro.deck-a', '900');
+  storage.setItem('phosphor.split.pro.deck-agent', '900');
 
   const s = load(storage);
   // A much smaller window: 300 in the agent column, 500 in the middle, floor 380.
-  const h = handle(s, 'pro', 'deck-a', { pane: 300, give: 500 });
+  const h = handle(s, 'pro', 'deck-agent', { pane: 300, give: 500 });
   s.splitRestore(h);
 
   assert.equal(applied(h), 420, 'clamped to what this window can give');
   assert.equal(
-    storage.map.get('phosphor.split.pro.deck-a'),
+    storage.map.get('phosphor.split.pro.deck-agent'),
     '900',
     'the size chosen on the bigger screen is still there for when it comes back',
   );
@@ -212,60 +216,60 @@ test('a stored size that no longer fits is clamped, and the stored one is left a
 
 test('storage that refuses everything does not cost a person their drag', () => {
   const s = load(makeStorage(true));
-  assert.equal(s.splitRead('pro', 'deck-a'), null, 'nothing to restore, and no throw');
+  assert.equal(s.splitRead('pro', 'deck-agent'), null, 'nothing to restore, and no throw');
 
-  s.splitWrite('pro', 'deck-a', 320);
-  assert.equal(s.splitRead('pro', 'deck-a'), 320, 'the in-memory copy carries the session');
+  s.splitWrite('pro', 'deck-agent', 320);
+  assert.equal(s.splitRead('pro', 'deck-agent'), 320, 'the in-memory copy carries the session');
 
-  s.splitForget('pro', 'deck-a');
-  assert.equal(s.splitRead('pro', 'deck-a'), null);
+  s.splitForget('pro', 'deck-agent');
+  assert.equal(s.splitRead('pro', 'deck-agent'), null);
 });
 
 test('a stored value that is not a size is treated as absent', () => {
   const storage = makeStorage();
   const s = load(storage);
   for (const junk of ['', 'wide', '0', '-40', 'NaN']) {
-    storage.map.set('phosphor.split.pro.deck-a', junk);
-    delete s.SPLIT_MEM['phosphor.split.pro.deck-a'];
-    assert.equal(s.splitRead('pro', 'deck-a'), null, junk + ' is not a size');
+    storage.map.set('phosphor.split.pro.deck-agent', junk);
+    delete s.SPLIT_MEM['phosphor.split.pro.deck-agent'];
+    assert.equal(s.splitRead('pro', 'deck-agent'), null, junk + ' is not a size');
   }
 });
 
 test('a keyboard press moves the same boundary the pointer does, and is written down', () => {
   const storage = makeStorage();
   const s = load(storage);
-  const h = handle(s, 'pro', 'deck-a', { pane: 300, give: 500 });
+  const h = handle(s, 'pro', 'deck-agent', { pane: 300, give: 500 });
   const events: string[] = [];
   s.window.dispatchEvent = (ev: Any) => events.push(ev.type);
   s.CustomEvent = function (type: string) { return { type }; } as any;
   s.Event = function (type: string) { return { type }; } as any;
 
-  s.splitKeydown(h, { key: 'ArrowRight', preventDefault() {} });
+  s.splitKeydown(h, { key: 'ArrowLeft', preventDefault() {} });
   assert.equal(applied(h), 316, 'one arrow is one nudge, in the direction the pointer goes');
-  assert.equal(storage.map.get('phosphor.split.pro.deck-a'), '316', 'and it is remembered');
+  assert.equal(storage.map.get('phosphor.split.pro.deck-agent'), '316', 'and it is remembered');
 
   s.splitKeydown(h, { key: 'Enter', preventDefault() {} });
   assert.equal(applied(h), null, 'Enter puts it back to the stylesheet default');
-  assert.equal(storage.map.has('phosphor.split.pro.deck-a'), false);
+  assert.equal(storage.map.has('phosphor.split.pro.deck-agent'), false);
 
   assert.ok(events.includes('phosphor:split'), 'and the deck is told to redraw its frames');
 });
 
 test('a keyboard press on the inverted handle respects the same inversion', () => {
   const s = load();
-  const h = handle(s, 'pro', 'deck-c', { pane: 300, give: 500 });
+  const h = handle(s, 'pro', 'deck-agent', { pane: 300, give: 500 });
   s.window.dispatchEvent = () => {};
   s.CustomEvent = function (type: string) { return { type }; } as any;
   s.Event = function (type: string) { return { type }; } as any;
 
   s.splitKeydown(h, { key: 'ArrowRight', preventDefault() {} });
-  assert.equal(applied(h), 284, 'right narrows the right-hand rail, the way dragging right does');
+  assert.equal(applied(h), 284, 'right narrows a right-hand pane, the way dragging right does');
 });
 
 test('a handle with no neighbour to take from can still take the spare room, and no more', () => {
   const s = load();
-  // No slack at all in the rail: the gate is already using everything.
-  const h = handle(s, 'pro', 'gate-policy', { pane: 200, give: 0 });
+  // No slack at all in the column: the gate is already using everything the tape could give.
+  const h = handle(s, 'trade', 'gate-tape', { pane: 200, give: 140 });
   s.splitBegin(h, 0);
   assert.equal(s.splitAt(h, 5000), 200, 'there is nothing to take, so nothing moves');
   assert.equal(s.splitAt(h, -5000), 96, 'and it can always be given back, down to the floor');
@@ -285,16 +289,16 @@ test('two presses on a handle put it back to the stylesheet default', () => {
   s.CustomEvent = function (type: string) { return { type }; } as any;
   s.Event = function (type: string) { return { type }; } as any;
 
-  const h = handle(s, 'pro', 'deck-a', { pane: 300, give: 500 });
+  const h = handle(s, 'pro', 'deck-agent', { pane: 300, give: 500 });
   h.lastDown = 0;
   s.splitWire(h);
 
   // One press, a drag, a release: the column is 380 wide and the browser remembers.
   h.node.fire('pointerdown', { button: 0, clientX: 0, pointerId: 1 });
-  s.splitApply(h, s.splitAt(h, 80));
+  s.splitApply(h, s.splitAt(h, -80));
   h.node.fire('pointerup', {});
   assert.equal(applied(h), 380);
-  assert.equal(storage.map.get('phosphor.split.pro.deck-a'), '380');
+  assert.equal(storage.map.get('phosphor.split.pro.deck-agent'), '380');
 
   // Two presses in a row, which is a double click on the handle.
   h.node.fire('pointerdown', { button: 0, clientX: 0, pointerId: 2 });
@@ -302,5 +306,5 @@ test('two presses on a handle put it back to the stylesheet default', () => {
 
   assert.equal(applied(h), null, 'the property is gone, so the CSS default is what shows');
   assert.equal(h.pane.getAttribute('data-sized'), null);
-  assert.equal(storage.map.has('phosphor.split.pro.deck-a'), false, 'and it is not remembered');
+  assert.equal(storage.map.has('phosphor.split.pro.deck-agent'), false, 'and it is not remembered');
 });
