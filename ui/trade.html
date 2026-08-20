@@ -81,34 +81,6 @@
        never does. -->
   <div class="deck" data-split="trade">
 
-    <div class="col col-agent">
-
-      <!-- 1. AGENT. The one thing this screen could not do was say a word to the agent
-           holding its seat. It was a fixed 22vh under the book, paid for out of the chart,
-           and the argument for that placement was that the right column ends in the tape and
-           the tape may not be shortened. That argument still holds and this does not break
-           it: the height comes from a column of its own now, not from either of them.
-
-           The chat renders no approval control, ever. APPROVALS is two columns over.
-
-           data-frame="double" is the one thing this panel asks the frame renderer for: the
-           same box drawn in double rules. See layoutFrames() in ui/trade.js. -->
-      <section class="panel panel-tchat grow">
-        <button type="button" class="frame frame-top" data-frame="double" data-title="AGENT" data-collapse="agent" aria-expanded="true" aria-controls="agent-chat"></button>
-        <div class="pbody">
-          <div id="agent-chat"></div>
-        </div>
-        <div class="frame frame-bottom" data-frame="double"></div>
-      </section>
-
-    </div>
-
-    <!-- The handles. role="separator" with a tabindex is a real window splitter: arrows move
-         it, Home and End take it to its limits, Enter puts it back. ui/split.js owns the
-         behaviour and the numbers; the markup owns only where each one sits. -->
-    <div class="split split-x" data-split-handle="deck-a" role="separator" aria-orientation="vertical"
-         tabindex="0" aria-label="Resize the agent column. Arrow keys move it, enter resets it."></div>
-
     <div class="col col-mid">
 
 
@@ -210,8 +182,9 @@
 
     </div>
 
-    <div class="split split-x" data-split-handle="deck-c" role="separator" aria-orientation="vertical"
-         tabindex="0" aria-label="Resize the right column. Arrow keys move it, enter resets it."></div>
+
+    <div class="split split-x" data-split-handle="deck-rail" role="separator" aria-orientation="vertical"
+         tabindex="0" aria-label="drag to resize the risk column"></div>
 
     <div class="col col-rail">
 
@@ -382,6 +355,35 @@
 
     </div>
 
+
+    <div class="split split-x" data-split-handle="deck-agent" role="separator" aria-orientation="vertical"
+         tabindex="0" aria-label="drag to resize the agent column"></div>
+
+    <div class="col col-agent">
+
+      <!-- 1. AGENT. The one thing this screen could not do was say a word to the agent
+           holding its seat. It was a fixed 22vh under the book, paid for out of the chart,
+           and the argument for that placement was that the right column ends in the tape and
+           the tape may not be shortened. That argument still holds and this does not break
+           it: the height comes from a column of its own now, not from either of them.
+
+           The chat renders no approval control, ever. APPROVALS is two columns over.
+
+           data-frame="double" is the one thing this panel asks the frame renderer for: the
+           same box drawn in double rules. See layoutFrames() in ui/trade.js. -->
+      <section class="panel panel-tchat grow">
+        <button type="button" class="frame frame-top" data-frame="double" data-title="AGENT" data-collapse="agent" aria-expanded="true" aria-controls="agent-chat"></button>
+        <div class="pbody">
+          <div id="agent-chat"></div>
+        </div>
+        <div class="frame frame-bottom" data-frame="double"></div>
+      </section>
+
+    </div>
+
+    <!-- The handles. role="separator" with a tabindex is a real window splitter: arrows move
+         it, Home and End take it to its limits, Enter puts it back. ui/split.js owns the
+         behaviour and the numbers; the markup owns only where each one sits. -->
   </div>
 
 </main>

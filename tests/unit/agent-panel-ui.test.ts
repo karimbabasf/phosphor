@@ -69,10 +69,18 @@ function makeNode(tag: string, created: Any[]): Any {
       for (const fn of node.listeners[kind] ?? []) fn({ preventDefault() {}, stopPropagation() {}, ...ev });
     },
     get firstChild() { return node.children[0] ?? null; },
-    get childElementCount() { return node.children.length; },
+    /* Element children only, the way the real property counts. Text nodes are children here
+       too, and counting them would make the transcript cap fire on the wrong number. */
+    get childElementCount() { return node.children.filter((c: Any) => c.tagName !== '#TEXT').length; },
     /* A real setter, because the panel empties the transcript by assigning '' to it and a
-       plain field would have kept every row while reporting none. */
-    get textContent() { return text; },
+       plain field would have kept every row while reporting none.
+       The getter walks the children, because an agent answer is no longer one string: it is a
+       run of text nodes and lit <b> elements, and a getter that returned only this node's own
+       text would report the answer as empty. */
+    get textContent() {
+      if (node.children.length === 0) return text;
+      return node.children.map((c: Any) => c.textContent).join('');
+    },
     set textContent(value: string) {
       text = String(value);
       for (const c of node.children) c.parentNode = null;
@@ -105,6 +113,14 @@ function load(opts: { startFails?: string; driver?: Any } = {}): Harness {
 
   const document: Any = {
     createElement: (tag: string) => makeNode(tag, created),
+    /* Real text nodes. The panel builds the agent's answer as text nodes with lit <b> elements
+       between them rather than as one string, which is how it highlights a figure without ever
+       putting a string into the DOM as markup. A harness without this cannot see that. */
+    createTextNode: (value: string) => {
+      const n = makeNode('#text', created);
+      n.textContent = String(value);
+      return n;
+    },
     addEventListener: () => {},
     removeEventListener: () => {},
     hidden: false,
@@ -223,8 +239,19 @@ test('no string reaches the DOM as markup', () => {
   const nasty = '<img src=x onerror="alert(1)">';
   h.chat.push({ kind: 'text', text: nasty });
   const row = h.find('chat-list').children.at(-1);
-  assert.equal(row.children[1].textContent, nasty, 'the tag is held as text, exactly as written');
-  assert.equal(row.children[1].children.length, 0, 'and it built no elements');
+  const body = row.children[1];
+  assert.equal(body.textContent, nasty, 'the tag is held as text, exactly as written');
+  /* The answer is built as a run of text nodes with lit <b> elements between them, which is how
+     a figure is highlighted without a string ever being parsed. So "it built no elements" is no
+     longer the invariant; "it built nothing but those two kinds" is, and it is the stronger one:
+     an <img> reaching this list would fail here whether it came from a string or from code. */
+  for (const child of body.children) {
+    const kind = child.tagName === '#TEXT' ? '#text' : child.tagName + '.' + child.className;
+    assert.ok(
+      kind === '#text' || kind === 'B.chat-fig',
+      `the answer built a ${kind}, and the only things allowed in it are text and a lit figure`,
+    );
+  }
 });
 
 test('markdown markers are taken off, and the text is kept', () => {

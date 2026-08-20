@@ -75,7 +75,10 @@ test('a handle is reachable without a pointer', () => {
   for (const [, file] of PAGES) {
     const html = read(file);
     const handles = [...html.matchAll(/<div class="split[^>]*>/g)].map((m) => m[0]);
-    assert.ok(handles.length >= 4, file + ' has its handles');
+    // Two on the custody deck (the agent's width, the wallet's height) and three on trading,
+    // which keeps its rail. A count rather than a list: which handles exist is a layout
+    // decision that moves, and that one handle is unreachable by keyboard is a bug forever.
+    assert.ok(handles.length >= 2, file + ' has its handles');
     for (const tag of handles) {
       assert.match(tag, /role="separator"/, 'a splitter says what it is');
       assert.match(tag, /aria-orientation="(vertical|horizontal)"/, 'and which way it runs');
@@ -85,14 +88,25 @@ test('a handle is reachable without a pointer', () => {
   }
 });
 
-test('the policy panel ships shut, and its markup says so before any script runs', () => {
-  const app = read('app.js');
-  assert.match(app, /var COLLAPSE_DEFAULTS = \{ policy: true \};/, 'policy is the one default');
-
+/* The gate replaced the policy panel as the thing this file has to hold still.
+   Karim asked for the rail gone on 2026-08-20 and the gate went with it, which is the one
+   removal in that change that could have cost something real. It did not, because the gate
+   became a strip that appears when a decision is actually waiting. These four assertions are
+   what stop it quietly becoming a panel again, or worse, a panel that can be shut. */
+test('the approval gate has no control that hides it, and hides itself when empty', () => {
   const html = read('index.html');
-  const control = html.match(/<button[^>]*data-collapse="policy"[^>]*>/);
-  assert.ok(control, 'the policy panel still collapses from its own frame line');
-  assert.match(control[0], /aria-expanded="false"/, 'and the first paint agrees with the default');
+
+  const strip = html.match(/<section class="gatestrip"[^>]*>/);
+  assert.ok(strip, 'the gate is a strip above the deck');
+  assert.match(strip[0], /\bhidden\b/, 'and it is not on screen before there is anything to decide');
+
+  // No collapse control anywhere inside it. data-collapse is what makes a frame a button.
+  const block = html.slice(html.indexOf('<section class="gatestrip"'), html.indexOf('<div class="deck"'));
+  assert.ok(!block.includes('data-collapse'), 'a safety surface that can be hidden is a safety bug');
+
+  // And the only thing that may set that attribute is the pending count.
+  const app = read('app.js');
+  assert.match(app, /strip\.hidden = pending === 0;/, 'the pending count is what shows it');
 });
 
 test('a tool that only asks never reads as a tool that did it', () => {

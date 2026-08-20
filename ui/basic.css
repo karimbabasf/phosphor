@@ -522,17 +522,21 @@ body[data-view='basic'] #page {
   outline-offset: 2px;
 }
 
-/* ---- the bar ---- */
+/* ---- the bar, which is now the composer's bottom row ---- */
 
+/* It used to float between the transcript and the input with a rule of its own, which put
+   three separate baselines at the foot of the panel and left the field looking like an
+   afterthought under them. It sits inside the field's own box now: one object, two halves. */
 .basic-chat .chat-bar {
   flex: none;
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-top: 14px;
-  padding-top: 14px;
+  padding: 10px 4px 0;
   border-top: 1px solid var(--rule);
 }
+
+.basic-chat .chat-bar[hidden] { display: none; }
 
 .basic-chat .chat-state {
   margin-right: auto;
@@ -607,31 +611,41 @@ body[data-view='basic'] #page {
 
 /* ---- the prompt ---- */
 
+/* ONE BOX. Karim, 2026-08-20: "the text box is weird." The field, the state word and both
+   stops are one object with one border and one focus ring, which is how every composer this
+   person already uses is built. The ring goes on the box rather than on the input, because
+   the box is what they are aiming at. */
 .basic-chat .chat-form {
   flex: none;
   display: flex;
-  gap: 10px;
-  margin-top: 12px;
-}
-
-.basic-chat .chat-input {
-  flex: 1 1 auto;
-  min-width: 0;
-  font: inherit;
-  font-size: 1rem;
-  padding: 12px 15px;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 14px;
+  padding: 12px 11px 10px;
   border-radius: var(--r-control);
   background: var(--ground);
   border: 1px solid var(--rule-firm);
+  transition: border-color 200ms var(--ease-out);
+}
+
+.basic-chat .chat-form:focus-within { border-color: var(--calm); }
+
+.basic-chat .chat-input {
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  font-size: 1rem;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
   color: var(--ink);
 }
 
 .basic-chat .chat-input::placeholder { color: var(--ink-faint); }
+.basic-chat .chat-input:focus { outline: none; }
 
-.basic-chat .chat-input:focus {
-  outline: 2px solid var(--calm);
-  outline-offset: 1px;
-}
+/* Send is the affirmative one and ends the row, past the stop. */
+.basic-chat .chat-send { margin-left: 0; }
 
 /* Motion, refused. The dissolve keeps its opacity and loses its blur, because a blur is a
    motion cue and an opacity is a statement that something is gone. The globe holds one
@@ -1381,3 +1395,36 @@ body[data-view='basic'].waiting .basic-headline {
 /* Start a SECOND assistant, in its own terminal window, from inside the "Your assistant"
    fold. A calm accent, not the amber of a pending decision nor the red of the brake:
    starting help is neither a question nor a stop. */
+/* ---------- the transcript, given three voices ----------
+
+   Karim, 2026-08-20: "no creativity" about how the output was drawn. The same fix as the
+   deck's, said in this screen's own language rather than the terminal's: no green, no
+   brackets, and weight doing the work that brightness does over there. */
+
+/* The answer is the thing on this screen, so it carries a rule and the full text colour. */
+.basic-chat .chat-agent {
+  border-left: 2px solid var(--rule-firm);
+  padding-left: 14px;
+  margin-left: -2px;
+}
+
+/* Work the assistant did, marked rather than named. A column of small marks reads as a list
+   of things happening; the word "ran" four times reads as a paragraph. */
+.basic-chat .chat-tool .chat-who {
+  text-align: center;
+  font-size: 8px;
+}
+
+/* THE FIGURES. A balance, a percentage, a price: the three things a person came to find. In
+   a proportional face weight is available, so this is the one place on this screen where a
+   heavier weight carries meaning instead of decoration. */
+.basic-chat .chat-fig {
+  font-weight: inherit;
+  font-variation-settings: 'wght' 600;
+  color: var(--ink);
+}
+
+/* Same rule as the deck's, same reason: a control that wraps its own label looks broken, and
+   the composer's row is as narrow as this panel ever gets. */
+.basic-chat .chat-btn { white-space: nowrap; }
+.basic-chat .chat-state { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

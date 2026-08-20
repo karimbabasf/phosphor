@@ -195,17 +195,37 @@
   max-height: 38vh;
 }
 
-/* The middle column carries the blotter and the right carries prose, so the deck is split in
-   the blotter's favour on this page and on this page only: the two side columns start
-   narrower than the custody deck's and the middle keeps the difference. At the even-ish
-   widths that page uses, the figures a person came to read were the part that went over the
-   edge.
+/* This page keeps three columns where the custody deck now has two, and it states its own
+   template because of it. The custody deck lost its rail on 2026-08-20 because that rail held
+   a gate reading "no pending approvals", a shut policy panel and a pulse strip. This one holds
+   liquidation distance, account health, the funding basis, armed mandates and the tape, and a
+   perpetuals screen without those is a worse screen, not a cleaner one.
 
-   Two properties, not a template. ui/style.css declares the five tracks once, and every page
-   that restated them would be a second copy to keep true when a handle is added. */
+   What it takes from the custody deck is the ORDER: chart and blotter, then the rail, then
+   the agent last. "The chat is on the right" is true on every screen in this app.
+
+   The blotter's favour: the two side columns start narrower than the custody deck's and the
+   middle keeps the difference, because at even-ish widths the figures a person came to read
+   were the part that went over the edge. */
 .deck {
-  --deck-a-default: clamp(300px, 21vw, 400px);
-  --deck-c-default: clamp(260px, 20vw, 340px);
+  --deck-rail-default: clamp(260px, 20vw, 340px);
+  --deck-agent-default: clamp(300px, 21vw, 400px);
+  grid-template-columns:
+    minmax(0, 1fr)
+    var(--gutter)
+    var(--deck-rail, var(--deck-rail-default))
+    var(--gutter)
+    var(--deck-agent, var(--deck-agent-default));
+}
+
+/* Same override as the custody deck's, with the rail still in the middle of it. */
+body.agent-collapsed .deck {
+  grid-template-columns:
+    minmax(0, 1fr)
+    var(--gutter)
+    var(--deck-rail, var(--deck-rail-default))
+    var(--gutter)
+    28ch;
 }
 
 /* Every column width is declared and the floor is their exact sum, which is the whole fix

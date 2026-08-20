@@ -190,6 +190,38 @@ var PhosphorChat = (function () {
       .trim();
   }
 
+  /* THE FIGURES ARE THE POINT, so the figures are lit.
+     An agent answer here is not prose with numbers in it, it is numbers with prose holding
+     them together: "ETH-USD on the 15 minute with EMA(21) drawn. Last 2293.5, EMA at 2272.58
+     and rising, price 0.92% above it." Rendered flat, a person has to read the sentence to
+     find the three things they actually wanted, every time. Lit, they can take the figure at
+     a glance and read the sentence only if it surprises them. That is what a terminal is FOR,
+     and this app had been throwing it away on the one surface where a model does the talking.
+
+     Four kinds, and no more: money, percentages, bare numbers, and instrument names. Anything
+     cleverer starts guessing, and a highlight on the wrong word is worse than none.
+
+     STILL textContent, every piece. This builds element nodes and sets their text; no string
+     on this path is ever parsed as markup, which is the rule the whole file is written to. */
+  var FIGURE = /(\$[\d,]+(?:\.\d+)?|[+-]?\d[\d,]*\.?\d*%|\b[A-Z]{2,6}-[A-Z]{2,6}\b|\b[A-Z]{2,5}\b(?=\s|[.,)]|$)|\b\d[\d,]*(?:\.\d+)?\b)/g;
+
+  function litText(cls, body) {
+    var node = el('span', cls);
+    var last = 0;
+    var m;
+    FIGURE.lastIndex = 0;
+    while ((m = FIGURE.exec(body)) !== null) {
+      /* A zero-length match would spin here forever. It cannot happen with this pattern and
+         the guard costs one line, which is the right price for a loop in a render path. */
+      if (m.index === FIGURE.lastIndex) { FIGURE.lastIndex += 1; continue; }
+      if (m.index > last) node.appendChild(document.createTextNode(body.slice(last, m.index)));
+      node.appendChild(el('b', 'chat-fig', m[0]));
+      last = m.index + m[0].length;
+    }
+    if (last < body.length) node.appendChild(document.createTextNode(body.slice(last)));
+    return node;
+  }
+
   function renderEvent(list, event) {
     var row = null;
     if (event.kind === 'said') {
@@ -201,10 +233,14 @@ var PhosphorChat = (function () {
       if (body === '') return; /* a turn that was nothing but a fence is not a message */
       row = el('div', 'chat-row chat-agent');
       row.appendChild(el('span', 'chat-who', 'agent'));
-      row.appendChild(el('span', 'chat-text', body));
+      row.appendChild(litText('chat-text', body));
     } else if (event.kind === 'tool') {
+      /* A tool call is a thing happening, not a thing said, so it is drawn as a mark and a
+         phrase rather than as another line of conversation. The mark is what makes a run of
+         them read as a list of work: four dim rows with a column of blocks down the left is
+         a machine doing things, and four dim rows without it is a paragraph nobody reads. */
       row = el('div', 'chat-row chat-tool');
-      row.appendChild(el('span', 'chat-who', 'ran'));
+      row.appendChild(el('span', 'chat-who', '\u25AA'));
       row.appendChild(el('span', 'chat-text', toolLabel(event.name)));
     } else if (event.kind === 'tool_result') {
       return; /* The result is visible in the app's own state. A second line saying it
@@ -495,6 +531,15 @@ var PhosphorChat = (function () {
     confirm.appendChild(yes);
     confirm.appendChild(no);
 
+    /* ONE BOX. Karim, 2026-08-20: "the text box is weird."
+       It was three things stacked loose at the foot of a tall column: a state word floating on
+       its own line, a STOP AGENT button beside it with nothing to sit on, and an input under
+       both. Three baselines, no edge, and the one control a person is meant to use without
+       being told to was the least visible of them.
+       Now the state and both stops are the bottom row INSIDE the field's own border, which is
+       how every composer a person already uses is built. It also fixes a real problem rather
+       than only a look: the box has one focus ring, so tabbing into it lands somewhere, and
+       the destructive control sits at the far end of a row rather than floating next to text. */
     var bar = el('div', 'chat-bar');
     bar.appendChild(status);
     bar.appendChild(halt);
@@ -511,11 +556,11 @@ var PhosphorChat = (function () {
     var send = el('button', 'chat-btn chat-send', options.sendLabel || 'SEND');
     send.type = 'submit';
     form.appendChild(input);
-    form.appendChild(send);
+    form.appendChild(bar);
+    bar.appendChild(send);
     form.hidden = true;
 
     root.appendChild(stage);
-    root.appendChild(bar);
     root.appendChild(form);
 
     var record = {

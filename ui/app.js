@@ -42,15 +42,14 @@ var DONUT_INNER = 0.58;
 
 var COLLAPSE_PREFIX = 'phosphor.collapse.';
 
-/* Which panels start shut on a window that has never been touched. Only one does, and the
-   reason is that the policy panel held a quarter of the rail open at all times to print four
-   sentences that say what has not changed since the last time anybody read them, with the
-   whole policy behind the POLICY button anyway. Karim, 2026-08-19: "I don't like how we show
-   the policy."
+/* Which panels are shut when storage has nothing to say.
+   The policy panel that this named is gone from the custody deck: it was collapsed by default
+   and behind the POLICY button anyway, so the panel was a title line taking a slot in a rail.
+   The table stays because the mechanism does, and because ui/trade.html still collapses panels.
 
    A DEFAULT IS NOT A PREFERENCE. This is the value used when storage has nothing to say.
-   The moment a person opens the panel, '0' is written and that is what they get back, on
-   this window and every one after it. */
+   The moment a person opens a panel, '0' is written and that is what they get back, on this
+   window and every one after it. */
 var COLLAPSE_DEFAULTS = { policy: true };
 
 /* Box-drawing weights. The agent column is the one surface on the deck drawn in double rules,
@@ -336,14 +335,23 @@ function paintWaiting() {
   readout.appendChild(skelLine(0, 9, 'line'));
   readout.appendChild(skelLine(1, 7, 'line'));
 
+  /* The gate and the policy are not on this page in every mode any more: the custody deck's
+     gate is a strip that starts hidden and its policy panel is gone entirely, behind the
+     POLICY button. A waiting state paints what is there; it does not require it to be there.
+     Without the guard the whole boot threw here and the window stayed on its skeleton, which
+     is the loudest possible failure for the smallest possible change. */
   var gate = $('gate');
-  gate.textContent = '';
-  gate.appendChild(skelLine(0, 34));
-  gate.appendChild(skelLine(1, 21));
+  if (gate) {
+    gate.textContent = '';
+    gate.appendChild(skelLine(0, 34));
+    gate.appendChild(skelLine(1, 21));
+  }
 
   var policy = $('policy-lines');
-  policy.textContent = '';
-  for (var p = 0; p < 4; p++) policy.appendChild(skelLine(p, 30 - p * 4, 'rule skelline'));
+  if (policy) {
+    policy.textContent = '';
+    for (var p = 0; p < 4; p++) policy.appendChild(skelLine(p, 30 - p * 4, 'rule skelline'));
+  }
 
   drawDonutWaiting();
 }
@@ -809,8 +817,13 @@ function setHover(index) {
 
 /* ---------- 5. policy ---------- */
 
+/* The custody deck no longer carries a policy panel: it was shut by default and the whole
+   policy is behind the POLICY button, which builds its own copy from the same state. So this
+   paints when the element is there and returns when it is not, rather than throwing and
+   taking every render after it down with it. */
 function renderPolicy(s) {
   var box = $('policy-lines');
+  if (!box) return;
   box.textContent = '';
   if (!s.policy) {
     box.appendChild(el('div', 'rule red', 'POLICY FILE UNREADABLE: ALL WRITES REFUSED'));
@@ -869,8 +882,16 @@ function decide(route, id, buttons, errorNode) {
   return APPROVALS.decide(route, id, buttons, errorNode, approvalDeps());
 }
 
+/* The gate is a strip above the deck now, not a panel in a rail, and it does not exist while
+   nothing is pending. APPROVALS.render returns the pending count for exactly this: the page
+   that hides an empty gate should not have to re-read the state to work out whether it is
+   empty. Hidden rather than emptied, because an empty bordered box that says "no pending
+   approvals" for hours is what teaches a person to stop looking at the one surface on this
+   screen they must never stop looking at. */
 function renderGate(s) {
-  APPROVALS.render($('gate'), s, approvalDeps());
+  var pending = APPROVALS.render($('gate'), s, approvalDeps());
+  var strip = $('gate-strip');
+  if (strip) strip.hidden = pending === 0;
 }
 
 /* ---------- 6b. basic view ----------
