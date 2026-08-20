@@ -574,6 +574,12 @@ body[data-view='basic'] #page {
 
 .basic-chat .chat-stop { color: var(--ink-soft); }
 
+/* Stop this answer. Between turns it is disabled and fades to nothing rather than leaving the
+   bar, so nothing moves when an answer starts or ends. It keeps the full weight of a normal
+   control while the stop beside it stays muted: mid-answer, this is the one being reached
+   for. See ui/driver-chat.js. */
+.basic-chat .chat-halt[disabled] { opacity: 0; }
+
 /* The question. It replaces the stop button in place rather than opening anything, so the
    answer is where the press that asked it was, and the bar never changes height. */
 .basic-chat .chat-confirm {

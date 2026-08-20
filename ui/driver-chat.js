@@ -27,9 +27,13 @@
  * consent are separate on purpose: an approval button inside a scrolling transcript authored
  * by the thing being approved is precisely the design this whole app exists to argue against.
  *
- * The one control that IS here is STOP, and it asks first. Stopping costs a conversation that
- * cannot be recovered from this window, so it is two presses, and the second one is not the
- * one under the cursor. */
+ * TWO STOPS, AND THEY ARE NOT THE SAME CONTROL. "STOP AGENT" ends the session: the process
+ * goes, the conversation goes, and none of it can be got back from this window, so it asks
+ * first and the second press is not the one under the cursor. "STOP" ends the ANSWER: the
+ * turn in flight is cancelled and everything else stays. It asks nothing and costs one press,
+ * because the thing it competes with is waiting, and a cheap stop that costs two presses is
+ * one nobody uses. A human should never have to reach for the destructive one to get the
+ * cheap one. */
 
 'use strict';
 
@@ -80,12 +84,83 @@ var PhosphorChat = (function () {
       });
   }
 
+  /* WHAT THE AGENT IS DOING, IN WORDS. One phrase per tool, and this table is the whole of
+     it: no template, no argument interpolation, no sentence built at runtime.
+
+     The transcript used to print the tool id, which meant a person watching their own money
+     being worked on read `chart_set_view` and `propose_intents_withdraw`. Those are the names
+     of functions. The line beside them says "ran", so a phrase completes it: "ran changing
+     the chart".
+
+     TWO RULES THE PHRASES KEEP.
+     - Present tense and no numbers. The row is one line in a moving transcript, not a
+       receipt; what actually happened is in the panel the tool changed and in the LOG.
+     - A propose_* tool ASKS. It moves nothing, and its phrase may never suggest it did: the
+       thing it produced is a pending proposal sitting in the gate waiting for a human. The
+       pairs below are deliberately one word apart for that reason ("asking to swap" against
+       "swapping"), because that word is the entire difference between them.
+
+     An id with no entry falls through to the id itself with the server prefix stripped, which
+     is what every line looked like before. A new tool prints its own name until somebody
+     writes it a phrase; it does not print nothing, and it does not get a guessed one. */
+  var TOOL_PHRASES = {
+    /* reading */
+    balances: 'reading your balances',
+    wallet: 'reading your wallet',
+    composition: 'checking what you hold',
+    candles: 'reading prices',
+    policy_show: 'reading the policy',
+    proposal_status: 'checking the approval',
+    market_search: 'looking up a market',
+    indicator_catalog: 'checking the indicators',
+    mandate_catalog: 'checking the mandates',
+    skill: 'reading its instructions',
+    trade_read: 'reading the account',
+    /* the chart */
+    chart_read: 'reading the chart',
+    chart_measure: 'measuring the chart',
+    chart_scan: 'scanning the timeframes',
+    chart_set_view: 'changing the chart',
+    chart_add_indicator: 'adding an indicator',
+    chart_level: 'drawing a level',
+    chart_mark: 'marking the chart',
+    chart_trendline: 'drawing a trendline',
+    chart_batch: 'redrawing the chart',
+    /* the trading window */
+    trade_focus: 'focusing a market',
+    trade_highlight: 'highlighting the chart',
+    trade_overlay: 'drawing on the chart',
+    trade_note: 'leaving a note',
+    trade_batch: 'redrawing the account',
+    /* asking. None of these moves anything: each one puts a proposal in the gate. */
+    propose_consolidate: 'asking to consolidate',
+    propose_swap: 'asking to swap',
+    propose_intents_deposit: 'asking to deposit',
+    propose_intents_withdraw: 'asking to withdraw',
+    propose_mandate: 'asking to arm a mandate',
+    /* doing, once a human has said yes */
+    consolidate: 'consolidating',
+    swap: 'swapping',
+    intents_deposit: 'depositing',
+    intents_withdraw: 'withdrawing',
+    mandate_arm: 'arming a mandate',
+    /* the window itself */
+    switch: 'switching the screen',
+    watch: 'changing the coins you watch',
+    start: 'starting up',
+  };
+
   /* A tool call is the honest unit of "what the agent actually did", so it is rendered as its
      own line rather than folded into prose. The name is stripped of the mcp__phosphor__
      prefix because a person reading this does not need to be told, forty times, which server
      it came from: they are looking at that server. */
   function toolLabel(name) {
-    return String(name || 'tool').replace(/^mcp__phosphor__/, '');
+    var id = String(name || 'tool').replace(/^mcp__phosphor__/, '');
+    var phrase = TOOL_PHRASES[id];
+    /* typeof, not truthiness: the tool id arrives from a language model, and a lookup on a
+       plain object hands back Object.prototype's own members for ids like `constructor` or
+       `toString`. A function stringified into the transcript is not a phrase. */
+    return typeof phrase === 'string' ? phrase : id;
   }
 
   /* This panel is not a markdown renderer and is never going to be one: rendering
@@ -262,6 +337,8 @@ var PhosphorChat = (function () {
     mount.root.setAttribute('data-driver-state', next);
     mount.status.textContent =
       next === 'thinking' ? 'working' : next === 'starting' ? 'connecting' : detail ? detail : next;
+    // There is an answer to stop only while one is being written.
+    mount.halt.disabled = next !== 'thinking';
 
     if (next === 'starting') {
       if (mount.phase !== 'booting') {
@@ -316,6 +393,17 @@ var PhosphorChat = (function () {
     mount.confirm.hidden = true;
     mount.stopBtn.hidden = false;
     if (mount.phase === 'live') mount.form.hidden = false;
+  }
+
+  /* Stop this answer, keep the conversation. One press, no question, and not awaited: the
+     turn is either already being cancelled or there was nothing to cancel, and either way the
+     line that says so comes back down the event stream as a status with a detail, which the
+     transcript already knows how to print. Disabled on the way out so the press reads as
+     having landed before the server has said anything. */
+  function haltTurn(mount) {
+    if (mount.halt.disabled) return;
+    mount.halt.disabled = true;
+    api({ action: 'interrupt' }).catch(function () {});
   }
 
   /* The teardown, on screen. Pro and trade fall apart into the character rain that already
@@ -382,6 +470,14 @@ var PhosphorChat = (function () {
 
     var status = el('span', 'chat-state', 'off');
     status.setAttribute('role', 'status');
+
+    /* The cheap stop. Disabled between turns rather than hidden, and the stylesheets fade it
+       to nothing: a control that appears out of nowhere moves the one beside it, and the one
+       beside it is the destructive one. */
+    var halt = el('button', 'chat-btn chat-halt', options.haltLabel || 'STOP');
+    halt.type = 'button';
+    halt.disabled = true;
+
     var stopBtn = el('button', 'chat-btn chat-stop', options.stopLabel || 'STOP AGENT');
     stopBtn.type = 'button';
 
@@ -398,6 +494,7 @@ var PhosphorChat = (function () {
 
     var bar = el('div', 'chat-bar');
     bar.appendChild(status);
+    bar.appendChild(halt);
     bar.appendChild(stopBtn);
     bar.appendChild(confirm);
     bar.hidden = true;
@@ -429,6 +526,7 @@ var PhosphorChat = (function () {
       form: form,
       input: input,
       status: status,
+      halt: halt,
       stopBtn: stopBtn,
       confirm: confirm,
       yes: yes,
@@ -464,6 +562,19 @@ var PhosphorChat = (function () {
         record.reason = err.message;
         idle(record);
       });
+    });
+
+    halt.addEventListener('click', function () {
+      haltTurn(record);
+    });
+    /* Escape in the prompt box does the same thing, because it is what every chat on this
+       machine does and a person will try it before they look for a button. Scoped to the box
+       and stopped there ONLY when it actually interrupted, so an Escape with nothing to stop
+       still reaches whatever else on the page was listening for it. */
+    input.addEventListener('keydown', function (ev) {
+      if (ev.key !== 'Escape' || record.halt.disabled) return;
+      ev.stopPropagation();
+      haltTurn(record);
     });
 
     stopBtn.addEventListener('click', function () {

@@ -276,6 +276,15 @@ function charWidth() {
   return probe.getBoundingClientRect().width / probe.textContent.length;
 }
 
+/* Box-drawing weights, the same two ui/app.js carries. The agent column is the one surface
+   on either deck drawn in double rules, which is how a terminal says "this is a different
+   kind of thing" without reaching for a second colour. A panel asks for one by carrying
+   data-frame on its frame element; everything else is single. */
+var FRAME_SETS = {
+  single: { open: '┌', shut: '├', close: '┐', tee: '┤', end: '└', foot: '┘', rule: '─' },
+  double: { open: '╔', shut: '╠', close: '╗', tee: '╣', end: '╚', foot: '╝', rule: '═' },
+};
+
 function layoutFrames() {
   var cw = charWidth();
   if (!cw) return;
@@ -283,16 +292,17 @@ function layoutFrames() {
   for (var i = 0; i < frames.length; i++) {
     var frame = frames[i];
     var cols = Math.max(24, Math.floor(frame.parentElement.clientWidth / cw));
+    var set = FRAME_SETS[frame.getAttribute('data-frame')] || FRAME_SETS.single;
     var title = frame.getAttribute('data-title');
     if (!title) {
-      frame.textContent = '└' + repeat('─', Math.max(1, cols - 2)) + '┘';
+      frame.textContent = set.end + repeat(set.rule, Math.max(1, cols - 2)) + set.foot;
       continue;
     }
     var name = frame.getAttribute('data-collapse');
     var shut = name ? isCollapsed(name) : false;
-    var head = (shut ? '├' : '┌') + '─ ' + title + ' ';
-    var tail = name ? ' [' + (shut ? '+' : '-') + '] ─' + (shut ? '┤' : '┐') : '┐';
-    frame.textContent = head + repeat('─', Math.max(1, cols - head.length - tail.length)) + tail;
+    var head = (shut ? set.shut : set.open) + set.rule + ' ' + title + ' ';
+    var tail = name ? ' [' + (shut ? '+' : '-') + '] ' + set.rule + (shut ? set.tee : set.close) : set.close;
+    frame.textContent = head + repeat(set.rule, Math.max(1, cols - head.length - tail.length)) + tail;
   }
 }
 
@@ -1860,6 +1870,12 @@ function wireCommand() {
 }
 
 function wireResize() {
+  /* A splitter drag resizes two panels without resizing the window, and the frames are box
+     drawing measured in characters: they have to be redrawn on the frame the boundary moved,
+     not 120ms after it stops. ui/split.js fires this once per animation frame while a handle
+     is moving, and a plain resize once on release. */
+  window.addEventListener('phosphor:split', layoutFrames);
+
   var timer = null;
   window.addEventListener('resize', function () {
     if (timer) clearTimeout(timer);
@@ -1871,6 +1887,11 @@ function wireResize() {
 }
 
 async function boot() {
+  /* Before applyCollapse, and the order matters: a panel's height depends on how wide its
+     column is, so the columns are restored to what a person left them at before anything
+     measures a panel. Guarded because a missing splitter is a deck that cannot be resized,
+     not a deck that fails to draw. */
+  if (window.splitBoot) window.splitBoot();
   applyCollapse();
   wireKill();
   wireCollapse();

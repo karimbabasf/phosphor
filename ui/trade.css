@@ -195,10 +195,18 @@
   max-height: 38vh;
 }
 
-/* The left column carries the blotter and the right carries prose, so the deck is split in
-   the blotter's favour on this page and on this page only. At the even-ish 1.06 the pro
-   page uses, the figures a person came to read were the part that went over the edge. */
-.deck { grid-template-columns: 1.30fr 1fr; }
+/* The middle column carries the blotter and the right carries prose, so the deck is split in
+   the blotter's favour on this page and on this page only: the two side columns start
+   narrower than the custody deck's and the middle keeps the difference. At the even-ish
+   widths that page uses, the figures a person came to read were the part that went over the
+   edge.
+
+   Two properties, not a template. ui/style.css declares the five tracks once, and every page
+   that restated them would be a second copy to keep true when a handle is added. */
+.deck {
+  --deck-a-default: clamp(260px, 18vw, 380px);
+  --deck-c-default: clamp(260px, 20vw, 340px);
+}
 
 /* Every column width is declared and the floor is their exact sum, which is the whole fix
    for the clipping. Fixed layout does not overflow, it DIVIDES: an undeclared column is
@@ -778,25 +786,30 @@
 /* ---------- the agent conversation ----------
 
    Everything the chat looks like is in style.css, because the custody deck holds the same
-   panel and neither page gets its own version of a transcript. This file decides one thing:
-   how much of the left column it is allowed to take.
+   panel and neither page gets its own version of a transcript, and the column it stands in
+   is dressed there too. This file decides nothing about it any more.
 
-   A fixed slice, not a share. The panel that grows on this page is the chart, and it is the
-   one that can pay for a conversation: the tape and the risk panel are in the other column
-   and are not touched. Height in vh with a floor in pixels, so a short window does not hand
-   it three lines and a scrollbar. */
-.panel-tchat { flex: none; }
-
+   It used to take a fixed 22vh out of the chart, because it was a panel sharing that column.
+   It is the whole of its own column now: it takes the height the column has and gives none
+   of it back, the chart has stopped paying for the conversation, and how WIDE the column is
+   is the person's to drag. See ui/split.js and the deck comment in ui/trade.html. */
 .panel-tchat > .pbody {
-  /* 22vh, and the number was measured rather than picked: on a 1440x900 window it leaves
-     the chart a little over 300px, which is the point below which candles stop being read
-     and start being guessed at. A trader who wants those pixels back collapses the panel
-     from its own frame line, and the deck remembers. */
-  height: 22vh;
-  min-height: 132px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* ---------- panes a person has sized ----------
+
+   Restated from ui/style.css, and it has to be. The height caps above are declared in THIS
+   file, this file loads second, and at equal specificity the later rule wins: a panel dragged
+   taller would otherwise be a frame drawn around a body still stopped at 24vh. The rule is the
+   same one and the reason is the same one: once somebody has chosen a height, the number they
+   dragged to IS the cap. See ui/split.js. */
+.panel[data-sized] > .pbody {
+  max-height: none;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 /* Toggled by the renderer, so nothing above may set display on one of these and win. */
@@ -825,6 +838,9 @@
      and in the later stylesheet, so it would win and stack the panels into two columns of
      half a phone. */
   .deck { grid-template-columns: 1fr; }
+  /* Restated for the collapsed case: the rule in ui/style.css that narrows the agent column
+     carries a body class, so it outranks the line above and would keep five tracks here. */
+  body.agent-collapsed .deck { grid-template-columns: 1fr; }
   .deck > .col { display: contents; }
 
   /* Every panel is numbered. An unordered one takes order 0 and lands above the chart,
@@ -848,7 +864,8 @@
      bound is not a panel on a scrolling page, it is the page. It gets a pixel height here
      rather than a viewport fraction, for the reason stated above about vh on a page that
      scrolls, and it keeps its own scroll inside. */
-  .panel-tchat > .pbody { height: 260px; min-height: 0; }
+  .panel-tchat { flex: none; }
+  .panel-tchat > .pbody { flex: 0 0 260px; min-height: 0; }
 
   .panel-tbook > .pbody { display: block; }
   .panel-thistory { min-height: 0; }

@@ -31,7 +31,7 @@ type Any = Record<string, any>;
 
 /** Every button the panel is allowed to build, by class. A new one fails this list on purpose:
  *  the point of the list is that adding a control here is a decision somebody had to make. */
-const ALLOWED_BUTTONS = ['chat-globe', 'chat-jump', 'chat-btn chat-stop', 'chat-btn chat-confirm-yes', 'chat-btn chat-confirm-no', 'chat-btn chat-send'];
+const ALLOWED_BUTTONS = ['chat-globe', 'chat-jump', 'chat-btn chat-halt', 'chat-btn chat-stop', 'chat-btn chat-confirm-yes', 'chat-btn chat-confirm-no', 'chat-btn chat-send'];
 
 function makeNode(tag: string, created: Any[]): Any {
   let text = '';
@@ -360,4 +360,71 @@ test('a reload in the middle of a conversation goes back to the conversation, no
   assert.equal(h.phase(), 'live');
   h.tick(1000);
   assert.deepEqual(h.rows(), ['you|what do I hold?', 'agent|Nothing on any chain.']);
+});
+
+/** Up, live, and with an answer being written. Three of the four tests below need this. */
+function thinking(): Harness {
+  const h = load();
+  h.chat.push({ kind: 'status', state: 'starting' });
+  h.tick(1000);
+  h.chat.push({ kind: 'status', state: 'thinking' });
+  return h;
+}
+
+test('the stop for an answer is there only while there is an answer', () => {
+  const h = load();
+  const halt = h.find('chat-halt');
+  assert.equal(halt.disabled, true, 'nothing to stop before the agent is even up');
+
+  h.chat.push({ kind: 'status', state: 'starting' });
+  h.tick(1000);
+  assert.equal(halt.disabled, true, 'nor while it is starting');
+
+  h.chat.push({ kind: 'status', state: 'thinking' });
+  assert.equal(halt.disabled, false, 'an answer is being written: now it can be stopped');
+
+  h.chat.push({ kind: 'status', state: 'ready' });
+  assert.equal(halt.disabled, true, 'the turn ended, so the control goes with it');
+
+  // Disabled, not removed. A control that leaves the bar takes the bar width with it, and the
+  // button beside this one is the one that ends the conversation.
+  assert.equal(halt.hidden, false);
+});
+
+test('stopping an answer is one press and asks nothing', async () => {
+  const h = thinking();
+  h.find('chat-halt').fire('click');
+  await flush();
+
+  const sent = h.posts.filter((p: Any) => p.action !== undefined);
+  assert.deepEqual(sent.map((p: Any) => p.action), ['interrupt'], 'one request, and it is the cheap one');
+  assert.equal(h.find('chat-confirm').hidden, true, 'no question was asked');
+  assert.equal(h.phase(), 'live', 'and the conversation is still standing');
+  assert.equal(h.find('chat-halt').disabled, true, 'the press reads as landed before the wire answers');
+});
+
+test('escape in the prompt box stops the answer, and passes through when there is none', async () => {
+  const h = thinking();
+  let stopped = 0;
+  h.find('chat-input').fire('keydown', { key: 'Escape', stopPropagation: () => { stopped += 1; } });
+  await flush();
+  assert.deepEqual(h.posts.map((p: Any) => p.action), ['interrupt']);
+  assert.equal(stopped, 1, 'and it is not also read by whatever else on the page listens for Escape');
+
+  // The turn is over. Escape now belongs to the rest of the page.
+  h.chat.push({ kind: 'status', state: 'ready' });
+  h.find('chat-input').fire('keydown', { key: 'Escape', stopPropagation: () => { stopped += 1; } });
+  await flush();
+  assert.equal(h.posts.length, 1, 'nothing was sent');
+  assert.equal(stopped, 1, 'and the key was left alone');
+});
+
+test('the record says the human stopped the answer', () => {
+  const h = thinking();
+  // What src/server.ts pushes down the event stream once the turn is cancelled.
+  h.chat.push({ kind: 'status', state: 'ready', detail: 'the human stopped this answer' });
+
+  assert.deepEqual(h.rows().at(-1), '|the human stopped this answer');
+  const row = h.find('chat-list').children.at(-1);
+  assert.equal(row.className, 'chat-row chat-status', 'as a status line, which is the dim one');
 });

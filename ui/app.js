@@ -42,6 +42,25 @@ var DONUT_INNER = 0.58;
 
 var COLLAPSE_PREFIX = 'phosphor.collapse.';
 
+/* Which panels start shut on a window that has never been touched. Only one does, and the
+   reason is that the policy panel held a quarter of the rail open at all times to print four
+   sentences that say what has not changed since the last time anybody read them, with the
+   whole policy behind the POLICY button anyway. Karim, 2026-08-19: "I don't like how we show
+   the policy."
+
+   A DEFAULT IS NOT A PREFERENCE. This is the value used when storage has nothing to say.
+   The moment a person opens the panel, '0' is written and that is what they get back, on
+   this window and every one after it. */
+var COLLAPSE_DEFAULTS = { policy: true };
+
+/* Box-drawing weights. The agent column is the one surface on the deck drawn in double rules,
+   which is how a terminal says "this is a different kind of thing" without a second colour.
+   Panels ask for one by carrying data-frame on the frame element; everything else is single. */
+var FRAME_SETS = {
+  single: { open: '┌', shut: '├', close: '┐', tee: '┤', end: '└', foot: '┘', rule: '─' },
+  double: { open: '╔', shut: '╠', close: '╗', tee: '╣', end: '╚', foot: '╝', rule: '═' },
+};
+
 var TOKEN = null;
 var WALLET = { rows: [], totalUsd: 0, byChain: {}, stale: [] };
 var DONUT_SLICES = [];
@@ -188,9 +207,12 @@ function layoutFrames() {
   for (var i = 0; i < frames.length; i++) {
     var frame = frames[i];
     var cols = Math.max(24, Math.floor(frame.parentElement.clientWidth / cw));
+    // Which weight of rule this panel is drawn in. Single unless the markup asks for double,
+    // which one panel does: the agent column. See FRAME_SETS above.
+    var set = FRAME_SETS[frame.getAttribute('data-frame')] || FRAME_SETS.single;
     var title = frame.getAttribute('data-title');
     if (!title) {
-      frame.textContent = '└' + repeat('─', Math.max(1, cols - 2)) + '┘';
+      frame.textContent = set.end + repeat(set.rule, Math.max(1, cols - 2)) + set.foot;
       continue;
     }
     // A collapsible panel draws its own control into the frame line: [-] open,
@@ -198,9 +220,9 @@ function layoutFrames() {
     // below to corner off.
     var name = frame.getAttribute('data-collapse');
     var shut = name ? isCollapsed(name) : false;
-    var head = (shut ? '├' : '┌') + '─ ' + title + ' ';
-    var tail = name ? ' [' + (shut ? '+' : '-') + '] ─' + (shut ? '┤' : '┐') : '┐';
-    frame.textContent = head + repeat('─', Math.max(1, cols - head.length - tail.length)) + tail;
+    var head = (shut ? set.shut : set.open) + set.rule + ' ' + title + ' ';
+    var tail = name ? ' [' + (shut ? '+' : '-') + '] ' + set.rule + (shut ? set.tee : set.close) : set.close;
+    frame.textContent = head + repeat(set.rule, Math.max(1, cols - head.length - tail.length)) + tail;
   }
 }
 
@@ -211,10 +233,14 @@ function layoutFrames() {
    storage throws, which it does in a locked-down browser profile. */
 function isCollapsed(name) {
   if (COLLAPSE_MEM[name] !== undefined) return COLLAPSE_MEM[name];
+  var fallback = COLLAPSE_DEFAULTS[name] === true;
   try {
-    return window.localStorage.getItem(COLLAPSE_PREFIX + name) === '1';
+    var stored = window.localStorage.getItem(COLLAPSE_PREFIX + name);
+    // Nothing stored is the only case the default answers. '0' is a person having opened
+    // this panel, and that outranks anything this file thinks it should look like.
+    return stored === null ? fallback : stored === '1';
   } catch (err) {
-    return false;
+    return fallback;
   }
 }
 
@@ -1501,7 +1527,11 @@ function wireBasic() {
       placeholder: 'Ask your assistant to do something',
       startLabel: 'Start your assistant',
       idleNote: 'No assistant is running.',
-      stopLabel: 'Stop',
+      /* Two stops on this bar, so neither may be called just "Stop". One ends the answer
+         being written and one ends the assistant; the labels are the only thing telling
+         them apart, and the cheap one is the one a person reaches for mid-answer. */
+      haltLabel: 'Stop this answer',
+      stopLabel: 'Stop assistant',
       stopQuestion: 'Stop your assistant?',
       stopYes: 'Yes, stop',
       stopNo: 'Cancel',
@@ -1912,6 +1942,15 @@ function wireWallet() {
 }
 
 function wireResize() {
+  /* A splitter drag resizes two panels without resizing the window, and the frames are box
+     drawing measured in characters: they have to be redrawn on the frame the boundary moved,
+     not 120ms after it stops. ui/split.js fires this once per animation frame while a handle
+     is moving, and a plain resize once on release for everything below. */
+  window.addEventListener('phosphor:split', function () {
+    layoutFrames();
+    drawDonut();
+  });
+
   var timer = null;
   window.addEventListener('resize', function () {
     if (timer) clearTimeout(timer);
@@ -1927,6 +1966,11 @@ function wireResize() {
 }
 
 async function boot() {
+  /* Before applyCollapse, and the order matters: a panel's height depends on how wide its
+     column is, so the columns are restored to what a person left them at before anything
+     measures a panel. Guarded because a missing splitter is a deck that cannot be resized,
+     not a deck that fails to draw. */
+  if (window.splitBoot) window.splitBoot();
   applyCollapse();
   // Before the first fetch, not after: the point of it is the second the page is on screen
   // with nothing in it, and paint order is the whole feature.

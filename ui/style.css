@@ -19,6 +19,10 @@
   --green-faint: rgba(51, 255, 102, 0.38);
   --green-ghost: rgba(51, 255, 102, 0.22);
   --green-wash: rgba(51, 255, 102, 0.10);
+  /* Thinner than the wash by half again, and it exists for one surface: the agent column.
+     A whole column carrying the wash reads as a highlighted row; this reads as a different
+     ground. Still one hue, still opacity only. */
+  --green-veil: rgba(51, 255, 102, 0.045);
   --red: #ff3b30;
   --red-dim: rgba(255, 59, 48, 0.62);
   --red-ghost: rgba(255, 59, 48, 0.30);
@@ -64,8 +68,47 @@ body {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 1.06fr 1fr;
-  column-gap: 22px;
+  /* Five tracks, three of them columns and two of them the gutters between: the gutters are
+     real grid items because they are the drag handles, and a handle has to be a thing the
+     pointer can land on rather than a gap between two things. See ui/split.js.
+
+     The two column widths are custom properties with defaults, and that is the whole of the
+     splitter's storage contract: ui/split.js writes --deck-a or --deck-c on this element and
+     nothing else, and removing the property is how a handle resets. The defaults live here,
+     in CSS, so no copy of them exists in the script to drift from.
+
+     Each page states its own defaults rather than its own template: ui/trade.css sets the
+     two --*-default properties and inherits every other decision made here.
+
+     The agent gets the wider of the two side columns, because it is the one a person reads
+     sentences in: at the 22vw the rail gets, a transcript is 37 characters across. Measured
+     at 1440, which is the window this is built on: 346 for the agent, 317 for the rail, and
+     709 left for the chart, comfortably past the 380 a chart stops being read at. */
+  --deck-a-default: clamp(280px, 24vw, 440px);
+  --deck-c-default: clamp(260px, 22vw, 380px);
+  --gutter: 22px;
+  grid-template-columns:
+    var(--deck-a, var(--deck-a-default))
+    var(--gutter)
+    minmax(0, 1fr)
+    var(--gutter)
+    var(--deck-c, var(--deck-c-default));
+  column-gap: 0;
+}
+
+/* Collapsed, the agent panel is a title line, and a title line does not need a fifth of the
+   window. The track is fixed here rather than left to the stored width, and 28ch is measured
+   from the frame renderer: layoutFrames() never draws a line narrower than 24 characters, the
+   column pays 2ch of its own padding, and a line drawn wider than the box it sits in loses its
+   closing corner to overflow:hidden. It overrides --deck-a rather than clearing it, so the
+   width a person dragged is still there when they open the panel again. */
+body.agent-collapsed .deck {
+  grid-template-columns:
+    28ch
+    var(--gutter)
+    minmax(0, 1fr)
+    var(--gutter)
+    var(--deck-c, var(--deck-c-default));
 }
 
 /* min-width:0 is load-bearing: without it a grid item refuses to go below its
@@ -227,7 +270,9 @@ body.gate-off .panel-gate > .frame-top { color: var(--red); }
 
 /* Caps on the variable-length panels: content grows into a scroll, not into the page. */
 .panel-gate > .pbody { max-height: 46vh; }
-.panel-policy > .pbody { max-height: 26vh; }
+/* 32vh rather than the 26 it had. The panel is shut when the app opens now, so this is the
+   height of a thing somebody asked for, and the rail has the room the agent used to take. */
+.panel-policy > .pbody { max-height: 32vh; }
 
 .frame {
   flex: none;
@@ -276,15 +321,11 @@ button.frame:focus-visible { outline: 1px dotted var(--green); outline-offset: 1
 .panel.collapsed > .pbody,
 .panel.collapsed > .frame-bottom { display: none; }
 
-/* Collapsing the agent panel is how the gate gets room, so the gate has to be
-   able to take it: the 46vh cap lifts and it grows to whatever it holds. The cap
-   lifts rather than the panel stretching, because a gate with nothing pending
-   would otherwise become a full-height empty box. Room is what it can use, not
-   chrome painted around nothing.
-   It was the log that collapsed here. The log is behind a button now and the
-   growing panel in that column is the conversation, so the name follows it. */
-body.agent-collapsed .panel-gate { min-height: 0; }
-body.agent-collapsed .panel-gate > .pbody { max-height: none; }
+/* Collapsing the agent used to hand its height to the gate, because they shared a column.
+   They do not any more: the agent is a column of its own and what it releases is WIDTH, which
+   the deck's own rule above takes care of. The gate keeps its cap in every state, which is
+   what it always should have had: a gate with nothing pending stretched to fill a column is
+   chrome painted around nothing. */
 
 /* ---------- 2. wallet ---------- */
 
@@ -630,9 +671,23 @@ body.agent-collapsed .panel-gate > .pbody { max-height: none; }
    scrolls inside itself already. chart.js sets --panes; three is the enforced maximum. */
 .panel-chart { flex-grow: calc(1 + var(--panes, 0) * 0.55); }
 
-/* ---------- 5. policy ---------- */
+/* ---------- 5. policy ----------
 
-.rule { white-space: pre-wrap; }
+   Four machine-rendered sentences, and they were printed as four touching lines of wrapped
+   text: at a glance that is a paragraph, and the thing a person is checking is which of the
+   four rules they are looking at. Karim, 2026-08-19: "I don't like how we show the policy".
+
+   So each rule is a block with air around it and a hanging indent, which puts every wrapped
+   line under the words rather than under the $. The sentences themselves are untouched: they
+   are rendered by src/view and they belong to the backend, not to this file. */
+
+.rule {
+  white-space: pre-wrap;
+  padding-left: 2ch;
+  text-indent: -2ch;
+}
+
+.rule + .rule { margin-top: 6px; }
 .rule .prompt { color: var(--green-ghost); }
 
 /* ---------- 6. approval gate ---------- */
@@ -728,6 +783,96 @@ body.agent-collapsed .panel-gate > .pbody { max-height: none; }
 .logline .msg { color: var(--green); }
 .logline.refusal .type,
 .logline.refusal .msg { color: var(--red); }
+
+/* ---------- the splitters ----------
+
+   The gutters between the columns and between the stacked panels, made draggable. The
+   behaviour, the floors and the stored sizes are ui/split.js; this is what a handle looks
+   like and how a sized pane holds its size.
+
+   There is no widget here on purpose. A grip with a rounded body would be the first rounded
+   thing on the deck, and this surface has none: the handle is the gutter it already had, and
+   the affordance is one hairline in the middle of it that brightens under the pointer. */
+
+.split {
+  position: relative;
+  flex: none;
+  /* Or a touch drag scrolls the page out from under the handle. */
+  touch-action: none;
+  background: transparent;
+}
+
+.split-x { height: 100%; cursor: col-resize; }
+.split-y { height: 12px; cursor: row-resize; }
+
+/* The handle stands where a panel's top margin used to, so the margin goes: 12px of gap
+   plus a 12px handle is a gutter twice the width of every other one on the deck. */
+.col > .split-y + .panel { margin-top: 0; }
+
+.split::before {
+  content: '';
+  position: absolute;
+  background: var(--green-ghost);
+  transition: background-color 120ms ease-out;
+}
+
+.split-x::before { left: 50%; top: 0; bottom: 0; width: 1px; transform: translateX(-0.5px); }
+.split-y::before { top: 50%; left: 50%; width: 28px; height: 1px; transform: translate(-50%, -0.5px); }
+
+.split:hover::before { background: var(--green-dim); }
+.split:focus-visible::before,
+.split:active::before { background: var(--green); }
+.split:focus-visible { outline: 1px dotted var(--green); outline-offset: -3px; }
+
+/* While a boundary is moving: no text gets selected by the drag, and the cursor stays the
+   handle's own wherever the pointer has got to. ui/split.js puts both classes on the body. */
+body.splitting { user-select: none; }
+body.splitting-x, body.splitting-x * { cursor: col-resize; }
+body.splitting-y, body.splitting-y * { cursor: row-resize; }
+
+@media (prefers-reduced-motion: reduce) {
+  .split::before { transition: none; }
+}
+
+/* A pane a person has sized. flex-basis rather than height: these are flex children and a
+   height loses to `flex: 1` every time (the stacked fallback below learned this the hard
+   way on the agent panel). :not(.collapsed) so a collapsed panel keeps its one line. */
+.panel[data-sized]:not(.collapsed) { flex: 0 0 var(--split-h); }
+
+/* The caps are a default for a panel nobody has sized. Once somebody has, the number they
+   dragged to IS the cap, and the body fills what the panel was given. */
+.panel[data-sized] > .pbody {
+  max-height: none;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* The rail's spare room, and the thing the gate's handle takes its height from. Empty, and
+   the emptiness is the point: see the markup in ui/index.html. */
+.rail-slack {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* ---------- the agent column ----------
+
+   Karim, 2026-08-19: "I want the agent tab to be a little more unique and actually centered
+   on the left." TWO decisions, not a pile of small ones: the box is drawn in double rules
+   instead of single (layoutFrames() in ui/app.js, from data-frame="double" in the markup),
+   and the column stands on the faintest wash of green so it reads as its own ground.
+
+   No new colour, no border, no shadow, no gradient, no radius. The law at the top of this
+   file holds, and a second WEIGHT of line is how a terminal says "this one is different".
+   The one extra line below is not a third decision: it lifts the bottom rule to the tier
+   the top one already had, so the double box reads as one box. */
+.col-agent {
+  background: var(--green-veil);
+  /* The drag handle's gutter is outside the column; this is the air inside it, which is what
+     keeps the double rule off the wash's edge. */
+  padding: 0 1ch;
+}
+
+.col-agent .frame { color: var(--green-faint); }
 
 /* ---------- the deck bar ----------
 
@@ -1081,6 +1226,12 @@ body.agent-collapsed .panel-gate > .pbody { max-height: none; }
 .deck .chat-btn:focus-visible { outline: 1px dotted var(--green); outline-offset: 1px; }
 .deck .chat-stop { margin-left: auto; }
 
+/* The cheap stop sits with the state word, and the auto margin above puts the whole width of
+   the bar between it and STOP AGENT. Between turns it is disabled and fades to nothing rather
+   than leaving the bar: a control that appears out of nowhere moves whatever is beside it,
+   and what is beside it is the one that ends the conversation. See ui/driver-chat.js. */
+.deck .chat-halt[disabled] { opacity: 0; }
+
 /* The question. It replaces the STOP button in place rather than opening anything, so the
    answer is where the press that asked it was, and the whole bar never changes height. */
 .deck .chat-confirm {
@@ -1157,6 +1308,32 @@ body.agent-collapsed .panel-gate > .pbody { max-height: none; }
   html, body { height: auto; overflow: auto; }
   #page { height: auto; overflow: visible; padding-bottom: 40px; }
   .deck { grid-template-columns: 1fr; }
+  /* Restated for the collapsed case: the rule that narrows the agent column carries a body
+     class, so it outranks the line above on specificity and would keep five tracks here. */
+  body.agent-collapsed .deck { grid-template-columns: 1fr; }
+  /* A stacked page has no gutters to drag and no column to trade width with, so the handles
+     go and every pane it sized goes back to its content. A splitter that resizes nothing is
+     a row of dead grips down the middle of a phone. */
+  .split, .rail-slack { display: none; }
+  .panel[data-sized]:not(.collapsed) { flex: none; }
+  .panel[data-sized] > .pbody { flex: none; }
+  /* The wash reads as a highlight once the column is the full width of the page. */
+  .col-agent { background: transparent; padding: 0; }
+
+  /* The column boxes dissolve so the six panels can be given one global order. Without this
+     the deck stacks column by column, and the first column is now the whole conversation:
+     the price, what is held and the approval gate would all sit under a transcript. The
+     order below is the one this page stacked in before the agent moved. Nothing about a
+     narrow window changed, only the source order did. ui/trade.css does the same for its own
+     page and states its own numbers: of the six below, only the chart is a panel both pages
+     have, and both give it the same place. */
+  .deck > .col { display: contents; }
+  .panel-chart { order: 1; }
+  .panel-wallet { order: 2; }
+  .panel-gate { order: 3; }
+  .panel-policy { order: 4; }
+  .panel-agent { order: 5; }
+  .panel-pulse { order: 6; }
   .panel.grow { flex: none; }
   .panel-gate > .pbody,
   .panel-policy > .pbody { max-height: none; }

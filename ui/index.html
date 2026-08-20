@@ -52,13 +52,69 @@
     <button type="button" class="btn" id="open-history" aria-haspopup="dialog">[ HISTORY ]</button>
   </p>
 
-  <!-- Two columns: left is what is held, right is what governs it.
+  <!-- Three columns, and which panel is where is the whole argument of this deck.
+
+       THE AGENT IS THE LEFT COLUMN, alone, at full height. It used to be the fourth panel
+       down the right-hand rail, under the gate and the policy, which put the thing this
+       window is now FOR below two things that report on it. Karim, 2026-08-19: "I want the
+       agent tab to be a little more unique and actually centered on the left." Alone in a
+       column it needs no share of a stack, the globe stands in the middle of real space
+       rather than in a letterbox, and the transcript is the tallest thing on screen.
+
+       It is also drawn differently, in two ways and only in ways this surface already had:
+       double box rules instead of single (data-frame="double", read by layoutFrames() in
+       ui/app.js), and the faintest wash of green behind the column. No second hue, no
+       shadow, no gradient, no radius: the law at the top of ui/style.css holds, and a second
+       WEIGHT of line is how a terminal says "this one is different".
+
+       MIDDLE is what the money is doing: the chart, and under it what is held.
+       RIGHT is what governs it: the gate first, the policy under it, the pulse at the foot.
+
+       Between every pair of them is a handle. See ui/split.js: the gutters are draggable,
+       each pane has a floor, and the gate's floor is a safety rule rather than a taste.
        Each column fills the viewport height; panels scroll inside, the page never does. -->
-  <div class="deck">
+  <div class="deck" data-split="pro">
 
-    <div class="col">
+    <div class="col col-agent">
 
-      <!-- 2. CHART: top left, everything else moves down under it.
+      <!-- 7. AGENT. The log stood here and did not belong: a person cannot talk to an audit
+           trail, and the one thing this window could not do was say a word to the agent
+           holding its seat. The transcript is the conversation and the log is the record,
+           they were never the same rectangle, and the record is behind the LOG button now
+           with the room to print all of every line.
+
+           Empty, and filled by ui/driver-chat.js. It holds four phases in the one box: a
+           turning globe when no agent is running and the whole layer is the button that
+           starts one, the intro printing while the child process comes up, the transcript
+           and the prompt, and the fall of characters that takes it apart on a stop.
+
+           No approval control is ever rendered in here, and driver-chat.js will not build
+           one. The gate is the top of the right-hand rail, and consent does not live inside
+           a scrolling transcript written by the thing asking for it. That is now two columns
+           of separation rather than two panels, which is the point of the move.
+
+           data-frame="double" is the one thing this panel asks the frame renderer for: the
+           same box drawn in double rules. See layoutFrames() in ui/app.js. -->
+      <section class="panel panel-agent grow">
+        <button type="button" class="frame frame-top" data-frame="double" data-title="AGENT" data-collapse="agent" aria-expanded="true" aria-controls="agent-chat"></button>
+        <div class="pbody">
+          <div id="agent-chat"></div>
+        </div>
+        <div class="frame frame-bottom" data-frame="double"></div>
+      </section>
+
+    </div>
+
+    <!-- The handles. role="separator" with a tabindex is a real window splitter: arrows move
+         it, Home and End take it to its limits, Enter puts it back. ui/split.js owns the
+         behaviour and the numbers; the markup owns only where each one sits. -->
+    <div class="split split-x" data-split-handle="deck-a" role="separator" aria-orientation="vertical"
+         tabindex="0" aria-label="Resize the agent column. Arrow keys move it, enter resets it."></div>
+
+    <div class="col col-mid">
+
+      <!-- 2. CHART: the top of the middle column, and the panel that grows: whatever the
+           wallet under it does not take, it gets.
            Two stacked canvases: the scene redraws on data, the hud redraws on the pointer.
            The control surface is a command line, not a toolbar: the same words the agent
            uses over MCP, typed. -->
@@ -83,7 +139,10 @@
         <div class="frame frame-bottom"></div>
       </section>
 
-      <!-- 3. WALLET: the whole bottom left. What is held, now: the donut and the table,
+      <div class="split split-y" data-split-handle="chart-wallet" role="separator" aria-orientation="horizontal"
+           tabindex="0" aria-label="Resize the chart against the wallet. Arrow keys move it, enter resets it."></div>
+
+      <!-- 3. WALLET: the foot of the middle column. What is held, now: the donut and the table,
            two views of one row set. The table scrolls inside itself, so the page still
            never scrolls.
 
@@ -125,7 +184,10 @@
 
     </div>
 
-    <div class="col">
+    <div class="split split-x" data-split-handle="deck-c" role="separator" aria-orientation="vertical"
+         tabindex="0" aria-label="Resize the right column. Arrow keys move it, enter resets it."></div>
+
+    <div class="col col-rail">
 
       <!-- 5. APPROVAL GATE. Never collapses: a safety surface that can be hidden
            is a safety bug. Its frame title carries no [-] for that reason. -->
@@ -137,39 +199,35 @@
         <div class="frame frame-bottom"></div>
       </section>
 
-      <!-- 6. POLICY -->
+      <div class="split split-y" data-split-handle="gate-policy" role="separator" aria-orientation="horizontal"
+           tabindex="0" aria-label="Resize the approval gate. Arrow keys move it, enter resets it."></div>
+
+      <!-- 6. POLICY. Shut when the app opens, and the only panel on the deck that is.
+           Karim, 2026-08-19: "I don't like how we show the policy". Four machine-rendered
+           sentences held a quarter of the rail open at all times to say what has not changed
+           since the last time it was read, and the whole policy is behind the POLICY button
+           anyway. It opens on its own frame line and the deck remembers that choice: the
+           default is a starting point, not a preference this file keeps re-imposing.
+           See COLLAPSE_DEFAULTS in ui/app.js. -->
       <section class="panel panel-policy">
-        <button type="button" class="frame frame-top" data-title="POLICY" data-collapse="policy" aria-expanded="true" aria-controls="policy-lines"></button>
+        <button type="button" class="frame frame-top" data-title="POLICY" data-collapse="policy" aria-expanded="false" aria-controls="policy-lines"></button>
         <div class="pbody">
           <div id="policy-lines"></div>
         </div>
         <div class="frame frame-bottom"></div>
       </section>
 
-      <!-- 7. AGENT. The log stood here and did not belong: a person cannot talk to an audit
-           trail, and the one thing this window could not do was say a word to the agent
-           holding its seat. The transcript is the conversation and the log is the record,
-           they were never the same rectangle, and the record is behind the LOG button now
-           with the room to print all of every line.
+      <!-- The rail's spare room, and a real element rather than a gap, because the gate's
+           handle has to take its height from something it can measure. Empty on purpose:
+           an approval gate with nothing pending is a short panel, and stretching one to fill
+           a column is chrome painted around nothing. -->
+      <div class="rail-slack" aria-hidden="true"></div>
 
-           Empty, and filled by ui/driver-chat.js. It holds four phases in the one box: a
-           turning globe when no agent is running and the whole layer is the button that
-           starts one, the intro printing while the child process comes up, the transcript
-           and the prompt, and the fall of characters that takes it apart on a stop.
-
-           No approval control is ever rendered in here, and driver-chat.js will not build
-           one. The gate is three panels up, and consent does not live inside a scrolling
-           transcript written by the thing asking for it. -->
-      <section class="panel panel-agent grow">
-        <button type="button" class="frame frame-top" data-title="AGENT" data-collapse="agent" aria-expanded="true" aria-controls="agent-chat"></button>
-        <div class="pbody">
-          <div id="agent-chat"></div>
-        </div>
-        <div class="frame frame-bottom"></div>
-      </section>
-
-      <!-- 8. AGENT PULSE. A small oscilloscope under the conversation: the second half of the presence
-           signal, the moving thing that keeps a working window from ever reading as frozen.
+      <!-- 8. AGENT PULSE. A small oscilloscope at the foot of the rail: the second half of the
+           presence signal, the moving thing that keeps a working window from ever reading as
+           frozen. It sits here rather than under the conversation because the conversation is
+           a column of its own now, and a strip of moving line under a full-height transcript
+           would read as part of it.
            It draws the same working/idle/disconnected state as the orb, so it needs no words
            of its own. See ui/presence.js. -->
       <section class="panel panel-pulse">
@@ -361,6 +419,9 @@
 <!-- Before driver-chat.js: it exposes window.PhosphorGlobe, which the agent panel turns in
      its idle phase. Self-contained, presentational, and it reads no state of its own. -->
 <script src="/agent-globe.js" defer></script>
+<!-- Before app.js, which calls splitBoot(): the draggable gutters between the
+     panels, and the sizes a person left them at. -->
+<script src="/split.js" defer></script>
 <script src="/driver-chat.js" defer></script>
 <script src="/app.js" defer></script>
 </body>

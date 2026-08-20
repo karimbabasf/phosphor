@@ -88,17 +88,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_DIR = path.join(__dirname, '..', 'ui');
 const PROJECT_DIR = path.join(__dirname, '..');
 
-/* Which model the app's own agent runs, when config does not say.
-   Left unset, Claude Code inherits whatever this machine's default is, which on most installs is
-   the largest and slowest model available. That is the wrong default here and the reason is not
-   frugality: the work is picking a tool out of a named index and calling it, a human is watching
-   the window while it happens, and the seconds spent are the whole experience of using this app.
-   Nothing about safety rides on the choice. The model cannot approve anything, cannot execute a
-   write, cannot reach a key and cannot hold a tool outside Phosphor's own surface; those are
-   properties of src/policy, of the approval gate, and of assertSurface in src/driver.ts, and they
-   are identical whichever model is in the seat. Set `driver.model` in config.json to override. */
-const DEFAULT_MODEL = 'sonnet';
-
 const HOST = '127.0.0.1';
 const MAX_BODY_BYTES = 1024 * 1024;
 // Every label component on the MCP surface is caller-controlled and lands in an
@@ -342,7 +331,16 @@ export function createServer(deps: ServerDeps): PhosphorServer {
             repo: PROJECT_DIR,
             port: cfg.port,
             claudeBin: cfg.driver?.claudeBin,
-            model: cfg.driver?.model ?? DEFAULT_MODEL,
+            /* Unset by default, and that is a measured decision rather than an omission. Pinning
+               a faster model looked like the obvious speed win and it is not one: over six runs
+               of two canonical chart prompts, all three models were correct every time, and the
+               medians came out 5.0s on sonnet, 6.2s on the machine default (opus), 8.0s on haiku,
+               which is inside the run-to-run spread on the first two. Haiku was slower, not
+               faster: it spent thinking tokens the others did not and took an extra round trip
+               more often. The time is in the round trips, not the model, so the app takes the
+               user's own default and `driver.model` in config.json is there for anyone who
+               disagrees. See scripts/bench-driver.ts to re-run the comparison. */
+            model: cfg.driver?.model,
             /* The role, and the reason it is a default rather than a config field with no value.
                An agent given no role is a general assistant holding a wallet's tools: it offers
                to write code it cannot write, it asks which screen you meant, and it treats a
