@@ -99,6 +99,12 @@ const STRIPPED = [
   'CLAUDE_CODE_USE_BEDROCK',
   'CLAUDE_CODE_USE_VERTEX',
   'CLAUDE_CODE_SAFE_MODE',
+  // Where the signing key is. The child has no reader, so this is defence in depth rather than
+  // a hole being closed, and it is worth the two lines anyway: operator/settings.json denies
+  // Read(~/.phosphor/**) by literal path, which says nothing about a key moved elsewhere by
+  // PHOSPHOR_KEYS. Not telling the agent where the key is costs nothing, because nothing it is
+  // allowed to do involves knowing.
+  'PHOSPHOR_KEYS',
 ];
 
 function childEnv(repo: string, port: number, sessionId: string): NodeJS.ProcessEnv {
