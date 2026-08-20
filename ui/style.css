@@ -1457,6 +1457,13 @@ body.splitting-y, body.splitting-y * { cursor: row-resize; }
 .deck .chat-bar {
   flex: none;
   display: flex;
+  /* The agent column drags to 240px (ui/split.js sets that floor), where these three controls
+     want 231px of a 191px box: the state word had already shrunk to nothing and SEND was still
+     being cut to "SE". Nothing here may be renamed and no control may wrap its own label, so
+     the row is the thing that gives. Every line ends where SEND does; the left of a line is
+     held open by the auto margin on the halt below. */
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
   gap: 1ch;
   padding-top: 5px;
@@ -1504,9 +1511,11 @@ body.splitting-y, body.splitting-y * { cursor: row-resize; }
 
 .deck .chat-btn:hover { color: var(--green-hi); border-color: var(--green-dim); }
 .deck .chat-btn:focus-visible { outline: 1px dotted var(--green); outline-offset: 1px; }
-/* Pushed to the right-hand end of the row by the auto margin, so the whole width of the box
-   stands between the state word and the control that ends the conversation. */
-.deck .chat-stop { margin-left: auto; }
+/* The whole width of the box stands between the state word and the control that ends the
+   conversation. It is written as a margin AFTER the halt rather than before STOP AGENT so that
+   it survives a wrap: an auto margin belongs to its own line, so STOP AGENT and SEND still end
+   the line they land on, and the state word and the halt still hold the left of theirs. */
+.deck .chat-halt { margin-right: auto; }
 
 /* The cheap stop sits with the state word, and the auto margin above puts the whole width of
    the bar between it and STOP AGENT. Between turns it is disabled and fades to nothing rather
@@ -1515,16 +1524,21 @@ body.splitting-y, body.splitting-y * { cursor: row-resize; }
 .deck .chat-halt[disabled] { opacity: 0; }
 
 /* The question. It replaces the STOP button in place rather than opening anything, so the
-   answer is where the press that asked it was, and the whole bar never changes height. */
+   answer is where the press that asked it was. It wraps for the same reason the bar does:
+   this is the widest thing the composer ever holds. */
 .deck .chat-confirm {
-  margin-left: auto;
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 1ch;
   animation: deck-chat-in 160ms ease-out;
 }
 
-.deck .chat-confirm-q { color: var(--green-hi); }
+/* Forty-one characters of sentence has never shared a line with two buttons in a column this
+   narrow. It was wrapping its own text beside them and eating the state word to pay for it, so
+   it takes the line and the two answers take the one under it. That also settles what a wrap
+   does to a question: CANCEL can no longer be stranded on the line below YES, STOP. */
+.deck .chat-confirm-q { flex-basis: 100%; color: var(--green-hi); }
 /* Marked, because it ends a conversation that cannot be got back from this window. Red is
    the gate's colour and this is not the gate, so it is the border only and not the word. */
 .deck .chat-confirm-yes { border-color: var(--green-dim); }

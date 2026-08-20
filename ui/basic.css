@@ -698,6 +698,12 @@ body[data-view='basic'] #page {
 .basic-chat .chat-bar {
   flex: none;
   display: flex;
+  /* Both stops are whole phrases and ui/app.js says why neither may be shortened to "Stop", so
+     at a narrow window the row cannot hold them: it wanted 409px of a 138px card and put the
+     state word, both stops and Send outside the rounded edge. The row wraps, and every line
+     ends where Send does. The auto margin on the state word still holds the left of its own. */
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
   gap: 12px;
   padding: 10px 4px 0;
@@ -762,6 +768,7 @@ body[data-view='basic'] #page {
    answer is where the press that asked it was, and the bar never changes height. */
 .basic-chat .chat-confirm {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   animation: basic-globe-in 200ms var(--ease-out);
@@ -787,6 +794,11 @@ body[data-view='basic'] #page {
   flex: none;
   display: flex;
   flex-direction: column;
+  /* How much room the composer has is a fact about this card, not about the window: on the pro
+     deck the same box is a column somebody can drag. So the sizes below are asked of the box
+     itself, the way ui/trade.css asks the rail how wide it is. Named, because two stylesheets
+     are live in this document and an unnamed query answers to whichever container is nearest. */
+  container: composer / inline-size;
   gap: 4px;
   margin-top: 14px;
   padding: 12px 11px 10px;
@@ -814,6 +826,38 @@ body[data-view='basic'] #page {
 
 /* Send is the affirmative one and ends the row, past the stop. */
 .basic-chat .chat-send { margin-left: 0; }
+
+/* ---- the composer, narrowed ----
+
+   Wrapping alone is not enough here. "Stop this answer" is 159px of control and the card is
+   138px wide at the floor, so the widest label is wider than the line it would wrap onto and
+   the button would hang out of the card on its own. The controls come down instead, in two
+   steps, each sized so the longest label still fits the narrowest line it can land on. This
+   is the one thing on this screen allowed to get smaller: the words are load-bearing and the
+   padding around them is not. */
+
+@container composer (max-width: 430px) {
+  .basic-chat .chat-btn {
+    padding: 10px 12px;
+    font-size: 0.875rem;
+  }
+
+  /* Same reason as the pro deck's: the question is a sentence and the two answers are
+     controls, and a wrap that fits YES on one line and CANCEL on the next reads as two
+     unrelated buttons. The sentence takes the line, the pair takes the one under it. */
+  .basic-chat .chat-confirm-q { flex-basis: 100%; }
+}
+
+@container composer (max-width: 250px) {
+  .basic-chat .chat-btn {
+    padding: 9px 8px;
+    font-size: 0.8125rem;
+  }
+
+  /* Twelve pixels between controls is a twelfth of the card at this width. */
+  .basic-chat .chat-bar { gap: 8px; }
+  .basic-chat .chat-confirm { gap: 8px; }
+}
 
 /* Motion, refused. The dissolve keeps its opacity and loses its blur, because a blur is a
    motion cue and an opacity is a statement that something is gone. The globe holds one
