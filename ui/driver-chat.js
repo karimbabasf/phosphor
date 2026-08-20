@@ -14,14 +14,18 @@
  *   live      the transcript and the prompt box. This is the phase the panel exists for.
  *   closing   the stop was confirmed. The panel is taken apart on screen and comes back idle.
  *
- * THE SAME GLOBE, TWICE, ANSWERING TWO QUESTIONS. ui/agent-globe.js draws both of them.
+ * THE SAME GLOBE, TWICE, ANSWERING TWO QUESTIONS. ui/warden-globe.js draws both of them, or
+ * ui/agent-globe.js does when a canvas cannot hold a WebGL context; GLOBE below is the switch
+ * and the fallback, and nothing past this paragraph knows which file answered.
  * The big one fills the idle phase and says NO AGENT IS RUNNING HERE, which is why the whole
  * layer around it is the button that starts one. The badge is forty pixels in the corner of a
  * booting or live panel and says THIS PANEL'S DRIVER IS UP, plus how hard it is working, and
  * it says it without a word: quick and bright while the agent writes, slow and dim while it
  * waits. There is no third setting. A stopped agent is not a dull badge, it is the big globe.
  * They are never on screen together and exactly one of them is ever turning; setGlobes below
- * is the only function allowed to touch either.
+ * is the only function allowed to touch either. The terminal surfaces also give the badge a
+ * trace running left out of it, drawn by ui/presence.js off the very same driver state, so the
+ * light and the line are one instrument rather than two.
  *
  * NEITHER OF THEM IS THE SEAT LIGHT. #agent-orb in the pro and trade status bar is a filled
  * ball, and it is lit whenever ANY agent holds the MCP seat, including one running in a
@@ -52,6 +56,34 @@
 'use strict';
 
 var PhosphorChat = (function () {
+  /* ---------- WHICH GLOBE, AND HOW TO GO BACK ----------
+
+     TO REVERT: set GLOBE to 'flat'. That is the whole switch. Both files stay on disk and both
+     keep working, so the change is one word and a reload, and nothing else in this file, in the
+     stylesheets or in the markup knows which one is mounted.
+
+       'warden'  ui/warden-globe.js, the real three.js body Warden draws: an additive line
+                 lattice inside a gyro cradle around Claude's sunburst.
+       'flat'    ui/agent-globe.js, the 2D canvas globe that came before it. The same motif
+                 flattened, drawn with strokes, no WebGL and no vendored library.
+
+     The fallback is not the switch and cannot be turned off. A WebGL globe needs a GPU to say
+     yes, and this window holds an approval button: it may never show an empty box because a
+     driver was old, a context was refused, or a build shipped without ui/vendor. So the flat
+     globe answers for all three, and the panel never learns the difference. */
+  var GLOBE = 'warden';
+
+  /* create() on the WebGL globe returns null when the canvas cannot hold a context, which is
+     the only honest moment to find that out: it is asked of the real canvas, before any of the
+     735 KB of three.js is fetched. A missing file answers the same way, one line earlier. */
+  function makeGlobe(canvas, options) {
+    if (GLOBE === 'warden' && window.PhosphorWardenGlobe) {
+      var webgl = PhosphorWardenGlobe.create(canvas, options);
+      if (webgl) return webgl;
+    }
+    return window.PhosphorGlobe ? PhosphorGlobe.create(canvas, options) : null;
+  }
+
   var TRANSCRIPT_MAX = 400;
   /* How close to the bottom still counts as reading the newest line. One row of slack, so a
      panel that is a pixel off the end from a fractional scroll is still pinned. */
@@ -483,6 +515,12 @@ var PhosphorChat = (function () {
     var idle = mount.phase === 'idle';
     var lit = mount.phase === 'booting' || mount.phase === 'live';
     mount.badge.hidden = !lit;
+    /* The trace is the badge's own line, so it is told the same thing the badge is and at the
+       same moment. Only the mount that built one speaks, because two panels on one page would
+       otherwise take turns overwriting each other's answer. */
+    if (mount.trace && window.PhosphorPresence && PhosphorPresence.drive) {
+      PhosphorPresence.drive(lit ? mount.driverState : '');
+    }
 
     if (idle) {
       mount.badgeOrb.stop();
@@ -736,7 +774,33 @@ var PhosphorChat = (function () {
     var badge = el('span', 'chat-badge');
     badge.setAttribute('aria-hidden', 'true');
     var badgeCanvas = el('canvas', 'chat-badge-canvas');
-    badge.appendChild(badgeCanvas);
+
+    /* THE TRACE, AND WHY IT COMES OUT OF THE GLOBE. Karim, 2026-08-20: "can we make the pulse
+       line that we had before just come out of that globe to the left." It used to be a panel
+       of its own under the log, which is what made it a widget parked nearby; belonging to the
+       badge is what makes it the globe's own line rather than a second instrument agreeing with
+       the first. So on a surface that asks for one the badge becomes a row: the trace runs left
+       out of the orb, and both go on and off screen with the driver they describe.
+
+       ui/presence.js draws it, from the same driver state the badge globe is tuned by, which is
+       NOT the state that file's own orb reads: the ball in the window chrome is lit by any agent
+       holding the MCP seat, and this line is lit by the one process this panel started.
+
+       ONLY WHERE AN OSCILLOSCOPE BELONGS, which is why it is asked for rather than assumed. It
+       is a terminal instrument, and the calm screen may never look like a terminal. A surface
+       that does not ask keeps the badge it already had, down to the markup: one canvas directly
+       inside the badge, with no wrapper its stylesheet has never heard of. */
+    var trace = null;
+    if (options.trace) {
+      trace = el('canvas', 'chat-badge-trace');
+      trace.id = 'agent-pulse';
+      var badgeOrbBox = el('span', 'chat-badge-orb');
+      badgeOrbBox.appendChild(badgeCanvas);
+      badge.appendChild(trace);
+      badge.appendChild(badgeOrbBox);
+    } else {
+      badge.appendChild(badgeCanvas);
+    }
     badge.hidden = true;
 
     stage.appendChild(globe);
@@ -808,6 +872,7 @@ var PhosphorChat = (function () {
       list: list,
       jump: jump,
       badge: badge,
+      trace: trace,
       bar: bar,
       form: form,
       input: input,
@@ -831,14 +896,14 @@ var PhosphorChat = (function () {
       /* The gain the surface asked for, forwarded. The calm screen's blue is a low-chroma
          token and lands dimmer than the terminal's green at the same alpha, which is what
          ui/app.js is compensating for when it hands this panel a number. */
-      orb: window.PhosphorGlobe
-        ? PhosphorGlobe.create(canvas, { colorVar: options.colorVar || '--green', gain: options.gain })
-        : null,
-      /* minRadius 0 because the floor in agent-globe.js is there to stop the panel-filling
+      orb: makeGlobe(canvas, { colorVar: options.colorVar || '--green', gain: options.gain }),
+      /* minRadius 0 because the floor in both globe files is there to stop the panel-filling
          globe shrinking to a dot, and this one IS a dot. */
-      badgeOrb: window.PhosphorGlobe
-        ? PhosphorGlobe.create(badgeCanvas, { colorVar: options.colorVar || '--green', gain: options.gain, minRadius: 0 })
-        : null,
+      badgeOrb: makeGlobe(badgeCanvas, {
+        colorVar: options.colorVar || '--green',
+        gain: options.gain,
+        minRadius: 0,
+      }),
     };
     /* A browser with no 2d context still gets a working panel: the globes are the only thing
        that goes, and the button around the idle one is what actually starts the agent. */
@@ -850,6 +915,10 @@ var PhosphorChat = (function () {
     };
     if (!record.orb) record.orb = deadGlobe();
     if (!record.badgeOrb) record.badgeOrb = deadGlobe();
+
+    // Handed over before the first setGlobes call, so the trace is already adopted when it is
+    // told which state to draw.
+    if (trace && window.PhosphorPresence && PhosphorPresence.trace) PhosphorPresence.trace(trace);
 
     root.setAttribute('data-phase', 'idle');
     root.setAttribute('data-driver-state', 'off');
