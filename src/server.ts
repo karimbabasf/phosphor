@@ -60,6 +60,7 @@ import type { AgentPresence } from './agents.ts';
 import { buildTransactions, createGasCache, evmCandidates } from './transactions.ts';
 import type { TxPlace } from './transactions.ts';
 import { gateRequired, gateBanner } from './policy/gate.ts';
+import type { Allocator } from './yield/allocator.ts';
 import { buildGreeting } from './greeting.ts';
 import { buildRole } from './role.ts';
 import { research } from './research.ts';
@@ -218,6 +219,11 @@ export type ServerDeps = {
      to on would have each of them spawn a real Claude Code process. main.ts is the one caller
      that passes it, and it is the one caller that is an app. */
   autostart?: boolean;
+  /* The stablecoin allocator, when one is running. Optional because every test in this repo
+     builds a server and none of them should be reaching an RPC for a lending rate. Absent
+     means the window renders the panel with nothing in it and says why, which is also what a
+     demo-mode install gets. */
+  allocator?: Allocator;
   /* Injected only so a test can drive the start paths without a real Claude Code process
      appearing on the machine. main.ts never passes it, and nothing here can loosen the
      lockdown through it: the tool surface is fixed in operator/driver.settings.json and
@@ -701,6 +707,12 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         lastActivityAt: agents.activityAt(),
       },
       candleProducts: cfg.candleProducts,
+      // What the stablecoin is earning. Read from a background refresh rather than here,
+      // because buildState is synchronous and a position lives on a chain. `stale` on that
+      // view means the last read failed and these are the previous good numbers; the panel
+      // says so rather than drawing a zero, which for this feature would be the worst
+      // available lie.
+      yield: deps.allocator?.view() ?? null,
       view: getView(),
       // Computed in BOTH modes, deliberately. A view model that only exists in the mode
       // that renders it is a view model nothing exercises while the app sits in its
@@ -1093,6 +1105,32 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       }
 
       return sendJson(res, 400, { error: `unknown driver action: ${action}` });
+    }
+
+    if (route === '/api/yield/withdraw') {
+      // The button in the window, and the ONLY thing on this route.
+      //
+      // It files a yield_withdraw proposal exactly as the allocator would and then stops. It
+      // does not approve it and it cannot: above the click threshold the proposal waits in
+      // the same gate every other one waits in, and below it the policy engine decides. This
+      // is not a second path to the money, it is the same path with a human at the front.
+      //
+      // No amount is accepted from the request. Omitting it means the whole position, which
+      // is the only withdrawal that cannot leave dust behind on a balance that grows every
+      // block, and an amount on the wire would be a number this route would have to trust.
+      const chain = typeof body.chain === 'string' ? body.chain : '';
+      if (chain !== 'eth' && chain !== 'base' && chain !== 'arb') {
+        sendJson(res, 400, { error: `chain must be one of eth, base, arb; got '${chain}'` });
+        return;
+      }
+      try {
+        const proposal = await proposals.proposeYieldWithdraw({ chain });
+        broadcastState();
+        sendJson(res, 200, proposal);
+      } catch (err) {
+        sendJson(res, 400, { error: errText(err) });
+      }
+      return;
     }
 
     if (route === '/api/kill') {
@@ -2130,6 +2168,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
           route === '/api/approve' ||
           route === '/api/refuse' ||
           route === '/api/kill' ||
+          route === '/api/yield/withdraw' ||
           route === '/api/driver'
         ) {
           return await handleMutation(route, req, res);

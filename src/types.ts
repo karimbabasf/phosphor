@@ -628,6 +628,11 @@ export type AppConfig = {
   // app opens on the globe and starting one is a press. Setting it true opens the window with
   // an agent already running, and stopping the agent by hand never restarts it either way.
   driver?: { claudeBin?: string; systemPrompt?: string; autostart?: boolean; model?: string };
+  // The automated stablecoin allocator. Off by default, and the default is the point: a loop
+  // that files proposals to move money should be something a human switched on, not something
+  // an install inherits. Even on, it can only PROPOSE; the policy engine and the approval gate
+  // decide the rest, exactly as they do for an agent.
+  yield?: { autoAllocate?: boolean; intervalMs?: number; dustUsd?: number };
 };
 
 // ---------- Service interfaces (wired in main.ts) ----------
