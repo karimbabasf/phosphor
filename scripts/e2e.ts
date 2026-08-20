@@ -20,7 +20,11 @@ import { EXPECTED_TOOLS_SORTED } from '../tests/tool-surface.ts';
 type Json = any;
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const PORT = 4199;
+// Overridable because this repo runs in several worktrees at once and 4199 is not always
+// free: the same lesson the `pkill -f "src/main.ts"` note records, which is that matching on
+// a name or a number catches the OTHER worktree. Defaults to 4199 so nothing that already
+// runs this has to change.
+const PORT = Number(process.env.PHOSPHOR_E2E_PORT ?? process.env.ACC_PORT ?? 4199);
 const BASE = `http://127.0.0.1:${PORT}`;
 
 // The exact tool surface, sorted. An extra tool here is a new way for an agent to reach the
