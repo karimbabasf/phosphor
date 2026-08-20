@@ -183,8 +183,8 @@ export function createAgents(now: () => number = Date.now): AgentPresence {
       const at = now();
       for (const [session, until] of revoked) if (at >= until) revoked.delete(session);
       const current = live();
-      // The seat is cleared whether or not anyone held it, so a summon always leaves a clean
-      // seat for the agent it is about to start.
+      // The seat is cleared whether or not anyone held it, so starting an agent from the
+      // window always leaves a clean seat for the one it is about to start.
       const held = seat;
       seat = null;
       if (held !== null) revoked.set(held.session, at + REVOKE_MS);

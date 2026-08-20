@@ -23,10 +23,16 @@
    which is the one thing this screen may never look like.
 
    One screen, no page scroll (Karim, 2026-08-12: "make it all fit on one screen
-   like pro mode"). Two columns: what you have on the left, what has been happening
-   on the right. A list that outgrows its box scrolls inside itself, the way pro's
-   panels do. Under 1000px wide or 640px tall two columns of readable type do not
-   fit, and the screen goes back to being one scrolling document.
+   like pro mode"). ONE column, and the conversation is the centre of it: the balance,
+   anything wrong with it, four buttons, and the chat, which takes every pixel the other
+   three leave over. Everything this screen used to lay out at once now sits behind one of
+   those four buttons, in one sheet, held out of the flow so that opening it cannot move
+   the balance or the conversation by a pixel.
+
+   THE QUESTION IS NOT ONE OF THE FOLDS. It is a layer above everything, it appears at
+   once rather than arriving over 200ms, and no key press takes it off the screen. What
+   may be made simpler here is the number of WORDS at rest, never the number of facts at
+   the moment a person approves a transfer.
    ============================================================================ */
 
 /* Self-hosted. The pro screen never loads these: it is monospace by design and
@@ -128,59 +134,30 @@ body[data-view='basic'] #page {
   overflow: hidden;
 }
 
-/* ---------- the deck ---------- */
+/* ---------- the screen ---------- */
 
-/* Two columns, 1.04 to 1 rather than a half and a half: the left one carries the
-   balance, the question and the wallet, so it gets the larger share, and an even
-   split would read as a template. Top padding clears the calm bar at its thickest,
-   so a state change never shifts a single line of text on the page.
+/* One column, held to a readable measure and centred. Two columns were right for a screen
+   that showed six things at once; this one shows four, and the fourth of them wants the
+   height rather than half the width. Top padding clears the calm bar at its thickest, so a
+   state change never shifts a single line of text on the page.
 
-   The split follows the reading order rather than cutting across it: everything
-   that is YOURS goes down the left (what you have, what you are being asked), and
-   the record goes down the right (what a coin costs, what happened, what the app
-   promises, the way out). Read left then right and you have read the markup in
-   order, which is why the stacked fallback needs no reordering at all. */
+   Nothing in this stack scrolls. The header, the warning, the four buttons and the brake
+   are each as tall as their own content, and the conversation takes what is left, which is
+   most of it. The transcript inside the conversation scrolls, the way pro's panels do. */
 .basic {
   height: 100%;
-  max-width: 1480px;
+  max-width: 62rem;
   margin: 0 auto;
-  padding: clamp(40px, 5.4vh, 68px) clamp(22px, 3vw, 48px) clamp(26px, 3.6vh, 44px);
-  display: grid;
-  grid-template-columns: minmax(0, 1.04fr) minmax(0, 1fr);
-  column-gap: clamp(34px, 5vw, 84px);
-}
-
-/* Each column is its own stack and its own scroll boundary. min-height: 0 is
-   load-bearing: without it a flex item refuses to shrink below its content and the
-   overflow lands on the page instead of inside the box. */
-.basic-col {
+  padding: clamp(34px, 4.6vh, 58px) clamp(22px, 4vw, 44px) clamp(20px, 2.8vh, 34px);
   display: flex;
   flex-direction: column;
-  gap: clamp(20px, 3.4vh, 44px);
-  min-height: 0;
+  gap: clamp(16px, 2.2vh, 26px);
 }
 
-/* Both columns can scroll, and neither normally does: the lists inside them shrink
-   and scroll internally first. The column scroll is the safety valve, and it only
-   opens when a question is so long that the wallet under it has already given up
-   all the room it has. It matters that the valve is on the COLUMN and not inside
-   the question box: YES and NO stay below the facts they rest on, and nothing on
-   this screen may put an approving button above the thing being approved. */
-.basic-col-yours,
-.basic-col-record { overflow-y: auto; }
-
-/* Both columns hold their spare height in the MIDDLE, not at the bottom. Every block
-   on this screen is a fixed amount of content: three prices, two short lists, a wallet
-   that is as long as the wallet is. Stretching one of them to fill a tall screen opens
-   a hole inside a box; letting the last one hang leaves half a column empty under it,
-   which is what the fifth pass looked like before the ring got a bottom edge to sit on.
-   So the first block anchors the top of each column, the last anchors the bottom, and
-   the four of them line up across the deck. */
-.basic-col-record,
-.basic-col-yours { justify-content: space-between; }
-
 /* Warm and thin. The terminal's ghost-green scrollbar belongs to the other screen. */
-.basic-col,
+.basic-chat .chat-list,
+.basic-sheet-panel,
+.basic-ask-layer,
 #basic-rows,
 #basic-events,
 #basic-actions {
@@ -238,17 +215,17 @@ body[data-view='basic'] #page {
 
 /* ---------- the balance ---------- */
 
-/* Never shrinks. The balance is what this screen is for, so anything else in the
-   column gives up room before it does. */
-.basic-money { margin: 0; flex: none; }
+/* Never shrinks. The balance is what this screen is for, so the conversation under it
+   gives up room before it does. */
+.basic-head { margin: 0; flex: none; }
 
 .basic-total {
   margin: 0;
-  /* Height is in the sum as well as width, because this screen now has to fit a
-     fixed viewport: a short laptop shrinks the balance instead of pushing the
-     holdings off the bottom. Lands near 68px at 1440x900, which is the size the
-     brief asks to be readable from normal sitting distance. */
-  font-size: clamp(2.5rem, 3.2vw + 2.4vh, 4.6rem);
+  /* Height is in the sum as well as width, because this screen has to fit a fixed
+     viewport: a short laptop shrinks the balance instead of pushing the conversation off
+     the bottom. Smaller than it was by about a fifth, because it no longer has a column
+     to itself, and still by a wide margin the biggest thing on the screen. */
+  font-size: clamp(2.1rem, 2.2vw + 1.9vh, 3.6rem);
   font-variation-settings: 'wght' 585;
   /* Off the round stops and off the convergence curve: tracking stops tightening
      around 30px, so this is the flat end of the curve rather than a guess that
@@ -284,6 +261,518 @@ body[data-view='basic'] #page {
   color: var(--ink-faint);
 }
 
+/* ---------- the folds ---------- */
+
+/* The whole of the rest of the app, as a row of words. Not icons: an icon is a thing to
+   decode, and this screen is read by someone who does not want to decode anything. They
+   are quiet on purpose, because none of them is what a person came here to do, and a
+   button is offered only when there is something behind it (see app.js). */
+.basic-folds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  flex: none;
+}
+
+.basic-fold {
+  font: inherit;
+  font-size: 0.9375rem;
+  font-variation-settings: 'wght' 500;
+  padding: 9px 15px;
+  border-radius: 999px;
+  background: transparent;
+  border: 1px solid var(--rule-firm);
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: transform 160ms ease-out, color 160ms ease-out,
+    border-color 160ms ease-out, background-color 160ms ease-out;
+}
+
+.basic-fold:hover {
+  color: var(--ink);
+  border-color: var(--ink-faint);
+  background: color-mix(in oklch, var(--ink) 6%, transparent);
+}
+
+.basic-fold:active { transform: scale(0.97); }
+
+.basic-fold:focus-visible {
+  outline: 2px solid var(--calm);
+  outline-offset: 2px;
+}
+
+/* ---------- the conversation ---------- */
+
+/* The centre of the screen and the only block on it that grows. ui/driver-chat.js builds
+   everything inside it and the pro deck mounts the same component, so every rule here is
+   scoped under .basic-chat: the two screens share a component and share nothing about how
+   it looks, which is the line this whole file draws.
+
+   Nothing in here is monospace. The pro deck reads its transcript as a log; this one reads
+   it as a conversation, and a conversation set in a terminal face is a log with a different
+   name on it. Nothing in here animates position either: rows land several a second while an
+   assistant is working, and a dozen things easing at once is the opposite of calm.
+
+   THE FOUR PHASES ARE THE SAME FOUR, AND THEY LOOK NOTHING ALIKE. idle is a globe in the
+   calm blue rather than in phosphor green; closing is a dissolve rather than the pro deck's
+   fall of terminal characters. Same component, same states, same seconds; a screen that may
+   never look like a terminal does not get a waterfall of ASCII on it, and driver-chat.js is
+   told which one to run at mount rather than deciding from the surface it woke up on. */
+.basic-chat {
+  flex: 1 1 auto;
+  min-height: 11rem;
+  display: flex;
+  flex-direction: column;
+  padding: 18px 20px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-surface);
+}
+
+/* The box all four phases fill, and the positioned ancestor the globe layer stands in. */
+.basic-chat .chat-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  transition: opacity 240ms var(--ease-out), filter 240ms var(--ease-out);
+}
+
+/* The dissolve, and the whole of what "stop the assistant" looks like here. A crossfade
+   between a transcript and a globe shows two objects at once and reads as a glitch; the
+   blur blends them into one thing changing, which is what it is. It is the same beat as
+   the pro deck's character fall and a hair shorter, because a dissolve that lasts as long
+   as a waterfall reads as a stall. */
+.basic-chat[data-phase='closing'] .chat-stage {
+  opacity: 0;
+  filter: blur(3px);
+}
+
+/* ---- idle: the globe ---- */
+
+/* The whole layer is the button. A small START under a large picture would be a target
+   beside the target, and the thing a person wants to press is the globe. */
+.basic-chat .chat-globe {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  color: var(--ink);
+  animation: basic-globe-in 260ms var(--ease-out);
+  transition: transform 160ms var(--ease-out);
+}
+
+.basic-chat .chat-globe:active { transform: scale(0.98); }
+
+.basic-chat .chat-globe:focus-visible {
+  outline: 2px solid var(--calm);
+  outline-offset: 2px;
+  border-radius: var(--r-control);
+}
+
+/* Never from nothing. A globe that grows out of a point reads as an object arriving from
+   somewhere else; one that swells the last five percent reads as this screen settling. */
+@keyframes basic-globe-in {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.basic-chat .chat-globe-canvas {
+  display: block;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+}
+
+.basic-chat .chat-globe-label {
+  flex: none;
+  font-size: 1.0625rem;
+  font-variation-settings: 'wght' 545;
+  color: var(--ink);
+}
+
+/* Why there is no assistant, when there is a reason worth saying. Otherwise the resting
+   line, which is the same two-word voice the wallet uses when it holds nothing. */
+.basic-chat .chat-globe-sub {
+  flex: none;
+  font-size: 0.9375rem;
+  color: var(--ink-faint);
+  max-width: 34rem;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+/* ---- the transcript ---- */
+
+.basic-chat .chat-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+
+/* The conversation grows up from the box you type in, the same as the deck's and the same as
+   every other chat this person uses. Three exchanges anchored to the top of a tall panel leave
+   a field of empty below them that reads as something failing to load. margin-top rather than
+   justify-content: flex-end, which clips the top of the column once it overflows. */
+.basic-chat .chat-list > :first-child { margin-top: auto; }
+
+/* A fixed first column, so who is speaking lines up down the whole transcript and the eye
+   can find the reply without reading the labels one at a time. */
+.basic-chat .chat-row {
+  display: grid;
+  grid-template-columns: 3.6rem minmax(0, 1fr);
+  column-gap: 14px;
+  align-items: baseline;
+}
+
+.basic-chat .chat-who {
+  font-size: 11px;
+  font-variation-settings: 'wght' 545;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  text-align: right;
+}
+
+.basic-chat .chat-text {
+  color: var(--ink);
+  font-size: 1rem;
+  line-height: 1.55;
+  /* The assistant writes in paragraphs and sometimes in lists. Collapsing its newlines
+     turns a readable answer into one long sentence. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Your own words are the one thing in the transcript whose content you already know, so
+   they are given a shape rather than read: an object on the page, not more of the page. */
+.basic-chat .chat-said .chat-text {
+  display: inline-block;
+  padding: 8px 13px;
+  border-radius: var(--r-control);
+  background: color-mix(in oklch, var(--ink) 10%, var(--surface));
+}
+
+/* What it did, which is a quieter kind of fact than what it said. */
+.basic-chat .chat-tool .chat-text {
+  color: var(--ink-faint);
+  font-size: 0.9375rem;
+}
+
+/* The intro, while the assistant starts. Every line of it is a true statement about what
+   is being started, so it is quiet rather than hidden. */
+.basic-chat .chat-boot .chat-text {
+  color: var(--ink-soft);
+  font-size: 0.9375rem;
+}
+
+.basic-chat .chat-error .chat-who,
+.basic-chat .chat-error .chat-text { color: var(--frozen); }
+
+.basic-chat .chat-status .chat-text {
+  color: var(--ink-faint);
+  font-size: 0.9375rem;
+}
+
+/* Basic marks a failed row with red words, not with a rule down its side. Stated rather
+   than left unset, because ui/style.css styles `.chat-error` unscoped and the pro deck's
+   marker is a phosphor-green left border: without these two lines it lands here. */
+.basic-chat .chat-error {
+  border-left: 0;
+  padding-left: 0;
+}
+
+/* The way back to the newest line. Shown only when the reader has scrolled off the end, so
+   a conversation that has been left behind always says so and always offers the way back
+   rather than leaving a person to find the bottom by hand. */
+.basic-chat .chat-jump {
+  position: absolute;
+  left: 50%;
+  bottom: 2px;
+  transform: translateX(-50%);
+  font: inherit;
+  font-size: 0.875rem;
+  font-variation-settings: 'wght' 545;
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--rule-firm);
+  cursor: pointer;
+  animation: basic-globe-in 200ms var(--ease-out);
+}
+.basic-chat .chat-jump:active { transform: translateX(-50%) scale(0.97); }
+.basic-chat .chat-jump:focus-visible {
+  outline: 2px solid var(--calm);
+  outline-offset: 2px;
+}
+
+/* ---- the bar, which is now the composer's bottom row ---- */
+
+/* It used to float between the transcript and the input with a rule of its own, which put
+   three separate baselines at the foot of the panel and left the field looking like an
+   afterthought under them. It sits inside the field's own box now: one object, two halves. */
+.basic-chat .chat-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 4px 0;
+  border-top: 1px solid var(--rule);
+}
+
+.basic-chat .chat-bar[hidden] { display: none; }
+
+.basic-chat .chat-state {
+  margin-right: auto;
+  font-size: 0.875rem;
+  font-variation-settings: 'wght' 505;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+/* Never in amber. On this screen amber means one thing, a question waiting for an answer,
+   and an assistant that is merely busy is not that. */
+.basic-chat[data-driver-state='starting'] .chat-state,
+.basic-chat[data-driver-state='ready'] .chat-state { color: var(--calm); }
+
+.basic-chat[data-driver-state='thinking'] .chat-state {
+  color: var(--calm);
+  animation: basic-breathe 2.4s var(--ease-out) infinite;
+}
+
+.basic-chat[data-driver-state='failed'] .chat-state { color: var(--frozen); }
+
+.basic-chat .chat-btn {
+  font: inherit;
+  font-size: 0.9375rem;
+  font-variation-settings: 'wght' 545;
+  letter-spacing: 0.02em;
+  padding: 10px 16px;
+  border-radius: var(--r-control);
+  background: color-mix(in oklch, var(--ink) 7%, var(--surface));
+  color: var(--ink);
+  border: 1px solid var(--rule-firm);
+  cursor: pointer;
+  transition: transform 160ms var(--ease-out), background-color 160ms var(--ease-out),
+    border-color 160ms var(--ease-out);
+}
+
+.basic-chat .chat-btn:hover { background: color-mix(in oklch, var(--ink) 13%, var(--surface)); }
+.basic-chat .chat-btn:active { transform: scale(0.97); }
+
+.basic-chat .chat-btn:focus-visible {
+  outline: 2px solid var(--calm);
+  outline-offset: 2px;
+}
+
+.basic-chat .chat-stop { color: var(--ink-soft); }
+
+/* Stop this answer. Between turns it is disabled and fades to nothing rather than leaving the
+   bar, so nothing moves when an answer starts or ends. It keeps the full weight of a normal
+   control while the stop beside it stays muted: mid-answer, this is the one being reached
+   for. See ui/driver-chat.js. */
+.basic-chat .chat-halt[disabled] { opacity: 0; }
+
+/* The question. It replaces the stop button in place rather than opening anything, so the
+   answer is where the press that asked it was, and the bar never changes height. */
+.basic-chat .chat-confirm {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  animation: basic-globe-in 200ms var(--ease-out);
+}
+
+.basic-chat .chat-confirm-q {
+  font-size: 0.9375rem;
+  font-variation-settings: 'wght' 545;
+  color: var(--ink);
+}
+
+/* Marked, because it ends a conversation that cannot be got back from this window. The
+   border only: red words here belong to the frozen state and to nothing else. */
+.basic-chat .chat-confirm-yes { border-color: color-mix(in srgb, var(--frozen) 46%, var(--rule-firm)); }
+
+/* ---- the prompt ---- */
+
+/* ONE BOX. Karim, 2026-08-20: "the text box is weird." The field, the state word and both
+   stops are one object with one border and one focus ring, which is how every composer this
+   person already uses is built. The ring goes on the box rather than on the input, because
+   the box is what they are aiming at. */
+.basic-chat .chat-form {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 14px;
+  padding: 12px 11px 10px;
+  border-radius: var(--r-control);
+  background: var(--ground);
+  border: 1px solid var(--rule-firm);
+  transition: border-color 200ms var(--ease-out);
+}
+
+.basic-chat .chat-form:focus-within { border-color: var(--calm); }
+
+.basic-chat .chat-input {
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  font-size: 1rem;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+}
+
+.basic-chat .chat-input::placeholder { color: var(--ink-faint); }
+.basic-chat .chat-input:focus { outline: none; }
+
+/* Send is the affirmative one and ends the row, past the stop. */
+.basic-chat .chat-send { margin-left: 0; }
+
+/* Motion, refused. The dissolve keeps its opacity and loses its blur, because a blur is a
+   motion cue and an opacity is a statement that something is gone. The globe holds one
+   still frame, which ui/agent-globe.js decides for itself: no stylesheet reaches inside a
+   canvas. */
+@media (prefers-reduced-motion: reduce) {
+  .basic-chat .chat-globe,
+  .basic-chat .chat-jump,
+  .basic-chat .chat-confirm { animation: none; }
+  .basic-chat .chat-globe,
+  .basic-chat .chat-btn { transition: none; }
+  .basic-chat .chat-globe:active,
+  .basic-chat .chat-btn:active { transform: none; }
+  .basic-chat .chat-jump:active { transform: translateX(-50%); }
+  .basic-chat[data-phase='closing'] .chat-stage { filter: none; }
+  .basic-chat[data-driver-state='thinking'] .chat-state { animation: none; }
+}
+
+/* ---------- the sheet ---------- */
+
+/* One box for all four folds. It is never `hidden`: it is fixed, out of the flow, and
+   switched with visibility, so opening a fold cannot move the balance, the warning or the
+   conversation by a pixel, and the ring and the three lines inside it have a box to be
+   measured against the moment they are shown. */
+.basic-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: clamp(20px, 4vh, 48px) clamp(16px, 4vw, 40px);
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  /* Visibility is a discrete property, so a browser flips it at the HALFWAY point of a
+     transition. Opening, that put the panel in a hidden subtree for the first 100ms, and
+     focus() on a hidden element does nothing at all: the sheet opened with the keyboard
+     still on the button behind it. So it flips at once on the way in, and waits out the
+     fade on the way out, which is the only asymmetry in this file and it is load-bearing. */
+  transition: opacity 200ms var(--ease-out), visibility 0s linear 200ms;
+}
+
+.basic-sheet[data-open='1'] {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+  transition: opacity 200ms var(--ease-out), visibility 0s linear;
+}
+
+.basic-scrim {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in oklch, var(--ground) 76%, transparent);
+}
+
+.basic-sheet-panel {
+  position: relative;
+  width: min(38rem, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 20px 24px 26px;
+  background: var(--surface);
+  border: 1px solid var(--rule-firm);
+  border-radius: var(--r-surface);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+  /* From 0.95, never from 0: a box that grows out of nothing came from nowhere, and this
+     one came from a button that is still on the screen behind it. */
+  transform: scale(0.95);
+  transform-origin: center;
+  transition: transform 200ms var(--ease-out);
+}
+
+.basic-sheet[data-open='1'] .basic-sheet-panel { transform: scale(1); }
+
+.basic-sheet-panel:focus { outline: none; }
+
+.basic-sheet-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.basic-sheet-title {
+  margin: 0 auto 0 0;
+  font-size: 1.1875rem;
+  font-variation-settings: 'wght' 545;
+  letter-spacing: -0.006em;
+  color: var(--ink);
+}
+
+.basic-sheet-close {
+  font: inherit;
+  font-size: 0.9375rem;
+  font-variation-settings: 'wght' 505;
+  padding: 8px 15px;
+  border-radius: 999px;
+  background: transparent;
+  border: 1px solid var(--rule-firm);
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: transform 160ms ease-out, color 160ms ease-out, border-color 160ms ease-out;
+}
+
+.basic-sheet-close:hover { color: var(--ink); border-color: var(--ink-faint); }
+.basic-sheet-close:active { transform: scale(0.97); }
+
+.basic-sheet-close:focus-visible {
+  outline: 2px solid var(--calm);
+  outline-offset: 2px;
+}
+
+.basic-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+/* A plain sentence about how something works, inside a box a person opened on purpose.
+   These are the only places on this screen with room for one. */
+.basic-note {
+  margin: 0;
+  color: var(--ink-faint);
+  font-size: 0.9375rem;
+  line-height: 1.5;
+}
+
 /* ---------- section label ---------- */
 
 .basic-label {
@@ -298,32 +787,15 @@ body[data-view='basic'] #page {
 
 /* ---------- what you own ---------- */
 
-/* The heading stays put and the rows scroll under it. A wallet with twenty things
-   in it must not push the promise and the stop control off the screen, and a
-   heading that scrolls away leaves a column of figures nobody can name.
-
-   It gives its height back to a question when one arrives, down to a floor of about
-   two rows. Below that the column scrolls instead: a wallet squeezed to a sliver is
-   worse than a page that moves. It does not STRETCH, because the ring beside it is a
-   fixed size and a box drawn twice as tall as its own picture is a hole. */
-.basic-holdings {
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  flex: 0 1 auto;
-  min-height: 8rem;
-}
-
 /* The ring on the left, the rows on the right. The ring takes a fixed column: it is a
-   picture of the rows beside it, and a picture that changes size when a row appears
-   reads as a second thing happening. */
+   picture of the rows beside it, and a picture that changes size when a row appears reads
+   as a second thing happening. Both sit inside the sheet now, and the sheet is the box
+   that scrolls, so neither of them needs a scroll or a height floor of its own. */
 .basic-wallet {
   display: grid;
   grid-template-columns: 148px minmax(0, 1fr);
   align-items: start;
   gap: clamp(18px, 2vw, 30px);
-  min-height: 0;
-  overflow: hidden;
 }
 
 .basic-donutwrap {
@@ -337,13 +809,7 @@ body[data-view='basic'] #page {
   display: block;
 }
 
-#basic-rows {
-  overflow-y: auto;
-  min-height: 0;
-  /* The rows scroll and the ring does not, so the box that scrolls is the one that
-     needs the height, and it can never be taller than the ring's column allows. */
-  max-height: 100%;
-}
+#basic-rows { min-width: 0; }
 
 .basic-row {
   display: grid;
@@ -406,101 +872,15 @@ body[data-view='basic'] #page {
 
 /* ---------- the three prices ---------- */
 
-/* One raised band holding three rows, so the block reads as a different KIND of fact
-   from the holdings opposite it: those are yours, these are the world's. Three cards
-   would have made three of them, and three cards of one thing is a dashboard. */
+/* One raised band holding three rows, so the block reads as a different KIND of fact from
+   the holdings behind the button beside it: those are yours, these are the world's. Three
+   cards would have made three of them, and three cards of one thing is a dashboard. A step
+   lighter than the sheet it sits in, which is the same move it made against the column. */
 .basic-prices {
   margin: 0;
   padding: 16px 22px 6px;
-  background: var(--surface);
+  background: color-mix(in oklch, var(--ink) 5%, var(--surface));
   border-radius: var(--r-surface);
-  flex: none;
-}
-
-/* The heading line. The label keeps the same size and colour as the two opposite it, so
-   the eye is the only new thing here rather than a new kind of heading. */
-.basic-market {
-  margin: 0 0 4px;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-}
-
-.basic-market .basic-label { margin: 0; }
-
-/* The note is anchored to the EYE, not to the heading line, so where it lands does not
-   depend on how wide the word MARKET happens to be. */
-.basic-eyewrap {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-}
-
-/* Quiet at rest and never a target you have to hunt for: 26px of hit area around a 15px
-   drawing, which is what makes it usable by someone whose hand is not steady. */
-.basic-eye {
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  display: grid;
-  place-items: center;
-  background: none;
-  border: 0;
-  border-radius: 50%;
-  color: var(--ink-faint);
-  cursor: help;
-  font: inherit;
-}
-
-.basic-eye svg {
-  width: 15px;
-  height: 15px;
-  /* The ring and the lid are drawn, the pupil is filled: an eye that is filled all through
-     is a dot, and a dot beside a heading reads as a bullet. */
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.6;
-}
-
-.basic-eye .pupil { fill: currentColor; stroke: none; }
-
-.basic-eye:hover,
-.basic-eye:focus-visible { color: var(--ink); }
-
-.basic-eye:focus-visible {
-  outline: 2px solid var(--calm);
-  outline-offset: 2px;
-}
-
-/* The sentence. Held out of the flow so a block of running text cannot appear inside a
-   heading row and push three prices down the screen. */
-.basic-eye-note {
-  position: absolute;
-  left: calc(100% + 10px);
-  top: 50%;
-  transform: translateY(-50%);
-  z-index: 2;
-  width: max-content;
-  max-width: 34ch;
-  padding: 11px 14px;
-  background: color-mix(in oklch, var(--ink) 12%, var(--surface));
-  border: 1px solid var(--rule-firm);
-  border-radius: var(--r-control);
-  color: var(--ink);
-  font-size: 0.9375rem;
-  line-height: 1.4;
-  /* Hidden from sight AND from a screen reader's tab order until it is asked for, but
-     still reachable by aria-describedby, which is why it is not display: none. */
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 120ms var(--ease-out), visibility 120ms;
-}
-
-.basic-eye:hover + .basic-eye-note,
-.basic-eye:focus-visible + .basic-eye-note,
-.basic-eye-note:hover {
-  opacity: 1;
-  visibility: visible;
 }
 
 /* Mark, name, then the figures on the right, and the line between them. The line is
@@ -575,26 +955,25 @@ body[data-view='basic'] #page {
 
 /* ---------- what happened, and what the assistant did ---------- */
 
-/* One list per COLUMN rather than two lists side by side. Side by side they fitted, and
-   they still read as one table with a gap in it; a column apart they cannot be confused,
-   and each one lands under the thing it is about: money under the balance, the assistant
-   under the prices it was looking at.
-
-   Same shape as the wallet above it: fixed heading, scrolling body. A hundred lines shrink
-   the body rather than pushing STOP EVERYTHING off the bottom of the screen. */
+/* Two lists in one box, never folded into one: four real movements sat under twenty
+   balance checks the last time they shared a list. Karim, 2026-08-14: "history for
+   transactions and agent actions separate". Each keeps its own heading and each hides on
+   its own when it has nothing in it, and if both are empty the button that opens this
+   whole pane is not offered. */
 .basic-hist {
   margin: 0;
   display: flex;
   flex-direction: column;
-  /* Shrinks but never stretches: five lines of history are five lines, and a box drawn
-     taller than its content is how a hole gets into a column. */
-  flex: 0 1 auto;
   min-height: 0;
 }
 
+/* Capped rather than endless. Both lists sit in one box a person opened on purpose, and a
+   sheet that has to be scrolled past forty balance checks to reach the second list is the
+   fold undoing the point of folding. */
 #basic-events,
 #basic-actions {
   overflow-y: auto;
+  max-height: 15rem;
   min-height: 0;
 }
 
@@ -669,21 +1048,45 @@ body[data-view='basic'] #page {
 
 /* ---------- the question ---------- */
 
+/* It takes the screen. Not a fold, not a panel in a column: when there is something to
+   approve, the thing to approve IS the screen. It appears at once and with no entrance of
+   its own, because an animation on this layer is a delay on this layer and nothing here
+   may delay a question by a frame.
+
+   Its z-index sits ABOVE the sheet's, and app.js shuts the sheet the moment a question
+   arrives, so there are two independent reasons a fold can never end up on top of it. */
+.basic-ask-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: clamp(22px, 4vh, 48px) clamp(16px, 4vw, 40px);
+  background: color-mix(in oklch, var(--ground) 94%, transparent);
+  overflow-y: auto;
+}
+
 .basic-ask {
-  padding: 26px 24px 24px;
+  width: min(40rem, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 28px 26px 26px;
   border-radius: var(--r-surface);
   background: var(--surface);
   /* Not a hairline plus a diffuse shadow. The tone step does the separating and
      the border only firms the edge. */
   border: 1px solid var(--rule-firm);
+  box-shadow: 0 20px 56px rgba(0, 0, 0, 0.55);
   display: flex;
   flex-direction: column;
   gap: 14px;
-  /* Never shrinks. Everything else in this column may give up room to the question;
-     the question may not give up room to anything. */
-  flex: none;
-  max-width: 36rem;
 }
+
+/* Focus lands on the panel rather than on YES when a question arrives, so a person whose
+   finger is already on the space bar cannot have a consent button moved under it. The
+   panel is the whole screen, so it needs no ring drawn round it to be found. */
+.basic-ask:focus { outline: none; }
+.basic-ask:focus-visible { outline: 2px solid var(--asking); outline-offset: 3px; }
 
 .basic-ask-headline {
   margin: 0;
@@ -792,8 +1195,8 @@ body[data-view='basic'] #page {
      lit edge on paper reads as a scratch on near-black. */
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 1px 2px rgba(0, 0, 0, 0.45);
   cursor: pointer;
-  transition: transform 120ms var(--ease-out), box-shadow 120ms var(--ease-out),
-    background-color 120ms var(--ease-out);
+  transition: transform 160ms ease-out, box-shadow 160ms ease-out,
+    background-color 160ms ease-out;
 }
 
 @supports (text-box: trim-both cap alphabetic) {
@@ -832,35 +1235,44 @@ body[data-view='basic'] #page {
 
 /* ---------- the promise, and the way out ---------- */
 
+/* Under the headline and quieter than it, and never folded away: it is the one sentence
+   that says whether money can move without you being asked, and a fact about where money
+   goes does not go behind a button, however plain the screen is trying to be. */
 .basic-footer {
-  margin: 0;
-  color: var(--ink-soft);
-  font-size: 1rem;
+  margin: 10px 0 0;
+  color: var(--ink-faint);
+  font-size: 0.9375rem;
   max-width: 46ch;
 }
 
+/* Last on the screen and last in the markup, and on the opposite side of the deck from
+   SEND: the two buttons at the bottom of this screen do very different things and a thumb
+   should never find them next to each other. Far from YES by construction now, because
+   YES only ever exists on a layer that covers this one. */
 .basic-stop {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 12px;
-  padding-top: clamp(16px, 2.4vh, 28px);
-  border-top: 1px solid var(--rule);
   flex: none;
 }
 
 .basic-agent {
   margin: 0;
-  color: var(--ink-faint);
-  font-size: 0.9375rem;
+  color: var(--ink-soft);
+  font-size: 1rem;
 }
 
-/* Sits last and far from YES, which is the one piece of the old screen's layout
-   worth keeping: the two most consequential buttons must never be adjacent. */
 .basic-kill {
+  font-size: 0.9375rem;
+  padding: 10px 16px;
+  background: transparent;
+  box-shadow: none;
   color: var(--frozen);
-  border-color: color-mix(in oklch, var(--frozen) 34%, var(--surface));
+  border-color: color-mix(in oklch, var(--frozen) 34%, var(--ground));
 }
+
+.basic-kill:hover { background: color-mix(in oklch, var(--frozen) 10%, transparent); }
 
 .basic-kill[data-on='1'] {
   color: var(--ink);
@@ -879,6 +1291,16 @@ body[data-view='basic'] #page {
 
 .basic-stop-confirm[hidden] { display: none; }
 
+/* The brake's own failure line. It used to be written into the question's error node,
+   which is a covered layer now: a freeze that did not take would have said so on a
+   surface nobody was looking at. */
+.basic-stop-error {
+  margin: 0;
+  flex-basis: 100%;
+  color: var(--frozen);
+  font-size: 0.9375rem;
+}
+
 /* ---------- waiting ---------- */
 
 /* The basic screen holds its own placeholders and dims them. It gets no blocks
@@ -896,15 +1318,6 @@ body[data-view='basic'].waiting .basic-headline {
   50%, 100% { opacity: 0.45; }
 }
 
-/* ---------- when a question is on screen ---------- */
-
-/* Everything that is not the question gets quieter, and the balance stops being
-   the biggest thing on the page. Nothing is hidden: a person mid-decision may
-   still want to see what they hold, and the right column does not move at all. */
-.basic[data-tone='asking'] .basic-col { gap: clamp(16px, 2.4vh, 30px); }
-.basic[data-tone='asking'] .basic-total { font-size: clamp(1.9rem, 1.4vw + 1.4vh, 2.6rem); }
-.basic[data-tone='asking'] .basic-headline { font-size: 1.0625rem; }
-
 /* ---------- reduced motion ---------- */
 
 @media (prefers-reduced-motion: reduce) {
@@ -914,15 +1327,14 @@ body[data-view='basic'].waiting .basic-headline {
   }
 }
 
-/* ---------- narrow, or short ---------- */
+/* ---------- short, or narrow ---------- */
 
-/* Two columns of type this size need about 1000px, and the whole deck needs about
-   640px of height before the lists have nothing left to give. Past either edge the
-   screen goes back to what it was: one column, in reading order, that scrolls.
-   `display: contents` dissolves the two column wrappers so the sections become
-   direct children of the flex column again. Nothing is reordered: the columns were
-   cut along the reading order, so the markup order IS the phone order. */
-@media (max-width: 1000px), (max-height: 640px) {
+/* One column at every width now, so nothing has to be undone here and nothing is
+   reordered: the markup order IS the order at every size. The only thing that runs out is
+   HEIGHT, and what gives first is the balance, then the conversation, and below about
+   520px there is no arrangement of a balance, four buttons and a conversation that fits,
+   so the page carries the scroll again. */
+@media (max-height: 520px) {
   html:has(body[data-view='basic']) { height: auto; overflow: visible; }
 
   body[data-view='basic'] {
@@ -938,81 +1350,81 @@ body[data-view='basic'].waiting .basic-headline {
   }
 
   .basic {
-    display: flex;
-    flex-direction: column;
     height: auto;
-    max-width: 34rem;
-    gap: 44px;
-    padding: 64px 22px 56px;
+    min-height: 100dvh;
+    padding: 44px 22px 32px;
   }
 
-  .basic-col { display: contents; }
-
-  /* The page carries the scroll again, so nothing scrolls inside itself and nothing
-     is pinned to a fold that no longer exists. */
-  .basic-col-yours,
-  .basic-col-record,
-  .basic-wallet,
-  #basic-rows,
-  #basic-events,
-  #basic-actions {
-    overflow: visible;
-  }
-
-  .basic-holdings,
-  .basic-hist { min-height: 0; }
-
-  /* One column of type this narrow cannot hold a ring beside a list, and it cannot
-     hold two lists beside each other either. Both go back to being stacked, in the
-     same order they are read. */
-  .basic-wallet {
-    grid-template-columns: minmax(0, 1fr);
-    justify-items: center;
-    gap: 24px;
-  }
-
-  #basic-rows { width: 100%; max-height: none; }
-
-  .basic-footer { margin-top: 0; }
-
-  .basic-total { font-size: clamp(3.1rem, 8.5vw, 5rem); }
-  .basic[data-tone='asking'] .basic-total { font-size: clamp(2rem, 5vw, 2.6rem); }
+  .basic-chat { min-height: 20rem; }
 }
 
 /* ---------- narrow ---------- */
 
-@media (max-width: 480px) {
-  .basic { padding: 64px 20px 56px; gap: 40px; }
+@media (max-width: 560px) {
+  .basic { padding: 48px 18px 28px; }
   .basic-row { grid-template-columns: 10px 6fr 3fr 3fr; column-gap: 8px; }
   .basic-row-qty,
   .basic-row-value { padding-left: 8px; }
   .basic-row-qty { font-size: 0.875rem; }
   .basic-actions { grid-template-columns: 1fr; }
 
-  /* The line is the first thing to go: at this width it would be about forty pixels
-     wide, and forty pixels of a day is a shape that means nothing. The price and the
-     direction are the facts, and they both stay. */
+  /* A ring cannot sit beside a list at this width. It goes back to being stacked, in the
+     same order it is read. */
+  .basic-wallet {
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: center;
+    gap: 22px;
+  }
+
+  #basic-rows { width: 100%; }
+
+  /* The line is the first thing to go: at this width it would be about forty pixels wide,
+     and forty pixels of a day is a shape that means nothing. The price and the direction
+     are the facts, and they both stay. */
   .basic-prices { padding: 16px 18px 6px; }
   .basic-price { grid-template-columns: 20px minmax(0, 1fr) auto; }
   .basic-spark { display: none; }
   .basic-price-figures { min-width: 0; }
 
-  /* No room beside the eye at this width, so the note drops under it and is held inside
-     the band rather than running off the edge of the screen. */
-  .basic-eye-note {
-    left: 0;
-    top: calc(100% + 8px);
-    transform: none;
-    max-width: min(34ch, 62vw);
-  }
+  /* No room for a label column beside the words at this width, so who is speaking goes
+     above what they said rather than shrinking the line to nothing. */
+  .basic-chat .chat-row { grid-template-columns: minmax(0, 1fr); row-gap: 3px; }
+  .basic-chat .chat-who { text-align: left; }
 }
 
-/* Start the assistant from the calm screen. A calm accent, not the amber of a pending
-   decision nor the red of the stop below it: starting help is neither a question nor a brake. */
-.basic-summon {
+/* Start a SECOND assistant, in its own terminal window, from inside the "Your assistant"
+   fold. A calm accent, not the amber of a pending decision nor the red of the brake:
+   starting help is neither a question nor a stop. */
+/* ---------- the transcript, given three voices ----------
+
+   Karim, 2026-08-20: "no creativity" about how the output was drawn. The same fix as the
+   deck's, said in this screen's own language rather than the terminal's: no green, no
+   brackets, and weight doing the work that brightness does over there. */
+
+/* The answer is the thing on this screen, so it carries a rule and the full text colour. */
+.basic-chat .chat-agent {
+  border-left: 2px solid var(--rule-firm);
+  padding-left: 14px;
+  margin-left: -2px;
+}
+
+/* Work the assistant did, marked rather than named. A column of small marks reads as a list
+   of things happening; the word "ran" four times reads as a paragraph. */
+.basic-chat .chat-tool .chat-who {
+  text-align: center;
+  font-size: 8px;
+}
+
+/* THE FIGURES. A balance, a percentage, a price: the three things a person came to find. In
+   a proportional face weight is available, so this is the one place on this screen where a
+   heavier weight carries meaning instead of decoration. */
+.basic-chat .chat-fig {
+  font-weight: inherit;
+  font-variation-settings: 'wght' 600;
   color: var(--ink);
-  border-color: color-mix(in oklch, var(--calm) 46%, var(--rule-firm));
 }
-.basic-summon:hover {
-  border-color: color-mix(in oklch, var(--calm) 64%, var(--rule-firm));
-}
+
+/* Same rule as the deck's, same reason: a control that wraps its own label looks broken, and
+   the composer's row is as narrow as this panel ever gets. */
+.basic-chat .chat-btn { white-space: nowrap; }
+.basic-chat .chat-state { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

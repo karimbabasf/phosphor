@@ -1,0 +1,42 @@
+[package]
+name = "phosphor-desktop"
+version = "0.3.0"
+edition = "2021"
+rust-version = "1.77"
+description = "Phosphor: local stablecoin control app driven by any MCP agent"
+default-run = "phosphor-desktop"
+
+# Named phosphor-desktop, not phosphor, and it has to stay that way. The payload is bundled as
+# a resource directory called `phosphor`, and Tauri stages resources next to the compiled binary.
+# A crate called `phosphor` therefore has its own executable path overwritten by that directory,
+# and the build dies on "failed to remove file target/release/phosphor".
+[[bin]]
+name = "phosphor-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.5.1", features = [] }
+
+# Deliberately thin. This crate launches a process, waits for a port and opens a window;
+# everything the product does is in the Node payload. HTTP is hand-rolled over std::net
+# because the only request ever made is a GET to loopback, and a full client would be a
+# supply-chain dependency bought for nothing.
+[dependencies]
+serde_json = "1.0"
+tauri = { version = "2.9.5", features = [] }
+tauri-plugin-clipboard-manager = "2.3.0"
+tauri-plugin-dialog = "2.3.0"
+
+# The one exception to the thin rule above, and it buys nothing new in the tree: tauri already
+# depends on libc on unix, so this is a direct name for a crate that is here anyway. It is
+# needed because std::process::Child::kill is SIGKILL with no gentler option, and a backend
+# that is SIGKILLed cannot take the agent it spawned down with it. See Backend::kill.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

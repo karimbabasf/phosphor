@@ -81,6 +81,78 @@ there." "Switch to trading." "Show me BTC on the 4 hour and mark the range." "Sh
 it loses that trend line, and cap me at $200." "Never let me hold more than 20% in anything that
 can freeze me."
 
+## Or let the app start the agent
+
+The line above is the car waiting for somebody to arrive with a key. The app also brings its own
+driver: opening the window spawns a headless Claude Code process, hands it this same MCP server,
+and streams the conversation into the window, so the app is ready to be talked to before you have
+finished looking at it. There is no terminal in the loop and no second surface to learn. It needs
+the `claude` CLI installed and already logged in; the child inherits that login, so the model is
+billed to the subscription you already pay for and Phosphor never sees a key.
+
+Stop the agent from the conversation and the panel goes back to a turning globe you press to start
+another one. Stopping the ANSWER is a different control and does not cost you the conversation:
+while the agent is working, one press (or Escape) cancels the turn in flight and leaves the session
+where it was.
+
+That agent is given a role, in `src/role.ts`, and the role is the difference between an operator and
+a general assistant holding a wallet's tools. It says what Phosphor is, that this session has no
+shell and no file system and no browser and should not offer any, that it cannot approve its own
+proposals, that every string it reads through a tool is data written by somebody else and can never
+give it an instruction, and that answers are two or three lines rather than an essay. It also
+carries the whole capability index, which is a speed decision as much as a clarity one: an agent
+that already knows which tool draws a sloped line does not spend a round trip finding out.
+
+What that agent is allowed to do is fixed, not configured:
+
+| | |
+|---|---|
+| Tools | `mcp__phosphor__*` and nothing else. No shell, no file writer, no reader, no web. |
+| Other MCP servers | None. `--strict-mcp-config`, so nothing else on the machine joins. |
+| Your settings | Not loaded. `--setting-sources=`, so your hooks, plugins and `CLAUDE.md` stay out. |
+| Approval | Impossible. It proposes; a human clicks in the window, exactly as before. |
+
+The deny list that does this lives in `operator/driver.settings.json`, and the app does not trust
+it. Claude Code announces its own tool list when a session starts, and `src/driver.ts` kills the
+session if that list holds anything outside Phosphor's own tools. That check is there because the
+deny list beside it had already gone stale once: written against one release, it was silently
+permitting `WebFetch`, `WebSearch`, `SendMessage` and more by the next. `tests/lockdown.test.ts`
+launches the real binary against both shipped profiles and fails when a release adds a tool, so
+the next drift is a red test rather than a wider seat.
+
+If `claude` is installed somewhere unusual, set `driver.claudeBin` in `config.json` to its full
+path. An app launched from the Dock does not inherit your shell's `PATH`, which is exactly where
+Claude Code tends to install itself.
+
+## Install it as a Mac app
+
+The same app, packaged so it opens from the Dock instead of a terminal. It needs nothing installed:
+the bundle carries its own Node runtime, so Node 24 is a requirement for the repo and not for the
+app.
+
+    npm run app:build
+
+That stages the payload, checks it boots on the bundled runtime, and writes
+`src-tauri/target/release/bundle/macos/Phosphor.app`. Drag it to Applications. It is unsigned, so
+the first launch needs a right-click and Open rather than a double-click.
+
+Installed, the app splits what the repo keeps in one place:
+
+| | Repo | Installed |
+|---|---|---|
+| code, `ui/`, `data/`, `skills/` | working copy | `Phosphor.app/Contents/Resources/phosphor/`, read-only |
+| `state/`, audit log, policy | `state/` | `~/Library/Application Support/com.karimbabasf.phosphor/state/` |
+| `config.local.json` | repo root | `~/Library/Application Support/com.karimbabasf.phosphor/` |
+| keys | `~/.phosphor/phosphor/keys.json` | the same file, unchanged |
+
+To connect an agent to the installed app, use Phosphor > Copy MCP Config in the menu bar. It puts
+a `claude mcp add-json` line on the clipboard with this installation's real paths already filled in.
+
+The app and `npm run app` share a default port, so starting the app while the repo copy is already
+running opens a window onto the copy that is running rather than starting a second one. That is
+deliberate: two backends over one state directory would race over the audit log and the policy
+file. To run both at once, give the installed app its own port in its `config.local.json`.
+
 ## The tool surface
 
 Thirty-six tools, in five families. Read tools execute directly and cannot move anything. Write

@@ -54,13 +54,15 @@ import type { MarketData } from './market/index.ts';
 import type { TradeService } from './trade/service.ts';
 import { classify } from './composition.ts';
 import { buildWallet } from './wallet.ts';
-import { summonAgent } from './summon.ts';
-import type { SummonOutcome } from './summon.ts';
+import { createDriver } from './driver.ts';
+import type { Driver, DriverEvent } from './driver.ts';
 import type { AgentPresence } from './agents.ts';
 import { buildTransactions, createGasCache, evmCandidates } from './transactions.ts';
 import type { TxPlace } from './transactions.ts';
 import { gateRequired, gateBanner } from './policy/gate.ts';
 import { buildGreeting } from './greeting.ts';
+import { buildRole } from './role.ts';
+import { research } from './research.ts';
 import { buildMandateCatalog } from './strategy/catalog.ts';
 import { VERSION } from './version.ts';
 import { renderSentences } from './policy/render.ts';
@@ -84,8 +86,6 @@ import { analysisHandlers } from './analysis/index.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_DIR = path.join(__dirname, '..', 'ui');
-// Where a summoned agent is started. Derived from this file's own location and never from a
-// request: see the security note at the top of src/summon.ts.
 const PROJECT_DIR = path.join(__dirname, '..');
 
 const HOST = '127.0.0.1';
@@ -161,6 +161,10 @@ const READ_TOOLS: readonly string[] = [
   'chart_batch',
   'indicator_catalog',
   'market_search',
+  // The one tool that leaves this machine. It is a read like the others because that is all it
+  // is: the APP fetches from a fixed allowlist and hands back text. The agent never gets a URL
+  // it can point anywhere, which is the whole reason this is a Phosphor tool and not WebFetch.
+  'research',
   'trade_read',
   'trade_batch',
   // How to write a mandate. Opening a position is the one action that cannot be reached by
@@ -209,9 +213,16 @@ export type ServerDeps = {
   getView: () => ViewMode;
   setView: (mode: ViewMode) => void;
   trade: TradeService;
-  // Injected only so a test can drive the summon route without a Terminal window opening on
-  // whoever is running the suite. Defaults to the real thing.
-  summon?: (cwd: string) => Promise<SummonOutcome>;
+  /* Start the in-app agent when the port opens. OPT IN, and deliberately not read from cfg
+     here: every test in this repo builds a server and listens on it, and a flag that defaulted
+     to on would have each of them spawn a real Claude Code process. main.ts is the one caller
+     that passes it, and it is the one caller that is an app. */
+  autostart?: boolean;
+  /* Injected only so a test can drive the start paths without a real Claude Code process
+     appearing on the machine. main.ts never passes it, and nothing here can loosen the
+     lockdown through it: the tool surface is fixed in operator/driver.settings.json and
+     checked again at runtime inside src/driver.ts. */
+  makeDriver?: () => Driver;
 };
 
 // http.Server plus an explicit push so the wiring layer can signal the UI after
@@ -290,6 +301,87 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     const load = await loadCandles(product, granularitySec, limit);
     return load.candles.filter((c) => c.t < endSec);
   });
+
+  // The driver's seat. The transcript is kept here rather than in the browser because a window
+  // that reloads mid-conversation should come back to the conversation, and because the SSE
+  // stream is a change notification, not a delivery guarantee. TRANSCRIPT_MAX is a memory bound,
+  // not an editorial one: the full record of what the agent did lives in the audit log, which is
+  // append-only and is what anyone should read when the question is what happened.
+  const TRANSCRIPT_MAX = 400;
+  const transcript: Array<DriverEvent & { at: number }> = [];
+  let driver: Driver | null = null;
+
+  function driverEvent(event: DriverEvent): void {
+    transcript.push({ ...event, at: Date.now() });
+    if (transcript.length > TRANSCRIPT_MAX) transcript.splice(0, transcript.length - TRANSCRIPT_MAX);
+    // A refused lockdown is not a chat message. It is the one driver event that belongs in the
+    // permanent record, because it means a Claude Code upgrade changed the tool surface under an
+    // app that signs transactions.
+    if (event.kind === 'error' && event.message.startsWith('refusing to drive')) {
+      audit.append('error', event.message, { source: 'driver' });
+    }
+    for (const client of sseClients) sseSend(client, { type: 'driver', event });
+  }
+
+  function getDriver(): Driver {
+    if (driver === null) {
+      driver = deps.makeDriver
+        ? deps.makeDriver()
+        : createDriver({
+            repo: PROJECT_DIR,
+            port: cfg.port,
+            claudeBin: cfg.driver?.claudeBin,
+            /* Unset by default, and that is a measured decision rather than an omission. Pinning
+               a faster model looked like the obvious speed win and it is not one: over six runs
+               of two canonical chart prompts, all three models were correct every time, and the
+               medians came out 5.0s on sonnet, 6.2s on the machine default (opus), 8.0s on haiku,
+               which is inside the run-to-run spread on the first two. Haiku was slower, not
+               faster: it spent thinking tokens the others did not and took an extra round trip
+               more often. The time is in the round trips, not the model, so the app takes the
+               user's own default and `driver.model` in config.json is there for anyone who
+               disagrees. See scripts/bench-driver.ts to re-run the comparison. */
+            model: cfg.driver?.model,
+            /* The role, and the reason it is a default rather than a config field with no value.
+               An agent given no role is a general assistant holding a wallet's tools: it offers
+               to write code it cannot write, it asks which screen you meant, and it treats a
+               token name as something that can tell it what to do. src/role.ts is the answer to
+               all three. A `driver.systemPrompt` in config still wins outright, because somebody
+               running their own Phosphor should be able to change how their own agent talks. */
+            systemPrompt:
+              cfg.driver?.systemPrompt ?? buildRole({ root: PROJECT_DIR, view: getView(), network: cfg.network }),
+            onEvent: driverEvent,
+          });
+    }
+    return driver;
+  }
+
+  /* Starting the agent, from either door: a human pressing the globe, or the app opening.
+
+     The seat is taken away FIRST, and that order is not cosmetic: the agent this is replacing
+     heartbeats every few seconds and a process takes longer than that to start, so opening
+     first lets the outgoing agent win the seat its replacement was started to take. */
+  function startDriver(how: 'human' | 'app'): string | null {
+    const dropped = agents.evict();
+    if (dropped !== null) {
+      audit.append('agent_disconnected', `${how === 'human' ? 'the human' : 'the app'} replaced ${dropped.client} with the in-app driver`, {
+        client: dropped.client,
+      });
+    }
+    audit.append(
+      'app_start',
+      how === 'human'
+        ? 'in-app driver starting: the app is spawning its own agent'
+        : 'in-app driver starting at boot: the window opens with an agent attached',
+    );
+    getDriver().start();
+    broadcastState();
+    return dropped?.client ?? null;
+  }
+
+  function driverPayload(): Record<string, unknown> {
+    const status = driver === null ? { state: 'off' as const, sessionId: '', running: false } : driver.status();
+    return { ...status, transcript };
+  }
 
   function sseSend(res: http.ServerResponse, payload: unknown): void {
     res.write(`data: ${JSON.stringify(payload)}\n\n`);
@@ -463,6 +555,38 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       'content-type': 'application/json; charset=utf-8',
       'content-length': Buffer.byteLength(body),
       'cache-control': 'no-store',
+    });
+    res.end(body);
+  }
+
+  // As sendJson, but the caller may ask whether anything changed since last time.
+  //
+  // State is pushed on a timer whether or not it moved: the heartbeat below fires every
+  // HEARTBEAT_MS, and the ledger refresh in main.ts broadcasts on every pass. The browser
+  // answers each one by refetching 54KB and rebuilding the wallet, the policy and the basic
+  // screen, and measured on a running instance those bodies are byte-identical, so the rebuild
+  // repaints exactly what was already there.
+  //
+  // The ETag lets that case cost a 304: no body, no parse, no DOM teardown, no layout. Nothing
+  // about freshness changes, because the request still happens on every signal. Only the redraw
+  // is skipped, and only when the bytes match.
+  //
+  // no-store stays. The browser's own HTTP cache must not hold a wallet balance; the conditional
+  // request here is driven by an ETag the page holds in memory and loses on reload.
+  function sendJsonConditional(req: http.IncomingMessage, res: http.ServerResponse, payload: unknown): void {
+    const body = JSON.stringify(payload);
+    // Not a security boundary, just a change detector, so speed beats collision resistance.
+    const etag = `"${crypto.createHash('sha1').update(body).digest('base64')}"`;
+    if (req.headers['if-none-match'] === etag) {
+      res.writeHead(304, { etag, 'cache-control': 'no-store' });
+      res.end();
+      return;
+    }
+    res.writeHead(200, {
+      'content-type': 'application/json; charset=utf-8',
+      'content-length': Buffer.byteLength(body),
+      'cache-control': 'no-store',
+      etag,
     });
     res.end(body);
   }
@@ -921,29 +1045,54 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       return;
     }
 
-    if (route === '/api/summon') {
-      /* Order matters and it is not the obvious one. The seat is taken away FIRST and the
-         terminal is opened second, because the old proxy heartbeats every five seconds and a
-         terminal takes longer than that to start a shell: open first and the outgoing agent
-         wins the race for the seat its replacement was summoned to take. */
-      const dropped = agents.evict();
-      if (dropped !== null) {
-        audit.append('agent_disconnected', `the human replaced ${dropped.client} from the window`, {
-          client: dropped.client,
-          since: dropped.since,
-          reason: 'summon',
-        });
+    if (route === '/api/driver') {
+      const action = String(body.action ?? '');
+      const instance = getDriver();
+
+      if (action === 'start') {
+        const dropped = startDriver('human');
+        return sendJson(res, 200, { ok: true, dropped, ...instance.status() });
       }
-      broadcastState();
-      const outcome = await (deps.summon ?? summonAgent)(PROJECT_DIR);
-      if (!outcome.ok) {
-        audit.append('error', `summon failed: ${outcome.error}`, { reason: outcome.error });
-        sendJson(res, 500, { error: outcome.error, dropped: dropped?.client ?? null });
-        return;
+
+      if (action === 'prompt') {
+        const text = typeof body.text === 'string' ? body.text.trim() : '';
+        if (text === '') return sendJson(res, 400, { error: 'text is required' });
+        if (text.length > 8000) return sendJson(res, 400, { error: 'text is too long: 8000 characters maximum' });
+        try {
+          instance.send(text);
+        } catch (err) {
+          return sendJson(res, 409, { error: errText(err) });
+        }
+        /* Logged before anything the agent does with it. The dashcam is supposed to answer
+           "why did this happen", and the tool calls alone only answer "what happened": a swap
+           in the transcript with no instruction above it reads as the app acting on its own. */
+        audit.append('driver_prompt', `human to the agent: ${text}`, { chars: text.length });
+        driverEvent({ kind: 'said', text });
+        return sendJson(res, 200, { ok: true, ...instance.status() });
       }
-      audit.append('app_start', `summoned a new agent in ${outcome.how}`, { how: outcome.how });
-      sendJson(res, 200, { ok: true, how: outcome.how, dropped: dropped?.client ?? null });
-      return;
+
+      /* Stop the answer, not the agent. A separate action from `stop` because they are separate
+         intentions and the app should never make a human choose the destructive one to get the
+         cheap one: `interrupt` ends the turn in flight and keeps the conversation, `stop` ends
+         the session and throws it away. It is audited like everything else, because "the agent
+         went quiet halfway through" is a question somebody will ask the log later. */
+      if (action === 'interrupt') {
+        const stopped = instance.interrupt();
+        /* No driverEvent here. interrupt() sets the state itself and the driver's own status
+           event is already on its way through onEvent, so pushing a second one printed the
+           line twice in the window. Seen doing exactly that on the live app. */
+        if (stopped) audit.append('driver_prompt', 'the human stopped the answer in progress', { interrupted: true });
+        return sendJson(res, 200, { ok: true, interrupted: stopped, ...instance.status() });
+      }
+
+      if (action === 'stop') {
+        instance.stop();
+        audit.append('app_start', 'in-app driver stopped by the human');
+        broadcastState();
+        return sendJson(res, 200, { ok: true, ...instance.status() });
+      }
+
+      return sendJson(res, 400, { error: `unknown driver action: ${action}` });
     }
 
     if (route === '/api/kill') {
@@ -1103,6 +1252,20 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         catalogLoadedAt: market.catalogLoadedAt(),
         note: 'Any of these can be charted on any timeframe from 1m to 1w.',
       });
+      return;
+    }
+
+    /* Market news, and the only place in this app where an agent's question causes a request to
+       leave the machine. Three things make that safe enough to ship, and all three live in
+       src/research.ts rather than here: the hosts are a fixed set checked by exact match, the
+       agent supplies a search phrase and never a URL, and everything coming back is stripped and
+       wrapped in a quote envelope that says out loud it is somebody else's writing.
+       The query is already in the audit log: every agent read is written there before dispatch,
+       arguments included, by the one line that covers the whole surface. */
+    if (tool === 'research') {
+      const query = typeof args.query === 'string' ? args.query : '';
+      if (query.trim() === '') return sendJson(res, 400, { error: 'query is required' });
+      sendJson(res, 200, await research(query, { limit: intParam(args.limit, 8, 20) }));
       return;
     }
 
@@ -1937,7 +2100,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         return;
       }
       if (req.method === 'GET' || req.method === 'HEAD') {
-        if (route === '/api/state') return sendJson(res, 200, buildState());
+        if (route === '/api/state') return sendJsonConditional(req, res, buildState());
         if (route === '/api/candles') return await sendCandles(url, res);
         if (route === '/api/chart') return sendJson(res, 200, chartPayload());
         if (route === '/api/log') {
@@ -1950,6 +2113,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         }
         if (route === '/api/trade') return sendJson(res, 200, trade.payload());
         if (route === '/api/session') return sendJson(res, 200, { token });
+        if (route === '/api/driver') return sendJson(res, 200, driverPayload());
         if (route === '/api/events') return openEvents(req, res);
         if (route.startsWith('/api/')) return sendJson(res, 404, { error: `unknown route: ${route}` });
         // The second surface. A bare /trade is the page; everything else still resolves as a
@@ -1962,7 +2126,12 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         if (route === '/api/chart') return await handleChartWrite(req, res);
         if (route === '/api/trade') return await handleTradeWrite(req, res);
         if (route === '/api/trade/action') return await handleTradeAction(req, res);
-        if (route === '/api/approve' || route === '/api/refuse' || route === '/api/kill' || route === '/api/summon') {
+        if (
+          route === '/api/approve' ||
+          route === '/api/refuse' ||
+          route === '/api/kill' ||
+          route === '/api/driver'
+        ) {
           return await handleMutation(route, req, res);
         }
         return sendJson(res, 404, { error: `unknown route: ${route}` });
@@ -1979,6 +2148,19 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     void handle(req, res);
   });
 
+  /* The app opens with an agent already attached. On 'listening' and not before, because the
+     child's MCP proxy POSTs straight back to this port: a driver started ahead of the socket
+     would hand the model an empty tool surface and a session that has to be thrown away.
+
+     `once`, so a server that is closed and listened on again does not stack a second child on
+     top of the first. A failure here is not fatal to the app: the driver reports it, the panel
+     lands on the globe with the reason printed under it, and pressing the globe tries again. */
+  if (deps.autostart === true) {
+    base.once('listening', () => {
+      startDriver('app');
+    });
+  }
+
   base.on('close', () => {
     offStore();
     offAudit();
@@ -1986,6 +2168,10 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     clearInterval(priceTimer);
     for (const client of sseClients) client.end();
     sseClients.clear();
+    /* The child dies with the server that started it. An orphaned driver would keep the seat,
+       keep spending the user's subscription, and keep proposing into a state directory whose
+       window is gone, and it is the app's job to clean up a process the app created. */
+    if (driver !== null) driver.stop();
   });
 
   // Structural guarantee for the "binds 127.0.0.1 only" constraint: a bare port

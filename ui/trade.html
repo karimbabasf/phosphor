@@ -39,10 +39,6 @@
          dulls when it is idle. Presentational, mirrors the `agent` field, so aria-hidden. -->
     <canvas class="agent-orb" id="agent-orb" aria-hidden="true"></canvas>
     <button type="button" id="kill-btn" class="btn">[ KILL SWITCH: -- ]</button>
-    <!-- Written AFTER the brake, deliberately. The comment above this bar states the rule:
-         nothing focusable comes before the kill switch, so the keyboard reaches the thing
-         that stops the machine before the thing that starts one. -->
-    <button type="button" id="summon-btn" class="btn">[ SUMMON AGENT ]</button>
     <span class="cursor" aria-hidden="true">&#9608;</span>
   </header>
 
@@ -53,17 +49,40 @@
   <p class="banner" id="t-banner-policy" role="alert" hidden></p>
   <p class="alert dim" id="t-alert" role="status" hidden></p>
 
-  <!-- Five panels, two columns. Left is the market and what this account holds in it,
-       right is what governs the account and what it has already done.
+  <!-- The three records this deck has never had room to print. LOG is the app's whole audit
+       trail, not the trading slice of it the tape below carries. POLICY is what governs this
+       account and was only ever a word in the status bar here. HISTORY is the treasury
+       ledger: swaps, deposits and withdrawals, which have different columns and their own
+       page, and are read from here rather than by leaving.
+       Controls FOR the deck, so they sit above it rather than becoming a panel in it. -->
+  <p class="deckbar">
+    <span class="k">open</span>
+    <button type="button" class="btn" id="open-log" aria-haspopup="dialog">[ LOG ]</button>
+    <button type="button" class="btn" id="open-policy" aria-haspopup="dialog">[ POLICY ]</button>
+    <button type="button" class="btn" id="open-history" aria-haspopup="dialog">[ HISTORY ]</button>
+  </p>
 
-       It was eight, and eight was the defect: five variable-height panels shared one
-       non-scrolling column with height caps summing past 150vh, so whichever panel was
-       last paid for every other panel's overflow and rendered as an empty frame line.
+  <!-- Seven panels, three columns, and the shape is the custody deck's: the two windows are
+       the same app and a person moves between them without relearning where anything is.
+
+       THE AGENT IS THE LEFT COLUMN, alone, at full height, drawn in double box rules with the
+       faintest wash behind it. It used to sit under the book, paid for out of the chart. That
+       was the right answer while it was a panel among panels; it is the wrong one now that
+       the in-app agent is how this app is used. Karim, 2026-08-19: "I want the agent tab to
+       be a little more unique and actually centered on the left."
+
+       MIDDLE is the market and what this account holds in it: the chart, and the book under
+       it. RIGHT is what governs the account and what it has already done: the risk panel,
+       what needs a decision, and the tape.
+
+       Between every pair of them is a handle. See ui/split.js: the gutters are draggable,
+       every pane has a floor, and the APPROVALS floor is a safety rule rather than a taste.
        Each column fills the viewport height; panels scroll inside themselves, the page
        never does. -->
-  <div class="deck">
+  <div class="deck" data-split="trade">
 
-    <div class="col">
+    <div class="col col-mid">
+
 
       <!-- 2. CHART. Same ids as the pro page: ui/chart.js binds to them by id and the
            file is shared, so this panel is the pro page's chart with the account drawn
@@ -104,6 +123,9 @@
         </div>
         <div class="frame frame-bottom"></div>
       </section>
+
+      <div class="split split-y" data-split-handle="chart-book" role="separator" aria-orientation="horizontal"
+           tabindex="0" aria-label="Resize the chart against the book. Arrow keys move it, enter resets it."></div>
 
       <!-- 3. BOOK. Working orders are child rows of the position they belong to, not a
            table of their own: a stop at 3200 is a property of the ETH long, not an
@@ -160,7 +182,11 @@
 
     </div>
 
-    <div class="col">
+
+    <div class="split split-x" data-split-handle="deck-rail" role="separator" aria-orientation="vertical"
+         tabindex="0" aria-label="drag to resize the risk column"></div>
+
+    <div class="col col-rail">
 
       <!-- 4. RISK. One panel, read top to bottom, answering the three questions this
            page exists for: how far am I from the price that ends this, what is the book
@@ -277,9 +303,20 @@
         <div class="frame frame-bottom"></div>
       </section>
 
-      <!-- 6. HISTORY. One time-ordered record of everything this account did on this
+      <div class="split split-y" data-split-handle="gate-tape" role="separator" aria-orientation="horizontal"
+           tabindex="0" aria-label="Resize the approvals panel against the tape. Arrow keys move it, enter resets it."></div>
+
+      <!-- 6. TAPE. One time-ordered record of everything this account did on this
            venue: fills, the manual controls, what the mandate fired, and every refusal
-           that stopped a trade. It was three panels (FILLS, MANDATE, LOG) and they were
+           that stopped a trade.
+
+           It was titled HISTORY and the word had to move: the deck bar above now opens the
+           treasury ledger under that name, and two different records cannot share one word
+           on one screen. TAPE is what the paragraph below already called it. The panel
+           itself is unchanged and it keeps its room, because the HISTORY overlay is a
+           different ledger and does not show a single row of this one.
+
+           It was three panels (FILLS, MANDATE, LOG) and they were
            three views of one sequence, which is why reading them meant looking in three
            places and reconciling three clocks.
 
@@ -290,7 +327,7 @@
            Scoped to trading. Treasury swaps and withdrawals are a different ledger with
            different columns and they stay on the pro window's TRANSACTIONS tab. -->
       <section class="panel panel-thistory grow">
-        <div class="frame frame-top" data-title="HISTORY"></div>
+        <div class="frame frame-top" data-title="TAPE"></div>
         <div class="pbody">
           <div class="tablewrap">
             <table class="grid" id="t-history">
@@ -318,6 +355,35 @@
 
     </div>
 
+
+    <div class="split split-x" data-split-handle="deck-agent" role="separator" aria-orientation="vertical"
+         tabindex="0" aria-label="drag to resize the agent column"></div>
+
+    <div class="col col-agent">
+
+      <!-- 1. AGENT. The one thing this screen could not do was say a word to the agent
+           holding its seat. It was a fixed 22vh under the book, paid for out of the chart,
+           and the argument for that placement was that the right column ends in the tape and
+           the tape may not be shortened. That argument still holds and this does not break
+           it: the height comes from a column of its own now, not from either of them.
+
+           The chat renders no approval control, ever. APPROVALS is two columns over.
+
+           data-frame="double" is the one thing this panel asks the frame renderer for: the
+           same box drawn in double rules. See layoutFrames() in ui/trade.js. -->
+      <section class="panel panel-tchat grow">
+        <button type="button" class="frame frame-top" data-frame="double" data-title="AGENT" data-collapse="agent" aria-expanded="true" aria-controls="agent-chat"></button>
+        <div class="pbody">
+          <div id="agent-chat"></div>
+        </div>
+        <div class="frame frame-bottom" data-frame="double"></div>
+      </section>
+
+    </div>
+
+    <!-- The handles. role="separator" with a tabindex is a real window splitter: arrows move
+         it, Home and End take it to its limits, Enter puts it back. ui/split.js owns the
+         behaviour and the numbers; the markup owns only where each one sits. -->
   </div>
 
 </main>
@@ -332,6 +398,17 @@
 <!-- Before trade.js: exposes window.PhosphorPresence, driven from state and the SSE
      'activity' event. Self-contained and presentational. -->
 <script src="/presence.js" defer></script>
+<!-- One modal and the three records it opens, shared with the custody window so neither
+     page can end up showing a shorter version of the same thing. -->
+<script src="/overlay.js" defer></script>
+<script src="/deck-views.js" defer></script>
+<!-- Before driver-chat.js: it exposes window.PhosphorGlobe, which the agent panel turns in
+     its idle phase. Self-contained, presentational, and it reads no state of its own. -->
+<script src="/agent-globe.js" defer></script>
+<!-- Before trade.js, which calls splitBoot(): the draggable gutters between the
+     panels, and the sizes a person left them at. -->
+<script src="/split.js" defer></script>
+<script src="/driver-chat.js" defer></script>
 <script src="/trade.js" defer></script>
 </body>
 </html>

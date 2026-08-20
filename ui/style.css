@@ -2,8 +2,14 @@
    One hue: phosphor green on near-black. Hierarchy is brightness and opacity only.
    Red is reserved for the safety gate: pending approvals, refusals, breached
    shares, and the gate-disabled banner.
-   No radius, no shadow, no gradient, no transition. Two animations: the cursor, and the
-   block wave that stands in for whatever has not arrived yet. */
+   No radius, no shadow, no gradient. Animation is rationed to five things and each one is
+   listed here: the cursor, the block wave that stands in for whatever has not arrived yet,
+   the press on a button, the overlay opening, and the globe that turns in the agent panel
+   while no agent is running. Nothing else moves.
+   Every one of them drops its transform under prefers-reduced-motion, and the globe holds
+   one still frame: ui/agent-globe.js reads the query itself, because it is a canvas and no
+   stylesheet can reach inside one. The character fall is the same split and is stated in
+   ui/transition.js. */
 
 :root {
   --bg: #0b0d0b;
@@ -13,6 +19,10 @@
   --green-faint: rgba(51, 255, 102, 0.38);
   --green-ghost: rgba(51, 255, 102, 0.22);
   --green-wash: rgba(51, 255, 102, 0.10);
+  /* Thinner than the wash by half again, and it exists for one surface: the agent column.
+     A whole column carrying the wash reads as a highlighted row; this reads as a different
+     ground. Still one hue, still opacity only. */
+  --green-veil: rgba(51, 255, 102, 0.06);
   --red: #ff3b30;
   --red-dim: rgba(255, 59, 48, 0.62);
   --red-ghost: rgba(255, 59, 48, 0.30);
@@ -58,8 +68,39 @@ body {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 1.06fr 1fr;
-  column-gap: 22px;
+  /* Three tracks, two of them columns and one the gutter between: the gutter is a real grid
+     item because it is the drag handle, and a handle has to be a thing the pointer can land
+     on rather than a gap between two things. See ui/split.js.
+
+     The agent's width is a custom property with a default, and that is the whole of the
+     splitter's storage contract: ui/split.js writes --deck-agent on this element and nothing
+     else, and removing the property is how the handle resets. The default lives here, in CSS,
+     so no copy of it exists in the script to drift from.
+
+     The agent is the wider it has ever been, because it is the only thing on this deck a
+     person reads sentences in and it is now the only thing sharing the width with the chart.
+     Measured at 1512: 420 for the agent, 1070 for the chart, comfortably past the 380 a
+     chart stops being read at. */
+  --deck-agent-default: clamp(320px, 27vw, 460px);
+  --gutter: 22px;
+  grid-template-columns:
+    minmax(0, 1fr)
+    var(--gutter)
+    var(--deck-agent, var(--deck-agent-default));
+  column-gap: 0;
+}
+
+/* Collapsed, the agent panel is a title line, and a title line does not need a quarter of the
+   window. The track is fixed here rather than left to the stored width, and 28ch is measured
+   from the frame renderer: layoutFrames() never draws a line narrower than 24 characters, the
+   column pays 2ch of its own padding, and a line drawn wider than the box it sits in loses its
+   closing corner to overflow:hidden. It overrides --deck-agent rather than clearing it, so the
+   width a person dragged is still there when they open the panel again. */
+body.agent-collapsed .deck {
+  grid-template-columns:
+    minmax(0, 1fr)
+    var(--gutter)
+    28ch;
 }
 
 /* min-width:0 is load-bearing: without it a grid item refuses to go below its
@@ -221,7 +262,9 @@ body.gate-off .panel-gate > .frame-top { color: var(--red); }
 
 /* Caps on the variable-length panels: content grows into a scroll, not into the page. */
 .panel-gate > .pbody { max-height: 46vh; }
-.panel-policy > .pbody { max-height: 26vh; }
+/* 32vh rather than the 26 it had. The panel is shut when the app opens now, so this is the
+   height of a thing somebody asked for, and the rail has the room the agent used to take. */
+.panel-policy > .pbody { max-height: 32vh; }
 
 .frame {
   flex: none;
@@ -270,13 +313,11 @@ button.frame:focus-visible { outline: 1px dotted var(--green); outline-offset: 1
 .panel.collapsed > .pbody,
 .panel.collapsed > .frame-bottom { display: none; }
 
-/* Collapsing the log is how the gate gets room, so the gate has to be able to
-   take it: the 46vh cap lifts and it grows to whatever it holds. The cap lifts
-   rather than the panel stretching, because a gate with nothing pending would
-   otherwise become a full-height empty box. Room is what it can use, not chrome
-   painted around nothing. */
-body.log-collapsed .panel-gate { min-height: 0; }
-body.log-collapsed .panel-gate > .pbody { max-height: none; }
+/* Collapsing the agent used to hand its height to the gate, because they shared a column.
+   They do not any more: the agent is a column of its own and what it releases is WIDTH, which
+   the deck's own rule above takes care of. The gate keeps its cap in every state, which is
+   what it always should have had: a gate with nothing pending stretched to fill a column is
+   chrome painted around nothing. */
 
 /* ---------- 2. wallet ---------- */
 
@@ -289,35 +330,9 @@ body.log-collapsed .panel-gate > .pbody { max-height: none; }
   overflow: hidden;
 }
 
-/* The two views of the wallet. Same bracket idiom as the chart's timeframe strip, and
-   for the same reason: it stays a line of text on a terminal instead of becoming a tab
-   widget with a border and a background. */
-.tabs {
-  display: flex;
-  align-items: baseline;
-  gap: 1ch;
-  margin: 0 0 4px;
-  flex: none;
-}
-
-.tab {
-  appearance: none;
-  background: transparent;
-  border: 0;
-  color: var(--green-faint);
-  font: var(--fs) / var(--lh) var(--mono);
-  letter-spacing: 0.08em;
-  padding: 0 0.75ch;
-  cursor: pointer;
-}
-
-.tab:hover { color: var(--green); }
-.tab:focus-visible { outline: 1px dotted var(--green); outline-offset: 1px; }
-.tab.on { color: var(--green-hi); }
-.tab.on::before { content: '['; color: var(--green-ghost); }
-.tab.on::after { content: ']'; color: var(--green-ghost); }
-
-.tabmeta { margin-left: auto; }
+/* The wallet's tab strip lived here: HOLDINGS and TRANSACTIONS, two panes in one panel.
+   There is one pane now. The history is the HISTORY overlay, where it has the width for
+   its eight columns, and a single pane does not need a strip to switch between. */
 
 /* The colour that ties a row to its slice. A square of ink, not a swatch with a border:
    the ring is the chart and this is only the key to it. */
@@ -552,10 +567,16 @@ body.log-collapsed .panel-gate > .pbody { max-height: none; }
 
 /* ---------- 3. chart ---------- */
 
+/* One line until it cannot be one line. The bar carries the product, eight timeframes, the
+   indicator field, the venue and whatever the agent has drawn, and the last of those only
+   exists once an agent has drawn something: a bar sized for the empty case clipped its own
+   [clear] button in half the moment one appeared. Wrapping costs a second line in a rare
+   state, and a control cut down the middle costs the reader their trust in the whole panel. */
 .chartbar {
   display: flex;
   align-items: baseline;
-  gap: 1ch;
+  flex-wrap: wrap;
+  gap: 2px 1ch;
   margin: 0 0 4px;
   flex: none;
 }
@@ -648,9 +669,23 @@ body.log-collapsed .panel-gate > .pbody { max-height: none; }
    scrolls inside itself already. chart.js sets --panes; three is the enforced maximum. */
 .panel-chart { flex-grow: calc(1 + var(--panes, 0) * 0.55); }
 
-/* ---------- 5. policy ---------- */
+/* ---------- 5. policy ----------
 
-.rule { white-space: pre-wrap; }
+   Four machine-rendered sentences, and they were printed as four touching lines of wrapped
+   text: at a glance that is a paragraph, and the thing a person is checking is which of the
+   four rules they are looking at. Karim, 2026-08-19: "I don't like how we show the policy".
+
+   So each rule is a block with air around it and a hanging indent, which puts every wrapped
+   line under the words rather than under the $. The sentences themselves are untouched: they
+   are rendered by src/view and they belong to the backend, not to this file. */
+
+.rule {
+  white-space: pre-wrap;
+  padding-left: 2ch;
+  text-indent: -2ch;
+}
+
+.rule + .rule { margin-top: 6px; }
 .rule .prompt { color: var(--green-ghost); }
 
 /* ---------- 6. approval gate ---------- */
@@ -693,13 +728,35 @@ body.log-collapsed .panel-gate > .pbody { max-height: none; }
 .btn:focus-visible { outline: 1px dotted var(--green); outline-offset: 1px; }
 .btn[disabled] { color: var(--green-ghost); border-color: var(--green-ghost); cursor: default; }
 
+/* The press. The only motion a control on this page has, and it is on the way down only:
+   a button that springs back slowly reads as laggy on a terminal. Named properties, never
+   `all`: `all` would catch the colour and the border on every hover as well.
+
+   .chat-btn is scoped to the deck for the reason written over the chat section below:
+   driver-chat.js builds the same class names on the basic screen, and that screen is not
+   a terminal. .btn needs no scope, because it is this file's own control class and the
+   basic screen uses none of it. */
+.btn,
+.deck .chat-btn {
+  transition: transform 160ms ease-out;
+}
+
+.btn:active,
+.deck .chat-btn:active { transform: scale(0.97); }
+.btn[disabled]:active { transform: none; }
+
 .btn.on { color: var(--red); border-color: var(--red); }
 .btn.on:hover { color: var(--red); border-color: var(--red); }
 
 .btn.refuse { color: var(--red); border-color: var(--red-ghost); }
 .btn.refuse:hover { color: var(--red); border-color: var(--red); }
 
-/* ---------- 7. log ---------- */
+/* ---------- the audit log ----------
+
+   It was panel 7 on the deck and it is not a panel any more: the deck's right column now
+   ends in the agent conversation, and the log opens full-height behind the LOG button. The
+   rules below did not change with the move, which is the point of keeping them: the same
+   renderer draws the same lines, with the room to print all of every one of them. */
 
 .log {
   flex: 1;
@@ -725,6 +782,633 @@ body.log-collapsed .panel-gate > .pbody { max-height: none; }
 .logline.refusal .type,
 .logline.refusal .msg { color: var(--red); }
 
+/* ---------- the splitters ----------
+
+   The gutters between the columns and between the stacked panels, made draggable. The
+   behaviour, the floors and the stored sizes are ui/split.js; this is what a handle looks
+   like and how a sized pane holds its size.
+
+   There is no widget here on purpose. A grip with a rounded body would be the first rounded
+   thing on the deck, and this surface has none: the handle is the gutter it already had, and
+   the affordance is one hairline in the middle of it that brightens under the pointer. */
+
+.split {
+  position: relative;
+  flex: none;
+  /* Or a touch drag scrolls the page out from under the handle. */
+  touch-action: none;
+  background: transparent;
+}
+
+.split-x { height: 100%; cursor: col-resize; }
+.split-y { height: 12px; cursor: row-resize; }
+
+/* The handle stands where a panel's top margin used to, so the margin goes: 12px of gap
+   plus a 12px handle is a gutter twice the width of every other one on the deck. */
+.col > .split-y + .panel { margin-top: 0; }
+
+/* Nothing at rest. A permanent grip mark between every pair of panels reads as debris,
+   especially the short horizontal ones, which look like a stray rule somebody left in. The
+   12px target is still there for the pointer to find, and the line arrives the moment it
+   does. This is how every editor on this machine draws a splitter, and nobody fails to find
+   one. Keyboard users are not left out: the focus rule below lights it the same way. */
+.split::before {
+  content: '';
+  position: absolute;
+  background: transparent;
+  transition: background-color 120ms ease-out;
+}
+
+.split-x::before { left: 50%; top: 0; bottom: 0; width: 1px; transform: translateX(-0.5px); }
+.split-y::before { top: 50%; left: 50%; width: 28px; height: 1px; transform: translate(-50%, -0.5px); }
+
+.split:hover::before { background: var(--green-dim); }
+.split-x:hover::before { width: 2px; }
+.split:focus-visible::before,
+.split:active::before { background: var(--green); }
+.split:focus-visible { outline: 1px dotted var(--green); outline-offset: -3px; }
+
+/* While a boundary is moving: no text gets selected by the drag, and the cursor stays the
+   handle's own wherever the pointer has got to. ui/split.js puts both classes on the body. */
+body.splitting { user-select: none; }
+body.splitting-x, body.splitting-x * { cursor: col-resize; }
+body.splitting-y, body.splitting-y * { cursor: row-resize; }
+
+@media (prefers-reduced-motion: reduce) {
+  .split::before { transition: none; }
+}
+
+/* A pane a person has sized. flex-basis rather than height: these are flex children and a
+   height loses to `flex: 1` every time (the stacked fallback below learned this the hard
+   way on the agent panel). :not(.collapsed) so a collapsed panel keeps its one line. */
+.panel[data-sized]:not(.collapsed) { flex: 0 0 var(--split-h); }
+
+/* The caps are a default for a panel nobody has sized. Once somebody has, the number they
+   dragged to IS the cap, and the body fills what the panel was given. */
+.panel[data-sized] > .pbody {
+  max-height: none;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* The rail's spare room, and the thing the gate's handle takes its height from. Empty, and
+   the emptiness is the point: see the markup in ui/index.html. */
+/* ---------- the approval gate, as a strip ----------
+
+   It replaced a panel in a column on 2026-08-20 and the replacement is stronger rather than
+   weaker. A gate that lives in a rail is a gate a person stops looking at, because for hours
+   at a time it says "no pending approvals" and teaches them there is nothing there. This one
+   does not exist until something is pending, and then it is the full width of the window,
+   above everything, in the one position nothing else on this screen ever occupies.
+
+   Red, and the only place on this deck that carries it besides the banners: red on this app
+   means the safety gate, and this IS the safety gate. It has no collapse control and it never
+   gets one. ui/app.js sets [hidden] from the pending count and nothing else touches it. */
+.gatestrip {
+  flex: none;
+  margin: 6px 0 0;
+  max-height: 42vh;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.gatestrip[hidden] { display: none; }
+
+.gatestrip > .frame { color: var(--red-dim); }
+
+.gatestrip-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 3px 1ch 4px;
+}
+
+.gatestrip-body::-webkit-scrollbar { width: 6px; }
+.gatestrip-body::-webkit-scrollbar-track { background: transparent; }
+.gatestrip-body::-webkit-scrollbar-thumb { background: var(--red-ghost); }
+
+/* ---------- the agent column ----------
+
+   Karim, 2026-08-19: "I want the agent tab to be a little more unique and actually centered
+   on the left." TWO decisions, not a pile of small ones: the box is drawn in double rules
+   instead of single (layoutFrames() in ui/app.js, from data-frame="double" in the markup),
+   and the column stands on the faintest wash of green so it reads as its own ground.
+
+   No new colour, no border, no shadow, no gradient, no radius. The law at the top of this
+   file holds, and a second WEIGHT of line is how a terminal says "this one is different".
+   The one extra line below is not a third decision: it lifts the bottom rule to the tier
+   the top one already had, so the double box reads as one box. */
+.col-agent {
+  background: var(--green-veil);
+  /* The drag handle's gutter is outside the column; this is the air inside it, which is what
+     keeps the double rule off the wash's edge. */
+  padding: 0 1ch;
+}
+
+.col-agent .frame { color: var(--green-faint); }
+
+/* ---------- the deck bar ----------
+
+   Three buttons on one line between the banners and the deck: LOG, POLICY, HISTORY. They
+   are controls FOR the deck, so they sit above it and outside it rather than becoming a
+   fourth panel with a frame of its own. One line of height is the whole cost. */
+
+.deckbar {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0 1ch;
+  margin: 6px 0 0;
+  flex: none;
+}
+
+.deckbar .k { margin-right: 0.5ch; }
+
+/* ---------- the overlays (ui/overlay.js) ----------
+
+   Where the log, the policy and the transaction history are read in full. The deck never
+   scrolls and these three records do not fit it, so this is the one surface in the app
+   where scrolling is expected rather than a layout failure. */
+
+.ovl {
+  /* The dialog IS the backdrop hit area: the panel inside covers everything it draws, so a
+     click that lands on the dialog landed outside the panel. Hence no padding of its own. */
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--green);
+  font: var(--fs) / var(--lh) var(--mono);
+  max-width: none;
+  max-height: none;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.ovl::backdrop {
+  /* Near-black over near-black: the deck stays faintly legible underneath, which is what
+     says this is a layer over the app rather than a page the app navigated to. */
+  background: rgba(6, 8, 6, 0.86);
+}
+
+.ovl-panel {
+  width: min(1100px, calc(100vw - 48px));
+  max-height: calc(100dvh - 48px);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg);
+  border: 1px solid var(--green-dim);
+  /* Modals, not popovers: they grow from their own middle. Never from scale(0). */
+  transform: scale(0.95);
+  transform-origin: center;
+  opacity: 0;
+  transition: transform 200ms cubic-bezier(0.23, 1, 0.32, 1),
+              opacity 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.ovl[data-open] > .ovl-panel {
+  transform: scale(1);
+  opacity: 1;
+}
+
+.ovl-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 1ch;
+  padding: 4px 1ch 5px;
+  border-bottom: 1px solid var(--green-ghost);
+}
+
+.ovl-title {
+  font: inherit;
+  margin: 0;
+  color: var(--green-hi);
+  letter-spacing: 0.08em;
+}
+
+.ovl-close { margin-left: auto; }
+
+.ovl-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 1ch 10px;
+}
+
+.ovl-body:focus-visible { outline: none; }
+
+.ovl-body::-webkit-scrollbar { width: 6px; height: 6px; }
+.ovl-body::-webkit-scrollbar-track { background: transparent; }
+.ovl-body::-webkit-scrollbar-thumb { background: var(--green-ghost); }
+
+/* Nothing in an overlay is cut to fit any more: that is the entire reason the three views
+   moved in here, so the rules that used to clip them are lifted by name. */
+.ovl-body .log { max-height: none; }
+.ovl-body .logline { white-space: pre-wrap; }
+.ovl-body .ovl-note { color: var(--green-faint); margin: 0 0 6px; }
+.ovl-body .ovl-sec {
+  color: var(--green-hi);
+  letter-spacing: 0.08em;
+  margin: 12px 0 3px;
+  border-bottom: 1px solid var(--green-ghost);
+}
+.ovl-body .ovl-sec:first-child { margin-top: 0; }
+.ovl-body .ovl-line { white-space: pre-wrap; word-break: break-word; }
+.ovl-body .ovl-line .k { display: inline-block; min-width: 22ch; }
+
+/* The history table gets the width it never had in half a deck column, so it stops
+   dividing eight columns into nothing and simply prints them. */
+.ovl-body .txgrid { max-height: none; overflow: visible; }
+.ovl-body .txbar { display: flex; align-items: baseline; gap: 1ch; margin: 0 0 6px; }
+
+/* ---------- the agent panel (ui/driver-chat.js) ----------
+
+   The panel the log used to hold. It is the one surface in the app whose whole content is
+   written by a language model, so it is deliberately plain: no bubbles, no avatars, no
+   colour of its own. A speaker column, a line of text, and the same phosphor as everything
+   else. What it must never grow is a control that decides anything; approval stays in the
+   gate, three panels up.
+
+   FOUR PHASES, carried on the root as data-phase, and every one of them fills the same box:
+   idle is the globe, booting is the intro printing, live is the transcript and the prompt,
+   closing is the character fall taking it apart. driver-chat.js switches them; this file
+   only says what each one looks like.
+
+   EVERY RULE IN THIS SECTION IS SCOPED UNDER .deck, AND NONE MAY LOSE THAT SCOPE.
+   PhosphorChat.mount() puts class="chat" on whatever root it is handed, so these class
+   names are not this file's private vocabulary: the basic screen mounts the same component
+   and ui/basic.css styles the same names. Unscoped, every property that only this file sets
+   passes straight through to a screen whose stated law is that it may never look like a
+   terminal, and it did: .chat-error shipped a --green-faint left rule onto the basic screen,
+   phosphor green on the calm surface, found by the basic agent on 2026-08-19.
+
+   .deck is the right scope rather than #page[data-view='pro'] because trade.html's #page
+   carries no data-view attribute at all, and both decks put the chat inside .deck while
+   #basic is a sibling of it. Adding a property to a rule below is safe; removing a .deck
+   from one is not. The keyframes are namespaced for the same reason: a bare `chat-in` is a
+   document-global name that either stylesheet could redefine and silently win. */
+
+.deck .chat {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* The box the globe, the transcript and the character fall all stand in, and the positioned
+   ancestor the fall's canvas is stretched inside. Without the position here the canvas would
+   find the viewport and the rain would cover the whole window on a stop. */
+.deck .chat-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/* Anything driver-chat.js hides is hidden. Stated because two of these carry a display of
+   their own below, and a display in a rule beats the browser's own [hidden] every time. */
+.deck .chat-globe[hidden],
+.deck .chat-jump[hidden],
+.deck .chat-bar[hidden],
+.deck .chat-confirm[hidden],
+.deck .chat-form[hidden],
+.deck .chat-list[hidden] { display: none; }
+
+/* ---- idle: the globe ----
+
+   The whole layer is the button, because the thing a person wants to press here is the
+   globe and a small START under it would be a target beside the target. It is a real
+   <button>, so the keyboard reaches it and reads its label. */
+.deck .chat-globe {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font: var(--fs) / var(--lh) var(--mono);
+  color: var(--green);
+  letter-spacing: 0.06em;
+  transition: transform 160ms ease-out;
+}
+
+/* The press, on the same 160ms as every other control here. It takes the canvas with it,
+   which is the point: the globe is what is being pressed. */
+.deck .chat-globe:active { transform: scale(0.98); }
+.deck .chat-globe:focus-visible { outline: 1px dotted var(--green); outline-offset: -2px; }
+
+.deck .chat-globe-canvas {
+  display: block;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+}
+
+.deck .chat-globe-label {
+  flex: none;
+  color: var(--green);
+}
+.deck .chat-globe:hover .chat-globe-label { color: var(--green-hi); }
+
+/* Why there is no agent, when there is a reason worth printing: a start that was refused, a
+   child that exited, a lockdown that failed. Otherwise it is the resting line. */
+.deck .chat-globe-sub {
+  flex: none;
+  color: var(--green-faint);
+  max-width: 60ch;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+/* ---- the transcript ---- */
+
+.deck .chat-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 0.5ch;
+  /* Sentences, not readouts, so the line spacing is the one thing on this deck that leaves the
+     terminal rhythm. 1.35 is right for a table of numbers and too tight for a paragraph. */
+  line-height: 1.55;
+  /* THE CONVERSATION GROWS UP FROM THE BOX YOU TYPE IN. A transcript is bottom-anchored in
+     every chat a person has ever used, and top-anchored it turns a tall empty column into a
+     void with four lines floating at the top of it. margin-top:auto on the first row rather
+     than justify-content:flex-end, because flex-end clips the top of an overflowing column
+     and this one overflows the moment a conversation gets going. */
+  display: flex;
+  flex-direction: column;
+}
+
+.deck .chat-list > :first-child { margin-top: auto; }
+
+.deck .chat-list::-webkit-scrollbar { width: 6px; }
+.deck .chat-list::-webkit-scrollbar-track { background: transparent; }
+.deck .chat-list::-webkit-scrollbar-thumb { background: var(--green-ghost); }
+
+/* Opacity only, and only on arrival. Rows land constantly while an agent works, and
+   anything that moves them would make the panel unreadable exactly when it is being read. */
+.deck .chat-row {
+  display: flex;
+  gap: 1ch;
+  align-items: baseline;
+  animation: deck-chat-in 160ms ease-out;
+}
+
+@keyframes deck-chat-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.deck .chat-who {
+  flex: none;
+  width: 6ch;
+  text-align: right;
+  color: var(--green-faint);
+}
+
+.deck .chat-text {
+  flex: 1;
+  min-width: 0;
+  white-space: pre-wrap;
+  /* Agent text carries addresses and hashes, which have no spaces to break at. */
+  overflow-wrap: anywhere;
+}
+
+/* THREE VOICES, THREE WEIGHTS. Karim, 2026-08-20, on the transcript: "no creativity."
+   It was three kinds of line drawn identically, so a person scanning for the answer had to
+   read the labels one at a time to find it. Now the answer is the brightest thing in the
+   column and carries a rule down its left; what the human said is bright but unruled; and the
+   work the agent did is dim, marked, and reads as a list rather than as more conversation. */
+.deck .chat-said .chat-text { color: var(--green-hi); }
+
+.deck .chat-agent {
+  border-left: 2px solid var(--green-dim);
+  padding-left: 1ch;
+  margin-left: -1px;
+}
+
+.deck .chat-agent .chat-text { color: var(--green); }
+.deck .chat-agent .chat-who { color: var(--green-dim); }
+
+/* The mark, not a word. A column of small blocks down the left of four dim rows reads as a
+   machine doing things; the same four rows with "ran" written four times reads as a paragraph.
+   Centred in the same 6ch gutter the words use, so nothing shifts between row kinds. */
+.deck .chat-tool .chat-who {
+  color: var(--green-dim);
+  text-align: center;
+  font-size: 9px;
+}
+
+.deck .chat-tool .chat-text { color: var(--green-faint); }
+.deck .chat-status .chat-text { color: var(--green-faint); }
+
+/* THE FIGURES. An agent answer here is numbers with prose holding them together, so the
+   numbers are what the eye should land on: a price, a percentage, a ticker. Brightness only,
+   no second hue and no background, which is the law at the top of this file. Weight is not
+   available in a monospace face at this size without the glyphs shifting, so <b> is stripped
+   back to the same weight and lit instead. */
+.deck .chat-fig {
+  font-weight: inherit;
+  color: var(--green-hi);
+}
+
+/* The intro. Dimmer than the conversation because it is the app talking about itself, and
+   every line of it is true rather than decorative: see the list in driver-chat.js. */
+.deck .chat-boot .chat-text {
+  color: var(--green-dim);
+  letter-spacing: 0.04em;
+}
+
+/* NOT red. Red on this app means the safety gate, or something being taken from the user,
+   and a language model failing to answer is neither: a chat error that borrows the colour
+   of a pending withdrawal teaches a person to stop reading the colour. It is marked by a
+   rule down its left instead, which is a difference that survives being dim. */
+.deck .chat-error {
+  border-left: 1px solid var(--green-faint);
+  padding-left: 1ch;
+  margin-left: -1px;
+}
+
+.deck .chat-error .chat-text { color: var(--green-dim); }
+
+/* The way back to the newest line, and the only thing that ever appears over the transcript.
+   It is shown by driver-chat.js when, and only when, the reader has scrolled off the end,
+   so a panel that has been left behind always says so and always offers the way back. */
+.deck .chat-jump {
+  position: absolute;
+  left: 50%;
+  bottom: 4px;
+  transform: translateX(-50%);
+  appearance: none;
+  background: var(--bg);
+  border: 1px solid var(--green-ghost);
+  color: var(--green);
+  font: var(--fs) / var(--lh) var(--mono);
+  letter-spacing: 0.06em;
+  padding: 0 1ch;
+  cursor: pointer;
+  animation: deck-chat-in 160ms ease-out;
+}
+.deck .chat-jump:hover { color: var(--green-hi); border-color: var(--green-dim); }
+.deck .chat-jump:focus-visible { outline: 1px dotted var(--green); outline-offset: 1px; }
+.deck .chat-jump:active { transform: translateX(-50%) scale(0.97); }
+
+/* ---- the bar ---- */
+
+/* The composer's bottom row. It sits inside the field's border, so it gets a rule above it
+   rather than a margin: the two halves of one box, not two boxes. */
+.deck .chat-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 1ch;
+  padding-top: 5px;
+  border-top: 1px solid var(--green-ghost);
+}
+
+.deck .chat-bar[hidden] { display: none; }
+
+/* SEND is the affirmative one and sits at the end of the row, past the destructive one, which
+   is the order every dialog on this machine uses. */
+.deck .chat-send { margin-left: 0; }
+
+/* The elastic thing on that row, and the one allowed to be cut: it is a word repeating what
+   the status bar already says, and the two controls beside it are not. */
+.deck .chat-state {
+  color: var(--green-faint);
+  letter-spacing: 0.06em;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The state word is the only thing on this panel that says whether the agent is alive, so
+   it brightens when it is and stays quiet when it is not. */
+.deck .chat[data-driver-state='ready'] .chat-state,
+.deck .chat[data-driver-state='thinking'] .chat-state { color: var(--green-hi); }
+.deck .chat[data-driver-state='failed'] .chat-state { color: var(--green-dim); }
+
+.deck .chat-btn {
+  appearance: none;
+  /* A control that wraps its own label is a control that looks broken. The composer's row is
+     as narrow as the agent column gets, so STOP AGENT breaks over two lines on the trading
+     page unless it is told not to. The state word beside it is the elastic one. */
+  white-space: nowrap;
+  background: transparent;
+  border: 1px solid var(--green-ghost);
+  color: var(--green);
+  font: var(--fs) / var(--lh) var(--mono);
+  letter-spacing: 0.06em;
+  padding: 0 1ch;
+  cursor: pointer;
+}
+
+.deck .chat-btn:hover { color: var(--green-hi); border-color: var(--green-dim); }
+.deck .chat-btn:focus-visible { outline: 1px dotted var(--green); outline-offset: 1px; }
+/* Pushed to the right-hand end of the row by the auto margin, so the whole width of the box
+   stands between the state word and the control that ends the conversation. */
+.deck .chat-stop { margin-left: auto; }
+
+/* The cheap stop sits with the state word, and the auto margin above puts the whole width of
+   the bar between it and STOP AGENT. Between turns it is disabled and fades to nothing rather
+   than leaving the bar: a control that appears out of nowhere moves whatever is beside it,
+   and what is beside it is the one that ends the conversation. See ui/driver-chat.js. */
+.deck .chat-halt[disabled] { opacity: 0; }
+
+/* The question. It replaces the STOP button in place rather than opening anything, so the
+   answer is where the press that asked it was, and the whole bar never changes height. */
+.deck .chat-confirm {
+  margin-left: auto;
+  display: flex;
+  align-items: baseline;
+  gap: 1ch;
+  animation: deck-chat-in 160ms ease-out;
+}
+
+.deck .chat-confirm-q { color: var(--green-hi); }
+/* Marked, because it ends a conversation that cannot be got back from this window. Red is
+   the gate's colour and this is not the gate, so it is the border only and not the word. */
+.deck .chat-confirm-yes { border-color: var(--green-dim); }
+
+/* ---- the prompt ---- */
+
+/* ONE BOX, holding the field and every control that belongs to it.
+   Karim, 2026-08-20: "the text box is weird." It was three things stacked loose at the foot of
+   a tall column: a state word on its own line, a stop button beside it with nothing to sit on,
+   and an underlined caret under both. Three baselines and no edge. The field is the box now and
+   the state, the stop and the send are its bottom row, which is how every composer a person
+   already uses is built. */
+.deck .chat-form {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 8px;
+  padding: 7px 1ch 5px;
+  border: 1px solid var(--green-ghost);
+  transition: border-color 160ms ease-out;
+}
+
+/* The whole box answers the focus, because the whole box is the target. */
+.deck .chat-form:focus-within { border-color: var(--green-dim); }
+
+.deck .chat-input {
+  appearance: none;
+  background: transparent;
+  color: var(--green);
+  border: 0;
+  font: var(--fs) / var(--lh) var(--mono);
+  padding: 0;
+  width: 100%;
+  min-width: 0;
+}
+
+.deck .chat-input::placeholder { color: var(--green-ghost); }
+.deck .chat-input:focus-visible { outline: none; }
+
+/* The field is the elastic one on that line, not the button. */
+.deck .chat-send { flex: none; }
+
+/* ---------- motion, refused ----------
+
+   Transforms go; opacity stays. A person who has asked the system to stop moving things
+   has not asked to stop being told that something appeared. */
+@media (prefers-reduced-motion: reduce) {
+  .btn,
+  .deck .chat-btn,
+  .deck .chat-globe { transition: none; }
+  .btn:active,
+  .deck .chat-btn:active,
+  .deck .chat-globe:active { transform: none; }
+  /* The jump button keeps its centring transform: it is a position, not a motion. Only the
+     press is dropped. */
+  .deck .chat-jump:active { transform: translateX(-50%); }
+  .ovl-panel {
+    transform: none;
+    /* Kept rather than zeroed: overlay.js waits for this transition to end before it closes
+       the dialog, and a duration of zero is a transition that may never report. */
+    transition: opacity 120ms ease-out;
+  }
+  .ovl[data-open] > .ovl-panel { transform: none; }
+}
+
 /* Two columns, but not enough width for a 178px donut beside six nowrap columns.
    The table is what was asked for, so the donut is what goes. */
 @media (min-width: 1101px) and (max-width: 1319px) {
@@ -736,6 +1420,32 @@ body.log-collapsed .panel-gate > .pbody { max-height: none; }
   html, body { height: auto; overflow: auto; }
   #page { height: auto; overflow: visible; padding-bottom: 40px; }
   .deck { grid-template-columns: 1fr; }
+  /* Restated for the collapsed case: the rule that narrows the agent column carries a body
+     class, so it outranks the line above on specificity and would keep five tracks here. */
+  body.agent-collapsed .deck { grid-template-columns: 1fr; }
+  /* A stacked page has no gutters to drag and no column to trade width with, so the handles
+     go and every pane it sized goes back to its content. A splitter that resizes nothing is
+     a row of dead grips down the middle of a phone. */
+  .split { display: none; }
+  .panel[data-sized]:not(.collapsed) { flex: none; }
+  .panel[data-sized] > .pbody { flex: none; }
+  /* The wash reads as a highlight once the column is the full width of the page. */
+  .col-agent { background: transparent; padding: 0; }
+
+  /* The column boxes dissolve so the six panels can be given one global order. Without this
+     the deck stacks column by column, and the first column is now the whole conversation:
+     the price, what is held and the approval gate would all sit under a transcript. The
+     order below is the one this page stacked in before the agent moved. Nothing about a
+     narrow window changed, only the source order did. ui/trade.css does the same for its own
+     page and states its own numbers: of the six below, only the chart is a panel both pages
+     have, and both give it the same place. */
+  .deck > .col { display: contents; }
+  .panel-chart { order: 1; }
+  .panel-wallet { order: 2; }
+  .panel-gate { order: 3; }
+  .panel-policy { order: 4; }
+  .panel-agent { order: 5; }
+  .panel-pulse { order: 6; }
   .panel.grow { flex: none; }
   .panel-gate > .pbody,
   .panel-policy > .pbody { max-height: none; }
@@ -748,7 +1458,7 @@ body.log-collapsed .panel-gate > .pbody { max-height: none; }
   /* Same for the history, which is wider still. It keeps a cap on its own height so a
      long list becomes a scroll inside the panel rather than a page nobody can leave. */
   .txgrid { max-height: 50vh; }
-  .tabs, .txbar { flex-wrap: wrap; }
+  .txbar { flex-wrap: wrap; }
   .donutwrap { margin-bottom: 6px; }
   #donut { height: 180px; flex: none; }
   /* Same reason: the timeframe strip wraps rather than push the body out. */
@@ -757,7 +1467,15 @@ body.log-collapsed .panel-gate > .pbody { max-height: none; }
      or every indicator would be dropped for room on every narrow window. */
   .chartwrap { height: calc(220px + var(--panes, 0) * 78px); flex: none; }
   .panel-chart { flex-grow: 0; }
-  .log { max-height: 46vh; flex: none; }
+  /* The conversation keeps a height, and it is the one panel that has to: a transcript with
+     no bound is not a panel on a scrolling page, it is the page. Pixels rather than a
+     viewport fraction, for the same reason every other cap here is lifted: a fraction of
+     the viewport means nothing once the page scrolls past it. */
+  /* flex-basis, not height. The panel is still .grow, so `.panel.grow > .pbody` gives this
+     box `flex: 1 1 0%`, and a flex-basis on the main axis beats a height every time: set as
+     `height: 300px` this collapsed to the 54px its two controls occupy and the transcript
+     had no room at all. Same specificity as that rule and later in the file, so it wins. */
+  .panel.panel-agent > .pbody { flex: 0 0 300px; overflow: hidden; }
 }
 
 /* Narrow enough that a 36ch hanging indent leaves the message one word wide. */
@@ -768,13 +1486,20 @@ body.log-collapsed .panel-gate > .pbody { max-height: none; }
 
 /* The mode swap. Server-driven: app.js copies state.view onto #page and onto body,
    and nothing else in the browser is allowed to set it. Everything the basic screen
-   looks like lives in basic.css: this file is the pro terminal and stops here. */
+   looks like lives in basic.css: this file is the pro terminal and stops here.
+
+   EVERY direct child of #page that belongs to the pro terminal has to be named in this
+   list. #page is a fixed 100dvh column with overflow hidden, so an unlisted element does
+   not merely appear on the basic screen: it takes its own height off the bottom of that
+   column, and what falls off the end of the basic screen is the STOP EVERYTHING control.
+   The deck bar was added to this file and not to this list, and that is exactly what
+   happened. Anything added above goes in here too. */
 #page[data-view='basic'] .deck,
+#page[data-view='basic'] .deckbar,
 #page[data-view='basic'] .statusbar,
 #page[data-view='basic'] .banner,
 #page[data-view='basic'] .alert { display: none; }
 #page[data-view='pro'] #basic { display: none; }
-
 
 /* ---- agent presence light (ui/presence.js) ---- */
 /* The orb sits in the status bar next to the `agent` field. The row aligns on the baseline,

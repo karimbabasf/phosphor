@@ -2,7 +2,8 @@
 // over it when present. config.json is the committed template and carries no addresses;
 // config.local.json is gitignored and carries the real ones, so the remote never learns
 // which wallets these are. Env vars PHOSPHOR_PORT, PHOSPHOR_MODE, PHOSPHOR_NETWORK,
-// PHOSPHOR_DATA_DIR and PHOSPHOR_KEYS override both (ACC_* names still work).
+// PHOSPHOR_DATA_DIR and PHOSPHOR_KEYS override both (ACC_* names still work), and
+// PHOSPHOR_CONFIG_DIR moves config.local.json off the root for the installed .app.
 //
 // dataDir is resolved relative to root and created if missing, so every other module
 // can assume it exists. keysPath is resolved against $HOME and is REQUIRED to sit
@@ -70,10 +71,19 @@ function isNetwork(value: unknown): value is Network {
   return value === 'testnet' || value === 'mainnet';
 }
 
+// Where config.local.json lives. Normally it sits beside config.json at the root, and that
+// is still the answer for a repo checkout. Installed, the root is inside a read-only .app
+// bundle, so the writable half has to move: PHOSPHOR_CONFIG_DIR points at it. config.json
+// itself never moves, because it is the committed template and nothing ever writes to it.
+function configLocalPath(baseDir: string): string {
+  const override = env('PHOSPHOR_CONFIG_DIR');
+  return path.join(override !== undefined ? path.resolve(override) : baseDir, 'config.local.json');
+}
+
 export function loadConfig(root?: string): AppConfig {
   const baseDir = root ?? process.cwd();
   const base = readJsonIfPresent(path.join(baseDir, 'config.json'));
-  const local = readJsonIfPresent(path.join(baseDir, 'config.local.json'));
+  const local = readJsonIfPresent(configLocalPath(baseDir));
   const parsed: PartialConfig = {
     ...base,
     ...local,

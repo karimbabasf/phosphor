@@ -195,10 +195,38 @@
   max-height: 38vh;
 }
 
-/* The left column carries the blotter and the right carries prose, so the deck is split in
-   the blotter's favour on this page and on this page only. At the even-ish 1.06 the pro
-   page uses, the figures a person came to read were the part that went over the edge. */
-.deck { grid-template-columns: 1.30fr 1fr; }
+/* This page keeps three columns where the custody deck now has two, and it states its own
+   template because of it. The custody deck lost its rail on 2026-08-20 because that rail held
+   a gate reading "no pending approvals", a shut policy panel and a pulse strip. This one holds
+   liquidation distance, account health, the funding basis, armed mandates and the tape, and a
+   perpetuals screen without those is a worse screen, not a cleaner one.
+
+   What it takes from the custody deck is the ORDER: chart and blotter, then the rail, then
+   the agent last. "The chat is on the right" is true on every screen in this app.
+
+   The blotter's favour: the two side columns start narrower than the custody deck's and the
+   middle keeps the difference, because at even-ish widths the figures a person came to read
+   were the part that went over the edge. */
+.deck {
+  --deck-rail-default: clamp(260px, 20vw, 340px);
+  --deck-agent-default: clamp(300px, 21vw, 400px);
+  grid-template-columns:
+    minmax(0, 1fr)
+    var(--gutter)
+    var(--deck-rail, var(--deck-rail-default))
+    var(--gutter)
+    var(--deck-agent, var(--deck-agent-default));
+}
+
+/* Same override as the custody deck's, with the rail still in the middle of it. */
+body.agent-collapsed .deck {
+  grid-template-columns:
+    minmax(0, 1fr)
+    var(--gutter)
+    var(--deck-rail, var(--deck-rail-default))
+    var(--gutter)
+    28ch;
+}
 
 /* Every column width is declared and the floor is their exact sum, which is the whole fix
    for the clipping. Fixed layout does not overflow, it DIVIDES: an undeclared column is
@@ -407,6 +435,18 @@
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr) max-content minmax(0, 1fr);
   column-gap: 2ch;
+}
+
+/* Two pairs per row need room for two pairs. The rail is draggable now, so how much room
+   there is stopped being a fact about the window and became a fact about this panel, which
+   is what a container query is for: a media query cannot see a column the user just made
+   narrower. Below the threshold the grid folds to one pair per row rather than letting a
+   six-figure mark price run into the word beside it, which is what it was doing at the
+   rail's own default width: "$72,324.00oracle". */
+.panel > .pbody { container-type: inline-size; }
+
+@container (max-width: 330px) {
+  .rgrid { grid-template-columns: max-content minmax(0, 1fr); }
 }
 
 .rgrid dd {
@@ -775,6 +815,35 @@
 #t-history-rows > tr.liquidation > td:first-child { border-left: 1px solid var(--red-ghost); }
 #t-history-rows > tr.liquidation > td:last-child { border-right: 1px solid var(--red-ghost); }
 
+/* ---------- the agent conversation ----------
+
+   Everything the chat looks like is in style.css, because the custody deck holds the same
+   panel and neither page gets its own version of a transcript, and the column it stands in
+   is dressed there too. This file decides nothing about it any more.
+
+   It used to take a fixed 22vh out of the chart, because it was a panel sharing that column.
+   It is the whole of its own column now: it takes the height the column has and gives none
+   of it back, the chart has stopped paying for the conversation, and how WIDE the column is
+   is the person's to drag. See ui/split.js and the deck comment in ui/trade.html. */
+.panel-tchat > .pbody {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ---------- panes a person has sized ----------
+
+   Restated from ui/style.css, and it has to be. The height caps above are declared in THIS
+   file, this file loads second, and at equal specificity the later rule wins: a panel dragged
+   taller would otherwise be a frame drawn around a body still stopped at 24vh. The rule is the
+   same one and the reason is the same one: once somebody has chosen a height, the number they
+   dragged to IS the cap. See ui/split.js. */
+.panel[data-sized] > .pbody {
+  max-height: none;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 /* Toggled by the renderer, so nothing above may set display on one of these and win. */
 [hidden] { display: none; }
 
@@ -801,6 +870,9 @@
      and in the later stylesheet, so it would win and stack the panels into two columns of
      half a phone. */
   .deck { grid-template-columns: 1fr; }
+  /* Restated for the collapsed case: the rule in ui/style.css that narrows the agent column
+     carries a body class, so it outranks the line above and would keep five tracks here. */
+  body.agent-collapsed .deck { grid-template-columns: 1fr; }
   .deck > .col { display: contents; }
 
   /* Every panel is numbered. An unordered one takes order 0 and lands above the chart,
@@ -810,12 +882,22 @@
   .panel-tgate { order: 3; }
   .panel-tbook { order: 4; }
   .panel-thistory { order: 5; }
+  /* Last, and not because it matters least: a narrow window is somebody checking on a
+     position, and the two records they came for are the tape and the risk panel. */
+  .panel-tchat { order: 6; }
 
   /* The caps above are viewport fractions, which stop meaning anything once the page
      scrolls: 22vh of a scrolling page is an arbitrary slice and not a panel. */
   .panel-trisk > .pbody,
   .panel-tgate > .pbody,
   .panel-tbook > .pbody { max-height: none; overflow: visible; }
+
+  /* The chat keeps a height, and it is the one panel that has to: a transcript with no
+     bound is not a panel on a scrolling page, it is the page. It gets a pixel height here
+     rather than a viewport fraction, for the reason stated above about vh on a page that
+     scrolls, and it keeps its own scroll inside. */
+  .panel-tchat { flex: none; }
+  .panel-tchat > .pbody { flex: 0 0 260px; min-height: 0; }
 
   .panel-tbook > .pbody { display: block; }
   .panel-thistory { min-height: 0; }

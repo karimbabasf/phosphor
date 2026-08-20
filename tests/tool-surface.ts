@@ -60,6 +60,7 @@ export const EXPECTED_TOOLS: readonly string[] = [
   'chart_batch',
   'indicator_catalog',
   'market_search',
+  'research',
   'chart_set_view',
   'chart_add_indicator',
   'chart_remove_indicator',

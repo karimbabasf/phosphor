@@ -42,6 +42,24 @@ var DONUT_INNER = 0.58;
 
 var COLLAPSE_PREFIX = 'phosphor.collapse.';
 
+/* Which panels are shut when storage has nothing to say.
+   The policy panel that this named is gone from the custody deck: it was collapsed by default
+   and behind the POLICY button anyway, so the panel was a title line taking a slot in a rail.
+   The table stays because the mechanism does, and because ui/trade.html still collapses panels.
+
+   A DEFAULT IS NOT A PREFERENCE. This is the value used when storage has nothing to say.
+   The moment a person opens a panel, '0' is written and that is what they get back, on this
+   window and every one after it. */
+var COLLAPSE_DEFAULTS = { policy: true };
+
+/* Box-drawing weights. The agent column is the one surface on the deck drawn in double rules,
+   which is how a terminal says "this is a different kind of thing" without a second colour.
+   Panels ask for one by carrying data-frame on the frame element; everything else is single. */
+var FRAME_SETS = {
+  single: { open: '┌', shut: '├', close: '┐', tee: '┤', end: '└', foot: '┘', rule: '─' },
+  double: { open: '╔', shut: '╠', close: '╗', tee: '╣', end: '╚', foot: '╝', rule: '═' },
+};
+
 var TOKEN = null;
 var WALLET = { rows: [], totalUsd: 0, byChain: {}, stale: [] };
 var DONUT_SLICES = [];
@@ -53,8 +71,10 @@ var SSE_SEEN_OPEN = false;
 var REFRESH_INFLIGHT = false;
 var REFRESH_QUEUED = false;
 /* Which panels have never had an answer yet. Not "is a request in flight": a panel that has
-   real numbers in it and is refreshing them must not fall back to blocks. */
-var WAITING = { state: true, log: true };
+   real numbers in it and is refreshing them must not fall back to blocks.
+   The log used to be a second key in here. It is not a panel any more, so nothing on the
+   deck is waiting on it, and the blocks now clear on the one read that fills them. */
+var WAITING = { state: true };
 var DONUT_ANIM = 0;
 
 /* ---------- small helpers ---------- */
@@ -186,9 +206,12 @@ function layoutFrames() {
   for (var i = 0; i < frames.length; i++) {
     var frame = frames[i];
     var cols = Math.max(24, Math.floor(frame.parentElement.clientWidth / cw));
+    // Which weight of rule this panel is drawn in. Single unless the markup asks for double,
+    // which one panel does: the agent column. See FRAME_SETS above.
+    var set = FRAME_SETS[frame.getAttribute('data-frame')] || FRAME_SETS.single;
     var title = frame.getAttribute('data-title');
     if (!title) {
-      frame.textContent = '└' + repeat('─', Math.max(1, cols - 2)) + '┘';
+      frame.textContent = set.end + repeat(set.rule, Math.max(1, cols - 2)) + set.foot;
       continue;
     }
     // A collapsible panel draws its own control into the frame line: [-] open,
@@ -196,9 +219,9 @@ function layoutFrames() {
     // below to corner off.
     var name = frame.getAttribute('data-collapse');
     var shut = name ? isCollapsed(name) : false;
-    var head = (shut ? '├' : '┌') + '─ ' + title + ' ';
-    var tail = name ? ' [' + (shut ? '+' : '-') + '] ─' + (shut ? '┤' : '┐') : '┐';
-    frame.textContent = head + repeat('─', Math.max(1, cols - head.length - tail.length)) + tail;
+    var head = (shut ? set.shut : set.open) + set.rule + ' ' + title + ' ';
+    var tail = name ? ' [' + (shut ? '+' : '-') + '] ' + set.rule + (shut ? set.tee : set.close) : set.close;
+    frame.textContent = head + repeat(set.rule, Math.max(1, cols - head.length - tail.length)) + tail;
   }
 }
 
@@ -209,10 +232,14 @@ function layoutFrames() {
    storage throws, which it does in a locked-down browser profile. */
 function isCollapsed(name) {
   if (COLLAPSE_MEM[name] !== undefined) return COLLAPSE_MEM[name];
+  var fallback = COLLAPSE_DEFAULTS[name] === true;
   try {
-    return window.localStorage.getItem(COLLAPSE_PREFIX + name) === '1';
+    var stored = window.localStorage.getItem(COLLAPSE_PREFIX + name);
+    // Nothing stored is the only case the default answers. '0' is a person having opened
+    // this panel, and that outranks anything this file thinks it should look like.
+    return stored === null ? fallback : stored === '1';
   } catch (err) {
-    return false;
+    return fallback;
   }
 }
 
@@ -308,31 +335,34 @@ function paintWaiting() {
   readout.appendChild(skelLine(0, 9, 'line'));
   readout.appendChild(skelLine(1, 7, 'line'));
 
+  /* The gate and the policy are not on this page in every mode any more: the custody deck's
+     gate is a strip that starts hidden and its policy panel is gone entirely, behind the
+     POLICY button. A waiting state paints what is there; it does not require it to be there.
+     Without the guard the whole boot threw here and the window stayed on its skeleton, which
+     is the loudest possible failure for the smallest possible change. */
   var gate = $('gate');
-  gate.textContent = '';
-  gate.appendChild(skelLine(0, 34));
-  gate.appendChild(skelLine(1, 21));
+  if (gate) {
+    gate.textContent = '';
+    gate.appendChild(skelLine(0, 34));
+    gate.appendChild(skelLine(1, 21));
+  }
 
   var policy = $('policy-lines');
-  policy.textContent = '';
-  for (var p = 0; p < 4; p++) policy.appendChild(skelLine(p, 30 - p * 4, 'rule skelline'));
-
-  var log = $('log');
-  log.textContent = '';
-  // Plain skelline, not logline: the log's hanging indent would pull a block row 36ch off
-  // the left edge of the panel.
-  for (var g = 0; g < 8; g++) log.appendChild(skelLine(g, 46 - ((g * 7) % 20)));
+  if (policy) {
+    policy.textContent = '';
+    for (var p = 0; p < 4; p++) policy.appendChild(skelLine(p, 30 - p * 4, 'rule skelline'));
+  }
 
   drawDonutWaiting();
 }
 
-/* A panel stops waiting the moment its own answer lands, not when the last one does: the log
-   and the state come back separately and a panel that has its numbers should not sit under
-   blocks because a different fetch is slow. */
+/* A panel stops waiting the moment its own answer lands, not when the last one does. There
+   is one key left now that the log has stopped being a panel, but the shape stays: the next
+   thing to get its own fetch gets its own key rather than a rewrite of this. */
 function settled(which) {
   if (!WAITING[which]) return;
   WAITING[which] = false;
-  if (WAITING.state || WAITING.log) return;
+  if (WAITING.state) return;
   document.body.classList.remove('waiting');
 }
 
@@ -769,355 +799,14 @@ function setHover(index) {
 
 /* ---------- 2c. transactions ----------
 
-   The history of what this app actually did with the money: one row per executed
-   proposal, newest first. Everything in it is derived by the server from the proposal
-   store and the hashes the rails produced (src/transactions.ts); this file formats and
-   never computes, which is why a value here can be checked against the audit log line
-   for the same id.
+   Gone from this file, and gone from this page's layout. It was a tab inside the wallet
+   panel; it is the HISTORY overlay now, and the renderer moved with it to ui/deck-views.js
+   because the trading window opens the same record from the same button. The move is not a
+   preference: eight nowrap columns and a per-row expansion never fitted half a deck column,
+   so the table divided its width instead of taking it and the detail a person opens a
+   history for was the first thing off the screen.
 
-   Interactive means three things, and no more than three: the filters narrow the list,
-   a row expands in place to its full detail, and every address and hash is a link to the
-   explorer that owns it. No modal, no route: the brief allows neither. */
-
-var TX = { entries: [], gasPending: 0 };
-var TX_FILTER = 'all';
-var TX_OPEN = {};
-var TX_LOADED = false;
-
-var TX_FILTERS = [
-  { key: 'all', label: 'ALL' },
-  { key: 'swap', label: 'SWAPS' },
-  { key: 'deposit', label: 'DEPOSITS' },
-  { key: 'withdraw', label: 'WITHDRAWALS' },
-  { key: 'transfer', label: 'TRANSFERS' }
-];
-
-/* Addresses are shown short in the table and never short in the detail: a truncated
-   address is fine to point at and not enough to check. */
-function shortAddress(address) {
-  var a = String(address);
-  if (a.length <= 13) return a;
-  return a.slice(0, 6) + '…' + a.slice(-4);
-}
-
-function txTime(iso) {
-  var d = new Date(iso);
-  if (isNaN(d.getTime())) return String(iso);
-  var today = new Date();
-  var sameDay = d.toDateString() === today.toDateString();
-  return sameDay ? d.toTimeString().slice(0, 5) : (d.getMonth() + 1) + '/' + d.getDate();
-}
-
-/* What this move cost in gas, added up over its own transactions. Three outcomes, and
-   they are three different sentences: a figure, still reading, or nobody can tell us.
-   A move that only ever signed an intent burned no gas at all, which is a fourth. */
-function gasOf(entry) {
-  var totalUsd = 0;
-  var seen = false;
-  var pending = false;
-  var unknown = false;
-  for (var i = 0; i < entry.hashes.length; i++) {
-    var tx = entry.hashes[i];
-    if (tx.kind !== 'chain') continue;
-    if (tx.gas === null) {
-      if (tx.gasPending) pending = true;
-      else unknown = true;
-      continue;
-    }
-    seen = true;
-    if (tx.gas.feeUsd !== null) totalUsd += tx.gas.feeUsd;
-  }
-  return { usd: seen ? totalUsd : null, pending: pending, unknown: unknown, onChain: seen || pending || unknown };
-}
-
-/* A link, or plain text when the chain has no explorer we can name. Never a dead <a>:
-   a link that goes nowhere is worse than a value that does not pretend to be one. */
-function explorerLink(text, url, cls) {
-  if (!url) return el('span', cls, text);
-  var a = el('a', cls ? 'link ' + cls : 'link', text);
-  a.href = url;
-  a.target = '_blank';
-  a.rel = 'noopener noreferrer';
-  a.title = url;
-  return a;
-}
-
-function partyCell(party, cls) {
-  var td = el('td', cls ? 'addr ' + cls : 'addr');
-  if (!party) {
-    td.appendChild(el('span', 'faint', '--'));
-    return td;
-  }
-  var node = explorerLink(shortAddress(party.address), party.url, party.self ? 'self' : '');
-  node.title = party.address + (party.self ? ' (our own wallet)' : '');
-  td.appendChild(node);
-  return td;
-}
-
-function movementOf(entry) {
-  if (!entry.sent) return entry.note || '--';
-  var sent = amount(entry.sent.amount) + ' ' + entry.sent.symbol;
-  if (!entry.received) return sent;
-  return sent + ' → ' + amount(entry.received.amount) + ' ' + entry.received.symbol;
-}
-
-function copyButton(text) {
-  var btn = el('button', 'copy', '[copy]');
-  btn.type = 'button';
-  btn.addEventListener('click', function (ev) {
-    ev.stopPropagation();
-    if (!navigator.clipboard) return;
-    navigator.clipboard.writeText(text).then(function () {
-      btn.textContent = '[copied]';
-      setTimeout(function () {
-        btn.textContent = '[copy]';
-      }, 1200);
-    }, function () {
-      btn.textContent = '[no]';
-    });
-  });
-  return btn;
-}
-
-function detailLine(label, node) {
-  var line = el('div', 'txd-line');
-  line.appendChild(el('span', 'txd-k', padEnd(label, 14)));
-  line.appendChild(node);
-  return line;
-}
-
-/* The expansion. Everything the row had to leave out: full addresses, every hash with
-   the gas it actually burned, the venue's own fee, and the verdict that let it through. */
-function txDetail(entry) {
-  var box = el('div', 'txd');
-
-  if (entry.detail) box.appendChild(el('div', 'txd-detail', entry.detail));
-
-  var parties = [entry.from, entry.to, entry.counterparty];
-  var labels = ['from', 'to', 'via'];
-  for (var p = 0; p < parties.length; p++) {
-    if (!parties[p]) continue;
-    var wrap = el('span', 'txd-addr');
-    wrap.appendChild(explorerLink(parties[p].address, parties[p].url, parties[p].self ? 'self' : ''));
-    if (parties[p].self) wrap.appendChild(el('span', 'faint', '  our own wallet'));
-    wrap.appendChild(copyButton(parties[p].address));
-    box.appendChild(detailLine(labels[p] + ' (' + parties[p].place + ')', wrap));
-  }
-
-  for (var h = 0; h < entry.hashes.length; h++) {
-    var tx = entry.hashes[h];
-    var line = el('span', 'txd-hash');
-    line.appendChild(explorerLink(tx.hash, tx.url, ''));
-    line.appendChild(copyButton(tx.hash));
-    box.appendChild(detailLine(tx.kind === 'intent' ? 'intent' : 'tx ' + tx.place, line));
-    if (tx.gas) {
-      var g = el('span', 'txd-gas');
-      g.appendChild(document.createTextNode(
-        Number(tx.gas.gasUsed).toLocaleString('en-US') + ' gas × ' +
-        (Number(tx.gas.gasPriceWei) / 1e9).toFixed(4) + ' gwei = ' +
-        tx.gas.feeNative.toFixed(8) + ' ' + tx.gas.feeSymbol +
-        (tx.gas.feeUsd === null ? '' : '  (' + usdSmall(tx.gas.feeUsd) + ')')
-      ));
-      if (tx.gas.status === 'reverted') g.appendChild(el('span', 'red', '  REVERTED'));
-      box.appendChild(detailLine('gas', g));
-    } else if (tx.kind === 'intent') {
-      // Not a gap in the data: an intent is signed, not broadcast, so there is no gas of
-      // ours to report and the fee that WAS paid is the solver's, below.
-      box.appendChild(detailLine('gas', el('span', 'faint', 'none: signed as an intent, settled by a solver')));
-    } else if (!tx.gasPending) {
-      box.appendChild(detailLine('gas', el('span', 'faint', 'unknown: no chain this app can reach has this hash')));
-    }
-  }
-
-  if (entry.venueFeeUsd !== null) {
-    box.appendChild(detailLine('venue fee', el('span', null, usd(entry.venueFeeUsd) + '  (quoted at approval)')));
-  }
-  if (entry.decidedBy) {
-    var decided = entry.decidedBy === 'human' ? 'a human clicked approve'
-      : entry.decidedBy === 'policy' ? 'the policy engine, under the click threshold'
-      : 'auto-approved: the approval gate was disabled';
-    box.appendChild(detailLine('decided by', el('span', null, decided)));
-  }
-  for (var r = 0; r < entry.reasons.length; r++) {
-    box.appendChild(detailLine(r === 0 ? 'why' : '', el('span', 'dim', entry.reasons[r])));
-  }
-  box.appendChild(detailLine('proposal', el('span', 'faint', entry.id)));
-  return box;
-}
-
-function txRow(entry) {
-  var tr = document.createElement('tr');
-  tr.className = 'txrow' + (entry.status === 'failed' ? ' failed' : '');
-  tr.dataset.id = entry.id;
-  tr.tabIndex = 0;
-  tr.setAttribute('role', 'button');
-  tr.setAttribute('aria-expanded', TX_OPEN[entry.id] ? 'true' : 'false');
-
-  tr.appendChild(el('td', 'time', txTime(entry.ts)));
-
-  var action = el('td', 'action');
-  action.appendChild(el('span', 'caret', TX_OPEN[entry.id] ? '▾ ' : '▸ '));
-  action.appendChild(document.createTextNode(entry.action));
-  if (entry.status === 'failed') action.appendChild(el('span', 'red', ' FAILED'));
-  if (entry.status === 'executing') action.appendChild(el('span', 'hi', ' RUNNING'));
-  tr.appendChild(action);
-
-  var move = el('td', 'move');
-  move.appendChild(document.createTextNode(movementOf(entry)));
-  // The route, and only the route. The venue is a word per row that pushes gas and the
-  // hash off the right edge, and it is one line down in the detail.
-  var route = entry.place === entry.toPlace ? entry.place : entry.place + '→' + entry.toPlace;
-  move.appendChild(el('span', 'faint', '  ' + route));
-  move.title = movementOf(entry) + '  ' + route + (entry.venue ? ' via ' + entry.venue : '');
-  tr.appendChild(move);
-
-  tr.appendChild(el('td', 'num', usd(entry.valueUsd)));
-  tr.appendChild(partyCell(entry.from, 'from'));
-  tr.appendChild(partyCell(entry.to));
-
-  var gas = gasOf(entry);
-  var gasCell = el('td', 'num gas');
-  if (gas.usd !== null) gasCell.appendChild(document.createTextNode(usdSmall(gas.usd)));
-  else if (gas.pending) gasCell.appendChild(el('span', 'faint', 'reading'));
-  else if (gas.unknown) gasCell.appendChild(el('span', 'faint', 'unknown'));
-  else gasCell.appendChild(el('span', 'faint', 'no gas'));
-  tr.appendChild(gasCell);
-
-  var txCell = el('td', 'txh');
-  if (!entry.hashes.length) txCell.appendChild(el('span', 'faint', '--'));
-  else {
-    txCell.appendChild(explorerLink(shortAddress(entry.hashes[0].hash), entry.hashes[0].url, ''));
-    if (entry.hashes.length > 1) txCell.appendChild(el('span', 'faint', ' +' + (entry.hashes.length - 1)));
-  }
-  tr.appendChild(txCell);
-  return tr;
-}
-
-function txMatches(entry) {
-  if (TX_FILTER === 'all') return true;
-  if (TX_FILTER === 'transfer') return entry.action === 'transfer' || entry.action === 'consolidate';
-  return entry.action === TX_FILTER;
-}
-
-function renderTransactions() {
-  var tbody = $('tx-rows');
-  tbody.textContent = '';
-  var shown = 0;
-  for (var i = 0; i < TX.entries.length; i++) {
-    var entry = TX.entries[i];
-    if (!txMatches(entry)) continue;
-    shown++;
-    tbody.appendChild(txRow(entry));
-    if (TX_OPEN[entry.id]) {
-      var open = document.createElement('tr');
-      open.className = 'txopen';
-      var cell = document.createElement('td');
-      cell.colSpan = 8;
-      cell.appendChild(txDetail(entry));
-      open.appendChild(cell);
-      tbody.appendChild(open);
-    }
-  }
-
-  if (!shown) {
-    var empty = document.createElement('tr');
-    var cell2 = el('td', 'faint', TX.entries.length
-      ? 'nothing under this filter'
-      : 'no transactions yet: nothing has been executed from this app');
-    cell2.colSpan = 8;
-    empty.appendChild(cell2);
-    tbody.appendChild(empty);
-  }
-
-  var meta = $('tx-meta');
-  meta.textContent = '';
-  meta.appendChild(document.createTextNode(shown + (shown === 1 ? ' transaction' : ' transactions')));
-  // Said out loud rather than left as a blank cell: a fee that has not been read yet and
-  // a fee of zero are different facts.
-  if (TX.gasPending > 0) meta.appendChild(el('span', 'faint', '   reading gas for ' + TX.gasPending + '...'));
-  $('tab-meta').textContent = TX.entries.length ? TX.entries.length + ' recorded' : '';
-}
-
-function renderTxFilters() {
-  var box = $('tx-filters');
-  box.textContent = '';
-  for (var i = 0; i < TX_FILTERS.length; i++) {
-    (function (filter) {
-      var btn = el('button', 'tf' + (TX_FILTER === filter.key ? ' on' : ''), filter.label);
-      btn.type = 'button';
-      btn.addEventListener('click', function () {
-        TX_FILTER = filter.key;
-        renderTxFilters();
-        renderTransactions();
-      });
-      box.appendChild(btn);
-    })(TX_FILTERS[i]);
-  }
-}
-
-async function refreshTransactions() {
-  try {
-    var payload = await getJson('/api/transactions');
-    TX = { entries: payload.entries || [], gasPending: payload.gasPending || 0 };
-    TX_LOADED = true;
-    renderTransactions();
-  } catch (err) {
-    alertLine('cannot read the transaction history: ' + (err.message || String(err)));
-  }
-}
-
-function wireTransactions() {
-  renderTxFilters();
-
-  var tbody = $('tx-rows');
-  function toggle(tr) {
-    if (!tr || !tr.dataset.id) return;
-    var id = tr.dataset.id;
-    if (TX_OPEN[id]) delete TX_OPEN[id];
-    else TX_OPEN[id] = true;
-    renderTransactions();
-  }
-  tbody.addEventListener('click', function (ev) {
-    // A click on a link is a click on the link, not on the row behind it.
-    if (ev.target.closest('a') || ev.target.closest('button')) return;
-    toggle(ev.target.closest ? ev.target.closest('tr.txrow') : null);
-  });
-  tbody.addEventListener('keydown', function (ev) {
-    if (ev.key !== 'Enter' && ev.key !== ' ') return;
-    var tr = ev.target.closest ? ev.target.closest('tr.txrow') : null;
-    if (!tr) return;
-    ev.preventDefault();
-    toggle(tr);
-  });
-}
-
-/* The two views of the wallet. The holdings pane keeps its canvas, so switching back
-   redraws it: a canvas that was display:none has no size to draw into. */
-function showWalletPane(pane) {
-  var holdings = pane !== 'activity';
-  $('pane-holdings').hidden = !holdings;
-  $('pane-activity').hidden = holdings;
-  $('tab-holdings').classList.toggle('on', holdings);
-  $('tab-activity').classList.toggle('on', !holdings);
-  $('tab-holdings').setAttribute('aria-selected', holdings ? 'true' : 'false');
-  $('tab-activity').setAttribute('aria-selected', holdings ? 'false' : 'true');
-  // The totals line belongs to the holdings: "14 tokens empty, not listed" under a list of
-  // transactions is a sentence about the wrong table.
-  $('wallet-total').hidden = !holdings;
-  if (holdings) drawDonut();
-  else if (!TX_LOADED) refreshTransactions();
-}
-
-function wireTabs() {
-  var tabs = document.querySelectorAll('.tab');
-  for (var i = 0; i < tabs.length; i++) {
-    (function (tab) {
-      tab.addEventListener('click', function () {
-        showWalletPane(tab.dataset.pane);
-      });
-    })(tabs[i]);
-  }
-}
+   openHistoryOverlay(), further down, is all that is left of it here. */
 
 /* ---------- 3. chart ---------- */
 
@@ -1128,8 +817,13 @@ function wireTabs() {
 
 /* ---------- 5. policy ---------- */
 
+/* The custody deck no longer carries a policy panel: it was shut by default and the whole
+   policy is behind the POLICY button, which builds its own copy from the same state. So this
+   paints when the element is there and returns when it is not, rather than throwing and
+   taking every render after it down with it. */
 function renderPolicy(s) {
   var box = $('policy-lines');
+  if (!box) return;
   box.textContent = '';
   if (!s.policy) {
     box.appendChild(el('div', 'rule red', 'POLICY FILE UNREADABLE: ALL WRITES REFUSED'));
@@ -1148,6 +842,13 @@ function renderPolicy(s) {
     box.appendChild(rule);
   }
 }
+
+/* The whole policy, for the POLICY overlay, is PhosphorViews.policy in ui/deck-views.js.
+   The panel above keeps its place on the deck and is not redundant: the sentences are what
+   a person checks at a glance before they click anything, and four lines of English is the
+   right amount of policy to have on screen at all times. What the panel cannot show is the
+   numbers those sentences were rendered from, the destination allowlist in full addresses,
+   and the composition limits, which is what the overlay is. */
 
 /* ---------- 6. approval gate ---------- */
 
@@ -1181,8 +882,16 @@ function decide(route, id, buttons, errorNode) {
   return APPROVALS.decide(route, id, buttons, errorNode, approvalDeps());
 }
 
+/* The gate is a strip above the deck now, not a panel in a rail, and it does not exist while
+   nothing is pending. APPROVALS.render returns the pending count for exactly this: the page
+   that hides an empty gate should not have to re-read the state to work out whether it is
+   empty. Hidden rather than emptied, because an empty bordered box that says "no pending
+   approvals" for hours is what teaches a person to stop looking at the one surface on this
+   screen they must never stop looking at. */
 function renderGate(s) {
-  APPROVALS.render($('gate'), s, approvalDeps());
+  var pending = APPROVALS.render($('gate'), s, approvalDeps());
+  var strip = $('gate-strip');
+  if (strip) strip.hidden = pending === 0;
 }
 
 /* ---------- 6b. basic view ----------
@@ -1344,17 +1053,14 @@ function drawBasicDonut(holdings) {
    nothing in it and a wallet nobody could read say different things, and the
    server decides which by handing back an empty list or a null total. */
 function renderBasicHoldings(holdings, unknown) {
-  var section = $('basic-holdings');
   var rows = $('basic-rows');
   rows.textContent = '';
 
   // Nothing to say while the total is unknown: a partial list of holdings looks
-  // exactly like the full holdings of someone who owns less.
-  if (unknown) {
-    section.hidden = true;
-    return;
-  }
-  section.hidden = false;
+  // exactly like the full holdings of someone who owns less. The fold that opens this
+  // pane hides itself in the same breath, so the pane is unreachable rather than
+  // reachable and blank.
+  if (unknown) return;
 
   if (!holdings || holdings.length === 0) {
     rows.appendChild(el('p', 'basic-empty', 'Nothing yet.'));
@@ -1454,15 +1160,12 @@ function drawSpark(canvas, points) {
    absent from the list rather than present and blank: no price is a fact, and the last
    price that worked would be a stale figure with nothing beside it saying so. */
 function renderBasicPrices(prices) {
-  var section = $('basic-prices');
   var list = $('basic-price-rows');
   list.textContent = '';
 
-  if (!prices || prices.length === 0) {
-    section.hidden = true;
-    return;
-  }
-  section.hidden = false;
+  // Same rule as the holdings above: nothing readable means the fold is not offered,
+  // rather than offered and empty.
+  if (!prices || prices.length === 0) return;
 
   for (var i = 0; i < prices.length; i++) {
     var p = prices[i];
@@ -1565,6 +1268,130 @@ function redrawBasicCanvases() {
   }
 }
 
+/* ---------- the folds ----------
+
+   Four buttons and ONE sheet, never one opener per button: a person who works out how
+   the first one behaves has worked out all four, and a second mechanism would be a second
+   thing to learn on a screen whose whole argument is that there is almost nothing to
+   learn. Escape shuts it, the backdrop shuts it, Tab cannot leave it, and focus goes back
+   to the button it came from.
+
+   The sheet is never `hidden`. It is fixed, out of the flow, and switched with
+   visibility, so opening it cannot move the balance, the warning or the conversation by a
+   pixel. What it holds is a fold of the screen, not a part of it. */
+
+var BASIC_FOLDS = {
+  own: { pane: 'basic-pane-own', title: 'What you own' },
+  market: { pane: 'basic-pane-market', title: 'Market' },
+  history: { pane: 'basic-pane-history', title: 'History' },
+  assistant: { pane: 'basic-pane-assistant', title: 'Your assistant' },
+};
+
+/* The button the open sheet came from, and which fold is up. Both null while it is shut. */
+var basicSheetFrom = null;
+var basicSheetName = null;
+
+function basicFoldButton(name) {
+  var nav = $('basic-folds');
+  if (!nav) return null;
+  for (var i = 0; i < nav.children.length; i++) {
+    if (nav.children[i].dataset.fold === name) return nav.children[i];
+  }
+  return null;
+}
+
+/* Everything inside a layer that a Tab can land on. offsetParent is null for anything in
+   a shut pane, which is how the three folds that are not open stay out of the ring
+   without a second list of what is showing. */
+function basicFocusable(panel) {
+  var nodes = panel.querySelectorAll('button, input, select, textarea, a[href], [tabindex]');
+  var ring = [];
+  for (var i = 0; i < nodes.length; i++) {
+    var node = nodes[i];
+    if (node.disabled) continue;
+    if (node.getAttribute('tabindex') === '-1') continue;
+    if (node.offsetParent === null) continue;
+    ring.push(node);
+  }
+  return ring;
+}
+
+/* Written once and used by both layers on this screen, because they are the only two and
+   they must not disagree about what the keyboard does. */
+function basicTrapTab(panel, ev) {
+  if (ev.key !== 'Tab') return;
+  var ring = basicFocusable(panel);
+  if (ring.length === 0) {
+    ev.preventDefault();
+    panel.focus();
+    return;
+  }
+  var first = ring[0];
+  var last = ring[ring.length - 1];
+  var here = document.activeElement;
+  if (ev.shiftKey) {
+    if (here === first || here === panel || !panel.contains(here)) {
+      ev.preventDefault();
+      last.focus();
+    }
+  } else if (here === last || !panel.contains(here)) {
+    ev.preventDefault();
+    first.focus();
+  }
+}
+
+function openBasicSheet(name, from) {
+  if (!Object.prototype.hasOwnProperty.call(BASIC_FOLDS, name)) return;
+
+  for (var key in BASIC_FOLDS) {
+    if (!Object.prototype.hasOwnProperty.call(BASIC_FOLDS, key)) continue;
+    $(BASIC_FOLDS[key].pane).hidden = key !== name;
+    var button = basicFoldButton(key);
+    if (button) button.setAttribute('aria-expanded', key === name ? 'true' : 'false');
+  }
+
+  $('basic-sheet-title').textContent = BASIC_FOLDS[name].title;
+  basicSheetFrom = from || null;
+  basicSheetName = name;
+  $('basic-sheet').dataset.open = '1';
+
+  /* The pane has a box for the first time, so this is the first moment the ring and the
+     three lines can be drawn: a canvas in a shut pane has no width, and everything drawn
+     into it while it was shut went nowhere. */
+  redrawBasicCanvases();
+  var panel = $('basic-sheet-panel');
+  panel.scrollTop = 0;
+  panel.focus();
+}
+
+/* `noFocus` is for one caller: an arriving question, which shuts the sheet and then takes
+   focus itself. Handing focus back to a fold button on the way past would put the
+   keyboard on a control that is about to be covered. */
+function closeBasicSheet(noFocus) {
+  var sheet = $('basic-sheet');
+  if (sheet.dataset.open !== '1') return;
+  sheet.dataset.open = '0';
+  var button = basicSheetName === null ? null : basicFoldButton(basicSheetName);
+  if (button) button.setAttribute('aria-expanded', 'false');
+  var back = basicSheetFrom;
+  basicSheetFrom = null;
+  basicSheetName = null;
+  if (noFocus) return;
+  // Back where it came from, unless the state changed underneath and that button has
+  // since taken itself off the screen.
+  if (back && back.isConnected && back.offsetParent !== null) back.focus();
+}
+
+/* A fold is offered only when there is something behind it. A button that opens an empty
+   box is worse here than no button: this screen is read by someone deciding whether to
+   trust it, and a dead end is a small lie. */
+function setBasicFold(name, available) {
+  var button = basicFoldButton(name);
+  if (!button) return;
+  button.hidden = !available;
+  if (!available && basicSheetName === name) closeBasicSheet();
+}
+
 function basicDestNode(dest) {
   var foreign = dest.chosenBy === 'quoter' || dest.label.indexOf('NOT your wallet') !== -1;
   var wrap = el('div', 'basic-dest' + (dest.chosenBy === 'quoter' ? ' quoter' : foreign ? ' foreign' : ''));
@@ -1575,12 +1402,29 @@ function basicDestNode(dest) {
   return wrap;
 }
 
+/* The proposal the question on screen is about, so an arriving question can be told from
+   the same question redrawn by the next state frame. Focus moves once, on arrival: moving
+   it again every two seconds would pull the caret out of whatever a person is doing, and
+   the thing they are most likely to be doing is reading an address character by
+   character. */
+var basicAskId = null;
+
 function renderBasicAsk(ask) {
   var box = $('basic-ask');
   if (!ask) {
+    var wasAsking = basicAskId !== null;
+    basicAskId = null;
     box.hidden = true;
+    /* The question was the whole screen a moment ago and its buttons have gone with it.
+       Without this the keyboard falls back to the body and starts again from the top. */
+    if (wasAsking) {
+      var input = document.querySelector('#basic-chat .chat-input');
+      if (input && input.offsetParent !== null) input.focus();
+    }
     return;
   }
+  var arrived = basicAskId !== ask.proposalId;
+  basicAskId = ask.proposalId;
   box.hidden = false;
   $('basic-ask-headline').textContent = ask.headline;
   $('basic-ask-after').textContent = ask.afterLine;
@@ -1606,6 +1450,15 @@ function renderBasicAsk(ask) {
   yes.dataset.id = ask.proposalId;
   no.dataset.id = ask.proposalId;
   $('basic-error').hidden = true;
+
+  if (arrived) {
+    // Nothing on this screen may cover a question or hold one up, so the sheet goes at
+    // once and without waiting on its own exit.
+    closeBasicSheet(true);
+    /* The PANEL, not YES. A person whose finger is already on the space bar must never
+       find that the app moved a consent button under it. */
+    $('basic-ask-panel').focus();
+  }
 }
 
 function renderBasic(s) {
@@ -1641,6 +1494,13 @@ function renderBasic(s) {
   renderBasicPrices(b.prices);
   renderBasicHistory(b.recent, b.actions);
 
+  /* Which folds exist at all. Read off the same numbers the panes were just filled from,
+     so a button and the box behind it can never disagree. "Your assistant" is not here
+     because it is always true: there is always an answer to whether one is connected. */
+  setBasicFold('own', b.totalUsd !== null);
+  setBasicFold('market', (b.prices || []).length > 0);
+  setBasicFold('history', (b.recent || []).length > 0 || (b.actions || []).length > 0);
+
   var warning = $('basic-warning');
   warning.textContent = b.warning || '';
   warning.hidden = !b.warning;
@@ -1658,6 +1518,86 @@ function wireBasic() {
   var no = $('basic-no');
   var error = $('basic-error');
 
+  /* THE CONVERSATION. Mounted before the first state frame rather than after it, so a
+     transcript that is already running is on screen the moment the page is. Every string
+     it renders goes through textContent inside ui/driver-chat.js: it is the one surface
+     on this screen whose whole content is written by a language model, and it renders no
+     approval control, which is why the question is a different block entirely. */
+  /* Mounted here and NOT loaded here, deliberately. PhosphorChat.load() walks every mount
+     that has registered by the time it runs, so one call at the end of boot() covers this
+     screen and the pro deck together; a call from inside this function would only cover
+     both by accident of source order, and would fetch the transcript twice. The one call
+     lives at the bottom of boot(). If it ever goes, this screen opens with an empty
+     transcript and no error, which is the quietest way this chat can be broken. */
+  if (window.PhosphorChat) {
+    PhosphorChat.mount($('basic-chat'), {
+      /* The same four facts the pro deck's intro prints, in this screen's voice. Both are
+         true of the same process; only the words differ. */
+      intro: [
+        'Starting your assistant.',
+        'It runs on this computer, inside this window.',
+        'It can only use Phosphor: no files, no web, no terminal.',
+      ],
+      /* A dissolve, not the pro deck's fall of terminal characters. Same beat, and the one
+         thing this screen may never look like is a terminal. */
+      veil: 'fade',
+      colorVar: '--calm',
+      /* Louder than the deck's, because --calm is a low-chroma blue and lands dimmer than
+         phosphor green at the same alpha. Measured against the pro globe side by side. */
+      gain: 1.35,
+      placeholder: 'Ask your assistant to do something',
+      startLabel: 'Start your assistant',
+      idleNote: 'No assistant is running.',
+      /* Two stops on this bar, so neither may be called just "Stop". One ends the answer
+         being written and one ends the assistant; the labels are the only thing telling
+         them apart, and the cheap one is the one a person reaches for mid-answer. */
+      haltLabel: 'Stop this answer',
+      stopLabel: 'Stop assistant',
+      stopQuestion: 'Stop your assistant?',
+      stopYes: 'Yes, stop',
+      stopNo: 'Cancel',
+      jumpLabel: 'Jump to latest',
+      sendLabel: 'Send',
+      listLabel: 'conversation with your assistant',
+      inputLabel: 'message to your assistant',
+    });
+  }
+
+  /* One listener for four buttons. The fold name comes off the button's own dataset, and
+     openBasicSheet refuses anything that is not one of the four it knows. */
+  var folds = $('basic-folds');
+  folds.addEventListener('click', function (ev) {
+    var button = ev.target && ev.target.closest ? ev.target.closest('.basic-fold') : null;
+    if (!button || !folds.contains(button)) return;
+    openBasicSheet(button.dataset.fold, button);
+  });
+
+  var sheet = $('basic-sheet');
+  $('basic-scrim').addEventListener('click', function () {
+    closeBasicSheet();
+  });
+  $('basic-sheet-close').addEventListener('click', function () {
+    closeBasicSheet();
+  });
+  /* On the sheet and not on the document, deliberately: an Escape listener that watches
+     the whole page is one refactor away from dismissing the question below, and the
+     question is the one thing here a key press may not take off the screen. */
+  sheet.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Escape') {
+      ev.stopPropagation();
+      closeBasicSheet();
+      return;
+    }
+    basicTrapTab($('basic-sheet-panel'), ev);
+  });
+
+  /* The question traps the keyboard too, and answers no key at all. Leaving a decision by
+     pressing one key is the shape of an accident, and NO is right there and goes on the
+     record as a refusal, which is a different and better thing than a dismissal. */
+  $('basic-ask').addEventListener('keydown', function (ev) {
+    basicTrapTab($('basic-ask-panel'), ev);
+  });
+
   // The same decide() the pro gate calls. One approval code path in both modes,
   // so the two screens cannot drift on what a click actually does.
   yes.addEventListener('click', function () {
@@ -1667,21 +1607,16 @@ function wireBasic() {
     if (no.dataset.id) decide('/api/refuse', no.dataset.id, [yes, no], error);
   });
 
-  // Start the assistant without leaving the calm screen. Same /api/summon the pro window uses,
-  // worded plainly because this screen never says "agent".
-  var summon = $('basic-summon');
-  if (summon) {
-    summon.addEventListener('click', function () {
-      runSummon(summon, 'Start the assistant in a new window? Any assistant connected now is stopped.');
-    });
-  }
-
-  // Two presses, and the confirm is a real control rather than window.confirm,
+    // Two presses, and the confirm is a real control rather than window.confirm,
   // because a native dialog is the easiest thing on this screen to dismiss by reflex.
   var kill = $('basic-kill');
   var confirm = $('basic-stop-confirm');
   var killYes = $('basic-kill-yes');
   var killCancel = $('basic-kill-cancel');
+  /* The brake's own error line. It used to write into the question's error node, which is
+     now a covered layer: a freeze that failed would have reported itself onto a surface
+     nobody was looking at, on the one control that exists for the moment things go wrong. */
+  var stopError = $('basic-stop-error');
 
   function closeConfirm() {
     confirm.hidden = true;
@@ -1699,13 +1634,14 @@ function wireBasic() {
   killCancel.addEventListener('click', closeConfirm);
   killYes.addEventListener('click', async function () {
     killYes.disabled = true;
+    stopError.hidden = true;
     try {
       await postJson('/api/kill', { on: kill.dataset.on !== '1', token: TOKEN });
       await refreshState();
       closeConfirm();
     } catch (err) {
-      error.textContent = err.message || String(err);
-      error.hidden = false;
+      stopError.textContent = err.message || String(err);
+      stopError.hidden = false;
       closeConfirm();
     } finally {
       killYes.disabled = false;
@@ -1713,38 +1649,97 @@ function wireBasic() {
   });
 }
 
-/* ---------- 7. log ---------- */
+/* ---------- 7. the audit log ----------
 
-function logLine(event) {
-  var line = el('div', REFUSAL_TYPES[event.type] ? 'logline refusal' : 'logline');
-  line.appendChild(el('span', 'ts', '[' + clock(event.ts) + '] '));
-  line.appendChild(el('span', 'type', padEnd(event.type, 25)));
-  line.appendChild(el('span', 'msg', event.msg));
-  return line;
-}
+   It was a panel and it is the LOG overlay now. The renderer below is the one it always
+   had, unchanged: same classes, same hanging indent, same red on a refusal. What changed
+   is where it draws and how much of a line survives the drawing. In the panel a message
+   ran into the right edge of a quarter of the screen; in the overlay it has the width of
+   the window and wraps under its own column, so a line is read rather than guessed at.
 
-function renderLog(events) {
-  var box = $('log');
-  box.textContent = '';
-  for (var i = 0; i < events.length; i++) box.appendChild(logLine(events[i]));
+   The tail lives here whether or not anybody is looking at it. Lines arrive one at a time
+   over SSE and a store that only existed while the overlay was open would mean opening it
+   is what starts recording, which is the opposite of what an audit trail is for. */
+
+var LOG_EVENTS = [];
+/* The list element inside the open overlay, or null. */
+var LOG_VIEW = null;
+
+/* The line itself is drawn by ui/deck-views.js, so the trading window's LOG shows the same
+   thing this one does. What stays here is the store and the SSE tail feeding it. */
+
+function setLog(events) {
+  LOG_EVENTS = Array.isArray(events) ? events.slice(0, LOG_MAX_LINES) : [];
+  renderLog();
 }
 
 function appendLog(event) {
-  var box = $('log');
-  box.insertBefore(logLine(event), box.firstChild);
-  while (box.childElementCount > LOG_MAX_LINES) box.removeChild(box.lastChild);
+  LOG_EVENTS.unshift(event);
+  if (LOG_EVENTS.length > LOG_MAX_LINES) LOG_EVENTS.length = LOG_MAX_LINES;
+  if (!LOG_VIEW) return;
+  /* One line, prepended, rather than a rebuild of four hundred: the overlay is open in
+     front of somebody who is reading it, and rebuilding the list under them would throw
+     away their scroll position on every event the app records. */
+  LOG_VIEW.insertBefore(PhosphorViews.logLine(event), LOG_VIEW.firstChild);
+  while (LOG_VIEW.childElementCount > LOG_MAX_LINES) LOG_VIEW.removeChild(LOG_VIEW.lastChild);
+}
+
+function renderLog() {
+  if (!LOG_VIEW) return;
+  LOG_VIEW.textContent = '';
+  if (!LOG_EVENTS.length) {
+    LOG_VIEW.appendChild(el('div', 'faint', 'nothing recorded yet'));
+    return;
+  }
+  for (var i = 0; i < LOG_EVENTS.length; i++) LOG_VIEW.appendChild(PhosphorViews.logLine(LOG_EVENTS[i]));
 }
 
 /* ---------- refresh and events ---------- */
 
+/* The ETag of the state we are currently showing. Held in memory only, so a reload always
+   starts from a full read and can never inherit a stale one. */
+var STATE_ETAG = null;
+
+/* A state read that can come back "nothing changed".
+   The server pushes a state signal on a timer whether or not anything moved, and the body is
+   byte-identical almost every time. Asking conditionally turns that case into a 304, and the
+   caller skips the rebuild instead of repainting identical pixels. Returns null for unchanged. */
+async function getState() {
+  var headers = { accept: 'application/json' };
+  if (STATE_ETAG) headers['if-none-match'] = STATE_ETAG;
+  var res = await fetch('/api/state', { headers: headers });
+  if (res.status === 304) return null;
+  if (!res.ok) throw new Error('/api/state returned ' + res.status);
+  // Read the tag from the response we are about to apply, so the two can never drift apart.
+  STATE_ETAG = res.headers.get('etag');
+  return res.json();
+}
+
+/* Set when a state signal arrived with the window hidden, so the way back is a real read. */
+var STATE_MISSED_WHILE_HIDDEN = false;
+
 async function refreshState() {
+  /* A hidden window is minimised or on another Space: there is nothing to paint, and the timers
+     that drive this keep firing regardless. Note that a signal came and answer it on the way
+     back, so what appears when the window returns is current rather than whatever was last drawn. */
+  if (document.hidden) {
+    STATE_MISSED_WHILE_HIDDEN = true;
+    return;
+  }
   if (REFRESH_INFLIGHT) {
     REFRESH_QUEUED = true;
     return;
   }
   REFRESH_INFLIGHT = true;
   try {
-    STATE = await getJson('/api/state');
+    var next = await getState();
+    if (next === null) {
+      // Unchanged. The round trip still succeeded, so the app is demonstrably reachable and any
+      // earlier "cannot reach" line should clear exactly as it would after a full read.
+      alertLine(null);
+      return;
+    }
+    STATE = next;
     // Settled before the renders, not after: drawDonut asks whether the panel is still
     // waiting, and it must already have the answer by the time the wallet draws.
     settled('state');
@@ -1771,11 +1766,17 @@ async function refreshState() {
   }
 }
 
+/* The other half of the rule above: coming back into view is itself a reason to read.
+   Only when something was actually missed, so merely switching Spaces costs nothing. */
+document.addEventListener('visibilitychange', function () {
+  if (document.hidden || !STATE_MISSED_WHILE_HIDDEN) return;
+  STATE_MISSED_WHILE_HIDDEN = false;
+  refreshState();
+});
+
 async function refreshLog() {
   try {
-    var events = await getJson('/api/log?limit=200');
-    settled('log');
-    renderLog(events);
+    setLog(await getJson('/api/log?limit=200'));
   } catch (err) {
     alertLine('cannot read the log: ' + (err.message || String(err)));
   }
@@ -1803,11 +1804,13 @@ function openEvents() {
     // the calls stop. Carries nothing, so there is nothing to refetch.
     else if (payload.type === 'activity') { if (window.PhosphorPresence) PhosphorPresence.note(); }
     else if (payload.type === 'log' && payload.event) appendLog(payload.event);
-    // Only refetched once the panel has been opened: a gas receipt landing behind a tab
-    // nobody is looking at is not worth a round trip.
-    else if (payload.type === 'transactions') {
-      if (TX_LOADED) refreshTransactions();
-    }
+    // The in-app driver talking. Forwarded rather than handled here: the transcript is owned by
+    // driver-chat.js, which is mounted on both the pro deck and the basic screen.
+    else if (payload.type === 'driver' && payload.event) { if (window.PhosphorChat) PhosphorChat.push(payload.event); }
+    // Only refetched while somebody is looking at it: a gas receipt landing behind a closed
+    // overlay is not worth a round trip, and opening it reads afresh anyway. The call is a
+    // no-op when the overlay is shut, which is where that decision is made.
+    else if (payload.type === 'transactions') PhosphorViews.transactionsRefresh();
     else if (payload.type === 'candles') candlesPushed();
     // A chart change from an agent. Our own writes come back with a revision we already
     // know, and chartPushed drops those rather than repainting over the hand.
@@ -1815,46 +1818,107 @@ function openEvents() {
   });
 }
 
-/* ---------- wiring ---------- */
+/* ---------- the deck bar and its overlays ----------
 
-/* Start a fresh agent in a new terminal, and take the seat off whatever held it.
+   Three buttons, one modal (ui/overlay.js). Each of these builds a view and hands back the
+   elements the renderers write into; closing drops those references, which is what stops a
+   live SSE line or a gas receipt from being drawn into a box that is no longer on screen.
 
-   The window could already STOP an agent in three ways and start one in none, so the first
-   step of using this product was leaving it. The confirm is not ceremony: the agent that gets
-   dropped may be mid-conversation, and losing that is not recoverable from here.
+   None of them is a copy of a panel with more room. The log prints whole lines instead of
+   clipped ones, the policy shows the numbers the sentences were rendered from, and the
+   history gets the eight columns it never fitted. That is the point of the move. */
 
-   The response is not awaited for effect on this page. The seat change arrives as a state
-   push and the new agent announces itself on its first heartbeat, so the bar updates through
-   the same path it always does rather than through a special case for this button. */
-/* One summon path, called from the pro button and the basic START button. The seat change
-   arrives as a state push and the new agent announces itself on its first heartbeat, so the
-   bar updates through the same path it always does rather than a special case for the button. */
-async function runSummon(btn, question) {
-  if (SUMMON_PENDING) return;
-  if (question && !window.confirm(question)) return;
-  SUMMON_PENDING = true;
-  btn.disabled = true;
-  try {
-    var answer = await postJson('/api/summon', { token: TOKEN });
-    alertLine(answer && answer.dropped
-      ? 'new agent starting; dropped ' + answer.dropped
-      : 'new agent starting in a terminal window');
-  } catch (err) {
-    alertLine('summon failed: ' + (err.message || String(err)));
-  } finally {
-    SUMMON_PENDING = false;
-    btn.disabled = false;
+function openLogOverlay(trigger) {
+  PhosphorOverlay.open({
+    title: 'LOG',
+    trigger: trigger,
+    build: function (box) {
+      box.appendChild(el('p', 'ovl-note', 'Everything this app recorded, newest first. Nothing here is shortened.'));
+      LOG_VIEW = el('div', 'log');
+      box.appendChild(LOG_VIEW);
+      // Draw the tail we already hold, then read again: the overlay is never empty while a
+      // fetch is in flight, and it is never stale once that fetch lands.
+      renderLog();
+      refreshLog();
+    },
+    onClose: function () {
+      LOG_VIEW = null;
+    }
+  });
+}
+
+function openPolicyOverlay(trigger) {
+  PhosphorOverlay.open({
+    title: 'POLICY',
+    trigger: trigger,
+    build: function (box) {
+      PhosphorViews.policy(box, STATE);
+    }
+  });
+}
+
+function openHistoryOverlay(trigger) {
+  PhosphorOverlay.open({
+    title: 'HISTORY',
+    trigger: trigger,
+    build: function (box) {
+      PhosphorViews.transactions(box, alertLine);
+    },
+    onClose: PhosphorViews.transactionsClosed
+  });
+}
+
+function wireDeckBar() {
+  var buttons = [
+    { id: 'open-log', open: openLogOverlay },
+    { id: 'open-policy', open: openPolicyOverlay },
+    { id: 'open-history', open: openHistoryOverlay }
+  ];
+  for (var i = 0; i < buttons.length; i++) {
+    (function (spec) {
+      var btn = $(spec.id);
+      if (!btn) return;
+      btn.addEventListener('click', function () {
+        spec.open(btn);
+      });
+    })(buttons[i]);
   }
 }
 
-function wireSummon() {
-  var btn = document.getElementById('summon-btn');
-  if (!btn) return;
-  btn.addEventListener('click', function () {
-    runSummon(btn, 'Start a new agent in a terminal window? Any agent connected now is dropped and loses its conversation.');
+/* The agent panel, in the box the log used to hold. driver-chat.js owns everything inside
+   it, including the rule that it never renders an approval.
+
+   Every line of the intro is a true statement about the agent being started, checked against
+   operator/driver.settings.json and against the runtime check in src/driver.ts: the deny list
+   there takes Bash, Read, Write, WebFetch and WebSearch away, and assertSurface kills the
+   session if the tool list the child announces holds anything outside mcp__phosphor__. It is
+   a boot print, not a loading animation, so what it says has to keep being true. */
+var AGENT_INTRO = [
+  'PHOSPHOR // AGENT LINK',
+  'spawning a local agent under this window',
+  'tool surface: phosphor only, checked on connect',
+  'no shell, no files, no web of its own',
+];
+
+function mountChat() {
+  if (!window.PhosphorChat) return;
+  PhosphorChat.mount($('agent-chat'), {
+    intro: AGENT_INTRO,
+    /* The character fall, the same one every other change on this surface runs through.
+       ui/basic.css states why the calm screen is handed 'fade' instead. */
+    veil: 'rain',
+    colorVar: '--green',
+    startLabel: 'START THE AGENT',
+    idleNote: 'no agent is running',
+    stopLabel: 'STOP AGENT',
+    stopQuestion: 'stop the agent? the conversation is lost.',
+    stopYes: 'YES, STOP',
+    stopNo: 'CANCEL',
+    jumpLabel: 'LATEST',
   });
 }
-var SUMMON_PENDING = false;
+
+/* ---------- wiring ---------- */
 
 function wireKill() {
   $('kill-btn').addEventListener('click', async function () {
@@ -1899,6 +1963,15 @@ function wireWallet() {
 }
 
 function wireResize() {
+  /* A splitter drag resizes two panels without resizing the window, and the frames are box
+     drawing measured in characters: they have to be redrawn on the frame the boundary moved,
+     not 120ms after it stops. ui/split.js fires this once per animation frame while a handle
+     is moving, and a plain resize once on release for everything below. */
+  window.addEventListener('phosphor:split', function () {
+    layoutFrames();
+    drawDonut();
+  });
+
   var timer = null;
   window.addEventListener('resize', function () {
     if (timer) clearTimeout(timer);
@@ -1914,16 +1987,20 @@ function wireResize() {
 }
 
 async function boot() {
+  /* Before applyCollapse, and the order matters: a panel's height depends on how wide its
+     column is, so the columns are restored to what a person left them at before anything
+     measures a panel. Guarded because a missing splitter is a deck that cannot be resized,
+     not a deck that fails to draw. */
+  if (window.splitBoot) window.splitBoot();
   applyCollapse();
   // Before the first fetch, not after: the point of it is the second the page is on screen
   // with nothing in it, and paint order is the whole feature.
   paintWaiting();
   wireKill();
-  wireSummon();
   wireCollapse();
   wireWallet();
-  wireTabs();
-  wireTransactions();
+  wireDeckBar();
+  mountChat();
   wireResize();
   wireBasic();
   // The chart owns its own fetch loop and its own timers (see ui/chart.js), so it boots
@@ -1938,6 +2015,9 @@ async function boot() {
   }
   await refreshState();
   await refreshLog();
+  // The transcript and the driver's own state, once. Everything after this arrives on the
+  // event stream and is pushed into the chat by openEvents() below.
+  if (window.PhosphorChat) PhosphorChat.load();
   openEvents();
 }
 
