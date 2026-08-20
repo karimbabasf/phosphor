@@ -106,3 +106,32 @@ test('resolveClaudeBin refuses a configured path that does not exist', () => {
   // program gets to drive a wallet.
   assert.throws(() => resolveClaudeBin('/nowhere/claude'), /does not exist/);
 });
+
+test('buildArgv names a model only when one was chosen', () => {
+  // Unset, Claude Code inherits the machine's own default, which is a decision nobody in this
+  // app made and on most installs is the slowest model available. The flag is how the app takes
+  // that decision back, so the absence of the flag has to stay a deliberate, visible state.
+  const bare = buildArgv({ repo: '/repo', nodeBin: '/n', settings: '/s.json', sessionId: 'x' });
+  assert.ok(!bare.includes('--model'));
+
+  const chosen = buildArgv({ repo: '/repo', nodeBin: '/n', settings: '/s.json', sessionId: 'x', model: 'sonnet' });
+  assert.equal(chosen[chosen.indexOf('--model') + 1], 'sonnet');
+});
+
+test('buildArgv keeps the lockdown flags when a model and a prompt are both set', () => {
+  // The regression this guards: a flag appended after the lockdown flags is easy to write in a
+  // way that lands before --strict-mcp-config or replaces --permission-mode. Both would be
+  // silent, and both would end the isolation.
+  const argv = buildArgv({
+    repo: '/repo',
+    nodeBin: '/n',
+    settings: '/s.json',
+    sessionId: 'x',
+    model: 'sonnet',
+    systemPrompt: 'you are phosphor',
+  });
+  assert.ok(argv.includes('--strict-mcp-config'));
+  assert.equal(argv[argv.indexOf('--permission-mode') + 1], 'dontAsk');
+  assert.ok(argv.includes('--setting-sources='));
+  assert.equal(argv[argv.indexOf('--append-system-prompt') + 1], 'you are phosphor');
+});

@@ -171,7 +171,7 @@ function wireShutdown(): void {
 const INSTRUCTIONS = [
   'You are connected to Phosphor, a local app that holds real funds. Assume this role now and keep it for the whole session: you are the operator of Phosphor, the person who makes things happen in it. The app is the car and you are the person with the key.',
   '',
-  'FIRST ACTION, before you answer the human at all: call the `start` tool and print its `banner` field verbatim inside a code block, exactly as it arrives. Do not summarise it, redraw it, translate it or add to it. `start` also returns the full index of everything you can do, so read that index instead of guessing.',
+  'ORIENT YOURSELF WITH `start` unless you were already given the index. It returns the live state (network, wallet, whether a decision is waiting, the approval threshold, which window the human is looking at) and the full index of every capability beside the tool that performs it. Read that index instead of guessing. It also returns a `banner`, which is a boot screen for a terminal: print it only when your human is watching a terminal, and never into an app window, which draws its own.',
   '',
   'RULES, all of them properties of the code rather than requests:',
   '1. You DRIVE this app. You do not DEVELOP it. Never edit, write or run code in the Phosphor repository, and never change its config. If something needs changing, say so and let a human open a separate development session. Proposing a rule change through `propose_policy_change` is the one legitimate way you change how Phosphor behaves.',
@@ -287,13 +287,13 @@ const CANNOT_APPROVE =
 registerRead(
   'start',
   [
-    'CALL THIS FIRST, before anything else, the moment you connect.',
+    'Where you are and what you can do, in one call.',
     '',
-    'Returns the Phosphor greeting and the complete index of what you can do. The `banner` field',
-    'is a finished terminal banner: print it verbatim inside a code block before you say anything',
-    'else, without redrawing or summarising it. It carries the live state a human needs to see at',
-    'a glance: which network, what the wallet is worth, whether a decision is waiting, what the',
-    'approval threshold is, and which window they are looking at.',
+    'Returns the live state and the complete index of what you can do. The state is which network,',
+    'what the wallet is worth, whether a decision is waiting, what the approval threshold is, and',
+    'which window the human is looking at. The `banner` field is that state drawn as a terminal boot',
+    'screen: print it only if your human is watching a terminal, and never into an app window, which',
+    'draws its own and does not want a second one.',
     '',
     'The `capabilities` field names every capability with the exact tool that performs it, and says',
     'which to reach for where two tools overlap. Read it instead of guessing, and never ask a human',

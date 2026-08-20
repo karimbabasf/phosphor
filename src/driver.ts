@@ -56,6 +56,12 @@ export type DriverOptions = {
   nodeBin?: string;
   claudeBin?: string;
   systemPrompt?: string;
+  // Which model drives. Left unset, Claude Code picks whatever the machine's own default is,
+  // which is nobody's decision and on most installs is the slowest option available. Driving a
+  // chart is not the work a frontier model exists for, and the difference is seconds a human
+  // spends watching a window do nothing. See DEFAULT_MODEL in src/server.ts for the choice and
+  // the reason it is safe to make.
+  model?: string;
   onEvent: (event: DriverEvent) => void;
 };
 
@@ -132,6 +138,7 @@ export function buildArgv(opts: {
   settings: string;
   sessionId: string;
   systemPrompt?: string;
+  model?: string;
 }): string[] {
   const mcp = JSON.stringify({
     mcpServers: { phosphor: { command: opts.nodeBin, args: [path.join(opts.repo, 'src', 'mcp.ts')] } },
@@ -159,6 +166,7 @@ export function buildArgv(opts: {
     '--session-id',
     opts.sessionId,
   ];
+  if (opts.model) argv.push('--model', opts.model);
   if (opts.systemPrompt) argv.push('--append-system-prompt', opts.systemPrompt);
   return argv;
 }
@@ -283,6 +291,7 @@ export function createDriver(opts: DriverOptions) {
       settings,
       sessionId,
       systemPrompt: opts.systemPrompt,
+      model: opts.model,
     });
 
     /* detached, so the child leads its own process group and kill() below can take the group
@@ -346,6 +355,31 @@ export function createDriver(opts: DriverOptions) {
     set('thinking');
   }
 
+  /* Stop THIS answer without stopping the agent.
+     Before this existed there was one way out of a turn that had gone wrong, which was killing
+     the session, and killing the session throws away the conversation with it. So a human who
+     asked the wrong question, or watched the agent set off down a nine-call analysis they did
+     not want, paid for it with everything said so far plus a cold start. That is the difference
+     between an app you interrupt and an app you wait for.
+     The mechanism is Claude Code's control channel on the same stdin the turns go down: a
+     request with subtype `interrupt`. The child answers with a `control_response`, which this
+     parser ignores by design (onLine acts on named event types and nothing else), and then emits
+     the ordinary `result` event for the aborted turn, which is what returns the state to ready.
+     Guarded on `thinking` because an interrupt sent to an idle child is a request with no turn
+     to cancel, and the answer to it is an error the human did not cause. */
+  function interrupt(): boolean {
+    if (!child || state !== 'thinking') return false;
+    const request = { type: 'control_request', request_id: randomUUID(), request: { subtype: 'interrupt' } };
+    try {
+      child.stdin.write(`${JSON.stringify(request)}\n`);
+    } catch {
+      // The pipe closes when the child dies first, and a dead child needs no interrupting.
+      return false;
+    }
+    set('ready', 'the human stopped this answer');
+    return true;
+  }
+
   // Signals go to the group, negated pid, so the agent and the MCP proxy it spawned both stop.
   // A group that has already gone produces ESRCH, which is the outcome asked for and not an
   // error worth surfacing.
@@ -404,6 +438,7 @@ export function createDriver(opts: DriverOptions) {
   return {
     start,
     send,
+    interrupt,
     stop,
     status: () => ({ state, sessionId, running: child !== null }),
   };

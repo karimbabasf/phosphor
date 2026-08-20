@@ -294,6 +294,6 @@ export function buildGreeting(f: GreetingFacts, version: string): Greeting {
     capabilities: CAPABILITIES,
     rules: OPERATING_RULES,
     printing:
-      'Print the banner field verbatim inside a code block, exactly as it arrived, before you say anything else. Do not summarise it, redraw it or add to it. Use bannerAnsi only if the human has told you their terminal renders ANSI colour.',
+      'The banner is drawn for a terminal. Print it only when your human is watching one, verbatim inside a code block and never redrawn or summarised, and use bannerAnsi only if they have said their terminal renders ANSI colour. In an app window, print nothing: the window has already introduced you and a second boot screen inside a conversation is noise. The facts are yours to use either way.',
   };
 }

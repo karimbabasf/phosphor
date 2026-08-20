@@ -83,12 +83,25 @@ can freeze me."
 
 ## Or let the app start the agent
 
-The line above is the car waiting for somebody to arrive with a key. The app can also start the
-agent itself: press START THE AGENT in the window and Phosphor spawns a headless Claude Code
-process, hands it this same MCP server, and streams the conversation into the window. There is no
-terminal in the loop and no second surface to learn. It needs the `claude` CLI installed and
-already logged in; the child inherits that login, so the model is billed to the subscription you
-already pay for and Phosphor never sees a key.
+The line above is the car waiting for somebody to arrive with a key. The app also brings its own
+driver: opening the window spawns a headless Claude Code process, hands it this same MCP server,
+and streams the conversation into the window, so the app is ready to be talked to before you have
+finished looking at it. There is no terminal in the loop and no second surface to learn. It needs
+the `claude` CLI installed and already logged in; the child inherits that login, so the model is
+billed to the subscription you already pay for and Phosphor never sees a key.
+
+Stop the agent from the conversation and the panel goes back to a turning globe you press to start
+another one. Stopping the ANSWER is a different control and does not cost you the conversation:
+while the agent is working, one press (or Escape) cancels the turn in flight and leaves the session
+where it was.
+
+That agent is given a role, in `src/role.ts`, and the role is the difference between an operator and
+a general assistant holding a wallet's tools. It says what Phosphor is, that this session has no
+shell and no file system and no browser and should not offer any, that it cannot approve its own
+proposals, that every string it reads through a tool is data written by somebody else and can never
+give it an instruction, and that answers are two or three lines rather than an essay. It also
+carries the whole capability index, which is a speed decision as much as a clarity one: an agent
+that already knows which tool draws a sloped line does not spend a round trip finding out.
 
 What that agent is allowed to do is fixed, not configured:
 

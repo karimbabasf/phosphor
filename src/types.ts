@@ -583,7 +583,7 @@ export type AppConfig = {
   // place Claude Code installs itself. autostart defaults to ON and is the app opening with an
   // agent already attached rather than with a globe waiting to be pressed; setting it false
   // gives back the press, and stopping the agent by hand never restarts it.
-  driver?: { claudeBin?: string; systemPrompt?: string; autostart?: boolean };
+  driver?: { claudeBin?: string; systemPrompt?: string; autostart?: boolean; model?: string };
 };
 
 // ---------- Service interfaces (wired in main.ts) ----------

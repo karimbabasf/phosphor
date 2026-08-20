@@ -61,6 +61,7 @@ import { buildTransactions, createGasCache, evmCandidates } from './transactions
 import type { TxPlace } from './transactions.ts';
 import { gateRequired, gateBanner } from './policy/gate.ts';
 import { buildGreeting } from './greeting.ts';
+import { buildRole } from './role.ts';
 import { buildMandateCatalog } from './strategy/catalog.ts';
 import { VERSION } from './version.ts';
 import { renderSentences } from './policy/render.ts';
@@ -85,6 +86,17 @@ import { analysisHandlers } from './analysis/index.ts';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_DIR = path.join(__dirname, '..', 'ui');
 const PROJECT_DIR = path.join(__dirname, '..');
+
+/* Which model the app's own agent runs, when config does not say.
+   Left unset, Claude Code inherits whatever this machine's default is, which on most installs is
+   the largest and slowest model available. That is the wrong default here and the reason is not
+   frugality: the work is picking a tool out of a named index and calling it, a human is watching
+   the window while it happens, and the seconds spent are the whole experience of using this app.
+   Nothing about safety rides on the choice. The model cannot approve anything, cannot execute a
+   write, cannot reach a key and cannot hold a tool outside Phosphor's own surface; those are
+   properties of src/policy, of the approval gate, and of assertSurface in src/driver.ts, and they
+   are identical whichever model is in the seat. Set `driver.model` in config.json to override. */
+const DEFAULT_MODEL = 'sonnet';
 
 const HOST = '127.0.0.1';
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -325,7 +337,15 @@ export function createServer(deps: ServerDeps): PhosphorServer {
             repo: PROJECT_DIR,
             port: cfg.port,
             claudeBin: cfg.driver?.claudeBin,
-            systemPrompt: cfg.driver?.systemPrompt,
+            model: cfg.driver?.model ?? DEFAULT_MODEL,
+            /* The role, and the reason it is a default rather than a config field with no value.
+               An agent given no role is a general assistant holding a wallet's tools: it offers
+               to write code it cannot write, it asks which screen you meant, and it treats a
+               token name as something that can tell it what to do. src/role.ts is the answer to
+               all three. A `driver.systemPrompt` in config still wins outright, because somebody
+               running their own Phosphor should be able to change how their own agent talks. */
+            systemPrompt:
+              cfg.driver?.systemPrompt ?? buildRole({ root: PROJECT_DIR, view: getView(), network: cfg.network }),
             onEvent: driverEvent,
           });
     }
@@ -1046,6 +1066,20 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         audit.append('driver_prompt', `human to the agent: ${text}`, { chars: text.length });
         driverEvent({ kind: 'said', text });
         return sendJson(res, 200, { ok: true, ...instance.status() });
+      }
+
+      /* Stop the answer, not the agent. A separate action from `stop` because they are separate
+         intentions and the app should never make a human choose the destructive one to get the
+         cheap one: `interrupt` ends the turn in flight and keeps the conversation, `stop` ends
+         the session and throws it away. It is audited like everything else, because "the agent
+         went quiet halfway through" is a question somebody will ask the log later. */
+      if (action === 'interrupt') {
+        const stopped = instance.interrupt();
+        if (stopped) {
+          audit.append('driver_prompt', 'the human stopped the answer in progress', { interrupted: true });
+          driverEvent({ kind: 'status', state: 'ready', detail: 'the human stopped this answer' });
+        }
+        return sendJson(res, 200, { ok: true, interrupted: stopped, ...instance.status() });
       }
 
       if (action === 'stop') {
