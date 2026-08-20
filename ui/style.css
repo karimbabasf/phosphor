@@ -1613,3 +1613,10 @@ body.splitting-y, body.splitting-y * { cursor: row-resize; }
   padding: 4px 6px;
   margin: 0 0 8px;
 }
+
+/* The basic screen's one line about earning. Same weight as the places line under it:
+   it is a fact about the money, not an advertisement for a feature. */
+.basic-earning {
+  color: var(--green-dim);
+  margin: 4px 0 0;
+}

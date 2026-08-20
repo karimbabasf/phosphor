@@ -775,3 +775,80 @@ test('a zero-priced draft drops the money clause rather than wording around it',
   );
   assert.match(priced.recent[0]!.headline, /\$105\.00 of your/);
 });
+
+// ---------- the earning line ----------
+//
+// The rule this screen keeps is that it may render fewer WORDS, never fewer FACTS. Money
+// that is earning is a fact, so it gets a sentence. A RATE is not on this screen at all,
+// and that is the deliberate part: a percentage is the piece of a yield product most
+// likely to be heard as a promise, and this reader has nothing to check it against.
+
+function yieldRow(over: Partial<WalletRow> = {}): WalletRow {
+  return {
+    kind: 'yield',
+    chain: 'arb',
+    symbol: 'USDC earning',
+    tokenId: '0x460b97BD498E1157530AEb3086301d5225b91216',
+    quantity: 56.292142,
+    priceUsd: 1,
+    valueUsd: 56.292142,
+    share: 0.2,
+    native: false,
+    yield: {
+      venue: 'aave-v3',
+      receiptSymbol: 'aArbSepUSDC',
+      receipt: '0x460b97BD498E1157530AEb3086301d5225b91216',
+      principalUsd: 56.292032,
+      earnedUsd: 0.00011,
+    },
+    ...over,
+  };
+}
+
+test('no money earning means no sentence at all, not an empty one', () => {
+  assert.equal(buildBasic(baseInput()).earning, null);
+});
+
+test('money that is earning gets one sentence, and it carries NO percentage', () => {
+  const view = buildBasic(
+    baseInput({ wallet: { rows: [yieldRow()], totalUsd: 100, byChain: { arb: 100 }, stale: [], emptyCount: 0 } }),
+  );
+  assert.ok(view.earning !== null);
+  assert.match(view.earning, /\$56\.29 of your money is earning interest/);
+  // The whole point of the line. A rate here would be read as a promise.
+  assert.doesNotMatch(view.earning, /%/);
+  assert.doesNotMatch(view.earning, /APY|APR|annualis/i);
+});
+
+test('a sub-cent gain says so in words rather than printing $0.00', () => {
+  // $0.00 next to "is earning interest" tells this reader the thing is not working, which
+  // is the opposite of true. Yield is sub-cent for hours on any real amount.
+  const view = buildBasic(
+    baseInput({ wallet: { rows: [yieldRow()], totalUsd: 100, byChain: { arb: 100 }, stale: [], emptyCount: 0 } }),
+  );
+  assert.match(view.earning ?? '', /has not made a full cent yet/);
+  assert.doesNotMatch(view.earning ?? '', /\$0\.00/);
+});
+
+test('past a cent it prints the amount', () => {
+  const row = yieldRow();
+  const view = buildBasic(
+    baseInput({
+      wallet: {
+        rows: [{ ...row, yield: { ...row.yield!, earnedUsd: 0.41 } }],
+        totalUsd: 100, byChain: { arb: 100 }, stale: [], emptyCount: 0,
+      },
+    }),
+  );
+  assert.match(view.earning ?? '', /It has made \$0\.41 so far\./);
+});
+
+test('a stale chain suppresses the earning line, like every other number here', () => {
+  // Tied to the same condition that nulls the total. A figure here next to "still checking"
+  // would be the one number on screen claiming to be current when nothing else is.
+  const view = buildBasic(
+    baseInput({ wallet: { rows: [yieldRow()], totalUsd: 100, byChain: { arb: 100 }, stale: ['near'], emptyCount: 0 } }),
+  );
+  assert.equal(view.totalUsd, null);
+  assert.equal(view.earning, null);
+});

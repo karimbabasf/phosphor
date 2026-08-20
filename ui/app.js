@@ -1527,6 +1527,13 @@ function renderBasic(s) {
 
   $('basic-headline').textContent = b.headline;
   $('basic-agent').textContent = b.agentLine;
+  var earning = $('basic-earning');
+  if (earning) {
+    // Rendered verbatim. This screen composes no sentence about money: every string comes
+    // from src/view/basic.ts, which is what lets the two modes be asserted to agree.
+    earning.textContent = b.earning || '';
+    earning.hidden = !b.earning;
+  }
   $('basic-footer').textContent = b.footer;
 
   lastBasic = b;

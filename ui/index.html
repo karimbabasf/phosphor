@@ -246,6 +246,12 @@
       <p class="basic-total" id="basic-total">--</p>
       <p class="basic-headline" id="basic-headline">--</p>
       <p class="basic-places" id="basic-places"></p>
+      <!-- One sentence, and no percentage. See the comment above `earning` in
+           src/view/basic.ts: a rate is the part of a yield product most likely to be
+           heard as a promise, and this reader has nothing to check it against.
+           Hidden rather than emptied, so an empty line does not sit here reserving space
+           for a fact that does not exist yet. -->
+      <p class="basic-earning" id="basic-earning" hidden></p>
       <!-- The standing promise, and the one line here that is never folded away: it says
            whether money can move without you being asked, which is a fact about where
            money goes, and those do not go behind a button. -->

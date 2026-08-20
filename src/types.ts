@@ -545,6 +545,11 @@ export type BasicView = {
   prices: BasicPrice[];
   recent: BasicRecent[]; // newest first, capped; empty is a designed state, not a bug
   actions: BasicAction[]; // the other half of the history: what the assistant did
+  // One sentence about money that is earning, or null when none is. Deliberately carries
+  // NO percentage: this screen exists for someone who owns the money and is not technical,
+  // and a rate is the part of a yield product most likely to be read as a promise. The
+  // dollars are the fact. The rate, its window and its caveat live on the pro screen.
+  earning: string | null;
 };
 
 // ---------- Audit ----------

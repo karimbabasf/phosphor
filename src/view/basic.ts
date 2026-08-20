@@ -749,6 +749,25 @@ export function buildBasic(input: BasicInput): BasicView {
   else if (!gateRequired) footer = 'You will NOT be asked before money moves.';
   else footer = 'You will be asked before anything moves.';
 
+  // One sentence about money that is earning, built from the wallet's own yield rows so
+  // this screen and the pro screen cannot disagree about the amount.
+  //
+  // No percentage, on purpose. This reader owns the money and is not technical, and a rate
+  // is the part of a yield product most likely to be heard as a promise about the future.
+  // The dollars are a fact about the past. Suppressed entirely while the total is null, for
+  // the same reason the holdings list is: a number here, next to "still checking", would be
+  // the one figure on screen claiming to be current when nothing else is.
+  const earningRows = wallet.rows.filter(r => r.kind === 'yield');
+  let earning: string | null = null;
+  if (totalUsd !== null && earningRows.length > 0) {
+    const working = earningRows.reduce((sum, r) => sum + (r.yield?.principalUsd ?? 0), 0);
+    const made = earningRows.reduce((sum, r) => sum + (r.yield?.earnedUsd ?? 0), 0);
+    // Yield is sub-cent for hours. money() would print $0.00 and tell this reader the thing
+    // is not working, which is the opposite of true, so the small case gets its own words.
+    const madeLine = made < 0.01 ? 'It has not made a full cent yet.' : `It has made ${money(made)} so far.`;
+    earning = `${money(working)} of your money is earning interest. ${madeLine}`;
+  }
+
   return {
     tone,
     totalUsd,
@@ -759,6 +778,7 @@ export function buildBasic(input: BasicInput): BasicView {
     warning,
     agentLine,
     footer,
+    earning,
     // Tied to the same condition that nulls the total. A holdings list with a chain
     // missing from it looks exactly like the holdings list of someone who owns less,
     // and this reader has nothing to check it against.
