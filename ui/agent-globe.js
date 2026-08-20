@@ -3,21 +3,26 @@
  * ONE job: say what the agent is doing without a word. It does that in two places, and they
  * are the same drawing on purpose rather than two pictures that nearly agree:
  *
- *   the idle panel   no agent. It is the whole panel, it turns, and it says "press me".
- *   the link badge   an agent. It is about forty pixels in the corner of the live panel, and
- *                    it turns fast and bright while the agent works, slow and dim while it
- *                    waits, and holds one still frame when it is stopped.
+ *   the idle globe   NO AGENT. It is the whole panel, it turns at one speed, and it says
+ *                    "press me", because the layer around it is the button that starts one.
+ *   the link badge   AN AGENT, AND HOW HARD IT IS WORKING. About forty pixels in the corner of
+ *                    a booting or live panel: fast and bright while the agent writes, slow and
+ *                    dim while it waits. It is not a light for a dead process. When the agent
+ *                    goes, the panel goes back to the idle globe, which says the same thing far
+ *                    louder, and the badge is taken off the screen rather than dulled.
  *
- * The badge is why `tune` and `hold` exist; everything else here was already what the idle
- * globe needed. Neither the speed nor the brightness is decided in this file: whoever mounts
- * a globe says what each state looks like, and this draws it.
+ * The badge is why `tune` exists; everything else here was already what the idle globe needed.
+ * Neither the speed nor the brightness is decided in this file: whoever mounts a globe says
+ * what each state looks like, and this draws it.
  *
- * WHY A GLOBE AND NOT THE ORB. ui/presence.js already draws a ball, and it means something
- * else: it is the seat light, and it is on when an agent is WORKING. Two lit balls on one
- * screen saying different things is worse than either alone, so this is a wireframe sphere,
- * a shape the orb never takes. It is Warden's motif (web/viz/shared/scene, gyro rings around
- * a core) flattened to 2D for the same reason presence.js flattened the orb: a shaded WebGL
- * planet would fight a CRT terminal.
+ * WHY A GLOBE AND NOT THE ORB. ui/presence.js already draws a ball in the status bar, and it
+ * answers a different question: whether ANY agent holds the MCP seat and is working, including
+ * one running in a terminal that window never started. Both globes here are about the panel
+ * they sit in and the single driver it owns. Two lit balls on one screen saying different
+ * things is worse than either alone, so this is a wireframe sphere, a shape the orb never
+ * takes. It is Warden's motif (web/viz/shared/scene, gyro rings around a core) flattened to 2D
+ * for the same reason presence.js flattened the orb: a shaded WebGL planet would fight a CRT
+ * terminal.
  *
  * WHAT IT COSTS. One rAF while it is running, and nothing at all otherwise. It stops itself
  * when the tab is hidden, because a globe nobody can see is a battery bill, and it draws one
@@ -405,19 +410,6 @@ var PhosphorGlobe = (function () {
         } catch (err) {
           /* a canvas already off the page has nothing to clear */
         }
-      },
-      /* Stop turning, and KEEP THE PICTURE. `stop` clears the canvas because the idle globe
-         leaves the page when it stops, and a canvas about to be hidden should not hold a
-         frame. The badge does not leave: a stopped agent still has a corner, and what that
-         corner has to say is "here, and not working", which is this shape standing still. */
-      hold: function () {
-        running = false;
-        if (raf) cancelAnimationFrame(raf);
-        raf = 0;
-        last = 0;
-        document.removeEventListener('visibilitychange', onVisibility);
-        resolve();
-        draw(clock || 2.4);
       },
       /* How fast and how loud, from here on. Applied to the next frame rather than to the
          canvas, so a badge that is already turning changes speed where it is. */

@@ -14,11 +14,19 @@
  *   live      the transcript and the prompt box. This is the phase the panel exists for.
  *   closing   the stop was confirmed. The panel is taken apart on screen and comes back idle.
  *
- * THE SAME GLOBE, TWICE. ui/agent-globe.js draws the idle phase, and it draws the small badge
- * in the corner of the live one, which is the only thing on this panel that says what the
- * agent is doing without a word: quick and bright while it writes, slow and dim while it
- * waits, one still frame when it is stopped. They are never on screen together and exactly one
- * of them is ever turning; setGlobes below is the only function allowed to touch either.
+ * THE SAME GLOBE, TWICE, ANSWERING TWO QUESTIONS. ui/agent-globe.js draws both of them.
+ * The big one fills the idle phase and says NO AGENT IS RUNNING HERE, which is why the whole
+ * layer around it is the button that starts one. The badge is forty pixels in the corner of a
+ * booting or live panel and says THIS PANEL'S DRIVER IS UP, plus how hard it is working, and
+ * it says it without a word: quick and bright while the agent writes, slow and dim while it
+ * waits. There is no third setting. A stopped agent is not a dull badge, it is the big globe.
+ * They are never on screen together and exactly one of them is ever turning; setGlobes below
+ * is the only function allowed to touch either.
+ *
+ * NEITHER OF THEM IS THE SEAT LIGHT. #agent-orb in the pro and trade status bar is a filled
+ * ball, and it is lit whenever ANY agent holds the MCP seat, including one running in a
+ * terminal this window never started (ui/presence.js). Both globes here are wireframe, both
+ * sit inside the panel, and both know about exactly one process: the driver this panel owns.
  *
  * THE RULE THAT DOES NOT BEND. Every string this file puts on screen is agent-authored or
  * human-authored text, and it reaches the DOM through textContent, never innerHTML. That is
@@ -448,15 +456,22 @@ var PhosphorChat = (function () {
      two numbers: how fast it turns and how loud it is. `thinking` is the one it exists for,
      and it is the only state that is unmistakably ALIVE at a glance from across a desk.
      `gain` multiplies whatever the surface asked for at mount, so the calm screen's louder
-     globe stays the louder one in every state. */
+     globe stays the louder one in every state.
+
+     THREE STATES AND NO FOURTH, AND THE MISSING ONE IS DELIBERATE. The badge used to carry a
+     dull, still setting for `stopped`, `off` and `failed`, and nobody could ever have seen it:
+     all three send the panel to idle, where the badge is hidden and the big globe is the whole
+     answer. So the badge is a light for a running driver and nothing else. "No agent" is said
+     once, by a globe that fills the panel and asks to be pressed, and a second quieter version
+     of the same sentence in the corner is worse than one answer: a reader who finds both has
+     to work out which of them is current.
+     These three are also exactly the states that can outlive a setGlobes call while the panel
+     is lit, because setState sends every other one to idle before it returns. */
   var BADGE_DRIVE = {
     thinking: { rate: 2.4, gain: 1.5 },
     starting: { rate: 1.7, gain: 1 },
     ready: { rate: 0.5, gain: 0.8 },
   };
-  /* Off, stopped, failed: a dead process, and the badge says so by not moving. Dimmer than
-     ready, because "there and resting" and "not there" have to differ at a glance. */
-  var BADGE_STILL = { rate: 0, gain: 0.42 };
 
   /* EXACTLY ONE GLOBE TURNS, and this is the only function that starts or stops either. The
      idle globe is the whole panel; the badge is forty pixels of the live one. They are never
@@ -479,11 +494,20 @@ var PhosphorChat = (function () {
       mount.badgeOrb.stop();
       return;
     }
-    var drive = BADGE_DRIVE[mount.driverState] || BADGE_STILL;
+    /* A state with no setting means a driver that is gone, which under a lit panel is the one
+       tick between that news arriving and setState landing the panel on the globe. Nothing is
+       drawn for it: the badge is already on its way off the screen, and a frame held in a
+       corner about to be hidden is a frame nobody sees.
+       typeof, not truthiness, for the reason toolLabel gives above: the state is a string off
+       the wire, and a lookup on a plain object hands back Object.prototype's own members for
+       one named `constructor`. */
+    var drive = BADGE_DRIVE[mount.driverState];
+    if (!drive || typeof drive.rate !== 'number') {
+      mount.badgeOrb.stop();
+      return;
+    }
     mount.badgeOrb.tune(drive);
-    // rate 0 is not a slow globe, it is a stopped one: one frame, kept, and no rAF at all.
-    if (drive.rate > 0) mount.badgeOrb.start();
-    else mount.badgeOrb.hold();
+    mount.badgeOrb.start();
   }
 
   /* ---------- phases ---------- */
@@ -798,7 +822,7 @@ var PhosphorChat = (function () {
        that goes, and the button around the idle one is what actually starts the agent. */
     var deadGlobe = function () {
       return {
-        start: function () {}, stop: function () {}, hold: function () {}, tune: function () {},
+        start: function () {}, stop: function () {}, tune: function () {},
         running: function () { return false; },
       };
     };

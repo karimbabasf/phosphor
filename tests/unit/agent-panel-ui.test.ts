@@ -167,6 +167,10 @@ function load(opts: { startFails?: string; driver?: Any; veilNeverFires?: boolea
         drive: null,
         start: () => { if (on) return; on = true; calls.push('start'); },
         stop: () => { on = false; calls.push('stop'); },
+        /* A tripwire, and the one method here the real object does not have. ui/agent-globe.js
+           dropped `hold` with the badge's dull state, so a panel that reached for it would
+           throw in a browser and print a stack about an undefined function. Recorded instead,
+           so the test below fails with the reason rather than with the symptom. */
         hold: () => { on = false; calls.push('hold'); },
         tune: (next: Any) => { globe.drive = next; },
         running: () => on,
@@ -463,10 +467,16 @@ test('a reload in the middle of a conversation goes back to the conversation, no
   assert.equal(h.phase(), 'live');
   h.tick(1000);
   assert.deepEqual(h.rows(), ['you|what do I hold?', 'agent|Nothing on any chain.']);
-  /* The panel is put back live before the driver state arrives, which is the one moment the
-     badge is up with nothing to report. It holds a still frame there rather than turning,
-     because a light that spins before anything is known is a light that lies. */
-  assert.equal(h.badge.calls.includes('hold'), true);
+  /* The panel is put back live one statement before the driver state arrives, which is the one
+     moment the badge is up with nothing to report. It draws NOTHING there rather than a dull
+     held frame: a light that spins before anything is known is a light that lies, and a light
+     dimmed to mean "no agent" is the big globe's sentence said quietly in a corner. The state
+     lands in the same synchronous turn, so what a person sees is a badge that starts turning. */
+  assert.deepEqual(
+    h.badge.calls,
+    ['stop', 'stop', 'start'],
+    'blank while the state is unknown, turning the moment it lands, and never held dull',
+  );
   assert.equal(h.badge.running(), true, 'and it is turning again once the state lands');
 });
 
@@ -602,9 +612,15 @@ test('a panel handed three plain strings still prints three plain rows', () => {
    Karim, 2026-08-20: "a warden globe that glows and is animated when working and dull when
    stopped." It is a status light, so what it has to get right is the state, and there is one
    thing under it that costs real battery: whether it is turning. A badge that keeps turning
-   after the agent has stopped is the whole failure. */
+   after the agent has stopped is the whole failure.
 
-test('the badge follows the driver and stands still when there is nothing to show', () => {
+   THE DULL HALF OF THAT SENTENCE IS THE BIG GLOBE, not a dull badge. `stopped`, `off` and
+   `failed` all send the panel to idle, where the badge is hidden and a globe that fills the
+   panel is the answer, so a dimmed badge could only ever have been drawn into a corner nobody
+   was looking at. The badge now has three settings, one per state a lit panel can be in, and
+   anything else takes it off the screen. */
+
+test('the badge has one setting per state a lit panel can be in, and no dull fourth', () => {
   const h = load();
   assert.equal(h.find('chat-badge').hidden, true, 'there is no link to report while the globe is the panel');
   assert.equal(h.badge.running(), false);
@@ -639,6 +655,44 @@ test('a stopped agent costs no frames, and the light is put away with the panel'
   assert.equal(h.phase(), 'idle');
   assert.equal(h.badge.running(), false, 'nothing is turning in a corner nobody can see');
   assert.equal(h.find('chat-badge').hidden, true);
+  assert.equal(
+    h.badge.calls.includes('hold'),
+    false,
+    'a dead driver takes the badge off the screen; it never holds a dull frame in a hidden corner',
+  );
+});
+
+/* The state that used to exist and could not be reached: every way an agent can end sends the
+   panel to the globe, so there is no path on which a dimmed badge is on screen. Driven the way
+   a real stop drives it, one route per ending, because the three do not share a branch. */
+test('every way an agent ends puts the badge away rather than dimming it', async () => {
+  for (const ending of ['stopped', 'off', 'failed']) {
+    const h = load();
+    h.chat.push({ kind: 'status', state: 'starting' });
+    h.tick(1000);
+    h.chat.push({ kind: 'status', state: 'thinking' });
+    assert.equal(h.badge.running(), true, `${ending}: the badge is up while the agent works`);
+
+    h.chat.push({ kind: 'status', state: ending });
+    h.tick(2000);
+    assert.equal(h.phase(), 'idle', `${ending}: lands on the globe`);
+    assert.equal(h.find('chat-badge').hidden, true, `${ending}: and the badge is gone with it`);
+    assert.equal(h.badge.calls.includes('hold'), false, `${ending}: never dimmed and kept`);
+    assert.equal(h.badge.running(), false, `${ending}: and never left turning`);
+  }
+
+  // The human's own stop, which is the route through the veil rather than through a status.
+  const h = load();
+  h.chat.push({ kind: 'status', state: 'starting' });
+  h.tick(1000);
+  h.chat.push({ kind: 'status', state: 'ready' });
+  h.find('chat-stop').fire('click');
+  h.find('chat-confirm-yes').fire('click');
+  h.tick(2000);
+  await flush();
+  assert.equal(h.phase(), 'idle', 'a confirmed stop lands on the globe');
+  assert.equal(h.find('chat-badge').hidden, true);
+  assert.equal(h.badge.calls.includes('hold'), false);
 });
 
 test('exactly one globe turns, whatever the panel is doing', () => {
