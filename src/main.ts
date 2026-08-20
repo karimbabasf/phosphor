@@ -275,6 +275,8 @@ const server = createServer({
   getView,
   setView,
   trade,
+  // Default ON. The window is meant to open ready to be talked to, not ready to be started.
+  autostart: cfg.driver?.autostart !== false,
 });
 
 setInterval(() => {

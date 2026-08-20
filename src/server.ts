@@ -207,6 +207,16 @@ export type ServerDeps = {
   getView: () => ViewMode;
   setView: (mode: ViewMode) => void;
   trade: TradeService;
+  /* Start the in-app agent when the port opens. OPT IN, and deliberately not read from cfg
+     here: every test in this repo builds a server and listens on it, and a flag that defaulted
+     to on would have each of them spawn a real Claude Code process. main.ts is the one caller
+     that passes it, and it is the one caller that is an app. */
+  autostart?: boolean;
+  /* Injected only so a test can drive the start paths without a real Claude Code process
+     appearing on the machine. main.ts never passes it, and nothing here can loosen the
+     lockdown through it: the tool surface is fixed in operator/driver.settings.json and
+     checked again at runtime inside src/driver.ts. */
+  makeDriver?: () => Driver;
 };
 
 // http.Server plus an explicit push so the wiring layer can signal the UI after
@@ -309,15 +319,40 @@ export function createServer(deps: ServerDeps): PhosphorServer {
 
   function getDriver(): Driver {
     if (driver === null) {
-      driver = createDriver({
-        repo: PROJECT_DIR,
-        port: cfg.port,
-        claudeBin: cfg.driver?.claudeBin,
-        systemPrompt: cfg.driver?.systemPrompt,
-        onEvent: driverEvent,
-      });
+      driver = deps.makeDriver
+        ? deps.makeDriver()
+        : createDriver({
+            repo: PROJECT_DIR,
+            port: cfg.port,
+            claudeBin: cfg.driver?.claudeBin,
+            systemPrompt: cfg.driver?.systemPrompt,
+            onEvent: driverEvent,
+          });
     }
     return driver;
+  }
+
+  /* Starting the agent, from either door: a human pressing the globe, or the app opening.
+
+     The seat is taken away FIRST, and that order is not cosmetic: the agent this is replacing
+     heartbeats every few seconds and a process takes longer than that to start, so opening
+     first lets the outgoing agent win the seat its replacement was started to take. */
+  function startDriver(how: 'human' | 'app'): string | null {
+    const dropped = agents.evict();
+    if (dropped !== null) {
+      audit.append('agent_disconnected', `${how === 'human' ? 'the human' : 'the app'} replaced ${dropped.client} with the in-app driver`, {
+        client: dropped.client,
+      });
+    }
+    audit.append(
+      'app_start',
+      how === 'human'
+        ? 'in-app driver starting: the app is spawning its own agent'
+        : 'in-app driver starting at boot: the window opens with an agent attached',
+    );
+    getDriver().start();
+    broadcastState();
+    return dropped?.client ?? null;
   }
 
   function driverPayload(): Record<string, unknown> {
@@ -992,19 +1027,8 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       const instance = getDriver();
 
       if (action === 'start') {
-        /* The seat is taken away first: the agent this is replacing heartbeats every few
-           seconds, and a process takes longer than that to start, so opening first lets the
-           outgoing agent win the seat its replacement was started to take. */
-        const dropped = agents.evict();
-        if (dropped !== null) {
-          audit.append('agent_disconnected', `the human replaced ${dropped.client} with the in-app driver`, {
-            client: dropped.client,
-          });
-        }
-        audit.append('app_start', 'in-app driver starting: the app is spawning its own agent');
-        instance.start();
-        broadcastState();
-        return sendJson(res, 200, { ok: true, dropped: dropped?.client ?? null, ...instance.status() });
+        const dropped = startDriver('human');
+        return sendJson(res, 200, { ok: true, dropped, ...instance.status() });
       }
 
       if (action === 'prompt') {
@@ -2072,6 +2096,19 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   const base = http.createServer((req, res) => {
     void handle(req, res);
   });
+
+  /* The app opens with an agent already attached. On 'listening' and not before, because the
+     child's MCP proxy POSTs straight back to this port: a driver started ahead of the socket
+     would hand the model an empty tool surface and a session that has to be thrown away.
+
+     `once`, so a server that is closed and listened on again does not stack a second child on
+     top of the first. A failure here is not fatal to the app: the driver reports it, the panel
+     lands on the globe with the reason printed under it, and pressing the globe tries again. */
+  if (deps.autostart === true) {
+    base.once('listening', () => {
+      startDriver('app');
+    });
+  }
 
   base.on('close', () => {
     offStore();

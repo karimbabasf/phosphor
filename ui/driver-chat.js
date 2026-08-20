@@ -530,7 +530,14 @@ var PhosphorChat = (function () {
 
   /* Called once per page, after every mount has registered. A window that reloaded mid
      conversation comes back to the conversation rather than to the globe, which is the only
-     reason the transcript lives on the server at all. */
+     reason the transcript lives on the server at all.
+
+     THE APP STARTS ITS OWN AGENT AT BOOT (see autostart in src/server.ts), so by the time this
+     page paints the driver is usually already up and the press that would have printed the
+     intro never happened. A driver that is running and has not said or done anything yet is
+     exactly that case, and it gets the intro anyway: the window is opening, which is what the
+     print is about. A reload in the middle of a real conversation is not that case and goes
+     straight back to the transcript. */
   function load() {
     fetch('/api/session')
       .then(function (r) { return r.json(); })
@@ -540,6 +547,13 @@ var PhosphorChat = (function () {
       .then(function (r) { return r.json(); })
       .then(function (json) {
         var running = json.state === 'ready' || json.state === 'thinking' || json.state === 'starting';
+        var entries = json.transcript || [];
+        /* Nothing has been said and nothing has been run: the driver came up on its own and is
+           waiting. Status and error rows do not count, because neither is a conversation. */
+        var untouched = true;
+        for (var k = 0; k < entries.length; k++) {
+          if (entries[k].kind !== 'status' && entries[k].kind !== 'error') untouched = false;
+        }
         for (var i = 0; i < mounts.length; i++) {
           var record = mounts[i];
           record.list.textContent = '';
@@ -549,8 +563,14 @@ var PhosphorChat = (function () {
             setState(record, json.state || 'off');
             continue;
           }
+          if (untouched) {
+            setPhase(record, 'booting');
+            printIntro(record);
+            // Queues the handover behind the last intro line, exactly as a live start does.
+            setState(record, json.state);
+            continue;
+          }
           setPhase(record, json.state === 'starting' ? 'booting' : 'live');
-          var entries = json.transcript || [];
           for (var j = 0; j < entries.length; j++) renderEvent(record.list, entries[j]);
           setState(record, json.state);
           toBottom(record);

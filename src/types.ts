@@ -577,11 +577,13 @@ export type AppConfig = {
   candleProducts: string[];
   dataDir: string; // state dir: policy.json, proposals.json, audit.jsonl
   keysPath: string; // absolute path OUTSIDE the working copy; never inside the repo
-  // The in-app driver. Both fields are optional and neither can loosen the lockdown: the tool
-  // surface is fixed in operator/driver.settings.json and checked again at runtime in
-  // src/driver.ts. claudeBin exists because a GUI app launched from Finder inherits a PATH that
-  // does not contain the place Claude Code installs itself.
-  driver?: { claudeBin?: string; systemPrompt?: string };
+  // The in-app driver. None of these can loosen the lockdown: the tool surface is fixed in
+  // operator/driver.settings.json and checked again at runtime in src/driver.ts. claudeBin
+  // exists because a GUI app launched from Finder inherits a PATH that does not contain the
+  // place Claude Code installs itself. autostart defaults to ON and is the app opening with an
+  // agent already attached rather than with a globe waiting to be pressed; setting it false
+  // gives back the press, and stopping the agent by hand never restarts it.
+  driver?: { claudeBin?: string; systemPrompt?: string; autostart?: boolean };
 };
 
 // ---------- Service interfaces (wired in main.ts) ----------

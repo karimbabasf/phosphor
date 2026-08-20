@@ -95,7 +95,7 @@ interface Harness {
   phase(): string | null;
 }
 
-function load(opts: { startFails?: string } = {}): Harness {
+function load(opts: { startFails?: string; driver?: Any } = {}): Harness {
   const created: Any[] = [];
   const posts: Any[] = [];
   const globeCalls: string[] = [];
@@ -132,7 +132,7 @@ function load(opts: { startFails?: string } = {}): Harness {
         }
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true }) });
       }
-      return Promise.resolve({ ok: true, json: () => Promise.resolve({ state: 'off', transcript: [] }) });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(opts.driver ?? { state: 'off', transcript: [] }) });
     },
   };
   sandbox.window = sandbox;
@@ -328,4 +328,36 @@ test('a prompt is sent once, the box is cleared, and the transcript follows the 
   assert.equal(h.find('chat-jump').hidden, true);
   await flush();
   assert.deepEqual(h.posts.filter((p) => p.action === 'prompt').map((p) => p.text), ['do the thing']);
+});
+
+test('a window that opens onto an agent the app started prints the intro anyway', async () => {
+  // What autostart leaves behind: the driver is up and the transcript holds nothing but the
+  // status events it emitted on the way. Nobody pressed anything, so nobody has seen the intro.
+  const h = load({ driver: { state: 'ready', running: true, transcript: [{ kind: 'status', state: 'starting' }, { kind: 'status', state: 'ready' }] } });
+  h.chat.load();
+  await flush();
+  assert.equal(h.phase(), 'booting');
+  h.tick(1000);
+  assert.equal(h.phase(), 'live');
+  assert.deepEqual(h.rows(), ['|one', '|two', '|three']);
+  assert.equal(h.find('chat-input').focused, true);
+});
+
+test('a reload in the middle of a conversation goes back to the conversation, not to the intro', async () => {
+  const h = load({
+    driver: {
+      state: 'ready',
+      running: true,
+      transcript: [
+        { kind: 'status', state: 'ready' },
+        { kind: 'said', text: 'what do I hold?' },
+        { kind: 'text', text: 'Nothing on any chain.' },
+      ],
+    },
+  });
+  h.chat.load();
+  await flush();
+  assert.equal(h.phase(), 'live');
+  h.tick(1000);
+  assert.deepEqual(h.rows(), ['you|what do I hold?', 'agent|Nothing on any chain.']);
 });
