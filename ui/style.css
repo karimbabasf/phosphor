@@ -2,8 +2,10 @@
    One hue: phosphor green on near-black. Hierarchy is brightness and opacity only.
    Red is reserved for the safety gate: pending approvals, refusals, breached
    shares, and the gate-disabled banner.
-   No radius, no shadow, no gradient, no transition. Two animations: the cursor, and the
-   block wave that stands in for whatever has not arrived yet. */
+   No radius, no shadow, no gradient. Animation is rationed to four things and each one is
+   listed here: the cursor, the block wave that stands in for whatever has not arrived yet,
+   the press on a button, and the overlay opening. Nothing else moves.
+   Every one of them drops its transform under prefers-reduced-motion. */
 
 :root {
   --bg: #0b0d0b;
@@ -270,13 +272,15 @@ button.frame:focus-visible { outline: 1px dotted var(--green); outline-offset: 1
 .panel.collapsed > .pbody,
 .panel.collapsed > .frame-bottom { display: none; }
 
-/* Collapsing the log is how the gate gets room, so the gate has to be able to
-   take it: the 46vh cap lifts and it grows to whatever it holds. The cap lifts
-   rather than the panel stretching, because a gate with nothing pending would
-   otherwise become a full-height empty box. Room is what it can use, not chrome
-   painted around nothing. */
-body.log-collapsed .panel-gate { min-height: 0; }
-body.log-collapsed .panel-gate > .pbody { max-height: none; }
+/* Collapsing the agent panel is how the gate gets room, so the gate has to be
+   able to take it: the 46vh cap lifts and it grows to whatever it holds. The cap
+   lifts rather than the panel stretching, because a gate with nothing pending
+   would otherwise become a full-height empty box. Room is what it can use, not
+   chrome painted around nothing.
+   It was the log that collapsed here. The log is behind a button now and the
+   growing panel in that column is the conversation, so the name follows it. */
+body.agent-collapsed .panel-gate { min-height: 0; }
+body.agent-collapsed .panel-gate > .pbody { max-height: none; }
 
 /* ---------- 2. wallet ---------- */
 
@@ -289,35 +293,9 @@ body.log-collapsed .panel-gate > .pbody { max-height: none; }
   overflow: hidden;
 }
 
-/* The two views of the wallet. Same bracket idiom as the chart's timeframe strip, and
-   for the same reason: it stays a line of text on a terminal instead of becoming a tab
-   widget with a border and a background. */
-.tabs {
-  display: flex;
-  align-items: baseline;
-  gap: 1ch;
-  margin: 0 0 4px;
-  flex: none;
-}
-
-.tab {
-  appearance: none;
-  background: transparent;
-  border: 0;
-  color: var(--green-faint);
-  font: var(--fs) / var(--lh) var(--mono);
-  letter-spacing: 0.08em;
-  padding: 0 0.75ch;
-  cursor: pointer;
-}
-
-.tab:hover { color: var(--green); }
-.tab:focus-visible { outline: 1px dotted var(--green); outline-offset: 1px; }
-.tab.on { color: var(--green-hi); }
-.tab.on::before { content: '['; color: var(--green-ghost); }
-.tab.on::after { content: ']'; color: var(--green-ghost); }
-
-.tabmeta { margin-left: auto; }
+/* The wallet's tab strip lived here: HOLDINGS and TRANSACTIONS, two panes in one panel.
+   There is one pane now. The history is the HISTORY overlay, where it has the width for
+   its eight columns, and a single pane does not need a strip to switch between. */
 
 /* The colour that ties a row to its slice. A square of ink, not a swatch with a border:
    the ring is the chart and this is only the key to it. */
@@ -693,13 +671,30 @@ body.log-collapsed .panel-gate > .pbody { max-height: none; }
 .btn:focus-visible { outline: 1px dotted var(--green); outline-offset: 1px; }
 .btn[disabled] { color: var(--green-ghost); border-color: var(--green-ghost); cursor: default; }
 
+/* The press. The only motion a control on this page has, and it is on the way down only:
+   a button that springs back slowly reads as laggy on a terminal. Named properties, never
+   `all`: `all` would catch the colour and the border on every hover as well. */
+.btn,
+.chat-btn {
+  transition: transform 160ms ease-out;
+}
+
+.btn:active,
+.chat-btn:active { transform: scale(0.97); }
+.btn[disabled]:active { transform: none; }
+
 .btn.on { color: var(--red); border-color: var(--red); }
 .btn.on:hover { color: var(--red); border-color: var(--red); }
 
 .btn.refuse { color: var(--red); border-color: var(--red-ghost); }
 .btn.refuse:hover { color: var(--red); border-color: var(--red); }
 
-/* ---------- 7. log ---------- */
+/* ---------- the audit log ----------
+
+   It was panel 7 on the deck and it is not a panel any more: the deck's right column now
+   ends in the agent conversation, and the log opens full-height behind the LOG button. The
+   rules below did not change with the move, which is the point of keeping them: the same
+   renderer draws the same lines, with the room to print all of every one of them. */
 
 .log {
   flex: 1;
@@ -725,6 +720,277 @@ body.log-collapsed .panel-gate > .pbody { max-height: none; }
 .logline.refusal .type,
 .logline.refusal .msg { color: var(--red); }
 
+/* ---------- the deck bar ----------
+
+   Three buttons on one line between the banners and the deck: LOG, POLICY, HISTORY. They
+   are controls FOR the deck, so they sit above it and outside it rather than becoming a
+   fourth panel with a frame of its own. One line of height is the whole cost. */
+
+.deckbar {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0 1ch;
+  margin: 6px 0 0;
+  flex: none;
+}
+
+.deckbar .k { margin-right: 0.5ch; }
+
+/* ---------- the overlays (ui/overlay.js) ----------
+
+   Where the log, the policy and the transaction history are read in full. The deck never
+   scrolls and these three records do not fit it, so this is the one surface in the app
+   where scrolling is expected rather than a layout failure. */
+
+.ovl {
+  /* The dialog IS the backdrop hit area: the panel inside covers everything it draws, so a
+     click that lands on the dialog landed outside the panel. Hence no padding of its own. */
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--green);
+  font: var(--fs) / var(--lh) var(--mono);
+  max-width: none;
+  max-height: none;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.ovl::backdrop {
+  /* Near-black over near-black: the deck stays faintly legible underneath, which is what
+     says this is a layer over the app rather than a page the app navigated to. */
+  background: rgba(6, 8, 6, 0.86);
+}
+
+.ovl-panel {
+  width: min(1100px, calc(100vw - 48px));
+  max-height: calc(100dvh - 48px);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg);
+  border: 1px solid var(--green-dim);
+  /* Modals, not popovers: they grow from their own middle. Never from scale(0). */
+  transform: scale(0.95);
+  transform-origin: center;
+  opacity: 0;
+  transition: transform 200ms cubic-bezier(0.23, 1, 0.32, 1),
+              opacity 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.ovl[data-open] > .ovl-panel {
+  transform: scale(1);
+  opacity: 1;
+}
+
+.ovl-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 1ch;
+  padding: 4px 1ch 5px;
+  border-bottom: 1px solid var(--green-ghost);
+}
+
+.ovl-title {
+  font: inherit;
+  margin: 0;
+  color: var(--green-hi);
+  letter-spacing: 0.08em;
+}
+
+.ovl-close { margin-left: auto; }
+
+.ovl-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 1ch 10px;
+}
+
+.ovl-body:focus-visible { outline: none; }
+
+.ovl-body::-webkit-scrollbar { width: 6px; height: 6px; }
+.ovl-body::-webkit-scrollbar-track { background: transparent; }
+.ovl-body::-webkit-scrollbar-thumb { background: var(--green-ghost); }
+
+/* Nothing in an overlay is cut to fit any more: that is the entire reason the three views
+   moved in here, so the rules that used to clip them are lifted by name. */
+.ovl-body .log { max-height: none; }
+.ovl-body .logline { white-space: pre-wrap; }
+.ovl-body .ovl-note { color: var(--green-faint); margin: 0 0 6px; }
+.ovl-body .ovl-sec {
+  color: var(--green-hi);
+  letter-spacing: 0.08em;
+  margin: 12px 0 3px;
+  border-bottom: 1px solid var(--green-ghost);
+}
+.ovl-body .ovl-sec:first-child { margin-top: 0; }
+.ovl-body .ovl-line { white-space: pre-wrap; word-break: break-word; }
+.ovl-body .ovl-line .k { display: inline-block; min-width: 22ch; }
+
+/* The history table gets the width it never had in half a deck column, so it stops
+   dividing eight columns into nothing and simply prints them. */
+.ovl-body .txgrid { max-height: none; overflow: visible; }
+.ovl-body .txbar { display: flex; align-items: baseline; gap: 1ch; margin: 0 0 6px; }
+
+/* ---------- the agent conversation (ui/driver-chat.js) ----------
+
+   The panel the log used to hold. It is the one surface in the app whose whole content is
+   written by a language model, so it is deliberately plain: no bubbles, no avatars, no
+   colour of its own. A speaker column, a line of text, and the same phosphor as everything
+   else. What it must never grow is a control that decides anything; approval stays in the
+   gate, three panels up. */
+
+.chat {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 0.5ch;
+}
+
+.chat-list::-webkit-scrollbar { width: 6px; }
+.chat-list::-webkit-scrollbar-track { background: transparent; }
+.chat-list::-webkit-scrollbar-thumb { background: var(--green-ghost); }
+
+/* Opacity only, and only on arrival. Rows land constantly while an agent works, and
+   anything that moves them would make the panel unreadable exactly when it is being read. */
+.chat-row {
+  display: flex;
+  gap: 1ch;
+  align-items: baseline;
+  animation: chat-in 160ms ease-out;
+}
+
+@keyframes chat-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.chat-who {
+  flex: none;
+  width: 6ch;
+  text-align: right;
+  color: var(--green-faint);
+}
+
+.chat-text {
+  flex: 1;
+  min-width: 0;
+  white-space: pre-wrap;
+  /* Agent text carries addresses and hashes, which have no spaces to break at. */
+  overflow-wrap: anywhere;
+}
+
+.chat-said .chat-text { color: var(--green-hi); }
+.chat-agent .chat-text { color: var(--green); }
+.chat-tool .chat-who { color: var(--green-ghost); }
+.chat-tool .chat-text { color: var(--green-faint); }
+.chat-status .chat-text { color: var(--green-faint); }
+
+/* NOT red. Red on this app means the safety gate, or something being taken from the user,
+   and a language model failing to answer is neither: a chat error that borrows the colour
+   of a pending withdrawal teaches a person to stop reading the colour. It is marked by a
+   rule down its left instead, which is a difference that survives being dim. */
+.chat-error {
+  border-left: 1px solid var(--green-faint);
+  padding-left: 1ch;
+  margin-left: -1px;
+}
+
+.chat-error .chat-text { color: var(--green-dim); }
+
+.chat-bar {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 1ch;
+  padding-top: 4px;
+}
+
+.chat-state {
+  color: var(--green-faint);
+  letter-spacing: 0.06em;
+}
+
+/* The state word is the only thing on this panel that says whether the agent is alive, so
+   it brightens when it is and stays quiet when it is not. */
+.chat[data-driver-state='ready'] .chat-state,
+.chat[data-driver-state='thinking'] .chat-state { color: var(--green-hi); }
+.chat[data-driver-state='failed'] .chat-state { color: var(--green-dim); }
+
+.chat-btn {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--green-ghost);
+  color: var(--green);
+  font: var(--fs) / var(--lh) var(--mono);
+  letter-spacing: 0.06em;
+  padding: 0 1ch;
+  cursor: pointer;
+}
+
+.chat-btn:hover { color: var(--green-hi); border-color: var(--green-dim); }
+.chat-btn:focus-visible { outline: 1px dotted var(--green); outline-offset: 1px; }
+.chat-start { margin-left: auto; }
+.chat-stop { margin-left: auto; }
+
+.chat-form {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 1ch;
+  padding-top: 4px;
+}
+
+.chat-input {
+  appearance: none;
+  background: transparent;
+  color: var(--green);
+  border: 0;
+  border-bottom: 1px solid var(--green-ghost);
+  font: var(--fs) / var(--lh) var(--mono);
+  padding: 0 0.5ch;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.chat-input::placeholder { color: var(--green-ghost); }
+.chat-input:focus-visible { outline: none; border-bottom-color: var(--green); }
+
+/* The field is the elastic one on that line, not the button. */
+.chat-send { flex: none; }
+
+/* ---------- motion, refused ----------
+
+   Transforms go; opacity stays. A person who has asked the system to stop moving things
+   has not asked to stop being told that something appeared. */
+@media (prefers-reduced-motion: reduce) {
+  .btn,
+  .chat-btn { transition: none; }
+  .btn:active,
+  .chat-btn:active { transform: none; }
+  .ovl-panel {
+    transform: none;
+    /* Kept rather than zeroed: overlay.js waits for this transition to end before it closes
+       the dialog, and a duration of zero is a transition that may never report. */
+    transition: opacity 120ms ease-out;
+  }
+  .ovl[data-open] > .ovl-panel { transform: none; }
+}
+
 /* Two columns, but not enough width for a 178px donut beside six nowrap columns.
    The table is what was asked for, so the donut is what goes. */
 @media (min-width: 1101px) and (max-width: 1319px) {
@@ -748,7 +1014,7 @@ body.log-collapsed .panel-gate > .pbody { max-height: none; }
   /* Same for the history, which is wider still. It keeps a cap on its own height so a
      long list becomes a scroll inside the panel rather than a page nobody can leave. */
   .txgrid { max-height: 50vh; }
-  .tabs, .txbar { flex-wrap: wrap; }
+  .txbar { flex-wrap: wrap; }
   .donutwrap { margin-bottom: 6px; }
   #donut { height: 180px; flex: none; }
   /* Same reason: the timeframe strip wraps rather than push the body out. */
@@ -757,7 +1023,15 @@ body.log-collapsed .panel-gate > .pbody { max-height: none; }
      or every indicator would be dropped for room on every narrow window. */
   .chartwrap { height: calc(220px + var(--panes, 0) * 78px); flex: none; }
   .panel-chart { flex-grow: 0; }
-  .log { max-height: 46vh; flex: none; }
+  /* The conversation keeps a height, and it is the one panel that has to: a transcript with
+     no bound is not a panel on a scrolling page, it is the page. Pixels rather than a
+     viewport fraction, for the same reason every other cap here is lifted: a fraction of
+     the viewport means nothing once the page scrolls past it. */
+  /* flex-basis, not height. The panel is still .grow, so `.panel.grow > .pbody` gives this
+     box `flex: 1 1 0%`, and a flex-basis on the main axis beats a height every time: set as
+     `height: 300px` this collapsed to the 54px its two controls occupy and the transcript
+     had no room at all. Same specificity as that rule and later in the file, so it wins. */
+  .panel.panel-agent > .pbody { flex: 0 0 300px; overflow: hidden; }
 }
 
 /* Narrow enough that a 36ch hanging indent leaves the message one word wide. */
@@ -768,8 +1042,16 @@ body.log-collapsed .panel-gate > .pbody { max-height: none; }
 
 /* The mode swap. Server-driven: app.js copies state.view onto #page and onto body,
    and nothing else in the browser is allowed to set it. Everything the basic screen
-   looks like lives in basic.css: this file is the pro terminal and stops here. */
+   looks like lives in basic.css: this file is the pro terminal and stops here.
+
+   EVERY direct child of #page that belongs to the pro terminal has to be named in this
+   list. #page is a fixed 100dvh column with overflow hidden, so an unlisted element does
+   not merely appear on the basic screen: it takes its own height off the bottom of that
+   column, and what falls off the end of the basic screen is the STOP EVERYTHING control.
+   The deck bar was added to this file and not to this list, and that is exactly what
+   happened. Anything added above goes in here too. */
 #page[data-view='basic'] .deck,
+#page[data-view='basic'] .deckbar,
 #page[data-view='basic'] .statusbar,
 #page[data-view='basic'] .banner,
 #page[data-view='basic'] .alert { display: none; }

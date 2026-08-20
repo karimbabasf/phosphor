@@ -33,17 +33,34 @@ var PhosphorChat = (function () {
     return node;
   }
 
-  function api(body) {
-    return fetch('/api/driver', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(Object.assign({ token: token }, body)),
-    }).then(function (res) {
-      return res.json().then(function (json) {
-        if (!res.ok) throw new Error(json && json.error ? json.error : 'request failed');
-        return json;
+  /* Fetched on demand rather than only at boot. The token arrives from a second request, and a
+     person who presses START in the moment between the page painting and that request landing
+     would otherwise get a 403 for doing nothing wrong. */
+  function withToken() {
+    if (token) return Promise.resolve(token);
+    return fetch('/api/session')
+      .then(function (r) { return r.json(); })
+      .then(function (json) {
+        token = json.token || '';
+        return token;
       });
-    });
+  }
+
+  function api(body) {
+    return withToken()
+      .then(function (current) {
+        return fetch('/api/driver', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(Object.assign({ token: current }, body)),
+        });
+      })
+      .then(function (res) {
+        return res.json().then(function (json) {
+          if (!res.ok) throw new Error(json && json.error ? json.error : 'request failed');
+          return json;
+        });
+      });
   }
 
   /* A tool call is the honest unit of "what the agent actually did", so it is rendered as its own

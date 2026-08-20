@@ -53,7 +53,20 @@
   <p class="banner" id="t-banner-policy" role="alert" hidden></p>
   <p class="alert dim" id="t-alert" role="status" hidden></p>
 
-  <!-- Five panels, two columns. Left is the market and what this account holds in it,
+  <!-- The three records this deck has never had room to print. LOG is the app's whole audit
+       trail, not the trading slice of it the tape below carries. POLICY is what governs this
+       account and was only ever a word in the status bar here. HISTORY is the treasury
+       ledger: swaps, deposits and withdrawals, which have different columns and their own
+       page, and are read from here rather than by leaving.
+       Controls FOR the deck, so they sit above it rather than becoming a panel in it. -->
+  <p class="deckbar">
+    <span class="k">open</span>
+    <button type="button" class="btn" id="open-log" aria-haspopup="dialog">[ LOG ]</button>
+    <button type="button" class="btn" id="open-policy" aria-haspopup="dialog">[ POLICY ]</button>
+    <button type="button" class="btn" id="open-history" aria-haspopup="dialog">[ HISTORY ]</button>
+  </p>
+
+  <!-- Six panels, two columns. Left is the market and what this account holds in it,
        right is what governs the account and what it has already done.
 
        It was eight, and eight was the defect: five variable-height panels shared one
@@ -154,6 +167,22 @@
                a twenty-first position. It is a footer of the panel now, so it holds still
                and it is never mistaken for data. -->
           <p class="bookfoot" id="t-book-foot" hidden></p>
+        </div>
+        <div class="frame frame-bottom"></div>
+      </section>
+
+      <!-- 3b. AGENT. The one thing this screen could not do was say a word to the agent
+           holding its seat. It sits under the book rather than in the right column, and the
+           placement is the whole decision: the right column ends in the tape, the tape is
+           the only full record of what this account did on this venue, and no overlay
+           replaces it. So the height for a conversation comes out of the chart, which is
+           the panel on this page that can give it.
+
+           The chat renders no approval control, ever. The gate is one column over. -->
+      <section class="panel panel-tchat">
+        <button type="button" class="frame frame-top" data-title="AGENT" data-collapse="agent" aria-expanded="true" aria-controls="agent-chat"></button>
+        <div class="pbody">
+          <div id="agent-chat"></div>
         </div>
         <div class="frame frame-bottom"></div>
       </section>
@@ -277,9 +306,17 @@
         <div class="frame frame-bottom"></div>
       </section>
 
-      <!-- 6. HISTORY. One time-ordered record of everything this account did on this
+      <!-- 6. TAPE. One time-ordered record of everything this account did on this
            venue: fills, the manual controls, what the mandate fired, and every refusal
-           that stopped a trade. It was three panels (FILLS, MANDATE, LOG) and they were
+           that stopped a trade.
+
+           It was titled HISTORY and the word had to move: the deck bar above now opens the
+           treasury ledger under that name, and two different records cannot share one word
+           on one screen. TAPE is what the paragraph below already called it. The panel
+           itself is unchanged and it keeps its room, because the HISTORY overlay is a
+           different ledger and does not show a single row of this one.
+
+           It was three panels (FILLS, MANDATE, LOG) and they were
            three views of one sequence, which is why reading them meant looking in three
            places and reconciling three clocks.
 
@@ -290,7 +327,7 @@
            Scoped to trading. Treasury swaps and withdrawals are a different ledger with
            different columns and they stay on the pro window's TRANSACTIONS tab. -->
       <section class="panel panel-thistory grow">
-        <div class="frame frame-top" data-title="HISTORY"></div>
+        <div class="frame frame-top" data-title="TAPE"></div>
         <div class="pbody">
           <div class="tablewrap">
             <table class="grid" id="t-history">
@@ -332,6 +369,11 @@
 <!-- Before trade.js: exposes window.PhosphorPresence, driven from state and the SSE
      'activity' event. Self-contained and presentational. -->
 <script src="/presence.js" defer></script>
+<!-- One modal and the three records it opens, shared with the custody window so neither
+     page can end up showing a shorter version of the same thing. -->
+<script src="/overlay.js" defer></script>
+<script src="/deck-views.js" defer></script>
+<script src="/driver-chat.js" defer></script>
 <script src="/trade.js" defer></script>
 </body>
 </html>

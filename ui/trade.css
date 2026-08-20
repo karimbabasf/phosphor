@@ -775,6 +775,30 @@
 #t-history-rows > tr.liquidation > td:first-child { border-left: 1px solid var(--red-ghost); }
 #t-history-rows > tr.liquidation > td:last-child { border-right: 1px solid var(--red-ghost); }
 
+/* ---------- the agent conversation ----------
+
+   Everything the chat looks like is in style.css, because the custody deck holds the same
+   panel and neither page gets its own version of a transcript. This file decides one thing:
+   how much of the left column it is allowed to take.
+
+   A fixed slice, not a share. The panel that grows on this page is the chart, and it is the
+   one that can pay for a conversation: the tape and the risk panel are in the other column
+   and are not touched. Height in vh with a floor in pixels, so a short window does not hand
+   it three lines and a scrollbar. */
+.panel-tchat { flex: none; }
+
+.panel-tchat > .pbody {
+  /* 22vh, and the number was measured rather than picked: on a 1440x900 window it leaves
+     the chart a little over 300px, which is the point below which candles stop being read
+     and start being guessed at. A trader who wants those pixels back collapses the panel
+     from its own frame line, and the deck remembers. */
+  height: 22vh;
+  min-height: 132px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 /* Toggled by the renderer, so nothing above may set display on one of these and win. */
 [hidden] { display: none; }
 
@@ -810,12 +834,21 @@
   .panel-tgate { order: 3; }
   .panel-tbook { order: 4; }
   .panel-thistory { order: 5; }
+  /* Last, and not because it matters least: a narrow window is somebody checking on a
+     position, and the two records they came for are the tape and the risk panel. */
+  .panel-tchat { order: 6; }
 
   /* The caps above are viewport fractions, which stop meaning anything once the page
      scrolls: 22vh of a scrolling page is an arbitrary slice and not a panel. */
   .panel-trisk > .pbody,
   .panel-tgate > .pbody,
   .panel-tbook > .pbody { max-height: none; overflow: visible; }
+
+  /* The chat keeps a height, and it is the one panel that has to: a transcript with no
+     bound is not a panel on a scrolling page, it is the page. It gets a pixel height here
+     rather than a viewport fraction, for the reason stated above about vh on a page that
+     scrolls, and it keeps its own scroll inside. */
+  .panel-tchat > .pbody { height: 260px; min-height: 0; }
 
   .panel-tbook > .pbody { display: block; }
   .panel-thistory { min-height: 0; }

@@ -45,6 +45,17 @@
   <p class="banner" id="policy-banner" hidden>POLICY FILE UNREADABLE: ALL WRITES REFUSED</p>
   <p class="alert dim" id="alert" hidden></p>
 
+  <!-- The three records that do not fit a deck that never scrolls: the audit log, the
+       policy in full, and everything this app has done with the money. They were panels
+       being cut to the room left over; each one now opens whole, behind its own button.
+       Controls FOR the deck, so they sit above it rather than becoming a panel in it. -->
+  <p class="deckbar">
+    <span class="k">open</span>
+    <button type="button" class="btn" id="open-log" aria-haspopup="dialog">[ LOG ]</button>
+    <button type="button" class="btn" id="open-policy" aria-haspopup="dialog">[ POLICY ]</button>
+    <button type="button" class="btn" id="open-history" aria-haspopup="dialog">[ HISTORY ]</button>
+  </p>
+
   <!-- Two columns: left is what is held, right is what governs it.
        Each column fills the viewport height; panels scroll inside, the page never does. -->
   <div class="deck">
@@ -76,22 +87,20 @@
         <div class="frame frame-bottom"></div>
       </section>
 
-      <!-- 3. WALLET: the whole bottom left. Two views of the same money in one panel,
-           switched by the strip at the top: what is held now, and what was done to it.
-           HOLDINGS is the donut and the table; TRANSACTIONS is the history. The strip
-           uses the same bracket idiom as the chart's timeframes, so it stays a line of
-           text on a terminal rather than becoming a tab widget.
-           Each pane scrolls inside itself, so the page still never scrolls. -->
+      <!-- 3. WALLET: the whole bottom left. What is held, now: the donut and the table,
+           two views of one row set. The table scrolls inside itself, so the page still
+           never scrolls.
+
+           It used to carry a second pane, TRANSACTIONS, behind a tab strip. That pane was
+           an eight-column table with a per-row expansion inside half a deck column, which
+           is the compression this redesign exists to end: the columns divided rather than
+           fitted, and the detail a person opens a history for was the first thing cut. It
+           is behind the HISTORY button now, full width, and the tab strip went with it
+           because one pane does not need tabs. -->
       <section class="panel panel-wallet">
         <div class="frame frame-top" data-title="WALLET"></div>
         <div class="pbody">
-          <p class="tabs" role="tablist" aria-label="wallet views">
-            <button type="button" class="tab on" id="tab-holdings" data-pane="holdings" role="tab" aria-selected="true" aria-controls="pane-holdings">HOLDINGS</button>
-            <button type="button" class="tab" id="tab-activity" data-pane="activity" role="tab" aria-selected="false" aria-controls="pane-activity">TRANSACTIONS</button>
-            <span class="tabmeta faint" id="tab-meta"></span>
-          </p>
-
-          <div class="wallet" id="pane-holdings" role="tabpanel" aria-labelledby="tab-holdings">
+          <div class="wallet" id="pane-holdings">
             <div class="donutwrap" id="donutwrap">
               <canvas id="donut"></canvas>
               <p class="readout" id="donut-readout">--</p>
@@ -109,33 +118,6 @@
                   </tr>
                 </thead>
                 <tbody id="wallet-rows"></tbody>
-              </table>
-            </div>
-          </div>
-
-          <!-- The history. Every row is derived from a proposal this app executed and the
-               hashes it produced; nothing here is authored. A row expands in place rather
-               than opening anything: the brief allows no modals and no routes. -->
-          <div class="txpane" id="pane-activity" role="tabpanel" aria-labelledby="tab-activity" hidden>
-            <p class="txbar">
-              <span class="tfs" id="tx-filters"></span>
-              <span class="meta faint" id="tx-meta">--</span>
-            </p>
-            <div class="txgrid" id="txgrid">
-              <table class="grid tx" id="tx-table">
-                <thead>
-                  <tr>
-                    <th class="c-time">TIME</th>
-                    <th class="c-action">ACTION</th>
-                    <th class="c-move">MOVEMENT</th>
-                    <th class="c-num c-value">VALUE</th>
-                    <th class="c-addr c-from">FROM</th>
-                    <th class="c-addr">TO</th>
-                    <th class="c-num c-gas">GAS</th>
-                    <th class="c-tx">TX</th>
-                  </tr>
-                </thead>
-                <tbody id="tx-rows"></tbody>
               </table>
             </div>
           </div>
@@ -168,16 +150,24 @@
         <div class="frame frame-bottom"></div>
       </section>
 
-      <!-- 7. LOG -->
-      <section class="panel panel-log grow">
-        <button type="button" class="frame frame-top" data-title="LOG" data-collapse="log" aria-expanded="true" aria-controls="log"></button>
+      <!-- 7. AGENT. The log stood here and did not belong: a person cannot talk to an audit
+           trail, and the one thing this window could not do was say a word to the agent
+           holding its seat. The transcript is the conversation and the log is the record,
+           they were never the same rectangle, and the record is behind the LOG button now
+           with the room to print all of every line.
+
+           No approval control is ever rendered in here, and driver-chat.js will not build
+           one. The gate is three panels up, and consent does not live inside a scrolling
+           transcript written by the thing asking for it. -->
+      <section class="panel panel-agent grow">
+        <button type="button" class="frame frame-top" data-title="AGENT" data-collapse="agent" aria-expanded="true" aria-controls="agent-chat"></button>
         <div class="pbody">
-          <div id="log" class="log"></div>
+          <div id="agent-chat"></div>
         </div>
         <div class="frame frame-bottom"></div>
       </section>
 
-      <!-- 8. AGENT PULSE. A small oscilloscope under the log: the second half of the presence
+      <!-- 8. AGENT PULSE. A small oscilloscope under the conversation: the second half of the presence
            signal, the moving thing that keeps a working window from ever reading as frozen.
            It draws the same working/idle/disconnected state as the orb, so it needs no words
            of its own. See ui/presence.js. -->
@@ -193,129 +183,153 @@
 
   </div>
 
-  <!-- BASIC. One balance, what you own, three prices, what happened, and the question
-       when there is one. Every string in here is written by src/view/basic.ts and
-       rendered verbatim: this file composes no sentence about money, for the same
-       reason policy sentences are machine-rendered.
-       The STOP control sits last and far from YES on purpose.
+  <!-- BASIC. At rest this screen holds four things: how much money there is, whether
+       anything is wrong, four buttons, and the conversation. Everything the earlier
+       screen laid out at once now sits behind one of those buttons. Every string here is
+       written by src/view/basic.ts and rendered verbatim: this file composes no sentence
+       about money, for the same reason policy sentences are machine-rendered.
 
-       Two columns on a screen wide enough for them, cut along the reading order
-       rather than across it: everything that is YOURS goes down the left (the
-       balance, the question, what you own), and the record goes down the right
-       (what a coin costs, what happened, what the app promises, the way out). The
-       wrappers exist only to be columns and hold no ids, and under 1000px basic.css
-       dissolves them, so the markup order below is exactly what a phone reads top
-       to bottom with nothing reordered. -->
+       THE ORDER. The balance first, because it is what the person opened the app for.
+       Then anything wrong with it, because that is the only thing allowed to interrupt.
+       Then the four buttons, which are the whole of the rest of the app. Then the
+       conversation, which takes every pixel left over: it is the thing a person uses,
+       and the layout says so by giving it the room rather than by decorating it.
+
+       THE QUESTION IS NOT ONE OF THE BUTTONS. It is the last block in this markup, it
+       covers the screen when it arrives, it has no close control, and the sheet shuts
+       itself the instant one appears. Nothing above it can cover it or hold it up.
+       The STOP control sits last and far from YES on purpose. -->
   <section id="basic" class="basic" data-tone="calm">
 
-    <div class="basic-col basic-col-yours">
-
-    <div class="basic-money">
+    <header class="basic-head">
       <p class="basic-brand">PHOSPHOR</p>
       <p class="basic-total" id="basic-total">--</p>
       <p class="basic-headline" id="basic-headline">--</p>
       <p class="basic-places" id="basic-places"></p>
-    </div>
+      <!-- The standing promise, and the one line here that is never folded away: it says
+           whether money can move without you being asked, which is a fact about where
+           money goes, and those do not go behind a button. -->
+      <p class="basic-footer" id="basic-footer"></p>
+    </header>
 
     <p class="basic-warning" id="basic-warning" role="alert" hidden></p>
 
-    <div class="basic-ask" id="basic-ask" hidden>
-      <p class="basic-ask-headline" id="basic-ask-headline"></p>
-      <p class="basic-ask-after" id="basic-ask-after"></p>
+    <!-- The folds. Each one is hidden until there is something behind it, because a
+         button that opens an empty box is worse on this screen than no button at all.
+         app.js sets aria-expanded; the sheet below is the one thing all four open. -->
+    <nav class="basic-folds" id="basic-folds" aria-label="the rest of your money">
+      <button type="button" class="basic-fold" data-fold="own" aria-haspopup="dialog" hidden>What you own</button>
+      <button type="button" class="basic-fold" data-fold="market" aria-haspopup="dialog" hidden>Market</button>
+      <button type="button" class="basic-fold" data-fold="history" aria-haspopup="dialog" hidden>History</button>
+      <button type="button" class="basic-fold" data-fold="assistant" aria-haspopup="dialog">Your assistant</button>
+    </nav>
 
-      <ul class="basic-facts" id="basic-facts"></ul>
-
-      <!-- Where the money actually lands. Never truncated, never omitted: F2 shipped a
-           correct amount beside a solver-chosen address described as "your wallet". -->
-      <div class="basic-dests" id="basic-dests"></div>
-
-      <div class="basic-actions">
-        <button type="button" class="basic-btn basic-yes" id="basic-yes">YES, ALLOW IT</button>
-        <button type="button" class="basic-btn basic-no" id="basic-no">NO</button>
-      </div>
-      <p class="basic-error" id="basic-error" hidden></p>
-    </div>
-
-    <!-- One row per thing owned, not one per chain. Which chain each part sits on
-         is a pro-screen fact. The ring is the same rows as a picture: it says how the
-         money divides, the rows say into what, and the chip is the key between them. -->
-    <section class="basic-holdings" id="basic-holdings" hidden>
-      <h2 class="basic-label">What you own</h2>
-      <div class="basic-wallet">
-        <div class="basic-donutwrap"><canvas id="basic-donut" aria-hidden="true"></canvas></div>
-        <div id="basic-rows"></div>
-      </div>
-    </section>
-
-    <!-- Half of the history. It sits in this column and not the other one because it is
-         about YOUR money, which is what this column is: the total, the things it is made
-         of, and what has been done to it. The assistant's half is opposite. Karim,
-         2026-08-14: "history for transactions and agent actions separate" -- two columns
-         is as separate as this page can make two lists. -->
-    <section class="basic-hist" id="basic-moves" hidden>
-      <h2 class="basic-label">What happened to your money</h2>
-      <div id="basic-events"></div>
-    </section>
-
-    </div>
-
-    <div class="basic-col basic-col-record">
-
-    <!-- Three coins, each with a price, a direction, and the shape of the last day
-         behind it. A LINE, never a candlestick (Karim, 2026-08-14: "just a single
-         line"): the candles are pro's answer to a question this reader did not ask,
-         but "and before now?" is a question they do ask. Rows are built by app.js
-         because a coin that could not be read is absent rather than blank. -->
-    <section class="basic-prices" id="basic-prices" hidden>
-      <p class="basic-market">
-        <span class="basic-label">Market</span>
-        <!-- The eye says these three coins are a CHOICE, which is the one thing about this
-             block a reader would never guess. A button and not a bare icon: it takes focus,
-             so the sentence is reachable by keyboard and not only by a hovering mouse.
-             What it promises is real, and it is `watch` in src/mcp.ts. -->
-        <span class="basic-eyewrap">
-          <button type="button" class="basic-eye" id="basic-eye" aria-describedby="basic-eye-note"
-                  aria-label="what this shows">
-            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-              <circle cx="12" cy="12" r="10.25"></circle>
-              <path d="M4.6 12c1.9-2.9 4.4-4.35 7.4-4.35S17.5 9.1 19.4 12c-1.9 2.9-4.4 4.35-7.4 4.35S6.5 14.9 4.6 12Z"></path>
-              <circle class="pupil" cx="12" cy="12" r="1.95"></circle>
-            </svg>
-          </button>
-          <!-- Beside the eye, not under it: under it the sentence sat on top of the first
-               price, and covering a number to explain the block it is in is a poor trade.
-               The heading line is empty to the right, so the note costs nothing there. -->
-          <span class="basic-eye-note" id="basic-eye-note" role="tooltip">
-            Ask your assistant to show different coins here. It remembers what you pick.
-          </span>
-        </span>
-      </p>
-      <div id="basic-price-rows"></div>
-    </section>
-
-    <!-- The other half of the history: an assistant reading and looking, which is a
-         different kind of fact from money moving. Folded into one list, four real
-         movements sat under twenty balance checks. -->
-    <section class="basic-hist" id="basic-doings" hidden>
-      <h2 class="basic-label">What the assistant did</h2>
-      <div id="basic-actions"></div>
-    </section>
-
-    <p class="basic-footer" id="basic-footer"></p>
+    <!-- THE CONVERSATION, and the centre of the screen. Built by ui/driver-chat.js, which
+         puts every string on screen through textContent: it is the one surface here whose
+         whole content is written by a language model. It renders no approval control and
+         it never will; the question below is a different block for that reason. -->
+    <div class="basic-chat" id="basic-chat"></div>
 
     <div class="basic-stop">
-      <p class="basic-agent" id="basic-agent"></p>
-      <!-- Start the assistant without leaving this screen. Same /api/summon the pro window
-           uses; worded plainly because this screen never says "agent". -->
-      <button type="button" class="basic-btn basic-summon" id="basic-summon">START THE ASSISTANT</button>
       <button type="button" class="basic-btn basic-kill" id="basic-kill">STOP EVERYTHING</button>
+      <!-- Two presses, and the confirm is a real control rather than window.confirm,
+           because a native dialog is the easiest thing on this screen to dismiss by reflex. -->
       <p class="basic-stop-confirm" id="basic-stop-confirm" hidden>
         <span id="basic-stop-question">Are you sure?</span>
         <button type="button" class="basic-btn basic-kill-yes" id="basic-kill-yes">YES, STOP</button>
         <button type="button" class="basic-btn basic-kill-cancel" id="basic-kill-cancel">Cancel</button>
       </p>
+      <!-- The brake's own error line. It used to write into the question's error node,
+           which is now a covered layer: a failed freeze would have reported itself onto a
+           surface nobody was looking at. -->
+      <p class="basic-stop-error" id="basic-stop-error" hidden></p>
     </div>
 
+    <!-- THE SHEET. One mechanism for all four buttons, never one per button: what a
+         person learns opening the first is true of the rest. Escape closes it, the
+         backdrop closes it, Tab cannot leave it, and focus returns to the button that
+         opened it. It is held out of the flow, so nothing it holds can push the balance,
+         the warning or the conversation anywhere. -->
+    <div class="basic-sheet" id="basic-sheet" data-open="0">
+      <div class="basic-scrim" id="basic-scrim"></div>
+      <div class="basic-sheet-panel" id="basic-sheet-panel" role="dialog" aria-modal="true"
+           aria-labelledby="basic-sheet-title" tabindex="-1">
+        <div class="basic-sheet-head">
+          <h2 class="basic-sheet-title" id="basic-sheet-title"></h2>
+          <button type="button" class="basic-sheet-close" id="basic-sheet-close">Done</button>
+        </div>
+
+        <!-- One row per thing owned, not one per chain. Which chain each part sits on is a
+             pro-screen fact. The ring is the same rows as a picture: it says how the money
+             divides, the rows say into what, and the chip is the key between them. -->
+        <div class="basic-pane" id="basic-pane-own" hidden>
+          <div class="basic-wallet">
+            <div class="basic-donutwrap"><canvas id="basic-donut" aria-hidden="true"></canvas></div>
+            <div id="basic-rows"></div>
+          </div>
+        </div>
+
+        <!-- Three coins, each with a price, a direction, and the shape of the last day
+             behind it. A LINE, never a candlestick: the candles are pro's answer to a
+             question this reader did not ask. Rows are built by app.js because a coin that
+             could not be read is absent rather than blank. -->
+        <div class="basic-pane" id="basic-pane-market" hidden>
+          <div class="basic-prices">
+            <div id="basic-price-rows"></div>
+          </div>
+          <!-- Plainly, and always. This used to be a tooltip on an eye, which asked a
+               reader to hover an icon to find out that the three coins are a CHOICE. In a
+               box they opened on purpose there is room to just say it. What it promises is
+               real, and it is `watch` in src/mcp.ts. -->
+          <p class="basic-note">Ask your assistant to show different coins here. It remembers what you pick.</p>
+        </div>
+
+        <!-- Both halves of the history, in one box and still two lists. Karim, 2026-08-14:
+             "history for transactions and agent actions separate". Folded into one list,
+             four real movements sat under twenty balance checks. -->
+        <div class="basic-pane" id="basic-pane-history" hidden>
+          <section class="basic-hist" id="basic-moves" hidden>
+            <h2 class="basic-label">What happened to your money</h2>
+            <div id="basic-events"></div>
+          </section>
+          <section class="basic-hist" id="basic-doings" hidden>
+            <h2 class="basic-label">What the assistant did</h2>
+            <div id="basic-actions"></div>
+          </section>
+        </div>
+
+        <div class="basic-pane" id="basic-pane-assistant" hidden>
+          <p class="basic-agent" id="basic-agent"></p>
+          <p class="basic-note">The conversation on the main screen runs an assistant inside
+            this window. This starts a separate one in its own terminal window.</p>
+          <button type="button" class="basic-btn basic-summon" id="basic-summon">START ONE IN A NEW WINDOW</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- THE QUESTION. Not a fold: it covers the screen, it has no close control, Escape
+         does not dismiss it, and it appears at once rather than arriving over 200ms. Every
+         destination address is here in full and none of it is behind anything. YES and NO
+         carry equal weight, deliberately, because this screen exists so a person can
+         decline and a decline dressed as the secondary action is a nudge. -->
+    <div class="basic-ask-layer" id="basic-ask" hidden>
+      <div class="basic-ask" id="basic-ask-panel" role="dialog" aria-modal="true"
+           aria-labelledby="basic-ask-headline" tabindex="-1">
+        <p class="basic-ask-headline" id="basic-ask-headline"></p>
+        <p class="basic-ask-after" id="basic-ask-after"></p>
+
+        <ul class="basic-facts" id="basic-facts"></ul>
+
+        <!-- Where the money actually lands. Never truncated, never omitted: F2 shipped a
+             correct amount beside a solver-chosen address described as "your wallet". -->
+        <div class="basic-dests" id="basic-dests"></div>
+
+        <div class="basic-actions">
+          <button type="button" class="basic-btn basic-yes" id="basic-yes">YES, ALLOW IT</button>
+          <button type="button" class="basic-btn basic-no" id="basic-no">NO</button>
+        </div>
+        <p class="basic-error" id="basic-error" hidden></p>
+      </div>
     </div>
 
   </section>
@@ -336,6 +350,11 @@
 <!-- Before app.js: it exposes window.PhosphorPresence, which app.js drives from state and the
      SSE 'activity' event. Self-contained and presentational. -->
 <script src="/presence.js" defer></script>
+<!-- One modal and the three records it opens, shared with the trading window so neither
+     page can end up showing a shorter version of the same thing. -->
+<script src="/overlay.js" defer></script>
+<script src="/deck-views.js" defer></script>
+<script src="/driver-chat.js" defer></script>
 <script src="/app.js" defer></script>
 </body>
 </html>

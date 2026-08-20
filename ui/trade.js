@@ -1246,16 +1246,40 @@ function renderHistory(p) {
 
 /* The audit tail arrives whole on a refresh and one line at a time over SSE. Both land in the
    same store and redraw the same tape, so a line pushed while the page is open sorts into the
-   sequence by its own timestamp instead of being stapled to the top of a different list. */
+   sequence by its own timestamp instead of being stapled to the top of a different list.
+
+   The store has a second reader now. The tape shows the trading slice of this list and drops
+   the rest on purpose; the LOG overlay shows all of it, in the app's own log lines, and the
+   two read from the one array so they can never disagree about what was recorded. */
 function setLog(events) {
   LOG_EVENTS = Array.isArray(events) ? events.slice(0, LOG_MAX_LINES) : [];
   renderHistory(PAYLOAD);
+  renderLogView();
 }
 
 function appendLog(event) {
   LOG_EVENTS.unshift(event);
   if (LOG_EVENTS.length > LOG_MAX_LINES) LOG_EVENTS.length = LOG_MAX_LINES;
   renderHistory(PAYLOAD);
+  if (!LOG_VIEW) return;
+  /* One line, prepended, rather than a rebuild of four hundred: the overlay is open in front
+     of somebody who is reading it, and rebuilding the list under them would throw away their
+     scroll position on every event the app records. */
+  LOG_VIEW.insertBefore(PhosphorViews.logLine(event), LOG_VIEW.firstChild);
+  while (LOG_VIEW.childElementCount > LOG_MAX_LINES) LOG_VIEW.removeChild(LOG_VIEW.lastChild);
+}
+
+/* The list element inside the open LOG overlay, or null. */
+var LOG_VIEW = null;
+
+function renderLogView() {
+  if (!LOG_VIEW) return;
+  LOG_VIEW.textContent = '';
+  if (!LOG_EVENTS.length) {
+    LOG_VIEW.appendChild(el('div', 'faint', 'nothing recorded yet'));
+    return;
+  }
+  for (var i = 0; i < LOG_EVENTS.length; i++) LOG_VIEW.appendChild(PhosphorViews.logLine(LOG_EVENTS[i]));
 }
 
 /* ---------- 8. note and overlays ---------- */
@@ -1575,6 +1599,12 @@ function openEvents() {
     // calls stop. Carries nothing, so there is nothing to refetch.
     else if (payload.type === 'activity') { if (window.PhosphorPresence) PhosphorPresence.note(); }
     else if (payload.type === 'log' && payload.event) appendLog(payload.event);
+    // The in-app driver talking. Forwarded rather than handled here: the transcript is owned by
+    // driver-chat.js, which is mounted on both the pro deck and the basic screen.
+    else if (payload.type === 'driver' && payload.event) { if (window.PhosphorChat) PhosphorChat.push(payload.event); }
+    // A gas receipt landed on the treasury ledger. The call is a no-op unless the HISTORY
+    // overlay is open, which is where that decision belongs.
+    else if (payload.type === 'transactions') PhosphorViews.transactionsRefresh();
     else if (payload.type === 'candles') candlesPushed();
     // A chart change from an agent. Our own writes come back with a revision we already know,
     // and chartPushed drops those rather than repainting over the hand.
@@ -1585,6 +1615,87 @@ function openEvents() {
   // writes bare `data:` frames with no `event:` field (src/server.ts sseSend), so every frame
   // arrives as 'message' and a named listener is unreachable. Removed rather than left in
   // place, because a fallback that cannot run is worse than none: it reads as covered.
+}
+
+/* ---------- the deck bar and its overlays ----------
+
+   Three buttons above the deck, one modal behind them (ui/overlay.js), and the three views
+   themselves in ui/deck-views.js so this window and the custody window cannot drift into
+   showing different amounts of the same record.
+
+   None of the three duplicates a panel on this page.
+   - LOG is the app's WHOLE audit trail. The tape below carries the trading slice of it and
+     drops everything else by design: a withdrawal is not a trade and has no business on a
+     blotter. Read the log when the question is what the app did, not what this account did.
+   - POLICY has never been on this screen at all. The status bar carries one word for it.
+   - HISTORY is the treasury ledger: swaps, deposits, withdrawals. Different columns, a
+     different ledger, and not one row of it reaches the tape. That is why the tape keeps
+     its panel and its room, and why the panel is titled TAPE now: two records cannot share
+     one word on one screen. */
+
+function openLogOverlay(trigger) {
+  PhosphorOverlay.open({
+    title: 'LOG',
+    trigger: trigger,
+    build: function (box) {
+      box.appendChild(el('p', 'ovl-note', 'Everything this app recorded, newest first, not just this venue. Nothing here is shortened.'));
+      LOG_VIEW = el('div', 'log');
+      box.appendChild(LOG_VIEW);
+      // Draw the tail already held, then read again: never empty while a fetch is in
+      // flight, never stale once it lands.
+      renderLogView();
+      refreshLog();
+    },
+    onClose: function () {
+      LOG_VIEW = null;
+    }
+  });
+}
+
+function openPolicyOverlay(trigger) {
+  PhosphorOverlay.open({
+    title: 'POLICY',
+    trigger: trigger,
+    build: function (box) {
+      PhosphorViews.policy(box, POLICY);
+    }
+  });
+}
+
+function openHistoryOverlay(trigger) {
+  PhosphorOverlay.open({
+    title: 'HISTORY',
+    trigger: trigger,
+    build: function (box) {
+      box.appendChild(el('p', 'ovl-note', 'The treasury ledger: swaps, deposits and withdrawals. Trades are on the TAPE panel.'));
+      PhosphorViews.transactions(box, alertLine);
+    },
+    onClose: PhosphorViews.transactionsClosed
+  });
+}
+
+function wireDeckBar() {
+  var buttons = [
+    { id: 'open-log', open: openLogOverlay },
+    { id: 'open-policy', open: openPolicyOverlay },
+    { id: 'open-history', open: openHistoryOverlay }
+  ];
+  for (var i = 0; i < buttons.length; i++) {
+    (function (spec) {
+      var btn = $(spec.id);
+      if (!btn) return;
+      btn.addEventListener('click', function () {
+        spec.open(btn);
+      });
+    })(buttons[i]);
+  }
+}
+
+/* The conversation, under the book. driver-chat.js owns everything inside it, including the
+   rule that it never renders an approval: the gate is one column over. */
+function mountChat() {
+  if (!window.PhosphorChat) return;
+  PhosphorChat.mount($('agent-chat'), { placeholder: 'tell the agent what to do' });
 }
 
 /* ---------- wiring ---------- */
@@ -1777,6 +1888,8 @@ async function boot() {
   wireProduct();
   wireCommand();
   wireResize();
+  wireDeckBar();
+  mountChat();
   // The frame and every label go up before the first fetch answers, with every number at --
   // and the banner saying what is being waited on. No spinner: the shell is the answer.
   renderKill(null);
@@ -1789,6 +1902,9 @@ async function boot() {
   await refreshState();
   await refreshTrade();
   await refreshLog();
+  // The transcript and the driver's own state, once. Everything after this arrives on the
+  // event stream and is pushed into the chat by openEvents() below.
+  if (window.PhosphorChat) PhosphorChat.load();
   openEvents();
   // The chart owns its own fetch loop and its own timers; see ui/chart.js.
   chartBoot();
