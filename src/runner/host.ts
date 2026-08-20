@@ -59,7 +59,66 @@ export type HostDeps = {
   killSwitch: () => boolean;
   user: string; // the master account address; positions and collateral are read against it
   pollMs?: number;
+  // The portfolio ceiling, and the reason it lives here rather than in the envelope.
+  //
+  // Every existing limit is PER MANDATE: notional, borrowed multiple, order rate, loss and
+  // expiry are all checked by src/strategy/envelope.ts against one mandate's own bounds. That
+  // leaves the number nobody was checking, which is the sum. Three separate $200 mandates are
+  // $600 of standing authority, each one individually within every rule, and no screen ever
+  // stated the total.
+  //
+  // It is enforced at arm() because this map IS the armed set: the policy engine sees one
+  // draft at a time and the child sees one mandate at a time, so this is the only place the
+  // question "how much is armed right now" has an answer. Same shape as the kill-switch check
+  // directly below it, and for the same reason: a refusal here happens before a child exists.
+  //
+  // It became load bearing on 2026-08-20, when the runner stopped refusing mainnet outright.
+  // A guard removed and replaced with nothing is how a testnet convenience becomes a mainnet
+  // hole, so this is what replaced it.
+  limits?: { maxArmedMandates: number; maxAggregateNotionalUsd: number };
 };
+
+// Testnet money is free, so the ceiling there only has to stop a runaway loop. Mainnet starts
+// deliberately small: this is a first run against real collateral, and the number a human is
+// most likely to regret is the one they never had to type.
+export const TESTNET_TRADING_LIMITS = { maxArmedMandates: 3, maxAggregateNotionalUsd: 2500 };
+export const MAINNET_TRADING_LIMITS = { maxArmedMandates: 3, maxAggregateNotionalUsd: 250 };
+
+export type TradingLimits = { maxArmedMandates: number; maxAggregateNotionalUsd: number };
+
+// The ceiling as a pure function of what is armed and what wants to arm, so it can be checked
+// without a child process, a key or a venue. Returns the refusal sentence, or null to allow.
+//
+// Pure on purpose: the host can only populate its armed map after a child has spawned, which
+// would have made the only test of this rule a test of process spawning.
+export function tradingLimitRefusal(
+  armedMandates: readonly { id: string; maxNotionalUsd: number }[],
+  incoming: { id: string; maxNotionalUsd: number },
+  limits: TradingLimits,
+): string | null {
+  // Re-arming an id that is already armed replaces it rather than adding to the total, so it
+  // must not be counted twice against either ceiling.
+  const others = armedMandates.filter((a) => a.id !== incoming.id);
+
+  if (others.length + 1 > limits.maxArmedMandates) {
+    return (
+      `${others.length} mandates are already armed and the ceiling is ${limits.maxArmedMandates}. ` +
+      `Disarm one before arming another: the limit is on standing authority, not on how much you can trade.`
+    );
+  }
+
+  const armedNotional = others.reduce((sum, a) => sum + a.maxNotionalUsd, 0);
+  const wouldBe = armedNotional + incoming.maxNotionalUsd;
+  if (wouldBe > limits.maxAggregateNotionalUsd) {
+    return (
+      `arming this would put $${wouldBe.toFixed(2)} of standing authority on the account, above the ` +
+      `$${limits.maxAggregateNotionalUsd.toFixed(2)} ceiling ($${armedNotional.toFixed(2)} is already armed). ` +
+      `Every bound in a mandate is per mandate; this is the one on the sum of them.`
+    );
+  }
+
+  return null;
+}
 
 export function createRunnerHost(deps: HostDeps): MandateRunner & {
   stopAll(reason: string): Promise<void>;
@@ -175,6 +234,13 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
   return {
     async arm(mandate, program) {
       if (deps.killSwitch()) return { ok: false, detail: 'kill switch is on; nothing can arm' };
+
+      const refusal = tradingLimitRefusal(
+        [...armed.values()].map((a) => ({ id: a.mandate.id, maxNotionalUsd: a.mandate.maxNotionalUsd })),
+        { id: mandate.id, maxNotionalUsd: mandate.maxNotionalUsd },
+        deps.limits ?? TESTNET_TRADING_LIMITS,
+      );
+      if (refusal !== null) return { ok: false, detail: refusal };
 
       try {
         const c = await ensureChild();

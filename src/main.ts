@@ -21,7 +21,7 @@ import { hyperliquidSource } from './hyperliquid.ts';
 import { createMarketData } from './market/index.ts';
 import { createProposalService } from './proposals.ts';
 import { createAgents } from './agents.ts';
-import { createRunnerHost } from './runner/host.ts';
+import { MAINNET_TRADING_LIMITS, TESTNET_TRADING_LIMITS, createRunnerHost } from './runner/host.ts';
 import { readApiWalletKey } from './runner/keys.ts';
 import { createTradeService } from './trade/service.ts';
 import { createInfoClient } from './hl/info.ts';
@@ -125,6 +125,9 @@ const runner = createRunnerHost({
   apiWalletKey: async () => await readApiWalletKey(cfg.keysPath),
   isMainnet: HL_MAINNET,
   baseUrl: HL_BASE_URL,
+  // The ceiling on everything armed at once. Tighter on mainnet, and it is what replaced the
+  // runner's blanket mainnet refusal rather than that refusal simply being deleted.
+  limits: HL_MAINNET ? MAINNET_TRADING_LIMITS : TESTNET_TRADING_LIMITS,
   // Fail closed: a policy file that will not load reads as the kill switch being ON, so an
   // unreadable policy can never be the reason a bot was allowed to arm.
   user: cfg.addresses.evm[0] ?? '',
