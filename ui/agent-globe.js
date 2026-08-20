@@ -1,9 +1,16 @@
-/* agent-globe.js: the rotating globe that stands in the agent panel when nothing is running.
+/* agent-globe.js: the rotating globe the agent panel draws, twice, at two sizes.
  *
- * ONE job: say "no agent here yet, press me" without a word, and keep saying it for as long
- * as the panel is empty. It is the idle state of the conversation, not decoration bolted on
- * top of it: when the driver is off this is the whole panel, and when the driver starts this
- * stops and is taken off the page.
+ * ONE job: say what the agent is doing without a word. It does that in two places, and they
+ * are the same drawing on purpose rather than two pictures that nearly agree:
+ *
+ *   the idle panel   no agent. It is the whole panel, it turns, and it says "press me".
+ *   the link badge   an agent. It is about forty pixels in the corner of the live panel, and
+ *                    it turns fast and bright while the agent works, slow and dim while it
+ *                    waits, and holds one still frame when it is stopped.
+ *
+ * The badge is why `tune` and `hold` exist; everything else here was already what the idle
+ * globe needed. Neither the speed nor the brightness is decided in this file: whoever mounts
+ * a globe says what each state looks like, and this draws it.
  *
  * WHY A GLOBE AND NOT THE ORB. ui/presence.js already draws a ball, and it means something
  * else: it is the seat light, and it is on when an agent is WORKING. Two lit balls on one
@@ -14,10 +21,13 @@
  *
  * WHAT IT COSTS. One rAF while it is running, and nothing at all otherwise. It stops itself
  * when the tab is hidden, because a globe nobody can see is a battery bill, and it draws one
- * still frame and never loops when the reader has asked for reduced motion.
+ * still frame and never loops when the reader has asked for reduced motion. Two of these on
+ * one panel would be two rAF loops, so driver-chat.js runs exactly one at a time and the two
+ * are never on screen together.
  *
- * IT IS NOT A BUTTON. driver-chat.js wraps it in one. This file draws and nothing else: it
- * has no listeners, reads no state, and calls no API. Whoever mounts it decides when it runs.
+ * IT IS NOT A BUTTON, AND IT IS NOT A CONTROL. driver-chat.js wraps the idle one in a button
+ * and leaves the badge alone. This file draws and nothing else: it has no listeners, reads no
+ * state, and calls no API. Whoever mounts it decides when it runs and how fast.
  */
 
 'use strict';
@@ -111,6 +121,23 @@ var PhosphorGlobe = (function () {
        to every stroke and to the bloom, and clamped where it would otherwise pass 1. */
     var gain = typeof options.gain === 'number' ? options.gain : 1;
 
+    /* THE DIAL, AND WHY THERE IS ONE. The badge is this same drawing used as a status light,
+       and a light that cannot change is not a light: it has to be bright and quick while the
+       agent writes and dim and slow while it waits. Both are one multiplier rather than two
+       copies of the draw code, because there is one globe in this app and there should stay
+       one. `drive` multiplies the mount's own gain instead of replacing it, so the calm
+       screen's louder globe stays the louder one at every state. Both start at the idle
+       globe's own numbers, so a mount that never calls tune is the globe this file always
+       drew. */
+    var rate = 1;
+    var drive = 1;
+
+    /* The floor under the radius, and why a caller is allowed to drop it. A globe that fills a
+       panel must never shrink to a dot when the panel is dragged narrow, so eighteen pixels is
+       the smallest it may be. The badge IS a dot: forty pixels of corner, where that floor
+       would draw a sphere half again wider than its own canvas. */
+    var minR = typeof options.minRadius === 'number' ? options.minRadius : 18;
+
     /* Resolved on the first frame, not here. The basic screen's tokens hang off
        body[data-view='basic'], and the attribute that switches them on is written by the
        first state frame, which lands AFTER this component is mounted. Reading at create
@@ -118,11 +145,17 @@ var PhosphorGlobe = (function () {
     var rgb = null;
     var raf = 0;
     var running = false;
-    var t0 = 0;
+    /* The turn, ACCUMULATED rather than read off a start time. A globe whose angle is
+       elapsed/SPIN_S jumps the moment the rate changes, because the new speed says it should
+       already be somewhere else; adding one frame's worth of turn at the current rate carries
+       it on from where it is. It is also what keeps a tab that was away for a minute from
+       spinning a minute of catch-up on its way back. */
+    var clock = 0;
+    var last = 0;
     var frames = 0;
 
     function rgba(a) {
-      var v = a * gain;
+      var v = a * gain * drive;
       if (v > 1) v = 1;
       return 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',' + v.toFixed(3) + ')';
     }
@@ -198,7 +231,12 @@ var PhosphorGlobe = (function () {
       ctx.clearRect(0, 0, box.w, box.h);
       var cx = box.w / 2;
       var cy = box.h / 2;
-      var r = Math.max(18, Math.min(box.w, box.h) * 0.30);
+      var r = Math.max(minR, Math.min(box.w, box.h) * 0.30);
+      /* Fewer lines on a small globe. The counts above are read at panel size, where they are
+         a wireframe; at badge size the same counts land five strokes inside one pixel and the
+         sphere fills in solid, which is the one thing a wireframe is for not doing. */
+      var lats = r < 16 ? 3 : LAT_RINGS;
+      var meridians = r < 16 ? 7 : MERIDIANS;
       var spin = (elapsed / SPIN_S) * Math.PI * 2;
 
       // The atmosphere: a soft bloom that stops the wireframe reading as a flat diagram.
@@ -225,8 +263,8 @@ var PhosphorGlobe = (function () {
       var i, j, lat, lon, prev, next;
 
       // Latitude rings, evenly spread between the poles and never on them.
-      for (i = 1; i <= LAT_RINGS; i++) {
-        lat = -Math.PI / 2 + (Math.PI * i) / (LAT_RINGS + 1);
+      for (i = 1; i <= lats; i++) {
+        lat = -Math.PI / 2 + (Math.PI * i) / (lats + 1);
         prev = project(lat, 0, spin, cx, cy, r);
         for (j = 1; j <= SEG; j++) {
           next = project(lat, (Math.PI * 2 * j) / SEG, spin, cx, cy, r);
@@ -236,8 +274,8 @@ var PhosphorGlobe = (function () {
       }
 
       // Meridians, pole to pole.
-      for (i = 0; i < MERIDIANS; i++) {
-        lon = (Math.PI * 2 * i) / MERIDIANS;
+      for (i = 0; i < meridians; i++) {
+        lon = (Math.PI * 2 * i) / meridians;
         prev = project(-Math.PI / 2, lon, spin, cx, cy, r);
         for (j = 1; j <= SEG; j++) {
           next = project(-Math.PI / 2 + (Math.PI * j) / SEG, lon, spin, cx, cy, r);
@@ -315,8 +353,13 @@ var PhosphorGlobe = (function () {
 
     function frame(now) {
       if (!running) return;
-      if (!t0) t0 = now;
-      draw((now - t0) / 1000);
+      if (!last) last = now;
+      var dt = (now - last) / 1000;
+      last = now;
+      // A quarter second is the most any one frame is allowed to be worth: see `clock`.
+      if (dt > 0.25) dt = 0.25;
+      clock += dt * rate;
+      draw(clock);
       raf = requestAnimationFrame(frame);
     }
 
@@ -325,6 +368,7 @@ var PhosphorGlobe = (function () {
         if (raf) cancelAnimationFrame(raf);
         raf = 0;
       } else if (running && !raf) {
+        last = 0;
         raf = requestAnimationFrame(frame);
       }
     }
@@ -340,17 +384,20 @@ var PhosphorGlobe = (function () {
         if (reduced()) {
           /* One frame, held. The shape still says what it says; it just stops moving, which
              is exactly what was asked for. */
-          draw(2.4);
+          running = false;
+          draw(clock || 2.4);
           return;
         }
         document.addEventListener('visibilitychange', onVisibility);
+        last = 0;
         raf = requestAnimationFrame(frame);
       },
       stop: function () {
         running = false;
         if (raf) cancelAnimationFrame(raf);
         raf = 0;
-        t0 = 0;
+        clock = 0;
+        last = 0;
         document.removeEventListener('visibilitychange', onVisibility);
         try {
           var box = canvas.getBoundingClientRect();
@@ -358,6 +405,26 @@ var PhosphorGlobe = (function () {
         } catch (err) {
           /* a canvas already off the page has nothing to clear */
         }
+      },
+      /* Stop turning, and KEEP THE PICTURE. `stop` clears the canvas because the idle globe
+         leaves the page when it stops, and a canvas about to be hidden should not hold a
+         frame. The badge does not leave: a stopped agent still has a corner, and what that
+         corner has to say is "here, and not working", which is this shape standing still. */
+      hold: function () {
+        running = false;
+        if (raf) cancelAnimationFrame(raf);
+        raf = 0;
+        last = 0;
+        document.removeEventListener('visibilitychange', onVisibility);
+        resolve();
+        draw(clock || 2.4);
+      },
+      /* How fast and how loud, from here on. Applied to the next frame rather than to the
+         canvas, so a badge that is already turning changes speed where it is. */
+      tune: function (next) {
+        if (!next) return;
+        if (typeof next.rate === 'number') rate = next.rate;
+        if (typeof next.gain === 'number') drive = next.gain;
       },
       running: function () {
         return running;
