@@ -347,10 +347,47 @@ var PhosphorChat = (function () {
 
   /* ---------- phases ---------- */
 
+  /* NO PHASE MAY STRAND. Karim, 2026-08-20: "once i stop the agent it doesnt quit it and show
+     the globe like I wanted, it simply just removes the text input bar."
+     That is this panel with no way out of a transient phase, and both of them had the same
+     hole. `closing` hands the return to the globe to an animation callback, so a veil that
+     never fires its action leaves the form hidden, the globe hidden and a dead transcript on
+     screen, which is exactly the description. `booting` waits for a status that arrives over
+     the event stream, so a stream that dropped between the press and the answer leaves the
+     intro printed and nothing else, which looks the same.
+     Neither is worth diagnosing while a person is standing in front of it. Each transient
+     phase now carries its own deadline, and when it passes the panel lands on the globe: the
+     one state anybody can act from. The veil still owns the landing when it works, and this
+     only ever fires when it did not.
+     closing is comfortably past the fall's own run (520ms cover, then the mode change).
+     booting is long because it is waiting on a process to spawn, and a false alarm there
+     would take a working session off the screen. */
+  var LAND_MS = { closing: 1400, booting: 30000 };
+  var LAND_REASON = {
+    closing: '',
+    booting: 'the agent did not come up',
+  };
+
   function setPhase(mount, next) {
     if (mount.phase === next) return;
     mount.phase = next;
     mount.root.setAttribute('data-phase', next);
+
+    /* Armed on the way in and cleared on the way out, so a phase that ends normally never
+       leaves a timer behind to fire at the next one. idle() re-enters this function, which is
+       what clears the timer that called it. */
+    if (mount.landTimer) {
+      clearTimeout(mount.landTimer);
+      mount.landTimer = 0;
+    }
+    if (LAND_MS[next]) {
+      mount.landTimer = setTimeout(function () {
+        mount.landTimer = 0;
+        if (mount.phase !== next) return;
+        mount.reason = mount.reason || LAND_REASON[next];
+        idle(mount);
+      }, LAND_MS[next]);
+    }
 
     var live = next === 'live';
     mount.form.hidden = !live;
@@ -582,6 +619,7 @@ var PhosphorChat = (function () {
       phase: 'idle',
       pinned: true,
       introTimer: 0,
+      landTimer: 0,
       liveWhenPrinted: false,
       reason: '',
       idleNote: options.idleNote || 'no agent is running',
@@ -691,12 +729,13 @@ var PhosphorChat = (function () {
      conversation comes back to the conversation rather than to the globe, which is the only
      reason the transcript lives on the server at all.
 
-     THE APP STARTS ITS OWN AGENT AT BOOT (see autostart in src/server.ts), so by the time this
-     page paints the driver is usually already up and the press that would have printed the
-     intro never happened. A driver that is running and has not said or done anything yet is
-     exactly that case, and it gets the intro anyway: the window is opening, which is what the
-     print is about. A reload in the middle of a real conversation is not that case and goes
-     straight back to the transcript. */
+     WITH NO AGENT THE ANSWER IS THE GLOBE, and that is the ordinary case now: autostart is off
+     by default (see src/main.ts), so the app opens with nothing running and the press is the
+     user's. The two cases below are the other ones. A driver that is up and has not said or
+     done anything yet gets the intro anyway, because either the window was reopened onto an
+     agent it did not start or `driver.autostart` is on, and both are the window opening, which
+     is what the print is about. A reload in the middle of a real conversation is neither, and
+     goes straight back to the transcript. */
   function load() {
     fetch('/api/session')
       .then(function (r) { return r.json(); })

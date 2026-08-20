@@ -23,7 +23,7 @@
 // external agent does, and a human clicks in the window. Nothing in this file can approve, and
 // nothing in this file should ever learn how.
 
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -38,6 +38,11 @@ const MCP_PREFIX = 'mcp__phosphor__';
 // against a real event, which is a few KB at worst, and bounded against a child that never
 // writes a newline.
 const MAX_LINE = 4 * 1024 * 1024;
+
+// How long a stopped agent gets to leave on its own before SIGKILL. Claude Code flushes and
+// exits well inside this; the session that needs the whole grace is one killed mid-request.
+const TERM_GRACE_MS = 1500;
+const POLL_MS = 50;
 
 export type DriverEvent =
   | { kind: 'status'; state: DriverState; detail?: string }
@@ -176,6 +181,90 @@ export function buildArgv(opts: {
 export function assertSurface(tools: unknown): string[] {
   if (!Array.isArray(tools)) return ['<the init event carried no tool list>'];
   return tools.filter((t): t is string => typeof t === 'string').filter((t) => !t.startsWith(MCP_PREFIX));
+}
+
+/* ---------- orphans from a run that is over ----------
+
+   Everything above stops an agent this process started. Nothing above can stop one left by a
+   process that was itself killed outright: the child is detached, so it is reparented to
+   launchd and keeps running with no window, no seat and no way to be reached. Before the
+   escalation above existed that happened on every quit, and one is already on the machine of
+   anyone who has been running this app.
+
+   THE MATCH IS THIS INSTALLATION'S OWN LOCKDOWN FILE, and the precision is the entire safety
+   argument. Anyone running Phosphor is likely to have their own Claude Code sessions open, and
+   a sweep that matched on the binary name would kill their work. The absolute path of
+   operator/driver.settings.json appears in the child's argv because this app put it there; no
+   other session on the machine is carrying it. */
+
+export function findOrphans(settings: string, psOutput: string, selfPid: number): number[] {
+  const found: number[] = [];
+  for (const line of psOutput.split('\n')) {
+    const match = /^\s*(\d+)\s+(.*)$/.exec(line);
+    if (match === null) continue;
+    const pid = Number(match[1]);
+    const args = match[2];
+    if (!Number.isInteger(pid) || pid <= 1 || pid === selfPid) continue;
+    // Both, not either: the settings path alone would match a person reading the file, and
+    // the stream flags alone would match any headless session on the machine.
+    if (!args.includes(settings)) continue;
+    if (!args.includes('--input-format') || !args.includes('stream-json')) continue;
+    found.push(pid);
+  }
+  return found;
+}
+
+/* Called once at boot, from src/main.ts, before anything can start a driver of its own. Safe
+   at exactly that moment and not at any other: the app has just taken the port, so a Phosphor
+   agent alive anywhere on this machine belongs to a run that is over. Returns the pids it
+   signalled so the caller can say so in the audit log. */
+export function sweepOrphans(repo: string, now: () => number = Date.now): number[] {
+  const settings = path.join(repo, 'operator', 'driver.settings.json');
+  let listing = '';
+  try {
+    listing = execFileSync('/bin/ps', ['-axo', 'pid=,args='], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
+  } catch {
+    // No ps, or a platform without one. An orphan left behind is worse than a sweep that did
+    // not run, but neither is worth refusing to start the app over.
+    return [];
+  }
+  const orphans = findOrphans(settings, listing, process.pid);
+  for (const pid of orphans) {
+    try {
+      process.kill(-pid, 'SIGTERM');
+    } catch {
+      try {
+        process.kill(pid, 'SIGTERM');
+      } catch {
+        continue;
+      }
+    }
+  }
+  // One grace for the whole set, then whatever is left is taken out. Same escalation as a
+  // live stop, and the same reason: asked first, made second.
+  const deadline = now() + TERM_GRACE_MS;
+  while (now() < deadline) {
+    if (!orphans.some(stillThere)) break;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, POLL_MS);
+  }
+  for (const pid of orphans) {
+    if (!stillThere(pid)) continue;
+    try {
+      process.kill(-pid, 'SIGKILL');
+    } catch {
+      /* gone between the look and the signal */
+    }
+  }
+  return orphans;
+}
+
+function stillThere(pid: number): boolean {
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
 }
 
 export function createDriver(opts: DriverOptions) {
@@ -395,6 +484,35 @@ export function createDriver(opts: DriverOptions) {
     }
   }
 
+  /* Groups this driver started and has not yet watched die. Almost always empty or one; it
+     holds two only in the window between a stop and the group actually going. */
+  const groups = new Set<number>();
+
+  function groupAlive(pid: number): boolean {
+    try {
+      process.kill(-pid, 0);
+      return true;
+    } catch (error) {
+      // EPERM is a group that exists and is not ours to signal, which still counts as there.
+      return (error as NodeJS.ErrnoException).code === 'EPERM';
+    }
+  }
+
+  function sleepSync(ms: number): void {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  }
+
+  /* ASKED TO GO, THEN MADE TO GO.
+     The old version of this sent SIGTERM and scheduled a SIGKILL two seconds later on an
+     unref'd timer, which is a backstop that cannot fire in the one case it exists for: on the
+     app's own way out the loop is already finished, so the timer is dropped and SIGTERM is the
+     only signal the agent ever gets. A Claude Code process that was mid-request when it
+     arrived then outlived the app that spawned it, detached, holding half a gigabyte, with no
+     window and nothing left to collect it. That is Karim's "they blat up the pc": every quit
+     leaked one, and they accumulate until the machine is rebooted.
+     So the escalation is real now. SIGTERM, then the group is watched, then SIGKILL, and
+     killSync below does the same thing without a timer for the callers that have no loop
+     left. */
   function kill(): void {
     if (!child) return;
     const dying = child;
@@ -406,8 +524,39 @@ export function createDriver(opts: DriverOptions) {
       /* the pipe can already be closed when the child died first */
     }
     if (pid === undefined) return;
+    groups.add(pid);
     signalGroup(pid, 'SIGTERM');
-    setTimeout(() => signalGroup(pid, 'SIGKILL'), 2000).unref();
+    /* Polled rather than one late SIGKILL, so a child that leaves at once is off the books at
+       once and a child that hangs is taken out the moment its grace is spent. Unref'd because
+       a pending burial must never be the reason the app stays up; killSync owns the exit. */
+    let waited = 0;
+    const watch = setInterval(() => {
+      waited += POLL_MS;
+      if (!groupAlive(pid)) {
+        groups.delete(pid);
+        clearInterval(watch);
+        return;
+      }
+      if (waited < TERM_GRACE_MS) return;
+      clearInterval(watch);
+      signalGroup(pid, 'SIGKILL');
+      groups.delete(pid);
+    }, POLL_MS);
+    watch.unref();
+  }
+
+  /* The same burial, synchronously, for the two callers where a timer is worthless: process
+     'exit', and a signal handler whose next line is process.exit(). Blocking the loop is the
+     point rather than a cost. The app is leaving, and the one thing that has to be true before
+     it does is that the process it spawned is gone. */
+  function killSync(): void {
+    kill();
+    const deadline = Date.now() + TERM_GRACE_MS;
+    for (const pid of groups) {
+      while (groupAlive(pid) && Date.now() < deadline) sleepSync(POLL_MS);
+      if (groupAlive(pid)) signalGroup(pid, 'SIGKILL');
+      groups.delete(pid);
+    }
   }
 
   // A driver that outlives the window would keep the seat, keep spending the user's
@@ -418,13 +567,13 @@ export function createDriver(opts: DriverOptions) {
   function armExitGuard(): void {
     if (guarded) return;
     guarded = true;
-    process.once('exit', () => kill());
+    process.once('exit', () => killSync());
     // Registering a signal listener replaces node's default action for that signal, so each one
     // has to exit explicitly or the app stops responding to the signal that was supposed to end
     // it. src/mcp.ts carries the same note for the same reason.
     for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) {
       process.once(signal, () => {
-        kill();
+        killSync();
         process.exit(0);
       });
     }

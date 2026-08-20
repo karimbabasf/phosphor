@@ -15,7 +15,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { assertSurface, buildArgv, resolveClaudeBin } from '../../src/driver.ts';
+import { assertSurface, buildArgv, findOrphans, resolveClaudeBin } from '../../src/driver.ts';
 
 test('assertSurface accepts phosphor tools and nothing else', () => {
   assert.deepEqual(assertSurface(['mcp__phosphor__balance', 'mcp__phosphor__propose_swap']), []);
@@ -134,4 +134,50 @@ test('buildArgv keeps the lockdown flags when a model and a prompt are both set'
   assert.equal(argv[argv.indexOf('--permission-mode') + 1], 'dontAsk');
   assert.ok(argv.includes('--setting-sources='));
   assert.equal(argv[argv.indexOf('--append-system-prompt') + 1], 'you are phosphor');
+});
+
+/* ---------- orphans ----------
+
+   The sweep exists because a detached child outlives a parent that is killed outright, and the
+   packaged app's shutdown did exactly that until 2026-08-20: SIGKILL to the control app, which
+   then had no chance to take its agent down, so every quit left a Claude Code process running
+   under launchd holding several hundred megabytes.
+
+   These tests are not about finding the orphan. They are about NOT finding anything else. The
+   person running this app almost certainly has their own Claude Code sessions open, and a sweep
+   that reached one of them would kill somebody's work to tidy up after ours. */
+
+const SETTINGS = '/Applications/Phosphor.app/Contents/Resources/phosphor/operator/driver.settings.json';
+
+test('the sweep finds an agent this installation left behind', () => {
+  const ps = [
+    '  501 /sbin/launchd',
+    ` 4821 /Users/k/.local/bin/claude --print --input-format stream-json --output-format stream-json --settings ${SETTINGS} --session-id abc`,
+    ' 4822 /usr/bin/node /Applications/Phosphor.app/Contents/Resources/phosphor/src/mcp.ts',
+  ].join('\n');
+  assert.deepEqual(findOrphans(SETTINGS, ps, 999), [4821]);
+});
+
+test('the sweep never reaches a Claude Code session that is not ours', () => {
+  const ps = [
+    ' 5100 /Users/k/.local/bin/claude',
+    ' 5101 /Users/k/.local/bin/claude --print --input-format stream-json --output-format stream-json',
+    ' 5102 /Users/k/.local/bin/claude --settings /Users/k/other-project/settings.json',
+    ` 5103 vim ${SETTINGS}`,
+    ` 5104 grep -r stream-json ${SETTINGS}`,
+  ].join('\n');
+  // 5101 is headless and 5103 has the path: neither is ours, and it takes BOTH to be ours.
+  assert.deepEqual(findOrphans(SETTINGS, ps, 999), []);
+});
+
+test('the sweep never signals the process running it, or init', () => {
+  const line = `--print --input-format stream-json --settings ${SETTINGS}`;
+  assert.deepEqual(findOrphans(SETTINGS, `  770 ${line}`, 770), [], 'itself');
+  assert.deepEqual(findOrphans(SETTINGS, `    1 ${line}`, 999), [], 'and never pid 1');
+});
+
+test('a different installation of Phosphor is a different path, and is left alone', () => {
+  const other = '/Users/k/Developer/phosphor/operator/driver.settings.json';
+  const ps = ` 6001 claude --print --input-format stream-json --settings ${other}`;
+  assert.deepEqual(findOrphans(SETTINGS, ps, 999), []);
 });

@@ -27,6 +27,13 @@ tauri = { version = "2.9.5", features = [] }
 tauri-plugin-clipboard-manager = "2.3.0"
 tauri-plugin-dialog = "2.3.0"
 
+# The one exception to the thin rule above, and it buys nothing new in the tree: tauri already
+# depends on libc on unix, so this is a direct name for a crate that is here anyway. It is
+# needed because std::process::Child::kill is SIGKILL with no gentler option, and a backend
+# that is SIGKILLed cannot take the agent it spawned down with it. See Backend::kill.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [profile.release]
 codegen-units = 1
 lto = true

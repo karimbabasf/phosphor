@@ -580,9 +580,9 @@ export type AppConfig = {
   // The in-app driver. None of these can loosen the lockdown: the tool surface is fixed in
   // operator/driver.settings.json and checked again at runtime in src/driver.ts. claudeBin
   // exists because a GUI app launched from Finder inherits a PATH that does not contain the
-  // place Claude Code installs itself. autostart defaults to ON and is the app opening with an
-  // agent already attached rather than with a globe waiting to be pressed; setting it false
-  // gives back the press, and stopping the agent by hand never restarts it.
+  // place Claude Code installs itself. autostart defaults to OFF: with no agent attached, the
+  // app opens on the globe and starting one is a press. Setting it true opens the window with
+  // an agent already running, and stopping the agent by hand never restarts it either way.
   driver?: { claudeBin?: string; systemPrompt?: string; autostart?: boolean; model?: string };
 };
 

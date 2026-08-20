@@ -103,7 +103,7 @@ interface Harness {
   phase(): string | null;
 }
 
-function load(opts: { startFails?: string; driver?: Any } = {}): Harness {
+function load(opts: { startFails?: string; driver?: Any; veilNeverFires?: boolean } = {}): Harness {
   const created: Any[] = [];
   const posts: Any[] = [];
   const globeCalls: string[] = [];
@@ -162,7 +162,12 @@ function load(opts: { startFails?: string; driver?: Any } = {}): Harness {
   sandbox.PHOSPHOR_RAIN = {
     // The panel hands the fall a host and a callback; the callback is the swap. Fired at once
     // here, which is the same thing the real file does when animation is unavailable.
-    swap: (apply: () => void) => apply(),
+    // veilNeverFires is the failure this panel has to survive rather than an exotic case: a
+    // canvas run that throws, a tab that is thrown away mid-fall, any reason the action never
+    // gets called. The panel may not depend on an animation to reach a state a person can use.
+    swap: (apply: () => void) => {
+      if (!opts.veilNeverFires) apply();
+    },
     playing: () => false,
   };
 
@@ -316,6 +321,46 @@ test('stopping asks first, and only the second press sends anything', async () =
   assert.equal(h.posts.filter((p) => p.action === 'stop').length, 1);
   assert.equal(h.phase(), 'idle', 'and it always ends on the globe');
   assert.equal(h.find('chat-list').children.length, 0);
+});
+
+/* Karim, 2026-08-20: "once i stop the agent it doesnt quit it and show the globe like I
+   wanted, it simply just removes the text input bar."
+   That is a panel stuck in `closing`: the form is hidden, the globe is hidden, and the dead
+   transcript is still standing. It happens whenever the fall does not call back, and the panel
+   had nothing else that could put it right, because setState refuses to act while closing so
+   the veil can own the landing. It still owns it when it works. These two are the floor. */
+test('a stop lands on the globe even when the fall never calls back', async () => {
+  const h = load({ veilNeverFires: true });
+  h.chat.push({ kind: 'status', state: 'starting' });
+  h.tick(1000);
+  h.chat.push({ kind: 'status', state: 'ready' });
+  h.chat.push({ kind: 'text', text: 'a line worth losing' });
+
+  h.find('chat-stop').fire('click');
+  h.find('chat-confirm-yes').fire('click');
+  await flush();
+  assert.equal(h.phase(), 'closing', 'the fall is asked for and is holding the panel');
+
+  // The server says the session is gone while the panel is mid-teardown, which is the exact
+  // moment the old code dropped the fact on the floor.
+  h.chat.push({ kind: 'status', state: 'stopped' });
+  h.tick(2000);
+  assert.equal(h.phase(), 'idle', 'and it is on the globe anyway');
+  assert.equal(h.find('chat-globe').hidden, false);
+  assert.equal(h.find('chat-list').children.length, 0, 'with the dead conversation cleared');
+});
+
+test('a start that never reports lands on the globe with a reason, not on a printed intro', () => {
+  const h = load();
+  h.find('chat-globe').fire('click');
+  h.tick(1000);
+  assert.equal(h.phase(), 'booting', 'the intro prints while the process comes up');
+
+  // Nothing else ever arrives: the event stream dropped, or the child never announced itself.
+  h.tick(30000);
+  assert.equal(h.phase(), 'idle');
+  assert.equal(h.find('chat-globe').hidden, false);
+  assert.equal(h.find('chat-globe-sub').textContent, 'the agent did not come up');
 });
 
 test('the globe turns only while the panel is idle', () => {

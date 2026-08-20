@@ -27,12 +27,27 @@ import { createTradeService } from './trade/service.ts';
 import { createInfoClient } from './hl/info.ts';
 import { atr } from './analysis/regime.ts';
 import { createServer } from './server.ts';
+import { sweepOrphans } from './driver.ts';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const cfg = loadConfig(root);
 
 const audit = createAudit(cfg.dataDir);
 const store = createStore(cfg.dataDir);
+
+/* Anything the last run left behind, before this one can add to it. See the note above
+   sweepOrphans in src/driver.ts for why this is safe here and nowhere else: it runs from the
+   entrypoint rather than from createServer because every test in this repo builds a server,
+   and a sweep that matched this installation's own settings path from inside a test would kill
+   a Phosphor agent the developer is actually using. */
+const collected = sweepOrphans(root);
+if (collected.length > 0) {
+  audit.append(
+    'app_start',
+    `collected ${collected.length} agent process(es) left running by a previous session`,
+    { pids: collected },
+  );
+}
 
 // Seed a default policy only when the file is absent. A present-but-corrupt file
 // is left in place: loadPolicy returns null and every write refuses (fail closed)
@@ -275,8 +290,13 @@ const server = createServer({
   getView,
   setView,
   trade,
-  // Default ON. The window is meant to open ready to be talked to, not ready to be started.
-  autostart: cfg.driver?.autostart !== false,
+  /* Default OFF, and the window opens on the turning globe. Karim, 2026-08-20: with no agent
+     attached yet, the globe is what the app opens on, always.
+     Spawning a Claude Code process because a window opened was the app making a decision on
+     the user's behalf, and paying for it: a session nobody had a question for still holds the
+     seat and still spends the subscription. The press is cheap and it is the user's. Anyone
+     who wants the old behaviour sets `driver.autostart: true` in config.json. */
+  autostart: cfg.driver?.autostart === true,
 });
 
 setInterval(() => {

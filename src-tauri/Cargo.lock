@@ -2386,6 +2386,7 @@ dependencies = [
 name = "phosphor-desktop"
 version = "0.3.0"
 dependencies = [
+ "libc",
  "serde_json",
  "tauri",
  "tauri-build",
