@@ -124,11 +124,163 @@ export function buildTriggerAction(triggers: TriggerRequest[]): unknown {
   return { type: 'order', orders: wire, grouping: 'positionTpsl' };
 }
 
+// An entry and its two exits, placed as ONE action.
+//
+// buildTriggerAction above uses grouping 'positionTpsl', which sizes a stop to whatever the
+// position happens to be when it fires. That is right for a stop attached to a position that
+// already exists. It is wrong for a bracket, where the stop belongs to THIS entry and to its
+// size: 'normalTpsl' is the grouping that ties them together, so the exits are born with the
+// entry rather than placed by a second round trip that can fail on its own.
+//
+// This is the difference between an agent that has to be present to attach a stop and one that
+// does not. The whole entry, target and stop go to the venue in one signature, and after that
+// they are the venue's problem at match speed rather than ours at tick speed.
+export function buildBracketAction(entry: OrderRequest, exits: TriggerRequest[]): unknown {
+  if (exits.length === 0) {
+    throw new Error('a bracket with no exits is just an order; use buildOrderAction');
+  }
+  if (exits.length > 2) {
+    throw new Error(`a bracket takes at most a target and a stop (got ${exits.length} exits)`);
+  }
+  for (const exit of exits) {
+    if (exit.assetId !== entry.assetId) {
+      throw new Error(`bracket exit is on asset ${exit.assetId} and the entry is on ${entry.assetId}`);
+    }
+    if (exit.isBuy === entry.isBuy) {
+      throw new Error('a bracket exit must be the opposite side from its entry, or it adds to the position');
+    }
+  }
+
+  const wire: Record<string, unknown>[] = [];
+
+  // The entry comes first. The venue reads the group in order and the exits attach to what
+  // precedes them, so this array is not a set.
+  const first: Record<string, unknown> = {
+    a: entry.assetId,
+    b: entry.isBuy,
+    p: formatPrice(entry.price, entry.szDecimals, true),
+    s: formatSize(entry.size, entry.szDecimals),
+    r: entry.reduceOnly,
+    t: { limit: { tif: entry.tif } },
+  };
+  if (entry.cloid !== undefined) first.c = entry.cloid;
+  wire.push(first);
+
+  for (const exit of exits) {
+    const e: Record<string, unknown> = {
+      a: exit.assetId,
+      b: exit.isBuy,
+      p: formatPrice(exit.triggerPx, exit.szDecimals, true),
+      s: formatSize(exit.size, exit.szDecimals),
+      r: true,
+      t: { trigger: { isMarket: exit.isMarket, triggerPx: formatPrice(exit.triggerPx, exit.szDecimals, true), tpsl: exit.tpsl } },
+    };
+    if (exit.cloid !== undefined) e.c = exit.cloid;
+    wire.push(e);
+  }
+
+  return { type: 'order', orders: wire, grouping: 'normalTpsl' };
+}
+
+// Move a resting order without giving up its place in the queue.
+//
+// The alternative is cancel then place, which costs two round trips, loses queue priority, and
+// leaves a window where the order is not on the book at all. For anything that maintains a
+// quote, that window is the whole risk.
+//
+// `a` is always_place and is the one field here that follows rule 2 in the header: OMITTED when
+// false, never sent as false. It says whether to place the new order even if the old one is
+// already gone. Defaulting it to false is the safe direction: an order that filled while the
+// modify was in flight must not be silently replaced with a fresh one.
+export function buildModifyAction(oid: number | string, order: OrderRequest, alwaysPlace = false): unknown {
+  const wire: Record<string, unknown> = {
+    a: order.assetId,
+    b: order.isBuy,
+    p: formatPrice(order.price, order.szDecimals, true),
+    s: formatSize(order.size, order.szDecimals),
+    r: order.reduceOnly,
+    t: { limit: { tif: order.tif } },
+  };
+  if (order.cloid !== undefined) wire.c = order.cloid;
+
+  const action: Record<string, unknown> = { type: 'modify', oid, order: wire };
+  if (alwaysPlace) action.a = true;
+  return action;
+}
+
+export function buildBatchModifyAction(
+  modifies: { oid: number | string; order: OrderRequest }[],
+  alwaysPlace = false,
+): unknown {
+  const wire = modifies.map((m) => {
+    const o: Record<string, unknown> = {
+      a: m.order.assetId,
+      b: m.order.isBuy,
+      p: formatPrice(m.order.price, m.order.szDecimals, true),
+      s: formatSize(m.order.size, m.order.szDecimals),
+      r: m.order.reduceOnly,
+      t: { limit: { tif: m.order.tif } },
+    };
+    if (m.order.cloid !== undefined) o.c = m.order.cloid;
+    return { oid: m.oid, order: o };
+  });
+
+  const action: Record<string, unknown> = { type: 'batchModify', modifies: wire };
+  if (alwaysPlace) action.a = true;
+  return action;
+}
+
+// The dead-man switch, and the only safety primitive here that works when this app is not.
+//
+// Everything else in this repo protects against a bot doing the wrong thing. This protects
+// against the app DYING while resting orders sit on the venue: the kill switch, the supervisor
+// and the envelope all need a process to run in, and a laptop that sleeps has none. Arm this
+// and the venue cancels everything by itself at a time we chose.
+//
+// Three venue rules shape how it can be used. The first two are documented; the third is not,
+// and it is the one that decides whether this feature exists for you at all.
+//
+//   - the time must be at least 5 seconds ahead, so this cannot be used as an instant cancel;
+//   - a trigger costs one of TEN per day, reset at 00:00 UTC. It is a safety net, not a
+//     heartbeat: re-arming it every few seconds would exhaust the budget before lunch;
+//   - IT IS GATED BEHIND $1,000,000 OF TRADED VOLUME. Measured, not read: arming it on the
+//     testnet account on 2026-08-20 returned
+//     "Cannot set scheduled cancel time until enough volume traded. Required: $1000000.
+//     Traded: $40988.83."
+//
+// That third rule is why isScheduleCancelLocked() exists below. A new account cannot have this
+// net, and code that assumes it can is code that believes it is protected and is not. Anything
+// relying on it has to read the response and fall back to its own supervision, which is what
+// the runner already does on every tick.
+//
+// Omitting the time REMOVES a scheduled cancel, which is how a bot stands the net down when it
+// disarms cleanly.
+export const SCHEDULE_CANCEL_MIN_LEAD_MS = 5_000;
+export const SCHEDULE_CANCEL_MAX_PER_DAY = 10;
+export const SCHEDULE_CANCEL_VOLUME_REQUIRED_USD = 1_000_000;
+
+// Whether the venue refused because the account has not traded enough, rather than because the
+// request was wrong. The two need different responses: this one is permanent until volume
+// arrives, so retrying it is pointless and reporting it as a failure to arm is misleading.
+export function isScheduleCancelLocked(response: unknown): boolean {
+  const text = typeof response === 'string' ? response : JSON.stringify(response ?? '');
+  return /enough volume traded/i.test(text);
+}
+
+export function buildScheduleCancelAction(timeMs: number | null): unknown {
+  // Key order again: one key, and its absence is meaningful.
+  if (timeMs === null) return { type: 'scheduleCancel' };
+  if (!Number.isFinite(timeMs) || !Number.isInteger(timeMs)) {
+    throw new Error(`scheduleCancel time must be an integer millisecond timestamp (got ${timeMs})`);
+  }
+  return { type: 'scheduleCancel', time: timeMs };
+}
+
 export function buildCancelAction(cancels: { assetId: number; oid: number }[]): unknown {
   return { type: 'cancel', cancels: cancels.map((c) => ({ a: c.assetId, o: c.oid })) };
 }
 
-function buildCancelByCloidAction(cancels: { assetId: number; cloid: string }[]): unknown {
+export function buildCancelByCloidAction(cancels: { assetId: number; cloid: string }[]): unknown {
   return { type: 'cancelByCloid', cancels: cancels.map((c) => ({ asset: c.assetId, cloid: c.cloid })) };
 }
 
@@ -164,6 +316,15 @@ export function createExchange(cfg: ExchangeConfig) {
     post,
     order: (orders: OrderRequest[]) => post(buildOrderAction(orders)),
     trigger: (triggers: TriggerRequest[]) => post(buildTriggerAction(triggers)),
+    // Entry plus its exits in one signature, so a position is never briefly naked.
+    bracket: (entry: OrderRequest, exits: TriggerRequest[]) => post(buildBracketAction(entry, exits)),
+    // Re-peg without leaving the book.
+    modify: (oid: number | string, order: OrderRequest, alwaysPlace = false) =>
+      post(buildModifyAction(oid, order, alwaysPlace)),
+    batchModify: (modifies: { oid: number | string; order: OrderRequest }[], alwaysPlace = false) =>
+      post(buildBatchModifyAction(modifies, alwaysPlace)),
+    // The net that works when this process does not. Null stands it down.
+    scheduleCancel: (timeMs: number | null) => post(buildScheduleCancelAction(timeMs)),
     cancel: (cancels: { assetId: number; oid: number }[]) => post(buildCancelAction(cancels)),
     cancelByCloid: (cancels: { assetId: number; cloid: string }[]) => post(buildCancelByCloidAction(cancels)),
     updateLeverage: (assetId: number, isCross: boolean, leverage: number) =>
