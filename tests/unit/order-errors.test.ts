@@ -86,3 +86,27 @@ test('the transport stamps an HTTP failure into a shape orderErrors understands'
   assert.equal(errs.length, 1);
   assert.match(errs[0], /HTTP 429/);
 });
+
+// ---------- the manual verbs, which are the human's last-resort controls ----------
+//
+// FLATTEN ALL disarms every bot and then closes every position. A refused close there used to be
+// folded into a string while the verb still answered ok:true, so the button disarmed everything,
+// closed nothing, returned HTTP 200, and showed the human nothing. The supervisor gone, the stop
+// watch gone, every position still open, behind a screen that looked finished.
+//
+// These pin the SHAPES that decision rests on. The wiring itself is exercised by the runner.
+
+test('a refused cancel is a refusal, so the human is not told an order is gone', () => {
+  // The venue answers a cancel with statuses too, and a refusal there means the order is still
+  // working. Reported as 'cancelled N order(s)' it becomes an order someone stops watching.
+  const refused = { status: 'ok', response: { type: 'cancel', data: { statuses: [{ error: 'Order was never placed' }] } } };
+  assert.deepEqual(orderErrors(refused), ['Order was never placed']);
+
+  const fine = { status: 'ok', response: { type: 'cancel', data: { statuses: ['success', 'success'] } } };
+  assert.deepEqual(orderErrors(fine), []);
+});
+
+test('a partially refused cancel still counts as a refusal', () => {
+  const mixed = { status: 'ok', response: { type: 'cancel', data: { statuses: ['success', { error: 'Order was never placed' }] } } };
+  assert.equal(orderErrors(mixed).length, 1);
+});

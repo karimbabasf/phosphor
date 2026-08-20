@@ -1421,7 +1421,11 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       audit.append(result.ok ? 'executed' : 'error', `${action}: ${result.detail}`, { action, id, coin });
       broadcastTrade();
       broadcastState();
-      sendJson(res, result.ok ? 200 : 400, result);
+      // `error` alongside `detail` on a failure, because the window builds the sentence it
+      // shows from `payload.error`. Without it a refused close reached the human as
+      // "/api/trade/action returned 400" and the venue's own words, which are the only part
+      // that says what to do next, were dropped on the floor.
+      sendJson(res, result.ok ? 200 : 400, result.ok ? result : { ...result, error: result.detail });
     } catch (err) {
       audit.append('error', `${action} failed: ${errText(err)}`);
       sendJson(res, 500, { ok: false, detail: errText(err) });
