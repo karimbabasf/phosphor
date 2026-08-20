@@ -23,12 +23,13 @@ connects and drives it. The app is the car, the agent is the person with the key
 You say "swap 20 USDC into WETH" or "short SOL if it loses this trend line". The agent turns that
 into a proposal. The app prices it, runs it through your policy, and either executes it or waits
 for your click. What an agent can propose: a swap inside NEAR Intents, funding that balance and
-taking it back out, gathering a stablecoin onto one chain, a change to the policy itself, and
-arming a rule-driven bot on Hyperliquid perpetuals.
+taking it back out, funding the Hyperliquid perps account from any chain this app signs for,
+gathering a stablecoin onto one chain, a change to the policy itself, and arming a rule-driven
+bot on Hyperliquid perpetuals.
 
-Uniswap v3 liquidity and the Hyperliquid bridge deposit are implemented, tested and drivable by a
-human, but they are deliberately not tools an agent is handed: neither has run on a live chain,
-and an unproven fund-moving rail is not one to discover the edges of with real money.
+Uniswap v3 liquidity is implemented, tested and drivable by a human, but it is deliberately not a
+tool an agent is handed: it has not run on a live chain, and an unproven fund-moving rail is not
+one to discover the edges of with real money.
 
 The agent can read everything and propose actions. It can never approve, never execute, and never
 touch policy without a human click in the app window. The policy engine enforces authored rules at
@@ -189,13 +190,20 @@ exactly like one agent, and neither of them knew about the other.
 | `propose_policy_change` | Proposes a patch to the policy rules. Always waits for a human click |
 | `propose_mandate` | Arms a rule-driven bot on Hyperliquid perpetuals: a rule program plus the envelope it may never leave. The only tool that grants standing authority, so it always waits for a human click |
 
-Three write tools were deliberately removed from this door and are not coming back on their own.
-`propose_lp_add`, `propose_lp_remove` and `propose_hl_deposit` are still implemented under
-`src/rails/`, still tested, and still drivable by a human. None has run on a live chain, and the
-wallet read after an `lp_add` is known to serve pre-trade balances while claiming nothing is
-stale, so sizing a second move off the first is already wrong on that path. They are absent
-rather than guarded, on purpose: a check can be wrong, but a capability that was never
-registered cannot be called at all.
+Two write tools were deliberately removed from this door and are not coming back on their own.
+`propose_lp_add` and `propose_lp_remove` are still implemented under `src/rails/`, still tested,
+and still drivable by a human. Neither has run on a live chain, and the wallet read after an
+`lp_add` is known to serve pre-trade balances while claiming nothing is stale, so sizing a second
+move off the first is already wrong on that path. They are absent rather than guarded, on
+purpose: a check can be wrong, but a capability that was never registered cannot be called at all.
+
+`propose_hl_deposit` was on that list until 2026-08-20 and is back, because the rail underneath it
+changed shape rather than because it was tested more. It used to transfer USDC to Hyperliquid's
+Bridge2 contract on Arbitrum; it now routes through NEAR Intents into HyperCore, and 1Click
+refuses `hypercore` as an origin, so the direction is a property of the venue rather than a check
+of ours. An agent holding it can add collateral to the trading account and has no path on its
+surface to remove any. Getting money off the venue is a signed `withdraw3` a human runs at a
+terminal, and that is deliberately not a tool.
 
 | Chart tool | Does |
 |---|---|
@@ -379,6 +387,11 @@ Two axes, independent of each other:
   contract address. It has no default. A missing or unrecognised value stops the app at boot rather
   than guessing, because guessing `mainnet` points real rails at real money and guessing `testnet`
   makes a mainnet deployment quietly fake.
+- `tradingNetwork` is which Hyperliquid the trading half talks to, and it follows `network` unless
+  you set it. It exists because the two are genuinely separate questions: the wallet can hold
+  mainnet money while trading is still being proved out on testnet. Every trading consumer reads
+  this one value, so the panel a human reads and the runner that trades cannot disagree about which
+  account they are looking at. They did once, and a mandate could be written that never fired.
 - `mode` is `live` or `demo`. Live reads real balances over public RPCs and needs no keys to read.
   Demo uses a fixture portfolio and a synthetic quoter, so the whole propose/approve/execute loop
   runs offline with nothing at stake.
@@ -457,10 +470,26 @@ Still open, unrelated to keys:
 
 ## Test it
 
-    npm test          # 371 tests: policy engine, proposals, ledger, composition, cost, rails, signers, injection
+    npm test          # the unit suite: policy engine, proposals, ledger, composition, cost, rails, signers, injection
     npm run near:prove # signs four real transactions on NEAR testnet and checks the balances moved
     npm run e2e       # boots the app + a real MCP client, drives 20 checks, exits 0/1
     npx tsc --noEmit  # typecheck
+
+Two of these go to the real venue, because a unit test cannot tell you a remote API accepts what
+you built. Neither spends anything.
+
+    node scripts/hypercore-probe.ts
+        Prices funding the perps account from every origin chain the rail claims, against the live
+        1Click API. Every quote is dry, so it mints no deposit address and commits to nothing. It
+        also checks that the pinned HyperCore USDC asset id is still in the token list, which is the
+        one constant in that rail that a remote change could invalidate.
+
+    PHOSPHOR_TRADING_NETWORK=testnet node scripts/hl-verbs-smoke.ts
+        Round-trips the exchange verbs against Hyperliquid TESTNET with real orders: a resting
+        limit, a re-peg, a batch re-peg, a bracket, and the dead-man switch. Every order is priced
+        far from mid so it cannot fill, and it cancels what it placed on the way out including on
+        the failure paths. It refuses to run on mainnet. This is the only way to learn that an
+        action is malformed, because this venue rejects one without saying why.
 
 The e2e run is the proof rather than a smoke test: it boots the real app, connects a real MCP
 client over stdio, and checks that reads work, that a write lands as pending, that approving it
