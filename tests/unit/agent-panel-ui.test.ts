@@ -331,6 +331,39 @@ test('a start that is refused lands back on the globe, with the reason on it', a
   assert.equal(h.find('chat-list').children.length, 0, 'and the transcript is cleared with it');
 });
 
+/* THE TEST THE OTHERS COULD NOT BE. Karim hit this twice on 2026-08-20: pressing STOP AGENT took
+   the whole composer away and left no way to confirm, cancel or type, and the agent kept running
+   because YES was never clickable. Every test above drives `chat-confirm-yes` by firing a click
+   at the node, and a click fired at a node whose parent is hidden still runs its handler, so the
+   suite was blind to it by construction. This one asks the question the others cannot: is the
+   control a person is being asked to press actually on screen. */
+function onScreen(node: Any): boolean {
+  for (let n: Any = node; n; n = n.parentNode) if (n.hidden) return false;
+  return true;
+}
+
+test('the question a stop asks is reachable, and so are both of its answers', async () => {
+  const h = load();
+  h.chat.push({ kind: 'status', state: 'starting' });
+  h.tick(1000);
+  h.chat.push({ kind: 'status', state: 'ready' });
+  assert.equal(onScreen(h.find('chat-input')), true, 'the box is there before the question');
+
+  h.find('chat-stop').fire('click');
+  await flush();
+
+  assert.equal(onScreen(h.find('chat-confirm')), true, 'the question is on screen');
+  assert.equal(onScreen(h.find('chat-confirm-yes')), true, 'and YES can be pressed');
+  assert.equal(onScreen(h.find('chat-confirm-no')), true, 'and so can CANCEL');
+  // What hiding the form was for, done to the one element it was ever about.
+  assert.equal(onScreen(h.find('chat-input')), false, 'the box is not invited to be typed in');
+
+  h.find('chat-confirm-no').fire('click');
+  await flush();
+  assert.equal(onScreen(h.find('chat-input')), true, 'cancel gives the box back');
+  assert.equal(onScreen(h.find('chat-confirm')), false);
+});
+
 test('stopping asks first, and only the second press sends anything', async () => {
   const h = load();
   h.chat.push({ kind: 'status', state: 'starting' });
@@ -340,7 +373,9 @@ test('stopping asks first, and only the second press sends anything', async () =
   h.find('chat-stop').fire('click');
   await flush();
   assert.equal(h.find('chat-confirm').hidden, false);
-  assert.equal(h.find('chat-form').hidden, true, 'the prompt box is not live behind a question');
+  // The INPUT, not the form. The form is what carries the question, and asserting it was
+  // hidden is what let the panel ship with no way to answer.
+  assert.equal(h.find('chat-input').hidden, true, 'the prompt box is not live behind a question');
   assert.equal(h.posts.filter((p) => p.action === 'stop').length, 0, 'asking is not stopping');
 
   h.find('chat-confirm-no').fire('click');

@@ -489,7 +489,14 @@ async function manual(msg: ManualMsg): Promise<void> {
     if (msg.verb === 'cancel' || msg.verb === 'cancel_all') {
       const cancels = msg.cancels ?? [];
       if (cancels.length === 0) return done(true, 'nothing working to cancel');
-      await requireExchange().cancel(cancels);
+      // The last unchecked venue result in this file. F3's stamping means a 429 arrives as
+      // {status:'err'}, but nothing read it, so a refused cancel still answered "cancelled": a
+      // human believing a resting order is gone when it is still working.
+      const cancelRes = await requireExchange().cancel(cancels);
+      const cancelRefused = orderErrors(cancelRes);
+      if (cancelRefused.length > 0) {
+        return done(false, `the venue refused the cancel: ${cancelRefused.join('; ')}. The order(s) are still working.`);
+      }
       return done(true, `cancelled ${cancels.length} order(s)`);
     }
 
@@ -500,19 +507,40 @@ async function manual(msg: ManualMsg): Promise<void> {
 
     // Flatten is the big red one: stop every bot AND close every position. Bots are stopped
     // FIRST, because closing while a program is still armed invites it to open the position
-    // straight back on its next tick.
+    // straight back on its next tick. That ordering is still right and is kept.
+    //
+    // What was wrong is what happened when a close then FAILED. Every close was attempted, each
+    // refusal was folded into a string, and the verb answered ok:true regardless. The server
+    // turns that into HTTP 200 and the window reacts only to a non-200, so a fully refused
+    // FLATTEN ALL disarmed every bot, closed nothing, and told the human nothing: the supervisor
+    // gone, the stop watch gone, and every position still open behind a screen that looked
+    // finished. That is the exact hazard the close paths were fixed for, surviving on the
+    // human's last-resort control, which is the worst place for it to survive.
+    //
+    // So failures are counted, and the verb reports ok:false when any close did not happen. The
+    // detail leads with what is STILL OPEN, because that is the sentence that decides what the
+    // person does next.
     for (const [id] of [...armed]) {
       armed.delete(id);
       send({ type: 'disarmed', id, reason: 'flatten' });
     }
     const results: string[] = [];
+    const stillOpen: string[] = [];
     for (const [coin, b] of book) {
       if (b.positionSide === 'flat') continue;
       try {
         results.push(await closeCoin(coin));
       } catch (err) {
+        stillOpen.push(coin);
         results.push(`${coin}: ${err instanceof Error ? err.message : String(err)}`);
       }
+    }
+    if (stillOpen.length > 0) {
+      return done(
+        false,
+        `every bot is stopped, but ${stillOpen.join(', ')} did NOT close and ${stillOpen.length === 1 ? 'is' : 'are'} STILL OPEN ` +
+          `with nothing supervising ${stillOpen.length === 1 ? 'it' : 'them'}. Close by hand. ${results.join('; ')}`,
+      );
     }
     return done(true, results.length === 0 ? 'nothing open, every bot stopped' : results.join('; '));
   } catch (err) {

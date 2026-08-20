@@ -623,17 +623,38 @@ var PhosphorChat = (function () {
      dialog is the easiest thing on any of these screens to dismiss by reflex, and what is
      behind this one is a conversation that cannot be got back. */
 
+  /* THE QUESTION LIVES INSIDE THE THING THIS USED TO HIDE. Karim, twice, 2026-08-20: "when i
+     click stop agent this is what happens, it doesnt terminate the agent, it jsut removes the
+     text box and there is nothing I can do."
+     This hid `form`, and the ONE BOX refactor earlier the same day had moved the bar inside the
+     form to give the composer a single border. So confirm sits at form > bar > confirm, and
+     hiding the form hid the question, both answers, and every way back. The agent kept running
+     because YES was never clickable, so the stop was never sent: the audit log has no stopped
+     line at all for those attempts, which is what proves the press never reached the server
+     rather than failing there.
+     It hides the INPUT now. That was the whole intent: a text box invited to be typed in while
+     a destructive question is standing is the thing worth taking away, and the question is not.
+     The cheap stop and SEND go with it, because neither has anything to do while the panel is
+     asking whether to end the session.
+
+     Every test drove `chat-confirm-yes` by firing a click straight at the node, and a click
+     fired at a node inside a hidden parent still runs its handler, so the suite could not see
+     this. The test added beside them walks the ancestors instead. */
   function openConfirm(mount) {
     mount.confirm.hidden = false;
     mount.stopBtn.hidden = true;
-    mount.form.hidden = true;
+    mount.input.hidden = true;
+    mount.send.hidden = true;
+    mount.halt.hidden = true;
     try { mount.no.focus(); } catch (err) {}
   }
 
   function closeConfirm(mount) {
     mount.confirm.hidden = true;
     mount.stopBtn.hidden = false;
-    if (mount.phase === 'live') mount.form.hidden = false;
+    mount.input.hidden = false;
+    mount.send.hidden = false;
+    mount.halt.hidden = false;
   }
 
   /* Stop this answer, keep the conversation. One press, no question, and not awaited: the
@@ -792,6 +813,7 @@ var PhosphorChat = (function () {
       input: input,
       status: status,
       halt: halt,
+      send: send,
       stopBtn: stopBtn,
       confirm: confirm,
       yes: yes,
