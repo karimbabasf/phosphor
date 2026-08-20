@@ -211,10 +211,18 @@ if (op === 'fund') {
 } else if (op === 'read') {
   await readPosition();
 } else if (op === 'withdraw') {
+  // An amount withdraws PART of the position and leaves the rest working, which is worth
+  // having as its own path: it is the one that exercises the time-weighted average principal
+  // for real, and it does not reset the window the way a full exit does.
+  const part = arg === undefined ? undefined : Number(arg);
+  if (part !== undefined && (!Number.isFinite(part) || part <= 0)) {
+    console.error('usage: node scripts/yield-prove.ts withdraw [amount]');
+    process.exit(1);
+  }
   console.log(`BEFORE, ${stamp()}`);
   await readPosition();
-  console.log('\nProposing yield_withdraw of the whole position.');
-  const p = await proposals.proposeYieldWithdraw({ chain: CHAIN, symbol: SYMBOL });
+  console.log(`\nProposing yield_withdraw of ${part === undefined ? 'the whole position' : part + ' ' + SYMBOL}.`);
+  const p = await proposals.proposeYieldWithdraw({ chain: CHAIN, symbol: SYMBOL, amount: part });
   await showProposal(p);
   console.log(`\nAFTER, ${stamp()}`);
   await readPosition();
