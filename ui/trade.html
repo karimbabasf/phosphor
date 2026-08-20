@@ -230,6 +230,18 @@
               </p>
               <span class="track" id="t-liq-bar"><span class="fill"></span></span>
             </div>
+            <!-- The other answer, and it is good news rather than a missing reading. A position
+                 whose collateral is worth more than the position has no price that kills it, and
+                 the venue says so by publishing a wall thousands of times the mark. Printed as a
+                 figure that reads as a broken panel: Karim saw "84636, 96865% away" on a SOL
+                 short and read it as a bug, which is a fair reading of that number.
+                 So the numbers go and a sentence takes their place. It says nothing is at risk
+                 here, in the words a person would use, and it is deliberately not styled as a
+                 warning: see liqReachable in src/trade/state.ts for what decides it. -->
+            <p class="liq-none" id="t-liq-none" hidden>
+              <span class="liq-none-head">NO WALL IN REACH</span>
+              <span class="liq-none-why">more collateral behind this than the position is worth, so no price gets there</span>
+            </p>
             <p class="wall-line" id="t-wall-line">STOP-OUT at <span id="t-wall-price">--</span>, the loss you approved</p>
           </div>
 

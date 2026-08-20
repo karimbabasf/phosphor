@@ -513,6 +513,31 @@ body.agent-collapsed .deck {
 .liq-sub .k { margin-right: 0.75ch; }
 #t-liq-price { color: var(--green); }
 
+/* The section when there is nothing to measure, and it stands where the 26px headline was.
+   Set smaller than that figure on purpose: the headline is loud because a distance closing
+   is the thing this panel exists to shout about, and "you cannot be liquidated" is the one
+   reading here that never needs to raise its voice. Green rather than the faint grey a
+   missing number gets, because this is an answer and not an absence. */
+.liq-none {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 0 6px;
+  max-width: 46ch;
+}
+
+.liq-none-head {
+  font-size: 15px;
+  letter-spacing: 0.14em;
+  color: var(--green-hi);
+}
+
+.liq-none-why {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--green-dim);
+}
+
 /* Distance remaining, not distance travelled: the green is the ground still under the
    position, the red behind it is what the venue takes. Price moving in shrinks the
    green and grows the red, which is the shape of the danger rather than a label

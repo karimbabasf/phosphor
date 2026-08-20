@@ -634,6 +634,25 @@ function renderLiqBlock(pos, wallPx) {
     setText('t-liq-pct', '--');
     setText('t-liq-usd', '--');
     setText('t-liq-atr', '--');
+    // Flat, so the readout is back and empty. Without this the sentence from the last position
+    // outlives the position it was about.
+    if ($('t-liq-body')) $('t-liq-body').hidden = false;
+    if ($('t-liq-none')) $('t-liq-none').hidden = true;
+    fillBar($('t-liq-bar'), null);
+    return;
+  }
+  /* A wall exists and nothing can reach it, which is not the same as no wall and not the same
+     as a far one. state.ts has already blanked the three distances for this case, so without
+     this branch the section prints "-- away, at 84636" and reads as a panel that lost half its
+     numbers. The sentence replaces the whole readout rather than sitting beside it: the venue's
+     price is still on the payload for anyone reading the log, and on screen beside the words
+     "no wall in reach" it only invites the reader to work out whether the two agree. */
+  var reachable = pos.liqReachable !== false;
+  var body = $('t-liq-body');
+  var none = $('t-liq-none');
+  if (body) body.hidden = !reachable;
+  if (none) none.hidden = reachable;
+  if (!reachable) {
     fillBar($('t-liq-bar'), null);
     return;
   }
