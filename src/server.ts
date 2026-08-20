@@ -1678,12 +1678,17 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         return;
       }
       if (kind === 'hl_deposit') {
+        // chain and symbol are optional and both default inside proposeHlDeposit: the money
+        // used to have to be USDC on Arbitrum, and now the origin is a choice, so omitting it
+        // keeps the old call shape working and naming it is the new capability.
+        const chain = params.chain === undefined ? undefined : chainField(params, 'chain', problems);
+        const symbol = params.symbol === undefined ? undefined : strField(params, 'symbol', problems);
         const amount = numField(params, 'amount', problems);
         if (problems.length > 0) {
           sendJson(res, 400, { error: problems.join('; ') });
           return;
         }
-        sendProposal(res, await proposals.proposeHlDeposit({ amount }));
+        sendProposal(res, await proposals.proposeHlDeposit({ chain, symbol, amount }));
         return;
       }
       if (kind === 'intents_deposit') {

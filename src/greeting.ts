@@ -207,6 +207,10 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
     group: 'move money (proposes only, never executes)',
     items: [
       { tool: 'propose_intents_deposit', does: 'fund the NEAR Intents balance from this app wallet. The funding step before a swap.' },
+      {
+        tool: 'propose_hl_deposit',
+        does: 'fund the Hyperliquid perps account from any chain this app signs for. The funding step before a mandate: a bot armed against an empty account can never fire. One way in by construction, so nothing on your surface takes it back out.',
+      },
       { tool: 'propose_swap', does: 'swap inside NEAR Intents by signing an intent. Nothing moves on chain.' },
       { tool: 'propose_intents_withdraw', does: 'take a balance back out of Intents to this app wallet on eth, base or arb.' },
       {
