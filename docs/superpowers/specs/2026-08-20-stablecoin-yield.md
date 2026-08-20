@@ -107,7 +107,7 @@ Five pieces, each in its own module, following the rail pattern already in `src/
 
     src/yield/venue.ts       the YieldVenue interface: what any venue must answer
     src/yield/aave.ts        the Aave v3 adapter, address tables VERIFIED above
-    src/yield/positions.ts   the position store: principal, cost basis, credit ledger
+    src/yield/positions.ts   the derivation: cost basis, credit ledger, the realized figure
     src/yield/allocator.ts   the loop: read rates, decide, propose through the gate
     src/rails/yield.ts       the two rails, yield_deposit and yield_withdraw
 
@@ -127,39 +127,35 @@ of a lending pool back to the wallet that owns it reduces exposure. It is allowl
 and audited the same way, but the UI gives it a button that a human can press without an agent
 being involved at all.
 
-### 3.2 The position store, and the one number that matters
+### 3.2 There is no position store, and that is the design
 
-`state/yield.json`, append-mostly, written through the same store discipline as `proposals.json`.
+The first draft of this spec had a `state/yield.json`. It is gone, and what replaced it is
+better for a reason worth writing down.
 
-    type YieldPosition = {
-      id: string;
-      venue: 'aave-v3';
-      chain: ChainId;
-      symbol: string;              // 'USDC'
-      aToken: string;
-      principalBase: string;       // base units, as a decimal string; never a JS number
-      openedAt: string;
-      credits: YieldCredit[];      // the ledger Aqua puts before the number
-      closedAt?: string;
-    }
+This repo already derives the whole transaction history from `proposals.json` plus
+`audit.jsonl` on every request (`src/transactions.ts`). Cost basis is the same kind of fact,
+so it is derived the same way:
 
-    type YieldCredit = {
-      at: string;
-      kind: 'deposit' | 'withdraw' | 'accrual';
-      amountBase: string;          // signed for deposit/withdraw, positive for accrual
-      txid?: string;               // deposits and withdraws carry a hash; accruals do not
-      note: string;
-    }
+    principal = sum(executed yield_deposit) - sum(executed yield_withdraw)   from the store
+    value     = aToken.balanceOf(us)                                          from the chain
+    earned    = value - principal
 
-`principalBase` is the cost basis: it goes up on a deposit, down on a withdraw, and is never
-touched by accrual. Earned is then
+No new file, nothing to migrate, nothing to repair. The point is not tidiness: a principal
+figure kept in its own file can drift from the chain, and the one number this feature exists
+to print is the difference between the two. A number that can drift from its own reference is
+not evidence.
 
-    earnedBase = aTokenBalanceNow - principalBase
+Three rules the derivation keeps, each with a test:
 
-read live from the chain at render time, never accumulated in the file. A number stored in a file
-can drift from the chain; a number read from the chain cannot. Accrual rows are snapshots for the
-ledger, written by the allocator each poll, and they are for a human's eye only. Nothing computes
-from them.
+- **Only executed proposals count.** A pending or failed one moved no money, and counting it
+  would inflate the cost basis, which shows up on screen as a SMALLER earned figure. Wrong in
+  the flattering direction is still wrong.
+- **The basis clamps at zero.** A full exit withdraws principal AND the interest on top of it,
+  so it is larger than anything ever deposited. Without the clamp the basis goes negative and
+  the next deposit reports a fortune it never made.
+- **The window starts at the current run of exposure**, not at the first deposit ever. A
+  position closed in June and reopened today has earned for hours, and a window measured from
+  June under-reports the rate by an order of magnitude.
 
 Base units stay strings all the way to the edge, because at 6 decimals a dollar is a million and
 the repo already learned this lesson at 18 in `src/rails/uniswap.ts`.
@@ -253,17 +249,56 @@ fewer facts.
 
 ---
 
-## 5. What counts as proof
+## 5. What counts as proof, and what actually happened
 
 Not "the tests pass". The claim is that money moved and grew, so the evidence is transaction
-hashes and two balance reads separated by time.
+hashes and two balance reads separated by real time. Recorded here as it happened on
+2026-08-20, all on Arbitrum Sepolia, all openable on sepolia.arbiscan.io.
 
-1. `npm test` green, including new unit tests for the adapter maths, the position store, the
-   allocator's rebalance test and its testnet cross-chain refusal.
-2. A real `yield_deposit` on Arbitrum Sepolia: approve tx hash, supply tx hash, both on
-   sepolia.arbiscan.io, and an `aArbSepUSDC` balance that was zero before and is not after.
-3. The same position read again later, showing an aToken balance strictly greater than principal,
-   with both readings timestamped. This is the number the UI prints.
-4. A real `yield_withdraw` returning the funds: tx hash, and a USDC balance back up.
-5. A screenshot of the panel showing the dollar amount, the percentage, its window and the
-   observation caveat.
+**Funding, through this app's own swap rail.** The wallet held WETH and no useful USDC, so the
+existing rail produced the token the new one consumes, which is the case
+`src/rails/uniswap-abi.ts` was already arguing for when it put swap and LP on the same chain.
+
+    0.03 WETH -> 56.174938 USDC   quote taken live, floor 48.815130
+    approve   0x862edaf1467c6e608c233b9e4d47bb7ac207329e8586f421e144e682e5d2564a
+    swap      0x80fb07e72153761770b00e0b90ad6cbac7605fb4dd80f07ad4b7b405a4d8fd2d
+
+One finding worth keeping: the floor has to be sized off the TESTNET POOL, not off mainnet
+spot. Arbitrum Sepolia's USDC/WETH pool prices ETH about 20 percent under the mainnet quote
+because nobody arbitrages it, so a mainnet-grade slippage floor refuses every swap and reads
+as a broken rail when it is a correct floor pointed at the wrong market.
+
+**The deposit, through the real proposal service and the real policy engine.**
+
+    yield_deposit 50 USDC, verdict allow, decidedBy policy, $50.00 against a $100 click threshold
+    approve   0x8c68a76ca6faff874c1c224bf5c1466d5b224ede3aa5c14b56a05f8732fe3127
+    supply    0xf4ad8744d03e2a48eb020642b3d4f51833acc326b39fbafdd314d0ac8363d426
+    position after: 50.000000 aArbSepUSDC
+
+**It grew, and the growth matches the pool's own stated rate.** Two reads, timestamped:
+
+    18:35:27Z   50.000000 USDC   principal 50.000000   earned 0
+    18:38:22Z   50.000012 USDC   principal 50.000000   earned 0.000012
+
+12 base units in 3 minutes on $50 annualises to 4.2 percent, against the 4.2687 percent APR
+the reserve reports. The number on the screen is the number the chain is paying.
+
+**The loop ran on its own.** With `yield.autoAllocate` on, the allocator found the swap's
+leftover USDC idle, filed its own proposal and it executed:
+
+    DECISION deposited | $6.29 idle on arb, proposed into Aave v3 at 4.36%.
+    proposal fe0de872, decidedBy policy
+
+**A defect the window found, which the tests had not.** The wallet total read $294.34 while
+$56.29 sat in Aave. Supplying a token removes it from the balance the chain reader sees, so
+the money did not move, it vanished from the one number a person checks first. `buildWallet`
+now takes the yield positions and the total is $350.61. A total that omits your money is the
+same class of lie this app refuses everywhere else.
+
+**A second defect, found by booting it.** `VenueRate.aprRay` was a `bigint`, and
+`JSON.stringify` THROWS on a bigint rather than dropping the field, so one wrongly typed
+lending rate returned a 500 for `/api/state` and blanked every panel in the window. It is a
+string now, and a test asserts the whole rate round-trips through JSON.
+
+Still to record here: the withdrawal, and the panel with a percentage on it (the window has to
+pass one hour before one is shown at all).

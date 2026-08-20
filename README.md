@@ -26,6 +26,13 @@ for your click. What an agent can propose: a swap inside NEAR Intents, funding t
 taking it back out, gathering a stablecoin onto one chain, a change to the policy itself, and
 arming a rule-driven bot on Hyperliquid perpetuals.
 
+It also earns. A stablecoin balance can be supplied to a lending venue, a loop keeps it in the
+best-paying venue it can reach, and the window shows what it has actually made with a button
+that takes it back out. The percentage there is realized and backward-looking, the window it
+covers is printed next to it, and under an hour no percentage is shown at all, because
+annualising twelve minutes of interest is arithmetically correct and rhetorically a lie. See
+[Earning](#earning).
+
 Uniswap v3 liquidity and the Hyperliquid bridge deposit are implemented, tested and drivable by a
 human, but they are deliberately not tools an agent is handed: neither has run on a live chain,
 and an unproven fund-moving rail is not one to discover the edges of with real money.
@@ -191,7 +198,10 @@ exactly like one agent, and neither of them knew about the other.
 
 Three write tools were deliberately removed from this door and are not coming back on their own.
 `propose_lp_add`, `propose_lp_remove` and `propose_hl_deposit` are still implemented under
-`src/rails/`, still tested, and still drivable by a human. None has run on a live chain, and the
+`src/rails/`, still tested, and still drivable by a human. `yield_deposit` and `yield_withdraw`
+have never been on this door either, for the same reason and with one difference: they HAVE now
+run on a live chain (see [Earning](#earning)), so putting them on it is a decision someone can
+make on evidence rather than on hope. None has run on a live chain, and the
 wallet read after an `lp_add` is known to serve pre-trade balances while claiming nothing is
 stale, so sizing a second move off the first is already wrong on that path. They are absent
 rather than guarded, on purpose: a check can be wrong, but a capability that was never
@@ -251,6 +261,85 @@ the server after the label the agent supplied, agent lines are dotted where a hu
 and the chart bar carries a count with a one-click clear. An agent can never alter a candle, and a
 price line it draws is excluded from the automatic price fit, so one absurd level cannot flatten
 the chart into a hairline.
+
+## Earning
+
+A stablecoin sitting in the wallet earns nothing. This puts it to work in a lending pool and
+shows what it made.
+
+**The venue is Aave v3, not a Uniswap range**, and the reason is provability rather than
+taste. A USDC/WETH range position's value moves with ETH, so over any window short enough to
+look at, "percent earned" would mostly be reporting the ETH move. 1inch's own risk page cites
+49.5 percent of studied Uniswap v3 positions collecting less in fees than impermanent loss
+cost them. An Aave supply is single-sided, has no impermanent loss, and its receipt token
+rebases: the aToken balance itself grows, so what a position is worth is one `balanceOf` and
+what it earned is that minus what was put in. There is no accounting layer between the chain
+and the number, which is what makes the number believable.
+
+Two verified markets, both checked by behaviour rather than read off a docs page:
+
+| Chain | Pool | USDC | Receipt | Rate on 2026-08-20 |
+|---|---|---|---|---|
+| Arbitrum Sepolia | `0xBfC91D59fdAA134A4ED45f7B584cAf96D7792Eff` | `0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d` | `aArbSepUSDC` | 4.36% APY |
+| Base Sepolia | `0x07eA79F68B2B3df564D0A34F8e19D9B1e339814b` | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` | `aBasSepUSDC` | 1.24% APY |
+
+The arb USDC is the same address the Uniswap rail already uses, so the existing swap rail
+produces exactly the token this one consumes and the feature adds no new funding step.
+
+Ethereum Sepolia is deliberately absent. Its market reports 57 percent on USDC, an artefact of
+a testnet nobody arbitrages, and a window whose headline number is 57 percent teaches the
+reader to distrust every other number in it. Mainnet is absent too: the rail refuses it until a
+human adds a row to the table on purpose.
+
+### The percentage
+
+Realized, backward-looking, and annualised from a window that is printed beside it:
+
+    earned over the window / time-weighted average principal x 365 / window days
+
+Three rules it keeps, each with a test:
+
+- **Under one hour, no percentage at all.** The dollars are shown and the panel says why.
+- **The dollars are bigger than the percentage on screen.** The ordering is the honesty.
+- **The caveat travels with the number** as a field, so a renderer cannot forget to print it:
+  "Observed, not promised. This is what it did, not what it will do."
+
+The rate the venue pays right now is shown too, clearly labelled `venue rate now`. It is what
+the allocator decides on, so it has to be visible; it is not what you earned, so it does not
+get to be the headline. The shape of all this is taken from 1inch's Aqua, whose own docs call
+its rate "an observation, not a promise" and "a rear-view mirror".
+
+Under the numbers is the ledger: every movement of principal with a transaction hash that
+opens on a block explorer. If you cannot produce that list, you do not have a yield to show.
+
+### The loop
+
+`src/yield/allocator.ts` polls every minute. It reads each venue's live rate and our balance
+there, puts idle stablecoin to work in the best-paying venue it can reach, and moves money
+between venues only when
+
+    spread x principal x 30 days  >  what the move costs
+
+Without that test a loop chases a 20 basis point spread with a two dollar gas bill and loses
+money while reporting that it optimised.
+
+**The loop never executes.** It files a proposal and stops. What happens next is the policy
+engine's call and, above the click threshold, a human's, exactly as it is for an agent. It is
+off by default: set `yield.autoAllocate` in `config.local.json` to switch it on. Off, it still
+reads and still reports, so the panel is populated either way.
+
+On testnet it is same-chain only, and says so rather than failing quietly. Moving between
+chains needs a bridge, this app's bridge is NEAR Intents, and NEAR Intents has no testnet.
+
+### Driving it by hand
+
+    node scripts/yield-prove.ts fund 0.03      swap WETH into USDC through the swap rail
+    node scripts/yield-prove.ts deposit 50     supply 50 USDC
+    node scripts/yield-prove.ts read           position, earned, realized figure, ledger
+    node scripts/yield-prove.ts withdraw       take the whole position back out
+
+It drives the real proposal service against the real chain and prints transaction hashes. It
+refuses to run on mainnet.
 
 ## How a proposal gets decided
 
