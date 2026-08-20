@@ -130,6 +130,8 @@ type PortOverrides = {
   storageRegistered?: boolean;
   heldUsdc?: number; // origin wallet balance, UI units
   gasWei?: bigint;
+  // A send that reports an error but DID broadcast. The live 2026-08-20 shape.
+  sendHashOnFailure?: string;
 };
 
 function fakeEvm(over: PortOverrides = {}): { port: HypercoreEvmPort; sends: Array<{ to: string; chain: string }> } {
@@ -142,9 +144,12 @@ function fakeEvm(over: PortOverrides = {}): { port: HypercoreEvmPort; sends: Arr
       nativeBalance: async () => over.gasWei ?? 10n ** 16n,
       async send(params) {
         sends.push({ to: String(params.to), chain: String(params.chain) });
-        return over.sendOk === false
-          ? { ok: false, error: over.sendError ?? 'reverted' }
-          : { ok: true, hash: '0xorigin', explorer: 'https://arbiscan.io/tx/0xorigin' };
+        if (over.sendOk === false) {
+          return over.sendHashOnFailure !== undefined
+            ? { ok: false, error: over.sendError ?? 'reverted', hash: over.sendHashOnFailure }
+            : { ok: false, error: over.sendError ?? 'reverted' };
+        }
+        return { ok: true, hash: '0xorigin', explorer: 'https://arbiscan.io/tx/0xorigin' };
       },
     },
   };
@@ -426,11 +431,46 @@ test('a deposit address that is not an address stops execution before the transf
   assert.equal(h.sends.length, 0);
 });
 
-test('a failed transfer says the money never left, so nobody sends it twice', async () => {
+test('a send that never broadcast says the money never left', async () => {
   const h = rail({ sendOk: false, sendError: 'insufficient funds' });
   const out = await h.rail.execute(draft());
   assert.equal(out.ok, false);
+  assert.match(out.detail, /failed before broadcast/);
   assert.match(out.detail, /No funds left the wallet/);
+  assert.deepEqual(out.txids, [], 'nothing to look up, because nothing was sent');
+});
+
+test('a send that broadcast and could not be confirmed NEVER says the money stayed', async () => {
+  // The live incident, 2026-08-20. The transfer confirmed on Arbitrum with status 0x1 and moved
+  // all 9.23 USDC, and sendTx still errored because the RPC refused the receipt call as needing
+  // an archive node. The rail printed "No funds left the wallet" over a completed transfer,
+  // which is the double-send trap this repo warns about in three other files.
+  const h = rail(
+    { sendOk: false, sendError: 'Archive node required for eth_getTransactionReceipt', sendHashOnFailure: '0xbroadcast' },
+    { statuses: ['PENDING_DEPOSIT'] },
+  );
+  const out = await h.rail.execute(draft());
+  assert.equal(out.ok, false);
+  assert.match(out.detail, /THE FUNDS MAY ALREADY HAVE LEFT THE WALLET/);
+  assert.match(out.detail, /0xbroadcast/);
+  assert.match(out.detail, /before sending again/);
+  assert.doesNotMatch(out.detail, /No funds left the wallet/, 'the one sentence that would cause a double send');
+  assert.deepEqual(out.txids, ['0xbroadcast'], 'the hash is handed back so it can be looked up');
+});
+
+test('a broadcast the app could not read still reports success when the routing completed', async () => {
+  // Same failure, happier ending, and it is what actually happened live once the deposit was
+  // submitted by hand: the money was already at the solver and the swap finished.
+  const h = rail(
+    { sendOk: false, sendError: 'Archive node required', sendHashOnFailure: '0xbroadcast' },
+    { statuses: ['SUCCESS'] },
+    [{ perp: 0, spot: 0, unifiedAvailable: 0.000002 }, { perp: 0, spot: 0, unifiedAvailable: 8.905472 }],
+  );
+  const out = await h.rail.execute(draft());
+  assert.equal(out.ok, true, out.detail ?? '');
+  assert.match(out.detail, /could not read its receipt/);
+  assert.match(out.detail, /routing completed anyway/);
+  assert.match(out.detail, /unified/);
 });
 
 test('a poll that never reaches terminal says the funds WERE sent, in capitals', async () => {

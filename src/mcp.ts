@@ -245,8 +245,20 @@ server.registerTool(
 // structural, not guarded. An agent holding this tool can put collateral INTO the trading
 // account and has no path, through this rail or any other on its surface, to take it out.
 // That is the same argument the API wallet's signing split makes (it can trade and cannot
-// withdraw), arriving from the other side. The gate still applies: on mainnet gateRequired()
-// is forced on and cannot be configured off, so every deposit is still a human click.
+// withdraw), arriving from the other side.
+//
+// WHAT THE GATE ACTUALLY DOES, corrected on 2026-08-20 after a live run proved the earlier
+// sentence here wrong. This comment used to claim that gateRequired() is forced on for mainnet
+// so every deposit is a human click. It is not. gateRequired() is consulted only in the
+// needs_approval branch of proposals.ts land(). A verdict of `allow`, which is what the engine
+// returns below policy.outbound.humanClickAboveUsd ($100 by default), executes immediately with
+// decidedBy 'policy' and never reads the gate at all. A real 9.23 USDC deposit went through on
+// mainnet with nobody clicking, exactly as designed.
+//
+// So the true statement is: above the click threshold a human clicks, below it the policy is
+// the decision, on every network. That is a deliberate design and not a bug, but a false
+// reassurance in a comment beside a fund-moving tool is worse than no comment, because the next
+// person sizes the threshold believing there is a second wall behind it.
 type ProposeKind =
   | 'consolidate'
   | 'policy_change'

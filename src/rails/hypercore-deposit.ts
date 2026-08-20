@@ -799,12 +799,49 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     const depositAddress = checkDepositAddress(p.family, quote.depositAddress);
     const sent = await depositTransfer(draft, p, depositAddress);
 
+    // A FAILED SEND AND A FAILED LOOK ARE NOT THE SAME THING, and this rail said they were.
+    //
+    // Live, funding 9.23 USDC on 2026-08-20: the transfer broadcast and confirmed on Arbitrum
+    // (0x82005d38..., status 0x1, 9.23 to the solver's address), and sendTx still reported an
+    // error, because the RPC it polled for the receipt refused the call as needing an archive
+    // node. The rail then printed "No funds left the wallet" over a transfer that had already
+    // moved every dollar. That sentence is the double-send trap this repo warns about in three
+    // other files, written by the one module positioned to cause it.
+    //
+    // A hash means it was broadcast. Once a hash exists, the honest report is that the money is
+    // probably gone and the app could not confirm where it got to, and the next action is to
+    // LOOK rather than to retry. Only a send with no hash at all can claim nothing happened.
     if (!sent.ok) {
-      const where = sent.hash !== undefined ? ` (tx ${sent.hash})` : '';
+      if (sent.hash !== undefined) {
+        // Best effort, and it is what rescued the live run: the solver finds the deposit from
+        // the hash even though we never reached the normal submit below.
+        await client.submitDeposit(depositAddress, sent.hash).catch(() => undefined);
+        const watch = await watchStatus(depositAddress);
+        if (watch.status === 'SUCCESS') {
+          const settled = await settleToPerp(draft, before);
+          return {
+            ok: true,
+            detail:
+              `the transfer broadcast as ${sent.hash} and this app could not read its receipt ` +
+              `(${oneLine(sent.error ?? 'unknown error', 90)}), but the routing completed anyway: ` +
+              `${oneLine(quote.amountOutFormatted, 40)} USDC credited.${settled}`,
+            txids: [sent.hash, ...watch.destinationTxHashes],
+          };
+        }
+        return {
+          ok: false,
+          detail:
+            `funding transfer broadcast as ${sent.hash} and this app could not confirm it: ` +
+            `${oneLine(sent.error ?? 'unknown error', 120)}. THE FUNDS MAY ALREADY HAVE LEFT THE WALLET. ` +
+            `1click last reported ${watch.reported} for deposit ${depositAddress}. Check the wallet and that ` +
+            `address before sending again.`,
+          txids: [sent.hash],
+        };
+      }
       return {
         ok: false,
-        detail: `funding transfer failed${where}: ${oneLine(sent.error ?? 'unknown error')}. No funds left the wallet.`,
-        txids: sent.hash !== undefined ? [sent.hash] : [],
+        detail: `funding transfer failed before broadcast: ${oneLine(sent.error ?? 'unknown error')}. No funds left the wallet.`,
+        txids: [],
       };
     }
 
