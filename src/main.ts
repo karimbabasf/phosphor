@@ -107,21 +107,23 @@ const signer = stubSigner();
 // The key it hands the child is the API wallet, never the master. Reading it lazily, at arm
 // time rather than at boot, means an install with no agent approved yet starts fine and fails
 // with a sentence that says what to do instead of failing at startup.
-// Hyperliquid is TESTNET in this build, and that is a fact about the code rather than a setting.
-// The runner refuses mainnet outright (src/runner/main.ts), the greeting states it as a fact
-// (src/server.ts) and the strategy catalog tells every agent so (src/strategy/catalog.ts). Only
-// this file disagreed: it derived the three Hyperliquid URLs from cfg.network, which is
-// `mainnet` here because the WALLET side of this app runs on mainnet, and that one word split
-// the app in half. The window read a mainnet account holding $0.000002 while the 888 the
-// account actually holds sits on testnet, and the runner was handed MAINNET=1 and refused to
-// arm anything at all, so a mandate could be written and never fire. Two constants, so the
-// panel a human reads and the runner that trades cannot be looking at different accounts.
-const HL_BASE_URL = 'https://api.hyperliquid-testnet.xyz';
-const HL_WS_URL = 'wss://api.hyperliquid-testnet.xyz/ws';
+// Which Hyperliquid the trading half talks to. This used to be two constants pinned to
+// testnet, because the version before THAT derived the URLs from cfg.network while the runner
+// refused mainnet outright, and that split the app in half: the window read a mainnet account
+// holding $0.000002 while the 888 the account actually holds sat on testnet, and the runner
+// was handed MAINNET=1 and refused to arm, so a mandate could be written and never fire.
+//
+// The lesson was never "pin it to testnet". It was that the panel a human reads and the runner
+// that trades must not be able to disagree. So there is now ONE value, cfg.tradingNetwork, and
+// every consumer takes it from here: these URLs, the runner's isMainnet, the greeting, the
+// withdraw rail and the strategy catalog. Disagreement is no longer expressible.
+const HL_MAINNET = cfg.tradingNetwork === 'mainnet';
+const HL_BASE_URL = HL_MAINNET ? 'https://api.hyperliquid.xyz' : 'https://api.hyperliquid-testnet.xyz';
+const HL_WS_URL = HL_MAINNET ? 'wss://api.hyperliquid.xyz/ws' : 'wss://api.hyperliquid-testnet.xyz/ws';
 
 const runner = createRunnerHost({
   apiWalletKey: async () => await readApiWalletKey(cfg.keysPath),
-  isMainnet: false,
+  isMainnet: HL_MAINNET,
   baseUrl: HL_BASE_URL,
   // Fail closed: a policy file that will not load reads as the kill switch being ON, so an
   // unreadable policy can never be the reason a bot was allowed to arm.

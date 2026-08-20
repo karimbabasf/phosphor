@@ -1149,9 +1149,11 @@ export function createServer(deps: ServerDeps): PhosphorServer {
           clickThresholdUsd: policy?.outbound.humanClickAboveUsd ?? null,
           killSwitch: policy?.killSwitch ?? false,
           gateRequired: gateRequired(cfg),
-          // The runner refuses mainnet outright (src/runner/main.ts), so this is a fact about
-          // the code rather than a setting, and the greeting states it as one.
-          tradingNetwork: 'testnet',
+          // Read from the one setting every trading consumer reads, so the greeting cannot
+          // name a network the runner is not on. It stopped being a fact about the code on
+          // 2026-08-20, when mainnet trading was enabled and cfg.tradingNetwork became the
+          // single place that decides.
+          tradingNetwork: cfg.tradingNetwork,
           tradingAllowed: true,
           holder: holder?.client ?? null,
           emptyCount: wallet.emptyCount,
@@ -1166,7 +1168,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       return;
     }
     if (tool === 'mandate_catalog') {
-      sendJson(res, 200, buildMandateCatalog());
+      sendJson(res, 200, buildMandateCatalog(cfg.tradingNetwork));
       return;
     }
     if (tool === 'balances') {

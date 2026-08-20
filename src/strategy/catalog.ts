@@ -13,6 +13,7 @@
 // rather than reaching an agent as confident nonsense.
 
 import type { Program } from './grammar.ts';
+import type { Network } from '../types.ts';
 
 export type Example = {
   intent: string;
@@ -88,10 +89,19 @@ const ENVELOPE = [
   { field: 'allowedActions', means: 'the verbs it may use. Derive it from the program (every verb the rules use) and read EXIT_RULE before you do.' },
 ];
 
+// The one line in this file that must never be stale. An agent that believes it is on testnet
+// writes bolder programs than an agent that knows the money is real, so a hardcoded "testnet
+// only" is not a harmless leftover once mainnet is switched on: it is the app telling the
+// agent the opposite of the truth at exactly the moment the truth matters.
+function networkTrap(network: Network): string {
+  return network === 'mainnet'
+    ? 'Trading is on Hyperliquid MAINNET. Every mandate you propose is armed against real money, and a rule that fires spends it. Size the envelope like it is the human real balance, because it is.'
+    : 'Trading is on Hyperliquid testnet, so a mandate is armed against play money. Write the program as if it were real anyway: the same program is what runs when the app is pointed at mainnet.';
+}
+
 const TRAPS = [
   EXIT_RULE,
   'propose_mandate ALWAYS waits for a human click, on every network, even where the approval gate is off. It grants standing authority rather than spending once, so there is no threshold that skips it. Expect to wait, and tell the human what you asked for in plain words.',
-  'Trading is testnet only in this build. The runner refuses mainnet outright, so a mandate is never armed against real money here.',
   'The approval screen renders your program as English. Write rules a person can check against what you told them, because what they read is what they are agreeing to.',
   'Prices in a program are literal numbers. Read the live price first (trade_read, or chart_read) and compute stops and targets from it, or you will arm a stop that is already crossed.',
   'A cross condition is an EDGE and fires once as it happens. A price_above is a STATE and is true for as long as it is true. Guard state conditions with `once: true` or a position check, or they fire on every tick.',
@@ -243,16 +253,18 @@ export const EXAMPLES: Example[] = [
   },
 ];
 
-export function buildMandateCatalog() {
+export function buildMandateCatalog(network: Network) {
   return {
     howItWorks:
       'This app has no discretionary order. Nothing opens except when an armed mandate rule fires, so opening a position means writing a program in this grammar and proposing it with propose_mandate. The program says what the bot tries; the envelope says what it can never exceed. A human approves both, always.',
+    network,
     refs: REFS,
     conditions: CONDITIONS,
     actions: ACTIONS,
     entries: ENTRIES,
     envelope: ENVELOPE,
-    traps: TRAPS,
+    // The network line is first because it changes how every line under it should be read.
+    traps: [networkTrap(network), ...TRAPS],
     examples: EXAMPLES,
   };
 }

@@ -100,6 +100,24 @@ export function loadConfig(root?: string): AppConfig {
   }
   const network: Network = networkRaw;
 
+  // The venue the TRADING half talks to, which is a separate question from the chains the
+  // wallet half holds money on.
+  //
+  // These were once the same value, and then they were two hardcoded constants, and both
+  // were wrong for the same reason: what breaks the app is not which network trading uses,
+  // it is the panel a human reads and the runner that trades disagreeing about it. main.ts
+  // derived its URLs from `network` while the runner refused mainnet outright, so a mandate
+  // could be written against a mainnet account that held nothing and never fire. The fix is
+  // not another constant. It is ONE value that every consumer takes, so they cannot drift.
+  //
+  // It follows `network` unless it is set, because an app pointed at mainnet money whose
+  // trading account is on testnet is the split all over again, just quieter.
+  const tradingRaw = env('PHOSPHOR_TRADING_NETWORK') ?? parsed.tradingNetwork ?? networkRaw;
+  if (!isNetwork(tradingRaw)) {
+    throw new Error(`config tradingNetwork must be "testnet" or "mainnet" (got ${JSON.stringify(tradingRaw)})`);
+  }
+  const tradingNetwork: Network = tradingRaw;
+
   const portRaw = env('PHOSPHOR_PORT', 'ACC_PORT');
   const port = portRaw !== undefined ? Number(portRaw) : (parsed.port ?? 4177);
   const dataDirInput = env('PHOSPHOR_DATA_DIR', 'ACC_DATA_DIR') ?? parsed.dataDir ?? 'state';
@@ -112,6 +130,7 @@ export function loadConfig(root?: string): AppConfig {
   const cfg: AppConfig = {
     mode,
     network,
+    tradingNetwork,
     // Mainnet ignores this entirely (see policy/gate.ts); it is read only on testnet.
     // The env override exists so the test harnesses can boot the real app with the gate ON
     // and still exercise the human-approval flow, which is the thing most worth testing,

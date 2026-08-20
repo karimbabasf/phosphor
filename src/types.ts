@@ -570,6 +570,10 @@ export type Signer = {
 export type AppConfig = {
   mode: Mode;
   network: Network; // selects RPCs, the token registry and every contract address
+  // The Hyperliquid network the trading half talks to. Follows `network` unless set. Every
+  // trading consumer reads THIS and never `network`, so the account the runner trades and the
+  // account the panel shows cannot be different ones. See the note in config.ts.
+  tradingNetwork: Network;
   approvalGate: boolean; // honoured on testnet only; see gateRequired() in policy/gate.ts
   port: number;
   addresses: { evm: string[]; solana: string[]; near: string[] };

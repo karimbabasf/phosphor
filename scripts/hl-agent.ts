@@ -31,14 +31,16 @@ import { liveSignPort, SIGNATURE_CHAIN_ID, SIGNATURE_CHAIN_ID_HEX } from '../src
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const cfg = loadConfig(root);
 
-if (cfg.network === 'mainnet') {
-  console.error('refused: this script is testnet only, matching the withdraw rail guard.');
-  process.exit(1);
-}
+// Follows cfg.tradingNetwork like every other trading consumer, so an approved agent wallet
+// always belongs to the account the runner is about to trade. Approving on the wrong network
+// is a silent failure: the arm succeeds, the first order is rejected as unauthorised, and the
+// reason is two layers away from where a human is looking.
+const HL_MAINNET = cfg.tradingNetwork === 'mainnet';
+const API = HL_MAINNET ? 'https://api.hyperliquid.xyz' : 'https://api.hyperliquid-testnet.xyz';
+console.error(`approving an agent wallet on Hyperliquid ${cfg.tradingNetwork} (${API})`);
 
 const nameArg = process.argv.indexOf('--name');
 const agentName = nameArg > -1 ? String(process.argv[nameArg + 1]) : 'phosphor-runner';
-const API = 'https://api.hyperliquid-testnet.xyz';
 
 const agentKey = generatePrivateKey();
 const agentAddress = privateKeyToAccount(agentKey).address;
@@ -49,7 +51,7 @@ const nonce = Date.now();
 // runner uses for orders. Getting these two the wrong way round is the documented failure.
 const action = {
   type: 'approveAgent',
-  hyperliquidChain: 'Testnet',
+  hyperliquidChain: HL_MAINNET ? 'Mainnet' : 'Testnet',
   signatureChainId: SIGNATURE_CHAIN_ID_HEX,
   agentAddress: agentAddress.toLowerCase(),
   agentName,
@@ -73,7 +75,7 @@ const typed = {
   },
   primaryType: 'HyperliquidTransaction:ApproveAgent',
   message: {
-    hyperliquidChain: 'Testnet',
+    hyperliquidChain: HL_MAINNET ? 'Mainnet' : 'Testnet',
     agentAddress: agentAddress.toLowerCase(),
     agentName,
     nonce: BigInt(nonce),
@@ -83,7 +85,7 @@ const typed = {
 const master = liveSignPort.address(cfg.keysPath);
 console.log(`master account : ${master}`);
 console.log(`new agent      : ${agentAddress}  (name: ${agentName})`);
-console.log('approving on testnet...');
+console.log(`approving on ${HL_MAINNET ? 'MAINNET' : 'testnet'}...`);
 
 const signature = await liveSignPort.signTypedData(cfg.keysPath, typed as never);
 

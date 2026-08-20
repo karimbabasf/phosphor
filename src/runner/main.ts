@@ -34,9 +34,20 @@ const KEY = process.env.PHOSPHOR_HL_KEY as `0x${string}` | undefined;
 const IS_MAINNET = process.env.PHOSPHOR_HL_MAINNET === '1';
 const BASE_URL = process.env.PHOSPHOR_HL_URL ?? 'https://api.hyperliquid-testnet.xyz';
 
-// Same guard as src/rails/hyperliquid-withdraw.ts:427. Mainnet trading is not enabled in this
-// version, and a flag that could turn it on by accident is worse than no flag.
-const MAINNET_REFUSED = 'the runner is testnet only in this version';
+// Mainnet trading was enabled on 2026-08-20 and this guard came out with it. What replaced it
+// is not a smaller check, it is a different one, and it is worth naming because deleting a
+// refusal usually is a mistake:
+//
+//   - the runner never arms itself. It runs a mandate a human read and clicked, and
+//     src/policy/gate.ts forces that click ON for mainnet with no way to configure it off.
+//   - the mandate is the wall: symbol, notional cap, borrowed multiple, orders per minute,
+//     max loss and an expiry, all checked here on every action, not at arm time only.
+//   - the kill switch stops the child regardless of what it is holding.
+//
+// So the thing the old guard protected against, a bot reaching mainnet money with nobody
+// having agreed to it, is now unreachable through the envelope rather than through a flag.
+// A flag that could be flipped by accident really is worse than no flag, which is why the
+// replacement is a bound and not a boolean.
 
 type Armed = {
   mandate: Mandate;
@@ -130,7 +141,6 @@ function resolveRef(ref: Ref): number | null {
 let exchange: ReturnType<typeof createExchange> | null = null;
 
 function requireExchange(): ReturnType<typeof createExchange> {
-  if (IS_MAINNET) throw new Error(MAINNET_REFUSED);
   if (KEY === undefined) throw new Error('no API wallet key in the environment');
   if (exchange === null) {
     exchange = createExchange({ privKey: KEY, isMainnet: IS_MAINNET, baseUrl: BASE_URL });
@@ -576,4 +586,4 @@ const timer = setInterval(() => {
 }, 250);
 timer.unref?.();
 
-send({ type: 'error', id: null, message: `runner up, ${IS_MAINNET ? 'MAINNET REFUSED' : 'testnet'}` });
+send({ type: 'error', id: null, message: `runner up, ${IS_MAINNET ? 'MAINNET' : 'testnet'}` });

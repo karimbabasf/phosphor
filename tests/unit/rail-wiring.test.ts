@@ -143,6 +143,7 @@ function setup(over: { policy?: Policy; rails?: Spy; positions?: LpPosition[] } 
   const cfg: AppConfig = {
     mode: 'live', // demo mode owns no rails at all; that is its own test below
     network: 'testnet',
+    tradingNetwork: 'testnet',
     approvalGate: true,
     port: 4177,
     addresses: { evm: [SELF_EVM], solana: [], near: [] },
@@ -516,6 +517,7 @@ function cfgFor(mode: AppConfig['mode']): AppConfig {
   return {
     mode,
     network: 'testnet',
+    tradingNetwork: 'testnet',
     approvalGate: true,
     port: 4177,
     addresses: { evm: [SELF_EVM], solana: [], near: [] },

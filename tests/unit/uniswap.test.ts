@@ -360,6 +360,7 @@ test('tokenFor will not pass native ETH off as WETH', () => {
 const cfg: AppConfig = {
   mode: 'live',
   network: 'testnet',
+  tradingNetwork: 'testnet',
   approvalGate: true,
   port: 4177,
   addresses: { evm: [WALLET], solana: [], near: [] },
