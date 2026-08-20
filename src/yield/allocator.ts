@@ -85,6 +85,11 @@ export type AllocatorDeps = {
   // deposit is two transactions and a dust deposit still costs a human an approval click.
   dustUsd?: number;
   autoAllocate?: boolean;
+  // The floor between two proposals, whatever the tick rate is. See the comment on
+  // PROPOSE_COOLDOWN_MS.
+  proposeCooldownMs?: number;
+  // A cross-venue move may not happen more often than this, whatever the spread says.
+  minRebalanceHours?: number;
   nowMs?: () => number;
 };
 
@@ -92,6 +97,66 @@ const SYMBOL = 'USDC';
 const DEFAULT_INTERVAL_MS = 60_000;
 const DEFAULT_DUST_USD = 5;
 const MAX_DECISIONS = 20;
+
+// The tick rate is how often the loop LOOKS. This is how often it may ACT, and they have to
+// be different numbers.
+//
+// Without this the loop re-files the same proposal every single tick for as long as the
+// condition holds. A deposit that keeps failing (a frozen reserve, gas exhausted, an RPC
+// flapping, the session cap reached) leaves the idle balance exactly where it was, so the
+// next tick sees the same money and proposes again, once a minute, forever. Three things go
+// wrong and none of them announces itself: proposals.json rewrites its whole array on every
+// put, so the disk cost is quadratic; the audit log fills with identical lines; and if the
+// approve lands and only the supply reverts, that is one real gas payment per minute for as
+// long as nobody is watching.
+//
+// Fifteen minutes because a lending rate does not move faster than that, so nothing is lost
+// by waiting, and a human who is watching gets a legible loop rather than a firehose.
+export const PROPOSE_COOLDOWN_MS = 15 * 60_000;
+
+// Consecutive failures back the loop off further, doubling to a four hour ceiling. A loop
+// that cannot act is a loop that should ask less often, and the state it is waiting on
+// (a thawed reserve, a refilled gas balance) is not one that changes in a minute.
+export const MAX_BACKOFF_MS = 4 * 60 * 60_000;
+
+// A cross-venue move may not happen more often than this, whatever the spread says. The
+// economics test below already refuses a move that does not pay for itself, and this is the
+// second brake: two rates that cross back and forth over a threshold would otherwise have
+// the loop paying to chase them each way.
+const DEFAULT_MIN_REBALANCE_HOURS = 24;
+
+// How long the loop must wait before acting again, given how many times acting has just
+// failed. Exported so a test can pin the curve rather than infer it.
+export function backoffMs(failureStreak: number, base = PROPOSE_COOLDOWN_MS): number {
+  if (failureStreak <= 0) return base;
+  return Math.min(base * 2 ** Math.min(failureStreak, 5), MAX_BACKOFF_MS);
+}
+
+// May the loop file something right now?
+//
+// A separate function rather than an inline check inside tick(), because it is the rule that
+// stops the loop spending money in a circle and a rule like that should be assertable without
+// standing up a chain, a key and a proposal service. tick() calls exactly this.
+export type ActionGate = { allowed: boolean; waitMs: number; sinceMs: number };
+
+export function actionGate(args: {
+  lastProposalAtMs: number | null;
+  failureStreak: number;
+  nowMs: number;
+  baseCooldownMs?: number;
+}): ActionGate {
+  const waitMs = backoffMs(args.failureStreak, args.baseCooldownMs ?? PROPOSE_COOLDOWN_MS);
+  const sinceMs = args.lastProposalAtMs === null ? Infinity : args.nowMs - args.lastProposalAtMs;
+  return { allowed: sinceMs >= waitMs, waitMs, sinceMs };
+}
+
+// Whether a proposal coming back means "do not immediately try that again".
+//
+// 'pending' is NOT a failure: it means a human was asked and has not answered yet, and backing
+// off on it would punish the approval gate for working exactly as designed.
+export function countsAsFailure(status: string): boolean {
+  return status !== 'executed' && status !== 'pending';
+}
 
 // The horizon a rebalance has to pay back inside. Thirty days is not a guess about how long
 // the money stays; it is the length of time over which a rate difference is allowed to be
@@ -135,9 +200,17 @@ export function createAllocator(deps: AllocatorDeps): Allocator {
   const intervalMs = deps.intervalMs ?? DEFAULT_INTERVAL_MS;
   const dustUsd = deps.dustUsd ?? DEFAULT_DUST_USD;
   const autoAllocate = deps.autoAllocate ?? false;
+  const proposeCooldownMs = deps.proposeCooldownMs ?? PROPOSE_COOLDOWN_MS;
+  const minRebalanceHours = deps.minRebalanceHours ?? DEFAULT_MIN_REBALANCE_HOURS;
   const now = deps.nowMs ?? (() => Date.now());
 
   let timer: NodeJS.Timeout | null = null;
+  // When the loop last FILED something, and how many times in a row that has not worked.
+  // Both are deliberately in memory rather than on disk: a restart is a human intervening,
+  // and a human who has just restarted the app should not be made to wait out a backoff.
+  let lastProposalAtMs: number | null = null;
+  let lastMoveAtMs: number | null = null;
+  let failureStreak = 0;
   const decisions: AllocatorDecision[] = [];
 
   let current: YieldView = {
@@ -305,10 +378,28 @@ export function createAllocator(deps: AllocatorDeps): Allocator {
       return record({ at, action: 'idle', detail: 'no healthy venue is reachable right now', proposalId: null });
     }
 
+    // The cooldown is checked BEFORE any branch that could file something, so it covers the
+    // deposit path and the rebalance path with one rule rather than two that can disagree.
+    const gate = actionGate({ lastProposalAtMs, failureStreak, nowMs: now(), baseCooldownMs: proposeCooldownMs });
+    const wait = gate.waitMs;
+    const since = gate.sinceMs;
+    const cooling = !gate.allowed;
+
     // 1. Idle money first. Money sitting in the wallet earns nothing, and that is the
     //    largest and most certain improvement available at any tick.
     const idleHere = view.venues.find((v) => v.chain === view.best?.chain && v.idleUsd >= dustUsd);
     if (idleHere !== undefined) {
+      if (cooling) {
+        return record({
+          at,
+          action: 'idle',
+          detail:
+            `$${idleHere.idleUsd.toFixed(2)} is idle on ${idleHere.chain}, but the last proposal was ` +
+            `${Math.round(since / 60_000)} minutes ago and the loop waits ${Math.round(wait / 60_000)} ` +
+            `minutes between actions${failureStreak > 0 ? ` (backed off after ${failureStreak} failed attempt(s))` : ''}.`,
+          proposalId: null,
+        });
+      }
       if (!autoAllocate) {
         return record({
           at,
@@ -321,6 +412,8 @@ export function createAllocator(deps: AllocatorDeps): Allocator {
       }
       try {
         const p = await deps.propose.yieldDeposit({ chain: idleHere.chain, symbol: SYMBOL, amount: idleHere.idleUsd });
+        lastProposalAtMs = now();
+        failureStreak = countsAsFailure(p.status) ? failureStreak + 1 : 0;
         return record({
           at,
           action: p.status === 'executed' ? 'deposited' : 'proposed',
@@ -330,6 +423,8 @@ export function createAllocator(deps: AllocatorDeps): Allocator {
           proposalId: p.id,
         });
       } catch (err) {
+        lastProposalAtMs = now();
+        failureStreak += 1;
         return record({ at, action: 'error', detail: err instanceof Error ? err.message : String(err), proposalId: null });
       }
     }
@@ -355,6 +450,18 @@ export function createAllocator(deps: AllocatorDeps): Allocator {
     // venue and refuses the move, which is a real refusal with a real reason rather than a
     // gap in the loop. The economics are computed anyway, because "we could not move" and
     // "moving would have lost money" are different facts and the window should show which.
+    // The second brake on a move, independent of whether it pays. Two rates that cross back
+    // and forth over a threshold would otherwise have the loop paying to chase them each way.
+    const sinceMove = lastMoveAtMs === null ? Infinity : now() - lastMoveAtMs;
+    if (sinceMove < minRebalanceHours * 3_600_000) {
+      return record({
+        at,
+        action: 'rebalance_refused',
+        detail: `moved venues ${Math.round(sinceMove / 3_600_000)} hours ago; the loop moves at most once every ${minRebalanceHours} hours.`,
+        proposalId: null,
+      });
+    }
+
     const verdict = rebalanceWorthIt({
       principalUsd: held.principalUsd,
       currentApy: held.rate?.apy ?? 0,

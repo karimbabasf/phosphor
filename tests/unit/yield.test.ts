@@ -25,7 +25,15 @@ import {
 } from '../../src/yield/positions.ts';
 import type { YieldCredit } from '../../src/yield/positions.ts';
 import { decodeReserveHealth, aaveAsset, aaveChains, marketFor } from '../../src/yield/aave.ts';
-import { rebalanceWorthIt, REBALANCE_HORIZON_DAYS } from '../../src/yield/allocator.ts';
+import {
+  MAX_BACKOFF_MS,
+  PROPOSE_COOLDOWN_MS,
+  actionGate,
+  backoffMs,
+  countsAsFailure,
+  rebalanceWorthIt,
+  REBALANCE_HORIZON_DAYS,
+} from '../../src/yield/allocator.ts';
 import type { Proposal } from '../../src/types.ts';
 
 // ---------- rates ----------
@@ -310,4 +318,59 @@ test('the loop never chases a spread that runs the wrong way', () => {
 
 test('the horizon a move has to repay inside is thirty days', () => {
   assert.equal(REBALANCE_HORIZON_DAYS, 30);
+});
+
+// ---------- the loop's brakes ----------
+//
+// These exist because of an audit finding, not a hypothetical. Before them the loop re-filed
+// the same proposal on every tick for as long as the condition held: proposals.json rewrites
+// its whole array per put, so the disk cost was quadratic, and an approve that landed with a
+// supply that reverted was one real gas payment per minute for as long as nobody looked.
+
+test('the cooldown is longer than the tick, or the loop can act on every look', () => {
+  assert.ok(PROPOSE_COOLDOWN_MS > 60_000);
+});
+
+test('backoff doubles per consecutive failure and stops at four hours', () => {
+  assert.equal(backoffMs(0), PROPOSE_COOLDOWN_MS);
+  assert.equal(backoffMs(1), PROPOSE_COOLDOWN_MS * 2);
+  assert.equal(backoffMs(3), PROPOSE_COOLDOWN_MS * 8);
+  assert.equal(backoffMs(99), MAX_BACKOFF_MS);
+  assert.ok(backoffMs(99) <= MAX_BACKOFF_MS);
+});
+
+test('inside the cooldown the loop may not act, however many times it looks', () => {
+  const t0 = 1_000_000;
+  // Six ticks a minute apart. Before the cooldown existed every one of them filed a proposal.
+  for (let i = 1; i <= 6; i++) {
+    const g = actionGate({ lastProposalAtMs: t0, failureStreak: 0, nowMs: t0 + i * 60_000 });
+    assert.equal(g.allowed, false, `tick ${i} must not be allowed to act`);
+  }
+  // Past it, acting is allowed again: the money is still doing nothing and backing off
+  // forever would be its own failure.
+  const after = actionGate({ lastProposalAtMs: t0, failureStreak: 0, nowMs: t0 + PROPOSE_COOLDOWN_MS + 1 });
+  assert.equal(after.allowed, true);
+});
+
+test('the very first action is never gated', () => {
+  assert.equal(actionGate({ lastProposalAtMs: null, failureStreak: 0, nowMs: 1 }).allowed, true);
+});
+
+test('a refusal widens the gap; one plain cooldown is no longer enough', () => {
+  const t0 = 1_000_000;
+  const justPastBase = t0 + PROPOSE_COOLDOWN_MS + 1;
+  assert.equal(actionGate({ lastProposalAtMs: t0, failureStreak: 0, nowMs: justPastBase }).allowed, true);
+  assert.equal(actionGate({ lastProposalAtMs: t0, failureStreak: 1, nowMs: justPastBase }).allowed, false);
+  assert.equal(
+    actionGate({ lastProposalAtMs: t0, failureStreak: 1, nowMs: t0 + PROPOSE_COOLDOWN_MS * 2 + 1 }).allowed,
+    true,
+  );
+});
+
+test('a proposal waiting on a human is not a failure, so the gate does not punish the gate', () => {
+  assert.equal(countsAsFailure('pending'), false);
+  assert.equal(countsAsFailure('executed'), false);
+  assert.equal(countsAsFailure('policy_refused'), true);
+  assert.equal(countsAsFailure('failed'), true);
+  assert.equal(countsAsFailure('refused'), true);
 });
