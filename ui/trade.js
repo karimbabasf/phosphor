@@ -29,11 +29,22 @@ var HISTORY_MAX_ROWS = 300;
    app was doing at the time. */
 var TRADE_ACTIONS = { close: 'close', cancel: 'cancel', cancel_all: 'cancel all', flatten: 'flatten', disarm: 'disarm' };
 
-/* The one proposal kind that reaches this venue. Every other kind the app can propose is
-   treasury (swap, deposit, withdraw, lp, consolidate, transfer) and belongs to the pro
-   window's TRANSACTIONS tab, which has the columns for it. Matching on the kind's own
-   name is why a withdrawal cannot land on this tape. */
-var MANDATE_KIND = 'mandate_arm';
+/* The proposal kinds that reach this venue, and the word each one goes under once it has
+   executed. Every other kind the app can propose is treasury (swap, intents deposit and
+   withdraw, lp, consolidate, transfer) and belongs to the pro window's TRANSACTIONS tab,
+   which has the columns for it. Matching on the kind's own name is why a withdrawal cannot
+   land on this tape.
+
+   There are two of them and there were one. `hl_deposit` joined on 2026-08-20 for a reason
+   that is a property of the account rather than of the ledger: it is the only treasury-shaped
+   kind whose money lands INSIDE this venue, and a bot armed against an unfunded account can
+   never fire. A human watching a mandate do nothing has to be able to see, on this page, that
+   the collateral it needs was proposed at 14:02 and is still waiting for a click. Sending them
+   to the other window to find that out is how a proposal sits unread while the market moves.
+
+   Exactly these two. The rule is not "anything that touches money", it is "the two kinds that
+   change what this venue's account can do", and a third one has to earn its place the same way. */
+var TRADE_PROPOSAL_KINDS = { mandate_arm: 'armed', hl_deposit: 'funded' };
 
 /* The closed overlay set, in the order src/trade/view.ts declares it. trade.html authors the
    buttons; this list is the fallback when the container is empty and the order they draw in. */
@@ -113,6 +124,15 @@ function usd(n) {
   if (Math.abs(v) < 0.005) v = 0;
   return (v < 0 ? '-' : '') + '$' +
     Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/* Whether a figure is one the screen will actually print as a number. usd() rounds at half a
+   cent, so anything under that reaches the glass as `$0.00`, and a line of prose ABOUT that
+   figure has to appear on the same condition. Otherwise a venue's rounding dust, and the live
+   mainnet account carries two millionths of a dollar of it, buys a caveat about money nobody
+   has. Not the same question as known(): a null is unknown, and this is known to be nothing. */
+function nonZero(n) {
+  return known(n) && Math.abs(Number(n)) >= 0.005;
 }
 
 /* PnL and net exposure are read for their direction before their size, so the sign is always
@@ -749,6 +769,116 @@ function renderRisk(p) {
   renderLiqBlock(at, armedWall(p, at ? at.coin : d.symbol));
 }
 
+/* ---------- 3b. collateral ----------
+
+   What a mandate can actually spend, where it is, and what it costs to send more.
+
+   THIS BLOCK CONTAINS NO CONTROL. Every manual control on this page stops something, and
+   starting is what a mandate is for, so there is no deposit button here and no field to type
+   an amount into. The agent proposes funding with propose_hl_deposit and a human decides it in
+   APPROVALS, one panel down, which is where every other decision that spends money on this
+   page is already taken. What is written here is the capability, so that a person looking at
+   an empty account knows what would fill it and what that would cost. */
+
+/* "arb, base or eth". A list a person reads, not a comma run: the last separator is a word
+   because that is how the rest of the copy on this page joins things. */
+function orList(items) {
+  if (!items || !items.length) return null;
+  if (items.length === 1) return String(items[0]);
+  return items.slice(0, -1).join(', ') + ' or ' + String(items[items.length - 1]);
+}
+
+/* The rail in one sentence, built from the numbers the payload carries rather than from a
+   remembered figure. The cost is quoted at TWO sizes on purpose. The routing fee is close to
+   flat, so a single percentage would be a fact about the amount pretending to be a fact about
+   the rail: the same deposit is under a percent at fifty dollars and a tenth of one at a
+   thousand, and a reader who was told one number would size the wrong deposit.
+
+   The rail is mainnet only, and on any other trading network this says so rather than
+   advertising a capability the rail refuses. That refusal is the most valuable one in the app:
+   the deposit would take real money, land it correctly on the MAINNET account, report success,
+   and leave the testnet account this app is trading empty. */
+function fundingLine(f) {
+  if (!f) return 'The funding rail has not reported its shape.';
+  if (f.available === false) {
+    var where = f.faucet ? ' Take testnet collateral from the venue faucet at ' + String(f.faucet) + '.' : '';
+    return 'The rail is mainnet only: it delivers mainnet USDC and one address names an account on both networks.' + where;
+  }
+  var origins = orList(f.origins);
+  var parts = [];
+  parts.push(origins && known(f.etaSec)
+    ? 'In from ' + origins + ' in about ' + count(f.etaSec) + 's'
+    : 'In from any chain this app signs for');
+  var costs = [];
+  var at = Array.isArray(f.costAt) ? f.costAt : [];
+  for (var i = 0; i < at.length; i++) {
+    if (!known(at[i].pct) || !known(at[i].usd)) continue;
+    costs.push(pct(at[i].pct) + ' of $' + amount(at[i].usd));
+  }
+  if (costs.length) parts.push('near flat at ' + costs.join(' and ' ));
+  if (known(f.minUsd)) parts.push('min $' + amount(f.minUsd));
+  // The safety property, and the last clause on purpose: it is what a reader is left holding.
+  return parts.join(', ') + '. One way in: out is a signed withdraw3.';
+}
+
+function renderCollateral(p) {
+  var d = p || {};
+  var coll = d.collateral || {};
+  var account = d.account || {};
+
+  setText('t-coll-perp', usd(coll.perpUsd));
+  setText('t-coll-spot', usd(coll.spotUsdcUsd));
+  setText('t-coll-network', coll.network ? 'hyperliquid ' + String(coll.network) : '--');
+
+  // What that spot figure MEANS, which is a different answer on the two kinds of account this
+  // venue has, and getting it wrong is worse than saying nothing.
+  //
+  // On a classic account the two books are separate: spot USDC is real, a mandate cannot draw
+  // on it, and a bot armed against it opens nothing. That is the sentence the block exists for.
+  //
+  // On a UNIFIED account the books are merged and there is no spot side to be stuck on. The
+  // same sentence there would tell somebody their money was unusable while it sat in free
+  // collateral on the line above. That is exactly the wrong claim the rail's settle step was
+  // corrected for on 2026-08-20, and it must not come back in on the screen.
+  //
+  // Nothing at all until the feed has settled which kind this is, because `unified: false` is
+  // also what "not known yet" looks like from here. accountKnown is the flag that tells them
+  // apart, and one render of silence is cheaper than one render of the wrong sentence.
+  //
+  // Drawn only when the figure it is about is drawn: nonZero is the same half-cent rule usd()
+  // rounds by, so venue dust does not buy a caveat about money nobody has.
+  var spotNote = $('t-coll-spot-note');
+  if (spotNote) {
+    var settled = account.accountKnown === true;
+    var say = settled && nonZero(coll.spotUsdcUsd);
+    if (say) {
+      setText('t-coll-spot-note', account.unified === true
+        ? 'This account is unified: the books are merged, so that USDC is already collateral.'
+        : 'Spot USDC is real money and is not margin. A mandate cannot draw on it.');
+    }
+    spotNote.hidden = !say;
+  }
+
+  // funded is three-valued. False is an account that has answered and has nothing, which is
+  // the state that needs a next action written next to it. Null is the venue not having
+  // answered yet, and the dashes above already say that; a page that printed "nothing to trade
+  // with" during a reconnect would be telling a funded account it was empty.
+  //
+  // The next action follows the rail rather than being one fixed sentence. On a network the
+  // rail cannot serve, "ask your agent to fund this account" sends a person to ask for
+  // something that will be refused, which is a dead end wearing the clothes of a next step.
+  var empty = $('t-coll-empty');
+  if (empty) {
+    var canFund = !coll.funding || coll.funding.available !== false;
+    setText('t-coll-empty', canFund
+      ? 'Nothing to trade with. Ask your agent to fund this account.'
+      : 'Nothing to trade with. Take collateral from the venue faucet.');
+    empty.hidden = coll.funded !== false;
+  }
+
+  setText('t-coll-rail', fundingLine(coll.funding));
+}
+
 /* ---------- 4. mandates ---------- */
 
 /* The four bounds, as the classes trade.css documents above the .mrow rules and not as a
@@ -1074,31 +1204,53 @@ function renderBook(p) {
    refusal at 14:31 and the fill that did not happen at 14:31 only mean something together.
 
    Scoped to trading, and the scoping is the whole reason this can be one panel. The audit log
-   is the app's log, so it also carries treasury swaps, deposits and withdrawals, which have
-   different columns, a different ledger and their own tab on the pro window. Nothing reaches
-   this tape unless it named a market, named a trade action, or named the one proposal kind
-   that arms a program on this venue. */
+   is the app's log, so it also carries treasury swaps, intents deposits and withdrawals, which
+   have different columns, a different ledger and their own tab on the pro window. Nothing
+   reaches this tape unless it named a market, named a trade action, or named one of the two
+   proposal kinds in TRADE_PROPOSAL_KINDS: the one that arms a program on this venue, and the
+   one that puts the collateral the program needs inside it. */
 
-/* Which proposal ids on this log tail belong to a mandate. Only proposal_created spells the
-   kind out, so the id it carries is what lets the later lines about the same proposal (the
-   approval, the refusal at approval time, the execution) be recognised as trading rather than
-   as treasury. A proposal whose creation has already scrolled off the tail is not claimed:
-   dropping a mandate line is a gap, and calling a withdrawal a trade is a lie. */
-function mandateProposalIds(events) {
-  var ids = {};
+/* Which proposal kind each id on this log tail is, for the two kinds this page claims. Only
+   proposal_created spells the kind out, so the id it carries is what lets the later lines about
+   the same proposal (the approval, the refusal at approval time, the execution) be recognised
+   as trading rather than as treasury. A proposal whose creation has already scrolled off the
+   tail is not claimed: dropping a line is a gap, and calling a swap a trade is a lie.
+
+   The kind is kept rather than a boolean, because the two kinds do not end in the same word. A
+   mandate that executes is ARMED and a deposit that executes is FUNDED, and one word for both
+   would put a bot on the tape where the money went. */
+function tradeProposalKinds(events) {
+  var kinds = {};
   for (var i = 0; i < events.length; i++) {
     var ev = events[i];
     if (ev.type !== 'proposal_created') continue;
-    if (String(ev.msg || '').indexOf(MANDATE_KIND) === -1) continue;
+    var msg = String(ev.msg || '');
     var id = ev.data && ev.data.id;
-    if (id) ids[String(id)] = true;
+    if (!id) continue;
+    for (var kind in TRADE_PROPOSAL_KINDS) {
+      if (msg.indexOf(kind) !== -1) kinds[String(id)] = kind;
+    }
   }
-  return ids;
+  return kinds;
+}
+
+/* Which of this page's kinds an event is about, or null. The id decides it whenever the tail
+   still holds the creation line; otherwise the message is read for a kind's own name, which is
+   what covers the first paint after a reload. */
+function proposalKindOf(ev, kinds) {
+  var data = ev.data || {};
+  var id = data.id ? String(data.id) : null;
+  if (id && kinds[id]) return kinds[id];
+  var msg = String(ev.msg || '');
+  for (var kind in TRADE_PROPOSAL_KINDS) {
+    if (msg.indexOf(kind) !== -1) return kind;
+  }
+  return null;
 }
 
 /* The short word this event goes under in the KIND column. Null means it is not this page's
    business and never reaches the tape. */
-function historyKind(ev, mandateIds) {
+function historyKind(ev, kinds) {
   var data = ev.data || {};
   var action = data.action ? String(data.action) : null;
   // A human pressed one of this page's buttons. tool_call is dropped on purpose: the server
@@ -1110,14 +1262,13 @@ function historyKind(ev, mandateIds) {
     return TRADE_ACTIONS[action];
   }
   if (action) return null;
-  var id = data.id ? String(data.id) : null;
-  var mine = Boolean(id && mandateIds[id]) || String(ev.msg || '').indexOf(MANDATE_KIND) !== -1;
+  var mine = proposalKindOf(ev, kinds);
   if (ev.type === 'kill_switch') return 'kill';
   if (!mine) return null;
   if (ev.type === 'proposal_created') return 'proposed';
   if (ev.type === 'approved') return 'approved';
   if (REFUSAL_TYPES[ev.type]) return 'refused';
-  if (ev.type === 'executed') return 'armed';
+  if (ev.type === 'executed') return TRADE_PROPOSAL_KINDS[mine];
   if (ev.type === 'execution_failed') return 'failed';
   return null;
 }
@@ -1174,11 +1325,11 @@ function mandateEntries(p) {
 }
 
 function logEntries(events) {
-  var mandateIds = mandateProposalIds(events);
+  var kinds = tradeProposalKinds(events);
   var out = [];
   for (var i = 0; i < events.length; i++) {
     var ev = events[i];
-    var kind = historyKind(ev, mandateIds);
+    var kind = historyKind(ev, kinds);
     if (!kind) continue;
     var at = Date.parse(ev.ts);
     out.push({
@@ -1459,6 +1610,7 @@ function renderAll(p) {
   renderStatus(p);
   renderVenueBanner(p);
   renderRisk(p);
+  renderCollateral(p);
   renderMarket(p);
   renderMandates(p);
   renderBook(p);
@@ -1638,10 +1790,13 @@ function openEvents() {
      drops everything else by design: a withdrawal is not a trade and has no business on a
      blotter. Read the log when the question is what the app did, not what this account did.
    - POLICY has never been on this screen at all. The status bar carries one word for it.
-   - HISTORY is the treasury ledger: swaps, deposits, withdrawals. Different columns, a
-     different ledger, and not one row of it reaches the tape. That is why the tape keeps
-     its panel and its room, and why the panel is titled TAPE now: two records cannot share
-     one word on one screen. */
+   - HISTORY is the treasury ledger: swaps, intents deposits, withdrawals. Different columns
+     and a different ledger. It used to share no row at all with the tape, and now it shares
+     exactly one kind: a Hyperliquid deposit is a movement of money, so it is a ledger row,
+     AND it is the collateral this account trades on, so its proposal and its execution are
+     on the tape too. The same event, read for two different questions. Everything else in
+     the ledger still stops at the door, which is why the tape keeps its panel and its room,
+     and why the panel is titled TAPE: two records cannot share one word on one screen. */
 
 function openLogOverlay(trigger) {
   PhosphorOverlay.open({
@@ -1677,7 +1832,7 @@ function openHistoryOverlay(trigger) {
     title: 'HISTORY',
     trigger: trigger,
     build: function (box) {
-      box.appendChild(el('p', 'ovl-note', 'The treasury ledger: swaps, deposits and withdrawals. Trades are on the TAPE panel.'));
+      box.appendChild(el('p', 'ovl-note', 'The treasury ledger: swaps, intents deposits and withdrawals. Trades are on the TAPE panel, and a Hyperliquid deposit is on both.'));
       PhosphorViews.transactions(box, alertLine);
     },
     onClose: PhosphorViews.transactionsClosed

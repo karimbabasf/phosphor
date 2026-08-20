@@ -52,8 +52,8 @@
   <!-- The three records this deck has never had room to print. LOG is the app's whole audit
        trail, not the trading slice of it the tape below carries. POLICY is what governs this
        account and was only ever a word in the status bar here. HISTORY is the treasury
-       ledger: swaps, deposits and withdrawals, which have different columns and their own
-       page, and are read from here rather than by leaving.
+       ledger: swaps, intents deposits and withdrawals, which have different columns and
+       their own page, and are read from here rather than by leaving.
        Controls FOR the deck, so they sit above it rather than becoming a panel in it. -->
   <p class="deckbar">
     <span class="k">open</span>
@@ -283,6 +283,47 @@
             <p class="empty" id="t-risk-empty" hidden>Waiting for the venue.</p>
           </div>
 
+          <!-- Where the money that backs all of the above actually sits, and how more of
+               it arrives. Four figures and at most three sentences.
+
+               It is a section of its own rather than four more rows in ACCOUNT because it
+               answers a different question. ACCOUNT is what the book is worth. COLLATERAL
+               is what a mandate can spend, which is not the same number on this venue: an
+               account can hold real USDC on the SPOT book, where it backs nothing, and a
+               bot armed against it can never open anything. That state has to be nameable
+               on screen or the failure reads as a broken runner.
+
+               Nothing in here starts a deposit, and there is no field to type an amount
+               into. Funding is proposed by the agent through propose_hl_deposit and
+               approved in the panel below this one, which is where every other decision
+               that spends money on this page is taken. The three sentences are the
+               capability written down, not a control. -->
+          <div class="rcoll">
+            <!-- The venue rides on the section label rather than taking a row of its own.
+                 It is a property of the whole block, not a fourth figure beside three
+                 dollar amounts, and every row this panel does not spend is a row MARKET
+                 and MANDATE keep above the fold. -->
+            <p class="rsec">COLLATERAL <span class="rsec-v" id="t-coll-network">--</span></p>
+            <!-- The two books, and only the two books. Free collateral is four lines up
+                 under ACCOUNT and again in the status bar, and withdrawable is a treasury
+                 question that belongs to the pro window. What this block is for is the one
+                 thing neither of them answers: which side of the venue the money is on. -->
+            <dl class="rgrid">
+              <dt class="k">perp</dt><dd id="t-coll-perp">--</dd>
+              <dt class="k">spot usdc</dt><dd id="t-coll-spot">--</dd>
+            </dl>
+            <!-- Written by the renderer, because what the spot figure MEANS depends on which
+                 kind of account this is. On a classic account it is a separate book a mandate
+                 cannot draw on. On a unified account the books are merged and the same
+                 sentence would call usable collateral stuck. -->
+            <p class="cnote" id="t-coll-spot-note" hidden></p>
+            <p class="empty" id="t-coll-empty" hidden>Nothing to trade with. Ask your agent to fund this account.</p>
+            <!-- One sentence, not three. The rail is reference material: it is read once,
+                 by somebody working out how money gets in, and it must not cost four lines
+                 of a capped panel every time the walls above it are read. -->
+            <p class="cnote faint" id="t-coll-rail">--</p>
+          </div>
+
           <!-- The instrument rather than the account. Mark and oracle are separated on
                purpose: they are different prices with different jobs, mark decides a
                liquidation and oracle decides funding, and the gap between them is the
@@ -339,9 +380,12 @@
 
            It was titled HISTORY and the word had to move: the deck bar above now opens the
            treasury ledger under that name, and two different records cannot share one word
-           on one screen. TAPE is what the paragraph below already called it. The panel
-           itself is unchanged and it keeps its room, because the HISTORY overlay is a
-           different ledger and does not show a single row of this one.
+           on one screen. TAPE is what the paragraph below already called it. The panel keeps
+           its room, because the HISTORY overlay is a different ledger with different columns.
+           The two overlap on exactly one kind, added 2026-08-20: a Hyperliquid deposit is a
+           movement of money and so it is a ledger row, and it is the collateral this account
+           trades on and so its proposal and its execution are on this tape as well. One
+           event, two questions. Nothing else in that ledger reaches this panel.
 
            It was three panels (FILLS, MANDATE, LOG) and they were
            three views of one sequence, which is why reading them meant looking in three

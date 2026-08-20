@@ -377,6 +377,23 @@
    long. It holds what were three panels: the account and its distance to the wall, the
    instrument, and what the armed program may still do. Nothing in it is a table, which is
    why it can live in the narrow column while both tables take the wide one. */
+/* Left at 44vh, and it was measured rather than assumed.
+
+   COLLATERAL joined this panel on 2026-08-20 and 44vh is not enough for five sections: at
+   1440x900 the panel wants 627px and gets 396, so MARKET and MANDATE read in the panel's own
+   scroll. Raising the cap to 52vh was tried and reverted, because the room it takes does not
+   come from where the comment below this one claims it does.
+
+   TAPE declares `min-height: 22vh` and that floor DOES NOT HOLD: `.panel.grow` in
+   ui/style.css sets `min-height: 0` at specificity 0,2,0 against this file's 0,1,0, so it
+   wins whatever the source order. Measured at 1440x900 with a proposal pending, the tape
+   computes min-height 0px and takes 112px at this cap and 40px at 52vh. So a bigger risk
+   panel is paid for by the tape, which is the one panel this page may not shorten.
+
+   The fix belongs in the specificity, not in this number, and it is not this change's to
+   make: it would move the layout in every state on a page another pass owns. Reported
+   instead. Until then the cap stays where it was and the panel scrolls, which is what a cap
+   paired with a scroll is for. */
 .panel-trisk > .pbody { max-height: 44vh; }
 
 /* A section label sitting on its own rule, in the register the panel frames already use:
@@ -546,6 +563,33 @@
   margin: 4px 0 0;
   color: var(--green-dim);
   max-width: 60ch;
+}
+
+/* Collateral: four figures and at most three sentences, ranked in two tiers.
+
+   The figures and the spot caveat are facts about THIS account, so they are read at the
+   panel's base brightness. The two sentences about the rail are a capability, true of the
+   app and not of the account, so they sit at the faintest tier: they have to be findable
+   by someone looking at an empty account and must not compete with the walls above them
+   every other time the panel is read.
+
+   A sentence, so it wraps and it is left aligned, the same rule .shock already follows. */
+.cnote {
+  margin: 4px 0 0;
+  color: var(--green-dim);
+  max-width: 60ch;
+}
+
+.cnote.faint { color: var(--green-faint); }
+
+/* A value carried on a section label: the venue the block below is about. Read as a word
+   rather than as a heading, so the label's tracking comes back off it. It rides here
+   because it is a property of the whole block and not a fourth figure in a column of
+   dollar amounts, and because a row this panel does not spend is a row MARKET and MANDATE
+   keep above the fold. */
+.rsec-v {
+  color: var(--green-dim);
+  letter-spacing: 0;
 }
 
 /* The instrument rather than the account, and one tier down as a block: mark against

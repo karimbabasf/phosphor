@@ -258,6 +258,7 @@ const tradeInfo = createInfoClient({ baseUrl: HL_BASE_URL });
 const trade = createTradeService({
   wsUrl: HL_WS_URL,
   user: cfg.addresses.evm[0] ?? '',
+  network: cfg.tradingNetwork,
   info: tradeInfo,
   runner,
   products: cfg.candleProducts,

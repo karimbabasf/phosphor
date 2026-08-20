@@ -23,7 +23,9 @@
 import type { Highlight, OverlayName, TradeViewState } from './view.ts';
 import type { Mandate } from '../strategy/envelope.ts';
 import type { Program } from '../strategy/grammar.ts';
+import type { Network } from '../types.ts';
 import { renderProgram } from '../strategy/render.ts';
+import { DUST_USD, fundingBlock, type FundingBlock } from './funding.ts';
 import type {
   AccountSnapshot,
   MarketCtx,
@@ -201,6 +203,34 @@ export type TradePayload = {
     netNotionalUsd: number | null;
     grossNotionalUsd: number | null;
     equityAtFivePctAdverse: number | null;
+  };
+  // Where the money that backs this account actually is, and how more of it arrives.
+  //
+  // Deliberately NOT a second copy of `account`. Free and withdrawable are already up there
+  // and are read from there; what is down here is the set of facts the account block cannot
+  // carry, because they are about the venue and the rail rather than about the book: which
+  // Hyperliquid this is, whose account, how much of the collateral is sitting on the spot
+  // side where a mandate cannot reach it, and what it costs to send more.
+  collateral: {
+    network: Network;
+    address: string | null;
+    // The perp book's own equity, straight from clearinghouseState and unreinterpreted.
+    perpUsd: number | null;
+    // The spot book's USDC, straight from spotClearinghouseState. What it MEANS depends on
+    // the kind of account and the page says which: on a classic account these are two books
+    // and this one backs nothing a mandate can spend, while on a unified account they are
+    // merged and this money is collateral the moment it lands. Both readings need the two
+    // figures side by side, which is why they are published separately rather than summed.
+    spotUsdcUsd: number | null;
+    // Has this account got anything at all on either book. Null while the feed has not
+    // answered, because "nothing here" and "not asked yet" are different sentences and the
+    // empty state on this surface names a next action.
+    funded: boolean | null;
+    // What the rail costs, as a shape. Static: no quote is taken to draw this page, and
+    // nothing on this page can start a deposit. A real deposit is priced by the rail's own
+    // simulate() at propose time and again at execute time, and it is refused when the live
+    // quote disagrees with the draft a human read.
+    funding: FundingBlock;
   };
   markets: Market[];
   positions: Position[];
@@ -488,6 +518,41 @@ function fillFrom(f: RawFill, mandates: MandateStatus[]): Fill {
   };
 }
 
+// ---------- collateral ----------
+
+// Where the money is, on which venue, and what it costs to send more.
+//
+// `funded` is three-valued for the same reason everything else on this surface is: with no
+// snapshot the account has not answered, and "no collateral" is a different sentence from "not
+// asked yet". Only one of those two names a next action.
+//
+// A zero on either book counts as an answer here, not as a null. That is the opposite of the
+// rule accountFrom applies to a unified account's equity, and the difference is what the
+// figure is for: equity 0.0 on a unified account is the venue failing to report money that is
+// there, while perp value 0.0 next to spot 0.0 is the venue correctly reporting an account
+// nobody has funded. This block exists to say that second thing out loud.
+function collateralFrom(
+  s: AccountSnapshot | null,
+  network: Network,
+  address: string | null,
+): TradePayload['collateral'] {
+  const perpUsd = s === null ? null : finite(s.perpValueUsd);
+  const spotUsdcUsd = s === null ? null : finite(s.spotUsdcUsd);
+  const answered = perpUsd !== null || spotUsdcUsd !== null;
+  // Dust is not collateral. The live mainnet account holds 0.000002 USDC and every figure on
+  // this surface rounds at half a cent, so counting that as funded would print $0.00 on both
+  // books while suppressing the one line that says what to do about an empty account.
+  const holds = (n: number | null): boolean => n !== null && Math.abs(n) >= DUST_USD;
+  return {
+    network,
+    address: address === null || address === '' ? null : address,
+    perpUsd,
+    spotUsdcUsd,
+    funded: answered ? holds(perpUsd) || holds(spotUsdcUsd) : null,
+    funding: fundingBlock(network),
+  };
+}
+
 // ---------- account ----------
 
 function accountFrom(s: AccountSnapshot | null, positions: Position[]): TradePayload['account'] {
@@ -768,6 +833,11 @@ export function buildTradePayload(deps: {
   atrFor: (coin: string) => number | null;
   products: string[];
   nowMs: number;
+  // Which Hyperliquid this account lives on, and which account. Both come from the app's
+  // config rather than from the venue, because a screen that asked the venue which network it
+  // was talking to would be asking the thing it is trying to check.
+  network: Network;
+  address: string;
 }): TradePayload {
   const snapshot = deps.feed.account();
   const status = deps.feed.status();
@@ -833,6 +903,7 @@ export function buildTradePayload(deps: {
     noteSource: deps.view.noteSource,
     venue: venueFrom(status, snapshot, deps.nowMs),
     account,
+    collateral: collateralFrom(snapshot, deps.network, deps.address),
     markets,
     positions,
     orders,

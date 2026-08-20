@@ -62,6 +62,11 @@ function snapshot(over: Partial<AccountSnapshot> = {}): AccountSnapshot {
     // not is its own test, because it is the one that used to render a funded account as empty.
     accountKnown: true,
     unified: false,
+    // The two raw books, unreinterpreted. On this plain perp fixture the perp value is the
+    // equity and there is no spot side at all, which is what a funded perps account looks like.
+    perpValueUsd: 1000,
+    spotUsdcUsd: null,
+    spotUsdcHoldUsd: null,
     positions: [position()],
     ...over,
   };
@@ -208,6 +213,8 @@ function build(p: {
     atrFor: () => (p.atr === undefined ? 15 : p.atr),
     products: ['BTC', 'ETH', 'SOL'],
     nowMs: NOW,
+    network: 'testnet',
+    address: '0x1111111111111111111111111111111111111111',
   });
 }
 

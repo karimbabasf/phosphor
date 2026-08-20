@@ -55,6 +55,20 @@ export type AccountSnapshot = {
   // False while clearinghouseState and activeAssetData still disagree about which kind of
   // account this is. Every figure above is null until it is true.
   accountKnown: boolean;
+  // The perp book's own equity, exactly as clearinghouseState reports it and with none of the
+  // unified-account reinterpretation the four figures above carry. On a classic account it is
+  // the balance a mandate draws margin from; on a unified account the books are merged and it
+  // is position equity while the money reads on the spot side. It is published raw either way,
+  // because the collateral surface has to be able to name the perp side as itself: "your
+  // collateral is on the other book" is the one sentence that explains an armed bot that
+  // cannot open anything, and it is only true on one of the two kinds of account.
+  perpValueUsd: number | null;
+  // The spot book, USDC only, which is the only asset that backs perps here. Whether it is a
+  // separate book at all is the account's business: on a classic account it is one, and on a
+  // unified account it is the same pot the perp side draws from. Published raw beside the perp
+  // figure so the surface can say which of those two it is looking at.
+  spotUsdcUsd: number | null;
+  spotUsdcHoldUsd: number | null;
   positions: RawPosition[];
 };
 
@@ -923,6 +937,13 @@ export function createTradeFeed(deps: {
       // True while the account reading is still ambiguous, so the window can say "waiting for
       // the venue" instead of drawing a funded account as empty.
       accountKnown: !unknown,
+      // Published whatever the account turns out to be, and deliberately NOT gated on
+      // `unknown`. These two are the raw books rather than a reading of them: the perp value
+      // is what clearinghouseState said and the spot total is what spotClearinghouseState
+      // said, so neither depends on the detection that the four figures above wait for.
+      perpValueUsd: clearing.accountValueUsd,
+      spotUsdcUsd: spot === null ? null : spot.totalUsd,
+      spotUsdcHoldUsd: spot === null ? null : spot.holdUsd,
       positions: positions.slice(),
     };
   }
