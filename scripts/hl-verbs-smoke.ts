@@ -21,18 +21,24 @@ import type { OrderRequest } from '../src/hl/exchange.ts';
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const cfg = loadConfig(root);
 
+// Derived BEFORE the refusal below, and that order is the whole point.
+//
+// isMainnet is the phantom-agent source byte, so it and the URL and the agent wallet all have
+// to name one network or the venue answers with a bare rejection and no reason. Taking all
+// three from cfg.tradingNetwork makes disagreement unexpressible.
+//
+// Read here rather than after the guard because the guard NARROWS the type to 'testnet', which
+// would make this comparison provably dead and a typecheck error. That is TypeScript pointing
+// out the guard is doing its job today; the derivation is what keeps it correct if the guard
+// is ever relaxed.
+const IS_MAINNET = cfg.tradingNetwork === 'mainnet';
+const BASE = IS_MAINNET ? 'https://api.hyperliquid.xyz' : 'https://api.hyperliquid-testnet.xyz';
+
 if (cfg.tradingNetwork !== 'testnet') {
   console.error(`refused: this places real orders and runs on testnet only (tradingNetwork is ${cfg.tradingNetwork}).`);
   console.error('run it as: PHOSPHOR_TRADING_NETWORK=testnet node scripts/hl-verbs-smoke.ts');
   process.exit(1);
 }
-
-// Both derived from the one setting, never stated twice. The refusal above already pins this
-// script to testnet, so today these are always the testnet pair; deriving them anyway means a
-// future edit that relaxes the guard cannot leave a testnet source byte signing against a
-// mainnet key, which is the kind of mismatch the venue answers with a bare rejection.
-const IS_MAINNET = cfg.tradingNetwork === 'mainnet';
-const BASE = IS_MAINNET ? 'https://api.hyperliquid.xyz' : 'https://api.hyperliquid-testnet.xyz';
 // The agent wallet for THIS network. Reading the flat legacy field here is what made this
 // script sign testnet orders with a mainnet wallet after the mainnet approval on 2026-08-20.
 const wallet = readApiWallet(cfg.keysPath, cfg.tradingNetwork);
