@@ -62,6 +62,7 @@ import type { TxPlace } from './transactions.ts';
 import { gateRequired, gateBanner } from './policy/gate.ts';
 import { buildGreeting } from './greeting.ts';
 import { buildRole } from './role.ts';
+import { research } from './research.ts';
 import { buildMandateCatalog } from './strategy/catalog.ts';
 import { VERSION } from './version.ts';
 import { renderSentences } from './policy/render.ts';
@@ -171,6 +172,10 @@ const READ_TOOLS: readonly string[] = [
   'chart_batch',
   'indicator_catalog',
   'market_search',
+  // The one tool that leaves this machine. It is a read like the others because that is all it
+  // is: the APP fetches from a fixed allowlist and hands back text. The agent never gets a URL
+  // it can point anywhere, which is the whole reason this is a Phosphor tool and not WebFetch.
+  'research',
   'trade_read',
   'trade_batch',
   // How to write a mandate. Opening a position is the one action that cannot be reached by
@@ -1249,6 +1254,20 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         catalogLoadedAt: market.catalogLoadedAt(),
         note: 'Any of these can be charted on any timeframe from 1m to 1w.',
       });
+      return;
+    }
+
+    /* Market news, and the only place in this app where an agent's question causes a request to
+       leave the machine. Three things make that safe enough to ship, and all three live in
+       src/research.ts rather than here: the hosts are a fixed set checked by exact match, the
+       agent supplies a search phrase and never a URL, and everything coming back is stripped and
+       wrapped in a quote envelope that says out loud it is somebody else's writing.
+       The query is already in the audit log: every agent read is written there before dispatch,
+       arguments included, by the one line that covers the whole surface. */
+    if (tool === 'research') {
+      const query = typeof args.query === 'string' ? args.query : '';
+      if (query.trim() === '') return sendJson(res, 400, { error: 'query is required' });
+      sendJson(res, 200, await research(query, { limit: intParam(args.limit, 8, 20) }));
       return;
     }
 
