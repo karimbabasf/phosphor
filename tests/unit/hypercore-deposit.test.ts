@@ -282,7 +282,9 @@ test('a NEAR testnet account is refused here, not by a 500 from the API', async 
   // 1Click is mainnet only. Without this check the quote is well formed, leaves, and comes back
   // as a bare "Internal server error", which tells a reader nothing about the actual cause.
   const h = rail();
-  const out = await h.rail.simulate(draft({ chain: 'near', symbol: 'USDC', from: 'phosphor.testnet' }));
+  // A generic name, not the one in config.local.json: scripts/sweep.ts treats any configured
+  // address in tracked content as a leak, and it is right to, even for a testnet account id.
+  const out = await h.rail.simulate(draft({ chain: 'near', symbol: 'USDC', from: 'example.testnet' }));
   assert.equal(out.ok, false);
   assert.match(out.error ?? '', /NEAR testnet account and 1Click is mainnet only/);
   assert.match(out.error ?? '', /an error that does not say so/);
