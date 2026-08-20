@@ -81,6 +81,36 @@ there." "Switch to trading." "Show me BTC on the 4 hour and mark the range." "Sh
 it loses that trend line, and cap me at $200." "Never let me hold more than 20% in anything that
 can freeze me."
 
+## Or let the app start the agent
+
+The line above is the car waiting for somebody to arrive with a key. The app can also start the
+agent itself: press START THE AGENT in the window and Phosphor spawns a headless Claude Code
+process, hands it this same MCP server, and streams the conversation into the window. There is no
+terminal in the loop and no second surface to learn. It needs the `claude` CLI installed and
+already logged in; the child inherits that login, so the model is billed to the subscription you
+already pay for and Phosphor never sees a key.
+
+What that agent is allowed to do is fixed, not configured:
+
+| | |
+|---|---|
+| Tools | `mcp__phosphor__*` and nothing else. No shell, no file writer, no reader, no web. |
+| Other MCP servers | None. `--strict-mcp-config`, so nothing else on the machine joins. |
+| Your settings | Not loaded. `--setting-sources=`, so your hooks, plugins and `CLAUDE.md` stay out. |
+| Approval | Impossible. It proposes; a human clicks in the window, exactly as before. |
+
+The deny list that does this lives in `operator/driver.settings.json`, and the app does not trust
+it. Claude Code announces its own tool list when a session starts, and `src/driver.ts` kills the
+session if that list holds anything outside Phosphor's own tools. That check is there because the
+deny list beside it had already gone stale once: written against one release, it was silently
+permitting `WebFetch`, `WebSearch`, `SendMessage` and more by the next. `tests/lockdown.test.ts`
+launches the real binary against both shipped profiles and fails when a release adds a tool, so
+the next drift is a red test rather than a wider seat.
+
+If `claude` is installed somewhere unusual, set `driver.claudeBin` in `config.json` to its full
+path. An app launched from the Dock does not inherit your shell's `PATH`, which is exactly where
+Claude Code tends to install itself.
+
 ## Install it as a Mac app
 
 The same app, packaged so it opens from the Dock instead of a terminal. It needs nothing installed:

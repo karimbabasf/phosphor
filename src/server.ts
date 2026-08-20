@@ -1049,6 +1049,10 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         } catch (err) {
           return sendJson(res, 409, { error: errText(err) });
         }
+        /* Logged before anything the agent does with it. The dashcam is supposed to answer
+           "why did this happen", and the tool calls alone only answer "what happened": a swap
+           in the transcript with no instruction above it reads as the app acting on its own. */
+        audit.append('driver_prompt', `human to the agent: ${text}`, { chars: text.length });
         driverEvent({ kind: 'said', text });
         return sendJson(res, 200, { ok: true, ...instance.status() });
       }

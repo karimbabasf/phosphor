@@ -534,6 +534,10 @@ export type LogEvent = {
     // these lines. Removing it would make the type lie about the file.
     | 'view_changed'
     | 'view_refused'
+    // What a human told the in-app driver to do. The tool calls that follow are already
+    // logged; without this line the transcript records that the app swapped a token and
+    // never records that somebody asked it to, which is the wrong half to keep.
+    | 'driver_prompt'
     | 'error';
   msg: string; // one human-readable line
   data?: unknown;
