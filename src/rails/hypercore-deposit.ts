@@ -251,6 +251,28 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
   async function plan(draft: HlDepositDraft): Promise<{ plan?: Plan; reasons: string[] }> {
     const reasons: string[] = [];
 
+    // THE FIRST CHECK, and the one that stops the worst outcome this rail can produce.
+    //
+    // 1Click has no testnet and the asset pinned above is MAINNET HyperCore USDC. The recipient
+    // is an EVM address, and the same address names an account on BOTH Hyperliquid networks. So
+    // a deposit raised while this app is trading testnet would take real money, deliver it
+    // correctly to the MAINNET trading account, and report success, while the testnet account
+    // the app is actually trading stayed empty. Nothing reverts. Nothing looks wrong.
+    //
+    // It is not recoverable by this rail either: getting it back is a signed withdraw3 against
+    // mainnet, which is not the network the app is configured for.
+    if (network !== 'mainnet') {
+      return {
+        reasons: [
+          `funding routes through NEAR Intents, which has no testnet, and the asset it delivers is ` +
+            `MAINNET HyperCore USDC. This app is trading ${network}, and one address names an account ` +
+            `on both networks, so this deposit would put real money into the mainnet trading account ` +
+            `while the ${network} one stayed empty. Use the venue faucet for ${network} ` +
+            `(https://app.hyperliquid-testnet.xyz/drip), or set tradingNetwork to mainnet`,
+        ],
+      };
+    }
+
     const family = originFamily(draft.chain);
     if (family === null) {
       return {

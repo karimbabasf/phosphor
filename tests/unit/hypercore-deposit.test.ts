@@ -198,6 +198,39 @@ function rail(
   return { rail: r, quotes, submitted, sends: evm.sends, infoCalls: info.calls };
 }
 
+// ---------- the network guard, which is the worst outcome this rail can produce ----------
+
+test('a testnet trading network is refused, because the money would land on mainnet and work', async () => {
+  // The failure this prevents does not revert and does not look wrong: 1Click has no testnet,
+  // the pinned asset is mainnet HyperCore, and one EVM address names an account on both
+  // networks. So the deposit would succeed, into the wrong book, while the account the app is
+  // trading stayed empty.
+  const h = rail({}, {}, [{ perp: 0, spot: 0 }], { network: 'testnet' });
+  const out = await h.rail.simulate(draft());
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /NEAR Intents, which has no testnet/);
+  assert.match(out.error ?? '', /real money into the mainnet trading account/);
+  assert.match(out.error ?? '', /faucet/);
+  assert.equal(h.quotes.length, 0, 'nothing was priced');
+});
+
+test('the network guard runs before every other refusal, so it cannot be masked by one', async () => {
+  // A draft that is wrong in several ways at once must still name this reason, because it is
+  // the one that costs money.
+  const h = rail({}, {}, [{ perp: 0, spot: 0 }], { network: 'testnet' });
+  const out = await h.rail.simulate(draft({ chain: 'sol', amount: 1, counterparty: 'nonsense' }));
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /has no testnet/);
+});
+
+test('execute refuses on testnet too, not only simulate', async () => {
+  const h = rail({}, {}, [{ perp: 0, spot: 0 }], { network: 'testnet' });
+  const out = await h.rail.execute(draft());
+  assert.equal(out.ok, false);
+  assert.match(out.detail, /has no testnet/);
+  assert.equal(h.sends.length, 0, 'nothing was signed');
+});
+
 // ---------- the shape refusals, none of which touch the network ----------
 
 test('an origin chain this app cannot sign on is refused before any quote', async () => {
