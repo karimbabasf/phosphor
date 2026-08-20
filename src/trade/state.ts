@@ -24,6 +24,7 @@ import type { Highlight, OverlayName, TradeViewState } from './view.ts';
 import type { Mandate } from '../strategy/envelope.ts';
 import type { Program } from '../strategy/grammar.ts';
 import { renderProgram } from '../strategy/render.ts';
+import { liquidationPrice } from '../hl/liquidation.ts';
 import type {
   AccountSnapshot,
   MarketCtx,
@@ -88,6 +89,10 @@ export type Position = {
   leverageType: 'cross' | 'isolated';
   marginUsedUsd: number;
   fundingPaidUsd: number;
+  // Whether liqPx is a price anything could actually reach. False means the collateral behind the
+  // position exceeds its own notional, so the three distances below are blank on purpose. Null
+  // means the venue published no liquidation price and the question has no answer yet.
+  liqReachable: boolean | null;
   liqDistancePct: number | null;
   liqDistanceUsd: number | null;
   liqDistanceAtr: number | null;
@@ -303,6 +308,25 @@ export function mandateWallPrice(p: {
   return wall;
 }
 
+// Whether a liquidation price is one anything could reach, which is a different question from
+// where it sits.
+//
+// The threshold is a whole mark of distance, and it is the one place on the scale that is not a
+// matter of taste: |liq - mark| >= mark says the loss from here to the wall is at least the
+// position's entire notional, which is the same statement as the collateral behind the wall
+// exceeding the notional it stands behind. Past that line the position is cash backed rather than
+// leveraged and there is no wall to draw. This is the same quantity collateralBehindLiq() in
+// feed-ws.ts reads out of liqPx, expressed per position in price terms, so it needs neither the
+// account's blended maintenance ratio nor its `sole` caveat to answer.
+//
+// One rule for both sides, because the sides are only superficially different. A long states this
+// plainly: its wall comes out at or below zero and nobody reads a negative number as a price. A
+// short has no such tell. Its wall runs off through 84636 on a mark of 87.738, and every number on
+// the way there still looks like a price. Writing it as a distance covers both in one line.
+function wallIsReachable(liqPx: number, markPx: number): boolean {
+  return Math.abs(liqPx - markPx) < markPx;
+}
+
 // ---------- positions ----------
 
 // The mark comes from the market context when there is one, because that is the number the chart
@@ -326,7 +350,16 @@ function positionFrom(p: RawPosition, ctx: MarketCtx | null, atr: number | null)
   // whole payload, so all three distances go dark together. Two of the three showing a number
   // while the third is blank would read as a data glitch instead of the truth, which is that the
   // venue has not published a liquidation price for this position.
-  const gapPx = liqPx === null || markPx === null ? null : Math.abs(liqPx - markPx);
+  //
+  // They go dark for a second reason too: a wall that exists and cannot be reached. Live testnet,
+  // 0.01 SOL sold at 74.914 in a unified account whose 887 dollars of spot USDC back 88 cents of
+  // notional, and the venue truthfully answered 84636.71 against a mark of 87.738. The panel then
+  // truthfully rendered it 96365 percent away. Neither number is wrong and together they read as
+  // a broken screen. A distance is something a human acts on and nobody acts on 96365 percent, so
+  // the honest answer is that this position has no wall in reach, not a very large number.
+  const rawGapPx = liqPx === null || markPx === null ? null : Math.abs(liqPx - markPx);
+  const liqReachable = liqPx === null || markPx === null ? null : wallIsReachable(liqPx, markPx);
+  const gapPx = liqReachable === true ? rawGapPx : null;
 
   // The anchor is the MARK, not the entry, and the choice matters.
   //
@@ -377,6 +410,7 @@ function positionFrom(p: RawPosition, ctx: MarketCtx | null, atr: number | null)
     leverageType: p.leverageType,
     marginUsedUsd: p.marginUsedUsd,
     fundingPaidUsd: p.fundingPaidUsd,
+    liqReachable,
     liqDistancePct,
     liqDistanceUsd,
     liqDistanceAtr,
@@ -621,6 +655,35 @@ function programSide(p: Program | null): 'long' | 'short' | null {
   return sides.size === 1 ? [...sides][0] : null;
 }
 
+// Where the projected position would die, in the venue's terms. Maintenance is charged against
+// the asset's maximum leverage, so a projection cannot be drawn without it: an approval screen
+// showing a guessed wall is worse than one showing none. Below 1x is not a leverage any venue
+// publishes, and it is also where the formula stops leaving a long any margin band at all, so it
+// is refused rather than passed through.
+function liqPxAtMaxFor(
+  side: 'long' | 'short' | null,
+  mark: number,
+  positionUsd: number,
+  accountValueUsd: number,
+  assetMaxLeverage: number | null,
+): number | null {
+  if (side === null || assetMaxLeverage === null || assetMaxLeverage < 1) return null;
+  if (positionUsd <= 0 || mark <= 0) return null;
+
+  const maintenanceLeverage = MAINTENANCE_DIVISOR * assetMaxLeverage;
+  const liq = liquidationPrice({
+    entryPx: mark,
+    side,
+    positionSize: positionUsd / mark,
+    marginAvailable: accountValueUsd - positionUsd / maintenanceLeverage,
+    maintenanceLeverage,
+  });
+  // The same rule an open position's wall answers to. A projected wall further than a whole mark
+  // away says the envelope cannot spend enough of this account to be liquidated, and there is no
+  // line to draw for that.
+  return wallIsReachable(liq, mark) ? liq : null;
+}
+
 // The account's next state if this program runs to the edge of its envelope.
 //
 // Sized against both walls: what the human granted, and what the collateral can actually carry.
@@ -628,10 +691,16 @@ function programSide(p: Program | null): 'long' | 'short' | null {
 // not a fifty thousand dollar position, and a receipt that says it is would be the wrong number
 // on an approval screen.
 //
-// Liquidation at that size is a straight consequence of the maintenance rule. The position is
-// gone when the loss has eaten the initial margin down to maintenance, and maintenance is half
-// the initial margin at maximum leverage, so the move that does it is 1 / (2 * maxLeverage) of
-// the entry price. It opens at the current mark, because that is when the receipt was written.
+// Liquidation at that size goes through the venue's own formula in src/hl/liquidation.ts rather
+// than a second copy of it here. It opens at the current mark, because that is when the receipt
+// was written.
+//
+// What used to be here was mark * (1 -/+ 1 / (2 * maxLeverage)) reading the MANDATE's leverage
+// where the formula wants the ASSET's. The two are different numbers and agree only when a mandate
+// happens to be written at the asset's own cap. The move to the wall is 1/L - 1/(2*M): L is the
+// leverage the position opens at, M is the maximum the asset allows. At 5x on an asset allowing 40
+// that is 18.75 percent, and reading L for M answered 10 percent. It also spent nothing on the
+// collateral the envelope leaves unposted, which in cross is standing behind the position too.
 //
 // The whole object is null when any input is unknown, rather than zeros: a projection built on a
 // missing free balance would read as a real plan.
@@ -640,6 +709,7 @@ function projectedFor(
   pos: Position | undefined,
   markPx: number | null,
   freeUsd: number | null,
+  assetMaxLeverage: number | null,
 ): MandateRow['projected'] {
   const maxNotionalUsd = finite(s.mandate.maxNotionalUsd);
   const maxLeverage = finite(s.mandate.maxLeverage);
@@ -657,8 +727,9 @@ function projectedFor(
   const freeAfterUsd = free + postedUsd - marginRequiredUsd;
 
   const side = programSide(s.program) ?? (pos === undefined ? null : pos.side);
-  const adverse = 1 / (MAINTENANCE_DIVISOR * maxLeverage);
-  const liqPxAtMax = side === null ? null : side === 'long' ? mark * (1 - adverse) : mark * (1 + adverse);
+  // Everything the account has stands behind a cross position, not only the slice this envelope
+  // posts as initial margin, so the collateral base is the free balance plus what is already down.
+  const liqPxAtMax = liqPxAtMaxFor(side, mark, maxPositionUsd, free + postedUsd, assetMaxLeverage);
 
   return { maxPositionUsd, liqPxAtMax, freeAfterUsd, marginRequiredUsd };
 }
@@ -671,6 +742,7 @@ function mandateRowFrom(
   nowMs: number,
   markPx: number | null,
   freeUsd: number | null,
+  assetMaxLeverage: number | null,
 ): MandateRow {
   const m = s.mandate;
   const notionalUsd = pos === undefined ? 0 : pos.notionalUsd;
@@ -732,7 +804,7 @@ function mandateRowFrom(
       allowedActions: [...m.allowedActions],
     },
     used: { notionalUsd, lossUsd, ordersLastMin, msToExpiry },
-    projected: projectedFor(s, pos, markPx, freeUsd),
+    projected: projectedFor(s, pos, markPx, freeUsd, assetMaxLeverage),
     wallPx,
     lastRule: s.lastRule,
     haltedReason: s.haltedReason,
@@ -820,6 +892,7 @@ export function buildTradePayload(deps: {
       deps.nowMs,
       ctx === null ? null : finite(ctx.markPx),
       account.freeUsd,
+      finite(deps.meta.get(m.mandate.symbol)?.maxLeverage),
     );
   });
 
@@ -1031,6 +1104,9 @@ export function buildTradeRead(payload: TradePayload): TradeRead {
       leverage: p.leverage,
       leverageType: p.leverageType,
       liqPx: p.liqPx,
+      // False means liqPx is further from the mark than the mark itself, so no price gets there
+      // and the three distances below are blank on purpose rather than missing.
+      liqReachable: p.liqReachable,
       // Grouped, because the three are one fact in three units and reading one without the others
       // is how twelve percent gets mistaken for safe.
       liqDistance: { pct: p.liqDistancePct, usd: p.liqDistanceUsd, atr: p.liqDistanceAtr },
