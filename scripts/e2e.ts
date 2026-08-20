@@ -20,7 +20,9 @@ import { EXPECTED_TOOLS_SORTED } from '../tests/tool-surface.ts';
 type Json = any;
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const PORT = 4199;
+// Overridable, because a hardcoded port fails against anything else already listening and the
+// failure reads as a broken app rather than as a busy socket. Found the slow way on 2026-08-20.
+const PORT = Number(process.env.PHOSPHOR_E2E_PORT ?? 4199);
 const BASE = `http://127.0.0.1:${PORT}`;
 
 // The exact tool surface, sorted. An extra tool here is a new way for an agent to reach the
