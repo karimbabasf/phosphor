@@ -311,10 +311,16 @@ body[data-view='basic'] #page {
    Nothing in here is monospace. The pro deck reads its transcript as a log; this one reads
    it as a conversation, and a conversation set in a terminal face is a log with a different
    name on it. Nothing in here animates position either: rows land several a second while an
-   assistant is working, and a dozen things easing at once is the opposite of calm. */
+   assistant is working, and a dozen things easing at once is the opposite of calm.
+
+   THE FOUR PHASES ARE THE SAME FOUR, AND THEY LOOK NOTHING ALIKE. idle is a globe in the
+   calm blue rather than in phosphor green; closing is a dissolve rather than the pro deck's
+   fall of terminal characters. Same component, same states, same seconds; a screen that may
+   never look like a terminal does not get a waterfall of ASCII on it, and driver-chat.js is
+   told which one to run at mount rather than deciding from the surface it woke up on. */
 .basic-chat {
   flex: 1 1 auto;
-  min-height: 9rem;
+  min-height: 11rem;
   display: flex;
   flex-direction: column;
   padding: 18px 20px;
@@ -323,6 +329,93 @@ body[data-view='basic'] #page {
   border-radius: var(--r-surface);
 }
 
+/* The box all four phases fill, and the positioned ancestor the globe layer stands in. */
+.basic-chat .chat-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  transition: opacity 240ms var(--ease-out), filter 240ms var(--ease-out);
+}
+
+/* The dissolve, and the whole of what "stop the assistant" looks like here. A crossfade
+   between a transcript and a globe shows two objects at once and reads as a glitch; the
+   blur blends them into one thing changing, which is what it is. It is the same beat as
+   the pro deck's character fall and a hair shorter, because a dissolve that lasts as long
+   as a waterfall reads as a stall. */
+.basic-chat[data-phase='closing'] .chat-stage {
+  opacity: 0;
+  filter: blur(3px);
+}
+
+/* ---- idle: the globe ---- */
+
+/* The whole layer is the button. A small START under a large picture would be a target
+   beside the target, and the thing a person wants to press is the globe. */
+.basic-chat .chat-globe {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  color: var(--ink);
+  animation: basic-globe-in 260ms var(--ease-out);
+  transition: transform 160ms var(--ease-out);
+}
+
+.basic-chat .chat-globe:active { transform: scale(0.98); }
+
+.basic-chat .chat-globe:focus-visible {
+  outline: 2px solid var(--calm);
+  outline-offset: 2px;
+  border-radius: var(--r-control);
+}
+
+/* Never from nothing. A globe that grows out of a point reads as an object arriving from
+   somewhere else; one that swells the last five percent reads as this screen settling. */
+@keyframes basic-globe-in {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.basic-chat .chat-globe-canvas {
+  display: block;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+}
+
+.basic-chat .chat-globe-label {
+  flex: none;
+  font-size: 1.0625rem;
+  font-variation-settings: 'wght' 545;
+  color: var(--ink);
+}
+
+/* Why there is no assistant, when there is a reason worth saying. Otherwise the resting
+   line, which is the same two-word voice the wallet uses when it holds nothing. */
+.basic-chat .chat-globe-sub {
+  flex: none;
+  font-size: 0.9375rem;
+  color: var(--ink-faint);
+  max-width: 34rem;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+/* ---- the transcript ---- */
+
 .basic-chat .chat-list {
   flex: 1 1 auto;
   min-height: 0;
@@ -330,18 +423,6 @@ body[data-view='basic'] #page {
   display: flex;
   flex-direction: column;
   gap: 13px;
-}
-
-/* An empty transcript is the FIRST thing a person sees here, every time they open the app
-   before starting an assistant, and a large empty rectangle reads as a thing that failed
-   to load rather than a thing waiting to be used. Two words, the same two the wallet uses
-   when it holds nothing, so the screen says "nothing yet" in one voice. It is a pseudo
-   element because ui/driver-chat.js owns everything inside the list, and it is not needed
-   by a screen reader: the list already carries its own aria-label. */
-.basic-chat .chat-list:empty::after {
-  content: 'Nothing yet.';
-  color: var(--ink-faint);
-  font-size: 1rem;
 }
 
 /* A fixed first column, so who is speaking lines up down the whole transcript and the eye
@@ -387,6 +468,13 @@ body[data-view='basic'] #page {
   font-size: 0.9375rem;
 }
 
+/* The intro, while the assistant starts. Every line of it is a true statement about what
+   is being started, so it is quiet rather than hidden. */
+.basic-chat .chat-boot .chat-text {
+  color: var(--ink-soft);
+  font-size: 0.9375rem;
+}
+
 .basic-chat .chat-error .chat-who,
 .basic-chat .chat-error .chat-text { color: var(--frozen); }
 
@@ -395,7 +483,41 @@ body[data-view='basic'] #page {
   font-size: 0.9375rem;
 }
 
-/* The state, and the two controls that start and stop it. */
+/* Basic marks a failed row with red words, not with a rule down its side. Stated rather
+   than left unset, because ui/style.css styles `.chat-error` unscoped and the pro deck's
+   marker is a phosphor-green left border: without these two lines it lands here. */
+.basic-chat .chat-error {
+  border-left: 0;
+  padding-left: 0;
+}
+
+/* The way back to the newest line. Shown only when the reader has scrolled off the end, so
+   a conversation that has been left behind always says so and always offers the way back
+   rather than leaving a person to find the bottom by hand. */
+.basic-chat .chat-jump {
+  position: absolute;
+  left: 50%;
+  bottom: 2px;
+  transform: translateX(-50%);
+  font: inherit;
+  font-size: 0.875rem;
+  font-variation-settings: 'wght' 545;
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--rule-firm);
+  cursor: pointer;
+  animation: basic-globe-in 200ms var(--ease-out);
+}
+.basic-chat .chat-jump:active { transform: translateX(-50%) scale(0.97); }
+.basic-chat .chat-jump:focus-visible {
+  outline: 2px solid var(--calm);
+  outline-offset: 2px;
+}
+
+/* ---- the bar ---- */
+
 .basic-chat .chat-bar {
   flex: none;
   display: flex;
@@ -438,8 +560,8 @@ body[data-view='basic'] #page {
   color: var(--ink);
   border: 1px solid var(--rule-firm);
   cursor: pointer;
-  transition: transform 160ms ease-out, background-color 160ms ease-out,
-    border-color 160ms ease-out;
+  transition: transform 160ms var(--ease-out), background-color 160ms var(--ease-out),
+    border-color 160ms var(--ease-out);
 }
 
 .basic-chat .chat-btn:hover { background: color-mix(in oklch, var(--ink) 13%, var(--surface)); }
@@ -450,22 +572,28 @@ body[data-view='basic'] #page {
   outline-offset: 2px;
 }
 
-/* Mixed in SRGB and not in OKLCH, which is the one place in this file that is deliberate.
-   --calm is at hue 236 and every warm token here is near hue 68, and an OKLCH mix walks the
-   short way round the wheel between them: 46% of the way from 236 to 68 lands on 145, which
-   is GREEN. Measured, not guessed: this border computed to oklch(0.5418 0.04236 145.28) and
-   put a phosphor-green edge on the one screen that may never look like a terminal. An SRGB
-   mix blends channels and travels through no hue at all. */
-.basic-chat .chat-start { border-color: color-mix(in srgb, var(--calm) 46%, var(--rule-firm)); }
-
-/* Basic marks a failed row with red words, not with a rule down its side. Stated rather than
-   left unset, because ui/style.css styles `.chat-error` unscoped and the pro deck's marker is
-   a phosphor-green left border: without these two lines it lands here, on this screen. */
-.basic-chat .chat-error {
-  border-left: 0;
-  padding-left: 0;
-}
 .basic-chat .chat-stop { color: var(--ink-soft); }
+
+/* The question. It replaces the stop button in place rather than opening anything, so the
+   answer is where the press that asked it was, and the bar never changes height. */
+.basic-chat .chat-confirm {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  animation: basic-globe-in 200ms var(--ease-out);
+}
+
+.basic-chat .chat-confirm-q {
+  font-size: 0.9375rem;
+  font-variation-settings: 'wght' 545;
+  color: var(--ink);
+}
+
+/* Marked, because it ends a conversation that cannot be got back from this window. The
+   border only: red words here belong to the frozen state and to nothing else. */
+.basic-chat .chat-confirm-yes { border-color: color-mix(in srgb, var(--frozen) 46%, var(--rule-firm)); }
+
+/* ---- the prompt ---- */
 
 .basic-chat .chat-form {
   flex: none;
@@ -491,6 +619,23 @@ body[data-view='basic'] #page {
 .basic-chat .chat-input:focus {
   outline: 2px solid var(--calm);
   outline-offset: 1px;
+}
+
+/* Motion, refused. The dissolve keeps its opacity and loses its blur, because a blur is a
+   motion cue and an opacity is a statement that something is gone. The globe holds one
+   still frame, which ui/agent-globe.js decides for itself: no stylesheet reaches inside a
+   canvas. */
+@media (prefers-reduced-motion: reduce) {
+  .basic-chat .chat-globe,
+  .basic-chat .chat-jump,
+  .basic-chat .chat-confirm { animation: none; }
+  .basic-chat .chat-globe,
+  .basic-chat .chat-btn { transition: none; }
+  .basic-chat .chat-globe:active,
+  .basic-chat .chat-btn:active { transform: none; }
+  .basic-chat .chat-jump:active { transform: translateX(-50%); }
+  .basic-chat[data-phase='closing'] .chat-stage { filter: none; }
+  .basic-chat[data-driver-state='thinking'] .chat-state { animation: none; }
 }
 
 /* ---------- the sheet ---------- */
@@ -1224,13 +1369,3 @@ body[data-view='basic'].waiting .basic-headline {
 /* Start a SECOND assistant, in its own terminal window, from inside the "Your assistant"
    fold. A calm accent, not the amber of a pending decision nor the red of the brake:
    starting help is neither a question nor a stop. */
-.basic-summon {
-  align-self: flex-start;
-  color: var(--ink);
-  /* SRGB for the same reason as .chat-start above: an OKLCH mix of --calm with a warm token
-     walks the wheel and comes out green. */
-  border-color: color-mix(in srgb, var(--calm) 46%, var(--rule-firm));
-}
-.basic-summon:hover {
-  border-color: color-mix(in srgb, var(--calm) 64%, var(--rule-firm));
-}

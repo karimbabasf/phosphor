@@ -39,10 +39,6 @@
          dulls when it is idle. Presentational, mirrors the `agent` field, so aria-hidden. -->
     <canvas class="agent-orb" id="agent-orb" aria-hidden="true"></canvas>
     <button type="button" id="kill-btn" class="btn">[ KILL SWITCH: -- ]</button>
-    <!-- Written AFTER the brake, deliberately. The comment above this bar states the rule:
-         nothing focusable comes before the kill switch, so the keyboard reaches the thing
-         that stops the machine before the thing that starts one. -->
-    <button type="button" id="summon-btn" class="btn">[ SUMMON AGENT ]</button>
     <span class="cursor" aria-hidden="true">&#9608;</span>
   </header>
 
@@ -373,6 +369,9 @@
      page can end up showing a shorter version of the same thing. -->
 <script src="/overlay.js" defer></script>
 <script src="/deck-views.js" defer></script>
+<!-- Before driver-chat.js: it exposes window.PhosphorGlobe, which the agent panel turns in
+     its idle phase. Self-contained, presentational, and it reads no state of its own. -->
+<script src="/agent-globe.js" defer></script>
 <script src="/driver-chat.js" defer></script>
 <script src="/trade.js" defer></script>
 </body>

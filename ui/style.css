@@ -2,10 +2,14 @@
    One hue: phosphor green on near-black. Hierarchy is brightness and opacity only.
    Red is reserved for the safety gate: pending approvals, refusals, breached
    shares, and the gate-disabled banner.
-   No radius, no shadow, no gradient. Animation is rationed to four things and each one is
+   No radius, no shadow, no gradient. Animation is rationed to five things and each one is
    listed here: the cursor, the block wave that stands in for whatever has not arrived yet,
-   the press on a button, and the overlay opening. Nothing else moves.
-   Every one of them drops its transform under prefers-reduced-motion. */
+   the press on a button, the overlay opening, and the globe that turns in the agent panel
+   while no agent is running. Nothing else moves.
+   Every one of them drops its transform under prefers-reduced-motion, and the globe holds
+   one still frame: ui/agent-globe.js reads the query itself, because it is a canvas and no
+   stylesheet can reach inside one. The character fall is the same split and is stated in
+   ui/transition.js. */
 
 :root {
   --bg: #0b0d0b;
@@ -844,13 +848,18 @@ body.agent-collapsed .panel-gate > .pbody { max-height: none; }
 .ovl-body .txgrid { max-height: none; overflow: visible; }
 .ovl-body .txbar { display: flex; align-items: baseline; gap: 1ch; margin: 0 0 6px; }
 
-/* ---------- the agent conversation (ui/driver-chat.js) ----------
+/* ---------- the agent panel (ui/driver-chat.js) ----------
 
    The panel the log used to hold. It is the one surface in the app whose whole content is
    written by a language model, so it is deliberately plain: no bubbles, no avatars, no
    colour of its own. A speaker column, a line of text, and the same phosphor as everything
    else. What it must never grow is a control that decides anything; approval stays in the
    gate, three panels up.
+
+   FOUR PHASES, carried on the root as data-phase, and every one of them fills the same box:
+   idle is the globe, booting is the intro printing, live is the transcript and the prompt,
+   closing is the character fall taking it apart. driver-chat.js switches them; this file
+   only says what each one looks like.
 
    EVERY RULE IN THIS SECTION IS SCOPED UNDER .deck, AND NONE MAY LOSE THAT SCOPE.
    PhosphorChat.mount() puts class="chat" on whatever root it is handed, so these class
@@ -871,7 +880,84 @@ body.agent-collapsed .panel-gate > .pbody { max-height: none; }
   min-height: 0;
   display: flex;
   flex-direction: column;
+  gap: 6px;
 }
+
+/* The box the globe, the transcript and the character fall all stand in, and the positioned
+   ancestor the fall's canvas is stretched inside. Without the position here the canvas would
+   find the viewport and the rain would cover the whole window on a stop. */
+.deck .chat-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/* Anything driver-chat.js hides is hidden. Stated because two of these carry a display of
+   their own below, and a display in a rule beats the browser's own [hidden] every time. */
+.deck .chat-globe[hidden],
+.deck .chat-jump[hidden],
+.deck .chat-bar[hidden],
+.deck .chat-confirm[hidden],
+.deck .chat-form[hidden],
+.deck .chat-list[hidden] { display: none; }
+
+/* ---- idle: the globe ----
+
+   The whole layer is the button, because the thing a person wants to press here is the
+   globe and a small START under it would be a target beside the target. It is a real
+   <button>, so the keyboard reaches it and reads its label. */
+.deck .chat-globe {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font: var(--fs) / var(--lh) var(--mono);
+  color: var(--green);
+  letter-spacing: 0.06em;
+  transition: transform 160ms ease-out;
+}
+
+/* The press, on the same 160ms as every other control here. It takes the canvas with it,
+   which is the point: the globe is what is being pressed. */
+.deck .chat-globe:active { transform: scale(0.98); }
+.deck .chat-globe:focus-visible { outline: 1px dotted var(--green); outline-offset: -2px; }
+
+.deck .chat-globe-canvas {
+  display: block;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+}
+
+.deck .chat-globe-label {
+  flex: none;
+  color: var(--green);
+}
+.deck .chat-globe:hover .chat-globe-label { color: var(--green-hi); }
+
+/* Why there is no agent, when there is a reason worth printing: a start that was refused, a
+   child that exited, a lockdown that failed. Otherwise it is the resting line. */
+.deck .chat-globe-sub {
+  flex: none;
+  color: var(--green-faint);
+  max-width: 60ch;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+/* ---- the transcript ---- */
 
 .deck .chat-list {
   flex: 1;
@@ -919,6 +1005,13 @@ body.agent-collapsed .panel-gate > .pbody { max-height: none; }
 .deck .chat-tool .chat-text { color: var(--green-faint); }
 .deck .chat-status .chat-text { color: var(--green-faint); }
 
+/* The intro. Dimmer than the conversation because it is the app talking about itself, and
+   every line of it is true rather than decorative: see the list in driver-chat.js. */
+.deck .chat-boot .chat-text {
+  color: var(--green-dim);
+  letter-spacing: 0.04em;
+}
+
 /* NOT red. Red on this app means the safety gate, or something being taken from the user,
    and a language model failing to answer is neither: a chat error that borrows the colour
    of a pending withdrawal teaches a person to stop reading the colour. It is marked by a
@@ -931,12 +1024,35 @@ body.agent-collapsed .panel-gate > .pbody { max-height: none; }
 
 .deck .chat-error .chat-text { color: var(--green-dim); }
 
+/* The way back to the newest line, and the only thing that ever appears over the transcript.
+   It is shown by driver-chat.js when, and only when, the reader has scrolled off the end,
+   so a panel that has been left behind always says so and always offers the way back. */
+.deck .chat-jump {
+  position: absolute;
+  left: 50%;
+  bottom: 4px;
+  transform: translateX(-50%);
+  appearance: none;
+  background: var(--bg);
+  border: 1px solid var(--green-ghost);
+  color: var(--green);
+  font: var(--fs) / var(--lh) var(--mono);
+  letter-spacing: 0.06em;
+  padding: 0 1ch;
+  cursor: pointer;
+  animation: deck-chat-in 160ms ease-out;
+}
+.deck .chat-jump:hover { color: var(--green-hi); border-color: var(--green-dim); }
+.deck .chat-jump:focus-visible { outline: 1px dotted var(--green); outline-offset: 1px; }
+.deck .chat-jump:active { transform: translateX(-50%) scale(0.97); }
+
+/* ---- the bar ---- */
+
 .deck .chat-bar {
   flex: none;
   display: flex;
   align-items: baseline;
   gap: 1ch;
-  padding-top: 4px;
 }
 
 .deck .chat-state {
@@ -963,15 +1079,30 @@ body.agent-collapsed .panel-gate > .pbody { max-height: none; }
 
 .deck .chat-btn:hover { color: var(--green-hi); border-color: var(--green-dim); }
 .deck .chat-btn:focus-visible { outline: 1px dotted var(--green); outline-offset: 1px; }
-.deck .chat-start { margin-left: auto; }
 .deck .chat-stop { margin-left: auto; }
+
+/* The question. It replaces the STOP button in place rather than opening anything, so the
+   answer is where the press that asked it was, and the whole bar never changes height. */
+.deck .chat-confirm {
+  margin-left: auto;
+  display: flex;
+  align-items: baseline;
+  gap: 1ch;
+  animation: deck-chat-in 160ms ease-out;
+}
+
+.deck .chat-confirm-q { color: var(--green-hi); }
+/* Marked, because it ends a conversation that cannot be got back from this window. Red is
+   the gate's colour and this is not the gate, so it is the border only and not the word. */
+.deck .chat-confirm-yes { border-color: var(--green-dim); }
+
+/* ---- the prompt ---- */
 
 .deck .chat-form {
   flex: none;
   display: flex;
   align-items: baseline;
   gap: 1ch;
-  padding-top: 4px;
 }
 
 .deck .chat-input {
@@ -981,7 +1112,7 @@ body.agent-collapsed .panel-gate > .pbody { max-height: none; }
   border: 0;
   border-bottom: 1px solid var(--green-ghost);
   font: var(--fs) / var(--lh) var(--mono);
-  padding: 0 0.5ch;
+  padding: 2px 0.5ch;
   flex: 1 1 auto;
   min-width: 0;
 }
@@ -998,9 +1129,14 @@ body.agent-collapsed .panel-gate > .pbody { max-height: none; }
    has not asked to stop being told that something appeared. */
 @media (prefers-reduced-motion: reduce) {
   .btn,
-  .deck .chat-btn { transition: none; }
+  .deck .chat-btn,
+  .deck .chat-globe { transition: none; }
   .btn:active,
-  .deck .chat-btn:active { transform: none; }
+  .deck .chat-btn:active,
+  .deck .chat-globe:active { transform: none; }
+  /* The jump button keeps its centring transform: it is a position, not a motion. Only the
+     press is dropped. */
+  .deck .chat-jump:active { transform: translateX(-50%); }
   .ovl-panel {
     transform: none;
     /* Kept rather than zeroed: overlay.js waits for this transition to end before it closes

@@ -33,10 +33,6 @@
     <span class="bar">&#9474;</span>
     <span class="field"><span class="k">mode</span> <span class="v" id="stat-mode">--</span></span>
     <button type="button" id="kill-btn" class="btn">[ KILL SWITCH: -- ]</button>
-    <!-- Written AFTER the brake, deliberately. The comment above this bar states the rule:
-         nothing focusable comes before the kill switch, so the keyboard reaches the thing
-         that stops the machine before the thing that starts one. -->
-    <button type="button" id="summon-btn" class="btn">[ SUMMON AGENT ]</button>
     <span class="cursor" aria-hidden="true">&#9608;</span>
   </header>
   <!-- Gate off is the more dangerous of the two banners: policy-unreadable fails
@@ -155,6 +151,11 @@
            holding its seat. The transcript is the conversation and the log is the record,
            they were never the same rectangle, and the record is behind the LOG button now
            with the room to print all of every line.
+
+           Empty, and filled by ui/driver-chat.js. It holds four phases in the one box: a
+           turning globe when no agent is running and the whole layer is the button that
+           starts one, the intro printing while the child process comes up, the transcript
+           and the prompt, and the fall of characters that takes it apart on a stop.
 
            No approval control is ever rendered in here, and driver-chat.js will not build
            one. The gate is three panels up, and consent does not live inside a scrolling
@@ -298,11 +299,14 @@
           </section>
         </div>
 
+        <!-- What holds the seat, which is not always the assistant this window started:
+             anything speaking Phosphor's handshake can take it. Starting and stopping one
+             is on the main screen, on the conversation itself, so there is one place to do
+             it and this box only ever reports. -->
         <div class="basic-pane" id="basic-pane-assistant" hidden>
           <p class="basic-agent" id="basic-agent"></p>
-          <p class="basic-note">The conversation on the main screen runs an assistant inside
-            this window. This starts a separate one in its own terminal window.</p>
-          <button type="button" class="basic-btn basic-summon" id="basic-summon">START ONE IN A NEW WINDOW</button>
+          <p class="basic-note">Start and stop your assistant on the main screen, in the
+            conversation itself.</p>
         </div>
       </div>
     </div>
@@ -354,6 +358,9 @@
      page can end up showing a shorter version of the same thing. -->
 <script src="/overlay.js" defer></script>
 <script src="/deck-views.js" defer></script>
+<!-- Before driver-chat.js: it exposes window.PhosphorGlobe, which the agent panel turns in
+     its idle phase. Self-contained, presentational, and it reads no state of its own. -->
+<script src="/agent-globe.js" defer></script>
 <script src="/driver-chat.js" defer></script>
 <script src="/app.js" defer></script>
 </body>

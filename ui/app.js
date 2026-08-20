@@ -1484,8 +1484,31 @@ function wireBasic() {
      transcript and no error, which is the quietest way this chat can be broken. */
   if (window.PhosphorChat) {
     PhosphorChat.mount($('basic-chat'), {
+      /* The same four facts the pro deck's intro prints, in this screen's voice. Both are
+         true of the same process; only the words differ. */
+      intro: [
+        'Starting your assistant.',
+        'It runs on this computer, inside this window.',
+        'It can only use Phosphor: no files, no web, no terminal.',
+      ],
+      /* A dissolve, not the pro deck's fall of terminal characters. Same beat, and the one
+         thing this screen may never look like is a terminal. */
+      veil: 'fade',
+      colorVar: '--calm',
+      /* Louder than the deck's, because --calm is a low-chroma blue and lands dimmer than
+         phosphor green at the same alpha. Measured against the pro globe side by side. */
+      gain: 1.35,
       placeholder: 'Ask your assistant to do something',
-      startLabel: 'START THE ASSISTANT',
+      startLabel: 'Start your assistant',
+      idleNote: 'No assistant is running.',
+      stopLabel: 'Stop',
+      stopQuestion: 'Stop your assistant?',
+      stopYes: 'Yes, stop',
+      stopNo: 'Cancel',
+      jumpLabel: 'Jump to latest',
+      sendLabel: 'Send',
+      listLabel: 'conversation with your assistant',
+      inputLabel: 'message to your assistant',
     });
   }
 
@@ -1533,16 +1556,7 @@ function wireBasic() {
     if (no.dataset.id) decide('/api/refuse', no.dataset.id, [yes, no], error);
   });
 
-  // Start the assistant without leaving the calm screen. Same /api/summon the pro window uses,
-  // worded plainly because this screen never says "agent".
-  var summon = $('basic-summon');
-  if (summon) {
-    summon.addEventListener('click', function () {
-      runSummon(summon, 'Start the assistant in a new window? Any assistant connected now is stopped.');
-    });
-  }
-
-  // Two presses, and the confirm is a real control rather than window.confirm,
+    // Two presses, and the confirm is a real control rather than window.confirm,
   // because a native dialog is the easiest thing on this screen to dismiss by reflex.
   var kill = $('basic-kill');
   var confirm = $('basic-stop-confirm');
@@ -1820,53 +1834,40 @@ function wireDeckBar() {
   }
 }
 
-/* The conversation, in the panel the log used to hold. driver-chat.js owns everything
-   inside it, including the rule that it never renders an approval. */
+/* The agent panel, in the box the log used to hold. driver-chat.js owns everything inside
+   it, including the rule that it never renders an approval.
+
+   Every line of the intro is a true statement about the agent being started, checked against
+   operator/driver.settings.json and against the runtime check in src/driver.ts: the deny list
+   there takes Bash, Read, Write, WebFetch and WebSearch away, and assertSurface kills the
+   session if the tool list the child announces holds anything outside mcp__phosphor__. It is
+   a boot print, not a loading animation, so what it says has to keep being true. */
+var AGENT_INTRO = [
+  'PHOSPHOR // AGENT LINK',
+  'spawning a local agent under this window',
+  'tool surface: phosphor only, checked on connect',
+  'no shell, no files, no web of its own',
+];
+
 function mountChat() {
   if (!window.PhosphorChat) return;
-  PhosphorChat.mount($('agent-chat'), {});
+  PhosphorChat.mount($('agent-chat'), {
+    intro: AGENT_INTRO,
+    /* The character fall, the same one every other change on this surface runs through.
+       ui/basic.css states why the calm screen is handed 'fade' instead. */
+    veil: 'rain',
+    colorVar: '--green',
+    startLabel: 'START THE AGENT',
+    idleNote: 'no agent is running',
+    stopLabel: 'STOP AGENT',
+    stopQuestion: 'stop the agent? the conversation is lost.',
+    stopYes: 'YES, STOP',
+    stopNo: 'CANCEL',
+    jumpLabel: 'LATEST',
+  });
 }
 
 /* ---------- wiring ---------- */
-
-/* Start a fresh agent in a new terminal, and take the seat off whatever held it.
-
-   The window could already STOP an agent in three ways and start one in none, so the first
-   step of using this product was leaving it. The confirm is not ceremony: the agent that gets
-   dropped may be mid-conversation, and losing that is not recoverable from here.
-
-   The response is not awaited for effect on this page. The seat change arrives as a state
-   push and the new agent announces itself on its first heartbeat, so the bar updates through
-   the same path it always does rather than through a special case for this button. */
-/* One summon path, called from the pro button and the basic START button. The seat change
-   arrives as a state push and the new agent announces itself on its first heartbeat, so the
-   bar updates through the same path it always does rather than a special case for the button. */
-async function runSummon(btn, question) {
-  if (SUMMON_PENDING) return;
-  if (question && !window.confirm(question)) return;
-  SUMMON_PENDING = true;
-  btn.disabled = true;
-  try {
-    var answer = await postJson('/api/summon', { token: TOKEN });
-    alertLine(answer && answer.dropped
-      ? 'new agent starting; dropped ' + answer.dropped
-      : 'new agent starting in a terminal window');
-  } catch (err) {
-    alertLine('summon failed: ' + (err.message || String(err)));
-  } finally {
-    SUMMON_PENDING = false;
-    btn.disabled = false;
-  }
-}
-
-function wireSummon() {
-  var btn = document.getElementById('summon-btn');
-  if (!btn) return;
-  btn.addEventListener('click', function () {
-    runSummon(btn, 'Start a new agent in a terminal window? Any agent connected now is dropped and loses its conversation.');
-  });
-}
-var SUMMON_PENDING = false;
 
 function wireKill() {
   $('kill-btn').addEventListener('click', async function () {
@@ -1931,7 +1932,6 @@ async function boot() {
   // with nothing in it, and paint order is the whole feature.
   paintWaiting();
   wireKill();
-  wireSummon();
   wireCollapse();
   wireWallet();
   wireDeckBar();
