@@ -204,7 +204,7 @@
    Two properties, not a template. ui/style.css declares the five tracks once, and every page
    that restated them would be a second copy to keep true when a handle is added. */
 .deck {
-  --deck-a-default: clamp(260px, 18vw, 380px);
+  --deck-a-default: clamp(300px, 21vw, 400px);
   --deck-c-default: clamp(260px, 20vw, 340px);
 }
 
@@ -415,6 +415,18 @@
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr) max-content minmax(0, 1fr);
   column-gap: 2ch;
+}
+
+/* Two pairs per row need room for two pairs. The rail is draggable now, so how much room
+   there is stopped being a fact about the window and became a fact about this panel, which
+   is what a container query is for: a media query cannot see a column the user just made
+   narrower. Below the threshold the grid folds to one pair per row rather than letting a
+   six-figure mark price run into the word beside it, which is what it was doing at the
+   rail's own default width: "$72,324.00oracle". */
+.panel > .pbody { container-type: inline-size; }
+
+@container (max-width: 330px) {
+  .rgrid { grid-template-columns: max-content minmax(0, 1fr); }
 }
 
 .rgrid dd {

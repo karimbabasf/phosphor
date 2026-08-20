@@ -22,7 +22,7 @@
   /* Thinner than the wash by half again, and it exists for one surface: the agent column.
      A whole column carrying the wash reads as a highlighted row; this reads as a different
      ground. Still one hue, still opacity only. */
-  --green-veil: rgba(51, 255, 102, 0.045);
+  --green-veil: rgba(51, 255, 102, 0.06);
   --red: #ff3b30;
   --red-dim: rgba(255, 59, 48, 0.62);
   --red-ghost: rgba(255, 59, 48, 0.30);
@@ -85,7 +85,7 @@ body {
      at 1440, which is the window this is built on: 346 for the agent, 317 for the rail, and
      709 left for the chart, comfortably past the 380 a chart stops being read at. */
   --deck-a-default: clamp(280px, 24vw, 440px);
-  --deck-c-default: clamp(260px, 22vw, 380px);
+  --deck-c-default: clamp(250px, 19vw, 340px);
   --gutter: 22px;
   grid-template-columns:
     var(--deck-a, var(--deck-a-default))
@@ -575,10 +575,16 @@ button.frame:focus-visible { outline: 1px dotted var(--green); outline-offset: 1
 
 /* ---------- 3. chart ---------- */
 
+/* One line until it cannot be one line. The bar carries the product, eight timeframes, the
+   indicator field, the venue and whatever the agent has drawn, and the last of those only
+   exists once an agent has drawn something: a bar sized for the empty case clipped its own
+   [clear] button in half the moment one appeared. Wrapping costs a second line in a rare
+   state, and a control cut down the middle costs the reader their trust in the whole panel. */
 .chartbar {
   display: flex;
   align-items: baseline;
-  gap: 1ch;
+  flex-wrap: wrap;
+  gap: 2px 1ch;
   margin: 0 0 4px;
   flex: none;
 }
@@ -809,10 +815,15 @@ button.frame:focus-visible { outline: 1px dotted var(--green); outline-offset: 1
    plus a 12px handle is a gutter twice the width of every other one on the deck. */
 .col > .split-y + .panel { margin-top: 0; }
 
+/* Nothing at rest. A permanent grip mark between every pair of panels reads as debris,
+   especially the short horizontal ones, which look like a stray rule somebody left in. The
+   12px target is still there for the pointer to find, and the line arrives the moment it
+   does. This is how every editor on this machine draws a splitter, and nobody fails to find
+   one. Keyboard users are not left out: the focus rule below lights it the same way. */
 .split::before {
   content: '';
   position: absolute;
-  background: var(--green-ghost);
+  background: transparent;
   transition: background-color 120ms ease-out;
 }
 
@@ -820,6 +831,7 @@ button.frame:focus-visible { outline: 1px dotted var(--green); outline-offset: 1
 .split-y::before { top: 50%; left: 50%; width: 28px; height: 1px; transform: translate(-50%, -0.5px); }
 
 .split:hover::before { background: var(--green-dim); }
+.split-x:hover::before { width: 2px; }
 .split:focus-visible::before,
 .split:active::before { background: var(--green); }
 .split:focus-visible { outline: 1px dotted var(--green); outline-offset: -3px; }
@@ -1109,7 +1121,19 @@ body.splitting-y, body.splitting-y * { cursor: row-resize; }
   min-height: 0;
   overflow-y: auto;
   padding-right: 0.5ch;
+  /* Sentences, not readouts, so the line spacing is the one thing on this deck that leaves the
+     terminal rhythm. 1.35 is right for a table of numbers and too tight for a paragraph. */
+  line-height: 1.55;
+  /* THE CONVERSATION GROWS UP FROM THE BOX YOU TYPE IN. A transcript is bottom-anchored in
+     every chat a person has ever used, and top-anchored it turns a tall empty column into a
+     void with four lines floating at the top of it. margin-top:auto on the first row rather
+     than justify-content:flex-end, because flex-end clips the top of an overflowing column
+     and this one overflows the moment a conversation gets going. */
+  display: flex;
+  flex-direction: column;
 }
+
+.deck .chat-list > :first-child { margin-top: auto; }
 
 .deck .chat-list::-webkit-scrollbar { width: 6px; }
 .deck .chat-list::-webkit-scrollbar-track { background: transparent; }
@@ -1198,6 +1222,7 @@ body.splitting-y, body.splitting-y * { cursor: row-resize; }
   display: flex;
   align-items: baseline;
   gap: 1ch;
+  margin-top: 8px;
 }
 
 .deck .chat-state {
@@ -1249,27 +1274,37 @@ body.splitting-y, body.splitting-y * { cursor: row-resize; }
 
 /* ---- the prompt ---- */
 
+/* A BOX, not an underline. This is the one control on the deck a person is meant to use
+   without being told to, and an underlined caret in the bottom corner of a tall dark column
+   does not read as somewhere to type. The border is the whole change: it gives the field an
+   edge to aim at and a place to put the send button inside rather than beside. */
 .deck .chat-form {
   flex: none;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 1ch;
+  margin-top: 6px;
+  padding: 5px 1ch;
+  border: 1px solid var(--green-ghost);
+  transition: border-color 160ms ease-out;
 }
+
+/* The whole box answers the focus, because the whole box is the target. */
+.deck .chat-form:focus-within { border-color: var(--green-dim); }
 
 .deck .chat-input {
   appearance: none;
   background: transparent;
   color: var(--green);
   border: 0;
-  border-bottom: 1px solid var(--green-ghost);
   font: var(--fs) / var(--lh) var(--mono);
-  padding: 2px 0.5ch;
+  padding: 0;
   flex: 1 1 auto;
   min-width: 0;
 }
 
 .deck .chat-input::placeholder { color: var(--green-ghost); }
-.deck .chat-input:focus-visible { outline: none; border-bottom-color: var(--green); }
+.deck .chat-input:focus-visible { outline: none; }
 
 /* The field is the elastic one on that line, not the button. */
 .deck .chat-send { flex: none; }

@@ -217,12 +217,6 @@
         <div class="frame frame-bottom"></div>
       </section>
 
-      <!-- The rail's spare room, and a real element rather than a gap, because the gate's
-           handle has to take its height from something it can measure. Empty on purpose:
-           an approval gate with nothing pending is a short panel, and stretching one to fill
-           a column is chrome painted around nothing. -->
-      <div class="rail-slack" aria-hidden="true"></div>
-
       <!-- 8. AGENT PULSE. A small oscilloscope at the foot of the rail: the second half of the
            presence signal, the moving thing that keeps a working window from ever reading as
            frozen. It sits here rather than under the conversation because the conversation is
@@ -237,6 +231,13 @@
         </div>
         <div class="frame frame-bottom"></div>
       </section>
+
+      <!-- The rail's spare room, and a real element rather than a gap, because the gate's
+           handle has to take its height from something it can measure. It sits LAST so the
+           rail's three panels stack from the top and the empty room falls below them: with
+           the slack in the middle, a one-line gate and a shut policy left a black column
+           between them and the pulse, which read as a layout that had lost something. -->
+      <div class="rail-slack" aria-hidden="true"></div>
 
     </div>
 

@@ -425,6 +425,12 @@ body[data-view='basic'] #page {
   gap: 13px;
 }
 
+/* The conversation grows up from the box you type in, the same as the deck's and the same as
+   every other chat this person uses. Three exchanges anchored to the top of a tall panel leave
+   a field of empty below them that reads as something failing to load. margin-top rather than
+   justify-content: flex-end, which clips the top of the column once it overflows. */
+.basic-chat .chat-list > :first-child { margin-top: auto; }
+
 /* A fixed first column, so who is speaking lines up down the whole transcript and the eye
    can find the reply without reading the labels one at a time. */
 .basic-chat .chat-row {
