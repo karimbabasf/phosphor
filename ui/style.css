@@ -673,14 +673,19 @@ body.agent-collapsed .panel-gate > .pbody { max-height: none; }
 
 /* The press. The only motion a control on this page has, and it is on the way down only:
    a button that springs back slowly reads as laggy on a terminal. Named properties, never
-   `all`: `all` would catch the colour and the border on every hover as well. */
+   `all`: `all` would catch the colour and the border on every hover as well.
+
+   .chat-btn is scoped to the deck for the reason written over the chat section below:
+   driver-chat.js builds the same class names on the basic screen, and that screen is not
+   a terminal. .btn needs no scope, because it is this file's own control class and the
+   basic screen uses none of it. */
 .btn,
-.chat-btn {
+.deck .chat-btn {
   transition: transform 160ms ease-out;
 }
 
 .btn:active,
-.chat-btn:active { transform: scale(0.97); }
+.deck .chat-btn:active { transform: scale(0.97); }
 .btn[disabled]:active { transform: none; }
 
 .btn.on { color: var(--red); border-color: var(--red); }
@@ -845,48 +850,62 @@ body.agent-collapsed .panel-gate > .pbody { max-height: none; }
    written by a language model, so it is deliberately plain: no bubbles, no avatars, no
    colour of its own. A speaker column, a line of text, and the same phosphor as everything
    else. What it must never grow is a control that decides anything; approval stays in the
-   gate, three panels up. */
+   gate, three panels up.
 
-.chat {
+   EVERY RULE IN THIS SECTION IS SCOPED UNDER .deck, AND NONE MAY LOSE THAT SCOPE.
+   PhosphorChat.mount() puts class="chat" on whatever root it is handed, so these class
+   names are not this file's private vocabulary: the basic screen mounts the same component
+   and ui/basic.css styles the same names. Unscoped, every property that only this file sets
+   passes straight through to a screen whose stated law is that it may never look like a
+   terminal, and it did: .chat-error shipped a --green-faint left rule onto the basic screen,
+   phosphor green on the calm surface, found by the basic agent on 2026-08-19.
+
+   .deck is the right scope rather than #page[data-view='pro'] because trade.html's #page
+   carries no data-view attribute at all, and both decks put the chat inside .deck while
+   #basic is a sibling of it. Adding a property to a rule below is safe; removing a .deck
+   from one is not. The keyframes are namespaced for the same reason: a bare `chat-in` is a
+   document-global name that either stylesheet could redefine and silently win. */
+
+.deck .chat {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
 }
 
-.chat-list {
+.deck .chat-list {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   padding-right: 0.5ch;
 }
 
-.chat-list::-webkit-scrollbar { width: 6px; }
-.chat-list::-webkit-scrollbar-track { background: transparent; }
-.chat-list::-webkit-scrollbar-thumb { background: var(--green-ghost); }
+.deck .chat-list::-webkit-scrollbar { width: 6px; }
+.deck .chat-list::-webkit-scrollbar-track { background: transparent; }
+.deck .chat-list::-webkit-scrollbar-thumb { background: var(--green-ghost); }
 
 /* Opacity only, and only on arrival. Rows land constantly while an agent works, and
    anything that moves them would make the panel unreadable exactly when it is being read. */
-.chat-row {
+.deck .chat-row {
   display: flex;
   gap: 1ch;
   align-items: baseline;
-  animation: chat-in 160ms ease-out;
+  animation: deck-chat-in 160ms ease-out;
 }
 
-@keyframes chat-in {
+@keyframes deck-chat-in {
   from { opacity: 0; }
   to { opacity: 1; }
 }
 
-.chat-who {
+.deck .chat-who {
   flex: none;
   width: 6ch;
   text-align: right;
   color: var(--green-faint);
 }
 
-.chat-text {
+.deck .chat-text {
   flex: 1;
   min-width: 0;
   white-space: pre-wrap;
@@ -894,25 +913,25 @@ body.agent-collapsed .panel-gate > .pbody { max-height: none; }
   overflow-wrap: anywhere;
 }
 
-.chat-said .chat-text { color: var(--green-hi); }
-.chat-agent .chat-text { color: var(--green); }
-.chat-tool .chat-who { color: var(--green-ghost); }
-.chat-tool .chat-text { color: var(--green-faint); }
-.chat-status .chat-text { color: var(--green-faint); }
+.deck .chat-said .chat-text { color: var(--green-hi); }
+.deck .chat-agent .chat-text { color: var(--green); }
+.deck .chat-tool .chat-who { color: var(--green-ghost); }
+.deck .chat-tool .chat-text { color: var(--green-faint); }
+.deck .chat-status .chat-text { color: var(--green-faint); }
 
 /* NOT red. Red on this app means the safety gate, or something being taken from the user,
    and a language model failing to answer is neither: a chat error that borrows the colour
    of a pending withdrawal teaches a person to stop reading the colour. It is marked by a
    rule down its left instead, which is a difference that survives being dim. */
-.chat-error {
+.deck .chat-error {
   border-left: 1px solid var(--green-faint);
   padding-left: 1ch;
   margin-left: -1px;
 }
 
-.chat-error .chat-text { color: var(--green-dim); }
+.deck .chat-error .chat-text { color: var(--green-dim); }
 
-.chat-bar {
+.deck .chat-bar {
   flex: none;
   display: flex;
   align-items: baseline;
@@ -920,18 +939,18 @@ body.agent-collapsed .panel-gate > .pbody { max-height: none; }
   padding-top: 4px;
 }
 
-.chat-state {
+.deck .chat-state {
   color: var(--green-faint);
   letter-spacing: 0.06em;
 }
 
 /* The state word is the only thing on this panel that says whether the agent is alive, so
    it brightens when it is and stays quiet when it is not. */
-.chat[data-driver-state='ready'] .chat-state,
-.chat[data-driver-state='thinking'] .chat-state { color: var(--green-hi); }
-.chat[data-driver-state='failed'] .chat-state { color: var(--green-dim); }
+.deck .chat[data-driver-state='ready'] .chat-state,
+.deck .chat[data-driver-state='thinking'] .chat-state { color: var(--green-hi); }
+.deck .chat[data-driver-state='failed'] .chat-state { color: var(--green-dim); }
 
-.chat-btn {
+.deck .chat-btn {
   appearance: none;
   background: transparent;
   border: 1px solid var(--green-ghost);
@@ -942,12 +961,12 @@ body.agent-collapsed .panel-gate > .pbody { max-height: none; }
   cursor: pointer;
 }
 
-.chat-btn:hover { color: var(--green-hi); border-color: var(--green-dim); }
-.chat-btn:focus-visible { outline: 1px dotted var(--green); outline-offset: 1px; }
-.chat-start { margin-left: auto; }
-.chat-stop { margin-left: auto; }
+.deck .chat-btn:hover { color: var(--green-hi); border-color: var(--green-dim); }
+.deck .chat-btn:focus-visible { outline: 1px dotted var(--green); outline-offset: 1px; }
+.deck .chat-start { margin-left: auto; }
+.deck .chat-stop { margin-left: auto; }
 
-.chat-form {
+.deck .chat-form {
   flex: none;
   display: flex;
   align-items: baseline;
@@ -955,7 +974,7 @@ body.agent-collapsed .panel-gate > .pbody { max-height: none; }
   padding-top: 4px;
 }
 
-.chat-input {
+.deck .chat-input {
   appearance: none;
   background: transparent;
   color: var(--green);
@@ -967,11 +986,11 @@ body.agent-collapsed .panel-gate > .pbody { max-height: none; }
   min-width: 0;
 }
 
-.chat-input::placeholder { color: var(--green-ghost); }
-.chat-input:focus-visible { outline: none; border-bottom-color: var(--green); }
+.deck .chat-input::placeholder { color: var(--green-ghost); }
+.deck .chat-input:focus-visible { outline: none; border-bottom-color: var(--green); }
 
 /* The field is the elastic one on that line, not the button. */
-.chat-send { flex: none; }
+.deck .chat-send { flex: none; }
 
 /* ---------- motion, refused ----------
 
@@ -979,9 +998,9 @@ body.agent-collapsed .panel-gate > .pbody { max-height: none; }
    has not asked to stop being told that something appeared. */
 @media (prefers-reduced-motion: reduce) {
   .btn,
-  .chat-btn { transition: none; }
+  .deck .chat-btn { transition: none; }
   .btn:active,
-  .chat-btn:active { transform: none; }
+  .deck .chat-btn:active { transform: none; }
   .ovl-panel {
     transform: none;
     /* Kept rather than zeroed: overlay.js waits for this transition to end before it closes
