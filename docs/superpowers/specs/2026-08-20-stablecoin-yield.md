@@ -300,5 +300,35 @@ same class of lie this app refuses everywhere else.
 lending rate returned a 500 for `/api/state` and blanked every panel in the window. It is a
 string now, and a test asserts the whole rate round-trips through JSON.
 
-Still to record here: the withdrawal, and the panel with a percentage on it (the window has to
-pass one hour before one is shown at all).
+**The money came back.** A partial withdrawal rather than a full exit, on purpose: it is the
+path that exercises the time-weighted average principal for real, and it leaves the position
+open so the window keeps running.
+
+    yield_withdraw 10 USDC, verdict allow, decidedBy policy
+    withdraw  0x0363b7e37ab10c3381c84c924c7028bda82a18642b9153aa60dcb7a4b70e5632
+    "10 USDC arrived in the wallet on arb"
+
+    before   56.292247 held   principal 56.292032   earned 215 base units
+    after    46.292247 held   principal 46.292032   earned 215 base units
+
+The earned figure is UNCHANGED across the withdrawal, which is the cost-basis arithmetic being
+right: exactly what left the position also left the basis. Time-weighted average principal fell
+to $55.24, not to the $46.29 standing at the end, because the money was $56 for most of the
+window and $46 only for the last minute.
+
+**Two findings from the code review, both mine, both fixed:**
+
+- The client built explorer links from the network alone, so every ledger hash on a Base
+  position linked to a transaction on Arbiscan that is not there. The prefix now travels on the
+  holding, resolved server-side, because the chain is the other half of the question.
+- The allocator only considered idle money on the BEST-paying chain, so $500 idle on Base would
+  be left earning nothing because Arbitrum paid ten basis points more, and the loop would then
+  report that nothing was idle. Depositing where the money already sits needs no bridge, so
+  there was never a trade-off to make.
+
+**And one from the security pass:** `PHOSPHOR_YIELD_AUTO` was parsed as `!== 'false'`, so `=0`,
+`=off` and `=no` all switched the money-moving loop ON. For a flag whose whole design is "off
+unless a human said otherwise", anything but an explicit yes has to mean no.
+
+Still to record here: the panel with a percentage on it. The window has to pass one hour before
+one is shown at all, which is the feature working rather than a gap in the evidence.
