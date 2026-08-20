@@ -573,6 +573,11 @@ export type AppConfig = {
   candleProducts: string[];
   dataDir: string; // state dir: policy.json, proposals.json, audit.jsonl
   keysPath: string; // absolute path OUTSIDE the working copy; never inside the repo
+  // The in-app driver. Both fields are optional and neither can loosen the lockdown: the tool
+  // surface is fixed in operator/driver.settings.json and checked again at runtime in
+  // src/driver.ts. claudeBin exists because a GUI app launched from Finder inherits a PATH that
+  // does not contain the place Claude Code installs itself.
+  driver?: { claudeBin?: string; systemPrompt?: string };
 };
 
 // ---------- Service interfaces (wired in main.ts) ----------

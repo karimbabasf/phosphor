@@ -56,6 +56,8 @@ import { classify } from './composition.ts';
 import { buildWallet } from './wallet.ts';
 import { summonAgent } from './summon.ts';
 import type { SummonOutcome } from './summon.ts';
+import { createDriver } from './driver.ts';
+import type { Driver, DriverEvent } from './driver.ts';
 import type { AgentPresence } from './agents.ts';
 import { buildTransactions, createGasCache, evmCandidates } from './transactions.ts';
 import type { TxPlace } from './transactions.ts';
@@ -290,6 +292,45 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     const load = await loadCandles(product, granularitySec, limit);
     return load.candles.filter((c) => c.t < endSec);
   });
+
+  // The driver's seat. The transcript is kept here rather than in the browser because a window
+  // that reloads mid-conversation should come back to the conversation, and because the SSE
+  // stream is a change notification, not a delivery guarantee. TRANSCRIPT_MAX is a memory bound,
+  // not an editorial one: the full record of what the agent did lives in the audit log, which is
+  // append-only and is what anyone should read when the question is what happened.
+  const TRANSCRIPT_MAX = 400;
+  const transcript: Array<DriverEvent & { at: number }> = [];
+  let driver: Driver | null = null;
+
+  function driverEvent(event: DriverEvent): void {
+    transcript.push({ ...event, at: Date.now() });
+    if (transcript.length > TRANSCRIPT_MAX) transcript.splice(0, transcript.length - TRANSCRIPT_MAX);
+    // A refused lockdown is not a chat message. It is the one driver event that belongs in the
+    // permanent record, because it means a Claude Code upgrade changed the tool surface under an
+    // app that signs transactions.
+    if (event.kind === 'error' && event.message.startsWith('refusing to drive')) {
+      audit.append('error', event.message, { source: 'driver' });
+    }
+    for (const client of sseClients) sseSend(client, { type: 'driver', event });
+  }
+
+  function getDriver(): Driver {
+    if (driver === null) {
+      driver = createDriver({
+        repo: PROJECT_DIR,
+        port: cfg.port,
+        claudeBin: cfg.driver?.claudeBin,
+        systemPrompt: cfg.driver?.systemPrompt,
+        onEvent: driverEvent,
+      });
+    }
+    return driver;
+  }
+
+  function driverPayload(): Record<string, unknown> {
+    const status = driver === null ? { state: 'off' as const, sessionId: '', running: false } : driver.status();
+    return { ...status, transcript };
+  }
 
   function sseSend(res: http.ServerResponse, payload: unknown): void {
     res.write(`data: ${JSON.stringify(payload)}\n\n`);
@@ -976,6 +1017,50 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       audit.append('app_start', `summoned a new agent in ${outcome.how}`, { how: outcome.how });
       sendJson(res, 200, { ok: true, how: outcome.how, dropped: dropped?.client ?? null });
       return;
+    }
+
+    if (route === '/api/driver') {
+      const action = String(body.action ?? '');
+      const instance = getDriver();
+
+      if (action === 'start') {
+        /* The seat is taken away first, for the same reason /api/summon does it: the agent this
+           is replacing heartbeats every few seconds, and a process takes longer than that to
+           start, so opening first lets the outgoing agent win the seat its replacement was
+           started to take. */
+        const dropped = agents.evict();
+        if (dropped !== null) {
+          audit.append('agent_disconnected', `the human replaced ${dropped.client} with the in-app driver`, {
+            client: dropped.client,
+          });
+        }
+        audit.append('app_start', 'in-app driver starting: the app is spawning its own agent');
+        instance.start();
+        broadcastState();
+        return sendJson(res, 200, { ok: true, dropped: dropped?.client ?? null, ...instance.status() });
+      }
+
+      if (action === 'prompt') {
+        const text = typeof body.text === 'string' ? body.text.trim() : '';
+        if (text === '') return sendJson(res, 400, { error: 'text is required' });
+        if (text.length > 8000) return sendJson(res, 400, { error: 'text is too long: 8000 characters maximum' });
+        try {
+          instance.send(text);
+        } catch (err) {
+          return sendJson(res, 409, { error: errText(err) });
+        }
+        driverEvent({ kind: 'said', text });
+        return sendJson(res, 200, { ok: true, ...instance.status() });
+      }
+
+      if (action === 'stop') {
+        instance.stop();
+        audit.append('app_start', 'in-app driver stopped by the human');
+        broadcastState();
+        return sendJson(res, 200, { ok: true, ...instance.status() });
+      }
+
+      return sendJson(res, 400, { error: `unknown driver action: ${action}` });
     }
 
     if (route === '/api/kill') {
@@ -1982,6 +2067,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         }
         if (route === '/api/trade') return sendJson(res, 200, trade.payload());
         if (route === '/api/session') return sendJson(res, 200, { token });
+        if (route === '/api/driver') return sendJson(res, 200, driverPayload());
         if (route === '/api/events') return openEvents(req, res);
         if (route.startsWith('/api/')) return sendJson(res, 404, { error: `unknown route: ${route}` });
         // The second surface. A bare /trade is the page; everything else still resolves as a
@@ -1994,7 +2080,13 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         if (route === '/api/chart') return await handleChartWrite(req, res);
         if (route === '/api/trade') return await handleTradeWrite(req, res);
         if (route === '/api/trade/action') return await handleTradeAction(req, res);
-        if (route === '/api/approve' || route === '/api/refuse' || route === '/api/kill' || route === '/api/summon') {
+        if (
+          route === '/api/approve' ||
+          route === '/api/refuse' ||
+          route === '/api/kill' ||
+          route === '/api/summon' ||
+          route === '/api/driver'
+        ) {
           return await handleMutation(route, req, res);
         }
         return sendJson(res, 404, { error: `unknown route: ${route}` });

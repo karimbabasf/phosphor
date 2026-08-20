@@ -32,7 +32,10 @@ const TRIPLE = process.arch === 'arm64' ? 'aarch64-apple-darwin' : 'x86_64-apple
 // What the app reads at runtime. config.local.json is deliberately absent: it is the writable
 // half and lives in Application Support, not in a read-only bundle. So is state/, and so are
 // the keys, which have never been in the working copy at all.
-const PAYLOAD = ['src', 'ui', 'data', 'skills', 'config.json', 'package.json', 'package-lock.json'];
+// `operator` carries the two lockdown files. Without it an installed app can still run, and the
+// driver would refuse to start rather than spawn an agent whose tool surface it cannot vouch for,
+// which is the correct failure and a useless one. It ships.
+const PAYLOAD = ['src', 'ui', 'data', 'skills', 'operator', 'config.json', 'package.json', 'package-lock.json'];
 
 // Removed after `npm ci`. The rule is deliberately narrow: only files Node can never load at
 // runtime. Sourcemaps and .d.ts declarations qualify, and nothing else does.

@@ -9,6 +9,9 @@
       "Monitor",
       "BashOutput",
       "KillShell",
+      "Read",
+      "Grep",
+      "Glob",
       "Agent",
       "Task",
       "Workflow",
@@ -35,22 +38,23 @@
       "ReportFindings",
       "Artifact",
       "EndConversation",
+      "AskUserQuestion",
       "LSP",
       "ListMcpResourcesTool",
       "ReadMcpResourceTool",
       "ReadMcpResourceDirTool",
-      "MultiEdit",
-      "NotebookRead",
+      "TodoWrite",
       "KillBash",
-      "Read(~/.phosphor/**)"
+      "NotebookRead",
+      "MultiEdit"
     ],
     "allow": [
-      "mcp__phosphor__*",
-      "Read",
-      "Grep",
-      "Glob"
+      "mcp__phosphor__*"
     ],
     "defaultMode": "default",
     "disableBypassPermissionsMode": "disable"
-  }
+  },
+  "hooks": {},
+  "enableAllProjectMcpServers": false,
+  "includeCoAuthoredBy": false
 }
