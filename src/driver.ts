@@ -101,12 +101,17 @@ const STRIPPED = [
   'CLAUDE_CODE_SAFE_MODE',
 ];
 
-function childEnv(repo: string, port: number): NodeJS.ProcessEnv {
+function childEnv(repo: string, port: number, sessionId: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   for (const key of STRIPPED) delete env[key];
   // The MCP proxy the child spawns has to find the same app instance the window is talking to.
   env.ACC_PORT = String(port);
   env.PHOSPHOR_REPO = repo;
+  // One seat for the whole conversation. Claude Code may start the MCP server more than once
+  // for a single session, and each copy would otherwise mint its own id, so the app would see
+  // two agents, seat one, and refuse every call the other made. See the note on SESSION in
+  // src/mcp.ts.
+  env.PHOSPHOR_SESSION = sessionId;
   return env;
 }
 
@@ -191,7 +196,6 @@ export function createDriver(opts: DriverOptions) {
         return;
       }
       sessionId = typeof event.session_id === 'string' ? event.session_id : sessionId;
-      set('ready');
       return;
     }
 
@@ -259,7 +263,7 @@ export function createDriver(opts: DriverOptions) {
        exit handlers registered below are what guarantee it does not. */
     child = spawn(bin, argv, {
       cwd: opts.repo,
-      env: childEnv(opts.repo, opts.port),
+      env: childEnv(opts.repo, opts.port, sessionId),
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: true,
     }) as ChildProcessWithoutNullStreams;
@@ -276,6 +280,17 @@ export function createDriver(opts: DriverOptions) {
     child.stderr.on('data', (chunk: string) => {
       const text = chunk.trim();
       if (text) opts.onEvent({ kind: 'error', message: text.slice(0, 500) });
+    });
+    /* Ready as soon as the process exists, not when it announces itself.
+       Claude Code does not emit its init event until the first turn arrives on stdin, so waiting
+       for init before showing the input box is a deadlock: the event needs a message, and the
+       message needs the box. This is safe, and the reason is worth stating precisely. The init
+       event still arrives BEFORE the model's first tool call, and onLine still kills the session
+       there when the tool surface is not Phosphor's own. So the worst case is that one sentence
+       of the human's text reached a session that is then killed before it can act on it. The
+       thing being guarded is what the agent can DO, and nothing it can do happens first. */
+    child.on('spawn', () => {
+      if (state === 'starting') set('ready');
     });
     child.on('error', (error) => fail(`driver: could not start ${bin}: ${error.message}`));
     child.on('exit', (code) => {

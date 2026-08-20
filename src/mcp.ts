@@ -37,7 +37,14 @@ const NOT_RUNNING = 'The control app is not running. Start it with: npm run app'
 // to tell two agents apart, and therefore able to let only one of them in. It is an
 // identifier and never an authorisation: see the KNOWN HOLE note at the top of
 // src/server.ts. A restart mints a new one, which is correct: it is a new session.
-const SESSION = randomUUID();
+//
+// PHOSPHOR_SESSION overrides it, and exists because "one process is one agent" turned out to
+// be false. A client may start this server more than once for a single conversation, and it
+// does: the in-app driver's child reliably produced two of these, whereupon the app correctly
+// observed two sessions, correctly gave the seat to one, and correctly refused every tool call
+// the other made, which is to say it refused the whole conversation. Two processes launched by
+// one driver are one agent, and the driver is the only thing that knows that, so it says so.
+const SESSION = process.env.PHOSPHOR_SESSION ?? randomUUID();
 
 // The app derives its expiry window from this number, so the two cannot drift apart. Five
 // seconds costs nothing on loopback and takes the worst-case "still shows connected" from
