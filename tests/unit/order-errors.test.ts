@@ -63,3 +63,26 @@ test('a body with no statuses array is not invented into an error', () => {
   assert.deepEqual(orderErrors({ status: 'ok', response: { type: 'default' } }), []);
   assert.deepEqual(orderErrors({ status: 'ok', response: { type: 'cancel', data: { statuses: ['success'] } } }), []);
 });
+
+// ---------- the shapes the final verification pass found slipping through ----------
+
+test('a bare top-level error with no status key is a refusal, not a success', () => {
+  // Hyperliquid answers 429 on a rate limit and the body need not carry a `status` key. Without
+  // this the response fell through to "no statuses array, therefore no errors" and a rejected
+  // order was booked as placed, with the in-flight reservation never released.
+  assert.deepEqual(orderErrors({ error: 'Too many requests' }), ['Too many requests']);
+});
+
+test('an empty error string is not treated as an error', () => {
+  // Only a real message counts, or every response with an empty field reads as broken.
+  assert.deepEqual(orderErrors({ error: '', status: 'ok', response: { data: { statuses: [{ resting: { oid: 1 } }] } } }), []);
+});
+
+test('the transport stamps an HTTP failure into a shape orderErrors understands', async () => {
+  // The transport is where a non-2xx used to become an ordinary-looking body. This is the
+  // contract between the two: whatever it produces for a failure must read as a refusal here.
+  const stamped = { status: 'err', response: 'HTTP 429: {"error":"Too many requests"}' };
+  const errs = orderErrors(stamped);
+  assert.equal(errs.length, 1);
+  assert.match(errs[0], /HTTP 429/);
+});

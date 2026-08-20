@@ -56,7 +56,16 @@ const defaultTransport: Transport = async (url, body) => {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
-  return await res.json();
+  const parsed = await res.json().catch(() => null);
+  // A non-2xx body is not a result. The venue answers 429 on a rate limit, and its body may
+  // carry no `status` key at all, so returning it unmarked let orderErrors() find no statuses
+  // array and report no errors: a rejected order booked as placed, with the in-flight
+  // reservation never released. Stamping the HTTP failure into the shape orderErrors already
+  // understands is what makes that impossible.
+  if (!res.ok) {
+    return { status: 'err', response: `HTTP ${res.status}: ${typeof parsed === 'string' ? parsed : JSON.stringify(parsed ?? res.statusText)}` };
+  }
+  return parsed;
 };
 
 // A 128-bit client order id. Its job is idempotent retry: after an ambiguous network failure
@@ -296,6 +305,12 @@ export function orderErrors(response: unknown): string[] {
     const detail = typeof r.response === 'string' ? r.response : JSON.stringify(r.response ?? r.status);
     return [detail];
   }
+
+  // A top-level `error` with no `status` beside it. Some venue responses and every proxy in
+  // front of it can produce this shape, and without the check it falls through to "no statuses,
+  // therefore no errors", which books a refusal as a fill.
+  const bareError = (r as { error?: unknown }).error;
+  if (typeof bareError === 'string' && bareError !== '') return [bareError];
 
   const statuses = r.response?.data?.statuses;
   if (!Array.isArray(statuses)) return [];

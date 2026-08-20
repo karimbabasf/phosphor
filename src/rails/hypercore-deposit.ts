@@ -848,8 +848,14 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     const txHash = sent.hash ?? '(no hash)';
     const evidence = `deposit ${depositAddress}, origin tx ${txHash}`;
 
-    // Best effort: the solver finds the deposit on its own, this only saves a few seconds.
-    await client.submitDeposit(depositAddress, txHash);
+    // Best effort, and it MUST NOT throw: the transfer above already confirmed, so the money is
+    // gone by the time this runs. An unguarded throw here escapes to the proposal service, which
+    // reports `hl_deposit rail threw` with an EMPTY txids list and marks the proposal failed. A
+    // 1Click blip between a confirmed transfer and the solver notification would then tell a
+    // human no money moved, hand them no origin hash to look it up with, and invite them to send
+    // it again. That is the exact trap this file warns about thirty lines above, and the recovery
+    // branch already guards the identical call. Same guard here.
+    await client.submitDeposit(depositAddress, txHash).catch(() => undefined);
 
     const watch = await watchStatus(depositAddress);
 

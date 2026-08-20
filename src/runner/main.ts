@@ -148,6 +148,30 @@ function requireExchange(): ReturnType<typeof createExchange> {
   return exchange;
 }
 
+// Setting the borrowed multiple ON THE VENUE, and confirming it took.
+//
+// This is an ACCOUNT setting rather than an order field, so an order placed without it runs at
+// whatever the account was last left at. The comment on the caller states the requirement:
+// "The approval screen said 3x; the account could be at 20x, which is a different position with
+// a much closer liquidation and the same words on screen. Set it before the first order and
+// refuse to trade if that fails."
+//
+// It used to set and not check. updateLeverage is a bare post() that returns the venue body
+// unexamined and never throws on a refusal, so a rejected change still updated the cached field
+// and the entry went out at the old multiple. Throwing here is what makes "refuse to trade if
+// that fails" true, and the cache is only written after the venue has agreed.
+async function setVenueLeverage(a: Armed, assetId: number, leverage: number): Promise<void> {
+  const res = await requireExchange().updateLeverage(assetId, true, leverage);
+  const refused = orderErrors(res);
+  if (refused.length > 0) {
+    throw new Error(
+      `venue refused to set the borrowed multiple to ${leverage}x: ${refused.join('; ')}. ` +
+        `Refusing to trade rather than open at whatever the account was last left at.`,
+    );
+  }
+  a.venueLeverage = leverage;
+}
+
 // An entry and its exits, in one signed action.
 //
 // The accounting here is deliberately identical to the `open` branch of place(): the rate
@@ -165,8 +189,7 @@ async function placeBracket(a: Armed, symbol: string, open: Action, exits: Actio
   const ex = requireExchange();
 
   if (a.venueLeverage !== open.leverage) {
-    await ex.updateLeverage(b.assetId, true, open.leverage);
-    a.venueLeverage = open.leverage;
+    await setVenueLeverage(a, b.assetId, open.leverage);
   }
 
   const isBuy = open.side === 'long';
@@ -206,6 +229,7 @@ async function placeBracket(a: Armed, symbol: string, open: Action, exits: Actio
     return;
   }
 
+  let released = false;
   const now = Date.now();
   // One rate unit per order actually sent, entry plus exits: a trigger is an order on the
   // venue's book and spends the same budget.
@@ -225,11 +249,16 @@ async function placeBracket(a: Armed, symbol: string, open: Action, exits: Actio
     // exactly as consequential as one that did and is invisible without this.
     const refused = orderErrors(res);
     if (refused.length > 0) {
+      // Released BEFORE send(), and the flag is what stops the catch below releasing it again.
+      // send() is process.send and throws on a dead IPC channel, which would otherwise land in
+      // that catch and subtract the same reservation twice: an under-count, which is the
+      // direction that lets more size through.
       a.inFlightUsd = Math.max(0, a.inFlightUsd - open.sizeUsd);
+      released = true;
       send({ type: 'error', id: a.mandate.id, message: `venue refused the bracket: ${refused.join('; ')}` });
     }
   } catch (err) {
-    a.inFlightUsd = Math.max(0, a.inFlightUsd - open.sizeUsd);
+    if (!released) a.inFlightUsd = Math.max(0, a.inFlightUsd - open.sizeUsd);
     throw err;
   }
 }
@@ -249,8 +278,7 @@ async function place(a: Armed, symbol: string, action: Action): Promise<void> {
     // at 20x, which is a different position with a much closer liquidation and the same words
     // on screen. Set it before the first order and refuse to trade if that fails.
     if (action.do === 'open' && a.venueLeverage !== action.leverage) {
-      await ex.updateLeverage(b.assetId, true, action.leverage);
-      a.venueLeverage = action.leverage;
+      await setVenueLeverage(a, b.assetId, action.leverage);
     }
 
     const isBuy = action.do === 'open' ? action.side === 'long' : b.positionSide !== 'short';
@@ -272,6 +300,7 @@ async function place(a: Armed, symbol: string, action: Action): Promise<void> {
     // against a four-per-minute limit and built a $238 position under a $60 cap. Incrementing
     // first makes the state pessimistic while the order is in doubt, which is the only safe
     // direction for these two numbers to be wrong in.
+    let released = false;
     const now = Date.now();
     a.ordersInLastMin.push(now);
     if (a.inFlightUsd === 0) a.inFlightSinceMs = now;
@@ -293,13 +322,16 @@ async function place(a: Armed, symbol: string, action: Action): Promise<void> {
       ]);
       const refused = orderErrors(res);
       if (refused.length > 0) {
+        // Released before send(), with the flag guarding the catch: send() throws on a dead IPC
+        // channel and would otherwise release the same reservation a second time.
         a.inFlightUsd = Math.max(0, a.inFlightUsd - action.sizeUsd);
+        released = true;
         send({ type: 'error', id: a.mandate.id, message: `venue refused the ${action.do}: ${refused.join('; ')}` });
       }
     } catch (err) {
       // A rejected order holds no size, so its reservation is given back. The rate count is
       // NOT given back: the venue was asked, and a rate limit exists to bound how often we ask.
-      a.inFlightUsd = Math.max(0, a.inFlightUsd - action.sizeUsd);
+      if (!released) a.inFlightUsd = Math.max(0, a.inFlightUsd - action.sizeUsd);
       throw err;
     }
     return;
@@ -316,7 +348,7 @@ async function place(a: Armed, symbol: string, action: Action): Promise<void> {
         : (resolveRef(exit.ref) ?? b.markPx);
     const px = roundToValidPrice(raw, b.szDecimals, true, isBuy);
 
-    await ex.order([
+    const exitRes = await ex.order([
       {
         assetId: b.assetId,
         isBuy,
@@ -329,6 +361,20 @@ async function place(a: Armed, symbol: string, action: Action): Promise<void> {
       },
     ]);
     a.ordersInLastMin.push(Date.now());
+
+    // The EXIT paths are the ones that matter when something is already wrong, so a refusal
+    // here cannot be swallowed. It used to be: this result was discarded, which meant flatten()
+    // would disarm a mandate and stop supervising a position that was still open, on the very
+    // path the envelope halt and the kill switch both run through.
+    //
+    // Throwing rather than reporting is deliberate. flatten() catches and says "flatten failed",
+    // and the tick loop catches and reports; both keep the position supervised. Returning
+    // quietly would let the caller believe it is flat.
+    const exitRefused = orderErrors(exitRes);
+    if (exitRefused.length > 0) {
+      throw new Error(`venue refused the ${action.do}: ${exitRefused.join('; ')}`);
+    }
+
     if (action.do === 'close') a.entryAtMs = null;
     return;
   }
@@ -417,7 +463,7 @@ async function closeCoin(coin: string): Promise<string> {
   // good price, and a fill that does not happen because the bound was tight is the worse
   // outcome. It is still a bound: there is no unbounded order anywhere in this file.
   const px = roundToValidPrice(aggressiveLimitPrice(b.markPx, isBuy, 100), b.szDecimals, true, isBuy);
-  await ex.order([
+  const res = await ex.order([
     {
       assetId: b.assetId,
       isBuy,
@@ -429,6 +475,10 @@ async function closeCoin(coin: string): Promise<string> {
       cloid: newCloid(),
     },
   ]);
+  // A human pressed close. Telling them it was sent when the venue refused is the worst
+  // possible answer here: they walk away from a position that is still open.
+  const refused = orderErrors(res);
+  if (refused.length > 0) throw new Error(`${coin}: the venue refused the close: ${refused.join('; ')}`);
   return `${coin}: close sent at ${px}`;
 }
 
@@ -478,7 +528,16 @@ async function flatten(id: string, reason: string): Promise<void> {
     try {
       await place(a, a.mandate.symbol, { do: 'close', exit: { type: 'market', maxSlippageBps: 100 } });
     } catch (err) {
-      send({ type: 'error', id, message: `flatten failed: ${err instanceof Error ? err.message : err}` });
+      // Say plainly that the position is STILL OPEN. This runs on the envelope halt and the
+      // kill switch, so it is read by someone who has just been told the bot was stopped, and
+      // "flatten failed" alone lets them believe stopping the bot closed the trade.
+      send({
+        type: 'error',
+        id,
+        message:
+          `flatten failed and the ${a.mandate.symbol} position is STILL OPEN: ` +
+          `${err instanceof Error ? err.message : String(err)}. Close it by hand.`,
+      });
     }
   }
   armed.delete(id);
