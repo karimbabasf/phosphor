@@ -1078,10 +1078,10 @@ export function createServer(deps: ServerDeps): PhosphorServer {
          went quiet halfway through" is a question somebody will ask the log later. */
       if (action === 'interrupt') {
         const stopped = instance.interrupt();
-        if (stopped) {
-          audit.append('driver_prompt', 'the human stopped the answer in progress', { interrupted: true });
-          driverEvent({ kind: 'status', state: 'ready', detail: 'the human stopped this answer' });
-        }
+        /* No driverEvent here. interrupt() sets the state itself and the driver's own status
+           event is already on its way through onEvent, so pushing a second one printed the
+           line twice in the window. Seen doing exactly that on the live app. */
+        if (stopped) audit.append('driver_prompt', 'the human stopped the answer in progress', { interrupted: true });
         return sendJson(res, 200, { ok: true, interrupted: stopped, ...instance.status() });
       }
 

@@ -12,8 +12,13 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { bootDriverServer } from '../fixtures/driver-server.ts';
+
+const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 test('an interrupt reaches the driver and keeps the session running', async () => {
   const b = await bootDriverServer({ state: 'thinking' });
@@ -124,4 +129,15 @@ test('an unknown action is still refused by name', async () => {
   } finally {
     await b.close();
   }
+});
+
+test('the stop is announced once, not twice', () => {
+  // Seen on the live app: the route pushed its own status event AND the driver emitted one
+  // from interrupt(), so the window printed "the human stopped this answer" on two lines. The
+  // route no longer speaks for the driver, and this reads the source to say so, because the
+  // duplicate is invisible in any assertion about the route's own answer.
+  const source = fs.readFileSync(path.join(ROOT, 'src', 'server.ts'), 'utf8');
+  const route = source.slice(source.indexOf("if (action === 'interrupt')"), source.indexOf("if (action === 'stop')"));
+  assert.ok(route.length > 0, 'the interrupt branch moved');
+  assert.ok(!route.includes('driverEvent('), 'the interrupt route emits a driver event of its own');
 });

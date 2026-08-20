@@ -112,6 +112,9 @@ var PhosphorChat = (function () {
     policy_show: 'reading the policy',
     proposal_status: 'checking the approval',
     market_search: 'looking up a market',
+    /* The one tool that leaves this machine, and the line says so. A person watching their
+       wallet app reach the internet is entitled to see that happen in words. */
+    research: 'reading the news',
     indicator_catalog: 'checking the indicators',
     mandate_catalog: 'checking the mandates',
     skill: 'reading its instructions',
