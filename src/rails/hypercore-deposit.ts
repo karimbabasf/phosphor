@@ -52,7 +52,7 @@
 
 import { getAddress, isAddress } from 'viem';
 import type { Address } from 'viem';
-import { erc20TransferData, evmAddress, sendTx } from '../chain/evm.ts';
+import { erc20Balance, erc20TransferData, evmAddress, reader, sendTx } from '../chain/evm.ts';
 import type { SendOutcome, SendParams } from '../chain/evm.ts';
 import {
   TGAS,
@@ -135,6 +135,12 @@ export function minCreditedFor(amount: number): number {
 export type HypercoreEvmPort = {
   signerAddress(keysPath: string): Address;
   send(params: SendParams): Promise<SendOutcome>;
+  // Read before we quote. The rail this replaced checked both and refused up front, and
+  // dropping that check was a regression: without it a short wallet gets a live quote, a minted
+  // deposit address and a reverted transfer, and the reason arrives from the chain instead of
+  // from a sentence. No money is lost either way; what is lost is the explanation.
+  erc20Balance(network: Network, chain: ChainId, token: Address, owner: Address): Promise<bigint>;
+  nativeBalance(network: Network, chain: ChainId, owner: Address): Promise<bigint>;
 };
 
 export type HypercoreNearPort = {
@@ -143,7 +149,12 @@ export type HypercoreNearPort = {
   send(params: NearSendParams): Promise<NearSendOutcome>;
 };
 
-export const liveEvmPort: HypercoreEvmPort = { signerAddress: evmAddress, send: sendTx };
+export const liveEvmPort: HypercoreEvmPort = {
+  signerAddress: evmAddress,
+  send: sendTx,
+  erc20Balance,
+  nativeBalance: (network, chain, owner) => reader(network, chain).getBalance({ address: owner }),
+};
 export const liveNearPort: HypercoreNearPort = {
   accountId: nearAccountId,
   storageRegistered: ftStorageRegistered,
@@ -627,6 +638,29 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
       }
     } catch (err) {
       return refusal(draft, [`cannot resolve the signing wallet: ${errText(err)}`]);
+    }
+
+    // Can this wallet actually send it. Checked BEFORE the quote, because a quote that prices a
+    // transfer the wallet cannot make is a number that reads as a plan.
+    if (p.family === 'evm') {
+      try {
+        const [held, gas] = await Promise.all([
+          evm.erc20Balance(network, draft.chain, p.originToken as Address, draft.from as Address),
+          evm.nativeBalance(network, draft.chain, draft.from as Address),
+        ]);
+        const shortfall: string[] = [];
+        if (held < p.amountBase) {
+          const have = Number(held) / 10 ** p.decimals;
+          shortfall.push(`wallet holds ${have} ${draft.symbol} on ${draft.chain} and the deposit needs ${draft.amount}`);
+        }
+        if (gas === 0n) {
+          shortfall.push(`wallet holds no native gas on ${draft.chain} and cannot pay for the transfer`);
+        }
+        if (shortfall.length > 0) return refusal(draft, shortfall);
+      } catch (err) {
+        // A chain we cannot read is a chain we may not send on.
+        return refusal(draft, [`could not read the ${draft.chain} wallet: ${errText(err)}`]);
+      }
     }
 
     try {

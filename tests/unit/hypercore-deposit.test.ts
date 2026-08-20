@@ -123,7 +123,14 @@ function fakeClient(over: ClientOverrides = {}): { client: OneClickClient; quote
   return { client, quotes, submitted };
 }
 
-type PortOverrides = { signer?: string; sendOk?: boolean; sendError?: string; storageRegistered?: boolean };
+type PortOverrides = {
+  signer?: string;
+  sendOk?: boolean;
+  sendError?: string;
+  storageRegistered?: boolean;
+  heldUsdc?: number; // origin wallet balance, UI units
+  gasWei?: bigint;
+};
 
 function fakeEvm(over: PortOverrides = {}): { port: HypercoreEvmPort; sends: Array<{ to: string; chain: string }> } {
   const sends: Array<{ to: string; chain: string }> = [];
@@ -131,6 +138,8 @@ function fakeEvm(over: PortOverrides = {}): { port: HypercoreEvmPort; sends: Arr
     sends,
     port: {
       signerAddress: () => (over.signer ?? SELF) as Address,
+      erc20Balance: async () => BigInt(Math.round((over.heldUsdc ?? 1000) * 1e6)),
+      nativeBalance: async () => over.gasWei ?? 10n ** 16n,
       async send(params) {
         sends.push({ to: String(params.to), chain: String(params.chain) });
         return over.sendOk === false
@@ -289,6 +298,41 @@ test('a NEAR testnet account is refused here, not by a 500 from the API', async 
   assert.match(out.error ?? '', /NEAR testnet account and 1Click is mainnet only/);
   assert.match(out.error ?? '', /an error that does not say so/);
   assert.equal(h.quotes.length, 0, 'the API was never asked');
+});
+
+test('a wallet too short for the deposit is refused before anything is priced', async () => {
+  // The rail this replaced checked this and refused up front. Dropping it meant a short wallet
+  // got a live quote, a minted deposit address and a reverted transfer, and the reason came from
+  // the chain instead of from a sentence.
+  const h = rail({ heldUsdc: 1.99 });
+  const out = await h.rail.simulate(draft({ amount: 50 }));
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /wallet holds 1\.99 USDC on arb and the deposit needs 50/);
+  assert.equal(h.quotes.length, 0, 'nothing was priced');
+});
+
+test('a wallet with the tokens and no gas is refused too, and says which is missing', async () => {
+  const h = rail({ heldUsdc: 1000, gasWei: 0n });
+  const out = await h.rail.simulate(draft({ amount: 50 }));
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /no native gas on arb/);
+  // Both messages open with "wallet holds", so the discriminator is the shortfall clause: the
+  // token balance is fine here and must not be blamed for a gas problem.
+  assert.doesNotMatch(out.error ?? '', /and the deposit needs/, 'the token balance is fine');
+});
+
+test('a chain that cannot be read is not a chain we send on', async () => {
+  const h = rail({}, {}, [{ perp: 0, spot: 0 }], {
+    evm: {
+      signerAddress: () => SELF,
+      send: async () => ({ ok: true, hash: '0x' }) as never,
+      erc20Balance: async () => { throw new Error('rpc down'); },
+      nativeBalance: async () => 0n,
+    },
+  });
+  const out = await h.rail.simulate(draft());
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /could not read the arb wallet: rpc down/);
 });
 
 // ---------- the quote checks ----------

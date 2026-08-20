@@ -11,8 +11,9 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { loadConfig } from '../src/config.ts';
-import { hypercoreDepositRail, MIN_DEPOSIT_USDC } from '../src/rails/hypercore-deposit.ts';
+import { HYPERCORE_USDC_ASSET_ID, hypercoreDepositRail, MIN_DEPOSIT_USDC } from '../src/rails/hypercore-deposit.ts';
 import type { HlDepositDraft } from '../src/types.ts';
+import { assetIdFor, oneClickClient } from '../src/intents.ts';
 import type { TokensFile } from '../src/intents.ts';
 import { HYPERCORE_COUNTERPARTY } from '../src/rails/hypercore-deposit.ts';
 import type { ChainId } from '../src/types.ts';
@@ -30,6 +31,7 @@ if (account === undefined) {
   process.exit(1);
 }
 
+const client = oneClickClient();
 const rail = hypercoreDepositRail({
   network: cfg.tradingNetwork,
   keysPath: cfg.keysPath,
@@ -88,6 +90,36 @@ function draftFor(chain: ChainId, value: number): HlDepositDraft {
   };
 }
 
+// A refusal for want of balance is a fact about the wallet, not about the venue, and this
+// script exists to answer both questions. So when the rail refuses on funds, the venue price is
+// still fetched directly and printed beside it: otherwise an empty wallet makes the routing look
+// broken when it is fine.
+async function venuePrice(chain: ChainId): Promise<string> {
+  const entry = tokens[chain]?.USDC;
+  if (entry === undefined) return '';
+  try {
+    const list = await client.tokens();
+    const origin = assetIdFor(chain, entry.tokenId, list);
+    if (origin === null) return '';
+    const res = await client.quote({
+      dry: true,
+      originAsset: origin,
+      destinationAsset: HYPERCORE_USDC_ASSET_ID,
+      amount: String(Math.round(amount * 10 ** entry.decimals)),
+      refundTo: account,
+      recipient: account,
+      recipientType: 'DESTINATION_CHAIN',
+      refundType: 'ORIGIN_CHAIN',
+      depositType: 'ORIGIN_CHAIN',
+    });
+    const out = Number(res.quote.amountOutFormatted);
+    const pct = ((amount - out) / amount) * 100;
+    return `  [venue would price it: ${out} out, ${pct.toFixed(2)} percent, ~${res.quote.timeEstimate ?? '?'}s]`;
+  } catch {
+    return '';
+  }
+}
+
 for (const chain of ORIGINS) {
   const out = await rail.simulate(draftFor(chain, amount));
   if (out.ok) {
@@ -96,7 +128,9 @@ for (const chain of ORIGINS) {
     const eta = out.summary.match(/arrives\s+(.+)/)?.[1] ?? '?';
     console.log(`${chain.padEnd(6)} OK      ${credited} USDC credited, cost ${cost}, ${eta}`);
   } else {
-    console.log(`${chain.padEnd(6)} REFUSED ${(out.error ?? '').slice(0, 150)}`);
+    const reason = out.error ?? '';
+    const priced = /wallet holds/.test(reason) ? await venuePrice(chain) : '';
+    console.log(`${chain.padEnd(6)} REFUSED ${reason.slice(0, 110)}${priced}`);
   }
 }
 
