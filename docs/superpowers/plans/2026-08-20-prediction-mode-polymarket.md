@@ -2,6 +2,53 @@
 
 **Repo:** `~/Developer/phosphor` (currently on `feat/in-app-driver`, v0.3.0, 1003 tests)
 
+> **PARKED 2026-08-20, the same day it was written. Read the next section before anything else.**
+> Karim shelved this as a future feature. The plan below is sound and the research holds, but a
+> jurisdiction check found after it was written changes who it can serve. Do not start building
+> from the phase list until that is resolved.
+
+## Read this first: the United States is close-only
+
+Checked live 2026-08-20 from Karim's own connection:
+
+```
+GET https://polymarket.com/api/geoblock
+{"blocked":true,"ip":"...","country":"US","region":"CA"}
+```
+
+`docs.polymarket.com/api-reference/geoblock` puts the **US in the close-only group, enforced on the
+API and not only on the frontend**. From a US connection an account can close existing positions and
+cannot open new ones. The same group holds the UK, France, Germany, Italy, Poland, Slovakia,
+Belgium, Singapore, Australia, New Zealand, Taiwan, Thailand, Brazil, Venezuela, Russia, and the
+four large Canadian provinces. A separate OFAC group (Iran, Syria, Cuba, North Korea, occupied
+Ukraine) is blocked outright, including closing.
+
+Three consequences:
+
+1. **No key or account fixes this.** It is geography, not permission. Do not plan around it.
+2. **The Phase 3 verification gate below cannot be run from Karim's machine.** "A $1 GTC limit order
+   rests on a real book" is an opening order. Any future executor has to either be eligible or
+   change the gate.
+3. **What still works from a restricted region**: every read tool, deposits and withdrawals
+   (geoblock is documented on order placement only, not verified further), and the whole close-only
+   half, which is `predict_cancel`, selling to exit, and `predict_redeem`. That is a real but much
+   smaller product: manage and exit, never open.
+
+**Open question that decides the feature.** Polymarket runs a separate CFTC-regulated US venue (the
+QCEX acquisition; polymarket.com advertises a US app). It is a different entity from this CLOB and
+almost certainly different rails. Nobody has checked whether it exposes a public API. That check is
+the first task if this is ever picked back up, because it decides whether prediction mode serves
+Karim's own market or only users abroad.
+
+Two smaller findings from the same pass, both worth keeping:
+
+- **No account is required to trade.** CLOB auth is a signature, not a signup: sign an EIP-712
+  `ClobAuth` payload, POST it to `clob.polymarket.com/auth/api-key`, and get back apiKey, secret and
+  passphrase. No email, no password, no UI. Phosphor's existing EVM key is enough. The builder
+  profile below buys gas and revenue, not permission, so nothing in this plan is blocked on it.
+- **The matching engine is in `eu-west-2`**, and Polymarket offers co-location through a KYC/KYB
+  form. That, not the transport code, is the real answer to the speed goal if this ever gets serious.
+
 ## Context
 
 Phosphor has two screens today, `pro` and `trade`. This adds a third, `prediction`, on
