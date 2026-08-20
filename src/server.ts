@@ -54,8 +54,6 @@ import type { MarketData } from './market/index.ts';
 import type { TradeService } from './trade/service.ts';
 import { classify } from './composition.ts';
 import { buildWallet } from './wallet.ts';
-import { summonAgent } from './summon.ts';
-import type { SummonOutcome } from './summon.ts';
 import { createDriver } from './driver.ts';
 import type { Driver, DriverEvent } from './driver.ts';
 import type { AgentPresence } from './agents.ts';
@@ -86,8 +84,6 @@ import { analysisHandlers } from './analysis/index.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_DIR = path.join(__dirname, '..', 'ui');
-// Where a summoned agent is started. Derived from this file's own location and never from a
-// request: see the security note at the top of src/summon.ts.
 const PROJECT_DIR = path.join(__dirname, '..');
 
 const HOST = '127.0.0.1';
@@ -211,9 +207,6 @@ export type ServerDeps = {
   getView: () => ViewMode;
   setView: (mode: ViewMode) => void;
   trade: TradeService;
-  // Injected only so a test can drive the summon route without a Terminal window opening on
-  // whoever is running the suite. Defaults to the real thing.
-  summon?: (cwd: string) => Promise<SummonOutcome>;
 };
 
 // http.Server plus an explicit push so the wiring layer can signal the UI after
@@ -994,40 +987,14 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       return;
     }
 
-    if (route === '/api/summon') {
-      /* Order matters and it is not the obvious one. The seat is taken away FIRST and the
-         terminal is opened second, because the old proxy heartbeats every five seconds and a
-         terminal takes longer than that to start a shell: open first and the outgoing agent
-         wins the race for the seat its replacement was summoned to take. */
-      const dropped = agents.evict();
-      if (dropped !== null) {
-        audit.append('agent_disconnected', `the human replaced ${dropped.client} from the window`, {
-          client: dropped.client,
-          since: dropped.since,
-          reason: 'summon',
-        });
-      }
-      broadcastState();
-      const outcome = await (deps.summon ?? summonAgent)(PROJECT_DIR);
-      if (!outcome.ok) {
-        audit.append('error', `summon failed: ${outcome.error}`, { reason: outcome.error });
-        sendJson(res, 500, { error: outcome.error, dropped: dropped?.client ?? null });
-        return;
-      }
-      audit.append('app_start', `summoned a new agent in ${outcome.how}`, { how: outcome.how });
-      sendJson(res, 200, { ok: true, how: outcome.how, dropped: dropped?.client ?? null });
-      return;
-    }
-
     if (route === '/api/driver') {
       const action = String(body.action ?? '');
       const instance = getDriver();
 
       if (action === 'start') {
-        /* The seat is taken away first, for the same reason /api/summon does it: the agent this
-           is replacing heartbeats every few seconds, and a process takes longer than that to
-           start, so opening first lets the outgoing agent win the seat its replacement was
-           started to take. */
+        /* The seat is taken away first: the agent this is replacing heartbeats every few
+           seconds, and a process takes longer than that to start, so opening first lets the
+           outgoing agent win the seat its replacement was started to take. */
         const dropped = agents.evict();
         if (dropped !== null) {
           audit.append('agent_disconnected', `the human replaced ${dropped.client} with the in-app driver`, {
@@ -2088,7 +2055,6 @@ export function createServer(deps: ServerDeps): PhosphorServer {
           route === '/api/approve' ||
           route === '/api/refuse' ||
           route === '/api/kill' ||
-          route === '/api/summon' ||
           route === '/api/driver'
         ) {
           return await handleMutation(route, req, res);

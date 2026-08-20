@@ -1,6 +1,6 @@
 // The hardening pass, driven against a real server over real HTTP.
 //
-// Same reasoning as summon-route.test.ts: the guards live on the wire (a Host header, an Origin
+// The guards live on the wire (a Host header, an Origin
 // header, the shape of a proposal body), so a unit test of a lifted function would assert the
 // function and not the door. Each test below is one of the red-team's confirmed break-ins,
 // turned into a test that fails on the old code and passes on the new.
@@ -128,7 +128,6 @@ async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
       onUpdate: () => {},
       stop: () => {},
     },
-    summon: async () => ({ ok: true, how: 'test' }),
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const port = (server.address() as AddressInfo).port;

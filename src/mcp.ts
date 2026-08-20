@@ -78,8 +78,8 @@ async function proxy(body: Record<string, unknown>) {
     // Replaced from the window. This is the one refusal that is not an answer to the agent:
     // the human has started a different agent on purpose and this process is meant to go
     // away. Returning the sentence instead would leave a live MCP server attached to a
-    // conversation that no longer drives anything, which is exactly the state the summon
-    // button exists to end.
+    // conversation that no longer drives anything, which is the state pressing the globe in
+    // the agent panel exists to end.
     if (res.status === 409 && payload.seat === 'revoked') {
       quitReplaced(typeof payload.error === 'string' ? payload.error : 'replaced from the phosphor window');
     }
