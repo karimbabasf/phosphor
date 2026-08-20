@@ -57,7 +57,7 @@ import { isRailKind } from './rails/index.ts';
 import type { RailDraft, RailKind, RailRegistry } from './rails/index.ts';
 import { VENUE as UNISWAP_VENUE } from './rails/uniswap.ts';
 import { chainsWithDeployment, deploymentFor, tokenFor } from './rails/uniswap-abi.ts';
-import { hlSpec } from './rails/hyperliquid-deposit.ts';
+import { HYPERCORE_COUNTERPARTY } from './rails/hypercore-deposit.ts';
 import { ONECLICK_COUNTERPARTY } from './rails/oneclick.ts';
 import { INTENTS_DEPOSIT_COUNTERPARTY, minCreditedFor } from './rails/intents-deposit.ts';
 import { INTENTS_NATIVE_COUNTERPARTY } from './rails/intents-native.ts';
@@ -861,22 +861,38 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     return problems.length > 0 ? refuseDraft('swap', draft, problems) : proposeRail('swap', draft);
   }
 
+  // "Put $200 into the trading account, from base." The origin chain is now the caller's
+  // choice rather than a fact about the bridge, because 1Click reaches all of them. What is
+  // still not the caller's choice: the wallet it leaves, the Hyperliquid account it credits,
+  // the loss floor and the counterparty. Those are resolved here from the app's own state,
+  // exactly as the Intents deposit does it.
   async function proposeHlDeposit(params: HlDepositParams): Promise<Proposal> {
     const snapshot = ledger.snapshot();
     const problems: string[] = [];
-    const spec = hlSpec(cfg.network);
-    const from = ourAddress(spec.chain, snapshot, problems);
+    const chain = params.chain ?? 'arb';
+    const from = ourAddress(chain, snapshot, problems);
+
+    const native = NATIVE_ASSET[chain];
+    const symbol = params.symbol ?? 'USDC';
+    const tokenId = native !== undefined && symbol === native.symbol ? NATIVE_TOKEN_ID : symbol;
+
+    // The trading account is the app's own EVM address. Hyperliquid identifies an account by
+    // the address that signs for it, so crediting anything else funds a book this app cannot
+    // trade. Derived here, never taken from a caller: the whole point of the propose surface
+    // is that an agent cannot name where money goes.
+    const hlAccount = ourAddress('eth', snapshot, problems);
 
     const draft: HlDepositDraft = {
       kind: 'hl_deposit',
-      chain: spec.chain,
-      symbol: spec.symbol,
+      chain,
+      symbol,
+      tokenId,
       amount: params.amount,
-      // The bridge takes one token and it is a dollar stable, which is the same rule the
-      // rail's own valueUsd applies.
-      amountUsd: Number.isFinite(params.amount) && params.amount >= 0 ? params.amount : Infinity,
+      amountUsd: usdOf(symbol, params.amount, snapshot),
+      minCredited: minCreditedFor(params.amount),
       from,
-      bridge: spec.bridge,
+      hlAccount,
+      counterparty: HYPERCORE_COUNTERPARTY,
     };
 
     return problems.length > 0 ? refuseDraft('hl_deposit', draft, problems) : proposeRail('hl_deposit', draft);

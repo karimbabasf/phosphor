@@ -46,7 +46,7 @@ import { syntheticQuoter, stubSigner } from '../../src/intents.ts';
 import { createProposalService } from '../../src/proposals.ts';
 import { createRails, venueAllowlist } from '../../src/rails/index.ts';
 import { chainsWithDeployment, deploymentFor } from '../../src/rails/uniswap-abi.ts';
-import { hlSpec } from '../../src/rails/hyperliquid-deposit.ts';
+import { HYPERCORE_COUNTERPARTY } from '../../src/rails/hypercore-deposit.ts';
 import { ONECLICK_COUNTERPARTY } from '../../src/rails/oneclick.ts';
 import { INTENTS_NATIVE_COUNTERPARTY } from '../../src/rails/intents-native.ts';
 import { evaluate } from '../../src/policy/engine.ts';
@@ -204,14 +204,21 @@ test('venueAllowlist names every contract the rails can hand funds to, and only 
     assert.ok(testnet.includes(dep.router.toLowerCase()), `${chain} router is missing`);
     assert.ok(testnet.includes(dep.positionManager.toLowerCase()), `${chain} position manager is missing`);
   }
-  assert.ok(testnet.includes(hlSpec('testnet').bridge.toLowerCase()), 'the hyperliquid bridge is missing');
   assert.ok(testnet.includes(ONECLICK_COUNTERPARTY), 'the oneclick venue is missing');
   assert.ok(testnet.every(a => a === a.toLowerCase()), 'the engine lowercases the list it compares against');
 
-  // The mainnet bridge on a testnet build is the one mistake in this app that is not
-  // recoverable: that address holds no contract on Arbitrum Sepolia.
-  assert.ok(!testnet.includes(hlSpec('mainnet').bridge.toLowerCase()), 'a testnet allowlist names the mainnet bridge');
-  assert.ok(!venueAllowlist('mainnet').includes(hlSpec('testnet').bridge.toLowerCase()));
+  // Hyperliquid funding used to put Bridge2's address here, and the worst mistake this app
+  // could make was a testnet build holding the mainnet bridge address: no contract lives there
+  // on Arbitrum Sepolia, so a transfer landed in a dead EOA and was gone. That whole class of
+  // error left with the mechanism. Funding routes through 1Click now, which mints a fresh
+  // deposit address per quote, so there is no bridge address on any list to get wrong, and
+  // the entry it does need is the venue string it shares with the swap rail.
+  assert.equal(
+    HYPERCORE_COUNTERPARTY,
+    ONECLICK_COUNTERPARTY,
+    'one host means one allowlist entry: a human allowing 1Click for swaps has allowed it for funding',
+  );
+  assert.ok(!testnet.some(a => /^0x2df1c51e09aecf9cacb7bc98cb1742757f163df7$/.test(a)), 'the mainnet Bridge2 address is gone from the allowlist');
 });
 
 test('every rail draft the service builds names a counterparty the seeded allowlist covers', async () => {
@@ -304,9 +311,10 @@ test('the app resolves every address in a rail draft, so the agent names none of
   assert.equal(swap.amountUsd, 500, 'the app prices the draft; the agent cannot declare a smaller number');
 
   const deposit = (await h.svc.proposeHlDeposit({ amount: 40 })).draft as HlDepositDraft;
-  assert.equal(deposit.bridge, hlSpec('testnet').bridge);
-  assert.equal(deposit.chain, 'arb');
+  assert.equal(deposit.counterparty, HYPERCORE_COUNTERPARTY, 'funding routes through 1Click, not a bridge contract');
+  assert.equal(deposit.chain, 'arb', 'arb is the default origin, not the only one');
   assert.equal(deposit.from, SELF_EVM);
+  assert.equal(deposit.hlAccount, SELF_EVM, 'the trading account is ours, resolved by the app');
 
   const remove = (await h.svc.proposeLpRemove({ positionId: POSITION.positionId, liquidityPct: 0.5 })).draft as LpRemoveDraft;
   assert.equal(remove.counterparty, ARB.positionManager);

@@ -23,7 +23,7 @@ import type { AppConfig, Network, Rail, SwapDraft, WriteDraft } from '../types.t
 import type { TokensFile } from '../intents.ts';
 import { uniswapRails } from './uniswap.ts';
 import { chainsWithDeployment, deploymentFor } from './uniswap-abi.ts';
-import { hlDepositRail, hlSpec } from './hyperliquid-deposit.ts';
+import { hypercoreDepositRail } from './hypercore-deposit.ts';
 import { ONECLICK_COUNTERPARTY, oneClickRail } from './oneclick.ts';
 import { INTENTS_NATIVE_COUNTERPARTY, intentsNativeRail } from './intents-native.ts';
 import { intentsDepositRail } from './intents-deposit.ts';
@@ -91,7 +91,15 @@ export function createRails(deps: RailDeps): RailRegistry {
   const uniswap = uniswapRails(deps.cfg);
   const table: Record<RailKind, Rail> = {
     swap: swapRail(deps) as Rail,
-    hl_deposit: hlDepositRail({ network: deps.cfg.network, keysPath: deps.cfg.keysPath }) as Rail,
+    // The TRADING network, not the wallet one: this rail funds a Hyperliquid account, and
+    // which Hyperliquid that is has its own setting. Passing cfg.network here would fund the
+    // mainnet account while the runner traded testnet, which is the exact split cfg.tradingNetwork
+    // exists to make unexpressible.
+    hl_deposit: hypercoreDepositRail({
+      network: deps.cfg.tradingNetwork,
+      keysPath: deps.cfg.keysPath,
+      tokens: deps.tokens,
+    }) as Rail,
     intents_deposit: intentsDepositRail({
       network: deps.cfg.network,
       keysPath: deps.cfg.keysPath,
@@ -136,7 +144,9 @@ export function venueAllowlist(network: Network): string[] {
     out.add(dep.positionManager.toLowerCase()); // NPM, for lp_add and lp_remove
   }
 
-  out.add(hlSpec(network).bridge.toLowerCase());
+  // Hyperliquid funding used to add Bridge2's address here. It routes through 1Click now, so
+  // it has no address of its own to list either, and its counterparty string IS ONECLICK_COUNTERPARTY:
+  // one host, one allowlist entry, added just below.
 
   // 1Click mints a fresh deposit address per quote, so no address of its own can ever sit
   // on a static list; the venue string is the allowlist entry (see the comment on
