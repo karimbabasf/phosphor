@@ -31,10 +31,12 @@ import {
   actionGate,
   backoffMs,
   countsAsFailure,
+  pickIdleVenue,
   rebalanceWorthIt,
   REBALANCE_HORIZON_DAYS,
 } from '../../src/yield/allocator.ts';
 import type { Proposal } from '../../src/types.ts';
+import type { VenueQuote } from '../../src/yield/allocator.ts';
 
 // ---------- rates ----------
 
@@ -373,4 +375,40 @@ test('a proposal waiting on a human is not a failure, so the gate does not punis
   assert.equal(countsAsFailure('policy_refused'), true);
   assert.equal(countsAsFailure('failed'), true);
   assert.equal(countsAsFailure('refused'), true);
+});
+
+// ---------- where idle money goes ----------
+
+function quote(chain: 'arb' | 'base' | 'eth', apy: number, idleUsd: number, healthy = true): VenueQuote {
+  return {
+    venue: 'aave-v3',
+    chain,
+    symbol: 'USDC',
+    rate: { aprRay: '0', apr: apy, apy },
+    healthy,
+    note: healthy ? '' : 'reserve frozen',
+    idleBase: String(Math.round(idleUsd * 1e6)),
+    idleUsd,
+  };
+}
+
+test('idle money is deposited where it already sits, not only on the best-paying chain', () => {
+  // The bug this replaces: only the best chain was considered, so $500 idle on base was left
+  // earning nothing because arb paid ten basis points more, and the loop then reported that
+  // nothing was idle at all. A local deposit needs no bridge, so there is nothing to trade off.
+  const picked = pickIdleVenue([quote('arb', 0.0436, 0), quote('base', 0.0124, 500)], 5);
+  assert.equal(picked?.chain, 'base');
+});
+
+test('among chains that both hold idle money, the best-paying one wins', () => {
+  const picked = pickIdleVenue([quote('base', 0.0124, 100), quote('arb', 0.0436, 100)], 5);
+  assert.equal(picked?.chain, 'arb');
+});
+
+test('dust is left alone, because a deposit is two transactions and a human click', () => {
+  assert.equal(pickIdleVenue([quote('arb', 0.0436, 3)], 5), undefined);
+});
+
+test('an unhealthy venue is never a destination, however much is idle on it', () => {
+  assert.equal(pickIdleVenue([quote('arb', 0.0436, 5000, false)], 5), undefined);
 });

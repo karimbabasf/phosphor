@@ -891,15 +891,10 @@ function decide(route, id, buttons, errorNode) {
 /* The yield panel. Every number and every caveat comes from the server; this composes none
    of them. See the header of ui/yield.js for why the order of that panel is the argument. */
 function renderYield(s) {
-  YIELD.render($('yield-panel'), s, {
-    explorerFor: function (hash) {
-      // The explorer prefix belongs to the chain, and the chain belongs to the network, so
-      // this reads the network the server reported rather than assuming one. A mainnet link
-      // under a testnet hash would send a reader looking for a transaction that is not there.
-      var testnet = !s || s.network !== 'mainnet';
-      return (testnet ? 'https://sepolia.arbiscan.io/tx/' : 'https://arbiscan.io/tx/') + hash;
-    }
-  });
+  // No explorer argument. The prefix belongs to the position's CHAIN as well as to the
+  // network, and the server already resolved both, so it travels on the holding rather than
+  // being inferred here. Inferring it produced an Arbiscan link for every Base position.
+  YIELD.render($('yield-panel'), s);
 }
 
 /* One press, and it files a proposal rather than moving anything.

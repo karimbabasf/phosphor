@@ -18,7 +18,7 @@
 // that showed $0.00 because an RPC blinked would be the worst possible lie for this feature.
 
 import type { AppConfig, ChainId, Proposal } from '../types.ts';
-import { erc20Balance, evmAddress } from '../chain/evm.ts';
+import { chainSpec, erc20Balance, evmAddress } from '../chain/evm.ts';
 import { getAddress } from 'viem';
 import { aaveAsset, aaveChains, aaveHealth, aavePosition, aaveRate } from './aave.ts';
 import type { VenueId, VenueRate } from './venue.ts';
@@ -158,6 +158,20 @@ export function countsAsFailure(status: string): boolean {
   return status !== 'executed' && status !== 'pending';
 }
 
+// Where idle money should go, given what every venue is paying and how much is sitting on
+// each chain doing nothing.
+//
+// ANY healthy chain, not only the best-paying one. Depositing where the money already IS
+// needs no bridge and is purely local, so refusing it because a different chain pays ten
+// basis points more leaves the money earning zero to protect a rounding error. Best-paying
+// first among the candidates, so a tie still lands in the right place. Where to move money
+// that is ALREADY working is a different question with a different answer.
+export function pickIdleVenue(venues: VenueQuote[], dustUsd: number): VenueQuote | undefined {
+  return venues
+    .filter((v) => v.healthy && v.rate !== null && v.idleUsd >= dustUsd)
+    .sort((a, b) => (b.rate as VenueRate).apy - (a.rate as VenueRate).apy)[0];
+}
+
 // The horizon a rebalance has to pay back inside. Thirty days is not a guess about how long
 // the money stays; it is the length of time over which a rate difference is allowed to be
 // treated as durable. A spread that needs longer than a month to repay its own gas is a
@@ -233,6 +247,10 @@ export function createAllocator(deps: AllocatorDeps): Allocator {
     decisions.unshift(d);
     if (decisions.length > MAX_DECISIONS) decisions.length = MAX_DECISIONS;
     current = { ...current, decisions: [...decisions] };
+    // Broadcast here as well as in refresh(). refresh() runs BEFORE the decision is recorded,
+    // so without this the panel always showed the PREVIOUS tick's reasoning and the current
+    // one arrived up to a minute late, which reads as a loop that is not thinking.
+    deps.onChange?.();
     return d;
   }
 
@@ -294,6 +312,7 @@ export function createAllocator(deps: AllocatorDeps): Allocator {
       decimals: asset.decimals,
       receiptSymbol: asset.receiptSymbol,
       receipt: asset.receipt,
+      explorerTx: chainSpec(cfg.network, chain).explorerTx,
       principalBase: principal.toString(),
       valueBase: position.balanceBase.toString(),
       earnedBase: earned.toString(),
@@ -387,7 +406,15 @@ export function createAllocator(deps: AllocatorDeps): Allocator {
 
     // 1. Idle money first. Money sitting in the wallet earns nothing, and that is the
     //    largest and most certain improvement available at any tick.
-    const idleHere = view.venues.find((v) => v.chain === view.best?.chain && v.idleUsd >= dustUsd);
+    //
+    //    Any healthy chain, not only the best-paying one. Depositing where the money already
+    //    IS needs no bridge and is purely local, so refusing it because a different chain pays
+    //    ten basis points more leaves the money earning zero to protect a rounding error. The
+    //    old version also then reported "nothing above the dust floor is idle", which was
+    //    simply false while $500 sat on the wrong chain. Best-paying first among equals, so a
+    //    tie still lands in the right place; where to move money that is ALREADY working is a
+    //    separate question, handled below.
+    const idleHere = pickIdleVenue(view.venues, dustUsd);
     if (idleHere !== undefined) {
       if (cooling) {
         return record({
@@ -405,8 +432,8 @@ export function createAllocator(deps: AllocatorDeps): Allocator {
           at,
           action: 'idle',
           detail:
-            `$${idleHere.idleUsd.toFixed(2)} of ${SYMBOL} is idle on ${idleHere.chain} and the best venue pays ` +
-            `${((view.best.apy) * 100).toFixed(2)}%, but automatic allocation is off, so nothing was proposed.`,
+            `$${idleHere.idleUsd.toFixed(2)} of ${SYMBOL} is idle on ${idleHere.chain}, where Aave pays ` +
+            `${(((idleHere.rate as VenueRate).apy) * 100).toFixed(2)}%, but automatic allocation is off, so nothing was proposed.`,
           proposalId: null,
         });
       }
@@ -419,7 +446,7 @@ export function createAllocator(deps: AllocatorDeps): Allocator {
           action: p.status === 'executed' ? 'deposited' : 'proposed',
           detail:
             `$${idleHere.idleUsd.toFixed(2)} idle on ${idleHere.chain}, proposed into Aave v3 at ` +
-            `${((view.best.apy) * 100).toFixed(2)}%. Proposal is ${p.status}.`,
+            `${(((idleHere.rate as VenueRate).apy) * 100).toFixed(2)}%. Proposal is ${p.status}.`,
           proposalId: p.id,
         });
       } catch (err) {

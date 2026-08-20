@@ -56,6 +56,13 @@ export type YieldHolding = {
   decimals: number;
   receiptSymbol: string;
   receipt: string;
+  // The explorer prefix for THIS position's chain, resolved server-side.
+  //
+  // The client used to build this from the network alone and always produced an Arbiscan
+  // URL, so every ledger hash on a Base position linked to a transaction that is not there.
+  // The chain is the other half of the question and the server already knows it, so the
+  // client is handed the answer rather than asked to infer it.
+  explorerTx: string;
   principalBase: string;
   valueBase: string;
   earnedBase: string;

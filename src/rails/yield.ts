@@ -174,6 +174,15 @@ export function yieldDepositRail(cfg: AppConfig): Rail<YieldDepositDraft> {
         const asset = aaveAsset(cfg.network, draft.chain, draft.symbol);
         if (asset === null) return { ok: false, detail: `Aave v3 does not take ${draft.symbol} on ${draft.chain}` };
 
+        // Re-read the flags here, not only in simulate().
+        //
+        // A deposit can sit in the approval gate for as long as a human takes to look at it,
+        // and a reserve can freeze in that time. Without this the rail runs anyway, lands the
+        // APPROVE on chain (a real allowance and real gas) and then reverts on the supply. One
+        // eth_call in front of a path that spends money is the cheapest check in the file.
+        const unhealthy = await refuseUnhealthy(cfg, draft);
+        if (unhealthy !== null) return { ok: false, detail: `refused before signing: ${unhealthy}` };
+
         const owner = evmAddress(cfg.keysPath);
         const amountBase = BigInt(draft.amountBase);
         const calls = await aaveDepositCalls({

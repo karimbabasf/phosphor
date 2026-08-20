@@ -91,7 +91,7 @@
     return wrap;
   }
 
-  function ledgerRows(holding, explorerFor) {
+  function ledgerRows(holding) {
     var wrap = el('div', 'y-ledger');
     wrap.appendChild(el('div', 'y-sub', 'LEDGER'));
     if (holding.credits.length === 0) {
@@ -110,7 +110,10 @@
       var links = el('td', 'y-hashes');
       for (var t = 0; t < c.txids.length; t++) {
         var a = el('a', 'y-hash', shortHash(c.txids[t]));
-        a.href = explorerFor(c.txids[t]);
+        // The prefix comes from the server, which knows the position's chain. The client used
+        // to build it from the network alone and always produced an Arbiscan URL, so every
+        // hash on a Base position linked to a transaction that is not there.
+        a.href = (holding.explorerTx || '') + c.txids[t];
         a.target = '_blank';
         a.rel = 'noreferrer noopener';
         links.appendChild(a);
@@ -124,7 +127,7 @@
     return wrap;
   }
 
-  function render(node, state, deps) {
+  function render(node, state) {
     if (!node) return 0;
     node.textContent = '';
     var view = state && state.yield;
@@ -139,8 +142,6 @@
         el('p', 'y-stale', 'Could not read the chain just now, so these are the last good numbers: ' + (view.error || 'unknown error')),
       );
     }
-
-    var explorerFor = deps && deps.explorerFor ? deps.explorerFor : function (h) { return '#' + h; };
 
     if (view.positions.length === 0) {
       node.appendChild(el('p', 'y-empty', 'Nothing is earning yet.'));
@@ -202,7 +203,7 @@
       actions.appendChild(el('span', 'y-error'));
       card.appendChild(actions);
 
-      card.appendChild(ledgerRows(h, explorerFor));
+      card.appendChild(ledgerRows(h));
       node.appendChild(card);
     }
 

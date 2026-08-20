@@ -131,13 +131,19 @@ export function buildWallet(
   // The value is the aToken balance, so it already includes the interest. Nothing is double
   // counted: the underlying left the wallet when it was supplied, and this is the same money
   // in the only place it now exists.
-  const yieldRows: WalletRow[] = yieldHoldings.map(h => ({
+  const yieldRows: WalletRow[] = yieldHoldings.map(h => {
+    // quantity is a TOKEN COUNT, and price is what one of them is worth, the same contract
+    // every other row on this table keeps. Putting the dollar figure in the quantity column
+    // reads correctly only while USDC prices at exactly 1.0; off peg the row contradicts
+    // itself, because quantity times price no longer equals the value beside them.
+    const unit = priceOf(h.symbol) || 1;
+    return {
     kind: 'yield',
     chain: h.chain,
     symbol: `${h.symbol} earning`,
     tokenId: h.receipt,
-    quantity: h.valueUsd,
-    priceUsd: priceOf(h.symbol) || 1,
+    quantity: h.valueUsd / unit,
+    priceUsd: unit,
     valueUsd: h.valueUsd,
     share: 0,
     native: false,
@@ -148,7 +154,8 @@ export function buildWallet(
       principalUsd: h.principalUsd,
       earnedUsd: h.earnedUsd,
     },
-  }));
+    };
+  });
 
   const held = [...tokenRows, ...lpRows, ...intentsRows, ...yieldRows].filter(
     r => r.kind === 'lp' || r.quantity > 0 || r.valueUsd > 0,
