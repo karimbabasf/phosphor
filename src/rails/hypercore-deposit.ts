@@ -74,8 +74,10 @@ const ONE_YOCTO = 1n;
 // shape the omni-bridge registry holds, so assetIdFor() will never find it.
 //
 // Same rule the Polygon decision settled on 2026-08-20: a table in this repo decides where
-// money goes and remote text never does. The boot check below confirms the pinned id is still
-// live; it does NOT take a replacement from the API.
+// money goes and remote text never does. plan() verifies this id is still in the live list on
+// every quote, off the fetch it already makes, and assertAssetLive() below is the same check
+// on its own for scripts/hypercore-probe.ts. Neither one ever takes a replacement from the API:
+// a hostile token list can stop this rail, and it cannot redirect it.
 export const HYPERCORE_USDC_ASSET_ID = '1cs_v1:hypercore:erc20:0xb88339CB7199b77E23DB6E890353E22632Ba630f';
 export const HYPERCORE_USDC_DECIMALS = 6;
 
@@ -96,6 +98,27 @@ export const MIN_DEPOSIT_USDC = 5;
 // the floor amount is about right: it lets a $10 test through with a loud number attached and
 // refuses the sizes where the user would be paying mostly for the privilege.
 export const MAX_FEE_PCT = 5;
+
+// The loss floor a draft carries, and it has to be shaped like the fee or it refuses honest
+// quotes.
+//
+// The Intents deposit rail uses a flat 200 bps of the amount, which is right for a fee that is
+// proportional. This one is not: it is about $0.315 plus 10 bp, so the percentage runs away as
+// the amount shrinks. Reusing the 200 bps rule here quietly refused every deposit between about
+// $6.50 and $17, because on $10 it demanded 9.80 credited and the venue delivers 9.67, and the
+// refusal blamed the floor instead of naming the flat fee. That is the same bug this repo keeps
+// paying for: the value checked was not the value used.
+//
+// So the floor is the measured fee with headroom on both terms, roughly doubled on the bp side
+// and rounded up on the flat side. It still caps the loss, and it caps it against the shape the
+// fee actually has.
+export const HYPERCORE_FLAT_FEE_USDC = 0.35; // measured 0.315
+export const HYPERCORE_FEE_BPS = 20; // measured about 10
+
+export function minCreditedFor(amount: number): number {
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  return amount - (HYPERCORE_FLAT_FEE_USDC + (amount * HYPERCORE_FEE_BPS) / 10_000);
+}
 
 // ---------- the seams ----------
 
@@ -341,7 +364,34 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     // could edit that list would want to move.
     let originAsset: string | null = null;
     try {
-      originAsset = assetIdFor(draft.chain, registry.tokenId, await client.tokens());
+      const list = await client.tokens();
+
+      // The pin is verified HERE, against the list this call already had to fetch, rather than
+      // at boot. It was written as a boot check and nothing called it, which made the comment
+      // above a claim about a check that never ran: the exact defect shape this repo keeps
+      // paying for. Doing it on the path that fetches the list anyway costs no round trip and
+      // cannot be forgotten, because a quote is impossible without it.
+      const pinned = list.find((t) => t.assetId === HYPERCORE_USDC_ASSET_ID);
+      if (pinned === undefined) {
+        const hypercore = list.filter((t) => t.blockchain.toLowerCase() === 'hypercore').map((t) => t.assetId);
+        return {
+          reasons: [
+            `the pinned HyperCore USDC asset id is no longer in the 1Click token list. Pinned: ` +
+              `${HYPERCORE_USDC_ASSET_ID}. Live hypercore assets: ${hypercore.length > 0 ? hypercore.join(', ') : 'none'}. ` +
+              `This rail will not take a replacement id from the API; update the constant deliberately`,
+          ],
+        };
+      }
+      if (pinned.decimals !== HYPERCORE_USDC_DECIMALS) {
+        return {
+          reasons: [
+            `HyperCore USDC decimals changed: pinned ${HYPERCORE_USDC_DECIMALS}, live ${pinned.decimals}. ` +
+              `Every amount this rail sends would be wrong by a factor of ten`,
+          ],
+        };
+      }
+
+      originAsset = assetIdFor(draft.chain, registry.tokenId, list);
     } catch (err) {
       return { reasons: [`could not read the 1Click token list: ${errText(err)}`] };
     }

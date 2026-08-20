@@ -23,6 +23,7 @@ import {
   MAX_FEE_PCT,
   MIN_DEPOSIT_USDC,
   hypercoreDepositRail,
+  minCreditedFor,
 } from '../../src/rails/hypercore-deposit.ts';
 import type { HypercoreDepositDeps, HypercoreEvmPort, HypercoreNearPort } from '../../src/rails/hypercore-deposit.ts';
 import type { HlDepositDraft } from '../../src/types.ts';
@@ -423,6 +424,25 @@ test('a credit the venue has not shown yet is not reported as a loss', async () 
 
 // ---------- the pin ----------
 
+test('a quote refuses when the pin is gone, so the check cannot be forgotten', async () => {
+  // The pin used to be verified only by a method nothing called. It is now checked on the path
+  // that fetches the token list anyway, so a quote is impossible without it having run.
+  const h = rail({}, { assetMissing: true });
+  const out = await h.rail.simulate(draft());
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /no longer in the 1Click token list/);
+  assert.equal(h.quotes.length, 0, 'nothing was priced against an unverified destination');
+});
+
+test('a hostile token list can stop this rail and cannot redirect it', async () => {
+  // The failure mode that matters: an attacker who could edit the remote list would want the
+  // money to go somewhere else. Refusing is the only thing they can cause.
+  const h = rail({}, { assetMissing: true });
+  const out = await h.rail.execute(draft());
+  assert.equal(out.ok, false);
+  assert.equal(h.sends.length, 0);
+});
+
 test('the pinned asset id is checked against the live list and never replaced from it', async () => {
   const gone = rail({}, { assetMissing: true });
   await assert.rejects(() => gone.rail.assertAssetLive(), /no longer in the 1Click token list/);
@@ -448,4 +468,48 @@ test('a draft that cannot price itself fails every budget instead of passing the
 
 test('the funding venue and the swap venue are one allowlist entry', () => {
   assert.equal(HYPERCORE_COUNTERPARTY, 'oneclick:1click.chaindefuser.com');
+});
+
+// ---------- the loss floor, which has to be shaped like the fee ----------
+
+test('the floor clears the real fee at every size the rail accepts', () => {
+  // The measured curve: fee is about 0.315 flat plus 10 bp. These are the live numbers from
+  // 2026-08-20, and the floor has to sit UNDER each delivered amount or it refuses an honest
+  // quote and blames the wrong thing.
+  const live: Array<[number, number]> = [
+    [5, 4.6797],
+    [10, 9.6747],
+    [50, 49.6347],
+    [100, 99.5847],
+  ];
+  for (const [sent, delivered] of live) {
+    assert.ok(
+      minCreditedFor(sent) <= delivered,
+      `floor ${minCreditedFor(sent).toFixed(4)} for ${sent} is above the ${delivered} the venue actually delivers`,
+    );
+  }
+});
+
+test('the old proportional floor is what this replaced, and it would have refused these', () => {
+  // 200 bps of the amount, the Intents rule. Kept here as the regression: on 10 USDC it demands
+  // 9.80 credited and the venue delivers 9.67, so every deposit under about 17 was refused with
+  // a message about the floor rather than about the flat fee.
+  const proportional = (amount: number): number => amount * 0.98;
+  assert.ok(proportional(10) > 9.6747, 'the old rule refused a 10 USDC deposit');
+  assert.ok(minCreditedFor(10) <= 9.6747, 'the new one does not');
+});
+
+test('the floor still caps the loss rather than waving everything through', () => {
+  // It must not be so loose that a genuinely bad quote passes. At 50 the venue delivers 49.63
+  // and the floor is 49.55, so anything more than about 9 cents worse than measured is refused.
+  assert.ok(minCreditedFor(50) > 49, 'a floor of 49 would allow a full percent of unexplained loss');
+  // At 1000 the floor is 997.65, so the most unexplained loss it will accept is 2.35, or
+  // 23.5 bp. The flat term stops mattering at size and the 20 bp term is what binds.
+  assert.ok(minCreditedFor(1000) > 997, 'the bp term must not dominate at size');
+  assert.ok(1000 - minCreditedFor(1000) < 3, 'and the cap in dollars stays small');
+});
+
+test('a nonsense amount floors at zero rather than at NaN', () => {
+  assert.equal(minCreditedFor(Number.NaN), 0);
+  assert.equal(minCreditedFor(-5), 0);
 });

@@ -57,7 +57,7 @@ import { isRailKind } from './rails/index.ts';
 import type { RailDraft, RailKind, RailRegistry } from './rails/index.ts';
 import { VENUE as UNISWAP_VENUE } from './rails/uniswap.ts';
 import { chainsWithDeployment, deploymentFor, tokenFor } from './rails/uniswap-abi.ts';
-import { HYPERCORE_COUNTERPARTY } from './rails/hypercore-deposit.ts';
+import { HYPERCORE_COUNTERPARTY, minCreditedFor as minCreditedForHypercore } from './rails/hypercore-deposit.ts';
 import { ONECLICK_COUNTERPARTY } from './rails/oneclick.ts';
 import { INTENTS_DEPOSIT_COUNTERPARTY, minCreditedFor } from './rails/intents-deposit.ts';
 import { INTENTS_NATIVE_COUNTERPARTY } from './rails/intents-native.ts';
@@ -889,7 +889,9 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
       tokenId,
       amount: params.amount,
       amountUsd: usdOf(symbol, params.amount, snapshot),
-      minCredited: minCreditedFor(params.amount),
+      // The hypercore floor, NOT the Intents one. That fee is proportional and this one is
+      // nearly flat, so the 200 bps rule refuses honest quotes under about $17.
+      minCredited: minCreditedForHypercore(params.amount),
       from,
       hlAccount,
       counterparty: HYPERCORE_COUNTERPARTY,
