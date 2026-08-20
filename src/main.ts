@@ -122,7 +122,7 @@ const HL_BASE_URL = HL_MAINNET ? 'https://api.hyperliquid.xyz' : 'https://api.hy
 const HL_WS_URL = HL_MAINNET ? 'wss://api.hyperliquid.xyz/ws' : 'wss://api.hyperliquid-testnet.xyz/ws';
 
 const runner = createRunnerHost({
-  apiWalletKey: async () => await readApiWalletKey(cfg.keysPath),
+  apiWalletKey: async () => await readApiWalletKey(cfg.keysPath, cfg.tradingNetwork),
   isMainnet: HL_MAINNET,
   baseUrl: HL_BASE_URL,
   // The ceiling on everything armed at once. Tighter on mainnet, and it is what replaced the

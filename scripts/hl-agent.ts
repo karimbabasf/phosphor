@@ -114,17 +114,30 @@ if (body.status !== 'ok') {
 // of an EXISTING file is a no-op, so the 0600 this file already carries would have been
 // inherited rather than enforced, and inherited is not a guarantee.
 const keys = JSON.parse(fs.readFileSync(cfg.keysPath, 'utf8')) as Record<string, unknown>;
-keys.hyperliquidAgent = {
+
+// Written under the NETWORK it was approved on, never over the other one.
+//
+// An agent wallet is approved by a signed action sent to one exchange, and the other network
+// has never heard of the address. A single slot meant approving on mainnet destroyed the
+// testnet agent, and pointing the app back at testnet then signed every order with a wallet
+// that venue does not recognise: rejected, with nothing saying why, because the key is present
+// and well formed and simply belongs somewhere else. That happened here on 2026-08-20.
+const agents = (keys.hyperliquidAgents ?? {}) as Record<string, unknown>;
+agents[cfg.tradingNetwork] = {
   address: agentAddress,
   privateKey: agentKey,
   name: agentName,
   approvedAt: new Date().toISOString(),
 };
+keys.hyperliquidAgents = agents;
+// The pre-2026-08-20 flat field is left exactly as it was. src/runner/keys.ts still reads it as
+// a fallback, so an install that has not re-approved keeps working, and removing it here would
+// take away a key this script did not create.
 
 const tmpPath = `${cfg.keysPath}.${process.pid}.tmp`;
 fs.writeFileSync(tmpPath, JSON.stringify(keys, null, 2) + '\n', { mode: 0o600 });
 fs.renameSync(tmpPath, cfg.keysPath);
 fs.chmodSync(cfg.keysPath, 0o600);
 
-console.log(`approved. key written to ${cfg.keysPath} under hyperliquidAgent.`);
+console.log(`approved. key written to ${cfg.keysPath} under hyperliquidAgents.${cfg.tradingNetwork}.`);
 console.log('this key can trade and cannot withdraw. the runner will pick it up on the next arm.');

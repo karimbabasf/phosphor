@@ -11,11 +11,11 @@
 //
 // Run: PHOSPHOR_TRADING_NETWORK=testnet node scripts/hl-verbs-smoke.ts
 
-import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfig } from '../src/config.ts';
 import { createExchange, isScheduleCancelLocked } from '../src/hl/exchange.ts';
+import { readApiWallet } from '../src/runner/keys.ts';
 import type { OrderRequest } from '../src/hl/exchange.ts';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -28,12 +28,18 @@ if (cfg.tradingNetwork !== 'testnet') {
 }
 
 const BASE = 'https://api.hyperliquid-testnet.xyz';
-const keys = JSON.parse(fs.readFileSync(cfg.keysPath, 'utf8')) as { hyperliquidAgent?: { privateKey: string; address: string } };
-const agent = keys.hyperliquidAgent;
-if (agent === undefined) {
-  console.error('no approved API wallet. Run: node scripts/hl-agent.ts');
+// The agent wallet for THIS network. Reading the flat legacy field here is what made this
+// script sign testnet orders with a mainnet wallet after the mainnet approval on 2026-08-20.
+const wallet = readApiWallet(cfg.keysPath, cfg.tradingNetwork);
+if (wallet.key === null) {
+  console.error(`no approved API wallet for ${cfg.tradingNetwork}. Run: PHOSPHOR_TRADING_NETWORK=${cfg.tradingNetwork} node scripts/hl-agent.ts`);
   process.exit(1);
 }
+if (wallet.source === 'legacy') {
+  console.error(`WARNING: using the pre-2026-08-20 flat agent key, which is not stamped with a network.`);
+  console.error(`If orders come back rejected, it was approved on the other one. Re-approve to be sure.`);
+}
+const agent = { privateKey: wallet.key, address: wallet.address ?? '(unknown)' };
 
 const user = cfg.addresses.evm[0] ?? '';
 const SYMBOL = process.argv.includes('--symbol') ? String(process.argv[process.argv.indexOf('--symbol') + 1]) : 'SOL';
