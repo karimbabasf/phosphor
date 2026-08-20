@@ -331,14 +331,21 @@
   /* Read from the live page rather than from a constant, because the basic view replaces the
      ground and the family. Re-read after the swap so the reveal clears to the colour of the
      mode that is arriving, not the one that left. */
-  function palette() {
+  function palette(host) {
     var doc = global.document;
     var ground = FALLBACK_GROUND;
     var body = FALLBACK_BODY;
     var head = FALLBACK_HEAD;
     try {
+      /* A boxed run is composited over the panel it stands in, not over the page. Its own
+         background is only used when it has one: a panel that inherits the page ground is
+         transparent here, and the page ground is then the right answer anyway. */
+      var surface = host ? global.getComputedStyle(host) : null;
+      if (surface && surface.backgroundColor && surface.backgroundColor !== 'rgba(0, 0, 0, 0)') {
+        ground = surface.backgroundColor;
+      }
       var bodyStyle = global.getComputedStyle(doc.body);
-      if (bodyStyle.backgroundColor && bodyStyle.backgroundColor !== 'rgba(0, 0, 0, 0)') {
+      if (ground === FALLBACK_GROUND && bodyStyle.backgroundColor && bodyStyle.backgroundColor !== 'rgba(0, 0, 0, 0)') {
         ground = bodyStyle.backgroundColor;
       }
       var rootStyle = global.getComputedStyle(doc.documentElement);
@@ -450,8 +457,17 @@
 
   function sizeRun(run) {
     var doc = global.document;
-    run.w = Math.max(1, doc.documentElement.clientWidth || global.innerWidth || 1);
-    run.h = Math.max(1, doc.documentElement.clientHeight || global.innerHeight || 1);
+    if (run.host) {
+      /* The host's border box, because the canvas is stretched to inset 0 inside it. A host
+         that has been laid out to nothing yet falls back to one pixel rather than to the
+         viewport: a fall the size of the screen inside a collapsed panel is the one wrong
+         answer here. */
+      run.w = Math.max(1, Math.round(run.host.clientWidth));
+      run.h = Math.max(1, Math.round(run.host.clientHeight));
+    } else {
+      run.w = Math.max(1, doc.documentElement.clientWidth || global.innerWidth || 1);
+      run.h = Math.max(1, doc.documentElement.clientHeight || global.innerHeight || 1);
+    }
     run.dpr = Math.min(global.devicePixelRatio || 1, MAX_DPR);
 
     var pw = Math.max(1, Math.floor(run.w * run.dpr));
@@ -729,7 +745,7 @@
       }
     }
     // The arriving mode may own a different ground; the reveal clears to that one.
-    if (run.kind === 'swap') run.colours = palette();
+    if (run.kind === 'swap') run.colours = palette(run.host);
     // Firing a leave run IS the navigation, so from here the cover has to stay up.
     if (run.kind === 'leave') run.hold = true;
   }
@@ -761,12 +777,12 @@
     teardown(run);
   }
 
-  function start(kind, action) {
+  function start(kind, action, host) {
     var doc = global.document;
     var canvas = doc.createElement('canvas');
     /* Set here rather than in a stylesheet: see the note at the top. inset is not used
        because this has to hold up on whatever the oldest engine in the house is. */
-    canvas.style.position = 'fixed';
+    canvas.style.position = host ? 'absolute' : 'fixed';
     canvas.style.left = '0';
     canvas.style.top = '0';
     canvas.style.pointerEvents = 'none';
@@ -786,13 +802,14 @@
     var run = {
       kind: kind,
       action: action,
+      host: host || null,
       canvas: canvas,
       ctx: ctx,
       buffer: buffer,
       bctx: bctx,
       glow: glow,
       gctx: gctx,
-      colours: palette(),
+      colours: palette(host || null),
       t0: 0,
       last: 0,
       raf: 0,
@@ -830,7 +847,7 @@
       for (var f = 0; f < PRIME_FRAMES; f++) stepTails(run, 1 / 60, priming);
     }
 
-    doc.body.appendChild(canvas);
+    (run.host || doc.body).appendChild(canvas);
     /* One frame drawn before returning, because an arriving run has to be covering the page
        by the browser's first paint. Waiting for rAF shows the new mode bare for a frame,
        which is the cut this replaces. For the other two kinds the veil is zero here and this
@@ -875,12 +892,12 @@
 
   /* basic and pro are two renderings of one page, so the change happens under the cover and
      the same canvas carries both halves. */
-  function swap(apply) {
+  function swap(apply, host) {
     if (live || !canAnimate()) {
       if (typeof apply === 'function') apply();
       return;
     }
-    start('swap', apply);
+    start('swap', apply, host || null);
   }
 
   /* trade is a different page. The fall covers this one, the flag is left for the next one,
