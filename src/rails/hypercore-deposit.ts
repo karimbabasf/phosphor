@@ -180,7 +180,13 @@ export type HlAccountState = {
   withdrawableUsd: number;
   marginUsedUsd: number;
   openPositions: number;
-  spot: HlSpotBalance[]; // a SEPARATE book from the perp balance above
+  spot: HlSpotBalance[]; // a SEPARATE book from the perp balance above, on a CLASSIC account
+  // Whether this account has the two books merged. On a unified account there is nothing to
+  // move between, `withdrawable` reads 0 while the money is present, and usdClassTransfer is
+  // rejected outright. Karim's account is unified on both networks, checked live 2026-08-20,
+  // so this is the normal case here rather than an exotic one.
+  unified: boolean;
+  availableUsdc: number; // free collateral: the perp figure classically, the unified figure otherwise
   funded: boolean;
   fetchedAt: string;
 };
@@ -193,6 +199,9 @@ type ClearinghouseState = {
 
 type SpotClearinghouseState = {
   balances?: Array<{ coin?: string; token?: number; total?: string; hold?: string }>;
+  // Present on a unified account: what is actually free once maintenance margin is held back,
+  // per token id. 0 is USDC. Same field src/rails/hyperliquid-withdraw.ts reads.
+  tokenToAvailableAfterMaintenance?: Array<[number | string, string]>;
 };
 
 // Every number in these responses is a string, and a malformed one must read as zero rather
@@ -558,15 +567,27 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     }));
 
     const accountValueUsd = num(perp.marginSummary?.accountValue);
+    const withdrawableUsd = num(perp.withdrawable);
+
+    const pairs = spotState.tokenToAvailableAfterMaintenance;
+    const unifiedUsdc = Array.isArray(pairs)
+      ? num(pairs.find(([id]) => Number(id) === 0)?.[1])
+      : 0;
+    // Same test the withdraw rail uses: money free under the unified figure while the perp
+    // figure reads zero is what a merged account looks like.
+    const unified = unifiedUsdc > 0 && withdrawableUsd === 0;
+
     return {
       address: user,
       network,
       accountValueUsd,
-      withdrawableUsd: num(perp.withdrawable),
+      withdrawableUsd,
       marginUsedUsd: num(perp.marginSummary?.totalMarginUsed),
       openPositions: Array.isArray(perp.assetPositions) ? perp.assetPositions.length : 0,
       spot,
-      funded: accountValueUsd > 0 || spot.some((b) => b.total > 0),
+      unified,
+      availableUsdc: Math.max(withdrawableUsd, unifiedUsdc),
+      funded: accountValueUsd > 0 || unifiedUsdc > 0 || spot.some((b) => b.total > 0),
       fetchedAt: new Date().toISOString(),
     };
   }
@@ -586,6 +607,17 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
       after = await accountState(draft.hlAccount);
     } catch (err) {
       return ` Could not read the account afterwards (${oneLine(errText(err), 80)}); the deposit itself completed.`;
+    }
+
+    // A UNIFIED account has no two sides. The money is collateral the moment it lands, and
+    // usdClassTransfer against one is rejected outright, so attempting the move here would turn
+    // a completed deposit into a frightening sentence about the spot side. Karim's account is
+    // unified on both networks, so this is the normal path rather than the exotic one.
+    if (after.unified || before.unified) {
+      const gain = after.availableUsdc - before.availableUsdc;
+      return gain > 0.01
+        ? ` The account is unified, so it is margin already: free collateral rose by ${gain.toFixed(4)} USDC.`
+        : ' The account is unified, so anything credited is margin already. The venue has not shown the rise yet.';
     }
 
     const perpGain = after.accountValueUsd - before.accountValueUsd;

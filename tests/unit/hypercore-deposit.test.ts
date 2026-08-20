@@ -159,7 +159,7 @@ function fakeNear(over: PortOverrides = {}): HypercoreNearPort {
 }
 
 // Hyperliquid /info, driven by what each test wants the account to look like before and after.
-type AccountShape = { perp: number; spot: number };
+type AccountShape = { perp: number; spot: number; unifiedAvailable?: number };
 
 function fakeInfo(shapes: AccountShape[]): { fetchImpl: typeof fetch; calls: string[] } {
   const calls: string[] = [];
@@ -176,9 +176,16 @@ function fakeInfo(shapes: AccountShape[]): { fetchImpl: typeof fetch; calls: str
       );
     }
     readPair += 1;
-    return new Response(JSON.stringify({ balances: [{ coin: 'USDC', token: 0, total: String(shape.spot), hold: '0' }] }), {
-      headers: { 'content-type': 'application/json' },
-    });
+    return new Response(
+      JSON.stringify({
+        balances: [{ coin: 'USDC', token: 0, total: String(shape.spot), hold: '0' }],
+        // A unified account reports this and leaves perp withdrawable at 0.
+        ...(shape.unifiedAvailable !== undefined
+          ? { tokenToAvailableAfterMaintenance: [[0, String(shape.unifiedAvailable)]] }
+          : {}),
+      }),
+      { headers: { 'content-type': 'application/json' } },
+    );
   };
   return { fetchImpl, calls };
 }
@@ -558,4 +565,39 @@ test('the floor still caps the loss rather than waving everything through', () =
 test('a nonsense amount floors at zero rather than at NaN', () => {
   assert.equal(minCreditedFor(Number.NaN), 0);
   assert.equal(minCreditedFor(-5), 0);
+});
+
+// ---------- unified accounts, which is what Karim actually has ----------
+
+test('a unified account is not asked to move money between books that do not exist', async () => {
+  // usdClassTransfer is rejected outright on a unified account. Attempting it would turn a
+  // completed deposit into a sentence about the money being stuck on the spot side, which would
+  // be both wrong and alarming. Checked live on 2026-08-20: the marker is present on both
+  // networks for this account, so this is the normal path here.
+  const h = rail({}, {}, [
+    { perp: 0, spot: 0, unifiedAvailable: 0.000002 },
+    { perp: 0, spot: 0, unifiedAvailable: 49.6347 },
+  ]);
+  const out = await h.rail.execute(draft());
+
+  assert.equal(out.ok, true, out.detail ?? '');
+  assert.match(out.detail, /account is unified, so it is margin already/);
+  assert.match(out.detail, /free collateral rose by 49\.63/);
+  assert.doesNotMatch(out.detail, /spot side/i, 'a unified account has no spot side to be stuck on');
+});
+
+test('accountState reports the unified figure as available collateral', async () => {
+  const h = rail({}, {}, [{ perp: 0, spot: 0, unifiedAvailable: 120.5 }]);
+  const state = await h.rail.accountState(SELF);
+  assert.equal(state.unified, true, 'money free under the unified figure with perp at zero');
+  assert.equal(state.availableUsdc, 120.5);
+  assert.equal(state.funded, true, 'a unified balance is funded even with accountValue at zero');
+});
+
+test('a classic account is still read the classic way', async () => {
+  const h = rail({}, {}, [{ perp: 80, spot: 20 }]);
+  const state = await h.rail.accountState(SELF);
+  assert.equal(state.unified, false);
+  assert.equal(state.availableUsdc, 80, 'the perp withdrawable figure');
+  assert.equal(state.spot.find((b) => b.coin === 'USDC')?.total, 20);
 });
