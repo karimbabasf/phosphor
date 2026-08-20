@@ -27,7 +27,12 @@ if (cfg.tradingNetwork !== 'testnet') {
   process.exit(1);
 }
 
-const BASE = 'https://api.hyperliquid-testnet.xyz';
+// Both derived from the one setting, never stated twice. The refusal above already pins this
+// script to testnet, so today these are always the testnet pair; deriving them anyway means a
+// future edit that relaxes the guard cannot leave a testnet source byte signing against a
+// mainnet key, which is the kind of mismatch the venue answers with a bare rejection.
+const IS_MAINNET = cfg.tradingNetwork === 'mainnet';
+const BASE = IS_MAINNET ? 'https://api.hyperliquid.xyz' : 'https://api.hyperliquid-testnet.xyz';
 // The agent wallet for THIS network. Reading the flat legacy field here is what made this
 // script sign testnet orders with a mainnet wallet after the mainnet approval on 2026-08-20.
 const wallet = readApiWallet(cfg.keysPath, cfg.tradingNetwork);
@@ -74,7 +79,7 @@ console.log(`agent     ${agent.address}`);
 console.log(`market    ${SYMBOL} (asset ${assetId}, szDecimals ${szDecimals}), mid ${mid}`);
 console.log(`margin    accountValue ${state.marginSummary?.accountValue ?? '?'}, withdrawable ${state.withdrawable ?? '?'}\n`);
 
-const ex = createExchange({ privKey: agent.privateKey as `0x${string}`, isMainnet: false, baseUrl: BASE });
+const ex = createExchange({ privKey: agent.privateKey as `0x${string}`, isMainnet: IS_MAINNET, baseUrl: BASE });
 
 // Far enough below mid that it rests rather than fills, and a size small enough that the
 // margin on this account covers it.
