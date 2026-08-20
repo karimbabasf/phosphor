@@ -27,15 +27,22 @@ const NON_EVM: Record<Network, Partial<Record<TxPlace, { tx: string; address: st
     sol: { tx: 'https://solscan.io/tx/', address: 'https://solscan.io/account/' },
     near: { tx: 'https://nearblocks.io/txns/', address: 'https://nearblocks.io/address/' },
     intents: { tx: 'https://nearblocks.io/txns/', address: 'https://nearblocks.io/address/' },
+    // The venue's own explorer, keyed by address. A HyperCore credit has no tx hash of ours.
+    hyperliquid: { tx: 'https://app.hyperliquid.xyz/explorer/tx/', address: 'https://app.hyperliquid.xyz/explorer/address/' },
   },
   testnet: {
     sol: { tx: 'https://solscan.io/tx/', address: 'https://solscan.io/account/' },
     near: { tx: 'https://testnet.nearblocks.io/txns/', address: 'https://testnet.nearblocks.io/address/' },
     intents: { tx: 'https://testnet.nearblocks.io/txns/', address: 'https://testnet.nearblocks.io/address/' },
+    hyperliquid: { tx: 'https://app.hyperliquid-testnet.xyz/explorer/tx/', address: 'https://app.hyperliquid-testnet.xyz/explorer/address/' },
   },
 };
 
-export type TxPlace = ChainId | 'intents';
+// Two members that are not chains. 'intents' is a balance inside the verifier contract, and
+// 'hyperliquid' is a balance on the venue's own books. Both are places money genuinely sits
+// and neither is anywhere a block explorer for a chain would find it, which is why calling
+// either one by a chain name would send a reader looking in the wrong place.
+export type TxPlace = ChainId | 'intents' | 'hyperliquid';
 
 // An EVM explorer's address page is its tx page with one path segment swapped. Deriving it
 // keeps one table rather than two that can drift apart.
@@ -242,12 +249,15 @@ function sidesOf(draft: WriteDraft): Sides {
     case 'hl_deposit':
       return {
         place: draft.chain,
-        toPlace: draft.chain,
+        // The money crosses: it leaves an ordinary chain and lands on the venue. Saying
+        // `draft.chain` on both sides was true of the Bridge2 mechanism, where the transfer
+        // never left Arbitrum, and it is not true of this one.
+        toPlace: 'hyperliquid',
         venue: 'hyperliquid',
         sent: { symbol: draft.symbol, amount: draft.amount },
         from: draft.from,
-        to: draft.bridge,
-        counterparty: draft.bridge,
+        to: draft.hlAccount,
+        counterparty: draft.counterparty,
       };
     case 'intents_deposit':
       return {

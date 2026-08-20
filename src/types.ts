@@ -243,14 +243,27 @@ export type IntentsWithdrawDraft = {
   counterparty: string; // must be on the policy allowlist
 };
 
+// Collateral entering a Hyperliquid perps account. The kind is older than the mechanism: it
+// used to mean an ERC-20 transfer to Hyperliquid's Bridge2 contract on Arbitrum, and now it
+// means a NEAR Intents route into HyperCore from any chain this app can sign on. The kind
+// stayed because what it MEANS to the policy engine, the ledger and the approval screen did
+// not change: money is entering the trading account.
+//
+// `bridge` is gone with the mechanism. It named a contract that credited whoever sent to it,
+// which is why this draft used to have no destination at all. The 1Click route has a real one,
+// so `hlAccount` exists and the policy engine can now check that funding lands on an account
+// we hold the key for, which it could never do before.
 export type HlDepositDraft = {
   kind: 'hl_deposit';
-  chain: ChainId; // 'arb' (Arbitrum Sepolia on testnet)
-  symbol: string; // 'USDC'
+  chain: ChainId; // the ORIGIN chain the money leaves from, not a Hyperliquid one
+  symbol: string;
+  tokenId: string; // 'native' for the gas asset, otherwise the ERC-20 contract
   amount: number;
   amountUsd: number;
-  from: string;
-  bridge: string; // resolved per network; the mainnet address on testnet burns the tokens
+  minCredited: number; // the least the trading account may be credited, in USDC
+  from: string; // our wallet on the origin chain
+  hlAccount: string; // the Hyperliquid account credited: an EVM address we hold the key for
+  counterparty: string; // must be on the policy allowlist
 };
 
 export type LpAddDraft = {
@@ -570,6 +583,10 @@ export type Signer = {
 export type AppConfig = {
   mode: Mode;
   network: Network; // selects RPCs, the token registry and every contract address
+  // The Hyperliquid network the trading half talks to. Follows `network` unless set. Every
+  // trading consumer reads THIS and never `network`, so the account the runner trades and the
+  // account the panel shows cannot be different ones. See the note in config.ts.
+  tradingNetwork: Network;
   approvalGate: boolean; // honoured on testnet only; see gateRequired() in policy/gate.ts
   port: number;
   addresses: { evm: string[]; solana: string[]; near: string[] };
@@ -605,7 +622,10 @@ export type SwapParams = {
   minAmountOut: number; // slippage floor, in toSymbol units
 };
 
-export type HlDepositParams = { amount: number }; // chain, token and bridge come from the network table
+// The origin chain is a choice now, because 1Click reaches all of them; it defaults to arb,
+// which is where the bespoke bridge used to require the money to already be. The credited
+// account, the loss floor and the counterparty stay resolved by the app.
+export type HlDepositParams = { amount: number; chain?: ChainId; symbol?: string };
 
 // The credited account, the loss floor and the counterparty are all resolved by the app.
 // symbol defaults to the origin chain's gas asset, which is what "deposit $10 of ETH" means.

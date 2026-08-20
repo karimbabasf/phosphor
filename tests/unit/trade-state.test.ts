@@ -62,6 +62,11 @@ function snapshot(over: Partial<AccountSnapshot> = {}): AccountSnapshot {
     // not is its own test, because it is the one that used to render a funded account as empty.
     accountKnown: true,
     unified: false,
+    // The two raw books, unreinterpreted. On this plain perp fixture the perp value is the
+    // equity and there is no spot side at all, which is what a funded perps account looks like.
+    perpValueUsd: 1000,
+    spotUsdcUsd: null,
+    spotUsdcHoldUsd: null,
     positions: [position()],
     ...over,
   };
@@ -198,16 +203,19 @@ function build(p: {
   mandates?: MandateStatus[];
   atr?: number | null;
   symbol?: string;
+  meta?: Map<string, AssetMeta>;
 }) {
   const view = createTradeView(p.symbol === undefined ? 'BTC' : p.symbol, () => NOW).state();
   return buildTradePayload({
     view,
     feed: feed(p),
     mandates: p.mandates === undefined ? [] : p.mandates,
-    meta: meta(),
+    meta: p.meta === undefined ? meta() : p.meta,
     atrFor: () => (p.atr === undefined ? 15 : p.atr),
     products: ['BTC', 'ETH', 'SOL'],
     nowMs: NOW,
+    network: 'testnet',
+    address: '0x1111111111111111111111111111111111111111',
   });
 }
 
@@ -368,12 +376,59 @@ test('a cross position with no liquidation price reports no distance in any of t
   assert.equal(pos.liqDistanceUsd, null);
   assert.equal(pos.liqDistanceAtr, null);
   assert.equal(pos.liqPx, null);
+  assert.equal(pos.liqReachable, null, 'no price published is unknown, not "cannot be liquidated"');
+});
+
+test('a wall more than a whole mark away cannot be reached, so it is not a distance', () => {
+  // Live testnet, and the numbers are the venue's own: 0.01 SOL sold at 74.914 in a unified
+  // account whose spot USDC backs the perp side, so Hyperliquid published liquidationPx
+  // 84636.7119047619 against a mark of 87.738. Nothing here is corrupt. 887 dollars of collateral
+  // behind 88 cents of notional really does put the wall 963 times the mark away.
+  //
+  // Rendered as a price and a percent it read as a broken panel: liquidation 84636, 96365% away.
+  // A long in the same state has a natural tell, because its wall comes out negative and no one
+  // mistakes that for a price. A short's runs off to positive infinity through numbers that all
+  // look like prices, and that asymmetry is the whole bug.
+  const p = build({
+    markets: { BTC: ctx({ markPx: 87.738 }) },
+    account: snapshot({
+      positions: [
+        position({
+          szi: -0.01,
+          entryPx: 74.914,
+          positionValueUsd: 0.87738,
+          unrealisedUsd: -0.12824,
+          marginUsedUsd: 0.087738,
+          liqPx: 84636.7119047619,
+        }),
+      ],
+    }),
+  });
+  const [pos] = p.positions;
+  assert.equal(pos.liqReachable, false);
+  assert.equal(pos.liqDistancePct, null, '96365 percent is arithmetic, not a distance to act on');
+  assert.equal(pos.liqDistanceUsd, null);
+  assert.equal(pos.liqDistanceAtr, null);
+  // The venue's own number is a fact about the account and survives untouched. Deleting it would
+  // leave the panel unable to tell "over collateralised" from "the venue published nothing".
+  close(pos.liqPx, 84636.7119047619, 'liqPx is still whatever the venue said');
+});
+
+test('a long whose wall sits at or below zero cannot be reached either', () => {
+  // The mirror of the short above, and the case Hyperliquid states by publishing a negative
+  // price. The rule has to catch both sides from one test or it is really two rules.
+  const p = build({ account: snapshot({ positions: [position({ liqPx: -2116.4 })] }) });
+  const [pos] = p.positions;
+  assert.equal(pos.liqReachable, false);
+  assert.equal(pos.liqDistancePct, null);
 });
 
 test('the liquidation distance is reported in percent, dollars and ATR together', () => {
   const p = build({ atr: 15 });
   const [pos] = p.positions;
-  // Mark 110, liquidation 80: a 30 point gap on 2 coins.
+  // Mark 110, liquidation 80: a 30 point gap on 2 coins. A 27 percent move is the ordinary case
+  // and the unreachable rule must not sweep it up.
+  assert.equal(pos.liqReachable, true);
   close(pos.liqDistancePct, (30 / 110) * 100, 'liqDistancePct');
   close(pos.liqDistanceUsd, 60, 'liqDistanceUsd is the loss from HERE, anchored on mark');
   close(pos.liqDistanceAtr, 2, 'liqDistanceAtr');
@@ -583,8 +638,45 @@ test('the receipt previews the position, the margin, the free collateral and the
   close(projected.maxPositionUsd, 5000, 'maxPositionUsd');
   close(projected.marginRequiredUsd, 1000, 'marginRequiredUsd');
   close(projected.freeAfterUsd, 1000, 'freeAfterUsd');
-  // Maintenance is half the initial margin at 5x, so the move that takes it is one tenth.
-  close(projected.liqPxAtMax, 99, 'liqPxAtMax on a long, from a mark of 110');
+  // BTC's maximum leverage is 40, so maintenance is notional / 80. $5000 at a mark of 110 is
+  // 45.4545 coins, and in cross the whole $2000 stands behind them, so the margin available the
+  // moment it opens is 2000 - 5000/80 = 1937.50. Hyperliquid's formula then puts the wall at
+  //   110 - 1937.50 / 45.4545 / (1 - 1/80) = 110 - 42.625 / 0.9875 = 66.8354
+  // The $1000 this envelope does NOT post is doing work here: it is cross collateral, and a
+  // receipt that ignores it draws the wall closer than the account would actually let it come.
+  close(projected.liqPxAtMax, 66.83544303797468, 'liqPxAtMax on a long, from a mark of 110');
+});
+
+test('the receipt takes maintenance from the ASSET maximum leverage, not the mandate leverage', () => {
+  // The two are different numbers and only coincide when a mandate is written at the asset's own
+  // cap. The move to liquidation is 1/L - 1/(2M): L is the leverage the position opens at, M is
+  // the maximum leverage the asset allows. Here L is 5 and M is 40, so the move is
+  // 0.2 - 0.0125 = 18.75 percent, not the 1/(2L) = 10 percent that reading L for M produces.
+  //
+  // $200 free at 5x buys $1000, below the $5000 envelope, so the whole account is posted and the
+  // adverse move is the account's own. size 9.0909 coins, margin available 200 - 1000/80 = 187.50,
+  //   110 - 187.50 / 9.0909 / 0.9875 = 89.1139
+  // which is a 18.99 percent move. The extra quarter point over 18.75 is maintenance being
+  // charged on the smaller notional the position has left at the wall, which the closed form
+  // drops and the venue does not.
+  const p = build({ account: snapshot({ positions: [], freeUsd: 200 }), mandates: [armed()] });
+  const projected = p.mandates[0].projected;
+  assert.ok(projected !== null);
+  close(projected.liqPxAtMax, 89.11392405063291, 'liqPxAtMax with the whole account posted');
+});
+
+test('the receipt has no wall when the venue never said what the asset allows', () => {
+  // maxLeverage comes from the venue's meta. Without it there is no maintenance requirement to
+  // reason from, and a guessed wall on an approval screen is worse than a blank one.
+  const p = build({
+    account: snapshot({ positions: [], freeUsd: 2000 }),
+    mandates: [armed()],
+    meta: new Map(),
+  });
+  const projected = p.mandates[0].projected;
+  assert.ok(projected !== null);
+  assert.equal(projected.liqPxAtMax, null);
+  close(projected.maxPositionUsd, 5000, 'the size is still knowable without it');
 });
 
 test('the receipt is capped by the collateral, not only by the envelope', () => {

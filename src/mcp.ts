@@ -230,20 +230,42 @@ server.registerTool(
 );
 
 // The kinds this DOOR opens onto, which is deliberately narrower than the set the app can
-// execute. lp_add, lp_remove and hl_deposit are still implemented, still reachable by a human
-// and still tested; they are simply not tools an agent is handed, because none of them has
-// ever been run on a live chain and an unproven fund-moving rail is not something to discover
-// the edges of with real money.
+// execute. lp_add and lp_remove are still implemented, still reachable by a human and still
+// tested; they are simply not tools an agent is handed, because neither has ever been run on a
+// live chain and an unproven fund-moving rail is not something to discover the edges of with
+// real money.
 //
 // Absent rather than guarded, on purpose. A check can be wrong; a capability that was never
 // registered cannot be called at all. The same argument the trading surface already makes for
 // having no close-position tool.
+//
+// hl_deposit JOINED this list on 2026-08-20, and the reason is a property of the rail rather
+// than a change of mind about the rule above. It routes through NEAR Intents into HyperCore,
+// and 1Click refuses hypercore as an ORIGIN: a quote out of it is a 400. So the direction is
+// structural, not guarded. An agent holding this tool can put collateral INTO the trading
+// account and has no path, through this rail or any other on its surface, to take it out.
+// That is the same argument the API wallet's signing split makes (it can trade and cannot
+// withdraw), arriving from the other side.
+//
+// WHAT THE GATE ACTUALLY DOES, corrected on 2026-08-20 after a live run proved the earlier
+// sentence here wrong. This comment used to claim that gateRequired() is forced on for mainnet
+// so every deposit is a human click. It is not. gateRequired() is consulted only in the
+// needs_approval branch of proposals.ts land(). A verdict of `allow`, which is what the engine
+// returns below policy.outbound.humanClickAboveUsd ($100 by default), executes immediately with
+// decidedBy 'policy' and never reads the gate at all. A real 9.23 USDC deposit went through on
+// mainnet with nobody clicking, exactly as designed.
+//
+// So the true statement is: above the click threshold a human clicks, below it the policy is
+// the decision, on every network. That is a deliberate design and not a bug, but a false
+// reassurance in a comment beside a fund-moving tool is worse than no comment, because the next
+// person sizes the threshold believing there is a second wall behind it.
 type ProposeKind =
   | 'consolidate'
   | 'policy_change'
   | 'swap'
   | 'intents_deposit'
   | 'intents_withdraw'
+  | 'hl_deposit'
   | 'mandate_arm';
 
 function registerPropose(
@@ -773,13 +795,34 @@ registerPropose(
   },
 );
 
-// propose_lp_add, propose_lp_remove and propose_hl_deposit used to be registered here and are
-// deliberately gone. The rails still exist under src/rails/ and a human can still drive them;
-// what changed is that they are no longer tools an agent holds. None of the three has been run
-// on a live chain, and the wallet read after an lp_add is known to serve pre-trade balances
-// while claiming nothing is stale, so sizing a second move off the first is already wrong on
-// that path. Removing them shrinks what an agent can get wrong with real money to the set that
-// has actually been proven end to end.
+registerPropose(
+  'propose_hl_deposit',
+  'hl_deposit',
+  `Proposes funding the Hyperliquid perps account, so a mandate has collateral to trade. This is the step BEFORE propose_mandate: arming a bot against an account holding nothing gets a mandate that can never fire.
+
+The route is NEAR Intents into HyperCore, so the money can start on any chain this app signs for and does not have to be USDC on Arbitrum first. chain says where the funds LEAVE FROM and defaults to arb. Which Hyperliquid account gets credited is resolved by the app from its own key and cannot be named here.
+
+Two numbers decide whether this is worth doing, and both are in the approval summary rather than here, because they are live: the routing fee is close to FLAT, about \$0.32 plus 10 bp, so it is about 0.7 percent on \$50 and about 0.13 percent on \$1000. Below \$5 it is refused, and above 5 percent of the deposit it is refused. If a human asks to fund a small amount, say what the percentage would be before you propose it.
+
+THE DIRECTION IS ONE WAY AND THAT IS THE POINT: 1Click cannot quote out of HyperCore, so this rail puts collateral in and no tool on your surface takes it out. Getting money off the venue is a signed withdraw3 a human runs at a terminal. ${MAINNET_ONLY} ${CANNOT_APPROVE}`,
+  {
+    chain: SELF_CUSTODY_CHAIN.optional(),
+    symbol: z.string().optional(),
+    amount: z.number(),
+  },
+);
+
+// propose_lp_add and propose_lp_remove used to be registered here and are deliberately gone.
+// The rails still exist under src/rails/ and a human can still drive them; what changed is that
+// they are no longer tools an agent holds. Neither has been run on a live chain, and the wallet
+// read after an lp_add is known to serve pre-trade balances while claiming nothing is stale, so
+// sizing a second move off the first is already wrong on that path. Removing them shrinks what
+// an agent can get wrong with real money to the set that has actually been proven end to end.
+//
+// propose_hl_deposit was on that list until 2026-08-20 and is now registered just above. It
+// earned its way back not by being tested more but by changing shape: the bespoke Arbitrum
+// bridge became a NEAR Intents route, and that route is structurally one-way. See the note on
+// ProposeKind.
 
 // Neither a read nor a propose: it mutates, but it moves no money and gets no policy
 // verdict. What it does change is what a HUMAN sees before they decide, which is why

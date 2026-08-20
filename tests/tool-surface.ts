@@ -35,7 +35,19 @@ export const EXPECTED_TOOLS: readonly string[] = [
   // rail is not something to find the edges of with real money. The rails still exist under
   // src/rails/ and a human can still drive them. If one reappears here, ask whether it has
   // been proven since.
+  //
+  // propose_hl_deposit reappeared on 2026-08-20, and the question above was asked. The answer
+  // is not "it has been tested more". It is that the rail changed shape: it was a bespoke
+  // transfer to Hyperliquid's Bridge2 contract and is now a NEAR Intents route into HyperCore,
+  // and 1Click cannot quote OUT of hypercore. The direction is a property of the venue rather
+  // than a check of ours, so an agent holding this can add collateral and has no path on this
+  // surface to remove any. lp_add and lp_remove are unchanged and stay off.
   'propose_swap',
+  // Funds the Hyperliquid perps account, from any chain this app signs for. One way in by
+  // construction; getting money off the venue is a signed withdraw3 a human runs at a terminal
+  // and is deliberately not a tool. Its chain argument is EVM only for the same reason
+  // propose_intents_withdraw's is.
+  'propose_hl_deposit',
   // Funds this app's own balance inside intents.near. Its far side is an account id rather
   // than a chain address, and the credited account is derived from our own key, so there is no
   // argument here that can name it.

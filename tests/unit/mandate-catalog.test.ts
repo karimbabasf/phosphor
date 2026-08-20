@@ -72,7 +72,7 @@ test('the example envelopes never exceed the size the program asks for', () => {
 });
 
 test('the catalogue names every condition and action the grammar has, so nothing is undiscoverable', () => {
-  const catalog = buildMandateCatalog();
+  const catalog = buildMandateCatalog('testnet');
   const documentedConditions = new Set(catalog.conditions.map((c) => c.op));
   const documentedActions = new Set(catalog.actions.map((a) => a.do));
 

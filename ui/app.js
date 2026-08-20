@@ -1531,13 +1531,20 @@ function wireBasic() {
      transcript and no error, which is the quietest way this chat can be broken. */
   if (window.PhosphorChat) {
     PhosphorChat.mount($('basic-chat'), {
-      /* The same four facts the pro deck's intro prints, in this screen's voice. Both are
-         true of the same process; only the words differ. */
-      intro: [
-        'Starting your assistant.',
-        'It runs on this computer, inside this window.',
-        'It can only use Phosphor: no files, no web, no terminal.',
-      ],
+      /* The same three facts the pro deck's intro prints, in this screen's voice. Both are
+         true of the same process; only the words differ, and this screen is written for
+         somebody who does not know what a shell is and should not have to. "on its own" is
+         load-bearing rather than soft: the assistant cannot browse, and it can ask Phosphor
+         to read the news, which is a thing this app tells you it is doing when it happens. */
+      intro: {
+        mark: 'Phosphor',
+        title: 'Starting your assistant',
+        facts: [
+          { label: 'Where', value: 'On this computer, inside this window' },
+          { label: 'It can use', value: 'Phosphor and nothing else, checked when it connects' },
+          { label: 'It cannot', value: 'Open your files, browse the web on its own, or use the terminal' },
+        ],
+      },
       /* A dissolve, not the pro deck's fall of terminal characters. Same beat, and the one
          thing this screen may never look like is a terminal. */
       veil: 'fade',
@@ -1888,17 +1895,27 @@ function wireDeckBar() {
 /* The agent panel, in the box the log used to hold. driver-chat.js owns everything inside
    it, including the rule that it never renders an approval.
 
-   Every line of the intro is a true statement about the agent being started, checked against
+   Every fact in the intro is a true statement about the agent being started, checked against
    operator/driver.settings.json and against the runtime check in src/driver.ts: the deny list
    there takes Bash, Read, Write, WebFetch and WebSearch away, and assertSurface kills the
    session if the tool list the child announces holds anything outside mcp__phosphor__. It is
-   a boot print, not a loading animation, so what it says has to keep being true. */
-var AGENT_INTRO = [
-  'PHOSPHOR // AGENT LINK',
-  'spawning a local agent under this window',
-  'tool surface: phosphor only, checked on connect',
-  'no shell, no files, no web of its own',
-];
+   a boot print, not a loading animation, so what it says has to keep being true.
+
+   THE SHAPE CHANGED AND THE CONTENT DID NOT. The three facts below are the three lines this
+   used to print, as label and value: driver-chat.js draws them as one card whose values sit
+   beside their labels on a wide panel and under them on a narrow one, which is the only way a
+   print like this survives a column a person can drag. "web of its own" is precise and is not
+   padding: the agent holds no WebFetch and no WebSearch, and phosphor's own research tool,
+   which does leave this machine, announces itself as "reading the news" when it runs. */
+var AGENT_INTRO = {
+  mark: 'PHOSPHOR',
+  title: 'AGENT LINK',
+  facts: [
+    { label: 'proc', value: 'a local agent, spawned under this window' },
+    { label: 'tools', value: 'phosphor only, checked on connect' },
+    { label: 'denied', value: 'shell, files, web of its own' },
+  ],
+};
 
 function mountChat() {
   if (!window.PhosphorChat) return;

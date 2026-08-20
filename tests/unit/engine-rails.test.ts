@@ -71,10 +71,13 @@ function hlDeposit(over: Partial<HlDepositDraft> = {}): HlDepositDraft {
     kind: 'hl_deposit',
     chain: 'arb',
     symbol: 'USDC',
+    tokenId: 'USDC',
     amount: 25,
     amountUsd: 25,
+    minCredited: 24.7,
     from: SELF_EVM,
-    bridge: VENUE,
+    hlAccount: SELF_EVM,
+    counterparty: VENUE,
     ...over,
   };
 }
@@ -132,7 +135,7 @@ test('every rail kind is evaluated, not refused as nothing_to_move', () => {
 test('a rail pointed at an unlisted venue is refused', () => {
   const cases = [
     swap({ counterparty: UNKNOWN_VENUE }),
-    hlDeposit({ bridge: UNKNOWN_VENUE }),
+    hlDeposit({ counterparty: UNKNOWN_VENUE }),
     lpAdd({ counterparty: UNKNOWN_VENUE }),
     lpRemove({ counterparty: UNKNOWN_VENUE }),
   ];

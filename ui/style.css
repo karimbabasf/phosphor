@@ -2,10 +2,12 @@
    One hue: phosphor green on near-black. Hierarchy is brightness and opacity only.
    Red is reserved for the safety gate: pending approvals, refusals, breached
    shares, and the gate-disabled banner.
-   No radius, no shadow, no gradient. Animation is rationed to five things and each one is
+   No radius, no shadow, no gradient. Animation is rationed to seven things and each one is
    listed here: the cursor, the block wave that stands in for whatever has not arrived yet,
-   the press on a button, the overlay opening, and the globe that turns in the agent panel
-   while no agent is running. Nothing else moves.
+   the press on a button, the overlay opening, the globe that turns in the agent panel while
+   no agent is running, the same globe as a small badge in the corner of that panel while an
+   agent IS running, and the agent's boot card printing itself a fact at a time. Nothing else
+   moves.
    Every one of them drops its transform under prefers-reduced-motion, and the globe holds
    one still frame: ui/agent-globe.js reads the query itself, because it is a canvas and no
    stylesheet can reach inside one. The character fall is the same split and is stated in
@@ -29,6 +31,13 @@
   --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
   --fs: 13px;
   --lh: 1.35;
+
+  /* The one curve. CSS's own ease-out is weak enough that a 200ms move reads as a 300ms one,
+     and the presses and fades in this file are short enough to have got away with it. The boot
+     card and the link light are not: they are the two things on this deck a person watches
+     while waiting. Same value as --ease-out in ui/basic.css, so the two screens move alike
+     even though they look nothing alike. */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 * {
@@ -1075,6 +1084,7 @@ body.splitting-y, body.splitting-y * { cursor: row-resize; }
    their own below, and a display in a rule beats the browser's own [hidden] every time. */
 .deck .chat-globe[hidden],
 .deck .chat-jump[hidden],
+.deck .chat-badge[hidden],
 .deck .chat-bar[hidden],
 .deck .chat-confirm[hidden],
 .deck .chat-form[hidden],
@@ -1227,11 +1237,131 @@ body.splitting-y, body.splitting-y * { cursor: row-resize; }
   color: var(--green-hi);
 }
 
-/* The intro. Dimmer than the conversation because it is the app talking about itself, and
-   every line of it is true rather than decorative: see the list in driver-chat.js. */
+/* The intro, in its fallback shape: plain rows, which is what driver-chat.js prints when it
+   is handed an array of strings instead of a card. Dimmer than the conversation because it is
+   the app talking about itself, and every line of it is true rather than decorative. */
 .deck .chat-boot .chat-text {
   color: var(--green-dim);
   letter-spacing: 0.04em;
+}
+
+/* ---- booting: the boot card ----
+
+   ONE OBJECT, NOT FOUR SENTENCES. The intro used to print as four rows, which in a tall narrow
+   column is four lonely lines floating over the box you type in. It is a card now, and the
+   card is the app introducing the process it just started: a header, a bar that fills as the
+   link is made, and the facts as a definition list.
+
+   IT HOLDS AT ANY WIDTH, AND NOT BY MEASURING ONE. ui/split.js lets a person drag this column
+   from 240 pixels to half the window without stopping, so there is no breakpoint to design
+   for and a card that changed shape at one would snap mid-drag. Two properties do the whole
+   job instead: the header's rule is the flexible item, and each fact is a flex row that wraps,
+   so a value sits beside its label while there is room for it and drops under it when there is
+   not. Nothing here is a box-drawing character, for the same reason: a rectangle made of
+   glyphs holds together at exactly one column count and breaks at every other one. */
+.deck .chat-intro {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 4px 0 2px;
+  padding: 6px 1ch 7px;
+  border: 1px solid var(--green-ghost);
+  background: var(--green-veil);
+  animation: deck-chat-in 200ms var(--ease-out);
+}
+
+.deck .chat-intro-head {
+  display: flex;
+  align-items: center;
+  gap: 1ch;
+}
+
+.deck .chat-intro-mark {
+  flex: none;
+  color: var(--green-hi);
+  letter-spacing: 0.22em;
+}
+
+/* The elastic piece, and the reason the header needs no width of its own. It is also the first
+   thing to give: a header too narrow for all three shortens the rule to nothing before it
+   makes the title wrap, because a short rule still reads as a rule and half a wrapped title
+   does not read as anything. */
+.deck .chat-intro-rule {
+  flex: 1 1 2ch;
+  min-width: 0;
+  height: 0;
+  border-top: 1px solid var(--green-ghost);
+}
+
+.deck .chat-intro-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  text-align: right;
+  color: var(--green-dim);
+  letter-spacing: 0.12em;
+}
+
+/* The link being made, as one thin bar filling left to right. It is what turns a print into a
+   boot: four facts arriving is text, four facts arriving against a bar that is filling is a
+   connection being established. Clipped rather than sized, because a width is a layout
+   property and this animates while rows are landing under it. */
+.deck .chat-intro-track {
+  height: 2px;
+  background: var(--green-ghost);
+}
+
+.deck .chat-intro-fill {
+  display: block;
+  height: 100%;
+  background: var(--green);
+  transition: clip-path 300ms var(--ease-out);
+}
+
+.deck .chat-intro-facts {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* The wrap that is the whole responsive story, stated above. The value's basis is what decides
+   where it gives up and drops: below about twenty characters of room a value beside its label
+   is two words a line, which is worse than a line of its own. */
+.deck .chat-intro-fact {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 1ch;
+  opacity: 0;
+  transform: translateY(2px);
+  transition: opacity 220ms var(--ease-out), transform 220ms var(--ease-out);
+}
+
+.deck .chat-intro-fact[data-in] {
+  opacity: 1;
+  transform: none;
+}
+
+/* The same 6ch gutter the transcript's speaker column uses, so a value in the card starts on
+   the same column as the text in the rows under it. A minimum rather than a width: every label
+   here fits inside it, and a longer one added later takes the room it needs and pushes its own
+   value along rather than being cut off in the middle of a word.
+
+   LEFT, not right like the transcript's speaker column, and that is a width decision rather
+   than a taste one. A right-aligned label is aligned to a value that is beside it, and the
+   whole point of this row is that the value drops UNDER it on a narrow panel; there the label
+   would be left hanging in the middle of a line with nothing to be aligned to. */
+.deck .chat-intro-label {
+  flex: none;
+  min-width: 6ch;
+  color: var(--green-faint);
+}
+
+.deck .chat-intro-value {
+  flex: 1 1 20ch;
+  min-width: 0;
+  margin: 0;
+  color: var(--green-dim);
+  overflow-wrap: anywhere;
 }
 
 /* NOT red. Red on this app means the safety gate, or something being taken from the user,
@@ -1268,6 +1398,58 @@ body.splitting-y, body.splitting-y * { cursor: row-resize; }
 .deck .chat-jump:focus-visible { outline: 1px dotted var(--green); outline-offset: 1px; }
 .deck .chat-jump:active { transform: translateX(-50%) scale(0.97); }
 
+/* ---- the link light ----
+
+   Karim, 2026-08-20: "a warden globe that glows and is animated when working and dull when
+   stopped." It is the SAME globe the idle phase fills the panel with, at forty pixels: one
+   motif used twice, rather than a second picture that means nearly the same thing. How fast it
+   turns and how bright it burns is ui/driver-chat.js's to say; this file says where it sits.
+
+   IT IS NOT THE SEAT LIGHT. #agent-orb up in the status bar is a filled ball and it answers a
+   different question: whether anything at all holds the agent seat, including a terminal
+   outside this window. This is a wireframe, and it is inside the panel it speaks for. Never
+   the same shape, never in the same place.
+
+   IT GETS A STRIP, IT DOES NOT FLOAT OVER ONE. A badge sitting on top of a scrolling column
+   cuts a word in half every time the reader is anywhere but the bottom, and no amount of
+   ground painted behind it fixes that: the line is still under it. So the transcript starts
+   below the light instead, and the rule that does it carries the phase, because the cost is
+   only worth paying in the two phases the light is up. pointer-events are off as well, so
+   the glow that spills past the strip can never eat a click meant for the text. */
+.deck .chat-badge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 36px;
+  height: 36px;
+  pointer-events: none;
+}
+
+.deck .chat[data-phase='booting'] .chat-list,
+.deck .chat[data-phase='live'] .chat-list { margin-top: 36px; }
+
+.deck .chat-badge-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* The glow, as a wash under the wireframe rather than a filter on it: opacity is the only
+   thing that moves between states, which keeps it off the paint path while an answer is being
+   written and the rest of the panel is busy. */
+.deck .chat-badge::before {
+  content: '';
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--green-wash), transparent 68%);
+  opacity: 0;
+  transition: opacity 320ms var(--ease-out);
+}
+
+.deck .chat[data-driver-state='ready'] .chat-badge::before { opacity: 0.4; }
+.deck .chat[data-driver-state='thinking'] .chat-badge::before { opacity: 1; }
+
 /* ---- the bar ---- */
 
 /* The composer's bottom row. It sits inside the field's border, so it gets a rule above it
@@ -1275,6 +1457,13 @@ body.splitting-y, body.splitting-y * { cursor: row-resize; }
 .deck .chat-bar {
   flex: none;
   display: flex;
+  /* The agent column drags to 240px (ui/split.js sets that floor), where these three controls
+     want 231px of a 191px box: the state word had already shrunk to nothing and SEND was still
+     being cut to "SE". Nothing here may be renamed and no control may wrap its own label, so
+     the row is the thing that gives. Every line ends where SEND does; the left of a line is
+     held open by the auto margin on the halt below. */
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
   gap: 1ch;
   padding-top: 5px;
@@ -1322,9 +1511,11 @@ body.splitting-y, body.splitting-y * { cursor: row-resize; }
 
 .deck .chat-btn:hover { color: var(--green-hi); border-color: var(--green-dim); }
 .deck .chat-btn:focus-visible { outline: 1px dotted var(--green); outline-offset: 1px; }
-/* Pushed to the right-hand end of the row by the auto margin, so the whole width of the box
-   stands between the state word and the control that ends the conversation. */
-.deck .chat-stop { margin-left: auto; }
+/* The whole width of the box stands between the state word and the control that ends the
+   conversation. It is written as a margin AFTER the halt rather than before STOP AGENT so that
+   it survives a wrap: an auto margin belongs to its own line, so STOP AGENT and SEND still end
+   the line they land on, and the state word and the halt still hold the left of theirs. */
+.deck .chat-halt { margin-right: auto; }
 
 /* The cheap stop sits with the state word, and the auto margin above puts the whole width of
    the bar between it and STOP AGENT. Between turns it is disabled and fades to nothing rather
@@ -1333,16 +1524,21 @@ body.splitting-y, body.splitting-y * { cursor: row-resize; }
 .deck .chat-halt[disabled] { opacity: 0; }
 
 /* The question. It replaces the STOP button in place rather than opening anything, so the
-   answer is where the press that asked it was, and the whole bar never changes height. */
+   answer is where the press that asked it was. It wraps for the same reason the bar does:
+   this is the widest thing the composer ever holds. */
 .deck .chat-confirm {
-  margin-left: auto;
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 1ch;
   animation: deck-chat-in 160ms ease-out;
 }
 
-.deck .chat-confirm-q { color: var(--green-hi); }
+/* Forty-one characters of sentence has never shared a line with two buttons in a column this
+   narrow. It was wrapping its own text beside them and eating the state word to pay for it, so
+   it takes the line and the two answers take the one under it. That also settles what a wrap
+   does to a question: CANCEL can no longer be stranded on the line below YES, STOP. */
+.deck .chat-confirm-q { flex-basis: 100%; color: var(--green-hi); }
 /* Marked, because it ends a conversation that cannot be got back from this window. Red is
    the gate's colour and this is not the gate, so it is the border only and not the word. */
 .deck .chat-confirm-yes { border-color: var(--green-dim); }
@@ -1400,6 +1596,14 @@ body.splitting-y, body.splitting-y * { cursor: row-resize; }
   /* The jump button keeps its centring transform: it is a position, not a motion. Only the
      press is dropped. */
   .deck .chat-jump:active { transform: translateX(-50%); }
+  /* The boot card keeps its fades and loses its moves. A person who asked the system to stop
+     moving things did not ask to stop being told that a fact arrived, so the facts still come
+     up one at a time; they just no longer travel to get there, and the bar snaps to each new
+     length rather than sliding to it. The globe in the corner reads the same query itself and
+     holds one frame: no stylesheet can reach inside a canvas. */
+  .deck .chat-intro { animation: none; }
+  .deck .chat-intro-fact { transform: none; transition: opacity 220ms var(--ease-out); }
+  .deck .chat-intro-fill { transition: none; }
   .ovl-panel {
     transform: none;
     /* Kept rather than zeroed: overlay.js waits for this transition to end before it closes

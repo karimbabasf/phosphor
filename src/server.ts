@@ -1149,9 +1149,11 @@ export function createServer(deps: ServerDeps): PhosphorServer {
           clickThresholdUsd: policy?.outbound.humanClickAboveUsd ?? null,
           killSwitch: policy?.killSwitch ?? false,
           gateRequired: gateRequired(cfg),
-          // The runner refuses mainnet outright (src/runner/main.ts), so this is a fact about
-          // the code rather than a setting, and the greeting states it as one.
-          tradingNetwork: 'testnet',
+          // Read from the one setting every trading consumer reads, so the greeting cannot
+          // name a network the runner is not on. It stopped being a fact about the code on
+          // 2026-08-20, when mainnet trading was enabled and cfg.tradingNetwork became the
+          // single place that decides.
+          tradingNetwork: cfg.tradingNetwork,
           tradingAllowed: true,
           holder: holder?.client ?? null,
           emptyCount: wallet.emptyCount,
@@ -1166,7 +1168,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       return;
     }
     if (tool === 'mandate_catalog') {
-      sendJson(res, 200, buildMandateCatalog());
+      sendJson(res, 200, buildMandateCatalog(cfg.tradingNetwork));
       return;
     }
     if (tool === 'balances') {
@@ -1676,12 +1678,17 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         return;
       }
       if (kind === 'hl_deposit') {
+        // chain and symbol are optional and both default inside proposeHlDeposit: the money
+        // used to have to be USDC on Arbitrum, and now the origin is a choice, so omitting it
+        // keeps the old call shape working and naming it is the new capability.
+        const chain = params.chain === undefined ? undefined : chainField(params, 'chain', problems);
+        const symbol = params.symbol === undefined ? undefined : strField(params, 'symbol', problems);
         const amount = numField(params, 'amount', problems);
         if (problems.length > 0) {
           sendJson(res, 400, { error: problems.join('; ') });
           return;
         }
-        sendProposal(res, await proposals.proposeHlDeposit({ amount }));
+        sendProposal(res, await proposals.proposeHlDeposit({ chain, symbol, amount }));
         return;
       }
       if (kind === 'intents_deposit') {
