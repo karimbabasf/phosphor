@@ -41,6 +41,14 @@
 //      side. Rather than assume which one 1Click credits, this rail finishes by LOOKING, and
 //      moves the balance itself if it has to. See settleToPerp() at the bottom: the rail is
 //      not done when the money arrives, it is done when the money is spendable as margin.
+//
+// One consequence of point 3 worth stating plainly, because it is easy to miss: this rail
+// signs under TWO different schemes. The deposit is an ordinary ERC-20 transfer or NEP-141
+// ft_transfer, and the settle step is an EIP-712 usdClassTransfer, which is the same
+// user-signed family as withdraw3. Both use the key at keysPath, so this is not new authority,
+// but a reader should know that a module called "deposit" produces a user-signed action. The
+// parameters are the narrow part: toPerp is always true and the amount comes from a balance
+// this rail just observed, so the worst it can do is move our own money between our own books.
 
 import { getAddress, isAddress } from 'viem';
 import type { Address } from 'viem';
