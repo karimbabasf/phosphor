@@ -34,6 +34,11 @@ import path from 'node:path';
 // using the desktop app is not that developer.
 const MCP_PREFIX = 'mcp__phosphor__';
 
+// The largest single stdout line the parser will hold before giving up on the session. Generous
+// against a real event, which is a few KB at worst, and bounded against a child that never
+// writes a newline.
+const MAX_LINE = 4 * 1024 * 1024;
+
 export type DriverEvent =
   | { kind: 'status'; state: DriverState; detail?: string }
   | { kind: 'said'; text: string }
@@ -201,6 +206,24 @@ export function createDriver(opts: DriverOptions) {
         );
         return;
       }
+      /* A session whose MCP server did not attach is not a degraded session, it is a useless
+         one: the agent holds no tools at all, so it answers from memory about a wallet it
+         cannot read, and silence there looks exactly like a thoughtful agent.
+         The statuses are split rather than compared against 'connected', because this release
+         also reports 'pending' and 'connecting', and a server that is merely still attaching is
+         not a dead one. Killing on those would refuse sessions that were about to work. Nothing
+         is being risked by waiting: assertSurface above has already established that whatever
+         does attach cannot bring a built-in tool with it. */
+      const servers = Array.isArray(event.mcp_servers) ? (event.mcp_servers as Array<Record<string, unknown>>) : [];
+      const phosphor = servers.find((s) => s.name === 'phosphor');
+      const status = phosphor === undefined ? 'absent' : String(phosphor.status);
+      if (status === 'absent' || status === 'failed' || status === 'needs-auth' || status === 'disconnected') {
+        fail(
+          `driver: the agent started but cannot reach Phosphor's own tools (${status === 'absent' ? 'the server did not load' : status}). It could talk and read nothing, so the session is stopped.`,
+        );
+        return;
+      }
+      if (status !== 'connected') set('starting', `waiting for Phosphor's tools to attach (${status})`);
       sessionId = typeof event.session_id === 'string' ? event.session_id : sessionId;
       return;
     }
@@ -275,11 +298,21 @@ export function createDriver(opts: DriverOptions) {
     }) as ChildProcessWithoutNullStreams;
     armExitGuard();
 
+    // setEncoding('utf8') rather than decoding chunks by hand, because a multi-byte character
+    // split across a chunk boundary is otherwise corrupted, and the agent writes token names.
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk: string) => {
       buffer += chunk;
       const lines = buffer.split('\n');
       buffer = lines.pop() ?? '';
+      // A line is a JSON event and events are not this big. Without a cap, a child that emits
+      // an unterminated line grows this string until the app it is a feature of runs out of
+      // memory, and the app dies holding the keys. Refusing the session is the smaller failure.
+      if (buffer.length > MAX_LINE) {
+        buffer = '';
+        fail(`driver: the agent emitted a single line over ${Math.round(MAX_LINE / 1024)}KB, which is not an event this app knows how to read.`);
+        return;
+      }
       for (const line of lines) if (line.trim()) onLine(line);
     });
     child.stderr.setEncoding('utf8');
