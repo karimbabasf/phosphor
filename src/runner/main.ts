@@ -26,7 +26,7 @@ import type { Mandate, RunState } from '../strategy/envelope.ts';
 import { emptyMemory, evaluate } from '../strategy/evaluate.ts';
 import type { MarketState, RuleMemory } from '../strategy/evaluate.ts';
 import type { Action, Program, Ref } from '../strategy/grammar.ts';
-import { createExchange, aggressiveLimitPrice, newCloid } from '../hl/exchange.ts';
+import { createExchange, aggressiveLimitPrice, newCloid, orderErrors } from '../hl/exchange.ts';
 import { roundToValidPrice } from '../hl/format.ts';
 import { distanceToLiquidationPct, liquidationPrice } from '../hl/liquidation.ts';
 
@@ -148,6 +148,92 @@ function requireExchange(): ReturnType<typeof createExchange> {
   return exchange;
 }
 
+// An entry and its exits, in one signed action.
+//
+// The accounting here is deliberately identical to the `open` branch of place(): the rate
+// count and the in-flight notional are incremented BEFORE the await, for the reason that
+// branch spells out at length (a window where a concurrent check reads a rate of zero once let
+// eight orders out against a four-per-minute cap and built a $238 position under a $60 one).
+//
+// What is different is the exit sizing. place() sizes a trigger from `b.positionUsd`, the
+// position on the book. Here the position does not exist yet, and reading it as flat is exactly
+// the defect this function exists to fix, so the exits are sized from the entry instead.
+async function placeBracket(a: Armed, symbol: string, open: Action, exits: Action[]): Promise<void> {
+  if (open.do !== 'open') return;
+  const b = book.get(symbol);
+  if (b === undefined) return;
+  const ex = requireExchange();
+
+  if (a.venueLeverage !== open.leverage) {
+    await ex.updateLeverage(b.assetId, true, open.leverage);
+    a.venueLeverage = open.leverage;
+  }
+
+  const isBuy = open.side === 'long';
+  const entry = open.entry;
+  const raw =
+    entry.type === 'market'
+      ? aggressiveLimitPrice(b.markPx, isBuy, entry.maxSlippageBps)
+      : (resolveRef(entry.ref) ?? b.markPx);
+  const px = roundToValidPrice(raw, b.szDecimals, true, isBuy);
+  const size = open.sizeUsd / px;
+
+  // Resolve the exits before anything is counted, so a reference that cannot be resolved costs
+  // nothing. An exit whose price is unreadable is dropped rather than guessed at.
+  const legs = [];
+  for (const exit of exits) {
+    if (exit.do !== 'set_stop' && exit.do !== 'set_target') continue;
+    const ref = resolveRef(exit.ref);
+    if (ref === null) {
+      send({ type: 'error', id: a.mandate.id, message: `${exit.do} skipped: its reference does not resolve to a price` });
+      continue;
+    }
+    legs.push({
+      assetId: b.assetId,
+      isBuy: !isBuy, // an exit is always the other side from the entry
+      size,
+      triggerPx: roundToValidPrice(ref, b.szDecimals, true, !isBuy),
+      isMarket: true,
+      tpsl: (exit.do === 'set_stop' ? 'sl' : 'tp') as 'sl' | 'tp',
+      szDecimals: b.szDecimals,
+      cloid: newCloid(),
+    });
+  }
+
+  if (legs.length === 0) {
+    // Nothing to attach. Fall back to the plain entry rather than sending a malformed group.
+    await place(a, symbol, open);
+    return;
+  }
+
+  const now = Date.now();
+  // One rate unit per order actually sent, entry plus exits: a trigger is an order on the
+  // venue's book and spends the same budget.
+  for (let n = 0; n < legs.length + 1; n += 1) a.ordersInLastMin.push(now);
+  if (a.inFlightUsd === 0) a.inFlightSinceMs = now;
+  a.inFlightUsd += open.sizeUsd;
+  if (a.entryAtMs === null) a.entryAtMs = now;
+
+  try {
+    const res = await ex.bracket(
+      { assetId: b.assetId, isBuy, price: px, size, reduceOnly: false, tif: entry.type === 'market' ? 'Ioc' : entry.postOnly === true ? 'Alo' : 'Gtc', szDecimals: b.szDecimals, cloid: newCloid() },
+      legs,
+    );
+    // The venue answers HTTP 200 with status ok and buries a refusal per order. Nothing here
+    // may treat that as a fill: the reservation has to come back or the mandate carries size it
+    // never had, and the human has to be told, because an order that never reached the book is
+    // exactly as consequential as one that did and is invisible without this.
+    const refused = orderErrors(res);
+    if (refused.length > 0) {
+      a.inFlightUsd = Math.max(0, a.inFlightUsd - open.sizeUsd);
+      send({ type: 'error', id: a.mandate.id, message: `venue refused the bracket: ${refused.join('; ')}` });
+    }
+  } catch (err) {
+    a.inFlightUsd = Math.max(0, a.inFlightUsd - open.sizeUsd);
+    throw err;
+  }
+}
+
 async function place(a: Armed, symbol: string, action: Action): Promise<void> {
   const b = book.get(symbol);
   if (b === undefined) return;
@@ -193,7 +279,7 @@ async function place(a: Armed, symbol: string, action: Action): Promise<void> {
     if (a.entryAtMs === null) a.entryAtMs = now;
 
     try {
-      await ex.order([
+      const res = await ex.order([
         {
           assetId: b.assetId,
           isBuy,
@@ -205,6 +291,11 @@ async function place(a: Armed, symbol: string, action: Action): Promise<void> {
           cloid: newCloid(),
         },
       ]);
+      const refused = orderErrors(res);
+      if (refused.length > 0) {
+        a.inFlightUsd = Math.max(0, a.inFlightUsd - action.sizeUsd);
+        send({ type: 'error', id: a.mandate.id, message: `venue refused the ${action.do}: ${refused.join('; ')}` });
+      }
     } catch (err) {
       // A rejected order holds no size, so its reservation is given back. The rate count is
       // NOT given back: the venue was asked, and a rate limit exists to bound how often we ask.
@@ -244,14 +335,31 @@ async function place(a: Armed, symbol: string, action: Action): Promise<void> {
 
   if (action.do === 'set_stop' || action.do === 'set_target') {
     const ref = resolveRef(action.ref);
-    if (ref === null || b.positionSide === 'flat') return;
+    // Both of these used to return in silence, and the second one hid a live defect for a week:
+    // a stop asked for in the same rule as its entry saw a book that still read flat, returned,
+    // and left a real position unprotected with nothing anywhere saying so. Entries and their
+    // exits now go to the venue together (see placeBracket), so reaching here on a flat book
+    // means a stop was asked for with no position and no entry beside it, which is a program
+    // that does not do what its author thinks. Say so.
+    if (ref === null) {
+      send({ type: 'error', id: a.mandate.id, message: `${action.do} skipped: its reference does not resolve to a price` });
+      return;
+    }
+    if (b.positionSide === 'flat') {
+      send({
+        type: 'error',
+        id: a.mandate.id,
+        message: `${action.do} skipped: nothing is open on ${symbol} to attach it to. Put it in the same rule as the entry and it is sent with it.`,
+      });
+      return;
+    }
     // Counted like any other order, and counted before the await for the same reason. A trigger
     // is an order on the venue's book: it spends the account's rate budget and its open-order
     // allowance. Ten identical stops went out in ten seconds while the rate counter read zero.
     a.ordersInLastMin.push(Date.now());
     // A stop for a long triggers below and sells, so it rounds as a sell would.
     const px = roundToValidPrice(ref, b.szDecimals, true, b.positionSide === 'short');
-    await ex.trigger([
+    const res = await ex.trigger([
       {
         assetId: b.assetId,
         isBuy: b.positionSide === 'short',
@@ -263,6 +371,12 @@ async function place(a: Armed, symbol: string, action: Action): Promise<void> {
         cloid: newCloid(),
       },
     ]);
+    const refusedTrigger = orderErrors(res);
+    if (refusedTrigger.length > 0) {
+      // A stop the venue refused is the most dangerous silent failure in this file: the
+      // position is open and believes it is protected.
+      send({ type: 'error', id: a.mandate.id, message: `venue refused the ${action.do}: ${refusedTrigger.join('; ')}` });
+    }
     return;
   }
 }
@@ -449,7 +563,8 @@ async function tick(): Promise<void> {
       a.memory = out.memory;
       a.prevMarkPx = b.markPx;
 
-      for (const action of out.actions) {
+      for (let i = 0; i < out.actions.length; i += 1) {
+        const action = out.actions[i];
         if (action.do === 'notify') {
           send({ type: 'error', id, message: action.text });
           continue;
@@ -467,6 +582,45 @@ async function tick(): Promise<void> {
             break;
           }
           continue;
+        }
+
+        // AN OPEN AND THE STOPS THAT FOLLOW IT GO TO THE VENUE TOGETHER.
+        //
+        // This is a fix for a defect that ran on mainnet with real money on 2026-08-20, and
+        // the failure was silent, which is why it survived. `open` and `set_stop` sit in one
+        // rule's `then` and therefore execute in ONE tick. The set_stop branch of place()
+        // begins `if (ref === null || b.positionSide === 'flat') return`, and on that tick the
+        // entry has only just been sent, so the book still reads flat and the stop returns
+        // without placing anything and without saying so. The rule is `once: true`, so it
+        // never runs again. The position had no stop for its whole life.
+        //
+        // A program written exactly like worked example 0 in the strategy catalog produced
+        // that. It is the shape most mandates reduce to.
+        //
+        // Sending them as one grouped action removes the ordering problem rather than timing
+        // around it: the venue attaches the exits to the entry itself, so there is no moment
+        // where a position exists without its stop, and no dependence on how fresh the book is.
+        // The exits are sized from the ENTRY, because the position they protect does not exist
+        // yet and reading it is the bug being fixed.
+        if (action.do === 'open') {
+          const exits: Action[] = [];
+          while (i + 1 < out.actions.length) {
+            const next = out.actions[i + 1];
+            if (next.do !== 'set_stop' && next.do !== 'set_target') break;
+            // Every fused action still faces the envelope on its own. Grouping changes how the
+            // orders reach the venue, never what the mandate permits.
+            const exitRuling = checkEnvelope(next, a.mandate, runState(a, symbol));
+            if (!exitRuling.allow) {
+              send({ type: 'error', id, message: `refused ${next.do}: ${exitRuling.reason}` });
+              break;
+            }
+            exits.push(next);
+            i += 1;
+          }
+          if (exits.length > 0) {
+            await placeBracket(a, symbol, action, exits);
+            continue;
+          }
         }
 
         await place(a, symbol, action);

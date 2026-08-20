@@ -276,6 +276,38 @@ export function buildScheduleCancelAction(timeMs: number | null): unknown {
   return { type: 'scheduleCancel', time: timeMs };
 }
 
+// What the venue actually said about each order, which is NOT the HTTP status and NOT the
+// top-level `status` field.
+//
+// A rejected order comes back as HTTP 200 with `{"status":"ok"}` at the top and the refusal
+// buried per order: `response.data.statuses[i] = {"error":"Price too far from oracle asset=4"}`.
+// So a caller that checks only what it is handed sees success. The runner did exactly that and
+// discarded the body entirely, which is why an order that never reached the book looked
+// identical to one that filled, and why a mandate could arm, fire, place nothing, and report
+// nothing. Found on 2026-08-20 while proving the bracket.
+//
+// Returns one string per refused order, empty when every order was accepted.
+export function orderErrors(response: unknown): string[] {
+  const r = response as { status?: string; response?: { data?: { statuses?: unknown[] } } } | null;
+  if (r === null || typeof r !== 'object') return ['the venue returned no response body'];
+
+  // A top-level failure carries its reason as a bare string where the object would be.
+  if (r.status !== undefined && r.status !== 'ok') {
+    const detail = typeof r.response === 'string' ? r.response : JSON.stringify(r.response ?? r.status);
+    return [detail];
+  }
+
+  const statuses = r.response?.data?.statuses;
+  if (!Array.isArray(statuses)) return [];
+  const errors: string[] = [];
+  for (const s of statuses) {
+    if (typeof s === 'object' && s !== null && typeof (s as { error?: unknown }).error === 'string') {
+      errors.push((s as { error: string }).error);
+    }
+  }
+  return errors;
+}
+
 export function buildCancelAction(cancels: { assetId: number; oid: number }[]): unknown {
   return { type: 'cancel', cancels: cancels.map((c) => ({ a: c.assetId, o: c.oid })) };
 }
