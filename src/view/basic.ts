@@ -269,6 +269,16 @@ function askHeadline(draft: WriteDraft, amountUsd: number): string {
   if (draft.kind === 'mandate_arm') {
     return `It wants standing permission to trade ${plainSymbol(draft.symbol)} on its own, holding at most ${money(draft.maxNotionalUsd)} at a time and stopping for good once it has lost ${money(draft.maxLossUsd)}.`;
   }
+  // No percentage in either sentence, on purpose. This screen exists for someone who owns
+  // the money and is not technical, and a rate is the part of a yield product most likely to
+  // be read as a promise. The dollars are the fact; the rate lives on the pro screen with
+  // its window and its caveat attached.
+  if (draft.kind === 'yield_deposit') {
+    return `It wants to put ${amountClause(amountUsd)}your ${plainSymbol(draft.symbol)} somewhere it earns interest.`;
+  }
+  if (draft.kind === 'yield_withdraw') {
+    return `It wants to bring your ${plainSymbol(draft.symbol)} back out of the place it has been earning interest.`;
+  }
   return `It wants to change one of your safety rules: "${draft.sentence}".`;
 }
 
@@ -290,6 +300,9 @@ function askAfterLine(draft: WriteDraft, totalUsd: number | null, amountUsd: num
     return 'The money comes back into your own wallet, where you can spend it directly again.';
   if (draft.kind === 'lp_add') return `${money(amountUsd)} moves into the pool. You can take it back out later.`;
   if (draft.kind === 'lp_remove') return 'Money comes back out of the pool to you.';
+  if (draft.kind === 'yield_deposit')
+    return `${money(amountUsd)} moves into a lending pool and starts earning. It is still yours and there is no lock: you can take it back whenever you want.`;
+  if (draft.kind === 'yield_withdraw') return 'The money comes back into your own wallet, with whatever it earned.';
   if (draft.kind === 'consolidate') return 'The money stays yours. It moves onto one chain.';
   // A transfer is the only kind that genuinely leaves, so it is the only one allowed to
   // state a balance afterwards, and only when the balance is known.

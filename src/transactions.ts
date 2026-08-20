@@ -139,6 +139,12 @@ const ACTIONS: Record<WriteDraft['kind'], TxEntry['action'] | null> = {
   consolidate: 'consolidate',
   lp_add: 'lp add',
   lp_remove: 'lp remove',
+  // Money leaving the wallet for a lending pool, and coming back from one. Deliberately the
+  // same two verbs the Intents rails use: from the reader's side of the screen, "my money
+  // went somewhere it is still mine" is one fact, and which contract holds it is a detail
+  // the row's counterparty already carries.
+  yield_deposit: 'deposit',
+  yield_withdraw: 'withdraw',
   // Not a transaction. It moves no money and it is already a line in the log.
   policy_change: null,
   // Arming grants standing authority; it moves nothing itself. What the armed bot then does

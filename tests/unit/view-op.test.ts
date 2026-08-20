@@ -125,6 +125,8 @@ async function boot(opts: { view?: ViewMode; proposals?: Proposal[] } = {}): Pro
       proposeMandate: async () => pendingProposal(),
       proposeLpAdd: async () => pendingProposal(),
       proposeLpRemove: async () => pendingProposal(),
+      proposeYieldDeposit: async () => pendingProposal(),
+      proposeYieldWithdraw: async () => pendingProposal(),
       approve: async () => pendingProposal(),
       refuse: async () => pendingProposal(),
       get: (id: string) => list.find((p) => p.id === id),

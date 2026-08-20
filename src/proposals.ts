@@ -40,6 +40,10 @@ import type {
   SimulationResult,
   SwapDraft,
   SwapParams,
+  YieldDepositDraft,
+  YieldDepositParams,
+  YieldWithdrawDraft,
+  YieldWithdrawParams,
   TransferLeg,
   Verdict,
   WriteDraft,
@@ -59,6 +63,9 @@ import { VENUE as UNISWAP_VENUE } from './rails/uniswap.ts';
 import { chainsWithDeployment, deploymentFor, tokenFor } from './rails/uniswap-abi.ts';
 import { hlSpec } from './rails/hyperliquid-deposit.ts';
 import { ONECLICK_COUNTERPARTY } from './rails/oneclick.ts';
+import { YIELD_VENUE } from './rails/yield.ts';
+import { aaveAsset, aavePosition, marketFor } from './yield/aave.ts';
+import { toBaseUnits } from './yield/venue.ts';
 import { INTENTS_DEPOSIT_COUNTERPARTY, minCreditedFor } from './rails/intents-deposit.ts';
 import { INTENTS_NATIVE_COUNTERPARTY } from './rails/intents-native.ts';
 import {
@@ -1135,6 +1142,109 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     return problems.length > 0 ? refuseDraft('lp_remove', draft, problems) : proposeRail('lp_remove', draft);
   }
 
+  // Park a stablecoin where it earns. The default symbol is USDC because that is the only
+  // asset the verified Aave table carries, and defaulting rather than requiring keeps the
+  // call site honest: a caller who names a symbol we do not have gets the table's own error
+  // rather than a silent substitution.
+  async function proposeYieldDeposit(params: YieldDepositParams): Promise<Proposal> {
+    const snapshot = ledger.snapshot();
+    const problems: string[] = [];
+    const symbol = params.symbol ?? 'USDC';
+    const from = ourAddress(params.chain, snapshot, problems);
+
+    // Decimals come from the venue's verified table, never from the caller and never from
+    // the token contract at propose time. The same rule the LP rail keeps: a decimals value
+    // on the wire is a multiplier on an amount this app is about to sign for.
+    const asset = aaveAsset(cfg.network, params.chain, symbol);
+    if (asset === null) {
+      problems.push(
+        `Aave v3 has no verified ${symbol} market on ${params.chain} for ${cfg.network}. ` +
+          'Only chains in the verified table can be proposed.',
+      );
+    }
+    const counterparty = resolve(() => String(marketFor(cfg.network, params.chain).pool), problems, '');
+
+    if (!Number.isFinite(params.amount) || params.amount <= 0) {
+      problems.push(`Deposit amount must be a positive number, got ${params.amount}.`);
+    }
+
+    const decimals = asset?.decimals ?? 6;
+    const amountBase = resolve(() => toBaseUnits(params.amount, decimals).toString(), problems, '0');
+
+    const draft: YieldDepositDraft = {
+      kind: 'yield_deposit',
+      venue: YIELD_VENUE,
+      chain: params.chain,
+      symbol,
+      amount: params.amount,
+      amountBase,
+      decimals,
+      amountUsd: usdOf(symbol, params.amount, snapshot),
+      from,
+      counterparty,
+    };
+
+    return problems.length > 0 ? refuseDraft('yield_deposit', draft, problems) : proposeRail('yield_deposit', draft);
+  }
+
+  // Take it back out. Omitting the amount means the whole position, and that is the case the
+  // withdraw button in the window uses, because it is the only one that cannot leave dust: a
+  // rebasing balance read here is already stale by the time the transaction lands.
+  async function proposeYieldWithdraw(params: YieldWithdrawParams): Promise<Proposal> {
+    const snapshot = ledger.snapshot();
+    const problems: string[] = [];
+    const symbol = params.symbol ?? 'USDC';
+    const from = ourAddress(params.chain, snapshot, problems);
+
+    const asset = aaveAsset(cfg.network, params.chain, symbol);
+    if (asset === null) {
+      problems.push(`Aave v3 has no verified ${symbol} market on ${params.chain} for ${cfg.network}.`);
+    }
+    const counterparty = resolve(() => String(marketFor(cfg.network, params.chain).pool), problems, '');
+
+    const whole = params.amount === undefined;
+    if (!whole && (!Number.isFinite(params.amount) || (params.amount as number) <= 0)) {
+      problems.push(`Withdrawal amount must be a positive number, got ${params.amount}.`);
+    }
+
+    const decimals = asset?.decimals ?? 6;
+
+    // The position is read here so the draft carries a real dollar figure, which is what the
+    // policy engine budgets on and what the approval gate shows. A read failure is a problem
+    // rather than a zero: a withdrawal priced at zero would slip under every cap in the
+    // policy and be approved without anyone seeing a number.
+    let positionBase = 0n;
+    if (asset !== null && from !== '') {
+      try {
+        positionBase = (await aavePosition(cfg.network, params.chain, symbol, from)).balanceBase;
+      } catch (err) {
+        problems.push(`Could not read the Aave position on ${params.chain}: ${errText(err)}`);
+      }
+    }
+
+    const amount = whole ? Number(positionBase) / 10 ** decimals : (params.amount as number);
+    const amountBase = whole ? null : toBaseUnits(amount, decimals).toString();
+
+    if (problems.length === 0 && positionBase === 0n) {
+      problems.push(`There is no Aave v3 ${symbol} position on ${params.chain} to withdraw.`);
+    }
+
+    const draft: YieldWithdrawDraft = {
+      kind: 'yield_withdraw',
+      venue: YIELD_VENUE,
+      chain: params.chain,
+      symbol,
+      amount,
+      amountBase,
+      decimals,
+      amountUsd: usdOf(symbol, amount, snapshot),
+      from,
+      counterparty,
+    };
+
+    return problems.length > 0 ? refuseDraft('yield_withdraw', draft, problems) : proposeRail('yield_withdraw', draft);
+  }
+
   function requirePending(id: string, action: string): Proposal {
     const p = store.get(id);
     if (!p) {
@@ -1234,6 +1344,8 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     proposeMandate: (p) => serialise(() => proposeMandate(p)),
     proposeLpAdd: (p) => serialise(() => proposeLpAdd(p)),
     proposeLpRemove: (p) => serialise(() => proposeLpRemove(p)),
+    proposeYieldDeposit: (p) => serialise(() => proposeYieldDeposit(p)),
+    proposeYieldWithdraw: (p) => serialise(() => proposeYieldWithdraw(p)),
     // approve() executes, so it shares the queue: a human click landing next to an
     // auto-approval must not be able to double-spend the cap either.
     approve: (id: string) => serialise(() => approve(id)),

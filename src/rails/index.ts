@@ -23,12 +23,14 @@ import type { AppConfig, Network, Rail, SwapDraft, WriteDraft } from '../types.t
 import type { TokensFile } from '../intents.ts';
 import { uniswapRails } from './uniswap.ts';
 import { chainsWithDeployment, deploymentFor } from './uniswap-abi.ts';
+import { aaveCounterparties } from '../yield/aave.ts';
 import { hlDepositRail, hlSpec } from './hyperliquid-deposit.ts';
 import { ONECLICK_COUNTERPARTY, oneClickRail } from './oneclick.ts';
 import { INTENTS_NATIVE_COUNTERPARTY, intentsNativeRail } from './intents-native.ts';
 import { intentsDepositRail } from './intents-deposit.ts';
 import { intentsWithdrawRail } from './intents-withdraw.ts';
 import { HYPERLIQUID_PERPS_COUNTERPARTY, mandateRail } from './mandate.ts';
+import { yieldRails } from './yield.ts';
 import type { MandateRunner } from './mandate.ts';
 import { isRailDraft, isRailKind, RAIL_KINDS } from './kinds.ts';
 import type { RailDraft, RailKind } from './kinds.ts';
@@ -108,6 +110,8 @@ export function createRails(deps: RailDeps): RailRegistry {
     }) as Rail,
     lp_add: uniswap.lpAdd as Rail,
     lp_remove: uniswap.lpRemove as Rail,
+    yield_deposit: yieldRails(deps.cfg).deposit as Rail,
+    yield_withdraw: yieldRails(deps.cfg).withdraw as Rail,
     mandate_arm: mandateRail({ runner: deps.runner }) as Rail,
   };
 
@@ -137,6 +141,12 @@ export function venueAllowlist(network: Network): string[] {
   }
 
   out.add(hlSpec(network).bridge.toLowerCase());
+
+  // The Aave v3 pools, for yield_deposit and yield_withdraw. Same rule as the Uniswap rows
+  // above: the addresses come from the verified deployment table in src/yield/aave.ts and
+  // from nowhere else, so no agent input can reach this list. Empty on mainnet, where that
+  // table is deliberately empty and the rail refuses anyway.
+  for (const pool of aaveCounterparties(network)) out.add(pool);
 
   // 1Click mints a fresh deposit address per quote, so no address of its own can ever sit
   // on a static list; the venue string is the allowlist entry (see the comment on

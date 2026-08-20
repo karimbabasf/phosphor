@@ -584,6 +584,8 @@ test('the live registry holds every rail kind and nothing else', () => {
     'lp_remove',
     'mandate_arm',
     'swap',
+    'yield_deposit',
+    'yield_withdraw',
   ]);
   for (const kind of registry.kinds()) {
     const rail = registry.for({ kind } as WriteDraft);

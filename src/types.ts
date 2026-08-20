@@ -279,6 +279,48 @@ export type LpRemoveDraft = {
   counterparty: string; // position manager; must be on the policy allowlist
 };
 
+// Parking a stablecoin in a lending venue, and pulling it back out.
+//
+// Two kinds rather than one with a direction flag, matching every other pair in this union.
+// The policy engine, the approval gate and the audit log all key on kind, so a reader of the
+// log has to be able to tell money leaving the wallet from money coming back to it without
+// opening the draft.
+//
+// `amountBase` is the authoritative amount and it is a STRING of base units. `amount` beside
+// it is for display and for the USD pricing only. At 6 decimals a hundred dollars is
+// 100000000 and survives a JS number, but a helper that is only correct for the decimals we
+// happen to use today is a trap left for whoever adds an 18-decimal stable.
+//
+// Null `amountBase` on a withdraw means everything, including whatever interest arrived
+// between the quote and the signature. On a rebasing receipt the balance is already
+// different by the time the transaction lands, so a withdrawal of a number read one block
+// ago leaves dust behind every single time.
+export type YieldDepositDraft = {
+  kind: 'yield_deposit';
+  venue: string; // 'aave-v3'
+  chain: ChainId;
+  symbol: string; // 'USDC'
+  amount: number; // UI units, for display and pricing
+  amountBase: string; // base units, the number actually sent
+  decimals: number;
+  amountUsd: number;
+  from: string;
+  counterparty: string; // the lending pool; must be on the policy allowlist
+};
+
+export type YieldWithdrawDraft = {
+  kind: 'yield_withdraw';
+  venue: string;
+  chain: ChainId;
+  symbol: string;
+  amount: number;
+  amountBase: string | null; // null means the whole position
+  decimals: number;
+  amountUsd: number;
+  from: string;
+  counterparty: string;
+};
+
 // Arming a strategy. The odd one out among the drafts, and deliberately so: it moves no money
 // at the moment it is approved. What it does is grant STANDING authority to a program that will
 // move money later, at machine speed, with no human in the loop for each order.
@@ -316,6 +358,8 @@ export type WriteDraft =
   | IntentsWithdrawDraft
   | LpAddDraft
   | LpRemoveDraft
+  | YieldDepositDraft
+  | YieldWithdrawDraft
   | MandateDraft;
 
 // One rail per feature, each owning exactly one module under src/rails/. The dispatch
@@ -631,6 +675,16 @@ export type LpAddParams = {
 // value. An id we do not already hold is refused rather than resolved.
 export type LpRemoveParams = { positionId: string; liquidityPct: number };
 
+// Where the money goes is not here, and cannot be. The caller names a chain, a symbol and a
+// size; the venue, the pool address and the account credited all resolve from the verified
+// table in src/yield/aave.ts and from the key this app holds.
+export type YieldDepositParams = { chain: ChainId; symbol?: string; amount: number };
+
+// `amount` omitted means the whole position, including whatever interest landed while the
+// proposal was waiting for a click. On a rebasing receipt that gap is real, and a number the
+// caller computed a block ago leaves dust behind every time.
+export type YieldWithdrawParams = { chain: ChainId; symbol?: string; amount?: number };
+
 // No address, no recipient, no contract. The agent names a symbol, a size and a shape, and
 // everything about WHERE the money is resolves from the app's own config and the venue table.
 export type MandateParams = {
@@ -659,6 +713,8 @@ export type ProposalService = {
   proposeMandate(params: MandateParams): Promise<Proposal>;
   proposeLpAdd(params: LpAddParams): Promise<Proposal>;
   proposeLpRemove(params: LpRemoveParams): Promise<Proposal>;
+  proposeYieldDeposit(params: YieldDepositParams): Promise<Proposal>;
+  proposeYieldWithdraw(params: YieldWithdrawParams): Promise<Proposal>;
   approve(id: string): Promise<Proposal>; // human path only; executes on approval
   refuse(id: string): Promise<Proposal>;
   get(id: string): Proposal | undefined;
