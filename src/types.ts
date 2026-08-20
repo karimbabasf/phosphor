@@ -107,7 +107,7 @@ export type LpPosition = {
 export type WalletPlace = ChainId | 'intents';
 
 export type WalletRow = {
-  kind: 'token' | 'lp' | 'intents';
+  kind: 'token' | 'lp' | 'intents' | 'yield';
   chain: WalletPlace;
   symbol: string; // 'USDC', 'ETH', or 'USDC/WETH 0.05%' for a pool position
   tokenId: string;
@@ -120,6 +120,10 @@ export type WalletRow = {
   // Set on an intents row: the verifier's asset id and the account it credits, so a row
   // can be reconciled against `npm run intents-balance` without guessing.
   intents?: { accountId: string; assetId: string };
+  // Set on a yield row: the venue, its receipt token, and what this holding has made above
+  // the money that was put in. The wallet shows the VALUE like every other row; `earnedUsd`
+  // is here so the row can say how much of that value was not deposited.
+  yield?: { venue: string; receiptSymbol: string; receipt: string; principalUsd: number; earnedUsd: number };
 };
 
 export type WalletView = {

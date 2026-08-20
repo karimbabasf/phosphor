@@ -681,7 +681,25 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     const snapshot = ledger.snapshot();
     const composition = classify(snapshot, riskRows);
     const policy = getPolicy();
-    const wallet = buildWallet(snapshot, ledger.positions(), ledger.intents());
+    // The yield positions are handed in so the wallet TOTAL includes them. Supplying a token
+    // removes it from the balance the chain reader sees, so without this the money in a
+    // lending venue is invisible to the one number a person checks first.
+    const yieldView = deps.allocator?.view() ?? null;
+    const wallet = buildWallet(
+      snapshot,
+      ledger.positions(),
+      ledger.intents(),
+      (yieldView?.positions ?? []).map((p) => ({
+        chain: p.chain,
+        venue: p.venue,
+        symbol: p.symbol,
+        receipt: p.receipt,
+        receiptSymbol: p.receiptSymbol,
+        valueUsd: p.valueUsd,
+        principalUsd: p.principalUsd,
+        earnedUsd: p.earnedUsd,
+      })),
+    );
     const list = proposals.list();
     return {
       ledger: snapshot,
@@ -712,7 +730,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       // view means the last read failed and these are the previous good numbers; the panel
       // says so rather than drawing a zero, which for this feature would be the worst
       // available lie.
-      yield: deps.allocator?.view() ?? null,
+      yield: yieldView,
       view: getView(),
       // Computed in BOTH modes, deliberately. A view model that only exists in the mode
       // that renders it is a view model nothing exercises while the app sits in its

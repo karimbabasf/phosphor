@@ -888,6 +888,46 @@ function decide(route, id, buttons, errorNode) {
    empty. Hidden rather than emptied, because an empty bordered box that says "no pending
    approvals" for hours is what teaches a person to stop looking at the one surface on this
    screen they must never stop looking at. */
+/* The yield panel. Every number and every caveat comes from the server; this composes none
+   of them. See the header of ui/yield.js for why the order of that panel is the argument. */
+function renderYield(s) {
+  YIELD.render($('yield-panel'), s, {
+    explorerFor: function (hash) {
+      // The explorer prefix belongs to the chain, and the chain belongs to the network, so
+      // this reads the network the server reported rather than assuming one. A mainnet link
+      // under a testnet hash would send a reader looking for a transaction that is not there.
+      var testnet = !s || s.network !== 'mainnet';
+      return (testnet ? 'https://sepolia.arbiscan.io/tx/' : 'https://arbiscan.io/tx/') + hash;
+    }
+  });
+}
+
+/* One press, and it files a proposal rather than moving anything.
+   Above the click threshold the proposal lands in the gate strip at the top of this window
+   like every other one; below it the policy engine decides. The button is not a second path
+   to the money, it is the same path with a human at the front of it. */
+document.addEventListener('click', async function (ev) {
+  var btn = ev.target && ev.target.closest ? ev.target.closest('.y-withdraw') : null;
+  if (!btn) return;
+  var card = btn.closest('.y-card');
+  var errNode = card ? card.querySelector('.y-error') : null;
+  btn.disabled = true;
+  var label = btn.textContent;
+  btn.textContent = '[ ASKING... ]';
+  if (errNode) errNode.textContent = '';
+  try {
+    // No amount is sent. Omitting it means the whole position, which is the only withdrawal
+    // that cannot leave dust on a balance that grows every block.
+    var p = await postJson('/api/yield/withdraw', { chain: btn.dataset.chain, token: TOKEN });
+    btn.textContent = p && p.status === 'pending' ? '[ WAITING FOR YOUR CLICK ABOVE ]' : label;
+    await refreshState();
+  } catch (err) {
+    if (errNode) errNode.textContent = err.message || String(err);
+    btn.textContent = label;
+    btn.disabled = false;
+  }
+});
+
 function renderGate(s) {
   var pending = APPROVALS.render($('gate'), s, approvalDeps());
   var strip = $('gate-strip');
@@ -1745,6 +1785,7 @@ async function refreshState() {
     settled('state');
     // Wallet first: the status bar reports its total.
     renderWallet(STATE);
+    renderYield(STATE);
     renderStatus(STATE);
     renderPolicy(STATE);
     renderGateBanner(STATE);

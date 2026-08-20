@@ -21,8 +21,16 @@ export type VenueId = 'aave-v3';
 // rate is what the contract says and the compounded rate is what a depositor actually gets,
 // and quoting either one as "the APY" without saying which is how a number becomes a lie by
 // a tenth of a percent.
+// aprRay is a STRING and not a bigint, and the reason is not style.
+//
+// This type is carried in the view that /api/state serialises, and JSON.stringify throws on
+// a bigint rather than dropping it: "Do not know how to serialize a BigInt", which took out
+// the WHOLE state payload and not just this field. Every panel in the window went blank
+// because a lending rate was the wrong type. Keeping the raw value as a decimal string
+// preserves all 27 digits of it, costs nothing, and makes that failure impossible to
+// reintroduce. The two numbers below are what anything actually computes on.
 export type VenueRate = {
-  aprRay: bigint; // the raw annualised simple rate, RAY (1e27), exactly as the venue stores it
+  aprRay: string; // the raw annualised simple rate, RAY (1e27), exactly as the venue stores it
   apr: number; // aprRay as a fraction: 0.0427 for 4.27 percent
   apy: number; // the same rate compounded per second, which is what a depositor receives
 };
@@ -119,7 +127,7 @@ export function apyFromApr(apr: number): number {
 
 export function rateFromRay(rateRay: bigint): VenueRate {
   const apr = aprFromRay(rateRay);
-  return { aprRay: rateRay, apr, apy: apyFromApr(apr) };
+  return { aprRay: rateRay.toString(), apr, apy: apyFromApr(apr) };
 }
 
 // ---------- base units ----------
@@ -129,16 +137,43 @@ export function rateFromRay(rateRay: bigint): VenueRate {
 // digits are rounding noise. At 6 decimals it survives, but a helper that is only correct
 // for the decimals we happen to use today is a trap left for whoever adds DAI.
 
+// NOTE ON THE THIRD COPY. src/intents.ts and src/rails/uniswap.ts each already carry a
+// toBaseUnits, and this is a third. They are not folded together here because the other two
+// live in modules that pull in viem, ABIs and deployment tables, and the point of this file
+// is that the policy engine and the allocator can import it without any of that. The drift
+// risk is real and is answered by a test rather than by a comment: tests/unit/yield.test.ts
+// asserts this implementation agrees with the uniswap one across a table of amounts.
+
+// String(amount), NOT amount.toFixed(20).
+//
+// JavaScript prints the SHORTEST decimal that round-trips to the same double, so
+// String(56.292032) is '56.292032', which is what the person typed. toFixed(20) prints the
+// float's true expansion, '56.29203199999999895908', and truncating THAT to six places gives
+// 56.292031: one base unit short, every time, silently. Caught by a test rather than by a
+// user finding they could not withdraw the balance the screen showed them.
 export function decimalString(amount: number): string {
   if (!Number.isFinite(amount)) throw new Error(`amount is not finite: ${amount}`);
-  if (amount < 0) throw new Error(`amount is negative: ${amount}`);
-  // toFixed(20) rather than String(), because String(1e-7) is '1e-7' and parseUnits cannot
-  // read that. 20 is the most toFixed accepts and is past any token's decimals.
-  const s = amount.toFixed(20);
-  return s.replace(/0+$/, '').replace(/\.$/, '') || '0';
+  const s = String(amount);
+  if (!/e/i.test(s)) return s;
+  // Exponential notation, which the digit walk below cannot read. Expanded by hand because
+  // 1e-7 has to become 0.0000001 before it can be split on the decimal point.
+  const parts = s.split(/e/i);
+  const exp = Number(parts[1]);
+  const negative = parts[0].startsWith('-');
+  const bare = negative ? parts[0].slice(1) : parts[0];
+  const split = bare.split('.');
+  const digits = split[0] + (split[1] ?? '');
+  const point = split[0].length + exp;
+  let out: string;
+  if (point <= 0) out = `0.${'0'.repeat(-point)}${digits}`;
+  else if (point >= digits.length) out = digits + '0'.repeat(point - digits.length);
+  else out = `${digits.slice(0, point)}.${digits.slice(point)}`;
+  return negative ? `-${out}` : out;
 }
 
 export function toBaseUnits(amount: number, decimals: number): bigint {
+  if (!Number.isFinite(amount)) throw new Error(`amount is not finite: ${amount}`);
+  if (amount < 0) throw new Error(`amount is negative: ${amount}`);
   const s = decimalString(amount);
   const [whole, frac = ''] = s.split('.');
   const padded = (frac + '0'.repeat(decimals)).slice(0, decimals);

@@ -169,6 +169,20 @@
         <div class="frame frame-bottom"></div>
       </section>
 
+      <!-- YIELD. What the stablecoin is earning, and the way back out.
+           The order inside it is the argument: dollars first, percentage second and smaller,
+           the caveat under that, then the ledger every number can be checked against. It is
+           taken from 1inch Aqua, whose overview leads each row with earned fees and calls its
+           own rate "an observation, not a promise". See the header of ui/yield.js.
+           Filled by YIELD.render; this file holds no numbers. -->
+      <section class="panel panel-yield">
+        <div class="frame frame-top" data-title="YIELD"></div>
+        <div class="pbody">
+          <div id="yield-panel"></div>
+        </div>
+        <div class="frame frame-bottom"></div>
+      </section>
+
     </div>
 
 
@@ -390,6 +404,7 @@
      panels, and the sizes a person left them at. -->
 <script src="/split.js" defer></script>
 <script src="/driver-chat.js" defer></script>
+<script src="/yield.js" defer></script>
 <script src="/app.js" defer></script>
 </body>
 </html>
