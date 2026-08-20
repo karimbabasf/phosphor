@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Scoped to the splash window only. The control window is a remote loopback page and is deliberately absent from this list, so it has no IPC bridge and no command surface at all: everything it does, it does by talking to the Node backend over HTTP, under the same origin rules src/server.ts already enforces.",
+  "windows": ["splash"],
+  "permissions": ["core:default"]
+}

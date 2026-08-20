@@ -81,6 +81,35 @@ there." "Switch to trading." "Show me BTC on the 4 hour and mark the range." "Sh
 it loses that trend line, and cap me at $200." "Never let me hold more than 20% in anything that
 can freeze me."
 
+## Install it as a Mac app
+
+The same app, packaged so it opens from the Dock instead of a terminal. It needs nothing installed:
+the bundle carries its own Node runtime, so Node 24 is a requirement for the repo and not for the
+app.
+
+    npm run app:build
+
+That stages the payload, checks it boots on the bundled runtime, and writes
+`src-tauri/target/release/bundle/macos/Phosphor.app`. Drag it to Applications. It is unsigned, so
+the first launch needs a right-click and Open rather than a double-click.
+
+Installed, the app splits what the repo keeps in one place:
+
+| | Repo | Installed |
+|---|---|---|
+| code, `ui/`, `data/`, `skills/` | working copy | `Phosphor.app/Contents/Resources/phosphor/`, read-only |
+| `state/`, audit log, policy | `state/` | `~/Library/Application Support/com.karimbabasf.phosphor/state/` |
+| `config.local.json` | repo root | `~/Library/Application Support/com.karimbabasf.phosphor/` |
+| keys | `~/.phosphor/phosphor/keys.json` | the same file, unchanged |
+
+To connect an agent to the installed app, use Phosphor > Copy MCP Config in the menu bar. It puts
+a `claude mcp add-json` line on the clipboard with this installation's real paths already filled in.
+
+The app and `npm run app` share a default port, so starting the app while the repo copy is already
+running opens a window onto the copy that is running rather than starting a second one. That is
+deliberate: two backends over one state directory would race over the audit log and the policy
+file. To run both at once, give the installed app its own port in its `config.local.json`.
+
 ## The tool surface
 
 Thirty-six tools, in five families. Read tools execute directly and cannot move anything. Write

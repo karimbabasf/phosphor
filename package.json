@@ -15,7 +15,10 @@
     "hl-agent": "node scripts/hl-agent.ts",
     "test": "node --test tests/unit/*.test.ts tests/injection.test.ts",
     "e2e": "node scripts/e2e.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "bundle": "node scripts/bundle-payload.ts",
+    "app:build": "npm run bundle && tauri build",
+    "tauri": "tauri"
   },
   "engines": {
     "node": ">=24"
@@ -26,6 +29,7 @@
     "zod": "^3.25.0"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4",
     "@types/node": "^26.2.0",
     "typescript": "^5.9.0"
   }

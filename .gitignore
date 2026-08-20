@@ -15,3 +15,9 @@ state/
 .playwright-mcp/
 *-startup.png
 node_modules
+
+# Desktop bundle build products (a Node binary and a full node_modules; never committed)
+src-tauri/payload/
+src-tauri/binaries/
+src-tauri/target/
+src-tauri/gen/

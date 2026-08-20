@@ -1,0 +1,79 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>PHOSPHOR</title>
+<!--
+  The only page Tauri itself serves. It is on screen for the couple of seconds the Node
+  backend takes to bind its port, and it is replaced, not navigated: the real window is a
+  separate webview pointed at http://127.0.0.1, so the page that holds the approval surface
+  never shares an origin or a webview with anything Tauri controls.
+-->
+<style>
+  :root {
+    --bg: #0b0d0b;
+    --green: #33ff66;
+    --green-dim: rgba(51, 255, 102, 0.62);
+    --green-ghost: rgba(51, 255, 102, 0.22);
+  }
+  html, body {
+    height: 100%;
+    margin: 0;
+    background: var(--bg);
+    color: var(--green);
+    font: 13px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+    -webkit-user-select: none;
+    user-select: none;
+    overflow: hidden;
+  }
+  main {
+    height: 100%;
+    display: grid;
+    place-content: center;
+    justify-items: center;
+    gap: 22px;
+    text-align: center;
+  }
+  .mark {
+    width: 54px;
+    height: 54px;
+    border: 3px solid var(--green);
+    border-radius: 50%;
+    box-shadow: 0 0 18px var(--green-ghost), inset 0 0 12px var(--green-ghost);
+    animation: breathe 1.6s ease-in-out infinite;
+  }
+  h1 {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 400;
+    letter-spacing: 0.42em;
+    text-indent: 0.42em;
+  }
+  p {
+    margin: 0;
+    color: var(--green-dim);
+    letter-spacing: 0.08em;
+  }
+  /* Scanlines, the same motif the app uses, so the first frame already looks like Phosphor. */
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background: repeating-linear-gradient(
+      to bottom,
+      rgba(51, 255, 102, 0.05) 0 1px,
+      transparent 1px 3px
+    );
+  }
+  @keyframes breathe {
+    0%, 100% { opacity: 0.45; transform: scale(0.97); }
+    50%      { opacity: 1;    transform: scale(1); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .mark { animation: none; opacity: 1; }
+  }
+</style>
+<main>
+  <div class="mark"></div>
+  <h1>PHOSPHOR</h1>
+  <p>starting the control app</p>
+</main>
