@@ -252,11 +252,18 @@ export function createDriver(opts: DriverOptions) {
       systemPrompt: opts.systemPrompt,
     });
 
+    /* detached, so the child leads its own process group and kill() below can take the group
+       rather than one pid. It matters because the child immediately spawns a third process of
+       its own, the MCP proxy in src/mcp.ts, and killing only the agent would leave that proxy
+       running against a window that has gone. Detached does NOT mean it outlives the app: the
+       exit handlers registered below are what guarantee it does not. */
     child = spawn(bin, argv, {
       cwd: opts.repo,
       env: childEnv(opts.repo, opts.port),
       stdio: ['pipe', 'pipe', 'pipe'],
+      detached: true,
     }) as ChildProcessWithoutNullStreams;
+    armExitGuard();
 
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk: string) => {
@@ -285,15 +292,54 @@ export function createDriver(opts: DriverOptions) {
     set('thinking');
   }
 
+  // Signals go to the group, negated pid, so the agent and the MCP proxy it spawned both stop.
+  // A group that has already gone produces ESRCH, which is the outcome asked for and not an
+  // error worth surfacing.
+  function signalGroup(pid: number, signal: NodeJS.Signals): void {
+    try {
+      process.kill(-pid, signal);
+    } catch {
+      try {
+        process.kill(pid, signal);
+      } catch {
+        /* already gone */
+      }
+    }
+  }
+
   function kill(): void {
     if (!child) return;
     const dying = child;
+    const pid = dying.pid;
     child = null;
-    dying.stdin.end();
-    dying.kill('SIGTERM');
-    setTimeout(() => {
-      if (!dying.killed) dying.kill('SIGKILL');
-    }, 2000).unref();
+    try {
+      dying.stdin.end();
+    } catch {
+      /* the pipe can already be closed when the child died first */
+    }
+    if (pid === undefined) return;
+    signalGroup(pid, 'SIGTERM');
+    setTimeout(() => signalGroup(pid, 'SIGKILL'), 2000).unref();
+  }
+
+  // A driver that outlives the window would keep the seat, keep spending the user's
+  // subscription, and keep proposing into a state directory nobody is watching. These cover
+  // every exit the parent can observe; a SIGKILL of the app itself is the one case no process
+  // can handle, and the seat TTL in src/agents.ts is what closes that one.
+  let guarded = false;
+  function armExitGuard(): void {
+    if (guarded) return;
+    guarded = true;
+    process.once('exit', () => kill());
+    // Registering a signal listener replaces node's default action for that signal, so each one
+    // has to exit explicitly or the app stops responding to the signal that was supposed to end
+    // it. src/mcp.ts carries the same note for the same reason.
+    for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) {
+      process.once(signal, () => {
+        kill();
+        process.exit(0);
+      });
+    }
   }
 
   function stop(): void {

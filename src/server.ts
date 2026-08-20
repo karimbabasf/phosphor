@@ -2114,6 +2114,10 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     clearInterval(priceTimer);
     for (const client of sseClients) client.end();
     sseClients.clear();
+    /* The child dies with the server that started it. An orphaned driver would keep the seat,
+       keep spending the user's subscription, and keep proposing into a state directory whose
+       window is gone, and it is the app's job to clean up a process the app created. */
+    if (driver !== null) driver.stop();
   });
 
   // Structural guarantee for the "binds 127.0.0.1 only" constraint: a bare port
