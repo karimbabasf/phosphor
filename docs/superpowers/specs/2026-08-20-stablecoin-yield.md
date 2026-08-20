@@ -330,5 +330,36 @@ window and $46 only for the last minute.
 `=off` and `=no` all switched the money-moving loop ON. For a flag whose whole design is "off
 unless a human said otherwise", anything but an explicit yes has to mean no.
 
-Still to record here: the panel with a percentage on it. The window has to pass one hour before
-one is shown at all, which is the feature working rather than a gap in the evidence.
+**The percentage appeared at one hour, and it agrees with the pool.**
+
+    12:35:22  window 1 hour   earned $0.000271   REALIZED 4.2672% annualised
+    the reserve's own stated rate at that moment:  4.2687% APR
+
+Those two numbers were arrived at independently. One is the pool reporting what it pays; the
+other is this app dividing a balance it watched grow by a cost basis it derived from its own
+proposal store. They agree to three decimal places, which is the whole claim of the feature.
+
+Below one hour the panel showed "No rate yet: 47 minutes is too short a window to annualise
+honestly" for the entire preceding hour, which is the refusal working rather than a gap.
+
+**The button closed the position, clicked in the real window.** Driven through a real page
+holding the real per-boot session token, which is the same path a finger takes:
+
+    12:37:16  yield_withdraw 54246470, verdict allow
+              "withdraw all USDC from Aave v3. 56.292312 USDC arrived in the wallet on arb."
+
+    aArbSepUSDC balance after:  0
+    wallet USDC after:          56.292312
+    principal ever supplied:    56.292033
+    kept as interest:            0.000279
+
+**The whole sequence, which is the feature's actual story:**
+
+    11:35  deposit  +50.000000   by hand, through the proposal service
+    11:43  deposit   +6.292032   BY THE LOOP: it found the swap's leftover USDC idle
+    12:23  withdraw -10.000000   by hand, partial, to leave the window open
+    12:23  deposit  +10.000001   BY THE LOOP: it found that 10 idle and put it back
+    12:37  withdraw -56.292312   THE BUTTON, whole position, interest included
+
+Two of those five were the bot acting on its own, and every one of them went through the same
+policy engine, the same audit log and the same proposal store as an agent's would.
