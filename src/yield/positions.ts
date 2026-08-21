@@ -63,12 +63,26 @@ export type YieldHolding = {
   // The chain is the other half of the question and the server already knows it, so the
   // client is handed the answer rather than asked to infer it.
   explorerTx: string;
-  principalBase: string;
+  // Whether this app can derive a cost basis for THIS position at all.
+  //
+  // False means the chain holds a balance and the proposal store has no executed deposit
+  // behind it, which happens on a fresh data dir, on a store restored short, and on a
+  // position somebody supplied with the same key outside this app. In that state the basis
+  // is UNKNOWN and zero is not a synonym for it: subtracting zero from the balance reports
+  // the entire position as interest earned. Found on 2026-08-20 by scripts/e2e.ts, which
+  // boots on a throwaway data dir and read a real 56.29 USDC position as 56.29 USDC of
+  // profit. Wrong in the flattering direction is still wrong, and this feature's whole claim
+  // is that the percentage it prints is a number it watched happen.
+  //
+  // When it is false, principal, earned and realized are all null. The VALUE is still known,
+  // because that one comes off the chain and needs no history.
+  basisKnown: boolean;
+  principalBase: string | null;
   valueBase: string;
-  earnedBase: string;
-  principalUsd: number;
+  earnedBase: string | null;
+  principalUsd: number | null;
   valueUsd: number;
-  earnedUsd: number;
+  earnedUsd: number | null;
   openedAt: string | null;
   credits: YieldCredit[]; // newest first
   rate: VenueRate | null; // what the venue pays RIGHT NOW, which is not what we earned
@@ -139,6 +153,32 @@ export function principalFrom(credits: YieldCredit[]): bigint {
     if (acc < 0n) acc = 0n;
   }
   return acc;
+}
+
+// Whether a cost basis exists at all, and what it is.
+//
+// The fourth rule of the derivation, and it was missing until 2026-08-20. The other three
+// (only executed proposals count, the basis clamps at zero, the window starts at the current
+// run of exposure) all assume there IS a basis. This one is about the case where there is
+// not: the chain holds a balance and the proposal store has no executed deposit behind it.
+//
+// It happens on a fresh data dir, on a store restored short of the deposit, and on a position
+// somebody supplied with the same key outside this app. In every one of them principalFrom()
+// correctly returns zero, because zero is genuinely what this app put in, and then
+// `balance - 0` reports the entire position as interest earned. Found by running
+// scripts/e2e.ts, which boots on a throwaway data dir, against a live 56.29 USDC Aave
+// position: it read 56.29 USDC of profit on a position that had earned fractions of a cent.
+//
+// Zero is not a synonym for unknown. The distinction is the whole feature: the claim is that
+// the percentage on the screen is a number this app watched happen, and a number derived from
+// a history it does not have is not one.
+export function basisFrom(
+  credits: YieldCredit[],
+  balanceBase: bigint,
+): { basisKnown: boolean; principalBase: bigint | null; earnedBase: bigint | null } {
+  if (credits.length === 0) return { basisKnown: false, principalBase: null, earnedBase: null };
+  const principal = principalFrom(credits);
+  return { basisKnown: true, principalBase: principal, earnedBase: balanceBase - principal };
 }
 
 // When the CURRENT run of exposure started.

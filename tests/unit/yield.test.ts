@@ -17,6 +17,7 @@ import {
   MIN_ANNUALISE_MS,
   OBSERVATION_CAVEAT,
   avgPrincipalBase,
+  basisFrom,
   creditsFor,
   openedAtFrom,
   principalFrom,
@@ -106,6 +107,43 @@ test('fromBaseUnits keeps the sign, so a loss reads as a loss', () => {
 function credit(kind: 'deposit' | 'withdraw', amountBase: string, at: string): YieldCredit {
   return { at, kind, amountBase, amountUsd: Number(amountBase) / 1e6, txids: ['0xabc'], proposalId: 'p' };
 }
+
+test('a balance with no deposit behind it has an UNKNOWN basis, not a zero one', () => {
+  // The defect this replaces, found 2026-08-20 by running scripts/e2e.ts on a throwaway data
+  // dir against a live 56.29 USDC Aave position: principalFrom([]) is correctly 0n, because
+  // zero is genuinely what this app put in, and `balance - 0` then reported the whole
+  // position as interest earned. A fresh install, a store restored short of the deposit, and
+  // a position supplied with this key outside the app all land here.
+  const basis = basisFrom([], 56_293_621n);
+  assert.equal(basis.basisKnown, false);
+  assert.equal(basis.principalBase, null);
+  // Null rather than 0n. Zero would render as "$0.00 earned", which is the same lie pointing
+  // the other way: it says a position that may have earned for months has earned nothing.
+  assert.equal(basis.earnedBase, null);
+});
+
+test('a balance with a deposit behind it earns the difference, and says the basis is known', () => {
+  const credits = [credit('deposit', '50000000', '2026-08-20T18:35:22Z')];
+  const basis = basisFrom(credits, 50_000_012n);
+  assert.equal(basis.basisKnown, true);
+  assert.equal(basis.principalBase, 50_000_000n);
+  assert.equal(basis.earnedBase, 12n);
+});
+
+test('a fully closed position keeps a KNOWN basis of zero, which is not the unknown case', () => {
+  // The two states look identical in the arithmetic and are opposite in meaning. Here the app
+  // has the whole history and the history says nothing is supplied; above it has no history
+  // at all. Distinguishing them on credits.length rather than on the principal is what keeps
+  // a closed position from reporting its next dust balance as pure profit.
+  const credits = [
+    credit('deposit', '50000000', '2026-08-20T18:35:22Z'),
+    credit('withdraw', '56292312', '2026-08-20T19:37:16Z'),
+  ];
+  const basis = basisFrom(credits, 0n);
+  assert.equal(basis.basisKnown, true);
+  assert.equal(basis.principalBase, 0n);
+  assert.equal(basis.earnedBase, 0n);
+});
 
 test('principal is deposits minus withdrawals, and interest never touches it', () => {
   const credits = [

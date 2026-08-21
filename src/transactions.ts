@@ -327,6 +327,41 @@ function sidesOf(draft: WriteDraft): Sides {
         to: draft.counterparty,
         counterparty: draft.counterparty,
       };
+    // Supplying a stablecoin to a lending pool, and taking it back.
+    //
+    // These fell through to `default` until 2026-08-20, which is a quiet way to be wrong: the
+    // fallback returns place 'eth', so every yield movement in the history read as having
+    // happened on Ethereum whatever chain it was actually on, with no venue, no amount and no
+    // counterparty. The gas figures survived it only by accident, because TxGas.place is the
+    // chain whose RPC answered and overrides the draft's guess, so the money column was wrong
+    // while the fee column beside it was right.
+    //
+    // The two directions differ in exactly one field. A withdrawal may carry a null
+    // amountBase, which is how "the whole position, interest included" is expressed: the
+    // rebasing receipt grows while the proposal waits, so the rail reads the balance at
+    // execution rather than trusting a number computed a block earlier. `amount` still holds
+    // what was quoted, so it is the honest thing to show, and a full exit says so in `note`
+    // rather than printing a figure that was already stale when it was written.
+    case 'yield_deposit':
+      return {
+        place: draft.chain,
+        toPlace: draft.chain,
+        venue: draft.venue,
+        sent: { symbol: draft.symbol, amount: draft.amount },
+        from: draft.from,
+        to: draft.counterparty,
+        counterparty: draft.counterparty,
+      };
+    case 'yield_withdraw':
+      return {
+        place: draft.chain,
+        toPlace: draft.chain,
+        venue: draft.venue,
+        sent: draft.amountBase === null ? null : { symbol: draft.symbol, amount: draft.amount },
+        from: draft.counterparty,
+        to: draft.from,
+        counterparty: draft.counterparty,
+      };
     default:
       return { place: 'eth', toPlace: 'eth', venue: null, sent: null, from: undefined, to: undefined, counterparty: undefined };
   }

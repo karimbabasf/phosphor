@@ -761,12 +761,28 @@ export function buildBasic(input: BasicInput): BasicView {
   const earningRows = wallet.rows.filter(r => r.kind === 'yield');
   let earning: string | null = null;
   if (totalUsd !== null && earningRows.length > 0) {
-    const working = earningRows.reduce((sum, r) => sum + (r.yield?.principalUsd ?? 0), 0);
-    const made = earningRows.reduce((sum, r) => sum + (r.yield?.earnedUsd ?? 0), 0);
-    // Yield is sub-cent for hours. money() would print $0.00 and tell this reader the thing
-    // is not working, which is the opposite of true, so the small case gets its own words.
-    const madeLine = made < 0.01 ? 'It has not made a full cent yet.' : `It has made ${money(made)} so far.`;
-    earning = `${money(working)} of your money is earning interest. ${madeLine}`;
+    // A position this app has no deposit of its own behind cannot be told what it made, and
+    // `?? 0` would have said "it has not made a full cent yet" about money that may have been
+    // earning for months. This reader has nothing to check that against, so the sentence says
+    // the amount is working and stops, rather than putting a figure it does not have next to
+    // a figure it does. See YieldHolding.basisKnown.
+    const unknown = earningRows.filter(r => r.yield?.earnedUsd === null || r.yield?.earnedUsd === undefined);
+    if (unknown.length > 0) {
+      // The VALUE, not the principal, because the principal is the number that is missing.
+      // Saying "$56.29 is earning" is true of the balance on the chain either way.
+      const held = earningRows.reduce((sum, r) => sum + r.valueUsd, 0);
+      earning = `${money(held)} of your money is earning interest. This app did not put it there, so it cannot say how much it has made.`;
+    } else {
+      // The principal here, deliberately: it is what was put in, and the sentence goes on to
+      // name the earnings separately. Using the value would count the interest twice, once
+      // inside "is earning interest" and again after "it has made".
+      const working = earningRows.reduce((sum, r) => sum + (r.yield?.principalUsd ?? 0), 0);
+      const made = earningRows.reduce((sum, r) => sum + (r.yield?.earnedUsd ?? 0), 0);
+      // Yield is sub-cent for hours. money() would print $0.00 and tell this reader the thing
+      // is not working, which is the opposite of true, so the small case gets its own words.
+      const madeLine = made < 0.01 ? 'It has not made a full cent yet.' : `It has made ${money(made)} so far.`;
+      earning = `${money(working)} of your money is earning interest. ${madeLine}`;
+    }
   }
 
   return {

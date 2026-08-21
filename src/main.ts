@@ -288,15 +288,27 @@ const trade = createTradeService({
 //
 // It always READS, so the window can show what the money is earning. It only ACTS when
 // cfg.yield.autoAllocate is on, and even then it can only propose.
-const allocator = createAllocator({
-  cfg,
-  propose: { yieldDeposit: (p) => proposals.proposeYieldDeposit(p) },
-  listProposals: () => proposals.list(),
-  autoAllocate: cfg.yield?.autoAllocate === true,
-  intervalMs: cfg.yield?.intervalMs,
-  dustUsd: cfg.yield?.dustUsd,
-  onChange: () => server.broadcastState(),
-});
+//
+// NOT IN DEMO MODE, and the reason is the one the rail registry already states about itself:
+// "the demo user never meant to involve" an RPC and a private key. The allocator's read is
+// live whatever the ledger is, so a demo install was calling balanceOf against a real chain
+// with the real signing key's address, and the numbers it drew were a real position sitting
+// on top of a fixture wallet. Found on 2026-08-20 by running scripts/e2e.ts, which boots in
+// demo mode on a throwaway data dir: it read a live 56.29 USDC Aave position and, with no
+// deposit history in that fresh store to derive a cost basis from, reported every cent of it
+// as interest earned. Two defects in one line, and this is the half that is a mode boundary.
+const allocator =
+  cfg.mode === 'demo'
+    ? undefined
+    : createAllocator({
+        cfg,
+        propose: { yieldDeposit: (p) => proposals.proposeYieldDeposit(p) },
+        listProposals: () => proposals.list(),
+        autoAllocate: cfg.yield?.autoAllocate === true,
+        intervalMs: cfg.yield?.intervalMs,
+        dustUsd: cfg.yield?.dustUsd,
+        onChange: () => server.broadcastState(),
+      });
 
 const server = createServer({
   cfg,
@@ -324,8 +336,8 @@ const server = createServer({
 });
 
 // Started after the server exists, because its first tick pushes a state frame and there has
-// to be something with SSE clients to push to.
-allocator.start();
+// to be something with SSE clients to push to. Absent in demo mode, where there is no loop.
+allocator?.start();
 
 setInterval(() => {
   const gone = agents.sweep();

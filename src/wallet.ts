@@ -40,8 +40,11 @@ export type YieldWalletHolding = {
   receipt: string;
   receiptSymbol: string;
   valueUsd: number;
-  principalUsd: number;
-  earnedUsd: number;
+  // Null when this app holds no executed deposit behind the balance, so it cannot say what
+  // the position cost. See YieldHolding.basisKnown: zero is not a synonym for unknown, and
+  // treating it as one prints the whole position as profit.
+  principalUsd: number | null;
+  earnedUsd: number | null;
 };
 
 export function buildWallet(

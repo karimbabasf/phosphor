@@ -160,7 +160,23 @@
       /* The headline, and it is the DOLLARS. Aqua leads with earned fees and the ordering is
          the honesty: a percentage read first is a percentage that gets remembered as a rate
          the product promised. */
-      card.appendChild(el('p', 'y-earned', earned(h.earnedUsd) + ' earned'));
+      if (h.basisKnown === false) {
+        /* A balance on chain with no deposit of ours behind it: a fresh data dir, a store
+           restored short, or a position somebody supplied with this key outside the app.
+           This used to print the whole balance as earnings, because the cost basis derived
+           to zero and zero subtracts like a real number. Found 2026-08-20 by running the e2e
+           on a throwaway data dir against a live 56.29 USDC position. */
+        card.appendChild(el('p', 'y-earned dim', 'earnings unknown'));
+        card.appendChild(
+          el(
+            'p',
+            'y-rate y-rate-held',
+            'This app has no record of the deposit that opened this position, so it cannot say what the money cost or what it has made. The balance below is read from the chain and is correct.',
+          ),
+        );
+      } else {
+        card.appendChild(el('p', 'y-earned', earned(h.earnedUsd) + ' earned'));
+      }
 
       var r = h.realized;
       if (r && r.annualisedPct !== null) {

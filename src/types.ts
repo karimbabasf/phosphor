@@ -123,7 +123,16 @@ export type WalletRow = {
   // Set on a yield row: the venue, its receipt token, and what this holding has made above
   // the money that was put in. The wallet shows the VALUE like every other row; `earnedUsd`
   // is here so the row can say how much of that value was not deposited.
-  yield?: { venue: string; receiptSymbol: string; receipt: string; principalUsd: number; earnedUsd: number };
+  // principalUsd and earnedUsd are null when this app has no executed deposit behind the
+  // balance and therefore no cost basis to derive from. The VALUE is never null: it comes
+  // off the chain and needs no history of ours.
+  yield?: {
+    venue: string;
+    receiptSymbol: string;
+    receipt: string;
+    principalUsd: number | null;
+    earnedUsd: number | null;
+  };
 };
 
 export type WalletView = {

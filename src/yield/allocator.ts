@@ -23,7 +23,7 @@ import { getAddress } from 'viem';
 import { aaveAsset, aaveChains, aaveHealth, aavePosition, aaveRate } from './aave.ts';
 import type { VenueId, VenueRate } from './venue.ts';
 import { fromBaseUnits } from './venue.ts';
-import { creditsFor, openedAtFrom, principalFrom, realizedFrom } from './positions.ts';
+import { basisFrom, creditsFor, openedAtFrom, realizedFrom } from './positions.ts';
 import type { YieldHolding } from './positions.ts';
 
 export type VenueQuote = {
@@ -54,6 +54,10 @@ export type YieldView = {
   totalPrincipalUsd: number;
   totalValueUsd: number;
   totalEarnedUsd: number;
+  // How many positions on this view have no derivable cost basis, so their value is in
+  // totalValueUsd and their earnings are in nothing. Zero on any install that opened its own
+  // positions, which is every ordinary one.
+  basisUnknown: number;
   best: { chain: ChainId; apy: number } | null;
   autoAllocate: boolean;
   lastTickAt: string | null;
@@ -234,6 +238,7 @@ export function createAllocator(deps: AllocatorDeps): Allocator {
     venues: [],
     totalPrincipalUsd: 0,
     totalValueUsd: 0,
+    basisUnknown: 0,
     totalEarnedUsd: 0,
     best: null,
     autoAllocate,
@@ -301,9 +306,11 @@ export function createAllocator(deps: AllocatorDeps): Allocator {
     if (position.balanceBase === 0n) return { quote, holding: null };
 
     const credits = creditsFor(proposals, 'aave-v3', chain, SYMBOL);
-    const principal = principalFrom(credits);
     const openedAt = openedAtFrom(credits);
-    const earned = position.balanceBase - principal;
+    // See basisFrom(): every derived figure goes null together when there is no history to
+    // derive one from, because a percentage whose denominator is unknown is not a smaller
+    // percentage, it is not a percentage.
+    const { basisKnown, principalBase: principal, earnedBase: earned } = basisFrom(credits, position.balanceBase);
 
     const holding: YieldHolding = {
       venue: 'aave-v3',
@@ -313,26 +320,30 @@ export function createAllocator(deps: AllocatorDeps): Allocator {
       receiptSymbol: asset.receiptSymbol,
       receipt: asset.receipt,
       explorerTx: chainSpec(cfg.network, chain).explorerTx,
-      principalBase: principal.toString(),
+      basisKnown,
+      principalBase: principal === null ? null : principal.toString(),
       valueBase: position.balanceBase.toString(),
-      earnedBase: earned.toString(),
-      principalUsd: fromBaseUnits(principal, asset.decimals),
+      earnedBase: earned === null ? null : earned.toString(),
+      principalUsd: principal === null ? null : fromBaseUnits(principal, asset.decimals),
       valueUsd: fromBaseUnits(position.balanceBase, asset.decimals),
-      earnedUsd: fromBaseUnits(earned, asset.decimals),
+      earnedUsd: earned === null ? null : fromBaseUnits(earned, asset.decimals),
       openedAt,
       credits: [...credits].reverse(),
       rate,
-      realized: realizedFrom({
-        credits,
-        openedAt,
-        earnedBase: earned,
-        decimals: asset.decimals,
-        // Stables are priced at exactly 1.0 here, which is what the rest of the app does and
-        // is stated rather than assumed: a depegged dollar would make this figure wrong in
-        // the same direction as every other dollar number on the screen.
-        priceUsd: 1,
-        nowMs: now(),
-      }),
+      realized:
+        earned === null
+          ? null
+          : realizedFrom({
+              credits,
+              openedAt,
+              earnedBase: earned,
+              decimals: asset.decimals,
+              // Stables are priced at exactly 1.0 here, which is what the rest of the app does
+              // and is stated rather than assumed: a depegged dollar would make this figure
+              // wrong in the same direction as every other dollar number on the screen.
+              priceUsd: 1,
+              nowMs: now(),
+            }),
     };
     return { quote, holding };
   }
@@ -365,9 +376,14 @@ export function createAllocator(deps: AllocatorDeps): Allocator {
         chain: positions[0]?.chain ?? null,
         positions,
         venues,
-        totalPrincipalUsd: positions.reduce((s, p) => s + p.principalUsd, 0),
+        // The totals cover only the positions this app can account for. A position with no
+        // basis contributes its VALUE, which is a chain fact, and contributes nothing to the
+        // principal or the earnings, which are not. basisUnknown is how a reader knows the
+        // sum is over a subset rather than over everything on the screen.
+        totalPrincipalUsd: positions.reduce((s, p) => s + (p.principalUsd ?? 0), 0),
         totalValueUsd: positions.reduce((s, p) => s + p.valueUsd, 0),
-        totalEarnedUsd: positions.reduce((s, p) => s + p.earnedUsd, 0),
+        totalEarnedUsd: positions.reduce((s, p) => s + (p.earnedUsd ?? 0), 0),
+        basisUnknown: positions.filter((p) => !p.basisKnown).length,
         best: best === null ? null : { chain: best.chain, apy: (best.rate as VenueRate).apy },
         autoAllocate,
         lastTickAt: new Date(now()).toISOString(),
@@ -489,11 +505,16 @@ export function createAllocator(deps: AllocatorDeps): Allocator {
       });
     }
 
+    // A move is judged against what the position is WORTH, not against what we put in. Those
+    // are the same number to within the interest on top until the basis is unknown, and then
+    // principalUsd is null and the old expression silently compared a spread against nothing.
+    // Value is the right term anyway: it is the money that would actually be bridged.
+    const movingUsd = held.valueUsd;
     const verdict = rebalanceWorthIt({
-      principalUsd: held.principalUsd,
+      principalUsd: movingUsd,
       currentApy: held.rate?.apy ?? 0,
       bestApy: view.best.apy,
-      moveCostUsd: crossChainCostUsd(held.principalUsd),
+      moveCostUsd: crossChainCostUsd(movingUsd),
     });
 
     const bridge =
