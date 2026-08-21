@@ -1,6 +1,6 @@
 # Phosphor prediction mode: Polymarket integration plan
 
-**Repo:** `~/Developer/phosphor` (currently on `feat/in-app-driver`, v0.3.0, 1003 tests)
+**Repo:** `~/Developer/Apps/phosphor` (currently on `feat/in-app-driver`, v0.3.0, 1003 tests)
 
 > **PARKED 2026-08-20, the same day it was written. Read the next section before anything else.**
 > Karim shelved this as a future feature. The plan below is sound and the research holds, but a

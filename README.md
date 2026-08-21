@@ -75,7 +75,7 @@ until the addresses `keygen` printed have been funded. Full walkthrough in [Test
 
 Connect an agent (Claude Code):
 
-    claude mcp add phosphor -- node ~/Developer/phosphor/src/mcp.ts
+    claude mcp add phosphor -- node ~/Developer/Apps/phosphor/src/mcp.ts
 
 Then ask it things. "What do I hold?" "Swap 20 USDC into WETH." "Move 50 into Intents and swap it
 there." "Switch to trading." "Show me BTC on the 4 hour and mark the range." "Short SOL at 10x if
