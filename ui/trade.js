@@ -1682,6 +1682,9 @@ async function refreshState() {
   STATE_INFLIGHT = true;
   try {
     POLICY = await getJson('/api/state');
+    // The trading window is the same app in a different shape, so it wears the same colours.
+    // Applied before anything is drawn into them, for the same reason the deck does it first.
+    if (window.PhosphorTheme) PhosphorTheme.apply(POLICY.theme);
     // Feed the presence light: seat state plus when the agent last did real work. Live
     // 'activity' pings keep it bright between state pushes; this seeds it on load.
     if (window.PhosphorPresence && POLICY.agents) {

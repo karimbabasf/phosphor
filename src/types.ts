@@ -546,6 +546,9 @@ export type LogEvent = {
     // tail() casts rather than validates, so an existing audit.jsonl can still hold
     // these lines. Removing it would make the type lie about the file.
     | 'view_changed'
+    // The window was recoloured. Its own kind rather than a view_changed, because a reader
+    // scanning for what a human was shown while they approved wants to see it named.
+    | 'theme_changed'
     | 'view_refused'
     // What a human told the in-app driver to do. The tool calls that follow are already
     // logged; without this line the transcript records that the app swapped a token and

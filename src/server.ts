@@ -76,7 +76,9 @@ import {
   TIMEFRAMES,
   timeframeLabel,
 } from './chart.ts';
-import type { ChartGeometry, ChartIndicator, ChartState } from './chart.ts';
+import type { ChartGeometry, ChartIndicator, ChartState, ProviderChoice } from './chart.ts';
+import { PROVIDER_CHOICES } from './chart.ts';
+import { applyPatch as applyThemePatch, DEFAULT_THEME, type Theme } from './view/theme.ts';
 import { indicatorCatalog, indicatorSpec } from './indicators.ts';
 import type { IndicatorResult } from './indicators.ts';
 import { createDrawingStore } from './drawings.ts';
@@ -176,6 +178,9 @@ const READ_TOOLS: readonly string[] = [
 // an approval. They are still audited like every other op: an agent that can change what the
 // human sees while that human approves a transfer is a surface, not a decoration.
 const VIEW_TOOLS: readonly string[] = [
+  // Colour. A write like the rest of this list: it changes what the human sees and moves no
+  // money. The one thing it cannot reach is the approval gate's red, which is not a slot.
+  'set_theme',
   'chart_set_view',
   'chart_add_indicator',
   'chart_remove_indicator',
@@ -212,6 +217,14 @@ export type ServerDeps = {
   agents: AgentPresence;
   getView: () => ViewMode;
   setView: (mode: ViewMode) => void;
+  // The window's colours. Same contract as the view mode above: held in memory by the
+  // caller, mirrored to disk there, read live here.
+  //
+  // Optional so a test can stand a server up without a data directory. Absent, the pair
+  // below holds the theme in this process only, which is exactly what a test wants and
+  // exactly what the app must not do: src/main.ts always passes the persisting pair.
+  getTheme?: () => Theme;
+  setTheme?: (theme: Theme) => void;
   trade: TradeService;
   /* Start the in-app agent when the port opens. OPT IN, and deliberately not read from cfg
      here: every test in this repo builds a server and listens on it, and a flag that defaulted
@@ -279,6 +292,15 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   const { cfg, audit, store, ledger, riskRows, candles, market, proposals } = deps;
   const { getPolicy, setKill, agents, getView, setView, trade } = deps;
 
+  // See the note on ServerDeps.getTheme: memory only when the caller did not bring a file.
+  let localTheme: Theme = { ...DEFAULT_THEME };
+  const getTheme = deps.getTheme ?? ((): Theme => localTheme);
+  const setTheme =
+    deps.setTheme ??
+    ((next: Theme): void => {
+      localTheme = next;
+    });
+
   const token = crypto.randomBytes(24).toString('hex');
   audit.append('app_start', 'approval surface armed: browser approval token minted for this boot');
 
@@ -298,7 +320,12 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   // History paging shares loadCandles, so a bar the agent walks back to is the same bar the
   // chart would have drawn had the human panned there.
   const history = createHistory(async (product, granularitySec, endSec, limit) => {
-    const load = await loadCandles(product, granularitySec, limit);
+    // Same rule as chart_batch: paging back on the instrument on screen follows that
+    // chart's pinned venue, and paging back on any other product does not inherit a
+    // choice that was never made about it.
+    const view = chart.state().view;
+    const provider = product === view.product ? view.provider : 'auto';
+    const load = await loadCandles(product, granularitySec, limit, provider);
     return load.candles.filter((c) => c.t < endSec);
   });
 
@@ -702,6 +729,9 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       },
       candleProducts: cfg.candleProducts,
       view: getView(),
+      // The window paints itself from this. It rides on state rather than on the chart
+      // payload because the ground and the accent are the whole page, not the canvas.
+      theme: getTheme(),
       // Computed in BOTH modes, deliberately. A view model that only exists in the mode
       // that renders it is a view model nothing exercises while the app sits in its
       // default state, which is where a regression would hide longest.
@@ -814,8 +844,13 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   //
   // An agent still waits, because an empty array is a worse answer than a slow one when
   // something is about to reason over it.
-  function readCandles(product: string, granularitySec: number, limit: number): CandleLoad {
-    const held = market.read(product, granularitySec, limit);
+  function readCandles(
+    product: string,
+    granularitySec: number,
+    limit: number,
+    provider: ProviderChoice = 'auto',
+  ): CandleLoad {
+    const held = market.read(product, granularitySec, limit, provider);
     return {
       candles: held.candles,
       source: held.source,
@@ -827,9 +862,17 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     };
   }
 
-  async function loadCandles(product: string, granularitySec: number, limit: number): Promise<CandleLoad> {
-    await market.warm(product, granularitySec, limit);
-    return readCandles(product, granularitySec, limit);
+  // `provider` pins the venue. It defaults to 'auto' so the surfaces that are not the chart
+  // (the price line, the coin list, a scan of some other product) keep the catalogue's own
+  // answer, and only the chart the human is looking at follows the chart's own choice.
+  async function loadCandles(
+    product: string,
+    granularitySec: number,
+    limit: number,
+    provider: ProviderChoice = 'auto',
+  ): Promise<CandleLoad> {
+    await market.warm(product, granularitySec, limit, provider);
+    return readCandles(product, granularitySec, limit, provider);
   }
 
   async function sendCandles(url: URL, res: http.ServerResponse): Promise<void> {
@@ -878,7 +921,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     const state = chart.state();
     // Memory only, and it cannot throw: an outage shows the last good candles marked stale
     // rather than an empty chart. This is the render path, so nothing here may await.
-    const load = readCandles(state.view.product, state.view.granularitySec, chart.historyNeeded());
+    const load = readCandles(state.view.product, state.view.granularitySec, chart.historyNeeded(), state.view.provider);
     const error: string | null = null;
     const computed = computeIndicators(state, load.candles);
     return {
@@ -923,7 +966,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   async function chartRead(): Promise<unknown> {
     const state = chart.state();
     try {
-      const load = await loadCandles(state.view.product, state.view.granularitySec, chart.historyNeeded());
+      const load = await loadCandles(state.view.product, state.view.granularitySec, chart.historyNeeded(), state.view.provider);
       return buildRead({
         state,
         candles: load.candles,
@@ -956,7 +999,10 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     }
     let notes: string[] = [];
     if (body.view !== null && typeof body.view === 'object') {
-      const outcome = chart.setView(body.view as Record<string, unknown>, 'human');
+      const patch = body.view as JsonBody;
+      const refusal = resolveViewPatch(patch, false);
+      if (refusal !== null) return sendJson(res, 400, { error: refusal });
+      const outcome = chart.setView(patch, 'human');
       if (!outcome.ok) return sendJson(res, 400, { error: outcome.error });
       notes = outcome.notes;
     }
@@ -1280,7 +1326,17 @@ export function createServer(deps: ServerDeps): PhosphorServer {
           // The chart's own product and timeframe are the defaults, so an op that names
           // neither measures what the human is currently looking at.
           candles: async (product, granularitySec, limit) =>
-            (await loadCandles(product || view.product, granularitySec, limit)).candles,
+            (
+              await loadCandles(
+                product || view.product,
+                granularitySec,
+                limit,
+                // Only the chart's own instrument follows the chart's pinned venue. An op
+                // that names a different product is a question about that product, and
+                // pinning it to a venue the caller never chose would answer a different one.
+                product === '' || product === view.product ? view.provider : 'auto',
+              )
+            ).candles,
           history,
           drawings,
         }),
@@ -1310,7 +1366,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     if (tool === 'chart_measure') {
       const view = chart.state().view;
       try {
-        const load = await loadCandles(view.product, view.granularitySec, chart.historyNeeded());
+        const load = await loadCandles(view.product, view.granularitySec, chart.historyNeeded(), view.provider);
         sendJson(res, 200, {
           product: view.product,
           timeframe: timeframeLabel(view.granularitySec),
@@ -1472,6 +1528,58 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     return typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
   }
 
+  /* Resolve the product a view patch names against the venue that patch lands on, in place.
+     Returns null when the patch is servable and the reason when it is not.
+
+     Both doors call it. An agent's chart_set_view and the window's own click are the same
+     change, and a refusal that only one of them got would mean the human can pin a venue
+     into a blank chart that the agent is told it cannot pin into.
+
+     The venue moves first because the product is resolved against it: "put SOL on coinbase"
+     has to either work or say why, rather than resolving SOL the way the catalogue prefers
+     and then charting Hyperliquid's perp under Coinbase's name. */
+  function resolveViewPatch(patch: JsonBody, requireListed: boolean): string | null {
+    const asked = typeof patch.product === 'string' ? patch.product.trim() : '';
+    const wantRaw =
+      patch.provider === undefined ? chart.state().view.provider : String(patch.provider).trim().toLowerCase();
+    const want: ProviderChoice = PROVIDER_CHOICES.includes(wantRaw as ProviderChoice)
+      ? (wantRaw as ProviderChoice)
+      : 'auto';
+
+    if (asked !== '') {
+      const ref = want === 'auto' ? market.resolve(asked) : market.resolveOn(asked, want);
+      if (ref === null) {
+        // `requireListed` is the difference between the two doors, and it is not a
+        // relaxation of the rule for the window: it is the rule the window already had.
+        //
+        // An agent NAMES a market, so an unlisted name is a typo to answer. The window
+        // pushes the whole view on every pan, so the product on it is the one the window is
+        // already drawing, and refusing it because the catalogue is cold or has not heard of
+        // an id from config.json would freeze the human's pan and zoom on a chart that is
+        // working. A pinned venue is still refused on both, because that IS the new choice
+        // being made and it is the one thing that can silently swap markets.
+        if (want !== 'auto') return `${want} does not list ${asked}`;
+        if (!requireListed) return null;
+        const near = market.search(asked, 5).map((m) => m.product);
+        const hint = near.length > 0 ? ` did you mean: ${near.join(', ')}` : '';
+        return `no market listed for "${asked}".${hint}`;
+      }
+      patch.product = ref.product;
+      return null;
+    }
+
+    // A venue change with no product named still has to be answerable on the product already
+    // on screen, and the same refusal applies: pin it anyway and the chart goes blank with
+    // nothing saying why.
+    if (want !== 'auto') {
+      const current = chart.state().view.product;
+      if (market.resolveOn(current, want) === null) {
+        return `${want} does not list ${current}. name a product it does list, or set the venue back to auto`;
+      }
+    }
+    return null;
+  }
+
   // ---------- chart writes from the agent ----------
 
   async function handleView(body: JsonBody, res: http.ServerResponse): Promise<void> {
@@ -1514,22 +1622,36 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       return;
     }
 
+    // Colour, answered before the chart chain for the same reason the trading writes are:
+    // it does not change the chart, so answering with the chart would be noise. It answers
+    // with the theme it wrote, so an agent never has to read back to see its own change.
+    if (tool === 'set_theme') {
+      const result = applyThemePatch(getTheme(), args);
+      if (!result.ok) {
+        sendJson(res, 400, { error: result.error });
+        return;
+      }
+      setTheme(result.theme);
+      // Audited like every other agent write. Recolouring the window is not a money move and
+      // it IS a change to what a human sees while they decide about one, so it leaves a line.
+      audit.append('theme_changed', `agent recoloured the window: ${result.notes.join('; ')}`, {
+        theme: result.theme,
+      });
+      broadcastState();
+      sendJson(res, 200, { ok: true, notes: result.notes, theme: result.theme });
+      return;
+    }
+
     let outcome: { ok: boolean; notes: string[]; error?: string; id?: string; label?: string };
     if (tool === 'chart_set_view') {
       // Resolve what was asked for into what a venue lists, before the view records it.
       // Without this the view stores the raw string, so "bitcoin" charts correctly and
       // then labels itself BITCOIN, and an agent reading the view back gets a product id
       // no venue would recognise.
-      const asked = typeof args.product === 'string' ? args.product.trim() : '';
-      if (asked !== '') {
-        const ref = market.resolve(asked);
-        if (ref === null) {
-          const near = market.search(asked, 5).map((m) => m.product);
-          const hint = near.length > 0 ? ` did you mean: ${near.join(', ')}` : '';
-          sendJson(res, 400, { error: `no market listed for "${asked}".${hint}` });
-          return;
-        }
-        args.product = ref.product;
+      const resolved = resolveViewPatch(args, true);
+      if (resolved !== null) {
+        sendJson(res, 400, { error: resolved });
+        return;
       }
       outcome = chart.setView(args, 'agent');
     } else if (tool === 'chart_add_indicator') outcome = chart.addIndicator(args, 'agent');

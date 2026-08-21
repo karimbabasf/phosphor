@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Policy, RiskRow, ViewMode } from './types.ts';
 import { readViewMode, writeViewMode } from './view/mode.ts';
+import { readTheme, writeTheme, type Theme } from './view/theme.ts';
 import { loadConfig } from './config.ts';
 import { createAudit } from './audit.ts';
 import { createStore } from './store.ts';
@@ -208,6 +209,17 @@ function setView(mode: ViewMode): void {
   writeViewMode(cfg.dataDir, mode);
 }
 
+// Same shape, same reason: the file is the durable copy and this is the live one, so a
+// window that reloads comes back the colour the conversation left it.
+let theme: Theme = readTheme(cfg.dataDir);
+function getTheme(): Theme {
+  return theme;
+}
+function setTheme(next: Theme): void {
+  theme = next;
+  writeTheme(cfg.dataDir, next);
+}
+
 function setKill(on: boolean): void {
   const p = getPolicy();
   if (p === null) {
@@ -295,6 +307,8 @@ const server = createServer({
   agents,
   getView,
   setView,
+  getTheme,
+  setTheme,
   trade,
   /* Default OFF, and the window opens on the turning globe. Karim, 2026-08-20: with no agent
      attached yet, the globe is what the app opens on, always.

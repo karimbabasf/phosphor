@@ -1747,6 +1747,9 @@ async function refreshState() {
       return;
     }
     STATE = next;
+    // Colour first, before anything is drawn into it. A canvas painted in the old accent and
+    // recoloured a frame later is a visible flicker on every state read.
+    PhosphorTheme.apply(STATE.theme);
     // Settled before the renders, not after: drawDonut asks whether the panel is still
     // waiting, and it must already have the answer by the time the wallet draws.
     settled('state');

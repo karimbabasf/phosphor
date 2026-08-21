@@ -8,7 +8,7 @@
 // So: read() for pixels, warm() for answers.
 
 import type { Candle } from '../types.ts';
-import { createCatalog, type Catalog, type MarketRef } from './catalog.ts';
+import { createCatalog, type Catalog, type MarketRef, type Provider } from './catalog.ts';
 import { createProviders, planBase } from './providers.ts';
 import { createMarketStore, staleAfterSec, type MarketStore } from './store.ts';
 import { formatTimeframe, parseTimeframe, MIN_TIMEFRAME_SEC } from './aggregate.ts';
@@ -59,18 +59,45 @@ export function createMarketData(deps: MarketDeps = {}) {
   const store =
     deps.store ?? createMarketStore({ fetchWindow: providers.fetchWindow, onUpdate: deps.onUpdate, now });
 
-  /* Which venue answers, and on what interval. One series, one venue, always. */
-  function plan(query: string, timeframe: string | number) {
+  /* Which venue answers, and on what interval. One series, one venue, always.
+
+     `want` names a venue to pin to. 'auto' is the catalogue's own preference, which is
+     Hyperliquid wherever it lists the coin. A pinned venue that does not list the product
+     resolves to null, and the read below reports that rather than falling back: a chart
+     that says coinbase while drawing Hyperliquid's perp is worse than an empty one. */
+  function plan(query: string, timeframe: string | number, want: Provider | 'auto' = 'auto') {
     const targetSec = Math.max(MIN_TIMEFRAME_SEC, parseTimeframe(timeframe) ?? 60);
-    const ref = catalog.resolve(query);
+    const ref = want === 'auto' ? catalog.resolve(query) : catalog.resolveOn(query, want);
     const product = ref?.product ?? query.toUpperCase();
-    return { ref, product, targetSec, base: planBase(ref, targetSec) };
+    const unlisted = want !== 'auto' && ref === null;
+    return { ref, product, targetSec, unlisted, want, base: planBase(ref, targetSec) };
   }
 
   /* The render path. Synchronous, never throws, never waits on a venue. */
-  function read(query: string, timeframe: string | number, bars: number): MarketRead {
-    const { ref, product, targetSec, base } = plan(query, timeframe);
-    const held = store.read(product, base.baseSec, targetSec, bars);
+  function read(query: string, timeframe: string | number, bars: number, want: Provider | 'auto' = 'auto'): MarketRead {
+    const { ref, product, targetSec, base, unlisted } = plan(query, timeframe, want);
+    // A venue that does not list the coin is answered here, without a fetch and without a
+    // cache entry, so the pinned name never sits over another venue's bars.
+    if (unlisted) {
+      return {
+        candles: [],
+        ref: null,
+        product,
+        timeframe: formatTimeframe(targetSec),
+        granularitySec: targetSec,
+        baseSec: base.baseSec,
+        source: String(want),
+        ageSec: 0,
+        filling: false,
+        stale: false,
+        coverageSec: 0,
+        bars: 0,
+        note: null,
+        error: `${want} does not list ${product}`,
+      };
+    }
+    const venue = ref?.provider ?? 'hyperliquid';
+    const held = store.read(product, base.baseSec, targetSec, bars, venue);
     const reached = coverage(held.candles, targetSec);
     const note = base.note;
 
@@ -95,16 +122,23 @@ export function createMarketData(deps: MarketDeps = {}) {
 
   /* The agent path. Waits for a cold cache, because an empty answer is worse than a slow
      one when something is going to reason over it. */
-  async function warm(query: string, timeframe: string | number, bars: number): Promise<MarketRead> {
-    const { product, targetSec, base } = plan(query, timeframe);
-    await store.warm(product, base.baseSec, targetSec, bars);
-    return read(query, timeframe, bars);
+  async function warm(
+    query: string,
+    timeframe: string | number,
+    bars: number,
+    want: Provider | 'auto' = 'auto',
+  ): Promise<MarketRead> {
+    const { ref, product, targetSec, base, unlisted } = plan(query, timeframe, want);
+    if (unlisted) return read(query, timeframe, bars, want);
+    await store.warm(product, base.baseSec, targetSec, bars, ref?.provider ?? 'hyperliquid');
+    return read(query, timeframe, bars, want);
   }
 
   return {
     read,
     warm,
     resolve: (query: string) => catalog.resolve(query),
+    resolveOn: (query: string, provider: Provider) => catalog.resolveOn(query, provider),
     search: (query: string, limit?: number) => catalog.search(query, limit),
     refreshCatalog: () => catalog.refresh(),
     catalogLoadedAt: () => catalog.loadedAt(),

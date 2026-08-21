@@ -18,12 +18,80 @@
 
 'use strict';
 
+/* The chart's colours are no longer constants: src/view/theme.ts holds them and the window
+   applies them through chartTheme() below. The values here are the defaults that file ships,
+   duplicated deliberately so a chart drawn before the first state frame lands is the right
+   colour rather than black on black.
+
+   Down is deliberately darker than the approval gate's #ff3b30 so the gate stays the only
+   alarm red on the page even though the chart uses red at all. Nothing here can repaint that
+   gate: it is a CSS token this file never touches, and it is not a theme slot either. */
 var C_BG = '#0b0d0b';
 var C_UP = '#33ff66';
-/* Down is deliberately darker than the approval gate's #ff3b30 so the gate stays the only
-   alarm red on the page even though the chart uses red at all. */
 var C_DOWN = '#cc3a30';
 var C_HI = '#8cffab';
+
+/* The ramps. green() and red() used to carry these triples inline, which is what made the
+   whole engine one hue at edit time rather than at run time. */
+var RGB_ACCENT = '51, 255, 102';
+var RGB_DOWN = '204, 58, 48';
+var RGB_AGENT = '51, 255, 102';
+
+/* "#33ff66" or "#3f6" to "51, 255, 102". Returns null on anything else, and every caller
+   treats null as "leave the colour alone": a bad value from the server must never be able to
+   blank the chart. The server refuses non-hex before it ever gets here; this is the second
+   wall, because a colour is the one agent-supplied string that reaches a canvas. */
+function rgbTriple(hex) {
+  if (typeof hex !== 'string') return null;
+  var value = hex.trim().toLowerCase();
+  if (!/^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/.test(value)) return null;
+  if (value.length === 4) {
+    value = '#' + value[1] + value[1] + value[2] + value[2] + value[3] + value[3];
+  }
+  return parseInt(value.slice(1, 3), 16) + ', ' + parseInt(value.slice(3, 5), 16) + ', ' + parseInt(value.slice(5, 7), 16);
+}
+
+/* The bright tint, mixed from the accent toward white rather than carried as a sixth slot.
+   One accent has to recolour the whole terminal coherently, and a highlight that stayed green
+   while everything else turned amber would read as a fault rather than a choice. */
+function lighten(hex, amount) {
+  var triple = rgbTriple(hex);
+  if (triple === null) return hex;
+  var parts = triple.split(', ');
+  var out = [];
+  for (var i = 0; i < 3; i++) {
+    out.push(Math.round(Number(parts[i]) + (255 - Number(parts[i])) * amount));
+  }
+  return 'rgb(' + out.join(', ') + ')';
+}
+
+/* Called by app.js on every state frame. Cheap and idempotent: it compares before it repaints,
+   so the once-a-second state read does not force a full scene redraw for nothing. */
+function chartTheme(theme) {
+  if (!theme) return;
+  var accent = rgbTriple(theme.accent);
+  var ground = rgbTriple(theme.background);
+  var up = rgbTriple(theme.up);
+  var down = rgbTriple(theme.down);
+  var agent = rgbTriple(theme.agent);
+  var before = [C_BG, C_UP, C_DOWN, C_HI, RGB_ACCENT, RGB_DOWN, RGB_AGENT].join('|');
+
+  if (accent !== null) {
+    RGB_ACCENT = accent;
+    C_HI = lighten(theme.accent, 0.45);
+  }
+  if (ground !== null) C_BG = 'rgb(' + ground + ')';
+  if (up !== null) C_UP = 'rgb(' + up + ')';
+  if (down !== null) {
+    C_DOWN = 'rgb(' + down + ')';
+    RGB_DOWN = down;
+  }
+  if (agent !== null) RGB_AGENT = agent;
+
+  if ([C_BG, C_UP, C_DOWN, C_HI, RGB_ACCENT, RGB_DOWN, RGB_AGENT].join('|') === before) return;
+  if (typeof chartInvalidate === 'function') chartInvalidate(true);
+}
+window.chartTheme = chartTheme;
 
 var CHART_FONT = '11px ui-monospace, SFMono-Regular, Menlo, monospace';
 var CHART_FONT_SMALL = '9px ui-monospace, SFMono-Regular, Menlo, monospace';
@@ -48,7 +116,7 @@ var CHART_READY = false;
 
 var CHART = {
   rev: 0,
-  view: { product: '', granularitySec: 60, barCount: 120, panOffset: 0, priceScale: { mode: 'auto' } },
+  view: { product: '', provider: 'auto', granularitySec: 60, barCount: 120, panOffset: 0, priceScale: { mode: 'auto' } },
   candles: [],
   /* What the candles on screen actually are, which is not always what the controls ask for.
      The view is a request and can run ahead of the data by a round trip, or sit on an
@@ -100,10 +168,15 @@ function chartWrap() {
 }
 
 function green(alpha) {
-  return 'rgba(51, 255, 102, ' + alpha + ')';
+  return 'rgba(' + RGB_ACCENT + ', ' + alpha + ')';
 }
 function red(alpha) {
-  return 'rgba(204, 58, 48, ' + alpha + ')';
+  return 'rgba(' + RGB_DOWN + ', ' + alpha + ')';
+}
+/* The ink the agent's own drawings are in. Defaults to the accent, so until someone sets it
+   the chart looks exactly as it did and the dash pattern is still what tells the two apart. */
+function agentInk(alpha) {
+  return 'rgba(' + RGB_AGENT + ', ' + alpha + ')';
 }
 
 function clampNum(value, low, high) {
@@ -1055,11 +1128,11 @@ function drawLevels(ctx, L) {
       // Off the top or the bottom of what is on screen. The line cannot be drawn where it
       // belongs, so it is pinned to the edge it went off, with an arrow saying which way.
       var edge = y < top ? top + 6 : bottom - 6;
-      ctx.fillStyle = green(0.4);
+      ctx.fillStyle = fromAgent ? agentInk(0.4) : green(0.4);
       ctx.fillText((y < top ? '↑ ' : '↓ ') + level.label + ' ' + priceText(level.price, L.decimals), 4, edge);
       continue;
     }
-    ctx.strokeStyle = green(fromAgent ? 0.5 : 0.7);
+    ctx.strokeStyle = fromAgent ? agentInk(0.5) : green(0.7);
     // Agent lines are dotted, human lines are dashed. Attribution is in the label as well,
     // but the eye reads the dash first.
     ctx.setLineDash(fromAgent ? [2, 3] : [6, 4]);
@@ -1168,7 +1241,8 @@ function drawMarks(ctx, L) {
     if (index < L.start - 1 || index > L.end + 1) continue;
     var x = L.xOf(index);
     if (x < 0 || x > L.plotWidth) continue;
-    ctx.strokeStyle = green(0.34);
+    var markInk = mark.source === 'agent' ? agentInk : green;
+    ctx.strokeStyle = markInk(0.34);
     ctx.setLineDash([2, 4]);
     ctx.beginPath();
     ctx.moveTo(hair(x), PAD_TOP);
@@ -1178,7 +1252,7 @@ function drawMarks(ctx, L) {
     ctx.save();
     ctx.translate(x - 3, L.axisTop - 4);
     ctx.rotate(-Math.PI / 2);
-    ctx.fillStyle = green(0.55);
+    ctx.fillStyle = markInk(0.55);
     ctx.fillText(mark.label, 0, 0);
     ctx.restore();
   }
@@ -1465,7 +1539,15 @@ function chartBusy(on) {
    asking for. Pan, zoom and price scale are deliberately not in here: those the hand owns. */
 function chartIdentityDiffers(view) {
   if (!view) return false;
-  return view.product !== CHART.view.product || view.granularitySec !== CHART.view.granularitySec;
+  // The venue is part of which market this is, not a preference about it. Two venues price
+  // the same coin differently and one of them is a perp against the other's spot, so a view
+  // still naming the venue the candles did NOT come from is the same failure as a view still
+  // naming the wrong product: one market's price under another market's name.
+  return (
+    view.product !== CHART.view.product ||
+    view.granularitySec !== CHART.view.granularitySec ||
+    view.provider !== CHART.view.provider
+  );
 }
 
 function applyChart(payload) {
@@ -1555,6 +1637,7 @@ async function pushChart(extra) {
     token: typeof TOKEN === 'string' ? TOKEN : null,
     view: {
       product: CHART.view.product,
+      provider: CHART.view.provider || 'auto',
       granularitySec: CHART.view.granularitySec,
       barCount: CHART.view.barCount,
       panOffset: CHART.view.panOffset,
@@ -1679,7 +1762,7 @@ function renderChartBar() {
 
   var meta = document.getElementById('chart-meta');
   if (!meta) return;
-  var line = CHART.meta.source;
+  var line = '';
   // Squeezed past the end of what the source will serve. The window is wider than the data,
   // which is a fact about the exchange and not a fault in the chart, so it is reported in the
   // same line as the source rather than left to look like bars that failed to draw.
@@ -1693,6 +1776,19 @@ function renderChartBar() {
   // truncates has to be the source name, never the reason the price might be wrong.
   if (CHART.meta.stale) meta.appendChild(chartSpan('hi', 'STALE: source unreachable, showing last known   '));
   if (CHART.meta.error) meta.appendChild(chartSpan('hi', CHART.meta.error + '   '));
+  /* The venue, and the control that changes it. The name was already printed here; making it
+     the button is what keeps this line from growing a toolbar. The same vocabulary the agent
+     has over chart_set_view, one click: auto, then each venue, then back.
+     It prints what is actually SERVING the candles, and says "pinned" only when the choice was
+     made rather than inherited, so a pin can never be mistaken for the default. */
+  var venue = chartSpan(CHART.view.provider === 'auto' ? 'faint' : 'tf on', CHART.meta.source);
+  venue.id = 'chart-provider';
+  venue.title =
+    CHART.view.provider === 'auto'
+      ? 'venue chosen automatically. click to pin one'
+      : 'venue pinned to ' + CHART.view.provider + '. click to change';
+  meta.appendChild(venue);
+  if (CHART.view.provider !== 'auto') meta.appendChild(chartSpan('faint', ' pinned'));
   meta.appendChild(chartSpan('faint', line));
   if (CHART.view.panOffset > 0) {
     var live = chartSpan('tf', '» live');
@@ -1977,6 +2073,16 @@ function wireChart() {
         setPan(0);
         chartInvalidate(true);
         queueChartPush();
+      } else if (id === 'chart-provider') {
+        /* auto, then each venue, then back. Three states on one click rather than three
+           controls: the line has room for a name, not a toolbar.
+           Pushed on its own and not through the view above, because the server refuses a
+           venue that does not list the product on screen, and the refusal has to arrive as
+           the answer to THIS click. chartNote prints it under the bar. */
+        var order = ['auto', 'hyperliquid', 'coinbase'];
+        var at = order.indexOf(CHART.view.provider || 'auto');
+        var next = order[(at + 1) % order.length];
+        void pushChart({ view: { product: CHART.view.product, provider: next } });
       } else if (id === 'chart-clear-agent') {
         void pushChart({ clear: 'agent' });
       }

@@ -11,14 +11,27 @@
 // is also why everything an agent draws carries an [agent] tag it cannot remove.
 
 import type { Candle } from './types.ts';
+import type { Provider } from './market/catalog.ts';
 import { indicatorSpec, normaliseParams, warmupBars, pctChange, trueRange } from './indicators.ts';
 import type { IndicatorResult } from './indicators.ts';
 import { MAX_TIMEFRAME_SEC, MIN_TIMEFRAME_SEC, parseTimeframe, formatTimeframe } from './market/aggregate.ts';
 
 export type PriceScale = { mode: 'auto' } | { mode: 'manual'; low: number; high: number };
 
+// 'auto' is not a provider, it is the absence of a choice, which is why it lives here rather
+// than widening Provider in the market layer. Nothing downstream ever fetches from 'auto'.
+export type ProviderChoice = Provider | 'auto';
+export const PROVIDER_CHOICES: readonly ProviderChoice[] = ['auto', 'hyperliquid', 'coinbase'];
+
 export type ChartView = {
   product: string;
+  // Which venue the candles are pulled from. 'auto' is the catalogue's own answer, which
+  // prefers Hyperliquid when it lists the coin because that is where this app executes.
+  // Naming a venue overrides that, and it can fail: not every coin is listed on both, so a
+  // forced venue that does not list the product is refused rather than quietly falling back.
+  // A silent fallback would put the other market's prices under the venue name the human
+  // just chose, which is the one thing a provider control must never do.
+  provider: ProviderChoice;
   granularitySec: number;
   // Bars across the plot. Fractional so a squeeze tracks the pointer instead of notching.
   barCount: number;
@@ -221,6 +234,7 @@ export function createChartStore(initialProduct: string): {
   const state: ChartState = {
     view: {
       product: initialProduct,
+      provider: 'auto',
       granularitySec: 60,
       barCount: LIMITS.barCountDefault,
       panOffset: 0,
@@ -263,6 +277,27 @@ export function createChartStore(initialProduct: string): {
     // same patch describe the instrument being left, so they are dropped below rather than
     // applied on top of the reset this branch just did.
     let switchedProduct = false;
+
+    // The venue moves before the product does, because the server resolves the product
+    // against whichever venue this patch lands on and a view that recorded them in the other
+    // order would answer chart_read with a product one venue lists and the other one's name.
+    if (patch.provider !== undefined) {
+      const asked = String(patch.provider).trim().toLowerCase();
+      if (!PROVIDER_CHOICES.includes(asked as ProviderChoice)) {
+        return { ok: false, notes, error: `unknown provider: ${String(patch.provider)}. one of ${PROVIDER_CHOICES.join(', ')}` };
+      }
+      const next = asked as ProviderChoice;
+      if (next !== view.provider) {
+        view.provider = next;
+        // The same argument the product branch makes: two venues price the same coin
+        // differently and one of them is a perp against the other's spot, so a manual
+        // scale and a pan measured on the venue being left do not describe the new one.
+        view.panOffset = 0;
+        view.priceScale = { mode: 'auto' };
+        switchedProduct = true;
+        notes.push(next === 'auto' ? 'provider back to auto' : `provider pinned to ${next}`);
+      }
+    }
 
     if (typeof patch.product === 'string' && patch.product.trim().length > 0) {
       const next = patch.product.trim().toUpperCase();

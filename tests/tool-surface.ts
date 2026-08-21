@@ -84,6 +84,10 @@ export const EXPECTED_TOOLS: readonly string[] = [
   // Moves the window between the three surfaces. Named `switch` rather than set_view_mode
   // because the requirement is that switching costs one word.
   'switch',
+  // Recolours the window. Same category as `switch` and `watch`: it changes what a human
+  // sees, reaches no rail and no money, and it cannot touch the approval gate's red, which
+  // is not one of its slots. See src/view/theme.ts.
+  'set_theme',
   // Picks the coins the basic screen tracks and saves the choice. Named for what the human
   // says, like `switch`. It changes what a human sees and reaches no rail and no money.
   'watch',

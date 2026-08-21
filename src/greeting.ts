@@ -131,6 +131,10 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
         tool: 'watch',
         does: 'set which coins the basic screen tracks, and save the choice. Send the WHOLE list, one to four: to drop one of three, send the other two. The screen tells its owner this can be asked for, so expect the ask.',
       },
+      {
+        tool: 'set_theme',
+        does: "recolour the window: accent (the one hue everything is drawn in), background, up, down, agent (what you draw). Hex only, reset:true restores the default green. The approval gate's red is not a slot, and a colour that would leave anything unreadable is refused.",
+      },
     ],
   },
   {
@@ -181,7 +185,11 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
   {
     group: 'shape the chart',
     items: [
-      { tool: 'chart_set_view', does: 'product, timeframe, bar count, pan, price scale. Returns the full read, so no follow-up call.' },
+      { tool: 'chart_set_view', does: 'product, timeframe, venue, bar count, pan, price scale. Returns the full read, so no follow-up call.' },
+      {
+        tool: 'chart_set_view provider:',
+        does: "which venue serves the candles: auto (prefers Hyperliquid, where this app executes), hyperliquid, or coinbase for that venue's spot market. A venue that does not list the product is refused with that reason, never quietly served from the other one.",
+      },
       { tool: 'chart_add_indicator', does: 'overlays draw on price; rsi, macd, atr, stoch, obv and volume take their own pane.' },
       { tool: 'chart_remove_indicator', does: 'remove one by id or type.' },
     ],

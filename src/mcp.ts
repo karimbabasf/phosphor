@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { VERSION } from './version.ts';
 import { listSkills, readSkill, skillsInstruction } from './skills.ts';
+import { THEME_SLOTS, SLOT_MEANING } from './view/theme.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -496,10 +497,35 @@ function registerView(name: string, description: string, shape: Record<string, z
 const CHART_ANSWER = 'Returns the full chart read after the change, so no follow-up call is needed.';
 
 registerView(
+  'set_theme',
+  [
+    'Recolours the window. Five named slots, each a hex colour like #33ff66 or #3f6:',
+    ...THEME_SLOTS.map((slot) => `  ${slot} — ${SLOT_MEANING[slot]}`),
+    'Pass reset:true to put every slot back to the default phosphor green. Omit a slot to leave it alone.',
+    "The approval gate's red is NOT a slot and cannot be reached from here. It is the one alarm on the page and it stays the colour it is, so a pending decision can never be painted into the background.",
+    'A colour that would leave anything unreadable on the ground is refused with the pair and the contrast ratio, and nothing is changed. Returns the theme as it now stands.',
+  ].join('\n'),
+  {
+    accent: z.string().optional(),
+    background: z.string().optional(),
+    up: z.string().optional(),
+    down: z.string().optional(),
+    agent: z.string().optional(),
+    reset: z.boolean().optional(),
+  },
+);
+
+registerView(
   'chart_set_view',
-  `Changes what the chart shows: product, timeframe, how many bars are on screen, how far back the window sits, and the price scale. Pass live:true to jump back to the newest bar. Omit a field to leave it alone. ${CHART_ANSWER}`,
+  `Changes what the chart shows: product, timeframe, which venue the candles come from, how many bars are on screen, how far back the window sits, and the price scale. Pass live:true to jump back to the newest bar. Omit a field to leave it alone. ${CHART_ANSWER}`,
   {
     product: z.string().optional(),
+    provider: z
+      .enum(['auto', 'hyperliquid', 'coinbase'])
+      .optional()
+      .describe(
+        'which venue serves the candles. auto is the default and prefers Hyperliquid, which is where this app executes, so a chart and a fill agree. coinbase draws that venue\'s spot market instead, which is a different price from a perp and is the point of asking for it. A venue that does not list the product is refused with that reason rather than quietly served from the other one.',
+      ),
     timeframe: z.string().optional().describe('one of 1s 5s 15s 30s 1m 5m 15m 30m 1h 4h 8h 1d'),
     barCount: z.number().optional().describe('bars across the plot, 20 to 500'),
     panOffset: z.number().optional().describe('bars back from the newest; 0 is live'),
