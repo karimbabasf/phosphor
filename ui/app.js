@@ -1860,7 +1860,9 @@ function openEvents() {
     // Only refetched while somebody is looking at it: a gas receipt landing behind a closed
     // overlay is not worth a round trip, and opening it reads afresh anyway. The call is a
     // no-op when the overlay is shut, which is where that decision is made.
-    else if (payload.type === 'transactions') PhosphorViews.transactionsRefresh();
+    // Both views read the same derivation, so a receipt that changes one changes the other.
+    // Both calls are no-ops with their overlay shut, and only one of the two can be open.
+    else if (payload.type === 'transactions') { PhosphorViews.transactionsRefresh(); PhosphorViews.gasRefresh(); }
     else if (payload.type === 'candles') candlesPushed();
     // A chart change from an agent. Our own writes come back with a revision we already
     // know, and chartPushed drops those rather than repainting over the hand.
@@ -1918,11 +1920,26 @@ function openHistoryOverlay(trigger) {
   });
 }
 
+/* The same aggregation the HISTORY table leaves to the reader. onClose is not optional
+   here: the view holds an animation frame while its ring sweeps in, and a frame left
+   running paints into a canvas that is no longer on screen. */
+function openGasOverlay(trigger) {
+  PhosphorOverlay.open({
+    title: 'GAS',
+    trigger: trigger,
+    build: function (box) {
+      PhosphorViews.gas(box, alertLine);
+    },
+    onClose: PhosphorViews.gasClosed
+  });
+}
+
 function wireDeckBar() {
   var buttons = [
     { id: 'open-log', open: openLogOverlay },
     { id: 'open-policy', open: openPolicyOverlay },
-    { id: 'open-history', open: openHistoryOverlay }
+    { id: 'open-history', open: openHistoryOverlay },
+    { id: 'open-gas', open: openGasOverlay }
   ];
   for (var i = 0; i < buttons.length; i++) {
     (function (spec) {

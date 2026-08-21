@@ -163,7 +163,7 @@ file. To run both at once, give the installed app its own port in its `config.lo
 
 ## The tool surface
 
-Thirty-six tools, in five families. Read tools execute directly and cannot move anything. Write
+Forty-five tools, in five families. Read tools execute directly and cannot move anything. Write
 tools never execute: they return a proposal id and a simulation result, and nothing else. Chart
 and trading tools move a view or a marker, never funds. Display tools move the window.
 
@@ -187,6 +187,8 @@ exactly like one agent, and neither of them knew about the other.
 | `log_tail` | Most recent audit lines, newest first |
 | `candles` | Recent OHLC candles for a product, with a staleness marker |
 | `proposal_status` | Status, verdict and simulation result for a proposal id |
+| `yield_read` | Every yield position with principal, current value and earnings, the realized percentage with its window and its caveat, the venue table with live rates and health, idle stablecoin, and what the loop decided on its recent looks. Answers `{ available: false, reason }` when no allocator is wired, which is a different claim from an empty position |
+| `gas_report` | What the app has spent on gas over a window, split by action, chain, rail kind and venue, plus gas as basis points of the value moved. An aggregation of receipts the history surface already read, so it makes no chain call. The four remainders (pending, unknown, unpriced, intent-settled) and the reverted line are counted separately and named in the tool description, because a total that drops what it could not count is a wrong number said confidently |
 
 | Write tool | Does |
 |---|---|
@@ -196,6 +198,9 @@ exactly like one agent, and neither of them knew about the other.
 | `propose_consolidate` | Gathers a token's scattered balances onto one chain. Unproven: this path has never run on a live chain, and the tool description says so, so a clean simulation is not evidence it works |
 | `propose_policy_change` | Proposes a patch to the policy rules. Always waits for a human click |
 | `propose_mandate` | Arms a rule-driven bot on Hyperliquid perpetuals: a rule program plus the envelope it may never leave. The only tool that grants standing authority, so it always waits for a human click |
+| `propose_yield_deposit` | Supplies a stablecoin to the lending venue. Omit the chain and the app picks the best-paying venue that is healthy and reachable, which is what the loop does. `amount` is the token amount, not dollars. Testnet only |
+| `propose_yield_withdraw` | Takes the position back out. Omitting `amount` closes it, interest included, and that is the correct way to exit: the receipt rebases, so a figure computed a block ago leaves dust behind. Omit the chain and the app uses the chain the position is on, refusing with the list when positions sit on more than one. Testnet only |
+| `yield_auto` | Starts or stops the allocator loop. Moves no money and gets no policy verdict, so it is a display-class tool with a rail-shaped name: all the loop can do is file a `yield_deposit` proposal, which the agent can already do itself, through the same policy engine and the same click threshold. It grants a schedule, not an authority |
 
 Two write tools were deliberately removed from this door and are not coming back on their own.
 `propose_lp_add` and `propose_lp_remove` are still implemented under `src/rails/`, still tested,
@@ -211,6 +216,21 @@ refuses `hypercore` as an origin, so the direction is a property of the venue ra
 of ours. An agent holding it can add collateral to the trading account and has no path on its
 surface to remove any. Getting money off the venue is a signed `withdraw3` a human runs at a
 terminal, and that is deliberately not a tool.
+
+The yield rail shipped earlier on 2026-08-20 with nothing on this door, held off by the same rule
+and saying so in its own spec: the tools would follow once the evidence existed. They went on later
+that day because it does. Five real movements on Arbitrum Sepolia, three by hand and two filed by
+the loop, each through the real proposal service and the real policy engine, ending in a full exit
+that returned 56.292312 USDC to the wallet, with the app's realized 4.2672 percent and the reserve's
+4.2687 percent APR arrived at independently and agreeing. The `lp_add` half of the old objection does
+not reach this rail either: a yield position is one `balanceOf` on a rebasing receipt and the wallet
+read already counts it, so there is no pre-trade balance to size a second move off. `propose_lp_add`
+and `propose_lp_remove` are unchanged and stay off.
+
+The three fund-moving yield tools are the only ones on this door that refuse **mainnet**. Every other
+rail here refuses testnet or refuses nothing, so the reflex reading is backwards. `src/rails/yield.ts`
+states the world it has been checked in, and undoing that means a human adding a mainnet row to the
+deployment table on purpose.
 
 | Chart tool | Does |
 |---|---|
@@ -302,12 +322,19 @@ Realized, backward-looking, and annualised from a window that is printed beside 
 
     earned over the window / time-weighted average principal x 365 / window days
 
-Three rules it keeps, each with a test:
+Four rules it keeps, each with a test:
 
 - **Under one hour, no percentage at all.** The dollars are shown and the panel says why.
 - **The dollars are bigger than the percentage on screen.** The ordering is the honesty.
 - **The caveat travels with the number** as a field, so a renderer cannot forget to print it:
   "Observed, not promised. This is what it did, not what it will do."
+- **No deposit of ours behind the balance means the earnings are UNKNOWN, not zero.** The cost
+  basis is derived from this app's own executed proposals, so a fresh data dir, a store restored
+  short, or a position supplied with the same key outside this app all leave nothing to derive
+  from. Reporting that as a basis of zero turns the whole position into interest: the panel read
+  a live 56.29 USDC position as 56.29 USDC of profit before this rule existed. The value still
+  comes off the chain and is still shown; the earnings and the percentage go blank together and
+  the panel says why.
 
 The rate the venue pays right now is shown too, clearly labelled `venue rate now`. It is what
 the allocator decides on, so it has to be visible; it is not what you earned, so it does not
@@ -330,8 +357,13 @@ money while reporting that it optimised.
 
 **The loop never executes.** It files a proposal and stops. What happens next is the policy
 engine's call and, above the click threshold, a human's, exactly as it is for an agent. It is
-off by default: set `yield.autoAllocate` in `config.local.json` to switch it on. Off, it still
+off by default: set `yield.autoAllocate` in `config.local.json` to switch it on, or call
+`yield_auto` from an agent, which flips the same switch a human has in the window. Off, it still
 reads and still reports, so the panel is populated either way.
+
+An agent drives the same rail through `yield_read`, `propose_yield_deposit` and
+`propose_yield_withdraw`. Those propose like every other write tool and execute like nothing, so the
+loop and the agent reach the policy engine by the same path a human does.
 
 On testnet it is same-chain only, and says so rather than failing quietly. Moving between
 chains needs a bridge, this app's bridge is NEAR Intents, and NEAR Intents has no testnet.
@@ -345,6 +377,37 @@ chains needs a bridge, this app's bridge is NEAR Intents, and NEAR Intents has n
 
 It drives the real proposal service against the real chain and prints transaction hashes. It
 refuses to run on mainnet.
+
+## Where the gas went
+
+Every movement this app makes burns gas somewhere, the per-transaction figure has always been on
+the row in HISTORY, and nothing added it up. `[ GAS ]` on the deck bar does, on both the operator
+deck and the trading one: a total for the window, a donut and a table for what each kind of action
+spent, a second pair for which chain it was spent on, and gas as basis points of the value actually
+moved. Agents ask the same question with `gas_report`, and both doors run the same derivation, so
+the human and the agent cannot be told different numbers about the same money.
+
+It is an aggregation, not a new read. The receipts come from the same cache the history surface
+fills, so opening GAS after HISTORY costs nothing and opening it first warms the cache for HISTORY.
+No new RPC call, no new store.
+
+The part worth reading is underneath the rings. An aggregate that silently drops what it cannot
+count reports a smaller number than the truth and calls it the truth, so four categories are
+counted apart and printed, and none of them means zero gas:
+
+    still reading     the receipt has not landed yet
+    unknown           no chain this app can reach has that hash
+    intent-settled    signed, not broadcast, so a solver paid the gas and we paid none
+    unpriced          gas known in native units, no price available to convert it
+
+And one that is not a remainder: **reverted**, in red, because gas spent on a transaction that
+moved nothing is the only figure here that is pure loss. A remainder that is zero prints nothing at
+all: "0 pending" is chrome.
+
+The tables are the authority and the rings are the shape of them. The canvas carries an
+`aria-label` naming the total and the largest slices, a slice under two percent gets no label on
+the ring because a crowded ring is less legible than a bare one, and the colours are read off the
+stylesheet's own custom properties at draw time rather than being a second palette to maintain.
 
 ## How a proposal gets decided
 

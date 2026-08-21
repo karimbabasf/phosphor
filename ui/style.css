@@ -1035,6 +1035,85 @@ body.splitting-y, body.splitting-y * { cursor: row-resize; }
 .ovl-body .txgrid { max-height: none; overflow: visible; }
 .ovl-body .txbar { display: flex; align-items: baseline; gap: 1ch; margin: 0 0 6px; }
 
+/* ---------- the gas report (the `gas` view in ui/deck-views.js) ----------
+
+   Two rings and their tables, side by side, and the tables are the authority: the canvas
+   next to each one draws the same numbers as a shape and is announced by an aria-label.
+   Scoped under .ovl-body because this view has one home and a class named `.gasring`
+   loose in the document is a name any other surface could collide with.
+
+   NO COLOUR HERE. Every slice colour is read off the custom properties at draw time by the
+   view itself, because a canvas is pixels and no stylesheet reaches inside one. What this
+   block owns is the boxes: sizes, rules and the room between them. */
+.ovl-body .gasbar { display: flex; align-items: baseline; gap: 1ch; margin: 0 0 8px; }
+.ovl-body .gasbar .meta { margin-left: auto; }
+
+/* Side by side while there is room for both, stacked when there is not. The basis is what
+   a 168px ring plus five columns of monospace actually needs; under that the second unit
+   drops below the first rather than squeezing the table into an ellipsis. */
+.ovl-body .gasrings { display: flex; flex-wrap: wrap; gap: 10px 3ch; }
+.ovl-body .gasunit { flex: 1 1 46ch; min-width: 0; }
+
+.ovl-body .gasunit-h {
+  margin: 0 0 4px;
+  color: var(--green-hi);
+  letter-spacing: 0.08em;
+  border-bottom: 1px solid var(--green-ghost);
+}
+
+.ovl-body .gasunit-body { display: flex; align-items: flex-start; gap: 2ch; }
+
+/* A fixed square, and ui/deck-views.js carries the same number as its fallback: a <dialog>
+   has no box until showModal() runs, so the first measure can come back zero.
+   150 and not more: the ring and its table share one half of the panel, and every pixel here
+   is a pixel the legend does not get. At 168 the widest slice key lost its tail to an
+   ellipsis while four number columns sat with room to spare, which is the wrong trade: the
+   table is the authority and the ring is the shape of it. */
+.ovl-body .gasring { flex: none; width: 150px; height: 150px; }
+
+.ovl-body .gaslegend { flex: 1 1 auto; min-width: 0; overflow-x: auto; }
+.ovl-body .gaslegend::-webkit-scrollbar { height: 6px; }
+.ovl-body .gaslegend::-webkit-scrollbar-track { background: transparent; }
+.ovl-body .gaslegend::-webkit-scrollbar-thumb { background: var(--green-ghost); }
+
+/* The four number columns are sized to their content the way the history table is, and the
+   slice name takes what is left. The figures here are why they are that narrow and not
+   narrower: 'consolidate' plus its chip needs 12ch and lost its last three characters to an
+   ellipsis at the first widths tried (headless render, 2026-08-20). A key that still does not
+   fit truncates and keeps its full text in the cell title, exactly as the history table does
+   with an address, and so does a gas figure past ten digits. */
+.ovl-body .gastable { table-layout: fixed; min-width: 40ch; }
+.ovl-body .gastable .c-gasusd { width: 10ch; }
+.ovl-body .gastable .c-share { width: 8ch; }
+.ovl-body .gastable .c-units { width: 10ch; }
+.ovl-body .gastable .c-txn { width: 4ch; }
+.ovl-body .gastable td { padding-top: 1px; padding-bottom: 1px; }
+.ovl-body .gastable td.slice { color: var(--green-hi); }
+
+/* The chip is what maps a row to its arc. Its colour is set by the view from the same token
+   the arc was filled with, so this rule owns the shape and never the ink. Same 7px square
+   the wallet table uses, so the two legends in this app read as one idea. */
+.ovl-body .gastable .chip {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 0.75ch;
+  vertical-align: baseline;
+}
+
+/* What the rings could not say: the bill in gas units, what it cost as a share of the money
+   moved, and every remainder the aggregation had to leave out. A rule above them because
+   they are a different claim from the rings, not a footnote to one of them. */
+.ovl-body .gasnotes {
+  margin-top: 10px;
+  padding-top: 4px;
+  border-top: 1px solid var(--green-ghost);
+}
+
+.ovl-body .gasnote { color: var(--green-dim); white-space: pre-wrap; }
+.ovl-body .gasnote.red { color: var(--red); }
+.ovl-body .gasnote.faint { color: var(--green-faint); }
+
 /* ---------- the agent panel (ui/driver-chat.js) ----------
 
    The panel the log used to hold. It is the one surface in the app whose whole content is

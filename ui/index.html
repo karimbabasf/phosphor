@@ -41,15 +41,23 @@
   <p class="banner" id="policy-banner" hidden>POLICY FILE UNREADABLE: ALL WRITES REFUSED</p>
   <p class="alert dim" id="alert" hidden></p>
 
-  <!-- The three records that do not fit a deck that never scrolls: the audit log, the
-       policy in full, and everything this app has done with the money. They were panels
-       being cut to the room left over; each one now opens whole, behind its own button.
-       Controls FOR the deck, so they sit above it rather than becoming a panel in it. -->
+  <!-- The records that do not fit a deck that never scrolls: the audit log, the policy in
+       full, everything this app has done with the money, and what that cost. They were
+       panels being cut to the room left over; each one now opens whole, behind its own
+       button. Controls FOR the deck, so they sit above it rather than becoming a panel in it.
+
+       GAS is fourth and it is not a fifth reading of the history. HISTORY answers "what did
+       this app do", one row per movement with the fee on the end of the row, which means a
+       person asking "what has this cost me" was adding twelve rows up in their head. GAS is
+       that sum, split by what kind of action spent it and which chain it burned on, with the
+       four things it could not count printed rather than dropped. See the `gas` view in
+       ui/deck-views.js and section 2.7 of the 2026-08-20 yield-and-gas spec. -->
   <p class="deckbar">
     <span class="k">open</span>
     <button type="button" class="btn" id="open-log" aria-haspopup="dialog">[ LOG ]</button>
     <button type="button" class="btn" id="open-policy" aria-haspopup="dialog">[ POLICY ]</button>
     <button type="button" class="btn" id="open-history" aria-haspopup="dialog">[ HISTORY ]</button>
+    <button type="button" class="btn" id="open-gas" aria-haspopup="dialog">[ GAS ]</button>
   </p>
 
   <!-- Two columns, and which panel is where is the whole argument of this deck.
