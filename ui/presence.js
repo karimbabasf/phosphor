@@ -1,8 +1,19 @@
-/* presence.js — the agent presence light, shared by the pro and trade windows.
+/* presence.js: the agent SEAT light, in the status bar of the pro and trade windows.
  *
- * ONE job: say whether the agent is WORKING right now, so a human who just asked it to do
- * something sees motion instead of a frozen screen, and sees stillness when it is idle. It is
- * the same idea as Warden's orb and the pulse maths below are lifted from it verbatim
+ * ONE job: say whether ANY agent holds the MCP seat and is working right now, whoever started
+ * it. An agent running in a terminal on the other side of the desk lights this exactly like one
+ * started from the panel in this window, because what it reads is the seat itself (src/agents.ts,
+ * connected() and activityAt()) rather than a process this window owns. So a human who just
+ * asked for something sees motion instead of a frozen screen, and stillness when nothing is
+ * working anywhere.
+ *
+ * IT IS NOT THE PANEL'S GLOBE. ui/agent-globe.js draws a wireframe sphere inside the agent
+ * panel, and that one knows about a single process: the driver that panel started. Read them
+ * this way and they never collide. Ball in the window chrome, anything anywhere; sphere in the
+ * panel, the agent in that panel. The basic screen hides the status bar (ui/style.css), so
+ * there the panel's globe is the only agent light on the page.
+ *
+ * It is the same idea as Warden's orb and the pulse maths below are lifted from it verbatim
  * (web/viz/shared/scene/AgentCore.tsx: agentCorePulseState / agentCoreSpinMultiplier): a
  * sin(t*2.2) wave drives a heart-scale of 1.04 + w*0.08 and a glow of 1 + crest*0.28, and a
  * working agent spins 1.35x faster. Warden draws a 3D WebGL globe; this is a 2D phosphor-green
@@ -17,7 +28,8 @@
  * It renders two things when their canvases are on the page (each optional, handled alone):
  *   #agent-orb     the ball in the status bar
  *   #agent-pulse   the oscilloscope strip under the log, the "something alive" that fills the
- *                  gap so a busy window is never a dead one
+ *                  gap so a busy window is never a dead one. Neither window carries this
+ *                  canvas right now, so today the orb is the whole of what gets drawn.
  *
  * Driven entirely from outside through window.PhosphorPresence:
  *   note()                     a tool call just happened NOW (from the SSE 'activity' event)

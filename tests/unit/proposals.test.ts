@@ -58,6 +58,7 @@ function setup(over: { mode?: AppConfig['mode']; policy?: Policy | 'none'; quote
   const cfg: AppConfig = {
     mode: over.mode ?? 'demo',
     network: over.network ?? 'testnet',
+    tradingNetwork: over.network ?? 'testnet',
     // Default on: the human-approval flow is what most of these tests exercise. The
     // gate-disabled cases below opt out explicitly. See policy/gate.ts.
     approvalGate: over.approvalGate ?? true,
@@ -603,7 +604,7 @@ test('a stale proposal in the store survives a fresh service and stays gettable'
 
 test('onChange fires on every state transition', async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'acc-proposals-'));
-  const cfg: AppConfig = { mode: 'demo', network: 'testnet', approvalGate: true, keysPath: '/tmp/phosphor-test-keys.json', port: 4177, addresses: { evm: [], solana: [], near: [] }, economicTransferUsd: 10, candleProducts: [], dataDir };
+  const cfg: AppConfig = { mode: 'demo', network: 'testnet', tradingNetwork: 'testnet', approvalGate: true, keysPath: '/tmp/phosphor-test-keys.json', port: 4177, addresses: { evm: [], solana: [], near: [] }, economicTransferUsd: 10, candleProducts: [], dataDir };
   savePolicy(dataDir, happyPolicy());
   let changes = 0;
   const svc = createProposalService({

@@ -87,6 +87,7 @@ async function boot(opts: { view?: ViewMode; proposals?: Proposal[] } = {}): Pro
   const cfg: AppConfig = {
     mode: 'demo',
     network: 'testnet',
+    tradingNetwork: 'testnet',
     approvalGate: true,
     port: 0,
     addresses: { evm: ['0xself'], solana: [], near: [] },

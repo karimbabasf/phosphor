@@ -18,6 +18,7 @@ import type { InfoClient } from '../hl/info.ts';
 import type { ManualAction, RunnerEvent } from '../runner/host.ts';
 import type { Mandate } from '../strategy/envelope.ts';
 import type { Program } from '../strategy/grammar.ts';
+import type { Network } from '../types.ts';
 
 export type AssetMeta = { name: string; szDecimals: number; maxLeverage: number; assetId: number };
 
@@ -45,6 +46,11 @@ export type TradeService = {
 export type TradeServiceDeps = {
   wsUrl: string;
   user: string;
+  // The TRADING network, cfg.tradingNetwork, which is the one value the runner and this
+  // surface both read. The page prints it beside the collateral because a balance means
+  // nothing without the venue it is on, and testnet money read as mainnet money is the
+  // cheapest way to arm a bot against nothing.
+  network: Network;
   info: InfoClient;
   runner: TradeRunner;
   products: string[];
@@ -162,6 +168,8 @@ export function createTradeService(deps: TradeServiceDeps): TradeService {
       atrFor: deps.atrFor,
       products: deps.products,
       nowMs: Date.now(),
+      network: deps.network,
+      address: deps.user,
     });
   }
 

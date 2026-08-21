@@ -204,20 +204,57 @@ test('usdClassTransfer signs nonce, not time, and mainnet stamps a different hyp
   assert.equal(main.action.signatureChainId, '0x66eee'); // unchanged: it is not the selector
 });
 
-// ---------- the testnet guard ----------
+// ---------- the network guard ----------
+//
+// Mainnet stopped being refused on 2026-08-20, when trading moved there. These two tests used
+// to assert the refusal. They now assert the thing the refusal was standing in for, which is
+// that the network reaches the SIGNATURE and not just the URL. A withdrawal signed with the
+// wrong hyperliquidChain is the failure that matters, and it is the one the venue catches
+// loudly rather than the one that moves money quietly.
 
-test('every write throws on mainnet rather than refusing softly', async () => {
-  const d = deps({ network: 'mainnet', withdrawable: '1000.0' });
-  await assert.rejects(() => withdraw3(d, { amount: 100 }), /TESTNET ONLY.*configured for mainnet/s);
-  await assert.rejects(() => usdClassTransfer(d, { amount: 100, toPerp: true }), /TESTNET ONLY.*configured for mainnet/s);
+test('a mainnet write signs a Mainnet payload and posts it to the mainnet exchange', async () => {
+  const { port, signed } = fakeSignPort();
+  const { fetchImpl, posts } = fakeFetch({ withdrawable: '1000.0' });
+  const d: HlWithdrawDeps = { network: 'mainnet', keysPath: KEYS, sign: port, fetchImpl, now: () => NOW };
+
+  const out = await withdraw3(d, { amount: 100 });
+  assert.equal(out.ok, true, out.detail);
+
+  // The field that actually separates the two worlds, read off what was signed.
+  assert.equal(signed.length, 1);
+  assert.equal((signed[0].message as Record<string, unknown>).hyperliquidChain, 'Mainnet');
+
+  // And every URL it touched agrees with it, so a Mainnet payload can never be posted at
+  // testnet and the balance it checked first was the mainnet balance. `posts` records the two
+  // info reads as well as the write, which is why this asserts over all of them.
+  const exchange = posts.filter((p) => p.url.endsWith('/exchange'));
+  assert.equal(exchange.length, 1);
+  assert.equal(exchange[0].url, 'https://api.hyperliquid.xyz/exchange');
+  assert.equal(exchange[0].body.action.hyperliquidChain, 'Mainnet');
+  assert.ok(
+    posts.every((p) => p.url.startsWith('https://api.hyperliquid.xyz/')),
+    `every call should be mainnet, got ${posts.map((p) => p.url).join(', ')}`,
+  );
 });
 
-test('the mainnet guard fires before anything is signed or sent', async () => {
+test('testnet and mainnet never produce the same signed payload for the same withdrawal', async () => {
+  const t = buildWithdrawPayload({ network: 'testnet', destination: OWN, amount: '100', time: NOW });
+  const m = buildWithdrawPayload({ network: 'mainnet', destination: OWN, amount: '100', time: NOW });
+  assert.equal(t.action.hyperliquidChain, 'Testnet');
+  assert.equal(m.action.hyperliquidChain, 'Mainnet');
+  assert.notDeepEqual(t.typedData.message, m.typedData.message);
+});
+
+test('an unknown network throws before anything is signed or sent', async () => {
   const { port, signed } = fakeSignPort();
   const { fetchImpl, posts } = fakeFetch({ withdrawable: '1000.0' });
   await assert.rejects(
-    () => withdraw3({ network: 'mainnet', keysPath: KEYS, sign: port, fetchImpl, now: () => NOW }, { amount: 100 }),
-    /TESTNET ONLY/,
+    () =>
+      withdraw3(
+        { network: 'devnet' as unknown as HlWithdrawDeps['network'], keysPath: KEYS, sign: port, fetchImpl, now: () => NOW },
+        { amount: 100 },
+      ),
+    /no Hyperliquid withdraw spec/,
   );
   assert.equal(signed.length, 0);
   assert.equal(posts.length, 0);

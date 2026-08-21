@@ -202,7 +202,8 @@ function destinationsOf(proposal: Proposal, selfAddresses: string[]): BasicDesti
     push(draft.counterparty, 'the exchange contract this app keeps on its approved list', 'app');
     push(draft.to, isSelf(draft.to, selfAddresses) ? 'your own wallet' : NOT_YOURS, 'app');
   } else if (draft.kind === 'hl_deposit') {
-    push(draft.bridge, 'the Hyperliquid bridge contract, from the list this app keeps', 'app');
+    push(draft.counterparty, 'the NEAR Intents router this app keeps on its approved list', 'app');
+    push(draft.hlAccount, isSelf(draft.hlAccount, selfAddresses) ? 'your own trading account' : NOT_YOURS, 'app');
   } else if (draft.kind === 'lp_add' || draft.kind === 'lp_remove') {
     push(draft.counterparty, 'the Uniswap contract this app keeps on its approved list', 'app');
   } else if (draft.kind === 'intents_withdraw') {

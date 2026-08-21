@@ -418,16 +418,21 @@ async function postAction(
   return { ok: true, detail: '', body };
 }
 
-// Every write in this module goes through here first. Mainnet is not a supported configuration
-// for this file: it moves real money and nobody authorised that, so it throws rather than
-// refusing softly. A thrown error cannot be mistaken for a result object with ok:false.
-function assertTestnet(deps: HlWithdrawDeps): void {
-  if (deps.network !== 'testnet') {
-    throw new Error(
-      `hyperliquid-withdraw is TESTNET ONLY and this app is configured for ${deps.network}. ` +
-        `These actions move real funds on mainnet. Refusing to sign.`,
-    );
-  }
+// Every write in this module goes through here first.
+//
+// This used to refuse mainnet outright, on the grounds that nobody had authorised real money
+// leaving. Karim authorised it on 2026-08-20, so the refusal is gone and what remains is the
+// check that actually prevents loss: the network must be one this file has a signature spec
+// for, because `hyperliquidChain` is INSIDE the EIP-712 payload. Signing a Testnet-domain
+// withdrawal against the mainnet exchange does not move the wrong money, it produces a
+// signature the venue rejects, and the failure is loud. Signing the other way round is the
+// one that would be quiet, which is why the spec table is keyed and has no default.
+//
+// It still throws rather than returning ok:false. A thrown error cannot be mistaken for a
+// result object, and every caller here is about to sign something.
+function assertSignableNetwork(deps: HlWithdrawDeps): void {
+  // Throws on anything outside the table, which is the whole check.
+  hlWithdrawSpec(deps.network);
 }
 
 // ---------- usdClassTransfer: spot <-> perp ----------
@@ -439,7 +444,7 @@ export async function usdClassTransfer(
   deps: HlWithdrawDeps,
   params: { amount: number; toPerp: boolean },
 ): Promise<HlActionResult> {
-  assertTestnet(deps);
+  assertSignableNetwork(deps);
   const sign = deps.sign ?? liveSignPort;
 
   let amount: string;
@@ -491,7 +496,7 @@ export async function withdraw3(
   deps: HlWithdrawDeps,
   params: { amount: number; destination?: string; allowExternalDestination?: boolean },
 ): Promise<HlActionResult> {
-  assertTestnet(deps);
+  assertSignableNetwork(deps);
   const sign = deps.sign ?? liveSignPort;
   const spec = hlWithdrawSpec(deps.network);
 

@@ -53,6 +53,7 @@ async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
   const cfg: AppConfig = {
     mode: 'demo',
     network: 'testnet',
+    tradingNetwork: 'testnet',
     approvalGate: true,
     port: 0,
     addresses: { evm: ['0xself'], solana: [], near: [] },

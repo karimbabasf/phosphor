@@ -249,7 +249,7 @@ test('every symbol and chain the draft names survives into basic', () => {
 test('every draft kind produces a headline that names its amount', () => {
   const drafts: WriteDraft[] = [
     swapDraft(),
-    { kind: 'hl_deposit', chain: 'arb', symbol: 'USDC', amount: 20, amountUsd: 20, from: SELF, bridge: ROUTER },
+    { kind: 'hl_deposit', chain: 'arb', symbol: 'USDC', tokenId: 'USDC', amount: 20, amountUsd: 20, minCredited: 19.8, from: SELF, hlAccount: SELF, counterparty: ROUTER },
     {
       kind: 'lp_add',
       chain: 'arb',

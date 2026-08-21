@@ -30,7 +30,9 @@ const value = (name: string): string | undefined => {
 };
 
 const cfg = loadConfig(ROOT);
-const deps: HlWithdrawDeps = { network: cfg.network, keysPath: cfg.keysPath };
+// The TRADING network, not the wallet one. hyperliquidChain rides inside the EIP-712 payload,
+// so this value has to be the venue the account lives on or the venue rejects the signature.
+const deps: HlWithdrawDeps = { network: cfg.tradingNetwork, keysPath: cfg.keysPath };
 
 function usage(): never {
   console.error('usage: node scripts/hl-withdraw.ts summary | to-perp <amt> | to-spot <amt> | withdraw <amt> [--to 0x..] [--allow-external] --yes');

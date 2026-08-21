@@ -137,7 +137,7 @@ function isRailDraft(draft: WriteDraft): draft is RailDraft {
 // a contract we chose rather than an arbitrary recipient, which is why rails get an
 // allowlist check on the venue instead of the leg-destination check.
 function counterpartyOf(draft: RailDraft): string {
-  return draft.kind === 'hl_deposit' ? draft.bridge : draft.counterparty;
+  return draft.counterparty;
 }
 
 // Where the OUTPUT lands, which is a different question from who we hand the funds to.
@@ -164,6 +164,10 @@ function destinationOf(draft: RailDraft): string | null {
   if (draft.kind === 'swap') return draft.to;
   if (draft.kind === 'intents_deposit') return draft.intentsAccount;
   if (draft.kind === 'intents_withdraw') return draft.to;
+  // hl_deposit gained one on 2026-08-20. The old Bridge2 mechanism credited whoever sent the
+  // tokens, so there was nothing here to check; the 1Click route names the account it credits,
+  // so funding a Hyperliquid account that is not ours is now a thing this can refuse.
+  if (draft.kind === 'hl_deposit') return draft.hlAccount;
   return null;
 }
 

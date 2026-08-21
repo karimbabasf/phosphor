@@ -22,6 +22,7 @@ const riskRows = JSON.parse(
 const demoConfig: AppConfig = {
   mode: 'demo',
   network: 'testnet',
+  tradingNetwork: 'testnet',
   approvalGate: true,
   keysPath: '/tmp/phosphor-test-keys.json',
   port: 4177,
@@ -138,6 +139,7 @@ test('applyDemoTransfer moves balance from source chain to destination chain, ne
 const liveConfig: AppConfig = {
   mode: 'live',
   network: 'testnet',
+  tradingNetwork: 'testnet',
   approvalGate: true,
   keysPath: '/tmp/phosphor-test-keys.json',
   port: 4177,

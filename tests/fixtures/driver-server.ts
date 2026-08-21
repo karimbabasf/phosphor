@@ -74,6 +74,7 @@ export async function bootDriverServer(opts: BootOptions = {}): Promise<Booted> 
   const cfg: AppConfig = {
     mode: 'demo',
     network: 'testnet',
+    tradingNetwork: 'testnet',
     approvalGate: true,
     port: 0,
     addresses: { evm: ['0xself'], solana: [], near: [] },
