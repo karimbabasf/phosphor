@@ -61,6 +61,9 @@ import { buildTransactions, createGasCache, evmCandidates } from './transactions
 import type { TxPlace } from './transactions.ts';
 import { gateRequired, gateBanner } from './policy/gate.ts';
 import type { Allocator } from './yield/allocator.ts';
+import { OBSERVATION_CAVEAT } from './yield/positions.ts';
+import { buildGasReport } from './gas/report.ts';
+import type { GasReport, GasWindow } from './gas/report.ts';
 import { buildGreeting } from './greeting.ts';
 import { buildRole } from './role.ts';
 import { research } from './research.ts';
@@ -143,6 +146,12 @@ const PROPOSE_KINDS: readonly string[] = [
   'lp_add',
   'lp_remove',
   'mandate_arm',
+  // Supplying a stablecoin to a lending venue and taking it back. On this list from
+  // 2026-08-20, when the rail had run on a live chain five times (see the evidence in
+  // docs/superpowers/specs/2026-08-20-stablecoin-yield.md section 5) and the agent door
+  // opened onto it. Before that the rails existed and only the window could drive them.
+  'yield_deposit',
+  'yield_withdraw',
 ];
 const READ_TOOLS: readonly string[] = [
   // The handshake presentation: the banner a connecting agent prints, the live facts it
@@ -172,6 +181,13 @@ const READ_TOOLS: readonly string[] = [
   // reading a tool signature, because it takes a program rather than arguments, so the
   // grammar has to be readable from the surface or an agent asks a human how.
   'mandate_catalog',
+  // What the money is earning, what it has actually made, and what the loop last decided.
+  // The same view the window's yield panel draws from, so the two cannot disagree about a
+  // number a human and an agent might both be looking at.
+  'yield_read',
+  // What this app has spent on gas, grouped. A pure aggregation over the history the
+  // HISTORY overlay already derives, so it reaches no chain of its own.
+  'gas_report',
 ];
 // Chart writes. They move no money, so they never reach the proposal path and never wait on
 // an approval. They are still audited like every other op: an agent that can change what the
@@ -802,6 +818,106 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       .finally(() => {
         gasFilling = false;
       });
+  }
+
+  // ---------- gas analytics ----------
+  //
+  // One derivation, two doors. The window opens GET /api/gas and an agent asks for the
+  // gas_report read tool, and both land here, for the same reason /api/chart and the chart
+  // read tools land in one place: two aggregations of one history would eventually disagree
+  // about a dollar, and the human and the agent would each be told a different number about
+  // the same money.
+  //
+  // The fill is kicked off exactly as /api/transactions does it. Without that line, a report
+  // asked for before the history panel was ever opened would count every unread receipt as a
+  // remainder forever, because nothing else on this surface reads a receipt.
+
+  function gasReport(windowRaw: string): { status: number; body: GasReport | { error: string } } {
+    const window = windowRaw as GasWindow;
+    if (window !== '24h' && window !== '7d' && window !== '30d' && window !== 'all') {
+      // A 400, not a 200 carrying an error field. The window renders whatever body it is
+      // handed, so an error object answered with a success status draws as a report of zero
+      // gas, which is the one wrong answer this whole feature exists to avoid.
+      return { status: 400, body: { error: `window must be one of 24h, 7d, 30d, all; got '${windowRaw}'` } };
+    }
+    const payload = transactionsPayload();
+    fillGas(payload.entries);
+    return { status: 200, body: buildGasReport({ entries: payload.entries, window, nowMs: Date.now() }) };
+  }
+
+  // ---------- the lending allocator's two doors ----------
+  //
+  // A chain omitted on a yield proposal is answered from the loop's own view rather than
+  // defaulted to a constant. A constant would be right until the day a second venue paid
+  // more, and then it would be quietly wrong on every call that trusted it.
+
+  function bestYieldChain(): { ok: true; chain: ChainId } | { ok: false; reason: string } {
+    const view = deps.allocator?.view();
+    if (!view) {
+      return { ok: false, reason: 'no lending allocator is running, so there is no best venue to pick. Name a chain.' };
+    }
+    if (view.best) return { ok: true, chain: view.best.chain };
+    // Healthy venues exist and none of them quoted a rate: the read failed or the reserve is
+    // frozen. Saying which is what lets a caller decide whether to retry or to stop.
+    const unhealthy = view.venues.filter(v => !v.healthy).map(v => `${v.chain}: ${v.note}`);
+    return {
+      ok: false,
+      reason:
+        'no venue is currently paying a readable rate, so there is no best chain to deposit into. ' +
+        (unhealthy.length > 0 ? unhealthy.join('; ') : 'Name a chain to force one.'),
+    };
+  }
+
+  function heldYieldChain(): { ok: true; chain: ChainId } | { ok: false; reason: string } {
+    const view = deps.allocator?.view();
+    if (!view) {
+      return { ok: false, reason: 'no lending allocator is running, so there is no position to withdraw from.' };
+    }
+    // Only positions that actually hold something. A closed position keeps its row so the
+    // window can still show what it earned, and withdrawing from it would refuse at the rail
+    // with a message about a zero balance instead of here with one about which chain.
+    const held = view.positions.filter(pos => Number(pos.valueUsd) > 0);
+    if (held.length === 0) return { ok: false, reason: 'nothing is supplied to a lending venue, so there is nothing to withdraw.' };
+    if (held.length > 1) {
+      return {
+        ok: false,
+        reason: `money is supplied on more than one chain (${held.map(p => p.chain).join(', ')}), so name the one to withdraw from.`,
+      };
+    }
+    return { ok: true, chain: held[0]!.chain };
+  }
+
+  // Starting and stopping the loop. It moves no money itself and gets no policy verdict,
+  // which puts it in the class of set_view_mode rather than of propose: what it changes is
+  // WHEN a proposal gets filed, not whether one can be. Every proposal the loop then files
+  // goes through the same engine, the same threshold and the same log an agent's does.
+  //
+  // Audited on both edges, because "who turned the bot on" is the first question anyone asks
+  // of a log after money moved without a click.
+  function handleYieldAuto(body: JsonBody, res: http.ServerResponse): void {
+    if (!deps.allocator) {
+      sendJson(res, 400, { error: 'no lending allocator is running in this app, so there is no loop to switch.' });
+      return;
+    }
+    if (typeof body.enabled !== 'boolean') {
+      // No default, deliberately. A switch that defaults to one of its two states is a switch
+      // an agent flips while trying to read it.
+      sendJson(res, 400, { error: 'enabled must be true or false' });
+      return;
+    }
+    const on = body.enabled;
+    if (on) deps.allocator.start();
+    else deps.allocator.stop();
+    audit.append(
+      'tool_call',
+      on
+        ? 'yield_auto ON: the lending loop may now file its own deposit proposals'
+        : 'yield_auto OFF: the lending loop will file nothing further',
+      { enabled: on },
+    );
+    broadcastState();
+    const view = deps.allocator.view();
+    sendJson(res, 200, { ok: true, autoAllocate: view.autoAllocate, lastTickAt: view.lastTickAt });
   }
 
   // ---------- browser routes ----------
@@ -1440,6 +1556,32 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       sendJson(res, 200, trade.batch(Array.isArray(args.ops) ? (args.ops as unknown[]) : []));
       return;
     }
+    if (tool === 'yield_read') {
+      const view = deps.allocator?.view() ?? null;
+      if (view === null) {
+        // Not an empty position. An empty view reads as "you have nothing supplied", which is
+        // a different claim from "this app is not wired for this", and an agent that cannot
+        // tell them apart tells its human the wrong one.
+        sendJson(res, 200, {
+          available: false,
+          reason:
+            'no lending allocator is running in this app, so there is no position to read. ' +
+            'This is how demo mode and a wallet-only install look; it does not mean a supplied balance is empty.',
+        });
+        return;
+      }
+      // The caveat travels with the number rather than sitting in the tool description,
+      // because the description is read once at connect and the percentage is read every
+      // time. An agent quoting the rate out loud should be carrying the same sentence the
+      // screen prints under it.
+      sendJson(res, 200, { available: true, ...view, caveat: OBSERVATION_CAVEAT });
+      return;
+    }
+    if (tool === 'gas_report') {
+      const report = gasReport(String(args.window ?? '7d'));
+      sendJson(res, report.status, report.body);
+      return;
+    }
     sendJson(res, 400, { error: `unknown read tool: ${tool}. known tools: ${READ_TOOLS.join(', ')}` });
   }
 
@@ -1777,6 +1919,56 @@ export function createServer(deps: ServerDeps): PhosphorServer {
           return;
         }
         sendProposal(res, await proposals.proposeIntentsWithdraw({ chain, symbol, amount }));
+        return;
+      }
+      if (kind === 'yield_deposit' || kind === 'yield_withdraw') {
+        // Both rails take EVM chains only, and chainField accepts sol and near because four
+        // other kinds need them. Narrowing here rather than there keeps the message specific:
+        // "sol is not a chain this rail supplies on" beats a generic list five items long.
+        let chain: ChainId | null = null;
+        if (params.chain === undefined) {
+          // Omitted on purpose, and it is the common case. A deposit goes where the loop
+          // would send it, and a withdrawal comes from wherever the position actually is.
+          // Both answers live in the allocator's view, so neither is a guess.
+          const picked = kind === 'yield_deposit' ? bestYieldChain() : heldYieldChain();
+          if (!picked.ok) {
+            sendJson(res, 400, { error: picked.reason });
+            return;
+          }
+          chain = picked.chain;
+        } else {
+          const named = chainField(params, 'chain', problems);
+          if (named !== 'eth' && named !== 'base' && named !== 'arb') {
+            problems.push(`chain must be one of eth, base, arb for ${kind}; got '${String(params.chain)}'`);
+          } else {
+            chain = named;
+          }
+        }
+        const symbol = params.symbol === undefined ? undefined : strField(params, 'symbol', problems);
+        // The asymmetry is the whole design of the withdrawal. An amount is REQUIRED going in
+        // and OPTIONAL coming out, because the receipt token rebases: a number the caller
+        // computed a block ago is already short of the position by whatever interest landed
+        // while the proposal waited for a click, and omitting it means all of it, dust
+        // included. See the comment on YieldWithdrawParams in src/types.ts.
+        const amount =
+          kind === 'yield_deposit'
+            ? numField(params, 'amount', problems)
+            : params.amount === undefined
+              ? undefined
+              : numField(params, 'amount', problems);
+        if (kind === 'yield_deposit' && amount !== undefined && amount <= 0) {
+          problems.push('amount must be greater than 0');
+        }
+        if (problems.length > 0 || chain === null) {
+          sendJson(res, 400, { error: problems.join('; ') || 'chain could not be resolved' });
+          return;
+        }
+        sendProposal(
+          res,
+          kind === 'yield_deposit'
+            ? await proposals.proposeYieldDeposit({ chain, symbol, amount: amount as number })
+            : await proposals.proposeYieldWithdraw({ chain, symbol, amount }),
+        );
         return;
       }
       if (kind === 'lp_add') {
@@ -2123,7 +2315,9 @@ export function createServer(deps: ServerDeps): PhosphorServer {
               ? `set_view_mode ${String(body.mode ?? '?')}`
               : op === 'set_basic_coins'
                 ? `set_basic_coins ${(Array.isArray(body.coins) ? body.coins : []).join(' ')}`
-                : `unknown op ${op}`;
+                : op === 'yield_auto'
+                  ? `yield_auto ${body.enabled === true ? 'on' : 'off'}`
+                  : `unknown op ${op}`;
     // Contract: every op that reads, proposes or moves the window is audit-logged
     // before dispatch, arguments included verbatim.
     audit.append('tool_call', `agent: ${capLabel(label)}`, body);
@@ -2148,8 +2342,12 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       await handleSetBasicCoins(body, res);
       return;
     }
+    if (op === 'yield_auto') {
+      handleYieldAuto(body, res);
+      return;
+    }
     sendJson(res, 400, {
-      error: `unknown op: ${op}. known ops: hello, bye, read, propose, view, set_view_mode, set_basic_coins`,
+      error: `unknown op: ${op}. known ops: hello, bye, read, propose, view, set_view_mode, set_basic_coins, yield_auto`,
     });
   }
 
@@ -2177,6 +2375,13 @@ export function createServer(deps: ServerDeps): PhosphorServer {
           const payload = transactionsPayload();
           fillGas(payload.entries);
           return sendJson(res, 200, payload);
+        }
+        if (route === '/api/gas') {
+          // Same derivation as /api/transactions and the same background fill, so opening GAS
+          // after HISTORY costs nothing and opening it first warms the cache for HISTORY. The
+          // report says how many receipts are still coming rather than counting them as free.
+          const report = gasReport(url.searchParams.get('window') ?? '7d');
+          return sendJson(res, report.status, report.body);
         }
         if (route === '/api/trade') return sendJson(res, 200, trade.payload());
         if (route === '/api/session') return sendJson(res, 200, { token });

@@ -428,6 +428,88 @@ async function run(): Promise<void> {
     rejection !== undefined,
     rejection?.msg ?? 'no such event',
   );
+
+  // ---- the yield surface, in an app that has no lending loop ----
+  //
+  // This script runs in demo mode, which holds no rails and, since 2026-08-20, starts no
+  // allocator either. What is proved here is the honesty of the answer rather than a deposit.
+  // That is the failure mode worth catching: a read that returns an empty view in this
+  // situation tells an agent "you have nothing earning", which is a different claim from
+  // "nothing here can tell you", and an agent that cannot tell them apart says the wrong one
+  // out loud to a human.
+  //
+  // These four checks are also what caught the two defects this branch fixes. Before the fix
+  // this run started a real allocator against a real chain with the real signing key, read a
+  // live 56.29 USDC Aave position onto a fixture wallet, and reported all 56.29 of it as
+  // interest earned, because a throwaway data dir has no deposit history to derive a cost
+  // basis from and zero subtracts like a real number.
+
+  const yieldRead = (await callTool(client, 'yield_read')) as Json;
+  check(
+    'yield_read answers in an app with no allocator, and says which kind of nothing it is',
+    yieldRead?.available === false && typeof yieldRead?.reason === 'string' && yieldRead.reason.length > 0,
+    `available=${String(yieldRead?.available)} reason=${String(yieldRead?.reason).slice(0, 80)}`,
+  );
+  check(
+    'and it does not hand back an empty position list that reads as "you have nothing supplied"',
+    yieldRead?.positions === undefined,
+    `positions=${JSON.stringify(yieldRead?.positions)}`,
+  );
+
+  const autoOff = (await callTool(client, 'yield_auto', { enabled: true })) as Json;
+  check(
+    'yield_auto refuses when there is no loop, rather than reporting a switch it did not throw',
+    typeof autoOff?.error === 'string' && /no lending allocator/.test(autoOff.error),
+    String(autoOff?.error ?? JSON.stringify(autoOff)).slice(0, 90),
+  );
+
+  // ---- the gas report, over the history this run just made ----
+  //
+  // The consolidation above executed, so there is a real movement in the store by now. In
+  // demo mode it has no chain hash to read a receipt from, which is exactly the case the
+  // remainder counters exist for: the total is zero dollars and the report has to say WHY
+  // rather than presenting zero as a measured figure.
+
+  const gas = (await callTool(client, 'gas_report', { window: 'all' })) as Json;
+  check(
+    'gas_report answers with a report, not an error, over the history this run just made',
+    gas?.window === 'all' && typeof gas?.totalUsd === 'number',
+    `window=${String(gas?.window)} totalUsd=${String(gas?.totalUsd)} moveCount=${String(gas?.moveCount)}`,
+  );
+  check(
+    'every dollar the report totals is accounted for by a chain',
+    Array.isArray(gas?.byChain) &&
+      Math.abs(gas.byChain.reduce((sum: number, s: Json) => sum + Number(s.feeUsd), 0) - Number(gas.totalUsd)) < 1e-9,
+    `byChain=${JSON.stringify((gas?.byChain ?? []).map((s: Json) => [s.key, s.feeUsd]))} totalUsd=${String(gas?.totalUsd)}`,
+  );
+  check(
+    'the report carries its remainders, so a zero total can be told from an unmeasured one',
+    gas?.pending !== undefined && gas?.unknown !== undefined && gas?.unpriced !== undefined && gas?.intentOnly !== undefined,
+    `pending=${JSON.stringify(gas?.pending)} unknown=${JSON.stringify(gas?.unknown)} intentOnly=${JSON.stringify(gas?.intentOnly)}`,
+  );
+
+  // Refused twice over, and either refusal is a pass. The shim's zod enum turns it away
+  // before it reaches the app, and the app refuses it again on its own door because
+  // /api/gas is reachable from the window without going through the shim at all. A guard
+  // that only exists in the shim is a guard the browser walks around.
+  let badWindowText = '';
+  try {
+    badWindowText = JSON.stringify(await callTool(client, 'gas_report', { window: 'forever' }));
+  } catch (err) {
+    badWindowText = errText(err);
+  }
+  check(
+    'a window this app does not have is refused by name rather than answered as zero',
+    /24h, 7d, 30d, all/.test(badWindowText) || /Invalid/i.test(badWindowText),
+    badWindowText.slice(0, 110),
+  );
+
+  const badWindowDirect = await getJson('/api/gas?window=forever');
+  check(
+    'and the window\'s own door refuses it too, not only the agent\'s',
+    typeof badWindowDirect?.error === 'string' && /24h, 7d, 30d, all/.test(badWindowDirect.error),
+    String(badWindowDirect?.error ?? JSON.stringify(badWindowDirect)).slice(0, 90),
+  );
 }
 
 // ---------- main ----------

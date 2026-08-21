@@ -25,6 +25,12 @@ export const EXPECTED_TOOLS: readonly string[] = [
   'log_tail',
   'policy_show',
   'proposal_status',
+  // The gas bill, grouped by action and by chain over a window. It reaches no rail and makes no
+  // chain call: it groups receipts the history surface has already read. It is on this list as a
+  // read, but the thing worth checking in review is its DESCRIPTION, which has to keep naming the
+  // four remainders (pending, unknown, unpriced, intent-settled). A total that drops what it could
+  // not count is a smaller number than the truth, said confidently.
+  'gas_report',
   'propose_consolidate',
   'propose_policy_change',
   // The rails. Each moves funds through a contract and none takes an address: the property
@@ -42,6 +48,16 @@ export const EXPECTED_TOOLS: readonly string[] = [
   // and 1Click cannot quote OUT of hypercore. The direction is a property of the venue rather
   // than a check of ours, so an agent holding this can add collateral and has no path on this
   // surface to remove any. lp_add and lp_remove are unchanged and stay off.
+  //
+  // The yield rail shipped earlier the same day with nothing on this list, deliberately and for
+  // the same rule, and its own spec said the tools would follow once the evidence existed. They
+  // went on later on 2026-08-20 because the evidence exists: five real movements on Arbitrum
+  // Sepolia, three by hand and two filed by the loop, each through the real proposal service and
+  // the real policy engine, ending in a full exit that returned 56.292312 USDC to the wallet, with
+  // the app's realized 4.2672 percent and the reserve's 4.2687 percent APR computed independently
+  // and agreeing. The rule was met, not waived. The lp_add half of the old objection does not
+  // reach this rail either: a yield position is one balanceOf on a rebasing receipt and buildWallet
+  // already counts it, so there is no pre-trade balance to size a second move off.
   'propose_swap',
   // Funds the Hyperliquid perps account, from any chain this app signs for. One way in by
   // construction; getting money off the venue is a signed withdraw3 a human runs at a terminal
@@ -57,6 +73,23 @@ export const EXPECTED_TOOLS: readonly string[] = [
   // only, because this app derives its EVM address from a key it holds and can therefore prove
   // the destination is its own; it holds no Solana key.
   'propose_intents_withdraw',
+  // The yield rail: put an idle stablecoin to work in a lending pool, take it back, read what it
+  // did, and hand the looking to a loop. Four tools rather than three, because an agent that can
+  // deposit and cannot read the position back is holding half a rail.
+  //
+  // These are the only fund-moving tools here that refuse MAINNET. Every other rail on this list
+  // refuses testnet or refuses nothing, so a reader skimming for "testnet only" will assume they
+  // have it backwards; they do not. src/rails/yield.ts states the world it has been checked in.
+  'yield_read',
+  'propose_yield_deposit',
+  'propose_yield_withdraw',
+  // Starts and stops the allocator loop. It looks like standing authority and is not: the loop
+  // can only FILE a yield_deposit proposal, which is a capability the agent already holds one
+  // line up, and every proposal it files meets the same policy engine, click threshold, session
+  // cap and audit log. It grants a schedule, not an authority. Compare propose_mandate, where an
+  // armed bot sends orders straight to a venue with no proposal per order: that is why that one
+  // is gated and this one is not. Moves no money, gets no policy verdict, same class as `switch`.
+  'yield_auto',
   // Arming a bot. The one proposal that grants STANDING authority rather than spending once,
   // so it never auto-approves on any network.
   'propose_mandate',
