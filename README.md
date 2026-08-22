@@ -165,10 +165,30 @@ state and an index of every tool grouped by what a person would actually ask for
 never has to ask a human how to operate the app. The role rides in the MCP handshake itself, in
 the server's `instructions`, so it arrives without anyone prompting for it.
 
-**One agent at a time.** The first MCP session to speak takes the seat and every other session
-is refused with the reason until it leaves. A session leaves by shutting down, or by going
-quiet for longer than two and a half heartbeats. Two agents driving one wallet used to look
-exactly like one agent, and neither of them knew about the other.
+**A team, not a seat.** Up to six agents drive this app at once, and any of them can spawn
+workers of its own. Each is named on a roster, each thing it draws carries its id, and they
+coordinate on a shared board they all read. A session leaves by shutting down, or by going quiet
+for longer than two and a half heartbeats.
+
+This used to be one agent at a time, and the reason it could change is worth stating: the old
+rule existed because two agents driving one wallet looked exactly like one agent, and neither of
+them knew about the other. They are told apart now, so they no longer have to be forbidden.
+What replaced exclusivity on the money path is narrower and structural. An agent holds a ROLE.
+An operator can propose; an ANALYST cannot, and the propose tools are not registered for its
+process at all, so there is nothing to talk it into. Every worker Phosphor spawns is an analyst.
+It can read every market, measure every chart and draw on it, and it has no path to the wallet.
+
+The other thing the seat used to prevent is prevented directly: an identical proposal from a
+second agent inside ninety seconds is refused with the id of the one already in flight. Two
+proposals below the click threshold would both execute and each would be individually correct,
+so only the pair is wrong and nothing else in the stack would have caught it.
+
+**The chart cleans itself up.** Levels, marks and trend lines are anchored to one instrument, so
+switching product clears the agent-drawn ones automatically and says how many it took. Indicators
+are kept, because an EMA means the same thing on any market. A human's own drawings are never
+swept by anything an agent does. Every `chart_read` carries a `housekeeping` block counting what
+is the reading agent's, what is another agent's and what is stale, beside the exact call that
+clears each.
 
 | Read tool | Returns |
 |---|---|
@@ -560,7 +580,10 @@ the agent reads and the pixel the human sees come from one implementation.
     src/server.ts      the approval surface, the JSON routes, the SSE stream, /api/mcp
     src/mcp.ts         stdio MCP server, thin proxy to the app, no approval path
     src/greeting.ts    the connect-time greeting and the index of everything an agent can do
-    src/agents.ts      who is driving, and the rule that only one thing may
+    src/agents.ts      who is driving: the roster, roles, heartbeat TTLs, the lead
+    src/board.ts       the noticeboard agents write one line each to. Data, never authority
+    src/duplicates.ts  two agents cannot double one proposal by accident
+    src/crew.ts        workers: the app spawning an analyst on an agent's behalf
     src/summon.ts      start a fresh agent in a terminal, wired to this app
     src/policy/        engine (pure) + policy file + sentence renderer
     src/proposals.ts   simulate, evaluate, persist, execute after approval
@@ -571,7 +594,11 @@ the agent reads and the pixel the human sees come from one implementation.
     src/intents.ts     1Click quotes, synthetic quoter, stub signer
     src/chart.ts       chart view state, the agent read model, the ruler
     src/indicators.ts  indicator maths, pure, index aligned with the candles
-    src/analysis/      the measurements: pivots, levels, regime, vwap, range, divergence
+    src/indicators-kit.ts      the series maths both catalogues are built from
+    src/indicators-library.ts  the wave family, supertrend, keltner, squeeze, ichimoku, adx
+    src/presets.ts     named study packages, and the tidy that runs before one is applied
+    src/analysis/      the measurements: pivots, levels, regime, vwap, range, divergence,
+                       and structure.ts: order blocks, gaps, liquidity, breaks of structure
     src/drawings.ts    the objects that make the chart a shared coordinate system
     src/batch.ts       many operations, one round trip, because latency is turns not ms
     src/market/        the candle cache and the catalog: why the chart stops being late

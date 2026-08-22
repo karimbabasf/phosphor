@@ -175,9 +175,9 @@ const proposals = createProposalService({
   dataDir: cfg.dataDir,
 });
 
-// Who is driving, and the rule that only one thing may. The state, the TTL and the
-// one-at-a-time seat live in src/agents.ts; what lives here is the sweep that turns a
-// silent expiry into a line in the log and a push to the window.
+// Who is driving, plural. The roster, the roles and the per-member TTL live in
+// src/agents.ts; what lives here is the sweep that turns a silent expiry into a line in the
+// log and a push to the window.
 //
 // The heartbeat itself is deliberately absent from the audit log, and the edges stand in
 // for it: one agent_connected when an agent attaches, one agent_disconnected when it goes.
@@ -320,13 +320,18 @@ const server = createServer({
 });
 
 setInterval(() => {
+  // Plural since the roster: one tick can find several members cold at once, and each is its
+  // own line in the log because "two agents dropped" is not a sentence anyone can act on.
   const gone = agents.sweep();
-  if (gone === null) return;
-  audit.append('agent_disconnected', 'the agent stopped sending heartbeats', {
-    client: gone.client,
-    lastSeen: gone.lastSeen,
-    ttlMs: gone.ttlMs,
-  });
+  if (gone.length === 0) return;
+  for (const member of gone) {
+    audit.append('agent_disconnected', `${member.label} stopped sending heartbeats`, {
+      client: member.client,
+      role: member.role,
+      lastSeen: member.lastSeen,
+      ttlMs: member.ttlMs,
+    });
+  }
   // Without this the light stayed on until the next state frame, whatever the TTL said.
   server.broadcastState();
 }, AGENT_SWEEP_MS);

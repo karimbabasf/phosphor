@@ -523,8 +523,8 @@ export type LogEvent = {
     // logged: it says nothing a reader of the transcript does not already know.
     | 'agent_connected'
     | 'agent_disconnected'
-    // A second agent tried to drive the app while another one held the seat. One
-    // line per refused session, not per refused call: see src/agents.ts.
+    // An agent was turned away: the roster was full, or the session had been replaced from
+    // the window. One line per refused session, not per refused call: see src/agents.ts.
     | 'agent_rejected'
     // Written by a human-run compaction, never by the app. The log is append-only,
     // so the one thing a removal owes its reader is a line saying it happened.

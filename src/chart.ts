@@ -43,17 +43,37 @@ export type ChartView = {
 
 export type Source = 'human' | 'agent';
 
-export type ChartIndicator = {
+// Provenance, carried by every object on the chart.
+//
+// It exists for two jobs that turned out to be the same job. Phosphor now seats a TEAM rather
+// than one agent (src/agents.ts), so "who drew this" stopped being answerable by the source tag
+// alone: three agents all write [agent]. And an agent that cannot tell its own work from another
+// agent's cannot tidy up after itself without wiping a colleague's, which is why `by` is what
+// `chart_clear what:'mine'` reads.
+//
+// `product` and `granularitySec` are the other half. A level at 63,000 drawn on BTC means
+// nothing on SOL, and before this the app had no way to know that, so it kept drawing it. See
+// the auto-tidy in setView.
+export type Provenance = {
+  source: Source;
+  // The session id of the agent that made it, or null for a human and for an agent that
+  // arrived before the roster existed.
+  by: string | null;
+  createdAt: number;
+  product: string;
+  granularitySec: number;
+};
+
+export type ChartIndicator = Provenance & {
   id: string;
   type: string;
   params: Record<string, number>;
   label: string;
   pane: 'price' | 'own';
-  source: Source;
 };
 
-export type ChartLevel = { id: string; price: number; label: string; source: Source };
-export type ChartMark = { id: string; t: number; label: string; source: Source };
+export type ChartLevel = Provenance & { id: string; price: number; label: string };
+export type ChartMark = Provenance & { id: string; t: number; label: string };
 
 // A sloped line between two points in time. The third drawing primitive, and the one that
 // took an actual request to notice was missing: a level is a horizontal line and a mark is a
@@ -61,14 +81,13 @@ export type ChartMark = { id: string; t: number; label: string; source: Source }
 // trend, which is the commonest thing anyone draws on a chart. Anchored to (time, price)
 // pairs rather than to bar indices, so panning and changing timeframe move it with the data
 // instead of leaving it stuck to the screen.
-export type ChartTrendline = {
+export type ChartTrendline = Provenance & {
   id: string;
   t1: number;
   p1: number;
   t2: number;
   p2: number;
   label: string;
-  source: Source;
 };
 
 // What the browser reports back about its own size, so the agent can tell whether what it
@@ -93,10 +112,34 @@ export type ChartState = {
   geometry: ChartGeometry | null;
   rev: number;
   lastDriver: Source;
+  // Which agent last moved this chart. With a team on it, "an agent changed the view" is no
+  // longer an answer: the human watching a product switch they did not ask for wants to know
+  // which of the three did it, and so does every other agent.
+  lastDriverBy: string | null;
   lastChangeAt: string;
 };
 
 export type Outcome = { ok: boolean; notes: string[]; error?: string; id?: string; label?: string };
+
+// What is on the chart that probably should not be, counted so the agent does not have to work
+// it out from a list. It rides on every chart_read, which is what makes cleaning up automatic
+// rather than something a human has to ask for: the numbers are in front of the model on the
+// call it makes anyway, beside the sentence that says which tool clears them.
+export type Housekeeping = {
+  // Objects this agent drew, and objects some OTHER agent drew. Two counts, because the tidy
+  // an agent may safely do is only ever the first one.
+  mine: number;
+  others: number;
+  human: number;
+  // Agent objects older than STALE_MS.
+  stale: number;
+  // Agent objects anchored to a product or timeframe the chart is no longer showing. Should be
+  // zero in ordinary use: setView tidies the price-anchored ones on a product switch.
+  foreign: number;
+  // How full the four caps are, so an agent knows it is about to be refused before it is.
+  capacity: { overlays: string; panes: string; levels: string; marks: string; trendlines: string };
+  hint: string;
+};
 
 // The timeframe vocabulary lives in the market layer, because that is what has to serve it.
 export { MAX_TIMEFRAME_SEC, MIN_TIMEFRAME_SEC, parseTimeframe, formatTimeframe };
@@ -216,19 +259,27 @@ export function displayDecimals(span: number, candles: Candle[]): number {
   return clamp(Math.max(priceDecimals(span, reference), tickDecimals(candles)), 0, 8);
 }
 
-export function createChartStore(initialProduct: string): {
+// How old an agent's object has to be before `chart_clear what:'stale'` will take it. Twenty
+// minutes is long enough that a level drawn at the start of a piece of analysis survives the
+// analysis, and short enough that yesterday's marks are not still on the screen. It is a
+// default for a deliberate sweep and never an expiry: nothing here removes an object on a
+// timer, because a level vanishing while a human is looking at it is worse than a stale one.
+export const STALE_MS = 20 * 60 * 1000;
+
+export function createChartStore(initialProduct: string, now: () => number = Date.now): {
   state(): ChartState;
   rev(): number;
   historyNeeded(): number;
-  setView(patch: Record<string, unknown>, source: Source): Outcome;
-  addIndicator(args: Record<string, unknown>, source: Source): Outcome;
+  setView(patch: Record<string, unknown>, source: Source, by?: string | null): Outcome;
+  addIndicator(args: Record<string, unknown>, source: Source, by?: string | null): Outcome;
   removeIndicator(ref: string): Outcome;
-  setLevel(args: Record<string, unknown>, source: Source): Outcome;
-  setMark(args: Record<string, unknown>, source: Source): Outcome;
-  setTrendline(args: Record<string, unknown>, source: Source): Outcome;
-  clear(what: string): Outcome;
+  setLevel(args: Record<string, unknown>, source: Source, by?: string | null): Outcome;
+  setMark(args: Record<string, unknown>, source: Source, by?: string | null): Outcome;
+  setTrendline(args: Record<string, unknown>, source: Source, by?: string | null): Outcome;
+  clear(what: string, by?: string | null): Outcome;
   setGeometry(geometry: ChartGeometry): void;
   agentObjects(): number;
+  housekeeping(by?: string | null): Housekeeping;
 } {
   let seq = 0;
   const state: ChartState = {
@@ -247,18 +298,32 @@ export function createChartStore(initialProduct: string): {
     geometry: null,
     rev: 1,
     lastDriver: 'human',
+    lastDriverBy: null,
     lastChangeAt: new Date().toISOString(),
   };
 
-  function bump(source: Source): void {
+  function bump(source: Source, by?: string | null): void {
     state.rev++;
     state.lastDriver = source;
+    state.lastDriverBy = source === 'agent' && typeof by === 'string' && by.length > 0 ? by.slice(0, 64) : null;
     state.lastChangeAt = new Date().toISOString();
   }
 
   function nextId(prefix: string): string {
     seq++;
     return `${prefix}-${seq}`;
+  }
+
+  // The four fields every object on this chart carries, filled in one place so a new writer
+  // cannot forget one and quietly produce an object the tidy cannot reason about.
+  function stamp(source: Source, by?: string | null): Provenance {
+    return {
+      source,
+      by: source === 'agent' && typeof by === 'string' && by.length > 0 ? by.slice(0, 64) : null,
+      createdAt: now(),
+      product: state.view.product,
+      granularitySec: state.view.granularitySec,
+    };
   }
 
   function tag(label: string, source: Source): string {
@@ -269,7 +334,7 @@ export function createChartStore(initialProduct: string): {
     return `[agent] ${trimmed}`;
   }
 
-  function setView(patch: Record<string, unknown>, source: Source): Outcome {
+  function setView(patch: Record<string, unknown>, source: Source, by?: string | null): Outcome {
     const notes: string[] = [];
     const view = state.view;
 
@@ -387,11 +452,48 @@ export function createChartStore(initialProduct: string): {
       else view.priceScale = { mode: 'manual', low, high };
     }
 
-    bump(source);
+    // THE TIDY. A level, a mark or a trend line is anchored to a price and a time on ONE
+    // instrument. Carried onto another it is not stale, it is WRONG: 63,000 drawn on Bitcoin
+    // lands off the bottom of a Solana chart, and a trend line anchored to last Tuesday's swing
+    // is a diagonal through a market that never had that swing. Before this, every one of them
+    // stayed until somebody noticed, and the somebody was the human.
+    //
+    // Indicators are deliberately NOT swept. An EMA 21 is a recipe rather than a place: it
+    // recomputes on the new series and means exactly what it meant before. Clearing it would
+    // make an agent rebuild its own study package on every product switch.
+    //
+    // The human's own drawings are never swept either, on the same rule the drawing store
+    // already holds: an agent's action must not delete work a person did on purpose. They are
+    // counted in the note instead, so the agent can offer to clear them rather than doing it.
+    if (switchedProduct) {
+      const staleAgent = (o: Provenance): boolean => o.source === 'agent' && o.product !== view.product;
+      const swept =
+        state.levels.filter(staleAgent).length +
+        state.marks.filter(staleAgent).length +
+        state.trendlines.filter(staleAgent).length;
+      if (swept > 0) {
+        state.levels = state.levels.filter((l) => !staleAgent(l));
+        state.marks = state.marks.filter((m) => !staleAgent(m));
+        state.trendlines = state.trendlines.filter((t) => !staleAgent(t));
+        notes.push(
+          `cleared ${swept} agent ${swept === 1 ? 'drawing' : 'drawings'} anchored to the previous instrument; indicators were kept because they recompute`,
+        );
+      }
+      const humanLeft = [...state.levels, ...state.marks, ...state.trendlines].filter(
+        (o) => o.source === 'human' && o.product !== view.product,
+      ).length;
+      if (humanLeft > 0) {
+        notes.push(
+          `${humanLeft} human ${humanLeft === 1 ? 'drawing' : 'drawings'} from the previous instrument are still on the chart and were left alone; only a human clears those`,
+        );
+      }
+    }
+
+    bump(source, by);
     return { ok: true, notes };
   }
 
-  function addIndicator(args: Record<string, unknown>, source: Source): Outcome {
+  function addIndicator(args: Record<string, unknown>, source: Source, by?: string | null): Outcome {
     const type = String(args.type ?? '').toLowerCase().trim();
     const spec = indicatorSpec(type);
     if (spec === undefined) {
@@ -432,8 +534,8 @@ export function createChartStore(initialProduct: string): {
     }
 
     const id = nextId(type);
-    state.indicators.push({ id, type, params, label: tag(label, source), pane: spec.pane, source });
-    bump(source);
+    state.indicators.push({ id, type, params, label: tag(label, source), pane: spec.pane, ...stamp(source, by) });
+    bump(source, by);
     const warmup = warmupBars(spec, params);
     if (warmup > state.view.barCount) {
       notes.push(`${label} needs ${warmup} bars of history and the window shows ${Math.round(state.view.barCount)}; the extra history is fetched behind the left edge`);
@@ -453,31 +555,31 @@ export function createChartStore(initialProduct: string): {
     return { ok: true, notes: [`removed ${before - kept.length}`] };
   }
 
-  function setLevel(args: Record<string, unknown>, source: Source): Outcome {
+  function setLevel(args: Record<string, unknown>, source: Source, by?: string | null): Outcome {
     const price = Number(args.price);
     if (!Number.isFinite(price)) return { ok: false, notes: [], error: 'price must be a finite number' };
     if (state.levels.length >= LIMITS.maxLevels) {
       return { ok: false, notes: [], error: `${LIMITS.maxLevels} price levels is the maximum. Clear some with chart_clear.` };
     }
     const id = nextId('level');
-    state.levels.push({ id, price, label: tag(String(args.label ?? '') || `level ${price}`, source), source });
-    bump(source);
+    state.levels.push({ id, price, label: tag(String(args.label ?? '') || `level ${price}`, source), ...stamp(source, by) });
+    bump(source, by);
     return { ok: true, notes: [], id };
   }
 
-  function setMark(args: Record<string, unknown>, source: Source): Outcome {
+  function setMark(args: Record<string, unknown>, source: Source, by?: string | null): Outcome {
     const t = Number(args.t ?? args.time);
     if (!Number.isFinite(t)) return { ok: false, notes: [], error: 't must be a unix timestamp in seconds' };
     if (state.marks.length >= LIMITS.maxMarks) {
       return { ok: false, notes: [], error: `${LIMITS.maxMarks} marks is the maximum. Clear some with chart_clear.` };
     }
     const id = nextId('mark');
-    state.marks.push({ id, t: Math.round(t), label: tag(String(args.label ?? '') || 'mark', source), source });
-    bump(source);
+    state.marks.push({ id, t: Math.round(t), label: tag(String(args.label ?? '') || 'mark', source), ...stamp(source, by) });
+    bump(source, by);
     return { ok: true, notes: [], id };
   }
 
-  function setTrendline(args: Record<string, unknown>, source: Source): Outcome {
+  function setTrendline(args: Record<string, unknown>, source: Source, by?: string | null): Outcome {
     const t1 = Number(args.t1);
     const p1 = Number(args.p1);
     const t2 = Number(args.t2);
@@ -507,34 +609,99 @@ export function createChartStore(initialProduct: string): {
       t2: Math.round(flip ? t1 : t2),
       p2: flip ? p1 : p2,
       label: tag(String(args.label ?? '') || 'trendline', source),
-      source,
+      ...stamp(source, by),
     });
-    bump(source);
+    bump(source, by);
     return { ok: true, notes: [], id };
   }
 
-  function clear(what: string): Outcome {
+  const CLEAR_TARGETS = ['indicators', 'levels', 'marks', 'trendlines', 'agent', 'mine', 'stale', 'all'] as const;
+
+  /* What may be removed, and by whom.
+     `agent` and `all` are the human's controls, and an agent holds them too because the human
+     may ask it to wipe the board. `mine` and `stale` are the ones written FOR the agent, and
+     they are the reason this took a `by` argument: with a team on the chart, an agent tidying
+     up must be able to reach its own work and nothing else. An agent that cleared `agent`
+     when it meant `mine` would delete a colleague's levels mid-analysis and neither of them
+     would ever find out why. */
+  function clear(what: string, by?: string | null): Outcome {
     const key = String(what ?? 'all').toLowerCase().trim();
+    const before = state.indicators.length + state.levels.length + state.marks.length + state.trendlines.length;
+
+    const keep = (predicate: (o: Provenance) => boolean): void => {
+      state.indicators = state.indicators.filter(predicate);
+      state.levels = state.levels.filter(predicate);
+      state.marks = state.marks.filter(predicate);
+      state.trendlines = state.trendlines.filter(predicate);
+    };
+
     if (key === 'indicators') state.indicators = [];
     else if (key === 'levels') state.levels = [];
     else if (key === 'marks') state.marks = [];
     else if (key === 'trendlines') state.trendlines = [];
     else if (key === 'agent') {
-      // The human's one-click way out of anything the agent put on the surface.
-      state.indicators = state.indicators.filter((i) => i.source !== 'agent');
-      state.levels = state.levels.filter((l) => l.source !== 'agent');
-      state.marks = state.marks.filter((m) => m.source !== 'agent');
-      state.trendlines = state.trendlines.filter((t) => t.source !== 'agent');
+      // The human's one-click way out of anything ANY agent put on the surface.
+      keep((o) => o.source !== 'agent');
+    } else if (key === 'mine') {
+      // An agent with no session id has no "mine" to speak of, and clearing everything the
+      // agents drew would be the wrong answer to a call that asked for one agent's work.
+      if (typeof by !== 'string' || by.length === 0) {
+        return {
+          ok: false,
+          notes: [],
+          error:
+            "clear 'mine' needs to know which agent is asking, and this call carried no session. " +
+            "Use 'agent' to clear everything the agents drew, or 'stale' for the old ones.",
+        };
+      }
+      keep((o) => !(o.source === 'agent' && o.by === by));
+    } else if (key === 'stale') {
+      const cutoff = now() - STALE_MS;
+      keep((o) => !(o.source === 'agent' && (o.createdAt < cutoff || o.product !== state.view.product)));
     } else if (key === 'all') {
       state.indicators = [];
       state.levels = [];
       state.marks = [];
       state.trendlines = [];
     } else {
-      return { ok: false, notes: [], error: `unknown target: ${key}. known: indicators, levels, marks, trendlines, agent, all` };
+      return { ok: false, notes: [], error: `unknown target: ${key}. known: ${CLEAR_TARGETS.join(', ')}` };
     }
+    const removed = before - (state.indicators.length + state.levels.length + state.marks.length + state.trendlines.length);
     bump('human');
-    return { ok: true, notes: [`cleared ${key}`] };
+    return { ok: true, notes: [`cleared ${key}: ${removed} ${removed === 1 ? 'object' : 'objects'} removed`] };
+  }
+
+  function housekeeping(by?: string | null): Housekeeping {
+    const all: Provenance[] = [...state.indicators, ...state.levels, ...state.marks, ...state.trendlines];
+    const cutoff = now() - STALE_MS;
+    const agentObjs = all.filter((o) => o.source === 'agent');
+    const mine = by ? agentObjs.filter((o) => o.by === by).length : 0;
+    const stale = agentObjs.filter((o) => o.createdAt < cutoff).length;
+    const foreign = agentObjs.filter(
+      (o) => o.product !== state.view.product || o.granularitySec !== state.view.granularitySec,
+    ).length;
+    const overlays = state.indicators.filter((i) => i.pane === 'price').length;
+    const panes = state.indicators.filter((i) => i.pane === 'own').length;
+    const hints: string[] = [];
+    if (stale > 0) hints.push(`${stale} agent ${stale === 1 ? 'object is' : 'objects are'} over 20 minutes old: chart_clear what:'stale'`);
+    if (mine > 0) hints.push(`chart_clear what:'mine' removes only your own ${mine}`);
+    if (panes >= LIMITS.maxPanes) hints.push('the sub-panes are full; the next one is refused. indicator_read measures without drawing');
+    if (overlays >= LIMITS.maxOverlays) hints.push('the price pane is full; remove an overlay before adding one');
+    return {
+      mine,
+      others: agentObjs.length - mine,
+      human: all.length - agentObjs.length,
+      stale,
+      foreign,
+      capacity: {
+        overlays: `${overlays}/${LIMITS.maxOverlays}`,
+        panes: `${panes}/${LIMITS.maxPanes}`,
+        levels: `${state.levels.length}/${LIMITS.maxLevels}`,
+        marks: `${state.marks.length}/${LIMITS.maxMarks}`,
+        trendlines: `${state.trendlines.length}/${LIMITS.maxTrendlines}`,
+      },
+      hint: hints.length === 0 ? 'nothing needs clearing' : hints.join('; '),
+    };
   }
 
   // Bars to fetch: the window, the pan, a margin, and the longest indicator warmup so an
@@ -562,6 +729,7 @@ export function createChartStore(initialProduct: string): {
     setMark,
     setTrendline,
     clear,
+    housekeeping,
     setGeometry(geometry: ChartGeometry): void {
       // Geometry is a report about the renderer, not a change to the chart, so it does not
       // bump the revision. Bumping it here would make the browser answer its own echo.
@@ -690,6 +858,9 @@ export type ReadArgs = {
   meta: { source: string; stale: boolean; built: string };
   computed: { indicator: ChartIndicator; result: IndicatorResult }[];
   nowSec: number;
+  // What the tidy would find, computed for the agent that is doing the reading. Optional so a
+  // caller with no roster (a test, the browser's own read) still gets a chart read.
+  housekeeping?: Housekeeping;
 };
 
 // Everything the agent can ask about what is on the chart, in one object. Written to be
@@ -782,6 +953,7 @@ export function buildRead(args: ReadArgs): unknown {
       params: indicator.params,
       pane: indicator.pane === 'price' ? 'price' : 'own',
       source: indicator.source,
+      by: indicator.by,
       state: result.state,
       last: result.plots.map((plot) => ({ key: plot.key, value: lastDefined(plot.values) })),
     })),
@@ -791,10 +963,22 @@ export function buildRead(args: ReadArgs): unknown {
       price: l.price,
       label: l.label,
       source: l.source,
+      by: l.by,
+      ageSec: Math.max(0, Math.round((Date.now() - l.createdAt) / 1000)),
+      drawnOn: `${l.product} ${timeframeLabel(l.granularitySec)}`,
       distanceFromLastPct: newest === null ? null : pctChange(newest.c, l.price),
       side: newest === null ? null : l.price > newest.c ? 'above price' : 'below price',
     })),
-    marks: state.marks.map((m) => ({ id: m.id, label: m.label, source: m.source, epochSec: m.t, iso: isoOf(m.t) })),
+    marks: state.marks.map((m) => ({
+      id: m.id,
+      label: m.label,
+      source: m.source,
+      by: m.by,
+      ageSec: Math.max(0, Math.round((Date.now() - m.createdAt) / 1000)),
+      drawnOn: `${m.product} ${timeframeLabel(m.granularitySec)}`,
+      epochSec: m.t,
+      iso: isoOf(m.t),
+    })),
 
     // priceNow and distanceFromLastPct are the whole reason to read a trendline back: a
     // sloped line's useful value is where it sits at this instant, and recomputing that from
@@ -807,6 +991,9 @@ export function buildRead(args: ReadArgs): unknown {
         id: tl.id,
         label: tl.label,
         source: tl.source,
+        by: tl.by,
+        ageSec: Math.max(0, Math.round((Date.now() - tl.createdAt) / 1000)),
+        drawnOn: `${tl.product} ${timeframeLabel(tl.granularitySec)}`,
         from: { epochSec: tl.t1, iso: isoOf(tl.t1), price: tl.p1 },
         to: { epochSec: tl.t2, iso: isoOf(tl.t2), price: tl.p2 },
         slopePerHour: slopePerSec * 3600,
@@ -820,7 +1007,13 @@ export function buildRead(args: ReadArgs): unknown {
     geometry: state.geometry,
     rev: state.rev,
     lastDriver: state.lastDriver,
+    lastDriverBy: state.lastDriverBy,
     lastChangeAt: state.lastChangeAt,
+    // What is on this chart that probably should not be. It rides on the read the agent makes
+    // anyway rather than waiting behind a tool nobody calls, which is the whole mechanism by
+    // which cleaning up became automatic: the counts and the exact call that fixes them are in
+    // front of the model at the moment it is looking at the chart.
+    housekeeping: args.housekeeping ?? null,
   };
 }
 

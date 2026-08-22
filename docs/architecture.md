@@ -42,12 +42,25 @@ between processes, not between the agent and the machine. An agent that can also
 fetch the token from `/api/session` and post it, which is an open hole at the time of writing and is
 documented in full in [the security model](security-model.md#the-honest-v1-boundary).
 
-**One agent at a time.** The first MCP session to speak takes the seat, and every other session is
-refused with the reason until it leaves. A session leaves by shutting down, or by going quiet for
-longer than two and a half heartbeats. This replaced an earlier design where two agents could both
-connect and read: two agents driving one wallet looked exactly like one agent, and neither of them
-knew about the other. `src/agents.ts` owns the seat. Proposals still queue, and each is approved
-separately.
+**A roster, capped at six.** Several MCP sessions drive this app at once, and any operator can ask
+the app to spawn workers of its own (`src/crew.ts`). A session leaves by shutting down, or by going
+quiet for longer than two and a half heartbeats. `src/agents.ts` owns the roster. Proposals still
+queue, and each is approved separately.
+
+This was one seat until 2026-08-21, and the old rule was written for a real failure: two agents
+driving one wallet looked exactly like one agent, and neither knew about the other. The roster
+fixes that failure from the other side rather than pretending it went away. Every member is named,
+every object drawn on the chart carries the session that drew it (`Provenance` in `src/chart.ts`),
+and `agent_roster` and the board in `src/board.ts` are how they see each other. Two agents are no
+longer indistinguishable from one, so they no longer have to be forbidden.
+
+**Roles, and why the money path did not widen with the door.** A member is an `operator` or an
+`analyst`. Everything Phosphor spawns is an analyst, and `src/mcp.ts` does not REGISTER the
+propose tools, `agent_spawn` or the window controls when `PHOSPHOR_ROLE` says so. The capability is
+absent from that process rather than refused inside it, which is the same property the tool
+lockdown in `src/driver.ts` is built on and is stronger than a check: a worker is a model whose
+brief was written by another model, and nothing in that chain is a human.
+`tests/injection.test.ts` starts a real analyst server and reads its surface back.
 
 ## Module map
 
@@ -77,7 +90,14 @@ separately.
 | `src/view/mode.ts` | Reads and writes the persisted view mode (`state/view.json`). Every failure path returns `pro`, because pro shows more and a corrupt file must never be why a human sees less. |
 | `src/view/basic.ts` | Pure `buildBasic()`. Every word on the basic screen is written here and nowhere else, so the two modes can be asserted to agree rather than assumed to. Refuses to state a balance it cannot back. |
 | `src/greeting.ts` | The connect-time greeting and the index of everything an agent can do, carried into the model's context by the MCP handshake's `instructions`. The role arrives without anyone prompting for it. |
-| `src/agents.ts` | Who is driving, and the rule that only one thing may: the seat, its heartbeat TTL, eviction and revocation. |
+| `src/agents.ts` | Who is driving, plural: the roster, each member's role and heartbeat TTL, the lead, eviction and revocation. |
+| `src/board.ts` | The noticeboard agents write one line each to, so a team is not three strangers sharing a screen. Everything on it is data: nothing reads a post as an instruction. |
+| `src/duplicates.ts` | The money-path half of removing the one-agent rule: an identical proposal from a second session inside ninety seconds is refused with the id of the one that already exists. Two proposals under the click threshold both execute, and only the pair is wrong. |
+| `src/crew.ts` | Workers. The app spawns them through the same locked-down driver path, with the analyst role, one brief, a deadline and a cap of three. Handing the driver's child an `Agent` tool was rejected: a sub-agent spawned inside the child announces nothing back to this app. |
+| `src/presets.ts` | Named study packages, and the tidy that runs before one is applied, so a package can never be refused by the pane cap. |
+| `src/indicators-kit.ts` | The series maths both indicator catalogues are built from. One EMA in the app, so the number the agent reads and the pixel the human sees cannot disagree. |
+| `src/indicators-library.ts` | The second catalogue: the wave family, SuperTrend, Keltner, the squeeze, Ichimoku, ADX and the rest. Written from published formulas; no vendored code and no third-party dependency. |
+| `src/analysis/structure.ts` | Structure as boxes and events rather than series: order blocks, fair value gaps, liquidity shelves, and the bar that closed through a swing. Measurements, never a place to trade. |
 | `src/summon.ts` | Starts a fresh agent in a terminal window, wired to this app. The window could already stop an agent; this is how it starts one. |
 | `src/rails/` | The rail registry: the one table that knows every rail exists. `swap` maps to one rail that dispatches on venue, so two venues can share a kind without pushing the pair into every call site. |
 | `src/rails/mandate.ts` | The perps rail. Arming a mandate is the only way a position is opened, and it always waits for a human click because it grants standing authority rather than doing one thing. |

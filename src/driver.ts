@@ -61,6 +61,21 @@ export type DriverOptions = {
   nodeBin?: string;
   claudeBin?: string;
   systemPrompt?: string;
+  /* WHO THIS CHILD IS, on the roster and on its own tool surface.
+     `analyst` is what src/crew.ts spawns. It reaches src/mcp.ts as PHOSPHOR_ROLE, and mcp.ts
+     does not REGISTER the propose tools for an analyst at all: the capability is absent from
+     that process rather than refused inside it, which is the same argument this file makes for
+     the built-in lockdown and is stronger than a check. `parent` and `label` are the roster's,
+     so a human looking at four agents can see which one spawned the other three. */
+  role?: 'operator' | 'analyst';
+  label?: string;
+  parent?: string;
+  /* Which lockdown file to run under. Left unset it is operator/driver.settings.json, and
+     nothing in this app currently sets it: workers deliberately run under the SAME file. One
+     lockdown, one test that checks it against the live Claude Code release
+     (tests/lockdown.test.ts), and one string for the orphan sweep to match on. A second
+     profile would have to earn all three of those again. */
+  settingsPath?: string;
   // Which model drives. Left unset, Claude Code picks whatever the machine's own default is,
   // which is nobody's decision and on most installs is the slowest option available. Driving a
   // chart is not the work a frontier model exists for, and the difference is seconds a human
@@ -123,7 +138,12 @@ const STRIPPED = [
   'PHOSPHOR_KEYS',
 ];
 
-function childEnv(repo: string, port: number, sessionId: string): NodeJS.ProcessEnv {
+function childEnv(
+  repo: string,
+  port: number,
+  sessionId: string,
+  identity?: { role?: string; label?: string; parent?: string },
+): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   for (const key of STRIPPED) delete env[key];
   // The MCP proxy the child spawns has to find the same app instance the window is talking to.
@@ -134,6 +154,11 @@ function childEnv(repo: string, port: number, sessionId: string): NodeJS.Process
   // two agents, seat one, and refuse every call the other made. See the note on SESSION in
   // src/mcp.ts.
   env.PHOSPHOR_SESSION = sessionId;
+  // The identity the child announces to the app, written by the APP and not by the child. A
+  // role the agent could choose for itself would be a role it could raise.
+  if (identity?.role) env.PHOSPHOR_ROLE = identity.role;
+  if (identity?.label) env.PHOSPHOR_LABEL = identity.label;
+  if (identity?.parent) env.PHOSPHOR_PARENT = identity.parent;
   return env;
 }
 
@@ -268,7 +293,7 @@ function stillThere(pid: number): boolean {
 }
 
 export function createDriver(opts: DriverOptions) {
-  const settings = path.join(opts.repo, 'operator', 'driver.settings.json');
+  const settings = opts.settingsPath ?? path.join(opts.repo, 'operator', 'driver.settings.json');
   let child: ChildProcessWithoutNullStreams | null = null;
   let state: DriverState = 'off';
   let sessionId = '';
@@ -390,7 +415,11 @@ export function createDriver(opts: DriverOptions) {
        exit handlers registered below are what guarantee it does not. */
     child = spawn(bin, argv, {
       cwd: opts.repo,
-      env: childEnv(opts.repo, opts.port, sessionId),
+      env: childEnv(opts.repo, opts.port, sessionId, {
+        role: opts.role,
+        label: opts.label,
+        parent: opts.parent,
+      }),
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: true,
     }) as ChildProcessWithoutNullStreams;

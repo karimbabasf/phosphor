@@ -24,7 +24,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 
 import type { EngineCtx } from '../src/policy/engine.ts';
 import { CAPABILITIES } from '../src/greeting.ts';
-import { EXPECTED_TOOLS_SORTED } from './tool-surface.ts';
+import { EXPECTED_TOOLS_SORTED, EXPECTED_WORKER_TOOLS_SORTED } from './tool-surface.ts';
 import type { LogEvent, RiskRow, TransferLeg, WriteDraft } from '../src/types.ts';
 import { evaluate } from '../src/policy/engine.ts';
 import { classify } from '../src/composition.ts';
@@ -58,6 +58,7 @@ const SELF = ['0x1111111111111111111111111111111111111111', '1111111111111111111
 const RECIPIENT_FIELDS = ['to', 'recipient', 'destination', 'address', 'toaddress', 'dest', 'payee'];
 
 let dataDir = '';
+let env: Record<string, string> = {};
 let port = 0;
 let base = '';
 type AppProcess = ChildProcessByStdio<null, Readable, Readable>;
@@ -151,7 +152,9 @@ before(async () => {
   dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-injection-'));
   port = await freePort();
   base = `http://127.0.0.1:${port}`;
-  const env = { ...cleanEnv(), ACC_PORT: String(port), ACC_MODE: 'demo', ACC_DATA_DIR: dataDir, PHOSPHOR_APPROVAL_GATE: 'true' };
+  // Module-scoped, because the worker-surface test below starts a SECOND mcp.ts against this
+  // same app and has to reach it the same way this one does.
+  env = { ...cleanEnv(), ACC_PORT: String(port), ACC_MODE: 'demo', ACC_DATA_DIR: dataDir, PHOSPHOR_APPROVAL_GATE: 'true' };
 
   const child: AppProcess = spawn(process.execPath, ['src/main.ts'], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
   child.stdout.resume();
@@ -258,6 +261,42 @@ test('the tool surface cannot express an exfiltration target', async () => {
     const schemaText = JSON.stringify(tool.inputSchema);
     assert.doesNotMatch(schemaText, /recipient|destination/i, `tool ${tool.name} schema names a destination`);
     assert.doesNotMatch(tool.name, /recipient|destination/i);
+  }
+});
+
+/* A SPAWNED WORKER'S DOOR IS NARROWER THAN ITS PARENT'S, and this is the assertion that whole
+   claim rests on.
+   Phosphor spawns workers now (src/crew.ts), and a worker is a model that another model wrote
+   the brief for. Nothing in that chain is a human, so a worker must not be able to reach the
+   money path. The mechanism is absence, not a check: src/mcp.ts reads PHOSPHOR_ROLE from the
+   environment the APP wrote and never registers propose_*, agent_spawn or the window controls
+   when it says analyst. This starts a second MCP server with that variable set and reads the
+   surface back, which is the only way to know the absence is real rather than intended. */
+test('a worker\'s tool surface has no propose, no spawn and no window controls', async () => {
+  const workerTransport = new StdioClientTransport({
+    command: process.execPath,
+    args: [path.join(ROOT, 'src', 'mcp.ts')],
+    cwd: ROOT,
+    env: { ...env, PHOSPHOR_ROLE: 'analyst', PHOSPHOR_SESSION: 'worker-under-test', PHOSPHOR_LABEL: 'test worker' },
+  });
+  const worker = new Client({ name: 'phosphor-worker-test', version: '0.1.0' });
+  await worker.connect(workerTransport);
+  try {
+    const names = (await worker.listTools()).tools.map((t) => t.name).sort();
+    assert.deepEqual(names, [...EXPECTED_WORKER_TOOLS_SORTED]);
+    // Stated again as properties rather than only as a list, because the list above is the
+    // thing that would be edited to make this test pass.
+    assert.equal(names.some((n) => n.startsWith('propose_')), false, 'a worker can reach the money path');
+    assert.equal(names.includes('agent_spawn'), false, 'a worker can spawn workers, which recurses');
+    for (const control of ['switch', 'watch', 'set_theme']) {
+      assert.equal(names.includes(control), false, `a worker can drive the window with ${control}`);
+    }
+    // And it is still useful: an analyst that could not measure would be pointless.
+    for (const needed of ['chart_read', 'chart_batch', 'trade_read', 'agent_post']) {
+      assert.equal(names.includes(needed), true, `a worker cannot ${needed}, so it cannot do its job`);
+    }
+  } finally {
+    await worker.close().catch(() => {});
   }
 });
 

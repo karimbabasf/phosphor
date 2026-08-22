@@ -103,7 +103,17 @@ test('the role is not so long it stops being read', () => {
   // Prefill is paid once per session and is cached after the first turn, so length is cheap in
   // tokens and expensive in attention. This is a ceiling, not a target: it exists so that adding
   // a paragraph is a decision somebody makes rather than something that happens.
+  //
+  // RAISED FROM 12,000 ON 2026-08-21, and this is the record of that decision rather than a
+  // number somebody nudged. Three things landed at once and every one of them is surface the
+  // agent has to know about before its first call: the team (five tools, because agents now run
+  // beside each other instead of one at a time), the tidy (chart_clear grew targets and the read
+  // grew a housekeeping block), and fourteen more indicators. About two thirds of this string is
+  // the capability index, which is a reference and grows with the app; the prose rules are still
+  // under six thousand characters and that is the half worth defending.
+  //
+  // The next paragraph should come out of something, not go on the end.
   const text = role();
   assert.ok(text.length > 3000, 'the role got gutted');
-  assert.ok(text.length < 12000, `the role is ${text.length} characters and nobody reads that far`);
+  assert.ok(text.length < 13000, `the role is ${text.length} characters and nobody reads that far`);
 });

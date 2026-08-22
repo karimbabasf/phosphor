@@ -10,6 +10,23 @@
 // real value for MACD and OBV, so the two must not be confused.
 
 import type { Candle } from './types.ts';
+import {
+  nulls,
+  lastValue,
+  drift,
+  sma,
+  ema,
+  wma,
+  wilder,
+  closes,
+  typical,
+  trueRange,
+  rsiSeries,
+  num,
+  pct,
+  versusPrice,
+} from './indicators-kit.ts';
+import { LIBRARY_SPECS } from './indicators-library.ts';
 
 export type PlotStyle = 'line' | 'histogram' | 'band';
 
@@ -52,123 +69,22 @@ export type IndicatorSpec = {
   summary: string;
   params: ParamSpec[];
   label(params: Record<string, number>): string;
+  // How many bars this indicator needs before it draws anything, when the answer is not simply
+  // its longest integer parameter. A wave oscillator stacks three averages, so it needs their
+  // sum; without this it would claim to be ready a hundred bars before it is, and the agent
+  // would read a warmup artefact as a reading. Optional: most indicators do not need it.
+  warmup?(params: Record<string, number>): number;
   compute(candles: Candle[], params: Record<string, number>): IndicatorResult;
 };
 
 // ---------- series helpers ----------
+//
+// They moved to src/indicators-kit.ts when a second catalogue started needing them. They are
+// re-exported here rather than merely imported, because callers outside this file (the
+// analysis layer, the chart) have always taken them from this module and a moved function is
+// not a reason to rewrite their imports.
 
-function nulls(n: number): (number | null)[] {
-  return new Array<number | null>(n).fill(null);
-}
-
-function lastValue(values: (number | null)[]): number | null {
-  for (let i = values.length - 1; i >= 0; i--) {
-    const v = values[i];
-    if (v !== null && Number.isFinite(v)) return v;
-  }
-  return null;
-}
-
-// Direction over the last `back` defined values. Used for the state line: a level with no
-// direction reads the same whether it is climbing or falling, which is half the information.
-function drift(values: (number | null)[], back: number): 'rising' | 'falling' | 'flat' {
-  const defined: number[] = [];
-  for (let i = values.length - 1; i >= 0 && defined.length <= back; i--) {
-    const v = values[i];
-    if (v !== null && Number.isFinite(v)) defined.push(v);
-  }
-  if (defined.length < 2) return 'flat';
-  const now = defined[0] as number;
-  const then = defined[defined.length - 1] as number;
-  const span = Math.abs(then) > 0 ? Math.abs((now - then) / then) : 0;
-  if (span < 0.0002) return 'flat';
-  return now > then ? 'rising' : 'falling';
-}
-
-export function sma(source: number[], period: number): (number | null)[] {
-  const out = nulls(source.length);
-  let sum = 0;
-  for (let i = 0; i < source.length; i++) {
-    sum += source[i] as number;
-    if (i >= period) sum -= source[i - period] as number;
-    if (i >= period - 1) out[i] = sum / period;
-  }
-  return out;
-}
-
-export function ema(source: number[], period: number): (number | null)[] {
-  const out = nulls(source.length);
-  if (source.length < period) return out;
-  const alpha = 2 / (period + 1);
-  // Seeded with the simple average of the first window, which is the convention every
-  // charting package uses. Seeding with source[0] instead shifts the whole line.
-  let sum = 0;
-  for (let i = 0; i < period; i++) sum += source[i] as number;
-  let prev = sum / period;
-  out[period - 1] = prev;
-  for (let i = period; i < source.length; i++) {
-    prev = (source[i] as number) * alpha + prev * (1 - alpha);
-    out[i] = prev;
-  }
-  return out;
-}
-
-export function wma(source: number[], period: number): (number | null)[] {
-  const out = nulls(source.length);
-  const denom = (period * (period + 1)) / 2;
-  for (let i = period - 1; i < source.length; i++) {
-    let acc = 0;
-    for (let k = 0; k < period; k++) acc += (source[i - period + 1 + k] as number) * (k + 1);
-    out[i] = acc / denom;
-  }
-  return out;
-}
-
-// Wilder's smoothing: the RSI and ATR average, which is an EMA with alpha 1/period.
-function wilder(source: number[], period: number): (number | null)[] {
-  const out = nulls(source.length);
-  if (source.length < period) return out;
-  let sum = 0;
-  for (let i = 0; i < period; i++) sum += source[i] as number;
-  let prev = sum / period;
-  out[period - 1] = prev;
-  for (let i = period; i < source.length; i++) {
-    prev = (prev * (period - 1) + (source[i] as number)) / period;
-    out[i] = prev;
-  }
-  return out;
-}
-
-function closes(candles: Candle[]): number[] {
-  return candles.map((c) => c.c);
-}
-
-function typical(candles: Candle[]): number[] {
-  return candles.map((c) => (c.h + c.l + c.c) / 3);
-}
-
-// Compact number for the state line. Big prices do not want four decimals and small ones
-// are unreadable without them.
-function num(value: number): string {
-  const abs = Math.abs(value);
-  const digits = abs >= 1000 ? 2 : abs >= 1 ? 4 : 6;
-  return Number(value.toFixed(digits)).toString();
-}
-
-function pct(value: number): string {
-  return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
-}
-
-// Where price sits against an overlay line, which is the only question anyone asks of a
-// moving average.
-function versusPrice(candles: Candle[], line: (number | null)[], name: string): string {
-  const value = lastValue(line);
-  const last = candles.length > 0 ? (candles[candles.length - 1] as Candle).c : null;
-  if (value === null || last === null) return `${name}: not enough history yet`;
-  const gap = ((last - value) / value) * 100;
-  const side = gap >= 0 ? 'above' : 'below';
-  return `${name} ${num(value)}, ${drift(line, 5)}, price ${side} by ${Math.abs(gap).toFixed(2)}%`;
-}
+export { sma, ema, wma, trueRange };
 
 // ---------- the catalogue ----------
 
@@ -360,26 +276,9 @@ const SPECS: IndicatorSpec[] = [
     params: [PERIOD(14, 2, 400)],
     label: (p) => `RSI ${p.period}`,
     compute(candles, p) {
-      const source = closes(candles);
-      const gains: number[] = [0];
-      const losses: number[] = [0];
-      for (let i = 1; i < source.length; i++) {
-        const change = (source[i] as number) - (source[i - 1] as number);
-        gains.push(change > 0 ? change : 0);
-        losses.push(change < 0 ? -change : 0);
-      }
-      // The first change is at index 1, so both averages start one bar late.
-      const avgGain = wilder(gains.slice(1), p.period);
-      const avgLoss = wilder(losses.slice(1), p.period);
-      const out = nulls(source.length);
-      for (let i = 0; i < avgGain.length; i++) {
-        const g = avgGain[i];
-        const l = avgLoss[i];
-        if (g === null || l === null) continue;
-        // No losses at all is 100 by the formula, but no movement at all is neither strong
-        // nor weak, and reporting 100 for a flat book would read as a breakout to an agent.
-        out[i + 1] = l === 0 ? (g === 0 ? 50 : 100) : 100 - 100 / (1 + g / l);
-      }
+      // One RSI in this app, in src/indicators-kit.ts, because the stochastic RSI and the
+      // wave family read the same array and two copies would drift apart in silence.
+      const out = rsiSeries(closes(candles), p.period);
       const value = lastValue(out);
       const state =
         value === null
@@ -579,28 +478,23 @@ function smoothNullable(values: (number | null)[], period: number): (number | nu
   return out;
 }
 
-export function trueRange(candles: Candle[]): number[] {
-  const out: number[] = [];
-  for (let i = 0; i < candles.length; i++) {
-    const c = candles[i] as Candle;
-    if (i === 0) {
-      out.push(c.h - c.l);
-      continue;
-    }
-    const prev = (candles[i - 1] as Candle).c;
-    out.push(Math.max(c.h - c.l, Math.abs(c.h - prev), Math.abs(c.l - prev)));
-  }
-  return out;
-}
+// The catalogue the rest of the app sees: the classics above, then the library beside them.
+//
+// One list rather than two surfaces. An agent asking indicator_catalog what it can draw should
+// not have to learn that a wave oscillator lives behind a different door from an EMA, and the
+// chart, the warmup calculation and the divergence op all resolve a type through this one map.
+// src/indicators-library.ts owns the second half only because one file holding thirty
+// indicators is a file nobody can read.
+const ALL_SPECS: IndicatorSpec[] = [...SPECS, ...LIBRARY_SPECS];
 
-const BY_TYPE = new Map<string, IndicatorSpec>(SPECS.map((s) => [s.type, s]));
+const BY_TYPE = new Map<string, IndicatorSpec>(ALL_SPECS.map((s) => [s.type, s]));
 
 export function indicatorSpec(type: string): IndicatorSpec | undefined {
   return BY_TYPE.get(type.toLowerCase().trim());
 }
 
 export function indicatorCatalog(): unknown[] {
-  return SPECS.map((s) => ({
+  return ALL_SPECS.map((s) => ({
     type: s.type,
     pane: s.pane === 'price' ? 'overlays the price' : 'takes its own pane',
     summary: s.summary,
@@ -630,6 +524,7 @@ export function normaliseParams(
 // How many bars this indicator needs before it produces anything. The agent is told when
 // the window it asked for is too short to draw the thing it just added.
 export function warmupBars(spec: IndicatorSpec, params: Record<string, number>): number {
+  if (spec.warmup !== undefined) return Math.max(1, Math.round(spec.warmup(params)));
   let longest = 1;
   for (const p of spec.params) {
     if (!p.int) continue;

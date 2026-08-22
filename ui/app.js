@@ -417,15 +417,31 @@ function renderStatus(s) {
   $('stat-total').textContent = usd(WALLET.totalUsd);
   $('stat-positions').textContent = count + (count === 1 ? ' position' : ' positions');
 
-  // One agent at a time by design (src/agents.ts), so this says WHICH one rather than how
-  // many. The client name is agent-authored and arrives cleaned and capped by the server;
-  // it reaches the DOM through textContent like every other dynamic string on this page.
+  /* WHO is driving, and how many.
+     Phosphor seated one agent at a time until 2026-08-21 and now seats a team (src/agents.ts),
+     so a line reading "claude-code" while three agents are attached would be a lie of omission
+     on the one field a human uses to know who is touching their wallet. One agent still reads
+     as its own name, because "1 agent" is a worse answer than the name when there is only one.
+     Every string here is agent-authored and arrives cleaned and capped by the server; it reaches
+     the DOM through textContent like every other dynamic string on this page. */
   var agents = s.agents || {};
   var holder = agents.holder || null;
+  var members = agents.members || [];
+  var workers = (agents.workers || []).filter(function (w) { return w.state === 'running'; });
   var agentNode = $('stat-agent');
-  agentNode.textContent = !agents.connected ? 'none' : holder ? holder.client : 'connected';
+  var label = 'none';
+  if (agents.connected === 1) label = holder ? holder.client : 'connected';
+  else if (agents.connected > 1) label = agents.connected + ' agents';
+  if (workers.length > 0) label += ' (+' + workers.length + ' working)';
+  agentNode.textContent = label;
   agentNode.className = !agents.connected ? 'v faint' : 'v';
-  agentNode.title = holder ? 'connected since ' + clock(holder.since) : 'no agent is connected';
+  agentNode.title = members.length
+    ? members
+        .map(function (m) {
+          return m.label + ' [' + m.role + '] since ' + clock(m.since) + ', ' + m.ops + ' calls';
+        })
+        .join('\n')
+    : 'no agent is connected';
   // Feed the presence light: whether an agent holds the seat, and when it last did real work.
   // Live 'activity' pings (below) keep it bright between state pushes; this seeds it on load.
   if (window.PhosphorPresence) PhosphorPresence.setState(agents.connected, agents.lastActivityAt);

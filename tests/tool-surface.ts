@@ -80,7 +80,15 @@ export const EXPECTED_TOOLS: readonly string[] = [
   'chart_mark',
   // The sloped line. A level is horizontal and a mark is vertical, so neither could express one.
   'chart_trendline',
+  // Tidying up, and the reason it grew targets: with a team on one chart, "clear what the agent
+  // drew" stopped being one thing. `mine` is this session's own work and is the default,
+  // because a tidy that reached a colleague's by default would be the commonest way one agent
+  // silently undoes another.
   'chart_clear',
+  // A whole study package in one call, and the tidy that makes it always fit. It clears the
+  // calling agent's own studies before it draws, so it can never be refused by the pane cap and
+  // the chart cannot silently accumulate. See src/presets.ts.
+  'chart_preset',
   // Moves the window between the three surfaces. Named `switch` rather than set_view_mode
   // because the requirement is that switching costs one word.
   'switch',
@@ -102,11 +110,43 @@ export const EXPECTED_TOOLS: readonly string[] = [
   'trade_overlay',
   'trade_note',
   'trade_clear',
+  // The team. Phosphor allowed one agent at a time until 2026-08-21 and now seats several, so
+  // these five exist to keep a roster from being a crowd: who is here, a board they write one
+  // line each to, and workers one of them can put on a piece of work.
+  //
+  // None of them moves money and none of them can. What they return is written by OTHER AGENTS,
+  // which makes it data in exactly the way a token name or a headline is data: it cannot
+  // instruct, approve or widen anything, and the tool descriptions say so.
+  'agent_roster',
+  'agent_board',
+  'agent_post',
+  'agent_jobs',
+  // The one that spawns another model. It is on an operator's surface and NOT on a worker's:
+  // src/mcp.ts does not register it when PHOSPHOR_ROLE is analyst, so a chain of models cannot
+  // spawn a chain of models. A worker's surface is this list minus agent_spawn, minus every
+  // propose_*, and minus the three window controls (switch, watch, set_theme).
+  'agent_spawn',
   // The only tool answered inside the shim instead of proxied to the app. It reads an enabled
   // skill file off this machine and returns its text, which is why it needs no app state and
-  // why it still works while another agent holds the seat. It moves nothing and, like every
-  // other read here, cannot reach a rail.
+  // why it still works while the roster is full. It moves nothing and, like every other read
+  // here, cannot reach a rail.
   'skill',
 ];
+
+/* What a spawned worker holds, which is this surface minus everything that acts.
+   Derived rather than typed out, so the two lists cannot drift: adding a tool above adds it to
+   a worker too unless it is named here, which is the safe direction to be wrong in only because
+   tests/injection.test.ts walks the whole surface for an address either way. */
+export const WORKER_WITHHELD: readonly string[] = [
+  'agent_spawn',
+  'switch',
+  'watch',
+  'set_theme',
+  ...EXPECTED_TOOLS.filter((t) => t.startsWith('propose_')),
+];
+
+export const EXPECTED_WORKER_TOOLS_SORTED: readonly string[] = EXPECTED_TOOLS.filter(
+  (t) => !WORKER_WITHHELD.includes(t),
+).sort();
 
 export const EXPECTED_TOOLS_SORTED: readonly string[] = [...EXPECTED_TOOLS].sort();
