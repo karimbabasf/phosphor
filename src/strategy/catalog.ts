@@ -146,7 +146,7 @@ export const EXAMPLES: Example[] = [
   {
     intent: 'Go long when price closes above a trend line I drew, and stop out back under it.',
     note:
-      'The reason drawing and trading are one system. Draw the line first with chart_trendline or chart_batch op:draw, take the id it returns (tl_1 here), and the trigger tracks the slope: the level it fires at moves as time passes, which a literal price cannot do.',
+      'The reason drawing and trading are one system. Draw the line first with chart_trendline or chart_batch op:draw, take the id it returns (tl_1 here), and the trigger tracks the slope: the level it fires at moves as time passes, which a literal price cannot do. NOT ARMABLE TODAY: the runner is fed the order book and nothing else, so it has no value for a drawing and no bar closes, and arming this is refused rather than left to sit reading false forever. Write the levels as fixed prices until the runner is fed the chart. See unrunnableRefusal in src/runner/host.ts.',
     program: {
       symbol: 'BTC',
       rules: [

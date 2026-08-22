@@ -24,10 +24,23 @@ import type { RunState } from './envelope.ts';
 export type MarketState = {
   nowMs: number;
   markPx: number;
-  // The previous tick's mark. Cross conditions are about a transition, and a transition needs
-  // two samples; holding the previous one here rather than inside the evaluator is what keeps
-  // this function pure.
-  prevMarkPx: number;
+  // The previous tick's mark, or null when there has not been one yet. Cross conditions are
+  // about a transition, and a transition needs two samples; holding the previous one here rather
+  // than inside the evaluator is what keeps this function pure.
+  //
+  // NULL RATHER THAN A SEED NUMBER, and the difference cost real money on 2026-08-21. The runner
+  // seeded this at 0, so `prevMarkPx <= v` was true of every level in existence and the FIRST
+  // evaluation after arming counted as a cross up whenever the mark already sat above the level.
+  // A mandate written to buy a dip opened at the market instead, on its very first tick, and the
+  // trade that reached the venue was not the one on the approval screen: the entry landed on the
+  // wrong side of its own stop, so the reward-to-risk a human read was inverted before the
+  // position existed. Nobody saw a wrong condition, because the condition was right.
+  //
+  // There is no seed value that is safe, which is why this is a type change and not a better
+  // constant: 0 is below every level and Infinity is above every level, so one direction always
+  // starts armed. The absence of a sample is a fact about the market state, so it is what the
+  // market state carries.
+  prevMarkPx: number | null;
   // A Ref to a price at this instant, or null when it cannot be resolved (a deleted drawing,
   // an indicator with no value yet). Null makes the condition false rather than throwing:
   // a strategy whose line was deleted should stop triggering, not crash the runner.
@@ -55,11 +68,13 @@ function condition(c: Condition, m: MarketState, s: RunState): boolean {
     }
     case 'price_cross_up': {
       const v = m.resolveRef(c.ref);
-      return v !== null && m.prevMarkPx <= v && m.markPx > v;
+      if (v === null || m.prevMarkPx === null) return false;
+      return m.prevMarkPx <= v && m.markPx > v;
     }
     case 'price_cross_down': {
       const v = m.resolveRef(c.ref);
-      return v !== null && m.prevMarkPx >= v && m.markPx < v;
+      if (v === null || m.prevMarkPx === null) return false;
+      return m.prevMarkPx >= v && m.markPx < v;
     }
     case 'bar_close': {
       const bar = m.lastClose(c.timeframeSec);
