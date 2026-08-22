@@ -31,7 +31,21 @@ type Any = Record<string, any>;
 
 /** Every button the panel is allowed to build, by class. A new one fails this list on purpose:
  *  the point of the list is that adding a control here is a decision somebody had to make. */
-const ALLOWED_BUTTONS = ['chat-globe', 'chat-jump', 'chat-btn chat-halt', 'chat-btn chat-stop', 'chat-btn chat-confirm-yes', 'chat-btn chat-confirm-no', 'chat-btn chat-send'];
+const ALLOWED_BUTTONS = [
+  'chat-globe',
+  'chat-jump',
+  'chat-btn chat-halt',
+  'chat-btn chat-stop',
+  'chat-btn chat-confirm-yes',
+  'chat-btn chat-confirm-no',
+  'chat-btn chat-send',
+  /* Added 2026-08-21 with the tab strip, and added here on purpose rather than by widening the
+     rule. Both are navigation: `chat-tab` puts a conversation in front and `chat-plus` starts
+     another agent. Neither approves, refuses or arms anything, and the plus reaches exactly one
+     route, /api/driver with action 'open', which cannot move money. */
+  'chat-tab',
+  'chat-plus',
+];
 
 function makeNode(tag: string, created: Any[]): Any {
   let text = '';
@@ -756,4 +770,73 @@ test('the record says the human stopped the answer', () => {
   assert.deepEqual(h.rows().at(-1), '|the human stopped this answer');
   const row = h.find('chat-list').children.at(-1);
   assert.equal(row.className, 'chat-row chat-status', 'as a status line, which is the dim one');
+});
+
+
+/* ---- the tab strip ----
+ *
+ * The panel showed one conversation until 2026-08-21. These are about the two things that go
+ * wrong when it shows several: a message printed into the wrong one, and a control that spends
+ * money twice because it was pressed twice.
+ */
+
+test('the plus asks the server to open a chat, and cannot be pressed twice while it waits', async () => {
+  const h = load();
+  const plus = h.find('chat-plus');
+
+  plus.fire('click');
+  assert.equal(plus.disabled, true, 'a second press before the answer is a second agent nobody asked for');
+  plus.fire('click');
+  await flush();
+  await flush();
+
+  const opens = h.posts.filter((p: Any) => p.action === 'open');
+  assert.equal(opens.length, 1, 'two presses must not open two agents');
+});
+
+test('every request names the conversation it is for', async () => {
+  const h = load();
+  h.chat.push({ kind: 'status', state: 'ready' });
+  h.tick(1000);
+  const input = h.find('chat-input');
+  input.value = 'buy the dip';
+  h.find('chat-form').fire('submit');
+  await flush();
+  await flush();
+
+  const prompt = h.posts.find((p: Any) => p.action === 'prompt');
+  assert.ok(prompt, 'the prompt never reached the server');
+  assert.ok('chat' in prompt, 'a prompt with no chat on it can be delivered to the wrong agent');
+});
+
+test('a message for a chat that is not in front never reaches the panel', () => {
+  const h = load({ driver: { max: 4, chats: [
+    { id: 'c1', label: 'AGENT 1', state: 'ready', transcript: [{ kind: 'text', text: 'first' }] },
+    { id: 'c2', label: 'AGENT 2', state: 'ready', transcript: [{ kind: 'text', text: 'second' }] },
+  ] } });
+  h.chat.load();
+  return flush().then(() => flush()).then(() => {
+    assert.equal(h.find('chat-tab').className.includes('chat-tab'), true);
+
+    const before = h.rows().join('|');
+    // c2 is not the one in front. Its line belongs in its own transcript and nowhere else.
+    h.chat.push('c2', { kind: 'text', text: 'this is for the other agent' });
+    assert.equal(h.rows().join('|'), before, 'a line printed into the conversation it did not come from');
+
+    // And it is there when that tab is chosen.
+    const tabs = h.find('chat-tabs');
+    const second = tabs.children.find((n: Any) => n.getAttribute('data-chat') === 'c2');
+    assert.ok(second, 'no tab for the second chat');
+    tabs.fire('click', { target: second });
+    assert.ok(h.rows().join('|').includes('this is for the other agent'), 'the line was lost, not deferred');
+  });
+});
+
+test('the plus is put away at the ceiling rather than refusing after the press', () => {
+  const four = [1, 2, 3, 4].map((n) => ({ id: `c${n}`, label: `AGENT ${n}`, state: 'ready', transcript: [] }));
+  const h = load({ driver: { max: 4, chats: four } });
+  h.chat.load();
+  return flush().then(() => flush()).then(() => {
+    assert.equal(h.find('chat-plus').disabled, true, 'a plus that is pressable at the ceiling teaches nothing');
+  });
 });

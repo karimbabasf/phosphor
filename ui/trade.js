@@ -1785,7 +1785,7 @@ function openEvents() {
     else if (payload.type === 'log' && payload.event) appendLog(payload.event);
     // The in-app driver talking. Forwarded rather than handled here: the transcript is owned by
     // driver-chat.js, which is mounted on both the pro deck and the basic screen.
-    else if (payload.type === 'driver' && payload.event) { if (window.PhosphorChat) PhosphorChat.push(payload.event); }
+    else if (payload.type === 'driver' && payload.event) { if (window.PhosphorChat) PhosphorChat.push(payload.chat, payload.event); }
     // A gas receipt landed on the treasury ledger. The call is a no-op unless the HISTORY
     // overlay is open, which is where that decision belongs.
     else if (payload.type === 'transactions') PhosphorViews.transactionsRefresh();

@@ -376,35 +376,81 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     return load.candles.filter((c) => c.t < endSec);
   });
 
-  // The driver's seat. The transcript is kept here rather than in the browser because a window
-  // that reloads mid-conversation should come back to the conversation, and because the SSE
-  // stream is a change notification, not a delivery guarantee. TRANSCRIPT_MAX is a memory bound,
-  // not an editorial one: the full record of what the agent did lives in the audit log, which is
+  // THE DRIVER'S SEATS, PLURAL SINCE 2026-08-21.
+  //
+  // This used to be one `driver` and one `transcript`. It is now a map of CHATS, each holding
+  // its own child process and its own conversation, because one seat made the window the only
+  // part of Phosphor that could not do two things at once: src/agents.ts has seated a roster of
+  // six since this morning and src/crew.ts spawns workers into it, and the human's own surface
+  // was still a single thread they had to finish before starting the next one.
+  //
+  // WHAT A SECOND CHAT IS AND IS NOT. It is a second Claude Code process under the same
+  // lockdown file, the same assertSurface check, and the same MCP server, joining the roster as
+  // its own named member. It is NOT a second view of one conversation: the three windows (pro,
+  // trade, basic) still all show whichever chat is in front, which is what they always did.
+  //
+  // THE ONE ORDERING RULE. Opening a chat must never evict the roster. startDriver() below
+  // clears the whole roster on purpose, because the globe means "start over with your own
+  // agent". The plus means "and also this one", and running the evicting path for it would kill
+  // the conversation the human is standing in. They are separate functions for that reason and
+  // openChat() is deliberately the one with no evict in it.
+  //
+  // The transcript is kept here rather than in the browser because a window that reloads
+  // mid-conversation should come back to the conversation, and because the SSE stream is a
+  // change notification, not a delivery guarantee. TRANSCRIPT_MAX is a memory bound, not an
+  // editorial one: the full record of what an agent did lives in the audit log, which is
   // append-only and is what anyone should read when the question is what happened.
   const TRANSCRIPT_MAX = 400;
-  const transcript: Array<DriverEvent & { at: number }> = [];
-  let driver: Driver | null = null;
 
-  function driverEvent(event: DriverEvent): void {
-    transcript.push({ ...event, at: Date.now() });
-    if (transcript.length > TRANSCRIPT_MAX) transcript.splice(0, transcript.length - TRANSCRIPT_MAX);
+  /* How many conversations a human may have open at once.
+     The real ceiling is elsewhere and it is MAX_AGENTS in src/agents.ts, which seats six and
+     refuses a seventh with a sentence saying so. This number is smaller than six for two
+     reasons that have nothing to do with arithmetic: every chat is a model on the other end of
+     a subscription and costs whether or not it is the tab in front, and every chat can spawn up
+     to three workers of its own, which come out of the same six seats. Four windows and the
+     workers they put to use is the roster full. */
+  const MAX_CHATS = 4;
+
+  type Chat = {
+    id: string;
+    label: string;
+    driver: Driver;
+    transcript: Array<DriverEvent & { at: number }>;
+  };
+
+  const chats = new Map<string, Chat>();
+  let chatSeq = 0;
+
+  function driverEvent(chat: Chat, event: DriverEvent): void {
+    chat.transcript.push({ ...event, at: Date.now() });
+    if (chat.transcript.length > TRANSCRIPT_MAX) {
+      chat.transcript.splice(0, chat.transcript.length - TRANSCRIPT_MAX);
+    }
     // A refused lockdown is not a chat message. It is the one driver event that belongs in the
     // permanent record, because it means a Claude Code upgrade changed the tool surface under an
     // app that signs transactions.
     if (event.kind === 'error' && event.message.startsWith('refusing to drive')) {
-      audit.append('error', event.message, { source: 'driver' });
+      audit.append('error', event.message, { source: 'driver', chat: chat.id });
     }
-    for (const client of sseClients) sseSend(client, { type: 'driver', event });
+    // Tagged with the chat, always. An untagged event was fine when there was one conversation
+    // and would print into whichever one the human happened to be looking at now.
+    for (const client of sseClients) sseSend(client, { type: 'driver', chat: chat.id, event });
   }
 
-  function getDriver(): Driver {
-    if (driver === null) {
-      driver = deps.makeDriver
-        ? deps.makeDriver()
-        : createDriver({
+  function makeChat(): Chat {
+    chatSeq += 1;
+    const id = `c${chatSeq}`;
+    const chat = { id, label: `AGENT ${chatSeq}`, transcript: [] } as Partial<Chat> as Chat;
+    chat.driver = deps.makeDriver
+      ? deps.makeDriver()
+      : createDriver({
             repo: PROJECT_DIR,
             port: cfg.port,
             claudeBin: cfg.driver?.claudeBin,
+            /* The name this child answers to on the roster, so a human reading src/agents.ts
+               through the window can tell four attached agents apart. Without it every one of
+               them is called after the client that started it and they are all the same client. */
+            label: chat.label,
             /* Unset by default, and that is a measured decision rather than an omission. Pinning
                a faster model looked like the obvious speed win and it is not one: over six runs
                of two canonical chart prompts, all three models were correct every time, and the
@@ -423,10 +469,23 @@ export function createServer(deps: ServerDeps): PhosphorServer {
                running their own Phosphor should be able to change how their own agent talks. */
             systemPrompt:
               cfg.driver?.systemPrompt ?? buildRole({ root: PROJECT_DIR, view: getView(), network: cfg.network }),
-            onEvent: driverEvent,
+            onEvent: (event) => driverEvent(chat, event),
           });
-    }
-    return driver;
+    chats.set(id, chat);
+    return chat;
+  }
+
+  /* The chat every door falls back to: the oldest one open, or a fresh one when nothing is.
+     Lazy for the same reason it always was, which is that the app must be able to boot, serve
+     the window and answer /api/state without ever spawning an agent. */
+  function primaryChat(): Chat {
+    for (const chat of chats.values()) return chat;
+    return makeChat();
+  }
+
+  function chatById(id: unknown): Chat | null {
+    if (typeof id !== 'string' || id === '') return null;
+    return chats.get(id) ?? null;
   }
 
   /* Starting the window's own agent, from either door: a human pressing the globe, or the app
@@ -455,14 +514,60 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         ? 'in-app driver starting: the app is spawning its own agent'
         : 'in-app driver starting at boot: the window opens with an agent attached',
     );
-    getDriver().start();
+    primaryChat().driver.start();
     broadcastState();
     return dropped[0]?.client ?? null;
   }
 
+  /* The plus. A second conversation beside the one already running, and the whole difference
+     from startDriver above is the line that is missing: no evict. A human pressing plus is
+     asking for another agent, not for a replacement, and dropping the roster here would take
+     down the chat they are standing in along with every worker it had spawned. */
+  function openChat(): { ok: true; chat: Chat } | { ok: false; error: string } {
+    if (chats.size >= MAX_CHATS) {
+      return {
+        ok: false,
+        error:
+          `${chats.size} agents are already open and ${MAX_CHATS} is the maximum. Close one first. ` +
+          'Each one is a model running whether or not its tab is in front, and each can put three ' +
+          'workers of its own on the roster.',
+      };
+    }
+    const chat = makeChat();
+    audit.append('app_start', `a second in-app agent is starting: ${chat.label}`, { chat: chat.id });
+    chat.driver.start();
+    broadcastState();
+    return { ok: true, chat };
+  }
+
+  function closeChat(chat: Chat): void {
+    chat.driver.stop();
+    chats.delete(chat.id);
+    audit.append('app_start', `in-app driver closed by the human (${chat.label})`, { chat: chat.id });
+    broadcastState();
+  }
+
+  /* Every open conversation, with its transcript, so a window that reloaded comes back to all
+     of them rather than to the one that happened to be in front.
+
+     WITH NOTHING OPEN THE ANSWER IS A CHAT THAT DOES NOT EXIST YET, and that is deliberate
+     rather than a placeholder. The app has to be able to serve this window without spawning an
+     agent, so answering here must not create one. The empty id is what the window posts back
+     when the human presses the globe, and the POST is where the process is made. */
   function driverPayload(): Record<string, unknown> {
-    const status = driver === null ? { state: 'off' as const, sessionId: '', running: false } : driver.status();
-    return { ...status, transcript };
+    const open = [...chats.values()].map((chat) => ({
+      id: chat.id,
+      label: chat.label,
+      ...chat.driver.status(),
+      transcript: chat.transcript,
+    }));
+    if (open.length === 0) {
+      open.push({ id: '', label: 'AGENT 1', state: 'off' as const, sessionId: '', running: false, transcript: [] });
+    }
+    // The flat fields are the first chat's, kept beside the list so anything reading the older
+    // single-seat shape still reads something true rather than undefined.
+    const { id: _id, label: _label, transcript: _t, ...flat } = open[0];
+    return { ...flat, chats: open, max: MAX_CHATS };
   }
 
   function sseSend(res: http.ServerResponse, payload: unknown): void {
@@ -1171,11 +1276,50 @@ export function createServer(deps: ServerDeps): PhosphorServer {
 
     if (route === '/api/driver') {
       const action = String(body.action ?? '');
-      const instance = getDriver();
+
+      /* The plus, and it is checked before the chat is resolved because it is the one action
+         that is not ABOUT an existing chat. */
+      if (action === 'open') {
+        const opened = openChat();
+        if (!opened.ok) return sendJson(res, 409, { error: opened.error });
+        return sendJson(res, 200, {
+          ok: true,
+          id: opened.chat.id,
+          label: opened.chat.label,
+          ...opened.chat.driver.status(),
+        });
+      }
+
+      /* Naming a chat that is not open is refused rather than quietly redirected. Falling back
+         to the first chat would send a sentence a human typed into one conversation to a
+         different agent, which is the failure this whole tagging exercise exists to prevent. */
+      const named = body.chat === undefined || body.chat === null || body.chat === '' ? null : chatById(body.chat);
+      if (body.chat !== undefined && body.chat !== null && body.chat !== '' && named === null) {
+        return sendJson(res, 404, { error: `no chat ${String(body.chat)} is open` });
+      }
+      const chat = named ?? primaryChat();
+      const instance = chat.driver;
 
       if (action === 'start') {
-        const dropped = startDriver('human');
-        return sendJson(res, 200, { ok: true, dropped, ...instance.status() });
+        /* THE GLOBE MEANS TWO DIFFERENT THINGS AND THE DIFFERENCE IS WHICH TAB IT IS ON.
+           On the first and only conversation it still means "start over with your own agent",
+           which clears the roster: a human pressing it while three terminals are attached is
+           asking for one agent, not for a fourth. On a second tab it cannot mean that, because
+           the roster it would clear holds the chat sitting next to this one. So the evicting
+           path runs only when there is nothing else here to kill. */
+        const sole = chats.size <= 1;
+        if (sole) {
+          const dropped = startDriver('human');
+          return sendJson(res, 200, { ok: true, dropped, id: chat.id, ...chat.driver.status() });
+        }
+        instance.start();
+        broadcastState();
+        return sendJson(res, 200, { ok: true, dropped: null, id: chat.id, ...instance.status() });
+      }
+
+      if (action === 'close') {
+        closeChat(chat);
+        return sendJson(res, 200, { ok: true, id: chat.id });
       }
 
       if (action === 'prompt') {
@@ -1190,9 +1334,9 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         /* Logged before anything the agent does with it. The dashcam is supposed to answer
            "why did this happen", and the tool calls alone only answer "what happened": a swap
            in the transcript with no instruction above it reads as the app acting on its own. */
-        audit.append('driver_prompt', `human to the agent: ${text}`, { chars: text.length });
-        driverEvent({ kind: 'said', text });
-        return sendJson(res, 200, { ok: true, ...instance.status() });
+        audit.append('driver_prompt', `human to ${chat.label}: ${text}`, { chars: text.length, chat: chat.id });
+        driverEvent(chat, { kind: 'said', text });
+        return sendJson(res, 200, { ok: true, id: chat.id, ...instance.status() });
       }
 
       /* Stop the answer, not the agent. A separate action from `stop` because they are separate
@@ -1205,15 +1349,20 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         /* No driverEvent here. interrupt() sets the state itself and the driver's own status
            event is already on its way through onEvent, so pushing a second one printed the
            line twice in the window. Seen doing exactly that on the live app. */
-        if (stopped) audit.append('driver_prompt', 'the human stopped the answer in progress', { interrupted: true });
-        return sendJson(res, 200, { ok: true, interrupted: stopped, ...instance.status() });
+        if (stopped) {
+          audit.append('driver_prompt', `the human stopped the answer in progress (${chat.label})`, {
+            interrupted: true,
+            chat: chat.id,
+          });
+        }
+        return sendJson(res, 200, { ok: true, id: chat.id, interrupted: stopped, ...instance.status() });
       }
 
       if (action === 'stop') {
         instance.stop();
-        audit.append('app_start', 'in-app driver stopped by the human');
+        audit.append('app_start', `in-app driver stopped by the human (${chat.label})`, { chat: chat.id });
         broadcastState();
-        return sendJson(res, 200, { ok: true, ...instance.status() });
+        return sendJson(res, 200, { ok: true, id: chat.id, ...instance.status() });
       }
 
       return sendJson(res, 400, { error: `unknown driver action: ${action}` });
@@ -2595,7 +2744,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     /* The child dies with the server that started it. An orphaned driver would keep the seat,
        keep spending the user's subscription, and keep proposing into a state directory whose
        window is gone, and it is the app's job to clean up a process the app created. */
-    if (driver !== null) driver.stop();
+    for (const chat of chats.values()) chat.driver.stop();
   });
 
   // Structural guarantee for the "binds 127.0.0.1 only" constraint: a bare port

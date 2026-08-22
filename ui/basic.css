@@ -1645,3 +1645,75 @@ body[data-view='basic'].waiting .basic-headline {
    the composer's row is as narrow as this panel ever gets. */
 .basic-chat .chat-btn { white-space: nowrap; }
 .basic-chat .chat-state { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- the tab strip on the calm screen ----
+
+   The same strip as the deck's and the same rule about motion: no animation on a switch,
+   because it is a repeated control and motion on a repeated control reads as lag. See the
+   matching block in ui/style.css for the argument about tabs rather than stacked panels. */
+.basic-chat .chat-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+
+.basic-chat .chat-tab {
+  appearance: none;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-control);
+  color: var(--ink-soft);
+  font: inherit;
+  padding: 4px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 120ms var(--ease-out), background-color 120ms var(--ease-out);
+}
+
+.basic-chat .chat-tab:hover { background: color-mix(in oklch, var(--ink) 7%, var(--surface)); }
+.basic-chat .chat-tab:focus-visible { outline: 2px solid var(--calm); outline-offset: 2px; }
+
+.basic-chat .chat-tab[data-on='true'] {
+  color: var(--ink);
+  background: color-mix(in oklch, var(--ink) 10%, var(--surface));
+}
+
+.basic-chat .chat-tab[data-unread='true']::after {
+  content: '';
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 6px;
+  vertical-align: middle;
+  border-radius: 50%;
+  background: var(--calm);
+}
+
+/* THE PLUS. Same control, same place, dressed for this screen. */
+.basic-chat .chat-plus {
+  appearance: none;
+  flex: 0 0 auto;
+  margin-left: auto;
+  border-radius: var(--r-control);
+  background: color-mix(in oklch, var(--ink) 7%, var(--surface));
+  border: 1px solid var(--rule-firm);
+  color: var(--ink);
+  font: inherit;
+  line-height: 1;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: transform 160ms var(--ease-out), background-color 160ms var(--ease-out),
+    opacity 160ms var(--ease-out);
+}
+
+.basic-chat .chat-plus:hover { background: color-mix(in oklch, var(--ink) 13%, var(--surface)); }
+.basic-chat .chat-plus:focus-visible { outline: 2px solid var(--calm); outline-offset: 2px; }
+.basic-chat .chat-plus:active { transform: scale(0.97); }
+.basic-chat .chat-plus[disabled] { opacity: 0.35; cursor: default; }
+.basic-chat .chat-plus[disabled]:active { transform: none; }
