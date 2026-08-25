@@ -1,10 +1,10 @@
-/* deck-views.js — the three records that live behind the deck bar, rendered once.
+/* deck-views.js: the records that live behind the deck bar, rendered once.
  *
- * WHY THIS FILE. The pro deck and the trading deck both open LOG, POLICY and HISTORY, and
- * they are the same three records read from the same three endpoints. Written twice they
- * would drift, and the way they drift is that one of them quietly starts showing less: a
- * column dropped here, a line truncated there. Written once, "nothing is shortened" is a
- * property of one file that can be checked.
+ * WHY THIS FILE. The pro deck and the trading deck both open LOG, POLICY, HISTORY and GAS,
+ * and they are the same records read from the same endpoints. Written twice they would
+ * drift, and the way they drift is that one of them quietly starts showing less: a column
+ * dropped here, a line truncated there. Written once, "nothing is shortened" is a property
+ * of one file that can be checked.
  *
  * It carries its own formatters rather than borrowing a page's. ui/app.js and ui/trade.js
  * both define usd() and they do not agree: the custody page prints `n/a` for a number it
@@ -574,11 +574,691 @@ var PhosphorViews = (function () {
     VIEW = null;
   }
 
+  /* ---------- GAS ----------
+
+     What this app has spent moving money, and where it went. Every movement burns gas
+     somewhere, src/transactions.ts has carried the per-transaction figure since the history
+     shipped, and until 2026-08-20 nothing added it up: the HISTORY table prints a fee per
+     row, so a person asking "what has this cost me" was summing twelve rows in their head.
+
+     ONE QUESTION IN THREE PARTS: what was spent, which kinds of action spent it, on which
+     chain. Two rings and a total. byAction groups the MOVEMENT and byChain groups the
+     RECEIPT, so a cross-chain move counts once in the first and twice in the second. The
+     server does that split (spec 2.4) and this file only prints what it returns.
+
+     THE TABLE IS THE AUTHORITY AND THE RING IS THE SHAPE OF IT. A canvas draws pixels, so
+     it assigns no markup and the law at the top of this file survives it, but a canvas is
+     also unreadable to anything that is not an eye. So every number on a ring is beside it
+     as text, the canvas carries an aria-label naming its largest slices, and the table below
+     carries all of them including the ones too thin to label.
+
+     AND IT PRINTS WHAT IT COULD NOT COUNT. Four remainders (a receipt still being read, a
+     hash no chain we can reach knows, a move signed as an intent, a fee with no price) and
+     one loss, reverted, which is the only figure here that bought nothing. An aggregate that
+     drops those quietly reports a smaller number than the truth and calls it the truth. A
+     remainder that is zero prints nothing: "0 pending" is chrome. */
+
+  /* '7d' is the endpoint's own default and the one a person wants first. A day is too short
+     to hold a swap and the deposit that followed it, and 'all' on a machine that has been
+     running for months is a number with no shape to read. */
+  var GAS_WINDOW = '7d';
+  var GAS = null;
+  var GAS_LOADED = false;
+  /* The elements an open overlay owns, null when shut, exactly as VIEW is above. */
+  var GVIEW = null;
+  var GAS_FRAME = 0;
+  /* The ring sweeps once per open. A refresh under an open overlay redraws and does not
+     move: a person reading a number does not want it counting up again underneath them. */
+  var GAS_SWEPT = false;
+
+  var GAS_WINDOWS = [
+    { key: '24h', label: '24H' },
+    { key: '7d', label: '7D' },
+    { key: '30d', label: '30D' },
+    { key: 'all', label: 'ALL' }
+  ];
+
+  var GAS_COLUMNS = [
+    { cls: 'c-slice', label: 'SLICE' },
+    { cls: 'c-num c-gasusd', label: 'GAS' },
+    { cls: 'c-num c-share', label: 'SHARE' },
+    { cls: 'c-num c-units', label: 'UNITS' },
+    { cls: 'c-num c-txn', label: 'TX' }
+  ];
+
+  /* THE PALETTE IS THE APP'S OWN LADDER, READ OFF THE ELEMENT ABOUT TO BE PAINTED, never a
+     table of hexes in here. Two reasons, and the second is the load-bearing one:
+
+     the law at the top of ui/style.css is one hue and hierarchy by brightness and opacity,
+     so a ring drawn in five steps of phosphor is the ring this surface is entitled to; and
+     this file is shared by two decks and must depend on neither, so it cannot reach for the
+     wallet donut's ten hues in ui/app.js, which ui/trade.js never loads.
+
+     Resolved from the canvas rather than from :root, for the reason ui/agent-globe.js states
+     at its own readRgb(): custom properties inherit, so the element that is going to be
+     painted is always the right place to ask, and a screen whose tokens hang off an
+     attribute higher up still answers correctly.
+
+     Past the fifth slice the ladder runs out and the tail is derived rather than invented:
+     opacity steps of --green, each one a fixed fraction of the last, starting from the alpha
+     the faintest token already carries. Two neighbours down there are close, which is why
+     every slice is trimmed by a hairline of ground at its edges: the ring stays countable
+     even where the ink stops separating, and the table names them either way. */
+  var GAS_RAMP = ['--green-hi', '--green', '--green-dim', '--green-faint', '--green-ghost'];
+  var GAS_TAIL_STEP = 0.7;
+  var GAS_TAIL_FLOOR = 0.05;
+  /* Matches .gasring in ui/style.css, and it is a fallback rather than a duplicate: see
+     fitRing() for the one frame in which the box measures zero. */
+  var GAS_RING_PX = 150;
+  /* The same hole the wallet donut has (DONUT_INNER in ui/app.js). Two rings in one app
+     that are not the same object read as a mistake. */
+  var GAS_INNER = 0.58;
+  var GAS_SWEEP_MS = 300;
+  /* Under two percent the label overlaps its neighbour's, and a ring crowded with
+     overlapping text is less legible than a ring with none. It is in the table. */
+  var GAS_LABEL_MIN = 0.02;
+  var GAS_RING_FONT = '11px ui-monospace, SFMono-Regular, Menlo, monospace';
+  var GAS_TOTAL_FONT = '600 15px ui-monospace, SFMono-Regular, Menlo, monospace';
+  var TWO_PI = Math.PI * 2;
+
+  function reducedMotion() {
+    try {
+      return Boolean(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    } catch (err) {
+      return false;
+    }
+  }
+
+  function raf(fn) {
+    if (window.requestAnimationFrame) return window.requestAnimationFrame(fn);
+    return window.setTimeout(function () {
+      fn(Date.now());
+    }, 16);
+  }
+
+  function cancelGasFrame() {
+    if (!GAS_FRAME) return;
+    if (window.cancelAnimationFrame) window.cancelAnimationFrame(GAS_FRAME);
+    else window.clearTimeout(GAS_FRAME);
+    GAS_FRAME = 0;
+  }
+
+  function rgbParts(raw) {
+    var text = String(raw === null || raw === undefined ? '' : raw).trim();
+    var hex = text.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+    if (hex) return [parseInt(hex[1], 16), parseInt(hex[2], 16), parseInt(hex[3], 16)];
+    var fn = text.match(/^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/i);
+    if (fn) return [Number(fn[1]), Number(fn[2]), Number(fn[3])];
+    return null;
+  }
+
+  function alphaOf(raw) {
+    var fn = String(raw === null || raw === undefined ? '' : raw)
+      .match(/^rgba\(\s*[\d.]+[\s,]+[\d.]+[\s,]+[\d.]+[\s,/]+([\d.]+)\s*\)$/i);
+    return fn ? Number(fn[1]) : 1;
+  }
+
+  function gasPalette(node) {
+    var style = null;
+    try {
+      style = window.getComputedStyle ? window.getComputedStyle(node) : null;
+    } catch (err) {
+      style = null;
+    }
+    function token(name) {
+      if (!style || !style.getPropertyValue) return '';
+      var value = style.getPropertyValue(name);
+      return value ? String(value).trim() : '';
+    }
+    var ramp = [];
+    for (var i = 0; i < GAS_RAMP.length; i++) {
+      var step = token(GAS_RAMP[i]);
+      if (step) ramp.push(step);
+    }
+    /* The inherited text colour is the last resort rather than a hex: it is the same green
+       by definition, because ui/style.css sets body { color: var(--green) }. */
+    return {
+      ramp: ramp,
+      base: rgbParts(token('--green') || (style ? style.color : '')),
+      bg: token('--bg'),
+      hi: token('--green-hi'),
+      dim: token('--green-dim'),
+      faint: token('--green-faint'),
+      ghost: token('--green-ghost')
+    };
+  }
+
+  function sliceInk(pal, index) {
+    if (index < pal.ramp.length) return pal.ramp[index];
+    var last = pal.ramp.length ? pal.ramp[pal.ramp.length - 1] : '';
+    if (!pal.base) return last;
+    var start = alphaOf(last);
+    var alpha = Math.max(GAS_TAIL_FLOOR, start * Math.pow(GAS_TAIL_STEP, index - pal.ramp.length + 1));
+    return 'rgba(' + pal.base[0] + ', ' + pal.base[1] + ', ' + pal.base[2] + ', ' + alpha.toFixed(3) + ')';
+  }
+
+  /* Ink for a label sitting ON a slice. The two brightest steps are near solid, so text on
+     them is the ground colour; everything below is faint enough to take bright text. One
+     rule, no second palette. */
+  function labelInk(pal, index) {
+    if (index < 2 && pal.bg) return pal.bg;
+    return pal.hi || pal.ramp[0] || '';
+  }
+
+  /* Gas units are a decimal string end to end (spec 2.4): the sum over a long history goes
+     past 2^53, so Number() would round it before it was ever printed. Grouped by hand for
+     the same reason, and anything that is not a plain integer is passed through untouched
+     rather than mangled. */
+  function groupDigits(value) {
+    var text = String(value === null || value === undefined ? '' : value);
+    if (!/^\d+$/.test(text)) return text;
+    var out = '';
+    var seen = 0;
+    for (var i = text.length - 1; i >= 0; i--) {
+      out = text.charAt(i) + out;
+      seen++;
+      if (seen % 3 === 0 && i > 0) out = ',' + out;
+    }
+    return out;
+  }
+
+  function hasGas(units) {
+    return /[1-9]/.test(String(units === null || units === undefined ? '' : units));
+  }
+
+  /* Basis points, and the precision follows the magnitude for the same reason usdSmall's
+     does: "0 bp" in a line about what the gas cost reads as free. */
+  function bps(value) {
+    var v = Number(value);
+    if (!isFinite(v)) return 'n/a';
+    return v >= 10 ? String(Math.round(v)) : v.toFixed(1);
+  }
+
+  function gasWindowLabel() {
+    if (GAS_WINDOW === '24h') return 'the last 24 hours';
+    if (GAS_WINDOW === '7d') return 'the last 7 days';
+    if (GAS_WINDOW === '30d') return 'the last 30 days';
+    return 'all time';
+  }
+
+  function gasStamp(iso) {
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return String(iso);
+    return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + d.toTimeString().slice(0, 5);
+  }
+
+  function gasRange() {
+    if (!GAS) return '';
+    return GAS.fromTs ? 'since ' + gasStamp(GAS.fromTs) : 'all time';
+  }
+
+  /* The backing store follows the CSS box times DPR, the way ui/chart.js sizes its own,
+     capped at 2 for the reason ui/agent-globe.js states: a third device pixel on a hairline
+     buys nothing and costs the whole surface again.
+
+     THE FALLBACK IS NOT DECORATION. A <dialog> is display:none until showModal(), and
+     PhosphorOverlay calls build() before it opens, so a measure taken in the frame the view
+     is built returns a zero box and the ring would be drawn one pixel wide. Every draw is a
+     frame late for that reason (see startGasDraw) and this is the belt for the braces.
+
+     clientWidth, NOT getBoundingClientRect. The panel this canvas sits in opens from
+     transform: scale(0.95), and a bounding rect is the VISUAL box, so a ring measured during
+     the 200ms open transition came back 159.6px for a 168px element, took a backing store
+     5 percent small, and was then stretched into the box it actually had: soft type in the
+     hole of the ring on a retina panel, which is the exact defect DPR handling is for. The
+     layout box ignores the ancestor's transform. Found in a headless render, 2026-08-20.
+     ui/chart.js and the wallet donut in ui/app.js both measure this way. */
+  function fitRing(canvas) {
+    if (!canvas || !canvas.getContext) return null;
+    var ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var w = Math.round(canvas.clientWidth || GAS_RING_PX);
+    var h = Math.round(canvas.clientHeight || GAS_RING_PX);
+    if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { ctx: ctx, w: w, h: h };
+  }
+
+  function sliceTotal(slices) {
+    var total = 0;
+    for (var i = 0; i < slices.length; i++) {
+      var v = Number(slices[i].feeUsd);
+      if (isFinite(v)) total += v;
+    }
+    return total;
+  }
+
+  /* What the canvas says out loud. The largest three, because a label that reads out
+     nineteen slices is one nobody listens to, and it says where the rest are. */
+  function ringLabel(kind, slices, total) {
+    var head = 'Gas by ' + kind + ', ' + gasWindowLabel() + '. ';
+    if (!GAS_LOADED) return head + 'Not read yet.';
+    var parts = [];
+    for (var i = 0; i < slices.length && parts.length < 3; i++) {
+      if (!(Number(slices[i].share) > 0)) continue;
+      parts.push(slices[i].label + ' ' + pct(slices[i].share));
+    }
+    if (!parts.length) return head + 'Nothing burned gas in this window.';
+    return head + usdSmall(total) + ' in total. Largest: ' + parts.join(', ')
+      + '. The table beside this ring holds every slice.';
+  }
+
+  function drawEmptyRing(ctx, pal, cx, cy, outer) {
+    if (pal.ghost) ctx.strokeStyle = pal.ghost;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(cx, cy, outer, 0, TWO_PI);
+    ctx.stroke();
+    if (pal.faint) ctx.fillStyle = pal.faint;
+    ctx.fillText(GAS_LOADED ? 'no gas' : 'reading', cx, cy);
+  }
+
+  /* The hole in the middle holds the number a person came for, and under it the window it
+     is of, because a total with no window is a claim about all of history. */
+  function drawRingCentre(ctx, pal, cx, cy, total) {
+    ctx.font = GAS_TOTAL_FONT;
+    if (pal.hi) ctx.fillStyle = pal.hi;
+    ctx.fillText(usdSmall(total), cx, cy - 7);
+    ctx.font = GAS_RING_FONT;
+    if (pal.dim) ctx.fillStyle = pal.dim;
+    ctx.fillText(GAS_WINDOW, cx, cy + 9);
+  }
+
+  function paintRing(unit, slices, progress) {
+    var box = fitRing(unit.canvas);
+    if (!box) return;
+    var ctx = box.ctx;
+    var pal = gasPalette(unit.canvas);
+    ctx.clearRect(0, 0, box.w, box.h);
+    ctx.font = GAS_RING_FONT;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    var cx = box.w / 2;
+    var cy = box.h / 2;
+    var outer = Math.min(box.w, box.h) / 2 - 4;
+    if (outer <= 6) return;
+    var inner = outer * GAS_INNER;
+    var total = sliceTotal(slices);
+
+    if (!slices.length || !(total > 0)) {
+      drawEmptyRing(ctx, pal, cx, cy, outer);
+      ctx.textAlign = 'left';
+      return;
+    }
+
+    // A gap of about 1.5px at the outer edge, as an angle, so two neighbouring steps of one
+    // hue never merge into a single unreadable band. Same figure the wallet donut uses.
+    var gap = 1.5 / outer;
+    var limit = TWO_PI * progress;
+    var start = -Math.PI / 2;
+    var acc = 0;
+    for (var i = 0; i < slices.length; i++) {
+      var share = total > 0 ? (Number(slices[i].feeUsd) || 0) / total : 0;
+      var sweep = share * TWO_PI;
+      var from = acc;
+      var to = Math.min(acc + sweep, limit);
+      acc += sweep;
+      if (to <= from) break;
+      var trim = to - from > gap * 3 ? gap : 0;
+      ctx.beginPath();
+      ctx.arc(cx, cy, outer, start + from + trim / 2, start + to - trim / 2);
+      ctx.arc(cx, cy, inner, start + to - trim / 2, start + from + trim / 2, true);
+      ctx.closePath();
+      var ink = sliceInk(pal, i);
+      if (ink) ctx.fillStyle = ink;
+      ctx.fill();
+    }
+
+    /* Labels after the sweep has landed, never during it: text sliding out from under a
+       growing arc is the kind of motion this app's law rations away. */
+    var mid = (outer + inner) / 2;
+    var band = outer - inner;
+    if (progress >= 1 && band >= 14) {
+      acc = 0;
+      for (var j = 0; j < slices.length; j++) {
+        var part = total > 0 ? (Number(slices[j].feeUsd) || 0) / total : 0;
+        var arc = part * TWO_PI;
+        var at = start + acc + arc / 2;
+        acc += arc;
+        if (part < GAS_LABEL_MIN) continue;
+        var text = String(slices[j].label);
+        var width = ctx.measureText ? ctx.measureText(text).width : text.length * 7;
+        /* Two gates, not one. Under two percent is the rule, and wider than its own arc is
+           the same defect arriving on a ring of four slices instead of forty: a label that
+           runs past its slice is pointing at the wrong number. */
+        if (width > arc * mid) continue;
+        var lab = labelInk(pal, j);
+        if (lab) ctx.fillStyle = lab;
+        /* The text runs ALONG the ring rather than across it. The band here is about 34px
+           and every label in this report is longer than the four characters that fits
+           horizontally, so a straight label would be gated out of existence by the width
+           test above and the ring would never carry one. */
+        ctx.save();
+        ctx.translate(cx + Math.cos(at) * mid, cy + Math.sin(at) * mid);
+        // Upside down on the lower half otherwise, which is unreadable rather than stylish.
+        ctx.rotate(at + Math.PI / 2 + (Math.sin(at) > 0 ? Math.PI : 0));
+        ctx.fillText(text, 0, 0);
+        ctx.restore();
+      }
+    }
+
+    drawRingCentre(ctx, pal, cx, cy, total);
+    ctx.textAlign = 'left';
+  }
+
+  function paintGas(progress) {
+    if (!GVIEW) return;
+    paintRing(GVIEW.action, GAS ? GAS.byAction || [] : [], progress);
+    paintRing(GVIEW.chain, GAS ? GAS.byChain || [] : [], progress);
+  }
+
+  function easeOut(t) {
+    return 1 - Math.pow(1 - t, 3);
+  }
+
+  /* One frame late, always, for the reason fitRing states: the dialog has no box until
+     showModal() has run, which is after build(). The sweep is the only motion this view
+     has, it runs once per open, and prefers-reduced-motion gets the final state in that
+     same deferred frame rather than a shorter animation. */
+  function startGasDraw() {
+    if (!GVIEW) return;
+    cancelGasFrame();
+    if (GAS_SWEPT || reducedMotion()) {
+      GAS_FRAME = raf(function () {
+        GAS_FRAME = 0;
+        GAS_SWEPT = true;
+        paintGas(1);
+      });
+      return;
+    }
+    var began = null;
+    GAS_FRAME = raf(function step(now) {
+      if (!GVIEW) return;
+      var stamp = typeof now === 'number' ? now : 0;
+      if (began === null) began = stamp;
+      var t = GAS_SWEEP_MS > 0 ? Math.min(1, (stamp - began) / GAS_SWEEP_MS) : 1;
+      paintGas(easeOut(t));
+      if (t < 1) {
+        GAS_FRAME = raf(step);
+        return;
+      }
+      GAS_FRAME = 0;
+      GAS_SWEPT = true;
+    });
+  }
+
+  function gasSpanRow(text) {
+    var tr = document.createElement('tr');
+    var cell = el('td', 'faint', text);
+    cell.colSpan = GAS_COLUMNS.length;
+    tr.appendChild(cell);
+    return tr;
+  }
+
+  function renderGasLegend(unit, slices) {
+    var tbody = unit.rows;
+    tbody.textContent = '';
+    if (!slices.length) {
+      tbody.appendChild(gasSpanRow(!GAS_LOADED ? 'reading...' : 'nothing burned gas in this window'));
+      return;
+    }
+    var pal = gasPalette(unit.canvas);
+    for (var i = 0; i < slices.length; i++) {
+      var slice = slices[i];
+      var tr = document.createElement('tr');
+
+      var name = el('td', 'slice');
+      var chip = el('span', 'chip');
+      chip.style.background = sliceInk(pal, i);
+      chip.setAttribute('aria-hidden', 'true');
+      name.appendChild(chip);
+      name.appendChild(document.createTextNode(slice.label));
+      name.title = slice.label + ': ' + slice.moveCount
+        + (slice.moveCount === 1 ? ' movement' : ' movements');
+      tr.appendChild(name);
+
+      // A slice exists because it burned gas, so no dollars means no price was available,
+      // not that it was free. Printing $0.00 here would be the second thing.
+      var money = el('td', 'num');
+      if (Number(slice.feeUsd) > 0) money.appendChild(document.createTextNode(usdSmall(slice.feeUsd)));
+      else money.appendChild(el('span', 'faint', 'unpriced'));
+      tr.appendChild(money);
+
+      tr.appendChild(el('td', 'num', pct(slice.share)));
+
+      // Gas units past ten digits do not fit the column. Truncated in the cell and whole in
+      // its title, the way the history table treats an address.
+      var units = el('td', 'num', groupDigits(slice.gasUsed));
+      units.title = groupDigits(slice.gasUsed) + ' gas units';
+      tr.appendChild(units);
+      tr.appendChild(el('td', 'num', String(slice.txCount)));
+      tbody.appendChild(tr);
+    }
+  }
+
+  function gasNote(box, text, cls) {
+    box.appendChild(el('div', cls ? 'gasnote ' + cls : 'gasnote', text));
+  }
+
+  function plural(n, one, many) {
+    return n + ' ' + (n === 1 ? one : many);
+  }
+
+  function renderGasNotes() {
+    var box = GVIEW.notes;
+    box.textContent = '';
+    if (!GAS) {
+      gasNote(box, 'reading the gas report...', 'faint');
+      return;
+    }
+    var said = 0;
+
+    if (hasGas(GAS.totalGasUsed)) {
+      gasNote(box, groupDigits(GAS.totalGasUsed) + ' gas units, over '
+        + plural(GAS.txCount, 'transaction', 'transactions') + '.');
+      said++;
+    }
+
+    if (GAS.gasBps !== null && GAS.gasBps !== undefined) {
+      gasNote(box, 'gas cost ' + bps(GAS.gasBps) + ' bp of the ' + usd(GAS.movedUsd) + ' this app moved.');
+      said++;
+    } else if (GAS.totalUsd > 0) {
+      // Not a missing number: nothing settled in this window, so there is no denominator.
+      gasNote(box, 'nothing moved in this window, so there is nothing to weigh the gas against.');
+      said++;
+    }
+
+    if (GAS.venueFeeUsd > 0) {
+      gasNote(box, 'venue fees ' + usd(GAS.venueFeeUsd)
+        + ', quoted at approval. Not gas, and not in the total above.');
+      said++;
+    }
+
+    // The one figure here that bought nothing, and the only red on this surface.
+    if (GAS.reverted && GAS.reverted.txCount > 0) {
+      gasNote(box, 'REVERTED: ' + usdSmall(GAS.reverted.feeUsd) + ' burned on '
+        + plural(GAS.reverted.txCount, 'transaction that moved', 'transactions that moved')
+        + ' nothing.', 'red');
+      said++;
+    }
+
+    if (GAS.pending && GAS.pending.moveCount > 0) {
+      gasNote(box, 'still reading: ' + plural(GAS.pending.moveCount, 'movement whose receipt has', 'movements whose receipts have')
+        + ' not landed. That gas is not in this total.');
+      said++;
+    }
+    if (GAS.unknown && GAS.unknown.moveCount > 0) {
+      gasNote(box, 'unknown: no chain this app can reach has a receipt for '
+        + plural(GAS.unknown.moveCount, 'movement', 'movements') + '. That gas is not in this total.');
+      said++;
+    }
+    if (GAS.intentOnly && GAS.intentOnly.moveCount > 0) {
+      gasNote(box, plural(GAS.intentOnly.moveCount, 'movement was', 'movements were')
+        + ' signed as an intent: no gas of ours, settled by a solver.');
+      said++;
+    }
+    if (GAS.unpriced && GAS.unpriced.txCount > 0) {
+      gasNote(box, 'unpriced: ' + plural(GAS.unpriced.txCount, 'transaction', 'transactions')
+        + ' burned ' + groupDigits(GAS.unpriced.gasUsed)
+        + ' gas units with no price to convert. The units are counted, the dollars are not.');
+      said++;
+    }
+
+    if (!said) gasNote(box, 'nothing has burned gas in this window.', 'faint');
+  }
+
+  function renderGasMeta() {
+    var meta = GVIEW.meta;
+    meta.textContent = '';
+    if (!GAS) {
+      meta.appendChild(document.createTextNode('reading the gas report...'));
+      return;
+    }
+    meta.appendChild(document.createTextNode(
+      plural(GAS.moveCount, 'movement', 'movements') + ', '
+      + plural(GAS.txCount, 'transaction', 'transactions') + '   ' + gasRange()
+    ));
+  }
+
+  function renderGas() {
+    if (!GVIEW) return;
+    var byAction = GAS ? GAS.byAction || [] : [];
+    var byChain = GAS ? GAS.byChain || [] : [];
+    var total = GAS ? GAS.totalUsd : 0;
+    renderGasMeta();
+    renderGasLegend(GVIEW.action, byAction);
+    renderGasLegend(GVIEW.chain, byChain);
+    GVIEW.action.canvas.setAttribute('aria-label', ringLabel('action', byAction, total));
+    GVIEW.chain.canvas.setAttribute('aria-label', ringLabel('chain', byChain, total));
+    renderGasNotes();
+    startGasDraw();
+  }
+
+  function renderGasWindows() {
+    if (!GVIEW) return;
+    var box = GVIEW.windows;
+    box.textContent = '';
+    for (var i = 0; i < GAS_WINDOWS.length; i++) {
+      (function (win) {
+        var btn = el('button', 'tf' + (GAS_WINDOW === win.key ? ' on' : ''), win.label);
+        btn.type = 'button';
+        btn.addEventListener('click', function () {
+          if (GAS_WINDOW === win.key) return;
+          GAS_WINDOW = win.key;
+          /* The old window's numbers may not sit under the new button for the length of a
+             fetch: that is a wrong number stated confidently, which is the defect this whole
+             view exists to argue against. And the ring redraws rather than sweeping again. */
+          GAS = null;
+          GAS_LOADED = false;
+          GAS_SWEPT = true;
+          renderGasWindows();
+          renderGas();
+          refreshGas();
+        });
+        box.appendChild(btn);
+      })(GAS_WINDOWS[i]);
+    }
+  }
+
+  /* Called on open, and again whenever the server says a receipt landed. A no-op with the
+     overlay shut, exactly as refreshTransactions is: nobody is looking, and opening it reads
+     afresh anyway. */
+  function refreshGas() {
+    if (!GVIEW) return Promise.resolve();
+    var onError = GVIEW.onError;
+    var asked = GAS_WINDOW;
+    return getJson('/api/gas?window=' + encodeURIComponent(asked)).then(function (report) {
+      // A slow answer to a window nobody is looking at any more would draw the wrong ring
+      // under the right button. The history view never needed this guard; this one asks a
+      // question that can change while the answer is in flight.
+      if (!GVIEW || asked !== GAS_WINDOW) return;
+      GAS = report;
+      GAS_LOADED = true;
+      renderGas();
+    }, function (err) {
+      if (onError) onError('cannot read the gas report: ' + (err.message || String(err)));
+    });
+  }
+
+  function gasUnit(kind, title) {
+    var wrap = el('div', 'gasunit');
+    wrap.appendChild(el('p', 'gasunit-h', title));
+
+    var body = el('div', 'gasunit-body');
+    var canvas = el('canvas', 'gasring');
+    /* An image with a name, not a decoration: the ring IS the shape of the numbers, so it
+       is announced, and what it announces is rewritten on every render. */
+    canvas.setAttribute('role', 'img');
+    canvas.setAttribute('aria-label', 'Gas by ' + kind + '. Not read yet.');
+
+    var legend = el('div', 'gaslegend');
+    var table = el('table', 'grid gastable');
+    var head = document.createElement('thead');
+    var headRow = document.createElement('tr');
+    for (var i = 0; i < GAS_COLUMNS.length; i++) {
+      headRow.appendChild(el('th', GAS_COLUMNS[i].cls, GAS_COLUMNS[i].label));
+    }
+    head.appendChild(headRow);
+    var rows = document.createElement('tbody');
+    table.appendChild(head);
+    table.appendChild(rows);
+    legend.appendChild(table);
+
+    body.appendChild(canvas);
+    body.appendChild(legend);
+    wrap.appendChild(body);
+    return { wrap: wrap, canvas: canvas, rows: rows, kind: kind };
+  }
+
+  function gas(box, onError) {
+    var bar = el('p', 'gasbar');
+    var windows = el('span', 'tfs');
+    var meta = el('span', 'meta faint', '--');
+    bar.appendChild(windows);
+    bar.appendChild(meta);
+
+    var rings = el('div', 'gasrings');
+    var action = gasUnit('action', 'BY ACTION');
+    var chain = gasUnit('chain', 'BY CHAIN');
+    rings.appendChild(action.wrap);
+    rings.appendChild(chain.wrap);
+
+    var notes = el('div', 'gasnotes');
+
+    box.appendChild(bar);
+    box.appendChild(rings);
+    box.appendChild(notes);
+
+    GVIEW = { action: action, chain: chain, meta: meta, windows: windows, notes: notes, onError: onError || null };
+    GAS_SWEPT = false;
+    renderGasWindows();
+    // Whatever the last read produced is on screen before the network is touched, the same
+    // way the history opens, and the read below replaces it when it lands.
+    renderGas();
+    refreshGas();
+  }
+
+  function gasClosed() {
+    // The frame first: a sweep still running would paint into a canvas nobody can see, and
+    // on a fast close it would paint into one that has been thrown away.
+    cancelGasFrame();
+    GVIEW = null;
+    GAS_SWEPT = false;
+  }
+
   return {
     logLine: logLine,
     policy: policy,
     transactions: transactions,
     transactionsClosed: transactionsClosed,
-    transactionsRefresh: refreshTransactions
+    transactionsRefresh: refreshTransactions,
+    gas: gas,
+    gasClosed: gasClosed,
+    gasRefresh: refreshGas
   };
 })();

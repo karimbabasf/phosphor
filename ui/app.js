@@ -904,6 +904,41 @@ function decide(route, id, buttons, errorNode) {
    empty. Hidden rather than emptied, because an empty bordered box that says "no pending
    approvals" for hours is what teaches a person to stop looking at the one surface on this
    screen they must never stop looking at. */
+/* The yield panel. Every number and every caveat comes from the server; this composes none
+   of them. See the header of ui/yield.js for why the order of that panel is the argument. */
+function renderYield(s) {
+  // No explorer argument. The prefix belongs to the position's CHAIN as well as to the
+  // network, and the server already resolved both, so it travels on the holding rather than
+  // being inferred here. Inferring it produced an Arbiscan link for every Base position.
+  YIELD.render($('yield-panel'), s);
+}
+
+/* One press, and it files a proposal rather than moving anything.
+   Above the click threshold the proposal lands in the gate strip at the top of this window
+   like every other one; below it the policy engine decides. The button is not a second path
+   to the money, it is the same path with a human at the front of it. */
+document.addEventListener('click', async function (ev) {
+  var btn = ev.target && ev.target.closest ? ev.target.closest('.y-withdraw') : null;
+  if (!btn) return;
+  var card = btn.closest('.y-card');
+  var errNode = card ? card.querySelector('.y-error') : null;
+  btn.disabled = true;
+  var label = btn.textContent;
+  btn.textContent = '[ ASKING... ]';
+  if (errNode) errNode.textContent = '';
+  try {
+    // No amount is sent. Omitting it means the whole position, which is the only withdrawal
+    // that cannot leave dust on a balance that grows every block.
+    var p = await postJson('/api/yield/withdraw', { chain: btn.dataset.chain, token: TOKEN });
+    btn.textContent = p && p.status === 'pending' ? '[ WAITING FOR YOUR CLICK ABOVE ]' : label;
+    await refreshState();
+  } catch (err) {
+    if (errNode) errNode.textContent = err.message || String(err);
+    btn.textContent = label;
+    btn.disabled = false;
+  }
+});
+
 function renderGate(s) {
   var pending = APPROVALS.render($('gate'), s, approvalDeps());
   var strip = $('gate-strip');
@@ -1503,6 +1538,13 @@ function renderBasic(s) {
 
   $('basic-headline').textContent = b.headline;
   $('basic-agent').textContent = b.agentLine;
+  var earning = $('basic-earning');
+  if (earning) {
+    // Rendered verbatim. This screen composes no sentence about money: every string comes
+    // from src/view/basic.ts, which is what lets the two modes be asserted to agree.
+    earning.textContent = b.earning || '';
+    earning.hidden = !b.earning;
+  }
   $('basic-footer').textContent = b.footer;
 
   lastBasic = b;
@@ -1771,6 +1813,7 @@ async function refreshState() {
     settled('state');
     // Wallet first: the status bar reports its total.
     renderWallet(STATE);
+    renderYield(STATE);
     renderStatus(STATE);
     renderPolicy(STATE);
     renderGateBanner(STATE);
@@ -1836,7 +1879,9 @@ function openEvents() {
     // Only refetched while somebody is looking at it: a gas receipt landing behind a closed
     // overlay is not worth a round trip, and opening it reads afresh anyway. The call is a
     // no-op when the overlay is shut, which is where that decision is made.
-    else if (payload.type === 'transactions') PhosphorViews.transactionsRefresh();
+    // Both views read the same derivation, so a receipt that changes one changes the other.
+    // Both calls are no-ops with their overlay shut, and only one of the two can be open.
+    else if (payload.type === 'transactions') { PhosphorViews.transactionsRefresh(); PhosphorViews.gasRefresh(); }
     else if (payload.type === 'candles') candlesPushed();
     // A chart change from an agent. Our own writes come back with a revision we already
     // know, and chartPushed drops those rather than repainting over the hand.
@@ -1894,11 +1939,26 @@ function openHistoryOverlay(trigger) {
   });
 }
 
+/* The same aggregation the HISTORY table leaves to the reader. onClose is not optional
+   here: the view holds an animation frame while its ring sweeps in, and a frame left
+   running paints into a canvas that is no longer on screen. */
+function openGasOverlay(trigger) {
+  PhosphorOverlay.open({
+    title: 'GAS',
+    trigger: trigger,
+    build: function (box) {
+      PhosphorViews.gas(box, alertLine);
+    },
+    onClose: PhosphorViews.gasClosed
+  });
+}
+
 function wireDeckBar() {
   var buttons = [
     { id: 'open-log', open: openLogOverlay },
     { id: 'open-policy', open: openPolicyOverlay },
-    { id: 'open-history', open: openHistoryOverlay }
+    { id: 'open-history', open: openHistoryOverlay },
+    { id: 'open-gas', open: openGasOverlay }
   ];
   for (var i = 0; i < buttons.length; i++) {
     (function (spec) {

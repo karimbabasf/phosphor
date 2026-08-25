@@ -290,7 +290,12 @@ type ProposeKind =
   | 'intents_deposit'
   | 'intents_withdraw'
   | 'hl_deposit'
-  | 'mandate_arm';
+  | 'mandate_arm'
+  // Added 2026-08-20. The yield rail is the one kind on this list whose refusal runs the other
+  // way: src/rails/yield.ts refuses a MAINNET config, because it has not been run on a live
+  // mainnet chain. Every other rail here refuses testnet or refuses nothing.
+  | 'yield_deposit'
+  | 'yield_withdraw';
 
 /* NOT REGISTERED FOR AN ANALYST, and that early return is the whole of what makes a spawned
    worker safe to hand out freely.
@@ -389,6 +394,34 @@ registerRead(
   'proposal_status',
   'Returns the status, verdict, and simulation result for a proposal id. Read-only, changes nothing.',
   { id: z.string() },
+);
+
+// The gas bill. An aggregation of receipts this app has already read for the history surface,
+// which is why it makes no chain call of its own and costs nothing after HISTORY has been open.
+//
+// The remainders are in the description rather than left for the agent to discover, and that is
+// the whole reason this description is long. An aggregate that silently drops what it could not
+// count reports a smaller number than the truth and calls it the truth, and an agent reading
+// only `totalUsd` will say it out loud with four receipts still being read.
+registerRead(
+  'gas_report',
+  [
+    'What this app has spent on gas: a dollar total, then the same total split by action, by chain,',
+    'by rail kind and by venue, plus gas as basis points of the value actually moved. It groups',
+    'receipts already read for the history surface, so it makes no new chain call and adds no delay.',
+    '',
+    'REPORT THE REMAINDERS OR THE TOTAL IS WRONG. Four counts sit beside it and not one of them means',
+    'zero gas: `pending` receipts are still being read, `unknown` hashes are on no chain this app can',
+    'reach, `unpriced` receipts have gas in native units and no price to convert it, and `intentOnly`',
+    'moves were settled by a solver so they burned none of our gas, which is a fact rather than a gap.',
+    '`reverted` is not a remainder and is worse than one: gas spent, nothing moved, pure loss. Saying',
+    '"$1.42 on gas" while four receipts are pending has told a human a wrong number confidently.',
+    '',
+    'The window filters on settle time, the same order every other surface here uses, and defaults to',
+    '7d. Chain dollars sum to the total; action counts may exceed the movement count, because one',
+    'cross-chain movement burns gas on two chains. Read-only, changes nothing.',
+  ].join(' '),
+  { window: z.enum(['24h', '7d', '30d', 'all']).optional().default('7d') },
 );
 
 // ---------- the chart ----------
@@ -951,6 +984,139 @@ THE DIRECTION IS ONE WAY AND THAT IS THE POINT: 1Click cannot quote out of Hyper
 // earned its way back not by being tested more but by changing shape: the bespoke Arbitrum
 // bridge became a NEAR Intents route, and that route is structurally one-way. See the note on
 // ProposeKind.
+//
+// The yield rail shipped earlier on 2026-08-20 with no tools at all, held off this door by the
+// same rule and said so in its own spec. The four tools below went on later the same day because
+// the rule was SATISFIED, not waived: five real movements on Arbitrum Sepolia, three by hand and
+// two filed by the loop, every one through the real proposal service and the real policy engine,
+// ending in a full exit that returned 56.292312 USDC to the wallet. The realized 4.2672 percent
+// the app derived and the 4.2687 percent APR the reserve reports were computed independently and
+// agree, which is what makes the position read believable rather than merely present.
+//
+// The lp_add objection does not carry across either. A yield position is one balanceOf on a
+// rebasing receipt, and buildWallet already takes the yield holdings, so there is no pre-trade
+// balance here to size a second move off.
+//
+// lp_add and lp_remove are unchanged and stay off.
+
+// ---------- the yield rail ----------
+//
+// Registered as a group rather than filed under the reads and the proposes, because an agent
+// that can deposit and cannot read the position back is holding half a rail. The order below is
+// the order to use them in.
+//
+// All four are TESTNET ONLY, and that is the reverse of the intents rails above. src/rails/yield.ts
+// refuses a mainnet config outright, and the refusal is the rail stating the world it has been
+// checked in rather than anything being misconfigured. Undoing it means a human adding a mainnet
+// row to DEPLOYMENTS in src/yield/aave.ts and deleting the check, on purpose.
+
+registerRead(
+  'yield_read',
+  [
+    'What the yield rail is doing, in one call: every position with its principal, what it is worth',
+    'now and what it has earned, the realized percentage with the window it was measured over, the',
+    'venue table with each live rate and whether that venue is healthy and reachable, the idle',
+    'stablecoin not yet working, and what the loop decided on its recent looks, including its refusals.',
+    '',
+    'THE `caveat` FIELD TRAVELS WITH THE PERCENTAGE AND SO MUST YOU. It reads "Observed, not promised.',
+    'This is what it did, not what it will do." The realized number is backward-looking and annualised',
+    'from a window that may be hours long, so quoting it without that sentence turns a measurement into',
+    'a forecast. Under an hour there is no percentage at all, only dollars, and that is deliberate.',
+    '',
+    'The realized percentage and the venue rate now are different numbers measured different ways, and',
+    'both are correct: one is what this position did, one is what the reserve pays at this block. Never',
+    'present one as the other. When no allocator is configured the answer is { available: false, reason },',
+    'which is a different claim from an empty position: it means this app is not wired for yield, not',
+    'that you have nothing supplied. Read-only, changes nothing.',
+  ].join(' '),
+  {},
+);
+
+registerPropose(
+  'propose_yield_deposit',
+  'yield_deposit',
+  `Proposes supplying a stablecoin to a lending venue, so a balance that is sitting still earns instead. The venue is Aave v3 and its receipt token rebases, which is why this rail can prove what it is worth: the position IS the balance, one balanceOf, with no accounting layer between the chain and the number.
+
+Leave chain out and the app supplies the best-paying venue that is healthy and reachable, which is exactly what the allocator loop does. Name a chain only when a human asked for that chain. symbol defaults to USDC. amount is the TOKEN amount and not dollars: 50 means 50 USDC.
+
+Where the funds land is the venue's own Pool contract, resolved from the verified deployment table in src/yield/aave.ts and already on the counterparty allowlist. There is no argument on this tool that can point them anywhere else.
+
+TESTNET ONLY, which is the opposite of the NEAR Intents rails: on a MAINNET config this refuses, and the refusal comes from the rail rather than from the policy, because this path has not been run on a live mainnet chain. Call \`start\` to see which network the app is on before proposing it. ${CANNOT_APPROVE}`,
+  {
+    chain: SELF_CUSTODY_CHAIN.optional().describe(
+      'omit it and the app picks the best-paying healthy venue, which is what the loop does; name one only when a human asked for that chain',
+    ),
+    symbol: z.string().optional().describe('defaults to USDC'),
+    amount: z.number().describe('the token amount, not dollars'),
+  },
+);
+
+registerPropose(
+  'propose_yield_withdraw',
+  'yield_withdraw',
+  `Proposes taking a stablecoin position back out of the lending venue, all of it or part of it.
+
+OMIT amount TO CLOSE THE POSITION, and prefer that over computing the size yourself. It is not a shortcut, it is the correct call: the receipt token rebases, so interest lands while the proposal waits for a click, and a figure worked out a block ago is already smaller than the position and leaves dust behind every time. Pass a number only for a partial exit that is MEANT to leave something working.
+
+Leave chain out and the app uses the chain the position is on. When positions sit on more than one chain it refuses and names them, so read that list and call again naming one. symbol defaults to USDC. The funds come back to this app's own wallet, derived from the key it holds, and nothing here can name another one.
+
+TESTNET ONLY, the same refusal propose_yield_deposit carries and for the same reason: on a mainnet config the rail refuses, because it has not been proven on a live mainnet chain. ${CANNOT_APPROVE}`,
+  {
+    chain: SELF_CUSTODY_CHAIN.optional().describe(
+      'omit it and the app uses the chain the position is on; it refuses and names them when positions sit on more than one',
+    ),
+    symbol: z.string().optional().describe('defaults to USDC'),
+    amount: z
+      .number()
+      .optional()
+      .describe('OMIT to take the whole position out, interest included. A number is a partial exit and leaves dust on a rebasing receipt'),
+  },
+);
+
+// Neither a read nor a propose, and the argument for that is worth having in front of anyone
+// reading this, because starting a loop looks like standing authority and this repo reserves
+// standing authority for propose_mandate, which never auto-approves on any network.
+//
+// It is not the same thing. What the loop can do is FILE a yield_deposit proposal, which is a
+// capability the agent already holds outright one tool up. Every proposal the loop files meets
+// the identical policy engine, click threshold, 24-hour session cap and audit log. Starting it
+// grants no authority over money the agent did not already have; it grants a schedule.
+//
+// propose_mandate is genuinely different: an armed bot sends orders to a venue directly, at
+// machine speed, with no proposal per order and no gate inside the loop. That is why it is
+// gated and this is not.
+server.registerTool(
+  'yield_auto',
+  {
+    description: [
+      'Starts or stops the allocator loop: the thing that keeps looking after you have disconnected.',
+      '',
+      'Started, it looks every sixty seconds. It reads each venue live rate and the idle balance, and when',
+      'idle stablecoin is worth putting to work it FILES a yield_deposit proposal. It files and stops there:',
+      'the loop never executes. Every proposal it files meets the same policy engine, the same click',
+      'threshold, the same 24-hour session cap and the same audit log as one you file yourself, so starting',
+      'it hands over no authority over money that propose_yield_deposit did not already hand you. What it',
+      'adds is time.',
+      '',
+      'Three limits bound that and none of them is an argument here: fifteen minutes between proposals',
+      'whatever the tick rate, consecutive failures backing off by doubling to a four hour ceiling, and a',
+      'move between venues only when the spread over thirty days beats what the move costs.',
+      '',
+      'This tool moves no money and gets no policy verdict, which puts it in the same class as `switch` and',
+      '`watch`: it changes what the app does next, and every flip is written to the audit log. A human has',
+      'the same switch in the window and the kill switch above it. Returns the new state and when the loop',
+      'next looks.',
+    ].join(' '),
+    inputSchema: {
+      enabled: z
+        .boolean()
+        .describe(
+          'true starts the loop, false stops it. Required, with no default: a switch whose default is one of its two states gets flipped by an agent that meant to read it. Call yield_read to see the current state.',
+        ),
+    },
+  },
+  async (args) => proxy({ op: 'yield_auto', enabled: args.enabled }),
+);
 
 // Neither a read nor a propose: it mutates, but it moves no money and gets no policy
 // verdict. What it does change is what a HUMAN sees before they decide, which is why

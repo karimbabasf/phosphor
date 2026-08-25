@@ -30,10 +30,28 @@ function lpValueUsd(pos: LpPosition, priceOf: (symbol: string) => number): numbe
   return sides + (pos.uncollectedFeesUsd ?? 0);
 }
 
+// Just enough of a yield position for the wallet to price it. Deliberately not the whole
+// YieldHolding: this module has no business with a credit ledger or an annualised window,
+// and a narrower input is one fewer thing that can change under it.
+export type YieldWalletHolding = {
+  chain: ChainId;
+  venue: string;
+  symbol: string;
+  receipt: string;
+  receiptSymbol: string;
+  valueUsd: number;
+  // Null when this app holds no executed deposit behind the balance, so it cannot say what
+  // the position cost. See YieldHolding.basisKnown: zero is not a synonym for unknown, and
+  // treating it as one prints the whole position as profit.
+  principalUsd: number | null;
+  earnedUsd: number | null;
+};
+
 export function buildWallet(
   snapshot: LedgerSnapshot,
   positions: LpPosition[] = [],
   intents?: IntentsRead,
+  yieldHoldings: YieldWalletHolding[] = [],
 ): WalletView {
   // Symbol -> unit price, learned from the holdings themselves and topped up from the
   // snapshot's native price table for symbols held only inside a pool.
@@ -105,8 +123,47 @@ export function buildWallet(
   // The test is quantity, not value: a token we hold but have no price for is still held,
   // and dropping it would be the app deciding you own less than you do. A pool position is
   // kept whatever it is worth, because the position exists on chain either way.
-  const held = [...tokenRows, ...lpRows, ...intentsRows].filter(r => r.kind === 'lp' || r.quantity > 0 || r.valueUsd > 0);
-  const emptyCount = tokenRows.length + intentsRows.length - held.filter(r => r.kind !== 'lp').length;
+  // Money supplied to a lending venue.
+  //
+  // This row exists because the wallet total was WRONG without it. A deposit leaves the
+  // token balance the chain reader sees, so $56 in an Aave position simply vanished from a
+  // $294 total, and the one number a person checks first quietly said they owned less than
+  // they did. The receipt token is not in data/tokens.testnet.json and adding it there would
+  // fix the arithmetic while calling the row aArbSepUSDC, which tells a reader nothing.
+  //
+  // The value is the aToken balance, so it already includes the interest. Nothing is double
+  // counted: the underlying left the wallet when it was supplied, and this is the same money
+  // in the only place it now exists.
+  const yieldRows: WalletRow[] = yieldHoldings.map(h => {
+    // quantity is a TOKEN COUNT, and price is what one of them is worth, the same contract
+    // every other row on this table keeps. Putting the dollar figure in the quantity column
+    // reads correctly only while USDC prices at exactly 1.0; off peg the row contradicts
+    // itself, because quantity times price no longer equals the value beside them.
+    const unit = priceOf(h.symbol) || 1;
+    return {
+    kind: 'yield',
+    chain: h.chain,
+    symbol: `${h.symbol} earning`,
+    tokenId: h.receipt,
+    quantity: h.valueUsd / unit,
+    priceUsd: unit,
+    valueUsd: h.valueUsd,
+    share: 0,
+    native: false,
+    yield: {
+      venue: h.venue,
+      receiptSymbol: h.receiptSymbol,
+      receipt: h.receipt,
+      principalUsd: h.principalUsd,
+      earnedUsd: h.earnedUsd,
+    },
+    };
+  });
+
+  const held = [...tokenRows, ...lpRows, ...intentsRows, ...yieldRows].filter(
+    r => r.kind === 'lp' || r.quantity > 0 || r.valueUsd > 0,
+  );
+  const emptyCount = tokenRows.length + intentsRows.length - held.filter(r => r.kind !== 'lp' && r.kind !== 'yield').length;
 
   const rows = held.sort((a, b) => b.valueUsd - a.valueUsd);
   const totalUsd = rows.reduce((sum, r) => sum + r.valueUsd, 0);

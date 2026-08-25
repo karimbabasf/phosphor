@@ -270,6 +270,16 @@ function askHeadline(draft: WriteDraft, amountUsd: number): string {
   if (draft.kind === 'mandate_arm') {
     return `It wants standing permission to trade ${plainSymbol(draft.symbol)} on its own, holding at most ${money(draft.maxNotionalUsd)} at a time and stopping for good once it has lost ${money(draft.maxLossUsd)}.`;
   }
+  // No percentage in either sentence, on purpose. This screen exists for someone who owns
+  // the money and is not technical, and a rate is the part of a yield product most likely to
+  // be read as a promise. The dollars are the fact; the rate lives on the pro screen with
+  // its window and its caveat attached.
+  if (draft.kind === 'yield_deposit') {
+    return `It wants to put ${amountClause(amountUsd)}your ${plainSymbol(draft.symbol)} somewhere it earns interest.`;
+  }
+  if (draft.kind === 'yield_withdraw') {
+    return `It wants to bring your ${plainSymbol(draft.symbol)} back out of the place it has been earning interest.`;
+  }
   return `It wants to change one of your safety rules: "${draft.sentence}".`;
 }
 
@@ -291,6 +301,9 @@ function askAfterLine(draft: WriteDraft, totalUsd: number | null, amountUsd: num
     return 'The money comes back into your own wallet, where you can spend it directly again.';
   if (draft.kind === 'lp_add') return `${money(amountUsd)} moves into the pool. You can take it back out later.`;
   if (draft.kind === 'lp_remove') return 'Money comes back out of the pool to you.';
+  if (draft.kind === 'yield_deposit')
+    return `${money(amountUsd)} moves into a lending pool and starts earning. It is still yours and there is no lock: you can take it back whenever you want.`;
+  if (draft.kind === 'yield_withdraw') return 'The money comes back into your own wallet, with whatever it earned.';
   if (draft.kind === 'consolidate') return 'The money stays yours. It moves onto one chain.';
   // A transfer is the only kind that genuinely leaves, so it is the only one allowed to
   // state a balance afterwards, and only when the balance is known.
@@ -737,6 +750,41 @@ export function buildBasic(input: BasicInput): BasicView {
   else if (!gateRequired) footer = 'You will NOT be asked before money moves.';
   else footer = 'You will be asked before anything moves.';
 
+  // One sentence about money that is earning, built from the wallet's own yield rows so
+  // this screen and the pro screen cannot disagree about the amount.
+  //
+  // No percentage, on purpose. This reader owns the money and is not technical, and a rate
+  // is the part of a yield product most likely to be heard as a promise about the future.
+  // The dollars are a fact about the past. Suppressed entirely while the total is null, for
+  // the same reason the holdings list is: a number here, next to "still checking", would be
+  // the one figure on screen claiming to be current when nothing else is.
+  const earningRows = wallet.rows.filter(r => r.kind === 'yield');
+  let earning: string | null = null;
+  if (totalUsd !== null && earningRows.length > 0) {
+    // A position this app has no deposit of its own behind cannot be told what it made, and
+    // `?? 0` would have said "it has not made a full cent yet" about money that may have been
+    // earning for months. This reader has nothing to check that against, so the sentence says
+    // the amount is working and stops, rather than putting a figure it does not have next to
+    // a figure it does. See YieldHolding.basisKnown.
+    const unknown = earningRows.filter(r => r.yield?.earnedUsd === null || r.yield?.earnedUsd === undefined);
+    if (unknown.length > 0) {
+      // The VALUE, not the principal, because the principal is the number that is missing.
+      // Saying "$56.29 is earning" is true of the balance on the chain either way.
+      const held = earningRows.reduce((sum, r) => sum + r.valueUsd, 0);
+      earning = `${money(held)} of your money is earning interest. This app did not put it there, so it cannot say how much it has made.`;
+    } else {
+      // The principal here, deliberately: it is what was put in, and the sentence goes on to
+      // name the earnings separately. Using the value would count the interest twice, once
+      // inside "is earning interest" and again after "it has made".
+      const working = earningRows.reduce((sum, r) => sum + (r.yield?.principalUsd ?? 0), 0);
+      const made = earningRows.reduce((sum, r) => sum + (r.yield?.earnedUsd ?? 0), 0);
+      // Yield is sub-cent for hours. money() would print $0.00 and tell this reader the thing
+      // is not working, which is the opposite of true, so the small case gets its own words.
+      const madeLine = made < 0.01 ? 'It has not made a full cent yet.' : `It has made ${money(made)} so far.`;
+      earning = `${money(working)} of your money is earning interest. ${madeLine}`;
+    }
+  }
+
   return {
     tone,
     totalUsd,
@@ -747,6 +795,7 @@ export function buildBasic(input: BasicInput): BasicView {
     warning,
     agentLine,
     footer,
+    earning,
     // Tied to the same condition that nulls the total. A holdings list with a chain
     // missing from it looks exactly like the holdings list of someone who owns less,
     // and this reader has nothing to check it against.

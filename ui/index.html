@@ -41,15 +41,23 @@
   <p class="banner" id="policy-banner" hidden>POLICY FILE UNREADABLE: ALL WRITES REFUSED</p>
   <p class="alert dim" id="alert" hidden></p>
 
-  <!-- The three records that do not fit a deck that never scrolls: the audit log, the
-       policy in full, and everything this app has done with the money. They were panels
-       being cut to the room left over; each one now opens whole, behind its own button.
-       Controls FOR the deck, so they sit above it rather than becoming a panel in it. -->
+  <!-- The records that do not fit a deck that never scrolls: the audit log, the policy in
+       full, everything this app has done with the money, and what that cost. They were
+       panels being cut to the room left over; each one now opens whole, behind its own
+       button. Controls FOR the deck, so they sit above it rather than becoming a panel in it.
+
+       GAS is fourth and it is not a fifth reading of the history. HISTORY answers "what did
+       this app do", one row per movement with the fee on the end of the row, which means a
+       person asking "what has this cost me" was adding twelve rows up in their head. GAS is
+       that sum, split by what kind of action spent it and which chain it burned on, with the
+       four things it could not count printed rather than dropped. See the `gas` view in
+       ui/deck-views.js and section 2.7 of the 2026-08-20 yield-and-gas spec. -->
   <p class="deckbar">
     <span class="k">open</span>
     <button type="button" class="btn" id="open-log" aria-haspopup="dialog">[ LOG ]</button>
     <button type="button" class="btn" id="open-policy" aria-haspopup="dialog">[ POLICY ]</button>
     <button type="button" class="btn" id="open-history" aria-haspopup="dialog">[ HISTORY ]</button>
+    <button type="button" class="btn" id="open-gas" aria-haspopup="dialog">[ GAS ]</button>
   </p>
 
   <!-- Two columns, and which panel is where is the whole argument of this deck.
@@ -169,6 +177,20 @@
         <div class="frame frame-bottom"></div>
       </section>
 
+      <!-- YIELD. What the stablecoin is earning, and the way back out.
+           The order inside it is the argument: dollars first, percentage second and smaller,
+           the caveat under that, then the ledger every number can be checked against. It is
+           taken from 1inch Aqua, whose overview leads each row with earned fees and calls its
+           own rate "an observation, not a promise". See the header of ui/yield.js.
+           Filled by YIELD.render; this file holds no numbers. -->
+      <section class="panel panel-yield">
+        <div class="frame frame-top" data-title="YIELD"></div>
+        <div class="pbody">
+          <div id="yield-panel"></div>
+        </div>
+        <div class="frame frame-bottom"></div>
+      </section>
+
     </div>
 
 
@@ -232,6 +254,12 @@
       <p class="basic-total" id="basic-total">--</p>
       <p class="basic-headline" id="basic-headline">--</p>
       <p class="basic-places" id="basic-places"></p>
+      <!-- One sentence, and no percentage. See the comment above `earning` in
+           src/view/basic.ts: a rate is the part of a yield product most likely to be
+           heard as a promise, and this reader has nothing to check it against.
+           Hidden rather than emptied, so an empty line does not sit here reserving space
+           for a fact that does not exist yet. -->
+      <p class="basic-earning" id="basic-earning" hidden></p>
       <!-- The standing promise, and the one line here that is never folded away: it says
            whether money can move without you being asked, which is a fact about where
            money goes, and those do not go behind a button. -->
@@ -393,6 +421,7 @@
      panels, and the sizes a person left them at. -->
 <script src="/split.js" defer></script>
 <script src="/driver-chat.js" defer></script>
+<script src="/yield.js" defer></script>
 <script src="/app.js" defer></script>
 </body>
 </html>

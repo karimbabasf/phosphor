@@ -148,6 +148,22 @@ export function loadConfig(root?: string): AppConfig {
     candleProducts: parsed.candleProducts ?? [],
     dataDir,
     keysPath,
+    // The allocator reads rates either way; autoAllocate is only whether it may act on them.
+    // Defaulting it off means an install that has never been configured watches and reports
+    // and files nothing, which is the safe half of the loop.
+    yield: {
+      // Opt IN, and the polarity matters more here than anywhere else in this file.
+      //
+      // The obvious form, `!== 'false'`, turns the money-moving loop ON for every value
+      // except that one literal string: PHOSPHOR_YIELD_AUTO=0, =off, =no and =disabled would
+      // all enable it. For a flag whose whole design is "off unless a human said otherwise",
+      // anything but an explicit yes has to mean no.
+      autoAllocate: env('PHOSPHOR_YIELD_AUTO') !== undefined
+        ? ['true', '1', 'yes', 'on'].includes(String(env('PHOSPHOR_YIELD_AUTO')).toLowerCase())
+        : (parsed.yield?.autoAllocate ?? false),
+      intervalMs: parsed.yield?.intervalMs ?? 60_000,
+      dustUsd: parsed.yield?.dustUsd ?? 5,
+    },
   };
 
   fs.mkdirSync(dataDir, { recursive: true });
