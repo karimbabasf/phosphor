@@ -55,9 +55,7 @@ type Armed = {
   memory: RuleMemory;
   armedAtMs: number;
   entryAtMs: number | null;
-  // Null until this runner has seen one book for the symbol. See MarketState in
-  // src/strategy/evaluate.ts for what a seeded 0 here did on 2026-08-21.
-  prevMarkPx: number | null;
+  prevMarkPx: number;
   ordersInLastMin: number[];  // timestamps, trimmed to the trailing minute
   realisedUsd: number;
   // Notional this runner has ORDERED but the feed has not confirmed yet.
@@ -731,10 +729,7 @@ process.on('message', async (msg: Record<string, unknown>) => {
       memory: emptyMemory(),
       armedAtMs: Date.now(),
       entryAtMs: null,
-      // No sample yet, which is not the same as a sample of zero. The first tick after arming
-      // takes one and fires no cross; the second tick is the first that can describe a
-      // transition. One tick of latency is the price of not inventing the past.
-      prevMarkPx: null,
+      prevMarkPx: 0,
       ordersInLastMin: [],
       realisedUsd: 0,
       inFlightUsd: 0,

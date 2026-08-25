@@ -1035,6 +1035,85 @@ body.splitting-y, body.splitting-y * { cursor: row-resize; }
 .ovl-body .txgrid { max-height: none; overflow: visible; }
 .ovl-body .txbar { display: flex; align-items: baseline; gap: 1ch; margin: 0 0 6px; }
 
+/* ---------- the gas report (the `gas` view in ui/deck-views.js) ----------
+
+   Two rings and their tables, side by side, and the tables are the authority: the canvas
+   next to each one draws the same numbers as a shape and is announced by an aria-label.
+   Scoped under .ovl-body because this view has one home and a class named `.gasring`
+   loose in the document is a name any other surface could collide with.
+
+   NO COLOUR HERE. Every slice colour is read off the custom properties at draw time by the
+   view itself, because a canvas is pixels and no stylesheet reaches inside one. What this
+   block owns is the boxes: sizes, rules and the room between them. */
+.ovl-body .gasbar { display: flex; align-items: baseline; gap: 1ch; margin: 0 0 8px; }
+.ovl-body .gasbar .meta { margin-left: auto; }
+
+/* Side by side while there is room for both, stacked when there is not. The basis is what
+   a 168px ring plus five columns of monospace actually needs; under that the second unit
+   drops below the first rather than squeezing the table into an ellipsis. */
+.ovl-body .gasrings { display: flex; flex-wrap: wrap; gap: 10px 3ch; }
+.ovl-body .gasunit { flex: 1 1 46ch; min-width: 0; }
+
+.ovl-body .gasunit-h {
+  margin: 0 0 4px;
+  color: var(--green-hi);
+  letter-spacing: 0.08em;
+  border-bottom: 1px solid var(--green-ghost);
+}
+
+.ovl-body .gasunit-body { display: flex; align-items: flex-start; gap: 2ch; }
+
+/* A fixed square, and ui/deck-views.js carries the same number as its fallback: a <dialog>
+   has no box until showModal() runs, so the first measure can come back zero.
+   150 and not more: the ring and its table share one half of the panel, and every pixel here
+   is a pixel the legend does not get. At 168 the widest slice key lost its tail to an
+   ellipsis while four number columns sat with room to spare, which is the wrong trade: the
+   table is the authority and the ring is the shape of it. */
+.ovl-body .gasring { flex: none; width: 150px; height: 150px; }
+
+.ovl-body .gaslegend { flex: 1 1 auto; min-width: 0; overflow-x: auto; }
+.ovl-body .gaslegend::-webkit-scrollbar { height: 6px; }
+.ovl-body .gaslegend::-webkit-scrollbar-track { background: transparent; }
+.ovl-body .gaslegend::-webkit-scrollbar-thumb { background: var(--green-ghost); }
+
+/* The four number columns are sized to their content the way the history table is, and the
+   slice name takes what is left. The figures here are why they are that narrow and not
+   narrower: 'consolidate' plus its chip needs 12ch and lost its last three characters to an
+   ellipsis at the first widths tried (headless render, 2026-08-20). A key that still does not
+   fit truncates and keeps its full text in the cell title, exactly as the history table does
+   with an address, and so does a gas figure past ten digits. */
+.ovl-body .gastable { table-layout: fixed; min-width: 40ch; }
+.ovl-body .gastable .c-gasusd { width: 10ch; }
+.ovl-body .gastable .c-share { width: 8ch; }
+.ovl-body .gastable .c-units { width: 10ch; }
+.ovl-body .gastable .c-txn { width: 4ch; }
+.ovl-body .gastable td { padding-top: 1px; padding-bottom: 1px; }
+.ovl-body .gastable td.slice { color: var(--green-hi); }
+
+/* The chip is what maps a row to its arc. Its colour is set by the view from the same token
+   the arc was filled with, so this rule owns the shape and never the ink. Same 7px square
+   the wallet table uses, so the two legends in this app read as one idea. */
+.ovl-body .gastable .chip {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 0.75ch;
+  vertical-align: baseline;
+}
+
+/* What the rings could not say: the bill in gas units, what it cost as a share of the money
+   moved, and every remainder the aggregation had to leave out. A rule above them because
+   they are a different claim from the rings, not a footnote to one of them. */
+.ovl-body .gasnotes {
+  margin-top: 10px;
+  padding-top: 4px;
+  border-top: 1px solid var(--green-ghost);
+}
+
+.ovl-body .gasnote { color: var(--green-dim); white-space: pre-wrap; }
+.ovl-body .gasnote.red { color: var(--red); }
+.ovl-body .gasnote.faint { color: var(--green-faint); }
+
 /* ---------- the agent panel (ui/driver-chat.js) ----------
 
    The panel the log used to hold. It is the one surface in the app whose whole content is
@@ -1730,87 +1809,97 @@ body.splitting-y, body.splitting-y * { cursor: row-resize; }
   height: 100%;
 }
 
-/* ---- the tab strip: one panel, several conversations ----
+/* ---------- yield panel ----------
 
-   Added 2026-08-21 with the plus. The agent column shows ONE chat at a time and the strip is
-   how the others stay reachable, which is the only layout the column can actually carry: split
-   four ways it would give each conversation four lines, and four lines is not a conversation.
+   The whole visual argument of this panel is a size ordering, and it is deliberate: the
+   dollars earned are the largest thing in the box, the annualised percentage is smaller and
+   carries the window it covers, and the caveat sits under both in the faintest ink that is
+   still readable. 1inch Aqua leads each of its rows with earned fees and treats the rate as
+   secondary, and its own docs call that rate "a rear-view mirror". Type size is how that
+   ordering survives someone glancing at the screen for one second.
 
-   NOTHING HERE ANIMATES ON A SWITCH. Changing tabs is a control a person uses tens of times an
-   hour, and an animation on a repeated action does not read as polish, it reads as lag. The
-   colour change is 120ms so it is not a jump cut, and that is the whole of the motion. The plus
-   is the exception and it is the ordinary one: it is a button, so it answers a press. */
-.deck .chat-tabs {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 1ch;
-  min-width: 0;
-  /* The tabs scroll and the plus does not: at four agents in a narrow column the names are what
-     gives, and the control that opens another must never be the thing pushed off the end. */
-  overflow: hidden;
+   Nothing here is decorative. Every rule below is either the ordering above or the same
+   grid and ink the rest of this window already uses. */
+
+.panel-yield > .pbody {
+  max-height: 42vh;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
-.deck .chat-tab {
-  appearance: none;
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--green-dim);
-  font: var(--fs) / var(--lh) var(--mono);
-  letter-spacing: 0.06em;
-  padding: 0 1ch;
-  cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  transition: color 120ms var(--ease-out), border-color 120ms var(--ease-out);
-}
+.y-card { margin-bottom: 10px; }
 
-.deck .chat-tab:hover { color: var(--green); }
-.deck .chat-tab:focus-visible { outline: 1px dotted var(--green); outline-offset: 1px; }
-
-/* The one in front. Brightness and a border, because colour alone is not a state a person can
-   see at a glance in a column of green on black. */
-.deck .chat-tab[data-on='true'] {
+/* The headline. Larger than anything else in the panel, on purpose. */
+.y-earned {
+  font-size: 22px;
+  line-height: 1.15;
   color: var(--green-hi);
-  border-color: var(--green-ghost);
+  margin: 2px 0 2px;
 }
 
-/* An agent that is working, on a tab that is not in front. It is the same brightening the state
-   word gets in the bar, so one language means one thing in both places. */
-.deck .chat-tab[data-state='thinking'] { color: var(--green); }
-
-/* Something was said while you were looking at another conversation. A character rather than a
-   dot, because this panel is monospace and a dot would move the label it sits beside. */
-.deck .chat-tab[data-unread='true']::after {
-  content: ' *';
-  color: var(--green-hi);
-}
-
-/* THE PLUS. Karim, 2026-08-21: "somewhere should be a plus sign that allows me to begin a new
-   chat in parallel." At the end of the strip, so it reads as "and another one" rather than as a
-   fifth tab, and it keeps its width when the names run out of room. */
-.deck .chat-plus {
-  appearance: none;
-  flex: 0 0 auto;
-  margin-left: auto;
-  background: transparent;
-  border: 1px solid var(--green-ghost);
+/* Second, and visibly second. */
+.y-rate {
+  font-size: 13px;
   color: var(--green);
-  font: var(--fs) / var(--lh) var(--mono);
-  padding: 0 1ch;
-  cursor: pointer;
-  transition: transform 160ms var(--ease-out), color 160ms var(--ease-out),
-    border-color 160ms var(--ease-out), opacity 160ms var(--ease-out);
+  margin: 0 0 2px;
 }
 
-.deck .chat-plus:hover { color: var(--green-hi); border-color: var(--green-dim); }
-.deck .chat-plus:focus-visible { outline: 1px dotted var(--green); outline-offset: 1px; }
-/* It answers the press. Every other control in this panel does. */
-.deck .chat-plus:active { transform: scale(0.97); }
+/* The window was too short to annualise. This is a refusal, so it reads as one rather than
+   as a missing value: dimmer than a real rate and never styled to look like one. */
+.y-rate-held { color: var(--green-dim); }
 
-/* At the ceiling. Dimmed and inert rather than removed: a control that vanishes takes its own
-   explanation with it, and the explanation here is that there is a limit. */
-.deck .chat-plus[disabled] { opacity: 0.3; cursor: default; }
-.deck .chat-plus[disabled]:hover { color: var(--green); border-color: var(--green-ghost); }
-.deck .chat-plus[disabled]:active { transform: none; }
+.y-caveat {
+  font-size: 11px;
+  color: var(--green-faint);
+  margin: 0 0 8px;
+}
+
+.y-facts { width: 100%; margin-bottom: 6px; }
+.y-facts .y-k { color: var(--green-faint); padding-right: 10px; white-space: nowrap; }
+.y-facts .y-v { color: var(--green); }
+
+.y-actions { display: flex; align-items: center; gap: 8px; margin: 6px 0 10px; }
+.y-withdraw { color: var(--green-hi); }
+.y-withdraw:disabled { color: var(--green-faint); cursor: default; }
+.y-error { color: var(--red); font-size: 11px; }
+
+.y-sub {
+  color: var(--green-faint);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  margin: 8px 0 2px;
+  border-top: 1px solid var(--green-ghost);
+  padding-top: 6px;
+}
+
+.y-venue-table, .y-ledger-table { width: 100%; }
+.y-venue-chain { color: var(--green-hi); text-transform: uppercase; }
+.y-venue-name, .y-venue-note { color: var(--green-dim); }
+.y-venue-best .y-venue-note { color: var(--green-hi); }
+.y-venue-down { color: var(--red-dim); }
+.y-venue-down .y-venue-note { color: var(--red-dim); }
+
+.y-when, .y-kind { color: var(--green-dim); }
+.y-hashes { text-align: right; }
+.y-hash { color: var(--green-faint); text-decoration: none; }
+.y-hash:hover { color: var(--green-hi); text-decoration: underline; }
+
+.y-empty, .y-decision { color: var(--green-dim); font-size: 12px; margin: 4px 0; }
+.y-decision-when { color: var(--green-faint); font-size: 11px; margin: 0; }
+
+/* A failed read keeps the previous numbers and says so. It must never blank the panel:
+   "you have nothing" is the single worst thing this box could say by accident. */
+.y-stale {
+  color: var(--red);
+  font-size: 11px;
+  border: 1px solid var(--red-ghost);
+  padding: 4px 6px;
+  margin: 0 0 8px;
+}
+
+/* The basic screen's one line about earning. Same weight as the places line under it:
+   it is a fact about the money, not an advertisement for a feature. */
+.basic-earning {
+  color: var(--green-dim);
+  margin: 4px 0 0;
+}

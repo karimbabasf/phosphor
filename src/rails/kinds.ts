@@ -25,6 +25,8 @@ import type {
   MandateDraft,
   SwapDraft,
   WriteDraft,
+  YieldDepositDraft,
+  YieldWithdrawDraft,
 } from '../types.ts';
 
 export type RailKind =
@@ -34,6 +36,8 @@ export type RailKind =
   | 'intents_withdraw'
   | 'lp_add'
   | 'lp_remove'
+  | 'yield_deposit'
+  | 'yield_withdraw'
   | 'mandate_arm';
 
 export type RailDraft =
@@ -43,6 +47,8 @@ export type RailDraft =
   | IntentsWithdrawDraft
   | LpAddDraft
   | LpRemoveDraft
+  | YieldDepositDraft
+  | YieldWithdrawDraft
   | MandateDraft;
 
 export const RAIL_KINDS: readonly RailKind[] = [
@@ -52,6 +58,8 @@ export const RAIL_KINDS: readonly RailKind[] = [
   'intents_withdraw',
   'lp_add',
   'lp_remove',
+  'yield_deposit',
+  'yield_withdraw',
   'mandate_arm',
 ];
 

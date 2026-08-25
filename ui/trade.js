@@ -1682,9 +1682,6 @@ async function refreshState() {
   STATE_INFLIGHT = true;
   try {
     POLICY = await getJson('/api/state');
-    // The trading window is the same app in a different shape, so it wears the same colours.
-    // Applied before anything is drawn into them, for the same reason the deck does it first.
-    if (window.PhosphorTheme) PhosphorTheme.apply(POLICY.theme);
     // Feed the presence light: seat state plus when the agent last did real work. Live
     // 'activity' pings keep it bright between state pushes; this seeds it on load.
     if (window.PhosphorPresence && POLICY.agents) {
@@ -1785,10 +1782,12 @@ function openEvents() {
     else if (payload.type === 'log' && payload.event) appendLog(payload.event);
     // The in-app driver talking. Forwarded rather than handled here: the transcript is owned by
     // driver-chat.js, which is mounted on both the pro deck and the basic screen.
-    else if (payload.type === 'driver' && payload.event) { if (window.PhosphorChat) PhosphorChat.push(payload.chat, payload.event); }
+    else if (payload.type === 'driver' && payload.event) { if (window.PhosphorChat) PhosphorChat.push(payload.event); }
     // A gas receipt landed on the treasury ledger. The call is a no-op unless the HISTORY
     // overlay is open, which is where that decision belongs.
-    else if (payload.type === 'transactions') PhosphorViews.transactionsRefresh();
+    // And the gas report, which is the same derivation grouped. Both calls are no-ops with
+    // their overlay shut, and only one of the two can be open at a time.
+    else if (payload.type === 'transactions') { PhosphorViews.transactionsRefresh(); PhosphorViews.gasRefresh(); }
     else if (payload.type === 'candles') candlesPushed();
     // A chart change from an agent. Our own writes come back with a revision we already know,
     // and chartPushed drops those rather than repainting over the hand.
@@ -1861,11 +1860,27 @@ function openHistoryOverlay(trigger) {
   });
 }
 
+/* The app's whole gas bill, not this venue's slice of it: same view, same endpoint, same
+   numbers as the custody deck, which is the reason that view lives in ui/deck-views.js.
+   onClose is not optional: the view holds an animation frame while its ring sweeps in. */
+function openGasOverlay(trigger) {
+  PhosphorOverlay.open({
+    title: 'GAS',
+    trigger: trigger,
+    build: function (box) {
+      box.appendChild(el('p', 'ovl-note', 'What this app has spent on gas, everywhere, not only on this venue. A trading fee is the venue taking its cut and is on the TAPE panel, not here.'));
+      PhosphorViews.gas(box, alertLine);
+    },
+    onClose: PhosphorViews.gasClosed
+  });
+}
+
 function wireDeckBar() {
   var buttons = [
     { id: 'open-log', open: openLogOverlay },
     { id: 'open-policy', open: openPolicyOverlay },
-    { id: 'open-history', open: openHistoryOverlay }
+    { id: 'open-history', open: openHistoryOverlay },
+    { id: 'open-gas', open: openGasOverlay }
   ];
   for (var i = 0; i < buttons.length; i++) {
     (function (spec) {

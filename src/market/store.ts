@@ -19,7 +19,7 @@
 import type { Candle } from '../types.ts';
 import { aggregate, baseBarsNeeded } from './aggregate.ts';
 
-export type FetchWindow = (product: string, baseSec: number, bars: number, provider: string) => Promise<Candle[]>;
+export type FetchWindow = (product: string, baseSec: number, bars: number) => Promise<Candle[]>;
 
 export type ReadResult = {
   candles: Candle[];
@@ -99,17 +99,8 @@ export function createMarketStore(options: MarketStoreOptions) {
   // One in-flight fill per series. A hundred reads during a drag collapse into one call.
   const inflight = new Map<string, Promise<void>>();
 
-  // The venue is part of the key, not a detail of the fetch.
-  //
-  // Without it, forcing a product onto the other venue writes that venue's bars into the
-  // series the first one already filled, and mergeSeries splices a perp and a spot market
-  // into one line by timestamp. Nothing downstream could tell: both are candles, both are
-  // the right shape, and the price is simply wrong in a way that looks like a real move.
-  // The provider argument is defaulted for the same reason it is documented here: a caller
-  // that forgets it lands on the venue the catalogue prefers anyway, so a mistake is a
-  // duplicate series and never a spliced one.
-  function keyOf(product: string, baseSec: number, provider: string): string {
-    return `${provider}:${product}:${baseSec}`;
+  function keyOf(product: string, baseSec: number): string {
+    return `${product}:${baseSec}`;
   }
 
   function evictIfNeeded(): void {
@@ -129,8 +120,8 @@ export function createMarketStore(options: MarketStoreOptions) {
   /* Fill a base series, deduped. Errors are kept on the series rather than thrown: a read
      during an outage should return the last good candles and say they are old, which is
      what the chart already knows how to draw. */
-  function fill(product: string, baseSec: number, bars: number, provider = 'hyperliquid'): Promise<void> {
-    const key = keyOf(product, baseSec, provider);
+  function fill(product: string, baseSec: number, bars: number): Promise<void> {
+    const key = keyOf(product, baseSec);
     const running = inflight.get(key);
     if (running !== undefined) return running;
 
@@ -139,7 +130,7 @@ export function createMarketStore(options: MarketStoreOptions) {
 
     const task = (async () => {
       try {
-        const fetched = await fetchWindow(product, baseSec, bars, provider);
+        const fetched = await fetchWindow(product, baseSec, bars);
         const current = series.get(key);
         const merged = mergeSeries(current?.candles ?? [], fetched, maxBars);
         const changed =
@@ -184,14 +175,14 @@ export function createMarketStore(options: MarketStoreOptions) {
   /* The read the render path uses. Never awaits, never throws.
      Returns what the cache holds folded to the timeframe asked for, and quietly starts a
      fill if the newest bar has aged out or the window is short. */
-  function read(product: string, baseSec: number, targetSec: number, bars: number, provider = 'hyperliquid'): ReadResult {
-    const key = keyOf(product, baseSec, provider);
+  function read(product: string, baseSec: number, targetSec: number, bars: number): ReadResult {
+    const key = keyOf(product, baseSec);
     const entry = series.get(key);
     const at = now();
     const needBase = baseBarsNeeded(bars, baseSec, targetSec);
 
     if (entry === undefined) {
-      void fill(product, baseSec, needBase, provider);
+      void fill(product, baseSec, needBase);
       return { candles: [], ageSec: 0, filling: true, bars: 0, source: 'filling', error: null };
     }
 
@@ -201,7 +192,7 @@ export function createMarketStore(options: MarketStoreOptions) {
     const short = !entry.exhausted && entry.candles.length < needBase;
     if (ageSec >= staleAfterSec(baseSec) || short) {
       // Background only. The caller gets the bars already in hand.
-      void fill(product, baseSec, needBase, provider);
+      void fill(product, baseSec, needBase);
     }
 
     const folded = aggregate(entry.candles, baseSec, targetSec);
@@ -219,25 +210,19 @@ export function createMarketStore(options: MarketStoreOptions) {
 
   /* Wait for a series to be usable. Only for callers that genuinely cannot draw without
      data, which is the first paint and an agent read, never the render loop. */
-  async function warm(
-    product: string,
-    baseSec: number,
-    targetSec: number,
-    bars: number,
-    provider = 'hyperliquid',
-  ): Promise<ReadResult> {
-    const first = read(product, baseSec, targetSec, bars, provider);
+  async function warm(product: string, baseSec: number, targetSec: number, bars: number): Promise<ReadResult> {
+    const first = read(product, baseSec, targetSec, bars);
     if (first.candles.length > 0) return first;
-    const pending = inflight.get(keyOf(product, baseSec, provider));
+    const pending = inflight.get(keyOf(product, baseSec));
     if (pending !== undefined) await pending;
-    return read(product, baseSec, targetSec, bars, provider);
+    return read(product, baseSec, targetSec, bars);
   }
 
   /* Fold a freshly built bar in without a network call. The trade stream uses this so the
      forming bar moves at trade speed while the REST rail stays on its slow cadence. */
-  function put(product: string, baseSec: number, candles: readonly Candle[], provider = 'hyperliquid'): void {
+  function put(product: string, baseSec: number, candles: readonly Candle[]): void {
     if (candles.length === 0) return;
-    const key = keyOf(product, baseSec, provider);
+    const key = keyOf(product, baseSec);
     const current = series.get(key);
     series.set(key, {
       candles: mergeSeries(current?.candles ?? [], candles, maxBars),

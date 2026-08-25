@@ -239,3 +239,111 @@ test('explorers follow the network, so a testnet hash never links to a mainnet p
   assert.equal(explorerAddressUrl('mainnet', 'base', '0xabc'), 'https://basescan.org/address/0xabc');
   assert.equal(explorerTxUrl('mainnet', 'sol', 'sig'), 'https://solscan.io/tx/sig');
 });
+
+// ---------- the yield rail ----------
+//
+// These fell through the shape switch's `default` until 2026-08-20, which returns place 'eth'
+// and nulls for everything else. So every supply to a lending pool read as an Ethereum
+// movement of an unnamed amount to nobody, whatever chain it was actually on, and the gas
+// column beside it was right the whole time because TxGas.place is the chain whose RPC
+// answered rather than the draft's guess. A money column and a fee column disagreeing about
+// which chain a row is on is the kind of defect that is easy to look straight past.
+
+function yieldDeposit(over: Partial<Proposal> = {}): Proposal {
+  return {
+    id: 'p-yield-deposit',
+    kind: 'yield_deposit',
+    createdAt: '2026-08-20T18:35:22.000Z',
+    status: 'executed',
+    draft: {
+      kind: 'yield_deposit',
+      venue: 'aave-v3',
+      chain: 'arb',
+      symbol: 'USDC',
+      amount: 50,
+      amountBase: '50000000',
+      decimals: 6,
+      amountUsd: 50,
+      from: SELF,
+      counterparty: '0xBfC91D59fdAA134A4ED45f7B584cAf96D7792Eff',
+    },
+    simulation: { ok: true, summary: 'aave-v3: supply 50 USDC on arb' },
+    verdict: { outcome: 'allow', reasons: ['$50.00 against a $100 click threshold'] },
+    decidedBy: 'policy',
+    decidedAt: '2026-08-20T18:35:27.000Z',
+    result: { ok: true, detail: 'supplied 50 USDC to Aave v3 on arb', txids: [EVM_HASH] },
+    ...over,
+  } as Proposal;
+}
+
+test('a supply to a lending pool is recorded on the chain it happened on, not on Ethereum', () => {
+  const [entry] = build([yieldDeposit()]);
+  assert.equal(entry!.action, 'deposit');
+  assert.equal(entry!.kind, 'yield_deposit');
+  assert.equal(entry!.place, 'arb');
+  assert.equal(entry!.toPlace, 'arb');
+});
+
+test('a supply names its venue and its size, so the row says what moved and where it went', () => {
+  const [entry] = build([yieldDeposit()]);
+  assert.equal(entry!.venue, 'aave-v3');
+  assert.deepEqual(entry!.sent, { symbol: 'USDC', amount: 50 });
+  assert.equal(entry!.counterparty?.address, '0xBfC91D59fdAA134A4ED45f7B584cAf96D7792Eff');
+  // Out of our wallet, into the pool. The direction is the whole difference from a withdrawal.
+  assert.equal(entry!.from?.self, true);
+  assert.equal(entry!.to?.address, '0xBfC91D59fdAA134A4ED45f7B584cAf96D7792Eff');
+});
+
+test('a withdrawal runs the other way: out of the pool, back to us', () => {
+  const [entry] = build([
+    yieldDeposit({
+      id: 'p-yield-withdraw',
+      kind: 'yield_withdraw',
+      draft: {
+        kind: 'yield_withdraw',
+        venue: 'aave-v3',
+        chain: 'arb',
+        symbol: 'USDC',
+        amount: 10,
+        amountBase: '10000000',
+        decimals: 6,
+        amountUsd: 10,
+        from: SELF,
+        counterparty: '0xBfC91D59fdAA134A4ED45f7B584cAf96D7792Eff',
+      },
+    } as Partial<Proposal>),
+  ]);
+  assert.equal(entry!.action, 'withdraw');
+  assert.equal(entry!.place, 'arb');
+  assert.equal(entry!.from?.address, '0xBfC91D59fdAA134A4ED45f7B584cAf96D7792Eff');
+  assert.equal(entry!.to?.self, true);
+  assert.deepEqual(entry!.sent, { symbol: 'USDC', amount: 10 });
+});
+
+test('a full exit records no amount, because the figure in the draft was stale before it was written', () => {
+  // amountBase null is how "the whole position, interest included" is expressed. The rebasing
+  // receipt grows while the proposal waits for a click, so the rail reads the balance at
+  // execution. Printing the quoted number here would be printing a number that was already
+  // wrong, and this row's own detail line carries what actually came back.
+  const [entry] = build([
+    yieldDeposit({
+      id: 'p-yield-exit',
+      kind: 'yield_withdraw',
+      draft: {
+        kind: 'yield_withdraw',
+        venue: 'aave-v3',
+        chain: 'arb',
+        symbol: 'USDC',
+        amount: 56.292312,
+        amountBase: null,
+        decimals: 6,
+        amountUsd: 56.29,
+        from: SELF,
+        counterparty: '0xBfC91D59fdAA134A4ED45f7B584cAf96D7792Eff',
+      },
+    } as Partial<Proposal>),
+  ]);
+  assert.equal(entry!.sent, null);
+  assert.equal(entry!.venue, 'aave-v3');
+  assert.equal(entry!.place, 'arb');
+});

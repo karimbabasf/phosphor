@@ -25,6 +25,12 @@ export const EXPECTED_TOOLS: readonly string[] = [
   'log_tail',
   'policy_show',
   'proposal_status',
+  // The gas bill, grouped by action and by chain over a window. It reaches no rail and makes no
+  // chain call: it groups receipts the history surface has already read. It is on this list as a
+  // read, but the thing worth checking in review is its DESCRIPTION, which has to keep naming the
+  // four remainders (pending, unknown, unpriced, intent-settled). A total that drops what it could
+  // not count is a smaller number than the truth, said confidently.
+  'gas_report',
   'propose_consolidate',
   'propose_policy_change',
   // The rails. Each moves funds through a contract and none takes an address: the property
@@ -42,6 +48,16 @@ export const EXPECTED_TOOLS: readonly string[] = [
   // and 1Click cannot quote OUT of hypercore. The direction is a property of the venue rather
   // than a check of ours, so an agent holding this can add collateral and has no path on this
   // surface to remove any. lp_add and lp_remove are unchanged and stay off.
+  //
+  // The yield rail shipped earlier the same day with nothing on this list, deliberately and for
+  // the same rule, and its own spec said the tools would follow once the evidence existed. They
+  // went on later on 2026-08-20 because the evidence exists: five real movements on Arbitrum
+  // Sepolia, three by hand and two filed by the loop, each through the real proposal service and
+  // the real policy engine, ending in a full exit that returned 56.292312 USDC to the wallet, with
+  // the app's realized 4.2672 percent and the reserve's 4.2687 percent APR computed independently
+  // and agreeing. The rule was met, not waived. The lp_add half of the old objection does not
+  // reach this rail either: a yield position is one balanceOf on a rebasing receipt and buildWallet
+  // already counts it, so there is no pre-trade balance to size a second move off.
   'propose_swap',
   // Funds the Hyperliquid perps account, from any chain this app signs for. One way in by
   // construction; getting money off the venue is a signed withdraw3 a human runs at a terminal
@@ -57,6 +73,23 @@ export const EXPECTED_TOOLS: readonly string[] = [
   // only, because this app derives its EVM address from a key it holds and can therefore prove
   // the destination is its own; it holds no Solana key.
   'propose_intents_withdraw',
+  // The yield rail: put an idle stablecoin to work in a lending pool, take it back, read what it
+  // did, and hand the looking to a loop. Four tools rather than three, because an agent that can
+  // deposit and cannot read the position back is holding half a rail.
+  //
+  // These are the only fund-moving tools here that refuse MAINNET. Every other rail on this list
+  // refuses testnet or refuses nothing, so a reader skimming for "testnet only" will assume they
+  // have it backwards; they do not. src/rails/yield.ts states the world it has been checked in.
+  'yield_read',
+  'propose_yield_deposit',
+  'propose_yield_withdraw',
+  // Starts and stops the allocator loop. It looks like standing authority and is not: the loop
+  // can only FILE a yield_deposit proposal, which is a capability the agent already holds one
+  // line up, and every proposal it files meets the same policy engine, click threshold, session
+  // cap and audit log. It grants a schedule, not an authority. Compare propose_mandate, where an
+  // armed bot sends orders straight to a venue with no proposal per order: that is why that one
+  // is gated and this one is not. Moves no money, gets no policy verdict, same class as `switch`.
+  'yield_auto',
   // Arming a bot. The one proposal that grants STANDING authority rather than spending once,
   // so it never auto-approves on any network.
   'propose_mandate',
@@ -80,22 +113,10 @@ export const EXPECTED_TOOLS: readonly string[] = [
   'chart_mark',
   // The sloped line. A level is horizontal and a mark is vertical, so neither could express one.
   'chart_trendline',
-  // Tidying up, and the reason it grew targets: with a team on one chart, "clear what the agent
-  // drew" stopped being one thing. `mine` is this session's own work and is the default,
-  // because a tidy that reached a colleague's by default would be the commonest way one agent
-  // silently undoes another.
   'chart_clear',
-  // A whole study package in one call, and the tidy that makes it always fit. It clears the
-  // calling agent's own studies before it draws, so it can never be refused by the pane cap and
-  // the chart cannot silently accumulate. See src/presets.ts.
-  'chart_preset',
   // Moves the window between the three surfaces. Named `switch` rather than set_view_mode
   // because the requirement is that switching costs one word.
   'switch',
-  // Recolours the window. Same category as `switch` and `watch`: it changes what a human
-  // sees, reaches no rail and no money, and it cannot touch the approval gate's red, which
-  // is not one of its slots. See src/view/theme.ts.
-  'set_theme',
   // Picks the coins the basic screen tracks and saves the choice. Named for what the human
   // says, like `switch`. It changes what a human sees and reaches no rail and no money.
   'watch',
@@ -110,43 +131,11 @@ export const EXPECTED_TOOLS: readonly string[] = [
   'trade_overlay',
   'trade_note',
   'trade_clear',
-  // The team. Phosphor allowed one agent at a time until 2026-08-21 and now seats several, so
-  // these five exist to keep a roster from being a crowd: who is here, a board they write one
-  // line each to, and workers one of them can put on a piece of work.
-  //
-  // None of them moves money and none of them can. What they return is written by OTHER AGENTS,
-  // which makes it data in exactly the way a token name or a headline is data: it cannot
-  // instruct, approve or widen anything, and the tool descriptions say so.
-  'agent_roster',
-  'agent_board',
-  'agent_post',
-  'agent_jobs',
-  // The one that spawns another model. It is on an operator's surface and NOT on a worker's:
-  // src/mcp.ts does not register it when PHOSPHOR_ROLE is analyst, so a chain of models cannot
-  // spawn a chain of models. A worker's surface is this list minus agent_spawn, minus every
-  // propose_*, and minus the three window controls (switch, watch, set_theme).
-  'agent_spawn',
   // The only tool answered inside the shim instead of proxied to the app. It reads an enabled
   // skill file off this machine and returns its text, which is why it needs no app state and
-  // why it still works while the roster is full. It moves nothing and, like every other read
-  // here, cannot reach a rail.
+  // why it still works while another agent holds the seat. It moves nothing and, like every
+  // other read here, cannot reach a rail.
   'skill',
 ];
-
-/* What a spawned worker holds, which is this surface minus everything that acts.
-   Derived rather than typed out, so the two lists cannot drift: adding a tool above adds it to
-   a worker too unless it is named here, which is the safe direction to be wrong in only because
-   tests/injection.test.ts walks the whole surface for an address either way. */
-export const WORKER_WITHHELD: readonly string[] = [
-  'agent_spawn',
-  'switch',
-  'watch',
-  'set_theme',
-  ...EXPECTED_TOOLS.filter((t) => t.startsWith('propose_')),
-];
-
-export const EXPECTED_WORKER_TOOLS_SORTED: readonly string[] = EXPECTED_TOOLS.filter(
-  (t) => !WORKER_WITHHELD.includes(t),
-).sort();
 
 export const EXPECTED_TOOLS_SORTED: readonly string[] = [...EXPECTED_TOOLS].sort();

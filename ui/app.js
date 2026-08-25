@@ -417,31 +417,15 @@ function renderStatus(s) {
   $('stat-total').textContent = usd(WALLET.totalUsd);
   $('stat-positions').textContent = count + (count === 1 ? ' position' : ' positions');
 
-  /* WHO is driving, and how many.
-     Phosphor seated one agent at a time until 2026-08-21 and now seats a team (src/agents.ts),
-     so a line reading "claude-code" while three agents are attached would be a lie of omission
-     on the one field a human uses to know who is touching their wallet. One agent still reads
-     as its own name, because "1 agent" is a worse answer than the name when there is only one.
-     Every string here is agent-authored and arrives cleaned and capped by the server; it reaches
-     the DOM through textContent like every other dynamic string on this page. */
+  // One agent at a time by design (src/agents.ts), so this says WHICH one rather than how
+  // many. The client name is agent-authored and arrives cleaned and capped by the server;
+  // it reaches the DOM through textContent like every other dynamic string on this page.
   var agents = s.agents || {};
   var holder = agents.holder || null;
-  var members = agents.members || [];
-  var workers = (agents.workers || []).filter(function (w) { return w.state === 'running'; });
   var agentNode = $('stat-agent');
-  var label = 'none';
-  if (agents.connected === 1) label = holder ? holder.client : 'connected';
-  else if (agents.connected > 1) label = agents.connected + ' agents';
-  if (workers.length > 0) label += ' (+' + workers.length + ' working)';
-  agentNode.textContent = label;
+  agentNode.textContent = !agents.connected ? 'none' : holder ? holder.client : 'connected';
   agentNode.className = !agents.connected ? 'v faint' : 'v';
-  agentNode.title = members.length
-    ? members
-        .map(function (m) {
-          return m.label + ' [' + m.role + '] since ' + clock(m.since) + ', ' + m.ops + ' calls';
-        })
-        .join('\n')
-    : 'no agent is connected';
+  agentNode.title = holder ? 'connected since ' + clock(holder.since) : 'no agent is connected';
   // Feed the presence light: whether an agent holds the seat, and when it last did real work.
   // Live 'activity' pings (below) keep it bright between state pushes; this seeds it on load.
   if (window.PhosphorPresence) PhosphorPresence.setState(agents.connected, agents.lastActivityAt);
@@ -904,6 +888,41 @@ function decide(route, id, buttons, errorNode) {
    empty. Hidden rather than emptied, because an empty bordered box that says "no pending
    approvals" for hours is what teaches a person to stop looking at the one surface on this
    screen they must never stop looking at. */
+/* The yield panel. Every number and every caveat comes from the server; this composes none
+   of them. See the header of ui/yield.js for why the order of that panel is the argument. */
+function renderYield(s) {
+  // No explorer argument. The prefix belongs to the position's CHAIN as well as to the
+  // network, and the server already resolved both, so it travels on the holding rather than
+  // being inferred here. Inferring it produced an Arbiscan link for every Base position.
+  YIELD.render($('yield-panel'), s);
+}
+
+/* One press, and it files a proposal rather than moving anything.
+   Above the click threshold the proposal lands in the gate strip at the top of this window
+   like every other one; below it the policy engine decides. The button is not a second path
+   to the money, it is the same path with a human at the front of it. */
+document.addEventListener('click', async function (ev) {
+  var btn = ev.target && ev.target.closest ? ev.target.closest('.y-withdraw') : null;
+  if (!btn) return;
+  var card = btn.closest('.y-card');
+  var errNode = card ? card.querySelector('.y-error') : null;
+  btn.disabled = true;
+  var label = btn.textContent;
+  btn.textContent = '[ ASKING... ]';
+  if (errNode) errNode.textContent = '';
+  try {
+    // No amount is sent. Omitting it means the whole position, which is the only withdrawal
+    // that cannot leave dust on a balance that grows every block.
+    var p = await postJson('/api/yield/withdraw', { chain: btn.dataset.chain, token: TOKEN });
+    btn.textContent = p && p.status === 'pending' ? '[ WAITING FOR YOUR CLICK ABOVE ]' : label;
+    await refreshState();
+  } catch (err) {
+    if (errNode) errNode.textContent = err.message || String(err);
+    btn.textContent = label;
+    btn.disabled = false;
+  }
+});
+
 function renderGate(s) {
   var pending = APPROVALS.render($('gate'), s, approvalDeps());
   var strip = $('gate-strip');
@@ -1503,6 +1522,13 @@ function renderBasic(s) {
 
   $('basic-headline').textContent = b.headline;
   $('basic-agent').textContent = b.agentLine;
+  var earning = $('basic-earning');
+  if (earning) {
+    // Rendered verbatim. This screen composes no sentence about money: every string comes
+    // from src/view/basic.ts, which is what lets the two modes be asserted to agree.
+    earning.textContent = b.earning || '';
+    earning.hidden = !b.earning;
+  }
   $('basic-footer').textContent = b.footer;
 
   lastBasic = b;
@@ -1763,14 +1789,12 @@ async function refreshState() {
       return;
     }
     STATE = next;
-    // Colour first, before anything is drawn into it. A canvas painted in the old accent and
-    // recoloured a frame later is a visible flicker on every state read.
-    PhosphorTheme.apply(STATE.theme);
     // Settled before the renders, not after: drawDonut asks whether the panel is still
     // waiting, and it must already have the answer by the time the wallet draws.
     settled('state');
     // Wallet first: the status bar reports its total.
     renderWallet(STATE);
+    renderYield(STATE);
     renderStatus(STATE);
     renderPolicy(STATE);
     renderGateBanner(STATE);
@@ -1832,11 +1856,13 @@ function openEvents() {
     else if (payload.type === 'log' && payload.event) appendLog(payload.event);
     // The in-app driver talking. Forwarded rather than handled here: the transcript is owned by
     // driver-chat.js, which is mounted on both the pro deck and the basic screen.
-    else if (payload.type === 'driver' && payload.event) { if (window.PhosphorChat) PhosphorChat.push(payload.chat, payload.event); }
+    else if (payload.type === 'driver' && payload.event) { if (window.PhosphorChat) PhosphorChat.push(payload.event); }
     // Only refetched while somebody is looking at it: a gas receipt landing behind a closed
     // overlay is not worth a round trip, and opening it reads afresh anyway. The call is a
     // no-op when the overlay is shut, which is where that decision is made.
-    else if (payload.type === 'transactions') PhosphorViews.transactionsRefresh();
+    // Both views read the same derivation, so a receipt that changes one changes the other.
+    // Both calls are no-ops with their overlay shut, and only one of the two can be open.
+    else if (payload.type === 'transactions') { PhosphorViews.transactionsRefresh(); PhosphorViews.gasRefresh(); }
     else if (payload.type === 'candles') candlesPushed();
     // A chart change from an agent. Our own writes come back with a revision we already
     // know, and chartPushed drops those rather than repainting over the hand.
@@ -1894,11 +1920,26 @@ function openHistoryOverlay(trigger) {
   });
 }
 
+/* The same aggregation the HISTORY table leaves to the reader. onClose is not optional
+   here: the view holds an animation frame while its ring sweeps in, and a frame left
+   running paints into a canvas that is no longer on screen. */
+function openGasOverlay(trigger) {
+  PhosphorOverlay.open({
+    title: 'GAS',
+    trigger: trigger,
+    build: function (box) {
+      PhosphorViews.gas(box, alertLine);
+    },
+    onClose: PhosphorViews.gasClosed
+  });
+}
+
 function wireDeckBar() {
   var buttons = [
     { id: 'open-log', open: openLogOverlay },
     { id: 'open-policy', open: openPolicyOverlay },
-    { id: 'open-history', open: openHistoryOverlay }
+    { id: 'open-history', open: openHistoryOverlay },
+    { id: 'open-gas', open: openGasOverlay }
   ];
   for (var i = 0; i < buttons.length; i++) {
     (function (spec) {

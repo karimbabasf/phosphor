@@ -49,17 +49,24 @@
   <p class="banner" id="t-banner-policy" role="alert" hidden></p>
   <p class="alert dim" id="t-alert" role="status" hidden></p>
 
-  <!-- The three records this deck has never had room to print. LOG is the app's whole audit
+  <!-- The records this deck has never had room to print. LOG is the app's whole audit
        trail, not the trading slice of it the tape below carries. POLICY is what governs this
        account and was only ever a word in the status bar here. HISTORY is the treasury
        ledger: swaps, intents deposits and withdrawals, which have different columns and
        their own page, and are read from here rather than by leaving.
-       Controls FOR the deck, so they sit above it rather than becoming a panel in it. -->
+       Controls FOR the deck, so they sit above it rather than becoming a panel in it.
+
+       GAS is fourth, and it is the app's whole gas bill rather than this venue's: the same
+       view the custody deck opens, from the same endpoint, because a cost split by chain
+       that stopped at one deck's rails would be a smaller number than the truth. It is a
+       read of what has already been spent, so it changes nothing on this screen. See the
+       `gas` view in ui/deck-views.js. -->
   <p class="deckbar">
     <span class="k">open</span>
     <button type="button" class="btn" id="open-log" aria-haspopup="dialog">[ LOG ]</button>
     <button type="button" class="btn" id="open-policy" aria-haspopup="dialog">[ POLICY ]</button>
     <button type="button" class="btn" id="open-history" aria-haspopup="dialog">[ HISTORY ]</button>
+    <button type="button" class="btn" id="open-gas" aria-haspopup="dialog">[ GAS ]</button>
   </p>
 
   <!-- Seven panels, three columns, and the shape is the custody deck's: the two windows are
@@ -449,9 +456,6 @@
      so the cover is standing before the browser paints this page for the first time. -->
 <script src="/transition.js" defer></script>
 <script src="/chart.js" defer></script>
-<!-- The colours, applied onto :root from the theme the server holds. After chart.js so
-     window.chartTheme is already defined when the first state frame lands. -->
-<script src="/theme.js" defer></script>
 <script src="/approvals.js" defer></script>
 <script src="/trade-overlay.js" defer></script>
 <!-- Before trade.js: exposes window.PhosphorPresence, driven from state and the SSE
