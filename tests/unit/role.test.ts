@@ -112,8 +112,16 @@ test('the role is not so long it stops being read', () => {
   // the capability index, which is a reference and grows with the app; the prose rules are still
   // under six thousand characters and that is the half worth defending.
   //
+  // RAISED FROM 13,000 ON 2026-08-24, when the yield branch and the team branch met in main.
+  // Neither branch wrote a word of prose. Each added tools, the index generates itself from
+  // CAPABILITIES, and the two additions simply summed: 41 tools and 10,069 characters on main,
+  // 52 and 12,801 on the team branch, 46 and 11,387 on the yield branch, 57 and 14,119 once
+  // both landed. The growth is 2,732 plus 1,318, which is 4,050 exactly, so nothing was said
+  // twice and nothing new was argued. This is the index doing what the paragraph above says it
+  // does, and the prose rules are the same size they were.
+  //
   // The next paragraph should come out of something, not go on the end.
   const text = role();
   assert.ok(text.length > 3000, 'the role got gutted');
-  assert.ok(text.length < 13000, `the role is ${text.length} characters and nobody reads that far`);
+  assert.ok(text.length < 15000, `the role is ${text.length} characters and nobody reads that far`);
 });
