@@ -1,69 +1,109 @@
-// Who is driving this app, and the rule that only one thing may.
+// Who is driving this app. Plural, since 2026-08-21.
 //
-// Two problems this owns, and they are the same problem seen from two sides.
+// WHAT CHANGED AND WHY. This file used to hold one seat: the first MCP session to speak took
+// it and every other session was refused with a sentence telling it to wait. That rule was
+// written for a real failure, and the failure is worth restating because nothing below
+// pretends it went away: two agents driving one wallet looked exactly like one agent, and
+// neither of them knew about the other. Exclusivity fixed the confusion by making the second
+// agent impossible.
 //
-// PRESENCE. An MCP process cannot say goodbye when it is killed, so absence of pings is
-// the only honest signal and a TTL is the only honest test. What the old shape got wrong
-// was the size of it: a 45s TTL swept every 15s meant a terminated agent read as connected
-// for up to a minute. The TTL is now derived from the interval the client says it pings at,
-// so the app is not guessing, and src/mcp.ts also sends a bye on shutdown, which makes the
-// TTL the backstop for a SIGKILL rather than the mechanism for every exit.
+// It also made a team impossible, and a team is what the work actually wants. One agent
+// reading the four hour while another reads the one minute, an analyst spawned to measure a
+// second market, a research pass running beside the session the human is typing into: every
+// one of those was refused by the seat, and the human's only route to two views was to run
+// them one after the other.
 //
-// EXCLUSIVITY. Presence used to be one anonymous timestamp: two agents driving the same
-// wallet looked exactly like one, and neither knew about the other. The seat below is the
-// fix. One session holds it, every other session is refused with the reason, and the seat
-// frees on bye or on expiry. It is deliberately not a security boundary (see the KNOWN HOLE
-// note at the top of src/server.ts: anything with a shell can post as any session). It is
-// what stops two agents on this machine racing each other by accident.
+// So the seat became a ROSTER, and the confusion is fixed the other way round: every member is
+// named, every object it draws carries its id (see Provenance in src/chart.ts), and every
+// agent can see the others through `agent_roster`. Two agents are no longer indistinguishable
+// from one, so they no longer need to be forbidden.
+//
+// WHAT DID NOT CHANGE.
+//
+//   Presence is still a TTL over pings, because an MCP process cannot say goodbye when it is
+//   killed. Each member carries its own TTL, derived from the interval its client declared.
+//
+//   This is still not a security boundary. Anything with a shell can post as any session; see
+//   the KNOWN HOLE note at the top of src/server.ts. It is what keeps a team coordinated, not
+//   what keeps an attacker out.
+//
+//   The money path is still guarded, and now by something narrower than exclusivity. A member
+//   holds a ROLE. An `operator` may propose; an `analyst` cannot, and the tools that would let
+//   it are not registered for its process at all (src/mcp.ts reads PHOSPHOR_ROLE). Spawned
+//   workers are analysts, so widening the door to a team did not widen the door to the wallet.
+//
+//   Approval is still a physical click a human makes. Nothing here approves anything, and
+//   three agents cannot outvote a human.
 
-export type AgentSeat = {
+export type AgentRole = 'operator' | 'analyst';
+
+export type AgentMember = {
   session: string;
   client: string;
-  since: string; // ISO, when this session took the seat
+  role: AgentRole;
+  // A short human-readable name for the window and for the other agents. Defaults to the
+  // client name; a worker is given one by whatever spawned it.
+  label: string;
+  // The session that spawned this one, or null for an agent a human started. It is what makes
+  // the roster a tree rather than a list, which is the difference between "five agents are
+  // connected" and "one agent and the four it put to work".
+  parent: string | null;
+  since: string; // ISO, when it joined
   lastSeen: string; // ISO, its most recent op or heartbeat
   ttlMs: number;
+  // Tool calls this member has made this run. The window's roster line reads it, and so does
+  // an agent deciding whether a colleague is actually working or merely attached.
+  ops: number;
 };
 
-export type SeatOk = { ok: true; seat: AgentSeat; edge: boolean };
-// `revoked` marks the one refusal an agent must not retry through. Every other busy answer
-// means "wait, somebody else is driving"; this one means "you have been replaced, stop".
-export type SeatBusy = { ok: false; seat: AgentSeat | null; error: string; revoked?: boolean };
-export type SeatResult = SeatOk | SeatBusy;
+export type JoinOk = { ok: true; member: AgentMember; edge: boolean };
+// `revoked` marks the one refusal an agent must not retry through. `full` means the roster is
+// at its cap: waiting is correct, retrying immediately is not.
+export type JoinBusy = { ok: false; member: AgentMember | null; error: string; revoked?: boolean; full?: boolean };
+export type JoinResult = JoinOk | JoinBusy;
 
 export type AgentPresence = {
-  // A hello, or the first op of a session that never sent one. Takes the seat when it is
-  // free, refuses when another live session holds it.
-  claim(params: { session?: unknown; client?: unknown; intervalMs?: unknown }): SeatResult;
-  // Every other op. Same rule as claim: an op from a session that never said hello takes
-  // the free seat rather than being refused for a handshake it was not told to send.
-  check(params: { session?: unknown; client?: unknown }): SeatResult;
-  // A clean shutdown. Only the holder can release, so a stale bye cannot evict a live agent.
-  release(session: unknown): AgentSeat | null;
-  // The human replacing the agent, from the window. Frees the seat AND revokes the session,
-  // which are two different things and both are needed: freeing alone would let the evicted
-  // proxy simply take the seat back on its next heartbeat, five seconds later, because a free
-  // seat is claimable by whoever asks first and it asks constantly.
-  evict(): AgentSeat | null;
-  // Turns lazy expiry into an event. Returns the seat that just went cold, once.
-  sweep(): AgentSeat | null;
-  holder(): AgentSeat | null;
+  claim(params: { session?: unknown; client?: unknown; intervalMs?: unknown; role?: unknown; label?: unknown; parent?: unknown }): JoinResult;
+  check(params: { session?: unknown; client?: unknown }): JoinResult;
+  release(session: unknown): AgentMember | null;
+  // The human replacing the agents, from the window. Frees the roster AND revokes every
+  // session on it, which are two different things and both are needed: freeing alone would let
+  // an evicted proxy simply rejoin on its next heartbeat, five seconds later.
+  evict(session?: unknown): AgentMember[];
+  // Turns lazy expiry into events. Returns the members that just went cold, once each.
+  sweep(): AgentMember[];
+  // The lead: the longest-attached operator, or null. It is who the window's chat surface
+  // belongs to and who a human means by "the agent". It is NOT a permission: every operator
+  // may do everything an operator may do.
+  lead(): AgentMember | null;
+  // Kept for every caller that predates the roster. It answers with the lead.
+  holder(): AgentMember | null;
+  roster(): AgentMember[];
+  member(session: unknown): AgentMember | null;
   connected(): number;
-  // The epoch-ms of the most recent REAL op (a tool call), or null if none this run. It is
-  // the "is the agent actually working right now" signal the window's presence light reads:
-  // heartbeats (op 'hello') do not touch it, so a connected-but-idle agent reports an old
-  // timestamp and the light dulls, while a burst of reads and proposes keeps it fresh and the
-  // light shines. This is deliberately recency, not an in-flight counter: the truth the human
-  // wants is "did the thing I asked for just cause activity", and a call that starts brightens
-  // the light for the whole window whether it takes 40ms or 4s.
+  capacity(): { used: number; max: number };
   activityAt(): number | null;
 };
 
 // A client that names no interval is an older src/mcp.ts pinging every 15s. Its TTL has to
-// stay above that or the light flaps; a client that declares one gets a TTL just wide
-// enough for two missed pings.
+// stay above that or the light flaps; a client that declares one gets a TTL just wide enough
+// for two missed pings.
 const DEFAULT_TTL_MS = 45_000;
 const MIN_TTL_MS = 8_000;
 const MAX_TTL_MS = 60_000;
+
+// How many agents may drive at once.
+//
+// Not one, and not unbounded. Every member is an MCP session holding a model on the other end,
+// and the failure a cap prevents is not confusion any more (the roster fixed that), it is
+// cost and noise: a runaway spawn loop would open sessions until the machine or the
+// subscription gave out, and a chart with nine agents drawing on it is unreadable whatever the
+// tags say. Six is two humans' worth of parallel work plus the workers they spawn.
+export const MAX_AGENTS = 6;
+
+// How long an evicted session stays refused. It only has to outlive the evicted proxy's own
+// exit, which happens on its very next heartbeat, so this is a wide margin and not a policy.
+const REVOKE_MS = 300_000;
 
 // Agent-controlled strings reach a status bar and an audit line. They are rendered as text
 // everywhere, so this is about keeping a 4KB "client name" out of the log rather than about
@@ -81,123 +121,171 @@ function ttlFrom(intervalMs: unknown): number {
   return Math.min(MAX_TTL_MS, Math.max(MIN_TTL_MS, Math.round(n * 2.5)));
 }
 
-// How long an evicted session stays refused. It only has to outlive the evicted proxy's own
-// exit, which happens on its very next heartbeat, so this is a wide margin and not a policy.
-// Bounded rather than permanent because a session id could in principle be reused by a fresh
-// process, and a map that only ever grows in a long-lived app is a leak.
-const REVOKE_MS = 300_000;
+// A role an agent claims for itself is a role it can lower and never raise. The app decides
+// what a session may do by which tools it registered for that process (src/mcp.ts reads
+// PHOSPHOR_ROLE from the environment the app itself wrote), so this field is a LABEL for the
+// roster and the audit log, not the gate. Reading it as the gate would be the classic mistake:
+// trusting a claim made by the thing being restricted.
+function roleFrom(value: unknown): AgentRole {
+  return value === 'analyst' ? 'analyst' : 'operator';
+}
 
-export function createAgents(now: () => number = Date.now): AgentPresence {
-  let seat: AgentSeat | null = null;
+export function createAgents(now: () => number = Date.now, max: number = MAX_AGENTS): AgentPresence {
+  const members = new Map<string, AgentMember>();
   let lastActivity: number | null = null;
   const revoked = new Map<string, number>();
 
-  function expired(s: AgentSeat): boolean {
-    return now() - Date.parse(s.lastSeen) >= s.ttlMs;
+  function expired(m: AgentMember): boolean {
+    return now() - Date.parse(m.lastSeen) >= m.ttlMs;
   }
 
-  // Lazy expiry, so connected() is honest the moment the TTL passes rather than at the next
+  // Lazy expiry, so connected() is honest the moment a TTL passes rather than at the next
   // sweep. sweep() is only how the drop becomes an audit line and an SSE push.
-  function live(): AgentSeat | null {
-    if (seat === null) return null;
-    return expired(seat) ? null : seat;
+  function live(): AgentMember[] {
+    const out: AgentMember[] = [];
+    for (const m of members.values()) if (!expired(m)) out.push(m);
+    // Oldest first, so the lead is stable: it is whoever has been here longest and it does not
+    // change because a newer member happened to ping first.
+    return out.sort((a, b) => Date.parse(a.since) - Date.parse(b.since));
   }
 
-  function take(session: string, client: string, ttlMs: number): SeatOk {
-    const stamp = new Date(now()).toISOString();
-    seat = { session, client, since: stamp, lastSeen: stamp, ttlMs };
-    return { ok: true, seat, edge: true };
+  function liveOne(session: string): AgentMember | null {
+    const m = members.get(session);
+    if (m === undefined) return null;
+    return expired(m) ? null : m;
   }
 
-  function touch(current: AgentSeat, client: string, ttlMs: number): SeatOk {
-    seat = { ...current, client, ttlMs, lastSeen: new Date(now()).toISOString() };
-    return { ok: true, seat, edge: false };
-  }
-
-  function busy(current: AgentSeat): SeatBusy {
+  function full(): JoinBusy {
+    const names = live().map((m) => `${m.label} (${m.role})`).join(', ');
     return {
       ok: false,
-      seat: current,
+      member: null,
+      full: true,
       error:
-        `another agent is already connected to phosphor (${current.client}, since ${current.since}). ` +
-        'Only one agent may drive this app at a time. Disconnect that one, or wait for it to stop ' +
-        'sending heartbeats, then try again.',
+        `phosphor already has ${max} agents attached (${names}), which is the maximum. ` +
+        'Wait for one to finish and stop sending heartbeats, or ask the human to drop one from the window. ' +
+        'This is a capacity limit, not a rule against a second agent: several may drive at once.',
     };
   }
 
-  function resolve(params: { session?: unknown; client?: unknown; intervalMs?: unknown }, claiming: boolean): SeatResult {
-    // An op with no session id is a curl, the e2e script, or an older mcp.ts. It is one
-    // occupant like any other rather than a hole in the rule: it can hold the seat, and it
-    // is refused while somebody else does.
+  function resolve(
+    params: { session?: unknown; client?: unknown; intervalMs?: unknown; role?: unknown; label?: unknown; parent?: unknown },
+    claiming: boolean,
+  ): JoinResult {
+    // An op with no session id is a curl, the e2e script, or an older mcp.ts. It is one member
+    // like any other rather than a hole in the roster.
     const session = clean(params.session, 'unnamed-session', 64);
     const client = clean(params.client, 'unnamed agent', 48);
 
-    // Checked before the seat, deliberately. An evicted session that arrives while the seat
-    // happens to be free must still be refused, or the replacement it was evicted for would
-    // lose the race to it: the old proxy is already pinging on a five second loop while the
-    // new terminal is still starting a shell.
+    // Checked before the roster, deliberately. An evicted session that arrives while there is
+    // room must still be refused, or the replacement it was evicted for would race it: the old
+    // proxy is already pinging on a five second loop while the new terminal is still starting.
     const until = revoked.get(session);
     if (until !== undefined) {
       if (now() < until) {
         return {
           ok: false,
-          seat: null,
+          member: null,
           revoked: true,
           error:
-            'this session has been replaced from the phosphor window. A newer agent now holds ' +
-            'the seat. Stop and let this connection close; do not retry.',
+            'this session has been replaced from the phosphor window. Stop and let this connection ' +
+            'close; do not retry.',
         };
       }
       revoked.delete(session);
     }
 
-    const current = live();
-    if (current === null) {
-      return take(session, client, claiming ? ttlFrom(params.intervalMs) : DEFAULT_TTL_MS);
+    const existing = liveOne(session);
+    if (existing !== null) {
+      // The same session re-announcing is not a new member. Its client name, label and ping
+      // interval are allowed to move; its role, parent and join time are not.
+      const updated: AgentMember = {
+        ...existing,
+        client: claiming ? client : existing.client,
+        label: claiming ? clean(params.label, client, 40) : existing.label,
+        ttlMs: claiming ? ttlFrom(params.intervalMs) : existing.ttlMs,
+        lastSeen: new Date(now()).toISOString(),
+        ops: claiming ? existing.ops : existing.ops + 1,
+      };
+      members.set(session, updated);
+      return { ok: true, member: updated, edge: false };
     }
-    if (current.session !== session) return busy(current);
-    // The holder's own client name and ping interval are allowed to change on a re-hello:
-    // the same session reconnecting is not a new occupant.
-    return touch(current, claiming ? client : current.client, claiming ? ttlFrom(params.intervalMs) : current.ttlMs);
+
+    // Expired members are dropped here rather than only in sweep(), so a roster that has gone
+    // cold does not keep a live agent out until the next tick.
+    for (const [id, m] of [...members]) if (expired(m)) members.delete(id);
+    if (members.size >= max) return full();
+
+    const stamp = new Date(now()).toISOString();
+    const member: AgentMember = {
+      session,
+      client,
+      role: roleFrom(params.role),
+      label: clean(params.label, client, 40),
+      parent: typeof params.parent === 'string' ? clean(params.parent, '', 64) || null : null,
+      since: stamp,
+      lastSeen: stamp,
+      ttlMs: claiming ? ttlFrom(params.intervalMs) : DEFAULT_TTL_MS,
+      ops: claiming ? 0 : 1,
+    };
+    members.set(session, member);
+    return { ok: true, member, edge: true };
+  }
+
+  function leadOf(list: AgentMember[]): AgentMember | null {
+    return list.find((m) => m.role === 'operator') ?? list[0] ?? null;
   }
 
   return {
     claim: (params) => resolve(params, true),
     check: (params) => {
       const result = resolve(params, false);
-      // Stamped only on a granted op. A refused check is a SECOND agent being turned away,
-      // not the holder working, so lighting the presence light on it would report the wrong
-      // session's activity. hello/bye never reach here (handleMcp answers them first), so
-      // this counts tool calls and nothing else.
+      // Stamped only on a granted op. A refused check is an agent being turned away, not a
+      // member working, so lighting the presence light on it would report activity that never
+      // happened. hello/bye never reach here (handleMcp answers them first), so this counts
+      // tool calls and nothing else.
       if (result.ok) lastActivity = now();
       return result;
     },
     release(session: unknown) {
-      const current = live();
-      if (current === null) return null;
-      if (current.session !== clean(session, 'unnamed-session', 64)) return null;
-      seat = null;
-      return current;
+      const id = clean(session, 'unnamed-session', 64);
+      const m = liveOne(id);
+      members.delete(id);
+      return m;
     },
-    evict() {
+    evict(session?: unknown) {
       const at = now();
-      for (const [session, until] of revoked) if (at >= until) revoked.delete(session);
-      const current = live();
-      // The seat is cleared whether or not anyone held it, so starting an agent from the
-      // window always leaves a clean seat for the one it is about to start.
-      const held = seat;
-      seat = null;
-      if (held !== null) revoked.set(held.session, at + REVOKE_MS);
-      return current;
+      for (const [id, until] of revoked) if (at >= until) revoked.delete(id);
+      // Naming a session drops that one; naming none drops the whole roster, which is what the
+      // window's "replace the agent" control means and what the app does before it starts its
+      // own driver.
+      const targets =
+        session === undefined || session === null
+          ? [...members.values()]
+          : [...members.values()].filter((m) => m.session === clean(session, '', 64));
+      const dropped: AgentMember[] = [];
+      for (const m of targets) {
+        members.delete(m.session);
+        revoked.set(m.session, at + REVOKE_MS);
+        if (!expired(m)) dropped.push(m);
+      }
+      return dropped;
     },
     sweep() {
-      if (seat === null || !expired(seat)) return null;
-      const gone = seat;
-      seat = null;
+      const gone: AgentMember[] = [];
+      for (const [id, m] of [...members]) {
+        if (!expired(m)) continue;
+        members.delete(id);
+        gone.push(m);
+      }
       return gone;
     },
-    holder: () => live(),
-    connected: () => (live() === null ? 0 : 1),
+    lead: () => leadOf(live()),
+    holder: () => leadOf(live()),
+    roster: () => live(),
+    member: (session: unknown) => liveOne(clean(session, 'unnamed-session', 64)),
+    connected: () => live().length,
+    capacity: () => ({ used: live().length, max }),
     activityAt: () => lastActivity,
   };
 }

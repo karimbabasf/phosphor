@@ -8,6 +8,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { unrunnableRefusal } from '../../src/runner/host.ts';
 import { checkEnvelope } from '../../src/strategy/envelope.ts';
 import type { Mandate, RunState } from '../../src/strategy/envelope.ts';
 import { programHash } from '../../src/strategy/grammar.ts';
@@ -233,4 +234,84 @@ test('a brake that reports success must have had something to act on', () => {
   for (const p of positions) {
     assert.ok(after.has(p.coin), `flatten must reach ${p.coin} with nothing armed on it`);
   }
+});
+
+
+// The runner is fed the order book and nothing else. Everything below would have armed, sat
+// there reading false, and reported itself as a live mandate the whole time.
+
+test('a program resting on a drawing is refused rather than armed into silence', () => {
+  const p: Program = {
+    symbol: 'BTC',
+    rules: [
+      {
+        id: 'break-up',
+        when: { op: 'price_cross_up', ref: { kind: 'drawing', id: 'tl_1' } },
+        then: [{ do: 'open', side: 'long', sizeUsd: 250, leverage: 3, entry: { type: 'market', maxSlippageBps: 30 } }],
+      },
+    ],
+  };
+  const refusal = unrunnableRefusal(p);
+  assert.ok(refusal !== null, 'a drawing reference has no value inside the runner');
+  assert.match(refusal, /tl_1/, 'the refusal names the reference that cannot be resolved');
+});
+
+test('a bar_close condition is refused, whatever its reference is', () => {
+  const p: Program = {
+    symbol: 'ETH',
+    rules: [
+      {
+        id: 'close-above',
+        when: { op: 'bar_close', timeframeSec: 900, side: 'above', ref: { kind: 'price', value: 2500 } },
+        then: [{ do: 'open', side: 'long', sizeUsd: 100, leverage: 2, entry: { type: 'market', maxSlippageBps: 20 } }],
+      },
+    ],
+  };
+  assert.match(String(unrunnableRefusal(p)), /bar_close/);
+});
+
+test('the refusal reaches into nested conditions, exits and the invalidate clause', () => {
+  const nested: Program = {
+    symbol: 'ETH',
+    rules: [
+      {
+        id: 'a',
+        when: { op: 'and', of: [{ op: 'position', state: 'flat' }, { op: 'not', of: { op: 'price_below', ref: { kind: 'indicator', id: 'ema_50' } } }] },
+        then: [{ do: 'open', side: 'long', sizeUsd: 100, leverage: 2, entry: { type: 'market', maxSlippageBps: 20 } }],
+      },
+    ],
+  };
+  assert.match(String(unrunnableRefusal(nested)), /ema_50/, 'depth is not a hiding place');
+
+  const stop: Program = {
+    symbol: 'ETH',
+    rules: [
+      {
+        id: 'a',
+        when: { op: 'position', state: 'long' },
+        // The dangerous one: this arms, holds a position, and never places the stop, because
+        // place() returns early on an unresolvable ref and says nothing.
+        then: [{ do: 'set_stop', ref: { kind: 'drawing', id: 'tl_9' } }],
+      },
+    ],
+  };
+  assert.match(String(unrunnableRefusal(stop)), /tl_9/, 'an unplaceable stop is the worst case');
+
+  const invalidated: Program = {
+    symbol: 'ETH',
+    rules: [
+      {
+        id: 'a',
+        when: { op: 'position', state: 'flat' },
+        then: [{ do: 'open', side: 'long', sizeUsd: 100, leverage: 2, entry: { type: 'market', maxSlippageBps: 20 } }],
+      },
+    ],
+    invalidate: { op: 'bar_close', timeframeSec: 3600, side: 'below', ref: { kind: 'price', value: 100 } },
+  };
+  assert.ok(unrunnableRefusal(invalidated) !== null, 'a thesis that can never die is not a thesis');
+});
+
+test('a program written entirely on prices arms', () => {
+  assert.equal(unrunnableRefusal(PROGRAM), null);
+  assert.equal(unrunnableRefusal(null), null, 'no program is not an unrunnable program');
 });

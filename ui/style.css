@@ -1729,3 +1729,88 @@ body.splitting-y, body.splitting-y * { cursor: row-resize; }
   width: 100%;
   height: 100%;
 }
+
+/* ---- the tab strip: one panel, several conversations ----
+
+   Added 2026-08-21 with the plus. The agent column shows ONE chat at a time and the strip is
+   how the others stay reachable, which is the only layout the column can actually carry: split
+   four ways it would give each conversation four lines, and four lines is not a conversation.
+
+   NOTHING HERE ANIMATES ON A SWITCH. Changing tabs is a control a person uses tens of times an
+   hour, and an animation on a repeated action does not read as polish, it reads as lag. The
+   colour change is 120ms so it is not a jump cut, and that is the whole of the motion. The plus
+   is the exception and it is the ordinary one: it is a button, so it answers a press. */
+.deck .chat-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 1ch;
+  min-width: 0;
+  /* The tabs scroll and the plus does not: at four agents in a narrow column the names are what
+     gives, and the control that opens another must never be the thing pushed off the end. */
+  overflow: hidden;
+}
+
+.deck .chat-tab {
+  appearance: none;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--green-dim);
+  font: var(--fs) / var(--lh) var(--mono);
+  letter-spacing: 0.06em;
+  padding: 0 1ch;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 120ms var(--ease-out), border-color 120ms var(--ease-out);
+}
+
+.deck .chat-tab:hover { color: var(--green); }
+.deck .chat-tab:focus-visible { outline: 1px dotted var(--green); outline-offset: 1px; }
+
+/* The one in front. Brightness and a border, because colour alone is not a state a person can
+   see at a glance in a column of green on black. */
+.deck .chat-tab[data-on='true'] {
+  color: var(--green-hi);
+  border-color: var(--green-ghost);
+}
+
+/* An agent that is working, on a tab that is not in front. It is the same brightening the state
+   word gets in the bar, so one language means one thing in both places. */
+.deck .chat-tab[data-state='thinking'] { color: var(--green); }
+
+/* Something was said while you were looking at another conversation. A character rather than a
+   dot, because this panel is monospace and a dot would move the label it sits beside. */
+.deck .chat-tab[data-unread='true']::after {
+  content: ' *';
+  color: var(--green-hi);
+}
+
+/* THE PLUS. Karim, 2026-08-21: "somewhere should be a plus sign that allows me to begin a new
+   chat in parallel." At the end of the strip, so it reads as "and another one" rather than as a
+   fifth tab, and it keeps its width when the names run out of room. */
+.deck .chat-plus {
+  appearance: none;
+  flex: 0 0 auto;
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--green-ghost);
+  color: var(--green);
+  font: var(--fs) / var(--lh) var(--mono);
+  padding: 0 1ch;
+  cursor: pointer;
+  transition: transform 160ms var(--ease-out), color 160ms var(--ease-out),
+    border-color 160ms var(--ease-out), opacity 160ms var(--ease-out);
+}
+
+.deck .chat-plus:hover { color: var(--green-hi); border-color: var(--green-dim); }
+.deck .chat-plus:focus-visible { outline: 1px dotted var(--green); outline-offset: 1px; }
+/* It answers the press. Every other control in this panel does. */
+.deck .chat-plus:active { transform: scale(0.97); }
+
+/* At the ceiling. Dimmed and inert rather than removed: a control that vanishes takes its own
+   explanation with it, and the explanation here is that there is a limit. */
+.deck .chat-plus[disabled] { opacity: 0.3; cursor: default; }
+.deck .chat-plus[disabled]:hover { color: var(--green); border-color: var(--green-ghost); }
+.deck .chat-plus[disabled]:active { transform: none; }

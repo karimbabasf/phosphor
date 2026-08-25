@@ -20,7 +20,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { MandateRunner } from '../rails/mandate.ts';
 import type { Mandate } from '../strategy/envelope.ts';
-import type { Program } from '../strategy/grammar.ts';
+import type { Condition, Program, Ref } from '../strategy/grammar.ts';
 import { createFeed } from './feed.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -118,6 +118,84 @@ export function tradingLimitRefusal(
   }
 
   return null;
+}
+
+// WHAT THE RUNNER CAN ACTUALLY EVALUATE, checked before anything arms.
+//
+// The child builds its MarketState from ONE input: the book pumpOnce sends below. Two kinds of
+// reference have no source in that process at all:
+//
+//   - bar closes. The child hard-codes `lastClose: () => null` for every timeframe, so a
+//     `bar_close` condition is false for the entire life of the mandate.
+//   - drawings and indicators. The child holds a refCache keyed on `drawing:tl_1` and fills it
+//     from a `refs` message. Nothing in this repo sends that message. resolveRef therefore
+//     answers null for every drawing and every indicator, forever.
+//
+// Both failures are SILENT, and silent in the two worst ways. An entry rule that is permanently
+// false is a bot that sits there while the human believes it is watching. An exit rule that is
+// permanently false is a position with no stop: place() begins `if (ref === null) return` for
+// set_stop, and a limit entry falls through to `resolveRef(ref) ?? b.markPx` and quietly becomes
+// an order at the mark instead of at the line.
+//
+// This is not a hypothetical program shape. Worked example 2 in src/strategy/catalog.ts is built
+// on a trend line and a 15m bar close, so it is the shape the app's own documentation teaches an
+// agent to write.
+//
+// The right end state is to SEND those values, not to refuse programs that need them, and the
+// hooks for it exist on both sides already. Until the pump carries them, arming one of these is
+// arming a program that does not do what the human read and approved, so it is refused at the
+// door where a person can see the refusal.
+export function unrunnableRefusal(program: Program | null): string | null {
+  if (program === null) return null;
+  const gaps = new Set<string>();
+
+  function ref(r: Ref): void {
+    if (r.kind === 'drawing') gaps.add(`a drawing reference (${r.id})`);
+    if (r.kind === 'indicator') gaps.add(`an indicator reference (${r.id})`);
+  }
+
+  function walk(c: Condition): void {
+    switch (c.op) {
+      case 'price_above':
+      case 'price_below':
+      case 'price_cross_up':
+      case 'price_cross_down':
+        ref(c.ref);
+        return;
+      case 'bar_close':
+        gaps.add('a bar_close condition');
+        ref(c.ref);
+        return;
+      case 'and':
+      case 'or':
+        for (const inner of c.of) walk(inner);
+        return;
+      case 'not':
+        walk(c.of);
+        return;
+      default:
+        return;
+    }
+  }
+
+  for (const rule of program.rules) {
+    walk(rule.when);
+    for (const action of rule.then) {
+      if (action.do === 'set_stop' || action.do === 'set_target') ref(action.ref);
+      if ((action.do === 'open' || action.do === 'add') && action.entry.type === 'limit') ref(action.entry.ref);
+      if ((action.do === 'reduce' || action.do === 'close') && action.exit.type === 'limit') ref(action.exit.ref);
+    }
+  }
+  if (program.invalidate !== undefined) walk(program.invalidate);
+
+  if (gaps.size === 0) return null;
+  return (
+    `this program rests on ${[...gaps].sort().join(' and ')}, and the runner is fed the order book ` +
+    'and nothing else, so it has no value for that at any point. The condition would read false for ' +
+    'the whole life of the mandate: an entry would never fire and a stop would never be placed. ' +
+    'Rewrite those levels as fixed prices, { "kind": "price", "value": N }, and rewrite a bar close ' +
+    'as a price condition, then arm it again.'
+  );
 }
 
 export function createRunnerHost(deps: HostDeps): MandateRunner & {
@@ -241,6 +319,9 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
         deps.limits ?? TESTNET_TRADING_LIMITS,
       );
       if (refusal !== null) return { ok: false, detail: refusal };
+
+      const unrunnable = unrunnableRefusal(program as Program | null);
+      if (unrunnable !== null) return { ok: false, detail: unrunnable };
 
       try {
         const c = await ensureChild();

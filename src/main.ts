@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Policy, RiskRow, ViewMode } from './types.ts';
 import { readViewMode, writeViewMode } from './view/mode.ts';
+import { readTheme, writeTheme, type Theme } from './view/theme.ts';
 import { loadConfig } from './config.ts';
 import { createAudit } from './audit.ts';
 import { createStore } from './store.ts';
@@ -174,9 +175,9 @@ const proposals = createProposalService({
   dataDir: cfg.dataDir,
 });
 
-// Who is driving, and the rule that only one thing may. The state, the TTL and the
-// one-at-a-time seat live in src/agents.ts; what lives here is the sweep that turns a
-// silent expiry into a line in the log and a push to the window.
+// Who is driving, plural. The roster, the roles and the per-member TTL live in
+// src/agents.ts; what lives here is the sweep that turns a silent expiry into a line in the
+// log and a push to the window.
 //
 // The heartbeat itself is deliberately absent from the audit log, and the edges stand in
 // for it: one agent_connected when an agent attaches, one agent_disconnected when it goes.
@@ -206,6 +207,17 @@ function getView(): ViewMode {
 function setView(mode: ViewMode): void {
   viewMode = mode;
   writeViewMode(cfg.dataDir, mode);
+}
+
+// Same shape, same reason: the file is the durable copy and this is the live one, so a
+// window that reloads comes back the colour the conversation left it.
+let theme: Theme = readTheme(cfg.dataDir);
+function getTheme(): Theme {
+  return theme;
+}
+function setTheme(next: Theme): void {
+  theme = next;
+  writeTheme(cfg.dataDir, next);
 }
 
 function setKill(on: boolean): void {
@@ -295,6 +307,8 @@ const server = createServer({
   agents,
   getView,
   setView,
+  getTheme,
+  setTheme,
   trade,
   /* Default OFF, and the window opens on the turning globe. Karim, 2026-08-20: with no agent
      attached yet, the globe is what the app opens on, always.
@@ -306,13 +320,18 @@ const server = createServer({
 });
 
 setInterval(() => {
+  // Plural since the roster: one tick can find several members cold at once, and each is its
+  // own line in the log because "two agents dropped" is not a sentence anyone can act on.
   const gone = agents.sweep();
-  if (gone === null) return;
-  audit.append('agent_disconnected', 'the agent stopped sending heartbeats', {
-    client: gone.client,
-    lastSeen: gone.lastSeen,
-    ttlMs: gone.ttlMs,
-  });
+  if (gone.length === 0) return;
+  for (const member of gone) {
+    audit.append('agent_disconnected', `${member.label} stopped sending heartbeats`, {
+      client: member.client,
+      role: member.role,
+      lastSeen: member.lastSeen,
+      ttlMs: member.ttlMs,
+    });
+  }
   // Without this the light stayed on until the next state frame, whatever the TTL said.
   server.broadcastState();
 }, AGENT_SWEEP_MS);

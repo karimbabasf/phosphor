@@ -51,6 +51,26 @@ test('a cross up fires only on the transition, not while simply above', () => {
   assert.equal(alreadyAbove.actions.length, 0, 'being above is not crossing');
 });
 
+test('a cross needs two samples, so the first tick after arming can never be one', () => {
+  // This is the mainnet defect of 2026-08-21, held shut from the evaluator's side. The runner
+  // seeded prevMarkPx at 0, so on the first tick `0 <= level` was true of every level and the
+  // mark was already above this one, and a mandate written to buy a dip bought the top instead.
+  const up = program({ op: 'price_cross_up', ref: { kind: 'price', value: 2508.3 } });
+  const first = evaluate(up, market({ prevMarkPx: null, markPx: 2524.2 }), run(), emptyMemory());
+  assert.equal(first.actions.length, 0, 'no prior sample is not a transition');
+
+  // Both directions, because the old bug was one direction being seeded true and the other
+  // being seeded false. Neither is a property of a market with one sample in it.
+  const down = program({ op: 'price_cross_down', ref: { kind: 'price', value: 2508.3 } });
+  const firstDown = evaluate(down, market({ prevMarkPx: null, markPx: 2400 }), run(), emptyMemory());
+  assert.equal(firstDown.actions.length, 0, 'no prior sample is not a transition');
+
+  // And the tick that does have two samples still fires, so the fix costs one tick and not the
+  // rule. This is the dip the mandate above was written for.
+  const dipped = evaluate(up, market({ prevMarkPx: 2500.1, markPx: 2509 }), run(), emptyMemory());
+  assert.equal(dipped.actions.length, 1, 'a real transition still fires');
+});
+
 test('a reference to a drawing resolves through the injected resolver', () => {
   const p = program({ op: 'price_above', ref: { kind: 'drawing', id: 'tl_1' } });
   // The stub resolver puts tl_1 at 105.

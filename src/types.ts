@@ -523,8 +523,8 @@ export type LogEvent = {
     // logged: it says nothing a reader of the transcript does not already know.
     | 'agent_connected'
     | 'agent_disconnected'
-    // A second agent tried to drive the app while another one held the seat. One
-    // line per refused session, not per refused call: see src/agents.ts.
+    // An agent was turned away: the roster was full, or the session had been replaced from
+    // the window. One line per refused session, not per refused call: see src/agents.ts.
     | 'agent_rejected'
     // Written by a human-run compaction, never by the app. The log is append-only,
     // so the one thing a removal owes its reader is a line saying it happened.
@@ -546,6 +546,9 @@ export type LogEvent = {
     // tail() casts rather than validates, so an existing audit.jsonl can still hold
     // these lines. Removing it would make the type lie about the file.
     | 'view_changed'
+    // The window was recoloured. Its own kind rather than a view_changed, because a reader
+    // scanning for what a human was shown while they approved wants to see it named.
+    | 'theme_changed'
     | 'view_refused'
     // What a human told the in-app driver to do. The tool calls that follow are already
     // logged; without this line the transcript records that the app swapped a token and

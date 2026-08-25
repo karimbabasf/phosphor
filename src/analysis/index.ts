@@ -23,14 +23,40 @@ import { volumeProfile } from './volume-profile.ts';
 import { anchoredVwap } from './vwap.ts';
 import { detectRange } from './range.ts';
 import { divergences } from './divergence.ts';
-import { indicatorSpec, normaliseParams } from '../indicators.ts';
+import { orderBlocks, fairValueGaps, liquiditySwings, structureBreaks } from './structure.ts';
+import { indicatorSpec, normaliseParams, indicatorCatalog } from '../indicators.ts';
 
 export type AnalysisDeps = {
   // Mirrors the server's own loader, so the agent measures the same bars the human sees.
   candles(product: string, granularitySec: number, limit: number): Promise<Candle[]>;
   history: ReturnType<typeof createHistory>;
   drawings: DrawingStore;
+  // Who is drawing and what they are looking at, stamped onto anything this batch creates.
+  // Optional, because a test and the browser both build these handlers with no agent behind
+  // them; absent, a drawing is anonymous exactly as it was before the roster existed.
+  author?: { by: string | null; product: string; granularitySec: number };
 };
+
+// The newest defined value of a plot, and the one before it. A last value with nothing to
+// compare it against cannot answer "is it turning", which is most of what an oscillator is for.
+function lastDefined(values: (number | null)[]): number | null {
+  for (let i = values.length - 1; i >= 0; i--) {
+    const v = values[i];
+    if (v !== null && Number.isFinite(v)) return v;
+  }
+  return null;
+}
+
+function previousDefined(values: (number | null)[]): number | null {
+  let seen = 0;
+  for (let i = values.length - 1; i >= 0; i--) {
+    const v = values[i];
+    if (v === null || !Number.isFinite(v)) continue;
+    if (seen === 1) return v;
+    seen += 1;
+  }
+  return null;
+}
 
 function str(v: unknown, fallback: string): string {
   return typeof v === 'string' && v.trim().length > 0 ? v.trim() : fallback;
@@ -145,6 +171,69 @@ export function analysisHandlers(deps: AnalysisDeps): Record<string, Handler> {
         (a.params as Record<string, unknown>) ?? {},
       ),
 
+    // Read an indicator WITHOUT putting it on the human's chart. Three sub-panes is the cap and
+    // it is there so the price stays readable, which used to mean an agent could not look at a
+    // fourth oscillator at all: it had to add one, read it, and take it off again, and the human
+    // watched their chart flicker. This computes the same arrays from the same catalogue and
+    // returns the last value of every plot plus the state line, and draws nothing.
+    indicator_read: async (a) => {
+      const type = str(a.indicator, 'rsi');
+      const spec = indicatorSpec(type);
+      if (!spec) throw new Error(`unknown indicator '${type}'. Call indicator_catalog for the list.`);
+      const numeric: Record<string, number> = {};
+      for (const [k, v] of Object.entries((a.params as Record<string, unknown>) ?? {})) {
+        if (typeof v === 'number') numeric[k] = v;
+      }
+      const { params, notes } = normaliseParams(spec, numeric);
+      const result = spec.compute(await load(a), params);
+      return {
+        indicator: spec.type,
+        label: spec.label(params),
+        pane: spec.pane,
+        params,
+        notes,
+        state: result.state,
+        guides: result.guides,
+        plots: result.plots.map((plot) => ({
+          key: plot.key,
+          label: plot.label,
+          last: lastDefined(plot.values),
+          previous: previousDefined(plot.values),
+        })),
+      };
+    },
+
+    // The whole catalogue, so a batch can ask what exists and then read one in the same call.
+    indicator_list: () => indicatorCatalog(),
+
+    // ---------- structure ----------
+    //
+    // Boxes and events rather than series. See the header of ./structure.ts for what each one
+    // is defined as. Every one of them returns extents and counts, never a place to trade.
+    order_blocks: async (a) =>
+      orderBlocks(await load(a), {
+        window: num(a.window, 2),
+        minProminence: num(a.minProminence, 0),
+        limit: num(a.limit, 12),
+      }),
+
+    fair_value_gaps: async (a) =>
+      fairValueGaps(await load(a), { limit: num(a.limit, 12) }),
+
+    liquidity: async (a) =>
+      liquiditySwings(await load(a), {
+        window: num(a.window, 2),
+        minProminence: num(a.minProminence, 0),
+        tolerance: num(a.tolerance, 0),
+        limit: num(a.limit, 12),
+      }),
+
+    structure: async (a) =>
+      structureBreaks(await load(a), {
+        window: num(a.window, 2),
+        minProminence: num(a.minProminence, 0),
+      }).slice(-num(a.limit, 12)),
+
     // ---------- geometry against drawn objects ----------
     trendline_fit: async (a) => {
       const found = await pivotsFor(a);
@@ -161,11 +250,20 @@ export function analysisHandlers(deps: AnalysisDeps): Record<string, Handler> {
     draw: (a) => {
       const kind = str(a.kind, 'trendline') === 'zone' ? 'zone' : 'trendline';
       const label = str(a.label, kind);
+      // Who drew it and on what. Without the product a zone survives a switch to another
+      // instrument, where its two prices describe nothing; without the session no agent on a
+      // team can tell its own zones from a colleague's.
+      const stamp = {
+        by: deps.author?.by ?? null,
+        product: deps.author?.product,
+        granularitySec: deps.author?.granularitySec,
+      };
       if (kind === 'zone') {
         return deps.drawings.add({
           kind,
           label,
           source: 'agent',
+          ...stamp,
           zone: { low: num(a.low, 0), high: num(a.high, 0) },
         });
       }
@@ -175,6 +273,7 @@ export function analysisHandlers(deps: AnalysisDeps): Record<string, Handler> {
         kind,
         label,
         source: 'agent',
+        ...stamp,
         line: {
           a: { t: num(a1.t, 0), price: num(a1.price, 0) },
           b: { t: num(b1.t, 0), price: num(b1.price, 0) },
@@ -186,10 +285,15 @@ export function analysisHandlers(deps: AnalysisDeps): Record<string, Handler> {
 
     drawings_remove: (a) => ({ removed: deps.drawings.remove(str(a.id, '')) }),
 
-    // Clearing defaults to the agent's own drawings. A bare "clear" that also wiped the
-    // human's work would be an agent undoing a person's deliberate act.
-    drawings_clear: (a) => ({
-      cleared: deps.drawings.clear(str(a.source, 'agent') === 'all' ? undefined : 'agent'),
-    }),
+    /* Clearing defaults to the agent's OWN drawings, and on a team "own" got narrower.
+       source:'mine' is this session's; 'agent' is every agent's; 'all' includes the human's.
+       A bare call still means 'mine', because a tidy that reached a colleague's work by
+       default would be the commonest way one agent silently undoes another. */
+    drawings_clear: (a) => {
+      const scope = str(a.source, 'mine');
+      if (scope === 'all') return { cleared: deps.drawings.clear() };
+      if (scope === 'agent') return { cleared: deps.drawings.clear('agent') };
+      return { cleared: deps.drawings.clear('agent', deps.author?.by ?? null) };
+    },
   };
 }

@@ -61,6 +61,38 @@ var PhosphorChat = (function () {
   var mounts = [];
   var token = '';
 
+  /* THE OPEN CONVERSATIONS, and why this file now holds a list rather than a state.
+   *
+   * A mount is a PANEL: the pro window, the trade window and the basic screen each register
+   * one, and all three have always shown the same conversation. A chat is a CONVERSATION: its
+   * own agent process, its own transcript, its own place on the roster in src/agents.ts. Those
+   * were the same thing until 2026-08-21 and they are not the same thing any more.
+   *
+   * So the panel gained a tab strip and one plus. The mounts still all show whichever chat is
+   * in front, which is the property that keeps the three windows agreeing with each other; the
+   * strip is how a person changes which one that is.
+   *
+   * The transcripts are cached here as well as on the server, and the reason is the switch. A
+   * person clicking a tab is not waiting for a round trip, and a refetch on every click would
+   * make the cheapest control in the panel the slowest. The server stays the truth: refresh()
+   * takes it whole whenever the SET of chats changes, and push() only ever appends. */
+  /* Seeded with ONE conversation that has no id yet, which is exactly what the server answers
+     with when nothing is running (see driverPayload in src/server.ts). It is what keeps a panel
+     usable before the first refresh lands, and it is the same shape the single-seat window
+     always had: one chat, no process behind it, and the globe as the way to start one. The empty
+     id is what a POST carries until a real chat exists, and the server reads it as "the first
+     one" rather than as a name it does not know. */
+  var chats = [{ id: '', label: 'AGENT 1', state: 'off', transcript: [], unread: false }];
+  var activeId = '';
+  /* Overwritten by the first refresh. It is the server that decides how many agents may run,
+     because it is the server that pays for them and holds the roster they join. */
+  var maxChats = 4;
+
+  function chatOf(id) {
+    for (var i = 0; i < chats.length; i++) if (chats[i].id === id) return chats[i];
+    return null;
+  }
+
   function el(tag, cls, text) {
     var node = document.createElement(tag);
     if (cls) node.className = cls;
@@ -81,13 +113,17 @@ var PhosphorChat = (function () {
       });
   }
 
+  /* Every request names the conversation it is for, and the server refuses a name it does not
+     know rather than falling back to the first chat. A sentence typed into one agent arriving
+     at a different one is the failure this parameter exists to prevent, and it is the kind that
+     is only noticed after the wrong agent has acted on it. */
   function api(body) {
     return withToken()
       .then(function (current) {
         return fetch('/api/driver', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(Object.assign({ token: current }, body)),
+          body: JSON.stringify(Object.assign({ token: current, chat: activeId }, body)),
         });
       })
       .then(function (res) {
@@ -797,11 +833,37 @@ var PhosphorChat = (function () {
     bar.appendChild(send);
     form.hidden = true;
 
+    /* THE STRIP, and the plus at the end of it.
+     *
+     * Karim, 2026-08-21: "on the ui I want to spin up multiple agents, meaning somewhere should
+     * be a plus sign that allows me to begin a new chat in parallel."
+     *
+     * TABS RATHER THAN STACKED PANELS, and the column is what decides it. The agent lives in a
+     * resizable column beside the chart, and splitting it into four rectangles would give each
+     * conversation a few lines of height, which is not a conversation. One rectangle showing one
+     * chat at a time is the honest use of the space; the strip is how the others stay reachable.
+     *
+     * A tab that is not in front still receives everything its agent says: push() writes it into
+     * that chat's transcript and marks the tab, so nothing is lost by looking away. The mark is
+     * the only motion in this strip. Switching tabs is not animated at all, because it is a
+     * control a person uses tens of times an hour and an animation on it reads as lag. */
+    var tabs = el('div', 'chat-tabs');
+    tabs.setAttribute('role', 'tablist');
+    tabs.setAttribute('aria-label', options.tabsLabel || 'open agents');
+
+    var plus = el('button', 'chat-plus', '+');
+    plus.type = 'button';
+    plus.title = options.plusLabel || 'open another agent';
+    plus.setAttribute('aria-label', options.plusLabel || 'open another agent');
+
+    root.appendChild(tabs);
     root.appendChild(stage);
     root.appendChild(form);
 
     var record = {
       root: root,
+      tabs: tabs,
+      plus: plus,
       stage: stage,
       globe: globe,
       sub: sub,
@@ -854,6 +916,41 @@ var PhosphorChat = (function () {
     root.setAttribute('data-phase', 'idle');
     root.setAttribute('data-driver-state', 'off');
     setGlobes(record);
+
+    /* Delegated, because renderTabs() rebuilds the tab buttons on every change and listeners
+       bound to the old ones would go with them. The plus is a permanent child of this mount and
+       keeps its own listener below. */
+    tabs.addEventListener('click', function (ev) {
+      var node = ev.target;
+      if (!node || !node.getAttribute) return;
+      var id = node.getAttribute('data-chat');
+      if (id === null) return;
+      selectChat(id);
+    });
+
+    plus.addEventListener('click', function () {
+      if (plus.disabled) return;
+      /* Disabled for the round trip rather than after it. Two presses land two agents, and the
+         second one is a process a person did not mean to pay for. */
+      plus.disabled = true;
+      api({ action: 'open' })
+        .then(function (json) {
+          activeId = json.id || activeId;
+          return refresh();
+        })
+        .catch(function (err) {
+          /* Printed into the conversation in front rather than thrown away. The refusal that
+             matters here is the ceiling, and a person who pressed plus and saw nothing happen
+             would press it again. */
+          renderEvent(record.list, { kind: 'error', message: err.message });
+          follow(record);
+        })
+        .then(function () {
+          // renderTabs owns whether the plus is available, so this hands it back correctly
+          // whether the open succeeded or was refused.
+          renderTabs();
+        });
+    });
 
     globe.addEventListener('click', function () {
       if (record.phase !== 'idle') return;
@@ -929,10 +1026,127 @@ var PhosphorChat = (function () {
     });
 
     mounts.push(record);
+    // Drawn now rather than at the first refresh, so a panel has its strip and its plus from the
+    // moment it exists. A window whose network never answers still gets both.
+    renderTabs();
     return record;
   }
 
-  function push(event) {
+  /* The strip, redrawn whole. It is a handful of buttons and rebuilding them is cheaper than
+     working out which one changed, and it keeps one function responsible for every attribute a
+     stylesheet reads off a tab. */
+  function renderTabs() {
+    for (var i = 0; i < mounts.length; i++) {
+      var record = mounts[i];
+      record.tabs.textContent = '';
+      for (var j = 0; j < chats.length; j++) {
+        var chat = chats[j];
+        var tab = el('button', 'chat-tab', chat.label);
+        tab.type = 'button';
+        tab.setAttribute('role', 'tab');
+        tab.setAttribute('data-chat', chat.id);
+        // The agent's own state, so a tab can say "this one is working" without a word.
+        tab.setAttribute('data-state', chat.state || 'off');
+        tab.setAttribute('aria-selected', chat.id === activeId ? 'true' : 'false');
+        if (chat.id === activeId) tab.setAttribute('data-on', 'true');
+        else if (chat.unread) tab.setAttribute('data-unread', 'true');
+        record.tabs.appendChild(tab);
+      }
+      /* Re-appended after the clear, because it is a child of the strip and the strip was just
+         emptied. Disabled at the ceiling: a plus that refuses after the press teaches nothing,
+         and the number is the server's. */
+      record.plus.disabled = chats.length >= maxChats;
+      record.tabs.appendChild(record.plus);
+      /* The count, for a stylesheet that wants to dress a strip of one differently. The tab is
+         drawn even when it is the only one: a lone plus with nothing beside it does not say what
+         it would be adding, and the row it saves is one line. */
+      record.tabs.setAttribute('data-count', String(chats.length));
+    }
+  }
+
+  /* Put one conversation into one panel: its transcript, its phase and its state word.
+     This is what load() always did per mount, lifted out because switching tabs is the same
+     operation as arriving on the page. The three cases are unchanged and are the reason it is
+     not simply "print the transcript": a chat with nothing running is the globe, a chat that
+     came up and has not spoken yet is the intro print, and anything else is the conversation. */
+  function showChat(record, chat) {
+    record.list.textContent = '';
+    record.reason = '';
+    if (!chat) {
+      setState(record, 'off');
+      return;
+    }
+    var running = chat.state === 'ready' || chat.state === 'thinking' || chat.state === 'starting';
+    var entries = chat.transcript || [];
+    if (!running) {
+      setState(record, chat.state || 'off');
+      return;
+    }
+    /* Nothing has been said and nothing has been run. Status and error rows do not count,
+       because neither is a conversation. */
+    var untouched = true;
+    for (var k = 0; k < entries.length; k++) {
+      if (entries[k].kind !== 'status' && entries[k].kind !== 'error') untouched = false;
+    }
+    if (untouched) {
+      setPhase(record, 'booting');
+      printIntro(record);
+      // Queues the handover behind the last intro line, exactly as a live start does.
+      setState(record, chat.state);
+      return;
+    }
+    setPhase(record, chat.state === 'starting' ? 'booting' : 'live');
+    for (var j = 0; j < entries.length; j++) renderEvent(record.list, entries[j]);
+    setState(record, chat.state);
+    toBottom(record);
+  }
+
+  function selectChat(id) {
+    if (id === activeId) return;
+    var chat = chatOf(id);
+    if (!chat) {
+      // A tab for a chat this window no longer knows about: the set changed somewhere else.
+      refresh();
+      return;
+    }
+    activeId = id;
+    chat.unread = false;
+    renderTabs();
+    for (var i = 0; i < mounts.length; i++) showChat(mounts[i], chat);
+  }
+
+  /* One driver event, tagged with the conversation it came from.
+     A tab that is not in front still gets everything: the event goes into that chat's cached
+     transcript and the tab is marked, so looking away costs nothing and coming back shows the
+     whole thing. Only the chat in front reaches the panels. */
+  function push(chatId, event) {
+    /* Called with one argument by anything that predates the tab strip. It means the
+       conversation in front, which is what a single-seat window always meant. */
+    if (event === undefined) {
+      event = chatId;
+      chatId = activeId;
+    }
+    var chat = chatOf(typeof chatId === 'string' ? chatId : '');
+    if (!chat) {
+      // An event from a chat this window has never heard of: another window opened one. The
+      // set of chats is the server's, so take it again rather than inventing a tab.
+      refresh();
+      return;
+    }
+
+    chat.transcript.push(event);
+    if (chat.transcript.length > TRANSCRIPT_MAX) chat.transcript.shift();
+    if (event.kind === 'status') chat.state = event.state;
+
+    if (chat.id !== activeId) {
+      // Status is the agent breathing, not the agent talking. Marking a tab for it would leave
+      // every tab marked all the time, which is the same as marking none of them.
+      if (event.kind !== 'status') chat.unread = true;
+      renderTabs();
+      return;
+    }
+
+    if (event.kind === 'status') renderTabs();
     for (var i = 0; i < mounts.length; i++) {
       var record = mounts[i];
       if (event.kind === 'status') setState(record, event.state, event.detail);
@@ -943,56 +1157,54 @@ var PhosphorChat = (function () {
     }
   }
 
+  /* The whole set of open conversations, taken from the server.
+     Called when the SET changes (opening, closing, an event from a chat this window does not
+     know) and never on an ordinary message, which push() handles without a round trip. Unread
+     marks are local and survive it: they are a fact about this window, not about the server. */
+  function refresh() {
+    return fetch('/api/driver')
+      .then(function (r) { return r.json(); })
+      .then(function (json) {
+        /* The flat shape is the fallback and not dead code: it is what an older server answers
+           with, and it is what keeps this panel working against one. A window that got neither a
+           list nor a state is left with the seeded chat above rather than with nothing. */
+        var incoming = json.chats || [{ id: '', label: 'AGENT 1', state: json.state || 'off', transcript: json.transcript || [] }];
+        if (typeof json.max === 'number') maxChats = json.max;
+        var next = [];
+        for (var i = 0; i < incoming.length; i++) {
+          var was = chatOf(incoming[i].id);
+          next.push({
+            id: incoming[i].id,
+            label: incoming[i].label,
+            state: incoming[i].state || 'off',
+            transcript: incoming[i].transcript || [],
+            unread: was ? was.unread : false,
+          });
+        }
+        chats = next.length > 0 ? next : [{ id: '', label: 'AGENT 1', state: 'off', transcript: [], unread: false }];
+        if (!chatOf(activeId)) activeId = chats[0].id;
+        var chat = chatOf(activeId);
+        if (chat) chat.unread = false;
+        renderTabs();
+        for (var m = 0; m < mounts.length; m++) showChat(mounts[m], chat);
+      })
+      .catch(function () {});
+  }
+
   /* Called once per page, after every mount has registered. A window that reloaded mid
      conversation comes back to the conversation rather than to the globe, which is the only
-     reason the transcript lives on the server at all.
+     reason the transcripts live on the server at all.
 
      WITH NO AGENT THE ANSWER IS THE GLOBE, and that is the ordinary case now: autostart is off
      by default (see src/main.ts), so the app opens with nothing running and the press is the
-     user's. The two cases below are the other ones. A driver that is up and has not said or
-     done anything yet gets the intro anyway, because either the window was reopened onto an
-     agent it did not start or `driver.autostart` is on, and both are the window opening, which
-     is what the print is about. A reload in the middle of a real conversation is neither, and
-     goes straight back to the transcript. */
+     user's. The server answers with one chat that has no id in that case, which is what keeps
+     serving this window from spawning a process nobody asked for. */
   function load() {
     fetch('/api/session')
       .then(function (r) { return r.json(); })
       .then(function (json) { token = json.token || ''; })
       .catch(function () {});
-    fetch('/api/driver')
-      .then(function (r) { return r.json(); })
-      .then(function (json) {
-        var running = json.state === 'ready' || json.state === 'thinking' || json.state === 'starting';
-        var entries = json.transcript || [];
-        /* Nothing has been said and nothing has been run: the driver came up on its own and is
-           waiting. Status and error rows do not count, because neither is a conversation. */
-        var untouched = true;
-        for (var k = 0; k < entries.length; k++) {
-          if (entries[k].kind !== 'status' && entries[k].kind !== 'error') untouched = false;
-        }
-        for (var i = 0; i < mounts.length; i++) {
-          var record = mounts[i];
-          record.list.textContent = '';
-          if (!running) {
-            /* Through setState rather than straight to idle(), so the state word and the
-               data-driver-state attribute are set by the one function that owns them. */
-            setState(record, json.state || 'off');
-            continue;
-          }
-          if (untouched) {
-            setPhase(record, 'booting');
-            printIntro(record);
-            // Queues the handover behind the last intro line, exactly as a live start does.
-            setState(record, json.state);
-            continue;
-          }
-          setPhase(record, json.state === 'starting' ? 'booting' : 'live');
-          for (var j = 0; j < entries.length; j++) renderEvent(record.list, entries[j]);
-          setState(record, json.state);
-          toBottom(record);
-        }
-      })
-      .catch(function () {});
+    refresh();
   }
 
   return { mount: mount, push: push, load: load };

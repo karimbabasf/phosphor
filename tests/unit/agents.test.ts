@@ -1,16 +1,22 @@
-// The seat: one agent drives, everything else is told why not, and a terminated agent
-// stops reading as connected quickly rather than eventually.
+// The roster: several agents drive at once, each is named, and a terminated one stops reading
+// as connected quickly rather than eventually.
+//
+// This file used to assert the opposite. Until 2026-08-21 there was one seat and the second
+// agent was refused; the tests below that check a second, third and fourth agent attaching are
+// the deliberate reversal of that rule, not a regression. What survives from the old shape is
+// everything that was about PRESENCE rather than exclusivity: the TTL, the eviction, the
+// revoke window, and the refusal a replaced agent must not retry through.
 //
 // Time is injected, so these assert the TTL itself rather than sleeping through it.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createAgents } from '../../src/agents.ts';
+import { createAgents, MAX_AGENTS } from '../../src/agents.ts';
 
-function clockFrom(start: number): { agents: ReturnType<typeof createAgents>; advance: (ms: number) => void } {
+function clockFrom(start: number, max?: number): { agents: ReturnType<typeof createAgents>; advance: (ms: number) => void } {
   let now = start;
-  const agents = createAgents(() => now);
+  const agents = createAgents(() => now, max);
   return {
     agents,
     advance: (ms: number) => {
@@ -19,7 +25,7 @@ function clockFrom(start: number): { agents: ReturnType<typeof createAgents>; ad
   };
 }
 
-test('the first hello takes the seat and reports the connect edge once', () => {
+test('the first hello joins the roster and reports the connect edge once', () => {
   const { agents } = clockFrom(1_000_000);
 
   const first = agents.claim({ session: 'a', client: 'claude-code', intervalMs: 5000 });
@@ -31,26 +37,84 @@ test('the first hello takes the seat and reports the connect edge once', () => {
   assert.equal(agents.connected(), 1);
 });
 
-test('a second agent is refused while the first holds the seat, and told which one holds it', () => {
+// The rule this whole change exists to remove.
+test('a second agent attaches beside the first instead of being refused', () => {
   const { agents } = clockFrom(1_000_000);
   agents.claim({ session: 'a', client: 'claude-code', intervalMs: 5000 });
 
   const other = agents.claim({ session: 'b', client: 'codex', intervalMs: 5000 });
-  assert.equal(other.ok, false);
-  assert.match(!other.ok ? other.error : '', /already connected/);
-  assert.match(!other.ok ? other.error : '', /claude-code/, 'the refusal names the holder, or it is not actionable');
-  assert.equal(agents.holder()?.client, 'claude-code', 'a refused claim does not disturb the holder');
+  assert.equal(other.ok, true, 'two agents may drive phosphor at the same time');
+  assert.equal(agents.connected(), 2);
+  assert.deepEqual(
+    agents.roster().map((m) => m.client),
+    ['claude-code', 'codex'],
+    'the roster is oldest first, so the lead does not move when a newer member pings',
+  );
 });
 
-test('every op is subject to the seat, not just the handshake', () => {
-  const { agents } = clockFrom(1_000_000);
+test('the lead is the longest-attached operator and does not change when others join', () => {
+  const { agents, advance } = clockFrom(1_000_000);
   agents.claim({ session: 'a', client: 'claude-code', intervalMs: 5000 });
+  advance(1000);
+  agents.claim({ session: 'b', client: 'worker', role: 'analyst', intervalMs: 5000 });
+  advance(1000);
+  agents.claim({ session: 'c', client: 'codex', intervalMs: 5000 });
 
-  assert.equal(agents.check({ session: 'b' }).ok, false, 'a tool call from a second agent is refused');
-  assert.equal(agents.check({ session: 'a' }).ok, true);
+  assert.equal(agents.lead()?.session, 'a');
+  assert.equal(agents.holder()?.session, 'a', 'holder() still answers, for every caller written before the roster');
 });
 
-test('an op from a session that never said hello takes a free seat', () => {
+test('an analyst never becomes the lead while an operator is attached', () => {
+  const { agents, advance } = clockFrom(1_000_000);
+  agents.claim({ session: 'worker', client: 'phosphor-worker', role: 'analyst', intervalMs: 5000 });
+  advance(1000);
+  agents.claim({ session: 'human-side', client: 'claude-code', intervalMs: 5000 });
+
+  assert.equal(agents.lead()?.session, 'human-side', 'the lead is the one that can act, not merely the oldest');
+});
+
+test('a role an agent claims is recorded but is a label, never a widening', () => {
+  const { agents } = clockFrom(1_000_000);
+  const claim = agents.claim({ session: 'a', client: 'x', role: 'operator' });
+  assert.equal(claim.ok && claim.member.role, 'operator');
+  const analyst = agents.claim({ session: 'b', client: 'y', role: 'analyst' });
+  assert.equal(analyst.ok && analyst.member.role, 'analyst');
+  // Anything unrecognised is an operator, because the tool surface is what actually decides
+  // and a mistyped role must not silently produce a member nothing can explain.
+  const odd = agents.claim({ session: 'c', client: 'z', role: 'captain' });
+  assert.equal(odd.ok && odd.member.role, 'operator');
+});
+
+test('the roster is capped, and the refusal says it is capacity rather than a rule', () => {
+  const { agents } = clockFrom(1_000_000, 2);
+  agents.claim({ session: 'a', client: 'one', intervalMs: 5000 });
+  agents.claim({ session: 'b', client: 'two', intervalMs: 5000 });
+
+  const third = agents.claim({ session: 'c', client: 'three', intervalMs: 5000 });
+  assert.equal(third.ok, false);
+  assert.equal(third.ok === false && third.full, true);
+  assert.match(!third.ok ? third.error : '', /maximum/);
+  assert.match(!third.ok ? third.error : '', /several may drive at once/);
+  assert.equal(agents.connected(), 2, 'a refused join does not disturb the members');
+});
+
+test('the default cap is the one the app ships with', () => {
+  const { agents } = clockFrom(1_000_000);
+  assert.equal(agents.capacity().max, MAX_AGENTS);
+});
+
+test('a member that expires makes room without waiting for a sweep', () => {
+  const { agents, advance } = clockFrom(1_000_000, 2);
+  agents.claim({ session: 'a', client: 'one', intervalMs: 5000 });
+  agents.claim({ session: 'b', client: 'two', intervalMs: 5000 });
+  advance(13_000);
+
+  const next = agents.claim({ session: 'c', client: 'three', intervalMs: 5000 });
+  assert.equal(next.ok, true);
+  assert.equal(agents.connected(), 1);
+});
+
+test('an op from a session that never said hello joins the roster', () => {
   const { agents } = clockFrom(1_000_000);
   const first = agents.check({ session: 'curl' });
   assert.equal(first.ok, true);
@@ -58,17 +122,27 @@ test('an op from a session that never said hello takes a free seat', () => {
   assert.equal(agents.connected(), 1, 'something is attached: a tool call cannot come from nothing');
 });
 
-test('a bye frees the seat immediately, which is what makes the light go out on shutdown', () => {
+test('a tool call from a second agent is granted, and both are counted', () => {
   const { agents } = clockFrom(1_000_000);
   agents.claim({ session: 'a', client: 'claude-code', intervalMs: 5000 });
 
-  const freed = agents.release('a');
-  assert.equal(freed?.client, 'claude-code');
-  assert.equal(agents.connected(), 0);
-  assert.equal(agents.claim({ session: 'b', client: 'codex' }).ok, true, 'the next agent can sit down at once');
+  assert.equal(agents.check({ session: 'b' }).ok, true);
+  assert.equal(agents.check({ session: 'a' }).ok, true);
+  assert.equal(agents.connected(), 2);
 });
 
-test('a bye from a session that does not hold the seat cannot evict the one that does', () => {
+test('a bye removes only the member that sent it', () => {
+  const { agents } = clockFrom(1_000_000);
+  agents.claim({ session: 'a', client: 'claude-code', intervalMs: 5000 });
+  agents.claim({ session: 'b', client: 'codex', intervalMs: 5000 });
+
+  const freed = agents.release('a');
+  assert.equal(freed?.client, 'claude-code');
+  assert.equal(agents.connected(), 1);
+  assert.equal(agents.lead()?.client, 'codex');
+});
+
+test('a bye from a session nobody knows changes nothing', () => {
   const { agents } = clockFrom(1_000_000);
   agents.claim({ session: 'a', client: 'claude-code', intervalMs: 5000 });
 
@@ -85,7 +159,17 @@ test('a killed agent expires on the TTL its own heartbeat interval implies', () 
 
   advance(1_000); // 13s: past 2.5 intervals
   assert.equal(agents.connected(), 0, 'a terminated agent stops reading as connected in about twelve seconds');
-  assert.equal(agents.holder(), null);
+  assert.equal(agents.lead(), null);
+});
+
+test('one member expiring does not take a live one with it', () => {
+  const { agents, advance } = clockFrom(1_000_000);
+  agents.claim({ session: 'fast', client: 'quick', intervalMs: 5000 });
+  agents.claim({ session: 'slow', client: 'patient' });
+
+  advance(13_000);
+  assert.equal(agents.connected(), 1);
+  assert.equal(agents.lead()?.session, 'slow');
 });
 
 test('a client that declares no interval keeps the old wide TTL rather than flapping', () => {
@@ -98,76 +182,110 @@ test('a client that declares no interval keeps the old wide TTL rather than flap
   assert.equal(agents.connected(), 0);
 });
 
-test('the sweep reports the drop exactly once, so the log gets one line', () => {
+test('the sweep reports each drop exactly once, so the log gets one line per agent', () => {
   const { agents, advance } = clockFrom(1_000_000);
   agents.claim({ session: 'a', client: 'claude-code', intervalMs: 5000 });
+  agents.claim({ session: 'b', client: 'codex', intervalMs: 5000 });
 
-  assert.equal(agents.sweep(), null, 'nothing to report while it is alive');
+  assert.deepEqual(agents.sweep(), [], 'nothing to report while they are alive');
   advance(13_000);
-  assert.equal(agents.sweep()?.client, 'claude-code');
-  assert.equal(agents.sweep(), null, 'the second sweep has nothing left to say');
-});
-
-test('an expired seat is free for the next agent without waiting for a sweep', () => {
-  const { agents, advance } = clockFrom(1_000_000);
-  agents.claim({ session: 'a', client: 'claude-code', intervalMs: 5000 });
-  advance(13_000);
-
-  const next = agents.claim({ session: 'b', client: 'codex', intervalMs: 5000 });
-  assert.equal(next.ok, true);
-  assert.equal(agents.holder()?.client, 'codex');
+  assert.deepEqual(
+    agents.sweep().map((m) => m.client).sort(),
+    ['claude-code', 'codex'],
+  );
+  assert.deepEqual(agents.sweep(), [], 'the second sweep has nothing left to say');
 });
 
 test('an agent-authored client name is capped and stripped of control characters', () => {
   const { agents } = clockFrom(1_000_000);
-  const claim = agents.claim({ session: 'a', client: 'x'.repeat(200) + '\ndrop table' });
+  const claim = agents.claim({ session: 'a', client: 'x'.repeat(200) + '\ndrop table' });
   assert.equal(claim.ok, true);
-  const name = claim.ok ? claim.seat.client : '';
+  const name = claim.ok ? claim.member.client : '';
   assert.equal(name.length, 48);
   assert.equal(/[\u0000-\u001f]/.test(name), false);
 });
 
-test('a re-hello from the holder may change its name but never the seat it holds', () => {
+test('a re-hello may change the name but never restarts the membership', () => {
   const { agents } = clockFrom(1_000_000);
   const first = agents.claim({ session: 'a', client: 'claude-code', intervalMs: 5000 });
-  const since = first.ok ? first.seat.since : '';
+  const since = first.ok ? first.member.since : '';
 
   const again = agents.claim({ session: 'a', client: 'claude-code v2', intervalMs: 5000 });
-  assert.equal(again.ok && again.seat.since, since, 'the session did not start again');
-  assert.equal(agents.holder()?.client, 'claude-code v2');
+  assert.equal(again.ok && again.member.since, since, 'the session did not start again');
+  assert.equal(agents.lead()?.client, 'claude-code v2');
 });
 
-// Eviction: the human replacing the agent from the window.
+test('a member records who spawned it, so the roster reads as a tree', () => {
+  const { agents } = clockFrom(1_000_000);
+  agents.claim({ session: 'lead', client: 'claude-code', intervalMs: 5000 });
+  const worker = agents.claim({
+    session: 'w1',
+    client: 'phosphor-worker',
+    role: 'analyst',
+    label: 'four hour',
+    parent: 'lead',
+    intervalMs: 5000,
+  });
+  assert.equal(worker.ok && worker.member.parent, 'lead');
+  assert.equal(worker.ok && worker.member.label, 'four hour');
+});
+
+test('ops are counted per member, so an attached-but-idle agent is visible as one', () => {
+  const { agents } = clockFrom(1_000_000);
+  agents.claim({ session: 'a', client: 'busy', intervalMs: 5000 });
+  agents.claim({ session: 'b', client: 'idle', intervalMs: 5000 });
+  agents.check({ session: 'a' });
+  agents.check({ session: 'a' });
+  agents.claim({ session: 'b', client: 'idle', intervalMs: 5000 }); // a heartbeat, not work
+
+  assert.equal(agents.member('a')?.ops, 2);
+  assert.equal(agents.member('b')?.ops, 0, 'heartbeats are not work');
+});
+
+// Eviction: the human replacing the agents from the window.
 //
-// Freeing the seat is the obvious half and it is not enough on its own. The evicted proxy
+// Clearing the roster is the obvious half and it is not enough on its own. An evicted proxy
 // heartbeats every five seconds and a terminal takes longer than that to start a shell, so a
-// seat that is merely free gets taken straight back by the agent that was just replaced.
-test('evict frees the seat and reports who was dropped', () => {
+// roster that is merely empty is refilled by the agent that was just replaced.
+test('evict with no argument clears the whole roster and reports everyone dropped', () => {
   const { agents } = clockFrom(1000);
   agents.claim({ session: 'old', client: 'claude-code', intervalMs: 5000 });
+  agents.claim({ session: 'w1', client: 'phosphor-worker', role: 'analyst', intervalMs: 5000 });
+
   const dropped = agents.evict();
-  assert.equal(dropped?.client, 'claude-code');
+  assert.deepEqual(dropped.map((m) => m.client).sort(), ['claude-code', 'phosphor-worker']);
   assert.equal(agents.connected(), 0);
-  assert.equal(agents.holder(), null);
+  assert.equal(agents.lead(), null);
 });
 
-test('an evicted session is refused even though the seat is now free', () => {
+test('evict can name one member and leave the rest working', () => {
+  const { agents } = clockFrom(1000);
+  agents.claim({ session: 'a', client: 'claude-code', intervalMs: 5000 });
+  agents.claim({ session: 'b', client: 'codex', intervalMs: 5000 });
+
+  const dropped = agents.evict('b');
+  assert.deepEqual(dropped.map((m) => m.client), ['codex']);
+  assert.equal(agents.connected(), 1);
+  assert.equal(agents.lead()?.client, 'claude-code');
+});
+
+test('an evicted session is refused even though there is now room', () => {
   const { agents } = clockFrom(1000);
   agents.claim({ session: 'old', client: 'claude-code', intervalMs: 5000 });
   agents.evict();
   const again = agents.claim({ session: 'old', client: 'claude-code', intervalMs: 5000 });
   assert.equal(again.ok, false);
   assert.equal(again.ok === false && again.revoked, true);
-  assert.equal(agents.connected(), 0, 'and it did not take the seat back');
+  assert.equal(agents.connected(), 0, 'and it did not rejoin');
 });
 
-test('the replacement gets the seat, and is not blocked by the eviction', () => {
+test('the replacement joins, and is not blocked by the eviction', () => {
   const { agents } = clockFrom(1000);
   agents.claim({ session: 'old', client: 'claude-code', intervalMs: 5000 });
   agents.evict();
   const fresh = agents.claim({ session: 'new', client: 'claude-code', intervalMs: 5000 });
   assert.equal(fresh.ok, true);
-  assert.equal(agents.holder()?.session, 'new');
+  assert.equal(agents.lead()?.session, 'new');
 });
 
 test('an ordinary op from an evicted session is refused too, not just a hello', () => {
@@ -192,16 +310,16 @@ test('a revoked session is forgiven once its window passes', () => {
   assert.equal(later.ok, true);
 });
 
-test('evicting an empty seat is not an error and still leaves it claimable', () => {
+test('evicting an empty roster is not an error and still leaves it joinable', () => {
   const { agents } = clockFrom(1000);
-  assert.equal(agents.evict(), null);
+  assert.deepEqual(agents.evict(), []);
   assert.equal(agents.claim({ session: 'new', client: 'x', intervalMs: 5000 }).ok, true);
 });
 
-test('a busy refusal is NOT marked revoked, because that one is worth retrying', () => {
-  // The proxy exits on `revoked` and reports a sentence on `busy`. Conflating them would have
-  // a second agent kill itself for arriving at a bad moment.
-  const { agents } = clockFrom(1000);
+test('a full roster is NOT marked revoked, because that one is worth waiting through', () => {
+  // The proxy exits on `revoked` and reports a sentence on anything else. Conflating them
+  // would have an agent kill itself for arriving while the app was busy.
+  const { agents } = clockFrom(1000, 1);
   agents.claim({ session: 'a', client: 'first', intervalMs: 5000 });
   const second = agents.claim({ session: 'b', client: 'second', intervalMs: 5000 });
   assert.equal(second.ok, false);

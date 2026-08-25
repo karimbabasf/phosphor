@@ -58,7 +58,7 @@ test('pan is capped back and allowed a little past the newest bar', () => {
 });
 
 test('the visible window includes a partially visible bar at either edge', () => {
-  const view = { product: 'BTC-USD', granularitySec: 60, barCount: 10.5, panOffset: 2.5, priceScale: { mode: 'auto' } as const };
+  const view = { provider: 'auto' as const, product: 'BTC-USD', granularitySec: 60, barCount: 10.5, panOffset: 2.5, priceScale: { mode: 'auto' } as const };
   const range = visibleRange(100, view);
   assert.equal(range.end, 98);
   assert.equal(range.start, 87);

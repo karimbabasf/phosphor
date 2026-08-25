@@ -449,6 +449,9 @@
      so the cover is standing before the browser paints this page for the first time. -->
 <script src="/transition.js" defer></script>
 <script src="/chart.js" defer></script>
+<!-- The colours, applied onto :root from the theme the server holds. After chart.js so
+     window.chartTheme is already defined when the first state frame lands. -->
+<script src="/theme.js" defer></script>
 <script src="/approvals.js" defer></script>
 <script src="/trade-overlay.js" defer></script>
 <!-- Before trade.js: exposes window.PhosphorPresence, driven from state and the SSE

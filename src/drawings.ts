@@ -20,6 +20,14 @@ export type Drawing = {
   kind: 'trendline' | 'zone';
   label: string;
   source: 'human' | 'agent';
+  // Which agent drew it, once there could be more than one. Null for a human, and null for an
+  // agent that never named itself. `clear('agent', session)` reads it, which is what lets one
+  // member of a team tidy up without deleting another's work.
+  by?: string | null;
+  // The instrument and timeframe it was anchored to. A zone between 63,000 and 64,000 is not a
+  // zone on Solana, and before this the store had no way to know which chart it belonged to.
+  product?: string;
+  granularitySec?: number;
   createdAt: number;
   line?: Line;
   zone?: { low: number; high: number };
@@ -30,7 +38,13 @@ export type DrawingStore = {
   get(id: string): Drawing | undefined;
   list(): Drawing[];
   remove(id: string): boolean;
-  clear(source?: 'human' | 'agent'): number;
+  // `source` alone clears every agent's work. Naming a session as well narrows it to that one
+  // agent's, which is the only clear a member of a team may safely make on its own.
+  clear(source?: 'human' | 'agent', by?: string | null): number;
+  // Drop every AGENT drawing anchored to something other than this product. Called by the
+  // chart when the instrument changes: a zone carried onto another market is not stale, it is
+  // wrong. The human's drawings are never swept, on the same rule the eviction above holds.
+  sweepForeign(product: string): number;
   count(): number;
 };
 
@@ -72,13 +86,26 @@ export function createDrawingStore(opts?: { max?: number; now?: () => number }):
     get: (id) => items.get(id),
     list: () => [...items.values()],
     remove: (id) => items.delete(id),
-    clear(source) {
+    clear(source, by) {
       let n = 0;
       for (const [id, d] of [...items.entries()]) {
-        if (source === undefined || d.source === source) {
-          items.delete(id);
-          n += 1;
-        }
+        if (source !== undefined && d.source !== source) continue;
+        if (by !== undefined && by !== null && d.by !== by) continue;
+        items.delete(id);
+        n += 1;
+      }
+      return n;
+    },
+    sweepForeign(product) {
+      let n = 0;
+      for (const [id, d] of [...items.entries()]) {
+        // An agent drawing with no product recorded predates this field. It is swept too: it
+        // was anchored to whatever was on screen when it was made, and that is the instrument
+        // being left.
+        if (d.source !== 'agent') continue;
+        if (d.product === product) continue;
+        items.delete(id);
+        n += 1;
       }
       return n;
     },

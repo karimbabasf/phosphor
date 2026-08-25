@@ -143,10 +143,21 @@ export function createProviders(deps: ProviderDeps) {
     return `${sec / 60}m`;
   };
 
-  /* The one function the store calls. Everything above is the routing behind it. */
-  async function fetchWindow(product: string, baseSec: number, bars: number): Promise<Candle[]> {
+  /* The one function the store calls. Everything above is the routing behind it.
+     `provider` is the venue the store keyed this series under, so the routing here has to
+     agree with it exactly: resolving the product freely and landing somewhere else would
+     write one venue's bars under another venue's key, which is the splice the store's own
+     keyOf comment exists to prevent. */
+  async function fetchWindow(product: string, baseSec: number, bars: number, provider: string): Promise<Candle[]> {
     const nowSec = Math.floor(now() / 1000);
-    const ref = deps.catalog.resolve(product);
+    const ref =
+      provider === 'coinbase' || provider === 'hyperliquid'
+        ? deps.catalog.resolveOn(product, provider)
+        : deps.catalog.resolve(product);
+
+    if (provider === 'coinbase' && ref === null) {
+      throw new Error(`coinbase does not list ${product}`);
+    }
 
     if (ref === null || ref.provider === 'hyperliquid') {
       const coin = product.split('-')[0]?.toUpperCase() ?? product;
