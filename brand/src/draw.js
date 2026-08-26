@@ -15,7 +15,9 @@ const DEFAULTS = {
   cutGap: 0.30,           // gap width, in stroke widths
   cutTopJoins: false,     // also break where the bowl leaves the stem at the top
   fg: '#000',
-  bg: '#fff',
+  bg: '#fff',             // null for no background, which knocks the mark out
+  outline: 0,             // outline width, in stroke widths. 0 draws none
+  outlineFg: '#000',
 };
 
 function drawMark(canvas, opts = {}) {
@@ -93,12 +95,19 @@ function drawMark(canvas, opts = {}) {
   const boxes = CFG.text.split('').map((_, i) => letterBox(i));
 
   // ---- pass 2: the real thing -------------------------------------------
+  // The mark is built on its own transparent layer, so a join can be cut out of
+  // it instead of painted over in the background colour. That is what lets the
+  // same geometry give a knocked-out mark and an outline that follows the real
+  // edge, gaps and all.
   const cx = canvas.getContext('2d');
   canvas.width = W; canvas.height = H;
-  setup(cx);
-  cx.fillStyle = CFG.bg; cx.fillRect(0, 0, W, H);
-  cx.fillStyle = CFG.fg;
-  cx.fillText(CFG.text, originX, baseline);
+
+  const ink = document.createElement('canvas');
+  ink.width = W; ink.height = H;
+  const ix = ink.getContext('2d');
+  setup(ix);
+  ix.fillStyle = '#000';
+  ix.fillText(CFG.text, originX, baseline);
 
   // Slashes. Both run at the zero's angle, so they read as one system rather
   // than two letters that happen to be crossed.
@@ -106,8 +115,8 @@ function drawMark(canvas, opts = {}) {
   const dl = Math.hypot(z.w, z.h);
   const ux = z.w / dl, uy = -z.h / dl;
 
-  cx.strokeStyle = CFG.fg;
-  cx.lineCap = 'butt';
+  ix.strokeStyle = '#000';
+  ix.lineCap = 'butt';
   for (const i of CFG.slashAt) {
     const box = boxes[i];
     // this letter's own stroke, off the row through its middle
@@ -128,11 +137,11 @@ function drawMark(canvas, opts = {}) {
       return last + st * CFG.slashOvershoot;
     };
     const rPos = edge(1), rNeg = edge(-1);
-    cx.lineWidth = st;
-    cx.beginPath();
-    cx.moveTo(ccx - ux * rNeg, ccy - uy * rNeg);
-    cx.lineTo(ccx + ux * rPos, ccy + uy * rPos);
-    cx.stroke();
+    ix.lineWidth = st;
+    ix.beginPath();
+    ix.moveTo(ccx - ux * rNeg, ccy - uy * rNeg);
+    ix.lineTo(ccx + ux * rPos, ccy + uy * rPos);
+    ix.stroke();
   }
 
   // Joins. A gap sits flush against the stem, so the stem stays whole and the
@@ -168,9 +177,46 @@ function drawMark(canvas, opts = {}) {
     if (CFG.cutTopJoins && bars[0]) barCut(stem[1] + 1, bars[0], true);
   }
 
-  cx.fillStyle = CFG.bg;
-  for (const c of cuts) cx.fillRect(c.x, c.y, c.w, c.h);
+  ix.globalCompositeOperation = 'destination-out';
+  for (const c of cuts) ix.fillRect(c.x, c.y, c.w, c.h);
+  ix.globalCompositeOperation = 'source-over';
 
-  return { W, H, stroke, gap, cuts: cuts.length, boxes,
+  // ---- compositing ------------------------------------------------------
+  const tint = (src, colour) => {
+    const t = document.createElement('canvas');
+    t.width = W; t.height = H;
+    const tx = t.getContext('2d');
+    tx.drawImage(src, 0, 0);
+    tx.globalCompositeOperation = 'source-in';
+    tx.fillStyle = colour; tx.fillRect(0, 0, W, H);
+    return t;
+  };
+
+  // The outline is the mark's own shape grown outwards, so it follows the
+  // slashes and the cut joins instead of the plain glyph. It has a ceiling: an
+  // outline wider than half a gap meets itself across the gap and closes it.
+  let outlineW = 0;
+  if (CFG.outline > 0) {
+    outlineW = Math.max(1, Math.min(Math.round(stroke * CFG.outline), Math.floor((gap - 2) / 2)));
+    const grown = document.createElement('canvas');
+    grown.width = W; grown.height = H;
+    const gx = grown.getContext('2d');
+    const steps = Math.max(64, Math.ceil(outlineW * 8));
+    for (let k = 0; k < steps; k++) {
+      const a = (k / steps) * Math.PI * 2;
+      gx.drawImage(ink, Math.cos(a) * outlineW, Math.sin(a) * outlineW);
+    }
+    gx.drawImage(ink, 0, 0);
+    cx.drawImage(tint(grown, CFG.outlineFg), 0, 0);
+  }
+
+  if (CFG.bg) {
+    cx.globalCompositeOperation = 'destination-over';
+    cx.fillStyle = CFG.bg; cx.fillRect(0, 0, W, H);
+    cx.globalCompositeOperation = 'source-over';
+  }
+  cx.drawImage(tint(ink, CFG.fg), 0, 0);
+
+  return { W, H, stroke, gap, cuts: cuts.length, boxes, outlineW,
            slashAngle: Math.round(Math.atan2(z.h, z.w) * 180 / Math.PI) };
 }

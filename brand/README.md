@@ -5,9 +5,11 @@ The official Phosphor wordmark, and the script that draws it.
 - `phosphor-wordmark.png` (3949 x 1088), the logo.
 - `phosphor-headquarters.png` (3508 x 2480), the same mark with a "headquarters" line under it,
   laid out on A4 landscape at 300 dpi. Prints at 297 x 210 mm with a 24 mm side margin.
+- `phosphor-wordmark-white-outline.png` (3949 x 1088), white `#fff` letters with a black `#000`
+  outline and no background, for laying the mark over a photo or a colour.
 
-Both are black `#000` on white `#fff`. The app runs green on near-black; these are the inverted
-mark, for light and print contexts.
+The first two are black `#000` on white `#fff`. The app runs green on near-black; these are the
+inverted mark, for light and print contexts.
 
 ## What the mark is
 
@@ -35,6 +37,7 @@ Needs a local Brave and `playwright-core`. Both come from the machine, not from 
 
     node build.mjs mark.html ../phosphor-wordmark.png
     node build.mjs hq.html ../phosphor-headquarters.png
+    node build.mjs mark-outline.html ../phosphor-wordmark-white-outline.png
 
 `build.mjs` writes the PNG and prints the geometry it measured.
 
@@ -44,5 +47,14 @@ There is no test suite. Check it by eye against these numbers, which `build.mjs`
 
     wordmark      W 3949  H 1088  stroke 91  gap 31  cuts 7  slashAngle 56
     headquarters  page 3508x2480  markSize 614  cap 437  subPx 166  marginSide 281
+    outline       same as wordmark, plus outlineW 12
 
 A changed `stroke` or `slashAngle` means the font failed to load and a fallback face was used.
+
+## The outline
+
+`outline` is a width in stroke widths, and `draw.js` grows the finished shape by that much, so the
+line follows the slashes and the cut joins rather than the plain glyph. It has a ceiling of half a
+gap minus a pixel: any wider and the outline meets itself across a join and closes the gap that the
+join is there to make. At the sizes above that ceiling is 14 px, and `outline: 0.13` asks for 12.
+`build.mjs` prints the `outlineW` it actually used, so a silent clamp shows up in the numbers.
