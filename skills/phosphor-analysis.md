@@ -9,6 +9,11 @@ they can see the chart.
 invalidation priced, was the reader able to act inside ten seconds.** Everything below serves
 those three.
 
+**Routing.** One product named, one question about it: here. No product named, several at
+once, or the words find, scan, hunt, watchlist, what is setting up: `phosphor-hunt`, which owns
+the funnel that picks what comes back here, and the standing rule that a research session
+proposes nothing and never offers to.
+
 The domain knowledge behind this skill is `~/Developer/Obsidian/Karim/Claude/Notes/crypto-trading-mastery-map.md`.
 Read it when a question goes past price structure into derivatives mechanics, onchain or macro.
 

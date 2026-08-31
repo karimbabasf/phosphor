@@ -29,6 +29,7 @@ Two steps, so the cost lands only where it is used.
 | Skill | For |
 |---|---|
 | `phosphor-analysis` | Reading a market and finding an opportunity, or establishing there is not one. Effort tiers, a fixed timeframe ladder, a numeric no-trade gate, the output contract, and the parameter defaults that are traps. |
+| `phosphor-hunt` | Hunting across markets when no product was named, on a stated risk and horizon. A funnel that kills candidates at every stage, a ranked board as the output, and the standing rule that a research session proposes nothing and never offers to. |
 
 ## What a skill is not
 
