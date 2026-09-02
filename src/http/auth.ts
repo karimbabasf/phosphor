@@ -1,9 +1,11 @@
 // The whole authorisation surface: the per-boot approval token, and the two request predicates
 // every mutating route checks before it does anything.
 //
-// KNOWN HOLE, do not read this file as a boundary. GET /api/session hands the token to ANY
-// unauthenticated caller on loopback, and sameOrigin() deliberately allows an absent Origin
-// header so curl and the e2e script work. So the whole path is open to anything with a shell:
+// KNOWN HOLE, do not read this file as a boundary. The server header used to claim the agent
+// "has no path to its own approval: no token, no route". That is false and was the most
+// misleading text in the repo. GET /api/session hands the token to ANY unauthenticated caller
+// on loopback, and sameOrigin() deliberately allows an absent Origin header so curl and the
+// e2e script work. So the whole path is open to anything with a shell:
 //   GET  /api/session                        -> token, no auth
 //   POST /api/approve  {id, token} no Origin -> 400 "unknown proposal" (auth CLEARED)
 //   POST /api/approve  with a wrong token    -> 403 "invalid approval token"
