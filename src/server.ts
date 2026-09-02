@@ -27,6 +27,8 @@ import { createHistory } from './history.ts';
 import { BASIC_EVENT_SCAN, PROJECT_DIR } from './http/context.ts';
 import type { Ctx, GasFill, PriceCache, ServerDeps, PhosphorServer } from './http/context.ts';
 import { HOST, windowToken } from './http/auth.ts';
+import { createKeystore } from './keystore/index.ts';
+import { createSession } from './keystore/session.ts';
 import { createSseHub } from './http/sse.ts';
 import { createChatRegistry } from './http/chats.ts';
 import { loadCandles, startPricePolling } from './http/chart.ts';
@@ -149,6 +151,21 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   const prices: PriceCache = { coins: readCoins(cfg.dataDir), readings: [] };
   prices.readings = prices.coins.map(() => null);
 
+  /* The keys and the clock over them. main.ts passes the keystore it installed as the process
+     keystore, so the app has exactly one; a test that passes none gets one over its own temp
+     keysPath, which reads that path and writes nothing until a wallet route is called. */
+  const keystore = deps.keystore ?? createKeystore({ keysPath: cfg.keysPath });
+  const session = createSession({
+    isUnlocked: () => keystore.isUnlocked(),
+    lock: (reason) => {
+      keystore.lock();
+      audit.append('app_start', reason === 'sleep' ? 'the wallet locked: this machine was asleep' : 'the wallet locked after fifteen minutes with nobody at the window', { reason });
+      sse.broadcastLock(keystore.state());
+      broadcastState();
+    },
+  });
+  session.start();
+
   /* Everything the handlers read, in one object. It is assembled here rather than passed around
      as a dozen arguments because src/server.ts used to be one closure over these bindings, and
      the split turned each read into a field. `history` and `crew` close over `ctx` itself and
@@ -156,6 +173,9 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   const ctx: Ctx = {
     ...deps,
     token,
+    keystore,
+    session,
+    releaseQueued: () => deps.proposals.releaseQueued(),
     theme: { get: getTheme, set: setTheme },
     sse,
     chats,
@@ -193,6 +213,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
 
   base.on('close', () => {
     sse.stop();
+    session.stop();
     clearInterval(priceTimer);
     chats.stopAll();
   });

@@ -215,6 +215,7 @@ async function boot(opts: { yieldView?: YieldView | null } = {}): Promise<Harnes
       get: () => undefined,
       list: () => [],
       sessionSpentUsd: () => 0,
+      releaseQueued: async () => 0,
     },
     getPolicy: () => defaultPolicy(),
     setKill: () => {},

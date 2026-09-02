@@ -130,6 +130,7 @@ async function boot(opts: { view?: ViewMode; proposals?: Proposal[] } = {}): Pro
       get: (id: string) => list.find((p) => p.id === id),
       list: () => list,
       sessionSpentUsd: () => 0,
+      releaseQueued: async () => 0,
     },
     getPolicy: () => defaultPolicy(),
     setKill: () => {},

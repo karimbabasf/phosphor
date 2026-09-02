@@ -116,6 +116,7 @@ async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
       get: () => undefined,
       list: () => [],
       sessionSpentUsd: () => 0,
+      releaseQueued: async () => 0,
     },
     getPolicy: () => defaultPolicy(),
     setKill: () => {},

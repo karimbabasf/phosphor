@@ -100,10 +100,15 @@ export function keystorePathFor(keysPath: string): string {
 /* tmp-then-rename with the tmp file's contents forced to disk first, so a crash leaves either
    the old file or the new one and never half of one. Track B is adding src/fsatomic.ts with
    the same shape for the app's other seven writers; this stays here because a key file must
-   not wait on another track to be written safely. */
-function writeSecret(target: string, body: string): void {
-  fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
-  fs.chmodSync(path.dirname(target), 0o700);
+   not wait on another track to be written safely.
+   `ownDir` is false for an export, which lands wherever the person chose. Tightening the mode
+   of the app's own key directory is right; tightening the mode of somebody's Documents folder
+   is not ours to do, and on a shared temp directory it is not even permitted. */
+function writeSecret(target: string, body: string, ownDir = true): void {
+  if (ownDir) {
+    fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+    fs.chmodSync(path.dirname(target), 0o700);
+  }
   const tmp = `${target}.${process.pid}.tmp`;
   const fd = fs.openSync(tmp, 'w', 0o600);
   try {
@@ -349,7 +354,7 @@ export function createKeystore(opts: { keysPath: string; now?: () => number; kdf
     try {
       const body = Buffer.from(JSON.stringify(payload), 'utf8');
       const out = { header, wrap: seal(dataKey, kek, aad), payload: seal(body, dataKey, aad) };
-      writeSecret(target, JSON.stringify(out, null, 2) + '\n');
+      writeSecret(target, JSON.stringify(out, null, 2) + '\n', false);
       wipe(body);
     } finally {
       wipe(dataKey, kek);

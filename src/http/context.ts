@@ -33,6 +33,8 @@ import type { DrawingStore } from '../drawings.ts';
 import type { Board } from '../board.ts';
 import type { Crew } from '../crew.ts';
 import type { DuplicateGuard } from '../duplicates.ts';
+import type { Keystore, LockState } from '../keystore/index.ts';
+import type { Session } from '../keystore/session.ts';
 import type { createHistory } from '../history.ts';
 import type { JsonBody } from './respond.ts';
 
@@ -170,6 +172,11 @@ export type ServerDeps = {
   getTheme?: () => Theme;
   setTheme?: (theme: Theme) => void;
   trade: TradeService;
+  /* The keys and the lock over them. Optional so a test can stand a server up without one;
+     createServer then builds a keystore over cfg.keysPath, which reads that path and writes
+     nothing until a wallet route is called. src/main.ts always passes the one it installed as
+     the process keystore, so the app has exactly one. */
+  keystore?: Keystore;
   /* Start the in-app agent when the port opens. OPT IN, and deliberately not read from cfg
      here: every test in this repo builds a server and listens on it, and a flag that defaulted
      to on would have each of them spawn a real Claude Code process. main.ts is the one caller
@@ -223,6 +230,7 @@ export type SseHub = {
   broadcastTrade(): void;
   broadcastActivity(): void;
   broadcastCandles(): void;
+  broadcastLock(state: LockState): void;
   open(req: http.IncomingMessage, res: http.ServerResponse): void;
   stop(): void;
 };
@@ -255,8 +263,15 @@ export type GasFill = { cache: GasCache; filling: boolean };
 
 /* ServerDeps minus the optional theme pair, because `theme` below is the resolved one and a
    handler reading ctx.getTheme() would crash on the install that did not pass it. */
-export type Ctx = Omit<ServerDeps, 'getTheme' | 'setTheme'> & {
+export type Ctx = Omit<ServerDeps, 'getTheme' | 'setTheme' | 'keystore'> & {
   token: string;
+  keystore: Keystore;
+  // The idle clock and the signing sessions. See src/keystore/session.ts.
+  session: Session;
+  /* Re-decide everything an agent proposed while the wallet was locked. Wired by the server
+     rather than imported, because the proposal service is what knows how to land a proposal
+     and the HTTP layer only knows when to ask. Returns how many were released. */
+  releaseQueued: () => Promise<number>;
   theme: ThemeSlot;
   sse: SseHub;
   chats: ChatRegistry;

@@ -147,6 +147,7 @@ export async function bootDriverServer(opts: BootOptions = {}): Promise<Booted> 
       get: () => undefined,
       list: () => [],
       sessionSpentUsd: () => 0,
+      releaseQueued: async () => 0,
     },
     getPolicy: () => defaultPolicy(),
     setKill: () => {},

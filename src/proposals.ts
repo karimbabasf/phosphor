@@ -21,11 +21,12 @@ import {
   createSerialiser,
   NO_RAILS,
   refuse,
+  releaseQueued,
   sessionSpentUsd,
   stableSymbols,
 } from './proposals/lifecycle.ts';
 import type { PCtx, ProposalDeps } from './proposals/lifecycle.ts';
-import { executeApproved } from './proposals/execute.ts';
+import { executeApproved, land } from './proposals/execute.ts';
 import { proposeConsolidate, proposePolicyChange } from './proposals/draft.ts';
 import { proposeHlDeposit, proposeIntentsDeposit, proposeIntentsWithdraw, proposeSwap } from './proposals/rails.ts';
 import {
@@ -48,6 +49,7 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     stables: stableSymbols(deps.riskRows),
     notify: () => deps.onChange?.(),
     execute: (p: Proposal) => executeApproved(ctx, p),
+    land: (p: Proposal) => land(ctx, p),
   };
 
   const serialise = createSerialiser();
@@ -68,6 +70,9 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     // auto-approval must not be able to double-spend the cap either.
     approve: (id: string) => serialise(() => approve(ctx, id)),
     refuse: (id: string) => refuse(ctx, id),
+    // Shares the queue for the same reason approve does: releasing several proposals at once
+    // is several things that may execute, and the daily cap has to see them one at a time.
+    releaseQueued: () => serialise(() => releaseQueued(ctx)),
     get: (id: string) => deps.store.get(id),
     list: () => deps.store.list(),
     sessionSpentUsd: () => sessionSpentUsd(ctx),
