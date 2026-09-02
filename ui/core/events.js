@@ -13,6 +13,47 @@
   var seenOpen = false;
   var retryAt = 0;
 
+  /* The server sends a state frame every fifteen seconds whether or not anything
+     moved, so silence is information. A killed backend does not always give the
+     browser an error: the socket can sit open-but-dead and EventSource stays
+     quiet, which looks exactly like a stream with nothing to report. Waiting for
+     two heartbeats and then saying so is the difference between a window that
+     knows the app is gone and one showing numbers from ten minutes ago.
+
+     Silence also means this socket is not delivering, whatever the browser
+     thinks of it, so the stream is torn down and reopened rather than waited on.
+     Without that a backend that comes back finds a window still holding a dead
+     EventSource, and the banner never clears.
+
+     This does not decide the app is down. It moves the connection to `stale`,
+     which is what starts the health poll, and the poll finds out. */
+  var HEARTBEAT_MS = 15000;
+  var SILENCE_MS = HEARTBEAT_MS * 2;
+  var lastFrameAt = 0;
+  var watchdog = 0;
+
+  function heard() {
+    lastFrameAt = Date.now();
+    if (connection === 'stale') setConnection('live');
+  }
+
+  function watch() {
+    if (watchdog) return;
+    watchdog = window.setInterval(function () {
+      if (source === null) return;
+      if (connection !== 'live') return;
+      if (Date.now() - lastFrameAt < SILENCE_MS) return;
+      setConnection('stale');
+      /* Replace the socket. onopen sets the connection back to live and, having
+         seen one open already, emits reattach so the window refetches what it
+         missed. */
+      source.close();
+      source = null;
+      lastFrameAt = Date.now();
+      start();
+    }, 5000);
+  }
+
   function on(type, handler) {
     if (!listeners[type]) listeners[type] = [];
     listeners[type].push(handler);
@@ -65,11 +106,14 @@
     source.onopen = function () {
       var wasDown = seenOpen && connection !== 'live';
       seenOpen = true;
+      lastFrameAt = Date.now();
       setConnection('live');
+      watch();
       if (wasDown) emit('reattach', null);
     };
 
     source.onmessage = function (event) {
+      heard();
       var frame = null;
       try {
         frame = JSON.parse(event.data);

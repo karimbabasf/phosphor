@@ -160,16 +160,10 @@
 
   function wireStream() {
     events.onConnection(function (connection) {
-      var offline = connection === 'offline' || connection === 'reconnecting';
+      var offline = connection === 'offline' || connection === 'reconnecting' || connection === 'stale';
       dom.setHidden(refs.offline, !offline);
-      if (refs.offline) {
-        dom.setText(
-          refs.offline.querySelector('[data-role="offline-text"]'),
-          connection === 'offline'
-            ? 'The app stopped answering. What you see here is the last thing it said.'
-            : 'Reconnecting to the app.'
-        );
-      }
+      if (offline) startHealthPoll(connection);
+      else stopHealthPoll();
       if (refs.feedChip) {
         dom.setAttr(refs.feedChip, 'data-tone', connection === 'live' ? 'up' : 'warn');
         dom.setText(refs.feedChip.querySelector('[data-role="feed-text"]'),
@@ -188,6 +182,49 @@
     events.start();
   }
 
+  /* The health poll. It runs ONLY while the stream is down: a window with a live
+     stream is already being told everything, and a poll beside it would be a
+     second, slower answer to a question already settled. Ten seconds is slow
+     enough to be free and fast enough that a person who restarts the backend
+     sees the banner clear before they reach for the reload.
+
+     What it buys is the difference between "the app is not answering" and "the
+     app is answering and something in it is broken", which is `lastError`. */
+  var healthTimer = 0;
+
+  function startHealthPoll(connection) {
+    sayOffline(connection, null);
+    if (healthTimer) return;
+    healthTimer = window.setInterval(pollHealth, 10000);
+    pollHealth();
+  }
+
+  function stopHealthPoll() {
+    if (!healthTimer) return;
+    window.clearInterval(healthTimer);
+    healthTimer = 0;
+  }
+
+  function pollHealth() {
+    api.health()
+      .then(function (result) {
+        var health = result.data || {};
+        sayOffline('reconnecting', health.lastError || null);
+      })
+      .catch(function () {
+        sayOffline('offline', null);
+      });
+  }
+
+  function sayOffline(connection, lastError) {
+    if (!refs.offline) return;
+    var text = connection === 'reconnecting'
+      ? 'Reconnecting to the app.'
+      : 'The app stopped answering. What you see here is the last thing it said.';
+    if (lastError) text += ' It last reported: ' + lastError;
+    dom.setText(refs.offline.querySelector('[data-role="offline-text"]'), text);
+  }
+
   function refresh(options) {
     var opts = options || {};
     return api.state(opts.first ? { busy: 'state', label: 'Checking your money' } : {})
@@ -195,7 +232,6 @@
         if (!result.fresh && store.loaded()) return;
         var payload = result.data;
         if (fixtures.active) payload = fixtures.applyToState(payload);
-        api.learn(payload);
         store.put(payload);
       })
       .catch(function (err) {
