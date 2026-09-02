@@ -164,6 +164,7 @@
     dom.clear(refs.card);
     if (next.kind === 'ask') buildAsk(next);
     else if (next.kind === 'receipt') buildReceipt(next.receipt);
+    else if (next.kind === 'card') next.build(refs.card, close);
     dom.setHidden(refs.overlay, false);
     window.PhosphorShell.updateField();
     var focusable = refs.card.querySelector('button');
@@ -365,9 +366,16 @@
     open({ kind: 'receipt', receipt: receipt });
   }
 
+  /* The same slot, filled by a caller. A pending ask still outranks it: render()
+     puts the decision back the moment this closes. */
+  function showCard(build) {
+    open({ kind: 'card', build: build });
+  }
+
   window.PhosphorDecision = {
     boot: boot,
     showReceipt: showReceipt,
+    showCard: showCard,
     close: close,
     diffOf: diffOf,
     refineDiff: refineDiff,

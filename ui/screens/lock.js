@@ -92,12 +92,10 @@
       window.PhosphorShell.setPending(unlock, true, 'Unlocking');
       api.unlock(password)
         .then(function (answer) {
-          if (answer && answer.missing) {
-            fail(error, 'This app cannot unlock yet. The unlock route is not built on this branch.');
-            return;
-          }
           if (answer && answer.ok === false) {
-            fail(error, reason(answer.error));
+            fail(error, reason(answer.error, answer.retryInSec));
+            /* The field is cleared on a refusal and kept on a success, because
+               a wrong password is retyped and a right one is finished with. */
             input.value = '';
             input.focus();
             return;
@@ -120,10 +118,16 @@
     input.focus();
   }
 
-  function reason(code) {
+  function reason(code, retryInSec) {
     if (code === 'wrong_password') return 'That password is wrong.';
-    if (code === 'locked_out') return 'Too many tries. Wait thirty seconds and try again.';
+    if (code === 'locked_out') {
+      var wait = typeof retryInSec === 'number' && retryInSec > 0
+        ? 'Wait ' + retryInSec + (retryInSec === 1 ? ' second' : ' seconds')
+        : 'Wait a moment';
+      return 'Too many tries. ' + wait + ' and try again.';
+    }
     if (code === 'no_wallet') return 'There is no wallet on this computer yet.';
+    if (code === 'damaged') return 'The key file on this computer cannot be read. Your recovery words will bring the wallet back.';
     return 'That did not work.';
   }
 
@@ -192,8 +196,8 @@
       window.PhosphorShell.setPending(go, true, 'Encrypting your keys');
       api.walletMigrate(first.value)
         .then(function (answer) {
-          if (answer && answer.missing) {
-            fail(error, 'This app cannot encrypt yet. The migration route is not built on this branch.');
+          if (answer && answer.ok === false) {
+            fail(error, reason(answer.error));
             return;
           }
           buildMigrateDone(answer);

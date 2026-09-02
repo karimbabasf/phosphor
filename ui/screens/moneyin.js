@@ -8,6 +8,7 @@
   'use strict';
 
   var dom = window.PhosphorDom;
+  var net = window.PhosphorNet;
   var api = window.PhosphorApi;
   var fixtures = window.PhosphorFixtures;
 
@@ -65,6 +66,121 @@
       caution.dataset.tone = 'warn';
       caution.appendChild(dom.el('span', '', 'Money sent to the wrong chain is gone. This is not something anyone can undo.'));
       host.appendChild(caution);
+
+      /* The keys live on this surface because this is the wallet surface: the
+         addresses money arrives at, and the words that are the only way back to
+         them. Both are behind the password, every time, with no session that
+         remembers you just typed it. */
+      host.appendChild(keysBlock());
+    });
+  }
+
+  /* ---------- your keys ---------- */
+
+  function keysBlock() {
+    var wrap = dom.el('section', 'keys-block');
+    wrap.appendChild(dom.el('p', 'title-sm', 'Your keys'));
+    wrap.appendChild(dom.el('p', 'meta', 'Your recovery words are the only way back to this wallet. Anyone who has them has your money.'));
+
+    var row = dom.el('div', 'hstack-2 wrap');
+    var words = dom.el('button', 'btn btn-ghost');
+    words.type = 'button';
+    words.appendChild(dom.el('span', 'btn-label', 'Show my recovery words'));
+    var backup = dom.el('button', 'btn btn-ghost');
+    backup.type = 'button';
+    backup.appendChild(dom.el('span', 'btn-label', 'Save an encrypted backup'));
+    row.appendChild(words);
+    row.appendChild(backup);
+    wrap.appendChild(row);
+
+    dom.on(words, 'click', function () { askPassword('mnemonic'); });
+    dom.on(backup, 'click', function () { askExport(); });
+    return wrap;
+  }
+
+  /* The password is asked for at the moment of the reveal and held nowhere.
+     A control that reveals a key on one click, because you typed a password ten
+     minutes ago, is a key an unattended window hands out. */
+  function askPassword(what) {
+    window.PhosphorPassword.ask({
+      title: what === 'keys' ? 'Show your private keys' : 'Show your recovery words',
+      body: 'Type your password. The words are shown once and are not saved anywhere by this app.',
+      confirm: 'Show them'
+    }).then(function (password) {
+      if (!password) return;
+      return api.revealStart(password, what).then(function (answer) {
+        if (answer && answer.ok === false) throw new Error(revealProblem(answer.error));
+        return api.revealFetch(answer.nonce);
+      }).then(function (material) {
+        showMaterial(what, material);
+      });
+    }).catch(function (err) {
+      window.PhosphorToast.show(net.readable(err), 'down');
+    });
+  }
+
+  function revealProblem(code) {
+    if (code === 'wrong_password') return 'That password is wrong.';
+    if (code === 'no_mnemonic') return 'This wallet was brought in as raw keys, so it has no recovery words.';
+    if (code === 'no_wallet') return 'There is no wallet on this computer.';
+    return 'That did not work.';
+  }
+
+  function showMaterial(what, material) {
+    window.PhosphorDecision.showCard(function (host, close) {
+      dom.clear(host);
+      host.appendChild(dom.el('p', 'label', 'On this screen only'));
+      host.appendChild(dom.el('h2', 'title', what === 'keys' ? 'Your private keys' : 'Your recovery words'));
+
+      var warn = dom.el('div', 'banner');
+      warn.dataset.tone = 'down';
+      warn.appendChild(dom.el('span', '', 'Anyone who reads these can take your money. Nobody from this app will ever ask you for them.'));
+      host.appendChild(warn);
+
+      if (what === 'mnemonic' && Array.isArray(material.mnemonic)) {
+        var grid = dom.el('ol', 'words');
+        for (var i = 0; i < material.mnemonic.length; i += 1) {
+          var item = dom.el('li', 'word');
+          item.appendChild(dom.el('span', 'meta mono', String(i + 1)));
+          item.appendChild(dom.el('span', 'body mono', material.mnemonic[i]));
+          grid.appendChild(item);
+        }
+        host.appendChild(grid);
+      } else if (material.keys) {
+        var list = dom.el('div', 'stack-2');
+        ['evm', 'solana', 'near'].forEach(function (rail) {
+          if (!material.keys[rail]) return;
+          list.appendChild(dom.el('p', 'label', rail === 'evm' ? 'Ethereum, Base and Arbitrum' : (rail === 'solana' ? 'Solana' : 'NEAR')));
+          list.appendChild(dom.el('p', 'addr', material.keys[rail]));
+        });
+        host.appendChild(list);
+      }
+
+      var actions = dom.el('div', 'screen-actions');
+      var done = dom.el('button', 'btn btn-primary');
+      done.appendChild(dom.el('span', 'btn-label', 'Done'));
+      actions.appendChild(done);
+      host.appendChild(actions);
+      dom.on(done, 'click', close);
+    });
+  }
+
+  function askExport() {
+    window.PhosphorPassword.ask({
+      title: 'Save an encrypted backup',
+      body: 'Type your password. The file is encrypted with it, so the copy is only as safe as the password is.',
+      confirm: 'Save it',
+      extra: { label: 'Where to save it', placeholder: '/Users/you/phosphor-backup.json' }
+    }).then(function (password, where) {
+      if (!password) return;
+      var target = window.PhosphorPassword.extraValue();
+      if (!target) throw new Error('Say where to save it.');
+      return api.walletExport(password, target).then(function (answer) {
+        if (answer && answer.ok === false) throw new Error(revealProblem(answer.error));
+        window.PhosphorToast.show('Backup written to ' + target + '.');
+      });
+    }).catch(function (err) {
+      window.PhosphorToast.show(net.readable(err), 'down');
     });
   }
 
@@ -108,9 +224,12 @@
     return card;
   }
 
-  /* Light modules on the window's own ground, so a QR does not punch a white
-     rectangle into a dark app. The quiet zone is four modules, which is what
-     a reader needs to find the code's edge. */
+  /* Dark modules on a light quiet zone, which is the way round the QR standard
+     specifies. An inverted code reads fine on a modern phone and is rejected by
+     plenty of older scanners, and the thing on the other side of this code is
+     an address money is sent to: a code that some camera cannot read is worth
+     more than a white tile is worth avoiding. The quiet zone is four modules,
+     which is what a reader needs to find the code's edge. */
   function drawQr(canvas, text) {
     if (typeof window.qrcode !== 'function' || !text) {
       canvas.remove();
@@ -139,14 +258,10 @@
     canvas.style.height = size + 'px';
 
     var ctx = canvas.getContext('2d');
-    var styles = getComputedStyle(document.documentElement);
-    var ground = (styles.getPropertyValue('--bg-1') || '#0F1013').trim();
-    var ink = (styles.getPropertyValue('--text') || '#EDEEF0').trim();
-
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = ground;
+    ctx.fillStyle = '#FFFFFF';
     ctx.fillRect(0, 0, size, size);
-    ctx.fillStyle = ink;
+    ctx.fillStyle = '#000000';
     for (var row = 0; row < count; row += 1) {
       for (var col = 0; col < count; col += 1) {
         if (!code.isDark(row, col)) continue;

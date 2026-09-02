@@ -270,8 +270,30 @@ export async function handleRevealStart(ctx: Ctx, req: http.IncomingMessage, res
   sendJson(res, 200, { ok: true, nonce, expiresInSec: REVEAL_TTL_MS / 1000 });
 }
 
+/* A browser does not send Origin on a same-origin GET, so sameOrigin() can never pass here and
+   this route was unreachable from the window it exists for. It is checked with the fetch
+   metadata headers instead, which is what they are for:
+
+     Sec-Fetch-Site: same-origin   the request came from this app's own page
+     Sec-Fetch-Mode: not navigate  it is a fetch, not a tab opened at this URL
+
+   The second half is the one that matters. A cross-site fetch cannot read this response anyway,
+   because nothing here sends CORS headers, so the material cannot reach an attacker's script.
+   What it CAN do is open the URL as a top-level navigation and render the JSON in a tab, and
+   that is what refusing `navigate` closes. A matching Origin is still accepted, so a caller that
+   does send one keeps working.
+
+   The nonce remains the credential: 32 random bytes, spent on sight, and dead in sixty seconds. */
+function revealSameOrigin(req: http.IncomingMessage): boolean {
+  if (sameOrigin(req)) return true;
+  const site = req.headers['sec-fetch-site'];
+  const mode = req.headers['sec-fetch-mode'];
+  if (site !== 'same-origin') return false;
+  return mode !== 'navigate';
+}
+
 export function handleRevealFetch(ctx: Ctx, nonce: string, req: http.IncomingMessage, res: http.ServerResponse): void {
-  if (!sameOrigin(req)) return fail(res, 403, 'cross-origin request');
+  if (!revealSameOrigin(req)) return fail(res, 403, 'cross-origin request');
   const held = pending.get(nonce);
   // Spent on sight, before anything can go wrong further down: a nonce that survives a failed
   // read is a nonce that can be retried.

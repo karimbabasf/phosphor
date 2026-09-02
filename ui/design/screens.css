@@ -76,15 +76,33 @@
   background: var(--bg-1);
 }
 
+ /* A white tile in a dark app, on purpose: see the note in moneyin.js. The
+   padding is the QR's own quiet zone carried into the layout so the code is
+   never flush against a dark edge. */
 .qr {
   flex: 0 0 auto;
   border-radius: var(--radius-sm);
   overflow: hidden;
   line-height: 0;
+  background: #FFFFFF;
+  padding: var(--s-1);
 }
 
 @media (max-width: 560px) {
   .receive-card { flex-direction: column-reverse; }
+}
+
+/* The keys sit on the wallet surface, set apart from the addresses above them
+   because one is where money arrives and the other is the wallet itself. */
+.keys-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-4);
+  margin-top: var(--s-2);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line-strong);
+  background: var(--bg-2);
 }
 
 /* ---------- limits ---------- */

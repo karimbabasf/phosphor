@@ -21,8 +21,8 @@
     build(host);
     mounted = true;
     store.subscribe(render);
-    window.PhosphorActivity.onChange(function () {
-      if (refs.activityBody) window.PhosphorActivity.render(refs.activityBody, { limit: 8 });
+    window.PhosphorReceipts.onChange(function () {
+      if (refs.activityBody) window.PhosphorReceipts.render(refs.activityBody, { limit: 8 });
     });
   }
 
@@ -144,8 +144,8 @@
       window.PhosphorMoneyIn.render(moneyIn.body);
     });
     activity.onOpen(function () {
-      window.PhosphorActivity.load();
-      window.PhosphorActivity.render(activity.body, { limit: 8 });
+      window.PhosphorReceipts.load();
+      window.PhosphorReceipts.render(activity.body, { limit: 8 });
     });
   }
 
@@ -257,7 +257,7 @@
     if (earning) renderEarning(earning);
 
     if (refs.activity.node.dataset.open === 'true') {
-      window.PhosphorActivity.render(refs.activityBody, { limit: 8 });
+      window.PhosphorReceipts.render(refs.activityBody, { limit: 8 });
     }
   }
 

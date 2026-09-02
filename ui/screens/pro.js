@@ -35,9 +35,9 @@
     build(host);
     mounted = true;
     store.subscribe(render);
-    window.PhosphorActivity.onChange(function () {
+    window.PhosphorReceipts.onChange(function () {
       if (refs.activityBody) {
-        window.PhosphorActivity.render(refs.activityBody, { limit: 12 });
+        window.PhosphorReceipts.render(refs.activityBody, { limit: 12 });
         renderFeeTotal();
       }
     });
@@ -119,7 +119,7 @@
     };
 
     window.PhosphorAgent.mount(assistantBody);
-    window.PhosphorActivity.load();
+    window.PhosphorReceipts.load();
   }
 
   function panel(title, span) {
@@ -355,7 +355,7 @@
 
   function renderFeeTotal() {
     if (!refs.feeValue) return;
-    var total = window.PhosphorActivity.feeTotal();
+    var total = window.PhosphorReceipts.feeTotal();
     dom.setText(refs.feeValue, total > 0 ? dom.fee(total) : 'None yet');
   }
 

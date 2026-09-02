@@ -40,6 +40,8 @@
   }
 
   function close() {
+    draft.mnemonic = [];
+    draft.password = '';
     open_ = false;
     dom.setHidden(host, true);
     dom.setAttr(document.body, 'data-locked', null);
@@ -155,16 +157,13 @@
       window.PhosphorShell.setPending(button, true, 'Making your wallet');
       api.walletCreate(draft.password)
         .then(function (answer) {
-          if (answer && answer.missing) {
-            /* The route is not built on this branch. The flow still walks so it
-               can be built and reviewed, and it says so rather than pretending
-               a wallet exists. */
-            draft.mnemonic = 'ridge lunar cabin velvet orbit shrimp gather pilot canyon fabric season timber'.split(' ');
-            draft.addresses = null;
-            fail(error, 'This is a preview: the wallet route is not built on this branch, so these words are not real.');
-            go(3);
+          if (answer && answer.ok === false) {
+            fail(error, walletProblem(answer.error));
             return;
           }
+          /* The words come back exactly once, on this response, and are never
+             served again. They live in this page's memory until the flow ends
+             and nowhere else. */
           draft.mnemonic = Array.isArray(answer.mnemonic) ? answer.mnemonic : [];
           draft.addresses = answer.addresses || null;
           go(3);
@@ -273,8 +272,8 @@
       window.PhosphorShell.setPending(button, true, 'Bringing your wallet in');
       api.walletImport({ password: draft.password, mnemonic: words.join(' ') })
         .then(function (answer) {
-          if (answer && answer.missing) {
-            fail(error, 'This is a preview: the import route is not built on this branch.');
+          if (answer && answer.ok === false) {
+            fail(error, walletProblem(answer.error));
             return;
           }
           draft.addresses = answer.addresses || null;
@@ -427,6 +426,13 @@
   }
 
   /* ---------- helpers ---------- */
+
+  function walletProblem(code) {
+    if (code === 'wrong_password') return 'That password did not work.';
+    if (code === 'exists') return 'There is already a wallet on this computer.';
+    if (code === 'no_wallet') return 'There is no wallet on this computer.';
+    return 'That did not work.';
+  }
 
   /* A password input carries a name and an autocomplete hint so a password
      manager can offer to save it. The card is not a form because the flow's
