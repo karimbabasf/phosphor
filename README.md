@@ -644,7 +644,10 @@ which `tests/unit/keystore.test.ts` asserts: a wallet made here opens in MetaMas
 The wallet locks after fifteen minutes with nobody at the window, when the machine sleeps, when
 the window closes, and on demand. Locked, every read still works, and every write proposal an
 agent makes is drafted, priced and policy-checked and then waits as `pending_unlock` until
-somebody unlocks, at which point it is decided again against the policy as it stands then. An
+somebody unlocks, at which point it is decided again against the policy as it stands then and
+lands as something to click. An unlock is not an approval: the click threshold says how much money
+ONE action may move without a person, and a queue released all at once is a different question, so
+even the small ones wait for the click they would not have needed with the app open. An
 armed trading rule is the one exception: it keeps the Hyperliquid API wallet key on a session with
 an expiry set when it was armed, eight hours by default and a day at most. That key can place
 orders and cannot withdraw, so a bot that outlives a lock holds trading authority, not custody.
