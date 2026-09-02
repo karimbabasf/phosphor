@@ -90,7 +90,7 @@ test('a proposal authored while locked is queued, not refused', async () => {
   assert.ok(!messages.some((m) => m.includes('refused')), 'nothing was refused');
 });
 
-test('unlocking releases the queue and the small one executes', async () => {
+test('unlocking releases the queue, and a small one comes out as something to click', async () => {
   const h = setup();
   await h.keystore.create(PASSWORD);
   h.keystore.lock();
@@ -101,7 +101,10 @@ test('unlocking releases the queue and the small one executes', async () => {
   assert.equal((await h.keystore.unlock(PASSWORD)).ok, true);
   const released = await h.svc.releaseQueued();
   assert.equal(released, 1);
-  assert.equal(h.store.get(queued.id)?.status, 'executed');
+  /* It used to execute here, because it is under the click threshold. An unlock releasing a
+     BATCH is not the same claim the threshold makes about one action: see the block at the
+     bottom of this file. */
+  assert.equal(h.store.get(queued.id)?.status, 'pending');
 });
 
 test('a large one released by unlock lands pending, waiting for a click as it always would', async () => {
@@ -272,4 +275,66 @@ test('a demo transfer that executed says what it left behind, not "unknown"', as
   assert.notEqual(row?.balances, undefined, 'the receipt carries balances at all');
   assert.equal(typeof row?.balances?.beforeUsd, 'number');
   assert.equal(typeof row?.balances?.afterUsd, 'number', 'and the number the person actually wants');
+});
+
+/* ---------- an unlock is not an approval ----------
+
+   A sub-threshold proposal executes on its own with nobody clicking, which is the documented
+   trade for small amounts. Released as a BATCH by an unlock it is a different thing: every
+   proposal an agent filed while the app was shut, running together on one keystroke, up to the
+   whole 24 hour cap, with the person having seen none of them. They typed their password to read
+   a balance. Nothing is refused; the work lands pending and they get to look at it. */
+
+test('an allow released by an unlock waits for a click instead of executing', async () => {
+  const h = setup();
+  await h.keystore.create(PASSWORD);
+  h.keystore.lock();
+
+  const queued = await smallMove(h);
+  assert.equal(queued.status, 'pending_unlock');
+  assert.equal(queued.verdict.outcome, 'allow', 'it would have executed on its own with the app open');
+
+  await h.keystore.unlock(PASSWORD);
+  assert.equal(await h.svc.releaseQueued(), 1);
+
+  assert.equal(h.store.get(queued.id)?.status, 'pending', 'the person sees it rather than a receipt for it');
+  const messages = h.audit.tail(50).map((e) => e.msg);
+  assert.ok(messages.some((m) => m.includes('waits for a click rather than running on the unlock')));
+});
+
+test('three queued proposals are three things to look at, not three sends', async () => {
+  const h = setup();
+  await h.keystore.create(PASSWORD);
+  h.keystore.lock();
+
+  const rows = [await smallMove(h), await smallMove(h), await smallMove(h)];
+
+  await h.keystore.unlock(PASSWORD);
+  await h.svc.releaseQueued();
+
+  for (const row of rows) assert.equal(h.store.get(row.id)?.status, 'pending');
+  assert.equal(h.svc.sessionSpentUsd(), 0, 'nothing was spent by typing a password');
+});
+
+test('the wallet being open is still the ordinary path, and a small move still executes', async () => {
+  const h = setup();
+  await h.keystore.create(PASSWORD);
+  const p = await smallMove(h);
+  assert.equal(p.status, 'executed', 'the click threshold is unchanged for a proposal made with the app open');
+});
+
+test('a refusal released by an unlock is still a refusal, not something to click', async () => {
+  const h = setup();
+  await h.keystore.create(PASSWORD);
+  h.keystore.lock();
+  const queued = await smallMove(h);
+
+  const killed = happyPolicy();
+  killed.killSwitch = true;
+  killed.sentences = renderSentences(killed);
+  savePolicy(h.dataDir, killed);
+
+  await h.keystore.unlock(PASSWORD);
+  await h.svc.releaseQueued();
+  assert.equal(h.store.get(queued.id)?.status, 'policy_refused');
 });

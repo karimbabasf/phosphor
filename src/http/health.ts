@@ -76,7 +76,12 @@ function buildHealth(ctx: Ctx): Health {
     version: VERSION,
     killSwitch,
     pending,
-    locked: false,
+    /* Read from the keystore rather than hardcoded. This was `false` with a comment saying the
+       custody track had not landed, and it had: health reported an unlocked wallet on every
+       install, including one that was shut. `locked` is the narrow question the field asks, so
+       needs_migration and no_wallet are both false here and lock.state on /api/state is the
+       four-way answer. */
+    locked: ctx.keystore.state() === 'locked',
     auditChain: chainAtBoot,
     lastError,
     uptimeSec: Math.floor((Date.now() - startedAtMs) / 1000),

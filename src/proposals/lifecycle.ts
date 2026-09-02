@@ -300,6 +300,26 @@ export async function releaseQueued(ctx: PCtx): Promise<number> {
       id: p.id,
       verdict,
     });
+
+    /* AN UNLOCK IS NOT AN APPROVAL, and an allow that would have executed on its own waits here
+       for a click instead.
+       The click threshold is a rule about how much money ONE action moves, and it was never a
+       statement about a batch. A queue released by an unlock is not one small spend: it is every
+       sub-threshold proposal an agent filed while the app was shut, executing together on one
+       keystroke, up to the day's whole cap, with nobody having seen any of them. A person types
+       their password to read a balance or receive funds; that is what they consented to.
+       Nothing is refused and no work is thrown away, which is the property the queue exists for:
+       the row lands `pending` and the human sees the list. This app already makes the same
+       argument for a mandate, in land(): a $30 cap is not a small spend, it is an unattended
+       trader with a $30 cap. A backlog is the same shape. */
+    if (verdict.outcome === 'allow') {
+      ctx.audit.append('proposal_created', `${p.id} was queued while the wallet was locked, so it waits for a click rather than running on the unlock`, {
+        id: p.id,
+      });
+      released += 1;
+      continue;
+    }
+
     await ctx.land(claimed);
     released += 1;
   }

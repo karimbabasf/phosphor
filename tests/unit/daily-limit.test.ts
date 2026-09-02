@@ -223,10 +223,22 @@ test('a released queue is decided one at a time against one cap, not all against
   capPolicy(dir, 9_000, 5_000);
   const released = await svc.releaseQueued();
   assert.equal(released, 3, 'every queued proposal is decided');
+  assert.equal(svc.list().filter(p => p.status === 'pending_unlock').length, 0, 'nothing is left queued');
+
+  /* All three come out PENDING, and none of them has spent anything. An unlock releases a batch,
+     and a batch is not what the click threshold is a claim about: the threshold says how much
+     money one action may move without a person, and three of them running together on one
+     keystroke is a different question. See releaseQueued in src/proposals/lifecycle.ts.
+     The cap still binds, one at a time, at the point the money actually moves, which is the
+     click. That is what the rest of this test drives. */
+  assert.equal(svc.list().filter(p => p.status === 'pending').length, 3);
+  assert.equal(svc.dailyLimit(5_000).spentUsd, 0, 'typing a password spends nothing');
+
+  // Three clicks arriving together, which is the race the serialiser exists for.
+  await Promise.all(made.map(p => svc.approve(p.id).catch(() => undefined)));
 
   const after = svc.dailyLimit(5_000);
   assert.ok(after.spentUsd <= after.capUsd, `spent ${after.spentUsd} against a cap of ${after.capUsd}`);
-  assert.equal(svc.list().filter(p => p.status === 'pending_unlock').length, 0, 'nothing is left queued');
 
   // Only the statuses that COUNT against the cap. A refusal is the right outcome for the ones
   // that did not fit, and counting refusals would pass whatever the cap did.
