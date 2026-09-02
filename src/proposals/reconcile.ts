@@ -15,6 +15,7 @@
 
 import type { ChainId, Proposal, WriteDraft } from '../types.ts';
 import { errText, nowIso, persist } from './lifecycle.ts';
+import { balanceAfter } from './execute.ts';
 import type { PCtx } from './lifecycle.ts';
 
 // What the chain says about one hash. `unknown` is a real answer and the most important one:
@@ -180,10 +181,21 @@ export async function reconcileProposal(ctx: PCtx, id: string): Promise<Proposal
     `${id} reconciled: ${outcome.status}. ${outcome.detail}`,
     { id, states },
   );
+  /* The receipt a person most wants a number on is this one: a row the app could not say had
+     moved money, now confirmed on chain. It kept `afterUsd: null` off the boot sweep, so the
+     answer to "what did that leave me with" was "unknown" for the one case where it matters.
+     Only on the confirmed path: a row that reverted or is still unknown has no after to report,
+     and inventing one would be worse than the blank. */
+  const balances =
+    outcome.status === 'executed' && p.balances !== undefined
+      ? { ...p.balances, afterUsd: await balanceAfter(ctx) }
+      : p.balances;
+
   return persist(ctx, {
     ...p,
     status: outcome.status,
     decidedAt: p.decidedAt ?? nowIso(),
+    ...(balances !== undefined ? { balances } : {}),
     result: { ok: outcome.status === 'executed', detail: outcome.detail, txids },
   });
 }

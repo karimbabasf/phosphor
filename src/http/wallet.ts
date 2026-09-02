@@ -85,6 +85,35 @@ function announce(ctx: Ctx): void {
   ctx.sse.broadcastState();
 }
 
+/* A REFUSAL SAYS SO IN ENGLISH, and carries the code beside it.
+   These routes answered `{ ok: false, error: 'wrong_password' }` with HTTP 200: a machine code in
+   the one field every other route on this surface fills with a human sentence via fail(). A
+   client switching on `error` printed "wrong_password" at a person, and one switching on the HTTP
+   status read a refusal as a success. The status stays 200 because these are answers rather than
+   errors (the window renders them into its own screen, and a 4xx would send it down the network
+   failure path), so the shape is what has to be unambiguous: `ok` is the answer, `error` is the
+   sentence, `code` is for anything that wants to branch. */
+const REFUSALS: Record<string, string> = {
+  wrong_password: 'That password is wrong.',
+  no_wallet: 'There is no wallet on this computer yet.',
+  no_mnemonic: 'This wallet has no recovery phrase, because it was imported from private keys.',
+  damaged: 'The key file on this computer cannot be read. Your recovery words will bring the wallet back.',
+  locked_out: 'Too many tries. Wait a moment and try again.',
+};
+
+function refusal(code: string, retryInSec?: number): JsonBody {
+  const wait =
+    code === 'locked_out' && typeof retryInSec === 'number' && retryInSec > 0
+      ? `Too many tries. Wait ${retryInSec} ${retryInSec === 1 ? 'second' : 'seconds'} and try again.`
+      : undefined;
+  return {
+    ok: false,
+    error: wait ?? REFUSALS[code] ?? 'That did not work.',
+    code,
+    ...(retryInSec !== undefined ? { retryInSec } : {}),
+  };
+}
+
 // ---------- unlock and lock ----------
 
 /* ONE UNLOCK AT A TIME, and the second caller is handed the first one's answer.
@@ -104,7 +133,7 @@ async function unlockOnce(ctx: Ctx, password: string): Promise<JsonBody> {
     // The reason is logged, the attempt is not counted in a way that could be mistaken for a
     // decision, and the password is nowhere near this line.
     ctx.audit.append('approve_attempt_rejected', `unlock refused: ${out.error}`, { error: out.error });
-    return { ok: false, error: out.error, ...(out.retryInSec !== undefined ? { retryInSec: out.retryInSec } : {}) };
+    return refusal(out.error, out.retryInSec);
   }
   ctx.audit.append('app_start', 'the wallet was unlocked in the window');
   ctx.session.touch();
@@ -119,7 +148,7 @@ export async function handleUnlock(ctx: Ctx, req: http.IncomingMessage, res: htt
   const body = await guarded(ctx, '/api/unlock', req, res);
   if (body === null) return;
   const password = typeof body.password === 'string' ? body.password : '';
-  if (password === '') return sendJson(res, 200, { ok: false, error: 'wrong_password' });
+  if (password === '') return sendJson(res, 200, refusal('wrong_password'));
 
   if (unlocking !== null) return sendJson(res, 200, await unlocking);
 
@@ -252,7 +281,7 @@ export async function handleWalletExport(ctx: Ctx, req: http.IncomingMessage, re
   const opened = await ctx.keystore.verify(password);
   if (!opened.ok) {
     ctx.audit.append('approve_attempt_rejected', `backup refused: ${opened.error}`, { error: opened.error });
-    return sendJson(res, 200, { ok: false, error: opened.error, ...(opened.retryInSec !== undefined ? { retryInSec: opened.retryInSec } : {}) });
+    return sendJson(res, 200, refusal(opened.error, opened.retryInSec));
   }
   try {
     await ctx.keystore.exportTo(target, password);
@@ -277,7 +306,7 @@ export async function handleRevealStart(ctx: Ctx, req: http.IncomingMessage, res
   if (body === null) return;
   const what = body.what === 'keys' ? 'keys' : 'mnemonic';
   const password = typeof body.password === 'string' ? body.password : '';
-  if (password === '') return sendJson(res, 200, { ok: false, error: 'wrong_password' });
+  if (password === '') return sendJson(res, 200, refusal('wrong_password'));
 
   // Re-entering the password is the control, so it is checked against the file rather than
   // against the fact that the wallet happens to be open.
@@ -290,9 +319,9 @@ export async function handleRevealStart(ctx: Ctx, req: http.IncomingMessage, res
   const opened = await ctx.keystore.unlock(password);
   if (!opened.ok && opened.error !== 'no_wallet') {
     ctx.audit.append('approve_attempt_rejected', `reveal refused: ${opened.error}`, { error: opened.error, what });
-    return sendJson(res, 200, { ok: false, error: opened.error });
+    return sendJson(res, 200, refusal(opened.error, opened.retryInSec));
   }
-  if (ctx.keystore.state() !== 'unlocked') return sendJson(res, 200, { ok: false, error: 'no_wallet' });
+  if (ctx.keystore.state() !== 'unlocked') return sendJson(res, 200, refusal('no_wallet'));
 
   if (wasShut) {
     /* The wallet is open now and everything that watches it has to be told: the window draws a
@@ -306,7 +335,7 @@ export async function handleRevealStart(ctx: Ctx, req: http.IncomingMessage, res
     });
   }
   if (what === 'mnemonic' && ctx.keystore.header()?.hasMnemonic !== true) {
-    return sendJson(res, 200, { ok: false, error: 'no_mnemonic' });
+    return sendJson(res, 200, refusal('no_mnemonic'));
   }
 
   // Nonces that were issued and never spent are dropped here rather than by a timer, because

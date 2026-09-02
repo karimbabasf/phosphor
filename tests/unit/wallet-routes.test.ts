@@ -257,7 +257,12 @@ test('lock and unlock move the state, and a wrong password does not', async () =
 
     const wrong = await b.post('/api/unlock', { token: b.token, password: 'not the password' });
     assert.equal(wrong.status, 200);
-    assert.deepEqual(wrong.json, { ok: false, error: 'wrong_password' });
+    /* A refusal answers with a sentence a person can read AND the code a screen branches on.
+        `error` used to carry the machine code, which is the field every other route on this
+        surface fills with English, so a client printing `error` printed "wrong_password". */
+    assert.equal(wrong.json.ok, false);
+    assert.equal(wrong.json.code, 'wrong_password');
+    assert.equal(wrong.json.error, 'That password is wrong.');
     assert.equal(b.keystore.state(), 'locked');
 
     const right = await b.post('/api/unlock', { token: b.token, password: PASSWORD });
@@ -302,11 +307,12 @@ test('five wrong passwords over the route start the backoff', async () => {
     await b.post('/api/lock', { token: b.token });
     for (let i = 0; i < 5; i += 1) {
       const out = await b.post('/api/unlock', { token: b.token, password: 'wrong' });
-      assert.equal(out.json.error, 'wrong_password', `attempt ${i + 1}`);
+      assert.equal(out.json.code, 'wrong_password', `attempt ${i + 1}`);
     }
     const out = await b.post('/api/unlock', { token: b.token, password: PASSWORD });
-    assert.equal(out.json.error, 'locked_out');
+    assert.equal(out.json.code, 'locked_out');
     assert.ok(out.json.retryInSec > 0);
+    assert.match(out.json.error, /Too many tries\. Wait \d+ seconds? and try again\./, 'and it says so in English');
   } finally {
     await b.close();
   }
@@ -592,7 +598,7 @@ test('a backup is refused under a password that does not open the live wallet', 
     const target = path.join(os.tmpdir(), `phosphor-typo-${crypto.randomBytes(6).toString('hex')}.json`);
     const typo = await b.post('/api/wallet/export', { token: b.token, password: 'a long enough passwerd', path: target });
     assert.equal(typo.json.ok, false);
-    assert.equal(typo.json.error, 'wrong_password');
+    assert.equal(typo.json.code, 'wrong_password');
     assert.ok(!fs.existsSync(target), 'and nothing was written');
 
     const right = await b.post('/api/wallet/export', { token: b.token, password: PASSWORD, path: target });
@@ -644,7 +650,7 @@ test('a wrong password on a backup still refuses, and still counts toward the ba
     const out = await b.post('/api/wallet/export', { token: b.token, password: 'not the password', path: target });
 
     assert.equal(out.json.ok, false);
-    assert.equal(out.json.error, 'wrong_password');
+    assert.equal(out.json.code, 'wrong_password');
     assert.ok(!fs.existsSync(target), 'nothing was written under a password that does not open the wallet');
     assert.equal(b.keystore.state(), 'locked');
   } finally {

@@ -255,3 +255,30 @@ test('only a 32-byte hex string is treated as an EVM hash', () => {
   assert.equal(looksLikeEvmHash('5xY9NEARorSolanaBase58Hash'), false);
   assert.equal(looksLikeEvmHash('0xdeadbeef'), false);
 });
+
+
+/* The receipt a person most wants a number on is the one for a row the app could not say had
+   moved money, now confirmed on chain. It kept `afterUsd: null` off the boot sweep, so the answer
+   to "what did that leave me with" was "unknown" for exactly that case. */
+test('a row reconciled to executed reports the balance it left behind', async () => {
+  const h = setup({ [`arb:${HASH_A}`]: 'confirmed' });
+  strand(h.dir, { id: 'r-after', result: { ok: false, detail: 'mid flight', txids: [HASH_A] }, balances: { beforeUsd: 1234, afterUsd: null } });
+  h.svc.reconcileOnBoot();
+
+  const out = await h.svc.reconcile('r-after');
+
+  assert.equal(out.status, 'executed');
+  assert.equal(out.balances?.beforeUsd, 1234, 'the before is the one recorded at the time');
+  assert.equal(typeof out.balances?.afterUsd, 'number', 'and the after is read now rather than left blank');
+});
+
+test('a row reconciled to something other than executed invents no balance', async () => {
+  const h = setup({ [`arb:${HASH_A}`]: 'absent' });
+  strand(h.dir, { id: 'r-reverted', result: { ok: false, detail: 'mid flight', txids: [HASH_A] }, balances: { beforeUsd: 1234, afterUsd: null } });
+  h.svc.reconcileOnBoot();
+
+  const out = await h.svc.reconcile('r-reverted');
+
+  assert.notEqual(out.status, 'executed');
+  assert.equal(out.balances?.afterUsd, null, 'a blank is better than a number nothing supports');
+});

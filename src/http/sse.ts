@@ -16,6 +16,9 @@ import type { ChartStore, SseHub } from './context.ts';
 const STATE_DEBOUNCE_MS = 120;
 const HEARTBEAT_MS = 15000; // SSE keepalive; doubles as a floor on state freshness
 const CANDLE_PUSH_MS = 250; // how often the browser is told there may be a newer bar
+// About twenty thousand frames' worth of backlog. Reached only by a client that has stopped
+// reading altogether, never by one that is merely slow.
+const SSE_BACKLOG_CAP = 1 << 20;
 
 export function createSseHub(deps: {
   store: Store;
@@ -37,7 +40,17 @@ export function createSseHub(deps: {
   let stateTimer: NodeJS.Timeout | null = null;
   let activityTimer: NodeJS.Timeout | null = null;
 
+  /* A frame is a few dozen bytes and carries no payload: the browser refetches on it. So a
+     socket holding a megabyte of them is not a slow client, it is a window that stopped reading,
+     and the write return value was ignored, so its buffer grew without bound for as long as the
+     process lived. It is dropped instead, and the EventSource on the other end reconnects on its
+     own if anything is still there. */
   function sseSend(res: http.ServerResponse, payload: unknown): void {
+    if (res.writableLength > SSE_BACKLOG_CAP) {
+      sseClients.delete(res);
+      res.destroy();
+      return;
+    }
     res.write(`data: ${JSON.stringify(payload)}\n\n`);
   }
 

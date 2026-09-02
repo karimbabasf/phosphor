@@ -123,7 +123,7 @@ export function walletUsd(ctx: PCtx): number {
    awaited, bounded, and a failure reports null rather than a number that would be wrong.
    This runs outside the one-at-a-time queue (the reservation was released when the row was
    written), so nobody waits behind it. */
-async function balanceAfter(ctx: PCtx): Promise<number | null> {
+export async function balanceAfter(ctx: PCtx): Promise<number | null> {
   const refreshed = await within(BALANCE_REFRESH_CAP_MS, ctx.ledger.refresh());
   return refreshed ? walletUsd(ctx) : null;
 }
@@ -220,7 +220,11 @@ export async function executeFundMove(ctx: PCtx, p: Proposal): Promise<Proposal>
     for (const leg of legs) ctx.ledger.applyDemoTransfer(leg);
     const detail = `moved ${money(totalUsdOf(p.draft))} across ${legs.length} leg(s) in demo mode`;
     ctx.audit.append('executed', `${p.id}: ${detail}`, { id: p.id, legs: legs.length });
-    return persist(ctx, { ...executing, status: 'executed', result: { ok: true, detail } });
+    /* The demo ledger has already moved, so the receipt can say what it moved to. This branch
+       returned without balances and kept { beforeUsd, afterUsd: null } off the executing row, so
+       every demo receipt read "balance after: unknown" about a transfer that plainly happened. */
+    const balances = { beforeUsd, afterUsd: await balanceAfter(ctx) };
+    return persist(ctx, { ...executing, status: 'executed', balances, result: { ok: true, detail } });
   }
 
   if (!ctx.signer.ready) {

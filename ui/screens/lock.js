@@ -103,7 +103,7 @@
       api.unlock(password)
         .then(function (answer) {
           if (answer && answer.ok === false) {
-            fail(error, reason(answer.error, answer.retryInSec));
+            fail(error, reason(answer.code || answer.error, answer.retryInSec));
             /* The field is cleared on a refusal and kept on a success, because
                a wrong password is retyped and a right one is finished with. */
             input.value = '';
@@ -129,6 +129,9 @@
     input.focus();
   }
 
+  /* The custody routes answer { ok, error, code }: `error` is already a sentence a
+     person can read, and `code` is what a screen branches on. This table exists
+     because the window can say it better in context than a route can. */
   function reason(code, retryInSec) {
     if (code === 'wrong_password') return 'That password is wrong.';
     if (code === 'locked_out') {
@@ -208,7 +211,7 @@
       api.walletMigrate(first.value)
         .then(function (answer) {
           if (answer && answer.ok === false) {
-            fail(error, reason(answer.error));
+            fail(error, reason(answer.code || answer.error));
             return;
           }
           buildMigrateDone(answer);

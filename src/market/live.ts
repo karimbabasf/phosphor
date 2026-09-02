@@ -343,7 +343,6 @@ export function createMarketLive(deps: MarketLiveDeps) {
     sock.onopen = () => {
       if (venue.socket !== sock) return;
       clearOpenTimer(venue);
-      venue.retry = 0;
       venue.opens += 1;
       if (venue.opens > 1) venue.reconnects += 1;
       venue.since = new Date(now()).toISOString();
@@ -359,6 +358,11 @@ export function createMarketLive(deps: MarketLiveDeps) {
 
     sock.onmessage = (ev: { data: unknown }) => {
       if (venue.socket !== sock) return;
+      /* The backoff is cleared by a MESSAGE, never by an open. A venue that completes the
+         handshake and then closes at once, which is what a rate limit and a ban both look like,
+         reset it on every cycle and reconnected once a second forever. A connection that has
+         carried data is a connection that worked; one that only opened proved nothing. */
+      venue.retry = 0;
       venue.lastMessageMs = now();
       handle(venue, ev.data);
     };

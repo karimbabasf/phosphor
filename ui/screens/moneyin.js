@@ -103,7 +103,7 @@
     }).then(function (password) {
       if (!password) return;
       return api.revealStart(password, what).then(function (answer) {
-        if (answer && answer.ok === false) throw new Error(revealProblem(answer.error));
+        if (answer && answer.ok === false) throw new Error(revealProblem(answer.code || answer.error));
         return api.revealFetch(answer.nonce);
       }).then(function (material) {
         showMaterial(what, material);
@@ -170,7 +170,7 @@
       var target = window.PhosphorPassword.extraValue();
       if (!target) throw new Error('Say where to save it.');
       return api.walletExport(password, target).then(function (answer) {
-        if (answer && answer.ok === false) throw new Error(revealProblem(answer.error));
+        if (answer && answer.ok === false) throw new Error(revealProblem(answer.code || answer.error));
         window.PhosphorToast.show('Backup written to ' + target + '.');
       });
     }).catch(function (err) {

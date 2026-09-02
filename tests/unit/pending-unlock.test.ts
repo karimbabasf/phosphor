@@ -256,3 +256,20 @@ test('a policy that refuses at click time still refuses, lock or no lock', async
   const clicked = await h.svc.approve(p.id);
   assert.equal(clicked.status, 'policy_refused', 'the engine is consulted before the lock is');
 });
+
+
+/* A demo receipt used to read "balance after: unknown" for a transfer that plainly happened: the
+   demo success path returned without balances and kept { beforeUsd, afterUsd: null } off the
+   executing row, while applyDemoTransfer had already moved the ledger. */
+test('a demo transfer that executed says what it left behind, not "unknown"', async () => {
+  const h = setup();
+  await h.keystore.create(PASSWORD);
+
+  const p = await smallMove(h);
+  assert.equal(p.status, 'executed');
+
+  const row = h.store.get(p.id);
+  assert.notEqual(row?.balances, undefined, 'the receipt carries balances at all');
+  assert.equal(typeof row?.balances?.beforeUsd, 'number');
+  assert.equal(typeof row?.balances?.afterUsd, 'number', 'and the number the person actually wants');
+});

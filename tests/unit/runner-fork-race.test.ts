@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
 
-import { createRunnerHost } from '../../src/runner/host.ts';
+import { createRunnerHost, type RunnerEvent } from '../../src/runner/host.ts';
 import type { Mandate } from '../../src/strategy/envelope.ts';
 import type { Program } from '../../src/strategy/grammar.ts';
 
@@ -25,7 +25,12 @@ class FakeChild extends EventEmitter {
   killed = false;
   readonly sent: unknown[] = [];
   stderr = null;
-  stdin = { write: (): boolean => true, end: (): void => {}, on: (): void => {} };
+  readonly stdin = new (class extends EventEmitter {
+    write(): boolean {
+      return true;
+    }
+    end(): void {}
+  })();
 
   send(msg: unknown): boolean {
     if (!this.connected) throw new Error('ERR_IPC_CHANNEL_CLOSED: channel closed');
@@ -139,4 +144,38 @@ test('a later arm starts a new child, because stopping is not permanent', async 
   const again = await h.runner.arm(mandate('m2'), PROGRAM);
   assert.equal(again.ok, true);
   assert.equal(h.forked.length, 2);
+});
+
+
+/* A child that dies before it reads the key raises EPIPE on ITS STDIN, and `child.on('error')`
+   does not cover a stream of the child rather than the child itself. With no listener node
+   re-raises it from nextTick as an uncaught exception, so a mandate that could not start took
+   the whole app with it. */
+test('an EPIPE writing the key to a dead child is a runner event, not an uncaught exception', async () => {
+  const events: RunnerEvent[] = [];
+  const forked: FakeChild[] = [];
+  const runner = createRunnerHost({
+    apiWalletKey: async () => '0x'.padEnd(66, '1') as `0x${string}`,
+    baseUrl: 'http://127.0.0.1:1',
+    user: '0x0000000000000000000000000000000000000001',
+    killSwitch: () => false,
+    pollMs: 100_000,
+    onEvent: (e) => events.push(e),
+    forkImpl: (() => {
+      const child = new FakeChild();
+      forked.push(child);
+      return child as unknown as ChildProcess;
+    }) as never,
+  });
+
+  await runner.arm(mandate('m1'), PROGRAM);
+  assert.equal(forked.length, 1);
+
+  // The listener the host attaches is the whole of the fix: without one this throws.
+  forked[0].stdin.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }));
+
+  assert.ok(
+    events.some((e) => e.type === 'error' && e.message.includes('never read its key')),
+    'the mandate hears about it, and the process keeps running',
+  );
 });

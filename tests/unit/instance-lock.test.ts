@@ -23,10 +23,18 @@ function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-lock-'));
 }
 
+/* The lock file holds `<pid> <start time>`. The start time is what tells a recycled pid from the
+   original holder: a SIGKILL leaves the file behind, the operating system hands the number to
+   something unrelated an hour later, and a pid check alone would make the app permanently
+   unstartable in the name of a process that has nothing to do with it. */
+function heldPid(dir: string): number {
+  return Number.parseInt(fs.readFileSync(path.join(dir, '.lock'), 'utf8').trim(), 10);
+}
+
 test('the lock holds this process id', () => {
   const dir = tmpDir();
   const lock = acquireInstanceLock(dir);
-  assert.equal(fs.readFileSync(path.join(dir, '.lock'), 'utf8'), String(process.pid));
+  assert.equal(heldPid(dir), process.pid);
   lock.release();
   assert.equal(fs.existsSync(path.join(dir, '.lock')), false);
 });
@@ -60,7 +68,7 @@ test('a lock left by a dead process is cleared rather than honoured', () => {
   fs.writeFileSync(path.join(dir, '.lock'), String(deadPid));
 
   const lock = acquireInstanceLock(dir);
-  assert.equal(fs.readFileSync(path.join(dir, '.lock'), 'utf8'), String(process.pid));
+  assert.equal(heldPid(dir), process.pid);
   lock.release();
 });
 
@@ -68,8 +76,29 @@ test('a lock file with garbage in it is treated as stale, not as a permanent blo
   const dir = tmpDir();
   fs.writeFileSync(path.join(dir, '.lock'), 'not a pid');
   const lock = acquireInstanceLock(dir);
-  assert.equal(fs.readFileSync(path.join(dir, '.lock'), 'utf8'), String(process.pid));
+  assert.equal(heldPid(dir), process.pid);
   lock.release();
+});
+
+/* THE RECYCLED PID, which is the case a pid alone cannot answer. The lock names a process that
+   is alive and is not the one that wrote it, which is what a pid number reused after a SIGKILL
+   looks like. Honouring it makes the app permanently unstartable with a message about an
+   unrelated process. */
+test('a lock naming a live process that started at a different time is stale, not a block', () => {
+  const dir = tmpDir();
+  // This process is certainly alive, and it certainly did not start in 1999.
+  fs.writeFileSync(path.join(dir, '.lock'), `${process.pid} Fri Jan  1 00:00:00 1999`);
+
+  const lock = acquireInstanceLock(dir);
+  assert.equal(heldPid(dir), process.pid);
+  lock.release();
+});
+
+test('a lock file written by an older version, with a pid and nothing else, is still honoured', () => {
+  const dir = tmpDir();
+  fs.writeFileSync(path.join(dir, '.lock'), String(process.pid));
+  assert.throws(() => acquireInstanceLock(dir), InstanceLockedError);
+  fs.unlinkSync(path.join(dir, '.lock'));
 });
 
 test('release never removes a lock another process has taken over', () => {

@@ -451,3 +451,55 @@ test('a market service with the rail switched off dials nothing at all', () => {
   assert.deepEqual(market.liveStatus(), []);
   assert.equal(market.liveConnected('hyperliquid'), false);
 });
+
+
+/* ---------- the backoff, and what resets it ----------
+
+   A venue that completes the handshake and closes at once, which is what a rate limit and a ban
+   both look like from here, reset the backoff on every OPEN and so reconnected once a second
+   forever. It is cleared by a MESSAGE now: a connection that carried data is a connection that
+   worked, and one that only opened proved nothing.
+
+   The retry delays are read off setTimeout rather than waited out, because the point is the
+   sequence and the sequence is fifteen seconds long. */
+async function retryDelays(cycles: number, speak: boolean): Promise<number[]> {
+  const { live, sockets } = harness();
+  const delays: number[] = [];
+  const real = globalThis.setTimeout;
+  const STEPS = [1000, 2000, 4000, 8000, 15000];
+  globalThis.setTimeout = ((fn: () => void, ms?: number) => {
+    /* Only the backoff steps are recorded, and only they are accelerated. The open watchdog
+       rides the same timer at ten seconds and is left alone: firing it early would close the
+       socket the test is about to speak on, which is a different failure wearing this one's
+       clothes. */
+    if (typeof ms === 'number' && STEPS.includes(ms)) {
+      delays.push(ms);
+      return real(fn, 0);
+    }
+    return real(fn, ms);
+  }) as typeof setTimeout;
+  try {
+    live.track('chart', [{ product: 'BTC-USD', provider: 'hyperliquid' }]);
+    for (let i = 0; i < cycles; i += 1) {
+      const sock = sockets.last();
+      sock.open();
+      if (speak) sock.deliver({ channel: 'nothing-this-reader-knows' });
+      sock.drop();
+      await new Promise((resolve) => real(resolve, 5)); // let the retry timer fire
+    }
+  } finally {
+    globalThis.setTimeout = real;
+    live.stop();
+  }
+  return delays;
+}
+
+test('a venue that opens and closes without ever speaking backs off instead of hammering', async () => {
+  const delays = await retryDelays(4, false);
+  assert.deepEqual(delays.slice(0, 4), [1000, 2000, 4000, 8000], 'the backoff grows across dead connections');
+});
+
+test('a socket that has carried a message starts its next backoff from the beginning', async () => {
+  const delays = await retryDelays(3, true);
+  assert.deepEqual(delays.slice(0, 3), [1000, 1000, 1000], 'a working connection resets the clock');
+});

@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 
 import { createShutdown, installShutdownHandlers, within, SETTLE_CAP_MS } from '../../src/shutdown.ts';
+import { VENUE_WRITE_TIMEOUT_MS } from '../../src/net.ts';
 import { beginDraining, isDraining, resetDrainingForTests } from '../../src/draining.ts';
 import { createSerialiser } from '../../src/proposals/lifecycle.ts';
 import type { LogEvent } from '../../src/types.ts';
@@ -148,8 +149,12 @@ test('the draining flag is one answer for the whole process', () => {
   resetDrainingForTests();
 });
 
-test('the settle cap is two seconds', () => {
-  assert.equal(SETTLE_CAP_MS, 2_000);
+/* The cap has to cover ONE venue write or the drain is decorative for the exact case it was
+   written for: a quit during a real send always timed out and stranded the row. Two seconds
+   against a thirty second venue budget could never wait for anything that mattered. */
+test('the settle cap covers a venue write, with a little room', () => {
+  assert.ok(SETTLE_CAP_MS > VENUE_WRITE_TIMEOUT_MS, 'a quit must be able to wait for a send in flight');
+  assert.ok(SETTLE_CAP_MS <= VENUE_WRITE_TIMEOUT_MS + 5_000, 'and not much longer than one');
 });
 
 // SIGTERM into a real backend, mid proposal. The property: proposals.json is valid JSON

@@ -9,8 +9,10 @@
 //
 // `wx` is the whole mechanism: open-for-write-and-fail-if-it-exists is one atomic syscall, so
 // two processes racing at boot cannot both win. The pid inside is what makes a lock left by a
-// killed process recoverable rather than permanent.
+// killed process recoverable rather than permanent, and the START TIME beside it is what stops a
+// recycled pid making the app permanently unstartable in the name of an unrelated process.
 
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -45,13 +47,48 @@ function pidIsAlive(pid: number): boolean {
   }
 }
 
-function readHolder(lockPath: string): number | null {
+/* WHEN that pid started, which is what tells a recycled pid from the original holder.
+   A pid alone cannot: a SIGKILL leaves the lock file behind, the operating system hands the
+   number to something unrelated an hour later, and the app is then permanently unstartable with
+   a message naming a process that has nothing to do with it. A start time is the cheapest thing
+   that distinguishes them and it needs no dependency: ps reports it on macOS and on Linux.
+   Null when ps is unavailable or says nothing, and a null on either side means the comparison is
+   skipped and the pid alone decides, which is exactly the old behaviour. */
+function pidStartedAt(pid: number): string | null {
   try {
-    const pid = Number.parseInt(fs.readFileSync(lockPath, 'utf8').trim(), 10);
-    return Number.isInteger(pid) && pid > 0 ? pid : null;
+    const out = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    return out === '' ? null : out;
   } catch {
     return null;
   }
+}
+
+type Holder = { pid: number; startedAt: string | null };
+
+/* The lock file holds `<pid> <start time>` now, and used to hold the pid alone. An old file is
+   read as a pid with an unknown start time, which is the same answer this returns when ps cannot
+   help, so an app upgraded while holding a lock still reads its own file. */
+function readHolder(lockPath: string): Holder | null {
+  try {
+    const raw = fs.readFileSync(lockPath, 'utf8').trim();
+    const pid = Number.parseInt(raw, 10);
+    if (!Number.isInteger(pid) || pid <= 0) return null;
+    const space = raw.indexOf(' ');
+    return { pid, startedAt: space === -1 ? null : raw.slice(space + 1).trim() || null };
+  } catch {
+    return null;
+  }
+}
+
+// Held means the pid is alive AND, when both sides know it, started when the lock says it did.
+function stillHeld(holder: Holder): boolean {
+  if (!pidIsAlive(holder.pid)) return false;
+  if (holder.startedAt === null) return true; // an older lock file, or a machine with no ps
+  const now = pidStartedAt(holder.pid);
+  return now === null || now === holder.startedAt;
 }
 
 /* Take the lock, or throw InstanceLockedError naming the process that holds it.
@@ -75,7 +112,7 @@ export function acquireInstanceLock(dataDir: string): InstanceLock {
   let fd = open();
   if (fd === null) {
     const holder = readHolder(lockPath);
-    if (holder !== null && pidIsAlive(holder)) throw new InstanceLockedError(holder, lockPath);
+    if (holder !== null && stillHeld(holder)) throw new InstanceLockedError(holder.pid, lockPath);
     // Stale, or unreadable and therefore useless as a claim. Clear it and try once more.
     try {
       fs.unlinkSync(lockPath);
@@ -85,12 +122,13 @@ export function acquireInstanceLock(dataDir: string): InstanceLock {
     fd = open();
     if (fd === null) {
       const now = readHolder(lockPath);
-      throw new InstanceLockedError(now ?? 0, lockPath);
+      throw new InstanceLockedError(now?.pid ?? 0, lockPath);
     }
   }
 
+  const startedAt = pidStartedAt(process.pid);
   try {
-    fs.writeFileSync(fd, String(process.pid));
+    fs.writeFileSync(fd, startedAt === null ? String(process.pid) : `${process.pid} ${startedAt}`);
   } finally {
     fs.closeSync(fd);
   }
@@ -103,7 +141,7 @@ export function acquireInstanceLock(dataDir: string): InstanceLock {
       released = true;
       // Only ever remove a lock this process actually holds. A release that ran after another
       // process had taken over a stale lock would hand the directory to a third.
-      if (readHolder(lockPath) !== process.pid) return;
+      if (readHolder(lockPath)?.pid !== process.pid) return;
       try {
         fs.unlinkSync(lockPath);
       } catch {

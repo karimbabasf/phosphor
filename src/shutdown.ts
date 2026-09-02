@@ -21,6 +21,7 @@
 // watchParent below.
 
 import type { Audit } from './audit.ts';
+import { VENUE_WRITE_TIMEOUT_MS } from './net.ts';
 
 export type ShutdownDeps = {
   audit: Pick<Audit, 'append'>;
@@ -39,7 +40,13 @@ export type ShutdownDeps = {
   parentWatch?: ParentWatch;
 };
 
-export const SETTLE_CAP_MS = 2_000;
+/* Long enough to cover ONE venue write, which is what the drain exists for.
+   It was two seconds while a venue write gets thirty (src/net.ts), so a quit during a real send
+   always timed the drain out and stranded the row with an unknown outcome: the drain was
+   decorative for exactly the case it was written for. The cost of the longer cap is paid only
+   when something is actually in flight, because serialise.idle() resolves at once when nothing
+   is, and a second signal (a person pressing ctrl-C again) still stops the wait immediately. */
+export const SETTLE_CAP_MS = VENUE_WRITE_TIMEOUT_MS + 2_000;
 export const SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
 export const PARENT_POLL_MS = 5_000;
 

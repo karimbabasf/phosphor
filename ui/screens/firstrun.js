@@ -158,7 +158,7 @@
       api.walletCreate(draft.password)
         .then(function (answer) {
           if (answer && answer.ok === false) {
-            fail(error, walletProblem(answer.error));
+            fail(error, walletProblem(answer.code || answer.error));
             return;
           }
           /* The words come back exactly once, on this response, and are never
@@ -273,7 +273,7 @@
       api.walletImport({ password: draft.password, mnemonic: words.join(' ') })
         .then(function (answer) {
           if (answer && answer.ok === false) {
-            fail(error, walletProblem(answer.error));
+            fail(error, walletProblem(answer.code || answer.error));
             return;
           }
           draft.addresses = answer.addresses || null;

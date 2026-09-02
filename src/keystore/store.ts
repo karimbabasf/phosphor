@@ -315,6 +315,10 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
   async function unlock(password: string): Promise<UnlockResult> {
     const opened = await openWith(password);
     if (!opened.ok) return opened;
+    // Wiped, not dropped. Unlocking a wallet that was already open used to leave the previous
+    // plaintext payload sitting in heap nothing would ever overwrite, which is the one thing
+    // holding the payload as bytes rather than as an object exists to make possible.
+    if (plain !== null) wipe(plain);
     plain = opened.body;
     announce();
     return { ok: true };

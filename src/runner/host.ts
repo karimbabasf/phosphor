@@ -344,6 +344,12 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
       stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
     });
     child = spawned;
+    /* A child that dies before it reads raises EPIPE on this stream, and `child.on('error')`
+       below does not cover a stream of the child rather than the child itself: with no listener
+       here it reached the process-wide crash handler and ended the app instead of the mandate. */
+    spawned.stdin?.on('error', (err: Error) => {
+      record({ type: 'error', id: null, message: `runner child never read its key: ${err.message}` });
+    });
     spawned.stdin?.write(`${key}\n`);
     spawned.stdin?.end();
 
