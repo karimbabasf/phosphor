@@ -422,3 +422,26 @@ test('the beacon moves the lock countdown and an agent call does not', async () 
     await b.close();
   }
 });
+
+test('a backup is refused under a password that does not open the live wallet', async () => {
+  // The bug this closes: exportTo encrypts under whatever password it is handed, so a typo made
+  // a valid backup that opens only with the typo. The check used to be skipped when the wallet
+  // was already unlocked, which is the state a person is in when they press Back up.
+  const b = await boot();
+  try {
+    await b.post('/api/wallet/import', { token: b.token, password: PASSWORD, mnemonic: VECTOR });
+    assert.equal(b.keystore.state(), 'unlocked');
+
+    const target = path.join(os.tmpdir(), `phosphor-typo-${crypto.randomBytes(6).toString('hex')}.json`);
+    const typo = await b.post('/api/wallet/export', { token: b.token, password: 'a long enough passwerd', path: target });
+    assert.equal(typo.json.ok, false);
+    assert.equal(typo.json.error, 'wrong_password');
+    assert.ok(!fs.existsSync(target), 'and nothing was written');
+
+    const right = await b.post('/api/wallet/export', { token: b.token, password: PASSWORD, path: target });
+    assert.equal(right.json.ok, true);
+    fs.rmSync(target);
+  } finally {
+    await b.close();
+  }
+});

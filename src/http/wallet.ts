@@ -209,11 +209,15 @@ export async function handleWalletExport(ctx: Ctx, req: http.IncomingMessage, re
   if (password === null) return fail(res, 400, `the password must be at least ${MIN_PASSWORD} characters`);
   const target = typeof body.path === 'string' ? body.path : '';
   if (!path.isAbsolute(target)) return fail(res, 400, 'the backup path must be absolute');
-  // The password is checked by using it: an export written under a password the owner mistyped
-  // is a backup that opens for nobody, which is worse than no backup at all.
+  /* The password has to open the LIVE keystore before it is used to write a backup, and the
+     check is unconditional. It used to fall through when the wallet happened to be unlocked
+     already, which was the bug this route exists to avoid: exportTo encrypts under whatever
+     password it is handed, so a typo produced a perfectly valid backup that opens only with the
+     typo. The owner would find out the day they needed it. */
   const opened = await ctx.keystore.unlock(password);
-  if (!opened.ok && ctx.keystore.state() !== 'unlocked') {
-    return sendJson(res, 200, { ok: false, error: opened.ok ? 'wrong_password' : opened.error });
+  if (!opened.ok) {
+    ctx.audit.append('approve_attempt_rejected', `backup refused: ${opened.error}`, { error: opened.error });
+    return sendJson(res, 200, { ok: false, error: opened.error, ...(opened.retryInSec !== undefined ? { retryInSec: opened.retryInSec } : {}) });
   }
   try {
     await ctx.keystore.exportTo(target, password);
@@ -252,8 +256,13 @@ export async function handleRevealStart(ctx: Ctx, req: http.IncomingMessage, res
     return sendJson(res, 200, { ok: false, error: 'no_mnemonic' });
   }
 
+  // Nonces that were issued and never spent are dropped here rather than by a timer, because
+  // the only thing that can add one is this line, so this is the only place the map can grow.
+  const at = Date.now();
+  for (const [key, held] of [...pending]) if (at > held.expires) pending.delete(key);
+
   const nonce = crypto.randomBytes(32).toString('hex');
-  pending.set(nonce, { what, expires: Date.now() + REVEAL_TTL_MS });
+  pending.set(nonce, { what, expires: at + REVEAL_TTL_MS });
   // The log records that somebody asked to see the key, which is exactly the event an owner
   // reading this file later wants to find. It records nothing about what they saw.
   ctx.audit.append('app_start', `the window asked to reveal the ${what === 'keys' ? 'private keys' : 'recovery phrase'}`, { what });

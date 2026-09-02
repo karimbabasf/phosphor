@@ -409,7 +409,15 @@ export function backupCopies(keysPath: string): string[] {
     .readdirSync(dir)
     .filter((name) => name !== base && name.startsWith(base) && /\.(bak|backup|old|generated)/i.test(name.slice(base.length)))
     .map((name) => path.join(dir, name))
-    .filter((p) => fs.statSync(p).isFile());
+    // statSync rather than lstatSync, and wrapped: a dangling symlink beside the key file
+    // would otherwise throw here and take the whole migration with it.
+    .filter((p) => {
+      try {
+        return fs.statSync(p).isFile();
+      } catch {
+        return false;
+      }
+    });
 }
 
 /* Overwrite, force to disk, truncate, unlink. In that order and with the fsync in the middle,
