@@ -6,6 +6,7 @@
 // decide about money, which is why every one of them is audited and every browser door carries
 // the per-boot approval token.
 
+import path from 'node:path';
 import type http from 'node:http';
 
 import type { ViewMode } from '../types.ts';
@@ -14,6 +15,7 @@ import { sameOrigin, tokenFingerprint, tokenMatches } from './auth.ts';
 import { errText, fail, readBody, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
 import { pollPrice } from './chart.ts';
+import { PROJECT_DIR } from './context.ts';
 import type { Ctx } from './context.ts';
 
 // Starting and stopping the loop. It moves no money itself and gets no policy verdict,
@@ -93,6 +95,25 @@ export async function handleMutation(
 
   if (route === '/api/driver') {
     const action = String(body.action ?? '');
+
+    /* The connection line for THIS installation, plus who is already on the door. It is
+       checked before the chat is resolved because, like the plus, it is not ABOUT a chat.
+
+       It used to live in a menu bar item on the packaged app only, which meant a person
+       running from a terminal had to read a README to find the one string they needed. It
+       reads nothing secret: an absolute path to a file already on this disk, and the names
+       external clients chose for themselves. Those names are agent-authored and the window
+       renders them as text, never as markup, exactly as it does the roster. */
+    if (action === 'connection') {
+      return sendJson(res, 200, {
+        command: `claude mcp add phosphor -- node ${path.join(PROJECT_DIR, 'src/mcp.ts')}`,
+        connected: ctx.agents.roster().map((member) => ({
+          name: member.client || member.label || member.session,
+          role: member.role,
+          calls: member.ops,
+        })),
+      });
+    }
 
     /* The plus, and it is checked before the chat is resolved because it is the one action
        that is not ABOUT an existing chat. */
