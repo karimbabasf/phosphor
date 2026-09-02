@@ -1,7 +1,11 @@
 // The view mode is the one piece of app state an agent can write directly, so the
 // question these tests answer is not "does it round trip" but "what happens on every
-// way it can go wrong". Every one of them must land on 'pro', because pro shows more
-// and a corrupt file must never be the reason a human sees less.
+// way it can go wrong".
+//
+// Two answers, because there are two questions. NO FILE is a fresh install: nobody has
+// chosen, nothing is being downgraded, and the first screen is the simple one. A file that
+// IS there and cannot be read lands on 'pro' every time, because pro shows more and a
+// corrupt file must never be the reason a human sees less than they had.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -14,12 +18,12 @@ function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-view-'));
 }
 
-test('a dataDir with no view file reads as pro', () => {
-  assert.equal(readViewMode(tmpDir()), 'pro');
+test('a fresh data dir with no view file opens on basic', () => {
+  assert.equal(readViewMode(tmpDir()), 'basic');
 });
 
-test('a dataDir that does not exist at all reads as pro rather than throwing', () => {
-  assert.equal(readViewMode(path.join(os.tmpdir(), 'phosphor-view-nonexistent-dir')), 'pro');
+test('a dataDir that does not exist at all reads as basic rather than throwing', () => {
+  assert.equal(readViewMode(path.join(os.tmpdir(), 'phosphor-view-nonexistent-dir')), 'basic');
 });
 
 test('a written mode round trips in both directions', () => {

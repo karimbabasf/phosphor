@@ -354,7 +354,7 @@
       return;
     }
     dom.reconcile(host, rows, function (fill, i) {
-      return (fill.tid || fill.time || '') + ':' + i;
+      return (fill.tid || fill.atMs || '') + ':' + i;
     }, function () {
       var row = dom.el('div', 'between fill-row');
       row.appendChild(dom.el('span', 'meta mono'));
@@ -362,11 +362,27 @@
       row.appendChild(dom.el('span', 'body mono'));
       return row;
     }, function (row, fill) {
-      dom.setText(row.children[0], dom.clock(fill.time || fill.at));
-      dom.setText(row.children[1], (fill.side === 'B' || fill.side === 'buy' ? 'Bought ' : 'Sold ')
-        + (fill.coin || '') + ' ' + dom.qty(fill.sz || fill.size || 0));
+      /* The field names are the payload's own: a Fill is
+         { tid, coin, side, px, sizeCoin, atMs, ... }. This read fill.sz, fill.size
+         and fill.time, none of which the payload has ever carried, so every row
+         said "Bought BTC 0" with no time beside it whatever had traded. */
+      dom.setText(row.children[0], dom.clock(fill.atMs));
+      dom.setText(row.children[1], (fill.side === 'sell' || fill.side === 'A' ? 'Sold ' : 'Bought ')
+        + (fill.coin || '') + ' ' + dom.qty(fill.sizeCoin, precisionOf(fill.coin)));
       dom.setText(row.children[2], typeof fill.px === 'number' ? dom.usd(fill.px) : '');
     });
+  }
+
+  /* How many places this asset actually trades in, off the venue's own metadata.
+     Undefined when the market is not in the payload, which leaves dom.qty on its
+     general rule; either way it never prints a real size as zero. */
+  function precisionOf(coin) {
+    var markets = (data && Array.isArray(data.markets)) ? data.markets : [];
+    for (var i = 0; i < markets.length; i += 1) {
+      if (markets[i].coin !== coin) continue;
+      return typeof markets[i].szDecimals === 'number' ? markets[i].szDecimals : undefined;
+    }
+    return undefined;
   }
 
   function emptyBlock(title, note) {

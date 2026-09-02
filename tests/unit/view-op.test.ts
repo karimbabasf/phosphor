@@ -357,7 +357,7 @@ test('the mode the server hands out is the one main.ts would persist', async () 
   const h = await boot({ view: 'basic' });
   try {
     assert.equal((await state(h)).view, 'basic');
-    assert.equal(readViewMode(h.dataDir), 'pro', 'an unwritten dataDir still reads pro');
+    assert.equal(readViewMode(h.dataDir), 'basic', 'an unwritten dataDir is a fresh install, which opens simple');
   } finally {
     await h.close();
   }

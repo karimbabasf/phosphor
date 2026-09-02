@@ -102,11 +102,19 @@
     });
   }
 
+  /* Places follow the asset when the caller knows them, and a size that really
+     traded is never rounded away: a 0.001 fill printed as 0 says nothing
+     happened, which is the one thing this list must not say. Eight places is the
+     venue's own ceiling on size. */
   function qty(value, digits) {
     var n = Number(value);
     if (!isFinite(n)) return '0';
     var d = digits === undefined ? (Math.abs(n) >= 1000 ? 2 : 4) : digits;
-    return n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: d });
+    for (var places = d; places <= 8; places += 1) {
+      var out = n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: places });
+      if (n === 0 || Number(out.replace(/,/g, '')) !== 0) return out;
+    }
+    return n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 8 });
   }
 
   /* Fees are the one figure that runs from a tenth of a cent to a few dollars,
