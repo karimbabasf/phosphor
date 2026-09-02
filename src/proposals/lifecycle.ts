@@ -27,6 +27,7 @@ import { classify } from '../composition.ts';
 import { evaluate } from '../policy/engine.ts';
 import type { EngineCtx } from '../policy/engine.ts';
 import { loadPolicy } from '../policy/file.ts';
+import { isLocked } from '../keystore/index.ts';
 import type { RailRegistry } from '../rails/index.ts';
 import type { TxLookup } from './reconcile.ts';
 import { withReservation } from './reservation.ts';
@@ -236,6 +237,17 @@ export async function approve(ctx: PCtx, id: string): Promise<Proposal> {
   if (verdict.outcome === 'refuse') {
     ctx.audit.append('policy_refused', `${id} refused at approval time: ${verdict.rule}`, { id, rule: verdict.rule, reasons: verdict.reasons });
     return persist(ctx, { ...p, verdict, status: 'policy_refused', decidedBy: 'policy', decidedAt: nowIso() });
+  }
+
+  /* A LOCKED WALLET QUEUES A CLICK TOO. land() has checked this since the queue existed and the
+     approve path had no equivalent, so a proposal a person approved after the wallet auto-locked
+     was persisted `executing`, the signer threw "the wallet is locked", and the row landed
+     `failed`, which is terminal. The work was thrown away and the sentence blamed the wallet.
+     It sits after the engine on purpose: a proposal the policy now refuses is refused whether or
+     not there is a key to sign it with. */
+  if (isLocked()) {
+    ctx.audit.append('proposal_created', `${id} was approved while the wallet was locked, so it is waiting to be unlocked`, { id });
+    return persist(ctx, { ...p, verdict, status: 'pending_unlock' });
   }
 
   const approved = persist(ctx, { ...p, verdict, status: 'approved', decidedBy: 'human', decidedAt: nowIso() });

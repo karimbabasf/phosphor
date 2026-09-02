@@ -197,3 +197,62 @@ test('an install that has never had a keystore is not treated as locked', async 
   const p = await smallMove(h);
   assert.notEqual(p.status, 'pending_unlock');
 });
+
+/* ---------- the click that arrives after the lock ----------
+
+   A proposal sits pending, the wallet auto-locks after fifteen idle minutes, and the human comes
+   back and clicks approve. approve() re-ran the engine and went straight to execution; land() is
+   what checks the lock, and the approve path had no equivalent. So the row was persisted
+   `executing`, the signer threw "the wallet is locked", and it landed `failed`, which is
+   terminal. The work was thrown away and the sentence blamed the wallet.
+
+   A click on a locked wallet means the same thing an agent's proposal on a locked wallet means:
+   it waits. */
+
+test('approving while the wallet is locked queues the proposal instead of failing it', async () => {
+  const h = setup();
+  await h.keystore.create(PASSWORD);
+
+  // Above the click threshold, so it sits pending waiting for a person.
+  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT', maxTotalUsd: 5000 });
+  assert.equal(p.status, 'pending');
+
+  // Fifteen idle minutes, and then the click.
+  h.keystore.lock();
+  const clicked = await h.svc.approve(p.id);
+
+  assert.equal(clicked.status, 'pending_unlock', 'the work is kept, not thrown away');
+  assert.equal(h.store.get(p.id)?.status, 'pending_unlock');
+  const messages = h.audit.tail(50).map((e) => e.msg);
+  assert.ok(!messages.some((m) => m.includes('execution_failed')), 'nothing failed');
+
+  // And it goes through on the unlock, exactly as an agent's queued proposal does.
+  await h.keystore.unlock(PASSWORD);
+  await h.svc.releaseQueued();
+  assert.equal(h.store.get(p.id)?.status, 'pending', 'still above the threshold, so it waits for the click it will now get');
+});
+
+test('a queued proposal cannot be approved twice: the second click finds it queued, not pending', async () => {
+  const h = setup();
+  await h.keystore.create(PASSWORD);
+  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT', maxTotalUsd: 5000 });
+  h.keystore.lock();
+
+  await h.svc.approve(p.id);
+  await assert.rejects(() => h.svc.approve(p.id), /not pending/);
+});
+
+test('a policy that refuses at click time still refuses, lock or no lock', async () => {
+  const h = setup();
+  await h.keystore.create(PASSWORD);
+  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT', maxTotalUsd: 5000 });
+
+  const killed = happyPolicy();
+  killed.killSwitch = true;
+  killed.sentences = renderSentences(killed);
+  savePolicy(h.dataDir, killed);
+  h.keystore.lock();
+
+  const clicked = await h.svc.approve(p.id);
+  assert.equal(clicked.status, 'policy_refused', 'the engine is consulted before the lock is');
+});
