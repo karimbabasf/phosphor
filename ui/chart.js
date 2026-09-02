@@ -1715,9 +1715,12 @@ function chartPushed(rev) {
 
 function candlesPushed() {
   if (CHART_DRAG) return;
-  // The cache refreshes on its own schedule, so redrawing faster than that only redraws
-  // the same bars. See staleAfterSec in src/market/store.ts.
-  var minGap = 2000;
+  // A floor on refetch rate, not a poll interval. It was 2000 ms, matched to a cache that
+  // refreshed every 3 s, and the two throttles plus the server's own push timer stacked into
+  // a price 4.0 s old at p50 (measured 2026-09-01). It is 250 ms now, matching staleAfterSec
+  // in src/market/store.ts. This path is the REST fallback: the live rail moves the price
+  // through candleLive() with no fetch at all.
+  var minGap = 250;
   if (Date.now() - CHART_FETCH.at < minGap) return;
   void refreshChart();
 }

@@ -15,7 +15,7 @@ import type { ChartStore, SseHub } from './context.ts';
 
 const STATE_DEBOUNCE_MS = 120;
 const HEARTBEAT_MS = 15000; // SSE keepalive; doubles as a floor on state freshness
-const CANDLE_PUSH_MS = 1000; // how often the browser is told there may be a newer bar
+const CANDLE_PUSH_MS = 250; // how often the browser is told there may be a newer bar
 
 export function createSseHub(deps: {
   store: Store;

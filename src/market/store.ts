@@ -79,11 +79,16 @@ export function mergeSeries(existing: readonly Candle[], incoming: readonly Cand
 
 /* How long a series may sit before the newest bar is worth refetching.
    A closed bar never changes, so the only thing aging is the bar still forming. Refreshing
-   a 1m chart more than once every few seconds buys nothing a person can see, and refreshing
-   a 1d chart every few seconds is pure waste. */
+   a 1d chart every few seconds is pure waste, so the coarse timeframes keep their long gates.
+
+   The 1m gate was 3 s and is 1 s. Measured 2026-09-01: three poll throttles sat in series
+   with no push rail (this gate, CANDLE_PUSH_MS in the server, minGap in the browser) and
+   polls compose by addition, so the price on screen was 4.0 s old at p50 while every hop
+   looked individually defensible. One second costs about four calls a minute per series,
+   which is well inside both venues' budgets. The live rail in live.ts is what actually moves
+   the price now; this is the fallback's cadence, not the screen's. */
 export function staleAfterSec(baseSec: number): number {
-  if (baseSec <= 1) return 1;
-  if (baseSec <= 60) return 3;
+  if (baseSec <= 60) return 1;
   if (baseSec <= 900) return 15;
   if (baseSec <= 3600) return 30;
   return 60;
