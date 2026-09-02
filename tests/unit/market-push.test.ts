@@ -72,7 +72,7 @@ test('a bar goes out as a frame carrying the bar, not as a nudge to come back fo
   advance(WINDOW_MS);
 
   assert.equal(frames.length, 1);
-  // The exact shape the spec's API table names, and the exact shape ui/chart.js matches on.
+  // The exact shape the spec's API table names, and the exact shape ui/chart/chart.js matches on.
   // 120 bytes against the 102 to 137 KB the browser used to refetch to move one close.
   assert.deepEqual(frames[0], {
     type: 'candle',

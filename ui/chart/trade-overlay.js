@@ -29,10 +29,14 @@
 
 'use strict';
 
+/* The same tokens the chart engine draws in. The overlay is not green any more:
+   a long is --up, the human's own wall is --warn because it is the colour this
+   window uses for anything waiting on a person, and the venue's wall keeps the
+   gate's red so the one thing nobody chose stays the one alarm on the glass. */
 var TRADE_C_LIQ = '#ff3b30'; // the venue's wall. The one red on this canvas.
-var TRADE_C_WALL = '#8cffab'; // the human's wall: the approved loss, reached.
-var TRADE_C_LONG = '#33ff66';
-var TRADE_C_SHORT = '#cc3a30'; // the chart's own down colour, dimmer than the gate red on purpose
+var TRADE_C_WALL = '#F2B544'; // the human's wall: the approved loss, reached.
+var TRADE_C_LONG = '#5B8DEF';
+var TRADE_C_SHORT = '#FF5A6E'; // the chart's own down colour, lighter than the gate red on purpose
 var TRADE_LABEL_H = 13; // minimum vertical gap between two stacked labels, in CSS pixels
 
 /* The overlay reads one global, set by ui/trade.js from the /api/trade payload. Absent means

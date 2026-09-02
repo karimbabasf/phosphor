@@ -63,7 +63,7 @@ var RGB_LINE = '34, 36, 42';
 var RGB_TEXT = '237, 238, 240';
 var RGB_TEXT2 = '154, 158, 168';
 
-/* "#33ff66" or "#3f6" to "51, 255, 102". Returns null on anything else, and every caller
+/* "#5b8def" or "#5be" to "91, 141, 239". Returns null on anything else, and every caller
    treats null as "leave the colour alone": a bad value from the server must never be able to
    blank the chart. The server refuses non-hex before it ever gets here; this is the second
    wall, because a colour is the one agent-supplied string that reaches a canvas. */
