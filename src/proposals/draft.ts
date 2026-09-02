@@ -101,7 +101,7 @@ export function planLegs(ctx: PCtx, params: { toChain: ChainId; symbol: string; 
   return legs;
 }
 
-export function legSummary(leg: TransferLeg): string {
+function legSummary(leg: TransferLeg): string {
   const q = leg.quote;
   const out = q ? amount(q.amountOut) : amount(leg.amount);
   const fee = q ? money(q.feeUsd) : 'unknown fee';
@@ -109,7 +109,7 @@ export function legSummary(leg: TransferLeg): string {
   return `${leg.fromChain} -> ${leg.toChain}: ${out} ${leg.symbol}, fee ${fee}, ${eta}`;
 }
 
-export function compositionDelta(ctx: PCtx, snapshot: LedgerSnapshot, legs: TransferLeg[], selfList: string[]): { lines: string[]; post: ReturnType<typeof classify> } {
+function compositionDelta(ctx: PCtx, snapshot: LedgerSnapshot, legs: TransferLeg[], selfList: string[]): { lines: string[]; post: ReturnType<typeof classify> } {
   const before = classify(snapshot, ctx.riskRows);
   const post = classify(applyLegs(snapshot, legs, selfList), ctx.riskRows);
   const lines = [`total stables ${money(before.totalUsd)} -> ${money(post.totalUsd)}`];

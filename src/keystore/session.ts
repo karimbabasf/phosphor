@@ -22,14 +22,14 @@ export const IDLE_LOCK_MS = 15 * 60 * 1000;
 export const TICK_MS = 15_000;
 // More than four ticks. A missed tick or two is a busy event loop; a minute is a machine that
 // was not running.
-export const SLEEP_GAP_MS = 60_000;
+const SLEEP_GAP_MS = 60_000;
 
 export const SIGNING_SESSION_DEFAULT_MS = 8 * 60 * 60 * 1000;
 export const SIGNING_SESSION_MAX_MS = 24 * 60 * 60 * 1000;
 
-export type LockReason = 'idle' | 'sleep';
+type LockReason = 'idle' | 'sleep';
 
-export type SigningSession = {
+type SigningSession = {
   id: string;
   armedAt: number;
   expiresAt: number;
@@ -56,7 +56,7 @@ export type Session = {
   expired(): SigningSession[];
 };
 
-export type SessionDeps = {
+type SessionDeps = {
   // What locking actually does. Kept as a callback rather than a keystore handle so this
   // module has no opinion about what a lock is beyond when it happens.
   lock: (reason: LockReason) => void;

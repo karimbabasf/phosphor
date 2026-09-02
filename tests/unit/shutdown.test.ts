@@ -137,8 +137,14 @@ test('the serialiser knows when it is idle', async () => {
 
 test('a rejection in the queue still lets idle resolve', async () => {
   const serialise = createSerialiser();
-  void serialise(() => Promise.reject(new Error('rail threw'))).catch(() => undefined);
+  let settled = false;
+  void serialise(() => Promise.reject(new Error('rail threw'))).catch(() => {
+    settled = true;
+  });
   await serialise.idle();
+  // Without this the test passed by not hanging, which is a test of the test runner's timeout
+  // rather than of the queue.
+  assert.equal(settled, true, 'the failed job finished, and idle waited for it to');
 });
 
 test('the draining flag is one answer for the whole process', () => {

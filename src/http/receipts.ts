@@ -22,7 +22,7 @@ import type { Ctx } from './context.ts';
 export const RECEIPT_LIMIT_DEFAULT = 25;
 export const RECEIPT_LIMIT_MAX = 200;
 
-export type ReceiptTx = { chain: string; hash: string; url: string | null };
+type ReceiptTx = { chain: string; hash: string; url: string | null };
 
 export type Receipt = {
   id: string;
@@ -66,7 +66,7 @@ function feesOf(entry: TxEntry): number | null {
   return (entry.venueFeeUsd ?? 0) + (gas ?? 0);
 }
 
-export function buildReceipts(ctx: Ctx, limit: number): Receipt[] {
+function buildReceipts(ctx: Ctx, limit: number): Receipt[] {
   const proposals = new Map<string, Proposal>();
   for (const p of ctx.proposals.list()) proposals.set(p.id, p);
 

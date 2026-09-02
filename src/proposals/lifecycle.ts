@@ -322,9 +322,9 @@ export async function refuse(ctx: PCtx, id: string): Promise<Proposal> {
    proposals.json on every call, and that file is durable (src/fsatomic.ts) and refuses to read as
    empty when it is damaged (src/store.ts). The two failures that COULD have lost it are closed
    elsewhere; this is the read that depends on them. */
-export type DailyLimit = { capUsd: number; spentUsd: number; resetsAt: string | null };
+type DailyLimit = { capUsd: number; spentUsd: number; resetsAt: string | null };
 
-export function countsAgainstCap(p: Proposal): boolean {
+function countsAgainstCap(p: Proposal): boolean {
   // 'needs_reconciliation' is deliberately absent, and task 4 says why: a row the app cannot
   // say moved money must not hold the budget hostage for a day.
   return (p.status === 'executed' || p.status === 'executing') && p.kind !== 'policy_change';
@@ -390,7 +390,7 @@ export function sessionSpentUsd(ctx: PCtx): number {
 // A promise chain is the whole mechanism. It makes "read the spend, decide, reserve" one
 // indivisible step, which is what a budget needs to mean anything. Throughput is not a
 // concern here: these operations end in a chain send, a human click, or both.
-export type Serialiser = {
+type Serialiser = {
   <T>(fn: () => Promise<T>): Promise<T>;
   // Resolves when everything queued as of the call has finished, however it finished. Used by
   // shutdown: work already in flight gets to write its row before the process ends. Nothing new

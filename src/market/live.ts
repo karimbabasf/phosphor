@@ -578,5 +578,3 @@ export function createMarketLive(deps: MarketLiveDeps) {
 
   return { track, ageMs, connected, status, stop };
 }
-
-export type MarketLive = ReturnType<typeof createMarketLive>;

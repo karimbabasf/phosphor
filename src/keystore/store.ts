@@ -35,8 +35,8 @@ export const KEYSTORE_FILENAME = 'keys.enc.json';
 // (it is a local file behind a window token) and not a defence against an offline attack
 // either, which the KDF answers. It is what stops a script from grinding a weak password
 // through the HTTP route at the speed of the event loop.
-export const MAX_FAILURES = 5;
-export const BACKOFF_MS = 30_000;
+const MAX_FAILURES = 5;
+const BACKOFF_MS = 30_000;
 
 /* DEMO MODE NEVER DESTROYS A KEY FILE, and this is the second lock on a door the config file
    already shut. The first lock is that keysPath now comes from the data directory, so a demo
@@ -134,7 +134,7 @@ function writeSecret(target: string, body: string, ownDir = true): void {
   atomicWrite(target, body, { mode: 0o600, ...(ownDir ? { dirMode: 0o700 } : {}) });
 }
 
-export function readKeystoreFile(file: string): KeystoreFile | null {
+function readKeystoreFile(file: string): KeystoreFile | null {
   if (!fs.existsSync(file)) return null;
   const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as KeystoreFile;
   if (parsed.header?.version !== 1) throw new Error(`${file} is not a keystore this app knows how to open`);
@@ -509,7 +509,7 @@ export function destroyPlaintext(target: string, demo: boolean = envIsDemo()): v
 // VERIFY BEFORE DESTROYING. A half-migration that has already deleted the plaintext is fund
 // loss, so the round trip is decrypted back and the derived EVM address compared against the
 // one the plaintext file held, and only then is anything overwritten.
-export async function migrateInto(deps: MigrateDeps, password: string): Promise<{ destroyed: string[]; addresses: StoredAddresses }> {
+async function migrateInto(deps: MigrateDeps, password: string): Promise<{ destroyed: string[]; addresses: StoredAddresses }> {
   if (fs.existsSync(deps.file)) throw new Error('this app already holds an encrypted wallet, so there is nothing to migrate');
   if (!fs.existsSync(deps.keysPath)) throw new Error(`no plaintext key file at ${deps.keysPath}`);
 

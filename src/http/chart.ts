@@ -78,7 +78,7 @@ export function startPricePolling(ctx: Ctx): NodeJS.Timeout {
   return priceTimer;
 }
 
-export type CandleLoad = {
+type CandleLoad = {
   candles: Candle[];
   source: string;
   stale: boolean;
@@ -103,7 +103,7 @@ export type CandleLoad = {
 //
 // An agent still waits, because an empty array is a worse answer than a slow one when
 // something is about to reason over it.
-export function readCandles(
+function readCandles(
   ctx: Ctx,
   product: string,
   granularitySec: number,
@@ -165,7 +165,7 @@ export async function sendCandles(ctx: Ctx, url: URL, res: http.ServerResponse):
 
 // ---------- chart ----------
 
-export function computeIndicators(
+function computeIndicators(
   state: ChartState,
   series: Candle[],
 ): { indicator: ChartIndicator; result: IndicatorResult }[] {

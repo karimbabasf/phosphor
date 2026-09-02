@@ -57,7 +57,7 @@ export function mnemonicToSeed(mnemonic: string): Buffer {
   return crypto.pbkdf2Sync(mnemonic.normalize('NFKD'), Buffer.from('mnemonic', 'utf8'), 2048, 64, 'sha512');
 }
 
-export function newMnemonic(): string {
+function newMnemonic(): string {
   // 128 bits of entropy, which is twelve words. viem draws from a CSPRNG and applies the
   // checksum, so an invalid mnemonic cannot be produced here.
   return generateMnemonic(english);

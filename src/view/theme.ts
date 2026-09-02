@@ -83,7 +83,7 @@ export function normaliseColour(raw: unknown): string | null {
   return trimmed;
 }
 
-export function rgbOf(hex: string): { r: number; g: number; b: number } {
+function rgbOf(hex: string): { r: number; g: number; b: number } {
   const full = normaliseColour(hex) ?? DEFAULT_THEME.accent;
   return {
     r: parseInt(full.slice(1, 3), 16),
@@ -111,7 +111,7 @@ export function contrastRatio(a: string, b: string): number {
   return (hi + 0.05) / (lo + 0.05);
 }
 
-export type ThemeOutcome =
+type ThemeOutcome =
   | { ok: true; theme: Theme; notes: string[] }
   | { ok: false; error: string };
 

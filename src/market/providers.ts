@@ -31,7 +31,7 @@ const COINBASE_MAX_ROWS = 300;
 // A minute is the floor. See the note on MIN_TIMEFRAME_SEC in src/chart.ts.
 const MIN_BASE_SEC = 60;
 
-export type BasePlan = {
+type BasePlan = {
   baseSec: number;
   provider: MarketRef['provider'];
   ref: MarketRef | null;
@@ -89,7 +89,7 @@ export async function pageBackward(
   return out.length > bars ? out.slice(-bars) : out;
 }
 
-export type ProviderDeps = {
+type ProviderDeps = {
   catalog: Catalog;
   fetchImpl?: typeof fetch;
   now?: () => number;

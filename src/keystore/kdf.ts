@@ -26,11 +26,11 @@ export type KdfParams = {
   salt: string; // hex
 };
 
-export const SCRYPT_N = 2 ** 18;
-export const SCRYPT_R = 8;
-export const SCRYPT_P = 1;
-export const KEY_BYTES = 32;
-export const SALT_BYTES = 32;
+const SCRYPT_N = 2 ** 18;
+const SCRYPT_R = 8;
+const SCRYPT_P = 1;
+const KEY_BYTES = 32;
+const SALT_BYTES = 32;
 
 /* scrypt needs 128 * N * r bytes, which at these parameters is 256 MiB, and node:crypto's
    default ceiling is 32 MiB. Doubling the requirement leaves room for the implementation's own
@@ -40,7 +40,7 @@ function maxmemFor(N: number, r: number): number {
   return 2 * 128 * N * r;
 }
 
-export function newSalt(): string {
+function newSalt(): string {
   return crypto.randomBytes(SALT_BYTES).toString('hex');
 }
 

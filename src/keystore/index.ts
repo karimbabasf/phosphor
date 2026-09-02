@@ -24,10 +24,6 @@ export function useKeystore(store: Keystore | null): void {
   active = store;
 }
 
-export function activeKeystore(): Keystore | null {
-  return active;
-}
-
 /* The plaintext fallback lives here and nowhere else. An install that has a keys.json and has
    not migrated yet keeps signing; once it has migrated the file is gone and this branch is
    unreachable. Every other module asks this one. */

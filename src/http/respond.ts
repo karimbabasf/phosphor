@@ -33,7 +33,7 @@ const MIME: Record<string, string> = {
 export type JsonBody = Record<string, unknown>;
 // `status` is on the failure because the two refusals are different answers: a body this
 // surface will not read at all is 415, a body it read and could not parse is 400.
-export type BodyResult = { ok: true; value: JsonBody } | { ok: false; error: string; status: number };
+type BodyResult = { ok: true; value: JsonBody } | { ok: false; error: string; status: number };
 
 export function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

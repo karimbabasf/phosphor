@@ -19,7 +19,7 @@ import type { Ctx } from './context.ts';
 
 const startedAtMs = Date.now();
 
-export type Health = {
+type Health = {
   ok: true;
   version: string;
   killSwitch: boolean;
@@ -29,7 +29,7 @@ export type Health = {
   uptimeSec: number;
 };
 
-export function buildHealth(ctx: Ctx): Health {
+function buildHealth(ctx: Ctx): Health {
   // The store can throw: a proposal file that will not read is quarantined and named. Health is
   // the one route that must answer anyway, because a person reaching for it is already asking
   // what is wrong. The failure becomes the answer rather than a 500.

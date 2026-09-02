@@ -17,7 +17,7 @@ import type { Ctx } from './context.ts';
 // What the agent gets back from any propose: the id to poll, what the policy decided,
 // and what the simulation said. Never the draft itself, so the app's resolved addresses
 // are not echoed to the caller that was deliberately not allowed to name them.
-export function sendProposal(ctx: Ctx, res: http.ServerResponse, proposal: Proposal): void {
+function sendProposal(ctx: Ctx, res: http.ServerResponse, proposal: Proposal): void {
   ctx.sse.broadcastState();
   sendJson(res, 200, {
     id: proposal.id,
@@ -47,7 +47,7 @@ export function numField(params: JsonBody, name: string, problems: string[]): nu
    Infinity. Neither is a policy question; both are a caller sending something that is not a
    quantity. `numField` already rejects NaN and Infinity, so this only has to rule out the sign
    and the zero. */
-export function positiveField(params: JsonBody, name: string, problems: string[]): number {
+function positiveField(params: JsonBody, name: string, problems: string[]): number {
   const value = numField(params, name, problems);
   if (!Number.isFinite(value)) return value; // numField has already said so
   if (value <= 0) {
@@ -67,7 +67,7 @@ export function positiveField(params: JsonBody, name: string, problems: string[]
   return value;
 }
 
-export function strField(params: JsonBody, name: string, problems: string[]): string {
+function strField(params: JsonBody, name: string, problems: string[]): string {
   const raw = params[name];
   if (typeof raw !== 'string' || raw.trim().length === 0) {
     problems.push(`${name} is required`);

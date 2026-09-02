@@ -22,8 +22,8 @@
 
 import crypto from 'node:crypto';
 
-export const IV_BYTES = 12; // 96 bits, the size GCM is defined for
-export const TAG_BYTES = 16;
+const IV_BYTES = 12; // 96 bits, the size GCM is defined for
+const TAG_BYTES = 16;
 
 export type Sealed = {
   iv: string; // hex

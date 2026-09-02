@@ -55,7 +55,7 @@ export type MarketRead = {
   error: string | null;
 };
 
-export type MarketDeps = {
+type MarketDeps = {
   catalog?: Catalog;
   store?: MarketStore;
   fetchImpl?: typeof fetch;

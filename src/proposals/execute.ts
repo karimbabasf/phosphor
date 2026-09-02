@@ -113,7 +113,7 @@ export async function executeApproved(ctx: PCtx, p: Proposal): Promise<Proposal>
 
 /* The wallet total the app currently believes, in USD. Synchronous: the snapshot is memory the
    refresh loop fills, so this costs nothing and never waits. */
-export function walletUsd(ctx: PCtx): number {
+function walletUsd(ctx: PCtx): number {
   return ctx.ledger.snapshot().holdings.reduce((sum, h) => sum + h.usd, 0);
 }
 
@@ -160,7 +160,7 @@ export async function executeRail(ctx: PCtx, p: Proposal, rail: Rail): Promise<P
   return persist(ctx, { ...executing, status: 'executed', balances, result: { ok: true, detail: result.detail, txids } });
 }
 
-export function legKey(leg: TransferLeg): string {
+function legKey(leg: TransferLeg): string {
   return `${leg.fromChain}->${leg.toChain}:${leg.symbol}`;
 }
 
@@ -191,7 +191,7 @@ export function depositAddressesOf(legs: TransferLeg[]): Array<{ leg: string; ad
 // saw. Anything that edits that file, or any refetch, would otherwise redirect the funds
 // silently. Compare what we are about to sign against what was recorded when the proposal
 // was made, and refuse on any difference rather than guessing which one is right.
-export function depositAddressMismatch(p: Proposal, legs: TransferLeg[]): string | null {
+function depositAddressMismatch(p: Proposal, legs: TransferLeg[]): string | null {
   const approved = p.simulation?.depositAddresses;
   if (approved === undefined) return null; // nothing venue-chosen in this proposal
 
@@ -209,7 +209,7 @@ export function depositAddressMismatch(p: Proposal, legs: TransferLeg[]): string
   return null;
 }
 
-export async function executeFundMove(ctx: PCtx, p: Proposal): Promise<Proposal> {
+async function executeFundMove(ctx: PCtx, p: Proposal): Promise<Proposal> {
   const legs = p.draft.kind === 'consolidate' ? p.draft.legs : p.draft.kind === 'transfer' ? [p.draft.leg] : [];
   const beforeUsd = walletUsd(ctx);
   const executing = persist(ctx, { ...p, status: 'executing', balances: { beforeUsd, afterUsd: null } });
@@ -265,7 +265,7 @@ export async function executeFundMove(ctx: PCtx, p: Proposal): Promise<Proposal>
   return persist(ctx, { ...executing, status: 'executed', balances, result: { ok: true, detail, txids } });
 }
 
-export async function applyPolicyChange(ctx: PCtx, p: Proposal): Promise<Proposal> {
+async function applyPolicyChange(ctx: PCtx, p: Proposal): Promise<Proposal> {
   if (p.draft.kind !== 'policy_change') return p;
   const current = loadPolicy(ctx.dataDir);
   if (!current) {

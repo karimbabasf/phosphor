@@ -19,9 +19,9 @@
 import type { Candle } from '../types.ts';
 import { aggregate, baseBarsNeeded, bucketStart } from './aggregate.ts';
 
-export type FetchWindow = (product: string, baseSec: number, bars: number, provider: string) => Promise<Candle[]>;
+type FetchWindow = (product: string, baseSec: number, bars: number, provider: string) => Promise<Candle[]>;
 
-export type ReadResult = {
+type ReadResult = {
   candles: Candle[];
   // Seconds since the newest bar in the cache was refreshed. The chart shows this.
   ageSec: number;
@@ -39,7 +39,7 @@ export type ReadResult = {
   error: string | null;
 };
 
-export type MarketStoreOptions = {
+type MarketStoreOptions = {
   fetchWindow: FetchWindow;
   // Told after a fill changes a series, so the server can push one SSE frame instead of
   // the browser polling. Never called for a fill that changed nothing.
@@ -76,13 +76,13 @@ type Series = {
 // How long after the last live bar a series still counts as being driven by a socket.
 // The audit's threshold: under 5 s is live, 5 to 30 s is delayed, past that the socket is not
 // serving this market whatever its readyState says.
-export const LIVE_FRESH_MS = 5000;
+const LIVE_FRESH_MS = 5000;
 
 // What the REST gate relaxes to while a series is live. The rail is what moves the price, so
 // REST becomes a correctness backstop reconciling the closed bar rather than the thing driving
 // the screen. When the socket goes down the gate below resumes and behaviour is exactly what
 // it was before the rail existed.
-export const LIVE_RELAXED_STALE_SEC = 30;
+const LIVE_RELAXED_STALE_SEC = 30;
 
 /* Union two oldest-first series by open time, letting the incoming bar win.
    The incoming copy is fresher by definition: it is either the same closed bar or the

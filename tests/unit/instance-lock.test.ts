@@ -53,10 +53,16 @@ test('a second lock on the same directory is refused by name', () => {
 });
 
 test('two different directories do not contend', () => {
-  const a = acquireInstanceLock(tmpDir());
-  const b = acquireInstanceLock(tmpDir());
+  const one = tmpDir();
+  const two = tmpDir();
+  const a = acquireInstanceLock(one);
+  const b = acquireInstanceLock(two);
+  assert.equal(heldPid(one), process.pid);
+  assert.equal(heldPid(two), process.pid, 'the second directory has a lock of its own');
   a.release();
   b.release();
+  assert.equal(fs.existsSync(path.join(one, '.lock')), false);
+  assert.equal(fs.existsSync(path.join(two, '.lock')), false);
 });
 
 test('a lock left by a dead process is cleared rather than honoured', () => {
@@ -109,11 +115,18 @@ test('release never removes a lock another process has taken over', () => {
   assert.equal(fs.readFileSync(path.join(dir, '.lock'), 'utf8'), '999999');
 });
 
-test('release is idempotent', () => {
+test('release is idempotent, and the second one does not remove somebody else\'s lock', () => {
   const dir = tmpDir();
   const lock = acquireInstanceLock(dir);
   lock.release();
+  assert.equal(fs.existsSync(path.join(dir, '.lock')), false);
+
+  // Somebody else takes the directory between the two releases, which is the case that makes a
+  // second release dangerous rather than merely redundant.
+  const next = acquireInstanceLock(dir);
   lock.release();
+  assert.equal(heldPid(dir), process.pid, 'the newer lock is still there');
+  next.release();
 });
 
 // The whole point, end to end: a real second process against one data dir exits with the named

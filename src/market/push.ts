@@ -129,8 +129,6 @@ export function createCandlePush(deps: CandlePushDeps) {
   return { push, quiet, stop, stats: () => ({ pending: pending.size, sent }) };
 }
 
-export type CandlePush = ReturnType<typeof createCandlePush>;
-
 /* The dot beside the price, in three states and no more.
 
    A person reading a chart has one question about the feed and it is whether the number can be
