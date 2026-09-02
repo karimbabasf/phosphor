@@ -77,6 +77,15 @@ export function buildState(ctx: Ctx): unknown {
     sentences: sentencesOf(policy),
     proposals: list,
     mode: ctx.cfg.mode,
+    /* The rolling 24h cap, as a fact rather than a sentence.
+       It was already in `sentences` as prose and nowhere as a number, so the window could tell a
+       person what the rule was and not how much of it was left. `spentUsd` is the same figure
+       the engine budgets on, so the number on screen and the number a proposal is refused
+       against cannot drift, and `resetsAt` is when the oldest counted spend leaves the window:
+       this cap does not empty at midnight and a screen implying it did would be wrong daily.
+       An unreadable policy has no cap to state, so the whole block is null rather than a zero
+       that would read as "nothing left to spend". */
+    dailyLimit: policy === null ? null : ctx.proposals.dailyLimit(policy.outbound.maxPerSessionUsd),
     // Every string in here is agent-authored (client names, labels, board posts) and is
     // rendered as text, never as markup. It is here so the status bar can say WHICH agents
     // are driving: "an agent is connected" is a weaker answer than "claude-code since 19:12"

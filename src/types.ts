@@ -783,4 +783,7 @@ export type ProposalService = {
   // Wait for whatever is already executing, up to capMs. True if it finished in time. What a
   // clean shutdown awaits before it closes the sockets.
   settle(capMs: number): Promise<boolean>;
+  // The rolling 24h cap as the window shows it: the same spend figure the engine budgets on,
+  // plus when the oldest counted spend leaves the window and capacity returns.
+  dailyLimit(capUsd: number): { capUsd: number; spentUsd: number; resetsAt: string | null };
 };

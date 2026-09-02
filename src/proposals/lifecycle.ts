@@ -283,6 +283,40 @@ export async function refuse(ctx: PCtx, id: string): Promise<Proposal> {
   return persist(ctx, { ...p, status: 'refused', decidedBy: 'human', decidedAt: nowIso() });
 }
 
+/* The rolling 24h cap, as the window shows it.
+   `spentUsd` is the same figure the engine budgets on, so the number a person reads and the
+   number a proposal is refused against cannot drift. `resetsAt` is when the OLDEST counted spend
+   leaves the window, which is when capacity next returns: the cap does not empty at midnight and
+   a screen that implied it did would be wrong every day.
+
+   It survives a restart because it never lived in memory. sessionSpentUsd derives from
+   proposals.json on every call, and that file is durable (src/fsatomic.ts) and refuses to read as
+   empty when it is damaged (src/store.ts). The two failures that COULD have lost it are closed
+   elsewhere; this is the read that depends on them. */
+export type DailyLimit = { capUsd: number; spentUsd: number; resetsAt: string | null };
+
+export function countsAgainstCap(p: Proposal): boolean {
+  // 'needs_reconciliation' is deliberately absent, and task 4 says why: a row the app cannot
+  // say moved money must not hold the budget hostage for a day.
+  return (p.status === 'executed' || p.status === 'executing') && p.kind !== 'policy_change';
+}
+
+export function dailyLimit(ctx: PCtx, capUsd: number): DailyLimit {
+  const cutoff = Date.now() - SESSION_WINDOW_MS;
+  const counted = ctx.store
+    .list()
+    .filter(countsAgainstCap)
+    .map(p => ({ at: Date.parse(p.decidedAt ?? p.createdAt), usd: totalUsdOf(p.draft) }))
+    .filter(row => Number.isFinite(row.at) && row.at >= cutoff);
+
+  const oldest = counted.reduce<number | null>((min, row) => (min === null || row.at < min ? row.at : min), null);
+  return {
+    capUsd,
+    spentUsd: counted.reduce((sum, row) => sum + row.usd, 0),
+    resetsAt: oldest === null ? null : new Date(oldest + SESSION_WINDOW_MS).toISOString(),
+  };
+}
+
 export function sessionSpentUsd(ctx: PCtx): number {
   const cutoff = Date.now() - SESSION_WINDOW_MS;
   return ctx.store

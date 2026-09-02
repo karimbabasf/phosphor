@@ -21,6 +21,7 @@ import { within } from './shutdown.ts';
 import {
   approve,
   createSerialiser,
+  dailyLimit,
   NO_RAILS,
   refuse,
   releaseQueued,
@@ -86,5 +87,6 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     // 13 exists to stop.
     reconcile: (id: string) => reconcileProposal(ctx, id),
     settle: (capMs: number) => within(capMs, serialise.idle()),
+    dailyLimit: (capUsd: number) => dailyLimit(ctx, capUsd),
   };
 }
