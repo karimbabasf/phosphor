@@ -1,13 +1,15 @@
 // Phosphor end to end proof. Boots a real app on a throwaway data dir, drives it through a
 // real MCP client over stdio, and plays the human at the browser for every approval. Nothing
 // here is mocked: the only thing this script fakes is the finger that clicks approve, and it
-// can only do that because it holds the per-boot token that GET /api/session hands out.
+// can only do that because it plays the SHELL as well: it mints the window token, hands it to
+// the app in PHOSPHOR_WINDOW_TOKEN, and holds the only copy. No route serves it.
 //
 // The claim under test is the product's whole pitch: the agent authors and proposes, the app
 // enforces and executes, and no write happens without either a human click or a policy that
 // explicitly said this size is fine. Run: node scripts/e2e.ts (exit 0 all green, 1 otherwise).
 
 import { spawn, type ChildProcessByStdio } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -73,7 +75,9 @@ async function getJson(route: string): Promise<Json> {
 async function postJson(route: string, body: unknown): Promise<{ status: number; json: Json }> {
   const res = await fetch(`${BASE}${route}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    // Origin names this app, because every write route requires a present matching one. A
+    // browser cannot set the header, so this is what a local caller brings instead.
+    headers: { 'content-type': 'application/json', origin: BASE },
     body: JSON.stringify(body),
   });
   let json: Json = null;
@@ -107,7 +111,16 @@ function holdingAmount(ledger: Json, chain: string, symbol: string): number {
 // ---------- children ----------
 
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-e2e-'));
-const childEnv = { ...cleanEnv(), ACC_PORT: String(PORT), ACC_MODE: 'demo', ACC_DATA_DIR: dataDir };
+// The window token, minted here because this script is standing in for the Tauri shell. The
+// app reads it from the environment and serves it nowhere, so this is the only copy.
+const WINDOW_TOKEN = crypto.randomBytes(32).toString('hex');
+const childEnv = {
+  ...cleanEnv(),
+  ACC_PORT: String(PORT),
+  ACC_MODE: 'demo',
+  ACC_DATA_DIR: dataDir,
+  PHOSPHOR_WINDOW_TOKEN: WINDOW_TOKEN,
+};
 
 type AppProcess = ChildProcessByStdio<null, Readable, Readable>;
 
@@ -330,9 +343,9 @@ async function run(): Promise<void> {
     `status=${pending?.status} eth USDT=${ethUsdtBefore}`,
   );
 
-  const session = await getJson('/api/session');
-  const token: string = session.token;
-  check('GET /api/session mints a per-boot approval token', typeof token === 'string' && token.length >= 32, `${token.length} chars`);
+  const token: string = WINDOW_TOKEN;
+  const served = await fetch(`${BASE}/api/session`);
+  check('GET /api/session is gone, so no local process can read the token', served.status === 404, `http ${served.status}`);
 
   const approved = await postJson('/api/approve', { id: proposalId, token });
   check(

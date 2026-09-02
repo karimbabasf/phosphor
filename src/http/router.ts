@@ -42,7 +42,6 @@ const GET: Record<string, Route> = {
     sendJson(res, report.status, report.body);
   },
   '/api/trade': (ctx, _req, res) => sendJson(res, 200, ctx.trade.payload()),
-  '/api/session': (ctx, _req, res) => sendJson(res, 200, { token: ctx.token }),
   '/api/driver': (ctx, _req, res) => sendJson(res, 200, ctx.chats.payload()),
   '/api/events': (ctx, req, res) => ctx.sse.open(req, res),
 };

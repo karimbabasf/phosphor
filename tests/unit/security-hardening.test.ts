@@ -7,6 +7,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -67,6 +68,8 @@ function builtSwap(): Proposal {
 
 async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-sec-'));
+  // Play the shell: the window token arrives in the environment, never over a route.
+  process.env.PHOSPHOR_WINDOW_TOKEN = crypto.randomBytes(32).toString('hex');
   const cfg: AppConfig = {
     mode: 'demo',
     port: 0,
@@ -296,6 +299,37 @@ test('a negative amountIn is refused at the edge, never reaching the USD math (F
     });
     assert.equal(out.status, 400);
     assert.match(out.body, /amountIn must be greater than 0/);
+  } finally {
+    await h.close();
+  }
+});
+
+// P0-1, the hole the product was named after. GET /api/session handed the approval token to any
+// process on loopback, so a curl of it followed by a POST to /api/approve executed a pending
+// proposal and wrote decidedBy: 'human' beside it. The token now arrives in the environment
+// from the shell that owns the window, and this walks the whole GET surface to prove nothing
+// hands it back.
+test('no route serves the window token (P0-1)', async () => {
+  const h = await boot();
+  try {
+    const gone = await raw(h.url, '/api/session', { headers: { Origin: h.url } });
+    assert.equal(gone.status, 404, 'GET /api/session must not exist');
+
+    const routes = [
+      '/api/state',
+      '/api/chart',
+      '/api/log',
+      '/api/transactions',
+      '/api/gas',
+      '/api/trade',
+      '/api/driver',
+    ];
+    const token = process.env.PHOSPHOR_WINDOW_TOKEN ?? '';
+    for (const route of routes) {
+      const out = await raw(h.url, route, { headers: { Origin: h.url } });
+      assert.ok(token.length > 0 && !out.body.includes(token), `${route} echoes the window token`);
+      assert.doesNotMatch(out.body, /"token"\s*:\s*"[^"]/, `${route} carries a token field`);
+    }
   } finally {
     await h.close();
   }

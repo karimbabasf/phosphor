@@ -2,14 +2,14 @@
 // an SSE change stream, and the single /api/mcp route the MCP proxy speaks.
 //
 // Approve, refuse and kill are the only mutating browser routes and every one of
-// them requires the per-boot token that GET /api/session hands out. Every /api/mcp
+// them requires the window token, which arrives in the environment and is served by
+// no route at all. Every /api/mcp
 // op is audit-logged as a tool_call before dispatch, and every rejected mutation is
 // audit-logged as approve_attempt_rejected. The one op that is not a tool_call is the
 // presence heartbeat: it is logged as agent_connected and agent_disconnected on the
 // edges, because a line every 15s buries the transcript it is meant to sit in.
 //
-// The approval token, the Host check and the origin check live in src/http/auth.ts, and the
-// known hole in all three is written up in that file header.
+// The window token, the Host check and the origin check live in src/http/auth.ts.
 
 import http from 'node:http';
 
@@ -26,7 +26,7 @@ import { createCrew } from './crew.ts';
 import { createHistory } from './history.ts';
 import { BASIC_EVENT_SCAN, PROJECT_DIR } from './http/context.ts';
 import type { Ctx, GasFill, PriceCache, ServerDeps, PhosphorServer } from './http/context.ts';
-import { HOST, mintToken } from './http/auth.ts';
+import { HOST, windowToken } from './http/auth.ts';
 import { createSseHub } from './http/sse.ts';
 import { createChatRegistry } from './http/chats.ts';
 import { loadCandles, startPricePolling } from './http/chart.ts';
@@ -44,8 +44,10 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       localTheme = next;
     });
 
-  const token = mintToken();
-  audit.append('app_start', 'approval surface armed: browser approval token minted for this boot');
+  /* The window token, read from the environment the shell wrote. No route serves it: the only
+     holder is the webview the shell injected it into. See src/http/auth.ts. */
+  const token = windowToken();
+  audit.append('app_start', 'approval surface armed: the window token is held by the window only');
 
   // The bounded audit tail the basic screen's activity list reads. Seeded once here, then
   // appended by the SSE hub's own audit subscription. See the note beside it in sse.ts.

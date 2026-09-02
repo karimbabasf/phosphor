@@ -104,13 +104,8 @@ var PhosphorChat = (function () {
      a person who presses start in the moment between the page painting and that request
      landing would otherwise get a 403 for doing nothing wrong. */
   function withToken() {
-    if (token) return Promise.resolve(token);
-    return fetch('/api/session')
-      .then(function (r) { return r.json(); })
-      .then(function (json) {
-        token = json.token || '';
-        return token;
-      });
+    if (!token) token = window.__PHOSPHOR_TOKEN__ || '';
+    return Promise.resolve(token);
   }
 
   /* Every request names the conversation it is for, and the server refuses a name it does not
@@ -1200,10 +1195,7 @@ var PhosphorChat = (function () {
      user's. The server answers with one chat that has no id in that case, which is what keeps
      serving this window from spawning a process nobody asked for. */
   function load() {
-    fetch('/api/session')
-      .then(function (r) { return r.json(); })
-      .then(function (json) { token = json.token || ''; })
-      .catch(function () {});
+    token = window.__PHOSPHOR_TOKEN__ || '';
     refresh();
   }
 
