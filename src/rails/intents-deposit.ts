@@ -418,11 +418,27 @@ export function intentsDepositRail(deps: IntentsDepositRailDeps): IntentsDeposit
     );
 
     if (!sent.ok) {
-      const where = sent.hash !== undefined ? ` (tx ${sent.hash})` : '';
+      /* Two different sentences, because they are two different facts and the difference is
+         whether a hash exists. With no hash nothing was broadcast and "no funds left the wallet"
+         is true. WITH a hash the transfer is on the wire and may already have confirmed, and the
+         old unconditional sentence invited the human to send the same amount twice. chain/evm.ts
+         now returns the hash from its catch, so this branch is reachable rather than dead.
+         hypercore-deposit.ts has carried the corrected shape since the live Arbitrum incident;
+         this is the same shape. */
+      if (sent.hash !== undefined) {
+        return {
+          ok: false,
+          detail:
+            `deposit transfer broadcast as ${sent.hash} and this app could not confirm it: ` +
+            `${oneLine(sent.error ?? 'unknown error', 120)}. THE FUNDS MAY ALREADY HAVE LEFT THE WALLET. ` +
+            `Check ${sent.hash} and the deposit address ${depositAddress} before sending again.`,
+          txids: [sent.hash],
+        };
+      }
       return {
         ok: false,
-        detail: `deposit transfer failed${where}: ${oneLine(sent.error ?? 'unknown error')}. No funds left the wallet.`,
-        txids: sent.hash !== undefined ? [sent.hash] : [],
+        detail: `deposit transfer failed: ${oneLine(sent.error ?? 'unknown error')}. No funds left the wallet.`,
+        txids: [],
       };
     }
 

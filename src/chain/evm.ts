@@ -98,12 +98,21 @@ export async function sendTx(params: SendParams): Promise<SendOutcome> {
   const { client, account } = writer(chain, keysPath);
   const pub = reader(chain);
 
+  /* Hoisted, and this is the whole of the fix.
+     `hash` used to be declared inside the try, so every post-broadcast error returned
+     `{ ok: false }` with no hash in it: a receipt wait that times out (120s, below), an archive
+     node refusing, a 5xx after three transport retries. All three report a transaction that IS
+     ON CHAIN as a clean failure with nothing to look it up by. This is the live Arbitrum
+     incident written up in rails/hypercore-deposit.ts, and the recovery branch there
+     (`if (sent.hash !== undefined)`) was dead code because sendTx could never populate it. */
+  let hash: `0x${string}` | undefined;
+
   try {
     // Estimate first. A revert here costs nothing and produces the real reason string,
     // where a broadcast revert costs gas and produces a receipt with status 0 and no why.
     const gas = await pub.estimateGas({ account, to, data, value: params.value ?? 0n });
 
-    const hash = await client.sendTransaction({
+    hash = await client.sendTransaction({
       account,
       chain: null,
       to,
@@ -118,7 +127,11 @@ export async function sendTx(params: SendParams): Promise<SendOutcome> {
     }
     return { ok: true, hash, explorer: spec.explorerTx + hash, gasUsed: receipt.gasUsed.toString() };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    // The hash if we have one. A caller that reads no hash here may state that nothing was
+    // broadcast; a caller that reads one may not.
+    const error = err instanceof Error ? err.message : String(err);
+    if (hash === undefined) return { ok: false, error };
+    return { ok: false, hash, explorer: spec.explorerTx + hash, error };
   }
 }
 

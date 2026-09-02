@@ -454,3 +454,78 @@ test('dust is left alone, because a deposit is two transactions and a human clic
 test('an unhealthy venue is never a destination, however much is idle on it', () => {
   assert.equal(pickIdleVenue([quote('arb', 0.0436, 5000, false)], 5), undefined);
 });
+
+// ---------- the multi-call rail, and the hash it used to drop ----------
+//
+// A deposit is an approve then a supply. The failure branch used to build its txids list from
+// the calls that had already succeeded, and push the current call's hash only after the ok
+// check, so the hash of the transaction actually in question was the one hash never reported.
+// Two on-chain state changes, and the record named one of them.
+
+import { runCalls } from '../../src/rails/yield.ts';
+import type { AppConfig } from '../../src/types.ts';
+import type { SendOutcome } from '../../src/chain/evm.ts';
+
+const YIELD_CFG = { keysPath: '/nonexistent/keys.json' } as unknown as AppConfig;
+
+function sender(outcomes: SendOutcome[]): typeof import('../../src/chain/evm.ts').sendTx {
+  let i = 0;
+  return (async () => outcomes[Math.min(i++, outcomes.length - 1)]) as never;
+}
+
+test('every hash is reported, including the one on the call that failed', async () => {
+  const out = await runCalls(
+    YIELD_CFG,
+    'arb',
+    [
+      { label: 'approve', to: '0xaaa', data: '0x1' },
+      { label: 'supply', to: '0xbbb', data: '0x2' },
+    ] as never,
+    sender([
+      { ok: true, hash: '0xapprove' },
+      { ok: false, hash: '0xsupply', error: 'could not read the receipt' },
+    ]),
+  );
+
+  assert.equal(out.ok, false);
+  assert.deepEqual(out.txids, ['0xapprove', '0xsupply'], 'the failing call is the one worth looking up');
+  assert.match(out.detail, /It broadcast as 0xsupply/);
+  assert.match(out.detail, /Completed before this: approve/);
+});
+
+test('a call that never broadcast reports only what did', async () => {
+  const out = await runCalls(
+    YIELD_CFG,
+    'arb',
+    [
+      { label: 'approve', to: '0xaaa', data: '0x1' },
+      { label: 'supply', to: '0xbbb', data: '0x2' },
+    ] as never,
+    sender([
+      { ok: true, hash: '0xapprove' },
+      { ok: false, error: 'insufficient funds for gas' },
+    ]),
+  );
+
+  assert.deepEqual(out.txids, ['0xapprove']);
+  assert.doesNotMatch(out.detail, /It broadcast as/);
+});
+
+test('every call succeeding reports every hash in order', async () => {
+  const out = await runCalls(
+    YIELD_CFG,
+    'arb',
+    [
+      { label: 'approve', to: '0xaaa', data: '0x1' },
+      { label: 'supply', to: '0xbbb', data: '0x2' },
+    ] as never,
+    sender([
+      { ok: true, hash: '0xapprove' },
+      { ok: true, hash: '0xsupply' },
+    ]),
+  );
+
+  assert.equal(out.ok, true);
+  assert.deepEqual(out.txids, ['0xapprove', '0xsupply']);
+  assert.equal(out.detail, 'approve, supply');
+});

@@ -572,6 +572,10 @@ export async function sendTx(params: NearSendParams): Promise<NearSendOutcome> {
   const spec = nearChainSpec();
   const fetchImpl = params.fetchImpl ?? fetch;
 
+  // Outside the try for the same reason as chain/evm.ts: a send whose RPC response is lost
+  // must not report "nothing happened" about a transaction that is signed and broadcast.
+  let hash: string | undefined;
+
   try {
     if (params.actions.length === 0) throw new Error('a transaction needs at least one action');
     const signer = readNearSigner(params.keysPath);
@@ -580,7 +584,7 @@ export async function sendTx(params: NearSendParams): Promise<NearSendOutcome> {
       recentBlockHash(spec, fetchImpl),
     ]);
 
-    const { signedTxBase64, hash } = signTransaction(
+    const signed = signTransaction(
       {
         signerId: signer.accountId,
         publicKeyBytes: signer.publicKeyBytes,
@@ -591,6 +595,11 @@ export async function sendTx(params: NearSendParams): Promise<NearSendOutcome> {
       },
       signer.privateKey,
     );
+    const { signedTxBase64 } = signed;
+    // Recorded on the outer binding the moment it exists, so the catch below can return it. A
+    // NEAR ft_transfer whose RPC response is lost used to report nothing sent while the tokens
+    // were gone, and with no hash there was nothing to check the explorer with.
+    hash = signed.hash;
 
     // EXECUTED_OPTIMISTIC waits for the transaction and its receipts to execute in a block
     // that is not yet final. Waiting for FINAL costs another ~2s per send for a guarantee a
@@ -620,7 +629,10 @@ export async function sendTx(params: NearSendParams): Promise<NearSendOutcome> {
 
     return { ok: true, hash, explorer, gasBurnt: gasBurnt.toString() };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    const error = err instanceof Error ? err.message : String(err);
+    // Signed and possibly broadcast. The hash is the only handle a human has on it.
+    if (hash === undefined) return { ok: false, error };
+    return { ok: false, hash, explorer: spec.explorerTx + hash, error };
   }
 }
 

@@ -670,3 +670,36 @@ test('a deposit address as counterparty is refused outright, never click-gated',
   const largeVenue = evaluate(draftOf({ counterparty: ONECLICK_COUNTERPARTY, amountUsd: 500 }), ctx);
   assert.equal(largeVenue.outcome, 'needs_approval');
 });
+
+// ---------- the hash that used to be dropped ----------
+//
+// chain/evm.ts declared `hash` inside its try, so every post-broadcast error came back with no
+// hash at all: a receipt wait that timed out, an archive node refusing, a 5xx after three
+// transport retries. All three report a transaction that IS ON CHAIN as a clean failure. The
+// sentence on top of it read "No funds left the wallet", which is how a person sends twice.
+
+test('a deposit transfer that broadcast and lost its receipt keeps the hash', async () => {
+  const h = harness({ send: { ok: false, hash: TX_HASH, error: 'Archive node required to read the receipt' } });
+  const out = await railOf(h).execute(draftOf());
+
+  assert.equal(out.ok, false);
+  assert.deepEqual(out.txids, [TX_HASH], 'the hash is the only handle a human has on it');
+  assert.match(out.detail, new RegExp(TX_HASH));
+});
+
+test('and the sentence over it never says no funds left the wallet', async () => {
+  const h = harness({ send: { ok: false, hash: TX_HASH, error: 'Archive node required to read the receipt' } });
+  const out = await railOf(h).execute(draftOf());
+
+  assert.doesNotMatch(out.detail, /No funds left the wallet/);
+  assert.match(out.detail, /MAY ALREADY HAVE LEFT THE WALLET/);
+});
+
+test('a transfer that never broadcast still says plainly that nothing moved', async () => {
+  const h = harness({ send: { ok: false, error: 'insufficient funds for gas * price + value' } });
+  const out = await railOf(h).execute(draftOf());
+
+  assert.equal(out.ok, false);
+  assert.deepEqual(out.txids, []);
+  assert.match(out.detail, /No funds left the wallet/, 'with no hash the sentence is true and stays');
+});

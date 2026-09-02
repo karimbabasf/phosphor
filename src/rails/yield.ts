@@ -56,17 +56,30 @@ async function refuseUnhealthy(draft: { chain: YieldDepositDraft['chain']; symbo
   return null;
 }
 
-async function runCalls(cfg: AppConfig, chain: YieldDepositDraft['chain'], calls: VenueCall[]): Promise<RailResult> {
+// Exported, and the send is a parameter, so the ordering below can be asserted without a key
+// and without a chain. This rail has five exports and no test named any of them.
+export async function runCalls(
+  cfg: AppConfig,
+  chain: YieldDepositDraft['chain'],
+  calls: VenueCall[],
+  send: typeof sendTx = sendTx,
+): Promise<RailResult> {
   const txids: string[] = [];
   const done: string[] = [];
 
   for (const call of calls) {
-    const out = await sendTx({
+    const out = await send({
       chain,
       keysPath: cfg.keysPath,
       to: call.to as Address,
       data: call.data as Hex,
     });
+    // BEFORE the ok check, deliberately. A call that broadcast and then failed to confirm has
+    // a hash, and the failure branch below used to return `txids` holding only the calls that
+    // had already succeeded: the hash of the transaction that is actually in question was the
+    // one hash dropped.
+    if (out.hash) txids.push(out.hash);
+
     if (!out.ok) {
       // Report what DID happen before the failure, not just the failure.
       //
@@ -74,9 +87,9 @@ async function runCalls(cfg: AppConfig, chain: YieldDepositDraft['chain'], calls
       // supply that reverted leaves a real allowance on chain. A result that said only
       // "supply failed" would hide a state change the wallet is now carrying.
       const sofar = done.length > 0 ? ` Completed before this: ${done.join(', ')}.` : '';
-      return { ok: false, detail: `${call.label} failed: ${out.error ?? 'unknown error'}.${sofar}`, txids };
+      const broadcast = out.hash ? ` It broadcast as ${out.hash}, so check it before retrying.` : '';
+      return { ok: false, detail: `${call.label} failed: ${out.error ?? 'unknown error'}.${sofar}${broadcast}`, txids };
     }
-    if (out.hash) txids.push(out.hash);
     done.push(call.label);
   }
 

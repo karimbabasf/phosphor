@@ -112,6 +112,9 @@ function harness(
     balance?: bigint;
     gasCost?: bigint;
     sendOk?: boolean;
+    // The hash a send carries when it broadcast and then failed to confirm. Distinct from
+    // sendOk:false with no hash, which is a transfer that never went out at all.
+    sendHashOnFailure?: string;
     statuses?: string[];
   } = {},
 ): Harness {
@@ -152,9 +155,12 @@ function harness(
       signerAddress: () => OWNER,
       async send(params) {
         sends.push(params);
-        return options.sendOk === false
-          ? { ok: false, error: 'insufficient funds for gas * price + value' }
-          : { ok: true, hash: '0xdeadbeef', explorer: 'https://etherscan.io/tx/0xdeadbeef', gasUsed: '21000' };
+        if (options.sendOk === false) {
+          return options.sendHashOnFailure === undefined
+            ? { ok: false, error: 'insufficient funds for gas * price + value' }
+            : { ok: false, hash: options.sendHashOnFailure, error: 'Archive node required to read the receipt' };
+        }
+        return { ok: true, hash: '0xdeadbeef', explorer: 'https://etherscan.io/tx/0xdeadbeef', gasUsed: '21000' };
       },
       async nativeBalance() {
         return h.balance;
@@ -451,4 +457,30 @@ test('simulate warns that credited funds are not in the wallet any more', async 
   const h = harness();
   const result = await railOf(h).simulate(draftOf());
   assert.match(result.summary, /NOT in this wallet/);
+});
+
+// ---------- the hash that used to be dropped ----------
+//
+// A deposit transfer that broadcast and then lost its receipt is a transfer that may already
+// have moved the money. chain/evm.ts used to return no hash on that path, so this rail reported
+// "No funds left the wallet" over it and handed the human nothing to look it up with.
+
+test('a deposit that broadcast and lost its receipt keeps the hash', async () => {
+  const h = harness({ sendOk: false, sendHashOnFailure: '0xbroadcast' });
+  const out = await railOf(h).execute(draftOf());
+
+  assert.equal(out.ok, false);
+  assert.deepEqual(out.txids, ['0xbroadcast']);
+  assert.doesNotMatch(out.detail, /No funds left the wallet/);
+  assert.match(out.detail, /MAY ALREADY HAVE LEFT THE WALLET/);
+  assert.match(out.detail, /0xbroadcast/);
+});
+
+test('a deposit that never broadcast still says nothing moved', async () => {
+  const h = harness({ sendOk: false });
+  const out = await railOf(h).execute(draftOf());
+
+  assert.equal(out.ok, false);
+  assert.deepEqual(out.txids, []);
+  assert.match(out.detail, /No funds left the wallet/);
 });
