@@ -31,12 +31,19 @@
 export type Duplicate = { id: string; session: string };
 
 export type DuplicateGuard = {
-  // The proposal already in flight that this one would double, or null.
+  // The proposal already in flight that this one would double, or null. `id` is empty when the
+  // other agent's proposal is still being drafted, which is the case this guard exists for.
   find(kind: string, params: Record<string, unknown>, session: string): Duplicate | null;
-  // Called only when a proposal actually LANDED. Recording at draft time instead would
-  // fingerprint drafts that were then refused for a bad amount, and block the corrected retry
-  // as a duplicate of a proposal that never existed.
+  /* Called TWICE per proposal, and the first call is the one that closes the race.
+     It used to be called once, when the proposal had landed, and the whole pipeline was awaited
+     in between: two identical requests arriving in the same tick both found an empty memory and
+     both landed. So the claim is made in the same tick as the check, with no id yet, and made
+     again with the real id when the proposal exists.
+     Anything that does not land calls forget, because a fingerprint left behind by a draft that
+     was refused for a bad amount would block the corrected retry as a duplicate of a proposal
+     that never existed, and would name an id nobody can look up. */
   remember(kind: string, params: Record<string, unknown>, session: string, id: string): void;
+  forget(kind: string, params: Record<string, unknown>): void;
   size(): number;
 };
 
@@ -87,9 +94,18 @@ export function createDuplicateGuard(now: () => number = Date.now, windowMs = DU
       const key = fingerprint(kind, params);
       // Deleted first so a re-proposal moves to the end of the insertion order, which is what
       // makes the cap above evict the genuinely oldest entry rather than the first ever seen.
+      // The claim's `at` is kept when the id is filled in, so the ninety seconds run from the
+      // moment of the check rather than from the moment the rail answered.
+      const claimed = seen.get(key);
+      // Only when this call is filling in the id on THIS session's own claim. A genuine
+      // re-proposal comes through the claim first, with an empty id, and that resets the clock.
+      const fillingIn = claimed !== undefined && claimed.id === '' && claimed.session === session && id !== '';
       seen.delete(key);
-      seen.set(key, { session, at: now(), id });
+      seen.set(key, { session, at: fillingIn ? claimed.at : now(), id });
       sweep();
+    },
+    forget(kind, params) {
+      seen.delete(fingerprint(kind, params));
     },
     size: () => seen.size,
   };

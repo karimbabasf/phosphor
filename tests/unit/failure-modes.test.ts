@@ -319,6 +319,70 @@ test('two identical proposals from one session: at most one is a spend', async (
   }
 });
 
+/* TWO AGENTS, one proposal, the same tick. This is the race the duplicate guard exists for and
+   the one it used to lose: handlePropose checked `find` and then awaited the whole proposal
+   pipeline before calling `remember`, so two identical requests arriving together both saw an
+   empty memory and both landed. Each proposal is individually correct, which is why nothing
+   downstream catches it: only the pair is wrong, and the human sees one action they asked for
+   and one they did not.
+   The claim is made at check time now, in the same tick as the check. */
+test('two agents proposing the same thing in one tick: one lands, the other is told about it', async () => {
+  const dir = tmpDir();
+  policyThatBinds(dir);
+  const port = takePort();
+  const app = await boot(dir, port);
+  try {
+    const params = { toChain: 'arb', symbol: 'USDC', maxTotalUsd: 8_000 };
+    const asAgent = (session: string): string =>
+      JSON.stringify({ op: 'propose', kind: 'consolidate', params, client: session, session });
+
+    const [a, b] = await Promise.all([
+      request(port, '/api/mcp', asAgent('agent-a')),
+      request(port, '/api/mcp', asAgent('agent-b')),
+    ]);
+
+    const statuses = [a.status, b.status].sort();
+    assert.deepEqual(statuses, [200, 409], 'one proposal, and the other agent is told why not');
+
+    const state = JSON.parse((await request(port, '/api/state')).body) as { proposals: Proposal[] };
+    // Filtered by kind, because a boot on a policy that predates a venue files a policy_change of
+    // its own asking to allow it, and that is not what this test is counting.
+    assert.equal(state.proposals.filter((p) => p.kind === 'consolidate').length, 1, 'one proposal exists, not two');
+
+    const refused = a.status === 409 ? a : b;
+    assert.match(JSON.parse(refused.body).error, /another agent proposed exactly this/);
+  } finally {
+    await app.stop();
+  }
+});
+
+/* A draft that never landed must not leave its fingerprint behind. Claiming at check time makes
+   that possible, so the claim is given back when the proposal does not happen: a fingerprint left
+   by a draft refused for a bad amount would block a second agent's correct proposal for ninety
+   seconds and name a proposal id that does not exist. */
+test('a proposal refused at the boundary leaves no claim behind for the next agent', async () => {
+  const dir = tmpDir();
+  policyThatBinds(dir);
+  const port = takePort();
+  const app = await boot(dir, port);
+  try {
+    const bad = JSON.stringify({
+      op: 'propose',
+      kind: 'swap',
+      params: { chain: 'arb', fromSymbol: 'USDC', toSymbol: 'USDT', amountIn: -5 },
+      client: 'agent-a',
+      session: 'agent-a',
+    });
+    const first = await request(port, '/api/mcp', bad);
+    assert.equal(first.status, 400, 'a negative amount is not a proposal');
+
+    const second = await request(port, '/api/mcp', JSON.stringify({ ...JSON.parse(bad), client: 'agent-b', session: 'agent-b' }));
+    assert.notEqual(second.status, 409, 'a second agent is not blocked by a draft that never existed');
+  } finally {
+    await app.stop();
+  }
+});
+
 test('concurrent approvals of one proposal decide it exactly once', async () => {
   const dir = tmpDir();
   const port = takePort();

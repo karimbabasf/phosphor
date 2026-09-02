@@ -101,23 +101,33 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
       existing: clash.id,
       by: clash.session,
     });
+    // An empty id means the other agent's proposal is still being drafted, which is exactly the
+    // race this guard exists for. There is nothing to read yet, so the sentence does not offer.
+    const names = clash.id === '' ? '' : ` (proposal ${clash.id})`;
     fail(
       res,
       409,
-      `another agent proposed exactly this ${kind} moments ago (proposal ${clash.id}). It has not been ` +
+      `another agent proposed exactly this ${kind} moments ago${names}. It has not been ` +
         'superseded, so this one is refused rather than doubling it. Read it with proposal_status, and ' +
         'use agent_board to say what you are taking on before you start.',
       { duplicate: clash.id },
     );
     return;
   }
+
+  /* THE CLAIM, made in the same tick as the check above, and that pair is the whole fix.
+     This used to be recorded only once the proposal had landed, with the entire draft, quote and
+     policy pipeline awaited in between, so two identical requests arriving together both found an
+     empty memory and both went through. Nothing downstream catches that: each proposal is
+     individually correct, and only the pair is wrong.
+     There is no id yet, so the entry carries an empty one and is rewritten with the real id when
+     the proposal exists. Anything that does not land gives the claim back below. */
+  ctx.duplicates.remember(kind, params, session, '');
+  let landed = false;
   const problems: string[] = [];
 
-  /* Every branch below answers through this rather than through sendProposal, so a proposal
-     that actually landed is the thing the duplicate guard remembers. Recording it at the top
-     of the function instead would fingerprint drafts that were then refused for a bad amount,
-     and block the corrected retry as a duplicate of a proposal that never existed. */
   const respond = (proposal: Proposal): void => {
+    landed = true;
     ctx.duplicates.remember(kind, params, session, proposal.id);
     sendProposal(ctx, res, proposal);
   };
@@ -369,5 +379,10 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
     fail(res, 400, `unknown propose kind: ${kind}. known kinds: ${PROPOSE_KINDS.join(', ')}`);
   } catch (err) {
     fail(res, 400, errText(err));
+  } finally {
+    /* Nothing landed, so the claim goes back. A fingerprint left behind by a draft that was
+       refused for a bad amount would block a second agent's correct proposal for ninety seconds
+       and name an id that does not exist. */
+    if (!landed) ctx.duplicates.forget(kind, params);
   }
 }

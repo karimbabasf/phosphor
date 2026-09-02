@@ -106,3 +106,49 @@ test('an empty proposal is still a proposal and is still guarded', () => {
   guard.remember('consolidate', {}, 'agent-a', 'prop-1');
   assert.equal(guard.find('consolidate', {}, 'agent-b')?.id, 'prop-1');
 });
+
+/* ---------- the claim, and giving it back ----------
+
+   The guard is only as good as WHEN it is written to. handlePropose checked `find` and then
+   awaited the whole draft, quote and policy pipeline before calling `remember`, so two identical
+   requests in one tick both found an empty memory. The claim is made in the same tick as the
+   check now, with no id yet, and rewritten with the real id when the proposal exists. */
+
+test('a claim with no id yet still blocks a second agent', () => {
+  const { guard } = guardFrom(1_000_000);
+  guard.remember('swap', SWAP, 'agent-a', '');
+  const clash = guard.find('swap', SWAP, 'agent-b');
+  assert.deepEqual(clash, { id: '', session: 'agent-a' }, 'the sentence can say who, even before it can say which');
+});
+
+test('filling in the id keeps the claim, it does not make a second one', () => {
+  const { guard } = guardFrom(1_000_000);
+  guard.remember('swap', SWAP, 'agent-a', '');
+  guard.remember('swap', SWAP, 'agent-a', 'prop-1');
+  assert.equal(guard.size(), 1);
+  assert.equal(guard.find('swap', SWAP, 'agent-b')?.id, 'prop-1');
+});
+
+test('the ninety seconds run from the check, not from whenever the rail answered', () => {
+  const { guard, advance } = guardFrom(1_000_000);
+  guard.remember('swap', SWAP, 'agent-a', '');
+  advance(40_000); // a slow quote and a slow chain read
+  guard.remember('swap', SWAP, 'agent-a', 'prop-1');
+
+  advance(DUPLICATE_MS - 40_000 + 1);
+  assert.equal(guard.find('swap', SWAP, 'agent-b'), null, 'the window closes when the check ages out');
+});
+
+test('forget gives the claim back, so a draft that never landed blocks nobody', () => {
+  const { guard } = guardFrom(1_000_000);
+  guard.remember('swap', SWAP, 'agent-a', '');
+  guard.forget('swap', SWAP);
+  assert.equal(guard.find('swap', SWAP, 'agent-b'), null);
+  assert.equal(guard.size(), 0);
+});
+
+test('forgetting something never claimed is not an error', () => {
+  const { guard } = guardFrom(1_000_000);
+  guard.forget('swap', SWAP);
+  assert.equal(guard.size(), 0);
+});
