@@ -30,8 +30,30 @@ import { createExchange, aggressiveLimitPrice, newCloid, orderErrors } from '../
 import { roundToValidPrice } from '../hl/format.ts';
 import { distanceToLiquidationPct, liquidationPrice } from '../hl/liquidation.ts';
 
-const KEY = process.env.PHOSPHOR_HL_KEY as `0x${string}` | undefined;
 const BASE_URL = process.env.PHOSPHOR_HL_URL ?? 'https://api.hyperliquid.xyz';
+
+/* THE KEY ARRIVES ON STDIN, one line, and stdin is closed behind it.
+ *
+ * It used to arrive in the environment, which was chosen over argv on purpose and correctly so,
+ * since argv is world-readable in `ps`. The environment is narrower and still not private: `ps
+ * eww <pid>` prints it for any process the same user owns, and this app's whole threat model is
+ * a same-user process. A pipe is readable by the two ends and nothing else.
+ *
+ * It cannot be wiped once it is here. A JavaScript string is immutable and the collector copies
+ * it, which is the same honest limit the keystore states about its own buffers, and the answer
+ * to it is the same: the parent kills this process when the signing session expires, and a dead
+ * process has no heap. */
+let KEY: `0x${string}` | undefined;
+let stdinBuffer = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk: string) => {
+  stdinBuffer += chunk;
+  const end = stdinBuffer.indexOf('\n');
+  if (end < 0) return;
+  const line = stdinBuffer.slice(0, end).trim();
+  stdinBuffer = '';
+  if (/^0x[0-9a-fA-F]{64}$/.test(line)) KEY = line as `0x${string}`;
+});
 
 // The runner holds no venue switch and no self-arm. What bounds it instead:
 //
@@ -138,7 +160,7 @@ function resolveRef(ref: Ref): number | null {
 let exchange: ReturnType<typeof createExchange> | null = null;
 
 function requireExchange(): ReturnType<typeof createExchange> {
-  if (KEY === undefined) throw new Error('no API wallet key in the environment');
+  if (KEY === undefined) throw new Error('no API wallet key: the app did not hand one to this runner');
   if (exchange === null) {
     exchange = createExchange({ privKey: KEY, baseUrl: BASE_URL });
   }

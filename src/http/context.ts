@@ -177,6 +177,9 @@ export type ServerDeps = {
      nothing until a wallet route is called. src/main.ts always passes the one it installed as
      the process keystore, so the app has exactly one. */
   keystore?: Keystore;
+  /* The lock's clock and the signing sessions. Optional for the same reason: a test that
+     brings none gets one that locks nothing, because it also brought no keystore to lock. */
+  session?: Session;
   /* Start the in-app agent when the port opens. OPT IN, and deliberately not read from cfg
      here: every test in this repo builds a server and listens on it, and a flag that defaulted
      to on would have each of them spawn a real Claude Code process. main.ts is the one caller
@@ -263,7 +266,7 @@ export type GasFill = { cache: GasCache; filling: boolean };
 
 /* ServerDeps minus the optional theme pair, because `theme` below is the resolved one and a
    handler reading ctx.getTheme() would crash on the install that did not pass it. */
-export type Ctx = Omit<ServerDeps, 'getTheme' | 'setTheme' | 'keystore'> & {
+export type Ctx = Omit<ServerDeps, 'getTheme' | 'setTheme' | 'keystore' | 'session'> & {
   token: string;
   keystore: Keystore;
   // The idle clock and the signing sessions. See src/keystore/session.ts.

@@ -12,6 +12,7 @@ import { readTheme, writeTheme, type Theme } from './view/theme.ts';
 import { loadConfig } from './config.ts';
 import { createAudit } from './audit.ts';
 import { createKeystore, useKeystore } from './keystore/index.ts';
+import { createSession } from './keystore/session.ts';
 import { createStore } from './store.ts';
 import { loadPolicy, savePolicy, defaultPolicy } from './policy/file.ts';
 import { renderSentences } from './policy/render.ts';
@@ -45,6 +46,27 @@ const store = createStore(cfg.dataDir);
    the window is where a person unlocks it. */
 const keystore = createKeystore({ keysPath: cfg.keysPath });
 useKeystore(keystore);
+
+/* The lock's clock, and the signing sessions armed rules hold, in one object because they are
+   two halves of one question: how long may this process keep a key. It is built here rather
+   than inside createServer because the runner needs it too, and there must be exactly one.
+   `announceLock` is filled once the server exists, since the frame it sends needs SSE clients
+   to send it to. Until then a lock is still a lock, it is simply not narrated. */
+let announceLock: (() => void) | null = null;
+const session = createSession({
+  isUnlocked: () => keystore.isUnlocked(),
+  lock: (reason) => {
+    keystore.lock();
+    audit.append(
+      'app_start',
+      reason === 'sleep'
+        ? 'the wallet locked: this machine was asleep'
+        : 'the wallet locked after fifteen minutes with nobody at the window',
+      { reason },
+    );
+    announceLock?.();
+  },
+});
 
 /* Anything the last run left behind, before this one can add to it. See the note above
    sweepOrphans in src/driver.ts for why this is safe here and nowhere else: it runs from the
@@ -138,6 +160,9 @@ const HL_WS_URL = 'wss://api.hyperliquid.xyz/ws';
 
 const runner = createRunnerHost({
   apiWalletKey: async () => await readApiWalletKey(cfg.keysPath),
+  // The one signing session in this process. An armed rule keeps the trading key across a
+  // lock, and only until the expiry the human set when they armed it.
+  session,
   baseUrl: HL_BASE_URL,
   // The ceiling on everything armed at once. It is what replaced the runner's blanket refusal
   // to trade real money rather than that refusal simply being deleted.
@@ -150,7 +175,10 @@ const runner = createRunnerHost({
     audit.append(
       e.type === 'halted' || e.type === 'error' ? 'error' : 'executed',
       `runner: ${e.type}${'id' in e && e.id !== null ? ` ${e.id}` : ''}` +
-        ('reason' in e ? `: ${e.reason}` : 'message' in e ? `: ${e.message}` : ''),
+        ('reason' in e ? `: ${e.reason}` : 'message' in e ? `: ${e.message}` : '') +
+        // Written into the sentence rather than left in the data, because "how long does this
+        // bot hold a key that can trade" is the question somebody reads this line to answer.
+        (e.type === 'armed' ? `: it holds the trading key until ${e.signingExpiresAt}` : ''),
       e,
     );
   },
@@ -334,6 +362,8 @@ const server = createServer({
   setView,
   getTheme,
   setTheme,
+  keystore,
+  session,
   trade,
   /* Default OFF, and the window opens on the turning globe. Karim, 2026-08-20: with no agent
      attached yet, the globe is what the app opens on, always.
@@ -348,6 +378,12 @@ const server = createServer({
 // Started after the server exists, because its first tick pushes a state frame and there has
 // to be something with SSE clients to push to. Absent in demo mode, where there is no loop.
 allocator?.start();
+
+// Now that there are clients to tell, an automatic lock says so on the wire.
+announceLock = () => {
+  server.broadcastState();
+};
+session.start();
 
 setInterval(() => {
   // Plural since the roster: one tick can find several members cold at once, and each is its

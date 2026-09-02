@@ -155,16 +155,27 @@ export function createServer(deps: ServerDeps): PhosphorServer {
      keystore, so the app has exactly one; a test that passes none gets one over its own temp
      keysPath, which reads that path and writes nothing until a wallet route is called. */
   const keystore = deps.keystore ?? createKeystore({ keysPath: cfg.keysPath });
-  const session = createSession({
-    isUnlocked: () => keystore.isUnlocked(),
-    lock: (reason) => {
-      keystore.lock();
-      audit.append('app_start', reason === 'sleep' ? 'the wallet locked: this machine was asleep' : 'the wallet locked after fifteen minutes with nobody at the window', { reason });
-      sse.broadcastLock(keystore.state());
-      broadcastState();
-    },
-  });
-  session.start();
+  const session =
+    deps.session ??
+    createSession({
+      isUnlocked: () => keystore.isUnlocked(),
+      lock: (reason) => {
+        keystore.lock();
+        audit.append(
+          'app_start',
+          reason === 'sleep'
+            ? 'the wallet locked: this machine was asleep'
+            : 'the wallet locked after fifteen minutes with nobody at the window',
+          { reason },
+        );
+        sse.broadcastLock(keystore.state());
+        broadcastState();
+      },
+    });
+  /* Only when this server owns the session. main.ts starts the one it built and shares with the
+     runner, and starting it twice would put two intervals on one clock. */
+  if (deps.session === undefined) session.start();
+  const stopSession = deps.session === undefined ? () => session.stop() : () => {};
 
   /* Everything the handlers read, in one object. It is assembled here rather than passed around
      as a dozen arguments because src/server.ts used to be one closure over these bindings, and
@@ -213,7 +224,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
 
   base.on('close', () => {
     sse.stop();
-    session.stop();
+    stopSession();
     clearInterval(priceTimer);
     chats.stopAll();
   });

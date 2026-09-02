@@ -21,12 +21,14 @@ import { fileURLToPath } from 'node:url';
 import type { MandateRunner } from '../rails/mandate.ts';
 import type { Mandate } from '../strategy/envelope.ts';
 import type { Condition, Program, Ref } from '../strategy/grammar.ts';
+import { SIGNING_SESSION_DEFAULT_MS } from '../keystore/session.ts';
+import type { Session } from '../keystore/session.ts';
 import { createFeed } from './feed.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export type RunnerEvent =
-  | { type: 'armed'; id: string; symbol: string }
+  | { type: 'armed'; id: string; symbol: string; signingExpiresAt: string }
   | { type: 'disarmed'; id: string; reason: string }
   | { type: 'fill'; id: string; symbol: string; side: string; sizeUsd: number; price: number }
   | { type: 'position'; id: string; symbol: string; sizeUsd: number; side: string; entryPx: number; liqPx: number | null; unrealisedUsd: number }
@@ -53,6 +55,15 @@ export type ManualAction = {
 
 export type HostDeps = {
   apiWalletKey: () => Promise<`0x${string}` | null>;
+  /* THE SIGNING SESSION, and it is the one exception to the auto-lock.
+     An armed rule has to survive a lock, or the bot is useless overnight, which is when perps
+     run, and the owner turns the lock off and loses the master key with it. So arming opens a
+     session scoped to that mandate, holding ONLY the Hyperliquid API wallet key: by the venue's
+     own signing split it can place orders and cannot withdraw, transfer or approve another
+     agent. A bot that outlives a lock holds trading authority, not custody.
+     Optional so a test can build a host without one, in which case an armed mandate has no
+     expiry beyond its own. */
+  session?: Session;
   baseUrl: string;
   onEvent: (e: RunnerEvent) => void;
   killSwitch: () => boolean;
@@ -201,14 +212,16 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
   events(): RunnerEvent[];
   manual(action: ManualAction): Promise<{ ok: boolean; detail: string }>;
   feedHealth(): ReturnType<ReturnType<typeof createFeed>['health']>;
-  armedDetail(): { mandate: Mandate; program: Program | null; since: string }[];
+  armedDetail(): { mandate: Mandate; program: Program | null; since: string; signingExpiresAt: string }[];
+  // Expired signing sessions, disarmed. Returns the ids it took the trading key back from.
+  sweepSigningSessions(): string[];
 } {
   let child: ChildProcess | null = null;
   // The program is held beside the mandate, not because this process runs it (the child does),
   // but because the trading window renders it in English. Reading it back off the child would
   // mean the screen showing a copy of the program rather than the program, and "the thing on
   // screen is the thing running" is the property the whole approval step depends on.
-  const armed = new Map<string, { mandate: Mandate; program: Program | null; since: string }>();
+  const armed = new Map<string, { mandate: Mandate; program: Program | null; since: string; signingExpiresAt: string }>();
   const recent: RunnerEvent[] = [];
   const feed = createFeed({ baseUrl: deps.baseUrl, user: deps.user });
   let pump: NodeJS.Timeout | null = null;
@@ -238,7 +251,13 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
 
   function startPump(): void {
     if (pump !== null) return;
-    pump = setInterval(() => void pumpOnce(), deps.pollMs ?? 2000);
+    pump = setInterval(() => {
+      // The expiry sweep rides the pump because the pump runs exactly while something is
+      // armed, which is exactly when a signing session can exist. A second timer for it would
+      // be a timer that ticks all night on an app with nothing running.
+      api.sweepSigningSessions();
+      void pumpOnce();
+    }, deps.pollMs ?? 2000);
     pump.unref();
   }
 
@@ -260,16 +279,17 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
     if (key === null) throw new Error('no API wallet key: run scripts/hl-agent.ts to approve one');
 
     const entry = path.join(__dirname, 'main.ts');
-    // The key goes over the fork's env rather than argv, because argv is visible in ps output
-    // to every process on the machine and this key can place orders.
+    /* THE KEY GOES OVER STDIN, and stdin is closed behind it.
+       It went over the environment before, which was chosen over argv on purpose (argv is
+       world-readable in `ps`) and was still not private: `ps eww <pid>` prints the environment
+       of any process this user owns, which is the attacker this app is built against. A pipe
+       has two ends and no third reader. */
     child = fork(entry, [], {
-      env: {
-        ...process.env,
-        PHOSPHOR_HL_KEY: key,
-        PHOSPHOR_HL_URL: deps.baseUrl,
-      },
-      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+      env: { ...process.env, PHOSPHOR_HL_URL: deps.baseUrl },
+      stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
     });
+    child.stdin?.write(`${key}\n`);
+    child.stdin?.end();
 
     child.on('message', (m) => {
       const e = m as RunnerEvent;
@@ -305,8 +325,8 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
     return child;
   }
 
-  return {
-    async arm(mandate, program) {
+  const api = {
+    async arm(mandate: Mandate, program: unknown) {
       if (deps.killSwitch()) return { ok: false, detail: 'kill switch is on; nothing can arm' };
 
       const refusal = tradingLimitRefusal(
@@ -322,13 +342,24 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
       try {
         const c = await ensureChild();
         c.send({ cmd: 'arm', mandate, program });
-        armed.set(mandate.id, { mandate, program: program as Program | null, since: new Date().toISOString() });
+        /* The signing session's length is the mandate's own expiry, clamped. The human already
+           chose how long this bot should live when they wrote the mandate, so asking them a
+           second question about how long it may hold a key would be two numbers for one
+           decision. The clamp is the app's own statement: eight hours by default, a day at
+           most, whatever the mandate says. */
+        const wanted = Date.parse(mandate.expiresAt) - Date.now();
+        const signing = deps.session?.arm(mandate.id, Number.isFinite(wanted) && wanted > 0 ? wanted : SIGNING_SESSION_DEFAULT_MS);
+        const signingExpiresAt = new Date(signing?.expiresAt ?? Date.now() + SIGNING_SESSION_DEFAULT_MS).toISOString();
+        armed.set(mandate.id, { mandate, program: program as Program | null, since: new Date().toISOString(), signingExpiresAt });
         // One book pushed before the child can act, so its first tick reasons about the real
         // market rather than the zeros it starts with.
         await pumpOnce();
         startPump();
-        record({ type: 'armed', id: mandate.id, symbol: mandate.symbol });
-        return { ok: true, detail: `armed ${mandate.id} on ${mandate.symbol}` };
+        record({ type: 'armed', id: mandate.id, symbol: mandate.symbol, signingExpiresAt });
+        return {
+          ok: true,
+          detail: `armed ${mandate.id} on ${mandate.symbol}; it holds the trading key until ${signingExpiresAt}`,
+        };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         record({ type: 'error', id: mandate.id, message });
@@ -336,10 +367,13 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
       }
     },
 
-    async disarm(id, reason) {
+    async disarm(id: string, reason: string) {
       // Disarm never fails and never waits on approval. If the child is already gone the
       // mandate is already not running, which is the state the caller asked for.
       armed.delete(id);
+      // The signing session goes with it. A session outliving the mandate it was opened for
+      // would be a key held for a bot that no longer exists.
+      deps.session?.disarm(id);
       if (child !== null && child.connected) child.send({ cmd: 'disarm', id, reason });
       record({ type: 'disarmed', id, reason });
       if (armed.size === 0) {
@@ -349,9 +383,13 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
       return { ok: true, detail: `disarmed ${id}: ${reason}` };
     },
 
-    async stopAll(reason) {
+    async stopAll(reason: string) {
       for (const [id] of armed) record({ type: 'disarmed', id, reason });
       armed.clear();
+      /* Every signing session goes, not only the ones this map knows about. Freeze everything
+         must mean no key is held anywhere, and a kill switch that depends on its own
+         bookkeeping being in step is not a kill switch. Same argument as the SIGKILL below. */
+      for (const session of deps.session?.armed() ?? []) deps.session?.disarm(session.id);
       stopPump();
       if (child !== null) {
         // Ask first so it can flatten, then take the process out regardless. A kill switch that
@@ -414,14 +452,34 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
     },
 
     status: () => ({
-      armed: [...armed.entries()].map(([id, v]) => ({ id, symbol: v.mandate.symbol, since: v.since })),
+      armed: [...armed.entries()].map(([id, v]) => ({
+        id,
+        symbol: v.mandate.symbol,
+        since: v.since,
+        // Shown on the armed row: how long this bot may keep signing, which is a different
+        // number from the mandate's own expiry and the one a person locking the app wants.
+        signingExpiresAt: v.signingExpiresAt,
+      })),
       running: child !== null && child.connected,
     }),
 
     // The same set as status(), with the bounds and the program itself. The trading window
     // needs both: the envelope to draw how much of it has been spent, and the program to show
     // the human the sentences they approved.
-    armedDetail: () => [...armed.values()].map((v) => ({ mandate: v.mandate, program: v.program, since: v.since })),
+    armedDetail: () =>
+      [...armed.values()].map((v) => ({ mandate: v.mandate, program: v.program, since: v.since, signingExpiresAt: v.signingExpiresAt })),
+
+    /* Sessions whose expiry has passed. Called on the pump, which runs only while something is
+       armed, which is exactly when a session can exist. Disarming each one kills the child
+       once the last mandate goes, and a dead process is the only reliable way to be rid of a
+       key that lives in an immutable string. */
+    sweepSigningSessions(): string[] {
+      const done = deps.session?.expired() ?? [];
+      for (const session of done) {
+        void api.disarm(session.id, 'the signing session expired, so the trading key was taken back');
+      }
+      return done.map((s) => s.id);
+    },
 
     // Whether the venue is answering the app's own reads, and how slowly. The trading window
     // shows this: a screen that is behind the market must say so rather than looking current.
@@ -429,4 +487,6 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
 
     events: () => [...recent],
   };
+
+  return api;
 }
