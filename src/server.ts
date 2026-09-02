@@ -89,10 +89,7 @@ import {
 } from './http/respond.ts';
 import type { JsonBody } from './http/respond.ts';
 import { HOST, hostIsLocal, mintToken, sameOrigin, tokenFingerprint, tokenMatches } from './http/auth.ts';
-
-const STATE_DEBOUNCE_MS = 120;
-const HEARTBEAT_MS = 15000; // SSE keepalive; doubles as a floor on state freshness
-const CANDLE_PUSH_MS = 1000; // how often the browser is told there may be a newer bar
+import { createSseHub } from './http/sse.ts';
 
 // The basic screen's price tracker. Hourly bars over a day: "today" for someone reading
 // a price is the last 24 hours, not the span since midnight in a timezone the exchange
@@ -126,9 +123,9 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   const token = mintToken();
   audit.append('app_start', 'approval surface armed: browser approval token minted for this boot');
 
-  const sseClients = new Set<http.ServerResponse>();
-  let stateTimer: NodeJS.Timeout | null = null;
-  let activityTimer: NodeJS.Timeout | null = null;
+  // The bounded audit tail the basic screen's activity list reads. Seeded once here, then
+  // appended by the SSE hub's own audit subscription. See the note beside it in sse.ts.
+  const recentEvents: LogEvent[] = audit.tail(BASIC_EVENT_SCAN);
 
   // Chart state is server-side on purpose: see the header of src/chart.ts. The browser
   // renders it and writes its own pan and zoom back.
@@ -142,6 +139,16 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   // The team board. One line each, read by every agent and by the human's log, and the reason a
   // roster of agents is a team rather than a crowd. See src/board.ts for what it is not.
   const board = createBoard();
+
+  const sse = createSseHub({ store, audit, chart, trade, recent: recentEvents, recentMax: BASIC_EVENT_SCAN });
+  const {
+    broadcastState,
+    broadcastTransactions,
+    broadcastChart,
+    broadcastTrade,
+    broadcastActivity,
+    broadcastCandles,
+  } = sse;
 
   // Workers: agents this app spawns on an agent's behalf. Created lazily, so an install that
   // never spawns one never resolves the claude binary. See src/crew.ts for why the app spawns
@@ -240,7 +247,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     }
     // Tagged with the chat, always. An untagged event was fine when there was one conversation
     // and would print into whichever one the human happened to be looking at now.
-    for (const client of sseClients) sseSend(client, { type: 'driver', chat: chat.id, event });
+    sse.broadcast({ type: 'driver', chat: chat.id, event });
   }
 
   function makeChat(): Chat {
@@ -375,117 +382,6 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     const { id: _id, label: _label, transcript: _t, ...flat } = open[0];
     return { ...flat, chats: open, max: MAX_CHATS };
   }
-
-  function sseSend(res: http.ServerResponse, payload: unknown): void {
-    res.write(`data: ${JSON.stringify(payload)}\n\n`);
-  }
-
-  // LEADING edge, then a trailing sweep, for the same reason as the feed's own coalescer in
-  // src/trade/feed-ws.ts: trailing-only made the FIRST change of a quiet minute pay the full
-  // debounce, and the first change is the one someone is watching for. The burst cap is
-  // unchanged at one frame per STATE_DEBOUNCE_MS.
-  let statePending = false;
-  function broadcastState(): void {
-    if (stateTimer !== null) {
-      statePending = true;
-      return;
-    }
-    for (const client of sseClients) sseSend(client, { type: 'state' });
-    stateTimer = setTimeout(function sweep() {
-      stateTimer = null;
-      if (!statePending) return;
-      statePending = false;
-      broadcastState();
-    }, STATE_DEBOUNCE_MS);
-    stateTimer.unref();
-  }
-
-  // The history panel refetches on its own signal rather than on state, because a gas
-  // receipt landing changes one cell in a table nobody may even be looking at, and a state
-  // push redraws the wallet, the gate, the policy and the basic screen.
-  function broadcastTransactions(): void {
-    for (const client of sseClients) sseSend(client, { type: 'transactions' });
-  }
-
-  // The revision rides along so the browser can tell an agent's change from the echo of its
-  // own. It ignores anything at or below the rev its last write returned, which is what keeps
-  // a server round trip from fighting the hand that is dragging the chart.
-  function broadcastChart(): void {
-    for (const client of sseClients) sseSend(client, { type: 'chart', rev: chart.rev() });
-  }
-
-  // The trading surface's own channel. It carries the revision and nothing else, exactly like
-  // the chart's: the browser refetches, so a payload that grew would not silently become a
-  // second copy of the truth travelling down a different pipe.
-  function broadcastTrade(): void {
-    for (const client of sseClients) sseSend(client, { type: 'trade', rev: trade.view.rev() });
-  }
-
-  // The presence light's live pulse. Deliberately NOT a state broadcast: a read changes no
-  // money, so making every agent read refetch and repaint the whole wallet would be a lot of
-  // work to move one dot. This carries nothing (the browser already knows the agent is
-  // connected) and only says "a tool call just happened now", which is all the light needs to
-  // brighten and restart its own dull timer. Coalesced so a burst of rapid reads is one frame.
-  let activityPending = false;
-  function broadcastActivity(): void {
-    if (activityTimer !== null) {
-      activityPending = true;
-      return;
-    }
-    for (const client of sseClients) sseSend(client, { type: 'activity' });
-    activityTimer = setTimeout(function sweep() {
-      activityTimer = null;
-      if (!activityPending) return;
-      activityPending = false;
-      broadcastActivity();
-    }, STATE_DEBOUNCE_MS);
-    activityTimer.unref();
-  }
-
-  // A proposal reaching 'executed' is both a balance change and a new line in the history.
-  const offStore = store.subscribe(() => {
-    broadcastState();
-    broadcastTransactions();
-  });
-  // The basic screen's second history list is built from the audit tail, and buildState
-  // runs on every broadcast and every heartbeat. audit.tail() re-reads the whole file from
-  // disk by design, and that file is append-only forever, so calling it per state build
-  // would make the state payload get slower every day the app runs. The newest events are
-  // kept in memory instead: seeded once here, appended by the same subscription that feeds
-  // the pro log, and bounded.
-  const recentEvents: LogEvent[] = audit.tail(BASIC_EVENT_SCAN);
-  const offAudit = audit.subscribe((event) => {
-    recentEvents.unshift(event);
-    if (recentEvents.length > BASIC_EVENT_SCAN) recentEvents.length = BASIC_EVENT_SCAN;
-    for (const client of sseClients) sseSend(client, { type: 'log', event });
-  });
-
-  // Tell the browser to redraw on a fixed cadence rather than on every trade.
-  //
-  // This used to hang off the Hyperliquid trade websocket, which fired about 1.4 times a
-  // second and made every browser refetch the whole chart payload each time. That socket
-  // existed to build second candles; both are gone. A timer is the honest replacement,
-  // because what the browser is actually waiting for is the cache refreshing behind it,
-  // and that runs on its own schedule (see staleAfterSec in src/market/store.ts). Pushing
-  // faster than the cache refreshes only redraws the same bars.
-  let candleFrame: NodeJS.Timeout | null = null;
-  function broadcastCandles(): void {
-    if (candleFrame !== null) return;
-    candleFrame = setTimeout(() => {
-      candleFrame = null;
-      for (const client of sseClients) sseSend(client, { type: 'candles' });
-    }, CANDLE_PUSH_MS);
-    candleFrame.unref();
-  }
-  const candleTick = setInterval(() => {
-    if (sseClients.size > 0) broadcastCandles();
-  }, CANDLE_PUSH_MS);
-  candleTick.unref();
-
-  const heartbeat = setInterval(() => {
-    for (const client of sseClients) sseSend(client, { type: 'state' });
-  }, HEARTBEAT_MS);
-  heartbeat.unref();
 
   // ---------- the three prices the basic screen tracks ----------
   //
@@ -807,22 +703,6 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   }
 
   // ---------- browser routes ----------
-
-  function openEvents(req: http.IncomingMessage, res: http.ServerResponse): void {
-    res.writeHead(200, {
-      'content-type': 'text/event-stream; charset=utf-8',
-      'cache-control': 'no-store',
-      connection: 'keep-alive',
-    });
-    res.write('retry: 2000\n\n');
-    sseClients.add(res);
-    const drop = () => {
-      sseClients.delete(res);
-    };
-    req.on('close', drop);
-    res.on('close', drop);
-    res.on('error', drop);
-  }
 
   type CandleLoad = {
     candles: Candle[];
@@ -2605,7 +2485,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         if (route === '/api/trade') return sendJson(res, 200, trade.payload());
         if (route === '/api/session') return sendJson(res, 200, { token });
         if (route === '/api/driver') return sendJson(res, 200, driverPayload());
-        if (route === '/api/events') return openEvents(req, res);
+        if (route === '/api/events') return sse.open(req, res);
         if (route.startsWith('/api/')) return fail(res, 404, `unknown route: ${route}`);
         // The second surface. A bare /trade is the page; everything else still resolves as a
         // file, so the two pages share one static root and one stylesheet.
@@ -2654,12 +2534,8 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   }
 
   base.on('close', () => {
-    offStore();
-    offAudit();
-    clearInterval(heartbeat);
+    sse.stop();
     clearInterval(priceTimer);
-    for (const client of sseClients) client.end();
-    sseClients.clear();
     /* The child dies with the server that started it. An orphaned driver would keep the seat,
        keep spending the user's subscription, and keep proposing into a state directory whose
        window is gone, and it is the app's job to clean up a process the app created. */

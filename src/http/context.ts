@@ -212,7 +212,9 @@ export type Chat = {
 // Everything the SSE fan-out owns: the client set, every broadcast, the heartbeat and the
 // candle push timer. Implemented by createSseHub in sse.ts.
 export type SseHub = {
-  send(res: http.ServerResponse, payload: unknown): void;
+  // One frame to every open client. The driver's per-chat events are the only caller
+  // outside this hub, because they are the one frame that carries a body.
+  broadcast(payload: unknown): void;
   clientCount(): number;
   broadcastState(): void;
   broadcastTransactions(): void;
