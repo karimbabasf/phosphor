@@ -28,13 +28,38 @@ export function mintToken(): string {
 // Absent means a developer ran the backend by hand. Minting one and printing it once is what
 // keeps that path usable; it is printed to stderr rather than served, because a route that
 // hands the token out is the hole this whole file exists to close.
-export function windowToken(): string {
-  const supplied = process.env.PHOSPHOR_WINDOW_TOKEN ?? '';
+export const WINDOW_TOKEN_VAR = 'PHOSPHOR_WINDOW_TOKEN';
+
+/* Printed once per PROCESS, not once per call. createServer resolves the token, and every test
+   in this repo builds a server, so a line per construction would bury the transcript it is
+   meant to sit in. */
+let announced = false;
+
+/* The token this boot answers to.
+
+   ENV OR MINT, and the env is the real path. The Tauri shell mints 32 random bytes, hands them
+   here in PHOSPHOR_WINDOW_TOKEN, and injects the same value into the control webview alone with
+   an initialization script (src-tauri/src/main.rs). The token is then reachable by exactly two
+   processes and served over HTTP by neither, which is what makes it an authorisation rather than
+   an identifier and what closes the hole this file's header describes.
+
+   Absent means a developer ran the backend by hand. Minting one and printing it once is what
+   keeps that path usable; it goes to stderr rather than to a route, because a route that hands
+   the token out is the hole. A SHORT value is treated as absent rather than accepted: 32
+   characters is the floor because that is what the shell sends, and a token below it is a
+   truncated or half-written variable, not a shorter secret somebody meant.
+
+   `env` is a parameter so a test can drive both paths without mutating the process. */
+export function windowToken(env: NodeJS.ProcessEnv = process.env): string {
+  const supplied = (env[WINDOW_TOKEN_VAR] ?? '').trim();
   if (supplied.length >= 32) return supplied;
   const minted = mintToken();
-  console.error(
-    `phosphor: no PHOSPHOR_WINDOW_TOKEN in the environment, so this boot minted one: ${minted}`,
-  );
+  if (!announced) {
+    announced = true;
+    process.stderr.write(
+      `phosphor: no ${WINDOW_TOKEN_VAR} in the environment, so this boot minted one: ${minted}\n`,
+    );
+  }
   return minted;
 }
 
