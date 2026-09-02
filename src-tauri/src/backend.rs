@@ -250,12 +250,18 @@ pub fn post_lock(port: u16, token: &str, reason: &str) -> bool {
     request(port, &head, Some(&body)).is_some_and(|out| out.starts_with("HTTP/1.1 2"))
 }
 
-/// Whether what answers on this port is Phosphor. The served page titles itself, which is enough
-/// to tell "a Phosphor is already up" apart from "something else owns this port", and those two
-/// cases must not be treated the same: the first names a process to quit, the second a port to
-/// free.
+/// Whether what answers on this port is Phosphor. Telling that apart from "something else owns
+/// this port" matters in two places, and they must not be conflated: one names a process to quit,
+/// the other a port to free. The same answer also gates the window, which only opens once the
+/// backend this shell started is the thing answering.
+///
+/// The marker is the `x-phosphor` header src/http/respond.ts sends. It used to be the page's
+/// <title>, which made the boot hostage to a cosmetic edit: retitling ui/index.html to "Phosphor"
+/// left this polling a healthy server it could no longer recognise, and the app died on a
+/// 45-second timeout with nothing wrong with it. Header names are case-insensitive on the wire,
+/// so the match is too.
 pub fn phosphor_is_listening(port: u16) -> bool {
-    get_root(port).is_some_and(|body| body.contains("<title>PHOSPHOR</title>"))
+    get_root(port).is_some_and(|res| res.to_ascii_lowercase().contains("x-phosphor:"))
 }
 
 /// Reads the port the way src/config.ts does, and only the port.

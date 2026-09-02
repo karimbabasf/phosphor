@@ -145,6 +145,16 @@ const CONTROL_CSP = [
   "frame-ancestors 'none'",
 ].join('; ');
 
+/* HOW THE SHELL KNOWS THIS IS PHOSPHOR. The desktop shell spawns this process, then polls the
+   port until something there names itself, and opens the window only once it has an answer. That
+   marker used to be the page's <title>, which put a boot on the wrong side of a cosmetic edit:
+   retitling ui/index.html to "Phosphor" left the shell polling a healthy server it no longer
+   recognised, and the app failed as a 45-second timeout with nothing actually wrong with it.
+   A response header cannot be moved by a redesign, and it is a fixed word rather than the version
+   so that a bump cannot break a boot either. src-tauri/src/backend.rs reads it. */
+export const IDENTITY_HEADER = 'x-phosphor';
+export const IDENTITY_VALUE = 'control';
+
 export function serveStatic(pathname: string, res: http.ServerResponse): void {
   let rel: string;
   try {
@@ -178,6 +188,7 @@ export function serveStatic(pathname: string, res: http.ServerResponse): void {
     'content-type': type,
     'content-length': body.length,
     'cache-control': cache,
+    [IDENTITY_HEADER]: IDENTITY_VALUE,
     ...(type === MIME['.html'] ? { 'content-security-policy': CONTROL_CSP } : {}),
   });
   res.end(body);
