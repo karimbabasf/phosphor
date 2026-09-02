@@ -50,14 +50,29 @@ function syncDir(dir: string): void {
   }
 }
 
-// Write `contents` to `filePath` so that a reader afterwards sees either the whole of the old
-// file or the whole of the new one, and so that a machine losing power sees the same.
-export function atomicWrite(filePath: string, contents: string): void {
+/* Write `contents` to `filePath` so that a reader afterwards sees either the whole of the old
+   file or the whole of the new one, and so that a machine losing power sees the same.
+
+   `mode` and `dirMode` exist for one caller: the keystore, whose file has to be 0600 in a 0700
+   directory. It wrote its own copy of this function while the two tracks were in flight, for the
+   stated reason that a key file could not wait on another branch to be written safely. Folding
+   it back in is worth doing rather than leaving two: its copy did not fsync the DIRECTORY after
+   the rename, so the rename naming the new key file could itself be lost in a power cut, which
+   is the failure this module exists to close. Omit both and the caller gets the process umask,
+   which is what every other state file wants. */
+export function atomicWrite(
+  filePath: string,
+  contents: string,
+  opts: { mode?: number; dirMode?: number } = {},
+): void {
   const dir = path.dirname(filePath);
-  fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(dir, { recursive: true, ...(opts.dirMode === undefined ? {} : { mode: opts.dirMode }) });
+  // mkdir's mode is masked by the umask and does nothing at all when the directory already
+  // exists, so a caller that asked for a mode gets it stated rather than hoped for.
+  if (opts.dirMode !== undefined) fs.chmodSync(dir, opts.dirMode);
   const tmpPath = tmpNameFor(filePath);
 
-  const fd = fs.openSync(tmpPath, 'w');
+  const fd = opts.mode === undefined ? fs.openSync(tmpPath, 'w') : fs.openSync(tmpPath, 'w', opts.mode);
   try {
     fs.writeFileSync(fd, contents);
     fs.fsyncSync(fd); // the bytes, before the name that will point at them
@@ -77,6 +92,11 @@ export function atomicWrite(filePath: string, contents: string): void {
     }
     throw err;
   }
+
+  // Same argument as the directory above: open's mode is umask-masked, so the file's mode is
+  // set rather than assumed. It matters here in a way it does not elsewhere: 0644 on a key file
+  // is world-readable.
+  if (opts.mode !== undefined) fs.chmodSync(filePath, opts.mode);
 
   syncDir(dir); // the entry, so the rename itself survives a power loss
 }

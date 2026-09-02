@@ -149,7 +149,12 @@ test('the key goes over stdin and is nowhere in the environment', () => {
 
 test('the key never reaches an argument list either', () => {
   const host = fs.readFileSync(path.join(ROOT, 'src', 'runner', 'host.ts'), 'utf8');
-  // fork's second argument is argv. It is empty and stays empty: argv is world-readable in ps
-  // for every process on the machine, not only this user's.
-  assert.match(host, /fork\(entry, \[\], \{/);
+  /* fork's second argument is argv. It is empty and stays empty: argv is world-readable in ps
+     for every process on the machine, not only this user's.
+
+     The call reads `(deps.forkImpl ?? fork)(entry, [], {` because the reliability track added a
+     test seam there. The seam does not touch what is asserted: argv is the second argument
+     either way, and the pattern allows the indirection rather than the argument. */
+  assert.match(host, /fork\)?\(entry, \[\], \{/);
+  assert.doesNotMatch(host, /fork\)?\(entry, \[[^\]]/, 'nothing was put into argv');
 });

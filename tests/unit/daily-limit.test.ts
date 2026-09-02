@@ -28,7 +28,7 @@ import { defaultPolicy, savePolicy } from '../../src/policy/file.ts';
 import { renderSentences } from '../../src/policy/render.ts';
 import { syntheticQuoter, stubSigner } from '../../src/intents.ts';
 import { createProposalService } from '../../src/proposals.ts';
-import type { AppConfig, Proposal, ProposalService, ProposalStatus, RiskRow } from '../../src/types.ts';
+import type { AppConfig, Policy, Proposal, ProposalService, ProposalStatus, RiskRow } from '../../src/types.ts';
 
 const RISK_ROWS: RiskRow[] = [{ symbol: 'USDC', issuer: 'Circle', freezable: true, tier: 'A' } as unknown as RiskRow];
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -37,10 +37,12 @@ function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-daily-'));
 }
 
-function serviceOn(dir: string): ProposalService {
-  const p = defaultPolicy();
-  p.sentences = renderSentences(p);
-  savePolicy(dir, p);
+function serviceOn(dir: string, policy?: Policy): ProposalService {
+  if (policy === undefined) {
+    const p = defaultPolicy();
+    p.sentences = renderSentences(p);
+    savePolicy(dir, p);
+  }
   const cfg = {
     mode: 'demo',
     dataDir: dir,
@@ -171,4 +173,64 @@ test('refused and pending proposals are not spends', () => {
 test('the cap comes from the caller, so the screen and the policy cannot drift', () => {
   const svc = serviceOn(tmpDir());
   assert.equal(svc.dailyLimit(1_234).capUsd, 1_234);
+});
+
+// ---------- the unlock queue and the cap, together ----------
+//
+// Custody queues a write made while the wallet was locked as `pending_unlock`, and releases the
+// whole queue through one serialise() call on unlock. Reliability cut that queue short at the
+// reservation and made the cap a number on the state payload. The two meet here: releasing N
+// proposals at once is N things that may spend, and they have to meet the SAME cap one at a time
+// rather than each reading the spend as it stood before any of them ran.
+//
+// The queued proposals are built through the real propose path and then moved to
+// `pending_unlock`, rather than written by hand. A hand-built draft has to satisfy the whole of
+// the engine's contract (sane leg numbers, a quote per leg, a destination it recognises) and a
+// fixture that drifts from that contract tests the fixture.
+
+function capPolicy(dir: string, clickAboveUsd: number, sessionUsd: number): Policy {
+  const policy = defaultPolicy();
+  policy.outbound.maxPerTransactionUsd = 10_000;
+  policy.outbound.maxPerSessionUsd = sessionUsd;
+  policy.outbound.humanClickAboveUsd = clickAboveUsd;
+  policy.sentences = renderSentences(policy);
+  savePolicy(dir, policy);
+  return policy;
+}
+
+test('a released queue is decided one at a time against one cap, not all against zero', async () => {
+  const dir = tmpDir();
+  // Nothing may execute on its own while these are being made, so each lands pending.
+  capPolicy(dir, 0, 100_000);
+  const svc = serviceOn(dir, defaultPolicy());
+
+  const made = [
+    await svc.proposeConsolidate({ toChain: 'arb', symbol: 'USDC', maxTotalUsd: 4_000 }),
+    await svc.proposeConsolidate({ toChain: 'base', symbol: 'USDC', maxTotalUsd: 4_000 }),
+    await svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDC', maxTotalUsd: 4_000 }),
+  ];
+  assert.deepEqual(made.map(p => p.status), ['pending', 'pending', 'pending']);
+
+  // What custody writes when the wallet is locked while an agent proposes.
+  const store = createStore(dir);
+  for (const p of made) store.put({ ...store.get(p.id) as Proposal, status: 'pending_unlock' });
+  assert.equal(svc.dailyLimit(5_000).spentUsd, 0, 'a queued proposal has not spent anything yet');
+
+  /* The unlock, with room for ONE of them. The policy is rewritten first on purpose: a queued
+     proposal is re-evaluated against the rules as they stand at unlock rather than replayed
+     against the rules it was made under, which is custody's own design and is what makes the
+     cap below the one that binds. */
+  capPolicy(dir, 9_000, 5_000);
+  const released = await svc.releaseQueued();
+  assert.equal(released, 3, 'every queued proposal is decided');
+
+  const after = svc.dailyLimit(5_000);
+  assert.ok(after.spentUsd <= after.capUsd, `spent ${after.spentUsd} against a cap of ${after.capUsd}`);
+  assert.equal(svc.list().filter(p => p.status === 'pending_unlock').length, 0, 'nothing is left queued');
+
+  // Only the statuses that COUNT against the cap. A refusal is the right outcome for the ones
+  // that did not fit, and counting refusals would pass whatever the cap did.
+  const spent = svc.list().filter(p => p.status === 'executed' || p.status === 'executing');
+  assert.equal(spent.length, 1, `one fits the cap, ${spent.length} spent: ${svc.list().map(p => p.status).join(', ')}`);
+  assert.equal(svc.list().filter(p => p.status === 'policy_refused').length, 2, 'and the rest are refused, not run');
 });

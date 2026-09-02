@@ -27,6 +27,7 @@ import { defaultParams, deriveKek } from './kdf.ts';
 import type { KdfParams } from './kdf.ts';
 import { addressesFromKeys, newWallet, normaliseMnemonic, walletFromMnemonic } from './derive.ts';
 import type { Addresses, RailKeys } from './derive.ts';
+import { atomicWrite } from '../fsatomic.ts';
 
 export const KEYSTORE_FILENAME = 'keys.enc.json';
 
@@ -98,27 +99,19 @@ export function keystorePathFor(keysPath: string): string {
 }
 
 /* tmp-then-rename with the tmp file's contents forced to disk first, so a crash leaves either
-   the old file or the new one and never half of one. Track B is adding src/fsatomic.ts with
-   the same shape for the app's other seven writers; this stays here because a key file must
-   not wait on another track to be written safely.
-   `ownDir` is false for an export, which lands wherever the person chose. Tightening the mode
-   of the app's own key directory is right; tightening the mode of somebody's Documents folder
-   is not ours to do, and on a shared temp directory it is not even permitted. */
+   the old file or the new one and never half of one.
+
+   Through src/fsatomic.ts now. This held its own copy while the custody and reliability tracks
+   were in flight, on the stated ground that a key file must not wait on another branch to be
+   written safely, and the copy was very nearly right: what it did not do was fsync the DIRECTORY
+   after the rename, so the entry naming the new key file could be lost in the same power cut it
+   was guarding against. One writer, one place that gets that right.
+
+   `ownDir` is false for an export, which lands wherever the person chose. Tightening the mode of
+   the app's own key directory is right; tightening the mode of somebody's Documents folder is
+   not ours to do, and on a shared temp directory it is not even permitted. */
 function writeSecret(target: string, body: string, ownDir = true): void {
-  if (ownDir) {
-    fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
-    fs.chmodSync(path.dirname(target), 0o700);
-  }
-  const tmp = `${target}.${process.pid}.tmp`;
-  const fd = fs.openSync(tmp, 'w', 0o600);
-  try {
-    fs.writeFileSync(fd, body);
-    fs.fsyncSync(fd);
-  } finally {
-    fs.closeSync(fd);
-  }
-  fs.renameSync(tmp, target);
-  fs.chmodSync(target, 0o600);
+  atomicWrite(target, body, { mode: 0o600, ...(ownDir ? { dirMode: 0o700 } : {}) });
 }
 
 export function readKeystoreFile(file: string): KeystoreFile | null {

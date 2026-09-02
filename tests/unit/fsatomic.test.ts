@@ -106,8 +106,18 @@ test('src/ holds exactly one durable writer', () => {
     }
   })(path.join(ROOT, 'src'));
 
+  /* One durable WRITER. The keystore's overwrite-in-place is the single other fsync in src/, and
+     it is not a writer: destroyPlaintext scribbles random bytes over the same inode and truncates
+     it, which is the whole point (a tmp-then-rename would leave the original blocks on disk with
+     the key still in them). It is named here rather than allowed by a pattern, so a THIRD fsync
+     appearing anywhere still fails this. */
   const syncing = files.filter(f => /\bfsyncSync\b/.test(fs.readFileSync(f, 'utf8')));
-  assert.deepEqual(syncing.map(f => path.relative(ROOT, f)), ['src/fsatomic.ts']);
+  assert.deepEqual(syncing.map(f => path.relative(ROOT, f)).sort(), ['src/fsatomic.ts', 'src/keystore/store.ts']);
+
+  const keystore = fs.readFileSync(path.join(ROOT, 'src/keystore/store.ts'), 'utf8');
+  assert.match(keystore, /export function destroyPlaintext/, 'the keystore fsync is the destruction path');
+  assert.doesNotMatch(keystore, /renameSync/, 'and its writes go through the one writer, not a second copy of it');
+  assert.match(keystore, /atomicWrite\(/, 'which it calls');
 
   const rolledByHand = files
     .filter(f => path.relative(ROOT, f) !== 'src/fsatomic.ts')

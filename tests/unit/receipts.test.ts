@@ -120,6 +120,7 @@ async function boot(proposals: Proposal[]): Promise<{ url: string; close: () => 
       get: (id: string) => store.get(id),
       list: () => store.list(),
       sessionSpentUsd: () => 0,
+      releaseQueued: async () => 0,
       reconcileOnBoot: () => [],
       settle: () => Promise.resolve(true),
       dailyLimit: (capUsd: number) => ({ capUsd, spentUsd: 0, resetsAt: null }),
