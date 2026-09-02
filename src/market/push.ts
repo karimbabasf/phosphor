@@ -42,19 +42,39 @@ const PUSH_MS = 120;
 // Under this, the socket is carrying the price. The audit's threshold.
 const LIVE_FRESH_SEC = 5;
 
+// A scheduled flush, and the only thing needed to call it off.
+export type PushTimer = { cancel(): void };
+
+/* The real clock and the real timer, wrapped so a test can supply its own.
+
+   The seam exists for the same reason FeedSocket does in src/trade/feed-ws.ts: the one thing in
+   this module that cannot be reasoned about offline is the part that happens LATER. A test that
+   proves a coalescer by sleeping is asserting on the machine's load, and it passes four times
+   and fails the fifth, which is exactly what this one did. */
+function realTimer(fn: () => void, ms: number): PushTimer {
+  const timer = setTimeout(fn, ms);
+  if (typeof timer.unref === 'function') timer.unref();
+  return { cancel: () => clearTimeout(timer) };
+}
+
 export type CandlePushDeps = {
   // Where a frame goes. The server hands its SSE fan-out in; a caller with no clients hands in
   // something that drops, and nothing here needs to know which.
   send: (frame: CandleFrame) => void;
   intervalMs?: number;
+  // Test seam. See realTimer above.
+  now?: () => number;
+  schedule?: (fn: () => void, ms: number) => PushTimer;
 };
 
 export function createCandlePush(deps: CandlePushDeps) {
   const intervalMs = deps.intervalMs ?? PUSH_MS;
+  const now = deps.now ?? (() => Date.now());
+  const schedule = deps.schedule ?? realTimer;
   // The newest bar per series. A burst on one market collapses to the last of it, because an
   // earlier bar in the same window is a price that has already been superseded.
   const pending = new Map<string, CandleFrame>();
-  let timer: ReturnType<typeof setTimeout> | null = null;
+  let timer: PushTimer | null = null;
   let sent = 0;
   let sentAt = 0;
   let stopped = false;
@@ -64,7 +84,7 @@ export function createCandlePush(deps: CandlePushDeps) {
     if (pending.size === 0) return;
     const frames = [...pending.values()];
     pending.clear();
-    sentAt = Date.now();
+    sentAt = now();
     for (const frame of frames) {
       sent += 1;
       deps.send(frame);
@@ -81,7 +101,7 @@ export function createCandlePush(deps: CandlePushDeps) {
      intervals at p50, so a rail that is merely between bars is not mistaken for one that has
      stopped, and a rail that has genuinely stopped hands over within one tick. */
   function quiet(withinMs = 2000): boolean {
-    return sentAt === 0 || Date.now() - sentAt > withinMs;
+    return sentAt === 0 || now() - sentAt > withinMs;
   }
 
   /* One bar, coalesced. Wired to the store's onLive, so it fires for anything that reaches the
@@ -96,13 +116,12 @@ export function createCandlePush(deps: CandlePushDeps) {
       candle,
     });
     if (timer !== null) return;
-    timer = setTimeout(flush, intervalMs);
-    if (typeof timer.unref === 'function') timer.unref();
+    timer = schedule(flush, intervalMs);
   }
 
   function stop(): void {
     stopped = true;
-    if (timer !== null) clearTimeout(timer);
+    if (timer !== null) timer.cancel();
     timer = null;
     pending.clear();
   }
