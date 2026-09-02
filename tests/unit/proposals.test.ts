@@ -53,15 +53,10 @@ type Harness = {
   usdtOn(chain: string): number;
 };
 
-function setup(over: { mode?: AppConfig['mode']; policy?: Policy | 'none'; quoter?: Quoter; signer?: Signer; ledger?: Ledger; approvalGate?: boolean; network?: AppConfig['network'] } = {}): Harness {
+function setup(over: { mode?: AppConfig['mode']; policy?: Policy | 'none'; quoter?: Quoter; signer?: Signer; ledger?: Ledger } = {}): Harness {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'acc-proposals-'));
   const cfg: AppConfig = {
     mode: over.mode ?? 'demo',
-    network: over.network ?? 'testnet',
-    tradingNetwork: over.network ?? 'testnet',
-    // Default on: the human-approval flow is what most of these tests exercise. The
-    // gate-disabled cases below opt out explicitly. See policy/gate.ts.
-    approvalGate: over.approvalGate ?? true,
     keysPath: '/tmp/phosphor-test-keys.json',
     port: 4177,
     addresses: { evm: [], solana: [], near: [] },
@@ -245,47 +240,45 @@ test('a quote with no deposit address records nothing and is governed by the all
   assert.equal(p.simulation?.depositAddresses, undefined);
 });
 
-// ---------- the gate-disabled path ----------
-// Security audit F3, 2026-08-12: gateRequired() existed and the UI reported it, but nothing
-// in the execution path read it. The banner said "every proposal auto-approves" while every
-// one of them sat pending forever. These tests are what makes the claim true.
+// ---------- the approval gate, which has no exemption ----------
+// Security audit F3, 2026-08-12: the gate was configurable, and nothing in the execution path
+// read the flag, so the banner said "every proposal auto-approves" while every one of them sat
+// pending forever. The flag is gone: above the click threshold a person clicks, and there is
+// no setting, environment or proposal kind that reaches execution without one.
 
-test('with the gate off, a needs_approval proposal auto-approves instead of parking', async () => {
-  const h = setup({ approvalGate: false });
+test('a proposal above the click threshold parks as pending and nothing decides it', async () => {
+  const h = setup();
   const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
 
-  assert.equal(p.verdict.outcome, 'needs_approval', 'the policy verdict itself must not change');
-  assert.notEqual(p.status, 'pending');
-  assert.equal(p.decidedBy, 'gate_disabled');
-  assert.ok(p.decidedAt);
-});
-
-test('an auto-approval is never recorded as a human decision', async () => {
-  const h = setup({ approvalGate: false });
-  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
-
-  assert.notEqual(p.decidedBy, 'human');
-  const lines = h.audit.tail(50);
-  const approved = lines.find(l => l.type === 'approved');
-  assert.ok(approved, 'the auto-approval must be audited');
-  assert.match(approved.msg, /gate disabled/i);
-  assert.doesNotMatch(approved.msg, /human/i);
-});
-
-test('the gate flag cannot auto-approve on mainnet even when it is set false', async () => {
-  const h = setup({ approvalGate: false, network: 'mainnet' });
-  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
-
-  assert.equal(p.status, 'pending', 'mainnet ignores approvalGate entirely');
+  assert.equal(p.verdict.outcome, 'needs_approval');
+  assert.equal(p.status, 'pending');
   assert.equal(p.decidedBy, undefined);
+  assert.equal(p.decidedAt, undefined);
+});
+
+test('no path writes the retired gate_disabled decision', async () => {
+  const h = setup();
+  await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
+  await h.svc.proposePolicyChange({
+    patch: { outbound: { maxPerTransactionUsd: 999999 } },
+    sentence: 'Refuse any single transaction above $999,999.',
+  });
+
+  for (const p of h.svc.list()) {
+    assert.notEqual(p.decidedBy, 'gate_disabled' as never);
+  }
+  for (const line of h.audit.tail(50)) {
+    assert.doesNotMatch(line.msg, /gate.disabled/i);
+    assert.doesNotMatch(line.msg, /auto-approved/i);
+  }
 });
 
 // The hole this closes was real and was introduced by the F3 fix itself: with the gate off,
 // proposePolicyChange auto-applied, and an agent raised maxPerTransactionUsd from $10,000 to
 // $999,999 with no human. The agent would author the limits and apply them, which is the one
-// thing this app exists to prevent. The policy file is shared with mainnet too.
-test('a policy change never auto-approves, even with the gate off', async () => {
-  const h = setup({ approvalGate: false });
+// thing this app exists to prevent.
+test('a policy change never auto-approves', async () => {
+  const h = setup();
   const p = await h.svc.proposePolicyChange({
     patch: { outbound: { maxPerTransactionUsd: 999999 } },
     sentence: 'Refuse any single transaction above $999,999.',
@@ -296,7 +289,7 @@ test('a policy change never auto-approves, even with the gate off', async () => 
 });
 
 test('the policy on disk is untouched while that change sits pending', async () => {
-  const h = setup({ approvalGate: false });
+  const h = setup();
   const before = loadPolicy(h.dataDir)?.outbound.maxPerTransactionUsd;
   await h.svc.proposePolicyChange({
     patch: { outbound: { maxPerTransactionUsd: 999999 } },
@@ -306,18 +299,10 @@ test('the policy on disk is untouched while that change sits pending', async () 
   assert.equal(loadPolicy(h.dataDir)?.outbound.maxPerTransactionUsd, before);
 });
 
-test('a fund move DOES still auto-approve with the gate off, so the flag still means something', async () => {
-  const h = setup({ approvalGate: false });
-  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
-
-  assert.equal(p.decidedBy, 'gate_disabled');
-  assert.notEqual(p.status, 'pending');
-});
-
 test('the gate being off does not turn a refusal into an approval', async () => {
   const policy = happyPolicy();
   policy.killSwitch = true;
-  const h = setup({ approvalGate: false, policy });
+  const h = setup({ policy });
   const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
 
   assert.equal(p.status, 'policy_refused');
@@ -604,7 +589,7 @@ test('a stale proposal in the store survives a fresh service and stays gettable'
 
 test('onChange fires on every state transition', async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'acc-proposals-'));
-  const cfg: AppConfig = { mode: 'demo', network: 'testnet', tradingNetwork: 'testnet', approvalGate: true, keysPath: '/tmp/phosphor-test-keys.json', port: 4177, addresses: { evm: [], solana: [], near: [] }, economicTransferUsd: 10, candleProducts: [], dataDir };
+  const cfg: AppConfig = { mode: 'demo', keysPath: '/tmp/phosphor-test-keys.json', port: 4177, addresses: { evm: [], solana: [], near: [] }, economicTransferUsd: 10, candleProducts: [], dataDir };
   savePolicy(dataDir, happyPolicy());
   let changes = 0;
   const svc = createProposalService({
@@ -670,7 +655,7 @@ test('concurrent proposals cannot exceed the session cap between them', async ()
   policy.outbound.maxPerTransactionUsd = 10000;
   policy.outbound.maxPerSessionUsd = 25000;
   policy.outbound.humanClickAboveUsd = 1_000_000; // take the click out of the picture
-  const h = setup({ approvalGate: false, policy });
+  const h = setup({ policy });
 
   const results = await Promise.all(
     [1, 2, 3, 4, 5].map(() => h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT', maxTotalUsd: 10000 })),
@@ -685,7 +670,9 @@ test('concurrent proposals cannot exceed the session cap between them', async ()
 });
 
 test('an in-flight proposal counts against the cap while it is still executing', async () => {
-  const h = setup({ approvalGate: false });
+  const policy = happyPolicy();
+  policy.outbound.humanClickAboveUsd = 1_000_000; // take the click out of the picture
+  const h = setup({ policy });
   const before = h.svc.sessionSpentUsd();
   await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
   assert.ok(h.svc.sessionSpentUsd() > before, 'a completed move must register');

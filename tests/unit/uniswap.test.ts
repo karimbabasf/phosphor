@@ -43,11 +43,11 @@ function addressWord(value: string): string {
   return word(BigInt(value));
 }
 
-const USDC = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
+const USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const WETH = '0x4200000000000000000000000000000000000006';
 const WALLET = '0x1111111111111111111111111111111111111111';
-const ROUTER = '0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4'; // Base Sepolia SwapRouter02
-const NPM = '0x27F971cb582BF9E50F397e4d29a5C7A34f11faA2'; // Base Sepolia position manager
+const ROUTER = '0x2626664c2603336E57B271c5C0b26F421741e481'; // Base SwapRouter02
+const NPM = '0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1'; // Base position manager
 
 test('swapCalldata is SwapRouter02 exactInputSingle: selector 0x04e45aaf and seven static words, no deadline', () => {
   const data = swapCalldata({
@@ -301,44 +301,47 @@ test('liquidityForAmounts is bounded by the scarcer side inside the range', () =
 // ---------- deployment and registry ----------
 
 test('deploymentFor only answers for chains with a verified deployment', () => {
-  assert.equal(deploymentFor('testnet', 'base').positionManager, NPM);
-  assert.equal(deploymentFor('testnet', 'arb').positionManager, '0x6b2937Bde17889EDCf8fbD8dE31C3C2a70Bc4d65');
-  assert.equal(deploymentFor('mainnet', 'base').positionManager, '0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1');
-  assert.throws(() => deploymentFor('testnet', 'eth'), /no verified deployment/);
-  assert.throws(() => deploymentFor('testnet', 'near'), /no verified deployment/);
-  assert.throws(() => deploymentFor('mainnet', 'arb'), /no verified deployment/);
-  assert.deepEqual(chainsWithDeployment('testnet').sort(), ['arb', 'base']);
+  assert.equal(deploymentFor('base').positionManager, NPM);
+  assert.equal(deploymentFor('arb').positionManager, '0xC36442b4a4522E871399CD717aBDD847Ab11FE88');
+  assert.throws(() => deploymentFor('eth'), /no verified deployment/);
+  assert.throws(() => deploymentFor('near'), /no verified deployment/);
+  assert.deepEqual(chainsWithDeployment().sort(), ['arb', 'base']);
 });
 
 test('each chain carries its own Chainlink feed address, because the same address is a different feed elsewhere', () => {
-  const arb = deploymentFor('testnet', 'arb').ethUsdFeed;
-  const base = deploymentFor('testnet', 'base').ethUsdFeed;
+  const arb = deploymentFor('arb').ethUsdFeed;
+  const base = deploymentFor('base').ethUsdFeed;
   assert.notEqual(arb.toLowerCase(), base.toLowerCase());
-  // Checked live 2026-08-12: 0xd30e2101... is "ETH / USD" on Arbitrum Sepolia and
-  // "USDC / USD" on Base Sepolia, both deployed, both 9,571 bytes. Reusing one address
-  // across chains would price WETH at $1.00 instead of $1,884 and never throw.
-  assert.equal(arb, '0xd30e2101a97dcbAeBCBC04F14C3f624E67A35165');
-  assert.equal(base, '0x4aDC67696bA383F43DD60A9e78F2C97Fbbfc7cb1');
+  // Read on chain 2026-09-01: 0x639Fe6ab... answers description() with "ETH / USD" at 8
+  // decimals on Arbitrum One. Reusing one address across chains would price WETH off the
+  // wrong feed and never throw.
+  assert.equal(arb, '0x639Fe6ab55C921f74e7fac1ee960C0B6293ba612');
+  assert.equal(base, '0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70');
 });
 
 test('the arb deployment is its own contract set, not Base addresses carried over', () => {
-  const arb = deploymentFor('testnet', 'arb');
-  const base = deploymentFor('testnet', 'base');
-  for (const key of ['factory', 'positionManager', 'quoter', 'router', 'ethUsdFeed'] as const) {
+  const arb = deploymentFor('arb');
+  const base = deploymentFor('base');
+  for (const key of ['positionManager', 'quoter', 'router', 'ethUsdFeed'] as const) {
     assert.notEqual(arb[key].toLowerCase(), base[key].toLowerCase(), `${key} must differ between chains`);
   }
-  assert.equal(arb.router, '0x101F443B4d1b059569D643917553c771E1b9663E');
-  assert.equal(arb.positionManager, '0x6b2937Bde17889EDCf8fbD8dE31C3C2a70Bc4d65');
-  assert.equal(arb.quoter, '0x2779a0CC1c3e0E44D2542EC3e79e3864Ae93Ef0B');
+  // Verified on chain 2026-09-01 at Arbitrum One block 500799790: the position manager, the
+  // quoter and the router all answer factory() with the factory listed here.
+  assert.equal(arb.factory, '0x1F98431c8aD98523631AE4a59f267346ea31F984');
+  assert.equal(arb.router, '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45');
+  assert.equal(arb.positionManager, '0xC36442b4a4522E871399CD717aBDD847Ab11FE88');
+  assert.equal(arb.quoter, '0x61fFE014bA17989E743c5F6cB21bF9697530B21e');
 });
 
-test('the token registry keeps the two testnet chains apart', () => {
-  assert.equal(tokenFor('testnet', 'base', 'USDC').address, USDC);
-  assert.equal(tokenFor('testnet', 'arb', 'USDC').address, '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d');
-  assert.equal(tokenFor('testnet', 'arb', 'WETH').address, '0x980B62Da83eFf3D4576C647993b0c1D7faf17c73');
-  // token0 must be the lower address or mint reverts, on both chains.
-  assert.ok(BigInt(tokenFor('testnet', 'arb', 'USDC').address) < BigInt(tokenFor('testnet', 'arb', 'WETH').address));
-  assert.ok(BigInt(tokenFor('testnet', 'base', 'USDC').address) < BigInt(tokenFor('testnet', 'base', 'WETH').address));
+test('the token registry keeps the two chains apart', () => {
+  assert.equal(tokenFor('base', 'USDC').address, USDC);
+  assert.equal(tokenFor('arb', 'USDC').address, '0xaf88d065e77c8cC2239327C5EDb3A432268e5831');
+  assert.equal(tokenFor('arb', 'WETH').address, '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1');
+  // token0 must be the lower address or mint reverts, and which token that is is a fact about
+  // the addresses rather than about the pair: WETH sorts below USDC on both chains here. A
+  // draft naming them the other way round is refused with the ticks it should have used.
+  assert.ok(BigInt(tokenFor('arb', 'WETH').address) < BigInt(tokenFor('arb', 'USDC').address));
+  assert.ok(BigInt(tokenFor('base', 'WETH').address) < BigInt(tokenFor('base', 'USDC').address));
 });
 
 test('tickSpacingFor carries the canonical spacings and rejects invented tiers', () => {
@@ -350,18 +353,15 @@ test('tickSpacingFor carries the canonical spacings and rejects invented tiers',
 });
 
 test('tokenFor will not pass native ETH off as WETH', () => {
-  assert.equal(tokenFor('testnet', 'base', 'usdc').decimals, 6);
-  assert.equal(tokenFor('testnet', 'base', 'WETH').address, '0x4200000000000000000000000000000000000006');
-  assert.throws(() => tokenFor('testnet', 'base', 'ETH'), /must be wrapped to WETH/);
+  assert.equal(tokenFor('base', 'usdc').decimals, 6);
+  assert.equal(tokenFor('base', 'WETH').address, '0x4200000000000000000000000000000000000006');
+  assert.throws(() => tokenFor('base', 'ETH'), /must be wrapped to WETH/);
 });
 
 // ---------- rail validation, all offline ----------
 
 const cfg: AppConfig = {
   mode: 'live',
-  network: 'testnet',
-  tradingNetwork: 'testnet',
-  approvalGate: true,
   port: 4177,
   addresses: { evm: [WALLET], solana: [], near: [] },
   economicTransferUsd: 10,
@@ -443,9 +443,10 @@ function addDraft(over: Partial<LpAddDraft> = {}): LpAddDraft {
     kind: 'lp_add',
     chain: 'base',
     venue: 'uniswap-v3',
-    poolId: '0x46880b404CD35c165EDdefF7421019F8dD25F4Ad',
-    token0: { symbol: 'USDC', tokenId: USDC, amount: 100, decimals: 6 },
-    token1: { symbol: 'WETH', tokenId: WETH, amount: 0.5, decimals: 18 },
+    // The live Base 0.30% WETH/USDC pool, read from the factory at block 50759716.
+    poolId: '0x6c561B446416E1A00E8E93E221854d6eA4171372',
+    token0: { symbol: 'WETH', tokenId: WETH, amount: 0.5, decimals: 18 },
+    token1: { symbol: 'USDC', tokenId: USDC, amount: 100, decimals: 6 },
     feeTier: 3000,
     tickLower: 224940,
     tickUpper: 225300,
@@ -458,8 +459,8 @@ function addDraft(over: Partial<LpAddDraft> = {}): LpAddDraft {
 
 test('the lp_add rail rejects a reversed pair and says how to fix the range', async () => {
   const reversed = addDraft({
-    token0: { symbol: 'WETH', tokenId: WETH, amount: 0.5, decimals: 18 },
-    token1: { symbol: 'USDC', tokenId: USDC, amount: 100, decimals: 6 },
+    token0: { symbol: 'USDC', tokenId: USDC, amount: 100, decimals: 6 },
+    token1: { symbol: 'WETH', tokenId: WETH, amount: 0.5, decimals: 18 },
   });
   const result = await uniswapLpAddRail(cfg).simulate(reversed);
   assert.equal(result.ok, false);
@@ -504,7 +505,7 @@ test('the lp_remove rail rejects a percentage outside (0, 1] and a non-numeric p
 
 test('readPositions reports a bad owner through onError and returns an empty list, never a throw', async () => {
   const errors: string[] = [];
-  const positions = await readPositions('testnet', 'not-an-address', { onError: m => errors.push(m) });
+  const positions = await readPositions('not-an-address', { onError: m => errors.push(m) });
   assert.deepEqual(positions, []);
   assert.equal(errors.length, 1);
   assert.match(errors[0], /not a valid address/);

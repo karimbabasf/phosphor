@@ -446,9 +446,7 @@ function renderStatus(s) {
   // Live 'activity' pings (below) keep it bright between state pushes; this seeds it on load.
   if (window.PhosphorPresence) PhosphorPresence.setState(agents.connected, agents.lastActivityAt);
 
-  // Which world this is running against matters more than demo/live, and the
-  // gate banner below only makes sense next to it.
-  $('stat-mode').textContent = (s.mode || '--') + (s.network ? ' / ' + s.network : '');
+  $('stat-mode').textContent = s.mode || '--';
 
   var kill = s.policy ? s.policy.killSwitch === true : false;
   var policyNode = $('stat-policy');
@@ -872,9 +870,9 @@ function renderPolicy(s) {
    trade window loads too. One renderer, so neither screen can show a thinner story than
    the other before the same click. */
 
-/* The gate can be switched off on testnet, and a machine that approves for you
-   has to say so where you cannot miss it. Rendered only from what the server
-   reports: the client never decides that the gate is off. */
+/* The server carries a banner slot for the approval gate. It is empty in every build that
+   ships, because the gate is unconditional, and the slot stays so that a state the window
+   cannot yet imagine is rendered from what the server says rather than assumed away. */
 function renderGateBanner(s) {
   var node = $('gate-banner');
   var banner = s.gate && s.gate.banner ? String(s.gate.banner) : '';

@@ -81,7 +81,6 @@ function pendingProposal(id = 'p-pending'): Proposal {
 // invention as a fact.
 function view(over: Partial<YieldView> = {}): YieldView {
   return {
-    network: 'testnet',
     chain: null,
     positions: [],
     venues: [],
@@ -141,9 +140,6 @@ async function boot(opts: { yieldView?: YieldView | null } = {}): Promise<Harnes
 
   const cfg: AppConfig = {
     mode: 'demo',
-    network: 'testnet',
-    tradingNetwork: 'testnet',
-    approvalGate: true,
     port: 0,
     addresses: { evm: ['0xself'], solana: [], near: [] },
     economicTransferUsd: 10,

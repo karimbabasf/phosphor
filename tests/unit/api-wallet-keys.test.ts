@@ -26,7 +26,9 @@ function keysFile(body: unknown): string {
   return p;
 }
 
-test('each network gets its own agent, and neither can be served the other', () => {
+// A keys.json written between 2026-08-20 and 2026-09-01 keyed the agent by a venue axis this
+// app no longer has. The mainnet entry is the one that names this venue, so it is the one read.
+test('the keyed shape is read from its mainnet entry', () => {
   const p = keysFile({
     hyperliquidAgents: {
       mainnet: { privateKey: MAINNET_KEY, address: '0xMAIN' },
@@ -34,18 +36,16 @@ test('each network gets its own agent, and neither can be served the other', () 
     },
   });
 
-  const main = readApiWallet(p, 'mainnet');
-  const test_ = readApiWallet(p, 'testnet');
-
-  assert.equal(main.key, MAINNET_KEY);
-  assert.equal(main.source, 'network');
-  assert.equal(test_.key, TESTNET_KEY);
-  assert.notEqual(main.key, test_.key, 'the whole point');
+  const r = readApiWallet(p);
+  assert.equal(r.key, MAINNET_KEY);
+  assert.equal(r.source, 'present');
+  assert.equal(r.address, '0xMAIN');
+  assert.notEqual(r.key, TESTNET_KEY, 'an entry for another venue is never handed out');
 });
 
-test('a network with no agent reads as absent, which fails loudly rather than signing wrong', () => {
-  const p = keysFile({ hyperliquidAgents: { mainnet: { privateKey: MAINNET_KEY } } });
-  const missing = readApiWallet(p, 'testnet');
+test('a file with no agent at all reads as absent, which fails loudly rather than signing wrong', () => {
+  const p = keysFile({ evm: { privateKey: MAINNET_KEY } });
+  const missing = readApiWallet(p);
   assert.equal(missing.key, null);
   assert.equal(missing.source, 'absent');
 });
@@ -54,45 +54,40 @@ test('the pre-2026-08-20 flat key is still read, and is labelled so a caller can
   // Refusing it would cost an existing install its agent for no safety gain: the key is right
   // there and was working yesterday. What a caller needs is to know it is unstamped.
   const p = keysFile({ hyperliquidAgent: { privateKey: LEGACY_KEY, address: '0xOLD' } });
-  for (const network of ['mainnet', 'testnet'] as const) {
-    const r = readApiWallet(p, network);
+  {
+    const r = readApiWallet(p);
     assert.equal(r.key, LEGACY_KEY);
-    assert.equal(r.source, 'legacy', 'a caller must be able to tell this apart from a proven one');
+    assert.equal(r.source, 'present');
   }
 });
 
-test('a network-keyed agent wins over a stale flat one', () => {
+test('the keyed entry wins over a stale flat one', () => {
   const p = keysFile({
     hyperliquidAgent: { privateKey: LEGACY_KEY },
     hyperliquidAgents: { mainnet: { privateKey: MAINNET_KEY } },
   });
-  assert.equal(readApiWallet(p, 'mainnet').key, MAINNET_KEY);
-  assert.equal(readApiWallet(p, 'mainnet').source, 'network');
-  // And the network with no entry of its own still falls back rather than reading mainnet's.
-  const fallback = readApiWallet(p, 'testnet');
-  assert.equal(fallback.key, LEGACY_KEY);
-  assert.equal(fallback.source, 'legacy');
-  assert.notEqual(fallback.key, MAINNET_KEY, 'testnet must never be handed the mainnet key');
+  assert.equal(readApiWallet(p).key, MAINNET_KEY);
+  assert.equal(readApiWallet(p).source, 'present');
 });
 
 test('a missing file, a malformed file and a malformed key all read as no key', async () => {
-  assert.equal(await readApiWalletKey('/nowhere/keys.json', 'mainnet'), null);
+  assert.equal(await readApiWalletKey('/nowhere/keys.json'), null);
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-keys-'));
   const bad = path.join(dir, 'keys.json');
   fs.writeFileSync(bad, '{ not json');
-  assert.equal(await readApiWalletKey(bad, 'mainnet'), null);
+  assert.equal(await readApiWalletKey(bad), null);
 
   const short = keysFile({ hyperliquidAgents: { mainnet: { privateKey: '0xabc' } } });
-  assert.equal(await readApiWalletKey(short, 'mainnet'), null, 'a truncated key is not a key');
+  assert.equal(await readApiWalletKey(short), null, 'a truncated key is not a key');
 
   const noPrefix = keysFile({ hyperliquidAgents: { mainnet: { privateKey: 'a'.repeat(64) } } });
-  assert.equal(await readApiWalletKey(noPrefix, 'mainnet'), null);
+  assert.equal(await readApiWalletKey(noPrefix), null);
 });
 
 test('nothing can arm without a key, which is the safe direction for this to fail', async () => {
   // Restating the module's own rule as a test, because the alternative fallback anyone would
   // reach for is the master key, and that key can withdraw.
   const p = keysFile({ hyperliquidAgents: {} });
-  assert.equal(await readApiWalletKey(p, 'mainnet'), null);
+  assert.equal(await readApiWalletKey(p), null);
 });

@@ -17,8 +17,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { MAX_FEE_PCT, MIN_DEPOSIT_USDC, hypercoreDepositRail } from '../../src/rails/hypercore-deposit.ts';
-import { FUNDING_FAUCET, FUNDING_SHAPE, feePctAt, fundingBlock } from '../../src/trade/funding.ts';
+import { MAX_FEE_PCT, MIN_DEPOSIT_USDC } from '../../src/rails/hypercore-deposit.ts';
+import { FUNDING_SHAPE, feePctAt, fundingBlock } from '../../src/trade/funding.ts';
 import { buildTradePayload } from '../../src/trade/state.ts';
 import type { AssetMeta } from '../../src/trade/state.ts';
 import type { AccountSnapshot, TradeFeed } from '../../src/trade/feed-ws.ts';
@@ -26,7 +26,6 @@ import { createTradeView } from '../../src/trade/view.ts';
 
 const NOW = 1_786_492_800_000;
 const ADDRESS = '0x3333333333333333333333333333333333333333';
-const SELF = '0x2222222222222222222222222222222222222222';
 
 function feed(snapshot: AccountSnapshot | null): TradeFeed {
   return {
@@ -59,7 +58,7 @@ function snapshot(over: Partial<AccountSnapshot> = {}): AccountSnapshot {
   };
 }
 
-function payload(snap: AccountSnapshot | null, network: 'testnet' | 'mainnet' = 'mainnet') {
+function payload(snap: AccountSnapshot | null = null) {
   return buildTradePayload({
     view: createTradeView('BTC', () => NOW).state(),
     feed: feed(snap),
@@ -68,7 +67,6 @@ function payload(snap: AccountSnapshot | null, network: 'testnet' | 'mainnet' = 
     atrFor: () => null,
     products: ['BTC'],
     nowMs: NOW,
-    network,
     address: ADDRESS,
   });
 }
@@ -104,7 +102,7 @@ test('a size the fee cannot be charged against has no percentage rather than an 
 });
 
 test('the funding block names its origins fastest first and quotes two sizes', () => {
-  const block = fundingBlock('mainnet');
+  const block = fundingBlock();
   assert.deepEqual(block.origins, ['arb', 'base', 'eth']);
   assert.equal(block.etaSec, 35);
   assert.equal(block.costAt.length, 2);
@@ -117,9 +115,8 @@ test('the funding block names its origins fastest first and quotes two sizes', (
 
 // ---------- the block itself ----------
 
-test('the collateral block carries the trading network and the account it is about', () => {
-  const p = payload(snapshot(), 'mainnet');
-  assert.equal(p.collateral.network, 'mainnet');
+test('the collateral block names the account it is about', () => {
+  const p = payload(snapshot());
   assert.equal(p.collateral.address, ADDRESS);
 });
 
@@ -158,7 +155,7 @@ test('a balance above the rounding threshold is collateral', () => {
 // figure of nine cents. Whether that money is usable depends on the kind of account and the
 // page says which, so the payload has to carry both figures rather than one reading of them.
 test('collateral sitting on the spot book counts as funded and is reported separately', () => {
-  const p = payload(snapshot({ perpValueUsd: 0.077, spotUsdcUsd: 887.81 }), 'testnet');
+  const p = payload(snapshot({ perpValueUsd: 0.077, spotUsdcUsd: 887.81 }));
   assert.equal(p.collateral.funded, true);
   assert.equal(p.collateral.perpUsd, 0.077);
   assert.equal(p.collateral.spotUsdcUsd, 887.81);
@@ -180,63 +177,3 @@ test('the funding shape reaches the payload so the page does no arithmetic about
   assert.ok(p.collateral.funding.costAt.length > 1);
 });
 
-// ---------- the rail is mainnet only, and the screen has to agree ----------
-
-// The screen must not advertise a capability the rail refuses. This is not a tidiness point: on
-// a testnet trading network the deposit takes REAL money, delivers it correctly to the mainnet
-// account, and reports success while the account being traded stays empty. A page that told
-// someone to ask their agent for funding there would be pointing at that.
-test('funding is not offered on a network the rail refuses to fund', () => {
-  const p = payload(snapshot(), 'testnet');
-  assert.equal(p.collateral.funding.available, false);
-  assert.equal(p.collateral.funding.faucet, FUNDING_FAUCET);
-});
-
-test('funding is offered on the one network the rail serves', () => {
-  const p = payload(snapshot(), 'mainnet');
-  assert.equal(p.collateral.funding.available, true);
-  assert.equal(p.collateral.funding.faucet, null);
-});
-
-// The screen and the rail must send a person to the same place. The rail spells the faucet out
-// inside a sentence rather than exporting it, so this asks the rail for that sentence and looks
-// for the string the screen prints. Two places naming one destination is exactly the drift that
-// makes a next action point at nothing.
-test('the faucet the screen names is the faucet the rail names', async () => {
-  const rail = hypercoreDepositRail({
-    network: 'testnet',
-    keysPath: '/nowhere/keys.json',
-    tokens: {} as never,
-    // The testnet check runs before anything else, so none of these are reached. They exist
-    // because the factory takes them, not because this test is about them.
-    client: {
-      tokens: async () => [] as never,
-      quote: async () => ({ quote: {} }) as never,
-      status: async () => ({}) as never,
-      submitDeposit: async () => undefined,
-    } as never,
-    evm: { signerAddress: () => SELF, send: async () => ({ ok: false, error: 'unused' }) } as never,
-    near: {
-      accountId: () => 'nobody.near',
-      storageRegistered: async () => true,
-      send: async () => ({ ok: false, error: 'unused' }),
-    } as never,
-  });
-
-  const result = await rail.simulate({
-    kind: 'hl_deposit',
-    chain: 'arb',
-    symbol: 'USDC',
-    tokenId: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
-    amount: 50,
-    amountUsd: 50,
-    minCredited: 49,
-    from: SELF,
-    hlAccount: SELF,
-    counterparty: 'unused',
-  } as never);
-
-  assert.equal(result.ok, false);
-  const said = `${result.summary} ${result.error ?? ''}`;
-  assert.ok(said.includes(FUNDING_FAUCET), `the rail's refusal does not name ${FUNDING_FAUCET}: ${said}`);
-});

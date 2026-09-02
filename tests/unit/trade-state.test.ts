@@ -214,7 +214,6 @@ function build(p: {
     atrFor: () => (p.atr === undefined ? 15 : p.atr),
     products: ['BTC', 'ETH', 'SOL'],
     nowMs: NOW,
-    network: 'testnet',
     address: '0x1111111111111111111111111111111111111111',
   });
 }

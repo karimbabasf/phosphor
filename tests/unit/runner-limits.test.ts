@@ -11,8 +11,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  MAINNET_TRADING_LIMITS,
-  TESTNET_TRADING_LIMITS,
+  TRADING_LIMITS,
   createRunnerHost,
   tradingLimitRefusal,
 } from '../../src/runner/host.ts';
@@ -76,14 +75,11 @@ test('the count rule is checked before the money rule, so the refusal names the 
   assert.match(refusal, /already armed and the ceiling is/);
 });
 
-test('mainnet is the tighter profile, and both are stated rather than derived', () => {
-  assert.equal(MAINNET_TRADING_LIMITS.maxAggregateNotionalUsd, 250);
-  assert.equal(TESTNET_TRADING_LIMITS.maxAggregateNotionalUsd, 2500);
-  assert.equal(MAINNET_TRADING_LIMITS.maxArmedMandates, 3);
-  assert.ok(
-    MAINNET_TRADING_LIMITS.maxAggregateNotionalUsd < TESTNET_TRADING_LIMITS.maxAggregateNotionalUsd,
-    'real money gets the smaller ceiling',
-  );
+// Stated rather than derived, and deliberately small: every run is against real collateral,
+// and the number a human is most likely to regret is the one they never had to type.
+test('the ceiling is a stated constant, and it is the small one', () => {
+  assert.equal(TRADING_LIMITS.maxAggregateNotionalUsd, 250);
+  assert.equal(TRADING_LIMITS.maxArmedMandates, 3);
 });
 
 // ---------- the wiring, which is the part a pure function cannot prove ----------
@@ -91,8 +87,7 @@ test('mainnet is the tighter profile, and both are stated rather than derived', 
 function host(limits?: { maxArmedMandates: number; maxAggregateNotionalUsd: number }, killed = false) {
   return createRunnerHost({
     apiWalletKey: async () => null,
-    isMainnet: false,
-    baseUrl: 'https://api.hyperliquid-testnet.xyz',
+    baseUrl: 'https://api.hyperliquid.xyz',
     user: '0x2222222222222222222222222222222222222222',
     killSwitch: () => killed,
     onEvent: () => {},
@@ -135,6 +130,6 @@ test('a mandate over the ceiling is refused before a child is ever spawned', asy
 test('a host given no limits falls back to the testnet profile rather than to none', () => {
   // The dep is optional, and an absent ceiling would be the quietest possible regression.
   assert.ok(
-    tradingLimitRefusal(armed(['a', 2000]), { id: 'b', maxNotionalUsd: 2000 }, TESTNET_TRADING_LIMITS) !== null,
+    tradingLimitRefusal(armed(['a', 2000]), { id: 'b', maxNotionalUsd: 2000 }, TRADING_LIMITS) !== null,
   );
 });

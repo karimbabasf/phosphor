@@ -205,7 +205,6 @@ function rail(
   const evm = fakeEvm(ports);
   const info = fakeInfo(shapes);
   const r = hypercoreDepositRail({
-    network: 'mainnet',
     keysPath: KEYS,
     tokens: TOKENS,
     client,
@@ -220,40 +219,7 @@ function rail(
   return { rail: r, quotes, submitted, sends: evm.sends, infoCalls: info.calls };
 }
 
-// ---------- the network guard, which is the worst outcome this rail can produce ----------
-
-test('a testnet trading network is refused, because the money would land on mainnet and work', async () => {
-  // The failure this prevents does not revert and does not look wrong: 1Click has no testnet,
-  // the pinned asset is mainnet HyperCore, and one EVM address names an account on both
-  // networks. So the deposit would succeed, into the wrong book, while the account the app is
-  // trading stayed empty.
-  const h = rail({}, {}, [{ perp: 0, spot: 0 }], { network: 'testnet' });
-  const out = await h.rail.simulate(draft());
-  assert.equal(out.ok, false);
-  assert.match(out.error ?? '', /NEAR Intents, which has no testnet/);
-  assert.match(out.error ?? '', /real money into the mainnet trading account/);
-  assert.match(out.error ?? '', /faucet/);
-  assert.equal(h.quotes.length, 0, 'nothing was priced');
-});
-
-test('the network guard runs before every other refusal, so it cannot be masked by one', async () => {
-  // A draft that is wrong in several ways at once must still name this reason, because it is
-  // the one that costs money.
-  const h = rail({}, {}, [{ perp: 0, spot: 0 }], { network: 'testnet' });
-  const out = await h.rail.simulate(draft({ chain: 'sol', amount: 1, counterparty: 'nonsense' }));
-  assert.equal(out.ok, false);
-  assert.match(out.error ?? '', /has no testnet/);
-});
-
-test('execute refuses on testnet too, not only simulate', async () => {
-  const h = rail({}, {}, [{ perp: 0, spot: 0 }], { network: 'testnet' });
-  const out = await h.rail.execute(draft());
-  assert.equal(out.ok, false);
-  assert.match(out.detail, /has no testnet/);
-  assert.equal(h.sends.length, 0, 'nothing was signed');
-});
-
-// ---------- the shape refusals, none of which touch the network ----------
+// ---------- the shape refusals ----------
 
 test('an origin chain this app cannot sign on is refused before any quote', async () => {
   const h = rail();
@@ -299,16 +265,18 @@ test('funding from a wallet this app does not hold the key for is refused', asyn
   assert.equal(h.quotes.length, 0);
 });
 
-test('a NEAR testnet account is refused here, not by a 500 from the API', async () => {
-  // 1Click is mainnet only. Without this check the quote is well formed, leaves, and comes back
-  // as a bare "Internal server error", which tells a reader nothing about the actual cause.
+test('a NEAR account id 1Click cannot settle to is refused here, not by a 500 from the API', async () => {
+  // Without this check the quote is well formed, leaves, and comes back as a bare "Internal
+  // server error", which tells a reader nothing about the actual cause. Checked as an
+  // allowlist of the two real account-id shapes rather than as a blocklist of wrong suffixes.
   const h = rail();
   // A generic name, not the one in config.local.json: scripts/sweep.ts treats any configured
-  // address in tracked content as a leak, and it is right to, even for a testnet account id.
-  const out = await h.rail.simulate(draft({ chain: 'near', symbol: 'USDC', from: 'example.testnet' }));
+  // address in tracked content as a leak, and it is right to.
+  const out = await h.rail.simulate(draft({ chain: 'near', symbol: 'USDC', from: 'example.invalid' }));
   assert.equal(out.ok, false);
-  assert.match(out.error ?? '', /NEAR testnet account and 1Click is mainnet only/);
-  assert.match(out.error ?? '', /an error that does not say so/);
+  assert.match(out.error ?? '', /not a NEAR account id 1Click can settle to/);
+  assert.match(out.error ?? '', /must end in \.near, or be a 64-character implicit account id/);
+  assert.equal(h.quotes.length, 0, 'nothing was priced');
   assert.equal(h.quotes.length, 0, 'the API was never asked');
 });
 
@@ -406,7 +374,7 @@ test('execute sends to the address the quote minted, submits it, and reports the
   assert.equal(h.sends.length, 1, 'exactly one transfer');
   assert.equal(h.sends[0].to, ARB_USDC, 'the transfer calls the token, not the deposit address');
   assert.equal(h.submitted.length, 1);
-  assert.match(out.detail, /funded Hyperliquid mainnet with 49\.6347 USDC/);
+  assert.match(out.detail, /funded Hyperliquid with 49\.6347 USDC/);
   assert.match(out.detail, /Credited to the perp side directly/);
   assert.ok(out.txids?.includes('0xorigin'));
 

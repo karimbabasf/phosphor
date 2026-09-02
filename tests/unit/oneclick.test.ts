@@ -24,11 +24,11 @@ import type { RiskRow } from '../../src/types.ts';
 
 import { toBaseUnits, oneLine } from '../../src/intents.ts';
 import type { OneClickToken, TokensFile } from '../../src/intents.ts';
-import { NO_TESTNET_REASON, ONECLICK_COUNTERPARTY, oneClickRail } from '../../src/rails/oneclick.ts';
+import { ONECLICK_COUNTERPARTY, oneClickRail } from '../../src/rails/oneclick.ts';
 import type { SwapEvmPort, SwapNearPort } from '../../src/rails/oneclick.ts';
 import type { SendOutcome, SendParams } from '../../src/chain/evm.ts';
 import type { NearSendOutcome, NearSendParams } from '../../src/chain/near.ts';
-import type { Network, SwapDraft } from '../../src/types.ts';
+import type { SwapDraft } from '../../src/types.ts';
 
 // ---------- fixtures ----------
 
@@ -210,7 +210,7 @@ function harness(
   return { fetchImpl, quoteBodies, depositSubmits, statusCalls, sends, nearSends, evm, near };
 }
 
-function railOf(h: Harness, network: Network = 'mainnet') {
+function railOf(h: Harness) {
   // A virtual clock, not the real one. sleepImpl returns immediately, so with now() left on
   // Date.now the 5ms deadline was being measured against wall time the test was never going
   // to spend: on a loaded machine the poll loop hit that deadline after two calls instead of
@@ -219,7 +219,6 @@ function railOf(h: Harness, network: Network = 'mainnet') {
   // to sleep for makes the loop bound deterministic on any machine.
   let clock = 0;
   return oneClickRail({
-    network,
     keysPath: '/nonexistent/keys.json', // never read: the signer ports are stubbed
     tokens: tokensFixture,
     evm: h.evm,
@@ -283,40 +282,6 @@ test('toBaseUnits rounds half-up past the token precision and rejects impossible
   assert.throws(() => toBaseUnits(-1, 6), /must not be negative/);
   assert.throws(() => toBaseUnits(Number.NaN, 6), /finite/);
   assert.throws(() => toBaseUnits(Number.POSITIVE_INFINITY, 18), /finite/);
-});
-
-// ---------- the network guard ----------
-
-test('execute refuses on testnet because NEAR Intents has no testnet', async () => {
-  const h = harness();
-  const rail = railOf(h, 'testnet');
-
-  await assert.rejects(
-    () => rail.execute(draftOf()),
-    (err: unknown) => {
-      assert.ok(err instanceof Error);
-      assert.match(err.message, /no testnet/i);
-      assert.match(err.message, /mainnet only/i);
-      assert.match(err.message, /anvil mainnet fork/i); // the guard names the alternative
-      return true;
-    },
-  );
-
-  // The guard is the first statement in execute: no quote, no key read, no transfer.
-  assert.equal(h.quoteBodies.length, 0);
-  assert.equal(h.sends.length, 0);
-  assert.equal(h.statusCalls.length, 0);
-});
-
-test('simulate on testnet still prices the swap but refuses to let it be approved', async () => {
-  const h = harness();
-  const result = await railOf(h, 'testnet').simulate(draftOf());
-
-  assert.equal(result.ok, false);
-  assert.equal(result.error, NO_TESTNET_REASON);
-  assert.match(result.summary, /CANNOT EXECUTE on testnet/);
-  assert.match(result.summary, /99\.85 USDT on arb/); // the real pricing is still shown
-  assert.equal(h.sends.length, 0);
 });
 
 // ---------- simulate ----------
@@ -389,7 +354,6 @@ test('execute quotes live, sends the input to the deposit address, and polls to 
   assert.equal(h.sends.length, 1);
   const send = h.sends[0];
   assert.equal(send.chain, 'base');
-  assert.equal(send.network, 'mainnet');
   assert.equal(send.to.toLowerCase(), '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913');
   const call = decodeFunctionData({ abi: ERC20, data: send.data });
   assert.equal(call.functionName, 'transfer');
@@ -589,14 +553,6 @@ test('a NEAR quote is priced at 24 decimals without losing yocto to a double', a
   const body = h.quoteBodies[0] as { amount: string; originAsset: string };
   assert.equal(body.amount, '10000000000000000000000000');
   assert.equal(body.originAsset, 'nep141:wrap.near');
-});
-
-test('a NEAR origin still refuses on testnet, because Intents has no testnet', async () => {
-  // The signer works on testnet. The venue does not exist there, and having a working
-  // signer must not turn that into an attempted swap against a host that is not real.
-  const h = harness({ quote: nearQuote() });
-  await assert.rejects(() => railOf(h, 'testnet').execute(nearDraft()), /has no testnet/);
-  assert.equal(h.nearSends.length, 0);
 });
 
 test('a failed NEAR deposit reports that no funds left the wallet', async () => {

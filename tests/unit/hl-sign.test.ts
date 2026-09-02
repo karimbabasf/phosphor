@@ -64,15 +64,9 @@ test('field order is part of the hash', () => {
   );
 });
 
-test('testnet and mainnet produce different signatures for the same action', async () => {
-  const t = await signL1Action(KEY, ORDER, 1_700_000_000_000, false);
-  const m = await signL1Action(KEY, ORDER, 1_700_000_000_000, true);
-  assert.notEqual(t.r + t.s, m.r + m.s, 'the network rides on source, not on chainId');
-});
-
 test('the signature recovers to the signing account', async () => {
   const nonce = 1_700_000_000_000;
-  const sig = await signL1Action(KEY, ORDER, nonce, false);
+  const sig = await signL1Action(KEY, ORDER, nonce);
   const packed = `${sig.r}${sig.s.slice(2)}${(sig.v - 27).toString(16).padStart(2, '0')}` as `0x${string}`;
 
   const recovered = await recoverTypedDataAddress({
@@ -89,7 +83,7 @@ test('the signature recovers to the signing account', async () => {
       ],
     },
     primaryType: 'Agent',
-    message: { source: 'b', connectionId: actionHash(ORDER, nonce, null, null) },
+    message: { source: 'a', connectionId: actionHash(ORDER, nonce, null, null) },
     signature: packed,
   });
 
@@ -100,7 +94,7 @@ test('the signature recovers to the signing account', async () => {
 });
 
 test('v is normalised to 27 or 28', async () => {
-  const sig = await signL1Action(KEY, ORDER, 1_700_000_000_000, false);
+  const sig = await signL1Action(KEY, ORDER, 1_700_000_000_000);
   assert.ok(sig.v === 27 || sig.v === 28, `got v=${sig.v}`);
   assert.match(sig.r, /^0x[0-9a-f]{64}$/);
   assert.match(sig.s, /^0x[0-9a-f]{64}$/);

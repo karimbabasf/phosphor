@@ -23,14 +23,13 @@ import { loadDemoLedger } from '../../src/ledger/demo.ts';
 import { defaultPolicy } from '../../src/policy/file.ts';
 import { evaluate } from '../../src/policy/engine.ts';
 import type { EngineCtx } from '../../src/policy/engine.ts';
-import type { Network, RiskRow, SwapDraft } from '../../src/types.ts';
+import type { RiskRow, SwapDraft } from '../../src/types.ts';
 import type { OneClickQuote, OneClickToken, TokensFile } from '../../src/intents.ts';
 import { venueAllowlist } from '../../src/rails/index.ts';
 
 import {
   INTENTS_NATIVE_COUNTERPARTY,
   INTENTS_NATIVE_VENUE,
-  INTENTS_NO_TESTNET_REASON,
   INTENTS_VERIFIER,
   base58Encode,
   checkIntentPayload,
@@ -214,9 +213,8 @@ function harness(
   return { api, signer, quotes, generated, submitted, signedPayloads, statusCalls };
 }
 
-function railOf(h: Harness, network: Network = 'mainnet') {
+function railOf(h: Harness) {
   return intentsNativeRail({
-    network,
     keysPath: '/nonexistent/keys.json', // never read: the signer port is stubbed
     tokens: tokensFixture,
     api: h.api,
@@ -229,39 +227,6 @@ function railOf(h: Harness, network: Network = 'mainnet') {
 }
 
 // ---------- guard 1: mainnet only ----------
-
-test('execute refuses on testnet, naming the missing verifier contract', async () => {
-  const h = harness();
-
-  await assert.rejects(
-    () => railOf(h, 'testnet').execute(draftOf()),
-    (err: unknown) => {
-      assert.ok(err instanceof Error);
-      assert.match(err.message, /no testnet/i);
-      assert.match(err.message, /mainnet only/i);
-      // The guard states the evidence, not just the conclusion: the all-ones code hash is
-      // NEAR's sentinel for an account that has never had code deployed.
-      assert.match(err.message, /11111111111111111111111111111111/);
-      assert.match(err.message, /never had code deployed/);
-      return true;
-    },
-  );
-
-  // The guard is the first statement in execute: no quote, no intent, no signature.
-  assert.equal(h.quotes.length, 0);
-  assert.equal(h.generated.length, 0);
-  assert.equal(h.signedPayloads.length, 0);
-  assert.equal(h.submitted.length, 0);
-});
-
-test('simulate refuses on testnet without pricing a swap that cannot run', async () => {
-  const h = harness();
-  const result = await railOf(h, 'testnet').simulate(draftOf());
-
-  assert.equal(result.ok, false);
-  assert.equal(result.error, INTENTS_NO_TESTNET_REASON);
-  assert.equal(h.quotes.length, 0);
-});
 
 // ---------- guard 2: the API key is a fee tier, not a permission ----------
 //
@@ -277,7 +242,6 @@ test('simulate refuses on testnet without pricing a swap that cannot run', async
 test('a keyless rail prices a swap instead of refusing it', async () => {
   const h = harness();
   const rail = intentsNativeRail({
-    network: 'mainnet',
     keysPath: '/nonexistent/keys.json',
     tokens: tokensFixture,
     apiKey: '',
@@ -294,7 +258,6 @@ test('a keyless rail prices a swap instead of refusing it', async () => {
 test('a keyless rail signs and submits, because the key was never what authorised it', async () => {
   const h = harness();
   const rail = intentsNativeRail({
-    network: 'mainnet',
     keysPath: '/nonexistent/keys.json',
     tokens: tokensFixture,
     apiKey: '',
@@ -784,7 +747,6 @@ test('the deposit is signed as an ft_transfer_call to the verifier, crediting ou
     intentsAccountId: OWNER,
     token: 'usdc.near',
     amountBase: 100000000n,
-    network: 'mainnet',
     keysPath: '/nonexistent/keys.json',
     near: port,
     signer: depositSigner,
@@ -824,7 +786,6 @@ test('the credited account is lowercased, because the verifier rejects a checksu
     intentsAccountId: OWNER,
     token: 'usdc.near',
     amountBase: 1n,
-    network: 'mainnet',
     keysPath: '/nonexistent/keys.json',
     near: port,
     signer,
@@ -851,7 +812,6 @@ test('the deposit refuses to credit any account but the one this key can spend f
     intentsAccountId: '0x000000000000000000000000000000000000dead',
     token: 'usdc.near',
     amountBase: 100n,
-    network: 'mainnet',
     keysPath: '/nonexistent/keys.json',
     near: port,
     signer: { address: () => OWNER, signErc191: async () => 'unused' },
@@ -873,7 +833,6 @@ test('the deposit still refuses any destination but the verifier, now that it ca
         intentsAccountId: OWNER,
         token: 'usdc.near',
         amountBase: 1n,
-        network: 'mainnet',
         keysPath: '/nonexistent/keys.json',
         near: port,
         // @ts-expect-error verifier is not part of the public arg shape; passing it proves
@@ -891,7 +850,6 @@ test('the deposit refuses when the verifier has no storage on the token, before 
     intentsAccountId: OWNER,
     token: 'usdc.near',
     amountBase: 1n,
-    network: 'mainnet',
     keysPath: '/nonexistent/keys.json',
     near: port,
     signer: depositSigner,
@@ -911,7 +869,6 @@ test('a failed deposit says the balance inside the verifier is unchanged', async
     intentsAccountId: OWNER,
     token: 'usdc.near',
     amountBase: 1n,
-    network: 'mainnet',
     keysPath: '/nonexistent/keys.json',
     near: port,
     signer: depositSigner,
@@ -921,21 +878,6 @@ test('a failed deposit says the balance inside the verifier is unchanged', async
   assert.match(result.detail, /balance inside intents\.near is unchanged/);
 });
 
-test('the deposit refuses on testnet, where the verifier has never been deployed', async () => {
-  const { port, sends } = nearPortStub();
-  const onTestnet = await intentsDeposit({
-    intentsAccountId: OWNER,
-    token: 'usdc.near',
-    amountBase: 1n,
-    network: 'testnet',
-    keysPath: '/nonexistent/keys.json',
-    near: port,
-    signer: depositSigner,
-  });
-  assert.equal(onTestnet.ok, false);
-  assert.equal(onTestnet.detail, INTENTS_NO_TESTNET_REASON);
-  assert.equal(sends.length, 0, 'the network guard runs before anything else');
-});
 
 // ---------- what this rail does to the policy engine ----------
 
@@ -949,7 +891,7 @@ const snapshot = loadDemoLedger();
 function engineCtx(): EngineCtx {
   const policy = defaultPolicy();
   // Seeded exactly the way main.ts seeds it, from the registry rather than by hand.
-  policy.outbound.destinationAllowlist = venueAllowlist('mainnet');
+  policy.outbound.destinationAllowlist = venueAllowlist();
   return {
     policy,
     composition: classify(snapshot, riskRows),
@@ -959,13 +901,11 @@ function engineCtx(): EngineCtx {
   };
 }
 
-test('the verifier account is on the allowlist the registry seeds, on both networks', () => {
-  for (const network of ['mainnet', 'testnet'] as Network[]) {
-    assert.ok(
-      venueAllowlist(network).includes(INTENTS_NATIVE_COUNTERPARTY.toLowerCase()),
-      `${INTENTS_NATIVE_COUNTERPARTY} missing from the ${network} allowlist`,
-    );
-  }
+test('the verifier account is on the allowlist the registry seeds', () => {
+  assert.ok(
+    venueAllowlist().includes(INTENTS_NATIVE_COUNTERPARTY.toLowerCase()),
+    `${INTENTS_NATIVE_COUNTERPARTY} missing from the allowlist`,
+  );
 });
 
 test('a swap on this rail passes the allowlist as a real address, and the click threshold still governs', () => {

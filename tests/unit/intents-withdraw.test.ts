@@ -18,7 +18,7 @@ import assert from 'node:assert/strict';
 import { getAddress } from 'viem';
 import type { Address } from 'viem';
 
-import type { AppConfig, IntentsWithdrawDraft, Network } from '../../src/types.ts';
+import type { AppConfig, IntentsWithdrawDraft } from '../../src/types.ts';
 import type { OneClickQuote, OneClickStatus, OneClickToken, TokensFile } from '../../src/intents.ts';
 import type { IntentsApiPort, IntentsQuoteParams, IntentsSignerPort } from '../../src/rails/intents-native.ts';
 import { base58Decode, base58Encode } from '../../src/rails/intents-native.ts';
@@ -218,10 +218,9 @@ const signer: IntentsSignerPort = {
   signErc191: async () => 'secp256k1:SIGNATURE',
 };
 
-function railOf(over: Overrides = {}, opts: { network?: Network; addresses?: AppConfig['addresses'] } = {}) {
+function railOf(over: Overrides = {}, opts: { addresses?: AppConfig['addresses'] } = {}) {
   const { api, calls } = apiOf(over);
   const rail = intentsWithdrawRail({
-    network: opts.network ?? 'mainnet',
     keysPath: '/nonexistent/keys.json', // the signer port is stubbed, so this is never opened
     tokens: tokensFixture,
     addresses: opts.addresses ?? ADDRESSES,
@@ -570,18 +569,6 @@ test('a draft spending another account is refused', async () => {
   const summary = await refusal(rail, draftOf({ from: '0x4444444444444444444444444444444444444444' }));
   assert.match(summary, /but the configured key is/);
   assert.equal(calls.quotes.length, 0, 'the account is checked before the network is touched');
-});
-
-test('testnet cannot execute, and simulate says so instead of pretending', async () => {
-  const { rail } = railOf({}, { network: 'testnet' });
-  const sim = await rail.simulate(draftOf());
-  assert.equal(sim.ok, false);
-  assert.match(sim.summary, /CANNOT EXECUTE on testnet/);
-  assert.match(sim.summary, /code_hash 11111111111111111111111111111111/);
-
-  const { rail: rail2, calls } = railOf({}, { network: 'testnet' });
-  assert.match(await executeError(rail2, draftOf()), /mainnet only/);
-  assert.equal(calls.quotes.length, 0, 'testnet must refuse before any network call');
 });
 
 // ---------- what happens after the signature is out ----------

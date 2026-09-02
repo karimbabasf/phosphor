@@ -105,7 +105,7 @@ test('the posted envelope carries action, nonce, signature and a null vault', as
   let seen = null as Record<string, unknown> | null;
   const ex = createExchange({
     privKey: '0x0123456789012345678901234567890123456789012345678901234567890123',
-    isMainnet: false,
+
     baseUrl: 'https://example.invalid',
     transport: async (_url, body) => {
       seen = body as Record<string, unknown>;

@@ -57,7 +57,7 @@ const ROOT = path.dirname(path.dirname(__dirname));
 const riskRows = (JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'risk-table.json'), 'utf8')) as { rows: RiskRow[] }).rows;
 
 const SELF_EVM = '0x1111111111111111111111111111111111111111';
-const ARB = deploymentFor('testnet', 'arb');
+const ARB = deploymentFor('arb');
 
 // A position the wallet already holds, so lp_remove has something to resolve against.
 // Priced off the demo fixture: USDC at 1.00 and ETH at 4,520.
@@ -126,7 +126,7 @@ function spyRails(over: { simulation?: SimulationResult; result?: RailResult } =
 // to catch, so it is spelled out here rather than hidden in a fixture.
 function seededPolicy(): Policy {
   const p = defaultPolicy();
-  p.outbound.destinationAllowlist = venueAllowlist('testnet');
+  p.outbound.destinationAllowlist = venueAllowlist();
   p.sentences = renderSentences(p);
   return p;
 }
@@ -142,9 +142,6 @@ function setup(over: { policy?: Policy; rails?: Spy; positions?: LpPosition[] } 
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-rail-wiring-'));
   const cfg: AppConfig = {
     mode: 'live', // demo mode owns no rails at all; that is its own test below
-    network: 'testnet',
-    tradingNetwork: 'testnet',
-    approvalGate: true,
     port: 4177,
     addresses: { evm: [SELF_EVM], solana: [], near: [] },
     economicTransferUsd: 10,
@@ -196,16 +193,16 @@ function swapParams(amountIn: number) {
 
 // ---------- the allowlist ----------
 
-test('venueAllowlist names every contract the rails can hand funds to, and only for this network', () => {
-  const testnet = venueAllowlist('testnet');
+test('venueAllowlist names every contract the rails can hand funds to', () => {
+  const allowed = venueAllowlist();
 
-  for (const chain of chainsWithDeployment('testnet')) {
-    const dep = deploymentFor('testnet', chain);
-    assert.ok(testnet.includes(dep.router.toLowerCase()), `${chain} router is missing`);
-    assert.ok(testnet.includes(dep.positionManager.toLowerCase()), `${chain} position manager is missing`);
+  for (const chain of chainsWithDeployment()) {
+    const dep = deploymentFor(chain);
+    assert.ok(allowed.includes(dep.router.toLowerCase()), `${chain} router is missing`);
+    assert.ok(allowed.includes(dep.positionManager.toLowerCase()), `${chain} position manager is missing`);
   }
-  assert.ok(testnet.includes(ONECLICK_COUNTERPARTY), 'the oneclick venue is missing');
-  assert.ok(testnet.every(a => a === a.toLowerCase()), 'the engine lowercases the list it compares against');
+  assert.ok(allowed.includes(ONECLICK_COUNTERPARTY), 'the oneclick venue is missing');
+  assert.ok(allowed.every(a => a === a.toLowerCase()), 'the engine lowercases the list it compares against');
 
   // Hyperliquid funding used to put Bridge2's address here, and the worst mistake this app
   // could make was a testnet build holding the mainnet bridge address: no contract lives there
@@ -218,11 +215,11 @@ test('venueAllowlist names every contract the rails can hand funds to, and only 
     ONECLICK_COUNTERPARTY,
     'one host means one allowlist entry: a human allowing 1Click for swaps has allowed it for funding',
   );
-  assert.ok(!testnet.some(a => /^0x2df1c51e09aecf9cacb7bc98cb1742757f163df7$/.test(a)), 'the mainnet Bridge2 address is gone from the allowlist');
+  assert.ok(!allowed.some((a: string) => /^0x2df1c51e09aecf9cacb7bc98cb1742757f163df7$/.test(a)), 'the Bridge2 address is gone from the allowlist');
 });
 
 test('every rail draft the service builds names a counterparty the seeded allowlist covers', async () => {
-  const allowed = new Set(venueAllowlist('testnet'));
+  const allowed = new Set(venueAllowlist());
   const h = setup();
 
   const swap = await h.svc.proposeSwap(swapParams(50));
@@ -524,9 +521,6 @@ test('the kill switch stops a rail proposal that was already pending', async () 
 function cfgFor(mode: AppConfig['mode']): AppConfig {
   return {
     mode,
-    network: 'testnet',
-    tradingNetwork: 'testnet',
-    approvalGate: true,
     port: 4177,
     addresses: { evm: [SELF_EVM], solana: [], near: [] },
     economicTransferUsd: 10,

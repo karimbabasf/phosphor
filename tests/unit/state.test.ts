@@ -181,7 +181,6 @@ test('loadConfig reads config.json, applies no overrides, and creates dataDir', 
     path.join(dir, 'config.json'),
     JSON.stringify({
       mode: 'demo',
-      network: 'testnet',
       port: 4177,
       addresses: { evm: [], solana: [], near: [] },
       economicTransferUsd: 10,
@@ -203,7 +202,6 @@ test('loadConfig applies ACC_PORT, ACC_MODE, ACC_DATA_DIR env overrides', () => 
     path.join(dir, 'config.json'),
     JSON.stringify({
       mode: 'demo',
-      network: 'testnet',
       port: 4177,
       addresses: { evm: [], solana: [], near: [] },
       economicTransferUsd: 10,

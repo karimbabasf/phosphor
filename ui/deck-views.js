@@ -173,7 +173,6 @@ var PhosphorViews = (function () {
 
     box.appendChild(el('p', 'ovl-sec', 'FILE'));
     policyLine(box, 'version', String(p.version));
-    policyLine(box, 'network', s.network ? String(s.network) : 'unknown');
   }
 
   /* ---------- HISTORY ----------

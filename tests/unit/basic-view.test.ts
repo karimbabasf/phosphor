@@ -40,7 +40,7 @@ function baseInput(over: Partial<BasicInput> = {}): BasicInput {
     proposals: [],
     policyReadable: true,
     killSwitch: false,
-    gateRequired: true,
+
     agentsConnected: 1,
     chainStatus: chainStatus(),
     selfAddresses: [SELF],
@@ -106,7 +106,6 @@ const ELEVEN: Array<[string, BasicInput]> = [
   ['human refused', baseInput({ proposals: [proposal({ status: 'refused', decidedAt: T1 })] })],
   ['policy refused', baseInput({ proposals: [proposal({ status: 'policy_refused', decidedAt: T1 })] })],
   ['kill switch', baseInput({ killSwitch: true })],
-  ['gate disabled', baseInput({ gateRequired: false })],
   ['policy unreadable', baseInput({ policyReadable: false })],
   ['no agent', baseInput({ agentsConnected: 0 })],
   ['chain read failed', baseInput({ wallet: { rows: [], totalUsd: 0, byChain: {}, stale: ['near'], emptyCount: 0 } })],
@@ -129,7 +128,6 @@ test('each state lands on the tone the spec assigns it', () => {
   assert.equal(toneOf('working'), 'working');
   assert.equal(toneOf('policy refused'), 'stopped');
   assert.equal(toneOf('kill switch'), 'frozen');
-  assert.equal(toneOf('gate disabled'), 'broken');
   assert.equal(toneOf('policy unreadable'), 'broken');
 });
 
@@ -344,23 +342,6 @@ test('no two lines on the screen are the same sentence', () => {
 
 // ---------- warnings ----------
 
-test('the gate being off warns even while a question is on screen', () => {
-  const view = buildBasic(baseInput({ gateRequired: false, proposals: [proposal()] }));
-  assert.equal(view.tone, 'asking', 'the question is still what the human must act on');
-  assert.ok(view.warning !== null);
-  assert.match(view.warning!, /without asking you first/);
-});
-
-test('a quiet screen with the gate off still shouts about it', () => {
-  const view = buildBasic(baseInput({ gateRequired: false }));
-  assert.equal(view.tone, 'broken');
-  // The alarm has to be on the screen. It is the warning that carries the words, and
-  // the tone that carries the colour, so this asserts both rather than one wording.
-  assert.match(view.warning!, /without asking you first/);
-  assert.match(view.headline, /not protecting it/);
-  assert.doesNotMatch(view.footer, /You will be asked before/);
-});
-
 // Found by looking at the rebuilt screen rather than at the object: the headline and
 // the warning were the same sentence written twice, which on a page with this much
 // space around it reads as a rendering fault rather than as emphasis. Same class of
@@ -368,7 +349,6 @@ test('a quiet screen with the gate off still shouts about it', () => {
 test('the headline never restates the warning directly under it', () => {
   const words = (s: string) => new Set(s.toLowerCase().replace(/[^a-z ]/g, '').split(/\s+/).filter((w) => w.length > 3));
   for (const input of [
-    baseInput({ gateRequired: false }),
     baseInput({ killSwitch: true }),
     baseInput({ policyReadable: false }),
   ]) {
@@ -394,15 +374,10 @@ test('the footer promises nothing moves without a press, but only when asking', 
 });
 
 // Found by opening the page rather than by any assertion: the footer promised
-// "You will be asked before anything moves" directly under a warning saying the
-// gate was off. Two sentences contradicting each other is worse than either one,
-// and worst on this screen, where the reader has no third source to break the tie.
+// "You will be asked before anything moves" directly under a warning that contradicted
+// it. Two sentences contradicting each other is worse than either one, and worst on
+// this screen, where the reader has no third source to break the tie.
 test('the footer never contradicts the warning above it', () => {
-  const gateOff = buildBasic(baseInput({ gateRequired: false }));
-  assert.match(gateOff.warning!, /without asking you first/);
-  assert.match(gateOff.footer, /NOT be asked/);
-  assert.doesNotMatch(gateOff.footer, /^You will be asked/);
-
   const frozen = buildBasic(baseInput({ killSwitch: true }));
   assert.doesNotMatch(frozen.footer, /You will be asked/);
 
@@ -419,7 +394,6 @@ test('nothing claims "all normal" while a warning is on screen', () => {
   for (const input of [
     baseInput({ killSwitch: true }),
     baseInput({ policyReadable: false }),
-    baseInput({ gateRequired: false }),
   ]) {
     const v = buildBasic(input);
     assert.ok(v.warning !== null, 'this case should carry a warning');

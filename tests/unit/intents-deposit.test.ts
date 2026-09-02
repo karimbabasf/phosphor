@@ -15,7 +15,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { getAddress } from 'viem';
 
-import type { IntentsDepositDraft, Network } from '../../src/types.ts';
+import type { IntentsDepositDraft } from '../../src/types.ts';
 import type { OneClickClient, OneClickQuote, OneClickToken, TokensFile } from '../../src/intents.ts';
 import type { SendParams } from '../../src/chain/evm.ts';
 import {
@@ -167,9 +167,8 @@ function harness(
   return h;
 }
 
-function railOf(h: Harness, network: Network = 'mainnet') {
+function railOf(h: Harness) {
   return intentsDepositRail({
-    network,
     keysPath: '/nonexistent/keys.json', // never read: the evm port is stubbed
     tokens: tokensFixture,
     client: h.client,
@@ -416,19 +415,6 @@ test('a draft claiming the wrong gas asset for its chain is refused', async () =
   const result = await railOf(h).simulate(draftOf({ symbol: 'SOL' }));
   assert.equal(result.ok, false);
   assert.match(result.summary, /gas asset of eth is ETH/);
-});
-
-// ---------- network guard ----------
-
-test('testnet refuses before any network call, and simulate says so before a human clicks', async () => {
-  const h = harness();
-  await assert.rejects(() => railOf(h, 'testnet').execute(draftOf()), /no testnet/i);
-  assert.equal(h.quotes.length, 0);
-  assert.equal(h.sends.length, 0);
-
-  const result = await railOf(h, 'testnet').simulate(draftOf());
-  assert.equal(result.ok, false);
-  assert.match(result.summary, /CANNOT EXECUTE on testnet/);
 });
 
 // ---------- reporting, where a wrong word costs a second deposit ----------

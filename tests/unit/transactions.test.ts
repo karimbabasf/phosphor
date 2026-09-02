@@ -73,7 +73,7 @@ function deposit(over: Partial<Proposal> = {}): Proposal {
 }
 
 function build(proposals: Proposal[], events: LogEvent[] = []) {
-  return buildTransactions({ proposals, events, network: 'mainnet', selfAddresses: [SELF] });
+  return buildTransactions({ proposals, events, selfAddresses: [SELF] });
 }
 
 test('an executed proposal becomes one row, with the movement it actually made', () => {
@@ -233,11 +233,11 @@ test('the list reads newest first', () => {
   assert.deepEqual(entries.map(e => e.id), ['p-swap', 'p-deposit']);
 });
 
-test('explorers follow the network, so a testnet hash never links to a mainnet page', () => {
-  assert.equal(explorerTxUrl('testnet', 'arb', '0xabc'), 'https://sepolia.arbiscan.io/tx/0xabc');
-  assert.equal(explorerAddressUrl('testnet', 'near', 'demo.testnet'), 'https://testnet.nearblocks.io/address/demo.testnet');
-  assert.equal(explorerAddressUrl('mainnet', 'base', '0xabc'), 'https://basescan.org/address/0xabc');
-  assert.equal(explorerTxUrl('mainnet', 'sol', 'sig'), 'https://solscan.io/tx/sig');
+test('an explorer link names the chain the hash is actually on', () => {
+  assert.equal(explorerTxUrl('arb', '0xabc'), 'https://arbiscan.io/tx/0xabc');
+  assert.equal(explorerAddressUrl('near', 'demo.near'), 'https://nearblocks.io/address/demo.near');
+  assert.equal(explorerAddressUrl('base', '0xabc'), 'https://basescan.org/address/0xabc');
+  assert.equal(explorerTxUrl('sol', 'sig'), 'https://solscan.io/tx/sig');
 });
 
 // ---------- the yield rail ----------

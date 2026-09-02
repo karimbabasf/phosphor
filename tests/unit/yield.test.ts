@@ -313,26 +313,30 @@ test('the reserve configuration bitmap decodes to the flags that decide whether 
 
 // ---------- the verified deployment table ----------
 
-test('mainnet has no verified deployment, so the table itself refuses before the rail does', () => {
-  assert.deepEqual(aaveChains('mainnet'), []);
-  assert.throws(() => marketFor('mainnet', 'base'), /no verified deployment/);
+// Every row here was read off the chain before it was written down. The aToken addresses are
+// what getReserveData(USDC) returned from each Pool: Arbitrum One at block 500799884 and Base
+// at block 50759012, both on 2026-09-01.
+test('the verified markets are the two chains the rails already use', () => {
+  assert.deepEqual(aaveChains().sort(), ['arb', 'base']);
+  assert.equal(marketFor('arb').pool, '0x794a61358D6845594F94dc1DB02A252b5b4814aD');
+  assert.equal(marketFor('base').pool, '0xA238Dd80C259a72e81d7e4664a9801593F98d1c5');
+  assert.equal(aaveAsset('arb', 'USDC')?.receipt, '0x724dc807b04555b71ed48a6896b6F41593b8C637');
+  assert.equal(aaveAsset('base', 'USDC')?.receipt, '0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB');
 });
 
-test('the testnet USDC is the SAME token the uniswap rail already knows on arb', async () => {
+test('a chain with no verified market answers with a sentence rather than a stack trace', () => {
+  assert.equal(aaveAsset('eth', 'USDC'), null);
+  assert.throws(() => marketFor('eth'), /Earning is not available on eth/);
+});
+
+test('the USDC this rail takes is the SAME token the uniswap rail already knows on arb', async () => {
   const { tokenFor } = await import('../../src/rails/uniswap-abi.ts');
-  const aave = aaveAsset('testnet', 'arb', 'USDC');
+  const aave = aaveAsset('arb', 'USDC');
   assert.ok(aave !== null);
   // This is what makes the feature free to fund: the existing swap rail produces exactly the
   // token this one consumes. Two different USDC addresses would mean a second funding step
   // for a human, and a silent one.
-  assert.equal(aave.address.toLowerCase(), tokenFor('testnet', 'arb', 'USDC').address.toLowerCase());
-});
-
-test('ethereum sepolia is deliberately absent', () => {
-  // Its market reports 57 percent on USDC, an artefact of a testnet nobody arbitrages. A
-  // window whose headline number is 57 percent teaches the reader to distrust every other
-  // number in it.
-  assert.equal(aaveAsset('testnet', 'eth', 'USDC'), null);
+  assert.equal(aave.address.toLowerCase(), tokenFor('arb', 'USDC').address.toLowerCase());
 });
 
 // ---------- the allocator's economics ----------

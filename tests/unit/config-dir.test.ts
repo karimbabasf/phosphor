@@ -43,7 +43,7 @@ const KEYS = path.join(os.tmpdir(), 'phosphor-config-keys', 'keys.json');
 
 test('with no override, config.local.json is read from the root, exactly as before', () => {
   const root = scratch();
-  write(root, 'config.json', { network: 'testnet', port: 4177, economicTransferUsd: 10 });
+  write(root, 'config.json', { port: 4177, economicTransferUsd: 10 });
   write(root, 'config.local.json', { port: 5000 });
 
   const cfg = withEnv({ PHOSPHOR_CONFIG_DIR: undefined, PHOSPHOR_KEYS: KEYS }, () => loadConfig(root));
@@ -54,7 +54,7 @@ test('with no override, config.local.json is read from the root, exactly as befo
 test('PHOSPHOR_CONFIG_DIR moves config.local.json out of the root', () => {
   const root = scratch();
   const support = scratch();
-  write(root, 'config.json', { network: 'testnet', port: 4177 });
+  write(root, 'config.json', { port: 4177 });
   write(support, 'config.local.json', { port: 6000, addresses: { evm: ['0xabc'] } });
 
   const cfg = withEnv({ PHOSPHOR_CONFIG_DIR: support, PHOSPHOR_KEYS: KEYS }, () => loadConfig(root));
@@ -66,7 +66,7 @@ test('PHOSPHOR_CONFIG_DIR moves config.local.json out of the root', () => {
 test('the override wins outright: a stale config.local.json left in the root is not read', () => {
   const root = scratch();
   const support = scratch();
-  write(root, 'config.json', { network: 'testnet', port: 4177 });
+  write(root, 'config.json', { port: 4177 });
   write(root, 'config.local.json', { port: 7777 });
   write(support, 'config.local.json', { port: 6000 });
 
@@ -78,7 +78,7 @@ test('the override wins outright: a stale config.local.json left in the root is 
 test('config.json still comes from the root, because the template ships with the code', () => {
   const root = scratch();
   const support = scratch();
-  write(root, 'config.json', { network: 'testnet', port: 4177, economicTransferUsd: 42 });
+  write(root, 'config.json', { port: 4177, economicTransferUsd: 42 });
   write(support, 'config.local.json', { port: 6000 });
 
   const cfg = withEnv({ PHOSPHOR_CONFIG_DIR: support, PHOSPHOR_KEYS: KEYS }, () => loadConfig(root));
@@ -90,7 +90,7 @@ test('config.json still comes from the root, because the template ships with the
 test('an override directory with no config.local.json falls back to the template alone', () => {
   const root = scratch();
   const support = scratch();
-  write(root, 'config.json', { network: 'testnet', port: 4177 });
+  write(root, 'config.json', { port: 4177 });
 
   const cfg = withEnv({ PHOSPHOR_CONFIG_DIR: support, PHOSPHOR_KEYS: KEYS }, () => loadConfig(root));
 
@@ -100,7 +100,7 @@ test('an override directory with no config.local.json falls back to the template
 test('a corrupt config.local.json still stops the boot when it sits in the override directory', () => {
   const root = scratch();
   const support = scratch();
-  write(root, 'config.json', { network: 'testnet', port: 4177 });
+  write(root, 'config.json', { port: 4177 });
   fs.mkdirSync(support, { recursive: true });
   fs.writeFileSync(path.join(support, 'config.local.json'), '{ not json');
 
@@ -118,7 +118,7 @@ test('a corrupt config.local.json still stops the boot when it sits in the overr
 
 test('only an explicit yes turns the money-moving loop on', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-yield-cfg-'));
-  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ mode: 'live', network: 'testnet', dataDir: 'state' }));
+  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ mode: 'live', dataDir: 'state' }));
   const prev = process.env.PHOSPHOR_YIELD_AUTO;
   try {
     for (const yes of ['true', 'TRUE', '1', 'yes', 'on']) {

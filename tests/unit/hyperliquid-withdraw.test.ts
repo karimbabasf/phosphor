@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseSignature } from 'viem';
+import { parseSignature, recoverTypedDataAddress } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import type { Address } from 'viem';
 
@@ -28,8 +28,13 @@ const OWN = '0x2222222222222222222222222222222222222222' as Address;
 const OUTSIDE = '0x3333333333333333333333333333333333333333';
 const KEYS = '/nowhere/keys.json'; // never read: the port stands in for the signer
 
-// The official hyperliquid-python-sdk's own test vector, from tests/signing_test.py. This key
-// is published in that repo as a fixture and holds nothing.
+// The key, destination and time come from the official hyperliquid-python-sdk's own test
+// vector in tests/signing_test.py. The key is published in that repo as a fixture and holds
+// nothing. The r and s below are NOT from that repo: its vector signs a domain this app no
+// longer produces, so they were computed here and checked by recovering the signer. What
+// stays externally anchored is the domain and the type list, asserted verbatim against the
+// SDK in the two tests directly below this one; this test is the regression guard on the
+// exact bytes those produce.
 const FIXTURE_KEY = '0x0123456789012345678901234567890123456789012345678901234567890123';
 const FIXTURE_DEST = '0x5e9ee1089755c3435139848e47e6635505d5a13a';
 const FIXTURE_TIME = 1687816341423;
@@ -93,7 +98,6 @@ function deps(over: Partial<HlWithdrawDeps> & FetchOverrides & PortOverrides = {
   const { port } = fakeSignPort(over);
   const { fetchImpl } = fakeFetch(over);
   return {
-    network: over.network ?? 'testnet',
     keysPath: KEYS,
     sign: over.sign ?? port,
     fetchImpl: over.fetchImpl ?? fetchImpl,
@@ -108,10 +112,9 @@ function deps(over: Partial<HlWithdrawDeps> & FetchOverrides & PortOverrides = {
 // producing valid signatures for the wrong message and the API will either reject them or
 // attribute them somewhere else.
 
-test('withdraw3 payload reproduces the official SDK signature fixture exactly', async () => {
+test('the withdraw3 payload signs to a fixed, recoverable signature', async () => {
   const account = privateKeyToAccount(FIXTURE_KEY);
   const { typedData, action, nonce } = buildWithdrawPayload({
-    network: 'testnet',
     destination: FIXTURE_DEST,
     amount: '1',
     time: FIXTURE_TIME,
@@ -120,10 +123,14 @@ test('withdraw3 payload reproduces the official SDK signature fixture exactly', 
   const packed = await account.signTypedData(typedData as never);
   const { r, s, yParity } = parseSignature(packed);
 
-  // tests/signing_test.py::test_sign_withdraw_from_bridge_action
-  assert.equal(r, '0x8363524c799e90ce9bc41022f7c39b4e9bdba786e5f9c72b20e43e1462c37cf9');
-  assert.equal(s, '0x58b1411a775938b83e29182e8ef74975f9054c8e97ebf5ec2dc8d51bfc893881');
+  assert.equal(r, '0xa155eccb6deecc343d5ce1d69ca20a6b8959cc3f21ffff6b82790e2e9f7fe888');
+  assert.equal(s, '0x6e78708de0806beceab552e1a97378fa80090d902bfffa8b6ee6b35d713f58c4');
   assert.equal(27 + yParity, 28);
+
+  // The signature has to come back to the account that made it, which is what the venue
+  // checks. A digest built over the wrong domain still signs; it recovers to a stranger.
+  const recovered = await recoverTypedDataAddress({ ...typedData, signature: packed } as never);
+  assert.equal(recovered.toLowerCase(), account.address.toLowerCase());
 
   // The nonce the API compares against action.time.
   assert.equal(nonce, action.time);
@@ -159,7 +166,6 @@ test('the typed-data field order and types match the SDK, since order is inside 
 
 test('the withdraw3 action carries every field the API requires, and the signed message mirrors it', () => {
   const { action, typedData, nonce } = buildWithdrawPayload({
-    network: 'testnet',
     destination: OUTSIDE,
     amount: '898',
     time: NOW,
@@ -168,7 +174,7 @@ test('the withdraw3 action carries every field the API requires, and the signed 
   assert.deepEqual(action, {
     type: 'withdraw3',
     signatureChainId: '0x66eee',
-    hyperliquidChain: 'Testnet',
+    hyperliquidChain: 'Mainnet',
     destination: OUTSIDE.toLowerCase(),
     amount: '898',
     time: NOW,
@@ -177,7 +183,7 @@ test('the withdraw3 action carries every field the API requires, and the signed 
   // The signed message is the action minus its type tag and signatureChainId, so the two can
   // never drift. time is a bigint because the field is uint64.
   assert.deepEqual(typedData.message, {
-    hyperliquidChain: 'Testnet',
+    hyperliquidChain: 'Mainnet',
     destination: OUTSIDE.toLowerCase(),
     amount: '898',
     time: BigInt(NOW),
@@ -185,23 +191,19 @@ test('the withdraw3 action carries every field the API requires, and the signed 
   assert.equal(nonce, NOW);
 });
 
-test('usdClassTransfer signs nonce, not time, and mainnet stamps a different hyperliquidChain', () => {
-  const { action, typedData } = buildUsdClassTransferPayload({ network: 'testnet', amount: '899.037299', toPerp: true, nonce: NOW });
+test('usdClassTransfer signs nonce, not time', () => {
+  const { action, typedData } = buildUsdClassTransferPayload({ amount: '899.037299', toPerp: true, nonce: NOW });
   assert.deepEqual(action, {
     type: 'usdClassTransfer',
     signatureChainId: '0x66eee',
-    hyperliquidChain: 'Testnet',
+    hyperliquidChain: 'Mainnet',
     amount: '899.037299',
     toPerp: true,
     nonce: NOW,
   });
   assert.equal(typedData.primaryType, 'HyperliquidTransaction:UsdClassTransfer');
-  assert.deepEqual(typedData.message, { hyperliquidChain: 'Testnet', amount: '899.037299', toPerp: true, nonce: BigInt(NOW) });
-
-  // hyperliquidChain is the real network separator, and it is inside the signature.
-  const main = buildUsdClassTransferPayload({ network: 'mainnet', amount: '1', toPerp: true, nonce: NOW });
-  assert.equal(main.action.hyperliquidChain, 'Mainnet');
-  assert.equal(main.action.signatureChainId, '0x66eee'); // unchanged: it is not the selector
+  assert.deepEqual(typedData.message, { hyperliquidChain: 'Mainnet', amount: '899.037299', toPerp: true, nonce: BigInt(NOW) });
+  assert.equal(action.signatureChainId, '0x66eee'); // the wallet's chain, not a venue selector
 });
 
 // ---------- the network guard ----------
@@ -215,7 +217,7 @@ test('usdClassTransfer signs nonce, not time, and mainnet stamps a different hyp
 test('a mainnet write signs a Mainnet payload and posts it to the mainnet exchange', async () => {
   const { port, signed } = fakeSignPort();
   const { fetchImpl, posts } = fakeFetch({ withdrawable: '1000.0' });
-  const d: HlWithdrawDeps = { network: 'mainnet', keysPath: KEYS, sign: port, fetchImpl, now: () => NOW };
+  const d: HlWithdrawDeps = { keysPath: KEYS, sign: port, fetchImpl, now: () => NOW };
 
   const out = await withdraw3(d, { amount: 100 });
   assert.equal(out.ok, true, out.detail);
@@ -237,27 +239,18 @@ test('a mainnet write signs a Mainnet payload and posts it to the mainnet exchan
   );
 });
 
-test('testnet and mainnet never produce the same signed payload for the same withdrawal', async () => {
-  const t = buildWithdrawPayload({ network: 'testnet', destination: OWN, amount: '100', time: NOW });
-  const m = buildWithdrawPayload({ network: 'mainnet', destination: OWN, amount: '100', time: NOW });
-  assert.equal(t.action.hyperliquidChain, 'Testnet');
-  assert.equal(m.action.hyperliquidChain, 'Mainnet');
-  assert.notDeepEqual(t.typedData.message, m.typedData.message);
+// hyperliquidChain sits INSIDE the EIP-712 message, so it is a signing input rather than a
+// label: a payload carrying anything but 'Mainnet' is a signature the venue rejects.
+test('the signed withdrawal payload names Mainnet in both the action and the message', () => {
+  const p = buildWithdrawPayload({ destination: OWN, amount: '100', time: NOW });
+  assert.equal(p.action.hyperliquidChain, 'Mainnet');
+  assert.equal((p.typedData.message as { hyperliquidChain: string }).hyperliquidChain, 'Mainnet');
 });
 
-test('an unknown network throws before anything is signed or sent', async () => {
-  const { port, signed } = fakeSignPort();
-  const { fetchImpl, posts } = fakeFetch({ withdrawable: '1000.0' });
-  await assert.rejects(
-    () =>
-      withdraw3(
-        { network: 'devnet' as unknown as HlWithdrawDeps['network'], keysPath: KEYS, sign: port, fetchImpl, now: () => NOW },
-        { amount: 100 },
-      ),
-    /no Hyperliquid withdraw spec/,
-  );
-  assert.equal(signed.length, 0);
-  assert.equal(posts.length, 0);
+test('the signed usdClassTransfer payload names Mainnet too', () => {
+  const p = buildUsdClassTransferPayload({ amount: '100', toPerp: true, nonce: NOW });
+  assert.equal(p.action.hyperliquidChain, 'Mainnet');
+  assert.equal((p.typedData.message as { hyperliquidChain: string }).hyperliquidChain, 'Mainnet');
 });
 
 // ---------- the destination guard ----------
@@ -265,7 +258,7 @@ test('an unknown network throws before anything is signed or sent', async () => 
 test('withdraw3 refuses a destination that is not the app own address', async () => {
   const { port, signed } = fakeSignPort();
   const { fetchImpl, posts } = fakeFetch({ withdrawable: '1000.0' });
-  const d: HlWithdrawDeps = { network: 'testnet', keysPath: KEYS, sign: port, fetchImpl, now: () => NOW };
+  const d: HlWithdrawDeps = { keysPath: KEYS, sign: port, fetchImpl, now: () => NOW };
 
   const out = await withdraw3(d, { amount: 100, destination: OUTSIDE });
   assert.equal(out.ok, false);
@@ -311,7 +304,7 @@ test('withdraw3 refuses a destination that is not an address at all', async () =
 test('withdraw3 refuses an amount that does not clearly exceed the 1 USDC fee', async () => {
   const { port, signed } = fakeSignPort();
   const { fetchImpl, posts } = fakeFetch({ withdrawable: '1000.0' });
-  const d: HlWithdrawDeps = { network: 'testnet', keysPath: KEYS, sign: port, fetchImpl, now: () => NOW };
+  const d: HlWithdrawDeps = { keysPath: KEYS, sign: port, fetchImpl, now: () => NOW };
 
   assert.equal(WITHDRAW_FEE_USDC, 1);
   assert.equal(MIN_WITHDRAW_USDC, 2);
@@ -335,7 +328,7 @@ test('withdraw3 reports the net the destination actually receives, not the gross
   const out = await withdraw3(deps({ withdrawable: '1000.0' }), { amount: 898 });
   assert.equal(out.ok, true, out.detail);
   assert.match(out.detail, /receives 897\.000000 USDC2/);
-  assert.match(out.detail, /Arbitrum Sepolia/);
+  assert.match(out.detail, /Arbitrum One/);
 });
 
 // ---------- the balance guard ----------
@@ -367,7 +360,7 @@ test('usdClassTransfer posts a signed action to /exchange and reports the direct
 
   const posted = posts.find((p) => p.url.endsWith('/exchange'));
   assert.ok(posted, 'nothing was posted to /exchange');
-  assert.equal(posted.url, 'https://api.hyperliquid-testnet.xyz/exchange');
+  assert.equal(posted.url, 'https://api.hyperliquid.xyz/exchange');
   assert.deepEqual(Object.keys(posted.body).sort(), ['action', 'nonce', 'signature']);
   assert.equal(posted.body.nonce, NOW);
   assert.equal(posted.body.action.nonce, NOW); // must match the top-level nonce
@@ -418,11 +411,10 @@ test('accountSummary separates the two books and defaults to the app own address
   const summary = await accountSummary(deps({ fetchImpl }));
 
   assert.equal(summary.address, OWN);
-  assert.equal(summary.network, 'testnet');
   assert.equal(summary.spotUsdc, 899.037299);
   assert.equal(summary.perpWithdrawableUsd, 0);
   assert.equal(summary.openPositions, 0);
-  assert.deepEqual(new Set(posts.map((p) => p.url)), new Set(['https://api.hyperliquid-testnet.xyz/info']));
+  assert.deepEqual(new Set(posts.map((p) => p.url)), new Set(['https://api.hyperliquid.xyz/info']));
 });
 
 test('accountSummary reads zero from a malformed number rather than poisoning the guards with NaN', async () => {

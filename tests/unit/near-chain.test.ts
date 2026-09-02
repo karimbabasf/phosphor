@@ -54,7 +54,7 @@ const PUBLIC_KEY = 'ed25519:FVen3X669xLzsi6N2V91DoiyzHzg1uAgqiT8jZ9nS96Z';
 function keysFile(near: Record<string, unknown>): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-near-'));
   const file = path.join(dir, 'keys.json');
-  fs.writeFileSync(file, JSON.stringify({ version: 1, network: 'testnet', near }), { mode: 0o600 });
+  fs.writeFileSync(file, JSON.stringify({ version: 1, near }), { mode: 0o600 });
   return file;
 }
 
@@ -329,9 +329,8 @@ const BLOCK = { header: { hash: base58Encode(new Uint8Array(32).fill(9)) } };
 test('a send builds on the current nonce and a recent block', async () => {
   const calls: any[] = [];
   const out = await sendTx({
-    network: 'testnet',
     keysPath: keysFile(GOOD_KEYS),
-    receiverId: 'wrap.testnet',
+    receiverId: 'wrap.near',
     actions: [transfer(1n)],
     fetchImpl: rpcStub(
       {
@@ -345,7 +344,7 @@ test('a send builds on the current nonce and a recent block', async () => {
 
   assert.equal(out.ok, true);
   assert.equal(out.gasBurnt, '5');
-  assert.match(out.explorer ?? '', /^https:\/\/testnet\.nearblocks\.io\/txns\//);
+  assert.match(out.explorer ?? '', /^https:\/\/nearblocks\.io\/txns\//);
 
   const send = calls.find((c) => c.method === 'send_tx');
   assert.equal(send.params.wait_until, 'EXECUTED_OPTIMISTIC');
@@ -364,9 +363,8 @@ test('a receipt that failed under a transaction that succeeded is reported as a 
   // receipt it spawned panicked: ft_transfer_call to an unregistered account does exactly
   // that. A rail reading only the outer status would call a bounced transfer a success.
   const out = await sendTx({
-    network: 'testnet',
     keysPath: keysFile(GOOD_KEYS),
-    receiverId: 'wrap.testnet',
+    receiverId: 'wrap.near',
     actions: [functionCall('ft_transfer', { receiver_id: 'x.near', amount: '1' }, 30n * TGAS, 1n)],
     fetchImpl: rpcStub({
       'query:view_access_key': ACCESS_KEY,
@@ -390,9 +388,8 @@ test('a function-call access key is refused before anything is signed', async ()
   // Discovering that inside execution wastes gas and reports an error about permissions
   // rather than about the key that was configured.
   const out = await sendTx({
-    network: 'testnet',
     keysPath: keysFile(GOOD_KEYS),
-    receiverId: 'wrap.testnet',
+    receiverId: 'wrap.near',
     actions: [transfer(1n)],
     fetchImpl: rpcStub({
       'query:view_access_key': { permission: { FunctionCall: { receiver_id: 'wrap.testnet' } }, nonce: 1 },
@@ -406,9 +403,8 @@ test('a function-call access key is refused before anything is signed', async ()
 
 test('a send with no actions is refused rather than broadcast empty', async () => {
   const out = await sendTx({
-    network: 'testnet',
     keysPath: keysFile(GOOD_KEYS),
-    receiverId: 'wrap.testnet',
+    receiverId: 'wrap.near',
     actions: [],
     fetchImpl: rpcStub({}),
   });
@@ -416,34 +412,32 @@ test('a send with no actions is refused rather than broadcast empty', async () =
   assert.match(out.error ?? '', /at least one action/);
 });
 
-test('mainnet and testnet point at different hosts and different explorers', async () => {
-  for (const [network, host] of [
-    ['testnet', 'test.rpc.fastnear.com'],
-    ['mainnet', 'free.rpc.fastnear.com'],
-  ] as const) {
-    let seen = '';
-    const fetchImpl = (async (url: string, init: any) => {
-      seen = url;
-      const body = JSON.parse(init.body);
-      const key = body.method === 'query' ? `query:${body.params.request_type}` : body.method;
-      const answers: Record<string, unknown> = {
-        'query:view_access_key': ACCESS_KEY,
-        block: BLOCK,
-        send_tx: { status: { SuccessValue: '' }, transaction_outcome: { outcome: { gas_burnt: 1 } }, receipts_outcome: [] },
-      };
-      return { ok: true, json: async () => ({ result: answers[key] }) } as any;
-    }) as unknown as typeof fetch;
+// rpc.mainnet.near.org is deprecated and answers -429 with a notice telling you to stop using
+// it, so a signer pointed there fails on every send. The endpoint is asserted rather than
+// assumed for that reason.
+test('a send goes to the FastNEAR endpoint the reader also uses', async () => {
+  let seen = '';
+  const fetchImpl = (async (url: string, init: any) => {
+    seen = url;
+    const body = JSON.parse(init.body);
+    const key = body.method === 'query' ? `query:${body.params.request_type}` : body.method;
+    const answers: Record<string, unknown> = {
+      'query:view_access_key': ACCESS_KEY,
+      block: BLOCK,
+      send_tx: { status: { SuccessValue: '' }, transaction_outcome: { outcome: { gas_burnt: 1 } }, receipts_outcome: [] },
+    };
+    return { ok: true, json: async () => ({ result: answers[key] }) } as any;
+  }) as unknown as typeof fetch;
 
-    const out = await sendTx({
-      network,
-      keysPath: keysFile(GOOD_KEYS),
-      receiverId: 'wrap.near',
-      actions: [transfer(1n)],
-      fetchImpl,
-    });
-    assert.equal(out.ok, true);
-    assert.ok(seen.includes(host), `${network} uses ${host}`);
-  }
+  const out = await sendTx({
+    keysPath: keysFile(GOOD_KEYS),
+    receiverId: 'wrap.near',
+    actions: [transfer(1n)],
+    fetchImpl,
+  });
+  assert.equal(out.ok, true);
+  assert.ok(seen.includes('free.rpc.fastnear.com'), `sent to ${seen}`);
+  assert.match(out.explorer ?? '', /^https:\/\/nearblocks\.io\/txns\//);
 });
 
 test('gas constants are the documented units', () => {

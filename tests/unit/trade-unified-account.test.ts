@@ -50,7 +50,6 @@ function payloadFrom(feed: TradeFeed): TradePayload {
     atrFor: () => 2.4,
     products: ['SOL'],
     nowMs: NOW,
-    network: 'testnet',
     address: '0x2222222222222222222222222222222222222222',
   });
 }

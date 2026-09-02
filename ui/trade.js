@@ -811,18 +811,9 @@ function orList(items) {
    remembered figure. The cost is quoted at TWO sizes on purpose. The routing fee is close to
    flat, so a single percentage would be a fact about the amount pretending to be a fact about
    the rail: the same deposit is under a percent at fifty dollars and a tenth of one at a
-   thousand, and a reader who was told one number would size the wrong deposit.
-
-   The rail is mainnet only, and on any other trading network this says so rather than
-   advertising a capability the rail refuses. That refusal is the most valuable one in the app:
-   the deposit would take real money, land it correctly on the MAINNET account, report success,
-   and leave the testnet account this app is trading empty. */
+   thousand, and a reader who was told one number would size the wrong deposit. */
 function fundingLine(f) {
   if (!f) return 'The funding rail has not reported its shape.';
-  if (f.available === false) {
-    var where = f.faucet ? ' Take testnet collateral from the venue faucet at ' + String(f.faucet) + '.' : '';
-    return 'The rail is mainnet only: it delivers mainnet USDC and one address names an account on both networks.' + where;
-  }
   var origins = orList(f.origins);
   var parts = [];
   parts.push(origins && known(f.etaSec)
@@ -847,7 +838,6 @@ function renderCollateral(p) {
 
   setText('t-coll-perp', usd(coll.perpUsd));
   setText('t-coll-spot', usd(coll.spotUsdcUsd));
-  setText('t-coll-network', coll.network ? 'hyperliquid ' + String(coll.network) : '--');
 
   // What that spot figure MEANS, which is a different answer on the two kinds of account this
   // venue has, and getting it wrong is worse than saying nothing.
