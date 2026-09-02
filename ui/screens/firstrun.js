@@ -31,11 +31,8 @@
     dom.setAttr(document.body, 'data-locked', 'true');
     dom.setHidden(host, false);
     dom.clear(host);
-    var field = dom.el('div', 'pattern-local');
-    host.appendChild(field);
-    if (window.PhosphorPattern) {
-      window.PhosphorPattern.mount(field, { cells: 13, state: 'idle', seed: 5 });
-    }
+    /* The window's one field is already behind this, and the shell holds it at
+       `locked` while there is no wallet. */
     card = dom.el('div', 'screen-card');
     host.appendChild(card);
     step = 0;
@@ -431,11 +428,15 @@
 
   /* ---------- helpers ---------- */
 
+  /* A password input carries a name and an autocomplete hint so a password
+     manager can offer to save it. The card is not a form because the flow's
+     Continue moves between screens rather than submitting one. */
   function field(label, autocomplete) {
     var node = dom.el('div', 'field');
     node.appendChild(dom.el('label', 'label', label));
     var input = dom.el('input', 'input');
     input.type = 'password';
+    input.name = autocomplete === 'off' ? 'word' : 'password';
     input.autocomplete = autocomplete;
     node.appendChild(input);
     return { node: node, input: input };

@@ -42,13 +42,13 @@
     else buildLock();
   }
 
+  /* No field of its own. The window has exactly one, it is already behind
+     everything, and the shell drives it to `locked` the moment the lock state
+     arrives. A second field here would paint an opaque ground over the dimmed
+     shell, and the point of dimming rather than hiding is that a person can
+     still see their balance without unlocking. */
   function shell() {
     dom.clear(refs.host);
-    var field = dom.el('div', 'pattern-local');
-    refs.host.appendChild(field);
-    if (window.PhosphorPattern) {
-      window.PhosphorPattern.mount(field, { cells: 13, state: 'locked', seed: 3 });
-    }
     var card = dom.el('div', 'screen-card');
     refs.host.appendChild(card);
     return card;
@@ -59,23 +59,29 @@
     card.appendChild(dom.el('h1', 'title', 'Locked'));
     card.appendChild(dom.el('p', 'body dim', 'Your password unlocks this app on this computer. Nobody can reset it.'));
 
+    /* A real form, not a loose input: it is what lets a password manager offer
+       to fill and to save, and it gives Enter to submit without a key handler. */
+    var form = dom.el('form', 'stack');
     var field = dom.el('div', 'field');
     field.appendChild(dom.el('label', 'label', 'Password'));
     var input = dom.el('input', 'input');
     input.type = 'password';
+    input.name = 'password';
     input.autocomplete = 'current-password';
     field.appendChild(input);
-    card.appendChild(field);
+    form.appendChild(field);
 
     var error = dom.el('p', 'body down');
     error.hidden = true;
-    card.appendChild(error);
+    form.appendChild(error);
 
     var actions = dom.el('div', 'screen-actions');
     var unlock = dom.el('button', 'btn btn-primary btn-lg');
+    unlock.type = 'submit';
     unlock.appendChild(dom.el('span', 'btn-label', 'Unlock'));
     actions.appendChild(unlock);
-    card.appendChild(actions);
+    form.appendChild(actions);
+    card.appendChild(form);
 
     card.appendChild(dom.el('p', 'meta', 'Your money is still here and still being read. Nothing moves while this app is locked.'));
 
@@ -107,9 +113,9 @@
         });
     };
 
-    dom.on(unlock, 'click', submit);
-    dom.on(input, 'keydown', function (event) {
-      if (event.key === 'Enter') submit();
+    dom.on(form, 'submit', function (event) {
+      event.preventDefault();
+      submit();
     });
     input.focus();
   }
@@ -134,40 +140,46 @@
     card.appendChild(dom.el('h1', 'title', 'Your keys are not encrypted'));
     card.appendChild(dom.el('p', 'body dim', 'This app found a key file on this computer that anything running as you can read. Set a password and it gets encrypted, then the readable copy is destroyed.'));
 
+    var form = dom.el('form', 'stack');
     var one = dom.el('div', 'field');
     one.appendChild(dom.el('label', 'label', 'Password'));
     var first = dom.el('input', 'input');
     first.type = 'password';
+    first.name = 'password';
     first.autocomplete = 'new-password';
     one.appendChild(first);
-    card.appendChild(one);
+    form.appendChild(one);
 
     var two = dom.el('div', 'field');
     two.appendChild(dom.el('label', 'label', 'Password again'));
     var second = dom.el('input', 'input');
     second.type = 'password';
+    second.name = 'password-confirm';
     second.autocomplete = 'new-password';
     two.appendChild(second);
-    card.appendChild(two);
+    form.appendChild(two);
 
     var strength = dom.el('p', 'meta');
-    card.appendChild(strength);
+    form.appendChild(strength);
 
     var error = dom.el('p', 'body down');
     error.hidden = true;
-    card.appendChild(error);
+    form.appendChild(error);
 
     var actions = dom.el('div', 'screen-actions');
     var go = dom.el('button', 'btn btn-primary btn-lg');
+    go.type = 'submit';
     go.appendChild(dom.el('span', 'btn-label', 'Encrypt now'));
     actions.appendChild(go);
-    card.appendChild(actions);
+    form.appendChild(actions);
+    card.appendChild(form);
 
     dom.on(first, 'input', function () {
       dom.setText(strength, window.PhosphorFirstRun.strengthWords(first.value));
     });
 
-    dom.on(go, 'click', function () {
+    dom.on(form, 'submit', function (event) {
+      event.preventDefault();
       if (first.value.length < 8) {
         fail(error, 'Use at least eight characters.');
         return;
