@@ -27,6 +27,13 @@
       if (view && !window.PhosphorShell.isPinned()) window.PhosphorShell.setView(view, {});
     });
 
+    /* The idle beacon, which is the only thing that pushes the auto-lock out.
+       It is fed by a person moving or typing, never by a request: an assistant
+       reading balances every two seconds must not hold a funded wallet open. */
+    if (window.PhosphorActivity) {
+      window.PhosphorActivity.start(window.PhosphorNet.getToken);
+    }
+
     window.PhosphorDecision.boot();
     window.PhosphorBasic.boot();
     window.PhosphorPro.boot();

@@ -16,27 +16,28 @@
   var busyCounts = {};
   var busyListeners = [];
 
-  /* The window token. The shell injects it before any script runs; the fetch
-     from /api/session is the fallback that exists only while that route does. */
+  /* The window token. The Tauri shell mints it, hands it to the backend in
+     PHOSPHOR_WINDOW_TOKEN, and injects it into this webview before any script
+     runs. It is never served over HTTP: GET /api/session is deleted, which is
+     what stops any other process on this machine from reading it and approving.
+
+     ?token= is a development hook and nothing else. A browser pointed at a bare
+     `npm run app` has no shell to do the injecting, and the backend prints the
+     token to stderr once for exactly that case. It is read before the injected
+     value so a dev run can override, and it is the only path here that takes a
+     token from a place a person could paste one. */
   var token = typeof window.__PHOSPHOR_TOKEN__ === 'string' ? window.__PHOSPHOR_TOKEN__ : '';
-  var tokenPromise = null;
+  var devToken = new URLSearchParams(window.location.search).get('token');
+  if (devToken) token = devToken;
 
   function getToken() {
     return token;
   }
 
+  /* Kept as a promise for the callers that were written against the fetch it
+     used to do. There is nothing to wait for any more. */
   function ensureToken() {
-    if (token) return Promise.resolve(token);
-    if (tokenPromise) return tokenPromise;
-    tokenPromise = fetch('/api/session', { headers: { accept: 'application/json' } })
-      .then(function (res) { return res.ok ? res.json() : null; })
-      .then(function (body) {
-        if (body && typeof body.token === 'string') token = body.token;
-        return token;
-      })
-      .catch(function () { return token; })
-      .then(function (value) { tokenPromise = null; return value; });
-    return tokenPromise;
+    return Promise.resolve(token);
   }
 
   function setToken(value) {

@@ -2,7 +2,11 @@
 
    It reads /api/receipts when the backend has it and falls back to
    /api/transactions until then, so the panel says something true either way
-   rather than sitting empty behind a route that does not exist. */
+   rather than sitting empty behind a route that does not exist.
+
+   The global is PhosphorReceipts rather than PhosphorActivity because
+   ui/activity.js is the custody idle beacon and got there first. Two different
+   things called activity is how one of them silently stops running. */
 (function () {
   'use strict';
 
@@ -157,7 +161,7 @@
     return total;
   }
 
-  window.PhosphorActivity = {
+  window.PhosphorReceipts = {
     load: load,
     render: render,
     get: get,

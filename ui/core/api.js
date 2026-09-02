@@ -13,15 +13,15 @@
 
      A fetch against a route the server has never heard of is logged by the
      browser as a console error whether or not the caller catches it, so the
-     window does not probe. It reads two fields off /api/state instead: `lock`
-     lands with custody and `dailyLimit` lands with reliability, and each one
-     arrives in the same commit as the routes beside it. Until they do, the
-     screens render the honest empty state and nothing is requested. */
-  var has = { custody: false, reliability: false };
+     window does not probe. It reads a field off /api/state instead: `dailyLimit`
+     lands with reliability, in the same commit as the routes beside it. Until it
+     does, those screens render the honest empty state and nothing is requested.
+
+     Custody has landed, so its routes are called outright. */
+  var has = { reliability: false };
 
   function learn(state) {
     if (!state || typeof state !== 'object') return;
-    has.custody = state.lock !== undefined && state.lock !== null;
     has.reliability = state.dailyLimit !== undefined && state.dailyLimit !== null;
   }
 
@@ -106,31 +106,50 @@
     },
 
     unlock: function (password) {
-      return writeOrMissing('/api/unlock', { password: password }, { busy: 'lock', label: 'Unlocking' }, has.custody);
+      return net.postJson('/api/unlock', { password: password }, { busy: 'lock', label: 'Unlocking' });
     },
 
     lock: function () {
-      return writeOrMissing('/api/lock', {}, { busy: 'lock', label: 'Locking' }, has.custody);
+      return net.postJson('/api/lock', {}, { busy: 'lock', label: 'Locking' });
     },
 
     walletCreate: function (password) {
-      return writeOrMissing('/api/wallet/create', { password: password }, { busy: 'wallet', label: 'Making your wallet' }, has.custody);
+      return net.postJson('/api/wallet/create', { password: password }, { busy: 'wallet', label: 'Making your wallet' });
     },
 
     walletImport: function (payload) {
-      return writeOrMissing('/api/wallet/import', payload, { busy: 'wallet', label: 'Bringing your wallet in' }, has.custody);
+      return net.postJson('/api/wallet/import', payload, { busy: 'wallet', label: 'Bringing your wallet in' });
     },
 
     walletMigrate: function (password) {
-      return writeOrMissing('/api/wallet/migrate', { password: password }, { busy: 'wallet', label: 'Encrypting your keys' }, has.custody);
+      return net.postJson('/api/wallet/migrate', { password: password }, { busy: 'wallet', label: 'Encrypting your keys' });
     },
 
     receive: function () {
-      return readOrMissing('/api/receive', {}, has.custody);
+      return net.getJson('/api/receive', { noCache: true });
     },
 
     receipts: function (limit) {
       return readOrMissing('/api/receipts?limit=' + (limit || 25), { busy: 'activity', label: 'Reading what happened' }, has.reliability);
+    },
+
+    /* Reveal is two halves on purpose. The POST proves the password and hands
+       back a nonce and no material; the GET spends that nonce once, so an
+       unattended unlocked window is not a key dump and a reveal cannot be
+       replayed out of a log. The material is never cached and never stored. */
+    revealStart: function (password, what) {
+      return net.postJson('/api/wallet/reveal', { password: password, what: what },
+        { busy: 'reveal', label: 'Checking your password' });
+    },
+
+    revealFetch: function (nonce) {
+      return net.getJson('/api/wallet/reveal/' + encodeURIComponent(nonce), { noCache: true })
+        .then(function (result) { return result.data; });
+    },
+
+    walletExport: function (password, path) {
+      return net.postJson('/api/wallet/export', { password: password, path: path },
+        { busy: 'wallet', label: 'Writing the backup' });
     },
 
     reconcile: function (id) {
