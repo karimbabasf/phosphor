@@ -14,30 +14,23 @@
 import http from 'node:http';
 
 import type {
-  ChainId,
   LogEvent,
-  Proposal,
 } from './types.ts';
 import { readCoins } from './view/coins.ts';
 import { createGasCache } from './transactions.ts';
 import { buildWorkerRole } from './role.ts';
 import { createChartStore } from './chart.ts';
-import { applyPatch as applyThemePatch, DEFAULT_THEME, type Theme } from './view/theme.ts';
+import { DEFAULT_THEME, type Theme } from './view/theme.ts';
 import { createDrawingStore } from './drawings.ts';
 import { createBoard } from './board.ts';
 import { createDuplicateGuard } from './duplicates.ts';
 import { createCrew } from './crew.ts';
-import { findPreset, presetCatalog } from './presets.ts';
 import { createHistory } from './history.ts';
 import {
   BASIC_EVENT_SCAN,
-  CHAINS,
   LOG_LIMIT_MAX,
   PROJECT_DIR,
-  PROPOSE_KINDS,
   READ_TOOLS,
-  TRADE_ACTIONS,
-  VIEW_TOOLS,
 } from './http/context.ts';
 import type { Ctx, GasFill, PriceCache, ReadTable, ServerDeps, PhosphorServer } from './http/context.ts';
 import {
@@ -52,23 +45,19 @@ import {
   serveStatic,
 } from './http/respond.ts';
 import type { JsonBody } from './http/respond.ts';
-import { HOST, hostIsLocal, mintToken, sameOrigin, tokenMatches } from './http/auth.ts';
+import { HOST, hostIsLocal, mintToken, sameOrigin } from './http/auth.ts';
 import { createSseHub } from './http/sse.ts';
 import { createChatRegistry } from './http/chats.ts';
 import {
-  bestYieldChain,
   buildState,
   fillGas,
   gasReport,
-  heldYieldChain,
   transactionsPayload,
 } from './http/state.ts';
 import {
   chartPayload,
-  chartRead,
   handleChartWrite,
   loadCandles,
-  resolveViewPatch,
   sendCandles,
   startPricePolling,
 } from './http/chart.ts';
@@ -85,6 +74,9 @@ import { marketReads } from './http/read/market.ts';
 import { tradeReads } from './http/read/trade.ts';
 import { walletReads } from './http/read/wallet.ts';
 import { yieldReads } from './http/read/yield.ts';
+import { handlePropose } from './http/propose.ts';
+import { handleView } from './http/view.ts';
+import { handleTradeAction, handleTradeWrite } from './http/trade.ts';
 
 // The three coins the basic screen tracks, in the order it shows them (Karim,
 // 2026-08-14: "btc, sol, and eth"). Fixed, and deliberately NOT the pro chart's
@@ -97,7 +89,7 @@ import { yieldReads } from './http/read/yield.ts';
 // window.
 
 export function createServer(deps: ServerDeps): PhosphorServer {
-  const { cfg, audit, store, proposals, agents, getView, trade } = deps;
+  const { cfg, audit, store, agents, getView, trade } = deps;
 
   // See the note on ServerDeps.getTheme: memory only when the caller did not bring a file.
   let localTheme: Theme = { ...DEFAULT_THEME };
@@ -131,7 +123,6 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   const sse = createSseHub({ store, audit, chart, trade, recent: recentEvents, recentMax: BASIC_EVENT_SCAN });
   const {
     broadcastState,
-    broadcastChart,
     broadcastTrade,
     broadcastActivity,
     broadcastCandles,
@@ -259,607 +250,6 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       return;
     }
     await handler(ctx, body, asRecord(body.args), res);
-  }
-
-  // The human's controls on the trading window. Deliberately NOT reachable from /api/mcp: the
-  // agent has no verb for closing a position, and the way that is guaranteed is that the door
-  // it knocks on does not open onto this function. A check could be wrong; an absence cannot.
-  async function handleTradeAction(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-    const parsed = await readBody(req);
-    if (!parsed.ok) return fail(res, 400, parsed.error);
-    const body = parsed.value;
-    if (!sameOrigin(req)) return fail(res, 403, 'cross-origin request refused');
-    if (!tokenMatches(body.token, token)) {
-      audit.append('approve_attempt_rejected', 'POST /api/trade/action rejected: bad approval token', {
-        action: String(body.action ?? ''),
-        tokenPresent: typeof body.token === 'string' && body.token.length > 0,
-      });
-      return fail(res, 403, 'invalid approval token');
-    }
-
-    const action = String(body.action ?? '');
-    if (!TRADE_ACTIONS.includes(action)) {
-      return fail(res, 400, `unknown action: ${action}. known: ${TRADE_ACTIONS.join(', ')}`);
-    }
-
-    const id = typeof body.id === 'string' ? body.id : undefined;
-    const coin = typeof body.coin === 'string' ? body.coin : undefined;
-    audit.append('tool_call', `human: ${action}${id ? ` ${id}` : ''}${coin ? ` ${coin}` : ''}`, {
-      action,
-      id,
-      coin,
-    });
-
-    try {
-      const result = await trade.action({ action, id, coin });
-      audit.append(result.ok ? 'executed' : 'error', `${action}: ${result.detail}`, { action, id, coin });
-      broadcastTrade();
-      broadcastState();
-      // `error` alongside `detail` on a failure, because the window builds the sentence it
-      // shows from `payload.error`. Without it a refused close reached the human as
-      // "/api/trade/action returned 400" and the venue's own words, which are the only part
-      // that says what to do next, were dropped on the floor.
-      // TRACK B: the two failure bodies below are the only ones on this surface that do not go
-      // through fail(). The 400 is `{ ...result, error }` because the window reads the venue's own
-      // fields beside the sentence, and the 500 is `{ ok: false, detail }` with no `error` at all.
-      // Both are left exactly as they are: changing them changes what the window renders.
-      sendJson(res, result.ok ? 200 : 400, result.ok ? result : { ...result, error: result.detail });
-    } catch (err) {
-      audit.append('error', `${action} failed: ${errText(err)}`);
-      sendJson(res, 500, { ok: false, detail: errText(err) });
-    }
-  }
-
-  // The window's own view writes, the mirror of handleChartWrite. Same reasoning: one door per
-  // caller, so the browser uses this and an agent uses /api/mcp, and both land in one place.
-  async function handleTradeWrite(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-    const parsed = await readBody(req);
-    if (!parsed.ok) return fail(res, 400, parsed.error);
-    const body = parsed.value;
-    if (!sameOrigin(req)) return fail(res, 403, 'cross-origin trade write refused');
-    if (!tokenMatches(body.token, token)) return fail(res, 403, 'invalid approval token');
-
-    const notes: string[] = [];
-    for (const [key, apply] of [
-      ['focus', (a: Record<string, unknown>) => trade.view.setFocus(a, 'human')],
-      ['overlay', (a: Record<string, unknown>) => trade.view.setOverlay(a, 'human')],
-      ['note', (a: Record<string, unknown>) => trade.view.setNote(a, 'human')],
-    ] as const) {
-      const arg = body[key];
-      if (arg === undefined || arg === null || typeof arg !== 'object') continue;
-      const out = apply(arg as Record<string, unknown>);
-      if (!out.ok) return fail(res, 400, out.error);
-      notes.push(...out.notes);
-    }
-    if (typeof body.clear === 'string') {
-      const out = trade.view.clear(body.clear);
-      if (!out.ok) return fail(res, 400, out.error);
-      notes.push(...out.notes);
-    }
-    if (typeof body.focus === 'object' && body.focus !== null) {
-      const symbol = String((body.focus as Record<string, unknown>).symbol ?? '').toUpperCase();
-      const match = cfg.candleProducts.find((p) => p.split('-')[0].toUpperCase() === symbol);
-      if (match !== undefined) chart.setView({ product: match }, 'human');
-      broadcastChart();
-    }
-    broadcastTrade();
-    sendJson(res, 200, { ok: true, notes });
-  }
-
-  // ---------- chart writes from the agent ----------
-
-  async function handleView(body: JsonBody, res: http.ServerResponse): Promise<void> {
-    const tool = String(body.tool ?? '');
-    const args = asRecord(body.args);
-
-    // The trading surface's writes answer with the trading surface, the same way the chart's
-    // answer with the chart: an agent that has to read after every write pays two round trips
-    // to learn what its own change did.
-    //
-    // Answered FIRST, and that placement is the fix rather than tidying. This block used to sit
-    // in the middle of the chart chain, which cut that chain in two: chart_set_view matched the
-    // `if` above it, set `outcome`, then fell into the second chain, matched nothing there, and
-    // was refused by the final else as an "unknown view tool: chart_set_view" that the same
-    // sentence went on to list as known. Every chart write below the split worked; the one
-    // above it was unreachable, and the error blamed the caller for the server's own break.
-    if (tool.startsWith('trade_')) {
-      let out: { ok: boolean; notes: string[]; error?: string };
-      if (tool === 'trade_focus') out = trade.view.setFocus(args, 'agent');
-      else if (tool === 'trade_highlight') out = trade.view.highlight(args, 'agent');
-      else if (tool === 'trade_overlay') out = trade.view.setOverlay(args, 'agent');
-      else if (tool === 'trade_note') out = trade.view.setNote(args, 'agent');
-      else out = trade.view.clear(String(args.what ?? 'agent'));
-
-      if (!out.ok) {
-        fail(res, 400, out.error, { notes: out.notes });
-        return;
-      }
-      // Focus moves the chart with it. A trading screen whose position panel and whose candles
-      // disagree about which market is on screen is the one bug on this surface a person would
-      // not catch, because both halves look right on their own.
-      if (tool === 'trade_focus') {
-        const symbol = String(args.symbol ?? '').toUpperCase();
-        const match = cfg.candleProducts.find((p) => p.split('-')[0].toUpperCase() === symbol);
-        if (match !== undefined) chart.setView({ product: match }, 'agent');
-      }
-      broadcastTrade();
-      broadcastChart();
-      sendJson(res, 200, { ok: true, notes: out.notes, trade: trade.read() });
-      return;
-    }
-
-    // Colour, answered before the chart chain for the same reason the trading writes are:
-    // it does not change the chart, so answering with the chart would be noise. It answers
-    // with the theme it wrote, so an agent never has to read back to see its own change.
-    if (tool === 'set_theme') {
-      const result = applyThemePatch(getTheme(), args);
-      if (!result.ok) {
-        fail(res, 400, result.error);
-        return;
-      }
-      setTheme(result.theme);
-      // Audited like every other agent write. Recolouring the window is not a money move and
-      // it IS a change to what a human sees while they decide about one, so it leaves a line.
-      audit.append('theme_changed', `agent recoloured the window: ${result.notes.join('; ')}`, {
-        theme: result.theme,
-      });
-      broadcastState();
-      sendJson(res, 200, { ok: true, notes: result.notes, theme: result.theme });
-      return;
-    }
-
-    // Who is writing. With a roster rather than a seat, "an agent drew this" is no longer an
-    // answer: it is what the tidy, the roster line and the human's "which of them did that"
-    // all read. See Provenance in src/chart.ts.
-    const by = String(body.session ?? '') || null;
-
-    let outcome: { ok: boolean; notes: string[]; error?: string; id?: string; label?: string };
-    if (tool === 'chart_set_view') {
-      // Resolve what was asked for into what a venue lists, before the view records it.
-      // Without this the view stores the raw string, so "bitcoin" charts correctly and
-      // then labels itself BITCOIN, and an agent reading the view back gets a product id
-      // no venue would recognise.
-      const resolved = resolveViewPatch(ctx, args, true);
-      if (resolved !== null) {
-        fail(res, 400, resolved);
-        return;
-      }
-      const before = chart.state().view.product;
-      outcome = chart.setView(args, 'agent', by);
-      // The chart store tidies its own levels, marks and trend lines on a product switch. The
-      // drawing store is a separate file holding the same kind of object (see the note beside
-      // createDrawingStore above), so the sweep has to reach it from here or half the agent's
-      // work would survive onto an instrument it does not describe.
-      const after = chart.state().view.product;
-      if (outcome.ok && after !== before) {
-        const swept = drawings.sweepForeign(after);
-        if (swept > 0) {
-          outcome.notes.push(`cleared ${swept} agent ${swept === 1 ? 'drawing' : 'drawings'} (zones and lines) anchored to ${before}`);
-        }
-      }
-    } else if (tool === 'chart_add_indicator') outcome = chart.addIndicator(args, 'agent', by);
-    else if (tool === 'chart_remove_indicator') outcome = chart.removeIndicator(String(args.id ?? args.type ?? ''));
-    else if (tool === 'chart_level') outcome = chart.setLevel(args, 'agent', by);
-    else if (tool === 'chart_mark') outcome = chart.setMark(args, 'agent', by);
-    else if (tool === 'chart_trendline') outcome = chart.setTrendline(args, 'agent', by);
-    else if (tool === 'chart_clear') {
-      const what = String(args.what ?? 'agent');
-      outcome = chart.clear(what, by);
-      // Same argument as the sweep above: a clear that left the zones behind would leave the
-      // human looking at a chart the agent believes it cleaned.
-      if (outcome.ok) {
-        const removed =
-          what === 'mine'
-            ? drawings.clear('agent', by)
-            : what === 'agent' || what === 'stale'
-              ? drawings.clear('agent')
-              : what === 'all'
-                ? drawings.clear()
-                : 0;
-        if (removed > 0) outcome.notes.push(`and ${removed} drawn ${removed === 1 ? 'object' : 'objects'} (zones and lines)`);
-      }
-    } else if (tool === 'chart_preset') {
-      /* A study package, and the tidy that makes it always fit.
-         The clear runs first and it clears only THIS agent's studies, so a package can never be
-         refused by the pane cap and can never delete a colleague's or a human's work. What a
-         human's overlays leave no room for is reported rather than forced in. */
-      const preset = findPreset(args.name);
-      if (preset === undefined) {
-        sendJson(res, 200, {
-          ok: true,
-          presets: presetCatalog(),
-          note: 'Call chart_preset again with one of these names. Applying one clears your own studies first.',
-        });
-        return;
-      }
-      const notes: string[] = [];
-      const mine = by === null ? null : chart.state().indicators.filter((i) => i.source === 'agent' && i.by === by);
-      // With no session to go on, the honest tidy is every agent's studies: an agent that
-      // cannot name itself cannot own anything, and leaving the chart full would fail the
-      // package on the cap, which is the outcome this whole path exists to prevent.
-      const cleared = chart.clear(by === null ? 'agent' : 'mine', by);
-      if (cleared.ok && (mine === null || mine.length > 0)) notes.push(...cleared.notes);
-      for (const want of preset.indicators) {
-        const added = chart.addIndicator({ type: want.type, params: want.params ?? {} }, 'agent', by);
-        if (added.ok) notes.push(`${added.label ?? want.type} added`);
-        else notes.push(`${want.type} not added: ${added.error ?? 'refused'}`);
-      }
-      outcome = { ok: true, notes: [`preset ${preset.name}`, ...notes] };
-    } else if (tool === 'agent_post') {
-      // A board post is not a chart write, but it belongs on this route: it is a write an agent
-      // makes to a shared surface a human reads, and it is audited like every other one.
-      const member = agents.member(body.session);
-      const post = board.post({
-        session: String(body.session ?? ''),
-        label: member?.label ?? String(body.client ?? 'agent'),
-        role: member?.role ?? 'operator',
-        kind: args.kind,
-        text: args.text,
-      });
-      audit.append('tool_call', `board: ${post.label} ${post.kind}`, { text: post.text });
-      broadcastState();
-      sendJson(res, 200, { ok: true, post, board: board.list(10) });
-      return;
-    } else if (tool === 'agent_spawn') {
-      const result = getCrew().spawn({
-        brief: args.brief,
-        label: args.label,
-        parent: String(body.session ?? 'unnamed-session'),
-        timeoutMs: args.timeoutMs,
-      });
-      if (!result.ok) {
-        fail(res, 400, result.error);
-        return;
-      }
-      audit.append('tool_call', `agent spawned a worker: ${result.job.label}`, {
-        id: result.job.id,
-        brief: result.job.brief,
-      });
-      broadcastState();
-      sendJson(res, 200, {
-        ok: true,
-        job: { id: result.job.id, label: result.job.label, state: result.job.state },
-        note:
-          'The worker is running. It answers once and stops. Collect it with agent_jobs; do not spin ' +
-          'waiting for it, carry on with your own work and read it when you next need it.',
-      });
-      return;
-    } else {
-      fail(res, 400, `unknown view tool: ${tool}. known tools: ${VIEW_TOOLS.join(', ')}`);
-      return;
-    }
-
-    if (!outcome.ok) {
-      fail(res, 400, outcome.error, { notes: outcome.notes });
-      return;
-    }
-    broadcastChart();
-    // Answer with the chart as it now stands. An agent that has to call chart_read after
-    // every write spends two round trips learning what its own change did.
-    sendJson(res, 200, {
-      ok: true,
-      id: outcome.id,
-      notes: outcome.notes,
-      chart: await chartRead(ctx),
-    });
-  }
-
-  // What the agent gets back from any propose: the id to poll, what the policy decided,
-  // and what the simulation said. Never the draft itself, so the app's resolved addresses
-  // are not echoed to the caller that was deliberately not allowed to name them.
-  function sendProposal(res: http.ServerResponse, proposal: Proposal): void {
-    broadcastState();
-    sendJson(res, 200, {
-      id: proposal.id,
-      status: proposal.status,
-      verdict: proposal.verdict,
-      simulation: proposal.simulation,
-    });
-  }
-
-  // Boundary checks only: a wrong type or an unknown chain is answered here, and every
-  // question about the value of a number (too big, zero, negative) is left to the policy
-  // engine and the rails, so money rules stay in one place.
-  function numField(params: JsonBody, name: string, problems: string[]): number {
-    const raw = params[name];
-    if (typeof raw !== 'number' || !Number.isFinite(raw)) {
-      problems.push(`${name} must be a finite number`);
-      return NaN;
-    }
-    return raw;
-  }
-
-  function strField(params: JsonBody, name: string, problems: string[]): string {
-    const raw = params[name];
-    if (typeof raw !== 'string' || raw.trim().length === 0) {
-      problems.push(`${name} is required`);
-      return '';
-    }
-    return raw.trim();
-  }
-
-  function chainField(params: JsonBody, name: string, problems: string[]): ChainId {
-    const raw = String(params[name] ?? '');
-    if (!CHAINS.includes(raw)) {
-      problems.push(`${name} must be one of: ${CHAINS.join(', ')}`);
-      return 'eth';
-    }
-    return raw as ChainId;
-  }
-
-  async function handlePropose(body: JsonBody, res: http.ServerResponse): Promise<void> {
-    const kind = String(body.kind ?? '');
-    const params = asRecord(body.params);
-    const session = String(body.session ?? 'unnamed-session');
-    const clash = duplicates.find(kind, params, session);
-    if (clash !== null) {
-      audit.append('agent_rejected', 'a duplicate proposal from a second agent was refused', {
-        kind,
-        existing: clash.id,
-        by: clash.session,
-      });
-      fail(
-        res,
-        409,
-        `another agent proposed exactly this ${kind} moments ago (proposal ${clash.id}). It has not been ` +
-          'superseded, so this one is refused rather than doubling it. Read it with proposal_status, and ' +
-          'use agent_board to say what you are taking on before you start.',
-        { duplicate: clash.id },
-      );
-      return;
-    }
-    const problems: string[] = [];
-
-    /* Every branch below answers through this rather than through sendProposal, so a proposal
-       that actually landed is the thing the duplicate guard remembers. Recording it at the top
-       of the function instead would fingerprint drafts that were then refused for a bad amount,
-       and block the corrected retry as a duplicate of a proposal that never existed. */
-    const respond = (proposal: Proposal): void => {
-      duplicates.remember(kind, params, session, proposal.id);
-      sendProposal(res, proposal);
-    };
-
-    try {
-      if (kind === 'swap') {
-        const venueRaw = params.venue === undefined ? 'uniswap-v3' : String(params.venue);
-        if (venueRaw !== 'uniswap-v3' && venueRaw !== 'oneclick' && venueRaw !== 'intents-native') {
-          problems.push('venue must be uniswap-v3, oneclick or intents-native');
-        }
-        const chain = chainField(params, 'chain', problems);
-        const toChain = params.toChain === undefined ? chain : chainField(params, 'toChain', problems);
-        // uniswap-v3 is an on-chain DEX and cannot cross chains. Caught HERE, at draft time, with
-        // a message that names the fix, rather than deep in the rail as "no verified deployment"
-        // that reads like a missing config. This is also the guard against the silent default: a
-        // cross-chain swap that names no venue defaults to uniswap-v3 and lands here, told to pick
-        // oneclick or intents-native, instead of building an on-chain draft nobody asked for.
-        if (venueRaw === 'uniswap-v3' && chain !== toChain) {
-          problems.push(
-            `uniswap-v3 is a same-chain venue and cannot swap ${chain} to ${toChain}. ` +
-              'For a cross-chain swap set venue to "oneclick" or "intents-native".',
-          );
-        }
-        const fromSymbol = strField(params, 'fromSymbol', problems);
-        const toSymbol = strField(params, 'toSymbol', problems);
-        const amountIn = numField(params, 'amountIn', problems);
-        // A negative or zero input has no honest swap. Rejected at the edge so it never reaches
-        // usdOf, where a negative amount became "$Infinity ... cannot be checked against a limit"
-        // and only failed closed by accident of the arithmetic.
-        if (amountIn <= 0) problems.push('amountIn must be greater than 0');
-        const minAmountOut = numField(params, 'minAmountOut', problems);
-        if (problems.length > 0) {
-          fail(res, 400, problems.join('; '));
-          return;
-        }
-        respond(
-          await proposals.proposeSwap({
-            venue: venueRaw as 'uniswap-v3' | 'oneclick' | 'intents-native',
-            chain,
-            toChain,
-            fromSymbol,
-            toSymbol,
-            amountIn,
-            minAmountOut,
-          }),
-        );
-        return;
-      }
-      if (kind === 'mandate_arm') {
-        const symbol = strField(params, 'symbol', problems);
-        const maxNotionalUsd = numField(params, 'maxNotionalUsd', problems);
-        const maxLeverage = numField(params, 'maxLeverage', problems);
-        const maxOrdersPerMin = numField(params, 'maxOrdersPerMin', problems);
-        const maxLossUsd = numField(params, 'maxLossUsd', problems);
-        const expiresAt = strField(params, 'expiresAt', problems);
-        const allowedActions = Array.isArray(params.allowedActions)
-          ? params.allowedActions.map((v) => String(v))
-          : [];
-        if (allowedActions.length === 0) problems.push('allowedActions must list at least one verb');
-        if (params.program === undefined) problems.push('program is required');
-        if (problems.length > 0) {
-          fail(res, 400, problems.join('; '));
-          return;
-        }
-        respond(
-          await proposals.proposeMandate({
-            symbol,
-            program: params.program,
-            maxNotionalUsd,
-            maxLeverage,
-            maxOrdersPerMin,
-            maxLossUsd,
-            expiresAt,
-            allowedActions,
-          }),
-        );
-        return;
-      }
-      if (kind === 'hl_deposit') {
-        // chain and symbol are optional and both default inside proposeHlDeposit: the money
-        // used to have to be USDC on Arbitrum, and now the origin is a choice, so omitting it
-        // keeps the old call shape working and naming it is the new capability.
-        const chain = params.chain === undefined ? undefined : chainField(params, 'chain', problems);
-        const symbol = params.symbol === undefined ? undefined : strField(params, 'symbol', problems);
-        const amount = numField(params, 'amount', problems);
-        if (problems.length > 0) {
-          fail(res, 400, problems.join('; '));
-          return;
-        }
-        respond(await proposals.proposeHlDeposit({ chain, symbol, amount }));
-        return;
-      }
-      if (kind === 'intents_deposit') {
-        const chain = chainField(params, 'chain', problems);
-        // symbol is optional: absent means the chain's gas asset, which is the common case
-        // and the one the ERC-20 path could not serve.
-        const symbol = params.symbol === undefined ? undefined : strField(params, 'symbol', problems);
-        const amount = numField(params, 'amount', problems);
-        if (problems.length > 0) {
-          fail(res, 400, problems.join('; '));
-          return;
-        }
-        respond(await proposals.proposeIntentsDeposit({ chain, symbol, amount }));
-        return;
-      }
-      if (kind === 'intents_withdraw') {
-        const chain = chainField(params, 'chain', problems);
-        // Same optional symbol as the deposit: absent means the destination chain's gas asset.
-        // There is no field here for the address, and there must never be one: the wallet the
-        // payout lands in is resolved from config by the proposal service and re-derived by the
-        // rail. tests/injection.test.ts holds this schema to that.
-        const symbol = params.symbol === undefined ? undefined : strField(params, 'symbol', problems);
-        const amount = numField(params, 'amount', problems);
-        if (problems.length > 0) {
-          fail(res, 400, problems.join('; '));
-          return;
-        }
-        respond(await proposals.proposeIntentsWithdraw({ chain, symbol, amount }));
-        return;
-      }
-      if (kind === 'yield_deposit' || kind === 'yield_withdraw') {
-        // Both rails take EVM chains only, and chainField accepts sol and near because four
-        // other kinds need them. Narrowing here rather than there keeps the message specific:
-        // "sol is not a chain this rail supplies on" beats a generic list five items long.
-        let chain: ChainId | null = null;
-        if (params.chain === undefined) {
-          // Omitted on purpose, and it is the common case. A deposit goes where the loop
-          // would send it, and a withdrawal comes from wherever the position actually is.
-          // Both answers live in the allocator's view, so neither is a guess.
-          const picked = kind === 'yield_deposit' ? bestYieldChain(ctx) : heldYieldChain(ctx);
-          if (!picked.ok) {
-            fail(res, 400, picked.reason);
-            return;
-          }
-          chain = picked.chain;
-        } else {
-          const named = chainField(params, 'chain', problems);
-          if (named !== 'eth' && named !== 'base' && named !== 'arb') {
-            problems.push(`chain must be one of eth, base, arb for ${kind}; got '${String(params.chain)}'`);
-          } else {
-            chain = named;
-          }
-        }
-        const symbol = params.symbol === undefined ? undefined : strField(params, 'symbol', problems);
-        // The asymmetry is the whole design of the withdrawal. An amount is REQUIRED going in
-        // and OPTIONAL coming out, because the receipt token rebases: a number the caller
-        // computed a block ago is already short of the position by whatever interest landed
-        // while the proposal waited for a click, and omitting it means all of it, dust
-        // included. See the comment on YieldWithdrawParams in src/types.ts.
-        const amount =
-          kind === 'yield_deposit'
-            ? numField(params, 'amount', problems)
-            : params.amount === undefined
-              ? undefined
-              : numField(params, 'amount', problems);
-        if (kind === 'yield_deposit' && amount !== undefined && amount <= 0) {
-          problems.push('amount must be greater than 0');
-        }
-        if (problems.length > 0 || chain === null) {
-          fail(res, 400, problems.join('; ') || 'chain could not be resolved');
-          return;
-        }
-        sendProposal(
-          res,
-          kind === 'yield_deposit'
-            ? await proposals.proposeYieldDeposit({ chain, symbol, amount: amount as number })
-            : await proposals.proposeYieldWithdraw({ chain, symbol, amount }),
-        );
-        return;
-      }
-      if (kind === 'lp_add') {
-        const chain = chainField(params, 'chain', problems);
-        const token0Symbol = strField(params, 'token0Symbol', problems);
-        const token1Symbol = strField(params, 'token1Symbol', problems);
-        const amount0 = numField(params, 'amount0', problems);
-        const amount1 = numField(params, 'amount1', problems);
-        const feeTier = numField(params, 'feeTier', problems);
-        const tickLower = numField(params, 'tickLower', problems);
-        const tickUpper = numField(params, 'tickUpper', problems);
-        if (problems.length > 0) {
-          fail(res, 400, problems.join('; '));
-          return;
-        }
-        respond(
-          await proposals.proposeLpAdd({
-            chain,
-            token0Symbol,
-            token1Symbol,
-            amount0,
-            amount1,
-            feeTier,
-            tickLower,
-            tickUpper,
-          }),
-        );
-        return;
-      }
-      if (kind === 'lp_remove') {
-        const positionId = strField(params, 'positionId', problems);
-        const liquidityPct = numField(params, 'liquidityPct', problems);
-        if (problems.length > 0) {
-          fail(res, 400, problems.join('; '));
-          return;
-        }
-        respond(await proposals.proposeLpRemove({ positionId, liquidityPct }));
-        return;
-      }
-      if (kind === 'consolidate') {
-        const toChain = String(params.toChain ?? '');
-        const symbol = typeof params.symbol === 'string' ? params.symbol.trim() : '';
-        if (!CHAINS.includes(toChain)) {
-          fail(res, 400, `toChain must be one of: ${CHAINS.join(', ')}`);
-          return;
-        }
-        if (symbol.length === 0) {
-          fail(res, 400, 'symbol is required');
-          return;
-        }
-        const fromChains = Array.isArray(params.fromChains)
-          ? (params.fromChains.filter((c) => typeof c === 'string' && CHAINS.includes(c)) as ChainId[])
-          : undefined;
-        const maxTotalUsd = typeof params.maxTotalUsd === 'number' && Number.isFinite(params.maxTotalUsd)
-          ? params.maxTotalUsd
-          : undefined;
-        respond(
-          await proposals.proposeConsolidate({
-            toChain: toChain as ChainId,
-            symbol,
-            ...(fromChains !== undefined && fromChains.length > 0 ? { fromChains } : {}),
-            ...(maxTotalUsd !== undefined ? { maxTotalUsd } : {}),
-          }),
-        );
-        return;
-      }
-      if (kind === 'policy_change') {
-        // patch and sentence are passed through as authored: the engine validates
-        // the patch, and the sentence is stored as data, never read as instruction.
-        const sentence = typeof params.sentence === 'string' ? params.sentence : '';
-        respond(await proposals.proposePolicyChange({ patch: asRecord(params.patch), sentence }));
-        return;
-      }
-      fail(res, 400, `unknown propose kind: ${kind}. known kinds: ${PROPOSE_KINDS.join(', ')}`);
-    } catch (err) {
-      fail(res, 400, errText(err));
-    }
   }
 
   function rejectSeat(error: string, body: JsonBody, res: http.ServerResponse, revoked = false): void {
@@ -1003,11 +393,11 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       return;
     }
     if (op === 'propose') {
-      await handlePropose(body, res);
+      await handlePropose(ctx, body, res);
       return;
     }
     if (op === 'view') {
-      await handleView(body, res);
+      await handleView(ctx, body, res);
       return;
     }
     if (op === 'set_view_mode') {
@@ -1074,8 +464,8 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       if (req.method === 'POST') {
         if (route === '/api/mcp') return await handleMcp(req, res);
         if (route === '/api/chart') return await handleChartWrite(ctx, req, res);
-        if (route === '/api/trade') return await handleTradeWrite(req, res);
-        if (route === '/api/trade/action') return await handleTradeAction(req, res);
+        if (route === '/api/trade') return await handleTradeWrite(ctx, req, res);
+        if (route === '/api/trade/action') return await handleTradeAction(ctx, req, res);
         if (
           route === '/api/approve' ||
           route === '/api/refuse' ||
