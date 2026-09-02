@@ -159,12 +159,12 @@ function raw(
 test('a forged Host is refused on every route, closing DNS-rebinding (Finding 4)', async () => {
   const h = await boot();
   try {
-    for (const route of ['/api/session', '/api/state']) {
+    for (const route of ['/api/state', '/api/trade']) {
       const out = await raw(h.url, route, { headers: { Host: 'evil.com' } });
       assert.equal(out.status, 403, `${route} under a foreign Host must be refused`);
     }
     // The real loopback name still answers.
-    const ok = await raw(h.url, '/api/session', { headers: { Host: '127.0.0.1' } });
+    const ok = await raw(h.url, '/api/state', { headers: { Host: '127.0.0.1' } });
     assert.equal(ok.status, 200);
   } finally {
     await h.close();
@@ -181,13 +181,64 @@ test('a cross-origin POST to /api/mcp is refused, closing CSRF (Findings 2 and 3
     });
     assert.equal(foreign.status, 403, 'a foreign Origin must not drive the money surface');
 
-    // The MCP proxy and curl send no Origin: that path stays open, or the app is unusable.
+    // An Origin naming this app is what a caller has to bring. A browser cannot set the
+    // header at all, so this can only be the window or a local process, which is the split.
     const local = await raw(h.url, '/api/mcp', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', Origin: h.url },
       body: JSON.stringify({ op: 'read', tool: 'start' }),
     });
-    assert.notEqual(local.status, 403, 'an absent Origin is a local caller and must be allowed');
+    assert.notEqual(local.status, 403, 'an Origin naming this app must be allowed');
+  } finally {
+    await h.close();
+  }
+});
+
+// The break-in this closes: a page embeds <iframe sandbox="allow-scripts">, which gives its
+// script an opaque origin, so its fetch sends the literal string 'null'. Host is really
+// 127.0.0.1 because the browser really dialled loopback. The old sameOrigin allowed 'null',
+// and /api/mcp carries no token, so one POST proposed a swap and the policy engine executed
+// it under the click threshold.
+test('an opaque Origin cannot reach the money surface (P0-2)', async () => {
+  const h = await boot();
+  try {
+    const sandboxed = await raw(h.url, '/api/mcp', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Origin: 'null' },
+      body: JSON.stringify({ op: 'read', tool: 'balances' }),
+    });
+    assert.equal(sandboxed.status, 403, 'the literal null Origin must be refused');
+
+    const headless = await raw(h.url, '/api/mcp', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ op: 'read', tool: 'balances' }),
+    });
+    assert.equal(headless.status, 403, 'an absent Origin must be refused too');
+  } finally {
+    await h.close();
+  }
+});
+
+// text/plain, multipart/form-data and application/x-www-form-urlencoded are the three types a
+// page can post cross-origin with no preflight. Refusing everything but application/json means
+// a cross-origin post has to ask first, and this app answers no CORS headers.
+test('a body that is not application/json is refused with 415', async () => {
+  const h = await boot();
+  try {
+    const plain = await raw(h.url, '/api/mcp', {
+      method: 'POST',
+      headers: { 'content-type': 'text/plain', Origin: h.url },
+      body: JSON.stringify({ op: 'read', tool: 'balances' }),
+    });
+    assert.equal(plain.status, 415);
+
+    const form = await raw(h.url, '/api/approve', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', Origin: h.url },
+      body: 'id=x&token=y',
+    });
+    assert.equal(form.status, 415);
   } finally {
     await h.close();
   }
@@ -198,7 +249,7 @@ test('a cross-chain swap that names no venue is refused with the venue to use (S
   try {
     const out = await raw(h.url, '/api/mcp', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', Origin: h.url },
       body: JSON.stringify({
         op: 'propose',
         kind: 'swap',
@@ -218,7 +269,7 @@ test('the same cross-chain swap with venue oneclick passes the guard and builds'
   try {
     const out = await raw(h.url, '/api/mcp', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', Origin: h.url },
       body: JSON.stringify({
         op: 'propose',
         kind: 'swap',
@@ -236,7 +287,7 @@ test('a negative amountIn is refused at the edge, never reaching the USD math (F
   try {
     const out = await raw(h.url, '/api/mcp', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', Origin: h.url },
       body: JSON.stringify({
         op: 'propose',
         kind: 'swap',

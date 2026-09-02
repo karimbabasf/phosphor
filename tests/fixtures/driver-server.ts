@@ -106,7 +106,7 @@ export async function bootDriverServer(opts: BootOptions = {}): Promise<Booted> 
     driver: async (body) => {
       const res = await fetch(`${booted.url}/api/driver`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', origin: booted.url },
         body: JSON.stringify({ token: await booted.token(), ...body }),
       });
       return { status: res.status, body: (await res.json()) as Record<string, unknown> };

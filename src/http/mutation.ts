@@ -87,7 +87,7 @@ export async function handleMutation(
       origin: req.headers.origin ?? '(absent)',
       agent: String(req.headers['user-agent'] ?? '(absent)').slice(0, 120),
     });
-    fail(res, parsed.ok ? 403 : 400, parsed.ok ? 'invalid approval token' : reason);
+    fail(res, parsed.ok ? 403 : parsed.status, parsed.ok ? 'invalid approval token' : reason);
     return;
   }
 

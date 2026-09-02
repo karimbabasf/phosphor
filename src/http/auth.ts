@@ -1,32 +1,41 @@
-// The whole authorisation surface: the per-boot approval token, and the two request predicates
-// every mutating route checks before it does anything.
+// The whole authorisation surface: the window token, and the three request predicates every
+// mutating route checks before it does anything.
 //
-// KNOWN HOLE, do not read this file as a boundary. The server header used to claim the agent
-// "has no path to its own approval: no token, no route". That is false and was the most
-// misleading text in the repo. GET /api/session hands the token to ANY unauthenticated caller
-// on loopback, and sameOrigin() deliberately allows an absent Origin header so curl and the
-// e2e script work. So the whole path is open to anything with a shell:
-//   GET  /api/session                        -> token, no auth
-//   POST /api/approve  {id, token} no Origin -> 400 "unknown proposal" (auth CLEARED)
-//   POST /api/approve  with a wrong token    -> 403 "invalid approval token"
-// The 400-versus-403 split is the proof that authorisation passed and only the id was unknown.
-// Every coding agent on this machine has a shell, so every one of them is already inside the
-// boundary the product claims to have.
+// THE TOKEN IS NEVER SERVED. It is minted outside this process by the Tauri shell, handed to
+// the backend in PHOSPHOR_WINDOW_TOKEN, and injected into the control webview as
+// window.__PHOSPHOR_TOKEN__. No route hands it out, which is what makes it an authorisation
+// rather than an identifier. GET /api/session used to hand it to any caller on loopback and is
+// deleted; the write-up is Lessons/2026-08-11-phosphor-approval-token-reachable.md in the vault.
 //
-// Verified independently twice on 2026-08-11. Writeup:
-// Lessons/2026-08-11-phosphor-approval-token-reachable.md in the vault. A per-boot token shared
-// with every local caller is an identifier, never an authorisation.
-// Unfixed: the fix is a design call on the thing the product exists for.
+// A bare `node src/main.ts` for development has no shell to mint one, so this file mints a
+// token and prints it once to stderr. That is a development convenience and it is stated where
+// it happens: an installed app always arrives with the variable set.
 
 import crypto from 'node:crypto';
 import type http from 'node:http';
 
 export const HOST = '127.0.0.1';
 
-// One token per boot, minted before the port opens. It is what GET /api/session hands the
-// window and what every browser write carries back.
+// One token per boot, minted before the port opens. It is what the window carries back on
+// every write. Only the fallback below calls it: the shell mints the real one.
 export function mintToken(): string {
-  return crypto.randomBytes(24).toString('hex');
+  return crypto.randomBytes(32).toString('hex');
+}
+
+// The token this boot answers to. The shell that owns the window puts it in the environment
+// before it starts this process, so the only holder is the webview the shell injected it into.
+//
+// Absent means a developer ran the backend by hand. Minting one and printing it once is what
+// keeps that path usable; it is printed to stderr rather than served, because a route that
+// hands the token out is the hole this whole file exists to close.
+export function windowToken(): string {
+  const supplied = process.env.PHOSPHOR_WINDOW_TOKEN ?? '';
+  if (supplied.length >= 32) return supplied;
+  const minted = mintToken();
+  console.error(
+    `phosphor: no PHOSPHOR_WINDOW_TOKEN in the environment, so this boot minted one: ${minted}`,
+  );
+  return minted;
 }
 
 // Hash both sides so the comparison is constant length as well as constant time:
@@ -50,7 +59,7 @@ export function tokenFingerprint(raw: string): string {
 // The Host header, on its own. A browser that has been pointed at this loopback service by a
 // DNS-rebinding page sends the ATTACKER's domain here, not 127.0.0.1: after the rebind the tab
 // still thinks it is talking to evil.com, so Host is evil.com. Refusing a non-loopback Host is
-// what closes rebinding for the READ routes too (/api/state, /api/session, /api/events), which
+// what closes rebinding for the READ routes too (/api/state, /api/events), which
 // sameOrigin never guarded because they carry no Origin. An absent Host is a Host-less HTTP/1.0
 // client (curl, the e2e script), a local tool and not a browser, so it is allowed: a browser
 // cannot omit it. The app binds to 127.0.0.1 only, so no legitimate request arrives under any
@@ -62,13 +71,26 @@ export function hostIsLocal(req: http.IncomingMessage): boolean {
   return hostname === HOST || hostname === 'localhost';
 }
 
-// Absent Origin (curl, the e2e script) is allowed; a foreign one is not. Paired
-// with the Host check this blunts drive-by and DNS-rebinding POSTs from a page
-// the human happens to have open in the same browser.
+// A PRESENT Origin that names this app, and nothing else. Three things it refuses that the
+// older, laxer version allowed:
+//
+//   'null'   an opaque origin. `<iframe sandbox="allow-scripts">` on any page the human has
+//            open gives its script exactly that, and the browser really did dial 127.0.0.1, so
+//            Host passes. Allowing the literal string was the one branch that let a web page
+//            reach /api/mcp and auto-execute under the click threshold.
+//   absent   any local process posting with no Origin at all. It was allowed so curl and the
+//            e2e script worked, which is the same door.
+//   foreign  unchanged: a page on another origin cannot post here.
+//
+// Origin is a forbidden header name, so no page can set it: a matching Origin can only come
+// from a page this app served, or from a local process that chose to send one. The local
+// process is not held out by this line, it is held out by the window token on every route that
+// decides anything; on /api/mcp, where the agent's door deliberately has no token, this is
+// what makes the door unreachable from a browser.
 export function sameOrigin(req: http.IncomingMessage): boolean {
   if (!hostIsLocal(req)) return false;
   const host = String(req.headers.host ?? '');
   const origin = req.headers.origin;
-  if (origin === undefined || origin === 'null') return true;
+  if (typeof origin !== 'string' || origin === 'null') return false;
   return origin === `http://${host}`;
 }

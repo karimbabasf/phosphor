@@ -16,7 +16,7 @@ import type { Ctx } from './context.ts';
 // it knocks on does not open onto this function. A check could be wrong; an absence cannot.
 export async function handleTradeAction(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const parsed = await readBody(req);
-  if (!parsed.ok) return fail(res, 400, parsed.error);
+  if (!parsed.ok) return fail(res, parsed.status, parsed.error);
   const body = parsed.value;
   if (!sameOrigin(req)) return fail(res, 403, 'cross-origin request refused');
   if (!tokenMatches(body.token, ctx.token)) {
@@ -64,7 +64,7 @@ export async function handleTradeAction(ctx: Ctx, req: http.IncomingMessage, res
 // caller, so the browser uses this and an agent uses /api/mcp, and both land in one place.
 export async function handleTradeWrite(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const parsed = await readBody(req);
-  if (!parsed.ok) return fail(res, 400, parsed.error);
+  if (!parsed.ok) return fail(res, parsed.status, parsed.error);
   const body = parsed.value;
   if (!sameOrigin(req)) return fail(res, 403, 'cross-origin trade write refused');
   if (!tokenMatches(body.token, ctx.token)) return fail(res, 403, 'invalid approval token');

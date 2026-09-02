@@ -170,7 +170,7 @@ async function boot(opts: { view?: ViewMode; proposals?: Proposal[] } = {}): Pro
 async function postMcp(h: Harness, body: unknown): Promise<{ status: number; json: any }> {
   const res = await fetch(`${h.url}/api/mcp`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', origin: h.url },
     body: JSON.stringify(body),
   });
   return { status: res.status, json: await res.json() };

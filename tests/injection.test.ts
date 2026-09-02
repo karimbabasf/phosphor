@@ -115,7 +115,7 @@ async function getJson(route: string): Promise<Json> {
 async function postJson(route: string, body: unknown): Promise<{ status: number; json: Json }> {
   const res = await fetch(`${base}${route}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', origin: base },
     body: JSON.stringify(body),
   });
   let json: Json = null;

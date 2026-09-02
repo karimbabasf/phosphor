@@ -98,7 +98,7 @@ export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.S
   }
   const parsed = await readBody(req);
   if (!parsed.ok) {
-    fail(res, 400, parsed.error);
+    fail(res, parsed.status, parsed.error);
     return;
   }
   const body = parsed.value;

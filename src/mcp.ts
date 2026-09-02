@@ -34,6 +34,15 @@ function resolvePort(): number {
 const BASE_URL = `http://127.0.0.1:${resolvePort()}`;
 const NOT_RUNNING = 'The control app is not running. Start it with: npm run app';
 
+// Every post to the app carries these two headers, and the app refuses a request without them.
+//
+// Origin is not a credential here and it is not pretending to be one: this process holds no
+// token and the agent's door deliberately has none. It is the header a BROWSER cannot forge,
+// because Origin is a forbidden header name, so requiring a present matching one is what makes
+// /api/mcp unreachable from a web page while leaving it open to a local agent, which is
+// exactly the split this door wants.
+const POST_HEADERS = { 'content-type': 'application/json', origin: BASE_URL };
+
 // One id per MCP process, which is one id per agent session. It is what makes the app able
 // to tell two agents apart, and therefore able to let only one of them in. It is an
 // identifier and never an authorisation: see the KNOWN HOLE note at the top of
@@ -75,7 +84,7 @@ async function proxy(body: Record<string, unknown>) {
   try {
     res = await fetch(`${BASE_URL}/api/mcp`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: POST_HEADERS,
       body: JSON.stringify({ ...body, session: SESSION, client: CLIENT, role: ROLE, label: LABEL, parent: PARENT }),
     });
   } catch {
@@ -124,7 +133,7 @@ async function sendHello(): Promise<void> {
   try {
     const res = await fetch(`${BASE_URL}/api/mcp`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: POST_HEADERS,
       body: JSON.stringify({
         op: 'hello',
         client: CLIENT,
@@ -161,7 +170,7 @@ async function sendBye(): Promise<void> {
     // Bounded: a shutdown must not hang on an app that is already gone.
     await fetch(`${BASE_URL}/api/mcp`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: POST_HEADERS,
       body: JSON.stringify({ op: 'bye', session: SESSION }),
       signal: AbortSignal.timeout(1_000),
     });

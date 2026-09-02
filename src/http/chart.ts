@@ -239,7 +239,7 @@ export async function chartRead(ctx: Ctx, by?: string | null): Promise<unknown> 
 // one door per caller: the window uses this, an agent uses /api/mcp.
 export async function handleChartWrite(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const parsed = await readBody(req);
-  if (!parsed.ok) return fail(res, 400, parsed.error);
+  if (!parsed.ok) return fail(res, parsed.status, parsed.error);
   const body = parsed.value;
   if (!sameOrigin(req)) return fail(res, 403, 'cross-origin chart write refused');
   if (!tokenMatches(body.token, ctx.token)) return fail(res, 403, 'invalid approval token');
