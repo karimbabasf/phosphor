@@ -780,4 +780,7 @@ export type ProposalService = {
   // Re-check one such row against the chain. Never guesses: a hash it cannot look up leaves
   // the proposal where it is, with a sentence saying why.
   reconcile(id: string): Promise<Proposal>;
+  // Wait for whatever is already executing, up to capMs. True if it finished in time. What a
+  // clean shutdown awaits before it closes the sockets.
+  settle(capMs: number): Promise<boolean>;
 };

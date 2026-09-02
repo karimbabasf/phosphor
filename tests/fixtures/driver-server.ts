@@ -149,6 +149,7 @@ export async function bootDriverServer(opts: BootOptions = {}): Promise<Booted> 
       sessionSpentUsd: () => 0,
       releaseQueued: async () => 0,
       reconcileOnBoot: () => [],
+      settle: () => Promise.resolve(true),
       reconcile: () => Promise.reject(new Error('not wired in this stub')),
     },
     getPolicy: () => defaultPolicy(),

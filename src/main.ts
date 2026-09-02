@@ -17,6 +17,8 @@ import { createStore } from './store.ts';
 import { installCrashHandlers } from './crash.ts';
 import { acquireInstanceLock } from './instancelock.ts';
 import type { InstanceLock } from './instancelock.ts';
+import { installShutdownHandlers } from './shutdown.ts';
+import { beginDraining } from './draining.ts';
 import { loadPolicy, savePolicy, defaultPolicy } from './policy/file.ts';
 import { renderSentences } from './policy/render.ts';
 import { createRails, venueAllowlist } from './rails/index.ts';
@@ -488,6 +490,26 @@ marketLive = (product, baseSec, candle, provider) => server.broadcastCandle(prod
 trade.onUpdate(() => {
   server.broadcastState();
   server.broadcastTrade();
+});
+
+/* Registered unconditionally, and this is the change. `armExitGuard` in driver.ts used to hold
+   the only signal handlers in the process, and it is called from `start()`, which runs only when
+   somebody opens a chat, and `driver.autostart` defaults false. On an ordinary install the
+   shell's SIGTERM therefore hit node's default action and the process died wherever it was: mid
+   rail, mid write. See src/shutdown.ts for the three steps and why they are in that order. */
+installShutdownHandlers({
+  audit,
+  drain: () => beginDraining(),
+  settle: (capMs) => proposals.settle(capMs),
+  close: async () => {
+    // The runner child holds a key that can place orders. It goes first, and stopAll does not
+    // depend on the child being healthy.
+    await runner.stopAll('phosphor is shutting down');
+    allocator?.stop();
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+  },
 });
 
 /* A port already in use used to be an uncaught exception with a raw stack, and the shell then

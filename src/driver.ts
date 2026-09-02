@@ -597,15 +597,10 @@ export function createDriver(opts: DriverOptions) {
     if (guarded) return;
     guarded = true;
     process.once('exit', () => killSync());
-    // Registering a signal listener replaces node's default action for that signal, so each one
-    // has to exit explicitly or the app stops responding to the signal that was supposed to end
-    // it. src/mcp.ts carries the same note for the same reason.
-    for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) {
-      process.once(signal, () => {
-        killSync();
-        process.exit(0);
-      });
-    }
+    // Signals are NOT registered here any more. src/shutdown.ts owns SIGINT, SIGTERM and SIGHUP
+    // unconditionally at boot, and its handler ends in process.exit, which runs the 'exit'
+    // listener above. Two owners meant the first one to answer decided, and this one answered by
+    // calling process.exit(0) immediately: the drain never got its two seconds.
   }
 
   function stop(): void {

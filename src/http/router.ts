@@ -12,6 +12,7 @@
 import http from 'node:http';
 
 import { HOST, hostIsLocal } from './auth.ts';
+import { isDraining } from '../draining.ts';
 import { errText, fail, intParam, sendJson, sendJsonConditional, serveStatic } from './respond.ts';
 import { buildState, fillGas, gasReport, transactionsPayload } from './state.ts';
 import { chartPayload, handleChartWrite, sendCandles } from './chart.ts';
@@ -113,6 +114,12 @@ export async function handle(ctx: Ctx, req: http.IncomingMessage, res: http.Serv
       return serveStatic(route, res);
     }
     if (req.method === 'POST') {
+      /* Draining. Reads keep answering so the window still renders; every write is refused with
+         a sentence rather than accepted two hundred milliseconds before the sockets close. See
+         src/draining.ts and src/shutdown.ts. */
+      if (isDraining()) {
+        return fail(res, 503, 'Phosphor is shutting down, so nothing new can be written. Start it again and retry.');
+      }
       const handler = POST[route];
       if (handler !== undefined) return await handler(ctx, req, res, url);
       return fail(res, 404, `unknown route: ${route}`);

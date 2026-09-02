@@ -17,6 +17,7 @@
 // is re-exported here, so no caller changed.
 
 import type { Proposal, ProposalService } from './types.ts';
+import { within } from './shutdown.ts';
 import {
   approve,
   createSerialiser,
@@ -84,5 +85,6 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     // reserves budget, and holding the spend queue open for a network read is the thing task
     // 13 exists to stop.
     reconcile: (id: string) => reconcileProposal(ctx, id),
+    settle: (capMs: number) => within(capMs, serialise.idle()),
   };
 }

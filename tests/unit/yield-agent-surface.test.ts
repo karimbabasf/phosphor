@@ -217,6 +217,7 @@ async function boot(opts: { yieldView?: YieldView | null } = {}): Promise<Harnes
       sessionSpentUsd: () => 0,
       releaseQueued: async () => 0,
       reconcileOnBoot: () => [],
+      settle: () => Promise.resolve(true),
       reconcile: () => Promise.reject(new Error('not wired in this stub')),
     },
     getPolicy: () => defaultPolicy(),

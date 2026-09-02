@@ -326,9 +326,17 @@ export function sessionSpentUsd(ctx: PCtx): number {
 // A promise chain is the whole mechanism. It makes "read the spend, decide, reserve" one
 // indivisible step, which is what a budget needs to mean anything. Throughput is not a
 // concern here: these operations end in a chain send, a human click, or both.
-export function createSerialiser(): <T>(fn: () => Promise<T>) => Promise<T> {
+export type Serialiser = {
+  <T>(fn: () => Promise<T>): Promise<T>;
+  // Resolves when everything queued as of the call has finished, however it finished. Used by
+  // shutdown: work already in flight gets to write its row before the process ends. Nothing new
+  // can be queued behind it during a drain, because the HTTP surface is already refusing.
+  idle(): Promise<void>;
+};
+
+export function createSerialiser(): Serialiser {
   let chain: Promise<unknown> = Promise.resolve();
-  return function serialise<T>(fn: () => Promise<T>): Promise<T> {
+  const serialise = function <T>(fn: () => Promise<T>): Promise<T> {
     // Both arms run fn, so one rejection does not wedge the queue for everything after it.
     const run = chain.then(fn, fn);
     chain = run.then(
@@ -336,5 +344,11 @@ export function createSerialiser(): <T>(fn: () => Promise<T>) => Promise<T> {
       () => undefined,
     );
     return run;
-  };
+  } as Serialiser;
+  serialise.idle = (): Promise<void> =>
+    chain.then(
+      () => undefined,
+      () => undefined,
+    );
+  return serialise;
 }
