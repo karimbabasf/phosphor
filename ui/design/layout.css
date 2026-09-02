@@ -219,11 +219,18 @@ html, body {
 
 /* ---------- Trade: full bleed, chart left, 360 px rail ---------- */
 
+ /* Trade is the one view with a fixed height rather than a minimum. The rail
+   holds five panels and a transcript, and as a min-height grid its content
+   stretched the row past the window: the chart grew with it, its bottom ran
+   off the screen, and the volume pane went with it. A fixed height gives the
+   chart exactly the room there is, and the rail scrolls inside itself, which
+   is the one place in this window a panel is allowed to. */
 .trade-wrap {
   flex: 1 1 auto;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 6px var(--rail, var(--rail-w));
-  min-height: calc(100vh - var(--topbar-h));
+  height: calc(100vh - var(--topbar-h));
+  min-height: 0;
 }
 
 .trade-main {
@@ -240,6 +247,7 @@ html, body {
   gap: var(--s-3);
   padding: var(--s-3);
   min-width: 0;
+  min-height: 0;
   overflow-y: auto;
 }
 
@@ -267,9 +275,13 @@ html, body {
 }
 
 @media (max-width: 1100px) {
+  /* Stacked, the page scrolls again and the rail goes back to its full length. */
   .trade-wrap {
     grid-template-columns: minmax(0, 1fr);
+    height: auto;
+    min-height: calc(100vh - var(--topbar-h));
   }
+  .trade-rail { overflow-y: visible; }
   .trade-main { border-right: 0; border-bottom: 1px solid var(--line); }
   .trade-rail { max-height: none; }
   .split-h { display: none; }

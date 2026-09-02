@@ -372,19 +372,70 @@
   color: var(--text-2);
 }
 
-.chart-wait {
-  position: absolute;
-  top: var(--s-3);
-  right: var(--s-3);
-  z-index: 3;
+/* The chart's status cluster. One dot that answers "is this price current",
+   and the venue it came from. Amber is the app's colour for waiting on
+   something, so a delayed feed reads the same here as everywhere else. */
+.chartstatus {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  gap: var(--s-3);
+  min-width: 0;
+}
+
+.feed {
+  display: inline-flex;
+  align-items: center;
   gap: var(--s-2);
-  padding: var(--s-1) var(--s-3);
-  border-radius: var(--radius-pill);
-  background: var(--bg-1);
-  border: 1px solid var(--line);
+  font-size: var(--fs-12);
+  font-family: var(--font-mono);
   color: var(--text-2);
+}
+
+.feed i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: 0 0 auto;
+}
+
+.feed[data-feed="live"] { color: var(--up); }
+.feed[data-feed="live"] i { box-shadow: 0 0 0 3px color-mix(in srgb, var(--up) 18%, transparent); }
+.feed[data-feed="delayed"] { color: var(--warn); }
+.feed[data-feed="offline"] { color: var(--text-3); }
+
+/* A read is out. The dot fades rather than spinning, because a chart that is
+   refreshing is still showing real bars and a spinner would say otherwise. */
+.feed[data-busy="1"] i {
+  animation: feedpulse 900ms var(--ease-in-out) infinite;
+}
+
+@keyframes feedpulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.venue {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  color: var(--text-3);
+  padding: 0 var(--s-2);
+  height: 22px;
+  border-radius: var(--radius-sm);
+  transition: color var(--dur-press) var(--ease-out),
+              transform var(--dur-press) var(--ease-out);
+}
+
+.venue:active { transform: scale(0.97); }
+.venue[data-pinned="1"] { color: var(--text-2); }
+
+@media (hover: hover) and (pointer: fine) {
+  .venue:hover { color: var(--text); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .feed[data-busy="1"] i { animation: none; opacity: 0.6; }
 }
 
 .fill-row {

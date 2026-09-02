@@ -47,6 +47,9 @@
     events.on('candles', function () {
       if (charted && typeof window.candlesPushed === 'function') window.candlesPushed();
     });
+    events.on('candle', function (frame) {
+      if (charted && typeof window.candleLive === 'function') window.candleLive(frame);
+    });
     events.on('chart', function (frame) {
       if (charted && typeof window.chartPushed === 'function') window.chartPushed(frame.rev);
     });
@@ -80,9 +83,24 @@
     cmd.type = 'text';
     cmd.placeholder = 'Indicators';
     bar.appendChild(cmd);
-    var meta = dom.el('span', 'meta mono grow');
-    meta.id = 'chart-meta';
-    bar.appendChild(meta);
+    /* The status cluster the chart engine drives: one dot that answers "is this
+       price current", and the venue it came from. It replaced three loading
+       blocks and a meta line that each said part of the same thing. */
+    var status = dom.el('span', 'chartstatus grow');
+    status.id = 'chart-status';
+    var feed = dom.el('span', 'feed');
+    feed.id = 'chart-feed';
+    feed.dataset.feed = 'offline';
+    feed.setAttribute('role', 'status');
+    feed.appendChild(dom.el('i'));
+    feed.appendChild(dom.el('b', '', 'offline'));
+    status.appendChild(feed);
+    var venue = dom.el('button', 'venue');
+    venue.id = 'chart-provider';
+    venue.type = 'button';
+    venue.textContent = '--';
+    status.appendChild(venue);
+    bar.appendChild(status);
 
     var toggles = dom.el('div', 'hstack-2');
     for (var i = 0; i < OVERLAYS.length; i += 1) {
@@ -102,10 +120,9 @@
        on, which made the row chrome rather than a control. */
     window.TRADE_OVERLAYS = { position: true, liquidation: true, mandateWall: true };
 
-    /* The stage. Every id chart.js looks for lives here, including chart-wait,
-       which the old trade page never had: chartBusy looked it up, found
-       nothing and returned, so a trade chart refresh had no in-flight signal
-       at all. */
+    /* The stage. Every id the chart engine looks for lives here. The in-flight
+       signal the old trade page never had is now the feed dot in the bar
+       above, which the engine sets busy while a read is out. */
     var stage = dom.el('div', 'chart-stage');
     stage.id = 'panel-chart';
     var chartwrap = dom.el('div', 'chartwrap');
@@ -122,12 +139,6 @@
     var hud = dom.el('canvas');
     hud.id = 'chart-hud';
     chartwrap.appendChild(hud);
-    var wait = dom.el('div', 'chart-wait');
-    wait.id = 'chart-wait';
-    wait.hidden = true;
-    wait.appendChild(dom.el('span', 'spinner'));
-    wait.appendChild(dom.el('span', 'meta', 'Reading prices'));
-    chartwrap.appendChild(wait);
     stage.appendChild(chartwrap);
     main.appendChild(stage);
 
@@ -164,7 +175,7 @@
       rulesBody: rules.body,
       happenedBody: happened.body,
       toggles: toggles,
-      meta: meta
+      status: status
     };
 
     window.PhosphorAgent.mount(assistant.body, { compact: true });
