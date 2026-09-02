@@ -26,7 +26,7 @@ import type { Mandate, RunState } from '../strategy/envelope.ts';
 import { emptyMemory, evaluate } from '../strategy/evaluate.ts';
 import type { MarketState, RuleMemory } from '../strategy/evaluate.ts';
 import type { Action, Program, Ref } from '../strategy/grammar.ts';
-import { createExchange, aggressiveLimitPrice, newCloid, orderErrors } from '../hl/exchange.ts';
+import { createExchange, aggressiveLimitPrice, cloidFor, orderErrors } from '../hl/exchange.ts';
 import { roundToValidPrice } from '../hl/format.ts';
 import { distanceToLiquidationPct, liquidationPrice } from '../hl/liquidation.ts';
 
@@ -238,7 +238,7 @@ async function placeBracket(a: Armed, symbol: string, open: Action, exits: Actio
       isMarket: true,
       tpsl: (exit.do === 'set_stop' ? 'sl' : 'tp') as 'sl' | 'tp',
       szDecimals: b.szDecimals,
-      cloid: newCloid(),
+      cloid: cloidFor({ mandate: a.mandate.id, leg: `bracket-exit-${String(legs.length)}-${exit.do}` }),
     });
   }
 
@@ -259,7 +259,7 @@ async function placeBracket(a: Armed, symbol: string, open: Action, exits: Actio
 
   try {
     const res = await ex.bracket(
-      { assetId: b.assetId, isBuy, price: px, size, reduceOnly: false, tif: entry.type === 'market' ? 'Ioc' : entry.postOnly === true ? 'Alo' : 'Gtc', szDecimals: b.szDecimals, cloid: newCloid() },
+      { assetId: b.assetId, isBuy, price: px, size, reduceOnly: false, tif: entry.type === 'market' ? 'Ioc' : entry.postOnly === true ? 'Alo' : 'Gtc', szDecimals: b.szDecimals, cloid: cloidFor({ mandate: a.mandate.id, leg: `bracket-entry-${symbol}` }) },
       legs,
     );
     // The venue answers HTTP 200 with status ok and buries a refusal per order. Nothing here
@@ -336,7 +336,7 @@ async function place(a: Armed, symbol: string, action: Action): Promise<void> {
           reduceOnly: false,
           tif: entry.type === 'market' ? 'Ioc' : entry.postOnly === true ? 'Alo' : 'Gtc',
           szDecimals: b.szDecimals,
-          cloid: newCloid(),
+          cloid: cloidFor({ mandate: a.mandate.id, leg: `open-${symbol}-${isBuy ? 'long' : 'short'}` }),
         },
       ]);
       const refused = orderErrors(res);
@@ -376,7 +376,7 @@ async function place(a: Armed, symbol: string, action: Action): Promise<void> {
         reduceOnly: true,
         tif: 'Ioc',
         szDecimals: b.szDecimals,
-        cloid: newCloid(),
+        cloid: cloidFor({ mandate: a.mandate.id, leg: `reduce-${symbol}-${fraction.toFixed(4)}` }),
       },
     ]);
     a.ordersInLastMin.push(Date.now());
@@ -433,7 +433,7 @@ async function place(a: Armed, symbol: string, action: Action): Promise<void> {
         isMarket: true,
         tpsl: action.do === 'set_stop' ? 'sl' : 'tp',
         szDecimals: b.szDecimals,
-        cloid: newCloid(),
+        cloid: cloidFor({ mandate: a.mandate.id, leg: `${action.do}-${symbol}-${px.toString()}` }),
       },
     ]);
     const refusedTrigger = orderErrors(res);
@@ -491,7 +491,8 @@ async function closeCoin(coin: string): Promise<string> {
       reduceOnly: true,
       tif: 'Ioc',
       szDecimals: b.szDecimals,
-      cloid: newCloid(),
+      // A human pressing close twice in one window means one close, not two.
+      cloid: cloidFor({ mandate: 'manual', leg: `close-${coin}` }),
     },
   ]);
   // A human pressed close. Telling them it was sent when the venue refused is the worst

@@ -19,6 +19,7 @@
 import { formatPrice, formatSize, wireNumber } from './format.ts';
 import { signL1Action } from './sign.ts';
 import { venueWriteTimeout } from '../net.ts';
+import { createHash } from 'node:crypto';
 
 export type Transport = (url: string, body: unknown) => Promise<unknown>;
 
@@ -71,13 +72,40 @@ const defaultTransport: Transport = async (url, body) => {
   return parsed;
 };
 
-// A 128-bit client order id. Its job is idempotent retry: after an ambiguous network failure
-// the same cloid cannot produce a second fill, which is the difference between a retry and a
-// double position.
+// A 128-bit client order id. Its job is idempotent retry: after an ambiguous network failure the
+// same cloid cannot produce a second fill, which is the difference between a retry and a double
+// position.
+//
+// A RANDOM one cannot do that job, and every call site used to generate a fresh one. The venue
+// dedupes on the cloid, so an id that is new on every attempt makes the second attempt a second
+// order: the documented safety did not exist. Kept for the paths that genuinely want a
+// one-shot id, and no longer used by the runner.
 export function newCloid(): string {
   const bytes = new Uint8Array(16);
   globalThis.crypto.getRandomValues(bytes);
   return `0x${[...bytes].map((b) => b.toString(16).padStart(2, '0')).join('')}`;
+}
+
+// How wide a retry window is. Long enough to cover a venue-write timeout (30 s) and the pause
+// before somebody tries again; short enough that two orders a person deliberately places a
+// minute apart are two orders. Anything inside one window with the same (mandate, leg) is a
+// RETRY of the same intent by definition, and the venue will refuse the duplicate.
+export const CLOID_WINDOW_MS = 60_000;
+
+/* A cloid derived from what the order IS rather than from randomness: the mandate that
+   authorised it, which leg of that mandate it is, and which retry window it falls in. Two
+   attempts at the same order inside a window produce the same id, so the second is refused as a
+   duplicate instead of opening a second position. Two different legs, two different mandates, or
+   two windows produce different ids.
+
+   SHA-256 truncated to 16 bytes. Not a security boundary: the property needed is that different
+   inputs give different ids, and the venue only ever compares them for equality. */
+export function cloidFor(parts: { mandate: string; leg: string; now?: number; windowMs?: number }): string {
+  const windowMs = parts.windowMs ?? CLOID_WINDOW_MS;
+  const window = Math.floor((parts.now ?? Date.now()) / windowMs);
+  const material = `${parts.mandate}|${parts.leg}|${String(window)}`;
+  const digest = createHash('sha256').update(material).digest('hex').slice(0, 32);
+  return `0x${digest}`;
 }
 
 // Nonces are per signer and the venue keeps only the 100 highest, so they must rise and must

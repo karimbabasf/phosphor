@@ -360,6 +360,16 @@ export type HlActionResult = {
   detail: string;
   action?: HlWithdrawAction | HlUsdClassTransferAction;
   response?: unknown;
+  /* The nonce this attempt signed with. On Hyperliquid the nonce IS the identity of the action:
+     the venue keeps the highest hundred per signer and refuses a repeat, which is the whole of
+     its deduplication. A retry that passes this back is a retry; one that mints a fresh nonce is
+     a SECOND REAL WITHDRAWAL, and that is what used to happen. */
+  nonce?: number;
+  /* The venue did not answer. Not a failure: the withdrawal may have been accepted and the
+     reply lost. A caller must not report "nothing happened", and if it retries it must reuse
+     `nonce` above. Before this the throw simply escaped, and the retry above it minted a new
+     nonce and a new signature that the venue was perfectly happy to accept a second time. */
+  ambiguous?: boolean;
 };
 
 type ExchangeResponse = { status?: string; response?: unknown };
@@ -372,18 +382,42 @@ async function postAction(
   action: HlWithdrawAction | HlUsdClassTransferAction,
   nonce: number,
   signature: HlSignature,
-): Promise<{ ok: boolean; detail: string; body: unknown }> {
+): Promise<{ ok: boolean; detail: string; body: unknown; ambiguous?: boolean }> {
   const spec = hlWithdrawSpec();
   /* The one call in this file that moves money off the venue. Thirty seconds, and the caller
      treats a timeout as UNKNOWN: the withdrawal may have been accepted. Retrying it with a
      fresh nonce would be a second real withdrawal, which is what task 9 closes. */
-  const res = await (deps.fetchImpl ?? fetch)(spec.exchangeUrl, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ action, nonce, signature }),
-    signal: venueWriteTimeout(),
-  });
-  const text = await res.text();
+  let res: Response;
+  try {
+    res = await (deps.fetchImpl ?? fetch)(spec.exchangeUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action, nonce, signature }),
+      signal: venueWriteTimeout(),
+    });
+  } catch (err) {
+    // The request went out and the answer did not come back. Ambiguous, never failed.
+    return {
+      ok: false,
+      ambiguous: true,
+      detail:
+        `${action.type} was sent to Hyperliquid and no reply came back (${errText(err)}). ` +
+        `IT MAY HAVE BEEN ACCEPTED. Check the account before retrying, and retry only with nonce ${String(nonce)}: ` +
+        `a fresh nonce would be a second real ${action.type}.`,
+      body: null,
+    };
+  }
+  let text: string;
+  try {
+    text = await res.text();
+  } catch (err) {
+    return {
+      ok: false,
+      ambiguous: true,
+      detail: `${action.type} reached Hyperliquid and its reply could not be read (${errText(err)}). IT MAY HAVE BEEN ACCEPTED.`,
+      body: null,
+    };
+  }
   let body: unknown;
   try {
     body = JSON.parse(text) as ExchangeResponse;
@@ -405,7 +439,8 @@ async function postAction(
 // faucet drip lands in spot.
 export async function usdClassTransfer(
   deps: HlWithdrawDeps,
-  params: { amount: number; toPerp: boolean },
+  // `nonce` retries a previous ambiguous attempt. See the note on HlActionResult.nonce.
+  params: { amount: number; toPerp: boolean; nonce?: number },
 ): Promise<HlActionResult> {
   const sign = deps.sign ?? liveSignPort;
 
@@ -431,12 +466,12 @@ export async function usdClassTransfer(
   const { action, typedData, nonce } = buildUsdClassTransferPayload({
     amount,
     toPerp: params.toPerp,
-    nonce: (deps.now ?? Date.now)(),
+    nonce: params.nonce ?? (deps.now ?? Date.now)(),
   });
 
   const signature = await sign.signTypedData(deps.keysPath, typedData);
   const out = await postAction(deps, action, nonce, signature);
-  if (!out.ok) return { ok: false, detail: out.detail, action, response: out.body };
+  if (!out.ok) return { ok: false, detail: out.detail, action, response: out.body, nonce, ambiguous: out.ambiguous };
   return {
     ok: true,
     detail: `moved ${amount} USDC ${params.toPerp ? 'spot -> perp' : 'perp -> spot'} on Hyperliquid`,
@@ -455,7 +490,15 @@ export async function usdClassTransfer(
 // wired to any of this, so an agent cannot reach the flag at all.
 export async function withdraw3(
   deps: HlWithdrawDeps,
-  params: { amount: number; destination?: string; allowExternalDestination?: boolean },
+  params: {
+    amount: number;
+    destination?: string;
+    allowExternalDestination?: boolean;
+    /* Pass the nonce from a previous ambiguous attempt to RETRY it. Omitted, the clock is used
+       and this is a new withdrawal. The venue refuses a nonce it has already seen, so a genuine
+       retry is refused as a duplicate rather than paying out twice. */
+    nonce?: number;
+  },
 ): Promise<HlActionResult> {
   const sign = deps.sign ?? liveSignPort;
   const spec = hlWithdrawSpec();
@@ -520,12 +563,13 @@ export async function withdraw3(
   const { action, typedData, nonce } = buildWithdrawPayload({
     destination,
     amount,
-    time: (deps.now ?? Date.now)(),
+    // The caller's nonce when retrying, the clock when this is a new withdrawal.
+    time: params.nonce ?? (deps.now ?? Date.now)(),
   });
 
   const signature = await sign.signTypedData(deps.keysPath, typedData);
   const out = await postAction(deps, action, nonce, signature);
-  if (!out.ok) return { ok: false, detail: out.detail, action, response: out.body };
+  if (!out.ok) return { ok: false, detail: out.detail, action, response: out.body, nonce, ambiguous: out.ambiguous };
 
   const net = (params.amount - WITHDRAW_FEE_USDC).toFixed(6);
   return {
