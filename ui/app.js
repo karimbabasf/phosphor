@@ -1881,6 +1881,11 @@ function openEvents() {
     // Both calls are no-ops with their overlay shut, and only one of the two can be open.
     else if (payload.type === 'transactions') { PhosphorViews.transactionsRefresh(); PhosphorViews.gasRefresh(); }
     else if (payload.type === 'candles') candlesPushed();
+    // A bar off a venue socket, carrying the bar itself. The chart folds it into whatever
+    // bucket size is on screen and repaints, with no fetch: this frame is what replaced the
+    // hundred-kilobyte refetch that used to happen every two to three seconds to move one
+    // close. The nudge above stays for the REST fallback.
+    else if (payload.type === 'candle') candleLive(payload);
     // A chart change from an agent. Our own writes come back with a revision we already
     // know, and chartPushed drops those rather than repainting over the hand.
     else if (payload.type === 'chart') chartPushed(payload.rev);

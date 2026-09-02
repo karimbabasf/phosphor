@@ -499,8 +499,9 @@ function chartFrame() {
   /* The rAF above is self-cancelling: chartFrame clears CHART_FRAME on entry and nothing
      re-arms it, which is correct for a chart that only redraws on input. A tween is the one
      thing here that has to keep drawing with no input at all, so it re-arms its own loop and
-     stops the moment it lands. */
-  if (running) chartInvalidate(true);
+     stops the moment it lands. Re-armed directly rather than through chartInvalidate, because
+     that would mark the scene dirty on behalf of a tween that may only own the hud. */
+  if (running && !CHART_FRAME) CHART_FRAME = window.requestAnimationFrame(chartFrame);
 }
 
 /* ---------- the view tween ----------
@@ -525,6 +526,46 @@ function chartFrame() {
 
 var CHART_TWEEN = null;
 var TWEEN_MS = 320;
+
+/* The last price tag and its line, eased.
+
+   This is the smallest of the three tweens and the one a person notices, because the tag is
+   the only filled block on the surface and a live rail moves it several times a second. Before
+   the rail it teleported every four seconds, which reads as a screen being redrawn; eased over
+   120 ms it reads as an instrument moving. The token is --dur-enter's smaller sibling in the
+   design system: 120 ms for the chart's last-price tag and line.
+
+   What is eased is the POSITION, never the figure. An interpolated price is a price that never
+   traded, and this tag is the one number on the chart a person reads without looking for it. */
+var CHART_PRICE_TWEEN = null;
+var PRICE_TWEEN_MS = 120;
+
+function startPriceTween(next) {
+  if (typeof next !== 'number' || !isFinite(next)) return;
+  var from = shownPrice();
+  if (from === null || from === next || reducedMotion()) {
+    CHART_PRICE_TWEEN = null;
+    return;
+  }
+  CHART_PRICE_TWEEN = {
+    from: from,
+    to: next,
+    t0: window.performance && performance.now ? performance.now() : Date.now()
+  };
+}
+
+/* Where the tag is drawn right now, which mid-ease is between two real prices and everywhere
+   else is the close itself. Null before there is anything to draw. */
+function shownPrice() {
+  if (CHART_PRICE_TWEEN) {
+    var now = window.performance && performance.now ? performance.now() : Date.now();
+    var t = (now - CHART_PRICE_TWEEN.t0) / PRICE_TWEEN_MS;
+    if (t >= 1) return CHART_PRICE_TWEEN.to;
+    return CHART_PRICE_TWEEN.from + (CHART_PRICE_TWEEN.to - CHART_PRICE_TWEEN.from) * easeServo(t < 0 ? 0 : t);
+  }
+  var candles = CHART.candles;
+  return candles.length ? candles[candles.length - 1].c : null;
+}
 
 function easeServo(t) {
   /* easeOutCubic. Reaches 90% in the first half, then settles. */
@@ -571,13 +612,24 @@ function startViewTween(next) {
    so anything that reads the view for a write (pushChart, chart_read) sees where the chart is
    GOING, never a half-way number that was never a real request. */
 function tweenStep() {
-  if (!CHART_TWEEN) return false;
   var now = window.performance && performance.now ? performance.now() : Date.now();
+  var running = false;
+
+  // The price tag lives on the hud, so an ease on it costs a nearly empty canvas rather than
+  // five hundred candles. Marking the scene here instead would redraw the whole chart at frame
+  // rate every time the price moved, which on a live rail is several times a second.
+  if (CHART_PRICE_TWEEN) {
+    CHART_DIRTY.hud = true;
+    if (now - CHART_PRICE_TWEEN.t0 >= PRICE_TWEEN_MS) CHART_PRICE_TWEEN = null;
+    else running = true;
+  }
+
+  if (!CHART_TWEEN) return running;
   var t = (now - CHART_TWEEN.t0) / CHART_TWEEN.ms;
   if (t >= 1) {
     CHART_TWEEN = null;
     CHART_DIRTY.scene = true;
-    return false;
+    return running;
   }
   CHART_DIRTY.scene = true;
   return true;
@@ -1296,7 +1348,11 @@ function drawLastPrice(ctx, L) {
   if (!candles.length) return;
   var last = candles[candles.length - 1];
   var up = last.c >= last.o;
-  var y = L.yOf(last.c);
+  // The tag slides; the figure it carries does not lie about where it is going. shownPrice is
+  // the eased position, last.c is the price that actually traded, and they are different
+  // things for 120 ms at a time.
+  var shown = shownPrice();
+  var y = L.yOf(shown === null ? last.c : shown);
   if (y >= L.priceTop && y <= L.priceTop + L.priceHeight) {
     ctx.strokeStyle = up ? green(0.45) : red(0.55);
     ctx.lineWidth = 1;
@@ -1553,6 +1609,10 @@ function chartIdentityDiffers(view) {
 function applyChart(payload) {
   // The server has now been heard from, so writing our view back is safe.
   CHART_READY = true;
+  // Another market or another bucket size is another price. The live rail's volume memo and
+  // the tag's ease are both about one series, and carrying either across would fold one
+  // market's volume into another's bar and slide the tag between two unrelated prices.
+  var wasIdentity = CHART.dataView ? CHART.dataView.product + '|' + CHART.dataView.granularitySec : '';
   CHART.rev = payload.rev;
   CHART.candles = payload.candles || [];
   CHART.meta = payload.meta || CHART.meta;
@@ -1597,8 +1657,18 @@ function applyChart(payload) {
     ? { product: payload.view.product, granularitySec: payload.view.granularitySec }
     : CHART.dataView;
 
+  var isIdentity = CHART.dataView ? CHART.dataView.product + '|' + CHART.dataView.granularitySec : '';
+  if (isIdentity !== wasIdentity) {
+    CHART_LIVE = null;
+    CHART_LIVE_HELD = null;
+    CHART_PRICE_TWEEN = null;
+  }
+
   var last = CHART.candles.length ? CHART.candles[CHART.candles.length - 1] : null;
   CHART.meta.barCloseSec = last ? Math.max(0, last.t + CHART.view.granularitySec - Date.now() / 1000) : null;
+  // The fallback rail moves the tag too. A REST refresh is slower than a socket frame and it
+  // teleports harder, so it is the path that most needs the ease.
+  if (last && isIdentity === wasIdentity) startPriceTween(last.c);
 
   // Panes need height from somewhere, and the panel is the only place it can come from.
   var panes = 0;
@@ -1711,6 +1781,124 @@ function chartPushed(rev) {
   // Our own echo. Anything newer came from an agent and has to repaint.
   if (typeof rev === 'number' && rev <= CHART_MY_REV) return;
   void refreshChart();
+}
+
+/* ---------- the live rail ----------
+
+   A candle frame off the SSE stream, carrying one 1m bar rather than asking this window to
+   come back for the whole array. That refetch was 102 to 137 KB of JSON, parsed and thrown
+   away every two to three seconds to move one close, and deleting it is most of why the
+   price on screen went from four seconds old to under half a second.
+
+   Everything here is defensive about identity. A frame names a product, a venue and a base
+   interval, and all three have to match what is actually being drawn before a number off it
+   reaches a pixel. The venue is checked against meta.source rather than the view's provider
+   because the view can say 'auto': what matters is which venue served these candles, not
+   which one was asked for. */
+
+// The last 1m bar folded in, so a frame for a minute already counted adds only what is new.
+// The venue resends the whole minute, not a delta, and adding its volume each time would make
+// the bar's volume climb with the message rate rather than with the market.
+var CHART_LIVE = null;
+// A frame that arrived while the hand was on the chart. Only the newest is worth keeping: an
+// older one is a price that has already been superseded.
+var CHART_LIVE_HELD = null;
+
+/* Which bucket a moment belongs to. The same arithmetic as bucketStart in
+   src/market/aggregate.ts, week offset included: epoch second zero was a Thursday, so weeks
+   carry an offset to open on Monday and a chart that skips it disagrees with every venue. */
+function liveBucket(tSec, stepSec) {
+  if (stepSec >= 604800 && stepSec % 604800 === 0) {
+    return Math.floor((tSec - 345600) / stepSec) * stepSec + 345600;
+  }
+  return Math.floor(tSec / stepSec) * stepSec;
+}
+
+function liveFrameMatches(frame) {
+  if (!frame || !frame.candle || !CHART.dataView) return false;
+  if (frame.product !== CHART.dataView.product) return false;
+  // The venue that served the bars on screen, which is not always the one the view asked for.
+  if (CHART.meta.source && frame.provider !== CHART.meta.source) return false;
+  var step = CHART.dataView.granularitySec;
+  if (!(step > 0) || !(frame.baseSec > 0)) return false;
+  // A base that does not divide the bucket cannot be folded into it without straddling, and
+  // a bar built from bars that straddle it is a price that never traded.
+  return step % frame.baseSec === 0;
+}
+
+function candleLive(frame) {
+  if (!liveFrameMatches(frame)) return;
+  // The vault already records that a live chart slides out from under a drag. The newest frame
+  // is held and applied on endDrag, so the hand keeps the chart and the price is not lost.
+  if (CHART_DRAG) {
+    CHART_LIVE_HELD = frame;
+    return;
+  }
+  applyLiveCandle(frame);
+}
+
+function applyLiveCandle(frame) {
+  var step = CHART.dataView.granularitySec;
+  var bar = frame.candle;
+  var slot = liveBucket(bar.t, step);
+  var list = CHART.candles;
+  var last = list.length ? list[list.length - 1] : null;
+
+  // A frame for a bucket older than the newest one drawn is a straggler from a reconnect, and
+  // rewriting a closed bar from one minute of it would be worse than ignoring it.
+  if (last && slot < last.t) return;
+
+  var key = frame.product + '|' + frame.provider + '|' + step;
+  var held = CHART_LIVE && CHART_LIVE.key === key ? CHART_LIVE : null;
+  // How much of this minute's volume is new. A repeat of a minute already counted contributes
+  // only the difference; a minute never seen contributes all of it.
+  var dv = held && held.minute === bar.t ? Math.max(0, bar.v - held.v) : bar.v;
+  CHART_LIVE = { key: key, minute: bar.t, v: bar.v };
+
+  if (last && slot === last.t) {
+    // The bucket on screen is the one this bar belongs to. When the timeframe IS the base the
+    // bar simply replaces it; otherwise the other minutes already folded into this bucket have
+    // to survive, so only the parts a later minute can move are moved.
+    if (step === frame.baseSec) {
+      list[list.length - 1] = { t: slot, o: bar.o, h: bar.h, l: bar.l, c: bar.c, v: bar.v };
+    } else {
+      list[list.length - 1] = {
+        t: slot,
+        o: last.o,
+        h: bar.h > last.h ? bar.h : last.h,
+        l: bar.l < last.l ? bar.l : last.l,
+        c: bar.c,
+        v: last.v + dv
+      };
+    }
+  } else {
+    list.push({ t: slot, o: bar.o, h: bar.h, l: bar.l, c: bar.c, v: bar.v });
+    // A window panned back is anchored by index from the newest bar, so a bar appended under
+    // it would walk the whole view one bar to the right. Anchor by the bar the human is
+    // actually looking at instead.
+    if (CHART.view.panOffset > 0) CHART.view.panOffset += 1;
+    // The array only ever grows here, and a window left open for hours would grow it without
+    // bound. The cap is far past anything the server serves, so trimming is the exception.
+    var cap = Math.max(600, Math.round(CHART.view.barCount) * 4 + 200);
+    if (list.length > cap) {
+      var cut = list.length - cap;
+      CHART.candles = list.slice(cut);
+      CHART.view.panOffset = Math.max(0, CHART.view.panOffset - cut);
+    }
+  }
+
+  var newest = CHART.candles[CHART.candles.length - 1];
+  CHART.meta.barCloseSec = Math.max(0, newest.t + step - Date.now() / 1000);
+  startPriceTween(newest.c);
+  chartInvalidate(true);
+}
+
+/* Applied when the hand comes off. Anything held is by definition the newest thing the venue
+   said, so it is not stale, only late. */
+function flushLiveCandle() {
+  var held = CHART_LIVE_HELD;
+  CHART_LIVE_HELD = null;
+  if (held && liveFrameMatches(held)) applyLiveCandle(held);
 }
 
 function candlesPushed() {
@@ -1975,6 +2163,10 @@ function wireChart() {
     CHART_DRAG = null;
     hud.style.cursor = 'crosshair';
     if (ev && ev.pointerId !== undefined && hud.hasPointerCapture(ev.pointerId)) hud.releasePointerCapture(ev.pointerId);
+    // Whatever the venue said while the hand was down. Applied before the fetch below so the
+    // price is right immediately rather than a round trip later, and harmless if the fetch
+    // lands first: applyChart replaces the array either way.
+    flushLiveCandle();
     // A press that moved nothing is a click, not a gesture: it costs neither a write nor a
     // fetch. Catch up on the stream only after a real one.
     if (!moved) return;
