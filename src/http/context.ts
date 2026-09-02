@@ -34,6 +34,7 @@ import type { Board } from '../board.ts';
 import type { Crew } from '../crew.ts';
 import type { DuplicateGuard } from '../duplicates.ts';
 import type { createHistory } from '../history.ts';
+import type { JsonBody } from './respond.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const PROJECT_DIR = path.join(__dirname, '..', '..');
@@ -275,5 +276,12 @@ export type Ctx = ServerDeps & {
   // One audit line per refused session, then silence. See rejectSeat in mcp.ts.
   seats: Set<string>;
 };
+
+// One read tool: it answers on `res` and moves nothing. `body` carries the calling session and
+// `args` the tool's own arguments, already unwrapped, because every handler wanted both.
+export type ReadTable = Record<
+  string,
+  (ctx: Ctx, body: JsonBody, args: JsonBody, res: http.ServerResponse) => void | Promise<void>
+>;
 
 export type { ChainId };
