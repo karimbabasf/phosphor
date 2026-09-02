@@ -41,19 +41,14 @@
 //   pattern-matched so a truncated or transposed key is refused before any quote, and on the
 //   EVM chains, where a key does exist, config must agree with it or the draft is refused.
 //
-//   NEAR IS NOT A DESTINATION. cfg.addresses.near carries an account id nobody signed for, and
-//   the one in the repo's own config is a testnet id. Paying a mainnet withdrawal to it would
-//   be a plain loss, so the chain is refused by name.
-//
-// THIS RAIL IS MAINNET ONLY, for the reason in src/rails/intents-native.ts: intents.testnet has
-// never had code deployed, so there is no verifier holding a balance to withdraw.
+//   NEAR IS NOT A DESTINATION. cfg.addresses.near carries an account id nobody signed for, so
+//   paying a withdrawal to it would be a plain loss and the chain is refused by name.
 
 import { formatUnits, getAddress, isAddress } from 'viem';
 import type {
   AppConfig,
   ChainId,
   IntentsWithdrawDraft,
-  Network,
   Rail,
   RailResult,
   SimulationResult,
@@ -61,7 +56,6 @@ import type {
 import { ONECLICK_TERMINAL, oneLine, resolveAsset, toBaseUnits } from '../intents.ts';
 import type { OneClickQuote, OneClickStatus, TokensFile } from '../intents.ts';
 import {
-  INTENTS_NO_TESTNET_REASON,
   INTENTS_SIGNING_STANDARD,
   INTENTS_VERIFIER,
   base58Decode,
@@ -156,7 +150,6 @@ export function addressProblem(chain: ChainId, address: string): string | null {
 }
 
 export type IntentsWithdrawRailDeps = {
-  network: Network;
   keysPath: string;
   tokens: TokensFile;
   addresses: AppConfig['addresses'];
@@ -189,7 +182,7 @@ function baseUnits(value: unknown, field: string): bigint {
 }
 
 export function intentsWithdrawRail(deps: IntentsWithdrawRailDeps): IntentsWithdrawRail {
-  const { network, keysPath, tokens, addresses } = deps;
+  const { keysPath, tokens, addresses } = deps;
   const signer = deps.signer ?? liveIntentsSigner;
   const sleep = deps.sleepImpl ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const now = deps.now ?? Date.now;
@@ -435,13 +428,6 @@ export function intentsWithdrawRail(deps: IntentsWithdrawRailDeps): IntentsWithd
         return { ok: false, summary: [`REFUSED: ${joined}`, ...lines].join('\n'), error: joined };
       }
 
-      if (network !== 'mainnet') {
-        return {
-          ok: false,
-          summary: [`CANNOT EXECUTE on ${network}: ${INTENTS_NO_TESTNET_REASON}`, ...lines].join('\n'),
-          error: INTENTS_NO_TESTNET_REASON,
-        };
-      }
 
       lines.push(
         `execution signs one intent with the EVM key and sends nothing on any chain; the solver pays out on ${draft.chain}`,
@@ -460,10 +446,6 @@ export function intentsWithdrawRail(deps: IntentsWithdrawRailDeps): IntentsWithd
   }
 
   async function execute(draft: IntentsWithdrawDraft): Promise<RailResult> {
-    // First line, before any network call and any key read. No verifier on testnet means no
-    // balance to withdraw.
-    if (network !== 'mainnet') throw new Error(INTENTS_NO_TESTNET_REASON);
-
     const p = await plan(draft);
     const owner = requireOwner(draft);
     requireEvmDestinationIsOurs(draft, p, owner);

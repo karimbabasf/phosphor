@@ -4,7 +4,7 @@
 // Polling was the alternative and it is the wrong one here. Hyperliquid's IP budget is 1200
 // weight per minute and most /info calls weigh 20, so a screen refreshing positions, orders,
 // fills, mark and funding spends the whole budget asking for answers the venue pushes for free.
-// src/hl/info.ts made REST survivable after the testnet went to ~16s per call; it did not make
+// src/hl/info.ts made REST survivable after the venue went to ~16s per call; it did not make
 // REST right for a live screen. REST stays for the one-shot reads at boot and for the state the
 // socket does not carry.
 //

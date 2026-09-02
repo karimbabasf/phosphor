@@ -33,12 +33,10 @@ if (account === undefined) {
 
 const client = oneClickClient();
 const rail = hypercoreDepositRail({
-  network: cfg.tradingNetwork,
   keysPath: cfg.keysPath,
   tokens,
 });
 
-console.log(`trading network : ${cfg.tradingNetwork}`);
 console.log(`trading account : ${account}`);
 console.log(`amount          : ${amount} USDC\n`);
 

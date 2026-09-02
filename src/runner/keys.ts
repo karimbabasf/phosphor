@@ -13,32 +13,21 @@
 // agent fails with a sentence that says what to do, rather than by silently signing orders with
 // the master key, which would be the worst possible fallback.
 //
-// ---------- one key per NETWORK, added 2026-08-20 ----------
-//
-// An agent wallet is approved on ONE Hyperliquid network. The approval is a signed action sent
-// to that network's exchange, and the other network has never heard of the address. This file
-// used to hold a single `hyperliquidAgent`, which meant approving on mainnet silently destroyed
-// the testnet one, and pointing the app back at testnet then signed orders with a wallet that
-// venue does not recognise. Every order comes back rejected and nothing says why, because the
-// key is present, well formed, and simply belongs somewhere else.
-//
-// That is not hypothetical: it happened here on 2026-08-20, approving mainnet over a testnet
-// agent that had been in use since 08-13.
-//
-// So the file is keyed by network now. The old flat shape is still read, because a keys.json
-// written before today has it and silently ignoring a key that is right there would be its own
-// version of the same bug: it is treated as belonging to whichever network asks first and a
-// caller can see that it was a legacy read.
+// A keys.json written before 2026-09-01 keyed the agent by a venue axis this app no longer
+// has. The reader takes the entry that names this venue first and falls back to the flat
+// field an older file carries, so no install loses its agent to a shape change. It never
+// writes that file back and never removes anything from it: it is key material, and a human
+// removes what a human put there.
 
 import fs from 'node:fs';
-import type { Network } from '../types.ts';
 
 type AgentEntry = { privateKey?: string; address?: string; name?: string; approvedAt?: string };
 type KeysFile = {
-  // The shape written before 2026-08-20: one agent, network unstated.
+  // The flat shape, written before 2026-08-20 and again from now on.
   hyperliquidAgent?: AgentEntry;
-  // The shape written now: one agent per network.
-  hyperliquidAgents?: Partial<Record<Network, AgentEntry>>;
+  // The keyed shape written between 2026-08-20 and 2026-09-01. Only the 'mainnet' entry is
+  // read; any other entry is left alone rather than deleted.
+  hyperliquidAgents?: { mainnet?: AgentEntry; [k: string]: AgentEntry | undefined };
   [k: string]: unknown;
 };
 
@@ -48,28 +37,26 @@ function validKey(value: unknown): value is `0x${string}` {
 
 export type ApiWalletRead = {
   key: `0x${string}` | null;
-  // Where it came from, so a caller can tell a network-specific key from a legacy one that
-  // merely has not been proven to belong to this network.
-  source: 'network' | 'legacy' | 'absent';
+  source: 'present' | 'absent';
   address: string | null;
 };
 
-export function readApiWallet(keysPath: string, network: Network): ApiWalletRead {
+export function readApiWallet(keysPath: string): ApiWalletRead {
   const absent: ApiWalletRead = { key: null, source: 'absent', address: null };
   if (!fs.existsSync(keysPath)) return absent;
   try {
     const parsed = JSON.parse(fs.readFileSync(keysPath, 'utf8')) as KeysFile;
 
-    const forNetwork = parsed.hyperliquidAgents?.[network];
-    if (validKey(forNetwork?.privateKey)) {
-      return { key: forNetwork.privateKey, source: 'network', address: forNetwork.address ?? null };
+    const keyed = parsed.hyperliquidAgents?.mainnet;
+    if (validKey(keyed?.privateKey)) {
+      return { key: keyed.privateKey, source: 'present', address: keyed.address ?? null };
     }
 
-    // Legacy flat entry. Read it rather than refuse: a file written before the split has a
-    // perfectly good key in it, and the migration should not cost an install its agent.
+    // The flat entry. Read it rather than refuse: a file written under either older shape
+    // has a perfectly good key in it, and a shape change should not cost an install its agent.
     const flat = parsed.hyperliquidAgent;
     if (validKey(flat?.privateKey)) {
-      return { key: flat.privateKey, source: 'legacy', address: flat.address ?? null };
+      return { key: flat.privateKey, source: 'present', address: flat.address ?? null };
     }
 
     return absent;
@@ -80,6 +67,6 @@ export function readApiWallet(keysPath: string, network: Network): ApiWalletRead
   }
 }
 
-export async function readApiWalletKey(keysPath: string, network: Network): Promise<`0x${string}` | null> {
-  return readApiWallet(keysPath, network).key;
+export async function readApiWalletKey(keysPath: string): Promise<`0x${string}` | null> {
+  return readApiWallet(keysPath).key;
 }

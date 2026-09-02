@@ -47,7 +47,6 @@ export type AllocatorDecision = {
 };
 
 export type YieldView = {
-  network: string;
   chain: ChainId | null; // where the money currently is, when it is anywhere
   positions: YieldHolding[];
   venues: VenueQuote[];
@@ -232,7 +231,6 @@ export function createAllocator(deps: AllocatorDeps): Allocator {
   const decisions: AllocatorDecision[] = [];
 
   let current: YieldView = {
-    network: cfg.network,
     chain: null,
     positions: [],
     venues: [],
@@ -262,7 +260,7 @@ export function createAllocator(deps: AllocatorDeps): Allocator {
   // One chain's worth of truth, read live. Errors are caught per chain rather than for the
   // whole sweep: one dead RPC must not blank a position on a chain that answered.
   async function readChain(chain: ChainId, owner: string, proposals: Proposal[]): Promise<{ quote: VenueQuote; holding: YieldHolding | null }> {
-    const asset = aaveAsset(cfg.network, chain, SYMBOL);
+    const asset = aaveAsset(chain, SYMBOL);
     if (asset === null) {
       return {
         quote: { venue: 'aave-v3', chain, symbol: SYMBOL, rate: null, healthy: false, note: 'no verified market', idleBase: '0', idleUsd: 0 },
@@ -278,10 +276,10 @@ export function createAllocator(deps: AllocatorDeps): Allocator {
 
     try {
       const [r, health, pos, idle] = await Promise.all([
-        aaveRate(cfg.network, chain, SYMBOL),
-        aaveHealth(cfg.network, chain, SYMBOL),
-        aavePosition(cfg.network, chain, SYMBOL, owner),
-        erc20Balance(cfg.network, chain, getAddress(asset.address), getAddress(owner)),
+        aaveRate(chain, SYMBOL),
+        aaveHealth(chain, SYMBOL),
+        aavePosition(chain, SYMBOL, owner),
+        erc20Balance(chain, getAddress(asset.address), getAddress(owner)),
       ]);
       rate = r;
       position = pos;
@@ -319,7 +317,7 @@ export function createAllocator(deps: AllocatorDeps): Allocator {
       decimals: asset.decimals,
       receiptSymbol: asset.receiptSymbol,
       receipt: asset.receipt,
-      explorerTx: chainSpec(cfg.network, chain).explorerTx,
+      explorerTx: chainSpec(chain).explorerTx,
       basisKnown,
       principalBase: principal === null ? null : principal.toString(),
       valueBase: position.balanceBase.toString(),
@@ -357,7 +355,7 @@ export function createAllocator(deps: AllocatorDeps): Allocator {
       return current;
     }
 
-    const chains = aaveChains(cfg.network);
+    const chains = aaveChains();
     const proposals = deps.listProposals();
 
     try {
@@ -372,7 +370,6 @@ export function createAllocator(deps: AllocatorDeps): Allocator {
           : healthy.reduce((a, b) => ((b.rate as VenueRate).apy > (a.rate as VenueRate).apy ? b : a));
 
       current = {
-        network: cfg.network,
         chain: positions[0]?.chain ?? null,
         positions,
         venues,
@@ -486,13 +483,6 @@ export function createAllocator(deps: AllocatorDeps): Allocator {
       });
     }
 
-    // A cross-chain move needs a bridge, and on testnet this app does not have one.
-    //
-    // NEAR Intents is the rail it would use, and it has no testnet: src/rails/index.ts says
-    // so and the oneclick rail is mainnet-only. So the honest tick here reports the better
-    // venue and refuses the move, which is a real refusal with a real reason rather than a
-    // gap in the loop. The economics are computed anyway, because "we could not move" and
-    // "moving would have lost money" are different facts and the window should show which.
     // The second brake on a move, independent of whether it pays. Two rates that cross back
     // and forth over a threshold would otherwise have the loop paying to chase them each way.
     const sinceMove = lastMoveAtMs === null ? Infinity : now() - lastMoveAtMs;
@@ -517,17 +507,12 @@ export function createAllocator(deps: AllocatorDeps): Allocator {
       moveCostUsd: crossChainCostUsd(movingUsd),
     });
 
-    const bridge =
-      cfg.network === 'testnet'
-        ? ' There is no cross-chain rail on testnet: NEAR Intents is mainnet only, so this move cannot be made here at all.'
-        : '';
-
     return record({
       at,
       action: 'rebalance_refused',
       detail:
         `${view.best.chain} pays ${(view.best.apy * 100).toFixed(2)}% against ${((held.rate?.apy ?? 0) * 100).toFixed(2)}% ` +
-        `on ${held.chain}, but ${verdict.reason}.${bridge}`,
+        `on ${held.chain}, but ${verdict.reason}.`,
       proposalId: null,
     });
   }

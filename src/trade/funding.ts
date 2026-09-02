@@ -19,7 +19,7 @@
 // builder. tests/unit/trade-collateral.test.ts imports both and fails if the two ever disagree,
 // which is what keeps a restatement from becoming a fork.
 
-import type { ChainId, Network } from '../types.ts';
+import type { ChainId } from '../types.ts';
 
 // One origin the rail has actually routed from, with what the router said it takes. Solana is
 // absent because the signer is, which is the same honest gap the swap rail carries, and near
@@ -77,24 +77,10 @@ const SAMPLE_SIZES = [50, 1000];
 // to do next.
 export const DUST_USD = 0.005;
 
-// Where testnet collateral comes from instead, printed as text because this surface is a
-// terminal and not a set of links. Held as a constant so the screen and the rail's refusal
-// cannot come to name two different places; tests/unit/trade-collateral.test.ts asks the rail
-// for its own refusal and fails if this string is not inside it.
-export const FUNDING_FAUCET = 'app.hyperliquid-testnet.xyz/drip';
-
 // The funding facts as the browser renders them. Assembled here rather than on the client so
 // that the arithmetic behind a cost on screen lives with the model it comes from, and so the
 // page does no maths about money at all.
 export type FundingBlock = {
-  // Whether the rail can fund the network this app is TRADING. It is mainnet only, and the
-  // reason is the worst failure this rail could have: 1Click has no testnet and the asset it
-  // delivers is mainnet HyperCore USDC, while one EVM address names an account on both
-  // networks. A testnet deposit would take real money, land it correctly on the mainnet
-  // account, report success, and leave the account being traded empty. The rail refuses it,
-  // and a screen advertising a capability its rail refuses would be sending a person to ask
-  // for something they cannot have.
-  available: boolean;
   minUsd: number;
   maxFeePct: number;
   // The fastest measured origin's time, in seconds.
@@ -102,12 +88,9 @@ export type FundingBlock = {
   // Measured origins, fastest first. Naming them is what makes the claim checkable.
   origins: string[];
   costAt: { usd: number; pct: number }[];
-  // Only when the rail cannot serve this network: where the collateral comes from instead.
-  faucet: string | null;
 };
 
-export function fundingBlock(network: Network, shape: FundingShape = FUNDING_SHAPE): FundingBlock {
-  const available = network === 'mainnet';
+export function fundingBlock(shape: FundingShape = FUNDING_SHAPE): FundingBlock {
   const ordered = [...shape.origins].sort((a, b) => a.etaSec - b.etaSec);
   const costAt: { usd: number; pct: number }[] = [];
   for (const usd of SAMPLE_SIZES) {
@@ -115,12 +98,10 @@ export function fundingBlock(network: Network, shape: FundingShape = FUNDING_SHA
     if (pct !== null) costAt.push({ usd, pct });
   }
   return {
-    available,
     minUsd: shape.minUsd,
     maxFeePct: shape.maxFeePct,
     etaSec: ordered.length > 0 ? ordered[0].etaSec : null,
     origins: ordered.map((o) => o.chain),
     costAt,
-    faucet: available ? null : FUNDING_FAUCET,
   };
 }

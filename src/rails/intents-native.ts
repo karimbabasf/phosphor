@@ -31,13 +31,6 @@
 // before the key is touched. A server that returns a payload swapping a different asset, or
 // a payload carrying a withdrawal to somebody else's account, is refused unsigned.
 //
-// THIS RAIL IS MAINNET ONLY, for the same reason oneclick.ts is, and the evidence is the
-// contract itself. On mainnet `intents.near` holds ~10.6 GB of state under code hash
-// HUJ89jxFhsXF17XS8L5kmxz7te8AKfdWw2xzrVYo7aoj. On testnet `intents.testnet` reports
-// code_hash 11111111111111111111111111111111, which is NEAR's all-ones sentinel for an
-// account that has never had code deployed. There is no verifier to sign an intent for on
-// testnet, so execute() refuses on any other network before it does anything else.
-//
 // IT ALSO NEEDS A PARTNER API KEY, which oneclick.ts does not. Quoting is unauthenticated,
 // but POST /v0/generate-intent and POST /v0/submit-intent both require an X-API-Key, and
 // those two calls are the entire rail. A missing key is therefore refused at simulate()
@@ -48,7 +41,7 @@ import fs from 'node:fs';
 import { formatUnits, hexToBytes } from 'viem';
 import type { Address, Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import type { Network, Rail, RailResult, SimulationResult, SwapDraft } from '../types.ts';
+import type { Rail, RailResult, SimulationResult, SwapDraft } from '../types.ts';
 import {
   ONECLICK_BASE,
   ONECLICK_TERMINAL,
@@ -719,13 +712,13 @@ const FT_TRANSFER_CALL_GAS = 100n * TGAS;
 export type IntentsNearPort = {
   accountId(keysPath: string): string;
   send(params: NearSendParams): Promise<NearSendOutcome>;
-  storageRegistered(network: Network, tokenId: string, accountId: string): Promise<boolean>;
+  storageRegistered(tokenId: string, accountId: string): Promise<boolean>;
 };
 
 const liveIntentsNearPort: IntentsNearPort = {
   accountId: nearAccountId,
   send: nearSendTx,
-  storageRegistered: (network, tokenId, accountId) => ftStorageRegistered(network, tokenId, accountId),
+  storageRegistered: ftStorageRegistered,
 };
 
 // Funds the rail by signing the deposit, which is the step that used to be impossible.
@@ -752,15 +745,10 @@ export async function intentsDeposit(args: {
   intentsAccountId: string;
   token: string;
   amountBase: bigint;
-  network: Network;
   keysPath: string;
   near?: IntentsNearPort;
   signer?: IntentsSignerPort;
 }): Promise<RailResult> {
-  if (args.network !== 'mainnet') {
-    return { ok: false, detail: INTENTS_NO_TESTNET_REASON, txids: [] };
-  }
-
   // Builds the call and throws if it is pointed anywhere but the verifier. Runs first, so a
   // bad destination never reaches a key.
   const plan = intentsDepositPlan(args);
@@ -784,7 +772,7 @@ export async function intentsDeposit(args: {
     };
   }
 
-  const registered = await near.storageRegistered(args.network, plan.token, plan.verifier);
+  const registered = await near.storageRegistered(plan.token, plan.verifier);
   if (!registered) {
     return {
       ok: false,
@@ -796,7 +784,6 @@ export async function intentsDeposit(args: {
   }
 
   const sent = await near.send({
-    network: args.network,
     keysPath: args.keysPath,
     receiverId: plan.call.contractId,
     actions: [
@@ -824,7 +811,6 @@ export async function intentsDeposit(args: {
 // ---------- the rail ----------
 
 export type IntentsNativeRailDeps = {
-  network: Network;
   keysPath: string;
   tokens: TokensFile;
   apiKey?: string; // defaults to process.env[INTENTS_API_KEY_ENV]
@@ -856,7 +842,7 @@ function baseUnits(value: unknown, field: string): bigint {
 }
 
 export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRail {
-  const { network, keysPath, tokens } = deps;
+  const { keysPath, tokens } = deps;
   const apiKey = deps.apiKey ?? process.env[INTENTS_API_KEY_ENV];
   const signer = deps.signer ?? liveIntentsSigner;
   const sleep = deps.sleepImpl ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
@@ -985,7 +971,6 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
       // approve and nothing can run.
       requireVenue(draft);
       requireUsable();
-      if (network !== 'mainnet') throw new Error(INTENTS_NO_TESTNET_REASON);
 
       const p = await plan(draft);
 
@@ -1016,9 +1001,6 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
   }
 
   async function execute(draft: SwapDraft): Promise<RailResult> {
-    // First line, before any network call, any key read and any quote. There is no verifier
-    // deployed on testnet, so there is nothing to sign an intent against.
-    if (network !== 'mainnet') throw new Error(INTENTS_NO_TESTNET_REASON);
     requireVenue(draft);
     requireUsable();
     const client = api as IntentsApiPort;

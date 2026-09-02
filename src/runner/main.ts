@@ -31,23 +31,18 @@ import { roundToValidPrice } from '../hl/format.ts';
 import { distanceToLiquidationPct, liquidationPrice } from '../hl/liquidation.ts';
 
 const KEY = process.env.PHOSPHOR_HL_KEY as `0x${string}` | undefined;
-const IS_MAINNET = process.env.PHOSPHOR_HL_MAINNET === '1';
-const BASE_URL = process.env.PHOSPHOR_HL_URL ?? 'https://api.hyperliquid-testnet.xyz';
+const BASE_URL = process.env.PHOSPHOR_HL_URL ?? 'https://api.hyperliquid.xyz';
 
-// Mainnet trading was enabled on 2026-08-20 and this guard came out with it. What replaced it
-// is not a smaller check, it is a different one, and it is worth naming because deleting a
-// refusal usually is a mistake:
+// The runner holds no venue switch and no self-arm. What bounds it instead:
 //
-//   - the runner never arms itself. It runs a mandate a human read and clicked, and
-//     src/policy/gate.ts forces that click ON for mainnet with no way to configure it off.
+//   - it never arms itself. It runs a mandate a human read and clicked, and that click is
+//     unconditional: src/proposals.ts has no path that approves a write without one.
 //   - the mandate is the wall: symbol, notional cap, borrowed multiple, orders per minute,
 //     max loss and an expiry, all checked here on every action, not at arm time only.
 //   - the kill switch stops the child regardless of what it is holding.
 //
-// So the thing the old guard protected against, a bot reaching mainnet money with nobody
-// having agreed to it, is now unreachable through the envelope rather than through a flag.
-// A flag that could be flipped by accident really is worse than no flag, which is why the
-// replacement is a bound and not a boolean.
+// A bound is the right shape for this rather than a boolean: a flag that could be flipped by
+// accident is worse than no flag.
 
 type Armed = {
   mandate: Mandate;
@@ -145,7 +140,7 @@ let exchange: ReturnType<typeof createExchange> | null = null;
 function requireExchange(): ReturnType<typeof createExchange> {
   if (KEY === undefined) throw new Error('no API wallet key in the environment');
   if (exchange === null) {
-    exchange = createExchange({ privKey: KEY, isMainnet: IS_MAINNET, baseUrl: BASE_URL });
+    exchange = createExchange({ privKey: KEY, baseUrl: BASE_URL });
   }
   return exchange;
 }
@@ -832,4 +827,4 @@ const timer = setInterval(() => {
 }, 250);
 timer.unref?.();
 
-send({ type: 'error', id: null, message: `runner up, ${IS_MAINNET ? 'MAINNET' : 'testnet'}` });
+send({ type: 'error', id: null, message: 'runner up' });

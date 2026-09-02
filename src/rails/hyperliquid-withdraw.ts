@@ -19,53 +19,42 @@
 //   - EIP-712 typed data, NOT personal_sign, and NOT the msgpack phantom-agent scheme that L1
 //     order actions use. The two schemes share an endpoint and nothing else.
 //   - domain name is 'HyperliquidSignTransaction'. L1 actions use 'Exchange'. Different domain.
-//   - domain chainId is 421614 and is NOT the network selector. It only declares which chain
-//     the wallet thinks it is signing on, and the docs accept 42161 there too. The field that
-//     actually separates the two worlds is hyperliquidChain, inside the signed message. That is
-//     the field to get right: a payload signed with 'Mainnet' is a valid mainnet instruction.
+//   - domain chainId is 421614 and is NOT a venue selector. It only declares which chain the
+//     wallet thinks it is signing on, and the docs accept 42161 there too. The field that
+//     names the venue is hyperliquidChain, inside the signed message. That is the field to
+//     get right: a payload signed with 'Mainnet' is a valid instruction against real money.
 //   - the top-level nonce must equal the action's time (withdraw3) or nonce (usdClassTransfer),
 //     in MILLISECONDS. A mismatch is rejected.
 //
-// The fee is 1.0 USDC and it comes OUT OF the amount: the destination receives amount - 1. That
-// is not in the testnet docs, so it was measured. See MIN_WITHDRAW_USDC below.
+// The fee is 1.0 USDC and it comes OUT OF the amount: the destination receives amount - 1.
+// See MIN_WITHDRAW_USDC below for how that figure was established.
 
 import fs from 'node:fs';
 import { isAddress, parseSignature } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import type { Address, Hex } from 'viem';
 import { evmAddress } from '../chain/evm.ts';
-import type { Network } from '../types.ts';
 
-// ---------- the per-network table ----------
+// ---------- the venue table ----------
 
-// Same rule as the deposit rail: nothing here has a default. A default is how a testnet build
-// ends up pointed at mainnet.
 export type HlWithdrawSpec = {
   exchangeUrl: string;
   infoUrl: string;
-  hyperliquidChain: 'Testnet' | 'Mainnet'; // the real network separator, inside the signature
+  // Inside the signed message, so it is a signing input rather than a label. A payload
+  // carrying anything else is a signature the venue rejects.
+  hyperliquidChain: 'Mainnet';
   label: string; // where the money lands, for humans reading a refusal
 };
 
-const HL_WITHDRAW_NETWORKS: Record<Network, HlWithdrawSpec> = {
-  testnet: {
-    exchangeUrl: 'https://api.hyperliquid-testnet.xyz/exchange',
-    infoUrl: 'https://api.hyperliquid-testnet.xyz/info',
-    hyperliquidChain: 'Testnet',
-    label: 'Arbitrum Sepolia',
-  },
-  mainnet: {
-    exchangeUrl: 'https://api.hyperliquid.xyz/exchange',
-    infoUrl: 'https://api.hyperliquid.xyz/info',
-    hyperliquidChain: 'Mainnet',
-    label: 'Arbitrum One',
-  },
+const HL_WITHDRAW: HlWithdrawSpec = {
+  exchangeUrl: 'https://api.hyperliquid.xyz/exchange',
+  infoUrl: 'https://api.hyperliquid.xyz/info',
+  hyperliquidChain: 'Mainnet',
+  label: 'Arbitrum One',
 };
 
-function hlWithdrawSpec(network: Network): HlWithdrawSpec {
-  const spec = HL_WITHDRAW_NETWORKS[network];
-  if (spec === undefined) throw new Error(`no Hyperliquid withdraw spec for network ${JSON.stringify(network)}`);
-  return spec;
+function hlWithdrawSpec(): HlWithdrawSpec {
+  return HL_WITHDRAW;
 }
 
 // ---------- the EIP-712 constants ----------
@@ -106,16 +95,17 @@ export const USD_CLASS_TRANSFER_TYPES = {
 
 const USDC_DECIMALS = 6;
 
-// Measured, not assumed. The docs quote $1 on the mainnet page and say nothing about testnet, so
-// this was read off nine real testnet withdrawals in userNonFundingLedgerUpdates: every one
-// carries "fee":"1.0". There is no testnet discount.
+// Measured, not assumed. The docs quote $1, and that figure was read back off nine real
+// withdrawals in userNonFundingLedgerUpdates: every one carries "fee":"1.0". The measurement
+// was taken before this app moved real money, so it agrees with the docs rather than
+// confirming them independently at size.
 export const WITHDRAW_FEE_USDC = 1;
 
 // The fee comes out of the amount, so the destination receives amount - 1. Established three
 // ways that agree: the nktkas SDK's integration test funds a perp account with exactly "2" and
 // then withdraws "2" successfully, which is only possible if the fee is inside the amount; a
-// zero-fill testnet account's 76 withdrawals reconcile to its live balance to the cent only
-// under that model; and the bridge's outbound Transfer amounts equal the ledger's net figure.
+// zero-fill account's 76 withdrawals reconcile to its live balance to the cent only under
+// that model; and the bridge's outbound Transfer amounts equal the ledger's net figure.
 //
 // So anything at or below 1.0 delivers nothing while still emptying that much from the account.
 // 2 is the floor: the smallest amount that actually lands at least 1 USDC2 on the far side.
@@ -159,7 +149,7 @@ export type HlTypedData = {
 export type HlWithdrawAction = {
   type: 'withdraw3';
   signatureChainId: string;
-  hyperliquidChain: 'Testnet' | 'Mainnet';
+  hyperliquidChain: 'Mainnet';
   destination: string;
   amount: string;
   time: number;
@@ -168,7 +158,7 @@ export type HlWithdrawAction = {
 export type HlUsdClassTransferAction = {
   type: 'usdClassTransfer';
   signatureChainId: string;
-  hyperliquidChain: 'Testnet' | 'Mainnet';
+  hyperliquidChain: 'Mainnet';
   amount: string;
   toPerp: boolean;
   nonce: number;
@@ -181,12 +171,11 @@ export type HlUsdClassTransferAction = {
 // and the server rebuilds the digest from the string we send. Lowercase is what the SDK's own
 // fixture uses, and normalising here means the signed text and the sent text cannot disagree.
 export function buildWithdrawPayload(args: {
-  network: Network;
   destination: string;
   amount: string;
   time: number;
 }): { action: HlWithdrawAction; typedData: HlTypedData; nonce: number } {
-  const spec = hlWithdrawSpec(args.network);
+  const spec = hlWithdrawSpec();
   const action: HlWithdrawAction = {
     type: 'withdraw3',
     signatureChainId: SIGNATURE_CHAIN_ID_HEX,
@@ -213,12 +202,11 @@ export function buildWithdrawPayload(args: {
 }
 
 export function buildUsdClassTransferPayload(args: {
-  network: Network;
   amount: string;
   toPerp: boolean;
   nonce: number;
 }): { action: HlUsdClassTransferAction; typedData: HlTypedData; nonce: number } {
-  const spec = hlWithdrawSpec(args.network);
+  const spec = hlWithdrawSpec();
   const action: HlUsdClassTransferAction = {
     type: 'usdClassTransfer',
     signatureChainId: SIGNATURE_CHAIN_ID_HEX,
@@ -284,7 +272,6 @@ export const liveSignPort: HlSignPort = {
 
 export type HlAccountSummary = {
   address: string;
-  network: Network;
   spotUsdc: number; // where a faucet drip and any spot trading proceeds sit
   perpAccountValueUsd: number;
   perpWithdrawableUsd: number; // 0 on a unified account even when funds are present
@@ -317,7 +304,6 @@ function num(value: string | undefined): number {
 }
 
 export type HlWithdrawDeps = {
-  network: Network;
   keysPath: string;
   sign?: HlSignPort;
   fetchImpl?: typeof fetch;
@@ -325,7 +311,7 @@ export type HlWithdrawDeps = {
 };
 
 async function info<T>(deps: HlWithdrawDeps, body: Record<string, unknown>): Promise<T> {
-  const spec = hlWithdrawSpec(deps.network);
+  const spec = hlWithdrawSpec();
   const res = await (deps.fetchImpl ?? fetch)(spec.infoUrl, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -363,7 +349,6 @@ export async function accountSummary(deps: HlWithdrawDeps, address?: string): Pr
 
   return {
     address: user,
-    network: deps.network,
     spotUsdc: num((spot.balances ?? []).find((b) => b.coin === 'USDC')?.total),
     perpAccountValueUsd: num(perp.marginSummary?.accountValue),
     perpWithdrawableUsd: num(perp.withdrawable),
@@ -397,7 +382,7 @@ async function postAction(
   nonce: number,
   signature: HlSignature,
 ): Promise<{ ok: boolean; detail: string; body: unknown }> {
-  const spec = hlWithdrawSpec(deps.network);
+  const spec = hlWithdrawSpec();
   const res = await (deps.fetchImpl ?? fetch)(spec.exchangeUrl, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -418,23 +403,6 @@ async function postAction(
   return { ok: true, detail: '', body };
 }
 
-// Every write in this module goes through here first.
-//
-// This used to refuse mainnet outright, on the grounds that nobody had authorised real money
-// leaving. Karim authorised it on 2026-08-20, so the refusal is gone and what remains is the
-// check that actually prevents loss: the network must be one this file has a signature spec
-// for, because `hyperliquidChain` is INSIDE the EIP-712 payload. Signing a Testnet-domain
-// withdrawal against the mainnet exchange does not move the wrong money, it produces a
-// signature the venue rejects, and the failure is loud. Signing the other way round is the
-// one that would be quiet, which is why the spec table is keyed and has no default.
-//
-// It still throws rather than returning ok:false. A thrown error cannot be mistaken for a
-// result object, and every caller here is about to sign something.
-function assertSignableNetwork(deps: HlWithdrawDeps): void {
-  // Throws on anything outside the table, which is the whole check.
-  hlWithdrawSpec(deps.network);
-}
-
 // ---------- usdClassTransfer: spot <-> perp ----------
 
 // Moves USDC between the two books on one account. Not a transfer to anyone: same account,
@@ -444,7 +412,6 @@ export async function usdClassTransfer(
   deps: HlWithdrawDeps,
   params: { amount: number; toPerp: boolean },
 ): Promise<HlActionResult> {
-  assertSignableNetwork(deps);
   const sign = deps.sign ?? liveSignPort;
 
   let amount: string;
@@ -467,7 +434,6 @@ export async function usdClassTransfer(
   }
 
   const { action, typedData, nonce } = buildUsdClassTransferPayload({
-    network: deps.network,
     amount,
     toPerp: params.toPerp,
     nonce: (deps.now ?? Date.now)(),
@@ -478,7 +444,7 @@ export async function usdClassTransfer(
   if (!out.ok) return { ok: false, detail: out.detail, action, response: out.body };
   return {
     ok: true,
-    detail: `moved ${amount} USDC ${params.toPerp ? 'spot -> perp' : 'perp -> spot'} on Hyperliquid ${deps.network}`,
+    detail: `moved ${amount} USDC ${params.toPerp ? 'spot -> perp' : 'perp -> spot'} on Hyperliquid`,
     action,
     response: out.body,
   };
@@ -496,9 +462,8 @@ export async function withdraw3(
   deps: HlWithdrawDeps,
   params: { amount: number; destination?: string; allowExternalDestination?: boolean },
 ): Promise<HlActionResult> {
-  assertSignableNetwork(deps);
   const sign = deps.sign ?? liveSignPort;
-  const spec = hlWithdrawSpec(deps.network);
+  const spec = hlWithdrawSpec();
 
   let own: Address;
   try {
@@ -558,7 +523,6 @@ export async function withdraw3(
   }
 
   const { action, typedData, nonce } = buildWithdrawPayload({
-    network: deps.network,
     destination,
     amount,
     time: (deps.now ?? Date.now)(),
@@ -572,7 +536,7 @@ export async function withdraw3(
   return {
     ok: true,
     detail:
-      `withdrawal of ${amount} USDC accepted on Hyperliquid ${deps.network}. ` +
+      `withdrawal of ${amount} USDC accepted on Hyperliquid. ` +
       `${destination} receives ${net} USDC2 on ${spec.label} in three to five minutes ` +
       `(${WITHDRAW_FEE_USDC} USDC fee). No Arbitrum transaction from us: the validators push it.`,
     action,

@@ -53,7 +53,6 @@ export type ManualAction = {
 
 export type HostDeps = {
   apiWalletKey: () => Promise<`0x${string}` | null>;
-  isMainnet: boolean;
   baseUrl: string;
   onEvent: (e: RunnerEvent) => void;
   killSwitch: () => boolean;
@@ -72,17 +71,15 @@ export type HostDeps = {
   // question "how much is armed right now" has an answer. Same shape as the kill-switch check
   // directly below it, and for the same reason: a refusal here happens before a child exists.
   //
-  // It became load bearing on 2026-08-20, when the runner stopped refusing mainnet outright.
-  // A guard removed and replaced with nothing is how a testnet convenience becomes a mainnet
-  // hole, so this is what replaced it.
+  // It became load bearing on 2026-08-20, when the runner stopped refusing to trade real
+  // money outright. A guard removed and replaced with nothing is a hole, so this replaced it.
   limits?: { maxArmedMandates: number; maxAggregateNotionalUsd: number };
 };
 
-// Testnet money is free, so the ceiling there only has to stop a runaway loop. Mainnet starts
-// deliberately small: this is a first run against real collateral, and the number a human is
-// most likely to regret is the one they never had to type.
-export const TESTNET_TRADING_LIMITS = { maxArmedMandates: 3, maxAggregateNotionalUsd: 2500 };
-export const MAINNET_TRADING_LIMITS = { maxArmedMandates: 3, maxAggregateNotionalUsd: 250 };
+// Deliberately small. Every run is against real collateral, and the number a human is most
+// likely to regret is the one they never had to type, so this is also the fallback when a
+// host passes no limits of its own.
+export const TRADING_LIMITS = { maxArmedMandates: 3, maxAggregateNotionalUsd: 250 };
 
 export type TradingLimits = { maxArmedMandates: number; maxAggregateNotionalUsd: number };
 
@@ -269,7 +266,6 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
       env: {
         ...process.env,
         PHOSPHOR_HL_KEY: key,
-        PHOSPHOR_HL_MAINNET: deps.isMainnet ? '1' : '0',
         PHOSPHOR_HL_URL: deps.baseUrl,
       },
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
@@ -316,7 +312,7 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
       const refusal = tradingLimitRefusal(
         [...armed.values()].map((a) => ({ id: a.mandate.id, maxNotionalUsd: a.mandate.maxNotionalUsd })),
         { id: mandate.id, maxNotionalUsd: mandate.maxNotionalUsd },
-        deps.limits ?? TESTNET_TRADING_LIMITS,
+        deps.limits ?? TRADING_LIMITS,
       );
       if (refusal !== null) return { ok: false, detail: refusal };
 

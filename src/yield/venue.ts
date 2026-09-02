@@ -9,7 +9,7 @@
 // shape does not fit here, and the honest move then is a second interface rather than an
 // optional field that half the callers forget to check.
 
-import type { ChainId, Network } from '../types.ts';
+import type { ChainId } from '../types.ts';
 
 export type VenueId = 'aave-v3';
 
@@ -71,24 +71,23 @@ export type YieldVenue = {
 
   // Which chains this venue is wired for on this network. A chain absent here is a chain the
   // venue is not reachable on, and every caller treats that as a refusal rather than a retry.
-  chains(network: Network): ChainId[];
+  chains(): ChainId[];
 
   // The stablecoin this venue takes on this chain, or null when it takes none. Null is the
   // normal answer for most chain and network pairs and is not an error.
-  asset(network: Network, chain: ChainId, symbol: string): VenueAsset | null;
+  asset(chain: ChainId, symbol: string): VenueAsset | null;
 
   // What it is paying, right now, read live.
-  rate(network: Network, chain: ChainId, symbol: string): Promise<VenueRate>;
+  rate(chain: ChainId, symbol: string): Promise<VenueRate>;
 
   // What we hold there, right now, read live.
-  position(network: Network, chain: ChainId, symbol: string, owner: string): Promise<VenuePosition>;
+  position(chain: ChainId, symbol: string, owner: string): Promise<VenuePosition>;
 
   // The calls that put money in. More than one because ERC-20 venues need an approval first,
   // and the approval is a real transaction a human should see named rather than a hidden step.
   // Returns an empty array when the allowance already covers the amount, which is why the
   // caller must not assume a fixed length.
   depositCalls(args: {
-    network: Network;
     chain: ChainId;
     symbol: string;
     owner: string;
@@ -99,7 +98,6 @@ export type YieldVenue = {
   // interest arrived between the quote and the signature, which is a real gap on a rebasing
   // token and the reason this is not expressed as a number the caller computes.
   withdrawCalls(args: {
-    network: Network;
     chain: ChainId;
     symbol: string;
     owner: string;

@@ -55,7 +55,6 @@ import { classify } from './composition.ts';
 import { applyLegs, evaluate } from './policy/engine.ts';
 import type { EngineCtx } from './policy/engine.ts';
 import { loadPolicy, savePolicy } from './policy/file.ts';
-import { gateRequired } from './policy/gate.ts';
 import { renderSentences } from './policy/render.ts';
 import { isRailKind } from './rails/index.ts';
 import type { RailDraft, RailKind, RailRegistry } from './rails/index.ts';
@@ -367,40 +366,11 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     });
 
     if (p.verdict.outcome === 'needs_approval') {
-      // A policy change is NEVER auto-approved, on any network, with the gate off or on.
-      // Karim's "no safeguards on testnet" means moving money without clicking; it cannot
-      // mean letting the agent rewrite the rules that govern it, because then the agent
-      // authors the limits AND applies them, which is the exact thing this app exists to
-      // prevent. Proven before this line existed: with the gate off an agent raised
-      // maxPerTransactionUsd from $10,000 to $999,999 and the file on disk changed.
-      // The policy file is also shared with mainnet, so a testnet convenience that can
-      // widen it is a mainnet hole wearing a testnet label.
-      // 'mandate_arm' joins policy_change for the same reason, one step further out. A policy
-      // change lets the agent rewrite the limits. A mandate lets it run inside them without a
-      // human seeing each order, which is standing authority rather than one spend. Auto
-      // approving that on a gate-off testnet would mean the agent both authors a bot and arms
-      // it, and the program is the one artifact whose whole point is that a person read it
-      // first. Editing a program means arming again, which means another click.
-      if (gateRequired(cfg) || p.kind === 'policy_change' || p.kind === 'mandate_arm') {
-        return persist(p);
-      }
-
-      // The gate is off, which only ever happens on testnet: gateRequired() ignores this
-      // flag entirely on mainnet. Karim asked for no safeguards while testing, and until
-      // now the flag only changed what the UI said, not what the app did, so the banner
-      // claimed every proposal auto-approves while they all sat pending forever. An app
-      // that misreports its own safety state is worse than one with the safety off.
-      //
-      // decidedBy is 'gate_disabled', never 'human'. The audit trail must never let anyone
-      // read this later as a person having looked at it and clicked.
-      audit.append('approved', `${p.kind} proposal ${p.id} auto-approved: approval gate disabled on ${cfg.network}`, {
-        id: p.id,
-        decidedBy: 'gate_disabled',
-        network: cfg.network,
-        totalUsd: totalUsdOf(p.draft),
-      });
-      const auto = persist({ ...p, status: 'approved', decidedBy: 'gate_disabled', decidedAt: nowIso() });
-      return executeApproved(auto);
+      // Above the click threshold nothing decides but a person. There is no exemption:
+      // no flag, no environment and no proposal kind reaches execution from here without
+      // a click on a surface the agent cannot open. The product's central claim is that
+      // an agent cannot approve its own actions, and this is the line that holds it.
+      return persist(p);
     }
 
     // allow: under the click threshold, so the policy itself is the decision maker.
@@ -847,7 +817,7 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
         ? ONECLICK_COUNTERPARTY
         : venue === 'intents-native'
           ? INTENTS_NATIVE_COUNTERPARTY
-          : resolve(() => String(deploymentFor(cfg.network, params.chain).router), problems, '');
+          : resolve(() => String(deploymentFor(params.chain).router), problems, '');
 
     const draft: SwapDraft = {
       kind: 'swap',
@@ -1084,10 +1054,10 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
 
     // Token addresses and decimals come from the venue's own verified registry, never from
     // the agent: a token id on the wire is a contract this app would then approve.
-    const token0 = resolve(() => tokenFor(cfg.network, params.chain, params.token0Symbol), problems, null);
-    const token1 = resolve(() => tokenFor(cfg.network, params.chain, params.token1Symbol), problems, null);
+    const token0 = resolve(() => tokenFor(params.chain, params.token0Symbol), problems, null);
+    const token1 = resolve(() => tokenFor(params.chain, params.token1Symbol), problems, null);
     const counterparty = resolve(
-      () => String(deploymentFor(cfg.network, params.chain).positionManager),
+      () => String(deploymentFor(params.chain).positionManager),
       problems,
       '',
     );
@@ -1138,10 +1108,10 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
       );
     }
 
-    const chain = position?.chain ?? chainsWithDeployment(cfg.network)[0] ?? 'arb';
+    const chain = position?.chain ?? chainsWithDeployment()[0] ?? 'arb';
     const from = position === undefined ? '' : ourAddress(chain, snapshot, problems);
     const counterparty =
-      position === undefined ? '' : resolve(() => String(deploymentFor(cfg.network, chain).positionManager), problems, '');
+      position === undefined ? '' : resolve(() => String(deploymentFor(chain).positionManager), problems, '');
 
     const draft: LpRemoveDraft = {
       kind: 'lp_remove',
@@ -1173,14 +1143,14 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     // Decimals come from the venue's verified table, never from the caller and never from
     // the token contract at propose time. The same rule the LP rail keeps: a decimals value
     // on the wire is a multiplier on an amount this app is about to sign for.
-    const asset = aaveAsset(cfg.network, params.chain, symbol);
+    const asset = aaveAsset(params.chain, symbol);
     if (asset === null) {
       problems.push(
-        `Aave v3 has no verified ${symbol} market on ${params.chain} for ${cfg.network}. ` +
+        `Aave v3 has no verified ${symbol} market on ${params.chain}. ` +
           'Only chains in the verified table can be proposed.',
       );
     }
-    const counterparty = resolve(() => String(marketFor(cfg.network, params.chain).pool), problems, '');
+    const counterparty = resolve(() => String(marketFor(params.chain).pool), problems, '');
 
     if (!Number.isFinite(params.amount) || params.amount <= 0) {
       problems.push(`Deposit amount must be a positive number, got ${params.amount}.`);
@@ -1214,11 +1184,11 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     const symbol = params.symbol ?? 'USDC';
     const from = ourAddress(params.chain, snapshot, problems);
 
-    const asset = aaveAsset(cfg.network, params.chain, symbol);
+    const asset = aaveAsset(params.chain, symbol);
     if (asset === null) {
-      problems.push(`Aave v3 has no verified ${symbol} market on ${params.chain} for ${cfg.network}.`);
+      problems.push(`Aave v3 has no verified ${symbol} market on ${params.chain}.`);
     }
-    const counterparty = resolve(() => String(marketFor(cfg.network, params.chain).pool), problems, '');
+    const counterparty = resolve(() => String(marketFor(params.chain).pool), problems, '');
 
     const whole = params.amount === undefined;
     if (!whole && (!Number.isFinite(params.amount) || (params.amount as number) <= 0)) {
@@ -1234,7 +1204,7 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     let positionBase = 0n;
     if (asset !== null && from !== '') {
       try {
-        positionBase = (await aavePosition(cfg.network, params.chain, symbol, from)).balanceBase;
+        positionBase = (await aavePosition(params.chain, symbol, from)).balanceBase;
       } catch (err) {
         problems.push(`Could not read the Aave position on ${params.chain}: ${errText(err)}`);
       }

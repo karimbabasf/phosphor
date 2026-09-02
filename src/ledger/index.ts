@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import type { AppConfig, ChainId, ChainStatus, Holding, LedgerSnapshot, LpPosition, Network, TransferLeg } from '../types.ts';
+import type { AppConfig, ChainId, ChainStatus, Holding, LedgerSnapshot, LpPosition, TransferLeg } from '../types.ts';
 import { loadDemoLedger } from './demo.ts';
 import * as evm from './evm.ts';
 import * as solana from './solana.ts';
@@ -22,33 +22,19 @@ type TokenTable = Record<string, Record<string, { tokenId: string; decimals: num
 
 const ALL_CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 
-// Per network, with no default. A flat mainnet table was the original shape and it was a
-// real bug: with mode live and network testnet the ledger read MAINNET balances using
-// MAINNET contracts, so a funded testnet wallet reported zero and looked simply empty
-// rather than misconfigured. The wrong answer was indistinguishable from the right one,
-// which is the worst kind.
-const RPC_URLS: Record<Network, Record<ChainId, string>> = {
-  mainnet: {
-    eth: 'https://ethereum-rpc.publicnode.com',
-    base: 'https://base-rpc.publicnode.com',
-    arb: 'https://arbitrum-one-rpc.publicnode.com',
-    sol: 'https://api.mainnet-beta.solana.com',
-    // NEAR's endpoint comes from src/chain/near.ts so the reader and the signer can never
-    // point at different worlds. NOT rpc.mainnet.near.org: that host now answers EVERY
-    // request with HTTP 429 and a notice telling you to stop using it, so each refresh threw,
-    // NEAR was marked stale and its holdings fell back to the last good read (empty on a
-    // fresh boot). A dead endpoint and an empty wallet looked identical, which is the same
-    // failure this file's network table was written to prevent. Verified 2026-08-13:
-    // fastnear answers view_account for intents.near in ~200ms.
-    near: nearChainSpec('mainnet').rpcUrl,
-  },
-  testnet: {
-    eth: 'https://ethereum-sepolia-rpc.publicnode.com',
-    base: 'https://sepolia.base.org',
-    arb: 'https://sepolia-rollup.arbitrum.io/rpc',
-    sol: 'https://api.devnet.solana.com',
-    near: nearChainSpec('testnet').rpcUrl, // rpc.testnet.near.org is deprecated the same way
-  },
+const RPC_URLS: Record<ChainId, string> = {
+  eth: 'https://ethereum-rpc.publicnode.com',
+  base: 'https://base-rpc.publicnode.com',
+  arb: 'https://arbitrum-one-rpc.publicnode.com',
+  sol: 'https://api.mainnet-beta.solana.com',
+  // NEAR's endpoint comes from src/chain/near.ts so the reader and the signer can never
+  // point at different endpoints. NOT rpc.mainnet.near.org: that host now answers EVERY
+  // request with HTTP 429 and a notice telling you to stop using it, so each refresh threw,
+  // NEAR was marked stale and its holdings fell back to the last good read (empty on a
+  // fresh boot). A dead endpoint and an empty wallet looked identical, which is the failure
+  // this file exists to prevent. Verified 2026-08-13: fastnear answers view_account for
+  // intents.near in ~200ms.
+  near: nearChainSpec().rpcUrl,
 };
 
 // Est. cost of one stable transfer out of a chain, in usd. Same constants as demo.ts, but
@@ -67,7 +53,7 @@ export type Ledger = {
   // What the intents.near verifier holds for this app. Separate from snapshot() for the
   // same reason positions() is: it is not a chain balance, a verifier outage must not mark
   // a chain stale, and it is undefined rather than empty when no read was attempted (demo
-  // mode, testnet, or no key), because "not asked" and "holds nothing" are different facts.
+  // mode, or no key), because "not asked" and "holds nothing" are different facts.
   intents(): IntentsRead | undefined;
   refresh(): Promise<LedgerSnapshot>;
   applyDemoTransfer(leg: TransferLeg): void;
@@ -78,9 +64,8 @@ function emptyChainStatus(): Record<ChainId, ChainStatus> {
   return Object.fromEntries(ALL_CHAINS.map(c => [c, { ok: true, fetchedAt }])) as Record<ChainId, ChainStatus>;
 }
 
-function loadTokenTable(network: Network): TokenTable {
-  const file = network === 'testnet' ? 'tokens.testnet.json' : 'tokens.json';
-  return JSON.parse(readFileSync(path.join(DATA_DIR, file), 'utf8')) as TokenTable;
+function loadTokenTable(): TokenTable {
+  return JSON.parse(readFileSync(path.join(DATA_DIR, 'tokens.json'), 'utf8')) as TokenTable;
 }
 
 // ---------- demo mode ----------
@@ -205,7 +190,7 @@ async function refreshEvmChain(
     // One batched round trip per address: token balances, native balance and gas price.
     const perAddress = await Promise.all(
       addresses.map(addr =>
-        evm.fetchChainState(chain, RPC_URLS[cfg.network][chain], addr, tokens[chain] ?? {}, fetchImpl),
+        evm.fetchChainState(chain, RPC_URLS[chain], addr, tokens[chain] ?? {}, fetchImpl),
       ),
     );
     const prices = await pricesPromise;
@@ -239,7 +224,7 @@ async function refreshSolChain(
   }
   try {
     const perAddress = await Promise.all(
-      addresses.map(addr => solana.fetchHoldings('sol', RPC_URLS[cfg.network].sol, addr, tokens.sol ?? {}, fetchImpl)),
+      addresses.map(addr => solana.fetchHoldings('sol', RPC_URLS.sol, addr, tokens.sol ?? {}, fetchImpl)),
     );
     const prices = await pricesPromise;
     const transferCostUsd = SOL_TRANSFER_LAMPORTS * (prices.SOL ?? 0) * SOL_TRANSFER_SIGNATURES;
@@ -267,7 +252,7 @@ async function refreshNearChain(
   }
   try {
     const perAddress = await Promise.all(
-      addresses.map(addr => near.fetchHoldings('near', RPC_URLS[cfg.network].near, addr, tokens.near ?? {}, fetchImpl)),
+      addresses.map(addr => near.fetchHoldings('near', RPC_URLS.near, addr, tokens.near ?? {}, fetchImpl)),
     );
     const prices = await pricesPromise;
     const transferCostUsd = NEAR_TRANSFER_NATIVE * (prices.NEAR ?? 0);
@@ -292,7 +277,7 @@ async function refreshPositions(cfg: AppConfig, previous: LpPosition[]): Promise
   if (cfg.addresses.evm.length === 0) return [];
   try {
     const perAddress = await Promise.all(
-      cfg.addresses.evm.map(address => readPositions(cfg.network, address, { onError: () => {} })),
+      cfg.addresses.evm.map(address => readPositions(address, { onError: () => {} })),
     );
     return perAddress.flat();
   } catch {
@@ -319,13 +304,11 @@ function intentsAccountId(cfg: AppConfig): string | null {
 }
 
 function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch): Ledger {
-  const tokens = loadTokenTable(cfg.network);
+  const tokens = loadTokenTable();
   let livePositions: LpPosition[] = [];
   // Shared client so the 186-entry token list is fetched once per process, not per refresh.
   const oneClick = oneClickClient({ fetchImpl });
-  // intents.near is mainnet only: it has never been deployed on testnet, so there is
-  // nothing there to read and asking would produce a permanent stale badge.
-  const intentsAccount = cfg.network === 'mainnet' ? intentsAccountId(cfg) : null;
+  const intentsAccount = intentsAccountId(cfg);
   let liveIntents: IntentsRead | undefined;
   let current: LedgerSnapshot = {
     holdings: [],
@@ -341,7 +324,7 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch): Ledger {
   async function refreshIntents(): Promise<IntentsRead | undefined> {
     if (intentsAccount === null) return undefined;
     const read = await fetchIntentsHoldings({
-      rpcUrl: RPC_URLS[cfg.network].near,
+      rpcUrl: RPC_URLS.near,
       accountId: intentsAccount,
       tokenList: () => oneClick.tokens(),
       fetchImpl,

@@ -52,7 +52,6 @@ export type BasicInput = {
   proposals: Proposal[];
   policyReadable: boolean;
   killSwitch: boolean;
-  gateRequired: boolean;
   agentsConnected: number;
   chainStatus: Record<ChainId, ChainStatus>;
   // Needed to tell "your own wallet" from any other address without guessing.
@@ -642,7 +641,7 @@ function refusalHeadline(proposal: Proposal): string {
 }
 
 export function buildBasic(input: BasicInput): BasicView {
-  const { wallet, proposals, policyReadable, killSwitch, gateRequired, agentsConnected } = input;
+  const { wallet, proposals, policyReadable, killSwitch, agentsConnected } = input;
 
   // --- what we are willing to say about the balance ---
   const staleChains = wallet.stale ?? [];
@@ -669,7 +668,7 @@ export function buildBasic(input: BasicInput): BasicView {
     // "all normal" is a claim about the whole app to this reader, not just about the
     // chain reads, so it is dropped whenever a warning is on screen. Otherwise the
     // page reads "all normal" directly under a red box saying everything is frozen.
-    const abnormal = killSwitch || !policyReadable || !gateRequired;
+    const abnormal = killSwitch || !policyReadable;
     placesLine = `spread across ${placeCount} ${placeCount === 1 ? 'place' : 'places'}.${abnormal ? '' : ' all normal.'}`;
   }
 
@@ -703,13 +702,6 @@ export function buildBasic(input: BasicInput): BasicView {
   } else if (working !== null) {
     tone = 'working';
     headline = 'Working on it. Please wait.';
-  } else if (!gateRequired) {
-    tone = 'broken';
-    // The warning below carries this fact in its own words. The headline says what is
-    // true of the money instead, so the screen is not the same sentence twice: on a
-    // page this spare, a restatement reads as a rendering fault rather than emphasis.
-    // Same reasoning as agentLine, and it only became visible once the screen had room.
-    headline = 'Your money is here, but this app is not protecting it.';
   } else if (settled !== null && settled.status === 'policy_refused') {
     tone = 'stopped';
     headline = refusalHeadline(settled);
@@ -729,25 +721,21 @@ export function buildBasic(input: BasicInput): BasicView {
     headline = 'Your money is safe. Nothing is happening.';
   }
 
-  // A warning is independent of tone: the gate being off matters just as much while a
-  // question is on screen as it does when the screen is quiet.
+  // A warning is independent of tone: a frozen app matters just as much while a question
+  // is on screen as it does when the screen is quiet.
   let warning: string | null = null;
   if (killSwitch) warning = 'You have frozen everything. The assistant cannot move any money.';
   else if (!policyReadable) warning = 'The safety rules cannot be read, so every move is being refused.';
-  else if (!gateRequired) warning = 'This app is set to move money without asking you first.';
 
   const agentLine = agentsConnected > 0 ? 'An assistant is connected.' : 'No assistant is connected.';
 
-  // The footer is a promise about what happens next, so it has to agree with the
-  // warning directly above it. An earlier version said "You will be asked before
-  // anything moves" on a screen whose warning said the gate was off. Two sentences
-  // contradicting each other is worse than either one alone, and worst here, because
-  // the reader has no third source to break the tie.
+  // The footer is a promise about what happens next, so it has to agree with the warning
+  // directly above it. Two sentences contradicting each other is worse than either one
+  // alone, and worst here, because the reader has no third source to break the tie.
   let footer: string;
   if (ask !== null) footer = 'Nothing moves unless you press YES.';
   else if (killSwitch) footer = 'Nothing can move while everything is frozen.';
   else if (!policyReadable) footer = 'Nothing can move until the rules are fixed.';
-  else if (!gateRequired) footer = 'You will NOT be asked before money moves.';
   else footer = 'You will be asked before anything moves.';
 
   // One sentence about money that is earning, built from the wallet's own yield rows so

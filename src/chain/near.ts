@@ -29,7 +29,6 @@
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import type { Network } from '../types.ts';
 
 // ---------- chain identity ----------
 
@@ -38,22 +37,16 @@ export type NearChainSpec = {
   explorerTx: string; // prefix; a rail returns explorerTx + hash as its evidence
 };
 
-// rpc.testnet.near.org and rpc.mainnet.near.org are DEPRECATED and now answer -429 with
-// "STOP USING IT NOW" rather than data, which is why the ledger's NEAR column was going
-// stale. FastNEAR is the replacement NEAR's own docs point at, and it needs no API key.
-const NEAR_CHAINS: Record<Network, NearChainSpec> = {
-  testnet: {
-    rpcUrl: 'https://test.rpc.fastnear.com',
-    explorerTx: 'https://testnet.nearblocks.io/txns/',
-  },
-  mainnet: {
-    rpcUrl: 'https://free.rpc.fastnear.com',
-    explorerTx: 'https://nearblocks.io/txns/',
-  },
+// rpc.mainnet.near.org is DEPRECATED and now answers -429 with "STOP USING IT NOW"
+// rather than data, which is why the ledger's NEAR column was going stale. FastNEAR is
+// the replacement NEAR's own docs point at, and it needs no API key.
+const NEAR_CHAIN: NearChainSpec = {
+  rpcUrl: 'https://free.rpc.fastnear.com',
+  explorerTx: 'https://nearblocks.io/txns/',
 };
 
-export function nearChainSpec(network: Network): NearChainSpec {
-  return NEAR_CHAINS[network];
+export function nearChainSpec(): NearChainSpec {
+  return NEAR_CHAIN;
 }
 
 // One NEAR is 10^24 yoctoNEAR. Every amount below the API boundary is a bigint of yocto:
@@ -544,7 +537,6 @@ async function recentBlockHash(spec: NearChainSpec, fetchImpl: typeof fetch): Pr
 }
 
 export type NearSendParams = {
-  network: Network;
   keysPath: string;
   receiverId: string;
   actions: NearAction[];
@@ -577,7 +569,7 @@ function failureOf(status: unknown): string | null {
 // so a rail trusting only the outer status would call a failed token transfer a success.
 // Every receipt outcome is checked, not just the transaction's own.
 export async function sendTx(params: NearSendParams): Promise<NearSendOutcome> {
-  const spec = nearChainSpec(params.network);
+  const spec = nearChainSpec();
   const fetchImpl = params.fetchImpl ?? fetch;
 
   try {
@@ -635,13 +627,12 @@ export async function sendTx(params: NearSendParams): Promise<NearSendOutcome> {
 // ---------- reads a rail needs before it signs ----------
 
 async function viewCall(
-  network: Network,
   contractId: string,
   method: string,
   args: unknown,
   options: NearRpcOptions = {},
 ): Promise<unknown> {
-  const spec = nearChainSpec(network);
+  const spec = nearChainSpec();
   const result = await rpc(
     spec.rpcUrl,
     'query',
@@ -662,11 +653,10 @@ async function viewCall(
 // Native yoctoNEAR held by an account. UNKNOWN_ACCOUNT is a balance of zero rather than a
 // failed read, the same call ledger/near.ts already makes.
 export async function nativeBalance(
-  network: Network,
   accountId: string,
   options: NearRpcOptions = {},
 ): Promise<bigint> {
-  const spec = nearChainSpec(network);
+  const spec = nearChainSpec();
   try {
     const result = await rpc(
       spec.rpcUrl,
@@ -683,12 +673,11 @@ export async function nativeBalance(
 
 // NEP-141 balance, as a bigint of base units.
 export async function ftBalance(
-  network: Network,
   tokenId: string,
   accountId: string,
   options: NearRpcOptions = {},
 ): Promise<bigint> {
-  const raw = await viewCall(network, tokenId, 'ft_balance_of', { account_id: accountId }, options);
+  const raw = await viewCall(tokenId, 'ft_balance_of', { account_id: accountId }, options);
   return BigInt(String(raw));
 }
 
@@ -696,12 +685,11 @@ export async function ftBalance(
 // transfer to an account with no storage registered fails, and the failure happens inside a
 // receipt where it is easy to misread as a transfer problem.
 export async function ftStorageRegistered(
-  network: Network,
   tokenId: string,
   accountId: string,
   options: NearRpcOptions = {},
 ): Promise<boolean> {
-  const raw = await viewCall(network, tokenId, 'storage_balance_of', { account_id: accountId }, options);
+  const raw = await viewCall(tokenId, 'storage_balance_of', { account_id: accountId }, options);
   return raw !== null && raw !== undefined;
 }
 

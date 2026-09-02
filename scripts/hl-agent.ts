@@ -31,13 +31,8 @@ import { liveSignPort, SIGNATURE_CHAIN_ID, SIGNATURE_CHAIN_ID_HEX } from '../src
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const cfg = loadConfig(root);
 
-// Follows cfg.tradingNetwork like every other trading consumer, so an approved agent wallet
-// always belongs to the account the runner is about to trade. Approving on the wrong network
-// is a silent failure: the arm succeeds, the first order is rejected as unauthorised, and the
-// reason is two layers away from where a human is looking.
-const HL_MAINNET = cfg.tradingNetwork === 'mainnet';
-const API = HL_MAINNET ? 'https://api.hyperliquid.xyz' : 'https://api.hyperliquid-testnet.xyz';
-console.error(`approving an agent wallet on Hyperliquid ${cfg.tradingNetwork} (${API})`);
+const API = 'https://api.hyperliquid.xyz';
+console.error(`approving an agent wallet on Hyperliquid (${API})`);
 
 const nameArg = process.argv.indexOf('--name');
 const agentName = nameArg > -1 ? String(process.argv[nameArg + 1]) : 'phosphor-runner';
@@ -51,7 +46,7 @@ const nonce = Date.now();
 // runner uses for orders. Getting these two the wrong way round is the documented failure.
 const action = {
   type: 'approveAgent',
-  hyperliquidChain: HL_MAINNET ? 'Mainnet' : 'Testnet',
+  hyperliquidChain: 'Mainnet',
   signatureChainId: SIGNATURE_CHAIN_ID_HEX,
   agentAddress: agentAddress.toLowerCase(),
   agentName,
@@ -75,7 +70,7 @@ const typed = {
   },
   primaryType: 'HyperliquidTransaction:ApproveAgent',
   message: {
-    hyperliquidChain: HL_MAINNET ? 'Mainnet' : 'Testnet',
+    hyperliquidChain: 'Mainnet',
     agentAddress: agentAddress.toLowerCase(),
     agentName,
     nonce: BigInt(nonce),
@@ -85,7 +80,7 @@ const typed = {
 const master = liveSignPort.address(cfg.keysPath);
 console.log(`master account : ${master}`);
 console.log(`new agent      : ${agentAddress}  (name: ${agentName})`);
-console.log(`approving on ${HL_MAINNET ? 'MAINNET' : 'testnet'}...`);
+console.log('approving...');
 
 const signature = await liveSignPort.signTypedData(cfg.keysPath, typed as never);
 
@@ -117,27 +112,20 @@ const keys = JSON.parse(fs.readFileSync(cfg.keysPath, 'utf8')) as Record<string,
 
 // Written under the NETWORK it was approved on, never over the other one.
 //
-// An agent wallet is approved by a signed action sent to one exchange, and the other network
-// has never heard of the address. A single slot meant approving on mainnet destroyed the
-// testnet agent, and pointing the app back at testnet then signed every order with a wallet
-// that venue does not recognise: rejected, with nothing saying why, because the key is present
-// and well formed and simply belongs somewhere else. That happened here on 2026-08-20.
-const agents = (keys.hyperliquidAgents ?? {}) as Record<string, unknown>;
-agents[cfg.tradingNetwork] = {
+keys.hyperliquidAgent = {
   address: agentAddress,
   privateKey: agentKey,
   name: agentName,
   approvedAt: new Date().toISOString(),
 };
-keys.hyperliquidAgents = agents;
-// The pre-2026-08-20 flat field is left exactly as it was. src/runner/keys.ts still reads it as
-// a fallback, so an install that has not re-approved keeps working, and removing it here would
-// take away a key this script did not create.
+// Any hyperliquidAgents entry an older version of this script wrote is left exactly as it was.
+// src/runner/keys.ts still reads it, so an install that has not re-approved keeps working, and
+// removing it here would take away a key this script did not create.
 
 const tmpPath = `${cfg.keysPath}.${process.pid}.tmp`;
 fs.writeFileSync(tmpPath, JSON.stringify(keys, null, 2) + '\n', { mode: 0o600 });
 fs.renameSync(tmpPath, cfg.keysPath);
 fs.chmodSync(cfg.keysPath, 0o600);
 
-console.log(`approved. key written to ${cfg.keysPath} under hyperliquidAgents.${cfg.tradingNetwork}.`);
+console.log(`approved. key written to ${cfg.keysPath} under hyperliquidAgent.`);
 console.log('this key can trade and cannot withdraw. the runner will pick it up on the next arm.');

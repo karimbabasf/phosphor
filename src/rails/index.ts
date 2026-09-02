@@ -19,7 +19,7 @@
 //      which is better than a rail reaching for an RPC and a private key that the demo
 //      user never meant to involve.
 
-import type { AppConfig, Network, Rail, SwapDraft, WriteDraft } from '../types.ts';
+import type { AppConfig, Rail, SwapDraft, WriteDraft } from '../types.ts';
 import type { TokensFile } from '../intents.ts';
 import { uniswapRails } from './uniswap.ts';
 import { chainsWithDeployment, deploymentFor } from './uniswap-abi.ts';
@@ -58,12 +58,10 @@ export type RailDeps = {
 function swapRail(deps: RailDeps): Rail<SwapDraft> {
   const uniswap = uniswapRails(deps.cfg).swap;
   const oneclick = oneClickRail({
-    network: deps.cfg.network,
     keysPath: deps.cfg.keysPath,
     tokens: deps.tokens,
   });
   const intentsNative = intentsNativeRail({
-    network: deps.cfg.network,
     keysPath: deps.cfg.keysPath,
     tokens: deps.tokens,
   });
@@ -93,17 +91,11 @@ export function createRails(deps: RailDeps): RailRegistry {
   const uniswap = uniswapRails(deps.cfg);
   const table: Record<RailKind, Rail> = {
     swap: swapRail(deps) as Rail,
-    // The TRADING network, not the wallet one: this rail funds a Hyperliquid account, and
-    // which Hyperliquid that is has its own setting. Passing cfg.network here would fund the
-    // mainnet account while the runner traded testnet, which is the exact split cfg.tradingNetwork
-    // exists to make unexpressible.
     hl_deposit: hypercoreDepositRail({
-      network: deps.cfg.tradingNetwork,
       keysPath: deps.cfg.keysPath,
       tokens: deps.tokens,
     }) as Rail,
     intents_deposit: intentsDepositRail({
-      network: deps.cfg.network,
       keysPath: deps.cfg.keysPath,
       tokens: deps.tokens,
     }) as Rail,
@@ -111,7 +103,6 @@ export function createRails(deps: RailDeps): RailRegistry {
     // so it re-derives the destination from config itself rather than trusting the draft that
     // reaches it; see the header of intents-withdraw.ts.
     intents_withdraw: intentsWithdrawRail({
-      network: deps.cfg.network,
       keysPath: deps.cfg.keysPath,
       tokens: deps.tokens,
       addresses: deps.cfg.addresses,
@@ -139,11 +130,11 @@ export function createRails(deps: RailDeps): RailRegistry {
 // The addresses come from the verified deployment tables and nowhere else. No agent input
 // reaches this list, which is what makes "the agent cannot name where the money goes" true
 // for the rails as well as for a transfer.
-export function venueAllowlist(network: Network): string[] {
+export function venueAllowlist(): string[] {
   const out = new Set<string>();
 
-  for (const chain of chainsWithDeployment(network)) {
-    const dep = deploymentFor(network, chain);
+  for (const chain of chainsWithDeployment()) {
+    const dep = deploymentFor(chain);
     out.add(dep.router.toLowerCase()); // SwapRouter02, for kind 'swap'
     out.add(dep.positionManager.toLowerCase()); // NPM, for lp_add and lp_remove
   }
@@ -154,22 +145,17 @@ export function venueAllowlist(network: Network): string[] {
 
   // The Aave v3 pools, for yield_deposit and yield_withdraw. Same rule as the Uniswap rows
   // above: the addresses come from the verified deployment table in src/yield/aave.ts and
-  // from nowhere else, so no agent input can reach this list. Empty on mainnet, where that
-  // table is deliberately empty and the rail refuses anyway.
-  for (const pool of aaveCounterparties(network)) out.add(pool);
+  // from nowhere else, so no agent input can reach this list.
+  for (const pool of aaveCounterparties()) out.add(pool);
 
   // 1Click mints a fresh deposit address per quote, so no address of its own can ever sit
   // on a static list; the venue string is the allowlist entry (see the comment on
-  // ONECLICK_COUNTERPARTY). It is listed on testnet too, where the rail is mainnet-only:
-  // the rail's own network guard is what stops a testnet send, and leaving the venue off
-  // would replace its plain "NEAR Intents has no testnet" refusal with a misleading
-  // "not on the allowlist".
   out.add(ONECLICK_COUNTERPARTY.toLowerCase());
 
   // The intents-native rail is the opposite case, and it is the reason that rail exists: its
   // counterparty is the verifier contract account itself, one fixed value for every swap
   // forever, so this really is an address on a static list rather than a venue string
-  // standing in for one that cannot be listed. Same testnet reasoning as above.
+  // standing in for one that cannot be listed.
   out.add(INTENTS_NATIVE_COUNTERPARTY.toLowerCase());
 
   // The perps venue, a third kind of entry again. A perp order hands funds to nobody: margin,

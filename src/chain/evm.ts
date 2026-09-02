@@ -15,32 +15,25 @@ import fs from 'node:fs';
 import { createPublicClient, createWalletClient, http, encodeFunctionData, parseAbi } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import type { Address, Hex, PublicClient, WalletClient } from 'viem';
-import type { ChainId, Network } from '../types.ts';
+import type { ChainId } from '../types.ts';
 
-// Chain identity per network. Kept here rather than in the rails so a rail cannot
-// quietly point itself at the wrong world.
+// Chain identity. Kept here rather than in the rails so a rail cannot quietly point
+// itself at the wrong chain.
 export type EvmChainSpec = {
   chainId: number;
   rpcUrl: string;
   explorerTx: string; // prefix; a rail returns explorerTx + hash as its evidence
 };
 
-const EVM_CHAINS: Record<Network, Partial<Record<ChainId, EvmChainSpec>>> = {
-  testnet: {
-    base: { chainId: 84532, rpcUrl: 'https://sepolia.base.org', explorerTx: 'https://sepolia.basescan.org/tx/' },
-    arb: { chainId: 421614, rpcUrl: 'https://sepolia-rollup.arbitrum.io/rpc', explorerTx: 'https://sepolia.arbiscan.io/tx/' },
-    eth: { chainId: 11155111, rpcUrl: 'https://ethereum-sepolia-rpc.publicnode.com', explorerTx: 'https://sepolia.etherscan.io/tx/' },
-  },
-  mainnet: {
-    base: { chainId: 8453, rpcUrl: 'https://base-rpc.publicnode.com', explorerTx: 'https://basescan.org/tx/' },
-    arb: { chainId: 42161, rpcUrl: 'https://arbitrum-one-rpc.publicnode.com', explorerTx: 'https://arbiscan.io/tx/' },
-    eth: { chainId: 1, rpcUrl: 'https://ethereum-rpc.publicnode.com', explorerTx: 'https://etherscan.io/tx/' },
-  },
+const EVM_CHAINS: Partial<Record<ChainId, EvmChainSpec>> = {
+  base: { chainId: 8453, rpcUrl: 'https://base-rpc.publicnode.com', explorerTx: 'https://basescan.org/tx/' },
+  arb: { chainId: 42161, rpcUrl: 'https://arbitrum-one-rpc.publicnode.com', explorerTx: 'https://arbiscan.io/tx/' },
+  eth: { chainId: 1, rpcUrl: 'https://ethereum-rpc.publicnode.com', explorerTx: 'https://etherscan.io/tx/' },
 };
 
-export function chainSpec(network: Network, chain: ChainId): EvmChainSpec {
-  const spec = EVM_CHAINS[network][chain];
-  if (spec === undefined) throw new Error(`no EVM chain spec for ${chain} on ${network}`);
+export function chainSpec(chain: ChainId): EvmChainSpec {
+  const spec = EVM_CHAINS[chain];
+  if (spec === undefined) throw new Error(`no EVM chain spec for ${chain}`);
   return spec;
 }
 
@@ -68,20 +61,20 @@ export function evmAddress(keysPath: string): Address {
 
 // ---------- clients ----------
 
-// sepolia.base.org rate-limits hard and answers with an HTML error page rather than
-// JSON when it does, which makes JSON.parse throw something unrelated to the real
-// problem. Retrying on that is the difference between a readable error and a mystery.
+// A rate-limited public RPC answers with an HTML error page rather than JSON, which
+// makes JSON.parse throw something unrelated to the real problem. Retrying on that is
+// the difference between a readable error and a mystery.
 function rpcTransport(url: string) {
   return http(url, { retryCount: 3, retryDelay: 400, timeout: 20_000 });
 }
 
-export function reader(network: Network, chain: ChainId): PublicClient {
-  const spec = chainSpec(network, chain);
+export function reader(chain: ChainId): PublicClient {
+  const spec = chainSpec(chain);
   return createPublicClient({ transport: rpcTransport(spec.rpcUrl) }) as PublicClient;
 }
 
-function writer(network: Network, chain: ChainId, keysPath: string): { client: WalletClient; account: ReturnType<typeof privateKeyToAccount>; spec: EvmChainSpec } {
-  const spec = chainSpec(network, chain);
+function writer(chain: ChainId, keysPath: string): { client: WalletClient; account: ReturnType<typeof privateKeyToAccount>; spec: EvmChainSpec } {
+  const spec = chainSpec(chain);
   const account = privateKeyToAccount(readEvmKey(keysPath));
   const client = createWalletClient({ account, transport: rpcTransport(spec.rpcUrl) });
   return { client, account, spec };
@@ -90,7 +83,6 @@ function writer(network: Network, chain: ChainId, keysPath: string): { client: W
 // ---------- the write path ----------
 
 export type SendParams = {
-  network: Network;
   chain: ChainId;
   keysPath: string;
   to: Address;
@@ -103,10 +95,10 @@ export type SendOutcome = { ok: boolean; hash?: string; explorer?: string; gasUs
 // Simulate, send, wait for the receipt, and report what actually happened. A rail never
 // broadcasts directly: it hands calldata here.
 export async function sendTx(params: SendParams): Promise<SendOutcome> {
-  const { network, chain, keysPath, to, data } = params;
-  const spec = chainSpec(network, chain);
-  const { client, account } = writer(network, chain, keysPath);
-  const pub = reader(network, chain);
+  const { chain, keysPath, to, data } = params;
+  const spec = chainSpec(chain);
+  const { client, account } = writer(chain, keysPath);
+  const pub = reader(chain);
 
   try {
     // Estimate first. A revert here costs nothing and produces the real reason string,
@@ -143,12 +135,12 @@ const ERC20 = parseAbi([
   'function transfer(address,uint256) returns (bool)',
 ]);
 
-export async function erc20Balance(network: Network, chain: ChainId, token: Address, owner: Address): Promise<bigint> {
-  return (await reader(network, chain).readContract({ address: token, abi: ERC20, functionName: 'balanceOf', args: [owner] })) as bigint;
+export async function erc20Balance(chain: ChainId, token: Address, owner: Address): Promise<bigint> {
+  return (await reader(chain).readContract({ address: token, abi: ERC20, functionName: 'balanceOf', args: [owner] })) as bigint;
 }
 
-export async function erc20Allowance(network: Network, chain: ChainId, token: Address, owner: Address, spender: Address): Promise<bigint> {
-  return (await reader(network, chain).readContract({ address: token, abi: ERC20, functionName: 'allowance', args: [owner, spender] })) as bigint;
+export async function erc20Allowance(chain: ChainId, token: Address, owner: Address, spender: Address): Promise<bigint> {
+  return (await reader(chain).readContract({ address: token, abi: ERC20, functionName: 'allowance', args: [owner, spender] })) as bigint;
 }
 
 export function erc20TransferData(to: Address, amount: bigint): Hex {
@@ -162,7 +154,6 @@ function erc20ApproveData(spender: Address, amount: bigint): Hex {
 // Approve only when the current allowance is short. An unconditional approve costs a
 // transaction every time and, at max uint, quietly widens what a spender may take.
 export async function ensureAllowance(args: {
-  network: Network;
   chain: ChainId;
   keysPath: string;
   token: Address;
@@ -170,10 +161,9 @@ export async function ensureAllowance(args: {
   needed: bigint;
 }): Promise<SendOutcome | null> {
   const owner = evmAddress(args.keysPath);
-  const current = await erc20Allowance(args.network, args.chain, args.token, owner, args.spender);
+  const current = await erc20Allowance(args.chain, args.token, owner, args.spender);
   if (current >= args.needed) return null;
   return sendTx({
-    network: args.network,
     chain: args.chain,
     keysPath: args.keysPath,
     to: args.token,

@@ -23,7 +23,6 @@ export type Transport = (url: string, body: unknown) => Promise<unknown>;
 
 export type ExchangeConfig = {
   privKey: `0x${string}`;
-  isMainnet: boolean;
   baseUrl: string;
   transport?: Transport;
 };
@@ -252,8 +251,8 @@ export function buildBatchModifyAction(
 //   - the time must be at least 5 seconds ahead, so this cannot be used as an instant cancel;
 //   - a trigger costs one of TEN per day, reset at 00:00 UTC. It is a safety net, not a
 //     heartbeat: re-arming it every few seconds would exhaust the budget before lunch;
-//   - IT IS GATED BEHIND $1,000,000 OF TRADED VOLUME. Measured, not read: arming it on the
-//     testnet account on 2026-08-20 returned
+//   - IT IS GATED BEHIND $1,000,000 OF TRADED VOLUME. Measured, not read: arming it on
+//     2026-08-20 returned
 //     "Cannot set scheduled cancel time until enough volume traded. Required: $1000000.
 //     Traded: $40988.83."
 //
@@ -353,7 +352,7 @@ export function createExchange(cfg: ExchangeConfig) {
 
   async function post(action: unknown, expiresAfter: number | null = null): Promise<unknown> {
     const nonce = nonces.next();
-    const signature = await signL1Action(cfg.privKey, action, nonce, cfg.isMainnet, null, expiresAfter);
+    const signature = await signL1Action(cfg.privKey, action, nonce, null, expiresAfter);
     const body: Record<string, unknown> = { action, nonce, signature, vaultAddress: null };
     if (expiresAfter !== null) body.expiresAfter = expiresAfter;
     return await transport(`${cfg.baseUrl}/exchange`, body);

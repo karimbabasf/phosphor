@@ -1,8 +1,8 @@
 // Loads config.json from the repo root into AppConfig, then merges config.local.json
 // over it when present. config.json is the committed template and carries no addresses;
 // config.local.json is gitignored and carries the real ones, so the remote never learns
-// which wallets these are. Env vars PHOSPHOR_PORT, PHOSPHOR_MODE, PHOSPHOR_NETWORK,
-// PHOSPHOR_DATA_DIR and PHOSPHOR_KEYS override both (ACC_* names still work), and
+// which wallets these are. Env vars PHOSPHOR_PORT, PHOSPHOR_MODE, PHOSPHOR_DATA_DIR and
+// PHOSPHOR_KEYS override both (ACC_* names still work), and
 // PHOSPHOR_CONFIG_DIR moves config.local.json off the root for the installed .app.
 //
 // dataDir is resolved relative to root and created if missing, so every other module
@@ -12,7 +12,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { AppConfig, Mode, Network } from './types.ts';
+import type { AppConfig, Mode } from './types.ts';
 
 // addresses is overridden rather than intersected: an intersection keeps the required
 // fields from AppConfig and defeats the whole point of a partial file.
@@ -67,10 +67,6 @@ function assertOutsideRepo(keysPath: string, root: string): void {
   }
 }
 
-function isNetwork(value: unknown): value is Network {
-  return value === 'testnet' || value === 'mainnet';
-}
-
 // Where config.local.json lives. Normally it sits beside config.json at the root, and that
 // is still the answer for a repo checkout. Installed, the root is inside a read-only .app
 // bundle, so the writable half has to move: PHOSPHOR_CONFIG_DIR points at it. config.json
@@ -92,31 +88,6 @@ export function loadConfig(root?: string): AppConfig {
 
   const mode = (env('PHOSPHOR_MODE', 'ACC_MODE') as Mode | undefined) ?? parsed.mode ?? 'live';
 
-  const networkRaw = env('PHOSPHOR_NETWORK') ?? parsed.network;
-  if (!isNetwork(networkRaw)) {
-    // No default. Guessing 'mainnet' would point real rails at real money; guessing
-    // 'testnet' would silently make a mainnet deployment fake. Both are worse than stopping.
-    throw new Error(`config network must be "testnet" or "mainnet" (got ${JSON.stringify(networkRaw)})`);
-  }
-  const network: Network = networkRaw;
-
-  // The venue the TRADING half talks to, which is a separate question from the chains the
-  // wallet half holds money on.
-  //
-  // These were once the same value, and then they were two hardcoded constants, and both
-  // were wrong for the same reason: what breaks the app is not which network trading uses,
-  // it is the panel a human reads and the runner that trades disagreeing about it. main.ts
-  // derived its URLs from `network` while the runner refused mainnet outright, so a mandate
-  // could be written against a mainnet account that held nothing and never fire. The fix is
-  // not another constant. It is ONE value that every consumer takes, so they cannot drift.
-  //
-  // It follows `network` unless it is set, because an app pointed at mainnet money whose
-  // trading account is on testnet is the split all over again, just quieter.
-  const tradingRaw = env('PHOSPHOR_TRADING_NETWORK') ?? parsed.tradingNetwork ?? networkRaw;
-  if (!isNetwork(tradingRaw)) {
-    throw new Error(`config tradingNetwork must be "testnet" or "mainnet" (got ${JSON.stringify(tradingRaw)})`);
-  }
-  const tradingNetwork: Network = tradingRaw;
 
   const portRaw = env('PHOSPHOR_PORT', 'ACC_PORT');
   const port = portRaw !== undefined ? Number(portRaw) : (parsed.port ?? 4177);
@@ -129,15 +100,6 @@ export function loadConfig(root?: string): AppConfig {
 
   const cfg: AppConfig = {
     mode,
-    network,
-    tradingNetwork,
-    // Mainnet ignores this entirely (see policy/gate.ts); it is read only on testnet.
-    // The env override exists so the test harnesses can boot the real app with the gate ON
-    // and still exercise the human-approval flow, which is the thing most worth testing,
-    // while the shipped config.json runs testnet with it off.
-    approvalGate: env('PHOSPHOR_APPROVAL_GATE') !== undefined
-      ? env('PHOSPHOR_APPROVAL_GATE') !== 'false'
-      : (parsed.approvalGate ?? true),
     port,
     addresses: {
       evm: parsed.addresses?.evm ?? [],

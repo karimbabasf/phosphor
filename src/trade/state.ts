@@ -23,7 +23,6 @@
 import type { Highlight, OverlayName, TradeViewState } from './view.ts';
 import type { Mandate } from '../strategy/envelope.ts';
 import type { Program } from '../strategy/grammar.ts';
-import type { Network } from '../types.ts';
 import { renderProgram } from '../strategy/render.ts';
 import { DUST_USD, fundingBlock, type FundingBlock } from './funding.ts';
 import { liquidationPrice } from '../hl/liquidation.ts';
@@ -217,7 +216,6 @@ export type TradePayload = {
   // Hyperliquid this is, whose account, how much of the collateral is sitting on the spot
   // side where a mandate cannot reach it, and what it costs to send more.
   collateral: {
-    network: Network;
     address: string | null;
     // The perp book's own equity, straight from clearinghouseState and unreinterpreted.
     perpUsd: number | null;
@@ -381,8 +379,8 @@ function positionFrom(p: RawPosition, ctx: MarketCtx | null, atr: number | null)
   // while the third is blank would read as a data glitch instead of the truth, which is that the
   // venue has not published a liquidation price for this position.
   //
-  // They go dark for a second reason too: a wall that exists and cannot be reached. Live testnet,
-  // 0.01 SOL sold at 74.914 in a unified account whose 887 dollars of spot USDC back 88 cents of
+  // They go dark for a second reason too: a wall that exists and cannot be reached. Measured
+  // live: 0.01 SOL sold at 74.914 in a unified account whose 887 dollars of spot USDC back 88 cents of
   // notional, and the venue truthfully answered 84636.71 against a mark of 87.738. The panel then
   // truthfully rendered it 96365 percent away. Neither number is wrong and together they read as
   // a broken screen. A distance is something a human acts on and nobody acts on 96365 percent, so
@@ -567,7 +565,6 @@ function fillFrom(f: RawFill, mandates: MandateStatus[]): Fill {
 // nobody has funded. This block exists to say that second thing out loud.
 function collateralFrom(
   s: AccountSnapshot | null,
-  network: Network,
   address: string | null,
 ): TradePayload['collateral'] {
   const perpUsd = s === null ? null : finite(s.perpValueUsd);
@@ -578,12 +575,11 @@ function collateralFrom(
   // books while suppressing the one line that says what to do about an empty account.
   const holds = (n: number | null): boolean => n !== null && Math.abs(n) >= DUST_USD;
   return {
-    network,
     address: address === null || address === '' ? null : address,
     perpUsd,
     spotUsdcUsd,
     funded: answered ? holds(perpUsd) || holds(spotUsdcUsd) : null,
-    funding: fundingBlock(network),
+    funding: fundingBlock(),
   };
 }
 
@@ -908,7 +904,6 @@ export function buildTradePayload(deps: {
   // Which Hyperliquid this account lives on, and which account. Both come from the app's
   // config rather than from the venue, because a screen that asked the venue which network it
   // was talking to would be asking the thing it is trying to check.
-  network: Network;
   address: string;
 }): TradePayload {
   const snapshot = deps.feed.account();
@@ -976,7 +971,7 @@ export function buildTradePayload(deps: {
     noteSource: deps.view.noteSource,
     venue: venueFrom(status, snapshot, deps.nowMs),
     account,
-    collateral: collateralFrom(snapshot, deps.network, deps.address),
+    collateral: collateralFrom(snapshot, deps.address),
     markets,
     positions,
     orders,

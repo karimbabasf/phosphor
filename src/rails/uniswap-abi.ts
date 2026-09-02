@@ -14,7 +14,7 @@
 
 import { parseAbi } from 'viem';
 import type { Address } from 'viem';
-import type { ChainId, Network } from '../types.ts';
+import type { ChainId } from '../types.ts';
 
 // ---------- deployments ----------
 
@@ -30,116 +30,93 @@ export type UniswapDeployment = {
 // a rail sends money to a contract that is not what its name says, so `deploymentFor` throws
 // for anything absent rather than guessing.
 //
-// Verified 2026-08-12 by eth_getCode plus an identity check on each side:
-//   testnet base  NPM.factory() -> 0x4752ba5D...  (matches), factory tick spacings 1/10/60/200
-//   mainnet base  NPM.factory() -> 0x33128a8f...  (matches)
-// Note 0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24 is Base Sepolia's factory AND Base
-// mainnet's SwapRouter02: same deployer and nonce on two chains. Addresses do not mean
-// the same contract across chains, which is why each row was checked by behaviour.
-// Arbitrum Sepolia is the DEFAULT for testnet, added by the lead 2026-08-12 and verified the
-// same way. Not a technical preference: no testnet faucet anywhere is scriptable, so the
-// number of chains Karim has to fund by hand is the thing worth minimising. The Hyperliquid
-// deposit rail is on Arbitrum Sepolia, so putting swap and LP there too means ONE funding
-// step for all three features, and the swap rail can then produce the USDC the LP rail needs.
+// Verified by eth_getCode plus an identity check on each side: ask the position manager,
+// the quoter and the router which factory they belong to, and refuse to believe an address
+// that does not answer with the factory this table lists.
 //
-// Verified 2026-08-12 by eth_getCode plus the same factory() identity check:
-//   factory         0x248AB79B...  24,535 B, feeAmountTickSpacing 100/500/3000/10000 -> 1/10/60/200
-//   positionManager 0x6b2937Bd...  24,384 B, factory() -> 0x248ab79b...  MATCH
-//   quoter          0x2779a0CC...   8,273 B, factory() -> 0x248ab79b...  MATCH
-//   router          0x101F443B...  24,497 B, factory() -> 0x248ab79b...  MATCH
-//   ethUsdFeed      0xd30e2101...  Chainlink, decimals 8, live
-// Pool in use: getPool(USDC, WETH, 3000) -> 0x66eeab70ac52459dd74c6ad50d578ef76a441bbf,
-// holding 8,808 USDC + 0.7595 WETH. token0 = USDC (it sorts below WETH).
-const DEPLOYMENTS: Record<Network, Partial<Record<ChainId, UniswapDeployment>>> = {
-  testnet: {
-    arb: {
-      factory: '0x248AB79Bbb9bC29bB72f7Cd42F17e054Fc40188e',
-      positionManager: '0x6b2937Bde17889EDCf8fbD8dE31C3C2a70Bc4d65',
-      quoter: '0x2779a0CC1c3e0E44D2542EC3e79e3864Ae93Ef0B',
-      router: '0x101F443B4d1b059569D643917553c771E1b9663E',
-      ethUsdFeed: '0xd30e2101a97dcbAeBCBC04F14C3f624E67A35165',
-    },
-    base: {
-      factory: '0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24',
-      positionManager: '0x27F971cb582BF9E50F397e4d29a5C7A34f11faA2',
-      quoter: '0xC5290058841028F1614F3A6F0F5816cAd0df5E27',
-      router: '0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4',
-      ethUsdFeed: '0x4aDC67696bA383F43DD60A9e78F2C97Fbbfc7cb1',
-    },
+//   base  NPM.factory() -> 0x33128a8f...  MATCH  (verified 2026-08-12)
+//   arb   read at Arbitrum One block 500799790 on 2026-09-01:
+//         positionManager.factory() -> 0x1F98431c8aD98523631AE4a59f267346ea31F984  MATCH
+//         quoter.factory()          -> 0x1F98431c8aD98523631AE4a59f267346ea31F984  MATCH
+//         router.factory()          -> 0x1F98431c8aD98523631AE4a59f267346ea31F984  MATCH
+//         ethUsdFeed 0x639Fe6ab...  Chainlink, description "ETH / USD", decimals 8, live
+//
+// Note 0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24 is Base mainnet's SwapRouter02 and also
+// another chain's factory: same deployer and nonce on two chains. Addresses do not mean the
+// same contract across chains, which is why each row was checked by behaviour.
+//
+// Arbitrum carries the Hyperliquid deposit rail, so swap and LP sit there too: the swap rail
+// can then produce exactly the USDC the deposit rail consumes with no bridge in between.
+const DEPLOYMENTS: Partial<Record<ChainId, UniswapDeployment>> = {
+  arb: {
+    factory: '0x1F98431c8aD98523631AE4a59f267346ea31F984',
+    positionManager: '0xC36442b4a4522E871399CD717aBDD847Ab11FE88',
+    quoter: '0x61fFE014bA17989E743c5F6cB21bF9697530B21e',
+    router: '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45',
+    ethUsdFeed: '0x639Fe6ab55C921f74e7fac1ee960C0B6293ba612',
   },
-  mainnet: {
-    base: {
-      factory: '0x33128a8fC17869897dcE68Ed026d694621f6FDfD',
-      positionManager: '0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1',
-      quoter: '0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a',
-      router: '0x2626664c2603336E57B271c5C0b26F421741e481',
-      ethUsdFeed: '0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70',
-    },
+  base: {
+    factory: '0x33128a8fC17869897dcE68Ed026d694621f6FDfD',
+    positionManager: '0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1',
+    quoter: '0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a',
+    router: '0x2626664c2603336E57B271c5C0b26F421741e481',
+    ethUsdFeed: '0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70',
   },
 };
 
-export function deploymentFor(network: Network, chain: ChainId): UniswapDeployment {
-  const found = DEPLOYMENTS[network][chain];
+export function deploymentFor(chain: ChainId): UniswapDeployment {
+  const found = DEPLOYMENTS[chain];
   if (found === undefined) {
-    const known = Object.keys(DEPLOYMENTS[network]).join(', ') || 'none';
-    throw new Error(`uniswap-v3 has no verified deployment for ${chain} on ${network} (verified: ${known})`);
+    const known = chainsWithDeployment().join(', ') || 'none';
+    throw new Error(`uniswap-v3 has no verified deployment for ${chain} (verified: ${known})`);
   }
   return found;
 }
 
-// Every chain this venue can be read or written on for a given network. readPositions
-// sweeps these, so a position minted on one chain does not vanish from the wallet when
-// the default chain for new drafts moves to another.
-export function chainsWithDeployment(network: Network): ChainId[] {
-  return Object.keys(DEPLOYMENTS[network]) as ChainId[];
+// Every chain this venue can be read or written on. readPositions sweeps these, so a
+// position minted on one chain does not vanish from the wallet when the default chain for
+// new drafts moves to another.
+export function chainsWithDeployment(): ChainId[] {
+  return Object.keys(DEPLOYMENTS) as ChainId[];
 }
 
 // ---------- tokens ----------
 
 export type TokenInfo = { symbol: string; address: Address; decimals: number };
 
-// The venue's own registry rather than data/tokens.json, because an LP rail needs the two
-// things that file does not carry: testnet addresses, and WETH. Symbols are matched
-// case-insensitively by tokenFor().
-const TOKENS: Record<Network, Partial<Record<ChainId, TokenInfo[]>>> = {
-  testnet: {
-    // Arbitrum Sepolia. Decimals verified behaviourally rather than read from a doc: at 6 and
-    // 18 respectively, balanceOf on the 0.3% pool yields 8,808.22 USDC and 0.7595 WETH, which
-    // are sane numbers. Wrong decimals would have produced absurd ones.
-    // NOTE this USDC is Circle's testnet USDC and is NOT the same token as Hyperliquid's
-    // USDC2, which also lives on Arbitrum Sepolia. Same chain, two different dollars.
-    arb: [
-      { symbol: 'USDC', address: '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d', decimals: 6 },
-      { symbol: 'WETH', address: '0x980B62Da83eFf3D4576C647993b0c1D7faf17c73', decimals: 18 },
-    ],
-    base: [
-      { symbol: 'USDC', address: '0x036CbD53842c5426634e7929541eC2318f3dCF7e', decimals: 6 },
-      { symbol: 'WETH', address: '0x4200000000000000000000000000000000000006', decimals: 18 },
-    ],
-  },
-  mainnet: {
-    base: [
-      { symbol: 'USDC', address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', decimals: 6 },
-      { symbol: 'WETH', address: '0x4200000000000000000000000000000000000006', decimals: 18 },
-      { symbol: 'DAI', address: '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb', decimals: 18 },
-    ],
-  },
+// The venue's own registry rather than data/tokens.json, because an LP rail needs the one
+// thing that file does not carry: WETH. Symbols are matched case-insensitively by
+// tokenFor(). Decimals were read from each contract, not from a doc.
+//
+// NOTE the USDC listed on arb is Circle's native USDC and is NOT the same token as
+// Hyperliquid's bridged dollar on the same chain. One chain, two different dollars.
+const TOKENS: Partial<Record<ChainId, TokenInfo[]>> = {
+  arb: [
+    { symbol: 'USDC', address: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831', decimals: 6 },
+    { symbol: 'WETH', address: '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1', decimals: 18 },
+    { symbol: 'DAI', address: '0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1', decimals: 18 },
+  ],
+  base: [
+    { symbol: 'USDC', address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', decimals: 6 },
+    { symbol: 'WETH', address: '0x4200000000000000000000000000000000000006', decimals: 18 },
+    { symbol: 'DAI', address: '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb', decimals: 18 },
+  ],
 };
 
-function tokensFor(network: Network, chain: ChainId): TokenInfo[] {
-  return TOKENS[network][chain] ?? [];
+function tokensFor(chain: ChainId): TokenInfo[] {
+  return TOKENS[chain] ?? [];
 }
 
 // 'ETH' is deliberately NOT an alias for WETH. This rail moves the ERC-20; it does not
 // wrap. Silently swapping one for the other produces "insufficient balance" against a
 // wallet that visibly holds ETH, which is the most confusing error this rail could give.
-export function tokenFor(network: Network, chain: ChainId, symbol: string): TokenInfo {
-  const list = tokensFor(network, chain);
+export function tokenFor(chain: ChainId, symbol: string): TokenInfo {
+  const list = tokensFor(chain);
   const found = list.find(t => t.symbol.toLowerCase() === symbol.toLowerCase());
   if (found === undefined) {
     const known = list.map(t => t.symbol).join(', ') || 'none';
     const hint = symbol.toLowerCase() === 'eth' ? ' Native ETH must be wrapped to WETH first; this rail does not wrap.' : '';
-    throw new Error(`uniswap-v3 does not know token ${symbol} on ${chain} ${network} (known: ${known}).${hint}`);
+    throw new Error(`uniswap-v3 does not know token ${symbol} on ${chain} (known: ${known}).${hint}`);
   }
   return found;
 }

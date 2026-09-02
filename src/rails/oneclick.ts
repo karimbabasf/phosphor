@@ -10,12 +10,6 @@
 // authorisation from us beyond seeing the money. Verified unauthenticated against the live
 // API on 2026-08-12; notes in scratchpad/research-near.md.
 //
-// THIS RAIL IS MAINNET ONLY, and the guard is not a preference. There is no testnet:
-// every candidate host is NXDOMAIN, intents.testnet has never had code deployed, and the
-// whole 62-page doc set contains zero occurrences of "testnet". A testnet mode here could
-// only be a fake host and a pretend swap, so execute() refuses on any other network before
-// it does anything else.
-//
 // Failure modes this rail has to survive, in the order they bite:
 //   - The deposit address is chosen by the remote API and we cannot prove who owns it.
 //     That trust is inherent to the protocol. What we can do is check the address is well
@@ -41,16 +35,9 @@ import {
   sendTx as nearSendTx,
 } from '../chain/near.ts';
 import type { NearSendOutcome, NearSendParams } from '../chain/near.ts';
-import type { ChainId, Network, Rail, RailResult, SimulationResult, SwapDraft } from '../types.ts';
+import type { ChainId, Rail, RailResult, SimulationResult, SwapDraft } from '../types.ts';
 import { ONECLICK_TERMINAL, assetIdFor, oneClickClient, oneLine, toBaseUnits } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickStatus, TokensFile } from '../intents.ts';
-
-// The message a human sees if the app is pointed anywhere but mainnet. It names the
-// alternative, because "not supported" without a next step just gets worked around.
-export const NO_TESTNET_REASON =
-  'NEAR Intents has no testnet: there is no 1Click host to call, and the verifier contract ' +
-  'has never been deployed on NEAR testnet, so this rail runs on mainnet only. To exercise a ' +
-  'swap without mainnet money, use the Uniswap v3 rail against an anvil mainnet fork.';
 
 // The chains this rail can deposit from, by signer family.
 //
@@ -116,17 +103,16 @@ export const liveEvmPort: SwapEvmPort = {
 export type SwapNearPort = {
   accountId(keysPath: string): string;
   send(params: NearSendParams): Promise<NearSendOutcome>;
-  storageRegistered(network: Network, tokenId: string, accountId: string): Promise<boolean>;
+  storageRegistered(tokenId: string, accountId: string): Promise<boolean>;
 };
 
 const liveNearPort: SwapNearPort = {
   accountId: nearAccountId,
   send: nearSendTx,
-  storageRegistered: (network, tokenId, accountId) => ftStorageRegistered(network, tokenId, accountId),
+  storageRegistered: ftStorageRegistered,
 };
 
 export type OneClickRailDeps = {
-  network: Network;
   keysPath: string;
   tokens: TokensFile; // data/tokens.json: chain -> symbol -> { tokenId, decimals }
   evm?: SwapEvmPort;
@@ -159,7 +145,7 @@ function baseUnits(value: unknown, field: string): bigint {
 }
 
 export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
-  const { network, keysPath, tokens } = deps;
+  const { keysPath, tokens } = deps;
   const evm = deps.evm ?? liveEvmPort;
   const near = deps.near ?? liveNearPort;
   const client = deps.client ?? oneClickClient({ fetchImpl: deps.fetchImpl });
@@ -318,7 +304,6 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
   async function depositTransfer(draft: SwapDraft, p: Plan, depositAddress: string): Promise<Deposited> {
     if (p.family === 'evm') {
       return evm.send({
-        network,
         chain: draft.chain,
         keysPath,
         to: p.originToken as Address,
@@ -330,7 +315,7 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
     // panics, the tokens bounce, and the transaction is still paid for. The deposit address
     // is freshly minted by the solver, so this is a live question rather than a formality.
     // Asking before signing turns a confusing on-chain failure into a sentence.
-    const registered = await near.storageRegistered(network, p.originToken, depositAddress);
+    const registered = await near.storageRegistered(p.originToken, depositAddress);
     if (!registered) {
       return {
         ok: false,
@@ -341,7 +326,6 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
     }
 
     return near.send({
-      network,
       keysPath,
       receiverId: p.originToken,
       actions: [
@@ -387,16 +371,6 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
         return { ok: false, summary: [`REFUSED: ${joined}`, ...lines].join('\n'), error: joined };
       }
 
-      if (network !== 'mainnet') {
-        // The pricing above is real and worth showing, but approving this would hand the
-        // human a proposal that cannot run. Say so before they click, not after.
-        return {
-          ok: false,
-          summary: [`CANNOT EXECUTE on ${network}: ${NO_TESTNET_REASON}`, ...lines].join('\n'),
-          error: NO_TESTNET_REASON,
-        };
-      }
-
       lines.push('execution sends the input to a deposit address the solver picks; only the amounts above are guaranteed');
       return { ok: true, summary: lines.join('\n') };
     } catch (err) {
@@ -406,10 +380,6 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
   }
 
   async function execute(draft: SwapDraft): Promise<RailResult> {
-    // First line, before any network call, any key read and any quote. There is no host to
-    // point at on a testnet, so there is nothing to attempt.
-    if (network !== 'mainnet') throw new Error(NO_TESTNET_REASON);
-
     const p = await plan(draft);
 
     // The draft names the wallet a human approved. If the configured key is a different

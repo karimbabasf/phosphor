@@ -14,28 +14,20 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import type { ChainId, LogEvent, Network, Proposal, WriteDraft } from './types.ts';
+import type { ChainId, DecidedBy, LogEvent, Proposal, WriteDraft } from './types.ts';
 import { chainSpec, reader } from './chain/evm.ts';
 
 // ---------- explorers ----------
 
-// Per network, per chain: where a hash and an address are looked at. The EVM tx prefixes
-// come from src/chain/evm.ts so a rail's evidence link and this table can never disagree;
-// only the non-EVM chains and the address forms are stated here.
-const NON_EVM: Record<Network, Partial<Record<TxPlace, { tx: string; address: string }>>> = {
-  mainnet: {
-    sol: { tx: 'https://solscan.io/tx/', address: 'https://solscan.io/account/' },
-    near: { tx: 'https://nearblocks.io/txns/', address: 'https://nearblocks.io/address/' },
-    intents: { tx: 'https://nearblocks.io/txns/', address: 'https://nearblocks.io/address/' },
-    // The venue's own explorer, keyed by address. A HyperCore credit has no tx hash of ours.
-    hyperliquid: { tx: 'https://app.hyperliquid.xyz/explorer/tx/', address: 'https://app.hyperliquid.xyz/explorer/address/' },
-  },
-  testnet: {
-    sol: { tx: 'https://solscan.io/tx/', address: 'https://solscan.io/account/' },
-    near: { tx: 'https://testnet.nearblocks.io/txns/', address: 'https://testnet.nearblocks.io/address/' },
-    intents: { tx: 'https://testnet.nearblocks.io/txns/', address: 'https://testnet.nearblocks.io/address/' },
-    hyperliquid: { tx: 'https://app.hyperliquid-testnet.xyz/explorer/tx/', address: 'https://app.hyperliquid-testnet.xyz/explorer/address/' },
-  },
+// Per chain: where a hash and an address are looked at. The EVM tx prefixes come from
+// src/chain/evm.ts so a rail's evidence link and this table can never disagree; only the
+// non-EVM chains and the address forms are stated here.
+const NON_EVM: Partial<Record<TxPlace, { tx: string; address: string }>> = {
+  sol: { tx: 'https://solscan.io/tx/', address: 'https://solscan.io/account/' },
+  near: { tx: 'https://nearblocks.io/txns/', address: 'https://nearblocks.io/address/' },
+  intents: { tx: 'https://nearblocks.io/txns/', address: 'https://nearblocks.io/address/' },
+  // The venue's own explorer, keyed by address. A HyperCore credit has no tx hash of ours.
+  hyperliquid: { tx: 'https://app.hyperliquid.xyz/explorer/tx/', address: 'https://app.hyperliquid.xyz/explorer/address/' },
 };
 
 // Two members that are not chains. 'intents' is a balance inside the verifier contract, and
@@ -46,33 +38,33 @@ export type TxPlace = ChainId | 'intents' | 'hyperliquid';
 
 // An EVM explorer's address page is its tx page with one path segment swapped. Deriving it
 // keeps one table rather than two that can drift apart.
-function evmExplorer(network: Network, chain: ChainId): { tx: string; address: string } | null {
+function evmExplorer(chain: ChainId): { tx: string; address: string } | null {
   try {
-    const spec = chainSpec(network, chain);
+    const spec = chainSpec(chain);
     return { tx: spec.explorerTx, address: spec.explorerTx.replace(/\/tx\/$/, '/address/') };
   } catch {
     return null;
   }
 }
 
-function explorerFor(network: Network, place: TxPlace): { tx: string; address: string } | null {
-  const nonEvm = NON_EVM[network][place];
+function explorerFor(place: TxPlace): { tx: string; address: string } | null {
+  const nonEvm = NON_EVM[place];
   if (nonEvm !== undefined) return nonEvm;
-  return evmExplorer(network, place as ChainId);
+  return evmExplorer(place as ChainId);
 }
 
-export function explorerTxUrl(network: Network, place: TxPlace, hash: string): string | null {
-  const table = explorerFor(network, place);
+export function explorerTxUrl(place: TxPlace, hash: string): string | null {
+  const table = explorerFor(place);
   if (table === null || hash.length === 0) return null;
   return table.tx + hash;
 }
 
-export function explorerAddressUrl(network: Network, place: TxPlace, address: string): string | null {
+export function explorerAddressUrl(place: TxPlace, address: string): string | null {
   // A balance inside intents.near is not an account any explorer has a page for: it is a
   // row in the verifier's own state, keyed by an address that belongs to another chain.
   // No link is the honest answer; `npm run intents-balance` is where that is checked.
   if (place === 'intents') return null;
-  const table = explorerFor(network, place);
+  const table = explorerFor(place);
   if (table === null || address.length === 0) return null;
   // A NEAR account id is a name, not a hash, and nearblocks resolves it on the same path.
   return table.address + address;
@@ -128,7 +120,10 @@ export type TxEntry = {
   from: TxParty | null;
   to: TxParty | null;
   counterparty: TxParty | null;
-  decidedBy: 'human' | 'policy' | 'gate_disabled' | null;
+  // The read side of the audit history. 'gate_disabled' is a retired value that no code
+  // path writes any more; records written before the approval gate became unconditional
+  // still carry it and must render rather than throw.
+  decidedBy: DecidedBy | 'gate_disabled' | null;
   hashes: TxHash[];
   // The venue's own fee, taken from the quote the human approved. Not gas: an intent pays a
   // solver, a swap pays a pool, and neither shows up in a gas figure.
@@ -212,7 +207,6 @@ function venueFeeOf(summary: string | undefined): number | null {
 }
 
 function party(
-  network: Network,
   label: string,
   address: string | undefined,
   place: TxPlace,
@@ -223,7 +217,7 @@ function party(
     label,
     address,
     place,
-    url: explorerAddressUrl(network, place, address),
+    url: explorerAddressUrl(place, address),
     self: selfAddresses.has(address.toLowerCase()),
   };
 }
@@ -426,7 +420,6 @@ export function txidsFromLog(events: LogEvent[]): Map<string, string[]> {
 export type BuildParams = {
   proposals: Proposal[];
   events: LogEvent[];
-  network: Network;
   selfAddresses: string[];
   // Hash -> gas, from the enricher. Absent keys read as "not looked up yet", never as "free".
   gas?: Map<string, TxGas>;
@@ -435,7 +428,7 @@ export type BuildParams = {
 };
 
 export function buildTransactions(params: BuildParams): TxEntry[] {
-  const { proposals, events, network } = params;
+  const { proposals, events } = params;
   const fromLog = txidsFromLog(events);
   const selfAddresses = new Set(params.selfAddresses.map(a => a.toLowerCase()));
   const gas = params.gas ?? new Map<string, TxGas>();
@@ -459,7 +452,7 @@ export function buildTransactions(params: BuildParams): TxEntry[] {
         hash,
         place,
         kind: seen.kind,
-        url: seen.kind === 'intent' ? null : explorerTxUrl(network, place, hash),
+        url: seen.kind === 'intent' ? null : explorerTxUrl(place, hash),
         gas: receipt,
         gasPending: seen.kind === 'chain' && receipt === null && !tried.has(gasKey(hash)),
       };
@@ -478,9 +471,9 @@ export function buildTransactions(params: BuildParams): TxEntry[] {
       received: receivedOf(p.draft, detail),
       note: p.draft.kind === 'lp_remove' ? `${round(p.draft.liquidityPct * 100)}% of the position` : null,
       valueUsd: usdOf(p.draft),
-      from: party(network, 'from', sides.from, sides.place, selfAddresses),
-      to: party(network, 'to', sides.to, sides.toPlace, selfAddresses),
-      counterparty: party(network, 'via', sides.counterparty, sides.place, selfAddresses),
+      from: party('from', sides.from, sides.place, selfAddresses),
+      to: party('to', sides.to, sides.toPlace, selfAddresses),
+      counterparty: party('via', sides.counterparty, sides.place, selfAddresses),
       decidedBy: p.decidedBy ?? null,
       hashes,
       venueFeeUsd: venueFeeOf(p.simulation?.summary),
@@ -521,7 +514,7 @@ const WEI = 1e18;
 
 // A mined receipt never changes, so the cache is write-once and lives across restarts. It
 // holds nothing private: public hashes and the gas they burned.
-export function createGasCache(params: { network: Network; dataDir: string }): GasCache {
+export function createGasCache(params: { dataDir: string }): GasCache {
   const filePath = path.join(params.dataDir, 'tx-gas.json');
   const cache = new Map<string, TxGas>();
   const failed = new Set<string>();
@@ -550,7 +543,7 @@ export function createGasCache(params: { network: Network; dataDir: string }): G
       const symbol = NATIVE_SYMBOL[place];
       if (symbol === undefined) continue;
       try {
-        const receipt = await reader(params.network, place as ChainId).getTransactionReceipt({ hash: hash as `0x${string}` });
+        const receipt = await reader(place as ChainId).getTransactionReceipt({ hash: hash as `0x${string}` });
         const feeNative = Number(receipt.gasUsed * receipt.effectiveGasPrice) / WEI;
         const price = priceOf(symbol);
         cache.set(gasKey(hash), {

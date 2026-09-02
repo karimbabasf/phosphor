@@ -22,7 +22,7 @@ import { hyperliquidSource } from './hyperliquid.ts';
 import { createMarketData } from './market/index.ts';
 import { createProposalService } from './proposals.ts';
 import { createAgents } from './agents.ts';
-import { MAINNET_TRADING_LIMITS, TESTNET_TRADING_LIMITS, createRunnerHost } from './runner/host.ts';
+import { TRADING_LIMITS, createRunnerHost } from './runner/host.ts';
 import { createAllocator } from './yield/allocator.ts';
 import { readApiWalletKey } from './runner/keys.ts';
 import { createTradeService } from './trade/service.ts';
@@ -64,7 +64,7 @@ if (collected.length > 0) {
 // have curated it, and an app whose whole claim is that software does not change the
 // rules behind your back cannot change the rules behind your back. A missing venue is
 // named once in the audit log and left alone.
-const venues = venueAllowlist(cfg.network);
+const venues = venueAllowlist();
 if (!fs.existsSync(path.join(cfg.dataDir, 'policy.json'))) {
   const seeded = defaultPolicy();
   seeded.outbound.destinationAllowlist = venues;
@@ -72,7 +72,7 @@ if (!fs.existsSync(path.join(cfg.dataDir, 'policy.json'))) {
   savePolicy(cfg.dataDir, seeded);
   audit.append(
     'policy_changed',
-    `seeded default policy on first boot, allowing ${venues.length} rail venue(s) on ${cfg.network}`,
+    `seeded default policy on first boot, allowing ${venues.length} rail venue(s)`,
     { destinationAllowlist: venues },
   );
 } else {
@@ -124,27 +124,15 @@ const signer = stubSigner();
 // The key it hands the child is the API wallet, never the master. Reading it lazily, at arm
 // time rather than at boot, means an install with no agent approved yet starts fine and fails
 // with a sentence that says what to do instead of failing at startup.
-// Which Hyperliquid the trading half talks to. This used to be two constants pinned to
-// testnet, because the version before THAT derived the URLs from cfg.network while the runner
-// refused mainnet outright, and that split the app in half: the window read a mainnet account
-// holding $0.000002 while the 888 the account actually holds sat on testnet, and the runner
-// was handed MAINNET=1 and refused to arm, so a mandate could be written and never fire.
-//
-// The lesson was never "pin it to testnet". It was that the panel a human reads and the runner
-// that trades must not be able to disagree. So there is now ONE value, cfg.tradingNetwork, and
-// every consumer takes it from here: these URLs, the runner's isMainnet, the greeting, the
-// withdraw rail and the strategy catalog. Disagreement is no longer expressible.
-const HL_MAINNET = cfg.tradingNetwork === 'mainnet';
-const HL_BASE_URL = HL_MAINNET ? 'https://api.hyperliquid.xyz' : 'https://api.hyperliquid-testnet.xyz';
-const HL_WS_URL = HL_MAINNET ? 'wss://api.hyperliquid.xyz/ws' : 'wss://api.hyperliquid-testnet.xyz/ws';
+const HL_BASE_URL = 'https://api.hyperliquid.xyz';
+const HL_WS_URL = 'wss://api.hyperliquid.xyz/ws';
 
 const runner = createRunnerHost({
-  apiWalletKey: async () => await readApiWalletKey(cfg.keysPath, cfg.tradingNetwork),
-  isMainnet: HL_MAINNET,
+  apiWalletKey: async () => await readApiWalletKey(cfg.keysPath),
   baseUrl: HL_BASE_URL,
-  // The ceiling on everything armed at once. Tighter on mainnet, and it is what replaced the
-  // runner's blanket mainnet refusal rather than that refusal simply being deleted.
-  limits: HL_MAINNET ? MAINNET_TRADING_LIMITS : TESTNET_TRADING_LIMITS,
+  // The ceiling on everything armed at once. It is what replaced the runner's blanket refusal
+  // to trade real money rather than that refusal simply being deleted.
+  limits: TRADING_LIMITS,
   // Fail closed: a policy file that will not load reads as the kill switch being ON, so an
   // unreadable policy can never be the reason a bot was allowed to arm.
   user: cfg.addresses.evm[0] ?? '',
@@ -286,7 +274,6 @@ const tradeInfo = createInfoClient({ baseUrl: HL_BASE_URL });
 const trade = createTradeService({
   wsUrl: HL_WS_URL,
   user: cfg.addresses.evm[0] ?? '',
-  network: cfg.tradingNetwork,
   info: tradeInfo,
   runner,
   products: cfg.candleProducts,

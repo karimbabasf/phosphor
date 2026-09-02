@@ -5,12 +5,6 @@
 export type ChainId = 'eth' | 'base' | 'arb' | 'sol' | 'near';
 export type Mode = 'demo' | 'live';
 
-// ChainId names the chain family; Network selects which world that family lives in.
-// Adding 'arb-sepolia' style ids instead was rejected: it doubles every ChainId switch
-// in the engine, ledger, policy file and UI, and the wallet's CHAIN column would read
-// 'arb-sepolia' where a wallet should read ARB. One config field moves the whole app.
-export type Network = 'testnet' | 'mainnet';
-
 // Which of the two screens the app window is showing. 'pro' is the operator deck;
 // 'basic' is the plain-English screen written for someone non-technical.
 //
@@ -112,7 +106,7 @@ export type WalletRow = {
   symbol: string; // 'USDC', 'ETH', or 'USDC/WETH 0.05%' for a pool position
   tokenId: string;
   quantity: number;
-  priceUsd: number; // 1.0 for stables, spot for natives; testnet prices come from the mainnet twin
+  priceUsd: number; // 1.0 for stables, spot for natives
   valueUsd: number;
   share: number; // 0..1 of wallet total
   native: boolean;
@@ -436,6 +430,10 @@ export type ProposalStatus =
   | 'failed'
   | 'policy_refused';
 
+// Who decided a proposal. There are exactly two answers and no third: a person clicked,
+// or the policy engine allowed it inside limits a person wrote. Nothing else may decide.
+export type DecidedBy = 'human' | 'policy';
+
 export type Proposal = {
   id: string;
   kind: WriteDraft['kind'];
@@ -444,10 +442,10 @@ export type Proposal = {
   draft: WriteDraft;
   simulation: SimulationResult | null;
   verdict: Verdict;
-  // 'gate_disabled' is an auto-approval taken because the approval gate is switched off on
-  // testnet. It is deliberately NOT 'human': nothing in the record may suggest a person
-  // clicked when no person did.
-  decidedBy?: 'human' | 'policy' | 'gate_disabled';
+  // Only a human click or a policy 'allow' decides a proposal. There is no third answer.
+  // Records written before the approval gate became unconditional may carry a retired
+  // value on disk; src/transactions.ts widens the type on the read side to render them.
+  decidedBy?: DecidedBy;
   decidedAt?: string;
   // txids are the evidence: the hashes the rail broadcast or the intents it signed. They
   // are also written to the audit log, but the log is compactable and this record is not,
@@ -647,12 +645,6 @@ export type Signer = {
 
 export type AppConfig = {
   mode: Mode;
-  network: Network; // selects RPCs, the token registry and every contract address
-  // The Hyperliquid network the trading half talks to. Follows `network` unless set. Every
-  // trading consumer reads THIS and never `network`, so the account the runner trades and the
-  // account the panel shows cannot be different ones. See the note in config.ts.
-  tradingNetwork: Network;
-  approvalGate: boolean; // honoured on testnet only; see gateRequired() in policy/gate.ts
   port: number;
   addresses: { evm: string[]; solana: string[]; near: string[] };
   economicTransferUsd: number; // below this a balance is dust regardless of gas

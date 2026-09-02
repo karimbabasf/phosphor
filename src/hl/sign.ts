@@ -99,7 +99,6 @@ export async function signL1Action(
   privKey: `0x${string}`,
   action: unknown,
   nonce: number,
-  isMainnet: boolean,
   vaultAddress: string | null = null,
   expiresAfter: number | null = null,
 ): Promise<Signature> {
@@ -107,9 +106,9 @@ export async function signL1Action(
   const account = privateKeyToAccount(privKey);
 
   const signature = await account.signTypedData({
-    // chainId is the literal 1337 on mainnet and testnet alike. The network is carried ONLY by
-    // `source` below. Swapping those two produces a perfectly valid signature for the other
-    // network, which the venue reports as a wallet that does not exist.
+    // chainId is the literal 1337 here and is not a chain selector. The venue is carried
+    // ONLY by `source` below, and 'a' is the one this app signs for. A different value
+    // produces a perfectly valid signature the venue reports as a wallet that does not exist.
     domain: {
       name: 'Exchange',
       version: '1',
@@ -118,7 +117,7 @@ export async function signL1Action(
     },
     types: AGENT_TYPES,
     primaryType: 'Agent',
-    message: { source: isMainnet ? 'a' : 'b', connectionId },
+    message: { source: 'a', connectionId },
   });
 
   // viem returns a packed 65-byte signature; the venue wants the parts named.

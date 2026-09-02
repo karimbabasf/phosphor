@@ -24,7 +24,6 @@ import type {
   LpAddDraft,
   LpPosition,
   LpRemoveDraft,
-  Network,
   Rail,
   RailResult,
   SimulationResult,
@@ -311,9 +310,9 @@ export function removeAndCollectCalldata(params: {
 
 export type PoolState = { address: Address; sqrtPriceX96: bigint; tick: number };
 
-async function poolAddress(network: Network, chain: ChainId, token0: Address, token1: Address, fee: number): Promise<Address | null> {
-  const dep = deploymentFor(network, chain);
-  const found = (await reader(network, chain).readContract({
+async function poolAddress(chain: ChainId, token0: Address, token1: Address, fee: number): Promise<Address | null> {
+  const dep = deploymentFor(chain);
+  const found = (await reader(chain).readContract({
     address: dep.factory,
     abi: FACTORY_ABI,
     functionName: 'getPool',
@@ -326,8 +325,8 @@ async function poolAddress(network: Network, chain: ChainId, token0: Address, to
 // a position's amounts come from its own liquidity, not the pool's. On sepolia.base.org,
 // which rate-limits hard, one skipped call per position is the difference between a wallet
 // that renders and a wallet full of "over rate limit".
-async function poolState(network: Network, chain: ChainId, pool: Address): Promise<PoolState> {
-  const slot0 = (await reader(network, chain).readContract({ address: pool, abi: POOL_ABI, functionName: 'slot0' })) as readonly [
+async function poolState(chain: ChainId, pool: Address): Promise<PoolState> {
+  const slot0 = (await reader(chain).readContract({ address: pool, abi: POOL_ABI, functionName: 'slot0' })) as readonly [
     bigint,
     number,
     number,
@@ -351,9 +350,9 @@ export type RawPosition = {
   tokensOwed1: bigint;
 };
 
-async function readPosition(network: Network, chain: ChainId, tokenId: bigint): Promise<RawPosition> {
-  const dep = deploymentFor(network, chain);
-  const raw = (await reader(network, chain).readContract({
+async function readPosition(chain: ChainId, tokenId: bigint): Promise<RawPosition> {
+  const dep = deploymentFor(chain);
+  const raw = (await reader(chain).readContract({
     address: dep.positionManager,
     abi: NPM_ABI,
     functionName: 'positions',
@@ -376,11 +375,11 @@ async function readPosition(network: Network, chain: ChainId, tokenId: bigint): 
 // any pair, and the wallet still has to label them.
 type MetaCache = Map<string, TokenInfo>;
 
-async function tokenMeta(network: Network, chain: ChainId, token: Address, cache: MetaCache): Promise<TokenInfo> {
+async function tokenMeta(chain: ChainId, token: Address, cache: MetaCache): Promise<TokenInfo> {
   const key = token.toLowerCase();
   const hit = cache.get(key);
   if (hit !== undefined) return hit;
-  const client = reader(network, chain);
+  const client = reader(chain);
   const [symbol, decimals] = await Promise.all([
     client.readContract({ address: token, abi: ERC20, functionName: 'symbol' }).catch(() => token.slice(0, 8)),
     client.readContract({ address: token, abi: ERC20, functionName: 'decimals' }).catch(() => 18),
@@ -397,10 +396,10 @@ const STABLES = new Set(['USDC', 'USDT', 'DAI', 'USDBC', 'USDS', 'PYUSD', 'USDE'
 // Chainlink on the chain itself. Testnet feeds carry real mainnet-equivalent prices, so
 // the USD column looks right on testnet. The pool's own sqrtPriceX96 is NOT a price
 // source: the Base Sepolia WETH/USDC pool implies about 167 USD/ETH against a real 1,884.
-async function ethUsd(network: Network, chain: ChainId): Promise<number | null> {
+async function ethUsd(chain: ChainId): Promise<number | null> {
   try {
-    const dep = deploymentFor(network, chain);
-    const client = reader(network, chain);
+    const dep = deploymentFor(chain);
+    const client = reader(chain);
     const [decimals, round] = await Promise.all([
       client.readContract({ address: dep.ethUsdFeed, abi: FEED_ABI, functionName: 'decimals' }),
       client.readContract({ address: dep.ethUsdFeed, abi: FEED_ABI, functionName: 'latestRoundData' }),
@@ -415,8 +414,8 @@ async function ethUsd(network: Network, chain: ChainId): Promise<number | null> 
 
 type PriceLookup = (symbol: string) => number | null;
 
-async function priceLookup(network: Network, chain: ChainId): Promise<PriceLookup> {
-  const eth = await ethUsd(network, chain);
+async function priceLookup(chain: ChainId): Promise<PriceLookup> {
+  const eth = await ethUsd(chain);
   return (symbol: string): number | null => {
     const upper = symbol.toUpperCase();
     if (STABLES.has(upper)) return 1;
@@ -429,9 +428,9 @@ async function priceLookup(network: Network, chain: ChainId): Promise<PriceLooku
 
 export type SwapQuote = { fee: number; amountOut: bigint; gasEstimate: bigint };
 
-async function quoteTier(network: Network, chain: ChainId, tokenIn: Address, tokenOut: Address, amountIn: bigint, fee: number): Promise<SwapQuote> {
-  const dep = deploymentFor(network, chain);
-  const { result } = await reader(network, chain).simulateContract({
+async function quoteTier(chain: ChainId, tokenIn: Address, tokenOut: Address, amountIn: bigint, fee: number): Promise<SwapQuote> {
+  const dep = deploymentFor(chain);
+  const { result } = await reader(chain).simulateContract({
     address: dep.quoter,
     abi: QUOTER_ABI,
     functionName: 'quoteExactInputSingle',
@@ -443,8 +442,8 @@ async function quoteTier(network: Network, chain: ChainId, tokenIn: Address, tok
 
 // Quote every tier and take the best fill. The draft names no fee tier, and picking one by
 // convention would silently route through a pool 20x thinner than the one next to it.
-async function bestQuote(network: Network, chain: ChainId, tokenIn: Address, tokenOut: Address, amountIn: bigint): Promise<SwapQuote> {
-  const settled = await Promise.allSettled(FEE_TIERS.map(fee => quoteTier(network, chain, tokenIn, tokenOut, amountIn, fee)));
+async function bestQuote(chain: ChainId, tokenIn: Address, tokenOut: Address, amountIn: bigint): Promise<SwapQuote> {
+  const settled = await Promise.allSettled(FEE_TIERS.map(fee => quoteTier(chain, tokenIn, tokenOut, amountIn, fee)));
   let best: SwapQuote | null = null;
   for (const outcome of settled) {
     if (outcome.status !== 'fulfilled') continue;
@@ -510,7 +509,7 @@ type SwapPlan = {
   recipient: Address;
 };
 
-async function planSwap(cfg: AppConfig, draft: SwapDraft): Promise<SwapPlan> {
+async function planSwap(draft: SwapDraft): Promise<SwapPlan> {
   requireVenue(draft.venue);
   if (draft.chain !== draft.toChain) throw new Error(`uniswap-v3 is a same-chain venue; draft goes ${draft.chain} to ${draft.toChain}`);
   // A floor of zero is not a floor. The type calls minAmountOut a slippage floor and the
@@ -519,15 +518,15 @@ async function planSwap(cfg: AppConfig, draft: SwapDraft): Promise<SwapPlan> {
   if (!(draft.minAmountOut > 0)) throw new Error('minAmountOut is 0: refusing to swap with no slippage floor');
   if (!(draft.amountIn > 0)) throw new Error('amountIn is 0');
 
-  requireCounterparty(draft.counterparty, deploymentFor(cfg.network, draft.chain).router, 'SwapRouter02');
+  requireCounterparty(draft.counterparty, deploymentFor(draft.chain).router, 'SwapRouter02');
 
-  const tokenIn = tokenFor(cfg.network, draft.chain, draft.fromSymbol);
-  const tokenOut = tokenFor(cfg.network, draft.chain, draft.toSymbol);
+  const tokenIn = tokenFor(draft.chain, draft.fromSymbol);
+  const tokenOut = tokenFor(draft.chain, draft.toSymbol);
   if (tokenIn.address.toLowerCase() === tokenOut.address.toLowerCase()) throw new Error(`cannot swap ${draft.fromSymbol} for itself`);
 
   const amountIn = toBaseUnits(draft.amountIn, tokenIn.decimals);
   const minOut = toBaseUnits(draft.minAmountOut, tokenOut.decimals);
-  const quote = await bestQuote(cfg.network, draft.chain, tokenIn.address, tokenOut.address, amountIn);
+  const quote = await bestQuote(draft.chain, tokenIn.address, tokenOut.address, amountIn);
   // minOut and quote.amountOut are both base units of tokenOut, so this compares exactly, no
   // decimals in the way. A floor below `MAX_SLIPPAGE_BPS` under the quote is not a floor.
   if (floorTooLow(quote.amountOut, minOut, MAX_SLIPPAGE_BPS)) {
@@ -558,9 +557,9 @@ export function uniswapSwapRail(cfg: AppConfig): Rail<SwapDraft> {
 
     async simulate(draft: SwapDraft): Promise<SimulationResult> {
       try {
-        const plan = await planSwap(cfg, draft);
+        const plan = await planSwap(draft);
         const owner = addr(draft.from, 'draft.from');
-        const balance = await erc20Balance(cfg.network, draft.chain, plan.tokenIn.address, owner);
+        const balance = await erc20Balance(draft.chain, plan.tokenIn.address, owner);
 
         const out = fmt(plan.quote.amountOut, plan.tokenOut.decimals, plan.tokenOut.symbol);
         const floor = fmt(plan.minOut, plan.tokenOut.decimals, plan.tokenOut.symbol);
@@ -576,8 +575,8 @@ export function uniswapSwapRail(cfg: AppConfig): Rail<SwapDraft> {
         if (plan.quote.amountOut < plan.minOut) {
           return { ok: false, summary: `${head}. The quote is below the floor, so this would revert.`, error: 'quote below minAmountOut' };
         }
-        const dep = deploymentFor(cfg.network, draft.chain);
-        const allowance = await erc20Allowance(cfg.network, draft.chain, plan.tokenIn.address, owner, dep.router);
+        const dep = deploymentFor(draft.chain);
+        const allowance = await erc20Allowance(draft.chain, plan.tokenIn.address, owner, dep.router);
         const approvals = allowance < plan.amountIn ? ' One approval transaction runs first.' : '';
         return { ok: true, summary: `${head}.${approvals}` };
       } catch (err) {
@@ -587,13 +586,12 @@ export function uniswapSwapRail(cfg: AppConfig): Rail<SwapDraft> {
 
     async execute(draft: SwapDraft): Promise<RailResult> {
       try {
-        const plan = await planSwap(cfg, draft);
+        const plan = await planSwap(draft);
         requireSigner(cfg, draft.from);
-        const dep = deploymentFor(cfg.network, draft.chain);
+        const dep = deploymentFor(draft.chain);
         const txids: string[] = [];
 
         const approval = await ensureAllowance({
-          network: cfg.network,
           chain: draft.chain,
           keysPath: cfg.keysPath,
           token: plan.tokenIn.address,
@@ -606,7 +604,6 @@ export function uniswapSwapRail(cfg: AppConfig): Rail<SwapDraft> {
         }
 
         const sent = await sendTx({
-          network: cfg.network,
           chain: draft.chain,
           keysPath: cfg.keysPath,
           to: dep.router,
@@ -654,14 +651,13 @@ type AddPlan = {
 // The position an increaseLiquidity would land on: same pair, same fee, same exact range,
 // already owned by this wallet. Anything else has to be a fresh mint.
 async function findExistingPosition(
-  network: Network,
   chain: ChainId,
   owner: Address,
   want: { token0: Address; token1: Address; fee: number; tickLower: number; tickUpper: number },
 ): Promise<RawPosition | null> {
-  const ids = await ownedTokenIds(network, chain, owner);
+  const ids = await ownedTokenIds(chain, owner);
   for (const tokenId of ids) {
-    const p = await readPosition(network, chain, tokenId);
+    const p = await readPosition(chain, tokenId);
     if (
       p.token0.toLowerCase() === want.token0.toLowerCase() &&
       p.token1.toLowerCase() === want.token1.toLowerCase() &&
@@ -675,9 +671,9 @@ async function findExistingPosition(
   return null;
 }
 
-async function planAdd(cfg: AppConfig, draft: LpAddDraft): Promise<AddPlan> {
+async function planAdd(draft: LpAddDraft): Promise<AddPlan> {
   requireVenue(draft.venue);
-  requireCounterparty(draft.counterparty, deploymentFor(cfg.network, draft.chain).positionManager, 'position manager');
+  requireCounterparty(draft.counterparty, deploymentFor(draft.chain).positionManager, 'position manager');
   const token0: TokenInfo = { symbol: draft.token0.symbol, address: addr(draft.token0.tokenId, 'token0'), decimals: draft.token0.decimals };
   const token1: TokenInfo = { symbol: draft.token1.symbol, address: addr(draft.token1.tokenId, 'token1'), decimals: draft.token1.decimals };
 
@@ -694,13 +690,13 @@ async function planAdd(cfg: AppConfig, draft: LpAddDraft): Promise<AddPlan> {
   }
   if (draft.tickLower >= draft.tickUpper) throw new Error(`tickLower ${draft.tickLower} must be below tickUpper ${draft.tickUpper}`);
 
-  const found = await poolAddress(cfg.network, draft.chain, token0.address, token1.address, draft.feeTier);
+  const found = await poolAddress(draft.chain, token0.address, token1.address, draft.feeTier);
   if (found === null) throw new Error(`no ${(draft.feeTier / 10_000).toFixed(2)}% pool exists for ${token0.symbol}/${token1.symbol} on ${draft.chain}`);
   if (draft.poolId !== '' && found.toLowerCase() !== draft.poolId.toLowerCase()) {
     throw new Error(`draft names pool ${draft.poolId} but the factory returns ${found} for this pair and fee`);
   }
 
-  const pool = await poolState(cfg.network, draft.chain, found);
+  const pool = await poolState(draft.chain, found);
   const desired0 = toBaseUnits(draft.token0.amount, token0.decimals);
   const desired1 = toBaseUnits(draft.token1.amount, token1.decimals);
   if (desired0 === 0n && desired1 === 0n) throw new Error('both amounts are 0');
@@ -714,7 +710,7 @@ async function planAdd(cfg: AppConfig, draft: LpAddDraft): Promise<AddPlan> {
   // amounts this liquidity actually needs, not 1% under what the draft offered. Setting
   // them off the offered amounts makes every one-sided range revert on its own slippage check.
   const used = amountsForLiquidity(pool.sqrtPriceX96, sqrtA, sqrtB, liquidity);
-  const existing = await findExistingPosition(cfg.network, draft.chain, addr(draft.from, 'draft.from'), {
+  const existing = await findExistingPosition(draft.chain, addr(draft.from, 'draft.from'), {
     token0: token0.address,
     token1: token1.address,
     fee: draft.feeTier,
@@ -745,11 +741,11 @@ export function uniswapLpAddRail(cfg: AppConfig): Rail<LpAddDraft> {
 
     async simulate(draft: LpAddDraft): Promise<SimulationResult> {
       try {
-        const plan = await planAdd(cfg, draft);
+        const plan = await planAdd(draft);
         const owner = addr(draft.from, 'draft.from');
         const [bal0, bal1] = await Promise.all([
-          erc20Balance(cfg.network, draft.chain, plan.token0.address, owner),
-          erc20Balance(cfg.network, draft.chain, plan.token1.address, owner),
+          erc20Balance(draft.chain, plan.token0.address, owner),
+          erc20Balance(draft.chain, plan.token1.address, owner),
         ]);
 
         const inRange = plan.pool.tick >= plan.tickLower && plan.pool.tick < plan.tickUpper;
@@ -763,10 +759,10 @@ export function uniswapLpAddRail(cfg: AppConfig): Rail<LpAddDraft> {
         if (bal1 < plan.used1) short.push(`${plan.token1.symbol} short by ${fmt(plan.used1 - bal1, plan.token1.decimals, plan.token1.symbol)}`);
         if (short.length > 0) return { ok: false, summary: `${head}. Balance is short: ${short.join(', ')}.`, error: 'insufficient balance' };
 
-        const dep = deploymentFor(cfg.network, draft.chain);
+        const dep = deploymentFor(draft.chain);
         const [allow0, allow1] = await Promise.all([
-          erc20Allowance(cfg.network, draft.chain, plan.token0.address, owner, dep.positionManager),
-          erc20Allowance(cfg.network, draft.chain, plan.token1.address, owner, dep.positionManager),
+          erc20Allowance(draft.chain, plan.token0.address, owner, dep.positionManager),
+          erc20Allowance(draft.chain, plan.token1.address, owner, dep.positionManager),
         ]);
         const approvals = [allow0 < plan.used0 ? plan.token0.symbol : null, allow1 < plan.used1 ? plan.token1.symbol : null].filter(s => s !== null);
         const tail = approvals.length > 0 ? ` Approvals run first for ${approvals.join(' and ')}.` : '';
@@ -778,9 +774,9 @@ export function uniswapLpAddRail(cfg: AppConfig): Rail<LpAddDraft> {
 
     async execute(draft: LpAddDraft): Promise<RailResult> {
       try {
-        const plan = await planAdd(cfg, draft);
+        const plan = await planAdd(draft);
         const signer = requireSigner(cfg, draft.from);
-        const dep = deploymentFor(cfg.network, draft.chain);
+        const dep = deploymentFor(draft.chain);
         const txids: string[] = [];
 
         // Approve the amounts the pool will actually pull, not the amounts offered: a
@@ -792,7 +788,6 @@ export function uniswapLpAddRail(cfg: AppConfig): Rail<LpAddDraft> {
         for (const [token, needed] of approvals) {
           if (needed === 0n) continue;
           const approval = await ensureAllowance({
-            network: cfg.network,
             chain: draft.chain,
             keysPath: cfg.keysPath,
             token: token.address,
@@ -829,7 +824,7 @@ export function uniswapLpAddRail(cfg: AppConfig): Rail<LpAddDraft> {
                 deadline: deadline(),
               });
 
-        const sent = await sendTx({ network: cfg.network, chain: draft.chain, keysPath: cfg.keysPath, to: dep.positionManager, data });
+        const sent = await sendTx({ chain: draft.chain, keysPath: cfg.keysPath, to: dep.positionManager, data });
         if (sent.hash !== undefined) txids.push(sent.hash);
         if (!sent.ok) return { ok: false, detail: `add liquidity failed: ${sent.error ?? 'unknown'}`, txids };
 
@@ -863,14 +858,14 @@ type RemovePlan = {
   recipient: Address;
 };
 
-async function planRemove(cfg: AppConfig, draft: LpRemoveDraft): Promise<RemovePlan> {
+async function planRemove(draft: LpRemoveDraft): Promise<RemovePlan> {
   requireVenue(draft.venue);
   if (!(draft.liquidityPct > 0) || draft.liquidityPct > 1) throw new Error(`liquidityPct must be in (0, 1], got ${draft.liquidityPct}`);
 
   const owner = addr(draft.from, 'draft.from');
-  const dep = deploymentFor(cfg.network, draft.chain);
+  const dep = deploymentFor(draft.chain);
   requireCounterparty(draft.counterparty, dep.positionManager, 'position manager');
-  const client = reader(cfg.network, draft.chain);
+  const client = reader(draft.chain);
 
   if (!/^\d+$/.test(draft.positionId)) throw new Error(`positionId ${draft.positionId} is not a token id`);
   const tokenId = BigInt(draft.positionId);
@@ -878,7 +873,7 @@ async function planRemove(cfg: AppConfig, draft: LpRemoveDraft): Promise<RemoveP
   const onChainOwner = (await client.readContract({ address: dep.positionManager, abi: NPM_ABI, functionName: 'ownerOf', args: [tokenId] })) as Address;
   if (onChainOwner.toLowerCase() !== owner.toLowerCase()) throw new Error(`position #${tokenId} is owned by ${onChainOwner}, not ${owner}`);
 
-  const position = await readPosition(cfg.network, draft.chain, tokenId);
+  const position = await readPosition(draft.chain, tokenId);
   if (position.liquidity === 0n) throw new Error(`position #${tokenId} holds no liquidity`);
 
   // Percent to liquidity in integer maths. 1e6 is finer than any percentage a UI produces
@@ -887,17 +882,17 @@ async function planRemove(cfg: AppConfig, draft: LpRemoveDraft): Promise<RemoveP
   const burn = draft.liquidityPct >= 1 ? position.liquidity : (position.liquidity * scaled) / 1_000_000n;
   if (burn === 0n) throw new Error(`${(draft.liquidityPct * 100).toFixed(4)}% of position #${tokenId} rounds to zero liquidity`);
 
-  const found = await poolAddress(cfg.network, draft.chain, position.token0, position.token1, position.fee);
+  const found = await poolAddress(draft.chain, position.token0, position.token1, position.fee);
   if (found === null) throw new Error(`the pool behind position #${tokenId} no longer resolves`);
-  const pool = await poolState(cfg.network, draft.chain, found);
+  const pool = await poolState(draft.chain, found);
 
   const out = amountsForLiquidity(pool.sqrtPriceX96, sqrtRatioAtTick(position.tickLower), sqrtRatioAtTick(position.tickUpper), burn);
   const cache: MetaCache = new Map();
   const [token0, token1] = await Promise.all([
-    tokenMeta(cfg.network, draft.chain, position.token0, cache),
-    tokenMeta(cfg.network, draft.chain, position.token1, cache),
+    tokenMeta(draft.chain, position.token0, cache),
+    tokenMeta(draft.chain, position.token1, cache),
   ]);
-  const fees = await collectableFees(cfg.network, draft.chain, tokenId, owner, position);
+  const fees = await collectableFees(draft.chain, tokenId, owner, position);
 
   return {
     position,
@@ -922,7 +917,7 @@ export function uniswapLpRemoveRail(cfg: AppConfig): Rail<LpRemoveDraft> {
 
     async simulate(draft: LpRemoveDraft): Promise<SimulationResult> {
       try {
-        const plan = await planRemove(cfg, draft);
+        const plan = await planRemove(draft);
         const pct = (draft.liquidityPct * 100).toFixed(2);
         const summary =
           `pull ${pct}% of position #${plan.position.tokenId} (${plan.token0.symbol}/${plan.token1.symbol} ${(plan.position.fee / 10_000).toFixed(2)}%): ` +
@@ -937,12 +932,11 @@ export function uniswapLpRemoveRail(cfg: AppConfig): Rail<LpRemoveDraft> {
 
     async execute(draft: LpRemoveDraft): Promise<RailResult> {
       try {
-        const plan = await planRemove(cfg, draft);
+        const plan = await planRemove(draft);
         requireSigner(cfg, draft.from);
-        const dep = deploymentFor(cfg.network, draft.chain);
+        const dep = deploymentFor(draft.chain);
 
         const sent = await sendTx({
-          network: cfg.network,
           chain: draft.chain,
           keysPath: cfg.keysPath,
           to: dep.positionManager,
@@ -972,9 +966,9 @@ export function uniswapLpRemoveRail(cfg: AppConfig): Rail<LpRemoveDraft> {
 
 // ---------- reading positions ----------
 
-async function ownedTokenIds(network: Network, chain: ChainId, owner: Address): Promise<bigint[]> {
-  const dep = deploymentFor(network, chain);
-  const client = reader(network, chain);
+async function ownedTokenIds(chain: ChainId, owner: Address): Promise<bigint[]> {
+  const dep = deploymentFor(chain);
+  const client = reader(chain);
   const count = (await client.readContract({ address: dep.positionManager, abi: NPM_ABI, functionName: 'balanceOf', args: [owner] })) as bigint;
   const indexes = Array.from({ length: Number(count) }, (_, i) => BigInt(i));
   return mapLimit(
@@ -989,15 +983,14 @@ async function ownedTokenIds(network: Network, chain: ChainId, owner: Address): 
 // so the simulated return includes the fees earned since the last touch. tokensOwed alone
 // reports only what was already checkpointed, which on a quiet position is often zero.
 async function collectableFees(
-  network: Network,
   chain: ChainId,
   tokenId: bigint,
   owner: Address,
   fallback: RawPosition,
 ): Promise<{ amount0: bigint; amount1: bigint }> {
   try {
-    const dep = deploymentFor(network, chain);
-    const { result } = await reader(network, chain).simulateContract({
+    const dep = deploymentFor(chain);
+    const { result } = await reader(chain).simulateContract({
       address: dep.positionManager,
       abi: NPM_ABI,
       functionName: 'collect',
@@ -1033,7 +1026,7 @@ export type ReadPositionsOptions = {
 // Every Uniswap v3 position this owner holds, priced where the app has an honest price.
 // Chains are swept rather than fixed: a position minted on one chain must not vanish from
 // the wallet because the default chain for new drafts moved to another.
-export async function readPositions(network: Network, owner: string, opts?: ReadPositionsOptions): Promise<LpPosition[]> {
+export async function readPositions(owner: string, opts?: ReadPositionsOptions): Promise<LpPosition[]> {
   const note = opts?.onError ?? ((): void => {});
   let ownerAddr: Address;
   try {
@@ -1043,17 +1036,17 @@ export async function readPositions(network: Network, owner: string, opts?: Read
     return [];
   }
 
-  const chains = opts?.chains ?? chainsWithDeployment(network);
-  const perChain = await Promise.all(chains.map(chain => readPositionsOnChain(network, chain, ownerAddr, note)));
+  const chains = opts?.chains ?? chainsWithDeployment();
+  const perChain = await Promise.all(chains.map(chain => readPositionsOnChain(chain, ownerAddr, note)));
   return perChain.flat();
 }
 
 // The NPM is ERC-721 Enumerable, so the loop is balanceOf, tokenOfOwnerByIndex, positions.
-async function readPositionsOnChain(network: Network, chain: ChainId, ownerAddr: Address, note: (message: string) => void): Promise<LpPosition[]> {
+async function readPositionsOnChain(chain: ChainId, ownerAddr: Address, note: (message: string) => void): Promise<LpPosition[]> {
   let ids: bigint[];
   let price: PriceLookup;
   try {
-    [ids, price] = await Promise.all([ownedTokenIds(network, chain, ownerAddr), priceLookup(network, chain)]);
+    [ids, price] = await Promise.all([ownedTokenIds(chain, ownerAddr), priceLookup(chain)]);
   } catch (err) {
     note(`uniswap-v3 position list failed on ${chain}: ${err instanceof Error ? err.message : String(err)}`);
     return [];
@@ -1068,14 +1061,14 @@ async function readPositionsOnChain(network: Network, chain: ChainId, ownerAddr:
   // and a wallet that renders slowly beats a wallet that renders empty.
   const results = await mapLimit(ids, 2, async tokenId => {
     try {
-      const position = await readPosition(network, chain, tokenId);
+      const position = await readPosition(chain, tokenId);
       // A burned-out NFT with nothing left in it is not a holding.
       if (position.liquidity === 0n && position.tokensOwed0 === 0n && position.tokensOwed1 === 0n) return null;
 
       const key = `${position.token0}-${position.token1}-${position.fee}`.toLowerCase();
       if (!pools.has(key)) {
-        const found = await poolAddress(network, chain, position.token0, position.token1, position.fee);
-        pools.set(key, found === null ? null : await poolState(network, chain, found));
+        const found = await poolAddress(chain, position.token0, position.token1, position.fee);
+        pools.set(key, found === null ? null : await poolState(chain, found));
       }
       const state = pools.get(key) ?? null;
       if (state === null) {
@@ -1083,9 +1076,9 @@ async function readPositionsOnChain(network: Network, chain: ChainId, ownerAddr:
         return null;
       }
       const pool = state.address;
-      const [token0, token1] = await Promise.all([tokenMeta(network, chain, position.token0, cache), tokenMeta(network, chain, position.token1, cache)]);
+      const [token0, token1] = await Promise.all([tokenMeta(chain, position.token0, cache), tokenMeta(chain, position.token1, cache)]);
       const amounts = amountsForLiquidity(state.sqrtPriceX96, sqrtRatioAtTick(position.tickLower), sqrtRatioAtTick(position.tickUpper), position.liquidity);
-      const fees = await collectableFees(network, chain, tokenId, ownerAddr, position);
+      const fees = await collectableFees(chain, tokenId, ownerAddr, position);
 
       const price0 = price(token0.symbol);
       const price1 = price(token1.symbol);

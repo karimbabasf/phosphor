@@ -59,7 +59,6 @@ import type { Driver, DriverEvent } from './driver.ts';
 import type { AgentPresence } from './agents.ts';
 import { buildTransactions, createGasCache, evmCandidates } from './transactions.ts';
 import type { TxPlace } from './transactions.ts';
-import { gateRequired, gateBanner } from './policy/gate.ts';
 import type { Allocator } from './yield/allocator.ts';
 import { OBSERVATION_CAVEAT } from './yield/positions.ts';
 import { buildGasReport } from './gas/report.ts';
@@ -490,7 +489,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
                all three. A `driver.systemPrompt` in config still wins outright, because somebody
                running their own Phosphor should be able to change how their own agent talks. */
             systemPrompt:
-              cfg.driver?.systemPrompt ?? buildRole({ root: PROJECT_DIR, view: getView(), network: cfg.network }),
+              cfg.driver?.systemPrompt ?? buildRole({ root: PROJECT_DIR, view: getView() }),
             onEvent: (event) => driverEvent(chat, event),
           });
     chats.set(id, chat);
@@ -911,8 +910,8 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       wallet,
       composition,
       policy,
-      gate: { required: gateRequired(cfg), banner: gateBanner(cfg) },
-      network: cfg.network,
+      // Unconditional. Kept in the payload so the window states it rather than assumes it.
+      gate: { required: true, banner: null },
       sentences: sentencesOf(policy),
       proposals: list,
       mode: cfg.mode,
@@ -964,7 +963,6 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         proposals: list,
         policyReadable: policy !== null,
         killSwitch: policy?.killSwitch ?? false,
-        gateRequired: gateRequired(cfg),
         agentsConnected: agents.connected(),
         chainStatus: snapshot.chainStatus,
         selfAddresses: [...cfg.addresses.evm, ...cfg.addresses.solana, ...cfg.addresses.near],
@@ -983,14 +981,13 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   // response rather than in front of it: the panel draws immediately with whatever receipts
   // are already cached, the rest are fetched, and the browser is told when they land.
 
-  const gasCache = createGasCache({ network: cfg.network, dataDir: cfg.dataDir });
+  const gasCache = createGasCache({ dataDir: cfg.dataDir });
   let gasFilling = false;
 
   function transactionsPayload(): { entries: ReturnType<typeof buildTransactions>; gasPending: number } {
     const entries = buildTransactions({
       proposals: proposals.list(),
       events: audit.tail(LOG_LIMIT_MAX),
-      network: cfg.network,
       selfAddresses: [...cfg.addresses.evm, ...cfg.addresses.solana, ...cfg.addresses.near],
       gas: gasCache.all(),
       tried: gasCache.triedAll(),
@@ -1584,7 +1581,6 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       const holder = agents.holder();
       const greeting = buildGreeting(
         {
-          network: cfg.network,
           view: getView(),
           totalUsd: wallet.totalUsd,
           // Places actually holding something, which is what "across N chains" means to a
@@ -1593,12 +1589,6 @@ export function createServer(deps: ServerDeps): PhosphorServer {
           pendingCount: pending.length,
           clickThresholdUsd: policy?.outbound.humanClickAboveUsd ?? null,
           killSwitch: policy?.killSwitch ?? false,
-          gateRequired: gateRequired(cfg),
-          // Read from the one setting every trading consumer reads, so the greeting cannot
-          // name a network the runner is not on. It stopped being a fact about the code on
-          // 2026-08-20, when mainnet trading was enabled and cfg.tradingNetwork became the
-          // single place that decides.
-          tradingNetwork: cfg.tradingNetwork,
           tradingAllowed: true,
           holder: holder?.client ?? null,
           emptyCount: wallet.emptyCount,
@@ -1613,7 +1603,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       return;
     }
     if (tool === 'mandate_catalog') {
-      sendJson(res, 200, buildMandateCatalog(cfg.tradingNetwork));
+      sendJson(res, 200, buildMandateCatalog());
       return;
     }
     if (tool === 'balances') {

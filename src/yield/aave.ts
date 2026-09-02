@@ -16,7 +16,7 @@
 
 import { encodeFunctionData, getAddress, parseAbi } from 'viem';
 import type { Address } from 'viem';
-import type { ChainId, Network } from '../types.ts';
+import type { ChainId } from '../types.ts';
 import { ERC20, erc20Allowance, reader } from '../chain/evm.ts';
 import type { VenueAsset, VenueCall, VenuePosition, VenueRate, YieldVenue } from './venue.ts';
 import { RAY, rateFromRay } from './venue.ts';
@@ -47,105 +47,90 @@ type AaveMarket = {
   assets: VenueAsset[];
 };
 
-// Verified 2026-08-20 by .probe/probe-aave.mjs and .probe/probe-crosscheck.mjs. The check
-// for each row was the same one src/rails/uniswap-abi.ts uses: ask the contract to identify
-// itself and refuse to believe an address that will not.
+// Verified on chain 2026-09-01 by reading getReserveData(USDC) from each Pool over a
+// public RPC and recording the aTokenAddress it returned. The check is the same one
+// src/rails/uniswap-abi.ts uses: ask the contract to identify itself and refuse to
+// believe an address that will not.
 //
-//   arb testnet   PoolAddressesProvider 0xB25a5D14....getPool() -> 0xBfC91D59...  MATCH
-//                 marketId "Aave V3 Arbitrum Sepolia Testnet Market"
-//                 aToken.UNDERLYING_ASSET_ADDRESS() -> 0x75faf114...              MATCH
-//                 reserve active=1 frozen=0 paused=0, supplyCap 10,500,000 USDC,
-//                 5,496,080 supplied, so 5,003,920 of headroom
-//                 supply(0.10 USDC) simulated from our own address and reverted with
-//                 "ERC20: transfer amount exceeds allowance", which is the ONLY thing
-//                 standing between this table and a working deposit
+//   arb   Pool 0x794a6135....getReserveData(USDC 0xaf88d065...)
+//         -> aToken 0x724dc807b04555b71ed48a6896b6F41593b8C637, symbol aArbUSDCn, 6 dp
+//         read at Arbitrum One block 500799884, supply rate 2.40% at that block
 //
-//   base testnet  PoolAddressesProvider 0xd449FeD4....getPool() -> 0x07eA79F6...  MATCH
-//                 marketId "Aave V3 BASE Testnet Market"
-//                 reserve active=1 frozen=0 paused=0, 8,510,288 of headroom
+//   base  Pool 0xA238Dd80....getReserveData(USDC 0x833589fC...)
+//         -> aToken 0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB, symbol aBasUSDC, 6 dp
+//         read at Base block 50759012, supply rate 4.25% at that block
 //
-// The USDC on arb testnet is the SAME address src/rails/uniswap-abi.ts already lists there.
-// That is what makes this feature free to fund: the existing swap rail produces exactly the
-// token this one consumes, on the chain the Hyperliquid rail already uses.
+// The USDC on arb is the SAME address src/rails/uniswap-abi.ts lists there, and so is the
+// one on base. That is what makes this feature free to fund: the existing swap rail
+// produces exactly the token this one consumes, on the chains the other rails already use.
 //
-// Note there are TWO Aave test markets on Base Sepolia, one on Circle's USDC and one on
-// Aave's own mock, and both aTokens are called aBasSepUSDC. The Circle one is listed here
-// because it is the token the rest of this app already knows. The other market's mock USDC
-// is 0xba50Cd2A20f6DA35D788639E581bca8d0B5d4D5f behind pool 0x8bAB6d1b...; it has a
-// permissionless faucet, which the Circle one does not, and that is the one reason it might
-// be worth adding later.
-//
-// Ethereum Sepolia was probed and is deliberately ABSENT. Its market reports 57 percent on
-// USDC and 71 percent on DAI, which are artefacts of a testnet nobody arbitrages. A window
-// whose headline number is 57 percent teaches the reader to distrust every other number in it.
-//
-// Mainnet is deliberately ABSENT. Adding a row here is the whole change needed to enable it,
-// and that is meant to be a decision someone makes on purpose rather than a default they
-// inherit.
-const DEPLOYMENTS: Record<Network, Partial<Record<ChainId, AaveMarket>>> = {
-  testnet: {
-    arb: {
-      pool: '0xBfC91D59fdAA134A4ED45f7B584cAf96D7792Eff',
-      assets: [
-        {
-          symbol: 'USDC',
-          address: '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d',
-          decimals: 6,
-          receipt: '0x460b97BD498E1157530AEb3086301d5225b91216',
-          receiptSymbol: 'aArbSepUSDC',
-        },
-      ],
-    },
-    base: {
-      pool: '0x07eA79F68B2B3df564D0A34F8e19D9B1e339814b',
-      assets: [
-        {
-          symbol: 'USDC',
-          address: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
-          decimals: 6,
-          receipt: '0xf53B60F4006cab2b3C4688ce41fD5362427A2A66',
-          receiptSymbol: 'aBasSepUSDC',
-        },
-      ],
-    },
+// Ethereum is deliberately ABSENT. Gas on L1 costs more than a stablecoin position of the
+// size this app moves will earn back, and the same USDC earns on both L2s listed here.
+// Adding a row is the whole change needed to enable a chain, and the row is only true
+// once someone has read getReserveData from that Pool and written the aToken down.
+const DEPLOYMENTS: Partial<Record<ChainId, AaveMarket>> = {
+  arb: {
+    pool: '0x794a61358D6845594F94dc1DB02A252b5b4814aD',
+    assets: [
+      {
+        symbol: 'USDC',
+        address: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+        decimals: 6,
+        receipt: '0x724dc807b04555b71ed48a6896b6F41593b8C637',
+        receiptSymbol: 'aArbUSDCn',
+      },
+    ],
   },
-  mainnet: {},
+  base: {
+    pool: '0xA238Dd80C259a72e81d7e4664a9801593F98d1c5',
+    assets: [
+      {
+        symbol: 'USDC',
+        address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        decimals: 6,
+        receipt: '0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB',
+        receiptSymbol: 'aBasUSDC',
+      },
+    ],
+  },
 };
 
-export function marketFor(network: Network, chain: ChainId): AaveMarket {
-  const found = DEPLOYMENTS[network][chain];
+// Chains with no verified market answer with a sentence rather than a stack trace: an
+// agent asking about a chain this venue was never wired to gets told so.
+export function marketFor(chain: ChainId): AaveMarket {
+  const found = DEPLOYMENTS[chain];
   if (found === undefined) {
-    const known = Object.keys(DEPLOYMENTS[network]).join(', ') || 'none';
-    throw new Error(`aave-v3 has no verified deployment for ${chain} on ${network} (verified: ${known})`);
+    const known = aaveChains().join(' and ') || 'no chain';
+    throw new Error(`Earning is not available on ${chain}. Aave v3 is wired to ${known} here.`);
   }
   return found;
 }
 
-export function aaveChains(network: Network): ChainId[] {
-  return Object.keys(DEPLOYMENTS[network]) as ChainId[];
+export function aaveChains(): ChainId[] {
+  return Object.keys(DEPLOYMENTS) as ChainId[];
 }
 
-export function aaveAsset(network: Network, chain: ChainId, symbol: string): VenueAsset | null {
-  const market = DEPLOYMENTS[network][chain];
+export function aaveAsset(chain: ChainId, symbol: string): VenueAsset | null {
+  const market = DEPLOYMENTS[chain];
   if (market === undefined) return null;
   return market.assets.find((a) => a.symbol.toLowerCase() === symbol.toLowerCase()) ?? null;
 }
 
-function requireAsset(network: Network, chain: ChainId, symbol: string): { market: AaveMarket; asset: VenueAsset } {
-  const market = marketFor(network, chain);
+function requireAsset(chain: ChainId, symbol: string): { market: AaveMarket; asset: VenueAsset } {
+  const market = marketFor(chain);
   const asset = market.assets.find((a) => a.symbol.toLowerCase() === symbol.toLowerCase());
   if (asset === undefined) {
     const known = market.assets.map((a) => a.symbol).join(', ') || 'none';
-    throw new Error(`aave-v3 on ${chain} ${network} does not take ${symbol} (takes: ${known})`);
+    throw new Error(`aave-v3 on ${chain} does not take ${symbol} (takes: ${known})`);
   }
   return { market, asset };
 }
 
 // ---------- reads ----------
 
-export async function aaveRate(network: Network, chain: ChainId, symbol: string): Promise<VenueRate> {
-  const { market, asset } = requireAsset(network, chain, symbol);
-  const data = await reader(network, chain).readContract({
+export async function aaveRate(chain: ChainId, symbol: string): Promise<VenueRate> {
+  const { market, asset } = requireAsset(chain, symbol);
+  const data = await reader(chain).readContract({
     address: market.pool,
     abi: POOL_ABI,
     functionName: 'getReserveData',
@@ -177,9 +162,9 @@ export function decodeReserveHealth(configuration: bigint): ReserveHealth {
   };
 }
 
-export async function aaveHealth(network: Network, chain: ChainId, symbol: string): Promise<ReserveHealth> {
-  const { market, asset } = requireAsset(network, chain, symbol);
-  const data = await reader(network, chain).readContract({
+export async function aaveHealth(chain: ChainId, symbol: string): Promise<ReserveHealth> {
+  const { market, asset } = requireAsset(chain, symbol);
+  const data = await reader(chain).readContract({
     address: market.pool,
     abi: POOL_ABI,
     functionName: 'getReserveData',
@@ -188,9 +173,9 @@ export async function aaveHealth(network: Network, chain: ChainId, symbol: strin
   return decodeReserveHealth(data.configuration);
 }
 
-export async function aavePosition(network: Network, chain: ChainId, symbol: string, owner: string): Promise<VenuePosition> {
-  const { market, asset } = requireAsset(network, chain, symbol);
-  const client = reader(network, chain);
+export async function aavePosition(chain: ChainId, symbol: string, owner: string): Promise<VenuePosition> {
+  const { market, asset } = requireAsset(chain, symbol);
+  const client = reader(chain);
   const who = getAddress(owner);
   const [balanceBase, scaledBase, indexRay] = await Promise.all([
     client.readContract({ address: getAddress(asset.receipt), abi: ATOKEN_ABI, functionName: 'balanceOf', args: [who] }),
@@ -203,17 +188,16 @@ export async function aavePosition(network: Network, chain: ChainId, symbol: str
 // ---------- writes, as calldata only ----------
 
 export async function aaveDepositCalls(args: {
-  network: Network;
   chain: ChainId;
   symbol: string;
   owner: string;
   amountBase: bigint;
 }): Promise<VenueCall[]> {
-  const { market, asset } = requireAsset(args.network, args.chain, args.symbol);
+  const { market, asset } = requireAsset(args.chain, args.symbol);
   if (args.amountBase <= 0n) throw new Error('aave-v3 deposit amount must be above zero');
 
   const calls: VenueCall[] = [];
-  const allowance = await erc20Allowance(args.network, args.chain, getAddress(asset.address), getAddress(args.owner), market.pool);
+  const allowance = await erc20Allowance(args.chain, getAddress(asset.address), getAddress(args.owner), market.pool);
 
   // Approve the exact amount, not the unlimited approval most front ends default to.
   //
@@ -253,13 +237,12 @@ export async function aaveDepositCalls(args: {
 const MAX_UINT256 = (1n << 256n) - 1n;
 
 export async function aaveWithdrawCalls(args: {
-  network: Network;
   chain: ChainId;
   symbol: string;
   owner: string;
   amountBase: bigint | null;
 }): Promise<VenueCall[]> {
-  const { market, asset } = requireAsset(args.network, args.chain, args.symbol);
+  const { market, asset } = requireAsset(args.chain, args.symbol);
   const amount = args.amountBase === null ? MAX_UINT256 : args.amountBase;
   if (args.amountBase !== null && args.amountBase <= 0n) {
     throw new Error('aave-v3 withdraw amount must be above zero, or null for everything');
@@ -294,8 +277,8 @@ export function aaveVenue(): YieldVenue {
 // The pool address is what the policy allowlist has to contain for this venue to be usable.
 // Same contract as src/rails/index.ts venueAllowlist: the addresses come from the verified
 // table above and from nowhere else, so no agent input can reach this list.
-export function aaveCounterparties(network: Network): string[] {
-  return aaveChains(network).map((chain) => marketFor(network, chain).pool.toLowerCase());
+export function aaveCounterparties(): string[] {
+  return aaveChains().map((chain) => marketFor(chain).pool.toLowerCase());
 }
 
 export { RAY };

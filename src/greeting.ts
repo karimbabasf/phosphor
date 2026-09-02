@@ -39,15 +39,12 @@ const DIM = '\x1b[38;5;28m';
 const RESET = '\x1b[0m';
 
 export type GreetingFacts = {
-  network: string;
   view: ViewMode;
   totalUsd: number | null;
   chainCount: number;
   pendingCount: number;
   clickThresholdUsd: number | null;
   killSwitch: boolean;
-  gateRequired: boolean;
-  tradingNetwork: string;
   tradingAllowed: boolean;
   holder: string | null;
   emptyCount: number;
@@ -65,8 +62,8 @@ function money(n: number | null): string {
 }
 
 // Two columns of facts, because a human reading a boot screen scans down a column rather than
-// along a line. Every value here is read live: a greeting that hardcodes "mainnet" is how an
-// operator ends up confidently working the wrong world.
+// along a line. Every value here is read live rather than written into the template: a boot
+// screen that states a fact it did not check is worse than one that states nothing.
 function factLines(f: GreetingFacts): string[] {
   const wallet =
     f.totalUsd === null
@@ -80,21 +77,17 @@ function factLines(f: GreetingFacts): string[] {
     f.killSwitch
       ? 'KILL SWITCH ON, every write refused'
       : f.clickThresholdUsd === null
-        ? f.gateRequired
-          ? 'every move needs a human click'
-          : 'policy decides'
+        ? 'every move needs a human click'
         : `human click above ${money(f.clickThresholdUsd)}`;
-  const trading = f.tradingAllowed
-    ? `hyperliquid ${f.tradingNetwork}`
-    : `refused on ${f.tradingNetwork}`;
+  const trading = f.tradingAllowed ? 'hyperliquid' : 'refused';
 
   // Three rows, two columns. The window the human is looking at is deliberately NOT a row
   // here: it is marked in the mode list below, where it is a place you can move to rather
   // than a fact you read and then have to map onto the options.
   return [
-    `${pad('NETWORK', 10)}${pad(f.network, 26)}${pad('SEAT', 9)}${f.holder === null ? 'yours' : f.holder}`,
-    `${pad('WALLET', 10)}${pad(wallet, 26)}${pad('PENDING', 9)}${pending}`,
-    `${pad('TRADING', 10)}${pad(trading, 26)}${pad('GATE', 9)}${gate}`,
+    `${pad('WALLET', 10)}${pad(wallet, 26)}${pad('SEAT', 9)}${f.holder === null ? 'yours' : f.holder}`,
+    `${pad('TRADING', 10)}${pad(trading, 26)}${pad('PENDING', 9)}${pending}`,
+    `${pad('GATE', 10)}${gate}`,
   ];
 }
 

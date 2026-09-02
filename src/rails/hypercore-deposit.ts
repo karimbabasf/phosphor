@@ -64,7 +64,7 @@ import {
   sendTx as nearSendTx,
 } from '../chain/near.ts';
 import type { NearSendOutcome, NearSendParams } from '../chain/near.ts';
-import type { ChainId, HlDepositDraft, Network, Rail, RailResult, SimulationResult } from '../types.ts';
+import type { ChainId, HlDepositDraft, Rail, RailResult, SimulationResult } from '../types.ts';
 import { ONECLICK_TERMINAL, assetIdFor, oneClickClient, oneLine, toBaseUnits } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickStatus, TokensFile } from '../intents.ts';
 import { ONECLICK_COUNTERPARTY } from './oneclick.ts';
@@ -139,13 +139,13 @@ export type HypercoreEvmPort = {
   // dropping that check was a regression: without it a short wallet gets a live quote, a minted
   // deposit address and a reverted transfer, and the reason arrives from the chain instead of
   // from a sentence. No money is lost either way; what is lost is the explanation.
-  erc20Balance(network: Network, chain: ChainId, token: Address, owner: Address): Promise<bigint>;
-  nativeBalance(network: Network, chain: ChainId, owner: Address): Promise<bigint>;
+  erc20Balance(chain: ChainId, token: Address, owner: Address): Promise<bigint>;
+  nativeBalance(chain: ChainId, owner: Address): Promise<bigint>;
 };
 
 export type HypercoreNearPort = {
   accountId(keysPath: string): string;
-  storageRegistered(network: Network, token: string, account: string): Promise<boolean>;
+  storageRegistered(token: string, account: string): Promise<boolean>;
   send(params: NearSendParams): Promise<NearSendOutcome>;
 };
 
@@ -153,7 +153,7 @@ export const liveEvmPort: HypercoreEvmPort = {
   signerAddress: evmAddress,
   send: sendTx,
   erc20Balance,
-  nativeBalance: (network, chain, owner) => reader(network, chain).getBalance({ address: owner }),
+  nativeBalance: (chain, owner) => reader(chain).getBalance({ address: owner }),
 };
 export const liveNearPort: HypercoreNearPort = {
   accountId: nearAccountId,
@@ -175,7 +175,6 @@ export type HlSpotBalance = { coin: string; token: number; total: number; hold: 
 
 export type HlAccountState = {
   address: string;
-  network: Network;
   accountValueUsd: number; // the perp side: this is what margin is drawn from
   withdrawableUsd: number;
   marginUsedUsd: number;
@@ -183,8 +182,8 @@ export type HlAccountState = {
   spot: HlSpotBalance[]; // a SEPARATE book from the perp balance above, on a CLASSIC account
   // Whether this account has the two books merged. On a unified account there is nothing to
   // move between, `withdrawable` reads 0 while the money is present, and usdClassTransfer is
-  // rejected outright. Karim's account is unified on both networks, checked live 2026-08-20,
-  // so this is the normal case here rather than an exotic one.
+  // rejected outright. Karim's account is unified, checked live 2026-08-20, so this is the
+  // normal case here rather than an exotic one.
   unified: boolean;
   availableUsdc: number; // free collateral: the perp figure classically, the unified figure otherwise
   funded: boolean;
@@ -219,15 +218,21 @@ function sameAddress(a: string, b: string): boolean {
   return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
 
-const INFO_URL: Record<Network, string> = {
-  testnet: 'https://api.hyperliquid-testnet.xyz/info',
-  mainnet: 'https://api.hyperliquid.xyz/info',
-};
+// The two shapes a NEAR account id that 1Click can settle to takes: a named account under
+// the .near top-level account, or a 64-character implicit account, which is the hex of an
+// ed25519 public key. Stricter than isNearAccountId() in chain/near.ts, which answers the
+// different question of whether a string is a structurally valid account id at all.
+function isSettlableNearAccount(raw: string): boolean {
+  const id = raw.trim().toLowerCase();
+  if (/^[0-9a-f]{64}$/.test(id)) return true;
+  return /^(?:[a-z0-9_-]+\.)+near$/.test(id);
+}
+
+const INFO_URL = 'https://api.hyperliquid.xyz/info';
 
 // ---------- the rail ----------
 
 export type HypercoreDepositDeps = {
-  network: Network; // the TRADING network: which Hyperliquid the collateral lands on
   keysPath: string;
   tokens: TokensFile;
   client?: OneClickClient;
@@ -255,7 +260,7 @@ type Plan = {
 };
 
 export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepositRail {
-  const { network, keysPath, tokens } = deps;
+  const { keysPath, tokens } = deps;
   const client = deps.client ?? oneClickClient({ fetchImpl: deps.fetchImpl });
   const evm = deps.evm ?? liveEvmPort;
   const near = deps.near ?? liveNearPort;
@@ -291,7 +296,7 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     const joined = reasons.join('; ');
     return {
       ok: false,
-      summary: [`REFUSED: fund Hyperliquid ${network} with ${draft.amount} ${draft.symbol} - ${joined}`, ...lines].join('\n'),
+      summary: [`REFUSED: fund Hyperliquid with ${draft.amount} ${draft.symbol} - ${joined}`, ...lines].join('\n'),
       error: joined,
     };
   }
@@ -301,28 +306,6 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
   // remote API about the wrong asset.
   async function plan(draft: HlDepositDraft): Promise<{ plan?: Plan; reasons: string[] }> {
     const reasons: string[] = [];
-
-    // THE FIRST CHECK, and the one that stops the worst outcome this rail can produce.
-    //
-    // 1Click has no testnet and the asset pinned above is MAINNET HyperCore USDC. The recipient
-    // is an EVM address, and the same address names an account on BOTH Hyperliquid networks. So
-    // a deposit raised while this app is trading testnet would take real money, deliver it
-    // correctly to the MAINNET trading account, and report success, while the testnet account
-    // the app is actually trading stayed empty. Nothing reverts. Nothing looks wrong.
-    //
-    // It is not recoverable by this rail either: getting it back is a signed withdraw3 against
-    // mainnet, which is not the network the app is configured for.
-    if (network !== 'mainnet') {
-      return {
-        reasons: [
-          `funding routes through NEAR Intents, which has no testnet, and the asset it delivers is ` +
-            `MAINNET HyperCore USDC. This app is trading ${network}, and one address names an account ` +
-            `on both networks, so this deposit would put real money into the mainnet trading account ` +
-            `while the ${network} one stayed empty. Use the venue faucet for ${network} ` +
-            `(https://app.hyperliquid-testnet.xyz/drip), or set tradingNetwork to mainnet`,
-        ],
-      };
-    }
 
     const family = originFamily(draft.chain);
     if (family === null) {
@@ -351,15 +334,16 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
       );
     }
 
-    // 1Click has no testnet, so a NEAR origin is always a MAINNET NEAR account. A `.testnet`
-    // account here is a config mistake, and without this check it leaves as a well-formed quote
-    // request and comes back as a bare "Internal server error" from the API: a refusal whose
-    // stated reason has nothing to do with the real cause, which is the shape of the bug this
-    // repo has paid for more than once.
-    if (family === 'near' && /\.testnet$/i.test(draft.from.trim())) {
+    // A NEAR origin must be an account that exists on the chain 1Click settles against.
+    // Checked as an allowlist of the two shapes a real NEAR account id can take rather than
+    // as a blocklist of wrong suffixes: an id of any other shape leaves here as a
+    // well-formed quote request and comes back as a bare "Internal server error" from the
+    // API, a refusal whose stated reason has nothing to do with the real cause, which is
+    // the shape of the bug this repo has paid for more than once.
+    if (family === 'near' && !isSettlableNearAccount(draft.from)) {
       reasons.push(
-        `${draft.from} is a NEAR testnet account and 1Click is mainnet only, so this quote would be refused ` +
-          `by the API with an error that does not say so. Configure a mainnet NEAR account, or fund from an EVM chain`,
+        `${draft.from} is not a NEAR account id 1Click can settle to. It must end in .near, or be a ` +
+          `64-character implicit account id. Configure a NEAR account, or fund from an EVM chain`,
       );
     }
 
@@ -449,7 +433,7 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     return {
       feePct,
       lines: [
-        `Fund Hyperliquid ${network} perps from ${draft.chain}.`,
+        `Fund Hyperliquid perps from ${draft.chain}.`,
         `  send      ${draft.amount} ${draft.symbol} on ${draft.chain}`,
         `  credited  ${oneLine(quote.amountOutFormatted, 40)} USDC to ${draft.hlAccount}`,
         `  cost      ${Number.isFinite(feeUsd) ? `${feeUsd.toFixed(4)} USDC, ${feePct.toFixed(2)} percent of the deposit` : 'unknown'}`,
@@ -509,7 +493,6 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
   async function depositTransfer(draft: HlDepositDraft, p: Plan, depositAddress: string): Promise<Deposited> {
     if (p.family === 'evm') {
       return evm.send({
-        network,
         chain: draft.chain,
         keysPath,
         to: p.originToken as Address,
@@ -520,7 +503,7 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     // A NEP-141 transfer to an account with no storage deposit on that token contract panics,
     // the tokens bounce, and the transaction is still paid for. The deposit address is freshly
     // minted, so this is a live question rather than a formality.
-    const registered = await near.storageRegistered(network, p.originToken, depositAddress);
+    const registered = await near.storageRegistered(p.originToken, depositAddress);
     if (!registered) {
       return {
         ok: false,
@@ -531,7 +514,6 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     }
 
     return near.send({
-      network,
       keysPath,
       receiverId: p.originToken,
       actions: [
@@ -541,7 +523,7 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
   }
 
   async function info<T>(body: Record<string, unknown>): Promise<T> {
-    const res = await fetchImpl(INFO_URL[network], {
+    const res = await fetchImpl(INFO_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
@@ -579,7 +561,6 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
 
     return {
       address: user,
-      network,
       accountValueUsd,
       withdrawableUsd,
       marginUsedUsd: num(perp.marginSummary?.totalMarginUsed),
@@ -612,7 +593,7 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     // A UNIFIED account has no two sides. The money is collateral the moment it lands, and
     // usdClassTransfer against one is rejected outright, so attempting the move here would turn
     // a completed deposit into a frightening sentence about the spot side. Karim's account is
-    // unified on both networks, so this is the normal path rather than the exotic one.
+    // unified, so this is the normal path rather than the exotic one.
     if (after.unified || before.unified) {
       const gain = after.availableUsdc - before.availableUsdc;
       return gain > 0.01
@@ -635,7 +616,7 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     }
 
     try {
-      const moved = await usdClassTransfer({ network, keysPath }, { amount: spotGain, toPerp: true });
+      const moved = await usdClassTransfer({ keysPath }, { amount: spotGain, toPerp: true });
       return moved.ok
         ? ` Landed on the spot side and was moved to perp: ${spotGain.toFixed(4)} USDC is margin now.`
         : ` Landed on the SPOT side and the move to perp failed: ${oneLine(moved.detail, 120)}. ` +
@@ -677,8 +658,8 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     if (p.family === 'evm') {
       try {
         const [held, gas] = await Promise.all([
-          evm.erc20Balance(network, draft.chain, p.originToken as Address, draft.from as Address),
-          evm.nativeBalance(network, draft.chain, draft.from as Address),
+          evm.erc20Balance(draft.chain, p.originToken as Address, draft.from as Address),
+          evm.nativeBalance(draft.chain, draft.from as Address),
         ]);
         const shortfall: string[] = [];
         if (held < p.amountBase) {
@@ -864,7 +845,7 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
       return {
         ok: true,
         detail:
-          `funded Hyperliquid ${network} with ${oneLine(quote.amountOutFormatted, 40)} USDC ` +
+          `funded Hyperliquid with ${oneLine(quote.amountOutFormatted, 40)} USDC ` +
           `from ${draft.amount} ${draft.symbol} on ${draft.chain}; ${evidence}.${settled}`,
         txids: [txHash, ...watch.destinationTxHashes],
       };

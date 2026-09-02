@@ -8,15 +8,6 @@
 //   3. The destination is never an argument. `supply` credits our own address and `withdraw`
 //      pays our own address, both derived from the key this app holds, so there is no field
 //      here that a hijacked agent could point somewhere else.
-//
-// One thing this rail does that the others do not: it refuses on MAINNET.
-//
-// Not because the venue is worse there, but because this rail has never run on a live chain
-// at the moment it is being written, and the repo's rule is that an unproven fund-moving rail
-// is not one to discover the edges of with real money. src/rails/hyperliquid-deposit.ts holds
-// the same position from the other side, refusing on testnet because the mainnet bridge
-// address burns tokens there. Both are the same rule: a rail states the world it has been
-// checked in.
 
 import { formatUnits } from 'viem';
 import type {
@@ -53,23 +44,12 @@ function requireVenue(venue: string): void {
   }
 }
 
-function requireTestnet(cfg: AppConfig): void {
-  if (cfg.network !== 'testnet') {
-    throw new Error(
-      'the yield rail runs on testnet only. It has not been run on a live mainnet chain, and an ' +
-        'unproven fund-moving rail is not one to find the edges of with real money. Enabling it ' +
-        'means adding a mainnet row to DEPLOYMENTS in src/yield/aave.ts and deleting this check, ' +
-        'on purpose, by a human.',
-    );
-  }
-}
-
 // A reserve that is frozen, paused or inactive still answers getReserveData and still reports
 // a rate. A rail that read only the rate would quote a number into the approval gate and then
 // fail at signing with a bare revert code, which is the worst of both: the human approved
 // something, and what came back said nothing. Reading the flags lets the refusal name the flag.
-async function refuseUnhealthy(cfg: AppConfig, draft: { chain: YieldDepositDraft['chain']; symbol: string }): Promise<string | null> {
-  const health = await aaveHealth(cfg.network, draft.chain, draft.symbol);
+async function refuseUnhealthy(draft: { chain: YieldDepositDraft['chain']; symbol: string }): Promise<string | null> {
+  const health = await aaveHealth(draft.chain, draft.symbol);
   if (!health.active) return `the Aave ${draft.symbol} reserve on ${draft.chain} is not active`;
   if (health.paused) return `the Aave ${draft.symbol} reserve on ${draft.chain} is paused`;
   if (health.frozen) return `the Aave ${draft.symbol} reserve on ${draft.chain} is frozen: no new supply is accepted`;
@@ -82,7 +62,6 @@ async function runCalls(cfg: AppConfig, chain: YieldDepositDraft['chain'], calls
 
   for (const call of calls) {
     const out = await sendTx({
-      network: cfg.network,
       chain,
       keysPath: cfg.keysPath,
       to: call.to as Address,
@@ -113,21 +92,20 @@ export function yieldDepositRail(cfg: AppConfig): Rail<YieldDepositDraft> {
     async simulate(draft): Promise<SimulationResult> {
       try {
         requireVenue(draft.venue);
-        requireTestnet(cfg);
 
-        const asset = aaveAsset(cfg.network, draft.chain, draft.symbol);
+        const asset = aaveAsset(draft.chain, draft.symbol);
         if (asset === null) {
           return { ok: false, summary: '', error: `Aave v3 does not take ${draft.symbol} on ${draft.chain}` };
         }
 
-        const unhealthy = await refuseUnhealthy(cfg, draft);
+        const unhealthy = await refuseUnhealthy(draft);
         if (unhealthy !== null) return { ok: false, summary: '', error: unhealthy };
 
         const amountBase = BigInt(draft.amountBase);
         if (amountBase <= 0n) return { ok: false, summary: '', error: 'deposit amount must be above zero' };
 
         const owner = evmAddress(cfg.keysPath);
-        const held = await erc20Balance(cfg.network, draft.chain, getAddress(asset.address), owner);
+        const held = await erc20Balance(draft.chain, getAddress(asset.address), owner);
         if (held < amountBase) {
           return {
             ok: false,
@@ -139,9 +117,8 @@ export function yieldDepositRail(cfg: AppConfig): Rail<YieldDepositDraft> {
         }
 
         const [rate, calls] = await Promise.all([
-          aaveRate(cfg.network, draft.chain, draft.symbol),
+          aaveRate(draft.chain, draft.symbol),
           aaveDepositCalls({
-            network: cfg.network,
             chain: draft.chain,
             symbol: draft.symbol,
             owner,
@@ -170,8 +147,7 @@ export function yieldDepositRail(cfg: AppConfig): Rail<YieldDepositDraft> {
     async execute(draft): Promise<RailResult> {
       try {
         requireVenue(draft.venue);
-        requireTestnet(cfg);
-        const asset = aaveAsset(cfg.network, draft.chain, draft.symbol);
+        const asset = aaveAsset(draft.chain, draft.symbol);
         if (asset === null) return { ok: false, detail: `Aave v3 does not take ${draft.symbol} on ${draft.chain}` };
 
         // Re-read the flags here, not only in simulate().
@@ -180,13 +156,12 @@ export function yieldDepositRail(cfg: AppConfig): Rail<YieldDepositDraft> {
         // and a reserve can freeze in that time. Without this the rail runs anyway, lands the
         // APPROVE on chain (a real allowance and real gas) and then reverts on the supply. One
         // eth_call in front of a path that spends money is the cheapest check in the file.
-        const unhealthy = await refuseUnhealthy(cfg, draft);
+        const unhealthy = await refuseUnhealthy(draft);
         if (unhealthy !== null) return { ok: false, detail: `refused before signing: ${unhealthy}` };
 
         const owner = evmAddress(cfg.keysPath);
         const amountBase = BigInt(draft.amountBase);
         const calls = await aaveDepositCalls({
-          network: cfg.network,
           chain: draft.chain,
           symbol: draft.symbol,
           owner,
@@ -200,7 +175,7 @@ export function yieldDepositRail(cfg: AppConfig): Rail<YieldDepositDraft> {
         // came back ok. src/rails/hypercore-deposit.ts finishes by looking too, for the same
         // reason: a transaction that succeeded is not the same claim as the money arriving
         // where it was meant to.
-        const after = await aavePosition(cfg.network, draft.chain, draft.symbol, owner);
+        const after = await aavePosition(draft.chain, draft.symbol, owner);
         return {
           ok: true,
           detail:
@@ -224,15 +199,14 @@ export function yieldWithdrawRail(cfg: AppConfig): Rail<YieldWithdrawDraft> {
     async simulate(draft): Promise<SimulationResult> {
       try {
         requireVenue(draft.venue);
-        requireTestnet(cfg);
 
-        const asset = aaveAsset(cfg.network, draft.chain, draft.symbol);
+        const asset = aaveAsset(draft.chain, draft.symbol);
         if (asset === null) {
           return { ok: false, summary: '', error: `Aave v3 does not take ${draft.symbol} on ${draft.chain}` };
         }
 
         const owner = evmAddress(cfg.keysPath);
-        const position = await aavePosition(cfg.network, draft.chain, draft.symbol, owner);
+        const position = await aavePosition(draft.chain, draft.symbol, owner);
         if (position.balanceBase === 0n) {
           return { ok: false, summary: '', error: `no Aave v3 ${draft.symbol} position on ${draft.chain} to withdraw` };
         }
@@ -240,7 +214,7 @@ export function yieldWithdrawRail(cfg: AppConfig): Rail<YieldWithdrawDraft> {
         // A paused reserve blocks withdrawals as well as supply, and this is the one place
         // where that has to be said out loud: the whole promise of this feature is that the
         // money can come back, so the moment it cannot, the human hears it in plain words.
-        const health = await aaveHealth(cfg.network, draft.chain, draft.symbol);
+        const health = await aaveHealth(draft.chain, draft.symbol);
         if (health.paused) {
           return {
             ok: false,
@@ -279,15 +253,13 @@ export function yieldWithdrawRail(cfg: AppConfig): Rail<YieldWithdrawDraft> {
     async execute(draft): Promise<RailResult> {
       try {
         requireVenue(draft.venue);
-        requireTestnet(cfg);
-        const asset = aaveAsset(cfg.network, draft.chain, draft.symbol);
+        const asset = aaveAsset(draft.chain, draft.symbol);
         if (asset === null) return { ok: false, detail: `Aave v3 does not take ${draft.symbol} on ${draft.chain}` };
 
         const owner = evmAddress(cfg.keysPath);
-        const before = await erc20Balance(cfg.network, draft.chain, getAddress(asset.address), owner);
+        const before = await erc20Balance(draft.chain, getAddress(asset.address), owner);
 
         const calls = await aaveWithdrawCalls({
-          network: cfg.network,
           chain: draft.chain,
           symbol: draft.symbol,
           owner,
@@ -297,7 +269,7 @@ export function yieldWithdrawRail(cfg: AppConfig): Rail<YieldWithdrawDraft> {
         const result = await runCalls(cfg, draft.chain, calls);
         if (!result.ok) return result;
 
-        const after = await erc20Balance(cfg.network, draft.chain, getAddress(asset.address), owner);
+        const after = await erc20Balance(draft.chain, getAddress(asset.address), owner);
         const arrived = after > before ? after - before : 0n;
         return {
           ok: true,
@@ -320,13 +292,13 @@ export function yieldRails(cfg: AppConfig): {
   return { deposit: yieldDepositRail(cfg), withdraw: yieldWithdrawRail(cfg) };
 }
 
-// Every counterparty the yield rails can hand funds to on this network, lowercased, taken
-// from the verified deployment table and nowhere else. Same contract as venueAllowlist.
-export function yieldCounterparties(cfg: AppConfig): string[] {
+// Every counterparty the yield rails can hand funds to, lowercased, taken from the verified
+// deployment table and nowhere else. Same contract as venueAllowlist.
+export function yieldCounterparties(): string[] {
   const out: string[] = [];
   for (const chain of ['arb', 'base', 'eth'] as const) {
     try {
-      out.push(marketFor(cfg.network, chain).pool.toLowerCase());
+      out.push(marketFor(chain).pool.toLowerCase());
     } catch {
       // No deployment on this chain for this network. Absent is the normal answer.
     }

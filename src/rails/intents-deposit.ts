@@ -26,16 +26,12 @@
 // balance leaves nothing to pay gas with, and every later transaction, including the one
 // that would rescue the funds, fails. checkNativeReserve() below is the answer and it runs
 // before anything is signed.
-//
-// THIS RAIL IS MAINNET ONLY, for the reason in src/rails/oneclick.ts: NEAR Intents has no
-// testnet, there is no 1Click host to call, and intents.near has never been deployed on NEAR
-// testnet. execute() refuses on any other network before it does anything else.
 
 import { formatUnits, getAddress, isAddress } from 'viem';
 import type { Address } from 'viem';
 import { erc20TransferData, evmAddress, reader, sendTx } from '../chain/evm.ts';
 import type { SendOutcome, SendParams } from '../chain/evm.ts';
-import type { ChainId, IntentsDepositDraft, Network, Rail, RailResult, SimulationResult } from '../types.ts';
+import type { ChainId, IntentsDepositDraft, Rail, RailResult, SimulationResult } from '../types.ts';
 import {
   NATIVE_ASSET,
   NATIVE_TOKEN_ID,
@@ -47,7 +43,7 @@ import {
   toBaseUnits,
 } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickStatus, TokensFile } from '../intents.ts';
-import { NO_TESTNET_REASON, ONECLICK_COUNTERPARTY } from './oneclick.ts';
+import { ONECLICK_COUNTERPARTY } from './oneclick.ts';
 
 // The chains src/chain/evm.ts can sign for. 1Click accepts Solana and NEAR origins too;
 // Phosphor has no signer for them, so a draft naming one is refused rather than attempted.
@@ -113,18 +109,18 @@ export function minCreditedFor(amount: number): number {
 export type DepositEvmPort = {
   signerAddress(keysPath: string): Address;
   send(params: SendParams): Promise<SendOutcome>;
-  nativeBalance(network: Network, chain: ChainId, address: Address): Promise<bigint>;
-  estimateNativeSendGas(network: Network, chain: ChainId, from: Address, to: Address, value: bigint): Promise<bigint>;
+  nativeBalance(chain: ChainId, address: Address): Promise<bigint>;
+  estimateNativeSendGas(chain: ChainId, from: Address, to: Address, value: bigint): Promise<bigint>;
 };
 
 const liveDepositEvmPort: DepositEvmPort = {
   signerAddress: evmAddress,
   send: sendTx,
-  async nativeBalance(network, chain, address) {
-    return reader(network, chain).getBalance({ address });
+  async nativeBalance(chain, address) {
+    return reader(chain).getBalance({ address });
   },
-  async estimateNativeSendGas(network, chain, from, to, value) {
-    const pub = reader(network, chain);
+  async estimateNativeSendGas(chain, from, to, value) {
+    const pub = reader(chain);
     const [gas, fees] = await Promise.all([
       pub.estimateGas({ account: from, to, value, data: '0x' }),
       pub.estimateFeesPerGas(),
@@ -135,7 +131,6 @@ const liveDepositEvmPort: DepositEvmPort = {
 };
 
 export type IntentsDepositRailDeps = {
-  network: Network;
   keysPath: string;
   tokens: TokensFile;
   evm?: DepositEvmPort;
@@ -167,7 +162,7 @@ function baseUnits(value: unknown, field: string): bigint {
 }
 
 export function intentsDepositRail(deps: IntentsDepositRailDeps): IntentsDepositRail {
-  const { network, keysPath, tokens } = deps;
+  const { keysPath, tokens } = deps;
   const evm = deps.evm ?? liveDepositEvmPort;
   const client = deps.client ?? oneClickClient({ fetchImpl: deps.fetchImpl });
   const sleep = deps.sleepImpl ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
@@ -277,8 +272,8 @@ export function intentsDepositRail(deps: IntentsDepositRailDeps): IntentsDeposit
     if (!p.isNative) return null;
 
     const owner = evm.signerAddress(keysPath);
-    const balance = await evm.nativeBalance(network, draft.chain, owner);
-    const gasCost = await evm.estimateNativeSendGas(network, draft.chain, owner, to, p.amountBase);
+    const balance = await evm.nativeBalance(draft.chain, owner);
+    const gasCost = await evm.estimateNativeSendGas(draft.chain, owner, to, p.amountBase);
 
     // Whichever is larger: a multiple of what this send costs now, or the absolute floor.
     // The multiple tracks a genuinely expensive moment; the floor covers the opposite case,
@@ -341,13 +336,6 @@ export function intentsDepositRail(deps: IntentsDepositRailDeps): IntentsDeposit
         return { ok: false, summary: [`REFUSED: ${joined}`, ...lines].join('\n'), error: joined };
       }
 
-      if (network !== 'mainnet') {
-        return {
-          ok: false,
-          summary: [`CANNOT EXECUTE on ${network}: ${NO_TESTNET_REASON}`, ...lines].join('\n'),
-          error: NO_TESTNET_REASON,
-        };
-      }
 
       // The reserve is checked here as well as in execute() so a human sees the refusal
       // before they click, not after. The address is not known yet at simulate time, so the
@@ -372,8 +360,6 @@ export function intentsDepositRail(deps: IntentsDepositRailDeps): IntentsDeposit
   }
 
   async function execute(draft: IntentsDepositDraft): Promise<RailResult> {
-    if (network !== 'mainnet') throw new Error(NO_TESTNET_REASON);
-
     const p = await plan(draft);
 
     // The draft names the wallet a human approved. If the configured key is a different
@@ -427,8 +413,8 @@ export function intentsDepositRail(deps: IntentsDepositRailDeps): IntentsDeposit
 
     const sent = await evm.send(
       p.isNative
-        ? { network, chain: draft.chain, keysPath, to: depositAddress, data: '0x', value: p.amountBase }
-        : { network, chain: draft.chain, keysPath, to: p.token as Address, data: erc20TransferData(depositAddress, p.amountBase) },
+        ? { chain: draft.chain, keysPath, to: depositAddress, data: '0x', value: p.amountBase }
+        : { chain: draft.chain, keysPath, to: p.token as Address, data: erc20TransferData(depositAddress, p.amountBase) },
     );
 
     if (!sent.ok) {
