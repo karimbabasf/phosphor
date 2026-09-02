@@ -26,10 +26,31 @@
   satisfies library validation without this. The payload's three dependencies (viem, zod and the
   MCP SDK) are pure JavaScript with no native addons, so node loads no third-party dylibs either.
 
-  That cannot be settled without a real signed build, and only the owner holds the identity. So:
-  at the first signed build, set this to <false/>, build, and run the app. If it launches and the
-  backend spawns, delete this key and this paragraph. If it does not, keep it and record the
-  failure here so the next person does not repeat the experiment.
+  Measured in the tree as it stands (Track A, 2026-09-01): exactly one native binary anywhere in
+  node_modules, and it is the Tauri CLI, marked dev and optional in the lockfile, so
+  `npm ci --omit=dev` never puts it in the bundle. Of the 107 production packages the payload
+  does install, zero have an install script, which is the lockfile's marker for anything that
+  compiles or fetches a binding. Zero calls to process.dlopen, createRequire, or a require of a
+  .node file in src/ or scripts/. So the bundled node loads system dylibs and nothing else.
+
+  That still cannot be SETTLED without a real signed build, and only the owner holds the
+  identity. So: at the first signed build, set this to <false/>, build, and then check the thing
+  that would actually break.
+
+  THE CHECK IS NOT "THE APP LAUNCHES". Library validation would bite the CHILD process, not the
+  window, and the window comes up first: a shell whose backend never spawned still shows you a
+  window. The check is that the backend is alive, and the app has a route that answers exactly
+  that with no token and no secret:
+
+      curl 127.0.0.1:4177/api/health
+
+  A 200 with `"ok":true` means node started, bound its port and is serving. If that answers,
+  delete this key and this whole comment. If it does not, keep the key and record the failure
+  here, so the next person does not repeat the experiment.
+
+  One caveat on the measurement above: it describes today's dependency tree. A native dependency
+  added later changes the answer silently, which is the other reason this note stays until
+  somebody has run the check.
 -->
 <plist version="1.0">
 <dict>

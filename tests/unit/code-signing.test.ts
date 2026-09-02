@@ -96,6 +96,11 @@ test('the library-validation opt-out carries the note that says how to retire it
   if (entitlement('com.apple.security.cs.disable-library-validation') !== true) return; // retired, as hoped
   assert.match(raw, /OPEN QUESTION/, 'a weakening entitlement has to say why it is there');
   assert.match(raw, /first signed build/, 'and what would settle it');
+  /* And the probe, named. "Does the app launch" is the wrong check and the tempting one: library
+     validation bites the CHILD process, and a shell whose backend never spawned still shows a
+     window. /api/health is the route that answers whether node is actually alive. */
+  assert.match(raw, /api\/health/, 'the retirement check has to name what to probe');
+  assert.doesNotMatch(raw, /If it launches and the\n  backend spawns/, 'launching is not the check');
 });
 
 /* Ad-hoc, so a local build still produces something that runs. The real build reads
