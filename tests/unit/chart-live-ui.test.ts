@@ -15,7 +15,7 @@ import { createContext, runInContext } from 'node:vm';
 type Sandbox = Record<string, any>;
 
 function loadChartUi(): Sandbox {
-  const source = readFileSync(new URL('../../ui/chart.js', import.meta.url), 'utf8');
+  const source = readFileSync(new URL('../../ui/chart/chart.js', import.meta.url), 'utf8');
   const sandbox: Sandbox = {
     window: {
       requestAnimationFrame: () => 1,
@@ -32,7 +32,7 @@ function loadChartUi(): Sandbox {
     console,
   };
   createContext(sandbox);
-  runInContext(source, sandbox, { filename: 'ui/chart.js' });
+  runInContext(source, sandbox, { filename: 'ui/chart/chart.js' });
   return sandbox;
 }
 

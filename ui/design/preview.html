@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phosphor components</title>
+<link rel="stylesheet" href="./tokens.css">
+<link rel="stylesheet" href="./reset.css">
+<link rel="stylesheet" href="./type.css">
+<link rel="stylesheet" href="./components.css">
+<link rel="stylesheet" href="./layout.css">
+<link rel="stylesheet" href="./screens.css">
+<style>
+  .sheet { max-width: 1200px; margin: 0 auto; padding: 48px 24px 96px; display: flex; flex-direction: column; gap: 48px; }
+  .group { display: flex; flex-direction: column; gap: 16px; }
+  .group > h2 { font-size: 12px; font-weight: 500; color: var(--text-3); letter-spacing: 0.04em; text-transform: uppercase; }
+  .bench { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg-1); }
+  .swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 12px; }
+  .swatch { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .swatch i { display: block; height: 48px; }
+  .swatch span { display: block; padding: 8px; font-size: 12px; font-family: var(--font-mono); color: var(--text-2); }
+  .scale > * { margin-bottom: 8px; }
+  .patternbox { position: relative; height: 220px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <header class="stack-2">
+    <h1 class="headline">Phosphor components</h1>
+    <p class="body dim">Every component and every state, on the tokens the app ships with.</p>
+  </header>
+
+  <section class="group">
+    <h2>Colour</h2>
+    <div class="swatches">
+      <div class="swatch"><i style="background:var(--bg-0)"></i><span>--bg-0</span></div>
+      <div class="swatch"><i style="background:var(--bg-1)"></i><span>--bg-1</span></div>
+      <div class="swatch"><i style="background:var(--bg-2)"></i><span>--bg-2</span></div>
+      <div class="swatch"><i style="background:var(--line)"></i><span>--line</span></div>
+      <div class="swatch"><i style="background:var(--line-strong)"></i><span>--line-strong</span></div>
+      <div class="swatch"><i style="background:var(--text)"></i><span>--text</span></div>
+      <div class="swatch"><i style="background:var(--text-2)"></i><span>--text-2</span></div>
+      <div class="swatch"><i style="background:var(--text-3)"></i><span>--text-3</span></div>
+      <div class="swatch"><i style="background:var(--ink)"></i><span>--ink</span></div>
+      <div class="swatch"><i style="background:var(--up)"></i><span>--up</span></div>
+      <div class="swatch"><i style="background:var(--down)"></i><span>--down</span></div>
+      <div class="swatch"><i style="background:var(--warn)"></i><span>--warn</span></div>
+      <div class="swatch"><i style="background:var(--agent)"></i><span>--agent</span></div>
+    </div>
+  </section>
+
+  <section class="group">
+    <h2>Type</h2>
+    <div class="bench scale" style="flex-direction:column;align-items:flex-start">
+      <p class="balance">$52,013.21</p>
+      <p class="headline">Waiting for you</p>
+      <p class="title">What you own</p>
+      <p class="title-sm">Your assistant</p>
+      <p class="body">Money sent to the wrong chain is gone. This is not something anyone can undo.</p>
+      <p class="label">Forced close price</p>
+      <p class="meta">14 minutes ago</p>
+      <p class="mono">0.42 ETH &nbsp; $1,898.40 &nbsp; 35.4%</p>
+      <p class="addr">0x742d35Cc6634C0532925a3b844Bc454e4438f44e</p>
+    </div>
+  </section>
+
+  <section class="group">
+    <h2>Button</h2>
+    <div class="bench">
+      <button class="btn btn-primary"><span class="btn-label">Yes</span></button>
+      <button class="btn"><span class="btn-label">Bring it back</span></button>
+      <button class="btn btn-ghost"><span class="btn-label">Cancel</span></button>
+      <button class="btn btn-danger"><span class="btn-label">No</span></button>
+      <button class="btn btn-quiet"><span class="btn-label">Edit</span></button>
+      <button class="btn btn-lg btn-primary"><span class="btn-label">Unlock</span></button>
+      <button class="btn btn-primary" disabled><span class="btn-label">Continue</span></button>
+      <button class="btn btn-primary" data-pending="true" style="min-width:120px">
+        <span class="btn-label">Approve</span>
+        <span class="btn-pending"><span class="spinner"></span><span>Approving</span></span>
+      </button>
+    </div>
+  </section>
+
+  <section class="group">
+    <h2>Chip and dot</h2>
+    <div class="bench">
+      <span class="chip"><span class="dot"></span>Unlocked</span>
+      <span class="chip" data-tone="warn"><span class="dot"></span>Locks in 4 min</span>
+      <span class="chip" data-tone="agent"><span class="dot dot-live"></span>Working</span>
+      <span class="chip" data-tone="up"><span class="dot dot-live"></span>Live</span>
+      <span class="chip" data-tone="down"><span class="dot"></span>Offline</span>
+      <button class="chip" data-tone="ink">Forced close</button>
+      <button class="chip">Rules</button>
+    </div>
+  </section>
+
+  <section class="group">
+    <h2>Banner</h2>
+    <div class="bench" style="flex-direction:column;align-items:stretch">
+      <div class="banner"><span>Auto-earn is on. Your assistant can move dollars between lending venues inside your limits.</span></div>
+      <div class="banner" data-tone="warn"><span>This app is set to move money without asking you first.</span></div>
+      <div class="banner" data-tone="down"><span>Could not reach Solana. Holdings there are unknown, not zero.</span></div>
+    </div>
+  </section>
+
+  <section class="group">
+    <h2>Panel, row and table</h2>
+    <div class="bench" style="align-items:stretch;gap:24px">
+      <section class="panel grow">
+        <div class="panel-head"><h3 class="title-sm">What you own</h3></div>
+        <div class="panel-body-flush">
+          <div class="row"><div class="row-main"><span class="body">US dollars (USDC)</span></div><div class="row-side stack-2"><span class="body mono">$27,700.00</span><span class="meta mono">27,700.00</span></div></div>
+          <div class="row"><div class="row-main"><span class="body">Ether (ETH)</span></div><div class="row-side stack-2"><span class="body mono">$1,921.45</span><span class="meta mono">0.4251</span></div></div>
+        </div>
+      </section>
+      <section class="panel grow">
+        <div class="panel-head"><h3 class="title-sm">Money</h3></div>
+        <div class="panel-body">
+          <div class="table-wrap">
+            <table class="table">
+              <thead><tr><th>What</th><th>Where</th><th class="num">Value</th></tr></thead>
+              <tbody>
+                <tr><td class="strong">USDC</td><td class="dim">Ethereum</td><td class="num mono">$18,400.00</td></tr>
+                <tr><td class="strong">USDT</td><td class="dim">Arbitrum</td><td class="num mono">$6,100.00</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
+  </section>
+
+  <section class="group">
+    <h2>Facts, meter and input</h2>
+    <div class="bench" style="align-items:stretch;gap:24px">
+      <section class="panel grow"><div class="panel-body">
+        <div class="facts">
+          <div class="fact"><span class="label">Trading money</span><span class="body mono">$4,120.00</span></div>
+          <div class="fact"><span class="label">Spare</span><span class="body mono">$2,880.00</span></div>
+          <div class="fact"><span class="label">Up or down</span><span class="body mono up">$212.40</span></div>
+          <div class="fact"><span class="label">Up or down</span><span class="body mono down">-$88.10</span></div>
+        </div>
+      </div></section>
+      <section class="panel grow"><div class="panel-body stack">
+        <div class="between"><span class="label">Limit per day</span><span class="body mono">$812.44 of $2,500</span></div>
+        <div class="meter"><div class="meter-fill" style="width:32%"></div></div>
+        <div class="meter"><div class="meter-fill" data-tone="warn" style="width:86%"></div></div>
+        <div class="meter"><div class="meter-fill" data-tone="down" style="width:22%"></div></div>
+        <div class="field"><label class="label">Password</label><input class="input" type="password" value="hunter22"></div>
+        <div class="field-row"><input class="input" readonly value="claude mcp add phosphor -- node /path/src/mcp.ts"><button class="btn btn-ghost"><span class="btn-label">Copy</span></button></div>
+      </div></section>
+    </div>
+  </section>
+
+  <section class="group">
+    <h2>Skeleton, refreshing and empty</h2>
+    <div class="bench" style="align-items:stretch;gap:24px">
+      <section class="panel grow"><div class="panel-body stack-2">
+        <div class="skel" style="height:16px"></div>
+        <div class="skel" style="height:16px;width:70%"></div>
+        <div class="skel" style="height:16px;width:40%"></div>
+      </div></section>
+      <section class="panel grow" data-refreshing="true"><div class="panel-body">
+        <p class="body">A refresh is a thin bar on the panel's top edge, never a skeleton over numbers that are already right.</p>
+      </div></section>
+      <section class="panel grow"><div class="panel-body">
+        <div class="empty">
+          <p class="empty-title">Nothing has happened yet</p>
+          <p>When your assistant moves money, every action lands here as a receipt.</p>
+        </div>
+      </div></section>
+    </div>
+  </section>
+
+  <section class="group">
+    <h2>Waiting</h2>
+    <div class="bench">
+      <span class="hstack-2"><span class="spinner"></span><span class="meta">Checking your money</span></span>
+      <span class="hstack-2"><span class="spinner"></span><span class="meta">Working out what this costs</span></span>
+      <span class="hstack-2"><span class="spinner"></span><span class="meta">Waiting for the network</span></span>
+      <span class="hstack-2"><span class="spinner"></span><span class="meta">Moving between chains</span></span>
+      <span class="hstack-2"><span class="spinner"></span><span class="meta">Starting your assistant</span></span>
+    </div>
+  </section>
+
+  <section class="group">
+    <h2>The decision card</h2>
+    <div class="bench" style="justify-content:center">
+      <div class="overlay-card" style="animation:none">
+        <p class="label">Waiting for you</p>
+        <h2 class="title">Swap US dollars for Ether on arb</h2>
+        <p class="headline mono">$2,500.00</p>
+        <div class="facts">
+          <div class="fact"><span class="label">What it costs</span><span class="body">$0.82 in fees, 0.1% price impact</span></div>
+          <div class="fact"><span class="label">Through</span><span class="body">uniswap-v3</span></div>
+          <div class="fact"><span class="label">Why you are being asked</span><span class="body">It is above the $100 you said to ask about.</span></div>
+        </div>
+        <div class="stack-2 destinations">
+          <p class="label">Where it goes</p>
+          <p class="addr">0x742d35Cc6634C0532925a3b844Bc454e4438f44e</p>
+        </div>
+        <div class="screen-actions">
+          <button class="btn btn-danger"><span class="btn-label">No</span></button>
+          <button class="btn btn-primary"><span class="btn-label">Yes</span></button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="group">
+    <h2>The pattern, four states</h2>
+    <div class="bench" style="gap:16px;align-items:stretch">
+      <div class="patternbox grow" data-state="idle"><div class="pattern-local"></div></div>
+      <div class="patternbox grow" data-state="working"><div class="pattern-local"></div></div>
+      <div class="patternbox grow" data-state="waiting"><div class="pattern-local"></div></div>
+      <div class="patternbox grow" data-state="locked"><div class="pattern-local"></div></div>
+    </div>
+    <div class="hstack-2">
+      <span class="meta">idle</span><span class="meta">working</span><span class="meta">waiting</span><span class="meta">locked</span>
+    </div>
+  </section>
+
+  <section class="group">
+    <h2>Toast</h2>
+    <div class="bench">
+      <div class="toast" style="position:static">Checked. It is done.</div>
+      <div class="toast" data-tone="down" style="position:static">Could not price this. Nothing was sent.</div>
+    </div>
+  </section>
+
+</div>
+
+<script src="./motion.js"></script>
+<script src="./pattern.js"></script>
+<script>
+  var boxes = document.querySelectorAll('.patternbox');
+  for (var i = 0; i < boxes.length; i += 1) {
+    window.PhosphorPattern.mount(boxes[i].querySelector('.pattern-local'), {
+      cells: 7,
+      state: boxes[i].dataset.state,
+      seed: i + 1
+    });
+  }
+</script>
+</body>
+</html>

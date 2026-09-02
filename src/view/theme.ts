@@ -37,19 +37,19 @@ export const THEME_SLOTS: readonly ThemeSlot[] = ['accent', 'background', 'up', 
 // What every slot means, handed to the agent in the tool description so it never has to guess
 // which one moves which pixels.
 export const SLOT_MEANING: Readonly<Record<ThemeSlot, string>> = {
-  accent: 'the one hue the whole terminal is drawn in: text, frames, grids, axes and every ramp derived from them',
-  background: 'the ground behind everything',
+  accent: 'the action colour: the fill on every primary button and the label on it',
+  background: 'the ground behind everything, and the panels and hairlines derived from it',
   up: 'candles that closed up',
   down: 'candles that closed down',
   agent: 'the levels, marks and trend lines the agent itself drew, so its own work can be told from the human’s',
 };
 
 export const DEFAULT_THEME: Theme = {
-  accent: '#33ff66',
-  background: '#0b0d0b',
-  up: '#33ff66',
-  down: '#cc3a30',
-  agent: '#33ff66',
+  accent: '#ffffff',
+  background: '#09090b',
+  up: '#5b8def',
+  down: '#ff5a6e',
+  agent: '#b79cff',
 };
 
 // The gate's red. Not a slot, checked like one: whatever the background becomes, the colour the
@@ -58,14 +58,13 @@ const GATE_RED = '#ff3b30';
 
 // Two floors, because two kinds of thing are being checked.
 //
-// TEXT is 4.5:1, WCAG's floor for normal text, and this whole window is 13px mono. The accent
-// is every label, every axis number and every frame; the agent ink is the labels on what it
-// drew; the gate red is the word REFUSED. All of them are read.
+// TEXT is 4.5:1, WCAG's floor for normal text. The accent is the label on every primary
+// button; the agent ink is the labels on what it drew; the gate red is the word REFUSED. All
+// of them are read.
 //
 // A MARK is 3:1, WCAG's floor for a non-text graphical object. A candle body is a shape whose
-// position carries the meaning, not a glyph. This is not a relaxation invented to fit: the
-// shipped down-candle #cc3a30 measures 3.99:1 on #0b0d0b, so a single 4.5 floor would have
-// refused Phosphor's own default theme, which is how this split was found.
+// position carries the meaning, not a glyph. The split was found when a single 4.5 floor
+// refused a down-candle the window had shipped with for months.
 const MIN_TEXT_CONTRAST = 4.5;
 const MIN_MARK_CONTRAST = 3;
 
@@ -141,7 +140,7 @@ export function applyPatch(current: Theme, patch: Record<string, unknown>): Them
     if (patch[slot] === undefined) continue;
     const colour = normaliseColour(patch[slot]);
     if (colour === null) {
-      return { ok: false, error: `${slot} must be a hex colour like #33ff66 or #3f6, got ${JSON.stringify(patch[slot])}` };
+      return { ok: false, error: `${slot} must be a hex colour like #5b8def or #fff, got ${JSON.stringify(patch[slot])}` };
     }
     if (colour !== next[slot]) notes.push(`${slot} ${next[slot]} to ${colour}`);
     next[slot] = colour;

@@ -7,6 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -50,6 +51,7 @@ type Booted = {
   keysPath: string;
   post: (route: string, body: unknown, opts?: { origin?: string; contentType?: string }) => Promise<{ status: number; json: any }>;
   get: (route: string, opts?: { origin?: string }) => Promise<{ status: number; json: any }>;
+  getRaw: (route: string, headers: Record<string, string>) => Promise<{ status: number; json: any }>;
   close: () => Promise<void>;
 };
 
@@ -138,8 +140,31 @@ async function boot(): Promise<Booted> {
     const res = await fetch(`${url}${route}`, { headers: { origin: opts.origin ?? url } });
     return { status: res.status, json: await res.json().catch(() => null) };
   }
+  /* Exactly the headers a browser sends, which is not the same set the helper above
+     sends: a same-origin GET carries no Origin at all, and it does carry Sec-Fetch-Site.
+     This goes through node:http rather than fetch because Sec-Fetch-* are forbidden
+     header names, so fetch silently drops them and the request under test never happens. */
+  function getRaw(route: string, headers: Record<string, string>): Promise<{ status: number; json: any }> {
+    return new Promise((resolve, reject) => {
+      const target = new URL(`${url}${route}`);
+      const req = http.request(
+        { hostname: target.hostname, port: target.port, path: target.pathname, method: 'GET', headers },
+        (res) => {
+          let body = '';
+          res.on('data', (chunk) => { body += chunk; });
+          res.on('end', () => {
+            let parsed: any = null;
+            try { parsed = JSON.parse(body); } catch { parsed = null; }
+            resolve({ status: res.statusCode ?? 0, json: parsed });
+          });
+        },
+      );
+      req.on('error', reject);
+      req.end();
+    });
+  }
 
-  return { url, token, keystore, keysPath, post, get, close: () => new Promise<void>((r) => server.close(() => r())) };
+  return { url, token, keystore, keysPath, post, get, getRaw, close: () => new Promise<void>((r) => server.close(() => r())) };
 }
 
 // ---------- the guard ----------
@@ -325,6 +350,58 @@ test('reveal is a two step handshake whose nonce works exactly once', async () =
     // And an unissued nonce is refused, so guessing is the only attack and it is 32 bytes wide.
     const guess = await b.get(`/api/wallet/reveal/${'0'.repeat(64)}`);
     assert.equal(guess.status, 404);
+  } finally {
+    await b.close();
+  }
+});
+
+test('a reveal is redeemable by the window, which sends no Origin on a GET', async () => {
+  // The regression this exists for: every other test here sends an Origin header, and a
+  // browser does not send one on a same-origin GET. Checking Origin alone made this route
+  // unreachable from the only window that is supposed to call it.
+  const b = await boot();
+  try {
+    const made = await b.post('/api/wallet/create', { token: b.token, password: PASSWORD });
+    const start = await b.post('/api/wallet/reveal', { token: b.token, password: PASSWORD, what: 'mnemonic' });
+
+    const out = await b.getRaw(`/api/wallet/reveal/${start.json.nonce}`, {
+      accept: 'application/json',
+      'sec-fetch-site': 'same-origin',
+      'sec-fetch-mode': 'cors',
+    });
+    assert.equal(out.status, 200, 'the window can spend its own nonce');
+    assert.deepEqual(out.json.mnemonic, made.json.mnemonic);
+  } finally {
+    await b.close();
+  }
+});
+
+test('a reveal url opened as a tab is refused, so the words cannot be rendered by a link', async () => {
+  // A cross-site fetch cannot read this response anyway: nothing here sends CORS headers. A
+  // top-level navigation can, and that is the hole `navigate` closes.
+  const b = await boot();
+  try {
+    await b.post('/api/wallet/create', { token: b.token, password: PASSWORD });
+    const start = await b.post('/api/wallet/reveal', { token: b.token, password: PASSWORD, what: 'mnemonic' });
+
+    const opened = await b.getRaw(`/api/wallet/reveal/${start.json.nonce}`, {
+      accept: 'text/html',
+      'sec-fetch-site': 'same-origin',
+      'sec-fetch-mode': 'navigate',
+    });
+    assert.equal(opened.status, 403);
+  } finally {
+    await b.close();
+  }
+});
+
+test('a reveal nonce is refused when nothing says where it came from', async () => {
+  const b = await boot();
+  try {
+    await b.post('/api/wallet/create', { token: b.token, password: PASSWORD });
+    const start = await b.post('/api/wallet/reveal', { token: b.token, password: PASSWORD, what: 'mnemonic' });
+    const bare = await b.getRaw(`/api/wallet/reveal/${start.json.nonce}`, { accept: 'application/json' });
+    assert.equal(bare.status, 403, 'no Origin and no fetch metadata is not a window');
   } finally {
     await b.close();
   }

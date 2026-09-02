@@ -6,13 +6,14 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { DEFAULT_THEME } from '../../src/view/theme.ts';
 import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
 
 type Sandbox = Record<string, any>;
 
 function loadChartUi(): Sandbox {
-  const source = readFileSync(new URL('../../ui/chart.js', import.meta.url), 'utf8');
+  const source = readFileSync(new URL('../../ui/chart/chart.js', import.meta.url), 'utf8');
   const store: Record<string, string> = {};
   const sandbox: Sandbox = {
     window: {
@@ -36,7 +37,7 @@ function loadChartUi(): Sandbox {
     console,
   };
   createContext(sandbox);
-  runInContext(source, sandbox, { filename: 'ui/chart.js' });
+  runInContext(source, sandbox, { filename: 'ui/chart/chart.js' });
   return sandbox;
 }
 
@@ -94,15 +95,18 @@ test('the chart is not green any more, and every ink is a design token', () => {
   assert.equal(typeof s.green, 'undefined', 'a function called green() returning blue is a lie');
 });
 
-test('a theme nobody chose cannot repaint the chart back to green', () => {
+test('the shipped defaults leave the chart on its tokens, and a chosen colour wins', () => {
   const s = loadChartUi();
-  // DEFAULT_THEME in src/view/theme.ts is still the old green and rides every state frame.
-  s.chartTheme({ accent: '#33ff66', background: '#0b0d0b', up: '#33ff66', down: '#cc3a30', agent: '#33ff66' });
-  assert.equal(s.C_UP, '#5B8DEF');
+  // The transitional guard that used to sit here compared each slot against the
+  // old green defaults and refused them. src/view/theme.ts now ships the design
+  // tokens, so a default state frame carries the same values the chart already
+  // holds and there is nothing left to refuse.
+  s.chartTheme(DEFAULT_THEME);
+  assert.equal(s.C_UP, 'rgb(91, 141, 239)');
   assert.equal(s.RGB_ACCENT, '91, 141, 239');
 
   // A colour somebody actually picked still wins. That is what the tool is for.
-  s.chartTheme({ accent: '#33ff66', background: '#0b0d0b', up: '#ffaa00', down: '#cc3a30', agent: '#33ff66' });
+  s.chartTheme({ ...DEFAULT_THEME, up: '#ffaa00' });
   assert.equal(s.C_UP, 'rgb(255, 170, 0)');
 });
 

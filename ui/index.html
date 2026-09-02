@@ -3,434 +3,100 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PHOSPHOR</title>
-<link rel="icon" href="data:,">
-<link rel="stylesheet" href="/style.css">
-<link rel="stylesheet" href="/basic.css">
-<!-- Only the display face is preloaded, and only because the balance is the first
-     thing read on the basic screen. The mono is for addresses inside a dialog. -->
-<link rel="preload" href="/fonts/amulya-var.woff2" as="font" type="font/woff2" crossorigin>
+<title>Phosphor</title>
+
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%23fff'/%3E%3C/svg%3E">
+
+<link rel="preload" href="./fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="./fonts/GeistMono-Variable.woff2" as="font" type="font/woff2" crossorigin>
+
+<link rel="stylesheet" href="./design/tokens.css">
+<link rel="stylesheet" href="./design/reset.css">
+<link rel="stylesheet" href="./design/type.css">
+<link rel="stylesheet" href="./design/components.css">
+<link rel="stylesheet" href="./design/layout.css">
+<link rel="stylesheet" href="./design/screens.css">
 </head>
-<body>
-<!-- data-view is set by the server's state payload, never by the browser. The two
-     screens both live in this page: swapping an attribute keeps one SSE stream, one
-     session token and one approval code path, so the gate cannot drift between them. -->
-<main id="page" data-view="pro">
+<body data-view="basic">
 
-  <!-- 1. STATUS -->
-  <header class="statusbar" id="statusbar">
-    <h1 class="ident">PHOSPHOR v0.3</h1>
-    <span class="bar">&#9474;</span>
-    <span class="field"><span class="k">held</span> <span class="v hi" id="stat-total">--</span> <span class="faint" id="stat-positions"></span></span>
-    <span class="bar">&#9474;</span>
-    <span class="field"><span class="k">agent</span> <span class="v" id="stat-agent">--</span></span>
-    <!-- The presence light: shines while the agent is working, dulls when it goes quiet, a
-         faint ghost when none is connected. Purely presentational, and everything it says is
-         also in the `agent` field beside it, so it is aria-hidden. See ui/presence.js. -->
-    <canvas class="agent-orb" id="agent-orb" aria-hidden="true"></canvas>
-    <span class="bar">&#9474;</span>
-    <span class="field"><span class="k">policy</span> <span class="v" id="stat-policy">--</span></span>
-    <span class="bar">&#9474;</span>
-    <span class="field"><span class="k">mode</span> <span class="v" id="stat-mode">--</span></span>
-    <button type="button" id="kill-btn" class="btn">[ KILL SWITCH: -- ]</button>
-    <span class="cursor" aria-hidden="true">&#9608;</span>
-  </header>
-  <!-- Gate off is the more dangerous of the two banners: policy-unreadable fails
-       closed, a disabled gate fails open. It sits first and it is inverted. -->
-  <p class="banner gate-off" id="gate-banner" role="alert" hidden></p>
-  <p class="banner" id="policy-banner" hidden>POLICY FILE UNREADABLE: ALL WRITES REFUSED</p>
-  <p class="alert dim" id="alert" hidden></p>
+<div id="page">
 
-  <!-- The records that do not fit a deck that never scrolls: the audit log, the policy in
-       full, everything this app has done with the money, and what that cost. They were
-       panels being cut to the room left over; each one now opens whole, behind its own
-       button. Controls FOR the deck, so they sit above it rather than becoming a panel in it.
+  <div id="field" class="pattern-field" aria-hidden="true"></div>
 
-       GAS is fourth and it is not a fifth reading of the history. HISTORY answers "what did
-       this app do", one row per movement with the fee on the end of the row, which means a
-       person asking "what has this cost me" was adding twelve rows up in their head. GAS is
-       that sum, split by what kind of action spent it and which chain it burned on, with the
-       four things it could not count printed rather than dropped. See the `gas` view in
-       ui/deck-views.js and section 2.7 of the 2026-08-20 yield-and-gas spec. -->
-  <p class="deckbar">
-    <span class="k">open</span>
-    <button type="button" class="btn" id="open-log" aria-haspopup="dialog">[ LOG ]</button>
-    <button type="button" class="btn" id="open-policy" aria-haspopup="dialog">[ POLICY ]</button>
-    <button type="button" class="btn" id="open-history" aria-haspopup="dialog">[ HISTORY ]</button>
-    <button type="button" class="btn" id="open-gas" aria-haspopup="dialog">[ GAS ]</button>
-  </p>
-
-  <!-- Two columns, and which panel is where is the whole argument of this deck.
-
-       LEFT is what the money is doing: the chart, and under it what is held.
-       RIGHT IS THE AGENT, alone, at full height. Karim, 2026-08-20: "chat on the right ...
-       whatever is on the right, completely remove it, just leave the chart, what's in the
-       bottom, and the agent on the right."
-
-       There was a third column between 2026-08-19 and 2026-08-20 and it is gone. It held a
-       gate that read "no pending approvals" for hours at a time, a policy panel that was
-       shut by default, and a pulse strip that draws what the status-bar orb already draws.
-       Every one of those was a rectangle earning its place by being a rectangle. What was
-       in it is not lost: the gate is a strip above the deck that appears when something is
-       actually pending, and the policy, the log and the history are the three buttons on
-       the bar above this comment.
-
-       The agent column is drawn differently, in two ways and only in ways this surface
-       already had: double box rules instead of single (data-frame="double", read by
-       layoutFrames() in ui/app.js), and the faintest wash of green behind the column. No
-       second hue, no shadow, no gradient, no radius: the law at the top of ui/style.css
-       holds, and a second WEIGHT of line is how a terminal says "this one is different".
-
-       One handle between them, and the chart column is what pays for the agent's width.
-       See ui/split.js. Each column fills the viewport height; panels scroll inside, the
-       page never does. -->
-  <!-- THE APPROVAL GATE, and it is no longer a panel.
-       Karim, 2026-08-20: "whatever is on the right, completely remove it, just leave the
-       chart, what's in the bottom, and the agent on the right." The rail held a gate that
-       said "no pending approvals" for hours at a time, a policy panel that was shut, and a
-       pulse strip. Two of those are chrome painted around nothing and the third is already
-       an orb in the status bar.
-       So the gate is a strip that DOES NOT EXIST until something is pending, and when one
-       is, it takes the full width above everything else. That is a stronger surface than the
-       panel it replaces, not a weaker one: a decision about money should interrupt the
-       screen rather than wait in a column somebody has stopped looking at. It never
-       collapses and it has no control that hides it. See renderGate() in ui/app.js, which
-       shows this strip only when APPROVALS.render reports a pending count above zero. -->
-  <section class="gatestrip" id="gate-strip" hidden aria-live="polite">
-    <div class="frame frame-top" data-title="APPROVAL GATE"></div>
-    <div class="gatestrip-body">
-      <div id="gate"></div>
-    </div>
-    <div class="frame frame-bottom"></div>
-  </section>
-
-  <div class="deck" data-split="pro">
-
-    <div class="col col-mid">
-
-      <!-- 2. CHART: the top of the middle column, and the panel that grows: whatever the
-           wallet under it does not take, it gets.
-           Two stacked canvases: the scene redraws on data, the hud redraws on the pointer.
-           The control surface is a command line, not a toolbar: the same words the agent
-           uses over MCP, typed. -->
-      <section class="panel panel-chart grow" id="panel-chart">
-        <div class="frame frame-top" data-title="CHART"></div>
-        <div class="pbody">
-          <p class="chartbar">
-            <label class="k" for="product">product</label>
-            <select id="product"></select>
-            <span class="tfs" id="timeframes"></span>
-            <label class="k" for="chart-cmd">ind</label>
-            <input id="chart-cmd" type="text" autocomplete="off" spellcheck="false" placeholder="ema 21" aria-label="add an indicator, for example: ema 21">
-            <!-- The status cluster: what the data is doing, and which venue it came from.
-                 One place, right-aligned, and nothing else. The three loading blocks and the
-                 meta line that used to sit here each said part of the same thing, so a person
-                 reading "is this price current" had three places to look and no answer in any
-                 of them. The dot is that answer; the notes that were beside it are drawn on
-                 the chart now, next to the bars they describe. -->
-            <span class="chartstatus" id="chart-status">
-              <span class="feed" id="chart-feed" data-feed="offline" role="status"><i></i><b>offline</b></span>
-              <button type="button" class="venue" id="chart-provider">--</button>
-            </span>
-          </p>
-          <div class="chartwrap" id="chartwrap" tabindex="0" role="img"
-               aria-label="price chart: drag to pan, wheel to zoom, arrow keys to move, 0 for live">
-            <canvas id="chart"></canvas>
-            <canvas id="chart-hud"></canvas>
-          </div>
-        </div>
-        <div class="frame frame-bottom"></div>
-      </section>
-
-      <div class="split split-y" data-split-handle="chart-wallet" role="separator" aria-orientation="horizontal"
-           tabindex="0" aria-label="Resize the chart against the wallet. Arrow keys move it, enter resets it."></div>
-
-      <!-- 3. WALLET: the foot of the middle column. What is held, now: the donut and the table,
-           two views of one row set. The table scrolls inside itself, so the page still
-           never scrolls.
-
-           It used to carry a second pane, TRANSACTIONS, behind a tab strip. That pane was
-           an eight-column table with a per-row expansion inside half a deck column, which
-           is the compression this redesign exists to end: the columns divided rather than
-           fitted, and the detail a person opens a history for was the first thing cut. It
-           is behind the HISTORY button now, full width, and the tab strip went with it
-           because one pane does not need tabs. -->
-      <section class="panel panel-wallet">
-        <div class="frame frame-top" data-title="WALLET"></div>
-        <div class="pbody">
-          <div class="wallet" id="pane-holdings">
-            <div class="donutwrap" id="donutwrap">
-              <canvas id="donut"></canvas>
-              <p class="readout" id="donut-readout">--</p>
-            </div>
-            <div class="walletgrid" id="walletgrid">
-              <table class="grid" id="wallet-table">
-                <thead>
-                  <tr>
-                    <th class="c-token">TOKEN</th>
-                    <th class="c-chain">CHAIN</th>
-                    <th class="c-num">QTY</th>
-                    <th class="c-num">PRICE</th>
-                    <th class="c-num">VALUE</th>
-                    <th class="c-num">SHARE</th>
-                  </tr>
-                </thead>
-                <tbody id="wallet-rows"></tbody>
-              </table>
-            </div>
-          </div>
-
-          <p class="totals" id="wallet-total">--</p>
-        </div>
-        <div class="frame frame-bottom"></div>
-      </section>
-
-      <!-- YIELD. What the stablecoin is earning, and the way back out.
-           The order inside it is the argument: dollars first, percentage second and smaller,
-           the caveat under that, then the ledger every number can be checked against. It is
-           taken from 1inch Aqua, whose overview leads each row with earned fees and calls its
-           own rate "an observation, not a promise". See the header of ui/yield.js.
-           Filled by YIELD.render; this file holds no numbers. -->
-      <section class="panel panel-yield">
-        <div class="frame frame-top" data-title="YIELD"></div>
-        <div class="pbody">
-          <div id="yield-panel"></div>
-        </div>
-        <div class="frame frame-bottom"></div>
-      </section>
-
+  <header class="topbar">
+    <div class="wordmark">
+      <span class="wordmark-glyph" aria-hidden="true"></span>
+      <span>Phosphor</span>
     </div>
 
-
-    <!-- The one handle left. It sizes the agent, and the chart column pays for it.
-         role="separator" with a tabindex is a real window splitter: arrows move it, Home and
-         End take it to its limits, Enter puts it back. ui/split.js owns the behaviour. -->
-    <div class="split split-x" data-split-handle="deck-agent" role="separator" aria-orientation="vertical"
-         tabindex="0" aria-label="drag to resize the agent column"></div>
-
-    <div class="col col-agent">
-
-      <!-- 7. AGENT. The log stood here and did not belong: a person cannot talk to an audit
-           trail, and the one thing this window could not do was say a word to the agent
-           holding its seat. The transcript is the conversation and the log is the record,
-           they were never the same rectangle, and the record is behind the LOG button now
-           with the room to print all of every line.
-
-           Empty, and filled by ui/driver-chat.js. It holds four phases in the one box: a
-           turning globe when no agent is running and the whole layer is the button that
-           starts one, the intro printing while the child process comes up, the transcript
-           and the prompt, and the fall of characters that takes it apart on a stop.
-
-           No approval control is ever rendered in here, and driver-chat.js will not build
-           one. The gate is a strip across the top of the window and consent does not live
-           inside a scrolling transcript written by the thing asking for it.
-
-           data-frame="double" is the one thing this panel asks the frame renderer for: the
-           same box drawn in double rules. See layoutFrames() in ui/app.js. -->
-      <section class="panel panel-agent grow">
-        <button type="button" class="frame frame-top" data-frame="double" data-title="AGENT" data-collapse="agent" aria-expanded="true" aria-controls="agent-chat"></button>
-        <div class="pbody">
-          <div id="agent-chat"></div>
-        </div>
-        <div class="frame frame-bottom" data-frame="double"></div>
-      </section>
-
-    </div>
-
-  </div>
-
-  <!-- BASIC. At rest this screen holds four things: how much money there is, whether
-       anything is wrong, four buttons, and the conversation. Everything the earlier
-       screen laid out at once now sits behind one of those buttons. Every string here is
-       written by src/view/basic.ts and rendered verbatim: this file composes no sentence
-       about money, for the same reason policy sentences are machine-rendered.
-
-       THE ORDER. The balance first, because it is what the person opened the app for.
-       Then anything wrong with it, because that is the only thing allowed to interrupt.
-       Then the four buttons, which are the whole of the rest of the app. Then the
-       conversation, which takes every pixel left over: it is the thing a person uses,
-       and the layout says so by giving it the room rather than by decorating it.
-
-       THE QUESTION IS NOT ONE OF THE BUTTONS. It is the last block in this markup, it
-       covers the screen when it arrives, it has no close control, and the sheet shuts
-       itself the instant one appears. Nothing above it can cover it or hold it up.
-       The STOP control sits last and far from YES on purpose. -->
-  <section id="basic" class="basic" data-tone="calm">
-
-    <header class="basic-head">
-      <p class="basic-brand">PHOSPHOR</p>
-      <p class="basic-total" id="basic-total">--</p>
-      <p class="basic-headline" id="basic-headline">--</p>
-      <p class="basic-places" id="basic-places"></p>
-      <!-- One sentence, and no percentage. See the comment above `earning` in
-           src/view/basic.ts: a rate is the part of a yield product most likely to be
-           heard as a promise, and this reader has nothing to check it against.
-           Hidden rather than emptied, so an empty line does not sit here reserving space
-           for a fact that does not exist yet. -->
-      <p class="basic-earning" id="basic-earning" hidden></p>
-      <!-- The standing promise, and the one line here that is never folded away: it says
-           whether money can move without you being asked, which is a fact about where
-           money goes, and those do not go behind a button. -->
-      <p class="basic-footer" id="basic-footer"></p>
-    </header>
-
-    <p class="basic-warning" id="basic-warning" role="alert" hidden></p>
-
-    <!-- The folds. Each one is hidden until there is something behind it, because a
-         button that opens an empty box is worse on this screen than no button at all.
-         app.js sets aria-expanded; the sheet below is the one thing all four open. -->
-    <nav class="basic-folds" id="basic-folds" aria-label="the rest of your money">
-      <button type="button" class="basic-fold" data-fold="own" aria-haspopup="dialog" hidden>What you own</button>
-      <button type="button" class="basic-fold" data-fold="market" aria-haspopup="dialog" hidden>Market</button>
-      <button type="button" class="basic-fold" data-fold="history" aria-haspopup="dialog" hidden>History</button>
-      <button type="button" class="basic-fold" data-fold="assistant" aria-haspopup="dialog">Your assistant</button>
+    <nav class="tabs" role="tablist" aria-label="Modes">
+      <button class="tab" role="tab" data-tab="basic" aria-selected="true">Basic</button>
+      <button class="tab" role="tab" data-tab="pro" aria-selected="false">Pro</button>
+      <button class="tab" role="tab" data-tab="trade" aria-selected="false">Trade</button>
     </nav>
 
-    <!-- THE CONVERSATION, and the centre of the screen. Built by ui/driver-chat.js, which
-         puts every string on screen through textContent: it is the one surface here whose
-         whole content is written by a language model. It renders no approval control and
-         it never will; the question below is a different block for that reason. -->
-    <div class="basic-chat" id="basic-chat"></div>
-
-    <div class="basic-stop">
-      <button type="button" class="basic-btn basic-kill" id="basic-kill">STOP EVERYTHING</button>
-      <!-- Two presses, and the confirm is a real control rather than window.confirm,
-           because a native dialog is the easiest thing on this screen to dismiss by reflex. -->
-      <p class="basic-stop-confirm" id="basic-stop-confirm" hidden>
-        <span id="basic-stop-question">Are you sure?</span>
-        <button type="button" class="basic-btn basic-kill-yes" id="basic-kill-yes">YES, STOP</button>
-        <button type="button" class="basic-btn basic-kill-cancel" id="basic-kill-cancel">Cancel</button>
-      </p>
-      <!-- The brake's own error line. It used to write into the question's error node,
-           which is now a covered layer: a failed freeze would have reported itself onto a
-           surface nobody was looking at. -->
-      <p class="basic-stop-error" id="basic-stop-error" hidden></p>
+    <div class="status-cluster">
+      <span class="chip" id="chip-lock">
+        <span class="dot" aria-hidden="true"></span>
+        <span data-role="lock-text">Unlocked</span>
+      </span>
+      <span class="chip" id="chip-feed" hidden>
+        <span class="dot" aria-hidden="true"></span>
+        <span data-role="feed-text">Live</span>
+      </span>
+      <button class="btn btn-danger" id="btn-freeze">
+        <span class="btn-label">Freeze everything</span>
+      </button>
     </div>
+  </header>
 
-    <!-- THE SHEET. One mechanism for all four buttons, never one per button: what a
-         person learns opening the first is true of the rest. Escape closes it, the
-         backdrop closes it, Tab cannot leave it, and focus returns to the button that
-         opened it. It is held out of the flow, so nothing it holds can push the balance,
-         the warning or the conversation anywhere. -->
-    <div class="basic-sheet" id="basic-sheet" data-open="0">
-      <div class="basic-scrim" id="basic-scrim"></div>
-      <div class="basic-sheet-panel" id="basic-sheet-panel" role="dialog" aria-modal="true"
-           aria-labelledby="basic-sheet-title" tabindex="-1">
-        <div class="basic-sheet-head">
-          <h2 class="basic-sheet-title" id="basic-sheet-title"></h2>
-          <button type="button" class="basic-sheet-close" id="basic-sheet-close">Done</button>
-        </div>
+  <div class="offline-bar" id="offline-bar" role="status" hidden>
+    <span class="dot" aria-hidden="true"></span>
+    <span data-role="offline-text"></span>
+  </div>
 
-        <!-- One row per thing owned, not one per chain. Which chain each part sits on is a
-             pro-screen fact. The ring is the same rows as a picture: it says how the money
-             divides, the rows say into what, and the chip is the key between them. -->
-        <div class="basic-pane" id="basic-pane-own" hidden>
-          <div class="basic-wallet">
-            <div class="basic-donutwrap"><canvas id="basic-donut" aria-hidden="true"></canvas></div>
-            <div id="basic-rows"></div>
-          </div>
-        </div>
+  <main class="views" id="views">
+    <section class="view" id="view-basic" role="tabpanel" aria-label="Basic" data-active="true"></section>
+    <section class="view" id="view-pro" role="tabpanel" aria-label="Pro"></section>
+    <section class="view" id="view-trade" role="tabpanel" aria-label="Trade"></section>
+  </main>
 
-        <!-- Three coins, each with a price, a direction, and the shape of the last day
-             behind it. A LINE, never a candlestick: the candles are pro's answer to a
-             question this reader did not ask. Rows are built by app.js because a coin that
-             could not be read is absent rather than blank. -->
-        <div class="basic-pane" id="basic-pane-market" hidden>
-          <div class="basic-prices">
-            <div id="basic-price-rows"></div>
-          </div>
-          <!-- Plainly, and always. This used to be a tooltip on an eye, which asked a
-               reader to hover an icon to find out that the three coins are a CHOICE. In a
-               box they opened on purpose there is room to just say it. What it promises is
-               real, and it is `watch` in src/mcp.ts. -->
-          <p class="basic-note">Ask your assistant to show different coins here. It remembers what you pick.</p>
-        </div>
+</div>
 
-        <!-- Both halves of the history, in one box and still two lists. Karim, 2026-08-14:
-             "history for transactions and agent actions separate". Folded into one list,
-             four real movements sat under twenty balance checks. -->
-        <div class="basic-pane" id="basic-pane-history" hidden>
-          <section class="basic-hist" id="basic-moves" hidden>
-            <h2 class="basic-label">What happened to your money</h2>
-            <div id="basic-events"></div>
-          </section>
-          <section class="basic-hist" id="basic-doings" hidden>
-            <h2 class="basic-label">What the assistant did</h2>
-            <div id="basic-actions"></div>
-          </section>
-        </div>
+<div class="overlay" id="overlay" role="dialog" aria-modal="true" aria-label="Waiting for you" hidden>
+  <div class="overlay-card" id="overlay-card"></div>
+</div>
 
-        <!-- What holds the seat, which is not always the assistant this window started:
-             anything speaking Phosphor's handshake can take it. Starting and stopping one
-             is on the main screen, on the conversation itself, so there is one place to do
-             it and this box only ever reports. -->
-        <div class="basic-pane" id="basic-pane-assistant" hidden>
-          <p class="basic-agent" id="basic-agent"></p>
-          <p class="basic-note">Start and stop your assistant on the main screen, in the
-            conversation itself.</p>
-        </div>
-      </div>
-    </div>
+<div class="screen" id="screen-lock" hidden></div>
+<div class="screen" id="screen-firstrun" hidden></div>
 
-    <!-- THE QUESTION. Not a fold: it covers the screen, it has no close control, Escape
-         does not dismiss it, and it appears at once rather than arriving over 200ms. Every
-         destination address is here in full and none of it is behind anything. YES and NO
-         carry equal weight, deliberately, because this screen exists so a person can
-         decline and a decline dressed as the secondary action is a nudge. -->
-    <div class="basic-ask-layer" id="basic-ask" hidden>
-      <div class="basic-ask" id="basic-ask-panel" role="dialog" aria-modal="true"
-           aria-labelledby="basic-ask-headline" tabindex="-1">
-        <p class="basic-ask-headline" id="basic-ask-headline"></p>
-        <p class="basic-ask-after" id="basic-ask-after"></p>
+<script src="./design/motion.js" defer></script>
+<script src="./design/pattern.js" defer></script>
+<script src="./vendor/qrcode.js" defer></script>
+<script src="./theme.js" defer></script>
+<script src="./split.js" defer></script>
+<script src="./core/dom.js" defer></script>
+<script src="./core/net.js" defer></script>
+<script src="./core/events.js" defer></script>
+<script src="./core/state.js" defer></script>
+<script src="./core/api.js" defer></script>
+<script src="./core/fixtures.js" defer></script>
+<script src="./screens/feedback.js" defer></script>
+<script src="./screens/receipt.js" defer></script>
+<script src="./activity.js" defer></script>
+<script src="./screens/receipts.js" defer></script>
+<script src="./screens/moneyin.js" defer></script>
+<script src="./screens/agent.js" defer></script>
+<script src="./screens/decision.js" defer></script>
+<script src="./screens/shell.js" defer></script>
+<script src="./screens/basic.js" defer></script>
+<script src="./screens/pro.js" defer></script>
+<script src="./screens/trade.js" defer></script>
+<script src="./screens/lock.js" defer></script>
+<script src="./screens/firstrun.js" defer></script>
+<script src="./chart/chart.js" defer></script>
+<script src="./chart/trade-overlay.js" defer></script>
+<script src="./app.js" defer></script>
 
-        <ul class="basic-facts" id="basic-facts"></ul>
-
-        <!-- Where the money actually lands. Never truncated, never omitted: F2 shipped a
-             correct amount beside a solver-chosen address described as "your wallet". -->
-        <div class="basic-dests" id="basic-dests"></div>
-
-        <div class="basic-actions">
-          <button type="button" class="basic-btn basic-yes" id="basic-yes">YES, ALLOW IT</button>
-          <button type="button" class="basic-btn basic-no" id="basic-no">NO</button>
-        </div>
-        <p class="basic-error" id="basic-error" hidden></p>
-      </div>
-    </div>
-
-  </section>
-
-  <!-- THE CALM BAR. Full bleed across the top of the window: its thickness and colour
-       are the whole state of the app. Presentational, and every state it reports is
-       also stated in words above, so it carries no aria role of its own. -->
-  <div class="basic-state" id="basic-state" data-tone="calm" aria-hidden="true"></div>
-
-</main>
-<!-- chart.js first: it only defines. app.js boots and calls chartBoot(). approvals.js is
-     shared with the trade window so both draw a pending proposal from one renderer. -->
-<!-- First, and deliberately: it runs the arriving half of a mode switch from its own body,
-     so the cover is standing before the browser paints this page for the first time. -->
-<script src="/transition.js" defer></script>
-<script src="/chart.js" defer></script>
-<!-- The colours, applied onto :root from the theme the server holds. After chart.js so
-     window.chartTheme is already defined when the first state frame lands. -->
-<script src="/theme.js" defer></script>
-<script src="/approvals.js" defer></script>
-<script src="/activity.js" defer></script>
-<!-- Before app.js: it exposes window.PhosphorPresence, which app.js drives from state and the
-     SSE 'activity' event. Self-contained and presentational. -->
-<script src="/presence.js" defer></script>
-<!-- One modal and the three records it opens, shared with the trading window so neither
-     page can end up showing a shorter version of the same thing. -->
-<script src="/overlay.js" defer></script>
-<script src="/deck-views.js" defer></script>
-<!-- Before driver-chat.js: it exposes window.PhosphorGlobe, which the agent panel turns in
-     its idle phase. Self-contained, presentational, and it reads no state of its own. -->
-<script src="/agent-globe.js" defer></script>
-<!-- Before app.js, which calls splitBoot(): the draggable gutters between the
-     panels, and the sizes a person left them at. -->
-<script src="/split.js" defer></script>
-<script src="/driver-chat.js" defer></script>
-<script src="/yield.js" defer></script>
-<script src="/app.js" defer></script>
 </body>
 </html>

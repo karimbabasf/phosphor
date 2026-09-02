@@ -15,15 +15,25 @@ import { createContext, runInContext } from 'node:vm';
 
 type Sandbox = Record<string, any>;
 
-/* ui/approvals.js is a browser script that assigns one global. Running it in a context with a
-   stub window makes that global the test surface, the same way tests/unit/chart-ui.test.ts
-   reaches ui/chart.js. */
+/* The diff logic moved from ui/approvals.js to ui/screens/decision.js when the
+   window was rebuilt, unchanged. Running the file in a context with a stub
+   window makes its global the test surface, the same way
+   tests/unit/chart-ui.test.ts reaches the chart engine. */
 function loadApprovals(): Sandbox {
-  const source = readFileSync(new URL('../../ui/approvals.js', import.meta.url), 'utf8');
-  const sandbox: Sandbox = { window: {}, document: { createElement: () => ({}) }, console };
+  const source = readFileSync(new URL('../../ui/screens/decision.js', import.meta.url), 'utf8');
+  const sandbox: Sandbox = {
+    window: {
+      PhosphorDom: { on: () => {} },
+      PhosphorNet: {},
+      PhosphorApi: {},
+      PhosphorState: { select: () => {}, get: () => ({}) },
+    },
+    document: { createElement: () => ({}), getElementById: () => null, addEventListener: () => {} },
+    console,
+  };
   createContext(sandbox);
-  runInContext(source, sandbox, { filename: 'ui/approvals.js' });
-  return sandbox.window.APPROVALS;
+  runInContext(source, sandbox, { filename: 'ui/screens/decision.js' });
+  return sandbox.window.PhosphorDecision;
 }
 
 const APPROVALS = loadApprovals();
