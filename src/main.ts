@@ -15,6 +15,8 @@ import { createKeystore, useKeystore } from './keystore/index.ts';
 import { createSession } from './keystore/session.ts';
 import { createStore } from './store.ts';
 import { installCrashHandlers } from './crash.ts';
+import { acquireInstanceLock } from './instancelock.ts';
+import type { InstanceLock } from './instancelock.ts';
 import { loadPolicy, savePolicy, defaultPolicy } from './policy/file.ts';
 import { renderSentences } from './policy/render.ts';
 import { createRails, venueAllowlist } from './rails/index.ts';
@@ -43,6 +45,26 @@ const audit = createAudit(cfg.dataDir);
    process on any unhandled rejection, and the shell above inherits stdio to nowhere, so the
    window simply stops answering. */
 installCrashHandlers({ audit });
+
+/* One Phosphor per data directory. Taken before the store is read, because the damage two
+   backends do is to that file: store.put rewrites the whole proposal list, so the second writer
+   silently drops the first writer's proposals. See src/instancelock.ts. */
+let instanceLock: InstanceLock;
+try {
+  instanceLock = acquireInstanceLock(cfg.dataDir);
+} catch (err) {
+  const why = err instanceof Error ? err.message : String(err);
+  console.error(`phosphor: ${why}`);
+  try {
+    audit.append('error', `refused to boot: ${why}`);
+  } catch {
+    // stderr already carries it.
+  }
+  process.exit(4);
+}
+// Released on any ordinary exit, including the crash handler's. A SIGKILL leaves the file
+// behind, which is what the pid inside it is for: the next boot sees a dead pid and clears it.
+process.on('exit', () => instanceLock.release());
 
 const store = createStore(cfg.dataDir);
 
