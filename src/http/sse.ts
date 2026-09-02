@@ -26,8 +26,12 @@ export function createSseHub(deps: {
   // because the audit subscription that feeds the pro log is the same one that feeds it.
   recent: LogEvent[];
   recentMax: number;
+  // Whether the live rail has gone quiet. Defaults to "always", which is behaviour before the
+  // rail existed. See the tick below for why the nudge timer has to ask.
+  candlesQuiet?: () => boolean;
 }): SseHub {
   const { store, audit, chart, trade, recent, recentMax } = deps;
+  const candlesQuiet = deps.candlesQuiet ?? (() => true);
 
   const sseClients = new Set<http.ServerResponse>();
   let stateTimer: NodeJS.Timeout | null = null;
@@ -138,7 +142,13 @@ export function createSseHub(deps: {
     candleFrame.unref();
   }
   const candleTick = setInterval(() => {
-    if (sseClients.size > 0) broadcastCandles();
+    if (sseClients.size === 0) return;
+    // While a venue socket is pushing bars the browser is already current, and this nudge would
+    // only make it refetch the whole candle array to arrive where it already is. That refetch is
+    // exactly what the delta frame in src/market/push.ts exists to delete. The moment the rail
+    // goes quiet this resumes, which is what makes REST the fallback and not a second path.
+    if (!candlesQuiet()) return;
+    broadcastCandles();
   }, CANDLE_PUSH_MS);
   candleTick.unref();
 

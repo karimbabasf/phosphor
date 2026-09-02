@@ -428,7 +428,9 @@ test('the rail follows what is being read, and a socket bar lands in the cache u
   // And the cache now holds it, so the next read paints the socket's bar with no fetch.
   const held = market.read('BTC-USD', '1m', 100);
   assert.equal(held.candles[held.candles.length - 1]?.c, 100.5);
-  assert.equal(held.liveAgeSec, 0);
+  // Not exactly zero: this one runs on the wall clock, and a millisecond between the put and
+  // the read is a passing test that fails one run in four.
+  assert.ok(held.liveAgeSec !== null && held.liveAgeSec < 1, `expected a fresh series, got ${held.liveAgeSec}`);
   assert.equal(market.liveConnected('hyperliquid'), true);
   market.stopLive();
 });

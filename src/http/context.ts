@@ -20,6 +20,7 @@ import type { PriceReading } from '../view/basic.ts';
 import type { Audit } from '../audit.ts';
 import type { Store } from '../store.ts';
 import type { Ledger } from '../ledger/index.ts';
+import type { Candle } from '../types.ts';
 import type { CandleService } from '../candles.ts';
 import type { MarketData } from '../market/index.ts';
 import type { TradeService } from '../trade/service.ts';
@@ -194,7 +195,11 @@ export type ServerDeps = {
 // only reach the window through broadcastState, which the trading page does not listen to.
 export type PhosphorServer = http.Server & {
   broadcastState(): void;
+  // The contentless nudge, which the REST fallback still sends: a fill landed, come and look.
   broadcastCandles(): void;
+  // A bar off a venue socket, carrying the bar. Coalesced in src/market/push.ts, and the reason
+  // the browser stopped refetching a hundred kilobytes of JSON to move one close.
+  broadcastCandle(product: string, baseSec: number, candle: Candle, provider: string): void;
   broadcastTrade(): void;
 };
 

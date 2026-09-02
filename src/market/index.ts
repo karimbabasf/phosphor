@@ -213,7 +213,11 @@ export function createMarketData(deps: MarketDeps = {}) {
     stats: () => store.stats(),
     // What the rail is carrying, for the health route and the feed dot's venue half.
     liveStatus: (): VenueStatus[] => (live === null ? [] : live.status()),
-    liveConnected: (provider: Provider): boolean => (live === null ? false : live.connected(provider)),
+    /* Takes a plain string because the caller has a venue NAME, off a read's `source`, not a
+       narrowed type. A name that is not a venue this rail carries is simply not connected,
+       which is the honest answer and saves every caller a cast. */
+    liveConnected: (provider: string): boolean =>
+      live !== null && (provider === 'hyperliquid' || provider === 'coinbase') && live.connected(provider),
     stopLive: (): void => live?.stop(),
   };
 }

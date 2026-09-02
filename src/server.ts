@@ -25,9 +25,10 @@ import { createDuplicateGuard } from './duplicates.ts';
 import { createCrew } from './crew.ts';
 import { createHistory } from './history.ts';
 import { BASIC_EVENT_SCAN, PROJECT_DIR } from './http/context.ts';
-import type { Ctx, GasFill, PriceCache, ServerDeps, PhosphorServer } from './http/context.ts';
+import type { Ctx, GasFill, PriceCache, ServerDeps, PhosphorServer, SseHub } from './http/context.ts';
 import { HOST, mintToken } from './http/auth.ts';
 import { createSseHub } from './http/sse.ts';
+import { createCandlePush } from './market/push.ts';
 import { createChatRegistry } from './http/chats.ts';
 import { loadCandles, startPricePolling } from './http/chart.ts';
 import { handle } from './http/router.ts';
@@ -64,12 +65,38 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   // roster of agents is a team rather than a crowd. See src/board.ts for what it is not.
   const board = createBoard();
 
-  const sse = createSseHub({ store, audit, chart, trade, recent: recentEvents, recentMax: BASIC_EVENT_SCAN });
+  /* The live rail's frame, coalesced at 120 ms. See src/market/push.ts for the shape and for
+     why the arithmetic lives there rather than here. This is the whole of it on this side: a
+     bar in, the hub's fan-out out.
+
+     Built before the hub so the hub can ask it whether the rail has gone quiet, and holding the
+     hub in a mutable rather than closing over it because `send` cannot run before the assignment
+     two lines down: nothing calls it but a timer this has not started yet. */
+  let hub: SseHub | null = null;
+  const candlePush = createCandlePush({ send: (frame) => hub?.broadcast(frame) });
+
+  const sse = createSseHub({
+    store,
+    audit,
+    chart,
+    trade,
+    recent: recentEvents,
+    recentMax: BASIC_EVENT_SCAN,
+    candlesQuiet: () => candlePush.quiet(),
+  });
+  hub = sse;
   const {
     broadcastState,
     broadcastTrade,
     broadcastCandles,
   } = sse;
+
+  const broadcastCandle: PhosphorServer['broadcastCandle'] = (product, baseSec, candle, provider) => {
+    // Nobody watching is nobody to tell. The rail keeps filling the cache either way, so a
+    // window that opens later gets the bars rather than a gap.
+    if (sse.clientCount() === 0) return;
+    candlePush.push(product, baseSec, candle, provider);
+  };
 
   // Workers: agents this app spawns on an agent's behalf. Created lazily, so an install that
   // never spawns one never resolves the claude binary. See src/crew.ts for why the app spawns
@@ -191,6 +218,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
 
   base.on('close', () => {
     sse.stop();
+    candlePush.stop();
     clearInterval(priceTimer);
     chats.stopAll();
   });
@@ -214,5 +242,5 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   };
   base.listen = localOnlyListen as unknown as typeof base.listen;
 
-  return Object.assign(base, { broadcastState, broadcastCandles, broadcastTrade });
+  return Object.assign(base, { broadcastState, broadcastCandles, broadcastCandle, broadcastTrade });
 }

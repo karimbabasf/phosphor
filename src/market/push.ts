@@ -56,6 +56,7 @@ export function createCandlePush(deps: CandlePushDeps) {
   const pending = new Map<string, CandleFrame>();
   let timer: ReturnType<typeof setTimeout> | null = null;
   let sent = 0;
+  let sentAt = 0;
   let stopped = false;
 
   function flush(): void {
@@ -63,10 +64,24 @@ export function createCandlePush(deps: CandlePushDeps) {
     if (pending.size === 0) return;
     const frames = [...pending.values()];
     pending.clear();
+    sentAt = Date.now();
     for (const frame of frames) {
       sent += 1;
       deps.send(frame);
     }
+  }
+
+  /* Whether the rail has gone quiet, which is what makes REST the fallback rather than a
+     second path running beside it.
+
+     The server's nudge timer asks this before firing. While bars are arriving the browser is
+     already current, and a nudge would only make it refetch a hundred kilobytes of JSON to
+     arrive where it already is: that refetch is the thing the delta frame exists to delete, and
+     leaving the timer unconditional would have kept it. Two seconds is four Hyperliquid candle
+     intervals at p50, so a rail that is merely between bars is not mistaken for one that has
+     stopped, and a rail that has genuinely stopped hands over within one tick. */
+  function quiet(withinMs = 2000): boolean {
+    return sentAt === 0 || Date.now() - sentAt > withinMs;
   }
 
   /* One bar, coalesced. Wired to the store's onLive, so it fires for anything that reaches the
@@ -92,7 +107,7 @@ export function createCandlePush(deps: CandlePushDeps) {
     pending.clear();
   }
 
-  return { push, stop, stats: () => ({ pending: pending.size, sent }) };
+  return { push, quiet, stop, stats: () => ({ pending: pending.size, sent }) };
 }
 
 export type CandlePush = ReturnType<typeof createCandlePush>;

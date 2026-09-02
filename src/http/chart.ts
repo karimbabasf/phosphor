@@ -15,6 +15,7 @@ import { sameOrigin, tokenMatches } from './auth.ts';
 import { errText, fail, intParam, readBody, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
 import { CANDLE_LIMIT_MAX } from './context.ts';
+import { feedFor, type FeedState } from '../market/push.ts';
 import type { Ctx } from './context.ts';
 
 // The basic screen's price tracker. Hourly bars over a day: "today" for someone reading
@@ -74,6 +75,9 @@ export type CandleLoad = {
   // True while the window behind this read is still being filled, so the chart can say
   // "filling" rather than showing a short series as though it were the whole story.
   filling: boolean;
+  // Whether a venue socket is driving this market right now. Three states and no more, because
+  // a person reading a chart has one question about the feed. See src/market/push.ts.
+  feed: FeedState;
   note: string | null;
 };
 
@@ -102,6 +106,9 @@ export function readCandles(
     built: 'candles',
     fetchedAt: new Date(Date.now() - held.ageSec * 1000).toISOString(),
     filling: held.filling,
+    // Per series, not per venue: a socket carrying BTC says nothing about SOL, and an open
+    // socket that has gone silent looks healthy from its readyState and nothing like it here.
+    feed: feedFor(held, ctx.market.liveConnected),
     note: held.note,
   };
 }
@@ -180,6 +187,7 @@ export function chartPayload(ctx: Ctx): unknown {
       built: load.built,
       fetchedAt: load.fetchedAt,
       filling: load.filling,
+      feed: load.feed,
       note: load.note,
       error,
     },

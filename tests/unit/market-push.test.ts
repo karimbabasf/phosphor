@@ -117,3 +117,28 @@ test('the boundary is five seconds, which is where the audit put it', () => {
   assert.equal(feedStateFrom({ ...base, liveAgeSec: 4.9 }), 'live');
   assert.equal(feedStateFrom({ ...base, liveAgeSec: 5 }), 'delayed');
 });
+
+// ---------- handing over to the fallback ----------
+
+test('a rail that has never sent is quiet, so the nudge timer runs exactly as it did before', () => {
+  const { push } = harness();
+  assert.equal(push.quiet(), true);
+});
+
+test('a rail that is pushing is not quiet, which is what stops the browser refetching', async () => {
+  const { push } = harness();
+  push.push('BTC-USD', 60, bar(), 'hyperliquid');
+  await settle();
+  // The nudge would make the window refetch the whole candle array to arrive where the frame
+  // just put it, and that refetch is the thing this rail exists to delete.
+  assert.equal(push.quiet(), false);
+});
+
+test('a rail that stops hands back within one window rather than leaving the chart on its own', async () => {
+  const { push } = harness();
+  push.push('BTC-USD', 60, bar(), 'hyperliquid');
+  await settle();
+  assert.equal(push.quiet(20), false, 'two bars apart is not a rail that stopped');
+  await settle(40);
+  assert.equal(push.quiet(20), true, 'a socket that died gives REST the chart back');
+});

@@ -368,10 +368,9 @@ setInterval(() => {
 // previous candles and needs to be told there are better ones, not polled at.
 marketUpdated = () => server.broadcastCandles();
 
-// A bar off a venue socket. Still the contentless nudge here, which is already coalesced and
-// costs nothing extra beside the timer that fires at the same rate. The frame that carries the
-// bar itself, and deletes the browser's hundred-kilobyte refetch, is wired in src/market/push.ts.
-marketLive = () => server.broadcastCandles();
+// A bar off a venue socket. It goes down the same stream carrying the bar itself, coalesced at
+// 120 ms in src/market/push.ts, which is what deleted the browser's hundred-kilobyte refetch.
+marketLive = (product, baseSec, candle, provider) => server.broadcastCandle(product, baseSec, candle, provider);
 
 // The feed moving is the only thing that makes the trading surface change without anyone
 // touching it, so it is what drives the push. Coalesced by the feed already.
