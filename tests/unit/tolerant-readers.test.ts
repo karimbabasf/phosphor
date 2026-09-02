@@ -99,8 +99,49 @@ test('a garbage proposals.json refuses, names why, and keeps the bytes', () => {
   });
   assert.equal(fs.existsSync(path.join(dir, 'proposals.json')), false);
   assert.equal(fs.readFileSync(savedAs, 'utf8'), '[{"id":"a","kind":"conso');
-  // Quarantined, so the SECOND read comes up empty rather than looping on the same bytes.
-  assert.deepEqual(store.list(), []);
+});
+
+/* ---------- a store that has quarantined once stays refused ----------
+
+   Quarantine renames the bad file aside and throws, and every later read used to find no file
+   and return []. One request 500s and from then on the spend history is empty: sessionSpentUsd
+   and the daily limit both read zero, the 24 hour cap is fully restored, and the next put writes
+   a fresh one-row list over what used to be the history. main.ts refuses to boot on this; nothing
+   refused mid-run.
+   The latch is per store instance, which is per process. The NEXT boot builds a new one, finds no
+   file, and comes up clean with the evidence kept beside it, which is what quarantine is for. */
+
+test('a store that quarantined a file refuses every later read, rather than reading as empty', () => {
+  const dir = tmpDir();
+  const store = createStore(dir);
+  store.put(sample('a'));
+  fs.writeFileSync(path.join(dir, 'proposals.json'), '[{"id":"a","kind":"conso');
+
+  assert.throws(() => store.list(), CorruptStateError);
+  assert.throws(() => store.list(), CorruptStateError, 'the second read refuses too, with the same sentence');
+  assert.throws(() => store.get('a'), CorruptStateError);
+});
+
+test('a store that quarantined a file refuses to write, so nothing is written over the history', () => {
+  const dir = tmpDir();
+  const store = createStore(dir);
+  store.put(sample('a'));
+  fs.writeFileSync(path.join(dir, 'proposals.json'), 'not json at all');
+
+  assert.throws(() => store.list(), CorruptStateError);
+  assert.throws(() => store.put(sample('b')), CorruptStateError);
+  assert.equal(fs.existsSync(path.join(dir, 'proposals.json')), false, 'and no fresh one-row list took its place');
+});
+
+test('the next boot comes up clean, because the latch belongs to the process that hit it', () => {
+  const dir = tmpDir();
+  const first = createStore(dir);
+  fs.writeFileSync(path.join(dir, 'proposals.json'), 'not json at all');
+  assert.throws(() => first.list(), CorruptStateError);
+
+  // A restart: a new store over the same directory, with the bad bytes kept beside it.
+  assert.deepEqual(createStore(dir).list(), []);
+  assert.ok(fs.readdirSync(dir).some((f) => f.startsWith('proposals.json.corrupt.')), 'the evidence is still there');
 });
 
 test('a proposals.json holding an object rather than a list is corruption too', () => {

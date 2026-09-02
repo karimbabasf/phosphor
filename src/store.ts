@@ -2,6 +2,13 @@
 // through src/fsatomic.ts. list()/get() re-read from disk so a freshly created Store against an
 // existing dataDir sees prior proposals immediately (no in-memory cache to go stale across
 // restarts).
+//
+// EVERY CALLER HAS TO KNOW ONE THING: these throw. A proposals.json that exists and cannot be
+// read as a list of proposals is corruption, never an empty history, so readAll quarantines the
+// bytes and raises CorruptStateError. Once that has happened this store refuses every read and
+// every write for the life of the process: reading as empty would restore a spent 24 hour cap and
+// the next put would write a one-row list over the history. main.ts is what turns the first of
+// those throws into a refusal to boot with a sentence.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -35,9 +42,18 @@ export function createStore(dataDir: string): Store {
   const filePath = path.join(dataDir, 'proposals.json');
   const subscribers = new Set<() => void>();
 
-  // Move the unreadable file aside and name what was wrong with it. Renaming rather than
-  // deleting keeps the evidence, and it means the SECOND boot comes up on an empty store
-  // instead of looping forever on the same bytes.
+  /* ONCE THIS PROCESS HAS SEEN THE FILE CORRUPT, IT NEVER READS AGAIN.
+     Quarantine renames the bad bytes aside and throws once, and every later read then found no
+     file and returned []. main.ts refuses to boot on that; nothing refused mid-run. So a file
+     damaged while the app was up cost one 500 and after that the spend history was empty:
+     sessionSpentUsd and the daily limit both read zero, the 24 hour cap was fully restored, and
+     the next put wrote a fresh one-row list over what used to be the history.
+     The latch belongs to this store instance, which is this process. The NEXT boot builds a new
+     one, finds no file, and comes up clean with the evidence kept beside it, which is what
+     renaming rather than deleting was for. */
+  let corrupt: CorruptStateError | null = null;
+
+  // Move the unreadable file aside and name what was wrong with it.
   function quarantine(why: string): CorruptStateError {
     const savedAs = path.join(dataDir, `proposals.json.corrupt.${Date.now()}`);
     try {
@@ -46,7 +62,8 @@ export function createStore(dataDir: string): Store {
       // Nothing more to do: the read already failed and now the rename has too. The error
       // still names the intended path so the operator knows what to look for.
     }
-    return new CorruptStateError(savedAs, why);
+    corrupt = new CorruptStateError(savedAs, why);
+    return corrupt;
   }
 
   /* An empty-but-existing file is corruption, never "no proposals yet".
@@ -56,6 +73,7 @@ export function createStore(dataDir: string): Store {
      closes the writing half; this closes the reading half. A parse failure had the opposite
      fault, throwing out of every caller including the one at boot. */
   function readAll(): Proposal[] {
+    if (corrupt !== null) throw corrupt;
     if (!fs.existsSync(filePath)) return [];
     const raw = fs.readFileSync(filePath, 'utf8');
     if (raw.trim().length === 0) throw quarantine('the file is empty');
