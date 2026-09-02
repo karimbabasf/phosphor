@@ -499,8 +499,8 @@ export type GasCache = {
   get(hash: string): TxGas | null;
   all(): Map<string, TxGas>;
   // True once this hash has been looked for and not found: no chain we can reach has it.
-  // A history that ran on testnet and is now read on mainnet is full of these, and "we
-  // looked and cannot see it" is a different sentence from "we have not looked yet".
+  // A history carrying a hash from a chain this app no longer reads is full of these, and
+  // "we looked and cannot see it" is a different sentence from "we have not looked yet".
   tried(hash: string): boolean;
   triedAll(): Set<string>;
   // Reads receipts for anything not cached yet and returns how many landed. Each hash comes

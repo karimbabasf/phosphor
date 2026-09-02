@@ -337,7 +337,7 @@ test('near.fetchHoldings reads an account that does not exist as zero, not as a 
     throw new Error('unexpected near query');
   }) as typeof fetch;
 
-  const holdings = await nearFetchHoldings('near', 'https://rpc.example', 'never-funded.testnet', {}, mockFetch);
+  const holdings = await nearFetchHoldings('near', 'https://rpc.example', 'never-funded.near', {}, mockFetch);
 
   const native = holdings.find(h => h.native);
   assert.ok(native, 'a nonexistent account still reports a NEAR row');
@@ -383,6 +383,6 @@ test('near.fetchHoldings does not swallow UNKNOWN_ACCOUNT raised by a missing to
   }) as typeof fetch;
 
   await assert.rejects(() =>
-    nearFetchHoldings('near', 'https://rpc.example', 'karim-demo.near', { USDC: { tokenId: 'nope.testnet', decimals: 6 } }, mockFetch),
+    nearFetchHoldings('near', 'https://rpc.example', 'karim-demo.near', { USDC: { tokenId: 'nope.near', decimals: 6 } }, mockFetch),
   );
 });

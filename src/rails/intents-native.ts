@@ -90,11 +90,6 @@ export const INTENTS_SIGNING_STANDARD = 'erc191';
 // so the name lives next to the message that tells a human to set it.
 export const INTENTS_API_KEY_ENV = 'PHOSPHOR_1CLICK_API_KEY';
 
-export const INTENTS_NO_TESTNET_REASON =
-  'NEAR Intents has no testnet: intents.testnet reports code_hash 11111111111111111111111111111111, ' +
-  'which is the all-ones sentinel for an account that has never had code deployed, so there is no ' +
-  'verifier contract to hold a balance or execute a signed intent. This rail runs on mainnet only.';
-
 // RETIRED as a blocker on 2026-08-13, kept as an exported string because the tests name it.
 //
 // This rail used to refuse at simulate() time without a partner API key, on the belief that

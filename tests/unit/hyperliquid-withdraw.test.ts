@@ -226,9 +226,9 @@ test('a mainnet write signs a Mainnet payload and posts it to the mainnet exchan
   assert.equal(signed.length, 1);
   assert.equal((signed[0].message as Record<string, unknown>).hyperliquidChain, 'Mainnet');
 
-  // And every URL it touched agrees with it, so a Mainnet payload can never be posted at
-  // testnet and the balance it checked first was the mainnet balance. `posts` records the two
-  // info reads as well as the write, which is why this asserts over all of them.
+  // And every URL it touched agrees with it, so the balance it checked first is the balance
+  // the payload spends. `posts` records the two info reads as well as the write, which is why
+  // this asserts over all of them.
   const exchange = posts.filter((p) => p.url.endsWith('/exchange'));
   assert.equal(exchange.length, 1);
   assert.equal(exchange[0].url, 'https://api.hyperliquid.xyz/exchange');

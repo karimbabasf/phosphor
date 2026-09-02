@@ -3,9 +3,8 @@
 //
 // Endpoint shapes verified against the live API 2026-08-12; notes in
 // scratchpad/research-near.md. Two findings from that research shape this file:
-//   - There is no testnet. One host, one verifier contract (intents.near), both mainnet.
-//     A "testnet mode" pointing at a made-up host would be a lie, so this module carries
-//     no host switch at all and src/rails/oneclick.ts holds the network guard.
+//   - One host and one verifier contract (intents.near), with no second world to point at.
+//     A host switch here could only select a made-up host, so this module carries none.
 //   - dry:false needs no API key and no exotic signing. An unauthenticated POST returns
 //     HTTP 201 with a live deposit address, and the only signature the flow needs is a
 //     plain ERC-20 transfer to that address.

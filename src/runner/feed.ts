@@ -19,7 +19,7 @@
 // unaffected either way, since that was never the slow part.
 //
 // Every read goes through the shared /info client rather than bare fetch, and that is a fix
-// rather than tidiness. Against a testnet that went to ~16s per call, this module's 2s poll
+// rather than tidiness. Against a venue that went to ~16s per call, this module's 2s poll
 // stacked eight requests per symbol and delivered no book at all, so an armed mandate sat
 // blind. The client bounds each request, merges the identical ones already in flight, and
 // stops asking a refusing venue. See src/hl/info.ts.

@@ -5,7 +5,7 @@
 // orders with nothing saying why. That is worse than no key at all: no key fails loudly at arm
 // time with a sentence telling you what to run.
 //
-// It happened here on 2026-08-20. Approving a mainnet agent wrote over the testnet one that had
+// It happened here on 2026-08-20. Approving one agent wrote over another that had
 // been in use since 08-13, and both live in a file this repo does not own.
 
 import test from 'node:test';
@@ -16,7 +16,7 @@ import path from 'node:path';
 import { readApiWallet, readApiWalletKey } from '../../src/runner/keys.ts';
 
 const MAINNET_KEY = ('0x' + 'a'.repeat(64)) as `0x${string}`;
-const TESTNET_KEY = ('0x' + 'b'.repeat(64)) as `0x${string}`;
+const OTHER_KEY = ('0x' + 'b'.repeat(64)) as `0x${string}`;
 const LEGACY_KEY = ('0x' + 'c'.repeat(64)) as `0x${string}`;
 
 function keysFile(body: unknown): string {
@@ -32,7 +32,7 @@ test('the keyed shape is read from its mainnet entry', () => {
   const p = keysFile({
     hyperliquidAgents: {
       mainnet: { privateKey: MAINNET_KEY, address: '0xMAIN' },
-      testnet: { privateKey: TESTNET_KEY, address: '0xTEST' },
+      other: { privateKey: OTHER_KEY, address: '0xOTHER' },
     },
   });
 
@@ -40,7 +40,7 @@ test('the keyed shape is read from its mainnet entry', () => {
   assert.equal(r.key, MAINNET_KEY);
   assert.equal(r.source, 'present');
   assert.equal(r.address, '0xMAIN');
-  assert.notEqual(r.key, TESTNET_KEY, 'an entry for another venue is never handed out');
+  assert.notEqual(r.key, OTHER_KEY, 'an entry for another venue is never handed out');
 });
 
 test('a file with no agent at all reads as absent, which fails loudly rather than signing wrong', () => {

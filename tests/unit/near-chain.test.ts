@@ -90,7 +90,7 @@ test('formatNear does not lose yocto to a double', () => {
 
 test('a NEAR account id is not an EVM address, and neither is accepted as the other', () => {
   assert.ok(isNearAccountId('wrap.near'));
-  assert.ok(isNearAccountId('demo.testnet'));
+  assert.ok(isNearAccountId('demo.near'));
   assert.ok(isNearAccountId('a'.repeat(64)));
   // The 64-hex implicit account form 1Click returns as a NEAR deposit address.
   assert.ok(isNearAccountId('aec6b4afd08c0ace0f392c4d1b8aa9c44ce9bbd558903c4b702ce1cb1ea941b2'.padEnd(64, '0')));
@@ -392,7 +392,7 @@ test('a function-call access key is refused before anything is signed', async ()
     receiverId: 'wrap.near',
     actions: [transfer(1n)],
     fetchImpl: rpcStub({
-      'query:view_access_key': { permission: { FunctionCall: { receiver_id: 'wrap.testnet' } }, nonce: 1 },
+      'query:view_access_key': { permission: { FunctionCall: { receiver_id: 'wrap.near' } }, nonce: 1 },
       block: BLOCK,
     }),
   });

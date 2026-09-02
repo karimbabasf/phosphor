@@ -291,9 +291,7 @@ type ProposeKind =
   | 'intents_withdraw'
   | 'hl_deposit'
   | 'mandate_arm'
-  // Added 2026-08-20. The yield rail is the one kind on this list whose refusal runs the other
-  // way: src/rails/yield.ts refuses a MAINNET config, because it has not been run on a live
-  // mainnet chain. Every other rail here refuses testnet or refuses nothing.
+  // Added 2026-08-20.
   | 'yield_deposit'
   | 'yield_withdraw';
 
@@ -853,12 +851,6 @@ registerPropose('propose_policy_change', 'policy_change', `Proposes a change to 
 // deployment tables. There is deliberately no argument on this surface that an agent
 // could point at an address of its choosing.
 
-// NEAR Intents has no testnet. All three tools below refuse on a testnet config, and that
-// refusal comes from the rail itself rather than from the policy, so the message says what is
-// actually wrong. Call `start` to see which network the app is on before proposing any of them.
-const MAINNET_ONLY =
-  'NEAR Intents is mainnet only: on a testnet config this refuses, and the refusal is the rail saying there is no testnet rather than anything being misconfigured.';
-
 registerPropose(
   'propose_swap',
   'swap',
@@ -869,7 +861,7 @@ registerPropose(
 
 If you omit venue it defaults to 'uniswap-v3', so a cross-chain swap (chain != toChain) MUST name 'oneclick' or 'intents-native' or it is refused. A refusal names the venue to use.
 
-IMPORTANT: for 'intents-native', chain: 'sol' means "the SOL-flavoured balance held in the verifier", not "my Solana wallet". ${MAINNET_ONLY} ${CANNOT_APPROVE}`,
+IMPORTANT: for 'intents-native', chain: 'sol' means "the SOL-flavoured balance held in the verifier", not "my Solana wallet". ${CANNOT_APPROVE}`,
   {
     chain: CHAIN,
     toChain: CHAIN.optional(),
@@ -891,7 +883,7 @@ registerPropose(
   'intents_deposit',
   `Proposes depositing funds from this app's own wallet into NEAR Intents, where they become a balance held by the intents.near verifier under this app's own account. This is the funding step before propose_swap, which can then swap that balance without moving anything on chain. Leaving symbol out deposits the origin chain's gas asset, so on eth that is native ETH. The asset does not change: this is custody moving, not a swap. Who gets credited is resolved by the app from its own key and cannot be named here.
 
-chain says where the funds LEAVE FROM, so it is a real wallet and is EVM only: this app holds an EVM key and can prove that address is its own. ${MAINNET_ONLY} ${CANNOT_APPROVE}`,
+chain says where the funds LEAVE FROM, so it is a real wallet and is EVM only: this app holds an EVM key and can prove that address is its own. ${CANNOT_APPROVE}`,
   {
     chain: SELF_CUSTODY_CHAIN,
     symbol: z.string().optional(),
@@ -904,7 +896,7 @@ registerPropose(
   'intents_withdraw',
   `Proposes withdrawing a balance held inside NEAR Intents back out to one of this app's own wallets on a real chain. The reverse of propose_intents_deposit, and the way a balance swapped with propose_swap gets out of the verifier. Leaving symbol out withdraws that chain's gas asset. Which wallet on that chain is ours is read from this app's own config and cannot be named here.
 
-chain says where the money LANDS, so it is EVM only: eth, base or arb. This app derives its EVM address from a key it holds, so it can prove the destination is its own. It holds no Solana key, so a Solana payout would be trusting a config file with real money, and a NEAR payout would go to an account nobody has signed for. ${MAINNET_ONLY} ${CANNOT_APPROVE}`,
+chain says where the money LANDS, so it is EVM only: eth, base or arb. This app derives its EVM address from a key it holds, so it can prove the destination is its own. It holds no Solana key, so a Solana payout would be trusting a config file with real money, and a NEAR payout would go to an account nobody has signed for. ${CANNOT_APPROVE}`,
   {
     chain: SELF_CUSTODY_CHAIN,
     symbol: z.string().optional(),
@@ -965,7 +957,7 @@ The route is NEAR Intents into HyperCore, so the money can start on any chain th
 
 Two numbers decide whether this is worth doing, and both are in the approval summary rather than here, because they are live: the routing fee is close to FLAT, about \$0.32 plus 10 bp, so it is about 0.7 percent on \$50 and about 0.13 percent on \$1000. Below \$5 it is refused, and above 5 percent of the deposit it is refused. If a human asks to fund a small amount, say what the percentage would be before you propose it.
 
-THE DIRECTION IS ONE WAY AND THAT IS THE POINT: 1Click cannot quote out of HyperCore, so this rail puts collateral in and no tool on your surface takes it out. Getting money off the venue is a signed withdraw3 a human runs at a terminal. ${MAINNET_ONLY} ${CANNOT_APPROVE}`,
+THE DIRECTION IS ONE WAY AND THAT IS THE POINT: 1Click cannot quote out of HyperCore, so this rail puts collateral in and no tool on your surface takes it out. Getting money off the venue is a signed withdraw3 a human runs at a terminal. ${CANNOT_APPROVE}`,
   {
     chain: SELF_CUSTODY_CHAIN.optional(),
     symbol: z.string().optional(),
@@ -1005,10 +997,10 @@ THE DIRECTION IS ONE WAY AND THAT IS THE POINT: 1Click cannot quote out of Hyper
 // that can deposit and cannot read the position back is holding half a rail. The order below is
 // the order to use them in.
 //
-// All four are TESTNET ONLY, and that is the reverse of the intents rails above. src/rails/yield.ts
-// refuses a mainnet config outright, and the refusal is the rail stating the world it has been
-// checked in rather than anything being misconfigured. Undoing it means a human adding a mainnet
-// row to DEPLOYMENTS in src/yield/aave.ts and deleting the check, on purpose.
+// The venue is wired to the chains in DEPLOYMENTS in src/yield/aave.ts, each row verified by
+// reading getReserveData from the Pool. A chain with no row answers "Earning is not available
+// on <chain>" rather than throwing, and adding a chain means reading that Pool and writing the
+// aToken down, on purpose, by a human.
 
 registerRead(
   'yield_read',
@@ -1041,7 +1033,7 @@ Leave chain out and the app supplies the best-paying venue that is healthy and r
 
 Where the funds land is the venue's own Pool contract, resolved from the verified deployment table in src/yield/aave.ts and already on the counterparty allowlist. There is no argument on this tool that can point them anywhere else.
 
-TESTNET ONLY, which is the opposite of the NEAR Intents rails: on a MAINNET config this refuses, and the refusal comes from the rail rather than from the policy, because this path has not been run on a live mainnet chain. Call \`start\` to see which network the app is on before proposing it. ${CANNOT_APPROVE}`,
+Only the chains with a verified market can be named. Anything else is refused with "Earning is not available on that chain", which is the venue table talking rather than the policy. ${CANNOT_APPROVE}`,
   {
     chain: SELF_CUSTODY_CHAIN.optional().describe(
       'omit it and the app picks the best-paying healthy venue, which is what the loop does; name one only when a human asked for that chain',
@@ -1060,7 +1052,7 @@ OMIT amount TO CLOSE THE POSITION, and prefer that over computing the size yours
 
 Leave chain out and the app uses the chain the position is on. When positions sit on more than one chain it refuses and names them, so read that list and call again naming one. symbol defaults to USDC. The funds come back to this app's own wallet, derived from the key it holds, and nothing here can name another one.
 
-TESTNET ONLY, the same refusal propose_yield_deposit carries and for the same reason: on a mainnet config the rail refuses, because it has not been proven on a live mainnet chain. ${CANNOT_APPROVE}`,
+Only the chains with a verified market can be named, the same list propose_yield_deposit takes. ${CANNOT_APPROVE}`,
   {
     chain: SELF_CUSTODY_CHAIN.optional().describe(
       'omit it and the app uses the chain the position is on; it refuses and names them when positions sit on more than one',

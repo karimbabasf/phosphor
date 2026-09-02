@@ -160,7 +160,7 @@ test('the venue rules are recorded as constants, not as folklore', () => {
   // cancel, and it cannot be a heartbeat.
   assert.equal(SCHEDULE_CANCEL_MIN_LEAD_MS, 5_000);
   assert.equal(SCHEDULE_CANCEL_MAX_PER_DAY, 10);
-  // The third is not documented and was measured against the live testnet venue on 2026-08-20.
+  // The third is not documented and was measured against the live venue on 2026-08-20.
   assert.equal(SCHEDULE_CANCEL_VOLUME_REQUIRED_USD, 1_000_000);
 });
 

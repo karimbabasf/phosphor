@@ -77,9 +77,6 @@ export const EXPECTED_TOOLS: readonly string[] = [
   // did, and hand the looking to a loop. Four tools rather than three, because an agent that can
   // deposit and cannot read the position back is holding half a rail.
   //
-  // These are the only fund-moving tools here that refuse MAINNET. Every other rail on this list
-  // refuses testnet or refuses nothing, so a reader skimming for "testnet only" will assume they
-  // have it backwards; they do not. src/rails/yield.ts states the world it has been checked in.
   'yield_read',
   'propose_yield_deposit',
   'propose_yield_withdraw',

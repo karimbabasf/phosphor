@@ -1,6 +1,6 @@
 // The client that survives a degraded venue.
 //
-// Written against a real failure, not a hypothetical one: Hyperliquid's testnet /info went to
+// Written against a real failure, not a hypothetical one: Hyperliquid's /info went to
 // ~16 seconds per call while the runner's feed polled every 2 seconds. Eight requests stacked
 // per symbol, the venue started refusing, and the runner logged `fetch failed` forever while an
 // armed mandate sat there never seeing a book. No order was ever placed. The bug was not the

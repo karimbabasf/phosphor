@@ -120,7 +120,7 @@ test('a mandate that can lose more than it can hold is not bounded', () => {
 // ---------- the live breach of 2026-08-13 ----------
 //
 // A mandate capped at $60 notional and 4 orders a minute built a $238 position with 8 orders in
-// one second, on live testnet money. Nothing in the envelope was wrong: it was asked eight
+// one second, on live money. Nothing in the envelope was wrong: it was asked eight
 // questions about the same instant and truthfully answered yes to all of them.
 //
 // Two independent causes, each sufficient on its own, so each gets its own test.

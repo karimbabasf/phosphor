@@ -1,6 +1,6 @@
 // One door to Hyperliquid's /info endpoint, for every reader in the process.
 //
-// This exists because of a specific failure. Hyperliquid's testnet went to ~16 seconds per
+// This exists because of a specific failure. Hyperliquid went to ~16 seconds per
 // call while the runner's feed polled every 2 seconds. Nothing in the poller bounded a
 // request, so eight of them stacked per symbol, the venue started refusing, and an armed
 // mandate sat there logging `fetch failed` and never seeing a book. The venue being slow was

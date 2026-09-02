@@ -1,6 +1,6 @@
 // The live account that put two liquidation prices on one risk panel, captured and redacted.
 //
-// One unified Hyperliquid account holding one cross short in SOL, read off the testnet venue on
+// One unified Hyperliquid account holding one cross short in SOL, read off the live venue on
 // 2026-08-13. The figures are kept exactly as the venue reported them, because their
 // RELATIONSHIPS are the whole test. The venue's own liquidationPx of 713.4218650794 can be
 // reproduced from the spot balance and from nothing else:

@@ -1,11 +1,15 @@
-// Phosphor testnet key generation. Mints one fresh keypair per rail (EVM secp256k1,
+// Raw key generation for developers. Mints one fresh keypair per rail (EVM secp256k1,
 // NEAR ed25519, Solana ed25519), writes them to keysPath (default ~/.phosphor/keys.json,
 // mode 0600, directory 0700), and prints public addresses only. Run: npm run keygen.
 //
-// These keys are for TESTNET. They are generated on a laptop, stored unencrypted at rest
-// behind file permissions, and handled by a program that also talks to the network. That is
-// an acceptable posture for faucet money and an unacceptable one for real money, so the file
-// records network: "testnet" and the banner says so on every run.
+// SUPERSEDED by wallet creation inside the app, which is where a person should make a wallet.
+// This script exists for a developer who wants raw keys on disk and knows what that costs.
+//
+// READ THIS BEFORE RUNNING IT. The keys it writes are generated on a laptop, stored
+// UNENCRYPTED at rest behind nothing but file permissions, and handled by a program that also
+// talks to the network. Anything that can read your home directory can spend what these
+// addresses hold. The app's own wallet creation encrypts the key set behind a password; this
+// script does not. Whatever you put behind these keys, you are accepting that.
 //
 // keysPath comes from src/config.ts, which refuses any path inside the working copy. A key
 // file inside a git working copy is one `git add -f` from being published; one outside it
@@ -144,8 +148,8 @@ function main(): void {
   const keysPath = loadConfig(ROOT).keysPath;
 
   if (fs.existsSync(keysPath) && !force) {
-    // Overwriting a funded testnet key loses the funds and the faucet cooldown with it, so the
-    // refusal is the default and --force is the deliberate act.
+    // Overwriting a funded key loses the funds with it, so the refusal is the default and
+    // --force is the deliberate act.
     console.error(`refusing to overwrite ${keysPath}`);
     console.error('A key file is already there. Overwriting it destroys whatever those addresses hold.');
     console.error('Move it aside, or re-run with --force if you really mean to replace it.');
@@ -158,9 +162,10 @@ function main(): void {
 
   const file = {
     version: 1,
-    network: 'testnet',
     createdAt: new Date().toISOString(),
-    _comment: 'TESTNET ONLY. Never place mainnet funds behind these keys. Regenerate with: npm run keygen -- --force',
+    _comment:
+      'Unencrypted keys on disk, protected by file permissions alone. Anything that can read this ' +
+      'file can spend what these addresses hold. Regenerate with: npm run keygen -- --force',
     evm,
     near,
     solana,
@@ -175,7 +180,7 @@ function main(): void {
 
   // Everything below is public. No branch of this program prints a private key.
   console.log('');
-  console.log('TESTNET KEYS GENERATED. Do not fund these with mainnet assets.');
+  console.log('KEYS GENERATED, UNENCRYPTED ON DISK. File permissions are the only thing protecting them.');
   console.log(`written to ${keysPath} (file 0600, directory 0700)`);
   console.log('');
   console.log(`  EVM      ${evm.address}`);

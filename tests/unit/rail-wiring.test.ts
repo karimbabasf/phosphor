@@ -5,7 +5,7 @@
 //
 //   1. The loop actually closes. A rail can be perfect and still never run, because the
 //      proposal service is the only thing that calls it. Every test that reaches execution
-//      asserts on a spy rail, so no test needs a key, an RPC or a testnet coin.
+//      asserts on a spy rail, so no test needs a key, an RPC or a coin.
 //
 //   2. The venue allowlist is seeded. evaluateRail refuses an unlisted counterparty
 //      OUTRIGHT (rule 'destination_not_allowed'), never as needs_approval, so a policy that
@@ -205,9 +205,9 @@ test('venueAllowlist names every contract the rails can hand funds to', () => {
   assert.ok(allowed.every(a => a === a.toLowerCase()), 'the engine lowercases the list it compares against');
 
   // Hyperliquid funding used to put Bridge2's address here, and the worst mistake this app
-  // could make was a testnet build holding the mainnet bridge address: no contract lives there
-  // on Arbitrum Sepolia, so a transfer landed in a dead EOA and was gone. That whole class of
-  // error left with the mechanism. Funding routes through 1Click now, which mints a fresh
+  // could make was holding a bridge address no contract lives at: a transfer landed in a dead
+  // EOA and was gone. That whole class of error left with the mechanism, because funding
+  // routes through 1Click now, which mints a fresh
   // deposit address per quote, so there is no bridge address on any list to get wrong, and
   // the entry it does need is the venue string it shares with the swap rail.
   assert.equal(

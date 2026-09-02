@@ -169,7 +169,7 @@ test('a failed verifier read is stale, never an absent row', () => {
 });
 
 test('a wallet that never asked the verifier does not claim it went stale', () => {
-  // Demo mode and testnet: intents.near is not there to read, so there is nothing to mark.
+  // Demo mode: intents.near is not read at all, so there is nothing to mark.
   assert.equal(buildWallet(loadDemoLedger()).stale.includes('intents'), false);
   assert.equal(
     buildWallet(loadDemoLedger(), [], { holdings: [], ok: true, fetchedAt: 'now' }).stale.includes('intents'),

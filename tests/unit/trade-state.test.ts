@@ -379,7 +379,7 @@ test('a cross position with no liquidation price reports no distance in any of t
 });
 
 test('a wall more than a whole mark away cannot be reached, so it is not a distance', () => {
-  // Live testnet, and the numbers are the venue's own: 0.01 SOL sold at 74.914 in a unified
+  // Measured live, and the numbers are the venue's own: 0.01 SOL sold at 74.914 in a unified
   // account whose spot USDC backs the perp side, so Hyperliquid published liquidationPx
   // 84636.7119047619 against a mark of 87.738. Nothing here is corrupt. 887 dollars of collateral
   // behind 88 cents of notional really does put the wall 963 times the mark away.

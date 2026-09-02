@@ -58,7 +58,7 @@ const tokensFixture: TokensFile = { eth: {}, base: {}, arb: {}, sol: {}, near: {
 const ADDRESSES: AppConfig['addresses'] = {
   evm: [OWNER],
   solana: [SOL_WALLET],
-  near: ['demo.testnet'],
+  near: ['demo.near'],
 };
 
 // 0.1 SOL, the amount the live quote below was taken for.
@@ -407,7 +407,7 @@ test('near is refused as a destination by name', async () => {
   const { rail } = railOf();
   const summary = await refusal(
     rail,
-    draftOf({ chain: 'near', symbol: 'NEAR', to: 'demo.testnet', amount: 1, minReceived: minReceivedFor(1) }),
+    draftOf({ chain: 'near', symbol: 'NEAR', to: 'demo.near', amount: 1, minReceived: minReceivedFor(1) }),
   );
   assert.match(summary, /eth, base, arb, sol only/);
   assert.match(summary, /nobody signed for/);

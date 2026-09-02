@@ -18,10 +18,6 @@
 //     list, so an asset that arrived as the output of a swap shows up without anyone
 //     registering it first. Probing all 186 listed assets every 30s would be the same
 //     answer for far more work.
-//   - The verifier is mainnet only. intents.near has never been deployed on testnet (the
-//     RPC answers UNKNOWN_ACCOUNT there), so on testnet this reads nothing and says so
-//     rather than inventing a zero.
-//
 // Read only. Two view calls, no signing, nothing here can move money.
 
 import type { OneClickToken } from '../intents.ts';

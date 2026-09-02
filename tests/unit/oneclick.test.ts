@@ -2,8 +2,7 @@
 //
 // The suite is built around the three things that can lose money on this rail: sending a
 // different amount than the human approved, sending to the wrong place, and calling a swap
-// finished when it is not. Plus the network guard, which exists because NEAR Intents has no
-// testnet at all and a "testnet mode" here could only ever be a pretend swap.
+// finished when it is not.
 //
 // Run: node --test tests/unit/oneclick.test.ts
 
@@ -44,7 +43,7 @@ const ERC20 = parseAbi(['function transfer(address,uint256) returns (bool)']);
 // live API for a NEAR-origin quote on 2026-08-13 and never funded. It is a 64-character hex
 // implicit account: the exact shape viem's isAddress refuses, which is why this rail used to
 // reject every NEAR swap.
-const NEAR_OWNER = 'demo.testnet';
+const NEAR_OWNER = 'demo.near';
 const NEAR_DEPOSIT = 'aec6b4afd08c0ace0f392c4d1b8aa9c44ce9bbd558903c4b702ce1cb1ea941b2';
 const NEAR_TX_HASH = 'GzRhr7585nMoskGxv5judyQTaCg1TZzaXULuyoCaQiSm';
 

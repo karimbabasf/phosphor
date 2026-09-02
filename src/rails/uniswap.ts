@@ -393,9 +393,9 @@ async function tokenMeta(chain: ChainId, token: Address, cache: MetaCache): Prom
 
 const STABLES = new Set(['USDC', 'USDT', 'DAI', 'USDBC', 'USDS', 'PYUSD', 'USDE']);
 
-// Chainlink on the chain itself. Testnet feeds carry real mainnet-equivalent prices, so
-// the USD column looks right on testnet. The pool's own sqrtPriceX96 is NOT a price
-// source: the Base Sepolia WETH/USDC pool implies about 167 USD/ETH against a real 1,884.
+// Chainlink on the chain itself. The pool's own sqrtPriceX96 is NOT a price source: a thin
+// pool's implied rate can sit hundreds of dollars away from the real one, and a USD column
+// built from it would be confidently wrong rather than blank.
 async function ethUsd(chain: ChainId): Promise<number | null> {
   try {
     const dep = deploymentFor(chain);
@@ -420,7 +420,7 @@ async function priceLookup(chain: ChainId): Promise<PriceLookup> {
     const upper = symbol.toUpperCase();
     if (STABLES.has(upper)) return 1;
     if (upper === 'WETH' || upper === 'ETH') return eth;
-    return null; // a testnet token with no mainnet twin has no honest price
+    return null; // a token with no feed and no stable peg has no honest price
   };
 }
 
@@ -1057,7 +1057,7 @@ async function readPositionsOnChain(chain: ChainId, ownerAddr: Address, note: (m
   // normal case, and sepolia.base.org counts every call.
   const pools = new Map<string, PoolState | null>();
 
-  // Two at a time. The public testnet RPC answers a burst with an HTML rate-limit page,
+  // Two at a time. A public RPC answers a burst with an HTML rate-limit page,
   // and a wallet that renders slowly beats a wallet that renders empty.
   const results = await mapLimit(ids, 2, async tokenId => {
     try {

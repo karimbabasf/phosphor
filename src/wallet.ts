@@ -128,8 +128,8 @@ export function buildWallet(
   // This row exists because the wallet total was WRONG without it. A deposit leaves the
   // token balance the chain reader sees, so $56 in an Aave position simply vanished from a
   // $294 total, and the one number a person checks first quietly said they owned less than
-  // they did. The receipt token is not in data/tokens.testnet.json and adding it there would
-  // fix the arithmetic while calling the row aArbSepUSDC, which tells a reader nothing.
+  // they did. The receipt token is not in data/tokens.json and adding it there would fix the
+  // arithmetic while calling the row aArbUSDCn, which tells a reader nothing.
   //
   // The value is the aToken balance, so it already includes the interest. Nothing is double
   // counted: the underlying left the wallet when it was supplied, and this is the same money
@@ -177,7 +177,7 @@ export function buildWallet(
     .map(([chain]) => chain);
   // A verifier read that failed is stale for the same reason a chain read that failed is:
   // showing no intents row would claim the deposit is gone. Only ever added when a read was
-  // actually attempted, so demo mode and testnet do not sprout a permanent STALE badge.
+  // actually attempted, so demo mode does not sprout a permanent STALE badge.
   if (intents !== undefined && !intents.ok) stale.push('intents');
 
   return { rows, totalUsd, byChain, stale, emptyCount };

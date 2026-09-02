@@ -127,7 +127,7 @@ test('a mandate over the ceiling is refused before a child is ever spawned', asy
   assert.doesNotMatch(out.detail, /API wallet/);
 });
 
-test('a host given no limits falls back to the testnet profile rather than to none', () => {
+test('a host given no limits falls back to the stated ceiling rather than to none', () => {
   // The dep is optional, and an absent ceiling would be the quietest possible regression.
   assert.ok(
     tradingLimitRefusal(armed(['a', 2000]), { id: 'b', maxNotionalUsd: 2000 }, TRADING_LIMITS) !== null,

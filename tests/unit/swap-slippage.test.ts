@@ -3,7 +3,7 @@
 // has no recipient field, so a near-zero floor is the exfiltration path: the agent names a price
 // at which a sandwich takes the money. floorTooLow is the pure half of the guard, asserted here
 // against a fixed quote so no live quoter is needed. The live half (a real quoter response) was
-// verified separately against a testnet pool: a 0.0000001 floor against a 0.002251 quote was
+// verified separately against a live pool: a 0.0000001 floor against a 0.002251 quote was
 // refused, a 0.00220 floor was allowed.
 
 import { test } from 'node:test';

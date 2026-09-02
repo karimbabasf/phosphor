@@ -104,21 +104,20 @@ const KNOWN_PUBLIC_CONSTANTS = new Map<string, string>([
   // account. Same shape as a private key, opposite meaning: this is a published contract.
   ['17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1', 'NEAR USDC token contract account id, data/tokens.json'],
   // A transaction hash is 32 bytes of hex, exactly like a private key, and nothing about the
-  // string distinguishes them. This one is public and permanent on Arbitrum Sepolia: it is
-  // the real testnet deposit whose input decodes to transfer(bridge, 10000000), cited as the
-  // evidence that the Hyperliquid bridge takes a plain ERC-20 transfer with no signed payload.
+  // string distinguishes them. This one is public and permanent: it is the deposit whose input
+  // decodes to transfer(bridge, 10000000), cited as the evidence that the Hyperliquid bridge
+  // takes a plain ERC-20 transfer with no signed payload.
   // Cited in src/rails/hyperliquid-deposit.ts and tests/unit/oneclick.test.ts.
-  ['d5a06833f3e299cce32a957e4078d473d14954b3aa9ec55cd966abc527015c03', 'public Arbitrum Sepolia tx hash, evidence for the HL bridge deposit shape'],
+  ['d5a06833f3e299cce32a957e4078d473d14954b3aa9ec55cd966abc527015c03', 'public tx hash, evidence for the HL bridge deposit shape'],
   // The official hyperliquid-python-sdk's own signing fixture, published in that repo at
-  // tests/signing_test.py. It is a sequential counting pattern, holds nothing, and is the
-  // reference our EIP-712 implementation is checked against in
-  // tests/unit/hyperliquid-withdraw.test.ts. Removing it would delete the only external
-  // proof that the bytes we sign are the bytes Hyperliquid verifies.
+  // tests/signing_test.py. It is a sequential counting pattern, holds nothing, and is the key
+  // tests/unit/hyperliquid-withdraw.test.ts signs its withdrawal fixture with.
   ['0123456789012345678901234567890123456789012345678901234567890123', 'hyperliquid-python-sdk published test key, signing fixture'],
   // The r and s that key must produce for the fixture withdrawal. Signature halves, not keys:
-  // they are an ASSERTION about output, and are worthless to anyone who has them.
-  ['8363524c799e90ce9bc41022f7c39b4e9bdba786e5f9c72b20e43e1462c37cf9', 'expected signature r from the SDK fixture'],
-  ['58b1411a775938b83e29182e8ef74975f9054c8e97ebf5ec2dc8d51bfc893881', 'expected signature s from the SDK fixture'],
+  // they are an ASSERTION about output, and are worthless to anyone who has them. Computed
+  // here rather than taken from the SDK, which signs a domain this app no longer produces.
+  ['a155eccb6deecc343d5ce1d69ca20a6b8959cc3f21ffff6b82790e2e9f7fe888', 'expected signature r for the withdrawal fixture'],
+  ['6e78708de0806beceab552e1a97378fa80090d902bfffa8b6ee6b35d713f58c4', 'expected signature s for the withdrawal fixture'],
   // The RFC 8032 vector again, in NEAR's base58 encoding rather than hex. The seed and public
   // key above are the same key written the other way, and tests/unit/near-chain.test.ts needs
   // this form because that is the shape a NEAR keys file actually holds. Allowing one encoding
@@ -228,15 +227,15 @@ function collectStrings(value: unknown, out: string[]): void {
   else if (value !== null && typeof value === 'object') for (const v of Object.values(value)) collectStrings(v, out);
 }
 
-// Only values that identify a wallet or open one. Config also holds "testnet", "state" and
-// "BTC-USD", which appear in tracked files for good reasons and must not fail the sweep.
+// Only values that identify a wallet or open one. Config also holds "state" and "BTC-USD",
+// which appear in tracked files for good reasons and must not fail the sweep.
 function looksIdentifying(v: string): boolean {
   if (/^0x[0-9a-fA-F]{40}$/.test(v)) return true; // EVM address
   if (/^0x[0-9a-fA-F]{64}$/.test(v)) return true; // EVM private key
   if (/^[0-9a-f]{64}$/.test(v)) return true; // NEAR implicit account id, raw seed
   if (/^ed25519:/.test(v)) return true;
   if (/^[1-9A-HJ-NP-Za-km-z]{32,88}$/.test(v)) return true; // Solana address or secret key
-  if (/^[a-z0-9_-]{2,60}\.(testnet|near)$/.test(v)) return true; // named NEAR account
+  if (/^[a-z0-9_-]{2,60}\.near$/.test(v)) return true; // named NEAR account
   return v.length >= 40 && !/\s/.test(v); // catch all: any long opaque token
 }
 

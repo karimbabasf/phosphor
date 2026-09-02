@@ -449,7 +449,7 @@ export function signNep413(payload: Nep413Payload, privateKey: crypto.KeyObject)
 // 'optimistic' exists for one specific job, and it was learned the expensive way. sendTx
 // returns at EXECUTED_OPTIMISTIC, which is a block or two ahead of finality, so a read at
 // 'final' taken immediately afterwards returns the state from BEFORE the transaction. The
-// first live wrap on testnet reported success and then showed a zero balance, which reads
+// first live wrap reported success and then showed a zero balance, which reads
 // exactly like a silent failure and is not one. Any read that verifies the effect of a send
 // that just returned has to ask for 'optimistic' or wait.
 export type NearFinality = 'final' | 'optimistic';
@@ -594,7 +594,7 @@ export async function sendTx(params: NearSendParams): Promise<NearSendOutcome> {
 
     // EXECUTED_OPTIMISTIC waits for the transaction and its receipts to execute in a block
     // that is not yet final. Waiting for FINAL costs another ~2s per send for a guarantee a
-    // testnet rail does not need; NONE would return before the outcome is known at all,
+    // this rail does not need; NONE would return before the outcome is known at all,
     // which is the one thing a rail reporting "ok" must never do.
     const result = await rpc(
       spec.rpcUrl,

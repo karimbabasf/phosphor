@@ -241,7 +241,7 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     // The price of one unit of what is being moved. This used to be assumed to be 1.0, with
     // the comment "stables are priced 1.0 everywhere in this app", and that was true while
     // the app only ever held stables. It stopped being true in this branch: the wallet now
-    // holds WETH, data/tokens.testnet.json lists it, and the candidate filter above is
+    // holds WETH, data/tokens.json lists it, and the candidate filter above is
     // `!h.native && symbol matches`, which does not exclude it.
     //
     // Setting amountUsd to the token count made a 10 WETH consolidation (~$18,800) govern as
