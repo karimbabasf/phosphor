@@ -183,7 +183,8 @@ test('SIGTERM mid-propose leaves a valid state file and exits clean', async () =
   const token = 'not-the-token'; // an MCP propose needs no token; this is only a body field
   void fetch(`http://127.0.0.1:${port}/api/mcp`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    // Origin and Content-Type both required on a write; see the note in failure-modes.test.ts.
+    headers: { 'content-type': 'application/json', origin: `http://127.0.0.1:${port}` },
     body: JSON.stringify({
       op: 'propose',
       kind: 'consolidate',

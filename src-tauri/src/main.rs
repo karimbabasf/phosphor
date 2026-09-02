@@ -225,7 +225,7 @@ fn open_control_window(app: &tauri::AppHandle, port: u16) -> Result<(), String> 
         if matches!(event, WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed) {
             let token = lock_token.clone();
             std::thread::spawn(move || {
-                let _ = post_lock(port, &token);
+                let _ = post_lock(port, &token, "the control window was closed");
             });
         }
     });

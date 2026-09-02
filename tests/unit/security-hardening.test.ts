@@ -490,7 +490,11 @@ test('health names no secret, no token and no balance', async () => {
 test('health is a GET only', async () => {
   const h = await boot();
   try {
-    const out = await raw(h.url, '/api/health', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    const out = await raw(h.url, '/api/health', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: new URL(h.url).origin },
+      body: '{}',
+    });
     assert.equal(out.status, 404, 'nothing on this route writes anything');
   } finally {
     await h.close();

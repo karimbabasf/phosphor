@@ -77,7 +77,15 @@ function request(port: number, route: string, body?: string): Promise<{ status: 
         port,
         path: route,
         method: body === undefined ? 'GET' : 'POST',
-        headers: body === undefined ? {} : { 'content-type': 'application/json' },
+        /* The Origin is sent on every write, and it has to be. The custody track tightened
+           sameOrigin() so a write with an ABSENT Origin is refused rather than allowed: an
+           absent header used to be treated as "a local tool, not a browser", which any local
+           process could also claim. A matching Origin satisfies both the old rule and the new
+           one, so these tests read the same before and after that lands. */
+        headers:
+          body === undefined
+            ? {}
+            : { 'content-type': 'application/json', origin: `http://127.0.0.1:${String(port)}` },
       },
       (res) => {
         let d = '';

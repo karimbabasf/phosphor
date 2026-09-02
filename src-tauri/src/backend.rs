@@ -236,8 +236,12 @@ pub fn get_root(port: u16) -> Option<String> {
 /// Ask the backend to lock the wallet. Best effort by design: the route belongs to the custody
 /// track and may not exist yet, so a 404 here is a perfectly good outcome. What matters is that
 /// closing the window is not silently a wallet left open.
-pub fn post_lock(port: u16, token: &str) -> bool {
-    let body = serde_json::json!({ "token": token }).to_string();
+///
+/// `reason` lands in the audit line. "the window closed" and "the machine slept" are different
+/// facts about the same lock, and a log that records only that a lock happened cannot answer the
+/// question somebody asks it afterwards, which is why.
+pub fn post_lock(port: u16, token: &str, reason: &str) -> bool {
+    let body = serde_json::json!({ "token": token, "reason": reason }).to_string();
     let head = format!(
         "POST /api/lock HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: http://127.0.0.1:{port}\r\n\
          Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
