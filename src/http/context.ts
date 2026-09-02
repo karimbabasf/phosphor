@@ -253,7 +253,9 @@ export type PriceCache = { coins: string[]; readings: PriceReading[] };
 // The receipt reader behind the history panel. `filling` is the one-at-a-time latch.
 export type GasFill = { cache: GasCache; filling: boolean };
 
-export type Ctx = ServerDeps & {
+/* ServerDeps minus the optional theme pair, because `theme` below is the resolved one and a
+   handler reading ctx.getTheme() would crash on the install that did not pass it. */
+export type Ctx = Omit<ServerDeps, 'getTheme' | 'setTheme'> & {
   token: string;
   theme: ThemeSlot;
   sse: SseHub;
