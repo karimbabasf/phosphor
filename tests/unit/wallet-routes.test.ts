@@ -690,3 +690,25 @@ test('a reveal on an already open wallet releases nothing, because nothing chang
     await b.close();
   }
 });
+
+/* Health reported `locked: false` on every install, hardcoded, with a comment saying the custody
+   track had not landed. It had landed. A field that always answers the same thing is worse than
+   no field: it is a claim a person or a monitor can act on and it is not true. */
+test('health reports the lock the app is actually in', async () => {
+  const b = await boot();
+  try {
+    const before = (await b.get('/api/health')).json as { locked: boolean };
+    assert.equal(before.locked, false, 'no wallet at all is not locked: there is nothing there to lock');
+
+    await b.post('/api/wallet/create', { token: b.token, password: PASSWORD });
+    assert.equal(((await b.get('/api/health')).json as { locked: boolean }).locked, false, 'a wallet just created is open');
+
+    await b.post('/api/lock', { token: b.token });
+    assert.equal(((await b.get('/api/health')).json as { locked: boolean }).locked, true, 'and a shut one says so');
+
+    await b.post('/api/unlock', { token: b.token, password: PASSWORD });
+    assert.equal(((await b.get('/api/health')).json as { locked: boolean }).locked, false);
+  } finally {
+    await b.close();
+  }
+});
