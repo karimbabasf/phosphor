@@ -19,8 +19,7 @@
 - **Every number on the Hyperliquid wire is a string** with at most 8 decimals, trailing zeros stripped, `-0` normalised to `0`. `"1.50"` and `"1.5"` hash differently.
 - **Lowercase every address before signing.**
 - **`f` on an order and `a` on a modify must be OMITTED when false.** Actions hashed with `f: false` are rejected.
-- **L1 action chainId is literally 1337** on mainnet and testnet both. Mainnet versus testnet is carried only by the phantom agent's `source`, `"a"` or `"b"`.
-- **Testnet only.** `MAINNET_REFUSED` guard in the runner, matching `src/rails/hyperliquid-withdraw.ts:427`.
+- **L1 action chainId is literally 1337**, and is not a venue selector. The venue is carried only by the phantom agent's `source`, `"a"` or `"b"`.
 - **No em dashes or en dashes** in any file, including comments and commit messages.
 
 ---
@@ -138,7 +137,7 @@ Property test: no sequence of actions accepted by `checkEnvelope` can leave noti
 Files: create `src/hl/sign.ts`, test.
 `actionHash` = `keccak(msgpack(action) || nonce as 8 bytes BE || 0x00 for a null vault (else 0x01 || 20 address bytes) || 0x00 || expiresAfter as 8 bytes BE when present)`.
 Then EIP-712 over domain `{ name: 'Exchange', version: '1', chainId: 1337, verifyingContract: zero }`, primary type `Agent`, types `[source string, connectionId bytes32]`, message `{ source: isMainnet ? 'a' : 'b', connectionId: actionHash }`.
-Test: a known action produces a stable hash (pin it, so a msgpack regression is caught); testnet and mainnet produce different signatures for the same action; the recovered address equals the signer.
+Test: a known action produces a stable hash (pin it, so a msgpack regression is caught); a change to the phantom agent source produces a different signatures for the same action; the recovered address equals the signer.
 
 ### Task 7: The exchange client
 Files: create `src/hl/exchange.ts`, test.
@@ -169,4 +168,4 @@ Position as a line on the chart with size and side, liquidation price as a line 
 Invoke the `security-audit` skill over the signer, the envelope and the arm path before calling this done. This is a wallet and a signer, which is the documented trigger.
 
 ## Verification
-`npm test` green, `npm run typecheck` clean, `tests/injection.test.ts` extended and passing, UI gate PASS, and on testnet: arm a mandate, watch a fill, watch a stop fire, hit the kill switch mid-position and confirm flat. Plus the empirical check that an API-wallet-signed withdrawal cannot move master funds.
+`npm test` green, `npm run typecheck` clean, `tests/injection.test.ts` extended and passing, UI gate PASS, and live: arm a mandate, watch a fill, watch a stop fire, hit the kill switch mid-position and confirm flat. Plus the empirical check that an API-wallet-signed withdrawal cannot move master funds.

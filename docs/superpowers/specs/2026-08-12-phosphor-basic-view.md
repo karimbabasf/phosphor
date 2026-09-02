@@ -226,7 +226,6 @@ outcome for this user.
 | Human refused | calm | "You said no. Nothing moved." | none |
 | Policy refused | stopped | "The assistant tried to X. Phosphor stopped it. Your money did not move." | none |
 | Kill switch on | frozen | "Everything is frozen. Nothing can move." | none |
-| Gate disabled (testnet) | broken | "WARNING: this app is not asking you before it moves money." | none |
 | Policy file unreadable | broken | "Something is wrong with the rules. Nothing can move." | none |
 | No agent connected | calm | "No assistant is connected right now." | none |
 | Chain read failed / still loading | calm | totalLine reads "still checking", never a number | none |

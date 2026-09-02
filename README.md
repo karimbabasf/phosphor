@@ -77,8 +77,8 @@ Requires Node 24+. No build step, no bundler, no packaging.
     npm run keygen
     npm run app
 
-Open http://127.0.0.1:4177. The shipped config runs live against testnet, so the wallet reads zero
-until the addresses `keygen` printed have been funded. Full walkthrough in [Testnet setup](#testnet-setup).
+Open http://127.0.0.1:4177. The shipped config runs live, so the wallet reads zero until the
+addresses `keygen` printed have been funded. Full walkthrough in [First run](#first-run).
 
 Connect an agent (Claude Code):
 
@@ -218,8 +218,8 @@ clears each.
 | `propose_consolidate` | Gathers a token's scattered balances onto one chain. Unproven: this path has never run on a live chain, and the tool description says so, so a clean simulation is not evidence it works |
 | `propose_policy_change` | Proposes a patch to the policy rules. Always waits for a human click |
 | `propose_mandate` | Arms a rule-driven bot on Hyperliquid perpetuals: a rule program plus the envelope it may never leave. The only tool that grants standing authority, so it always waits for a human click |
-| `propose_yield_deposit` | Supplies a stablecoin to the lending venue. Omit the chain and the app picks the best-paying venue that is healthy and reachable, which is what the loop does. `amount` is the token amount, not dollars. Testnet only |
-| `propose_yield_withdraw` | Takes the position back out. Omitting `amount` closes it, interest included, and that is the correct way to exit: the receipt rebases, so a figure computed a block ago leaves dust behind. Omit the chain and the app uses the chain the position is on, refusing with the list when positions sit on more than one. Testnet only |
+| `propose_yield_deposit` | Supplies a stablecoin to the lending venue. Omit the chain and the app picks the best-paying venue that is healthy and reachable, which is what the loop does. `amount` is the token amount, not dollars |
+| `propose_yield_withdraw` | Takes the position back out. Omitting `amount` closes it, interest included, and that is the correct way to exit: the receipt rebases, so a figure computed a block ago leaves dust behind. Omit the chain and the app uses the chain the position is on, refusing with the list when positions sit on more than one |
 | `yield_auto` | Starts or stops the allocator loop. Moves no money and gets no policy verdict, so it is a display-class tool with a rail-shaped name: all the loop can do is file a `yield_deposit` proposal, which the agent can already do itself, through the same policy engine and the same click threshold. It grants a schedule, not an authority |
 
 Two write tools were deliberately removed from this door and are not coming back on their own.
@@ -246,11 +246,6 @@ that returned 56.292312 USDC to the wallet, with the app's realized 4.2672 perce
 not reach this rail either: a yield position is one `balanceOf` on a rebasing receipt and the wallet
 read already counts it, so there is no pre-trade balance to size a second move off. `propose_lp_add`
 and `propose_lp_remove` are unchanged and stay off.
-
-The three fund-moving yield tools are the only ones on this door that refuse **mainnet**. Every other
-rail here refuses testnet or refuses nothing, so the reflex reading is backwards. `src/rails/yield.ts`
-states the world it has been checked in, and undoing that means a human adding a mainnet row to the
-deployment table on purpose.
 
 | Chart tool | Does |
 |---|---|
@@ -323,18 +318,21 @@ and the number, which is what makes the number believable.
 
 Two verified markets, both checked by behaviour rather than read off a docs page:
 
-| Chain | Pool | USDC | Receipt | Rate on 2026-08-20 |
-|---|---|---|---|---|
-| Arbitrum Sepolia | `0xBfC91D59fdAA134A4ED45f7B584cAf96D7792Eff` | `0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d` | `aArbSepUSDC` | 4.36% APY |
-| Base Sepolia | `0x07eA79F68B2B3df564D0A34F8e19D9B1e339814b` | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` | `aBasSepUSDC` | 1.24% APY |
+Every row was read off the chain before it was written down: `getReserveData(USDC)` on each
+Pool, with the `aTokenAddress` it returned recorded as the receipt.
 
-The arb USDC is the same address the Uniswap rail already uses, so the existing swap rail
-produces exactly the token this one consumes and the feature adds no new funding step.
+| Chain | Pool | USDC | Receipt | Read at block | Supply rate then |
+|---|---|---|---|---|---|
+| Arbitrum One | `0x794a61358D6845594F94dc1DB02A252b5b4814aD` | `0xaf88d065e77c8cC2239327C5EDb3A432268e5831` | `aArbUSDCn` `0x724dc807b04555b71ed48a6896b6F41593b8C637` | 500799884 | 2.40% |
+| Base | `0xA238Dd80C259a72e81d7e4664a9801593F98d1c5` | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` | `aBasUSDC` `0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB` | 50759012 | 4.25% |
 
-Ethereum Sepolia is deliberately absent. Its market reports 57 percent on USDC, an artefact of
-a testnet nobody arbitrages, and a window whose headline number is 57 percent teaches the
-reader to distrust every other number in it. Mainnet is absent too: the rail refuses it until a
-human adds a row to the table on purpose.
+The USDC on both chains is the same address the Uniswap rail already uses, so the existing swap
+rail produces exactly the token this one consumes and the feature adds no new funding step.
+
+Ethereum is deliberately absent. Gas on L1 costs more than a stablecoin position of the size
+this app moves will earn back, and the same USDC earns on both chains above. A chain with no
+row answers "Earning is not available on that chain" rather than throwing, and adding one means
+reading that Pool and writing the aToken down, on purpose, by a human.
 
 ### The percentage
 
@@ -385,18 +383,9 @@ An agent drives the same rail through `yield_read`, `propose_yield_deposit` and
 `propose_yield_withdraw`. Those propose like every other write tool and execute like nothing, so the
 loop and the agent reach the policy engine by the same path a human does.
 
-On testnet it is same-chain only, and says so rather than failing quietly. Moving between
-chains needs a bridge, this app's bridge is NEAR Intents, and NEAR Intents has no testnet.
-
-### Driving it by hand
-
-    node scripts/yield-prove.ts fund 0.03      swap WETH into USDC through the swap rail
-    node scripts/yield-prove.ts deposit 50     supply 50 USDC
-    node scripts/yield-prove.ts read           position, earned, realized figure, ledger
-    node scripts/yield-prove.ts withdraw       take the whole position back out
-
-It drives the real proposal service against the real chain and prints transaction hashes. It
-refuses to run on mainnet.
+A move between chains needs a bridge, and this app's bridge is NEAR Intents. The allocator
+refuses a cross-chain move that costs more than the rate difference earns back, and says which
+venue pays more and why it did not move rather than moving quietly.
 
 ## Where the gas went
 
@@ -484,7 +473,7 @@ Limits that are meaningful at their default (transaction cap, session cap, click
 floors) always render. Opt-in restrictions render only once set, because "no issuer may exceed 100%"
 says nothing. The kill switch, when on, always renders last.
 
-## Testnet setup
+## First run
 
 A fresh clone carries no keys and no addresses. Creating those two things is the whole setup.
 
@@ -492,16 +481,20 @@ A fresh clone carries no keys and no addresses. Creating those two things is the
     npm install
     npm run keygen
 
-`npm run keygen` mints one testnet keypair per rail (EVM secp256k1, NEAR ed25519, Solana ed25519)
-and writes them to `~/.phosphor/keys.json`, file mode 0600, in a directory mode 0700. That path is
-outside the working copy on purpose: a key file inside a git working copy is one `git add -f` from
-being published, and one outside it cannot be reached by git at all. The `.gitignore` entry is the
-second line of defence, not the first. Move the file with `PHOSPHOR_KEYS` or a `keysPath` config
-key; the app refuses to start if that path lands inside the repo.
+**Every address this app holds is a real address holding real money.** There is no practice mode
+and no second world to try it in. Size the first deposit accordingly.
+
+`npm run keygen` mints one keypair per rail (EVM secp256k1, NEAR ed25519, Solana ed25519) and
+writes them to `~/.phosphor/keys.json`, file mode 0600, in a directory mode 0700. Those keys sit
+UNENCRYPTED on disk: file permissions are the only thing protecting them, and anything that can
+read your home directory can spend what those addresses hold. That path is outside the working
+copy on purpose: a key file inside a git working copy is one `git add -f` from being published,
+and one outside it cannot be reached by git at all. The `.gitignore` entry is the second line of
+defence, not the first. Move the file with `PHOSPHOR_KEYS` or a `keysPath` config key; the app
+refuses to start if that path lands inside the repo.
 
 The command prints public addresses only. No branch of it prints a private key. It refuses to
-overwrite an existing key file, because silently replacing a funded testnet key loses the funds and
-the faucet cooldown together:
+overwrite an existing key file, because silently replacing a funded key loses the funds with it:
 
     npm run keygen -- --force     # deliberate replacement
 
@@ -517,19 +510,8 @@ merges over `config.json` key by key, so the addresses stay on your machine:
     }
 
 Fund the addresses. Every rail needs native gas on the chain it runs on, and balances read zero
-until the faucets land:
-
-| Chain | Faucet |
-|---|---|
-| Ethereum Sepolia | https://cloud.google.com/application/web3/faucet/ethereum/sepolia |
-| Base Sepolia | https://www.alchemy.com/faucets/base-sepolia |
-| Arbitrum Sepolia | https://www.alchemy.com/faucets/arbitrum-sepolia |
-| Solana devnet | https://faucet.solana.com |
-| NEAR testnet | https://near-faucet.io |
-| Hyperliquid testnet | https://app.hyperliquid-testnet.xyz/drip |
-
-A NEAR implicit account exists the moment it is funded, so the faucet transfer is what creates it.
-Then:
+until funds land. A NEAR implicit account exists the moment it is funded, so the first transfer
+to it is what creates it. Then:
 
     npm run app
 
@@ -548,33 +530,25 @@ Exit 0 means nothing secret is reachable from the remote. A finding names the fi
 the pattern, and never the matched text, because printing it would put the secret in a terminal, a
 scrollback buffer and probably a CI log.
 
-## Network, mode and config
+## Mode and config
 
-Two axes, independent of each other:
+There is one world. Every RPC endpoint, token address and contract address in this repo names a
+live chain, and there is no setting that points them anywhere else. Nothing here is a rehearsal.
 
-- `network` is `testnet` or `mainnet`. It selects the RPC endpoints, the token registry and every
-  contract address. It has no default. A missing or unrecognised value stops the app at boot rather
-  than guessing, because guessing `mainnet` points real rails at real money and guessing `testnet`
-  makes a mainnet deployment quietly fake.
-- `tradingNetwork` is which Hyperliquid the trading half talks to, and it follows `network` unless
-  you set it. It exists because the two are genuinely separate questions: the wallet can hold
-  mainnet money while trading is still being proved out on testnet. Every trading consumer reads
-  this one value, so the panel a human reads and the runner that trades cannot disagree about which
-  account they are looking at. They did once, and a mandate could be written that never fired.
-- `mode` is `live` or `demo`. Live reads real balances over public RPCs and needs no keys to read.
-  Demo uses a fixture portfolio and a synthetic quoter, so the whole propose/approve/execute loop
-  runs offline with nothing at stake.
+`mode` is the only axis:
 
-Shipped `config.json` is `network: "testnet"`, `mode: "live"`. Demo is no longer the default
-anywhere. It stays in the codebase because the test suite and the e2e proof run against it offline.
-The shipped config also sets `approvalGate: false`, which is honoured on testnet only: on mainnet
-the gate is forced on and the flag is ignored entirely.
+- `live` reads real balances over public RPCs and needs no keys to read.
+- `demo` uses a fixture portfolio and a synthetic quoter, so the whole propose, approve, execute
+  loop runs offline with nothing at stake. It is not a practice mode for real money: it moves
+  nothing, anywhere, ever.
 
-`config.json` is a committed template. It carries structure and safe defaults only: network, port,
-mode, empty address arrays, candle products. No addresses, ever. `config.local.json` carries yours,
-is gitignored, and merges over the template key by key. The environment variables
-`PHOSPHOR_NETWORK`, `PHOSPHOR_MODE`, `PHOSPHOR_PORT`, `PHOSPHOR_DATA_DIR` and `PHOSPHOR_KEYS`
-override both.
+Shipped `config.json` is `mode: "live"`. Demo is no longer the default anywhere. It stays in the
+codebase because the test suite and the e2e proof run against it offline.
+
+`config.json` is a committed template. It carries structure and safe defaults only: port, mode,
+empty address arrays, candle products. No addresses, ever. `config.local.json` carries yours, is
+gitignored, and merges over the template key by key. The environment variables `PHOSPHOR_MODE`,
+`PHOSPHOR_PORT`, `PHOSPHOR_DATA_DIR` and `PHOSPHOR_KEYS` override both.
 
 ## Keys and signing
 
@@ -584,7 +558,6 @@ values named rather than shown:
 
     {
       "version": 1,
-      "network": "testnet",
       "evm":    { "address": "0x...",       "privateKey": "0x<32 bytes hex>" },
       "near":   { "accountId": "<64 hex>",  "publicKey": "ed25519:<base58>",
                   "secretKey": "ed25519:<base58 of seed || public>" },
@@ -607,13 +580,11 @@ while a wrong borsh produces a signature that does not verify against the body, 
 the transaction and nothing moves. `near.ts` self-checks on the same principle as `keygen`, with
 RFC 8032 vector 1, two base58 vectors, sha256 of the empty string, and the borsh integer widths.
 
-`npm run near:prove` is the check that vectors cannot give you: it signs four real transactions on
-NEAR testnet (a Transfer, a storage deposit, a wrap, an unwrap) and leaves the account as it found
-it apart from about 0.0007 NEAR of gas. Two bugs came out of its first run that no unit test could
-have caught, both the same root cause: `send_tx` returns at `EXECUTED_OPTIMISTIC`, which is ahead
-of finality, so a read at `finality: final` straight afterwards returns the state from before the
-transaction. It made a successful wrap look like a silent failure, and it made a second send reuse
-a nonce the first had already spent.
+Two NEAR bugs were found by signing four real transactions rather than by any vector, both the
+same root cause: `send_tx` returns at `EXECUTED_OPTIMISTIC`, which is ahead of finality, so a read
+at `finality: final` straight afterwards returns the state from before the transaction. It made a
+successful wrap look like a silent failure, and it made a second send reuse a nonce the first had
+already spent. `src/chain/near.ts` carries both fixes and the comments explaining them.
 
 `keygen` therefore checks itself before it generates anything, on every run: the canonical
 Ethereum test key `0x4c0883a6...362318` must derive `0x2c7536E3605D9C16a7a3D7b1898e529396a65c23`,
@@ -621,11 +592,12 @@ RFC 8032 ed25519 vector 1 must derive its published public key, and base58 must 
 published vectors. Any mismatch stops the program instead of printing an address that no private
 key opens.
 
-These are testnet keys. They are generated on a laptop, stored unencrypted behind file permissions,
-and handled by a process that also talks to the network. That is a reasonable posture for faucet
-money and the wrong one for real money. Mainnet use is gated on answering key custody first: an OS
-keychain, a hardware signer, or a separate signing process that the app talks to but does not
-contain.
+**Key custody is the open problem, and it is open right now.** These keys are generated on a
+laptop, stored unencrypted behind file permissions, and handled by a process that also talks to the
+network. That is the wrong posture for real money, and real money is what they hold. The answer is
+one of an OS keychain, a hardware signer, or a separate signing process the app talks to but does
+not contain. Until one of those ships, treat the balance behind these keys as the amount you are
+willing to lose to anything that can read your home directory.
 
 Execution routes through NEAR Intents. One rail, no bridges, 1 basis point, 25+ chains, 125+
 assets. The alternative was per-chain bridges, which multiplies the number of things that can steal
@@ -640,25 +612,17 @@ Still open, unrelated to keys:
 ## Test it
 
     npm test          # the unit suite: policy engine, proposals, ledger, composition, cost, rails, signers, injection
-    npm run near:prove # signs four real transactions on NEAR testnet and checks the balances moved
     npm run e2e       # boots the app + a real MCP client, drives 20 checks, exits 0/1
     npx tsc --noEmit  # typecheck
 
-Two of these go to the real venue, because a unit test cannot tell you a remote API accepts what
-you built. Neither spends anything.
+One more goes to the real venue, because a unit test cannot tell you a remote API accepts what you
+built. It spends nothing.
 
     node scripts/hypercore-probe.ts
         Prices funding the perps account from every origin chain the rail claims, against the live
         1Click API. Every quote is dry, so it mints no deposit address and commits to nothing. It
         also checks that the pinned HyperCore USDC asset id is still in the token list, which is the
         one constant in that rail that a remote change could invalidate.
-
-    PHOSPHOR_TRADING_NETWORK=testnet node scripts/hl-verbs-smoke.ts
-        Round-trips the exchange verbs against Hyperliquid TESTNET with real orders: a resting
-        limit, a re-peg, a batch re-peg, a bracket, and the dead-man switch. Every order is priced
-        far from mid so it cannot fill, and it cancels what it placed on the way out including on
-        the failure paths. It refuses to run on mainnet. This is the only way to learn that an
-        action is malformed, because this venue rejects one without saying why.
 
 The e2e run is the proof rather than a smoke test: it boots the real app, connects a real MCP
 client over stdio, and checks that reads work, that a write lands as pending, that approving it
@@ -756,7 +720,7 @@ the agent reads and the pixel the human sees come from one implementation.
     src/runner/        the only code that places an order. No model runs in this process
     src/strategy/      the grammar an agent may write and the runner will execute
     src/view/          the basic screen as one pure function, and the mode itself
-    scripts/keygen.ts  testnet keypairs, written outside the working copy
+    scripts/keygen.ts  raw keypairs for developers, written outside the working copy
     scripts/sweep.ts   secret sweep over the tracked tree and the git history
     ui/                three windows, no framework, no build
     ui/chart.js        the chart engine: two canvases, one pointer surface

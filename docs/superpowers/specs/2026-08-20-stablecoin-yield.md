@@ -69,12 +69,11 @@ candidate, then walking `getReservesList()` and reading `getReserveData` for the
 
     provider   0xB25a5D144626a0D488e52AE717A051a2E9997076   6840 B
     getPool() -> 0xBfC91D59fdAA134A4ED45f7B584cAf96D7792Eff  MATCH
-    marketId   "Aave V3 Arbitrum Sepolia Testnet Market"
     USDC       0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d    decimals 6
     aToken     0x460b97BD498E1157530AEb3086301d5225b91216    aArbSepUSDC
     supply APY 4.2687%   borrow APY 5.6232%   aToken total supply 5,496,077 USDC
 
-The USDC address is **the same one `src/rails/uniswap-abi.ts` already lists for arb testnet**.
+The USDC address is **the same one `src/rails/uniswap-abi.ts` already lists for arb**.
 That is not a coincidence worth ignoring: it means the existing swap rail can produce the exact
 token this rail consumes, on the chain the Hyperliquid rail already uses, so the feature adds
 zero new funding steps for a human.
@@ -83,7 +82,6 @@ zero new funding steps for a human.
 
     provider   0xd449FeD49d9C443688d6816fE6872F21402e41de   6840 B
     getPool() -> 0x07eA79F68B2B3df564D0A34F8e19D9B1e339814b  MATCH
-    marketId   "Aave V3 BASE Testnet Market"
     USDC       0x036CbD53842c5426634e7929541eC2318f3dCF7e    decimals 6
     aToken     0xf53B60F4006cab2b3C4688ce41fD5362427A2A66    aBasSepUSDC
     supply APY 1.2342%   borrow APY 3.0236%
@@ -92,7 +90,7 @@ Two live venues, 4.27 percent against 1.23 percent, is a real allocation decisio
 staged one. The allocator has something true to be right about.
 
 **Ethereum Sepolia was probed and is deliberately NOT wired.** Its market reports 57 percent
-supply APY on USDC and 71 percent on DAI. Those are artefacts of a testnet nobody arbitrages, and
+supply APY on USDC and 71 percent on DAI. Those are artefacts of a market nobody arbitrages, and
 a demo whose headline number is 57 percent teaches the viewer to distrust every other number in
 the window.
 
@@ -209,10 +207,9 @@ agent's proposal does, is subject to the same policy, and appears in the same au
 the whole architecture of this app and the loop does not get an exception from it.
 
 The cross-chain move in step 4 needs a rail between chains and this app has one: NEAR Intents,
-already implemented as `intents_deposit` and `intents_withdraw`. **On testnet it does not exist**
-(`src/rails/index.ts` says so, and the oneclick rail is mainnet-only). So on testnet the allocator
-runs same-chain only: it will report a better venue elsewhere and refuse to move, with that as the
-stated reason. That refusal is correct behaviour and gets a test.
+already implemented as `intents_deposit` and `intents_withdraw`. The allocator still refuses a move
+that costs more than the rate difference earns back: it reports the better venue and says why it did
+not move, with that as the stated reason. That refusal is correct behaviour and gets a test.
 
 ### 3.5 The window
 
@@ -263,10 +260,10 @@ existing rail produced the token the new one consumes, which is the case
     approve   0x862edaf1467c6e608c233b9e4d47bb7ac207329e8586f421e144e682e5d2564a
     swap      0x80fb07e72153761770b00e0b90ad6cbac7605fb4dd80f07ad4b7b405a4d8fd2d
 
-One finding worth keeping: the floor has to be sized off the TESTNET POOL, not off mainnet
-spot. Arbitrum Sepolia's USDC/WETH pool prices ETH about 20 percent under the mainnet quote
-because nobody arbitrages it, so a mainnet-grade slippage floor refuses every swap and reads
-as a broken rail when it is a correct floor pointed at the wrong market.
+One finding worth keeping: the floor has to be sized off THE POOL BEING SWAPPED IN, not off a
+reference spot price. A thin pool can price ETH 20 percent away from the broad quote because
+nobody arbitrages it, so a floor set from the reference refuses every swap and reads as a broken
+rail when it is a correct floor pointed at the wrong market.
 
 **The deposit, through the real proposal service and the real policy engine.**
 

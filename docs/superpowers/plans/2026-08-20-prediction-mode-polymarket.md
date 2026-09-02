@@ -81,7 +81,6 @@ Live checks run 2026-08-20, not read from memory:
 | Heartbeat endpoint | stop sending it and **every resting order is cancelled** | a dead-man switch Hyperliquid does not offer |
 | Builder program | gasless wallet deploy, approvals, orders, CTF ops | this is what makes the wallet abstraction possible at all |
 | Builder fee ceiling | 100 bp taker, 50 bp maker, default 0 | changes need a 7-day cooldown plus 3 days of notice |
-| Testnet | **there is none** | same as 1Click; prediction mode is mainnet-only by construction |
 
 ### The two decisions you made
 
@@ -233,8 +232,7 @@ phase that makes the app fast.
 
 ## Things that will bite
 
-- **Mainnet only.** Polymarket has no testnet and neither does 1Click. Prediction mode needs the same
-  `NO_TESTNET_REASON` guard `src/rails/oneclick.ts` already carries. It also lands on the treasury
+- Prediction mode lands on the treasury
   (mainnet) side of the config, so the note in the vault stands: the trading half and this half
   cannot both be live in one config.
 - **The deposit address is unverifiable.** True of 1Click already, now true twice over. The mitigation

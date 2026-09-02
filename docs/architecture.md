@@ -67,14 +67,13 @@ brief was written by another model, and nothing in that chain is a human.
 | Module | Responsibility |
 |---|---|
 | `src/main.ts` | Wires everything and boots. Seeds a default policy only when the file is absent. |
-| `src/config.ts` | Merges `config.local.json` over `config.json`, applies the `PHOSPHOR_*` env overrides, resolves `keysPath` and asserts it sits outside the repo, creates the data dir. Throws when `network` is absent. |
+| `src/config.ts` | Merges `config.local.json` over `config.json`, applies the `PHOSPHOR_*` env overrides, resolves `keysPath` and asserts it sits outside the repo, creates the data dir. |
 | `src/server.ts` | HTTP surface: the UI, the read APIs, `/api/mcp`, and the token-gated decision routes. |
 | `src/mcp.ts` | The stdio MCP server. A proxy, nothing else. |
 | `src/ledger/` | `evm.ts`, `solana.ts`, `near.ts` readers plus `demo.ts` fixtures, behind one interface in `index.ts`. Read-only by construction. `snapshot()` reads token balances; `positions()` reads pool positions separately, so a venue being down cannot mark a whole chain stale. |
 | `src/wallet.ts` | The wallet view: one row per token and per LP position, with chain, quantity, unit price, USD value and share. Natives included. |
 | `src/composition.ts` | Classifies holdings against `data/risk-table.json`: issuer, freeze power, shares. Natives excluded, because composition rules are about stablecoin issuer concentration. |
 | `src/policy/engine.ts` | Pure. Takes a draft and a context, returns one of three verdicts. No IO, no clock, no network. |
-| `src/policy/gate.ts` | The single chokepoint deciding whether a proposal needs a human click. Mainnet forces yes. |
 | `src/policy/file.ts` | Load, validate and save `state/policy.json`. Returns null on anything it cannot trust. |
 | `src/policy/render.ts` | Policy to plain English. Pure and deterministic. |
 | `src/proposals.ts` | Simulate, evaluate, persist, and execute after approval. The only path to execution. |
@@ -157,19 +156,17 @@ reasons, so the log says what stopped a thing rather than only that something wa
 The rule chain and the fail-closed positions in it are described in
 [the security model](security-model.md).
 
-## Networks
+## Chains
 
-`Network` (`testnet` | `mainnet`) is an axis, not more chain ids. `ChainId` keeps meaning the chain
-family (`eth`, `base`, `arb`, `sol`, `near`) and the network selects the RPCs, the token registry
-and every contract address behind it.
+`ChainId` (`eth`, `base`, `arb`, `sol`, `near`) names the chain family and there is nothing behind
+it selecting which world that family lives in. Every RPC endpoint, token address and contract
+address in the repo names a live chain, and no config field, environment variable or type points
+them anywhere else.
 
-Adding `arb-sepolia` style ids was the alternative and was rejected. It doubles every `ChainId`
-switch in the engine, the ledger, the policy file and the UI, and the wallet's CHAIN column would
-read `arb-sepolia` where a wallet should read `ARB`.
-
-The network also decides whether the approval gate is switchable at all. On `mainnet` it is not, and
-`src/policy/gate.ts` ignores the config flag rather than trusting it. See
-[the security model](security-model.md) for what the switch does and does not turn off.
+That was not always true. There used to be a second axis alongside `ChainId`, and it produced two
+real holes rather than any safety: a rail that refused where it should have run, and a table whose
+entries were right for one world and absent in the other. Deleting it was cheaper than maintaining
+two sets of addresses, only one of which anyone ever exercised.
 
 ## Why NEAR Intents is the only rail
 

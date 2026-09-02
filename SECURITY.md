@@ -33,8 +33,6 @@ the exact steps, what you expected the policy engine to do, and what it did.
 - Bugs in third-party protocols, chains, bridges, venues or RPC providers. Report those to them.
 - Losses caused by your own configuration, your own approval, or a rule that did what it said.
 - Anything that needs an attacker who already has your machine, your shell or your key file.
-- The testnet template shipping with `approvalGate: false`. That flag is not read on mainnet, which
-  is documented in [docs/security-model.md](docs/security-model.md).
 - Limits the security model already states as known and unclaimed. Read it first.
 
 ## What to expect

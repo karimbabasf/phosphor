@@ -2,7 +2,7 @@
 
 Date: 2026-08-20
 Status: spec, agreed direction, details pending the live checks marked OPEN below
-Supersedes the deposit half of `2026-08-11-phosphor-testnet-v2.md`. Extends
+Supersedes the deposit half of the 2026-08-11 v2 spec. Extends
 `2026-08-12-phosphor-trading-design.md`, `2026-08-12-trading-surface-design.md` and `ux/flow.md`.
 
 ## What changed in the world
@@ -97,24 +97,21 @@ signature fires.
 
 ## Mainnet
 
-`config.local.json` already reads `network: "mainnet"`, and trading has been on Hyperliquid
-testnet regardless. Karim's instruction is explicit: use mainnet.
+Karim's instruction is explicit: trade real money.
 
 State of the accounts on 2026-08-20:
 
 - Hyperliquid MAINNET `0xd7b2de...5050`: accountValue 0.0, withdrawable 0.0, 0 positions,
   spot USDC 0.000002. The account exists and is empty.
-- Hyperliquid TESTNET, same address: 887.81 USDC spot, 0.077 perps equity, 1 open position.
-- Mainnet carries 232 perp markets against testnet's 210, and 40x is the real maximum
-  (BTC), which is where near.com's "40x" comes from.
+- 232 perp markets are listed, and 40x is the real maximum (BTC), which is where near.com's
+  "40x" comes from.
 
 **Verification strategy, and its one honest limit.** Everything that can be proven without
-spending Karim's money is proven: the full order lifecycle runs against testnet with its 887
-USDC, mainnet is exercised read-only across info, catalog and account, and every 1Click call
-in test is `dry:true`. The first real mainnet deposit and the first live order move real money
-and are Karim's to trigger. They are reduced to one named command each and reported, not
-performed. `config.local.json` also lists `near: ["phosphor.testnet"]` under a mainnet config,
-which is wrong and gets flagged with it.
+spending Karim's money is proven: the venue is exercised read-only across info, catalog and
+account, and every 1Click call in test is `dry:true`. The first real deposit and the first live
+order move real money and are Karim's to trigger. They are reduced to one named command each and
+reported, not performed. `config.local.json` also lists a NEAR account id that does not exist on
+the chain the reader queries, which is wrong and gets flagged with it.
 
 ## The trading environment for an agent
 
@@ -179,8 +176,7 @@ where the flat fee eats the deposit.
 - `npm run typecheck` clean.
 - Live dry quotes for every origin chain the deposit rail claims, asserted in a test that is
   allowed to skip when offline but never allowed to pass on a stub.
-- Testnet: a real order placed, modified, cancelled, and a real position opened and closed.
-- Mainnet: read paths only, plus the two commands handed to Karim.
+- The venue: read paths only, plus the two commands handed to Karim.
 - Trade page: driven in a browser at 390, 768 and 1440 CSS pixels, screenshot each, no
   horizontal scroll, every empty state rendering its own line from the COPY table.
   `ux/flow.md` names `~/.claude/tools/ui-gate.mjs` for this and that file no longer exists,

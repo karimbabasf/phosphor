@@ -34,8 +34,15 @@ Do not make this the only control standing between an agent and money you cannot
 ## Alpha software
 
 Version 0.x. Interfaces, tool names, config format and behaviour change without notice or
-migration. Some rails are implemented but have never run against a live chain, including Uniswap v3
-liquidity and the Hyperliquid bridge deposit. The trading surface has only ever run on testnet.
+migration.
+
+What has actually run against a live chain with real money, both on 2026-08-20: funding the
+Hyperliquid perps account through NEAR Intents, and one armed mandate that opened and closed a real
+SOL position.
+
+What has NOT: Uniswap v3 liquidity, the Hyperliquid bridge deposit, the Aave yield rails, and
+`propose_consolidate`. Those are implemented and tested, and a clean simulation of one is not
+evidence that it works. The first real run of any of them is the first real run.
 
 ## Not financial advice
 

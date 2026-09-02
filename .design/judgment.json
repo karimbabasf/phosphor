@@ -329,8 +329,8 @@
     }
   ],
   "goal": {
-    "outcome": "The owner sees the whole machine at once with no scrolling, and on testnet with the gate off he cannot miss that nothing is waiting for his click because everything is auto-approving",
-    "path": "Open the page. The red bar is the first thing above the fold and it states the gate is disabled. Under it, the left column is what he holds and the right column is what governs it, all without a scroll",
+    "outcome": "The owner sees the whole machine at once with no scrolling, and cannot miss whether anything is waiting for his click",
+    "path": "Open the page. The left column is what he holds and the right column is what governs it, all without a scroll",
     "holds": true,
     "why": "On the 1440x900 screenshot the banner is the only inverted block on an otherwise green-on-black page, 1416px wide at y=43, so the eye cannot route around it. The gate panel it refers to sits directly below it in the right column and carries the same red in its frame title, so the banner and the surface it disables read as one statement rather than as a stray warning"
   },
@@ -397,9 +397,9 @@
   },
   "verdict": "pass",
   "firstFivePro": {
-    "what": "A terminal control panel for a crypto wallet held across five chains, with a red bar across the top saying every proposal is auto-approving because the approval gate is off on testnet",
+    "what": "A terminal control panel for a crypto wallet held across five chains, where nothing moves until the owner clicks",
     "who": "The owner of the funds, supervising what a connected AI agent is allowed to do with them",
-    "action": "Read the wallet, or click APPROVE/REFUSE when the gate has something pending. With the gate disabled the honest answer is that there is no action, and the red bar is there to say so"
+    "action": "Read the wallet, or click APPROVE/REFUSE when the gate has something pending"
   },
   "limits": [
     {

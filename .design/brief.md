@@ -12,7 +12,7 @@ Success: a person who has never seen this understands within ten seconds what th
 governing it, and whether anything is waiting for their click. The page looks like a terminal, not
 like a dashboard product.
 
-Superseded on 2026-08-11 by `docs/superpowers/specs/2026-08-11-phosphor-testnet-v2.md`:
+Superseded on 2026-08-11 by the v2 spec:
 - **The COST region is gone.** Cost is not a vital feature (spec 4). Any earlier bullet asking for
   "what it costs them" or for cost in the left column no longer applies. The freed space goes to
   the wallet.
@@ -42,8 +42,6 @@ Superseded on 2026-08-11 by `docs/superpowers/specs/2026-08-11-phosphor-testnet-
   register, `[-]` expanded and `[+]` collapsed, and clicking the frame title toggles. Collapsed
   state persists per panel in localStorage. A collapsed panel releases its flex space to its
   siblings. The approval gate never collapses
-- While the approval gate is disabled, a permanent unmissable line in the gate's own red
-  (#ff3b30): GATE DISABLED - TESTNET - EVERY PROPOSAL AUTO-APPROVES
 - System monospace stack only, no webfont
 - Homebrew terminal: near-black ground, phosphor green, one hue, hierarchy by brightness/opacity only
 - Red in the UI chrome is exclusively for pending approvals, refusals, breached share cells and the
@@ -162,8 +160,7 @@ carries which earlier lines it reverses.
 
 ## Goal behind the ask
 The owner sees the whole machine at once, with no scrolling: what the wallet holds, what governs
-it, and whether anything is waiting for a click. On testnet with the gate off he must also be
-unable to miss that nothing is waiting for a click, because everything is auto-approving.
+it, and whether anything is waiting for a click.
 
 ## Who is looking
 Karim, the owner of the funds, supervising what a connected AI agent is allowed to do with them.

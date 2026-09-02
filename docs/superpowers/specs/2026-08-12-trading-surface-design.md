@@ -93,7 +93,7 @@ screen. An order with no position (a resting entry) sorts to the bottom under it
 
 ## Data: websocket, not polling
 
-The runner's REST poller starved against a testnet doing sixteen seconds per call, which
+The runner's REST poller starved against a venue doing sixteen seconds per call, which
 `src/hl/info.ts` now bounds. That fix makes REST survivable. It does not make it right here.
 
 Hyperliquid's own rate-limit documentation says it plainly: the IP weight budget is 1200 per

@@ -7,11 +7,11 @@
 > | From this spec | State |
 > |---|---|
 > | The frequency boundary (section 1.2) and its consequence that the agent never decides on a price | Built into what exists: no order tool was added, `propose_mandate` is still the only door |
-> | Venue-side primitives the spec calls tier 3 | **BUILT**: `bracket`, `modify`, `batchModify`, `scheduleCancel` in `src/hl/exchange.ts`, all four round-tripped against live testnet |
+> | Venue-side primitives the spec calls tier 3 | **BUILT**: `bracket`, `modify`, `batchModify`, `scheduleCancel` in `src/hl/exchange.ts`, all four round-tripped against the live venue |
 > | `scheduleCancel` as a usable dead-man switch | **BLOCKED BY THE VENUE**: gated behind $1,000,000 of traded volume. Measured, not read. See `isScheduleCancelLocked` |
 > | Funding the account from any chain (section 8.4) | **BUILT**: `src/rails/hypercore-deposit.ts`, `propose_hl_deposit`, live dry quotes on arb, eth and base |
-> | Portfolio ceiling (sections 5.10, 5.11) | **BUILT**, in `src/runner/host.ts` rather than the policy engine: $250 across 3 mandates on mainnet, $2500 on testnet |
-> | Mainnet (section 8.3) | **BUILT**: `cfg.tradingNetwork`, and the runner's blanket refusal was replaced by the ceiling above rather than deleted |
+> | Portfolio ceiling (sections 5.10, 5.11) | **BUILT**, in `src/runner/host.ts` rather than the policy engine: $250 across 3 mandates |
+> | Real money (section 8.3) | **BUILT**: the runner's blanket refusal was replaced by the ceiling above rather than deleted |
 > | Grammar extensions (section 3): relative `Ref`, `clock` condition, maintained limit, TWAP entry | **NOT BUILT** |
 > | `mandate_check`, `mandate_replay`, `mandate_tighten` (section 4) | **NOT BUILT** |
 > | Websocket-driven runner tick (section 1.4) | **NOT BUILT**. The runner still reasons every 250 ms about a book up to 2000 ms old, which is the single largest gap between what this app claims and what it does |
@@ -611,7 +611,7 @@ current values read off the repository; new ones carry a proposed number and a f
     window rather than a live position cap. Enforcement must be at the engine, because `approve()`
     re-runs the engine at click time and that is the only moment the live count is knowable.
 
-11. **Max aggregate armed notional: $2,500 on testnet, $250 on mainnet first run.**
+11. **Max aggregate armed notional: $250.**
     `policy.trading.maxAggregateNotionalUsd`. Same file, same branch.
     **Why:** the number a human should be able to read as "the most every bot I have armed can be
     holding at once". It is the portfolio ceiling that replaces the Basket object killed in 2.1.
@@ -620,8 +620,8 @@ current values read off the repository; new ones carry a proposed number and a f
     File: `src/policy/file.ts`, checked in `evaluateRail` against `MandateDraft.maxLeverage`, and
     again at arm time in `src/rails/mandate.ts` `execute()`.
     **Why:** the grammar's 40 exists only to refuse what no venue would accept, which is a
-    different job. 40x on a small account is a liquidation on a 2.5% move, and the mainnet move
-    makes that a real number rather than a testnet one.
+    different job. 40x on a small account is a liquidation on a 2.5% move, and the money is real,
+    which makes that a real number.
 
 13. **Max open positions: 3.** `policy.trading.maxOpenPositions`.
     File: the number in `src/policy/file.ts`, but the enforcement in `src/strategy/envelope.ts`,
@@ -879,16 +879,15 @@ Covered in 1.4. Worth restating as a defect because a comment saying "250 ms" be
 
 `src/runner/main.ts` carries `MAINNET_REFUSED` and refuses to build an exchange client when
 `PHOSPHOR_HL_MAINNET === '1'`. The move to mainnet has to remove that guard, and removing it
-should not be a one-line delete. `gateRequired()` already forces a click on mainnet and ignores the
-config flag, which is the right shape. What should replace the refusal is the mainnet profile of
-section 5: `maxAggregateNotionalUsd` $250, `maxLeverage` 10, mandate duration 8 h. A guard removed
-and replaced with nothing is how a testnet convenience becomes a mainnet hole.
+should not be a one-line delete. The approval gate already forces a click with no configurable
+exemption, which is the right shape. What should replace the refusal is the profile of section 5:
+`maxAggregateNotionalUsd` $250, `maxLeverage` 10, mandate duration 8 h. A guard removed and
+replaced with nothing is a hole.
 
 ### 8.4 NEAR Intents one-way deposits are a safety property, not just a feature
 
 1Click can now deposit into HyperCore from 35+ chains and cannot pull funds back out.
-`propose_intents_deposit` already exists with an EVM-only chain enum and already refuses on a
-testnet config. Nothing needs building. What is worth writing into the tool description is that
+`propose_intents_deposit` already exists with an EVM-only chain enum. Nothing needs building. What is worth writing into the tool description is that
 **the direction is the point**: an agent can help fund the trading account and structurally cannot
 drain it, which is the same argument as the API wallet's signing split, arriving from the other
 side.

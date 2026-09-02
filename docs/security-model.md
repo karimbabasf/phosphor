@@ -45,9 +45,6 @@ There is no override parameter, no force flag, no bypass path, and no "the user 
 argument anywhere in the tool schemas. A caller who dislikes a refusal has exactly one recourse: get
 a human to change the policy, in the window, with a click.
 
-One switch stands outside that sentence and it is described in full below: on testnet, the approval
-gate itself can be turned off. It is not reachable from the tool surface, and mainnet ignores it.
-
 The chain stops at the first refusal, in this order:
 
 1. Policy unreadable (`policy_unreadable`)
@@ -72,44 +69,25 @@ policy or the breach clears. And a policy change can never be auto-executed no m
 how sensible, because a policy change the human did not click is how every other guarantee here
 gets removed.
 
-## The approval gate can be switched off, on testnet only
+## The approval gate has no off switch
 
-Testing a rail against a faucet-funded testnet wallet through a human click on every proposal is
-slow enough that nobody does it, so the gate can be disabled with `"approvalGate": false` in the
-config. This is the one deliberate hole in the model, and it is drawn narrowly on purpose, because
-an agent that can approve its own actions is the exact thing this app exists to prevent.
+There used to be one. A config flag turned the gate off so a rail could be exercised without a
+click on every proposal, and it was the one deliberate hole in this model. It is gone. There is now
+no flag, no environment variable, no proposal kind and no configuration that reaches execution
+without either a human click or a policy `allow` inside limits a human wrote.
 
-`src/policy/gate.ts` is the single chokepoint. Every caller asks `gateRequired(cfg)`, and no caller
-reads the config flag directly:
+`src/proposals.ts` is the single chokepoint. A `needs_approval` verdict lands `pending` and stays
+there until a person clicks in the window. There is no else branch.
 
-    export function gateRequired(cfg: GateConfig): boolean {
-      if (cfg.network === 'mainnet') return true; // not configurable, deliberately
-      return cfg.approvalGate;
-    }
+`decidedBy` therefore has exactly two values, `'human'` and `'policy'`. A third value,
+`'gate_disabled'`, was written by the old auto-approve path and still appears in audit records from
+before 2026-09-01. It stays readable in `src/transactions.ts` so that history renders, and no code
+path writes it any more. `tests/unit/proposals.test.ts` asserts both halves: that a proposal above
+the threshold parks pending, and that nothing writes the retired value.
 
-**Mainnet ignores the flag rather than trusting it.** A `config.json` that says
-`{"network": "mainnet", "approvalGate": false}` still requires a human click on every proposal.
-`tests/unit/gate.test.ts` asserts that forcing. The reasoning is that config files get copied
-between machines and edited by whoever is in a hurry, so the safe state cannot depend on the file
-being right.
-
-What the switch does **not** turn off, on any network:
-
-- **The policy engine.** A `refuse` verdict still refuses. Caps, allowlists, issuer rules and
-  composition limits all still run. The gate decides whether a human clicks, not whether the rules
-  apply.
-- **The kill switch.** Still refuses every write.
-- **The audit log.** An auto-approval records `decidedBy: 'gate_disabled'`, never `human`, so no
-  transcript can later claim a person clicked when no person did. This matters more than it looks:
-  the log is the record of truth, and a log that lies about authority is worse than no log.
-
-The state is also visible rather than silent. `/api/state` carries `gate.required` and
-`gate.banner`, and the window shows `GATE DISABLED - TESTNET - EVERY PROPOSAL AUTO-APPROVES`
-whenever the gate is off.
-
-Note that the committed `config.json` template ships with `network: testnet` and
-`approvalGate: false`, because it is a testing template. Anyone pointing this at real money changes
-`network` to `mainnet`, at which point the flag stops being read at all.
+`/api/state` still carries `gate.required` and `gate.banner`. `required` is always `true` and
+`banner` is always `null`. They stay in the payload so the window renders what the server reports
+rather than assuming it.
 
 ## The agent can change what the human sees (v0.3)
 
@@ -267,12 +245,7 @@ not.
 
 Config splits the same way. `config.json` is the committed template and carries no addresses.
 `config.local.json` is gitignored and merged over it key by key, which is where real addresses go.
-`PHOSPHOR_PORT`, `PHOSPHOR_MODE`, `PHOSPHOR_NETWORK`, `PHOSPHOR_DATA_DIR` and `PHOSPHOR_KEYS`
-override both.
-
-`network` has no default. `loadConfig` throws when it is absent instead of guessing, because
-guessing mainnet points real rails at real money and guessing testnet makes a mainnet deployment
-silently fake.
+`PHOSPHOR_PORT`, `PHOSPHOR_MODE`, `PHOSPHOR_DATA_DIR` and `PHOSPHOR_KEYS` override both.
 
 ## What the injection suite proves
 
@@ -333,9 +306,6 @@ Before any live signing, in this order:
 4. **Real 1Click execution**: non-dry quote returns a deposit address, the Signer sends to it, then
    poll `/v0/status`. The quote client already exists; only the signing send is missing.
 5. Optional: a 1Click JWT for the lower fee tier.
-6. **Set `network` to `mainnet`.** `network` selects the RPCs, the token registry and every contract
-   address, and it is also what makes `approvalGate` unswitchable. Set it before keys rather than
-   after, so no window exists in which real keys are loaded while the gate is still a config flag.
 
 The policy engine is unchanged by any of it. It already refuses on the same rules whether the
 execution behind it is synthetic or real, which was the point of stubbing the signer rather than the

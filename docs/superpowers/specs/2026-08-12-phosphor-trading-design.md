@@ -248,7 +248,7 @@ Consequences worth stating:
   ask permission.
 
 **Arming never auto-approves, on any network, with the gate on or off.** `land()` already carves
-out exactly one kind this way: a `policy_change` stays pending even when the testnet gate is
+out exactly one kind this way: a `policy_change` stays pending even when the gate is
 disabled, because it changes the rules rather than spending inside them. A mandate is the same
 class of thing. It grants standing authority, so it joins that carve-out rather than riding the
 gate flag. This is one condition added beside the existing one in `src/proposals.ts:333`.
@@ -486,8 +486,8 @@ not rediscovered later.
   envelope check while exceeding notional, borrowed multiple, or order rate.
 - `tests/injection.test.ts` extended: the mandate and program schemas carry no address field, and
   no action verb moves value off the venue.
-- An empirical check on testnet that an API-wallet-signed withdrawal does not move master funds,
+- An empirical check that an API-wallet-signed withdrawal does not move master funds,
   because a security property this design leans on should be observed and not only read.
-- End to end on testnet: arm a mandate, watch it fill, watch a stop fire, hit the kill switch mid
+- End to end: arm a mandate, watch it fill, watch a stop fire, hit the kill switch mid
   position and confirm flat.
 - `node ~/.claude/tools/ui-gate.mjs` to PASS on the trading surfaces.
