@@ -47,9 +47,11 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       localTheme = next;
     });
 
-  /* The window token, read from the environment the shell wrote. No route serves it: the only
-     holder is the webview the shell injected it into. See src/http/auth.ts. */
-  const token = windowToken();
+  /* The window token. src/main.ts reads it off the first line of stdin, where the shell wrote it,
+     and hands it here; no route serves it, so the only other holder is the webview the shell
+     injected it into. `windowToken()` is the fallback for a server built without one, which is
+     every test in this repo. See src/http/auth.ts for why the pipe replaced an env var. */
+  const token = deps.token ?? windowToken();
   audit.append('app_start', 'approval surface armed: the window token is held by the window only');
 
   // The bounded audit tail the basic screen's activity list reads. Seeded once here, then

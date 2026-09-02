@@ -294,12 +294,18 @@ pub fn node_binary() -> Result<PathBuf, String> {
     Ok(node)
 }
 
-/// Start the control app. The window token goes over the environment, which is the one channel
-/// between these two processes that no other local process can read out of the app afterwards:
-/// it is never served over HTTP and never written to disk.
+/// Start the control app.
+///
+/// THE WINDOW TOKEN GOES OVER STDIN, as the first line, and the pipe is closed behind it. It used
+/// to go over the environment, which is not a channel between two processes at all: `ps eww <pid>`
+/// prints the environment of any process this user owns, which is the attacker this app is built
+/// against. A local process read the token back and drove the kill switch, the idle beacon and
+/// approve on a real pending proposal, which the audit then recorded as a human's click. A signed
+/// hardened runtime does not close that either. It is the same channel and the same argument the
+/// runner already uses for the Hyperliquid API wallet key.
 pub fn spawn_backend(payload: &Path, data: &Path, token: &str) -> Result<Child, String> {
     let node = node_binary()?;
-    Command::new(&node)
+    let mut child = Command::new(&node)
         .arg(payload.join("src").join("main.ts"))
         .current_dir(payload)
         .env("PHOSPHOR_DATA_DIR", data.join("state"))
@@ -308,13 +314,22 @@ pub fn spawn_backend(payload: &Path, data: &Path, token: &str) -> Result<Child, 
         // backend derives the key file from the data directory now, so that a demo or test
         // instance gets its own empty wallet instead of the owner's; saying so here is what
         // keeps the installed app reading the key file in ~/.phosphor that it always has.
-        // See defaultKeysPath in src/config.ts.
+        // It is also how the backend knows a missing token is a failure rather than a developer
+        // running it by hand. See defaultKeysPath and readWindowToken.
         .env("PHOSPHOR_APP_DATA", "1")
-        .env("PHOSPHOR_WINDOW_TOKEN", token)
         // Inherited so a crash on boot is readable in Console.app rather than swallowed.
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
-        .stdin(Stdio::null())
+        .stdin(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("could not start the control app with {node:?}: {e}"))
+        .map_err(|e| format!("could not start the control app with {node:?}: {e}"))?;
+
+    // Taken and dropped, so the pipe closes as soon as the line is written: the backend reads one
+    // line and wants nothing else from stdin ever again.
+    match child.stdin.take() {
+        Some(mut pipe) => writeln!(pipe, "{token}")
+            .map_err(|e| format!("could not hand the window token to the control app: {e}"))?,
+        None => return Err("the control app was started with no stdin to hand the window token to".into()),
+    }
+    Ok(child)
 }

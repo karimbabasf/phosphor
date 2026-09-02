@@ -151,6 +151,11 @@ export const TRADE_ACTIONS: readonly string[] = ['disarm', 'cancel', 'cancel_all
 
 export type ServerDeps = {
   cfg: AppConfig;
+  /* The window token, read off the first line of stdin by src/main.ts. Optional because every
+     test in this repo builds a server and has no pipe to read one from; absent falls back to
+     windowToken(), which is the environment or a minted one. The app always passes it, which is
+     what keeps the token out of an environment any process can print. */
+  token?: string;
   audit: Audit;
   store: Store;
   ledger: Ledger;

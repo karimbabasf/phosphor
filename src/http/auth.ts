@@ -1,15 +1,24 @@
 // The whole authorisation surface: the window token, and the three request predicates every
 // mutating route checks before it does anything.
 //
-// THE TOKEN IS NEVER SERVED. It is minted outside this process by the Tauri shell, handed to
-// the backend in PHOSPHOR_WINDOW_TOKEN, and injected into the control webview as
-// window.__PHOSPHOR_TOKEN__. No route hands it out, which is what makes it an authorisation
-// rather than an identifier. GET /api/session used to hand it to any caller on loopback and is
-// deleted; the write-up is Lessons/2026-08-11-phosphor-approval-token-reachable.md in the vault.
+// THE TOKEN IS NEVER SERVED, AND IT NEVER TRAVELS BY ENVIRONMENT. It is minted outside this
+// process by the Tauri shell, written as the first line of this process's stdin, and injected
+// into the control webview as window.__PHOSPHOR_TOKEN__. No route hands it out, which is what
+// makes it an authorisation rather than an identifier. GET /api/session used to hand it to any
+// caller on loopback and is deleted; the write-up is
+// Lessons/2026-08-11-phosphor-approval-token-reachable.md in the vault.
 //
-// A bare `node src/main.ts` for development has no shell to mint one, so this file mints a
-// token and prints it once to stderr. That is a development convenience and it is stated where
-// it happens: an installed app always arrives with the variable set.
+// The pipe replaced PHOSPHOR_WINDOW_TOKEN, and the reason is the one src/runner/host.ts already
+// gives for the Hyperliquid key: `ps eww <pid>` prints the environment of any process this user
+// owns, which is the attacker this app is built against. A local process read the token back and
+// drove the kill switch, the idle beacon, the driver prompt and approve on a real pending
+// proposal, which the audit then recorded as decidedBy 'human'. That is the whole of the
+// capability GET /api/session used to hand out, through a second channel. A hardened runtime does
+// not close it either: the signed node binary still shows its environment to ps.
+//
+// A bare `node src/main.ts` for development has nobody to send one, so this file mints a token
+// and prints it once to stderr. That is a development convenience and it is stated where it
+// happens: an installed app always arrives with one on the pipe, and refuses to boot without it.
 
 import crypto from 'node:crypto';
 import type http from 'node:http';
@@ -22,44 +31,115 @@ export function mintToken(): string {
   return crypto.randomBytes(32).toString('hex');
 }
 
-// The token this boot answers to. The shell that owns the window puts it in the environment
-// before it starts this process, so the only holder is the webview the shell injected it into.
-//
-// Absent means a developer ran the backend by hand. Minting one and printing it once is what
-// keeps that path usable; it is printed to stderr rather than served, because a route that
-// hands the token out is the hole this whole file exists to close.
+/* The variable this token used to travel in. It is named here so the test that asserts it is NOT
+   set can name it too, and so a reader grepping for it finds the reason it went. Nothing in src/
+   reads it any more. */
 export const WINDOW_TOKEN_VAR = 'PHOSPHOR_WINDOW_TOKEN';
+
+// 32 characters is the floor because that is what the shell sends. A shorter line is a truncated
+// or half-written pipe, not a shorter secret somebody meant.
+const MIN_TOKEN_CHARS = 32;
+
+// Long enough that a shell writing one line has finished, short enough that a developer who piped
+// nothing is not left staring at a window that has not opened.
+const TOKEN_WAIT_MS = 2_000;
+
+export type TokenSource = {
+  // The stream the first line is read from. Defaults to this process's stdin.
+  stdin?: NodeJS.ReadableStream & { isTTY?: boolean };
+  waitMs?: number;
+  /* Whether the Tauri shell started this process, which it says with PHOSPHOR_APP_DATA=1. A shell
+     child that receives no token must not mint one: the shell has already injected a token into
+     the webview, and a different one here leaves a window that cannot approve anything and no
+     sentence saying why. */
+  fromShell?: boolean;
+  env?: NodeJS.ProcessEnv;
+  onMinted?: (token: string) => void;
+};
+
+/* The token this boot answers to, read from the pipe before the port opens.
+   Resolves on the first newline, on end of stream, or on the deadline, whichever comes first, and
+   stops listening either way: nothing else in this process reads stdin, and holding it open would
+   keep an fd the shell wants closed. */
+export async function readWindowToken(opts: TokenSource = {}): Promise<string> {
+  const stdin = opts.stdin ?? (process.stdin as NodeJS.ReadableStream & { isTTY?: boolean });
+  const waitMs = opts.waitMs ?? TOKEN_WAIT_MS;
+  const env = opts.env ?? process.env;
+  const fromShell = opts.fromShell ?? env.PHOSPHOR_APP_DATA === '1';
+
+  // A terminal is nobody about to pipe a secret, so there is nothing to wait for.
+  const supplied = stdin.isTTY === true ? '' : await firstLine(stdin, waitMs);
+
+  if (supplied.length >= MIN_TOKEN_CHARS) return supplied;
+  if (fromShell) {
+    throw new Error(
+      'the window token never arrived on stdin, and this process was started by the app shell. ' +
+        'Minting one here would leave a window that cannot approve anything, so this instance will not start.',
+    );
+  }
+
+  const minted = mintToken();
+  const say = opts.onMinted ?? announceMinted;
+  say(minted);
+  return minted;
+}
+
+function firstLine(stdin: NodeJS.ReadableStream, waitMs: number): Promise<string> {
+  return new Promise((resolve) => {
+    let buffered = '';
+    let done = false;
+
+    const finish = (value: string): void => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      stdin.off('data', onData);
+      stdin.off('end', onEnd);
+      stdin.off('error', onEnd);
+      // Read no further. The token is the only thing this process ever wants from stdin.
+      stdin.pause?.();
+      resolve(value.trim());
+    };
+
+    const onData = (chunk: Buffer | string): void => {
+      buffered += String(chunk);
+      const at = buffered.indexOf('\n');
+      if (at !== -1) finish(buffered.slice(0, at));
+    };
+    const onEnd = (): void => finish(buffered);
+
+    const timer = setTimeout(() => finish(buffered), waitMs);
+    timer.unref?.();
+    stdin.on('data', onData);
+    stdin.on('end', onEnd);
+    stdin.on('error', onEnd);
+    stdin.resume?.();
+  });
+}
 
 /* Printed once per PROCESS, not once per call. createServer resolves the token, and every test
    in this repo builds a server, so a line per construction would bury the transcript it is
    meant to sit in. */
 let announced = false;
 
-/* The token this boot answers to.
+function announceMinted(minted: string): void {
+  if (announced) return;
+  announced = true;
+  process.stderr.write(`phosphor: no window token arrived on stdin, so this boot minted one: ${minted}\n`);
+}
 
-   ENV OR MINT, and the env is the real path. The Tauri shell mints 32 random bytes, hands them
-   here in PHOSPHOR_WINDOW_TOKEN, and injects the same value into the control webview alone with
-   an initialization script (src-tauri/src/main.rs). The token is then reachable by exactly two
-   processes and served over HTTP by neither, which is what makes it an authorisation rather than
-   an identifier and what closes the hole this file's header describes.
-
-   Absent means a developer ran the backend by hand. Minting one and printing it once is what
-   keeps that path usable; it goes to stderr rather than to a route, because a route that hands
-   the token out is the hole. A SHORT value is treated as absent rather than accepted: 32
-   characters is the floor because that is what the shell sends, and a token below it is a
-   truncated or half-written variable, not a shorter secret somebody meant.
+/* The synchronous fallback, and it is for tests and for a server built without one.
+   src/main.ts reads the pipe and hands the value to createServer, so the real backend never comes
+   through here. Every test in this repo builds a server, most of them do not care what the token
+   is, and a few play the shell by setting the variable themselves; that is safe in a test process
+   and unsafe in the app, which is why the app no longer does it.
 
    `env` is a parameter so a test can drive both paths without mutating the process. */
 export function windowToken(env: NodeJS.ProcessEnv = process.env): string {
   const supplied = (env[WINDOW_TOKEN_VAR] ?? '').trim();
-  if (supplied.length >= 32) return supplied;
+  if (supplied.length >= MIN_TOKEN_CHARS) return supplied;
   const minted = mintToken();
-  if (!announced) {
-    announced = true;
-    process.stderr.write(
-      `phosphor: no ${WINDOW_TOKEN_VAR} in the environment, so this boot minted one: ${minted}\n`,
-    );
-  }
+  announceMinted(minted);
   return minted;
 }
 

@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import type { Readable } from 'node:stream';
+import type { Readable, Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -62,7 +62,8 @@ let dataDir = '';
 let env: Record<string, string> = {};
 let port = 0;
 let base = '';
-type AppProcess = ChildProcessByStdio<null, Readable, Readable>;
+// stdin is a pipe now, because the window token goes down it as the first line.
+type AppProcess = ChildProcessByStdio<Writable, Readable, Readable>;
 
 let app: AppProcess | null = null;
 let client: Client | null = null;
@@ -150,8 +151,10 @@ before(async () => {
   base = `http://127.0.0.1:${port}`;
   // Module-scoped, because the worker-surface test below starts a SECOND mcp.ts against this
   // same app and has to reach it the same way this one does.
-  // The window token is handed to the app in its environment and served by no route, so this
-  // test plays the shell: it mints one, passes it down, and uses the same value to decide.
+  // The window token goes down the app's stdin as its first line and is served by no route, so
+  // this test plays the shell: it mints one, writes it to the pipe, and uses the same value to
+  // decide. It is deliberately NOT in `env`: `ps eww` prints the environment of any process this
+  // user owns, which is what took it off that channel.
   token = crypto.randomBytes(32).toString('hex');
   env = {
     ...cleanEnv(),
@@ -159,10 +162,11 @@ before(async () => {
     ACC_MODE: 'demo',
     ACC_DATA_DIR: dataDir,
     PHOSPHOR_APPROVAL_GATE: 'true',
-    PHOSPHOR_WINDOW_TOKEN: token,
   };
 
-  const child: AppProcess = spawn(process.execPath, ['src/main.ts'], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, ['src/main.ts'], { cwd: ROOT, env, stdio: ['pipe', 'pipe', 'pipe'] });
+  child.stdin.write(`${token}\n`);
+  child.stdin.end();
   child.stdout.resume();
   child.stderr.resume();
   app = child;

@@ -2,7 +2,8 @@
 // real MCP client over stdio, and plays the human at the browser for every approval. Nothing
 // here is mocked: the only thing this script fakes is the finger that clicks approve, and it
 // can only do that because it plays the SHELL as well: it mints the window token, hands it to
-// the app in PHOSPHOR_WINDOW_TOKEN, and holds the only copy. No route serves it.
+// the app as the first line of its stdin, and holds the only copy. No route serves it, and it is
+// never in an environment `ps eww` can print.
 //
 // The claim under test is the product's whole pitch: the agent authors and proposes, the app
 // enforces and executes, and no write happens without either a human click or a policy that
@@ -13,7 +14,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { Readable } from 'node:stream';
+import type { Readable, Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -119,10 +120,10 @@ const childEnv = {
   ACC_PORT: String(PORT),
   ACC_MODE: 'demo',
   ACC_DATA_DIR: dataDir,
-  PHOSPHOR_WINDOW_TOKEN: WINDOW_TOKEN,
 };
 
-type AppProcess = ChildProcessByStdio<null, Readable, Readable>;
+// stdin is a pipe now, because the window token goes down it as the first line.
+type AppProcess = ChildProcessByStdio<Writable, Readable, Readable>;
 
 let app: AppProcess | null = null;
 let client: Client | null = null;
@@ -160,11 +161,15 @@ process.on('SIGTERM', () => {
 });
 
 function startApp(): void {
-  const child: AppProcess = spawn(process.execPath, ['src/main.ts'], {
+  const child = spawn(process.execPath, ['src/main.ts'], {
     cwd: ROOT,
     env: childEnv,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    // Piped, because the window token goes down it as the first line. This script is standing in
+    // for the Tauri shell, so it hands the token over the same channel the shell does.
+    stdio: ['pipe', 'pipe', 'pipe'],
   });
+  child.stdin.write(`${WINDOW_TOKEN}\n`);
+  child.stdin.end();
   child.stdout.on('data', (d: Buffer) => appOutput.push(d.toString()));
   child.stderr.on('data', (d: Buffer) => appOutput.push(d.toString()));
   app = child;

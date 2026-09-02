@@ -37,6 +37,7 @@ import { createTradeService } from './trade/service.ts';
 import { createInfoClient } from './hl/info.ts';
 import { atr } from './analysis/regime.ts';
 import { createServer } from './server.ts';
+import { readWindowToken } from './http/auth.ts';
 import { sweepOrphans } from './driver.ts';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -436,8 +437,19 @@ const allocator =
         onChange: () => server.broadcastState(),
       });
 
+/* THE WINDOW TOKEN, off the pipe and before the port opens.
+   It used to arrive in PHOSPHOR_WINDOW_TOKEN, and `ps eww <pid>` prints the environment of any
+   process this user owns: a local process read it back and drove the kill switch, the idle
+   beacon and approve on a real proposal, which the audit then recorded as a human's click. The
+   shell writes it as the first line of this process's stdin instead and closes the pipe behind
+   it, the same channel and the same argument as the runner's Hyperliquid key.
+   Awaited here rather than inside createServer because every test in this repo builds a server
+   and none of them has a pipe to read. See src/http/auth.ts. */
+const windowTokenValue = await readWindowToken();
+
 const server = createServer({
   cfg,
+  token: windowTokenValue,
   audit,
   store,
   ledger,

@@ -47,14 +47,19 @@ test('the supplied token is the one every write is checked against', () => {
   assert.equal(tokenMatches(undefined, token), false);
 });
 
-// The other half of the contract lives in Rust, and the two have to agree on the name and the
+// The other half of the contract lives in Rust, and the two have to agree on the CHANNEL and the
 // shape or the window opens with a token the backend has never heard of. Read rather than
 // assumed, because the failure is silent: every approval would simply be refused.
-test('the shell and the backend agree on the variable and the injected global', () => {
+test('the shell and the backend agree on the channel and the injected global', () => {
   const shell = fs.readFileSync(path.join(ROOT, 'src-tauri/src/main.rs'), 'utf8');
   const child = fs.readFileSync(path.join(ROOT, 'src-tauri/src/backend.rs'), 'utf8');
 
-  assert.ok(child.includes(`.env("${WINDOW_TOKEN_VAR}", token)`), 'the shell passes the token to node under the agreed name');
+  /* Down the pipe, never through the environment. `ps eww <pid>` prints the environment of any
+     process this user owns, so a token that travelled there was readable by every process on the
+     machine: a local one drove the kill switch and approved a real proposal with it. */
+  assert.ok(child.includes('writeln!(pipe, "{token}")'), 'the shell writes the token to the backend\'s stdin');
+  assert.ok(child.includes('.stdin(Stdio::piped())'), 'and opens a pipe for it to go down');
+  assert.ok(!child.includes(WINDOW_TOKEN_VAR), 'the token is nowhere in the environment the shell hands over');
   assert.ok(shell.includes('window.__PHOSPHOR_TOKEN__'), 'the shell injects the token into the page');
   assert.ok(shell.includes('.initialization_script(&script)'), 'through an initialization script, so it runs before page script');
   // On the control window only. A splash that carried the token would put it on a second webview
