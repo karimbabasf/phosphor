@@ -20,18 +20,20 @@
   --text-2: #9A9EA8;
   --text-3: #5F636C;
 
-  /* State colour. White is the action colour. */
-  --ink: #FFFFFF;
+  /* State colour. Phosphor green is the action colour, and it is the same green
+     that means up: the app is named for one colour on near-black, so the action
+     and the direction are one decision rather than two decorated separately. */
+  --ink: #33FF66;
   --on-ink: #09090B;
-  --up: #5B8DEF;
+  --up: #33FF66;
   --down: #FF5A6E;
   --warn: #F2B544;
   --agent: #B79CFF;
 
   /* Tints derived from the five slots. theme.js rewrites these with the slots. */
-  --ink-wash: rgba(255, 255, 255, 0.08);
-  --ink-edge: rgba(255, 255, 255, 0.16);
-  --up-wash: rgba(91, 141, 239, 0.14);
+  --ink-wash: rgba(51, 255, 102, 0.08);
+  --ink-edge: rgba(51, 255, 102, 0.16);
+  --up-wash: rgba(51, 255, 102, 0.14);
   --down-wash: rgba(255, 90, 110, 0.14);
   --warn-wash: rgba(242, 181, 68, 0.14);
   --agent-wash: rgba(183, 156, 255, 0.13);

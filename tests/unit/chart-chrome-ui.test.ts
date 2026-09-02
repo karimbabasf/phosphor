@@ -83,7 +83,7 @@ const paneOf = (layout: any, label: string) =>
 
 test('the chart is not green any more, and every ink is a design token', () => {
   const s = loadChartUi();
-  assert.equal(s.C_UP, '#5B8DEF');
+  assert.equal(s.C_UP, '#33FF66');
   assert.equal(s.C_DOWN, '#FF5A6E');
   assert.equal(s.CHART_TOKENS.line, '#22242A');
   assert.equal(s.CHART_TOKENS.text2, '#9A9EA8');
@@ -101,9 +101,12 @@ test('the shipped defaults leave the chart on its tokens, and a chosen colour wi
   // old green defaults and refused them. src/view/theme.ts now ships the design
   // tokens, so a default state frame carries the same values the chart already
   // holds and there is nothing left to refuse.
+  // Read off DEFAULT_THEME rather than restated, so moving the palette moves
+  // this with it instead of failing a test that is not about the palette.
+  const triple = [1, 3, 5].map((at) => parseInt(DEFAULT_THEME.up.slice(at, at + 2), 16)).join(', ');
   s.chartTheme(DEFAULT_THEME);
-  assert.equal(s.C_UP, 'rgb(91, 141, 239)');
-  assert.equal(s.RGB_ACCENT, '91, 141, 239');
+  assert.equal(s.C_UP, `rgb(${triple})`);
+  assert.equal(s.RGB_ACCENT, triple);
 
   // A colour somebody actually picked still wins. That is what the tool is for.
   s.chartTheme({ ...DEFAULT_THEME, up: '#ffaa00' });

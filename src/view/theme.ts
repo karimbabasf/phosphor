@@ -45,9 +45,9 @@ export const SLOT_MEANING: Readonly<Record<ThemeSlot, string>> = {
 };
 
 export const DEFAULT_THEME: Theme = {
-  accent: '#ffffff',
+  accent: '#33ff66',
   background: '#09090b',
-  up: '#5b8def',
+  up: '#33ff66',
   down: '#ff5a6e',
   agent: '#b79cff',
 };

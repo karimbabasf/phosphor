@@ -27,11 +27,17 @@
    below pulls the live values off the document at boot, so the stylesheet stays the source of
    truth and this table is only the floor.
 
-   The engine used to be green on near-black, and every ink in it came off one accent through
-   green() and red(). It is not green any more. Up is #5B8DEF, blue, which is the accent slot
-   for the whole application; down is #FF5A6E. That pairing does the same job for the roughly
-   one person in twelve who cannot separate the old pair, and it stops the chart being the one
-   surface with its own hue.
+   Up is #33FF66, the phosphor green the app is named for and the accent slot for the whole
+   application; down is #FF5A6E. The chart is not the one surface with its own hue, because the
+   green is the window's green.
+
+   This pair was blue and red for a while, chosen because blue against red is separable by the
+   roughly one person in twelve who cannot separate green from red. It cost the product its
+   identity and read to its owner as a filter laid over the app, so green is the default again.
+   The accessible pairing is not gone: up and down are theme slots, so set_theme up #5B8DEF
+   restores it in one call, and no code has to change. What keeps this readable for everyone
+   meanwhile is that the two are far apart in luminance rather than only in hue, and that a
+   candle's meaning is carried by where it sits, not by what colour it is.
 
    Down is still lighter than the approval gate's alarm red so the gate stays the only alarm on
    the page. Nothing here can repaint that gate: it is a CSS token this file never touches. */
@@ -41,7 +47,7 @@ var CHART_TOKENS = {
   line: '#22242A',
   text: '#EDEEF0',
   text2: '#9A9EA8',
-  up: '#5B8DEF',
+  up: '#33FF66',
   down: '#FF5A6E',
   agent: '#B79CFF',
   warn: '#F2B544'
@@ -52,7 +58,7 @@ var CHART_TOKENS = {
 var C_BG = CHART_TOKENS.bg1;
 var C_UP = CHART_TOKENS.up;
 var C_DOWN = CHART_TOKENS.down;
-var C_HI = '#A9C2F6';
+var C_HI = '#8FFFAB';
 
 /* The ramps every ink in the engine is mixed from. Triples rather than hex, because every
    call site wants an alpha and building "rgba(...)" from a triple is one concatenation. */
