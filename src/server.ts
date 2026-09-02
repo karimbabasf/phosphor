@@ -207,6 +207,18 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   if (deps.session === undefined) session.start();
   const stopSession = deps.session === undefined ? () => session.stop() : () => {};
 
+  /* THE LOCK FRAME FOLLOWS THE STATE, not the caller, and that is the fix.
+     src/http/sse.ts says why the frame exists: the window answers it with a whole screen, and a
+     state frame arriving first repaints the wallet carrying the old lock chip. Every route that
+     changes the lock sent it. An AUTOMATIC lock did not, because main.ts builds its own session
+     and wired that callback to a state broadcast alone: fifteen idle minutes or a machine waking
+     from sleep shut the wallet and the window kept drawing it open until it reconciled from a
+     payload it happened to read for another reason.
+     Subscribing to the keystore means whatever closes it announces it. The routes still call
+     announce() as they always did, so a person clicking Lock gets the frame from both; the
+     window keys off the state it carries, so a repeat is a no-op there. */
+  const stopLockFrames = keystore.onChange((state) => sse.broadcastLock(state));
+
   /* Everything the handlers read, in one object. It is assembled here rather than passed around
      as a dozen arguments because src/server.ts used to be one closure over these bindings, and
      the split turned each read into a field. `history` and `crew` close over `ctx` itself and
@@ -256,6 +268,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     sse.stop();
     candlePush.stop();
     stopSession();
+    stopLockFrames();
     clearInterval(priceTimer);
     chats.stopAll();
   });

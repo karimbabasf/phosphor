@@ -447,7 +447,10 @@ const server = createServer({
 // to be something with SSE clients to push to. Absent in demo mode, where there is no loop.
 allocator?.start();
 
-// Now that there are clients to tell, an automatic lock says so on the wire.
+/* Now that there are clients to tell, an automatic lock says so on the wire.
+   The `lock` frame itself is not sent from here. The server subscribes to the keystore, so the
+   whole-screen answer follows the state change wherever it comes from; this line is the state
+   frame that goes behind it, and it goes second on purpose. See createServer. */
 announceLock = () => {
   server.broadcastState();
 };
