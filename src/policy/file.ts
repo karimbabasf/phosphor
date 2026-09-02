@@ -7,10 +7,10 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { z } from 'zod';
 import type { Policy } from '../types.ts';
 import { renderSentences } from './render.ts';
+import { atomicWriteJson } from '../fsatomic.ts';
 
 const policySchema = z.object({
   version: z.number(),
@@ -33,13 +33,6 @@ const policySchema = z.object({
 
 function policyPath(dataDir: string): string {
   return path.join(dataDir, 'policy.json');
-}
-
-function atomicWriteJson(filePath: string, data: unknown): void {
-  const dir = path.dirname(filePath);
-  const tmpPath = path.join(dir, `.${path.basename(filePath)}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`);
-  fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2));
-  fs.renameSync(tmpPath, filePath);
 }
 
 export function loadPolicy(dataDir: string): Policy | null {

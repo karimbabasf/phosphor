@@ -12,8 +12,8 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import type { ViewMode } from '../types.ts';
+import { atomicWriteJson } from '../fsatomic.ts';
 
 const FILE = 'view.json';
 
@@ -38,8 +38,5 @@ export function readViewMode(dataDir: string): ViewMode {
 }
 
 export function writeViewMode(dataDir: string, mode: ViewMode): void {
-  fs.mkdirSync(dataDir, { recursive: true });
-  const tmpPath = path.join(dataDir, `.${FILE}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`);
-  fs.writeFileSync(tmpPath, JSON.stringify({ view: mode }, null, 2));
-  fs.renameSync(tmpPath, filePathFor(dataDir));
+  atomicWriteJson(filePathFor(dataDir), { view: mode });
 }

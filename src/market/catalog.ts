@@ -17,7 +17,7 @@
 // charting the wrong asset.
 
 import fs from 'node:fs';
-import path from 'node:path';
+import { atomicWriteJson } from '../fsatomic.ts';
 
 export type Provider = 'hyperliquid' | 'coinbase';
 
@@ -147,8 +147,7 @@ export function createCatalog(options?: {
   function writeCache(): void {
     if (cachePath === undefined) return;
     try {
-      fs.mkdirSync(path.dirname(cachePath), { recursive: true });
-      fs.writeFileSync(cachePath, JSON.stringify({ at: loadedAtMs, refs }), 'utf8');
+      atomicWriteJson(cachePath, { at: loadedAtMs, refs }, undefined);
     } catch {
       // A listing that cannot be cached still works, it just costs a fetch next start.
     }

@@ -24,7 +24,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
+import { atomicWriteJson } from '../fsatomic.ts';
 
 const FILE = 'theme.json';
 
@@ -195,8 +195,5 @@ export function readTheme(dataDir: string): Theme {
 }
 
 export function writeTheme(dataDir: string, theme: Theme): void {
-  fs.mkdirSync(dataDir, { recursive: true });
-  const tmpPath = path.join(dataDir, `.${FILE}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`);
-  fs.writeFileSync(tmpPath, JSON.stringify(theme, null, 2));
-  fs.renameSync(tmpPath, filePathFor(dataDir));
+  atomicWriteJson(filePathFor(dataDir), theme);
 }

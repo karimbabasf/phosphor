@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { ChainId, DecidedBy, LogEvent, Proposal, WriteDraft } from './types.ts';
 import { chainSpec, reader } from './chain/evm.ts';
+import { atomicWriteJson } from './fsatomic.ts';
 
 // ---------- explorers ----------
 
@@ -528,7 +529,7 @@ export function createGasCache(params: { dataDir: string }): GasCache {
 
   function save(): void {
     try {
-      fs.writeFileSync(filePath, JSON.stringify(Object.fromEntries(cache), null, 2));
+      atomicWriteJson(filePath, Object.fromEntries(cache));
     } catch {
       // a cache that cannot be written is a slower app, not a broken one
     }

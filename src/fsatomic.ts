@@ -1,0 +1,87 @@
+// The one durable write in the app. Every file that holds state goes through it.
+//
+// tmp-file-then-rename was already the shape in five of the seven writers, and it is only half
+// of what durability needs. rename() is atomic in the directory entry, so a reader never sees a
+// half-written file, but neither the new file's BYTES nor the directory entry naming them are
+// guaranteed to be on the disk when the call returns. A power loss between the write and the
+// flush can land the rename and lose the body, and the file that comes back is zero bytes.
+//
+// That is not theory here. It is the mechanism behind the worst finding in the backend audit:
+// proposals.json read as empty, store.readAll's `if (raw.trim().length === 0) return []` treated
+// empty as "no proposals", and every proposal, pending and executed alike, vanished with no
+// error and nothing to distinguish it from a fresh install. Both halves are closed now. This is
+// the half that stops the empty file existing; store.ts refuses to read one.
+//
+// So: write, fsync the FILE so the bytes are down, close, rename, then fsync the DIRECTORY so
+// the entry pointing at them is down too. The directory flush is the step people leave out, and
+// without it the rename itself can be lost.
+
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+
+// A tmp name in the same directory, because rename is only atomic within one filesystem. The
+// leading dot keeps it out of a listing, and the pid plus random suffix keeps two writers (or
+// two processes on one data dir) from colliding on the same tmp file.
+function tmpNameFor(filePath: string): string {
+  const dir = path.dirname(filePath);
+  const base = path.basename(filePath);
+  return path.join(dir, `.${base}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`);
+}
+
+// Not every filesystem lets you open a directory for fsync (Windows does not), and a failure
+// here means the write is atomic but not durable, which is exactly where the code stood before.
+// Losing durability is worth reporting, never worth throwing away a successful write for.
+function syncDir(dir: string): void {
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(dir, 'r');
+    fs.fsyncSync(fd);
+  } catch {
+    // Best effort, as above.
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        // nothing to do
+      }
+    }
+  }
+}
+
+// Write `contents` to `filePath` so that a reader afterwards sees either the whole of the old
+// file or the whole of the new one, and so that a machine losing power sees the same.
+export function atomicWrite(filePath: string, contents: string): void {
+  const dir = path.dirname(filePath);
+  fs.mkdirSync(dir, { recursive: true });
+  const tmpPath = tmpNameFor(filePath);
+
+  const fd = fs.openSync(tmpPath, 'w');
+  try {
+    fs.writeFileSync(fd, contents);
+    fs.fsyncSync(fd); // the bytes, before the name that will point at them
+  } finally {
+    fs.closeSync(fd);
+  }
+
+  try {
+    fs.renameSync(tmpPath, filePath);
+  } catch (err) {
+    // A rename that fails leaves the tmp file behind, and a data dir slowly filling with
+    // .proposals.json.*.tmp is its own problem. The original error is what the caller needs.
+    try {
+      fs.unlinkSync(tmpPath);
+    } catch {
+      // nothing to do
+    }
+    throw err;
+  }
+
+  syncDir(dir); // the entry, so the rename itself survives a power loss
+}
+
+// The shape every caller in this app actually wants: pretty-printed JSON, durably.
+export function atomicWriteJson(filePath: string, value: unknown, space: number | undefined = 2): void {
+  atomicWrite(filePath, JSON.stringify(value, null, space));
+}

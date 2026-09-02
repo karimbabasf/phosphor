@@ -1,12 +1,12 @@
-// Proposal persistence. Whole list lives in proposals.json, rewritten
-// atomically (tmp file + rename) on every put. list()/get() re-read from
-// disk so a freshly created Store against an existing dataDir sees prior
-// proposals immediately (no in-memory cache to go stale across restarts).
+// Proposal persistence. Whole list lives in proposals.json, rewritten durably on every put
+// through src/fsatomic.ts. list()/get() re-read from disk so a freshly created Store against an
+// existing dataDir sees prior proposals immediately (no in-memory cache to go stale across
+// restarts).
 
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import type { Proposal } from './types.ts';
+import { atomicWriteJson } from './fsatomic.ts';
 
 export type Store = {
   list(): Proposal[];
@@ -51,9 +51,10 @@ export function createStore(dataDir: string): Store {
 
   /* An empty-but-existing file is corruption, never "no proposals yet".
      Before this, `if (raw.trim().length === 0) return []` erased history in silence: with no
-     fsync behind the rename, a crash can land the new directory entry without the body, and
-     the result is a zero-byte proposals.json indistinguishable from a fresh install. A parse
-     failure had the opposite fault, throwing out of every caller including the one at boot. */
+     flush behind the rename, a crash can land the new directory entry without the body, and the
+     result is a zero-byte proposals.json indistinguishable from a fresh install. src/fsatomic.ts
+     closes the writing half; this closes the reading half. A parse failure had the opposite
+     fault, throwing out of every caller including the one at boot. */
   function readAll(): Proposal[] {
     if (!fs.existsSync(filePath)) return [];
     const raw = fs.readFileSync(filePath, 'utf8');
@@ -69,9 +70,7 @@ export function createStore(dataDir: string): Store {
   }
 
   function writeAll(list: Proposal[]): void {
-    const tmpPath = path.join(dataDir, `.proposals.json.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`);
-    fs.writeFileSync(tmpPath, JSON.stringify(list, null, 2));
-    fs.renameSync(tmpPath, filePath);
+    atomicWriteJson(filePath, list);
   }
 
   function list(): Proposal[] {

@@ -15,7 +15,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
+import { atomicWriteJson } from '../fsatomic.ts';
 
 const FILE = 'coins.json';
 
@@ -61,8 +61,5 @@ export function readCoins(dataDir: string): string[] {
 }
 
 export function writeCoins(dataDir: string, coins: string[]): void {
-  fs.mkdirSync(dataDir, { recursive: true });
-  const tmpPath = path.join(dataDir, `.${FILE}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`);
-  fs.writeFileSync(tmpPath, JSON.stringify({ coins }, null, 2));
-  fs.renameSync(tmpPath, filePathFor(dataDir));
+  atomicWriteJson(filePathFor(dataDir), { coins });
 }
