@@ -2,6 +2,7 @@
 // return value comes back as a byte array (UTF-8 JSON, per NEAR's u128-as-string convention);
 // native balance comes from view_account.
 import type { ChainId, Holding } from '../types.ts';
+import { readTimeout } from '../net.ts';
 
 // NEAR puts the useful discriminator in error.cause.name (UNKNOWN_ACCOUNT, UNAVAILABLE_SHARD,
 // and so on) and leaves error.message as the generic "Server error". Deciding anything off
@@ -25,6 +26,7 @@ async function rpcQuery(
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'query', params }),
+    signal: readTimeout(),
   });
   if (!res.ok) throw new Error(`near query http ${res.status}`);
   const body = (await res.json()) as {

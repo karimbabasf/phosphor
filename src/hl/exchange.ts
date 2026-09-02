@@ -18,6 +18,7 @@
 
 import { formatPrice, formatSize, wireNumber } from './format.ts';
 import { signL1Action } from './sign.ts';
+import { venueWriteTimeout } from '../net.ts';
 
 export type Transport = (url: string, body: unknown) => Promise<unknown>;
 
@@ -50,10 +51,13 @@ export type TriggerRequest = {
 };
 
 const defaultTransport: Transport = async (url, body) => {
+  // Venue write: this places, cancels and modifies real orders. A timeout here says the venue
+  // did not answer, which is not the same as the order not existing.
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
+    signal: venueWriteTimeout(),
   });
   const parsed = await res.json().catch(() => null);
   // A non-2xx body is not a result. The venue answers 429 on a rate limit, and its body may

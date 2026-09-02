@@ -18,6 +18,7 @@
 // untrusted, which is the only property a reader can act on.
 
 import { randomUUID } from 'node:crypto';
+import { withTimeout } from './net.ts';
 
 // ---------- the allowlist ----------
 
@@ -108,7 +109,9 @@ async function fetchFeed(source: Source, fetchImpl: typeof fetch, deadline: numb
     try {
       res = await fetchImpl(target, {
         redirect: 'manual', // we decide, per hop, whether the next host is allowed
-        signal: AbortSignal.timeout(remaining),
+        // Through the shared helper, so every deadline in the app is one module's decision. The
+        // budget here is the caller's remaining hop allowance rather than a fixed read timeout.
+        signal: withTimeout(remaining),
         headers: { accept: 'application/rss+xml, application/xml, */*;q=0.5', 'user-agent': 'phosphor (market research)' },
       });
     } catch (err) {

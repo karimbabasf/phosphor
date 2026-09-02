@@ -20,6 +20,7 @@
 import type { Candle } from '../types.ts';
 import type { Catalog, MarketRef } from './catalog.ts';
 import { chooseBase } from './aggregate.ts';
+import { readTimeout } from '../net.ts';
 
 // What each venue will answer to natively. Anything else is folded from one of these.
 export const HYPERLIQUID_NATIVES = [60, 180, 300, 900, 1800, 3600, 7200, 14_400, 28_800, 43_200, 86_400, 259_200, 604_800];
@@ -103,6 +104,7 @@ export function createProviders(deps: ProviderDeps) {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ type: 'candleSnapshot', req: { coin, interval, startTime: startMs, endTime: endMs } }),
+      signal: readTimeout(),
     });
     if (!res.ok) throw new Error(`hyperliquid candles failed: ${res.status} ${await res.text()}`);
     const rows = (await res.json()) as { t: number; o: string; h: string; l: string; c: string; v: string }[];
@@ -123,7 +125,7 @@ export function createProviders(deps: ProviderDeps) {
     url.searchParams.set('start', new Date(startSec * 1000).toISOString());
     url.searchParams.set('end', new Date(endSec * 1000).toISOString());
 
-    const res = await fetchImpl(url.toString());
+    const res = await fetchImpl(url.toString(), { signal: readTimeout() });
     if (!res.ok) throw new Error(`coinbase candles failed: ${res.status} ${await res.text()}`);
     const rows = (await res.json()) as [number, number, number, number, number, number][];
     if (!Array.isArray(rows)) throw new Error('coinbase candles: unexpected body');

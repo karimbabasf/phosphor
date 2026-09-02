@@ -17,6 +17,7 @@
 
 import { parseUnits } from 'viem';
 import type { ChainId, TransferLeg, LegQuote, Quoter, Signer } from './types.ts';
+import { readTimeout, venueWriteTimeout } from './net.ts';
 
 export const ONECLICK_BASE = 'https://1click.chaindefuser.com';
 
@@ -281,7 +282,7 @@ export function oneClickClient(deps: OneClickDeps = {}): OneClickClient {
 
   async function tokens(): Promise<OneClickToken[]> {
     if (tokenListCache) return tokenListCache;
-    const res = await fetchImpl(`${ONECLICK_BASE}/v0/tokens`);
+    const res = await fetchImpl(`${ONECLICK_BASE}/v0/tokens`, { signal: readTimeout() });
     if (!res.ok) {
       throw new Error(`1click token list fetch failed: ${res.status} ${await res.text()}`);
     }
@@ -313,10 +314,13 @@ export function oneClickClient(deps: OneClickDeps = {}): OneClickClient {
     };
     if (params.referral !== undefined) body.referral = params.referral;
 
+    /* Venue write, and it is the `dry: false` case that makes it one: that quote mints a deposit
+       address and commits the solver, so a hang here is a hang after the venue has acted. */
     const res = await fetchImpl(`${ONECLICK_BASE}/v0/quote`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
+      signal: venueWriteTimeout(),
     });
     const payload = (await res.json().catch(() => null)) as Record<string, unknown> | null;
 
@@ -348,6 +352,7 @@ export function oneClickClient(deps: OneClickDeps = {}): OneClickClient {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ depositAddress, txHash }),
+        signal: readTimeout(),
       });
       if (!res.ok) return { ok: false, detail: `deposit/submit returned ${res.status}` };
       return { ok: true, detail: 'deposit notified' };
@@ -361,7 +366,7 @@ export function oneClickClient(deps: OneClickDeps = {}): OneClickClient {
     url.searchParams.set('depositAddress', depositAddress);
     if (depositMemo !== undefined && depositMemo !== '') url.searchParams.set('depositMemo', depositMemo);
 
-    const res = await fetchImpl(url.toString());
+    const res = await fetchImpl(url.toString(), { signal: readTimeout() });
     if (res.status === 404) {
       // The API has not seen this address yet. Not an error, and not terminal.
       return {

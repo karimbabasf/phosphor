@@ -21,7 +21,10 @@ export type Fetcher = (
 
 const DEFAULT_PAGE = 500;
 
-export function createHistory(fetch: Fetcher, opts?: { pageSize?: number }) {
+// Named `loadPage`, not `fetch`. It is a Fetcher this module is handed, not a network call,
+// and calling it `fetch` made the app's own "every fetch has a deadline" check read a local
+// function as a site with no timeout on it.
+export function createHistory(loadPage: Fetcher, opts?: { pageSize?: number }) {
   const pageSize = opts?.pageSize ?? DEFAULT_PAGE;
 
   return {
@@ -33,7 +36,7 @@ export function createHistory(fetch: Fetcher, opts?: { pageSize?: number }) {
     ): Promise<Page> {
       const want = limit ?? pageSize;
       const end = cursor ?? Math.floor(Date.now() / 1000);
-      const raw = await fetch(product, granularitySec, end, want);
+      const raw = await loadPage(product, granularitySec, end, want);
 
       const byTime = new Map<number, Candle>();
       for (const c of raw) byTime.set(c.t, c);

@@ -35,6 +35,7 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { evmPrivateKey } from '../keystore/index.ts';
 import type { Address, Hex } from 'viem';
 import { evmAddress } from '../chain/evm.ts';
+import { readTimeout, venueWriteTimeout } from '../net.ts';
 
 // ---------- the venue table ----------
 
@@ -305,6 +306,7 @@ async function info<T>(deps: HlWithdrawDeps, body: Record<string, unknown>): Pro
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
+    signal: readTimeout(),
   });
   if (!res.ok) throw new Error(`hyperliquid ${String(body.type)} failed: ${res.status} ${await res.text()}`);
   return (await res.json()) as T;
@@ -372,10 +374,14 @@ async function postAction(
   signature: HlSignature,
 ): Promise<{ ok: boolean; detail: string; body: unknown }> {
   const spec = hlWithdrawSpec();
+  /* The one call in this file that moves money off the venue. Thirty seconds, and the caller
+     treats a timeout as UNKNOWN: the withdrawal may have been accepted. Retrying it with a
+     fresh nonce would be a second real withdrawal, which is what task 9 closes. */
   const res = await (deps.fetchImpl ?? fetch)(spec.exchangeUrl, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ action, nonce, signature }),
+    signal: venueWriteTimeout(),
   });
   const text = await res.text();
   let body: unknown;

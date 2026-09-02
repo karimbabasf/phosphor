@@ -1,6 +1,7 @@
 // Solana balance reads over the public JSON-RPC. One getTokenAccountsByOwner call per mint
 // (summed across any duplicate token accounts) plus one getBalance call for native SOL.
 import type { ChainId, Holding } from '../types.ts';
+import { readTimeout } from '../net.ts';
 
 type TokenAccountsResult = {
   value: Array<{
@@ -18,6 +19,7 @@ async function rpcCall(
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+    signal: readTimeout(),
   });
   if (!res.ok) throw new Error(`${method} http ${res.status}`);
   const body = (await res.json()) as { result?: unknown; error?: { message?: string } };

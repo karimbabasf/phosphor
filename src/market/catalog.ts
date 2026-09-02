@@ -18,6 +18,7 @@
 
 import fs from 'node:fs';
 import { atomicWriteJson } from '../fsatomic.ts';
+import { readTimeout } from '../net.ts';
 
 export type Provider = 'hyperliquid' | 'coinbase';
 
@@ -158,6 +159,7 @@ export function createCatalog(options?: {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ type: 'meta' }),
+      signal: readTimeout(),
     });
     if (!res.ok) throw new Error(`hyperliquid meta failed: ${res.status}`);
     const body = (await res.json()) as HlMeta;
@@ -175,7 +177,7 @@ export function createCatalog(options?: {
   }
 
   async function coinbase(): Promise<MarketRef[]> {
-    const res = await fetchImpl('https://api.exchange.coinbase.com/products');
+    const res = await fetchImpl('https://api.exchange.coinbase.com/products', { signal: readTimeout() });
     if (!res.ok) throw new Error(`coinbase products failed: ${res.status}`);
     const body = (await res.json()) as CoinbaseProduct[];
     if (!Array.isArray(body)) throw new Error('coinbase products: unexpected body');

@@ -30,6 +30,7 @@
 import crypto from 'node:crypto';
 
 import { keyMaterial, walletAddresses } from '../keystore/index.ts';
+import { readTimeout, venueWriteTimeout } from '../net.ts';
 
 // ---------- chain identity ----------
 
@@ -473,10 +474,15 @@ async function rpc(
   params: unknown,
   fetchImpl: typeof fetch,
 ): Promise<any> {
+  /* Two budgets through one function, because this rpc carries both kinds of call. `send_tx`
+     broadcasts a signed transaction and waits for it to execute, so it gets the venue-write
+     budget and its timeout means UNKNOWN, never "nothing was sent"; the sendTx catch above
+     returns the hash for exactly that reason. Everything else here is a read. */
   const res = await fetchImpl(rpcUrl, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 'phosphor', method, params }),
+    signal: method === 'send_tx' ? venueWriteTimeout() : readTimeout(),
   });
   if (!res.ok) throw new Error(`near ${method} http ${res.status}`);
   const body = (await res.json()) as {

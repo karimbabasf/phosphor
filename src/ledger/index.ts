@@ -14,6 +14,7 @@ import { oneClickClient } from '../intents.ts';
 import { evmAddress } from '../chain/evm.ts';
 import { nearChainSpec } from '../chain/near.ts';
 import { readPositions } from '../rails/uniswap.ts';
+import { readTimeout } from '../net.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, '..', '..', 'data');
@@ -123,7 +124,9 @@ function createDemoLedger(): Ledger {
 type ChainRefreshResult = { holdings: Holding[]; status: ChainStatus; transferCostUsd: number };
 
 async function fetchSpotUsd(product: string, fetchImpl: typeof fetch): Promise<number> {
-  const res = await fetchImpl(`https://api.exchange.coinbase.com/products/${product}/candles?granularity=60`);
+  const res = await fetchImpl(`https://api.exchange.coinbase.com/products/${product}/candles?granularity=60`, {
+    signal: readTimeout(),
+  });
   if (!res.ok) throw new Error(`coinbase ${product} http ${res.status}`);
   const rows = (await res.json()) as number[][]; // [time,low,high,open,close,volume], newest first
   if (!Array.isArray(rows) || rows.length === 0) throw new Error(`coinbase ${product} returned no candles`);

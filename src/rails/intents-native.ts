@@ -68,6 +68,7 @@ import {
   sendTx as nearSendTx,
 } from '../chain/near.ts';
 import type { NearSendOutcome, NearSendParams } from '../chain/near.ts';
+import { venueWriteTimeout } from '../net.ts';
 
 // The verifier contract. This is the whole point of the rail: one fixed account that goes on
 // the policy allowlist once and stays there, unlike a deposit address minted per quote.
@@ -337,6 +338,7 @@ export function intentsApi(deps: { apiKey: string; fetchImpl?: typeof fetch }): 
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
+      signal: venueWriteTimeout(),
     });
     const payload = await readJson(res, '1click quote');
     const quoteField = payload['quote'] as OneClickQuote | undefined;
@@ -353,8 +355,11 @@ export function intentsApi(deps: { apiKey: string; fetchImpl?: typeof fetch }): 
     // checksummed returns HTTP 400 {"message":"Internal error generating intent"}. That message
     // reads as a server fault and is really a rejected argument, which is why this cost a swap
     // execution to find rather than a glance at the error.
+    // Venue write. This and submit-intent below sit between the human's approval and funds
+    // that cannot be recovered, and submit-intent runs after the signature is released.
     const res = await fetchImpl(`${ONECLICK_BASE}/v0/generate-intent`, {
       method: 'POST',
+      signal: venueWriteTimeout(),
       headers: authHeaders(),
       body: JSON.stringify({
         type: 'swap_transfer',
@@ -376,6 +381,7 @@ export function intentsApi(deps: { apiKey: string; fetchImpl?: typeof fetch }): 
   async function submitIntent(signed: { payload: string; signature: string }): Promise<SubmittedIntent> {
     const res = await fetchImpl(`${ONECLICK_BASE}/v0/submit-intent`, {
       method: 'POST',
+      signal: venueWriteTimeout(),
       headers: authHeaders(),
       body: JSON.stringify({
         type: 'swap_transfer',

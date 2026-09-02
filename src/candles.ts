@@ -4,6 +4,7 @@
 // Global Constraints and Task C. Binance is geo-blocked from this machine, never used.
 
 import type { Candle, CandleSource } from './types.ts';
+import { readTimeout } from './net.ts';
 
 export type CandleService = {
   get(
@@ -22,7 +23,7 @@ export function coinbaseSource(deps?: { fetchImpl?: typeof fetch }): CandleSourc
 
   async function candles(product: string, granularitySec: number, limit: number): Promise<Candle[]> {
     const url = `https://api.exchange.coinbase.com/products/${product}/candles?granularity=${granularitySec}`;
-    const res = await fetchImpl(url);
+    const res = await fetchImpl(url, { signal: readTimeout() });
     if (!res.ok) {
       throw new Error(`coinbase candles failed: ${res.status} ${await res.text()}`);
     }
@@ -64,7 +65,7 @@ export function krakenSource(deps?: { fetchImpl?: typeof fetch }): CandleSource 
     const pair = krakenPair(product);
     const intervalMin = Math.max(1, Math.round(granularitySec / 60));
     const url = `https://api.kraken.com/0/public/OHLC?pair=${pair}&interval=${intervalMin}`;
-    const res = await fetchImpl(url);
+    const res = await fetchImpl(url, { signal: readTimeout() });
     if (!res.ok) {
       throw new Error(`kraken candles failed: ${res.status} ${await res.text()}`);
     }

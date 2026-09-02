@@ -21,6 +21,7 @@
 // Read only. Two view calls, no signing, nothing here can move money.
 
 import type { OneClickToken } from '../intents.ts';
+import { readTimeout } from '../net.ts';
 
 export const INTENTS_VERIFIER = 'intents.near';
 
@@ -69,6 +70,7 @@ async function view(
         args_base64: Buffer.from(JSON.stringify(args)).toString('base64'),
       },
     }),
+    signal: readTimeout(),
   });
   if (!res.ok) throw new Error(`intents ${methodName} http ${res.status}`);
   const body = (await res.json()) as { result?: ViewResult; error?: { cause?: { name?: string } } };

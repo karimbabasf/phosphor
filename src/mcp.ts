@@ -13,6 +13,7 @@ import path from 'node:path';
 import { VERSION } from './version.ts';
 import { listSkills, readSkill, skillsInstruction } from './skills.ts';
 import { THEME_SLOTS, SLOT_MEANING } from './view/theme.ts';
+import { readTimeout, venueWriteTimeout } from './net.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -82,10 +83,14 @@ function textResult(text: string) {
 async function proxy(body: Record<string, unknown>) {
   let res: Response;
   try {
+    /* The venue budget, not the read one, and the reason is what sits on the other end: this is
+       the proxy's single door into the app, and a propose behind it can reach a rail. Thirty
+       seconds is the same ceiling the rails themselves carry. */
     res = await fetch(`${BASE_URL}/api/mcp`, {
       method: 'POST',
       headers: POST_HEADERS,
       body: JSON.stringify({ ...body, session: SESSION, client: CLIENT, label: LABEL, parent: PARENT }),
+      signal: venueWriteTimeout(),
     });
   } catch {
     return textResult(NOT_RUNNING);
@@ -134,6 +139,7 @@ async function sendHello(): Promise<void> {
     const res = await fetch(`${BASE_URL}/api/mcp`, {
       method: 'POST',
       headers: POST_HEADERS,
+      signal: readTimeout(),
       body: JSON.stringify({
         op: 'hello',
         client: CLIENT,

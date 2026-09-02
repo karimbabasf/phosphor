@@ -11,6 +11,7 @@
 // named, and a spliced line is worse than no line.
 
 import type { Candle, CandleSource } from './types.ts';
+import { readTimeout } from './net.ts';
 
 const INFO_URL = 'https://api.hyperliquid.xyz/info';
 
@@ -82,6 +83,7 @@ export function hyperliquidSource(deps?: { fetchImpl?: typeof fetch }): CandleSo
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ type: 'candleSnapshot', req: { coin, interval, startTime, endTime } }),
+      signal: readTimeout(),
     });
     if (!res.ok) {
       throw new Error(`hyperliquid candles failed: ${res.status} ${await res.text()}`);
@@ -104,6 +106,7 @@ export function hyperliquidSource(deps?: { fetchImpl?: typeof fetch }): CandleSo
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ type: 'allMids' }),
+      signal: readTimeout(),
     });
     if (!res.ok) throw new Error(`hyperliquid spot failed: ${res.status}`);
     const mids = (await res.json()) as Record<string, string>;

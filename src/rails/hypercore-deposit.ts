@@ -69,6 +69,7 @@ import { ONECLICK_TERMINAL, assetIdFor, oneClickClient, oneLine, toBaseUnits } f
 import type { OneClickClient, OneClickQuote, OneClickStatus, TokensFile } from '../intents.ts';
 import { ONECLICK_COUNTERPARTY } from './oneclick.ts';
 import { usdClassTransfer } from './hyperliquid-withdraw.ts';
+import { readTimeout } from '../net.ts';
 
 // NEP-141 transfer costs, same numbers the swap rail uses: 30 TGas is the documented ceiling
 // for ft_transfer, and the one yoctoNEAR is the full-access-key assertion the standard requires.
@@ -527,6 +528,7 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
+      signal: readTimeout(),
     });
     if (!res.ok) throw new Error(`hyperliquid ${String(body.type)} failed: ${res.status} ${await res.text()}`);
     return (await res.json()) as T;

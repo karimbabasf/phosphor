@@ -1,6 +1,7 @@
 // EVM balance reads over public JSON-RPC. Used for eth, base, arb (same shape, different rpcUrl
 // and token registry per chain). Native gas asset on all three is ETH.
 import type { ChainId, Holding } from '../types.ts';
+import { readTimeout } from '../net.ts';
 
 const BALANCE_OF_SELECTOR = '0x70a08231'; // balanceOf(address)
 
@@ -14,6 +15,7 @@ async function rpcCall(
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+    signal: readTimeout(),
   });
   if (!res.ok) throw new Error(`${method} http ${res.status}`);
   const body = (await res.json()) as { result?: unknown; error?: { message?: string } };
@@ -42,6 +44,7 @@ async function rpcBatch(rpcUrl: string, requests: RpcRequest[], fetchImpl: typeo
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(requests.map((r, id) => ({ jsonrpc: '2.0', id, method: r.method, params: r.params }))),
+    signal: readTimeout(),
   });
   if (!res.ok) throw new Error(`batch http ${res.status}`);
 
