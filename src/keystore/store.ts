@@ -96,6 +96,9 @@ export type Keystore = {
   addresses(): StoredAddresses;
   header(): KeystoreHeader | null;
   unlock(password: string): Promise<UnlockResult>;
+  // Proves a password against the file and changes nothing. What a route that re-asks for the
+  // password needs, as opposed to a route that opens the wallet.
+  verify(password: string): Promise<UnlockResult>;
   lock(): boolean;
   create(password: string): Promise<{ mnemonic: string; addresses: StoredAddresses }>;
   importWallet(password: string, from: { mnemonic?: string; keys?: Partial<RailKeys> }): Promise<{ addresses: StoredAddresses }>;
@@ -252,7 +255,17 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     }
   }
 
-  async function unlock(password: string): Promise<UnlockResult> {
+  /* The decrypt, and NOTHING ELSE. It reads the file, derives the key, opens both envelopes and
+     hands back the payload bytes; whether the wallet ends up open is the caller's decision.
+     Split out because two routes need to prove a password without opening anything. Backup and
+     reveal both re-ask for the password, which is the control that stops an unattended open
+     window being a key dump, and both used to run that check by calling unlock(). That is a real
+     unlock, and export then announced nothing: the window kept drawing the lock screen, the idle
+     timer kept counting from the last human action, and anything in pending_unlock stayed queued
+     until somebody locked and unlocked again.
+     The failure counter and the backoff belong here rather than in unlock, because they are the
+     brute-force control and a route that checks a password is a route that can be ground. */
+  async function openWith(password: string): Promise<{ ok: true; body: Buffer } | Extract<UnlockResult, { ok: false }>> {
     if (now() < backoffUntil) {
       return { ok: false, error: 'locked_out', retryInSec: Math.ceil((backoffUntil - now()) / 1000) };
     }
@@ -283,10 +296,10 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
       wipe(kek);
     }
 
+    let body: Buffer;
     try {
-      const body = open(stored.payload, dataKey, aad);
+      body = open(stored.payload, dataKey, aad);
       JSON.parse(body.toString('utf8'));
-      plain = body;
     } catch (err) {
       // The password was right and the file is not. Damage, not a typo, and it says so rather
       // than sending the owner to look for a password that would never have worked.
@@ -296,7 +309,23 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     }
     failures = 0;
     backoffUntil = 0;
+    return { ok: true, body };
+  }
+
+  async function unlock(password: string): Promise<UnlockResult> {
+    const opened = await openWith(password);
+    if (!opened.ok) return opened;
+    plain = opened.body;
     announce();
+    return { ok: true };
+  }
+
+  // The same proof with none of the consequences: the payload is decrypted, checked and wiped,
+  // and the lock state is exactly what it was.
+  async function verify(password: string): Promise<UnlockResult> {
+    const opened = await openWith(password);
+    if (!opened.ok) return opened;
+    wipe(opened.body);
     return { ok: true };
   }
 
@@ -350,7 +379,18 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
      one salt means one cracked password opens both, and a backup is the copy that ends up
      somewhere less careful than this directory. */
   async function exportTo(target: string, password: string): Promise<void> {
-    const payload = keys();
+    /* The payload is read UNDER THE PASSWORD GIVEN when the wallet is shut, rather than off an
+       open one, so writing a backup from behind the lock leaves the lock exactly where it was.
+       An already open wallet is read straight out of memory, which is the same bytes. */
+    let payload: KeysPayload;
+    if (plain !== null) {
+      payload = keys();
+    } else {
+      const opened = await openWith(password);
+      if (!opened.ok) throw new Error(`that password does not open this wallet (${opened.error})`);
+      payload = JSON.parse(opened.body.toString('utf8')) as KeysPayload;
+      wipe(opened.body);
+    }
     const kdf = params();
     const header: KeystoreHeader = {
       version: 1,
@@ -384,6 +424,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     addresses,
     header: () => readHeader(keysPath),
     unlock,
+    verify,
     lock,
     create,
     importWallet,

@@ -44,6 +44,16 @@ function fast(): ReturnType<typeof defaultParams> {
   return { ...defaultParams(), N: 2 ** 14 };
 }
 
+// Poll for something the server does off the response, with a deadline so a regression fails
+// with the sentence below rather than hanging the run.
+async function waitFor(done: () => boolean, why: string, capMs = 3000): Promise<void> {
+  const until = Date.now() + capMs;
+  while (!done()) {
+    if (Date.now() > until) throw new Error(why);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
 type Booted = {
   url: string;
   token: string;
@@ -273,7 +283,7 @@ test('two unlocks at once are one unlock, and the queue is released once', async
     const first = b.post('/api/unlock', { token: b.token, password: PASSWORD });
     // Wait until the server is actually inside the release, so the second press lands in the
     // window the bug lived in rather than after it.
-    while (b.releases() === 0) await new Promise((resolve) => setTimeout(resolve, 5));
+    await waitFor(() => b.releases() === 1, 'the first unlock never reached the release');
     const second = await b.post('/api/unlock', { token: b.token, password: PASSWORD });
 
     assert.equal(b.releases(), 1, 'the second press waits on the first rather than releasing the queue again');
@@ -588,6 +598,88 @@ test('a backup is refused under a password that does not open the live wallet', 
     const right = await b.post('/api/wallet/export', { token: b.token, password: PASSWORD, path: target });
     assert.equal(right.json.ok, true);
     fs.rmSync(target);
+  } finally {
+    await b.close();
+  }
+});
+
+/* ---------- what a password check must not do ----------
+
+   Backup and reveal both ask for the password again, which is the control that stops an
+   unattended open window being a key dump. They used to run that check by CALLING unlock, which
+   is a real unlock: the keystore opened, and then export returned without announcing anything.
+   The window kept drawing the lock screen because no lock frame was sent, the idle timer kept
+   counting from the last human action, and anything queued in pending_unlock stayed queued
+   until somebody locked and unlocked again. Three states out of step at once.
+
+   Backup verifies without opening. Reveal genuinely needs the wallet open, because the second
+   half of the handshake reads material off it, so it announces the unlock instead. */
+
+test('a backup checks the password without unlocking the wallet as a side effect', async () => {
+  const b = await boot();
+  try {
+    await b.post('/api/wallet/create', { token: b.token, password: PASSWORD });
+    await b.post('/api/lock', { token: b.token });
+    assert.equal(b.keystore.state(), 'locked');
+
+    const target = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-backup-')), 'backup.json');
+    const out = await b.post('/api/wallet/export', { token: b.token, password: PASSWORD, path: target });
+
+    assert.equal(out.json.ok, true, 'the backup is written from behind the lock');
+    assert.ok(fs.existsSync(target));
+    assert.equal(b.keystore.state(), 'locked', 'and the wallet is exactly as locked as it was');
+    assert.equal(b.releases(), 0, 'so there is no queue to release either');
+  } finally {
+    await b.close();
+  }
+});
+
+test('a wrong password on a backup still refuses, and still counts toward the backoff', async () => {
+  const b = await boot();
+  try {
+    await b.post('/api/wallet/create', { token: b.token, password: PASSWORD });
+    await b.post('/api/lock', { token: b.token });
+
+    const target = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-backup-')), 'backup.json');
+    const out = await b.post('/api/wallet/export', { token: b.token, password: 'not the password', path: target });
+
+    assert.equal(out.json.ok, false);
+    assert.equal(out.json.error, 'wrong_password');
+    assert.ok(!fs.existsSync(target), 'nothing was written under a password that does not open the wallet');
+    assert.equal(b.keystore.state(), 'locked');
+  } finally {
+    await b.close();
+  }
+});
+
+test('a reveal from behind the lock announces the unlock and releases what was queued', async () => {
+  const b = await boot();
+  try {
+    await b.post('/api/wallet/create', { token: b.token, password: PASSWORD });
+    await b.post('/api/lock', { token: b.token });
+
+    const start = await b.post('/api/wallet/reveal', { token: b.token, password: PASSWORD, what: 'mnemonic' });
+    assert.equal(start.json.ok, true);
+    assert.equal(b.keystore.state(), 'unlocked', 'the handshake needs the wallet open, and it says so');
+    assert.equal((await b.get('/api/state')).json.lock.state, 'unlocked');
+
+    // The queue is released in the background: this response carries a nonce that dies in
+    // thirty seconds, and releasing a queue means sending a rail apiece.
+    await waitFor(() => b.releases() === 1, 'the queue behind the lock was never released');
+    assert.equal(b.releases(), 1);
+  } finally {
+    await b.close();
+  }
+});
+
+test('a reveal on an already open wallet releases nothing, because nothing changed', async () => {
+  const b = await boot();
+  try {
+    await b.post('/api/wallet/create', { token: b.token, password: PASSWORD });
+    const start = await b.post('/api/wallet/reveal', { token: b.token, password: PASSWORD, what: 'mnemonic' });
+
+    assert.equal(start.json.ok, true);
+    assert.equal(b.releases(), 0, 'the wallet was already open, so no queue was waiting on it');
   } finally {
     await b.close();
   }

@@ -23,7 +23,7 @@ import type http from 'node:http';
 import path from 'node:path';
 
 import { sameOrigin, tokenMatches } from './auth.ts';
-import { fail, readBody, sendJson } from './respond.ts';
+import { errText, fail, readBody, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
 import { mnemonicProblem } from '../keystore/derive.ts';
 import type { RailKeys } from '../keystore/derive.ts';
@@ -244,8 +244,12 @@ export async function handleWalletExport(ctx: Ctx, req: http.IncomingMessage, re
      check is unconditional. It used to fall through when the wallet happened to be unlocked
      already, which was the bug this route exists to avoid: exportTo encrypts under whatever
      password it is handed, so a typo produced a perfectly valid backup that opens only with the
-     typo. The owner would find out the day they needed it. */
-  const opened = await ctx.keystore.unlock(password);
+     typo. The owner would find out the day they needed it.
+     VERIFY, not unlock. Proving the password is the whole of what this route needs, and it used
+     to prove it by opening the wallet and then saying nothing: the window kept drawing the lock
+     screen, the idle timer kept counting from the last human action, and anything queued in
+     pending_unlock stayed queued. Writing a backup is not a reason to open a wallet. */
+  const opened = await ctx.keystore.verify(password);
   if (!opened.ok) {
     ctx.audit.append('approve_attempt_rejected', `backup refused: ${opened.error}`, { error: opened.error });
     return sendJson(res, 200, { ok: false, error: opened.error, ...(opened.retryInSec !== undefined ? { retryInSec: opened.retryInSec } : {}) });
@@ -277,12 +281,30 @@ export async function handleRevealStart(ctx: Ctx, req: http.IncomingMessage, res
 
   // Re-entering the password is the control, so it is checked against the file rather than
   // against the fact that the wallet happens to be open.
+  //
+  // This one DOES unlock, unlike the backup above, and it has to: the second half of the
+  // handshake reads material off an open wallet, thirty seconds later, with no password in
+  // hand. What was missing is that the app never noticed. So the unlock is announced below,
+  // exactly as pressing Unlock would be.
+  const wasShut = ctx.keystore.state() === 'locked';
   const opened = await ctx.keystore.unlock(password);
   if (!opened.ok && opened.error !== 'no_wallet') {
     ctx.audit.append('approve_attempt_rejected', `reveal refused: ${opened.error}`, { error: opened.error, what });
     return sendJson(res, 200, { ok: false, error: opened.error });
   }
   if (ctx.keystore.state() !== 'unlocked') return sendJson(res, 200, { ok: false, error: 'no_wallet' });
+
+  if (wasShut) {
+    /* The wallet is open now and everything that watches it has to be told: the window draws a
+       whole screen off the lock frame, and the queue behind the lock is waiting on exactly this.
+       The queue is released in the BACKGROUND rather than awaited, because this response carries
+       a nonce that dies in thirty seconds and releasing a queue means sending a rail apiece. */
+    ctx.audit.append('app_start', 'the wallet was unlocked by the reveal handshake');
+    announce(ctx);
+    void ctx.releaseQueued().catch((err: unknown) => {
+      ctx.audit.append('error', `releasing the queue after a reveal failed: ${errText(err)}`);
+    });
+  }
   if (what === 'mnemonic' && ctx.keystore.header()?.hasMnemonic !== true) {
     return sendJson(res, 200, { ok: false, error: 'no_mnemonic' });
   }
