@@ -484,6 +484,22 @@ function requireSigner(cfg: AppConfig, from: string): Address {
   return signer;
 }
 
+/* Where the swap OUTPUT lands, checked against the key that is about to sign for it.
+   `plan.recipient` is `draft.to` read straight off the persisted JSON, and requireSigner checks
+   only `draft.from`. Proposals sit on disk as JSON between approval and execution (execute.ts
+   says so in as many words), so anything that edited that file, or any refetch, sent the proceeds
+   wherever the file said. Every intents rail re-derives and compares its destination; this one
+   trusted the draft.
+
+   Pure and exported so the rule can be asserted without a key, a chain and a quoter. */
+export function recipientRefusal(recipient: string, signer: string): string | null {
+  if (recipient.toLowerCase() === signer.toLowerCase()) return null;
+  return (
+    `the draft would send the swap output to ${recipient}, which is not the signing wallet ${signer}. ` +
+    'A swap pays out to the account that signed it and nowhere else.'
+  );
+}
+
 function failed(err: unknown): SimulationResult {
   const message = err instanceof Error ? err.message : String(err);
   return { ok: false, summary: `uniswap-v3: ${message.split('\n')[0]}`, error: message };
@@ -587,7 +603,9 @@ export function uniswapSwapRail(cfg: AppConfig): Rail<SwapDraft> {
     async execute(draft: SwapDraft): Promise<RailResult> {
       try {
         const plan = await planSwap(draft);
-        requireSigner(cfg, draft.from);
+        const signer = requireSigner(cfg, draft.from);
+        const misdirected = recipientRefusal(plan.recipient, signer);
+        if (misdirected !== null) throw new Error(misdirected);
         const dep = deploymentFor(draft.chain);
         const txids: string[] = [];
 

@@ -43,6 +43,7 @@ import type {
   GeneratedIntent,
   IntentsApiPort,
   IntentsNearPort,
+  VerifierBalancePort,
   IntentsSignerPort,
 } from '../../src/rails/intents-native.ts';
 import type { NearSendParams } from '../../src/chain/near.ts';
@@ -144,11 +145,38 @@ type Harness = {
   submitted: Array<{ payload: string; signature: string }>;
   signedPayloads: string[];
   statusCalls: string[];
+  verifierBalance: VerifierBalancePort;
+  verifierReads: string[];
 };
+
+/* What the live API echoes back beside the quote, and what execute now checks it against. A
+   quote with no echo, or one echoing a different recipient, is refused before the key is
+   touched: the signed intent hands a balance to a solver handle and names the destination
+   nowhere, so the echo is the only thing tying the signature to where the proceeds land. */
+function echoOf(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    originAsset: ORIGIN_ASSET,
+    destinationAsset: DEST_ASSET,
+    amount: '100000000',
+    depositType: 'INTENTS',
+    recipientType: 'INTENTS',
+    recipient: OWNER,
+    refundType: 'INTENTS',
+    refundTo: OWNER,
+    ...over,
+  };
+}
 
 function harness(
   options: {
     quote?: OneClickQuote;
+    // The quoteRequest echo, or null for a response that carries none at all.
+    echo?: Record<string, unknown> | null;
+    /* The verifier balance, in base units, before and after the swap. `null` for either is a
+       read that failed, which is not the same as a balance of zero and must never be reported as
+       one. The default is a swap that credits exactly the quoted amount. */
+    verifierBefore?: bigint | null;
+    verifierAfter?: bigint | null;
     quoteError?: string;
     intent?: Partial<GeneratedIntent>;
     payload?: string;
@@ -169,7 +197,8 @@ function harness(
     async quote(params) {
       quotes.push(params);
       if (options.quoteError !== undefined) throw new Error(options.quoteError);
-      return { quote: options.quote ?? quoteOf(), raw: {} };
+      const echo = options.echo === undefined ? echoOf() : options.echo;
+      return { quote: options.quote ?? quoteOf(), raw: echo === null ? {} : { quoteRequest: echo } };
     },
     async generateIntent(params) {
       generated.push(params);
@@ -210,7 +239,17 @@ function harness(
     },
   };
 
-  return { api, signer, quotes, generated, submitted, signedPayloads, statusCalls };
+  /* The verifier, before and after. The default is a swap that credits exactly what the quote
+     promised: 99 USDT at 6 decimals, comfortably at the draft floor. */
+  const verifierReads: string[] = [];
+  const before = options.verifierBefore === undefined ? 0n : options.verifierBefore;
+  const after = options.verifierAfter === undefined ? 99_000_000n : options.verifierAfter;
+  const verifierBalance: VerifierBalancePort = async (accountId, assetId) => {
+    verifierReads.push(`${accountId}:${assetId}`);
+    return verifierReads.length === 1 ? before : after;
+  };
+
+  return { api, signer, quotes, generated, submitted, signedPayloads, statusCalls, verifierBalance, verifierReads };
 }
 
 function railOf(h: Harness) {
@@ -219,6 +258,8 @@ function railOf(h: Harness) {
     tokens: tokensFixture,
     api: h.api,
     signer: h.signer,
+    // Injected, so no test reaches a real NEAR node, and so the after-check can be driven.
+    verifierBalance: h.verifierBalance,
     now: () => NOW,
     sleepImpl: async () => {},
     pollIntervalMs: 1,
@@ -263,6 +304,7 @@ test('a keyless rail signs and submits, because the key was never what authorise
     apiKey: '',
     api: h.api,
     signer: h.signer,
+    verifierBalance: h.verifierBalance,
     now: () => NOW,
     sleepImpl: async () => {},
     pollIntervalMs: 1,
@@ -934,4 +976,78 @@ test('the venue routes to this rail and not to the uniswap fallback', async () =
   const h = harness();
   const result = await railOf(h).simulate(draftOf({ venue: INTENTS_NATIVE_VENUE as SwapDraft['venue'] }));
   assert.equal(result.ok, true);
+});
+
+// ---------- the quote echo, and the balance read back ----------
+//
+// checkQuote read amountIn and minAmountOut and nothing else. A quote priced to credit a
+// DIFFERENT recipient, to take its input from a chain transfer rather than the verifier balance,
+// or to refund somewhere that is not our account, passed every check and was signed, submitted
+// and reported as SUCCESS. The sibling withdraw rail has had this second opinion all along.
+
+test('a quote echoing a different recipient is refused before the key is touched', async () => {
+  const h = harness({ echo: echoOf({ recipient: '0x000000000000000000000000000000000000dEaD' }) });
+  await assert.rejects(() => railOf(h).execute(draftOf()), /priced to credit .* not our account/);
+  assert.equal(h.signedPayloads.length, 0, 'nothing was signed');
+  assert.equal(h.submitted.length, 0);
+});
+
+test('a quote with no echo at all is refused rather than trusted', async () => {
+  const h = harness({ echo: null });
+  await assert.rejects(() => railOf(h).execute(draftOf()), /carries no quoteRequest echo/);
+  assert.equal(h.signedPayloads.length, 0);
+});
+
+test('a quote that pays out onto a chain is refused: this rail moves nothing', async () => {
+  const h = harness({ echo: echoOf({ recipientType: 'DESTINATION_CHAIN' }) });
+  await assert.rejects(() => railOf(h).execute(draftOf()), /pays out as DESTINATION_CHAIN/);
+});
+
+test('a quote whose refund goes elsewhere is refused', async () => {
+  const h = harness({ echo: echoOf({ refundTo: '0x000000000000000000000000000000000000dEaD' }) });
+  await assert.rejects(() => railOf(h).execute(draftOf()), /refund on this quote goes to/);
+});
+
+test('a quote echoing a different asset or size is refused', async () => {
+  await assert.rejects(() => railOf(harness({ echo: echoOf({ amount: '1' }) })).execute(draftOf()), /priced for 1 base units/);
+  await assert.rejects(
+    () => railOf(harness({ echo: echoOf({ destinationAsset: ORIGIN_ASSET }) })).execute(draftOf()),
+    /not the .* the draft names/,
+  );
+});
+
+test('a SUCCESS that credited less than the floor is reported as a failure', async () => {
+  // The venue says SUCCESS and the balance rose by 1 USDT against a 99 USDT floor. Before the
+  // read-back this was reported as "swapped 100 USDC for 99.5 USDT": the QUOTE's promise, over a
+  // payload that is a transfer and names no output at all.
+  const h = harness({ verifierBefore: 0n, verifierAfter: 1_000_000n });
+  const out = await railOf(h).execute(draftOf());
+  assert.equal(out.ok, false);
+  assert.match(out.detail, /1click reported SUCCESS/);
+  assert.match(out.detail, /below the 99 USDT floor/);
+});
+
+test('a SUCCESS that credited the floor reports the amount it actually read', async () => {
+  const h = harness({ verifierBefore: 5_000_000n, verifierAfter: 104_500_000n });
+  const out = await railOf(h).execute(draftOf());
+  assert.equal(out.ok, true, out.detail);
+  assert.match(out.detail, /for 99.5 USDT/, 'the delta, not the quote');
+  assert.match(out.detail, /read back from the verifier/);
+});
+
+test('a verifier that will not answer costs the check and not the swap', async () => {
+  const h = harness({ verifierBefore: null, verifierAfter: null });
+  const out = await railOf(h).execute(draftOf());
+  assert.equal(out.ok, true, out.detail);
+  assert.match(out.detail, /could not be read back/);
+  assert.match(out.detail, /solver's figure rather than an observed one/);
+});
+
+test('the balance is read for our own account and the destination asset', async () => {
+  const h = harness();
+  await railOf(h).execute(draftOf());
+  assert.deepEqual(h.verifierReads, [
+    `${OWNER.toLowerCase()}:${DEST_ASSET}`,
+    `${OWNER.toLowerCase()}:${DEST_ASSET}`,
+  ]);
 });

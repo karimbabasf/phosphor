@@ -798,6 +798,15 @@ export async function intentsDeposit(args: {
 
 // ---------- the rail ----------
 
+/* What one asset's balance is inside the verifier, in base units. null means the read failed,
+   which is not the same as a balance of zero and must never be reported as one.
+
+   This is the seam behind the after-check in execute. The rail used to report the QUOTE's
+   promised output as realised ("swapped X for Y"), and the payload actually signed is a transfer,
+   so the far side of that sentence was the solver's promise rather than an observed fact. The
+   reader already existed in src/ledger/intents.ts and nothing on this path ever called it. */
+export type VerifierBalancePort = (accountId: string, assetId: string) => Promise<bigint | null>;
+
 export type IntentsNativeRailDeps = {
   keysPath: string;
   tokens: TokensFile;
@@ -810,7 +819,35 @@ export type IntentsNativeRailDeps = {
   pollIntervalMs?: number;
   pollTimeoutMs?: number;
   maxDeadlineMs?: number;
+  verifierBalance?: VerifierBalancePort;
 };
+
+/* The default reader, over the same view calls the ledger uses. It never throws: a verifier that
+   will not answer costs the check, and losing the check must not turn a swap the venue confirmed
+   into a reported failure. */
+export function liveVerifierBalance(fetchImpl?: typeof fetch): VerifierBalancePort {
+  return async (accountId, assetId) => {
+    try {
+      const [{ fetchIntentsHoldings }, { nearChainSpec }] = await Promise.all([
+        import('../ledger/intents.ts'),
+        import('../chain/near.ts'),
+      ]);
+      const read = await fetchIntentsHoldings({
+        accountId,
+        rpcUrl: nearChainSpec().rpcUrl,
+        tokenList: async () => [],
+        fetchImpl: fetchImpl ?? fetch,
+      });
+      if (!read.ok) return null;
+      const held = read.holdings.find((h) => h.assetId === assetId);
+      if (held === undefined) return 0n;
+      // The ledger carries UI units for rendering; base units are what a floor is checked in.
+      return BigInt(Math.round(held.amount * 10 ** held.decimals));
+    } catch {
+      return null;
+    }
+  };
+}
 
 export type IntentsNativeRail = Rail<SwapDraft>;
 
@@ -842,6 +879,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
   // The key is optional: it selects a fee tier, it does not authorise the calls. See the
   // comment on INTENTS_NO_API_KEY_REASON for what was re-tested and when.
   const api = deps.api ?? intentsApi({ apiKey: apiKey ?? '', fetchImpl: deps.fetchImpl });
+  const verifierBalance = deps.verifierBalance ?? liveVerifierBalance(deps.fetchImpl);
 
   type Plan = {
     originAsset: string;
@@ -935,6 +973,69 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     return problems;
   }
 
+  /* The quote's echo of what we asked for, checked against what we asked for.
+     checkQuote above reads amountIn and minAmountOut and nothing else, so a quote priced to
+     credit a DIFFERENT recipient, to take its input from a chain transfer rather than the
+     verifier balance, or to refund somewhere that is not our account, passed every check and was
+     signed, submitted and reported as SUCCESS. The sibling withdraw rail closed exactly this gap
+     with its own checkQuoteEcho; this rail never got it.
+
+     A missing echo is a refusal, not a shrug. The signed intent hands a balance to a solver
+     handle and does not name the destination anywhere, so with no echo there is nothing tying
+     the signature to where the proceeds land. */
+  function checkQuoteEcho(p: Plan, owner: string, raw: unknown): string[] {
+    if (raw === null || typeof raw !== 'object') {
+      return [`the quote response is not an object (got ${oneLine(raw, 60)})`];
+    }
+    const echo = (raw as Record<string, unknown>)['quoteRequest'];
+    if (echo === null || typeof echo !== 'object' || Array.isArray(echo)) {
+      return [
+        'the quote carries no quoteRequest echo, so there is nothing tying it to the account the draft ' +
+          `credits. The signed intent hands our balance to a solver handle and does not name ${oneLine(owner, 60)} ` +
+          'anywhere, so without the echo this swap cannot be checked and is refused.',
+      ];
+    }
+    const req = echo as Record<string, unknown>;
+    const problems: string[] = [];
+    const say = (field: string): string => oneLine(req[field], 60);
+    const same = (value: unknown, want: string): boolean =>
+      typeof value === 'string' && value.toLowerCase() === want.toLowerCase();
+
+    // Where the proceeds land. Everything else on this quote is a price; this is the answer to
+    // "whose money is it afterwards".
+    if (!same(req['recipient'], owner)) {
+      problems.push(`the quote was priced to credit ${say('recipient')}, not our account ${oneLine(owner, 60)}`);
+    }
+    // INTENTS on both sides is what makes this a swap inside the verifier rather than a bridge:
+    // a DESTINATION_CHAIN payout would push the proceeds onto a chain nobody approved.
+    if (req['recipientType'] !== 'INTENTS') {
+      problems.push(
+        `the quote pays out as ${say('recipientType')}, not INTENTS; this rail swaps inside the verifier and ` +
+          'moves nothing onto any chain',
+      );
+    }
+    if (req['depositType'] !== 'INTENTS') {
+      problems.push(`the quote takes its input as ${say('depositType')}, not the INTENTS balance this rail spends`);
+    }
+    if (req['refundType'] !== 'INTENTS') {
+      problems.push(`a refund on this quote goes to ${say('refundType')}, not back to our balance inside the verifier`);
+    }
+    if (!same(req['refundTo'], owner)) {
+      problems.push(`a refund on this quote goes to ${say('refundTo')}, not to our account ${oneLine(owner, 60)}`);
+    }
+    // The assets and the size, as a complete second opinion rather than a partial one.
+    if (req['originAsset'] !== p.originAsset || req['destinationAsset'] !== p.destinationAsset) {
+      problems.push(
+        `the quote moves ${say('originAsset')} to ${say('destinationAsset')}, not the ` +
+          `${oneLine(p.originAsset, 40)} to ${oneLine(p.destinationAsset, 40)} the draft names`,
+      );
+    }
+    if (req['amount'] !== p.amountBase.toString()) {
+      problems.push(`the quote was priced for ${say('amount')} base units, not the ${p.amountBase.toString()} approved`);
+    }
+    return problems;
+  }
+
   function priceLines(draft: SwapDraft, quote: OneClickQuote): string[] {
     const inUsd = Number(quote.amountInUsd);
     const outUsd = Number(quote.amountOutUsd);
@@ -1012,7 +1113,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     });
     const quote = response.quote;
 
-    const problems = checkQuote(draft, p, quote);
+    const problems = [...checkQuote(draft, p, quote), ...checkQuoteEcho(p, owner, response.raw)];
     if (problems.length > 0) throw new Error(`live quote does not match the approved draft: ${problems.join('; ')}`);
 
     // For an INTENTS quote this is an account id inside the verifier, not a chain address,
@@ -1022,6 +1123,11 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     if (typeof depositAddress !== 'string' || depositAddress.trim() === '') {
       throw new Error(`the quote carries no deposit handle to attach an intent to (got ${oneLine(depositAddress, 60)})`);
     }
+
+    /* Read before, so the after-read below has something to subtract. A read that fails costs
+       the check and nothing else: this is deliberately taken before anything is signed, so a
+       verifier that will not answer refuses nothing and delays nothing. */
+    const beforeBase = await verifierBalance(owner.toLowerCase(), p.destinationAsset);
 
     const generated = await client.generateIntent({ signerId: owner, depositAddress });
 
@@ -1061,13 +1167,48 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     const watch = await watchStatus(depositAddress);
 
     if (watch.status === 'SUCCESS') {
+      /* SUCCESS from the venue is the venue's word. What arrived is a number this app can read,
+         and until now it never did: the detail reported `quote.amountOutFormatted`, which is the
+         solver's PROMISE, over a payload that is a transfer and names no output. So a swap that
+         credited less than the approved floor, or nothing at all, was reported as a success at
+         the promised size. */
+      const afterBase = await verifierBalance(owner.toLowerCase(), p.destinationAsset);
+      const txids = [submitted.intentHash, ...watch.destinationTxHashes];
+
+      if (beforeBase !== null && afterBase !== null) {
+        const delta = afterBase - beforeBase;
+        if (delta < p.minOutBase) {
+          return {
+            ok: false,
+            detail:
+              `1click reported SUCCESS, and the balance inside ${INTENTS_VERIFIER} rose by ` +
+              `${formatUnits(delta < 0n ? 0n : delta, p.destDecimals)} ${draft.toSymbol}, below the ` +
+              `${draft.minAmountOut} ${draft.toSymbol} floor this swap was approved with; ${evidence}. ` +
+              `Read the balance for ${owner} before signing another.`,
+            txids,
+          };
+        }
+        return {
+          ok: true,
+          detail:
+            `swapped ${draft.amountIn} ${draft.fromSymbol} for ${formatUnits(delta, p.destDecimals)} ` +
+            `${draft.toSymbol} inside ${INTENTS_VERIFIER}, read back from the verifier rather than taken ` +
+            `from the quote; ${evidence}. Nothing was transferred on any chain and the proceeds are ` +
+            `credited to ${owner} inside the verifier.`,
+          txids,
+        };
+      }
+
+      // The venue confirmed and this app could not read the balance. Still a success, and the
+      // sentence says which half is measured and which half is the solver's word.
       return {
         ok: true,
         detail:
-          `swapped ${draft.amountIn} ${draft.fromSymbol} for ${oneLine(quote.amountOutFormatted, 40)} ` +
-          `${draft.toSymbol} inside ${INTENTS_VERIFIER}; ${evidence}. Nothing was transferred on any chain ` +
-          `and the proceeds are credited to ${owner} inside the verifier.`,
-        txids: [submitted.intentHash, ...watch.destinationTxHashes],
+          `swapped ${draft.amountIn} ${draft.fromSymbol} for a quoted ${oneLine(quote.amountOutFormatted, 40)} ` +
+          `${draft.toSymbol} inside ${INTENTS_VERIFIER}; ${evidence}. The verifier balance could not be read ` +
+          `back, so the amount out is the solver's figure rather than an observed one. Nothing was transferred ` +
+          `on any chain and the proceeds are credited to ${owner} inside the verifier.`,
+        txids,
       };
     }
 

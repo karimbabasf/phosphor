@@ -25,6 +25,7 @@ import {
   uniswapLpAddRail,
   uniswapLpRemoveRail,
   uniswapSwapRail,
+  recipientRefusal,
 } from '../../src/rails/uniswap.ts';
 import { chainsWithDeployment, deploymentFor, tickSpacingFor, tokenFor } from '../../src/rails/uniswap-abi.ts';
 import type { AppConfig, LpAddDraft, LpRemoveDraft, SwapDraft } from '../../src/types.ts';
@@ -509,4 +510,28 @@ test('readPositions reports a bad owner through onError and returns an empty lis
   assert.deepEqual(positions, []);
   assert.equal(errors.length, 1);
   assert.match(errors[0], /not a valid address/);
+});
+
+// ---------- where the output lands ----------
+//
+// `recipient: addr(draft.to, 'draft.to')` sent the swap output wherever the persisted draft said,
+// and requireSigner checked only draft.from. Proposals sit on disk as JSON between approval and
+// execution, which src/proposals/execute.ts states in as many words, so anything that edited that
+// file redirected the proceeds and nothing looked. Every intents rail re-derives and compares its
+// destination; this rail trusted the JSON.
+
+test('a swap whose output goes anywhere but the signing wallet is refused', () => {
+  const signer = '0x1111111111111111111111111111111111111111';
+  const elsewhere = '0x000000000000000000000000000000000000dEaD';
+
+  const refusal = recipientRefusal(elsewhere, signer);
+  assert.notEqual(refusal, null);
+  assert.match(String(refusal), /not the signing wallet/);
+  assert.match(String(refusal), new RegExp(elsewhere));
+});
+
+test('the same wallet in a different case is the same wallet', () => {
+  const signer = '0x1111111111111111111111111111111111111111';
+  assert.equal(recipientRefusal(signer.toUpperCase().replace('0X', '0x'), signer), null);
+  assert.equal(recipientRefusal(signer, signer), null);
 });
