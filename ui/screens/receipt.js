@@ -33,7 +33,7 @@
     if (unknown) {
       var warn = dom.el('div', 'banner');
       warn.dataset.tone = 'warn';
-      warn.appendChild(dom.el('span', '', 'We sent this and we cannot read what happened to it. Do not send it again. Check it below, or open it in a block explorer.'));
+      warn.appendChild(dom.el('span', '', 'We sent this and we cannot read what happened to it. Do not send it again. Check it again below, or open it in a block explorer.'));
       host.appendChild(warn);
     }
 
@@ -78,12 +78,16 @@
         window.PhosphorShell.setPending(recheck, true, 'Checking');
         api.reconcile(receipt.id)
           .then(function (answer) {
-            if (answer && answer.missing) {
-              dom.setText(error, 'This app cannot re-check yet. Open the transaction in a block explorer.');
+            var status = answer && answer.status;
+            /* Still unreadable is an answer, and the card stays open on it:
+               closing would look like it had been settled. */
+            if (status === 'needs_reconciliation') {
+              dom.setText(error, 'Still no answer from the chain. Nothing has changed. Do not send it again.');
               error.hidden = false;
               return;
             }
-            window.PhosphorToast.show('Checked. It is ' + readableStatus(answer && answer.status) + '.');
+            window.PhosphorToast.show('Checked. It is ' + readableStatus(status) + '.'
+              + (answer && answer.detail ? ' ' + answer.detail : ''));
             if (onClose) onClose();
           })
           .catch(function (err) {
@@ -105,7 +109,8 @@
   function readableStatus(status) {
     if (status === 'executed') return 'done';
     if (status === 'failed') return 'not done, and nothing left your wallet';
-    return 'still unreadable';
+    if (status === 'needs_reconciliation') return 'still unreadable';
+    return 'no longer waiting';
   }
 
   function amountLine(receipt) {

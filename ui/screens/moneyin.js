@@ -10,7 +10,6 @@
   var dom = window.PhosphorDom;
   var net = window.PhosphorNet;
   var api = window.PhosphorApi;
-  var fixtures = window.PhosphorFixtures;
 
   var loaded = null;
   var loading = null;
@@ -18,13 +17,8 @@
   function load() {
     if (loaded) return Promise.resolve(loaded);
     if (loading) return loading;
-    if (fixtures.active) {
-      loaded = fixtures.receive();
-      return Promise.resolve(loaded);
-    }
     loading = api.receive().then(function (result) {
-      var data = result.data || {};
-      loaded = data.missing ? null : data;
+      loaded = result.data || null;
       loading = null;
       return loaded;
     }).catch(function () {

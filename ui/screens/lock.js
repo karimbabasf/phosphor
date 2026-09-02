@@ -241,5 +241,13 @@
     go.focus();
   }
 
-  window.PhosphorLock = { boot: boot };
+  /* Put the cursor in the password field. The queued-request card hands over to
+     the lock this way rather than drawing a second password box of its own. */
+  function focus() {
+    if (!refs.host || refs.host.hidden) return;
+    var input = refs.host.querySelector('input[type="password"]');
+    if (input) input.focus();
+  }
+
+  window.PhosphorLock = { boot: boot, focus: focus };
 })();

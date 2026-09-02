@@ -1,8 +1,7 @@
 /* Activity: what happened, newest first, each row a receipt.
 
-   It reads /api/receipts when the backend has it and falls back to
-   /api/transactions until then, so the panel says something true either way
-   rather than sitting empty behind a route that does not exist.
+   It reads /api/receipts, which is the one place that knows what a move cost
+   and what the balance was on each side of it.
 
    The global is PhosphorReceipts rather than PhosphorActivity because
    ui/activity.js is the custody idle beacon and got there first. Two different
@@ -12,7 +11,6 @@
 
   var dom = window.PhosphorDom;
   var api = window.PhosphorApi;
-  var fixtures = window.PhosphorFixtures;
 
   var receipts = [];
   var listeners = [];
@@ -42,57 +40,12 @@
   }
 
   function load() {
-    if (fixtures.active) {
-      receipts = fixtures.receipts().receipts;
-      state = 'ready';
-      emit();
-      return Promise.resolve(receipts);
-    }
     state = receipts.length ? 'refreshing' : 'loading';
     emit();
     return api.receipts(25)
       .then(function (result) {
         var data = result.data || {};
-        if (!data.missing && Array.isArray(data.receipts)) {
-          receipts = data.receipts;
-          state = 'ready';
-          emit();
-          return receipts;
-        }
-        return fallback();
-      })
-      .catch(function () {
-        return fallback();
-      });
-  }
-
-  /* Until /api/receipts lands, the transaction history carries the same
-     events. It has no balance before and after and no per-row fee, so those
-     lines are left off rather than guessed at. */
-  function fallback() {
-    return api.transactions()
-      .then(function (result) {
-        var data = result.data || {};
-        var rows = Array.isArray(data.transactions) ? data.transactions : (Array.isArray(data.rows) ? data.rows : []);
-        receipts = rows.map(function (tx, i) {
-          return {
-            id: tx.id || ('tx_' + i),
-            kind: tx.kind || 'action',
-            at: tx.at || tx.decidedAt || tx.createdAt,
-            summary: tx.summary || tx.detail || String(tx.kind || 'Something moved'),
-            fromChain: tx.chain || tx.fromChain,
-            toChain: tx.toChain || tx.chain,
-            amount: typeof tx.amount === 'number' ? tx.amount : undefined,
-            symbol: tx.symbol,
-            feesUsd: typeof tx.feeUsd === 'number' ? tx.feeUsd : undefined,
-            txids: (tx.txids || []).map(function (hash) {
-              return typeof hash === 'string'
-                ? { chain: tx.chain, hash: hash, url: null }
-                : hash;
-            }),
-            status: tx.status === 'executed' || tx.ok ? 'executed' : (tx.status || 'failed')
-          };
-        });
+        receipts = Array.isArray(data.receipts) ? data.receipts : [];
         state = 'ready';
         emit();
         return receipts;

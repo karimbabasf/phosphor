@@ -182,8 +182,9 @@
   function buildAsk(entry) {
     var proposal = entry.proposal;
     var draft = proposal.draft || {};
+    var queued = proposal.status === 'pending_unlock';
 
-    refs.card.appendChild(dom.el('p', 'label', 'Waiting for you'));
+    refs.card.appendChild(dom.el('p', 'label', queued ? 'Waiting for you to unlock' : 'Waiting for you'));
     refs.card.appendChild(dom.el('h2', 'title', headlineOf(proposal)));
 
     var amount = amountOf(proposal);
@@ -218,16 +219,42 @@
 
     if (draft.kind === 'policy_change') buildPolicyDiff(draft);
 
-    if (proposal.status === 'pending_unlock') {
-      var banner = dom.el('div', 'banner');
-      banner.dataset.tone = 'warn';
-      banner.appendChild(dom.el('span', '', 'The app is locked. This is queued and nothing happens until you unlock and decide.'));
-      refs.card.appendChild(banner);
-    }
-
     var error = dom.el('p', 'body down');
     error.hidden = true;
     refs.card.appendChild(error);
+
+    /* A request that arrived while the wallet was shut. It was authored and
+       checked against the limits; what is missing is the ability to sign. So the
+       card asks for the lock first and does not offer Yes, because a Yes it
+       could not act on would be a click that did nothing. */
+    if (queued) {
+      var banner = dom.el('div', 'banner');
+      banner.dataset.tone = 'warn';
+      banner.appendChild(dom.el('span', '', 'The app is locked, so this is waiting. Nothing has moved and nothing will until you unlock and decide.'));
+      refs.card.appendChild(banner);
+
+      var queuedActions = dom.el('div', 'screen-actions');
+      var refuse = dom.el('button', 'btn btn-danger');
+      refuse.appendChild(dom.el('span', 'btn-label', 'No'));
+      var unlock = dom.el('button', 'btn btn-primary');
+      unlock.appendChild(dom.el('span', 'btn-label', 'Unlock'));
+      queuedActions.appendChild(refuse);
+      queuedActions.appendChild(unlock);
+      refs.card.appendChild(queuedActions);
+
+      dom.on(refuse, 'click', function () {
+        decide(api.refuse, proposal.id, [refuse, unlock], error, refuse, 'Refusing');
+      });
+      dom.on(unlock, 'click', function () {
+        /* The overlay steps aside for the lock screen. It comes back on its own:
+           render() runs on the next state frame, and by then this request is
+           pending rather than pending_unlock. */
+        showing = null;
+        dom.setHidden(refs.overlay, true);
+        window.PhosphorLock.focus();
+      });
+      return;
+    }
 
     var actions = dom.el('div', 'screen-actions');
     var no = dom.el('button', 'btn btn-danger');

@@ -11,35 +11,15 @@
 
   /* Which half of the contract this backend has learned.
 
-     A fetch against a route the server has never heard of is logged by the
-     browser as a console error whether or not the caller catches it, so the
-     window does not probe. It reads a field off /api/state instead: `dailyLimit`
-     lands with reliability, in the same commit as the routes beside it. Until it
-     does, those screens render the honest empty state and nothing is requested.
+   Every route in the contract exists now. The gate that used to sit here read a
+   field off /api/state to decide whether a route had landed yet, so a screen
+   never fetched something the backend had not learned and never logged a 404
+   the caller could not act on. Both tracks have merged and there is nothing
+   left to gate. */
 
-     Custody has landed, so its routes are called outright. */
-  var has = { reliability: false };
-
-  function learn(state) {
-    if (!state || typeof state !== 'object') return;
-    has.reliability = state.dailyLimit !== undefined && state.dailyLimit !== null;
-  }
-
-  var MISSING_READ = { data: { missing: true }, fresh: true, status: 404 };
-  var MISSING_WRITE = { missing: true };
-
-  function readOrMissing(path, options, gate) {
-    if (gate === false) return Promise.resolve(MISSING_READ);
-    return net.getJson(path, options).catch(function (err) {
-      if (err && err.status === 404) return MISSING_READ;
-      throw err;
-    });
-  }
-
-  function writeOrMissing(path, body, options, gate) {
-    if (gate === false) return Promise.resolve(MISSING_WRITE);
+  function writeOrMissing(path, body, options) {
     return net.postJson(path, body, options).catch(function (err) {
-      if (err && err.status === 404) return MISSING_WRITE;
+      if (err && err.status === 404) return { missing: true };
       throw err;
     });
   }
@@ -101,8 +81,11 @@
 
     /* ---------- routes from the contract, not on this branch yet ---------- */
 
+    /* No token, and deliberately outside the busy contract: this is what the
+       shell asks while the stream is down, and a spinner on the one call that
+       answers "is the app there" would be reporting on itself. */
     health: function () {
-      return readOrMissing('/api/health', {}, has.reliability);
+      return net.getJson('/api/health', { noCache: true });
     },
 
     unlock: function (password) {
@@ -130,7 +113,7 @@
     },
 
     receipts: function (limit) {
-      return readOrMissing('/api/receipts?limit=' + (limit || 25), { busy: 'activity', label: 'Reading what happened' }, has.reliability);
+      return net.getJson('/api/receipts?limit=' + (limit || 25), { busy: 'activity', label: 'Reading what happened' });
     },
 
     /* Reveal is two halves on purpose. The POST proves the password and hands
@@ -153,12 +136,9 @@
     },
 
     reconcile: function (id) {
-      return writeOrMissing('/api/reconcile', { id: id }, { busy: 'reconcile', label: 'Checking again' }, has.reliability);
+      return net.postJson('/api/reconcile', { id: id }, { busy: 'reconcile', label: 'Checking again' });
     }
   };
-
-  api.learn = learn;
-  api.has = has;
 
   window.PhosphorApi = api;
 })();

@@ -12,7 +12,6 @@
   var net = window.PhosphorNet;
   var api = window.PhosphorApi;
   var store = window.PhosphorState;
-  var fixtures = window.PhosphorFixtures;
 
   var refs = {};
   var mounted = false;
@@ -275,7 +274,7 @@
 
     /* The daily limit: rolling 24 hours, survives a restart, so it is a limit a
        person can reason about rather than one that resets when the app does. */
-    var daily = state.dailyLimit || (fixtures.active ? fixtures.dailyLimit() : null);
+    var daily = state.dailyLimit;
     if (daily) {
       var block = dom.el('div', 'stack-2');
       var top = dom.el('div', 'between');
@@ -291,7 +290,11 @@
       if (used > 0.8) fill.dataset.tone = 'warn';
       meter.appendChild(fill);
       block.appendChild(meter);
-      block.appendChild(dom.el('p', 'meta', 'Resets ' + resetWords(daily.resetsAt) + '.'));
+      /* resetsAt is when the oldest counted spend leaves the window, not
+         midnight. A cap that rolls is described as rolling. */
+      block.appendChild(dom.el('p', 'meta', daily.resetsAt === null
+        ? 'Nothing has been spent in the last 24 hours.'
+        : 'The oldest of it stops counting ' + resetWords(daily.resetsAt) + '.'));
       refs.limitsBody.appendChild(block);
     }
 
