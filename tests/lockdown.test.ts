@@ -126,13 +126,15 @@ test(
   async () => {
     const tools = await announcedTools(bin as string, path.join(REPO, 'operator', 'settings.json'));
     const builtins = tools.filter((t) => !t.startsWith('mcp__phosphor__')).sort();
-    // Read, Grep and Glob are deliberate: operator/README.md says the operator can read the code
-    // it drives. Anything else here is the README describing a profile that no longer exists.
+    // Read alone, and scoped: operator/README.md says the operator can read the code it drives,
+    // and the key file is denied by path. Grep and Glob left on 2026-09-01 because a search tool
+    // reads files the path-scoped Read rule never gets to see the name of. Anything else here is
+    // the README describing a profile that no longer exists.
     assert.deepEqual(
       builtins,
-      ['Glob', 'Grep', 'Read'],
+      ['Read'],
       `operator/settings.json is out of date: this Claude Code release grants ${builtins.join(', ')}, ` +
-        'and operator/README.md claims it grants only Read, Grep and Glob.',
+        'and operator/README.md claims it grants only Read.',
     );
   },
 );
