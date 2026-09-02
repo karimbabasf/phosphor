@@ -25,37 +25,22 @@
 // sign with, so there is exactly one derivation path in this codebase rather than two that
 // have to agree.
 //
-// base58 is still vendored below, twenty lines, because NEAR and Solana need it and viem has
-// no base58. It is verified against published vectors at startup, as is every other step:
-// selfCheck() runs before any key is generated, so a broken primitive stops the program
-// rather than printing an address that no private key opens.
+// base58 comes from src/chain/near.ts, beside the decoder that reads these files back. It used
+// to be vendored here, which was one more place a base58 bug could differ from the app's. It is
+// still verified against published vectors at startup, as is every other step: selfCheck() runs
+// before any key is generated, so a broken primitive stops the program rather than printing an
+// address that no private key opens.
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
+
+// The encoder lives in src, beside the decoder that reads these files back. This script had its
+// own copy, which is one more place a base58 bug could differ from the app's.
+import { base58Encode } from '../src/chain/near.ts';
 import { loadConfig } from '../src/config.ts';
-
-// ---------- base58 ----------
-
-const B58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
-
-export function base58Encode(bytes: Uint8Array): string {
-  let acc = 0n;
-  for (const byte of bytes) acc = (acc << 8n) | BigInt(byte);
-  let out = '';
-  while (acc > 0n) {
-    out = B58_ALPHABET[Number(acc % 58n)] + out;
-    acc /= 58n;
-  }
-  // Every leading zero byte is one leading '1'; the bigint loop above cannot represent them.
-  for (const byte of bytes) {
-    if (byte !== 0) break;
-    out = '1' + out;
-  }
-  return out === '' ? '1' : out;
-}
 
 // ---------- key material ----------
 
@@ -201,8 +186,8 @@ function main(): void {
   console.log('Then fund them from the faucets listed in the README, and run: npm run sweep');
 }
 
-// Only generate when run as the entry point, so base58Encode can be imported (by a signer, or
-// by a check that re-derives an address) without minting a new key file as a side effect.
+// Only generate when run as the entry point, so this file can be imported without minting a new
+// key file as a side effect.
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main();
 }
