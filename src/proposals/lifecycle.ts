@@ -29,6 +29,7 @@ import type { EngineCtx } from '../policy/engine.ts';
 import { loadPolicy } from '../policy/file.ts';
 import type { RailRegistry } from '../rails/index.ts';
 import type { TxLookup } from './reconcile.ts';
+import { withReservation } from './reservation.ts';
 
 export const ALL_CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 const EVM_CHAINS: ChainId[] = ['eth', 'base', 'arb'];
@@ -331,24 +332,48 @@ export type Serialiser = {
   // Resolves when everything queued as of the call has finished, however it finished. Used by
   // shutdown: work already in flight gets to write its row before the process ends. Nothing new
   // can be queued behind it during a drain, because the HTTP surface is already refusing.
+  //
+  // NOT the same as "the queue is free". The queue moves on at the reservation; this waits for
+  // the whole job, which is what a shutdown actually needs.
   idle(): Promise<void>;
 };
 
 export function createSerialiser(): Serialiser {
+  // What the next caller waits on: the queue ahead of it reaching ITS reservation.
   let chain: Promise<unknown> = Promise.resolve();
+  // What a shutdown waits on: every job still running, reserved or not.
+  const outstanding = new Set<Promise<unknown>>();
+
   const serialise = function <T>(fn: () => Promise<T>): Promise<T> {
+    let release: () => void = () => {};
+    const reserved = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     // Both arms run fn, so one rejection does not wedge the queue for everything after it.
-    const run = chain.then(fn, fn);
-    chain = run.then(
+    const start = (): Promise<T> => withReservation(release, fn);
+    const run = chain.then(start, start);
+
+    const settled = run.then(
       () => undefined,
       () => undefined,
     );
+    outstanding.add(settled);
+    void settled.then(() => outstanding.delete(settled));
+
+    /* The cut. The next caller starts as soon as this one has its budget on disk, or as soon as
+       it finishes without reserving anything. A rail waiting five minutes on a venue no longer
+       holds the door that a human's refuse has to come through. */
+    chain = Promise.race([reserved, settled]);
     return run;
   } as Serialiser;
-  serialise.idle = (): Promise<void> =>
-    chain.then(
-      () => undefined,
-      () => undefined,
-    );
+
+  serialise.idle = async (): Promise<void> => {
+    // Loops because a job can queue another as it finishes. It terminates because the HTTP
+    // surface is already refusing new writes by the time a shutdown calls this, and the caller
+    // caps the whole wait anyway.
+    while (outstanding.size > 0) {
+      await Promise.all([...outstanding]);
+    }
+  };
   return serialise;
 }

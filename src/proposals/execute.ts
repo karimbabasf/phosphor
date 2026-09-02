@@ -11,6 +11,7 @@ import { renderSentences } from '../policy/render.ts';
 import { isRailKind } from '../rails/index.ts';
 import { isLocked } from '../keystore/index.ts';
 import { errText, mergePatch, money, nowIso, persist, totalUsdOf } from './lifecycle.ts';
+import { reservationMade } from './reservation.ts';
 import type { PCtx } from './lifecycle.ts';
 
 // Single exit for a freshly evaluated proposal. This is the only place a proposal can become
@@ -73,6 +74,9 @@ export async function land(ctx: PCtx, p: Proposal): Promise<Proposal> {
   }
 
   if (p.verdict.outcome === 'needs_approval') {
+    // Nothing reserved and nothing left to do: a pending proposal does not count against the
+    // cap, so the queue has no reason to keep waiting on this one.
+    reservationMade();
     // Above the click threshold nothing decides but a person. There is no exemption:
     // no flag, no environment and no proposal kind reaches execution from here without
     // a click on a surface the agent cannot open. The product's central claim is that
@@ -108,6 +112,11 @@ export async function executeApproved(ctx: PCtx, p: Proposal): Promise<Proposal>
 
 export async function executeRail(ctx: PCtx, p: Proposal, rail: Rail): Promise<Proposal> {
   const executing = persist(ctx, { ...p, status: 'executing' });
+  /* The budget is now on disk and sessionSpentUsd counts it, so the next caller can safely read,
+     decide and reserve. Everything below is a network wait with no shared state in it. Before
+     this the whole rail ran inside the queue, and a rail in watchStatus held every approve and
+     refuse in the app for up to five minutes. */
+  reservationMade();
 
   let result: RailResult;
   try {
@@ -179,6 +188,8 @@ export function depositAddressMismatch(p: Proposal, legs: TransferLeg[]): string
 export async function executeFundMove(ctx: PCtx, p: Proposal): Promise<Proposal> {
   const legs = p.draft.kind === 'consolidate' ? p.draft.legs : p.draft.kind === 'transfer' ? [p.draft.leg] : [];
   const executing = persist(ctx, { ...p, status: 'executing' });
+  // As executeRail: reserved, so the queue moves on and the sends below run outside it.
+  reservationMade();
 
   if (ctx.cfg.mode === 'demo') {
     for (const leg of legs) ctx.ledger.applyDemoTransfer(leg);
