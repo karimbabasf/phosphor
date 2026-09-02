@@ -17,26 +17,20 @@ import type {
   Candle,
   ChainId,
   LogEvent,
-  Policy,
   Proposal,
   ViewMode,
 } from './types.ts';
-import { buildBasic } from './view/basic.ts';
 import type { PriceReading } from './view/basic.ts';
 import { readCoins, writeCoins, MAX_COINS, MIN_COINS } from './view/coins.ts';
+import { createGasCache } from './transactions.ts';
 import { classify } from './composition.ts';
 import { buildWallet } from './wallet.ts';
-import { buildTransactions, createGasCache, evmCandidates } from './transactions.ts';
-import type { TxPlace } from './transactions.ts';
 import { OBSERVATION_CAVEAT } from './yield/positions.ts';
-import { buildGasReport } from './gas/report.ts';
-import type { GasReport, GasWindow } from './gas/report.ts';
 import { buildGreeting } from './greeting.ts';
 import { buildWorkerRole } from './role.ts';
 import { research } from './research.ts';
 import { buildMandateCatalog } from './strategy/catalog.ts';
 import { VERSION } from './version.ts';
-import { renderSentences } from './policy/render.ts';
 import {
   buildRead,
   createChartStore,
@@ -72,7 +66,7 @@ import {
   TRADE_ACTIONS,
   VIEW_TOOLS,
 } from './http/context.ts';
-import type { ServerDeps, PhosphorServer } from './http/context.ts';
+import type { Ctx, GasFill, PriceCache, ServerDeps, PhosphorServer } from './http/context.ts';
 import {
   asRecord,
   capLabel,
@@ -89,6 +83,15 @@ import type { JsonBody } from './http/respond.ts';
 import { HOST, hostIsLocal, mintToken, sameOrigin, tokenFingerprint, tokenMatches } from './http/auth.ts';
 import { createSseHub } from './http/sse.ts';
 import { createChatRegistry } from './http/chats.ts';
+import {
+  bestYieldChain,
+  buildState,
+  fillGas,
+  gasReport,
+  heldYieldChain,
+  sentencesOf,
+  transactionsPayload,
+} from './http/state.ts';
 
 // The basic screen's price tracker. Hourly bars over a day: "today" for someone reading
 // a price is the last 24 hours, not the span since midnight in a timezone the exchange
@@ -142,7 +145,6 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   const sse = createSseHub({ store, audit, chart, trade, recent: recentEvents, recentMax: BASIC_EVENT_SCAN });
   const {
     broadcastState,
-    broadcastTransactions,
     broadcastChart,
     broadcastTrade,
     broadcastActivity,
@@ -190,6 +192,19 @@ export function createServer(deps: ServerDeps): PhosphorServer {
 
   const chats = createChatRegistry({ cfg, audit, agents, getView, sse, makeDriver: deps.makeDriver });
 
+  // Two agents cannot double the same proposal by accident. See src/duplicates.ts for what this
+  // replaces and what it deliberately does not do.
+  const duplicates = createDuplicateGuard();
+
+  // The receipt reader behind the history panel, and the one-at-a-time latch in front of it.
+  const gas: GasFill = { cache: createGasCache({ dataDir: cfg.dataDir }), filling: false };
+
+  // A refused agent keeps trying: its heartbeat alone is one attempt every few seconds, and
+  // the condition it is waiting on (a full roster, or its own revocation) can last hours. One
+  // audit line per refused session, then silence. The refusal itself is never silent (every
+  // call gets the 409 and the reason), only the log is.
+  const seats = new Set<string>();
+
   // ---------- the three prices the basic screen tracks ----------
   //
   // buildState is synchronous and every caller depends on that, so prices are polled
@@ -204,8 +219,31 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   // Held in memory and mirrored to disk, the same shape as the view mode above it: the
   // file is the durable copy, this is the live one, and it is read once on boot rather
   // than per poll.
-  let basicCoins: string[] = readCoins(cfg.dataDir);
-  let priceReadings: PriceReading[] = basicCoins.map(() => null);
+  const prices: PriceCache = { coins: readCoins(cfg.dataDir), readings: [] };
+  prices.readings = prices.coins.map(() => null);
+
+  /* Everything the handlers read, in one object. It is assembled here rather than passed around
+     as a dozen arguments because src/server.ts used to be one closure over these bindings, and
+     the split turned each read into a field. `history` and `crew` close over `ctx` itself and
+     are only ever called from a request, which is why the cycle is safe. */
+  const ctx: Ctx = {
+    ...deps,
+    token,
+    theme: { get: getTheme, set: setTheme },
+    sse,
+    chats,
+    chart,
+    drawings,
+    board,
+    crew: getCrew,
+    crewIfAny: () => crew,
+    recent: recentEvents,
+    history,
+    prices,
+    gas,
+    duplicates,
+    seats,
+  };
 
   async function readPrice(product: string): Promise<PriceReading> {
     try {
@@ -231,10 +269,10 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     // Read into a local first. The list can change under this await when the assistant is
     // asked for a different coin, and assigning a three-coin result into a screen that now
     // shows two would put a price under the wrong name.
-    const coins = [...basicCoins];
+    const coins = [...prices.coins];
     const readings = await Promise.all(coins.map(readPrice));
-    if (coins.join() !== basicCoins.join()) return;
-    priceReadings = readings;
+    if (coins.join() !== prices.coins.join()) return;
+    prices.readings = readings;
   }
 
   const priceTimer = setInterval(() => {
@@ -244,237 +282,6 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   void pollPrice();
 
   // ---------- responses ----------
-
-  // ---------- state ----------
-
-  function sentencesOf(policy: Policy | null): string[] {
-    if (policy === null) return [];
-    // Authored sentences are the human's own words and win. A hand-edited file
-    // that empties them would otherwise hide live rules, so fall back to render.
-    const rendered = renderSentences(policy);
-    const lines = policy.sentences.length > 0 ? policy.sentences.slice() : rendered;
-    // The kill switch line can never be missing from the surface while the switch
-    // is on, whatever the stored sentences say. A refusal state the page does not
-    // state is a safety bug, so this does not depend on the writer of policy.json.
-    const killLine = rendered.find((line) => line.startsWith('KILL SWITCH ON'));
-    if (killLine !== undefined && !lines.some((line) => line.startsWith('KILL SWITCH ON'))) {
-      lines.push(killLine);
-    }
-    return lines;
-  }
-
-  function buildState(): unknown {
-    const snapshot = ledger.snapshot();
-    const composition = classify(snapshot, riskRows);
-    const policy = getPolicy();
-    // The yield positions are handed in so the wallet TOTAL includes them. Supplying a token
-    // removes it from the balance the chain reader sees, so without this the money in a
-    // lending venue is invisible to the one number a person checks first.
-    const yieldView = deps.allocator?.view() ?? null;
-    const wallet = buildWallet(
-      snapshot,
-      ledger.positions(),
-      ledger.intents(),
-      (yieldView?.positions ?? []).map((p) => ({
-        chain: p.chain,
-        venue: p.venue,
-        symbol: p.symbol,
-        receipt: p.receipt,
-        receiptSymbol: p.receiptSymbol,
-        valueUsd: p.valueUsd,
-        principalUsd: p.principalUsd,
-        earnedUsd: p.earnedUsd,
-      })),
-    );
-    const list = proposals.list();
-    return {
-      ledger: snapshot,
-      // wallet is what the UI renders; composition stays because the policy engine
-      // reads byIssuer and freezableShare out of it.
-      wallet,
-      composition,
-      policy,
-      // Unconditional. Kept in the payload so the window states it rather than assumes it.
-      gate: { required: true, banner: null },
-      sentences: sentencesOf(policy),
-      proposals: list,
-      mode: cfg.mode,
-      // Every string in here is agent-authored (client names, labels, board posts) and is
-      // rendered as text, never as markup. It is here so the status bar can say WHICH agents
-      // are driving: "an agent is connected" is a weaker answer than "claude-code since 19:12"
-      // and, now that several can attach, a wrong one when there are three.
-      agents: {
-        connected: agents.connected(),
-        // The lead, under the name every caller written before the roster already reads. The
-        // window's status bar says WHICH agent is driving, and with a team that is the lead.
-        holder: agents.holder(),
-        // The whole team, for the window's roster line. Labels and client names are
-        // agent-authored and are rendered as text, never as markup, exactly like `holder`.
-        members: agents.roster().map((m) => ({
-          session: m.session,
-          label: m.label,
-          client: m.client,
-          role: m.role,
-          parent: m.parent,
-          since: m.since,
-          ops: m.ops,
-        })),
-        capacity: agents.capacity(),
-        workers: (crew?.list() ?? []).map((j) => ({ id: j.id, label: j.label, state: j.state })),
-        // What the agents have told each other, so the human can read over their shoulder.
-        board: board.list(12),
-        // The most recent tool call, so a browser that just loaded (or reconnected and missed
-        // the live 'activity' pings below) can seed its presence light from state alone rather
-        // than waiting for the next op to know whether the agent is working.
-        lastActivityAt: agents.activityAt(),
-      },
-      candleProducts: cfg.candleProducts,
-      // What the stablecoin is earning. Read from a background refresh rather than here,
-      // because buildState is synchronous and a position lives on a chain. `stale` on that
-      // view means the last read failed and these are the previous good numbers; the panel
-      // says so rather than drawing a zero, which for this feature would be the worst
-      // available lie.
-      yield: yieldView,
-      view: getView(),
-      // The window paints itself from this. It rides on state rather than on the chart
-      // payload because the ground and the accent are the whole page, not the canvas.
-      theme: getTheme(),
-      // Computed in BOTH modes, deliberately. A view model that only exists in the mode
-      // that renders it is a view model nothing exercises while the app sits in its
-      // default state, which is where a regression would hide longest.
-      basic: buildBasic({
-        wallet,
-        proposals: list,
-        policyReadable: policy !== null,
-        killSwitch: policy?.killSwitch ?? false,
-        agentsConnected: agents.connected(),
-        chainStatus: snapshot.chainStatus,
-        selfAddresses: [...cfg.addresses.evm, ...cfg.addresses.solana, ...cfg.addresses.near],
-        prices: priceReadings,
-        // The assistant's half of the history: the same events the pro screen's log
-        // carries, rendered as sentences instead of as log lines. See buildActions.
-        events: recentEvents,
-      }),
-    };
-  }
-
-  // ---------- transaction history ----------
-  //
-  // Derived from the proposal store and the audit log on every request (see the header of
-  // src/transactions.ts). Gas is the one part that needs the chain, so it is read behind the
-  // response rather than in front of it: the panel draws immediately with whatever receipts
-  // are already cached, the rest are fetched, and the browser is told when they land.
-
-  const gasCache = createGasCache({ dataDir: cfg.dataDir });
-  let gasFilling = false;
-
-  function transactionsPayload(): { entries: ReturnType<typeof buildTransactions>; gasPending: number } {
-    const entries = buildTransactions({
-      proposals: proposals.list(),
-      events: audit.tail(LOG_LIMIT_MAX),
-      selfAddresses: [...cfg.addresses.evm, ...cfg.addresses.solana, ...cfg.addresses.near],
-      gas: gasCache.all(),
-      tried: gasCache.triedAll(),
-    });
-    // Only what is still worth waiting for. A hash no chain we can reach has ever heard of
-    // is answered, not pending: an app that has run on two networks holds plenty of them.
-    let gasPending = 0;
-    for (const entry of entries) {
-      for (const tx of entry.hashes) if (tx.gasPending) gasPending += 1;
-    }
-    return { entries, gasPending };
-  }
-
-  // One fill at a time, and only for hashes nobody has read yet. A receipt is immutable, so
-  // this converges: every call after the last one has landed does no network work at all.
-  function fillGas(entries: ReturnType<typeof buildTransactions>): void {
-    if (gasFilling) return;
-    const wanted: Array<{ places: TxPlace[]; hash: string }> = [];
-    for (const entry of entries) {
-      for (const tx of entry.hashes) {
-        if (tx.gasPending) wanted.push({ places: evmCandidates(tx.place), hash: tx.hash });
-      }
-    }
-    if (wanted.length === 0) return;
-    gasFilling = true;
-    const prices = ledger.snapshot().prices;
-    void gasCache
-      .fill(wanted, symbol => prices[symbol] ?? 0)
-      .then(landed => {
-        if (landed > 0) broadcastTransactions();
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        gasFilling = false;
-      });
-  }
-
-  // ---------- gas analytics ----------
-  //
-  // One derivation, two doors. The window opens GET /api/gas and an agent asks for the
-  // gas_report read tool, and both land here, for the same reason /api/chart and the chart
-  // read tools land in one place: two aggregations of one history would eventually disagree
-  // about a dollar, and the human and the agent would each be told a different number about
-  // the same money.
-  //
-  // The fill is kicked off exactly as /api/transactions does it. Without that line, a report
-  // asked for before the history panel was ever opened would count every unread receipt as a
-  // remainder forever, because nothing else on this surface reads a receipt.
-
-  function gasReport(windowRaw: string): { status: number; body: GasReport | { error: string } } {
-    const window = windowRaw as GasWindow;
-    if (window !== '24h' && window !== '7d' && window !== '30d' && window !== 'all') {
-      // A 400, not a 200 carrying an error field. The window renders whatever body it is
-      // handed, so an error object answered with a success status draws as a report of zero
-      // gas, which is the one wrong answer this whole feature exists to avoid.
-      return { status: 400, body: { error: `window must be one of 24h, 7d, 30d, all; got '${windowRaw}'` } };
-    }
-    const payload = transactionsPayload();
-    fillGas(payload.entries);
-    return { status: 200, body: buildGasReport({ entries: payload.entries, window, nowMs: Date.now() }) };
-  }
-
-  // ---------- the lending allocator's two doors ----------
-  //
-  // A chain omitted on a yield proposal is answered from the loop's own view rather than
-  // defaulted to a constant. A constant would be right until the day a second venue paid
-  // more, and then it would be quietly wrong on every call that trusted it.
-
-  function bestYieldChain(): { ok: true; chain: ChainId } | { ok: false; reason: string } {
-    const view = deps.allocator?.view();
-    if (!view) {
-      return { ok: false, reason: 'no lending allocator is running, so there is no best venue to pick. Name a chain.' };
-    }
-    if (view.best) return { ok: true, chain: view.best.chain };
-    // Healthy venues exist and none of them quoted a rate: the read failed or the reserve is
-    // frozen. Saying which is what lets a caller decide whether to retry or to stop.
-    const unhealthy = view.venues.filter(v => !v.healthy).map(v => `${v.chain}: ${v.note}`);
-    return {
-      ok: false,
-      reason:
-        'no venue is currently paying a readable rate, so there is no best chain to deposit into. ' +
-        (unhealthy.length > 0 ? unhealthy.join('; ') : 'Name a chain to force one.'),
-    };
-  }
-
-  function heldYieldChain(): { ok: true; chain: ChainId } | { ok: false; reason: string } {
-    const view = deps.allocator?.view();
-    if (!view) {
-      return { ok: false, reason: 'no lending allocator is running, so there is no position to withdraw from.' };
-    }
-    // Only positions that actually hold something. A closed position keeps its row so the
-    // window can still show what it earned, and withdrawing from it would refuse at the rail
-    // with a message about a zero balance instead of here with one about which chain.
-    const held = view.positions.filter(pos => Number(pos.valueUsd) > 0);
-    if (held.length === 0) return { ok: false, reason: 'nothing is supplied to a lending venue, so there is nothing to withdraw.' };
-    if (held.length > 1) {
-      return {
-        ok: false,
-        reason: `money is supplied on more than one chain (${held.map(p => p.chain).join(', ')}), so name the one to withdraw from.`,
-      };
-    }
-    return { ok: true, chain: held[0]!.chain };
-  }
 
   // Starting and stopping the loop. It moves no money itself and gets no policy verdict,
   // which puts it in the class of set_view_mode rather than of propose: what it changes is
@@ -1267,7 +1074,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       return;
     }
     if (tool === 'gas_report') {
-      const report = gasReport(String(args.window ?? '7d'));
+      const report = gasReport(ctx, String(args.window ?? '7d'));
       sendJson(res, report.status, report.body);
       return;
     }
@@ -1656,10 +1463,6 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     return raw as ChainId;
   }
 
-  // Two agents cannot double the same proposal by accident. See src/duplicates.ts for what this
-  // replaces and what it deliberately does not do.
-  const duplicates = createDuplicateGuard();
-
   async function handlePropose(body: JsonBody, res: http.ServerResponse): Promise<void> {
     const kind = String(body.kind ?? '');
     const params = asRecord(body.params);
@@ -1817,7 +1620,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
           // Omitted on purpose, and it is the common case. A deposit goes where the loop
           // would send it, and a withdrawal comes from wherever the position actually is.
           // Both answers live in the allocator's view, so neither is a guess.
-          const picked = kind === 'yield_deposit' ? bestYieldChain() : heldYieldChain();
+          const picked = kind === 'yield_deposit' ? bestYieldChain(ctx) : heldYieldChain(ctx);
           if (!picked.ok) {
             fail(res, 400, picked.reason);
             return;
@@ -1985,7 +1788,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         res,
         400,
         `the basic screen shows ${MIN_COINS} to ${MAX_COINS} coins, got ${asked.length}`,
-        { coins: basicCoins },
+        { coins: prices.coins },
       );
       return;
     }
@@ -2002,23 +1805,23 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         res,
         400,
         `not a market this app can chart: ${unknown.join(', ')}`,
-        { coins: basicCoins, hint: 'read market_search to find the id, then set that' },
+        { coins: prices.coins, hint: 'read market_search to find the id, then set that' },
       );
       return;
     }
 
-    const previous = basicCoins;
+    const previous = prices.coins;
     if (previous.join() === resolved.join()) {
       sendJson(res, 200, { ok: true, coins: resolved, unchanged: true });
       return;
     }
 
-    basicCoins = resolved;
+    prices.coins = resolved;
     writeCoins(cfg.dataDir, resolved);
     // Blank rather than stale while the new coins are fetched. The screen renders a coin
     // it has no price for as absent, so the band goes short for one poll instead of
     // showing the old coin's figure under the new coin's name.
-    priceReadings = resolved.map(() => null);
+    prices.readings = resolved.map(() => null);
     audit.append('view_changed', `agent set the basic screen coins to ${resolved.join(', ')}`, {
       from: previous,
       to: resolved,
@@ -2084,12 +1887,6 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     });
   }
 
-  // A refused agent keeps trying: its heartbeat alone is one attempt every few seconds, and
-  // the condition it is waiting on (a full roster, or its own revocation) can last hours. One
-  // audit line per refused session, then silence. The refusal itself is never silent (every
-  // call gets the 409 and the reason), only the log is.
-  const rejectedSessions = new Set<string>();
-
   function rejectSeat(error: string, body: JsonBody, res: http.ServerResponse, revoked = false): void {
     const session = String(body.session ?? 'unnamed-session');
     if (revoked) {
@@ -2104,8 +1901,8 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       fail(res, 409, error, { seat: 'revoked' });
       return;
     }
-    if (!rejectedSessions.has(session)) {
-      rejectedSessions.add(session);
+    if (!ctx.seats.has(session)) {
+      ctx.seats.add(session);
       // Not "a second agent was refused" any more: a second agent is welcome. This line is now
       // only ever a FULL roster, which is a capacity fact and reads differently in a log.
       audit.append('agent_rejected', 'an agent tried to attach to a full roster and was refused', {
@@ -2271,22 +2068,22 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         return;
       }
       if (req.method === 'GET' || req.method === 'HEAD') {
-        if (route === '/api/state') return sendJsonConditional(req, res, buildState());
+        if (route === '/api/state') return sendJsonConditional(req, res, buildState(ctx));
         if (route === '/api/candles') return await sendCandles(url, res);
         if (route === '/api/chart') return sendJson(res, 200, chartPayload());
         if (route === '/api/log') {
           return sendJson(res, 200, audit.tail(intParam(url.searchParams.get('limit'), 200, LOG_LIMIT_MAX)));
         }
         if (route === '/api/transactions') {
-          const payload = transactionsPayload();
-          fillGas(payload.entries);
+          const payload = transactionsPayload(ctx);
+          fillGas(ctx, payload.entries);
           return sendJson(res, 200, payload);
         }
         if (route === '/api/gas') {
           // Same derivation as /api/transactions and the same background fill, so opening GAS
           // after HISTORY costs nothing and opening it first warms the cache for HISTORY. The
           // report says how many receipts are still coming rather than counting them as free.
-          const report = gasReport(url.searchParams.get('window') ?? '7d');
+          const report = gasReport(ctx, url.searchParams.get('window') ?? '7d');
           return sendJson(res, report.status, report.body);
         }
         if (route === '/api/trade') return sendJson(res, 200, trade.payload());
