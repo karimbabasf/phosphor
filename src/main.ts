@@ -68,6 +68,24 @@ const session = createSession({
   },
 });
 
+/* Read the proposal file once, here, before anything else touches it. An unreadable state file
+   is a refusal to boot with a sentence, not a silent fresh start on an empty history and not a
+   raw stack out of whichever handler happened to read first. readAll has already moved the bad
+   bytes aside by the time this catch runs, so the next start comes up clean with the evidence
+   kept beside it. */
+try {
+  store.list();
+} catch (err) {
+  const why = err instanceof Error ? err.message : String(err);
+  console.error(`phosphor: ${why}`);
+  try {
+    audit.append('error', `refused to boot: ${why}`);
+  } catch {
+    // The audit file is on the same disk that just failed us. stderr already carries it.
+  }
+  process.exit(3);
+}
+
 /* Anything the last run left behind, before this one can add to it. See the note above
    sweepOrphans in src/driver.ts for why this is safe here and nowhere else: it runs from the
    entrypoint rather than from createServer because every test in this repo builds a server,

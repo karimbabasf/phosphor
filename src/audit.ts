@@ -35,6 +35,15 @@ export type Audit = {
   // Walks the whole file and reports the first line whose link does not hold. `ok` on an
   // absent or empty file: no lines is a chain nobody has broken.
   verify(): { ok: true; lines: number } | { ok: false; lines: number; break: ChainBreak };
+  // How many lines tail() has had to skip since boot. A torn line is normal after a power
+  // loss mid-append and abnormal any other time, so the number is reported (health) rather
+  // than logged: logging it would append a line per poll to the file that is torn.
+  //
+  // Distinct from verify() above, and the two answer different questions. verify() asks whether
+  // the chain HOLDS, and a torn line breaks it; this asks whether rendering the log had to skip
+  // anything. A file can have a torn last line, which is what a power loss during an append
+  // leaves, and still be a chain nobody tampered with up to that point.
+  tornLines(): number;
 };
 
 export function hashLine(line: string): string {
@@ -84,6 +93,7 @@ export function createAudit(dataDir: string): Audit {
   fs.mkdirSync(dataDir, { recursive: true });
   const filePath = path.join(dataDir, 'audit.jsonl');
   const subscribers = new Set<(e: LogEvent) => void>();
+  let torn = 0;
 
   /* The hash of the last line written, held in memory so an append is one write rather than a
      re-read of the file. Seeded from disk once, because a restart has to link onto whatever the
@@ -109,10 +119,25 @@ export function createAudit(dataDir: string): Audit {
     return event;
   }
 
+  // Newest first, and a line that will not parse is skipped rather than thrown.
+  //
+  // A half-written last line is what a power loss during appendFileSync leaves behind, and
+  // JSON.parse on it used to throw out of every caller. createServer reads the tail at
+  // construction, main.ts constructs the server at module scope, so one torn byte made the
+  // app permanently unbootable and recovery meant a human editing audit.jsonl by hand.
+  //
+  // The walk is backwards and counts what it keeps, so `limit` lines are still returned when
+  // some of the candidates are torn. Reading forwards and slicing would return fewer.
   function tail(limit: number): LogEvent[] {
     const lines = readLines(filePath);
-    const selected = lines.slice(-limit).map((line) => JSON.parse(line) as LogEvent);
-    selected.reverse();
+    const selected: LogEvent[] = [];
+    for (let i = lines.length - 1; i >= 0 && selected.length < limit; i -= 1) {
+      try {
+        selected.push(JSON.parse(lines[i]) as LogEvent);
+      } catch {
+        torn += 1;
+      }
+    }
     return selected;
   }
 
@@ -121,5 +146,5 @@ export function createAudit(dataDir: string): Audit {
     return () => subscribers.delete(fn);
   }
 
-  return { append, tail, subscribe, verify: () => verifyChain(readLines(filePath)) };
+  return { append, tail, subscribe, verify: () => verifyChain(readLines(filePath)), tornLines: () => torn };
 }
