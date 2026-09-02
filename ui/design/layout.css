@@ -1,0 +1,402 @@
+/* Phosphor layout: one shell, three views.
+
+   The page scrolls when the content is taller than the window. There is no
+   max-width on the shell and no 100dvh cap with overflow hidden at the page
+   level: those two together are what made a big screen show a square with its
+   edges cut off. Panels do not scroll inside themselves except tables. */
+
+html, body {
+  height: auto;
+  min-height: 100%;
+  overflow-x: hidden;
+}
+
+#page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  width: 100%;
+}
+
+/* ---------- The pattern field ---------- */
+
+.pattern-field {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.pattern-local {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+/* ---------- Top bar ---------- */
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: var(--s-4);
+  height: var(--topbar-h);
+  padding: 0 var(--s-4);
+  background: color-mix(in srgb, var(--bg-0) 88%, transparent);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+
+.wordmark {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--fs-14);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.wordmark-glyph {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background: var(--ink);
+}
+
+.tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  padding: 3px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+}
+
+.tab {
+  height: 28px;
+  padding: 0 var(--s-4);
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-13);
+  font-weight: 500;
+  color: var(--text-2);
+  transition: color var(--dur-press) var(--ease-out),
+              background-color var(--dur-press) var(--ease-out),
+              transform var(--dur-press) var(--ease-out);
+}
+
+.tab:active {
+  transform: scale(0.97);
+}
+
+.tab[aria-selected="true"] {
+  background: var(--bg-2);
+  color: var(--text);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .tab:hover:not([aria-selected="true"]) {
+    color: var(--text);
+  }
+}
+
+.status-cluster {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+/* ---------- Views ---------- */
+
+.views {
+  position: relative;
+  z-index: 1;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.view {
+  display: none;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.view[data-active="true"] {
+  display: flex;
+}
+
+/* The crossfade: 180 ms, 2 px of blur to bridge the two states. */
+.views[data-swapping="true"] .view[data-active="true"] {
+  animation: viewin var(--dur-swap) var(--ease-out) both;
+}
+
+@keyframes viewin {
+  from { opacity: 0; filter: blur(2px); }
+  to { opacity: 1; filter: blur(0); }
+}
+
+/* ---------- Basic: one 720 px column ---------- */
+
+/* The content columns paint the ground themselves, so the field shows in the
+   margins beyond them and nowhere else. Without this it reads through every
+   gutter and the grid looks like it is sitting on static. */
+.basic-col,
+.pro-grid,
+.trade-wrap {
+  background: var(--bg-0);
+}
+
+.basic-col {
+  width: min(var(--basic-col), 100%);
+  margin: 0 auto;
+  padding: var(--s-7) var(--s-5) var(--s-8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-5);
+}
+
+.hero {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius);
+  padding: var(--s-7) var(--s-5) var(--s-6);
+}
+
+.hero-inner {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+/* ---------- Pro: 12 columns, max 1440, the pattern fills the margins ---------- */
+
+.pro-grid {
+  width: min(var(--pro-max), 100%);
+  margin: 0 auto;
+  padding: var(--s-5) var(--s-5) var(--s-8);
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: var(--gutter);
+  align-items: start;
+}
+
+.span-4 { grid-column: span 4; }
+.span-5 { grid-column: span 5; }
+.span-6 { grid-column: span 6; }
+.span-7 { grid-column: span 7; }
+.span-8 { grid-column: span 8; }
+.span-12 { grid-column: span 12; }
+
+@media (max-width: 1100px) {
+  .pro-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .span-4, .span-5, .span-6, .span-7, .span-8, .span-12 { grid-column: span 6; }
+}
+
+/* ---------- Trade: full bleed, chart left, 360 px rail ---------- */
+
+.trade-wrap {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 6px var(--rail, var(--rail-w));
+  min-height: calc(100vh - var(--topbar-h));
+}
+
+.trade-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid var(--line);
+}
+
+.trade-rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding: var(--s-3);
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.chart-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+  padding: var(--s-2) var(--s-3);
+  border-bottom: 1px solid var(--line);
+  min-height: 44px;
+}
+
+.chart-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 320px;
+}
+
+.chart-stage canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+@media (max-width: 1100px) {
+  .trade-wrap {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .trade-main { border-right: 0; border-bottom: 1px solid var(--line); }
+  .trade-rail { max-height: none; }
+  .split-h { display: none; }
+}
+
+/* ---------- The resizer ---------- */
+
+.split-h {
+  cursor: col-resize;
+  background: transparent;
+  border: 0;
+  border-left: 1px solid transparent;
+  transition: background-color var(--dur-press) var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .split-h:hover { background: var(--line-strong); }
+}
+
+.split-h:focus-visible { background: var(--ink); }
+
+/* ---------- The decision overlay ---------- */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  padding: var(--s-5);
+  background: color-mix(in srgb, var(--bg-0) 72%, transparent);
+  backdrop-filter: blur(6px);
+}
+
+.overlay[hidden] { display: none; }
+
+.overlay-card {
+  width: min(560px, 100%);
+  max-height: calc(100vh - var(--s-8));
+  overflow-y: auto;
+  background: var(--bg-1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--lift);
+  padding: var(--s-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  animation: cardin var(--dur-enter) var(--ease-out) both;
+}
+
+@keyframes cardin {
+  from { opacity: 0; transform: scale(0.97) translateY(6px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* ---------- The screen cards: first run, lock, migration ---------- */
+
+.screen {
+  position: relative;
+  flex: 1 1 auto;
+  display: grid;
+  place-items: center;
+  padding: var(--s-6) var(--s-5);
+  min-height: calc(100vh - var(--topbar-h));
+}
+
+.screen-card {
+  position: relative;
+  z-index: 1;
+  width: min(520px, 100%);
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--lift);
+  padding: var(--s-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+
+.screen-steps {
+  font-size: var(--fs-12);
+  color: var(--text-3);
+  font-family: var(--font-mono);
+}
+
+.screen-actions {
+  display: flex;
+  gap: var(--s-2);
+  margin-top: var(--s-2);
+}
+
+/* ---------- Fold ---------- */
+
+.fold {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-1);
+  overflow: hidden;
+}
+
+.fold-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  width: 100%;
+  padding: var(--s-4);
+  text-align: left;
+  transition: background-color var(--dur-press) var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .fold-head:hover { background: var(--bg-2); }
+}
+
+.fold-mark {
+  color: var(--text-3);
+  transition: transform var(--dur-enter) var(--ease-out);
+}
+
+.fold[data-open="true"] .fold-mark {
+  transform: rotate(90deg);
+}
+
+.fold-body {
+  border-top: 1px solid var(--line);
+}
+
+/* ---------- Utility ---------- */
+
+.stack { display: flex; flex-direction: column; gap: var(--s-3); }
+.stack-2 { display: flex; flex-direction: column; gap: var(--s-2); }
+.stack-5 { display: flex; flex-direction: column; gap: var(--s-5); }
+.hstack { display: flex; align-items: center; gap: var(--s-3); }
+.hstack-2 { display: flex; align-items: center; gap: var(--s-2); }
+.between { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); }
+.grow { flex: 1 1 auto; min-width: 0; }
+.wrap { flex-wrap: wrap; }

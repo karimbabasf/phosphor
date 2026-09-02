@@ -1,0 +1,449 @@
+/* Screen-level pieces: the parts that belong to one surface rather than to the
+   component set. */
+
+/* ---------- facts: a label and a value, aligned down a column ---------- */
+
+.facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--s-2) var(--s-4);
+  align-items: baseline;
+}
+
+.fact {
+  display: contents;
+}
+
+.fact > .label {
+  white-space: nowrap;
+}
+
+.fact > .body {
+  text-align: right;
+}
+
+/* ---------- offline ---------- */
+
+.offline-bar {
+  position: sticky;
+  top: var(--topbar-h);
+  z-index: 35;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-4);
+  background: var(--warn-wash);
+  border-bottom: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+  font-size: var(--fs-13);
+  color: var(--text);
+}
+
+/* ---------- basic ---------- */
+
+.panel-bare {
+  background: transparent;
+  border-color: transparent;
+}
+
+.panel-total {
+  padding-top: var(--s-3);
+  margin-top: var(--s-3);
+  border-top: 1px solid var(--line);
+}
+
+.basic-stop {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  align-items: center;
+  padding-top: var(--s-5);
+  text-align: center;
+}
+
+.basic-stop .meta {
+  max-width: 42ch;
+}
+
+/* ---------- money in ---------- */
+
+.receive-card {
+  display: flex;
+  gap: var(--s-4);
+  align-items: flex-start;
+  padding: var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-1);
+}
+
+.qr {
+  flex: 0 0 auto;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  line-height: 0;
+}
+
+@media (max-width: 560px) {
+  .receive-card { flex-direction: column-reverse; }
+}
+
+/* ---------- limits ---------- */
+
+.limit-row {
+  padding: var(--s-2) 0;
+  border-top: 1px solid var(--line);
+}
+
+.limit-row:first-of-type {
+  border-top: 0;
+}
+
+.allowlist {
+  max-height: 168px;
+  overflow-y: auto;
+  padding: var(--s-3);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+}
+
+/* ---------- activity and receipts ---------- */
+
+.activity-list .row:first-child {
+  border-top: 1px solid var(--line);
+}
+
+.receipt-row {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  transition: background-color var(--dur-press) var(--ease-out);
+}
+
+.tx-row {
+  padding: var(--s-3);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+/* ---------- the agent panel ---------- */
+
+.agent-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-height: 220px;
+}
+
+.agent-head {
+  align-items: flex-start;
+}
+
+.agent-empty {
+  position: relative;
+  overflow: hidden;
+  min-height: 148px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  display: grid;
+  place-items: center;
+  padding: var(--s-5);
+}
+
+.agent-empty-inner {
+  position: relative;
+  z-index: 1;
+  text-align: center;
+  max-width: 44ch;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.transcript {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: var(--s-2);
+}
+
+.chat-row {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: var(--s-3);
+  align-items: baseline;
+  font-size: var(--fs-13);
+}
+
+.chat-who {
+  color: var(--text-3);
+  font-size: var(--fs-12);
+  text-align: right;
+}
+
+.chat-text {
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.chat-tool .chat-text,
+.chat-status .chat-text,
+.chat-boot .chat-text {
+  color: var(--text-2);
+}
+
+.chat-tool .chat-who {
+  color: var(--agent);
+}
+
+.chat-error .chat-text {
+  color: var(--down);
+}
+
+.chat-said .chat-text {
+  color: var(--text-2);
+}
+
+.agent-composer {
+  display: flex;
+  gap: var(--s-2);
+}
+
+.agent-composer .input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.agent-external {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--line);
+}
+
+.agent-client .dot {
+  color: var(--up);
+}
+
+/* ---------- first run ---------- */
+
+.choice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  align-items: flex-start;
+  text-align: left;
+  padding: var(--s-4);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+  transition: border-color var(--dur-press) var(--ease-out),
+              transform var(--dur-press) var(--ease-out);
+}
+
+.choice:active {
+  transform: scale(0.99);
+}
+
+.choice[data-chosen="true"] {
+  border-color: var(--ink);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .choice:hover { border-color: var(--text-3); }
+}
+
+.words {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s-2);
+  padding: var(--s-4);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+}
+
+.word {
+  display: flex;
+  gap: var(--s-2);
+  align-items: baseline;
+}
+
+.word .meta {
+  min-width: 16px;
+  text-align: right;
+  color: var(--text-3);
+}
+
+.checkline {
+  display: flex;
+  gap: var(--s-3);
+  align-items: flex-start;
+  cursor: pointer;
+}
+
+.checkline input {
+  margin-top: 3px;
+  accent-color: var(--ink);
+  width: 16px;
+  height: 16px;
+}
+
+.connect-block {
+  padding: var(--s-4);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+}
+
+.threshold-line {
+  font-size: var(--fs-16);
+}
+
+.threshold-input {
+  width: 96px;
+  text-align: right;
+  font-family: var(--font-mono);
+}
+
+/* ---------- trade ---------- */
+
+.chart-select {
+  width: auto;
+  min-width: 132px;
+  min-height: 30px;
+}
+
+.chart-cmd {
+  width: 168px;
+  min-height: 30px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+}
+
+.chartwrap {
+  position: absolute;
+  inset: 0;
+}
+
+.chart-hud {
+  position: absolute;
+  top: var(--s-3);
+  left: var(--s-3);
+  z-index: 2;
+  pointer-events: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  color: var(--text-2);
+}
+
+.chart-wait {
+  position: absolute;
+  top: var(--s-3);
+  right: var(--s-3);
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-1) var(--s-3);
+  border-radius: var(--radius-pill);
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  color: var(--text-2);
+}
+
+.fill-row {
+  padding: var(--s-1) 0;
+  font-size: var(--fs-13);
+}
+
+.timeframe {
+  height: 26px;
+  padding: 0 var(--s-3);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  color: var(--text-2);
+  border: 1px solid transparent;
+  transition: color var(--dur-press) var(--ease-out),
+              border-color var(--dur-press) var(--ease-out),
+              transform var(--dur-press) var(--ease-out);
+}
+
+.timeframe:active { transform: scale(0.97); }
+.timeframe[aria-pressed="true"],
+.timeframe.on {
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+
+/* ---------- the confirm dialog ---------- */
+
+dialog.confirm {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  max-width: min(460px, calc(100vw - var(--s-6)));
+}
+
+dialog.confirm::backdrop {
+  background: color-mix(in srgb, #000 62%, transparent);
+  backdrop-filter: blur(4px);
+}
+
+.confirm-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding: var(--s-5);
+  border-radius: var(--radius);
+  background: var(--bg-1);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--lift);
+  animation: cardin var(--dur-enter) var(--ease-out) both;
+}
+
+/* ---------- locked: the shell behind the card keeps reading ---------- */
+
+/* The shell keeps reading behind the lock, and it has to stay legible enough
+   that a person can see their balance without unlocking. Blurred and dimmed,
+   not hidden. */
+body[data-locked="true"] .views {
+  filter: blur(2px);
+  opacity: 0.62;
+  pointer-events: none;
+}
+
+body[data-locked="true"] .topbar .tabs {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.screen {
+  position: fixed;
+  inset: var(--topbar-h) 0 0 0;
+  z-index: 60;
+  background: color-mix(in srgb, var(--bg-0) 52%, transparent);
+}
+
+.destinations {
+  padding: var(--s-3);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+}
+
+.policy-diff {
+  padding: var(--s-3);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+}

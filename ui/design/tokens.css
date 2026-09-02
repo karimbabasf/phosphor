@@ -1,0 +1,87 @@
+/* Phosphor design tokens. One dark look, painted, never inherited from the OS.
+   Colour means state. Nothing is coloured for decoration.
+
+   Five of these are the set_theme contract and are rewritten at runtime by
+   ui/theme.js: --ink (accent), --bg-0 (background), --up, --down, --agent.
+   Everything else derives from them or stands on its own. */
+
+:root {
+  color-scheme: dark;
+
+  /* Ground and surfaces */
+  --bg-0: #09090B;
+  --bg-1: #0F1013;
+  --bg-2: #16171B;
+  --line: #22242A;
+  --line-strong: #2E3138;
+
+  /* Text */
+  --text: #EDEEF0;
+  --text-2: #9A9EA8;
+  --text-3: #5F636C;
+
+  /* State colour. White is the action colour. */
+  --ink: #FFFFFF;
+  --on-ink: #09090B;
+  --up: #5B8DEF;
+  --down: #FF5A6E;
+  --warn: #F2B544;
+  --agent: #B79CFF;
+
+  /* Tints derived from the five slots. theme.js rewrites these with the slots. */
+  --ink-wash: rgba(255, 255, 255, 0.08);
+  --ink-edge: rgba(255, 255, 255, 0.16);
+  --up-wash: rgba(91, 141, 239, 0.14);
+  --down-wash: rgba(255, 90, 110, 0.14);
+  --warn-wash: rgba(242, 181, 68, 0.14);
+  --agent-wash: rgba(183, 156, 255, 0.13);
+  --agent-edge: rgba(183, 156, 255, 0.28);
+
+  /* Type */
+  --font-ui: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --fs-12: 12px;
+  --fs-13: 13px;
+  --fs-14: 14px;
+  --fs-16: 16px;
+  --fs-20: 20px;
+  --fs-28: 28px;
+  --fs-56: 56px;
+
+  /* Space. A four-step rhythm, everything is a multiple of 4. */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 48px;
+  --s-8: 64px;
+
+  /* Shape */
+  --radius: 12px;
+  --radius-sm: 8px;
+  --radius-pill: 999px;
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --dur-press: 160ms;
+  --dur-enter: 220ms;
+  --dur-swap: 180ms;
+  --dur-number: 300ms;
+
+  /* Layout */
+  --topbar-h: 48px;
+  --basic-col: 720px;
+  --pro-max: 1440px;
+  --rail-w: 360px;
+  --gutter: 24px;
+
+  /* Depth. One shadow in the whole app, for things that float. */
+  --lift: 0 12px 40px rgba(0, 0, 0, 0.55), 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+}
+
+/* The five slots keep their meaning when an agent recolours the window, so the
+   window never paints text on a ground it cannot be read against. theme.js
+   enforces the contrast floors server side before these are written. */

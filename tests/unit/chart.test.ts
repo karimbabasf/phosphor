@@ -318,7 +318,7 @@ test('trendlines obey the clear targets, including the human way out of agent dr
 // The symbol switch, with the patch the BROWSER actually sends.
 //
 // The test above this one passes and always did, because it sends `{product}` alone. The real
-// client never sends that: ui/chart.js pushChart serialises the WHOLE view on every change,
+// client never sends that: ui/chart/chart.js pushChart serialises the WHOLE view on every change,
 // so a symbol switch arrives carrying the outgoing instrument's pan and price scale in the
 // same object. The reset ran and then those two fields wrote themselves straight back over
 // it, which is both of the complaints about this chart, from one line each.

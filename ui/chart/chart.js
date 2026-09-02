@@ -91,21 +91,13 @@ function lighten(hex, amount) {
   return 'rgb(' + out.join(', ') + ')';
 }
 
-/* The theme src/view/theme.ts ships, before anyone chose one.
-
-   TRANSITIONAL, and it deletes itself. The chart has moved onto the design tokens; the rest of
-   the window has not yet, so DEFAULT_THEME is still the old green and a state frame carrying it
-   would repaint this canvas green on the first tick, undoing the move. A slot still holding its
-   shipped value is a slot nobody chose, so the chart keeps its token. A slot somebody DID
-   choose still wins, which is the whole point of the tool.
-
-   When the theme defaults become the tokens, every comparison below is false and this constant
-   can go. Nothing else depends on it. */
-var SHIPPED_THEME = { accent: '#33ff66', background: '#0b0d0b', up: '#33ff66', down: '#cc3a30', agent: '#33ff66' };
-
-function chosen(value, slot) {
+/* A slot the window is actually carrying. The guard that used to sit here compared each slot
+   against the old green defaults and refused them, because a state frame carrying DEFAULT_THEME
+   would have repainted this canvas green on the first tick. src/view/theme.ts now ships the
+   design tokens, so there is nothing left to refuse: every slot that arrives is either the
+   token this file already uses or a colour somebody chose. */
+function chosen(value) {
   if (typeof value !== 'string') return null;
-  if (value.trim().toLowerCase() === SHIPPED_THEME[slot]) return null;
   return rgbTriple(value);
 }
 
@@ -119,11 +111,11 @@ function chosen(value, slot) {
    palette. The bright highlight follows the chosen accent, because it is a highlight. */
 function chartTheme(theme) {
   if (!theme) return;
-  var accent = chosen(theme.accent, 'accent');
-  var ground = chosen(theme.background, 'background');
-  var up = chosen(theme.up, 'up');
-  var down = chosen(theme.down, 'down');
-  var agent = chosen(theme.agent, 'agent');
+  var accent = chosen(theme.accent);
+  var ground = chosen(theme.background);
+  var up = chosen(theme.up);
+  var down = chosen(theme.down);
+  var agent = chosen(theme.agent);
   var before = [C_BG, C_UP, C_DOWN, C_HI, RGB_ACCENT, RGB_DOWN, RGB_AGENT].join('|');
 
   if (accent !== null) C_HI = lighten(theme.accent, 0.45);

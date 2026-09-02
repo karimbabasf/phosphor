@@ -15,11 +15,11 @@ import { createContext, runInContext } from 'node:vm';
 
 type Sandbox = Record<string, any>;
 
-/* ui/chart.js is a browser script, not a module: it declares vars and functions and does
+/* ui/chart/chart.js is a browser script, not a module: it declares vars and functions and does
    nothing until chartBoot is called. Running it in a context makes every one of those a
    property of the sandbox, which is the whole test surface. */
 function loadChartUi(): Sandbox {
-  const source = readFileSync(new URL('../../ui/chart.js', import.meta.url), 'utf8');
+  const source = readFileSync(new URL('../../ui/chart/chart.js', import.meta.url), 'utf8');
   const sandbox: Sandbox = {
     window: {
       requestAnimationFrame: () => 1,
@@ -36,7 +36,7 @@ function loadChartUi(): Sandbox {
     console,
   };
   createContext(sandbox);
-  runInContext(source, sandbox, { filename: 'ui/chart.js' });
+  runInContext(source, sandbox, { filename: 'ui/chart/chart.js' });
   return sandbox;
 }
 

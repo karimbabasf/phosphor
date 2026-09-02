@@ -51,54 +51,22 @@ var SPLIT_DOUBLE_MS = 400; /* two presses this close together are one double cli
  * 96 for the gate is one pending proposal with its two buttons still on screen.
  */
 var SPLIT_PAGES = {
-  pro: {
-    /* The agent is on the RIGHT, so dragging right makes it smaller: sign -1. The name is
-       deck-agent rather than the old deck-a on purpose. A stored width from the layout where
-       the agent was the LEFT column would be read back and applied to a column on the other
-       side of the screen, which is not a size anybody chose. A new name is how that entry
-       gets left behind instead of misapplied. */
-    'deck-agent': {
-      axis: 'x', sign: -1, min: 240,
-      pane: '.col-agent', host: '.deck', prop: '--deck-agent',
-      give: '.col-mid', giveMin: 380,
-    },
-    /* The wallet is the sized one and the chart is the give, never the other way round: the
-       chart is the growing panel in that column, so whatever the wallet does not take it
-       gets back automatically, and the chart canvas is resized by the browser rather than
-       by a second number this file would have to keep true. */
-    'chart-wallet': {
-      axis: 'y', sign: -1, min: 120,
-      pane: '.panel-wallet', host: '.panel-wallet', prop: '--split-h',
-      give: '#panel-chart', giveMin: 200,
-    },
-  },
+  /* One handle in the whole window now, because pro is a grid and basic is a
+     column: neither needs dragging. Trade keeps its rail, and the floors are
+     raised so nothing can be squeezed below its own content.
+
+     360 is the rail's design width and 320 is its floor: a position line
+     ("Forced close at $x, y% away") stops fitting on one line below that, and
+     a rail that wraps that line is worse than a rail that stops shrinking.
+     620 for the chart is the give's floor: a candle chart narrower than that
+     shows fewer bars than the timeframe row offers, so the controls above it
+     start lying about what is on screen. The old table's 120 and 96 floors are
+     gone with the panels they sized. */
   trade: {
-    /* The trading page keeps its rail: liquidation distance, account health and the tape are
-       not chrome and a perpetuals screen without them is a worse screen. What it takes from
-       the pro deck is the ORDER. The agent is the last column here too, so "the chat is on
-       the right" is true on every screen in this app. Renamed for the same reason as the pro
-       deck's: a stored width for a column that has moved is not a size anybody chose. */
-    'deck-agent': {
-      axis: 'x', sign: -1, min: 240,
-      pane: '.col-agent', host: '.deck', prop: '--deck-agent',
-      give: '.col-mid', giveMin: 380,
-    },
     'deck-rail': {
-      axis: 'x', sign: -1, min: 240,
-      pane: '.col-rail', host: '.deck', prop: '--deck-rail',
-      give: '.col-mid', giveMin: 380,
-    },
-    'chart-book': {
-      axis: 'y', sign: -1, min: 120,
-      pane: '.panel-tbook', host: '.panel-tbook', prop: '--split-h',
-      give: '#panel-chart', giveMin: 200,
-    },
-    /* Same floor as the pro deck's gate, for the same reason. The tape is the give because
-       it is the growing panel in that column. */
-    'gate-tape': {
-      axis: 'y', sign: 1, min: 96,
-      pane: '.panel-tgate', host: '.panel-tgate', prop: '--split-h',
-      give: '.panel-thistory', giveMin: 140,
+      axis: 'x', sign: -1, min: 320,
+      pane: '.trade-rail', host: '.trade-wrap', prop: '--rail',
+      give: '.trade-main', giveMin: 620,
     },
   },
 };
@@ -317,7 +285,7 @@ function splitWire(h) {
 }
 
 function splitBoot() {
-  var deck = document.querySelector('.deck[data-split]');
+  var deck = document.querySelector('[data-split]');
   if (!deck) return;
   var page = deck.getAttribute('data-split');
   var table = SPLIT_PAGES[page];

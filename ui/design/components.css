@@ -1,0 +1,543 @@
+/* Phosphor components. Every pressable presses. Every wait names a noun. */
+
+/* ---------- Button ---------- */
+
+.btn {
+  --btn-bg: var(--bg-2);
+  --btn-fg: var(--text);
+  --btn-edge: var(--line-strong);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
+  min-height: 36px;
+  padding: 0 var(--s-4);
+  border-radius: var(--radius-sm);
+  background: var(--btn-bg);
+  color: var(--btn-fg);
+  border: 1px solid var(--btn-edge);
+  font-size: var(--fs-14);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  transition: transform var(--dur-press) var(--ease-out),
+              background-color var(--dur-press) var(--ease-out),
+              border-color var(--dur-press) var(--ease-out),
+              color var(--dur-press) var(--ease-out),
+              opacity var(--dur-press) var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .btn:hover:not(:disabled) {
+    border-color: var(--text-3);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--ink) 88%, var(--bg-0));
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background: var(--bg-2);
+  }
+  .btn-danger:hover:not(:disabled) {
+    background: var(--down-wash);
+  }
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+}
+
+.btn-primary {
+  --btn-bg: var(--ink);
+  --btn-fg: var(--on-ink);
+  --btn-edge: var(--ink);
+  font-weight: 500;
+}
+
+.btn-ghost {
+  --btn-bg: transparent;
+  --btn-edge: var(--line);
+}
+
+.btn-quiet {
+  --btn-bg: transparent;
+  --btn-edge: transparent;
+  --btn-fg: var(--text-2);
+  padding: 0 var(--s-2);
+}
+
+.btn-danger {
+  --btn-bg: transparent;
+  --btn-fg: var(--down);
+  --btn-edge: color-mix(in srgb, var(--down) 40%, transparent);
+}
+
+.btn-lg {
+  min-height: 44px;
+  padding: 0 var(--s-5);
+  font-size: var(--fs-16);
+}
+
+.btn-block {
+  width: 100%;
+}
+
+/* A pending button keeps its width, swaps its label for the progress verb and
+   stops accepting the press. It never collapses and never jumps. */
+.btn[data-pending="true"] {
+  pointer-events: none;
+  opacity: 0.72;
+}
+
+.btn[data-pending="true"] .btn-label {
+  filter: blur(2px);
+  opacity: 0;
+}
+
+.btn-label {
+  transition: filter var(--dur-swap) var(--ease-out),
+              opacity var(--dur-swap) var(--ease-out);
+}
+
+.btn-pending {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  opacity: 0;
+  transition: opacity var(--dur-swap) var(--ease-out);
+}
+
+.btn[data-pending="true"] .btn-pending {
+  opacity: 1;
+}
+
+.btn:has(.btn-pending) {
+  position: relative;
+}
+
+/* ---------- Spinner ---------- */
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, currentColor 26%, transparent);
+  border-top-color: currentColor;
+  animation: spin 640ms linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ---------- Panel and card ---------- */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding: var(--s-4) var(--s-4) var(--s-3);
+  min-height: 0;
+}
+
+.panel-body {
+  padding: 0 var(--s-4) var(--s-4);
+  min-height: 0;
+}
+
+.panel-body-flush {
+  padding: 0 0 var(--s-2);
+}
+
+.card {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--s-5);
+}
+
+.card-raised {
+  background: var(--bg-1);
+  box-shadow: var(--lift);
+}
+
+/* ---------- Rows ---------- */
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  border-top: 1px solid var(--line);
+  min-width: 0;
+}
+
+.row:first-child {
+  border-top: 0;
+}
+
+.row-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.row-side {
+  flex: 0 0 auto;
+  text-align: right;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .row-hover:hover {
+    background: var(--bg-2);
+  }
+}
+
+/* ---------- Table ---------- */
+
+.table-wrap {
+  overflow: auto;
+  max-height: var(--table-max, none);
+}
+
+.table {
+  font-size: var(--fs-13);
+}
+
+.table th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-1);
+  color: var(--text-2);
+  font-size: var(--fs-12);
+  font-weight: 500;
+  padding: var(--s-2) var(--s-4);
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.table td {
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--line);
+  vertical-align: baseline;
+}
+
+.table tr:last-child td {
+  border-bottom: 0;
+}
+
+.table .num {
+  text-align: right;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .table tbody tr:hover td {
+    background: var(--bg-2);
+  }
+}
+
+/* ---------- Chip ---------- */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  height: 26px;
+  padding: 0 var(--s-3);
+  border-radius: var(--radius-pill);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  font-size: var(--fs-12);
+  font-weight: 500;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+button.chip {
+  transition: transform var(--dur-press) var(--ease-out),
+              border-color var(--dur-press) var(--ease-out),
+              color var(--dur-press) var(--ease-out);
+}
+
+button.chip:active {
+  transform: scale(0.97);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  button.chip:hover {
+    border-color: var(--text-3);
+    color: var(--text);
+  }
+}
+
+.chip[data-tone="agent"] { color: var(--agent); border-color: var(--agent-edge); }
+.chip[data-tone="warn"] { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 34%, transparent); }
+.chip[data-tone="down"] { color: var(--down); border-color: color-mix(in srgb, var(--down) 34%, transparent); }
+.chip[data-tone="up"] { color: var(--up); border-color: color-mix(in srgb, var(--up) 34%, transparent); }
+.chip[data-tone="ink"] { color: var(--text); border-color: var(--line-strong); }
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: 0 0 auto;
+}
+
+.dot-live {
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 18%, transparent);
+}
+
+/* ---------- Banner ---------- */
+
+.banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line-strong);
+  background: var(--bg-2);
+  font-size: var(--fs-13);
+  color: var(--text-2);
+}
+
+.banner[data-tone="warn"] {
+  border-color: color-mix(in srgb, var(--warn) 40%, transparent);
+  background: var(--warn-wash);
+  color: var(--text);
+}
+
+.banner[data-tone="down"] {
+  border-color: color-mix(in srgb, var(--down) 40%, transparent);
+  background: var(--down-wash);
+  color: var(--text);
+}
+
+/* ---------- Meter ---------- */
+
+.meter {
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-2);
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--text-2);
+  transition: width var(--dur-enter) var(--ease-out);
+}
+
+.meter-fill[data-tone="warn"] { background: var(--warn); }
+.meter-fill[data-tone="down"] { background: var(--down); }
+.meter-fill[data-tone="ink"] { background: var(--ink); }
+
+/* ---------- Skeleton ---------- */
+
+.skel {
+  border-radius: var(--radius-sm);
+  background: linear-gradient(
+    90deg,
+    var(--bg-2) 0%,
+    color-mix(in srgb, var(--bg-2) 55%, var(--line)) 50%,
+    var(--bg-2) 100%
+  );
+  background-size: 200% 100%;
+  animation: skel 1400ms var(--ease-in-out) infinite;
+  min-height: 12px;
+}
+
+@keyframes skel {
+  from { background-position: 140% 0; }
+  to { background-position: -40% 0; }
+}
+
+/* A refresh, as against a first load: one thin bar across the panel's top edge. */
+.panel[data-refreshing="true"] {
+  position: relative;
+}
+
+.panel[data-refreshing="true"]::after {
+  content: "";
+  position: absolute;
+  inset: -1px auto auto -1px;
+  width: calc(100% + 2px);
+  height: 2px;
+  border-radius: var(--radius) var(--radius) 0 0;
+  background: linear-gradient(90deg, transparent, var(--text-3), transparent);
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  animation: sweep 1100ms var(--ease-in-out) infinite;
+}
+
+@keyframes sweep {
+  from { background-position: -40% 0; }
+  to { background-position: 140% 0; }
+}
+
+/* ---------- Input ---------- */
+
+.input {
+  width: 100%;
+  min-height: 40px;
+  padding: 0 var(--s-3);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-size: var(--fs-14);
+  transition: border-color var(--dur-press) var(--ease-out);
+}
+
+.input::placeholder {
+  color: var(--text-3);
+}
+
+.input:focus {
+  border-color: var(--line-strong);
+}
+
+.input[readonly] {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-13);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.field-row {
+  display: flex;
+  gap: var(--s-2);
+  align-items: stretch;
+}
+
+.field-row .input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* ---------- Toast ---------- */
+
+.toasts {
+  position: fixed;
+  right: var(--s-5);
+  bottom: var(--s-5);
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  max-width: 380px;
+  padding: var(--s-3) var(--s-4);
+  border-radius: var(--radius-sm);
+  background: var(--bg-1);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--lift);
+  font-size: var(--fs-13);
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity var(--dur-enter) var(--ease-out),
+              transform var(--dur-enter) var(--ease-out);
+}
+
+@starting-style {
+  .toast {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+.toast[data-leaving="true"] {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+/* ---------- Empty state ---------- */
+
+.empty {
+  padding: var(--s-6) var(--s-4);
+  text-align: center;
+  color: var(--text-2);
+  font-size: var(--fs-13);
+}
+
+.empty-title {
+  color: var(--text);
+  font-size: var(--fs-14);
+  font-weight: 500;
+  margin-bottom: var(--s-1);
+}
+
+/* ---------- Number crossfade ---------- */
+
+.tick {
+  transition: opacity var(--dur-number) var(--ease-out);
+}
+
+.tick[data-ticking="true"] {
+  opacity: 0.35;
+}
+
+/* ---------- Enter ---------- */
+
+.enter {
+  animation: enter var(--dur-enter) var(--ease-out) both;
+  animation-delay: var(--enter-delay, 0ms);
+}
+
+@keyframes enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ---------- Reduced motion: opacity only, and the field freezes ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+
+  .spinner {
+    animation: none;
+    border-top-color: transparent;
+    border-right-color: currentColor;
+  }
+
+  .skel {
+    animation: none;
+    background: var(--bg-2);
+  }
+
+  .btn:active:not(:disabled) {
+    transform: none;
+  }
+}
