@@ -30,22 +30,17 @@ import {
   BASIC_EVENT_SCAN,
   LOG_LIMIT_MAX,
   PROJECT_DIR,
-  READ_TOOLS,
 } from './http/context.ts';
-import type { Ctx, GasFill, PriceCache, ReadTable, ServerDeps, PhosphorServer } from './http/context.ts';
+import type { Ctx, GasFill, PriceCache, ServerDeps, PhosphorServer } from './http/context.ts';
 import {
-  asRecord,
-  capLabel,
   errText,
   fail,
   intParam,
-  readBody,
   sendJson,
   sendJsonConditional,
   serveStatic,
 } from './http/respond.ts';
-import type { JsonBody } from './http/respond.ts';
-import { HOST, hostIsLocal, mintToken, sameOrigin } from './http/auth.ts';
+import { HOST, hostIsLocal, mintToken } from './http/auth.ts';
 import { createSseHub } from './http/sse.ts';
 import { createChatRegistry } from './http/chats.ts';
 import {
@@ -61,22 +56,9 @@ import {
   sendCandles,
   startPricePolling,
 } from './http/chart.ts';
-import {
-  handleMutation,
-  handleSetBasicCoins,
-  handleSetViewMode,
-  handleYieldAuto,
-} from './http/mutation.ts';
-import { agentReads } from './http/read/agents.ts';
-import { chartReads } from './http/read/chart.ts';
-import { gasReads } from './http/read/gas.ts';
-import { marketReads } from './http/read/market.ts';
-import { tradeReads } from './http/read/trade.ts';
-import { walletReads } from './http/read/wallet.ts';
-import { yieldReads } from './http/read/yield.ts';
-import { handlePropose } from './http/propose.ts';
-import { handleView } from './http/view.ts';
+import { handleMutation } from './http/mutation.ts';
 import { handleTradeAction, handleTradeWrite } from './http/trade.ts';
+import { handleMcp } from './http/mcp.ts';
 
 // The three coins the basic screen tracks, in the order it shows them (Karim,
 // 2026-08-14: "btc, sol, and eth"). Fixed, and deliberately NOT the pro chart's
@@ -124,7 +106,6 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   const {
     broadcastState,
     broadcastTrade,
-    broadcastActivity,
     broadcastCandles,
   } = sse;
 
@@ -226,199 +207,6 @@ export function createServer(deps: ServerDeps): PhosphorServer {
 
   // ---------- browser routes ----------
 
-  // ---------- MCP route ----------
-
-  /* Every read tool, in one table assembled from the seven domain files under http/read. A table
-     rather than the if-chain it replaces: a chain answers "unknown read tool" for a tool it then
-     lists as known the moment a branch above it falls through, which is exactly the break the
-     view chain carried for a while (see the note in view.ts). */
-  const READS: ReadTable = {
-    ...walletReads,
-    ...marketReads,
-    ...chartReads,
-    ...agentReads,
-    ...yieldReads,
-    ...gasReads,
-    ...tradeReads,
-  };
-
-  async function handleRead(body: JsonBody, res: http.ServerResponse): Promise<void> {
-    const tool = String(body.tool ?? '');
-    const handler = READS[tool];
-    if (handler === undefined) {
-      fail(res, 400, `unknown read tool: ${tool}. known tools: ${READ_TOOLS.join(', ')}`);
-      return;
-    }
-    await handler(ctx, body, asRecord(body.args), res);
-  }
-
-  function rejectSeat(error: string, body: JsonBody, res: http.ServerResponse, revoked = false): void {
-    const session = String(body.session ?? 'unnamed-session');
-    if (revoked) {
-      // A replaced agent is not a second agent that showed up: the human took the seat off it
-      // on purpose. It gets its own marker so the proxy exits instead of reporting a busy
-      // seat to a model that would then keep asking. Not deduplicated by session either,
-      // because there is exactly one of these per eviction.
-      audit.append('agent_disconnected', 'a replaced agent was refused and told to stop', {
-        op: String(body.op ?? ''),
-        client: body.client,
-      });
-      fail(res, 409, error, { seat: 'revoked' });
-      return;
-    }
-    if (!ctx.seats.has(session)) {
-      ctx.seats.add(session);
-      // Not "a second agent was refused" any more: a second agent is welcome. This line is now
-      // only ever a FULL roster, which is a capacity fact and reads differently in a log.
-      audit.append('agent_rejected', 'an agent tried to attach to a full roster and was refused', {
-        op: String(body.op ?? ''),
-        client: body.client,
-        attached: agents.roster().map((m) => m.label),
-      });
-    }
-    // seat:'busy' is the marker src/mcp.ts unwraps into a plain sentence for the agent. The
-    // name is kept because the proxy, the e2e script and older builds all read it; what it
-    // means has narrowed from "somebody else is driving" to "there is no room right now".
-    // It is deliberately not "any 409": the view-mode refusal is also a 409 and must keep its
-    // JSON shape, which is what the e2e script and the browser both read.
-    fail(res, 409, error, { seat: 'busy' });
-  }
-
-  async function handleMcp(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-    // The money surface gets the same cross-origin guard the approval and trade routes already
-    // carry. handleMcp is where an agent proposes and, under the click threshold, executes, so a
-    // page that could POST here blind (classic CSRF: a cross-origin fetch still sends Origin) was
-    // the one mutating route a browser could drive. sameOrigin refuses a foreign Origin, and the
-    // seat is not a credential, so this is what stands between a web page and a swap. An absent
-    // Origin (the MCP proxy over stdio->HTTP, curl, the e2e script) is still allowed.
-    if (!sameOrigin(req)) {
-      audit.append('agent_rejected', 'an /api/mcp call was refused as cross-origin', {
-        origin: req.headers.origin ?? '(absent)',
-        host: req.headers.host ?? '(absent)',
-      });
-      fail(res, 403, 'cross-origin request refused');
-      return;
-    }
-    const parsed = await readBody(req);
-    if (!parsed.ok) {
-      fail(res, 400, parsed.error);
-      return;
-    }
-    const body = parsed.value;
-    const op = String(body.op ?? '');
-
-    // The presence heartbeat is not a tool call, so it is answered before the
-    // append below and never enters the transcript. mcp.ts pings for the whole life
-    // of an agent session: on 2026-08-12, with two sessions open, 242 of 418 audit
-    // lines were heartbeats and the real calls were buried. Only the edges are worth
-    // a line, and the seat below reports them.
-    if (op === 'hello') {
-      // The client name is agent-controlled. It stays in data, where it is stored
-      // verbatim and rendered as data, and out of msg, where a crafted value could
-      // dress a heartbeat up as some other event in the log column.
-      const claim = agents.claim(body);
-      if (!claim.ok) {
-        rejectSeat(claim.error, body, res, claim.revoked === true);
-        return;
-      }
-      if (claim.edge) audit.append('agent_connected', 'an agent attached to phosphor', body);
-      broadcastState();
-      sendJson(res, 200, {
-        ok: true,
-        seat: 'held',
-        since: claim.member.since,
-        role: claim.member.role,
-        label: claim.member.label,
-        // What the joining agent needs to know before its first turn: it is not alone, and who
-        // else is here. An agent that discovers a colleague by finding a level it did not draw
-        // has already wasted a turn being confused.
-        roster: agents.roster().map((m) => ({ label: m.label, role: m.role, since: m.since })),
-      });
-      return;
-    }
-
-    // A clean shutdown, which is what makes the light go out the moment an agent is
-    // terminated rather than one TTL later. Only the holder can free its own seat.
-    if (op === 'bye') {
-      const freed = agents.release(body.session);
-      if (freed !== null) {
-        audit.append('agent_disconnected', 'the agent disconnected', { client: freed.client, since: freed.since });
-        broadcastState();
-      }
-      sendJson(res, 200, { ok: true });
-      return;
-    }
-
-    // Every other op is on the roster or is refused. An op from a session that never said
-    // hello joins: an agent should not have to know about a handshake to be counted as
-    // connected, and something has to be attached for a tool call to exist.
-    const seat = agents.check(body);
-    if (!seat.ok) {
-      rejectSeat(seat.error, body, res, seat.revoked === true);
-      return;
-    }
-    if (seat.edge) {
-      audit.append('agent_connected', 'an agent attached to phosphor', body);
-      // An agent that joined on its first op (no hello) is connected NOW. Push state so
-      // the window's `agent` field and presence light say so at once rather than at the next
-      // heartbeat up to a TTL later. The hello path already does this; this covers the rest.
-      broadcastState();
-    }
-    // A granted tool call is the agent working. Tell the window so its presence light shines
-    // now rather than at the next state push, which for a pure read would never come.
-    broadcastActivity();
-
-    const label =
-      op === 'read'
-        ? `read ${String(body.tool ?? '?')}`
-        : op === 'propose'
-          ? `propose ${String(body.kind ?? '?')}`
-          // 'view' is the chart's render state. 'set_view_mode' is which of the two
-          // screens the window shows. Two different things, deliberately named apart.
-          : op === 'view'
-            ? `chart ${String(body.tool ?? '?')}`
-            : op === 'set_view_mode'
-              ? `set_view_mode ${String(body.mode ?? '?')}`
-              : op === 'set_basic_coins'
-                ? `set_basic_coins ${(Array.isArray(body.coins) ? body.coins : []).join(' ')}`
-                : op === 'yield_auto'
-                  ? `yield_auto ${body.enabled === true ? 'on' : 'off'}`
-                  : `unknown op ${op}`;
-    // Contract: every op that reads, proposes or moves the window is audit-logged
-    // before dispatch, arguments included verbatim.
-    audit.append('tool_call', `agent: ${capLabel(label)}`, body);
-
-    if (op === 'read') {
-      await handleRead(body, res);
-      return;
-    }
-    if (op === 'propose') {
-      await handlePropose(ctx, body, res);
-      return;
-    }
-    if (op === 'view') {
-      await handleView(ctx, body, res);
-      return;
-    }
-    if (op === 'set_view_mode') {
-      handleSetViewMode(ctx, body, res);
-      return;
-    }
-    if (op === 'set_basic_coins') {
-      await handleSetBasicCoins(ctx, body, res);
-      return;
-    }
-    if (op === 'yield_auto') {
-      handleYieldAuto(ctx, body, res);
-      return;
-    }
-    fail(
-      res,
-      400,
-      `unknown op: ${op}. known ops: hello, bye, read, propose, view, set_view_mode, set_basic_coins, yield_auto`,
-    );
-  }
-
   // ---------- dispatch ----------
 
   async function handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -462,7 +250,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         return serveStatic(route, res);
       }
       if (req.method === 'POST') {
-        if (route === '/api/mcp') return await handleMcp(req, res);
+        if (route === '/api/mcp') return await handleMcp(ctx, req, res);
         if (route === '/api/chart') return await handleChartWrite(ctx, req, res);
         if (route === '/api/trade') return await handleTradeWrite(ctx, req, res);
         if (route === '/api/trade/action') return await handleTradeAction(ctx, req, res);
