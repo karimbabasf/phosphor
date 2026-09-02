@@ -137,6 +137,17 @@ export async function fetchIntentsHoldings(deps: IntentsBalanceDeps): Promise<In
       deps.tokenList().catch(() => [] as OneClickToken[]),
     ]);
 
+    /* mt_batch_balance_of answers POSITIONALLY: amounts[i] is the balance of assetIds[i] and
+       nothing in the response says so. A short array silently dropped holdings and a reordered
+       one attributed the wrong balance to the wrong asset, which is worse than a read failure
+       because it produces a number that looks right. */
+    if (!Array.isArray(amounts) || amounts.length !== assetIds.length) {
+      throw new Error(
+        `the verifier returned ${Array.isArray(amounts) ? String(amounts.length) : 'a non-list of'} balances for ` +
+          `${assetIds.length} assets, and they are matched by position`,
+      );
+    }
+
     const holdings: IntentsHolding[] = [];
     for (const [i, assetId] of assetIds.entries()) {
       const raw = BigInt(amounts[i] ?? '0');

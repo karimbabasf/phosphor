@@ -128,9 +128,16 @@ async function fetchSpotUsd(product: string, fetchImpl: typeof fetch): Promise<n
     signal: readTimeout(),
   });
   if (!res.ok) throw new Error(`coinbase ${product} http ${res.status}`);
-  const rows = (await res.json()) as number[][]; // [time,low,high,open,close,volume], newest first
+  const rows = (await res.json()) as unknown; // [time,low,high,open,close,volume], newest first
   if (!Array.isArray(rows) || rows.length === 0) throw new Error(`coinbase ${product} returned no candles`);
-  return rows[0][4]; // close
+  /* The CELL, not just the row. `rows[0][4]` length-checked `rows` and never `rows[0]`, so a
+     short row yielded undefined and priceHoldings then valued every native holding at $0: a
+     wallet that reads as empty because one array was the wrong shape. */
+  const close = (rows[0] as unknown[] | undefined)?.[4];
+  if (typeof close !== 'number' || !Number.isFinite(close) || close <= 0) {
+    throw new Error(`coinbase ${product} candle carries no usable close price`);
+  }
+  return close;
 }
 
 // Best-effort spot prices for the three native gas assets. A failure here must never throw
