@@ -15,7 +15,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 
-import { createShutdown, within, SETTLE_CAP_MS } from '../../src/shutdown.ts';
+import { createShutdown, installShutdownHandlers, within, SETTLE_CAP_MS } from '../../src/shutdown.ts';
 import { beginDraining, isDraining, resetDrainingForTests } from '../../src/draining.ts';
 import { createSerialiser } from '../../src/proposals/lifecycle.ts';
 import type { LogEvent } from '../../src/types.ts';
@@ -215,4 +215,128 @@ test('SIGTERM mid-propose leaves a valid state file and exits clean', async () =
     assert.doesNotThrow(() => JSON.parse(raw), 'proposals.json is valid JSON after a signal');
   }
   assert.equal(fs.existsSync(path.join(dir, '.lock')), false, 'the instance lock is released');
+});
+
+/* ---------- the window goes away ----------
+
+   src-tauri registers no signal handler, so on SIGTERM the shell takes the default action and
+   neither `impl Drop for Backend` nor RunEvent::Exit runs. The backend was then left holding the
+   port with the wallet loaded, and the next launch found the port in use. Seen twice on
+   2026-09-01. The signal is the parent pid: when the process that started this one goes, this one
+   is reparented, so process.ppid stops matching what it was at boot. */
+
+async function until(done: () => boolean, why: string, capMs = 3000): Promise<void> {
+  const deadline = Date.now() + capMs;
+  while (!done()) {
+    if (Date.now() > deadline) throw new Error(why);
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
+function watched(over: Partial<{ ppid: () => number; alive: (pid: number) => boolean; enabled: boolean }>) {
+  const order: string[] = [];
+  const codes: number[] = [];
+  const uninstall = installShutdownHandlers({
+    audit: { append: (type, msg): LogEvent => ({ ts: new Date().toISOString(), type, msg }) },
+    drain: () => order.push('drain'),
+    settle: async () => {
+      order.push('settle');
+      return true;
+    },
+    close: async () => {
+      order.push('close');
+    },
+    capMs: 20,
+    exit: (code) => codes.push(code),
+    stderr: () => {},
+    parentWatch: { intervalMs: 5, ...over },
+  });
+  return { order, codes, uninstall };
+}
+
+test('a parent that is still there is not a reason to stop', async () => {
+  const h = watched({ ppid: () => 4242, alive: () => true });
+  try {
+    await new Promise((r) => setTimeout(r, 40));
+    assert.deepEqual(h.order, []);
+    assert.deepEqual(h.codes, []);
+  } finally {
+    h.uninstall();
+  }
+});
+
+test('a parent pid that no longer answers runs the same three steps a signal would', async () => {
+  let alive = true;
+  const h = watched({ ppid: () => 4242, alive: () => alive });
+  try {
+    alive = false;
+    await until(() => h.codes.length > 0, 'the backend never stopped');
+    assert.deepEqual(h.order, ['drain', 'settle', 'close'], 'drain, settle, close, in that order');
+    assert.deepEqual(h.codes, [0]);
+  } finally {
+    h.uninstall();
+  }
+});
+
+test('being reparented is the same answer, because that is what happens when a parent dies', async () => {
+  let parent = 4242;
+  const h = watched({ ppid: () => parent, alive: () => true });
+  try {
+    parent = 1; // launchd on macOS, init or a subreaper on Linux
+    await until(() => h.codes.length > 0, 'a reparented backend kept running');
+    assert.deepEqual(h.order, ['drain', 'settle', 'close']);
+  } finally {
+    h.uninstall();
+  }
+});
+
+test('PHOSPHOR_NO_PARENT_WATCH=1 turns the watch off for a parent meant to exit first', async () => {
+  const prev = process.env.PHOSPHOR_NO_PARENT_WATCH;
+  process.env.PHOSPHOR_NO_PARENT_WATCH = '1';
+  const h = watched({ ppid: () => 4242, alive: () => false });
+  try {
+    await new Promise((r) => setTimeout(r, 40));
+    assert.deepEqual(h.codes, [], 'a dead parent stops nothing when the watch is off');
+  } finally {
+    h.uninstall();
+    if (prev === undefined) delete process.env.PHOSPHOR_NO_PARENT_WATCH;
+    else process.env.PHOSPHOR_NO_PARENT_WATCH = prev;
+  }
+});
+
+// The real thing: three processes, and the middle one exits.
+test('a real child whose parent exits shuts itself down', async () => {
+  const dir = tmpDir();
+  const marker = path.join(dir, 'closed');
+  const child = path.join(dir, 'child.mjs');
+  const parent = path.join(dir, 'parent.mjs');
+
+  fs.writeFileSync(
+    child,
+    `import fs from 'node:fs';\n` +
+      `import { installShutdownHandlers } from ${JSON.stringify(path.join(ROOT, 'src', 'shutdown.ts'))};\n` +
+      // Stands in for the HTTP server: without something holding the loop this process would
+      // exit on its own and prove nothing.
+      `const hold = setInterval(() => {}, 1000);\n` +
+      `installShutdownHandlers({\n` +
+      `  audit: { append: () => ({ ts: '', type: 'app_start', msg: '' }) },\n` +
+      `  drain: () => {},\n` +
+      `  settle: async () => true,\n` +
+      `  close: async () => { clearInterval(hold); fs.writeFileSync(${JSON.stringify(marker)}, 'closed'); },\n` +
+      `  capMs: 50,\n` +
+      `  stderr: () => {},\n` +
+      `  parentWatch: { intervalMs: 25 },\n` +
+      `});\n`,
+  );
+  fs.writeFileSync(
+    parent,
+    `import { spawn } from 'node:child_process';\n` +
+      `spawn(process.execPath, [${JSON.stringify(child)}], { stdio: 'ignore' });\n` +
+      `setTimeout(() => process.exit(0), 150);\n`,
+  );
+
+  const run = spawn(process.execPath, [parent], { stdio: 'ignore' });
+  await new Promise<void>((resolve) => run.on('exit', () => resolve()));
+
+  await until(() => fs.existsSync(marker), 'the backend outlived the process that started it', 8000);
 });

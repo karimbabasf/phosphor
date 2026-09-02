@@ -16,6 +16,9 @@
 //   3. CLOSE. Sockets, the runner child, the agent processes.
 //
 // Signals are registered UNCONDITIONALLY at boot, not from whichever subsystem happened to start.
+//
+// A fourth reason to run all three arrives without a signal: the window going away. See
+// watchParent below.
 
 import type { Audit } from './audit.ts';
 
@@ -31,10 +34,77 @@ export type ShutdownDeps = {
   capMs?: number;
   exit?: (code: number) => void;
   stderr?: (line: string) => void;
+  // Test seam for the parent watch below. Absent means the real thing: process.ppid, a five
+  // second tick, and process.kill(pid, 0).
+  parentWatch?: ParentWatch;
 };
 
 export const SETTLE_CAP_MS = 2_000;
 export const SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
+export const PARENT_POLL_MS = 5_000;
+
+export type ParentWatch = {
+  enabled?: boolean;
+  intervalMs?: number;
+  // Reads the CURRENT parent. Defaults to process.ppid, which changes the moment this process
+  // is reparented, which is the moment the process that started it went away.
+  ppid?: () => number;
+  alive?: (pid: number) => boolean;
+};
+
+function pidIsAlive(pid: number): boolean {
+  if (pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM means it exists and belongs to somebody else, which is still alive. Only ESRCH is
+    // the answer this is looking for.
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+/* THE SHELL DIES AND NODE DOES NOT, which is the orphan this closes.
+   src-tauri/src/main.rs registers no signal handler, so on SIGTERM the shell takes the default
+   action: neither `impl Drop for Backend` nor RunEvent::Exit runs, and this process is left
+   holding the port with the wallet loaded. Seen twice on 2026-09-01.
+   Fixed on the node side and not the Rust side, because it costs no new crate and because a
+   backend outliving its window is wrong however the window went. A crash, a Force Quit and a
+   SIGKILL leave the same orphan and none of them can run Rust either.
+
+   The signal is the parent pid. When the process that started this one goes, this one is
+   reparented (to launchd on macOS, to init or a subreaper on Linux), so process.ppid stops
+   matching what it was at boot. Both halves are checked: the reparent is the thing that always
+   happens, and a pid that no longer answers is the thing that is unambiguous.
+
+   PHOSPHOR_NO_PARENT_WATCH=1 turns it off, for anything that starts a backend from a parent
+   meant to exit first. */
+export function watchParent(deps: ParentWatch & { onGone: (why: string) => void }): () => void {
+  const enabled = deps.enabled ?? process.env.PHOSPHOR_NO_PARENT_WATCH !== '1';
+  if (!enabled) return () => {};
+
+  const read = deps.ppid ?? ((): number => process.ppid);
+  const alive = deps.alive ?? pidIsAlive;
+  const started = read();
+  let fired = false;
+
+  const timer = setInterval(() => {
+    if (fired) return;
+    const now = read();
+    const why =
+      now !== started
+        ? `the process that started phosphor (pid ${started}) is gone and this one was reparented to ${now}`
+        : !alive(started)
+          ? `the process that started phosphor (pid ${started}) is gone`
+          : null;
+    if (why === null) return;
+    fired = true;
+    deps.onGone(why);
+  }, deps.intervalMs ?? PARENT_POLL_MS);
+  // Never a reason on its own for this process to stay up. The HTTP server is what holds it.
+  timer.unref?.();
+  return () => clearInterval(timer);
+}
 
 export function createShutdown(deps: ShutdownDeps): (signal: string) => Promise<void> {
   const exit = deps.exit ?? ((code: number): void => process.exit(code));
@@ -96,8 +166,16 @@ export function installShutdownHandlers(deps: ShutdownDeps): () => void {
     process.on(signal, fn);
     return { signal, fn };
   });
+  /* The same three steps, reached without a signal. The window going away is a reason to stop
+     that no signal ever arrives for, so it goes through the one shutdown closure rather than a
+     second copy: a SIGTERM racing a dead parent must not run the drain twice. */
+  const stopWatch = watchParent({
+    ...deps.parentWatch,
+    onGone: (why) => void shutdown(why),
+  });
   return function uninstall(): void {
     for (const { signal, fn } of handlers) process.off(signal, fn);
+    stopWatch();
   };
 }
 
