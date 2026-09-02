@@ -119,6 +119,32 @@ export function sendJsonConditional(req: http.IncomingMessage, res: http.ServerR
   res.end(body);
 }
 
+/* THE CONTROL PAGE HOLDS THE APPROVAL TOKEN, in window.__PHOSPHOR_TOKEN__, so one injected
+   script is one approval an agent did not have to ask a person for.
+   The only thing preventing that was that the UI never assigns innerHTML, insertAdjacentHTML or
+   outerHTML: everything is built with createElement and textContent. That discipline is real
+   (tests/unit/agent-panel-ui.test.ts asserts it for the panel that renders model output) and it
+   is a convention, and a convention is not a control. This is the control.
+
+   `script-src 'self'` with no 'unsafe-inline': every script in ui/index.html is a src, and the
+   shell's token injection is an initialization script on the webview rather than a tag in the
+   document, so neither needs the exemption. `style-src` keeps 'unsafe-inline' because the window
+   sets element styles as it renders, and a stylesheet is not how a token leaves a machine.
+   `connect-src 'self'` is what stops a script that did get in from posting the token anywhere,
+   and `frame-ancestors 'none'` stops the page being framed at all. */
+const CONTROL_CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data:",
+  "font-src 'self'",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "frame-ancestors 'none'",
+].join('; ');
+
 export function serveStatic(pathname: string, res: http.ServerResponse): void {
   let rel: string;
   try {
@@ -148,7 +174,12 @@ export function serveStatic(pathname: string, res: http.ServerResponse): void {
   // font file is immutable content that would otherwise be refetched on every boot of
   // the window and re-run the swap.
   const cache = type === 'font/woff2' ? 'public, max-age=31536000, immutable' : 'no-store';
-  res.writeHead(200, { 'content-type': type, 'content-length': body.length, 'cache-control': cache });
+  res.writeHead(200, {
+    'content-type': type,
+    'content-length': body.length,
+    'cache-control': cache,
+    ...(type === MIME['.html'] ? { 'content-security-policy': CONTROL_CSP } : {}),
+  });
   res.end(body);
 }
 

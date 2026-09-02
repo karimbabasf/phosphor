@@ -147,7 +147,7 @@ function raw(
   urlBase: string,
   route: string,
   opts: { method?: string; headers?: Record<string, string>; body?: string } = {},
-): Promise<{ status: number; body: string }> {
+): Promise<{ status: number; body: string; headers: http.IncomingHttpHeaders }> {
   const u = new URL(urlBase + route);
   return new Promise((resolve, reject) => {
     const req = http.request(
@@ -155,7 +155,7 @@ function raw(
       (res) => {
         let d = '';
         res.on('data', (c) => (d += c));
-        res.on('end', () => resolve({ status: res.statusCode ?? 0, body: d }));
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body: d, headers: res.headers }));
       },
     );
     req.on('error', reject);
@@ -509,6 +509,36 @@ test('a forged Host cannot reach health either', async () => {
   try {
     const out = await raw(h.url, '/api/health', { headers: { Host: 'evil.com' } });
     assert.equal(out.status, 403);
+  } finally {
+    await h.close();
+  }
+});
+
+/* The control page holds the approval token in window.__PHOSPHOR_TOKEN__, so a single injected
+   script is a single approval nobody clicked. The only thing preventing that was the UI never
+   assigning innerHTML: a convention, held by nothing but review. */
+test('the control page is served with a policy that forbids inline script', async () => {
+  const h = await boot();
+  try {
+    const out = await raw(h.url, '/index.html');
+    assert.equal(out.status, 200);
+    const csp = out.headers['content-security-policy'];
+    assert.ok(typeof csp === 'string', 'the page carries no Content-Security-Policy at all');
+    assert.match(csp, /script-src 'self'/);
+    assert.ok(!/script-src[^;]*unsafe-inline/.test(csp), 'inline script is what steals a token');
+    assert.match(csp, /connect-src 'self'/, 'and a script that did get in cannot post it anywhere');
+    assert.match(csp, /frame-ancestors 'none'/);
+  } finally {
+    await h.close();
+  }
+});
+
+test('the same page still serves, and its scripts are all external so the policy costs nothing', async () => {
+  const h = await boot();
+  try {
+    const out = await raw(h.url, '/index.html');
+    assert.ok(out.body.includes('<script src='), 'the window loads its code from files');
+    assert.ok(!/<script(?![^>]*\bsrc=)[^>]*>[^<\s]/.test(out.body), 'no inline script the policy would break');
   } finally {
     await h.close();
   }
