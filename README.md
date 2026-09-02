@@ -42,7 +42,10 @@ The agent can read everything and propose actions. It can never approve, never e
 touch policy without a human click in the app window. The policy engine enforces authored rules at
 machine speed with no model in the execution path.
 
-![The phosphor window: status bar, chart, wallet with donut, approval gate, policy, log](docs/screenshots/full-page.png)
+![The phosphor window before the 2026-09-01 rebuild: status bar, chart, wallet with donut, approval gate, policy, log](docs/screenshots/full-page.png)
+
+That shot predates the window rebuild and is kept as history: the chart and the composition donut
+both left pro, which is five panels and one modal now. The screenshots further down are current.
 
 ## The two rules
 
@@ -71,14 +74,23 @@ the agent is not in it.
 
 ## Run it
 
-Requires Node 24+. No build step, no bundler, no packaging.
+Requires Node 24+ and a Rust toolchain for the desktop shell. No build step for the app itself,
+no bundler, no packaging.
 
     npm install
-    npm run keygen
-    npm run app
+    npm run tauri dev
 
-Open http://127.0.0.1:4177. The shipped config runs live, so the wallet reads zero until the
-addresses `keygen` printed have been funded. Full walkthrough in [First run](#first-run).
+That opens the window. The first run has no wallet, so the window asks for a password and makes
+one, shows you twelve words once, and writes an encrypted key file outside the working copy. After
+that the app opens LOCKED: reads keep working, an agent's writes are drafted and queued, and
+nothing can be signed until you type the password. It locks itself again after fifteen minutes
+with nobody at the window, and when the machine sleeps.
+
+The shipped config runs live, so the wallet reads zero until the addresses it made have been
+funded. Full walkthrough in [First run](#first-run).
+
+To run the backend on its own, without the shell, `npm run app` serves the same window at
+http://127.0.0.1:4177.
 
 Connect an agent (Claude Code):
 
@@ -98,8 +110,8 @@ finished looking at it. There is no terminal in the loop and no second surface t
 the `claude` CLI installed and already logged in; the child inherits that login, so the model is
 billed to the subscription you already pay for and Phosphor never sees a key.
 
-Stop the agent from the conversation and the panel goes back to a turning globe you press to start
-another one. Stopping the ANSWER is a different control and does not cost you the conversation:
+Stop the agent from the conversation and the panel goes back to a button that says what it does
+and starts another one. Stopping the ANSWER is a different control and does not cost you the conversation:
 while the agent is working, one press (or Escape) cancels the turn in flight and leaves the session
 where it was.
 
@@ -151,7 +163,7 @@ Installed, the app splits what the repo keeps in one place:
 | code, `ui/`, `data/`, `skills/` | working copy | `Phosphor.app/Contents/Resources/phosphor/`, read-only |
 | `state/`, audit log, policy | `state/` | `~/Library/Application Support/com.karimbabasf.phosphor/state/` |
 | `config.local.json` | repo root | `~/Library/Application Support/com.karimbabasf.phosphor/` |
-| keys | `~/.phosphor/phosphor/keys.json` | the same file, unchanged |
+| keys | `~/.phosphor/<repo folder>/keys.enc.json` | the same file, unchanged |
 
 To connect an agent to the installed app, use Phosphor > Copy MCP Config in the menu bar. It puts
 a `claude mcp add-json` line on the clipboard with this installation's real paths already filled in.
@@ -163,9 +175,11 @@ file. To run both at once, give the installed app its own port in its `config.lo
 
 ## The tool surface
 
-Forty-five tools, in five families. Read tools execute directly and cannot move anything. Write
+Fifty-two tools, in six families. Read tools execute directly and cannot move anything. Write
 tools never execute: they return a proposal id and a simulation result, and nothing else. Chart
-and trading tools move a view or a marker, never funds. Display tools move the window.
+and trading tools move a view or a marker, never funds. Team tools coordinate several agents.
+Display tools move the window. The tables below are the whole surface, and
+`tests/tool-surface.ts` is the one list both the injection suite and the e2e run hold it to.
 
 An agent that connects is handed all of this at once. `start` returns the greeting, the live
 state and an index of every tool grouped by what a person would actually ask for, so an agent
@@ -208,6 +222,7 @@ clears each.
 | `candles` | Recent OHLC candles for a product, with a staleness marker |
 | `proposal_status` | Status, verdict and simulation result for a proposal id |
 | `yield_read` | Every yield position with principal, current value and earnings, the realized percentage with its window and its caveat, the venue table with live rates and health, idle stablecoin, and what the loop decided on its recent looks. Answers `{ available: false, reason }` when no allocator is wired, which is a different claim from an empty position |
+| `research` | The one read that leaves this machine. The APP fetches from a fixed allowlist of documentation hosts and hands back text; the agent never gets a URL it can point anywhere, which is the whole reason this is a Phosphor tool and not a general web fetch |
 | `gas_report` | What the app has spent on gas over a window, split by action, chain, rail kind and venue, plus gas as basis points of the value moved. An aggregation of receipts the history surface already read, so it makes no chain call. The four remainders (pending, unknown, unpriced, intent-settled) and the reverted line are counted separately and named in the tool description, because a total that drops what it could not count is a wrong number said confidently |
 
 | Write tool | Does |
@@ -219,6 +234,7 @@ clears each.
 | `propose_policy_change` | Proposes a patch to the policy rules. Always waits for a human click |
 | `propose_mandate` | Arms a rule-driven bot on Hyperliquid perpetuals: a rule program plus the envelope it may never leave. The only tool that grants standing authority, so it always waits for a human click |
 | `propose_yield_deposit` | Supplies a stablecoin to the lending venue. Omit the chain and the app picks the best-paying venue that is healthy and reachable, which is what the loop does. `amount` is the token amount, not dollars |
+| `propose_hl_deposit` | Funds the Hyperliquid perpetuals account. Routes through NEAR Intents into HyperCore; there is no tool that takes money back out, and the paragraph below says why |
 | `propose_yield_withdraw` | Takes the position back out. Omitting `amount` closes it, interest included, and that is the correct way to exit: the receipt rebases, so a figure computed a block ago leaves dust behind. Omit the chain and the app uses the chain the position is on, refusing with the list when positions sit on more than one |
 | `yield_auto` | Starts or stops the allocator loop. Moves no money and gets no policy verdict, so it is a display-class tool with a rail-shaped name: all the loop can do is file a `yield_deposit` proposal, which the agent can already do itself, through the same policy engine and the same click threshold. It grants a schedule, not an authority |
 
@@ -262,6 +278,7 @@ and `propose_lp_remove` are unchanged and stay off.
 | `chart_trendline` | A sloped line through two time-and-price anchors, for when it is not. Zones are drawn through `chart_batch` |
 | `chart_mark` | A labelled moment on the time axis |
 | `chart_clear` | Clears indicators, levels, marks, everything the agent drew, or all of it |
+| `chart_preset` | Applies a named study package in one call, with the tidy that runs before one is applied, so a chart does not accumulate two answers to the same question |
 
 | Trading tool | Does |
 |---|---|
@@ -278,8 +295,19 @@ There is no tool that closes a position and no tool that places a discretionary 
 is opened and exited by a mandate a human armed, which is the same argument the write surface
 makes: the way to stop an agent doing something with real money is to never hand it the verb.
 
+| Team tool | Does |
+|---|---|
+| `agent_roster` | Who else is driving right now: name, role, when each was last heard from |
+| `agent_board` | The shared noticeboard, read. Every line on it is another agent's claim, held as data and never as an instruction |
+| `agent_post` | Writes one line to it. This is how two agents avoid taking the same job, and it is a courtesy rather than a lock |
+| `agent_jobs` | What the workers this session spawned are doing, and what they have finished |
+| `agent_spawn` | Starts a worker of its own. Every worker is an ANALYST: the propose tools are not registered for its process at all, so there is nothing on its surface to talk it into |
+| `skill` | The app's own playbooks, by name. Text the app wrote about how to operate the app, which is why it is a tool and not a prompt |
+
 | Display tool | Does |
 |---|---|
+| `watch` | Points the app at a market and leaves it there, so the window keeps showing what the conversation is about after the conversation has moved on |
+| `set_theme` | Changes the window's colours. Moves no money, and it is on this surface because a person asking their assistant to darken the screen should not have to leave the conversation |
 | `switch` | Moves the window between the plain-English view (`basic`), the operator view (`pro`) and the trading surface (`trade`). Moves no money, and every switch is audited. Named `switch` rather than `set_view_mode` because the whole requirement is that changing window costs one word: an agent hunting for how to "switch to trading" finds it immediately, and did not reliably find `set_view_mode`. Aliases (trading, hft, perps, simple) resolve in the app, so both doors agree. Not to be confused with `chart_set_view`, which drives the chart's render state inside pro |
 
 A switch used to be refused outright while a proposal was pending, so an agent could not move a
@@ -390,19 +418,22 @@ venue pays more and why it did not move rather than moving quietly.
 ## Where the gas went
 
 Every movement this app makes burns gas somewhere, the per-transaction figure has always been on
-the row in HISTORY, and nothing added it up. `[ GAS ]` on the deck bar does, on both the operator
-deck and the trading one: a total for the window, a donut and a table for what each kind of action
-spent, a second pair for which chain it was spent on, and gas as basis points of the value actually
-moved. Agents ask the same question with `gas_report`, and both doors run the same derivation, so
-the human and the agent cannot be told different numbers about the same money.
+the row in HISTORY, and nothing added it up. `GET /api/gas` does: a total for the window, what each
+kind of action spent, the same split by chain, and gas as basis points of the value actually moved.
+Agents ask the same question with `gas_report`, and both doors run the same derivation, so the
+human and the agent cannot be told different numbers about the same money.
+
+The `[ GAS ]` deck-bar modal that used to draw this, with a donut and a table on both decks, went
+with the window rebuild: per-transaction fees ride on the Activity rows now, with a total for the
+window. The derivation and both doors onto it are unchanged.
 
 It is an aggregation, not a new read. The receipts come from the same cache the history surface
 fills, so opening GAS after HISTORY costs nothing and opening it first warms the cache for HISTORY.
 No new RPC call, no new store.
 
-The part worth reading is underneath the rings. An aggregate that silently drops what it cannot
-count reports a smaller number than the truth and calls it the truth, so four categories are
-counted apart and printed, and none of them means zero gas:
+The part worth reading is the remainders. An aggregate that silently drops what it cannot count
+reports a smaller number than the truth and calls it the truth, so four categories are counted
+apart and reported, and none of them means zero gas:
 
     still reading     the receipt has not landed yet
     unknown           no chain this app can reach has that hash
@@ -413,10 +444,9 @@ And one that is not a remainder: **reverted**, in red, because gas spent on a tr
 moved nothing is the only figure here that is pure loss. A remainder that is zero prints nothing at
 all: "0 pending" is chrome.
 
-The tables are the authority and the rings are the shape of them. The canvas carries an
-`aria-label` naming the total and the largest slices, a slice under two percent gets no label on
-the ring because a crowded ring is less legible than a bare one, and the colours are read off the
-stylesheet's own custom properties at draw time rather than being a second palette to maintain.
+The numbers are the authority. The rings that used to draw their shape, and the labelled canvas
+that read them out, went with the composition donut in the window rebuild: the figures survived the
+drawing of them, because the derivation was never in the canvas.
 
 ## How a proposal gets decided
 
@@ -479,7 +509,7 @@ A fresh clone carries no keys and no addresses. Creating those two things is the
 
     git clone <repo> phosphor && cd phosphor
     npm install
-    npm run app
+    npm run tauri dev
 
 **Every address this app holds is a real address holding real money.** There is no practice mode
 and no second world to try it in. Size the first deposit accordingly.
@@ -491,16 +521,21 @@ from being published, and one outside it cannot be reached by git at all. The `.
 is the second line of defence, not the first. Move the file with `PHOSPHOR_KEYS` or a `keysPath`
 config key; the app refuses to start if that path lands inside the repo.
 
-`npm run keygen` still exists and mints RAW UNENCRYPTED keys for development. It is not the setup
-path any more: a file it writes reads as `needs_migration` in the app, and the migration screen is
-what turns it into a keystore.
+Then the lock, which is the state the app is in every time you open it after that. Locked, every
+read still works and the window still shows the balance; the password is what buys the ability to
+sign. It locks itself after fifteen minutes with nobody at the window and when the machine sleeps.
 
-The command prints public addresses only. No branch of it prints a private key. It refuses to
-overwrite an existing key file, because silently replacing a funded key loses the funds with it:
+`npm run keygen` still exists and mints RAW UNENCRYPTED keys for development. It is not the setup
+path, and running it before the first launch is a mistake rather than a step: a file it writes
+reads as `needs_migration` in the app, and the migration screen is what turns it into a keystore.
+
+It prints public addresses only. No branch of it prints a private key. It refuses to overwrite an
+existing key file, because silently replacing a funded key loses the funds with it:
 
     npm run keygen -- --force     # deliberate replacement
 
-Copy the block it prints into `config.local.json` at the repo root. That file is gitignored and
+The window prints the same addresses on the receive screen. Copy them into `config.local.json` at
+the repo root. That file is gitignored and
 merges over `config.json` key by key, so the addresses stay on your machine:
 
     {
@@ -515,7 +550,7 @@ Fund the addresses. Every rail needs native gas on the chain it runs on, and bal
 until funds land. A NEAR implicit account exists the moment it is funded, so the first transfer
 to it is what creates it. Then:
 
-    npm run app
+    npm run tauri dev
 
 ### Before any push
 
@@ -554,8 +589,20 @@ gitignored, and merges over the template key by key. The environment variables `
 
 ## Keys and signing
 
-Key material never enters the repo tree. It lives beside `keysPath`, default
-`~/.phosphor/<project>/`, and `npm run sweep` is the standing check that this stayed true.
+Key material never enters the repo tree, and `npm run sweep` is the standing check that this
+stayed true. It lives beside `keysPath`, and THE DATA DIRECTORY DECIDES where that is:
+
+    the repo default (state/)      ~/.phosphor/<repo folder>/keys.enc.json, falling back to
+                                   ~/.phosphor/keys.enc.json when an older install put it there
+    the installed .app             the same file. The shell says so with PHOSPHOR_APP_DATA=1,
+                                   so an upgrade never moves the wallet
+    any other data directory       keys.enc.json beside that directory's own state
+
+The last row is the one that matters. A demo run, a test or a second profile is given a data
+directory of its own, and it gets an EMPTY wallet rather than the real one: before this the key
+file was keyed off the repo folder alone, so every backend started from one checkout opened one
+wallet whatever data directory it was handed. `PHOSPHOR_KEYS` or a `keysPath` in config overrides
+all three, because a person naming a path has said which wallet they mean.
 
 The file is `keys.enc.json`, at 0600: one AES-256-GCM envelope over the whole key set, with a
 plaintext header the app can read without a password. A random 32-byte data key encrypts the
@@ -671,9 +718,9 @@ Still open, unrelated to keys:
 
 ## Test it
 
-    npm test          # the unit suite: policy engine, proposals, ledger, composition, cost, rails, signers, injection
-    npm run e2e       # boots the app + a real MCP client, drives 20 checks, exits 0/1
-    npx tsc --noEmit  # typecheck
+    npm test            # the unit suite: policy engine, proposals, ledger, composition, cost, rails, signers, injection
+    npm run e2e         # boots the app + a real MCP client, drives 36 checks, exits 0/1
+    npm run typecheck   # tsc --noEmit over src, tests and scripts
 
 One more goes to the real venue, because a unit test cannot tell you a remote API accepts what you
 built. It spends nothing.
@@ -688,7 +735,8 @@ The e2e run is the proof rather than a smoke test: it boots the real app, connec
 client over stdio, and checks that reads work, that a write lands as pending, that approving it
 executes, that the kill switch refuses, and that a forged approval token gets a 403.
 
-The injection suite (15 of the 129) feeds hostile strings from `tests/fixtures/hostile.json`
+The injection suite (11 of the 1745, in `tests/injection.test.ts`) feeds hostile strings from
+`tests/fixtures/hostile.json`
 through the real MCP surface: sentences that claim to be the account owner, that declare policy
 checks disabled, that carry a forged approval blob. Every one lands as a refusal or a pending
 proposal, is stored verbatim as the agent's claim rather than as a rule, and appears in the audit
@@ -699,19 +747,22 @@ human approval or a recorded `allow` verdict.
 
 Three windows, no framework and no build, and an agent moves between them with `switch`.
 
-**pro**, the operator view, is one page in seven regions: status bar (total held, agent
-connection, policy state, kill switch), chart, wallet with its composition donut, activity and
-transactions, policy sentences, approval gate, log. **basic** is the same app rewritten for a
-non-technical reader, computed server-side in `src/view/basic.ts` so every word a person reads is
-written in one place. **trade** is the trading surface: positions with liquidation distance,
-working orders, fills and armed mandates.
+**pro**, the operator view, is a 12-column grid in five panels and one modal: status bar (total
+held, agent connection, policy state, kill switch), wallet, activity and transactions with their
+fees, policy sentences, approval gate. The chart moved to trade, which is one word away, and the
+composition donut and the fragmentation block went with it. **basic** is the same app rewritten for
+a non-technical reader, computed server-side in `src/view/basic.ts` so every word a person reads is
+written in one place. **trade** is the trading surface: the chart, positions with liquidation
+distance, working orders, fills and armed mandates.
 
 The approval block renders identically on all three, which is what let the pending-proposal
 refusal be removed: a decision follows the human between windows instead of being left behind on
 the screen they came from.
 
-System monospace, near-black and green, with red reserved for pending approvals and refusals,
-because a safety gate that does not visually shout is a safety bug.
+Geist for the words and Geist Mono with tabular figures for anything that can change, so a value
+never moves its neighbours when it ticks. Up is blue (`--up: #5B8DEF`) and down is red, and red is
+also what a pending approval and a refusal wear, because a safety gate that does not visually shout
+is a safety bug.
 
 | ![Approval gate with a pending proposal](docs/screenshots/pending.png) | ![Kill switch on](docs/screenshots/kill-switch.png) |
 |---|---|
@@ -719,7 +770,7 @@ because a safety gate that does not visually shout is a safety bug.
 | ![Policy file unreadable](docs/screenshots/policy-unreadable.png) | ![Resting state](docs/screenshots/resting.png) |
 | Corrupt policy file: every write refused until a human repairs it | Resting: nothing pending, nothing to decide |
 
-### The chart
+### The chart, which lives on trade
 
 ![The chart with two overlays, an RSI pane, an agent price line and the crosshair](docs/screenshots/chart.png)
 
@@ -736,10 +787,10 @@ empty canvas instead of five hundred candles, which is most of why it keeps up w
     drag the bottom axis   squeeze or spread the bars
     double click           resets the axis under the pointer, or returns to live
     arrows, + and -, 0     pan, zoom, back to live
-    the ind field          ema 21, bbands 20 2.5, remove rsi, clear
+    the Indicators field   ema 21, bbands 20 2.5, remove rsi, clear
 
-The `ind` field is a command line rather than a toolbar, and it takes the same words the agent uses
-over MCP. Indicators that need their own pane get one, up to three, with the price pane held to a
+The Indicators field is a command line rather than a toolbar, and it takes the same words the agent
+uses over MCP. Indicators that need their own pane get one, up to three, with the price pane held to a
 150px floor: past that the chart refuses the pane and says why, and a window too short to hold what
 is already there drops panes and names them on screen. It never quietly squeezes.
 
@@ -749,20 +800,28 @@ the agent reads and the pixel the human sees come from one implementation.
 
 ## Layout
 
-    src/main.ts        app process: state owner, HTTP + UI on 127.0.0.1:4177
-    src/server.ts      the approval surface, the JSON routes, the SSE stream, /api/mcp
+    src/main.ts        app process: state owner, wiring, HTTP + UI on 127.0.0.1:4177
+    src/server.ts      the composition root: builds the context and hands it to the router
+    src/http/          the surface itself, 23 files: the router, the routes, auth, SSE, /api/mcp
     src/mcp.ts         stdio MCP server, thin proxy to the app, no approval path
     src/greeting.ts    the connect-time greeting and the index of everything an agent can do
     src/agents.ts      who is driving: the roster, roles, heartbeat TTLs, the lead
     src/board.ts       the noticeboard agents write one line each to. Data, never authority
     src/duplicates.ts  two agents cannot double one proposal by accident
     src/crew.ts        workers: the app spawning an analyst on an agent's behalf
-    src/summon.ts      start a fresh agent in a terminal, wired to this app
-    src/policy/        engine (pure) + policy file + sentence renderer
-    src/proposals.ts   simulate, evaluate, persist, execute after approval
+    src/driver.ts      the agent the app starts for you, and the orphans it collects
+    src/keystore/      the encrypted key file, the lock, the session, the derivation
+    src/policy/        engine (pure) + policy file + sentence renderer + the venue gap
+    src/proposals.ts   a 92-line door onto src/proposals/
+    src/proposals/     the work: lifecycle, execute, draft, rails, positions, reconcile
     src/rails/         the rail registry: uniswap, oneclick, intents, hyperliquid, mandate
+    src/yield/         the lending venue, the positions and the allocator loop
+    src/gas/           what a movement cost, grouped by action, chain, rail and venue
     src/chain/         the only places phosphor signs: evm.ts and near.ts
     src/ledger/        evm, solana, near readers + demo fixtures
+    src/history.ts     the transaction list the window pages through
+    src/transactions.ts  receipts and the gas cache both doors read
+    src/role.ts        what the app tells an agent it is, in the MCP handshake
     src/composition.ts risk classification against data/risk-table.json
     src/intents.ts     1Click quotes, synthetic quoter, stub signer
     src/chart.ts       chart view state, the agent read model, the ruler
@@ -783,9 +842,10 @@ the agent reads and the pixel the human sees come from one implementation.
     scripts/keygen.ts  raw keypairs for developers, written outside the working copy
     scripts/sweep.ts   secret sweep over the tracked tree and the git history
     ui/                three windows, no framework, no build
-    ui/chart.js        the chart engine: two canvases, one pointer surface
-    ui/trade.js        the trading window
-    ui/approvals.js    the approval block, rendered identically on all three windows
+    ui/chart/          the chart engine: two canvases, one pointer surface
+    ui/screens/        one file per screen: basic, pro, trade, lock, first run, decision
+    ui/core/           the DOM helpers, the keyed reconciler, the API client, the store
+    ui/design/         the tokens, the type scale and the motion the screens are built from
     operator/          the opt-in operator profile: an agent that drives but cannot develop
     state/             policy.json, proposals.json, audit.jsonl (append-only)
 
