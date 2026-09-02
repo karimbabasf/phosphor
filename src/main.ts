@@ -14,6 +14,7 @@ import { createAudit } from './audit.ts';
 import { createKeystore, useKeystore } from './keystore/index.ts';
 import { createSession } from './keystore/session.ts';
 import { createStore } from './store.ts';
+import { installCrashHandlers } from './crash.ts';
 import { loadPolicy, savePolicy, defaultPolicy } from './policy/file.ts';
 import { renderSentences } from './policy/render.ts';
 import { createRails, venueAllowlist } from './rails/index.ts';
@@ -37,6 +38,12 @@ const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const cfg = loadConfig(root);
 
 const audit = createAudit(cfg.dataDir);
+
+/* Before anything that can throw. See src/crash.ts: without these two handlers Node ends the
+   process on any unhandled rejection, and the shell above inherits stdio to nowhere, so the
+   window simply stops answering. */
+installCrashHandlers({ audit });
+
 const store = createStore(cfg.dataDir);
 
 /* The keys, and the lock over them. Installed before anything that could ask for a signature,
@@ -447,6 +454,31 @@ marketLive = (product, baseSec, candle, provider) => server.broadcastCandle(prod
 trade.onUpdate(() => {
   server.broadcastState();
   server.broadcastTrade();
+});
+
+/* A port already in use used to be an uncaught exception with a raw stack, and the shell then
+   reported the generic "The control app stopped while starting up", naming neither the port nor
+   the conflict. It is the single most likely startup failure on this app, because the most
+   common cause of it is a second Phosphor. */
+server.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EADDRINUSE') {
+    const msg = `127.0.0.1:${cfg.port} is already in use, so this instance did not start. Another Phosphor is probably already running on that port.`;
+    console.error(`phosphor: ${msg}`);
+    try {
+      audit.append('error', msg, { code: err.code, port: cfg.port });
+    } catch {
+      // stderr already carries it.
+    }
+    process.exit(2);
+  }
+  const msg = `the HTTP server failed: ${err.message}`;
+  console.error(`phosphor: ${msg}`);
+  try {
+    audit.append('error', msg, { code: err.code ?? null });
+  } catch {
+    // as above
+  }
+  process.exit(2);
 });
 
 server.listen(cfg.port, '127.0.0.1', () => {

@@ -85,6 +85,11 @@ export type HostDeps = {
   // It became load bearing on 2026-08-20, when the runner stopped refusing to trade real
   // money outright. A guard removed and replaced with nothing is a hole, so this replaced it.
   limits?: { maxArmedMandates: number; maxAggregateNotionalUsd: number };
+  // Test seam, the same shape as fetchImpl on the rails and FeedSocket on the trade feed. The
+  // guards around a DEAD child (the kill switch is the one that matters) cannot be exercised
+  // against a real fork without a real key and a real venue, and those guards are the ones that
+  // used to take the whole app down.
+  forkImpl?: typeof fork;
 };
 
 // Deliberately small. Every run is against real collateral, and the number a human is most
@@ -251,12 +256,25 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
 
   function startPump(): void {
     if (pump !== null) return;
+    /* Two jobs on one timer, and both of them wrapped.
+       The expiry sweep rides the pump because the pump runs exactly while something is armed,
+       which is exactly when a signing session can exist. A second timer for it would be a timer
+       that ticks all night on an app with nothing running.
+
+       `.catch` rather than `void` on the pump: pumpOnce awaits the feed and then calls record,
+       which reaches the caller's onEvent and the audit file, and a rejection anywhere in that
+       chain used to leave the process because a bare `void` consumes the value and not the
+       rejection. The sweep gets a try for the same reason: it takes a trading key back, and a
+       throw there must not stop the timer that would try again. */
     pump = setInterval(() => {
-      // The expiry sweep rides the pump because the pump runs exactly while something is
-      // armed, which is exactly when a signing session can exist. A second timer for it would
-      // be a timer that ticks all night on an app with nothing running.
-      api.sweepSigningSessions();
-      void pumpOnce();
+      try {
+        api.sweepSigningSessions();
+      } catch (err) {
+        record({ type: 'error', id: null, message: `signing session sweep: ${err instanceof Error ? err.message : String(err)}` });
+      }
+      pumpOnce().catch((err: unknown) => {
+        record({ type: 'error', id: null, message: `feed pump: ${err instanceof Error ? err.message : String(err)}` });
+      });
     }, deps.pollMs ?? 2000);
     pump.unref();
   }
@@ -283,8 +301,12 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
        It went over the environment before, which was chosen over argv on purpose (argv is
        world-readable in `ps`) and was still not private: `ps eww <pid>` prints the environment
        of any process this user owns, which is the attacker this app is built against. A pipe
-       has two ends and no third reader. */
-    child = fork(entry, [], {
+       has two ends and no third reader.
+
+       `forkImpl` is a test seam, the same shape as fetchImpl on the rails. The guards below
+       (child.on('error'), and the `connected` check on every send) are what a test needs to
+       drive, and they cannot be reached against a real fork without a real key and a real venue. */
+    child = (deps.forkImpl ?? fork)(entry, [], {
       env: { ...process.env, PHOSPHOR_HL_URL: deps.baseUrl },
       stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
     });
@@ -321,6 +343,18 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
       child = null;
     });
     child.stderr?.on('data', (b) => record({ type: 'error', id: null, message: String(b).trim() }));
+
+    /* A fork that cannot start, and a send on an IPC channel that has closed, both raise 'error'
+       on the child rather than throwing at the call site. With no listener Node re-raises it as
+       an uncaught exception from nextTick, which ends the app rather than the mandate. Every
+       other child in this repo has this listener (see driver.ts); this one did not. */
+    child.on('error', (err) => {
+      for (const [id] of armed) record({ type: 'disarmed', id, reason: `runner child failed: ${err.message}` });
+      armed.clear();
+      stopPump();
+      child = null;
+      record({ type: 'error', id: null, message: `runner child failed: ${err.message}` });
+    });
 
     return child;
   }
@@ -378,7 +412,7 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
       record({ type: 'disarmed', id, reason });
       if (armed.size === 0) {
         stopPump();
-        if (child !== null) child.send({ cmd: 'shutdown' });
+        if (child !== null && child.connected) child.send({ cmd: 'shutdown' });
       }
       return { ok: true, detail: `disarmed ${id}: ${reason}` };
     },
@@ -394,7 +428,12 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
       if (child !== null) {
         // Ask first so it can flatten, then take the process out regardless. A kill switch that
         // depends on the thing it is killing being healthy is not a kill switch.
-        child.send({ cmd: 'flatten_and_exit', reason });
+        //
+        // The `connected` guard is the whole of it. This was the one send path in the file
+        // without one, so flipping the kill switch onto a child that had already died threw
+        // ERR_IPC_CHANNEL_CLOSED into `void runner.stopAll(...)` in main.ts, uncaught: the kill
+        // switch killed the app. The SIGKILL below still runs, so the outcome is unchanged.
+        if (child.connected) child.send({ cmd: 'flatten_and_exit', reason });
         const doomed = child;
         setTimeout(() => {
           if (doomed.connected || doomed.exitCode === null) doomed.kill('SIGKILL');
@@ -476,7 +515,11 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
     sweepSigningSessions(): string[] {
       const done = deps.session?.expired() ?? [];
       for (const session of done) {
-        void api.disarm(session.id, 'the signing session expired, so the trading key was taken back');
+        // `.catch`, not `void`. disarm() sends over IPC and records an event, both of which can
+        // throw, and this runs on a timer with nothing above it to catch a rejection.
+        api.disarm(session.id, 'the signing session expired, so the trading key was taken back').catch((err: unknown) => {
+          record({ type: 'error', id: session.id, message: `taking the trading key back failed: ${err instanceof Error ? err.message : String(err)}` });
+        });
       }
       return done.map((s) => s.id);
     },

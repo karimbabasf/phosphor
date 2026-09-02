@@ -737,7 +737,7 @@ async function tick(): Promise<void> {
   }
 }
 
-process.on('message', async (msg: Record<string, unknown>) => {
+async function handleCommand(msg: Record<string, unknown>): Promise<void> {
   const cmd = msg.cmd;
 
   if (cmd === 'arm') {
@@ -825,6 +825,21 @@ process.on('message', async (msg: Record<string, unknown>) => {
   }
 
   if (cmd === 'shutdown') process.exit(0);
+}
+
+/* The command handler is 88 lines of async work: it arms, disarms and flattens, and `send` sits
+   outside flatten's own catch. A rejection out of any of it ended this process mid
+   `flatten_and_exit`, so every mandate after the failing one kept an open position on the venue
+   while the app reported the bot stopped. Nothing in here decides to die now: the fault goes up
+   as an event, the host reads it, and the human sees a sentence. */
+process.on('message', (msg: Record<string, unknown>) => {
+  handleCommand(msg).catch((err: unknown) => {
+    send({
+      type: 'error',
+      id: null,
+      message: `runner command ${String(msg.cmd)} failed: ${err instanceof Error ? err.message : String(err)}`,
+    });
+  });
 });
 
 // One tick at a time, always.
@@ -843,9 +858,15 @@ let ticking = false;
 const timer = setInterval(() => {
   if (ticking) return;
   ticking = true;
-  void tick().finally(() => {
-    ticking = false;
-  });
+  // `.catch` before `.finally`, because `.finally` passes a rejection straight through: the
+  // old shape reported nothing and took the runner down with it.
+  tick()
+    .catch((err: unknown) => {
+      send({ type: 'error', id: null, message: `tick failed: ${err instanceof Error ? err.message : String(err)}` });
+    })
+    .finally(() => {
+      ticking = false;
+    });
 }, 250);
 timer.unref?.();
 

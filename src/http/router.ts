@@ -118,8 +118,19 @@ export async function handle(ctx: Ctx, req: http.IncomingMessage, res: http.Serv
     }
     fail(res, 405, `method not allowed: ${String(req.method)}`);
   } catch (err) {
-    ctx.audit.append('error', `server error on ${route}: ${errText(err)}`);
-    if (!res.headersSent) fail(res, 500, errText(err));
-    else res.end();
+    // Everything in here is itself wrapped. The audit append is a disk write, and an ENOSPC on
+    // audit.jsonl throwing from inside this catch is exactly how one bad write on one request
+    // used to end the whole backend. The response still goes out; the log line is what is lost.
+    try {
+      ctx.audit.append('error', `server error on ${route}: ${errText(err)}`);
+    } catch (logErr) {
+      process.stderr.write(`phosphor: could not log a ${route} failure: ${errText(logErr)}\n`);
+    }
+    try {
+      if (!res.headersSent) fail(res, 500, errText(err));
+      else res.end();
+    } catch {
+      res.destroy();
+    }
   }
 }
