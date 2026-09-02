@@ -28,9 +28,6 @@
 
 import http from 'node:http';
 import crypto from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import type {
   Candle,
@@ -94,16 +91,22 @@ import {
   VIEW_TOOLS,
 } from './http/context.ts';
 import type { ServerDeps, PhosphorServer } from './http/context.ts';
+import {
+  asRecord,
+  capLabel,
+  errText,
+  fail,
+  intParam,
+  readBody,
+  round2,
+  sendJson,
+  sendJsonConditional,
+  serveStatic,
+} from './http/respond.ts';
+import type { JsonBody } from './http/respond.ts';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const UI_DIR = path.join(__dirname, '..', 'ui');
 
 const HOST = '127.0.0.1';
-const MAX_BODY_BYTES = 1024 * 1024;
-// Every label component on the MCP surface is caller-controlled and lands in an
-// append-only file. The body cap is 1 MB, so without this one request can write a
-// 1 MB log line, and a loop of them fills the disk the audit record lives on.
-const MAX_LABEL_CHARS = 64;
 const STATE_DEBOUNCE_MS = 120;
 const HEARTBEAT_MS = 15000; // SSE keepalive; doubles as a floor on state freshness
 const CANDLE_PUSH_MS = 1000; // how often the browser is told there may be a newer bar
@@ -123,42 +126,6 @@ const PRICE_POLL_MS = 30000;
 // pro chart's product either way: the two screens are read by two different people, and
 // the owner's prices should not change because a trader typed a ticker in the other
 // window.
-
-const MIME: Record<string, string> = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.woff2': 'font/woff2',
-};
-
-type JsonBody = Record<string, unknown>;
-type BodyResult = { ok: true; value: JsonBody } | { ok: false; error: string };
-
-function errText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
-function asRecord(value: unknown): JsonBody {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as JsonBody) : {};
-}
-
-// Bound a caller-supplied string before it reaches a log label. Truncation is
-// enough here: the log is JSONL, so JSON.stringify already escapes newlines and
-// quotes, and no caller-controlled text is ever rendered as HTML.
-function capLabel(raw: string): string {
-  return raw.length <= MAX_LABEL_CHARS ? raw : `${raw.slice(0, MAX_LABEL_CHARS)}...`;
-}
-
-function intParam(raw: unknown, fallback: number, max: number): number {
-  if (raw === null || raw === undefined) return fallback;
-  const n = Number.parseInt(String(raw), 10);
-  if (!Number.isFinite(n) || n <= 0) return fallback;
-  return Math.min(n, max);
-}
-
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
-}
 
 // Hash both sides so the comparison is constant length as well as constant time:
 // a raw timingSafeEqual on the tokens themselves would throw on a length mismatch
@@ -602,110 +569,6 @@ export function createServer(deps: ServerDeps): PhosphorServer {
 
   // ---------- responses ----------
 
-  function sendJson(res: http.ServerResponse, status: number, payload: unknown): void {
-    const body = JSON.stringify(payload);
-    res.writeHead(status, {
-      'content-type': 'application/json; charset=utf-8',
-      'content-length': Buffer.byteLength(body),
-      'cache-control': 'no-store',
-    });
-    res.end(body);
-  }
-
-  // As sendJson, but the caller may ask whether anything changed since last time.
-  //
-  // State is pushed on a timer whether or not it moved: the heartbeat below fires every
-  // HEARTBEAT_MS, and the ledger refresh in main.ts broadcasts on every pass. The browser
-  // answers each one by refetching 54KB and rebuilding the wallet, the policy and the basic
-  // screen, and measured on a running instance those bodies are byte-identical, so the rebuild
-  // repaints exactly what was already there.
-  //
-  // The ETag lets that case cost a 304: no body, no parse, no DOM teardown, no layout. Nothing
-  // about freshness changes, because the request still happens on every signal. Only the redraw
-  // is skipped, and only when the bytes match.
-  //
-  // no-store stays. The browser's own HTTP cache must not hold a wallet balance; the conditional
-  // request here is driven by an ETag the page holds in memory and loses on reload.
-  function sendJsonConditional(req: http.IncomingMessage, res: http.ServerResponse, payload: unknown): void {
-    const body = JSON.stringify(payload);
-    // Not a security boundary, just a change detector, so speed beats collision resistance.
-    const etag = `"${crypto.createHash('sha1').update(body).digest('base64')}"`;
-    if (req.headers['if-none-match'] === etag) {
-      res.writeHead(304, { etag, 'cache-control': 'no-store' });
-      res.end();
-      return;
-    }
-    res.writeHead(200, {
-      'content-type': 'application/json; charset=utf-8',
-      'content-length': Buffer.byteLength(body),
-      'cache-control': 'no-store',
-      etag,
-    });
-    res.end(body);
-  }
-
-  function serveStatic(pathname: string, res: http.ServerResponse): void {
-    let rel: string;
-    try {
-      rel = decodeURIComponent(pathname === '/' ? '/index.html' : pathname).replace(/^\/+/, '');
-    } catch {
-      sendJson(res, 404, { error: 'not found' });
-      return;
-    }
-    const target = path.resolve(UI_DIR, rel);
-    if (target !== UI_DIR && !target.startsWith(UI_DIR + path.sep)) {
-      sendJson(res, 404, { error: 'not found' });
-      return;
-    }
-    const type = MIME[path.extname(target)];
-    if (type === undefined) {
-      sendJson(res, 404, { error: 'not found' });
-      return;
-    }
-    let body: Buffer;
-    try {
-      body = fs.readFileSync(target);
-    } catch {
-      sendJson(res, 404, { error: 'not found' });
-      return;
-    }
-    // The UI is served from disk on every request so an edit shows up on reload, but a
-    // font file is immutable content that would otherwise be refetched on every boot of
-    // the window and re-run the swap.
-    const cache = type === 'font/woff2' ? 'public, max-age=31536000, immutable' : 'no-store';
-    res.writeHead(200, { 'content-type': type, 'content-length': body.length, 'cache-control': cache });
-    res.end(body);
-  }
-
-  function readBody(req: http.IncomingMessage): Promise<BodyResult> {
-    return new Promise((resolve) => {
-      const chunks: Buffer[] = [];
-      let size = 0;
-      req.on('data', (chunk: Buffer) => {
-        size += chunk.length;
-        if (size > MAX_BODY_BYTES) {
-          req.destroy();
-          resolve({ ok: false, error: 'request body too large' });
-          return;
-        }
-        chunks.push(chunk);
-      });
-      req.on('end', () => {
-        const raw = Buffer.concat(chunks).toString('utf8').trim();
-        if (raw.length === 0) {
-          resolve({ ok: true, value: {} });
-          return;
-        }
-        try {
-          resolve({ ok: true, value: asRecord(JSON.parse(raw)) });
-        } catch {
-          resolve({ ok: false, error: 'invalid json body' });
-        }
-      });
-      req.on('error', (err) => resolve({ ok: false, error: errText(err) }));
-    });
-  }
-
   // ---------- state ----------
 
   function sentencesOf(policy: Policy | null): string[] {
@@ -946,13 +809,13 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   // of a log after money moved without a click.
   function handleYieldAuto(body: JsonBody, res: http.ServerResponse): void {
     if (!deps.allocator) {
-      sendJson(res, 400, { error: 'no lending allocator is running in this app, so there is no loop to switch.' });
+      fail(res, 400, 'no lending allocator is running in this app, so there is no loop to switch.');
       return;
     }
     if (typeof body.enabled !== 'boolean') {
       // No default, deliberately. A switch that defaults to one of its two states is a switch
       // an agent flips while trying to read it.
-      sendJson(res, 400, { error: 'enabled must be true or false' });
+      fail(res, 400, 'enabled must be true or false');
       return;
     }
     const on = body.enabled;
@@ -1061,7 +924,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       });
       res.end(body);
     } catch (err) {
-      sendJson(res, 502, { error: errText(err) });
+      fail(res, 502, errText(err));
     }
   }
 
@@ -1160,10 +1023,10 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   // one door per caller: the window uses this, an agent uses /api/mcp.
   async function handleChartWrite(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const parsed = await readBody(req);
-    if (!parsed.ok) return sendJson(res, 400, { error: parsed.error });
+    if (!parsed.ok) return fail(res, 400, parsed.error);
     const body = parsed.value;
-    if (!sameOrigin(req)) return sendJson(res, 403, { error: 'cross-origin chart write refused' });
-    if (!tokenMatches(body.token, token)) return sendJson(res, 403, { error: 'invalid approval token' });
+    if (!sameOrigin(req)) return fail(res, 403, 'cross-origin chart write refused');
+    if (!tokenMatches(body.token, token)) return fail(res, 403, 'invalid approval token');
 
     if (body.geometry !== null && typeof body.geometry === 'object') {
       chart.setGeometry(body.geometry as ChartGeometry);
@@ -1172,25 +1035,25 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     if (body.view !== null && typeof body.view === 'object') {
       const patch = body.view as JsonBody;
       const refusal = resolveViewPatch(patch, false);
-      if (refusal !== null) return sendJson(res, 400, { error: refusal });
+      if (refusal !== null) return fail(res, 400, refusal);
       const outcome = chart.setView(patch, 'human');
-      if (!outcome.ok) return sendJson(res, 400, { error: outcome.error });
+      if (!outcome.ok) return fail(res, 400, outcome.error);
       notes = outcome.notes;
     }
     // The window's own command line. The human gets the same vocabulary as the agent, so
     // the chart is not a surface only an agent can change.
     if (body.addIndicator !== null && typeof body.addIndicator === 'object') {
       const outcome = chart.addIndicator(body.addIndicator as Record<string, unknown>, 'human');
-      if (!outcome.ok) return sendJson(res, 400, { error: outcome.error, notes: outcome.notes });
+      if (!outcome.ok) return fail(res, 400, outcome.error, { notes: outcome.notes });
       notes = notes.concat(outcome.notes);
     }
     if (typeof body.removeIndicator === 'string') {
       const outcome = chart.removeIndicator(body.removeIndicator);
-      if (!outcome.ok) return sendJson(res, 400, { error: outcome.error });
+      if (!outcome.ok) return fail(res, 400, outcome.error);
     }
     if (typeof body.clear === 'string') {
       const outcome = chart.clear(body.clear);
-      if (!outcome.ok) return sendJson(res, 400, { error: outcome.error });
+      if (!outcome.ok) return fail(res, 400, outcome.error);
     }
     broadcastChart();
     // The resulting view goes back with the answer. The window applies it from here rather
@@ -1258,7 +1121,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         origin: req.headers.origin ?? '(absent)',
         agent: String(req.headers['user-agent'] ?? '(absent)').slice(0, 120),
       });
-      sendJson(res, parsed.ok ? 403 : 400, { error: parsed.ok ? 'invalid approval token' : reason });
+      fail(res, parsed.ok ? 403 : 400, parsed.ok ? 'invalid approval token' : reason);
       return;
     }
 
@@ -1269,7 +1132,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
          that is not ABOUT an existing chat. */
       if (action === 'open') {
         const opened = openChat();
-        if (!opened.ok) return sendJson(res, 409, { error: opened.error });
+        if (!opened.ok) return fail(res, 409, opened.error);
         return sendJson(res, 200, {
           ok: true,
           id: opened.chat.id,
@@ -1283,7 +1146,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
          different agent, which is the failure this whole tagging exercise exists to prevent. */
       const named = body.chat === undefined || body.chat === null || body.chat === '' ? null : chatById(body.chat);
       if (body.chat !== undefined && body.chat !== null && body.chat !== '' && named === null) {
-        return sendJson(res, 404, { error: `no chat ${String(body.chat)} is open` });
+        return fail(res, 404, `no chat ${String(body.chat)} is open`);
       }
       const chat = named ?? primaryChat();
       const instance = chat.driver;
@@ -1312,12 +1175,12 @@ export function createServer(deps: ServerDeps): PhosphorServer {
 
       if (action === 'prompt') {
         const text = typeof body.text === 'string' ? body.text.trim() : '';
-        if (text === '') return sendJson(res, 400, { error: 'text is required' });
-        if (text.length > 8000) return sendJson(res, 400, { error: 'text is too long: 8000 characters maximum' });
+        if (text === '') return fail(res, 400, 'text is required');
+        if (text.length > 8000) return fail(res, 400, 'text is too long: 8000 characters maximum');
         try {
           instance.send(text);
         } catch (err) {
-          return sendJson(res, 409, { error: errText(err) });
+          return fail(res, 409, errText(err));
         }
         /* Logged before anything the agent does with it. The dashcam is supposed to answer
            "why did this happen", and the tool calls alone only answer "what happened": a swap
@@ -1353,7 +1216,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         return sendJson(res, 200, { ok: true, id: chat.id, ...instance.status() });
       }
 
-      return sendJson(res, 400, { error: `unknown driver action: ${action}` });
+      return fail(res, 400, `unknown driver action: ${action}`);
     }
 
     if (route === '/api/yield/withdraw') {
@@ -1369,7 +1232,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       // block, and an amount on the wire would be a number this route would have to trust.
       const chain = typeof body.chain === 'string' ? body.chain : '';
       if (chain !== 'eth' && chain !== 'base' && chain !== 'arb') {
-        sendJson(res, 400, { error: `chain must be one of eth, base, arb; got '${chain}'` });
+        fail(res, 400, `chain must be one of eth, base, arb; got '${chain}'`);
         return;
       }
       try {
@@ -1377,7 +1240,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         broadcastState();
         sendJson(res, 200, proposal);
       } catch (err) {
-        sendJson(res, 400, { error: errText(err) });
+        fail(res, 400, errText(err));
       }
       return;
     }
@@ -1396,7 +1259,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     }
 
     if (id === null) {
-      sendJson(res, 400, { error: 'id is required' });
+      fail(res, 400, 'id is required');
       return;
     }
     try {
@@ -1405,7 +1268,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       broadcastState();
       sendJson(res, 200, proposal);
     } catch (err) {
-      sendJson(res, 400, { error: errText(err) });
+      fail(res, 400, errText(err));
     }
   }
 
@@ -1502,7 +1365,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       try {
         sendJson(res, 200, await candles.get(product, granularity, limit));
       } catch (err) {
-        sendJson(res, 502, { error: errText(err) });
+        fail(res, 502, errText(err));
       }
       return;
     }
@@ -1510,7 +1373,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       const id = typeof args.id === 'string' ? args.id : '';
       const proposal = proposals.get(id);
       if (proposal === undefined) {
-        sendJson(res, 404, { error: `unknown proposal id: ${id}` });
+        fail(res, 404, `unknown proposal id: ${id}`);
         return;
       }
       sendJson(res, 200, proposal);
@@ -1612,7 +1475,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
        arguments included, by the one line that covers the whole surface. */
     if (tool === 'research') {
       const query = typeof args.query === 'string' ? args.query : '';
-      if (query.trim() === '') return sendJson(res, 400, { error: 'query is required' });
+      if (query.trim() === '') return fail(res, 400, 'query is required');
       sendJson(res, 200, await research(query, { limit: intParam(args.limit, 8, 20) }));
       return;
     }
@@ -1688,7 +1551,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
           }) as Record<string, unknown>),
         });
       } catch (err) {
-        sendJson(res, 502, { error: errText(err) });
+        fail(res, 502, errText(err));
       }
       return;
     }
@@ -1774,7 +1637,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       sendJson(res, report.status, report.body);
       return;
     }
-    sendJson(res, 400, { error: `unknown read tool: ${tool}. known tools: ${READ_TOOLS.join(', ')}` });
+    fail(res, 400, `unknown read tool: ${tool}. known tools: ${READ_TOOLS.join(', ')}`);
   }
 
   // The human's controls on the trading window. Deliberately NOT reachable from /api/mcp: the
@@ -1782,20 +1645,20 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   // it knocks on does not open onto this function. A check could be wrong; an absence cannot.
   async function handleTradeAction(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const parsed = await readBody(req);
-    if (!parsed.ok) return sendJson(res, 400, { error: parsed.error });
+    if (!parsed.ok) return fail(res, 400, parsed.error);
     const body = parsed.value;
-    if (!sameOrigin(req)) return sendJson(res, 403, { error: 'cross-origin request refused' });
+    if (!sameOrigin(req)) return fail(res, 403, 'cross-origin request refused');
     if (!tokenMatches(body.token, token)) {
       audit.append('approve_attempt_rejected', 'POST /api/trade/action rejected: bad approval token', {
         action: String(body.action ?? ''),
         tokenPresent: typeof body.token === 'string' && body.token.length > 0,
       });
-      return sendJson(res, 403, { error: 'invalid approval token' });
+      return fail(res, 403, 'invalid approval token');
     }
 
     const action = String(body.action ?? '');
     if (!TRADE_ACTIONS.includes(action)) {
-      return sendJson(res, 400, { error: `unknown action: ${action}. known: ${TRADE_ACTIONS.join(', ')}` });
+      return fail(res, 400, `unknown action: ${action}. known: ${TRADE_ACTIONS.join(', ')}`);
     }
 
     const id = typeof body.id === 'string' ? body.id : undefined;
@@ -1815,6 +1678,10 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       // shows from `payload.error`. Without it a refused close reached the human as
       // "/api/trade/action returned 400" and the venue's own words, which are the only part
       // that says what to do next, were dropped on the floor.
+      // TRACK B: the two failure bodies below are the only ones on this surface that do not go
+      // through fail(). The 400 is `{ ...result, error }` because the window reads the venue's own
+      // fields beside the sentence, and the 500 is `{ ok: false, detail }` with no `error` at all.
+      // Both are left exactly as they are: changing them changes what the window renders.
       sendJson(res, result.ok ? 200 : 400, result.ok ? result : { ...result, error: result.detail });
     } catch (err) {
       audit.append('error', `${action} failed: ${errText(err)}`);
@@ -1826,10 +1693,10 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   // caller, so the browser uses this and an agent uses /api/mcp, and both land in one place.
   async function handleTradeWrite(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const parsed = await readBody(req);
-    if (!parsed.ok) return sendJson(res, 400, { error: parsed.error });
+    if (!parsed.ok) return fail(res, 400, parsed.error);
     const body = parsed.value;
-    if (!sameOrigin(req)) return sendJson(res, 403, { error: 'cross-origin trade write refused' });
-    if (!tokenMatches(body.token, token)) return sendJson(res, 403, { error: 'invalid approval token' });
+    if (!sameOrigin(req)) return fail(res, 403, 'cross-origin trade write refused');
+    if (!tokenMatches(body.token, token)) return fail(res, 403, 'invalid approval token');
 
     const notes: string[] = [];
     for (const [key, apply] of [
@@ -1840,12 +1707,12 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       const arg = body[key];
       if (arg === undefined || arg === null || typeof arg !== 'object') continue;
       const out = apply(arg as Record<string, unknown>);
-      if (!out.ok) return sendJson(res, 400, { error: out.error });
+      if (!out.ok) return fail(res, 400, out.error);
       notes.push(...out.notes);
     }
     if (typeof body.clear === 'string') {
       const out = trade.view.clear(body.clear);
-      if (!out.ok) return sendJson(res, 400, { error: out.error });
+      if (!out.ok) return fail(res, 400, out.error);
       notes.push(...out.notes);
     }
     if (typeof body.focus === 'object' && body.focus !== null) {
@@ -1939,7 +1806,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       else out = trade.view.clear(String(args.what ?? 'agent'));
 
       if (!out.ok) {
-        sendJson(res, 400, { error: out.error, notes: out.notes });
+        fail(res, 400, out.error, { notes: out.notes });
         return;
       }
       // Focus moves the chart with it. A trading screen whose position panel and whose candles
@@ -1962,7 +1829,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     if (tool === 'set_theme') {
       const result = applyThemePatch(getTheme(), args);
       if (!result.ok) {
-        sendJson(res, 400, { error: result.error });
+        fail(res, 400, result.error);
         return;
       }
       setTheme(result.theme);
@@ -1989,7 +1856,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       // no venue would recognise.
       const resolved = resolveViewPatch(args, true);
       if (resolved !== null) {
-        sendJson(res, 400, { error: resolved });
+        fail(res, 400, resolved);
         return;
       }
       const before = chart.state().view.product;
@@ -2076,7 +1943,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         timeoutMs: args.timeoutMs,
       });
       if (!result.ok) {
-        sendJson(res, 400, { error: result.error });
+        fail(res, 400, result.error);
         return;
       }
       audit.append('tool_call', `agent spawned a worker: ${result.job.label}`, {
@@ -2093,12 +1960,12 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       });
       return;
     } else {
-      sendJson(res, 400, { error: `unknown view tool: ${tool}. known tools: ${VIEW_TOOLS.join(', ')}` });
+      fail(res, 400, `unknown view tool: ${tool}. known tools: ${VIEW_TOOLS.join(', ')}`);
       return;
     }
 
     if (!outcome.ok) {
-      sendJson(res, 400, { error: outcome.error, notes: outcome.notes });
+      fail(res, 400, outcome.error, { notes: outcome.notes });
       return;
     }
     broadcastChart();
@@ -2170,13 +2037,14 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         existing: clash.id,
         by: clash.session,
       });
-      sendJson(res, 409, {
-        error:
-          `another agent proposed exactly this ${kind} moments ago (proposal ${clash.id}). It has not been ` +
+      fail(
+        res,
+        409,
+        `another agent proposed exactly this ${kind} moments ago (proposal ${clash.id}). It has not been ` +
           'superseded, so this one is refused rather than doubling it. Read it with proposal_status, and ' +
           'use agent_board to say what you are taking on before you start.',
-        duplicate: clash.id,
-      });
+        { duplicate: clash.id },
+      );
       return;
     }
     const problems: string[] = [];
@@ -2218,7 +2086,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         if (amountIn <= 0) problems.push('amountIn must be greater than 0');
         const minAmountOut = numField(params, 'minAmountOut', problems);
         if (problems.length > 0) {
-          sendJson(res, 400, { error: problems.join('; ') });
+          fail(res, 400, problems.join('; '));
           return;
         }
         respond(
@@ -2247,7 +2115,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         if (allowedActions.length === 0) problems.push('allowedActions must list at least one verb');
         if (params.program === undefined) problems.push('program is required');
         if (problems.length > 0) {
-          sendJson(res, 400, { error: problems.join('; ') });
+          fail(res, 400, problems.join('; '));
           return;
         }
         respond(
@@ -2272,7 +2140,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         const symbol = params.symbol === undefined ? undefined : strField(params, 'symbol', problems);
         const amount = numField(params, 'amount', problems);
         if (problems.length > 0) {
-          sendJson(res, 400, { error: problems.join('; ') });
+          fail(res, 400, problems.join('; '));
           return;
         }
         respond(await proposals.proposeHlDeposit({ chain, symbol, amount }));
@@ -2285,7 +2153,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         const symbol = params.symbol === undefined ? undefined : strField(params, 'symbol', problems);
         const amount = numField(params, 'amount', problems);
         if (problems.length > 0) {
-          sendJson(res, 400, { error: problems.join('; ') });
+          fail(res, 400, problems.join('; '));
           return;
         }
         respond(await proposals.proposeIntentsDeposit({ chain, symbol, amount }));
@@ -2300,7 +2168,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         const symbol = params.symbol === undefined ? undefined : strField(params, 'symbol', problems);
         const amount = numField(params, 'amount', problems);
         if (problems.length > 0) {
-          sendJson(res, 400, { error: problems.join('; ') });
+          fail(res, 400, problems.join('; '));
           return;
         }
         respond(await proposals.proposeIntentsWithdraw({ chain, symbol, amount }));
@@ -2317,7 +2185,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
           // Both answers live in the allocator's view, so neither is a guess.
           const picked = kind === 'yield_deposit' ? bestYieldChain() : heldYieldChain();
           if (!picked.ok) {
-            sendJson(res, 400, { error: picked.reason });
+            fail(res, 400, picked.reason);
             return;
           }
           chain = picked.chain;
@@ -2345,7 +2213,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
           problems.push('amount must be greater than 0');
         }
         if (problems.length > 0 || chain === null) {
-          sendJson(res, 400, { error: problems.join('; ') || 'chain could not be resolved' });
+          fail(res, 400, problems.join('; ') || 'chain could not be resolved');
           return;
         }
         sendProposal(
@@ -2366,7 +2234,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         const tickLower = numField(params, 'tickLower', problems);
         const tickUpper = numField(params, 'tickUpper', problems);
         if (problems.length > 0) {
-          sendJson(res, 400, { error: problems.join('; ') });
+          fail(res, 400, problems.join('; '));
           return;
         }
         respond(
@@ -2387,7 +2255,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         const positionId = strField(params, 'positionId', problems);
         const liquidityPct = numField(params, 'liquidityPct', problems);
         if (problems.length > 0) {
-          sendJson(res, 400, { error: problems.join('; ') });
+          fail(res, 400, problems.join('; '));
           return;
         }
         respond(await proposals.proposeLpRemove({ positionId, liquidityPct }));
@@ -2397,11 +2265,11 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         const toChain = String(params.toChain ?? '');
         const symbol = typeof params.symbol === 'string' ? params.symbol.trim() : '';
         if (!CHAINS.includes(toChain)) {
-          sendJson(res, 400, { error: `toChain must be one of: ${CHAINS.join(', ')}` });
+          fail(res, 400, `toChain must be one of: ${CHAINS.join(', ')}`);
           return;
         }
         if (symbol.length === 0) {
-          sendJson(res, 400, { error: 'symbol is required' });
+          fail(res, 400, 'symbol is required');
           return;
         }
         const fromChains = Array.isArray(params.fromChains)
@@ -2427,9 +2295,9 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         respond(await proposals.proposePolicyChange({ patch: asRecord(params.patch), sentence }));
         return;
       }
-      sendJson(res, 400, { error: `unknown propose kind: ${kind}. known kinds: ${PROPOSE_KINDS.join(', ')}` });
+      fail(res, 400, `unknown propose kind: ${kind}. known kinds: ${PROPOSE_KINDS.join(', ')}`);
     } catch (err) {
-      sendJson(res, 400, { error: errText(err) });
+      fail(res, 400, errText(err));
     }
   }
 
@@ -2479,10 +2347,12 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     const asked = raw.map((c) => String(c ?? '').trim()).filter((c) => c.length > 0);
 
     if (asked.length < MIN_COINS || asked.length > MAX_COINS) {
-      sendJson(res, 400, {
-        error: `the basic screen shows ${MIN_COINS} to ${MAX_COINS} coins, got ${asked.length}`,
-        coins: basicCoins,
-      });
+      fail(
+        res,
+        400,
+        `the basic screen shows ${MIN_COINS} to ${MAX_COINS} coins, got ${asked.length}`,
+        { coins: basicCoins },
+      );
       return;
     }
 
@@ -2494,11 +2364,12 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       else if (!resolved.includes(ref.product)) resolved.push(ref.product);
     }
     if (unknown.length > 0) {
-      sendJson(res, 400, {
-        error: `not a market this app can chart: ${unknown.join(', ')}`,
-        coins: basicCoins,
-        hint: 'read market_search to find the id, then set that',
-      });
+      fail(
+        res,
+        400,
+        `not a market this app can chart: ${unknown.join(', ')}`,
+        { coins: basicCoins, hint: 'read market_search to find the id, then set that' },
+      );
       return;
     }
 
@@ -2533,10 +2404,12 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     const raw = String(body.mode ?? '').trim().toLowerCase();
     const mode = VIEW_ALIASES[raw];
     if (mode === undefined) {
-      sendJson(res, 400, {
-        error: `mode must be basic, pro or trade, got: ${raw || '(missing)'}`,
-        accepted: Object.keys(VIEW_ALIASES),
-      });
+      fail(
+        res,
+        400,
+        `mode must be basic, pro or trade, got: ${raw || '(missing)'}`,
+        { accepted: Object.keys(VIEW_ALIASES) },
+      );
       return;
     }
 
@@ -2594,7 +2467,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         op: String(body.op ?? ''),
         client: body.client,
       });
-      sendJson(res, 409, { error, seat: 'revoked' });
+      fail(res, 409, error, { seat: 'revoked' });
       return;
     }
     if (!rejectedSessions.has(session)) {
@@ -2612,7 +2485,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     // means has narrowed from "somebody else is driving" to "there is no room right now".
     // It is deliberately not "any 409": the view-mode refusal is also a 409 and must keep its
     // JSON shape, which is what the e2e script and the browser both read.
-    sendJson(res, 409, { error, seat: 'busy' });
+    fail(res, 409, error, { seat: 'busy' });
   }
 
   async function handleMcp(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -2627,12 +2500,12 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         origin: req.headers.origin ?? '(absent)',
         host: req.headers.host ?? '(absent)',
       });
-      sendJson(res, 403, { error: 'cross-origin request refused' });
+      fail(res, 403, 'cross-origin request refused');
       return;
     }
     const parsed = await readBody(req);
     if (!parsed.ok) {
-      sendJson(res, 400, { error: parsed.error });
+      fail(res, 400, parsed.error);
       return;
     }
     const body = parsed.value;
@@ -2743,9 +2616,11 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       handleYieldAuto(body, res);
       return;
     }
-    sendJson(res, 400, {
-      error: `unknown op: ${op}. known ops: hello, bye, read, propose, view, set_view_mode, set_basic_coins, yield_auto`,
-    });
+    fail(
+      res,
+      400,
+      `unknown op: ${op}. known ops: hello, bye, read, propose, view, set_view_mode, set_basic_coins, yield_auto`,
+    );
   }
 
   // ---------- dispatch ----------
@@ -2758,7 +2633,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       // DNS-rebinding for the whole surface, reads included, so a page cannot rebind its own
       // domain to 127.0.0.1 and then read the wallet and the session token as same-origin.
       if (!hostIsLocal(req)) {
-        sendJson(res, 403, { error: 'request refused: this app answers only on 127.0.0.1' });
+        fail(res, 403, 'request refused: this app answers only on 127.0.0.1');
         return;
       }
       if (req.method === 'GET' || req.method === 'HEAD') {
@@ -2784,7 +2659,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         if (route === '/api/session') return sendJson(res, 200, { token });
         if (route === '/api/driver') return sendJson(res, 200, driverPayload());
         if (route === '/api/events') return openEvents(req, res);
-        if (route.startsWith('/api/')) return sendJson(res, 404, { error: `unknown route: ${route}` });
+        if (route.startsWith('/api/')) return fail(res, 404, `unknown route: ${route}`);
         // The second surface. A bare /trade is the page; everything else still resolves as a
         // file, so the two pages share one static root and one stylesheet.
         if (route === '/trade' || route === '/trade/') return serveStatic('/trade.html', res);
@@ -2804,12 +2679,12 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         ) {
           return await handleMutation(route, req, res);
         }
-        return sendJson(res, 404, { error: `unknown route: ${route}` });
+        return fail(res, 404, `unknown route: ${route}`);
       }
-      sendJson(res, 405, { error: `method not allowed: ${String(req.method)}` });
+      fail(res, 405, `method not allowed: ${String(req.method)}`);
     } catch (err) {
       audit.append('error', `server error on ${route}: ${errText(err)}`);
-      if (!res.headersSent) sendJson(res, 500, { error: errText(err) });
+      if (!res.headersSent) fail(res, 500, errText(err));
       else res.end();
     }
   }
