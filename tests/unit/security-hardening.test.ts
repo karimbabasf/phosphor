@@ -453,6 +453,9 @@ test('health answers without a token and in the shape the spec fixes', async () 
     assert.equal(out.status, 200);
     const body = JSON.parse(out.body) as Record<string, unknown>;
     assert.deepEqual(Object.keys(body).sort(), [
+      // Whether the audit chain verified at boot. It is here because verify() used to have no
+      // caller outside the tests: a tamper check nothing runs detects nothing.
+      'auditChain',
       'killSwitch',
       'lastError',
       'locked',

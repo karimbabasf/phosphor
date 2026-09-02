@@ -29,13 +29,42 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { LogEvent } from './types.ts';
+import { atomicWriteJson } from './fsatomic.ts';
 
 export type ChainBreak = {
   // Line number in the file, 1-based, so it reads the way an editor numbers it.
   line: number;
-  reason: 'unparseable' | 'broken_link' | 'missing_link';
+  reason: 'unparseable' | 'broken_link' | 'missing_link' | 'truncated';
   detail: string;
 };
+
+/* THE ANCHOR, and it is what makes truncation a break.
+   The walk below compares each line's `prev` to the hash of the line above it and nothing held
+   either END, so dropping a prefix or a suffix of the file left a chain that is perfectly
+   self-consistent: an attacker with write access removed the newest and most incriminating lines
+   and the record still passed its own check. The tip is a count and the hash of the line at that
+   count, written durably beside the log, so a file shorter than the count or one whose line at
+   that count hashes differently is a file that lost something.
+
+   IT MAY LAG BY A LINE, and that is deliberate. A SIGKILL between the append and the tip write
+   leaves exactly that, so lines AFTER the anchor are accepted and lines missing before it are
+   not. Appending is what this file is for; removing is not. */
+export const TIP_FILENAME = 'audit.tip.json';
+
+export type ChainTip = { count: number; hash: string };
+
+export function readTip(dataDir: string): ChainTip | null {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(path.join(dataDir, TIP_FILENAME), 'utf8')) as Partial<ChainTip>;
+    if (typeof parsed.count !== 'number' || !Number.isInteger(parsed.count) || parsed.count < 0) return null;
+    if (typeof parsed.hash !== 'string' || parsed.hash.length === 0) return null;
+    return { count: parsed.count, hash: parsed.hash };
+  } catch {
+    // Absent, unreadable or not a tip. A data directory written by an older version has none, and
+    // that reads as "no anchor" rather than as damage: the walk is still the walk.
+    return null;
+  }
+}
 
 /* How much of the tail to read. 256 KB is about two thousand lines of this log, comfortably more
    than any caller asks for (the window's cap is a few hundred) and small enough that a 10 MB
@@ -73,7 +102,39 @@ function readLines(filePath: string): string[] {
   return fs.readFileSync(filePath, 'utf8').split('\n').filter((line) => line.length > 0);
 }
 
-export function verifyChain(lines: string[]): { ok: true; lines: number } | { ok: false; lines: number; break: ChainBreak } {
+export function verifyChain(
+  lines: string[],
+  tip: ChainTip | null = null,
+): { ok: true; lines: number } | { ok: false; lines: number; break: ChainBreak } {
+  /* The anchor first, because it is the cheap check and because a truncated file's REMAINING
+     lines chain perfectly: walking them would answer ok before anything noticed the file is
+     shorter than the record of it. */
+  if (tip !== null && tip.count > 0) {
+    if (lines.length < tip.count) {
+      return {
+        ok: false,
+        lines: lines.length,
+        break: {
+          line: lines.length,
+          reason: 'truncated',
+          detail: `the log holds ${lines.length} lines and this app recorded ${tip.count} lines. Something removed ${tip.count - lines.length} of them.`,
+        },
+      };
+    }
+    const anchored = hashLine(lines[tip.count - 1]);
+    if (anchored !== tip.hash) {
+      return {
+        ok: false,
+        lines: lines.length,
+        break: {
+          line: tip.count,
+          reason: 'truncated',
+          detail: `line ${tip.count} hashes to ${anchored.slice(0, 12)} and this app recorded ${tip.hash.slice(0, 12)} there. The lines before it are not the ones that were written.`,
+        },
+      };
+    }
+  }
+
   let expected: string | null = null;
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
@@ -118,6 +179,16 @@ export function createAudit(dataDir: string): Audit {
      re-read of the file. Seeded from disk once, because a restart has to link onto whatever the
      previous process left, and a chain that restarted from null on every boot would report
      every boot as a break. */
+  /* How many lines this app believes are in the file, which is the count half of the anchor.
+     Seeded from the tip on disk when there is one, and from the file otherwise: a data directory
+     written before the anchor existed has to acquire one without claiming the whole history was
+     counted by this process. */
+  let written: number = (() => {
+    const tip = readTip(dataDir);
+    if (tip !== null) return tip.count;
+    return readLines(filePath).length;
+  })();
+
   let previous: string | null = (() => {
     /* Seeded from the tail window rather than from the whole file. The seed needs exactly one
        line, the last, and the window is the END of the file, so the last line is always inside
@@ -140,6 +211,17 @@ export function createAudit(dataDir: string): Audit {
     const line = JSON.stringify(event);
     fs.appendFileSync(filePath, line + '\n');
     previous = hashLine(line);
+    written += 1;
+    /* Durably, through fsatomic, because a tip that is not on disk anchors nothing. It may end up
+       one line behind the log if this process dies in the gap, and verifyChain accepts that: what
+       it will not accept is a log that has lost a line the tip already counted. */
+    try {
+      atomicWriteJson(path.join(dataDir, TIP_FILENAME), { count: written, hash: previous } satisfies ChainTip, undefined);
+    } catch {
+      // The log line is already on disk and it is the record. A tip that could not be written
+      // makes the next verify() read an older anchor, which is a weaker check and not a wrong
+      // one; throwing here would turn a full disk into a backend that cannot log.
+    }
     if (type === 'error') latestError = { at: event.ts, msg };
     // Mirrored, not moved: the file is still the record. This is the copy a human reading
     // Console.app or a terminal can see without opening anything.
@@ -213,8 +295,9 @@ export function createAudit(dataDir: string): Audit {
     append,
     tail,
     subscribe,
-    // The one reader that must see every line: a chain cannot be verified through a window.
-    verify: () => verifyChain(readLines(filePath)),
+    // The one reader that must see every line: a chain cannot be verified through a window, and
+    // the anchor beside it is what turns truncation from invisible into named.
+    verify: () => verifyChain(readLines(filePath), readTip(dataDir)),
     tornLines: () => torn,
     lastError: () => latestError,
   };

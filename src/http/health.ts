@@ -25,9 +25,23 @@ type Health = {
   killSwitch: boolean;
   pending: number;
   locked: boolean;
+  /* The audit chain, checked rather than assumed. verify() had no caller outside the tests:
+     nothing on boot, no route, not health, so the record's integrity was never actually read in
+     production. It is a whole-file walk, so it runs once at boot and this reports what it found;
+     a poll that re-walked a 10 MB history would be its own denial of service. */
+  auditChain: string;
   lastError: string | null;
   uptimeSec: number;
 };
+
+/* What the boot check found, held for the life of the process. Set by src/main.ts before the port
+   opens; a server built without one (every test in this repo) reports that it was not run rather
+   than claiming a chain it never looked at. */
+let chainAtBoot = 'not checked';
+
+export function recordAuditChain(state: string): void {
+  chainAtBoot = state;
+}
 
 function buildHealth(ctx: Ctx): Health {
   // The store can throw: a proposal file that will not read is quarantined and named. Health is
@@ -52,17 +66,18 @@ function buildHealth(ctx: Ctx): Health {
   }
 
   const recorded = ctx.audit.lastError();
-  const lastError = storeError ?? policyError ?? (recorded === null ? null : `${recorded.at}: ${recorded.msg}`);
+  // A broken chain outranks a stale error line: it is a claim about the record itself, and the
+  // record is what every other answer here is drawn from.
+  const chainError = chainAtBoot.startsWith('broken') ? `the audit log is damaged: ${chainAtBoot.slice('broken: '.length)}` : null;
+  const lastError = chainError ?? storeError ?? policyError ?? (recorded === null ? null : `${recorded.at}: ${recorded.msg}`);
 
   return {
     ok: true,
     version: VERSION,
     killSwitch,
     pending,
-    /* Owned by the custody track, which has not landed on this branch. `false` is the honest
-       answer for a build with no keystore in it: there is nothing here that can be locked. When
-       Track A merges, this reads the keystore. */
     locked: false,
+    auditChain: chainAtBoot,
     lastError,
     uptimeSec: Math.floor((Date.now() - startedAtMs) / 1000),
   };

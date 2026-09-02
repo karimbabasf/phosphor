@@ -11,6 +11,7 @@ import { readViewMode, writeViewMode } from './view/mode.ts';
 import { readTheme, writeTheme, type Theme } from './view/theme.ts';
 import { loadConfig } from './config.ts';
 import { createAudit } from './audit.ts';
+import { recordAuditChain } from './http/health.ts';
 import { createKeystore, useKeystore } from './keystore/index.ts';
 import { createSession } from './keystore/session.ts';
 import { createStore } from './store.ts';
@@ -100,6 +101,28 @@ const session = createSession({
     announceLock?.();
   },
 });
+
+/* THE AUDIT CHAIN, CHECKED, once and before the port opens.
+   verify() had no caller outside the tests: nothing on boot, no route, not health, so the hash
+   chain that exists to detect tampering was never actually read in production. It walks the whole
+   file, which is why it runs here rather than on a poll, and the answer is reported through
+   /api/health rather than being made a refusal to boot: a damaged record is a thing the owner has
+   to be told about, and refusing to start would take away the app they would read it in. */
+try {
+  const chain = audit.verify();
+  if (chain.ok) {
+    recordAuditChain('ok');
+  } else {
+    const why = `${chain.break.reason} at line ${chain.break.line}: ${chain.break.detail}`;
+    recordAuditChain(`broken: ${why}`);
+    console.error(`phosphor: the audit log does not verify. ${why}`);
+    audit.append('error', `the audit log does not verify: ${why}`, { break: chain.break, lines: chain.lines });
+  }
+} catch (err) {
+  const why = err instanceof Error ? err.message : String(err);
+  recordAuditChain(`broken: the chain could not be read (${why})`);
+  console.error(`phosphor: the audit log could not be verified: ${why}`);
+}
 
 /* Read the proposal file once, here, before anything else touches it. An unreadable state file
    is a refusal to boot with a sentence, not a silent fresh start on an empty history and not a

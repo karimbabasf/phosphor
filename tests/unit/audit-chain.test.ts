@@ -92,7 +92,14 @@ test('reordering two lines is caught', () => {
 
   const result = createAudit(dir).verify();
   assert.equal(result.ok, false);
-  assert.equal(result.break.line, 2);
+  /* The tip anchor now reaches this first: the line at the recorded count is not the one that was
+     written there, which a reorder makes true as surely as a truncation does. The WALK still
+     catches it on its own, which is what the second half asserts, so the older detection is not
+     resting on the newer one. */
+  assert.equal(result.ok === false && result.break.reason, 'truncated');
+  const walked = verifyChain([written[0], written[2], written[1]]);
+  assert.equal(walked.ok, false, 'and the chain walk catches it with no anchor at all');
+  assert.equal(walked.ok === false && walked.break.line, 2);
 });
 
 test('a restart links onto what the last process wrote rather than starting a second chain', () => {
