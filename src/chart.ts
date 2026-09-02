@@ -427,7 +427,7 @@ export function createChartStore(initialProduct: string, now: () => number = Dat
     }
 
     // The two fields below used to undo the product reset above, in the same call, because the
-    // browser pushes the WHOLE view on any change (ui/chart.js pushChart) and not a minimal
+    // browser pushes the WHOLE view on any change (ui/chart/chart.js pushChart) and not a minimal
     // patch. Switching BTC to SOL therefore arrived as {product:'SOL-USD', panOffset:300,
     // priceLow:63000, priceHigh:64000}: the reset ran, then line-for-line the old instrument's
     // window was written back over it. Two visible failures came out of that, and they are the

@@ -76,7 +76,9 @@ export async function land(ctx: PCtx, p: Proposal): Promise<Proposal> {
 
   if (p.verdict.outcome === 'needs_approval') {
     // Nothing reserved and nothing left to do: a pending proposal does not count against the
-    // cap, so the queue has no reason to keep waiting on this one.
+    // cap, so the queue has no reason to keep waiting on this one. The pending_unlock branch
+    // above returns before reaching this line and reserves nothing either, for the same reason
+    // and not by oversight: a queued proposal has not spent anything.
     reservationMade();
     // Above the click threshold nothing decides but a person. There is no exemption:
     // no flag, no environment and no proposal kind reaches execution from here without

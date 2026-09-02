@@ -388,7 +388,7 @@ export function handleSetViewMode(ctx: Ctx, body: JsonBody, res: http.ServerResp
 
   // This used to refuse outright while any proposal was pending, so that an agent could not
   // move a human away from a decision they were in the middle of. Commit 7b41af4 put the
-  // approval block on the trading window too, and ui/approvals.js now renders it on all
+  // approval block on the trading window too, and ui/screens/decision.js now renders it on all
   // three surfaces, so the reason the refusal existed no longer holds: the decision follows
   // the human rather than being left behind on the screen they came from.
   //

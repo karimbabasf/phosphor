@@ -39,7 +39,7 @@ var TRADE_C_LONG = '#5B8DEF';
 var TRADE_C_SHORT = '#FF5A6E'; // the chart's own down colour, lighter than the gate red on purpose
 var TRADE_LABEL_H = 13; // minimum vertical gap between two stacked labels, in CSS pixels
 
-/* The overlay reads one global, set by ui/trade.js from the /api/trade payload. Absent means
+/* The overlay reads one global, set by ui/screens/trade.js from the /api/trade payload. Absent means
    this is a page without an account behind it, and every function below no-ops. */
 function tradeData() {
   return typeof window !== 'undefined' && window.TRADE ? window.TRADE : null;

@@ -455,12 +455,14 @@ const server = createServer({
   keystore,
   session,
   trade,
-  /* Default OFF, and the window opens on the turning globe. Karim, 2026-08-20: with no agent
-     attached yet, the globe is what the app opens on, always.
+  /* Default OFF, and the window opens with the assistant panel waiting to be started.
+     Karim, 2026-08-20: with no agent attached yet, the idle panel is what the app opens on,
+     always. (It said "the turning globe" when that was written. ui/screens/agent.js now opens
+     with "The globe is gone."; the decision recorded here is about spawning, not the drawing.)
      Spawning a Claude Code process because a window opened was the app making a decision on
      the user's behalf, and paying for it: a session nobody had a question for still holds the
      seat and still spends the subscription. The press is cheap and it is the user's. Anyone
-     who wants the old behaviour sets `driver.autostart: true` in config.json. */
+     who wants an agent started for them sets `driver.autostart: true` in config.json. */
   autostart: cfg.driver?.autostart === true,
   allocator,
 });
@@ -507,7 +509,7 @@ marketLive = (product, baseSec, candle, provider) => server.broadcastCandle(prod
 // touching it, so it is what drives the push. Coalesced by the feed already.
 //
 // BOTH channels, and the second one is the bug fix. This called broadcastState alone, and the
-// trading window does not listen to state: ui/trade.js refetches the position book on
+// trading window does not listen to state: ui/screens/trade.js refetches the position book on
 // {type:'trade'} and nothing else. So a fill arriving on the websocket repainted no position,
 // no PnL and no health bar. It corrected on the next unrelated 'trade' frame, which in
 // practice was the agent's next tool call, which is why the staleness read as "a couple of

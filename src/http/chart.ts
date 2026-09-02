@@ -190,7 +190,7 @@ export function chartPayload(ctx: Ctx): unknown {
      awaiting: a field whose only possible value was "nothing is wrong". It now carries the one
      failure this synchronous path CAN see, which is nothing on screen and nothing on the way.
      The field stays rather than going because the browser writes its own fetch failures into it
-     (ui/chart.js) and a good payload arriving is what clears them. */
+     (ui/chart/chart.js) and a good payload arriving is what clears them. */
   const error =
     load.candles.length === 0 && !load.filling
       ? `no candles for ${state.view.product} at ${String(state.view.granularitySec)}s, and none are being fetched`
