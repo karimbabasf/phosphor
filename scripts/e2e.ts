@@ -265,12 +265,16 @@ async function run(): Promise<void> {
   // browser payload, so the app displayed a state it was not in. Asserting the label
   // flipped would reproduce that mistake exactly.
 
-  const proBefore = await getJson('/api/state');
-  check('view starts in pro and a basic model is computed anyway', proBefore.view === 'pro' && Boolean(proBefore.basic), `view=${proBefore.view} basic=${Boolean(proBefore.basic)}`);
+  // A fresh data directory has no view file, which means nobody has chosen, which means this is a
+  // first run: it opens on basic. A view file that IS there and cannot be read is the other
+  // question and still lands on pro, because a corrupt file must never show a person less than
+  // they had. See src/view/mode.ts.
+  const firstView = await getJson('/api/state');
+  check('a fresh data dir opens on basic and a basic model is computed for it', firstView.view === 'basic' && Boolean(firstView.basic), `view=${firstView.view} basic=${Boolean(firstView.basic)}`);
 
-  await callTool(client, 'switch', { mode: 'basic' });
+  await callTool(client, 'switch', { mode: 'pro' });
   const afterFlip = await getJson('/api/state');
-  check('switch over stdio flips what /api/state reports', afterFlip.view === 'basic', `view=${afterFlip.view}`);
+  check('switch over stdio flips what /api/state reports', afterFlip.view === 'pro', `view=${afterFlip.view}`);
 
   // The third window, and the words a person actually says. Aliases resolve in the app rather
   // than in src/mcp.ts, so this check covers both doors onto it.
