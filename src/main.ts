@@ -233,6 +233,18 @@ const proposals = createProposalService({
   dataDir: cfg.dataDir,
 });
 
+/* Before the port opens, and before anything renders. A proposal left `executing` by a process
+   that is gone is unactionable (requirePending refuses every verb on it) and it holds the 24h
+   spend cap for the whole window. It becomes `needs_reconciliation` here: honest about not
+   knowing, out of the budget, and re-checkable through POST /api/reconcile. */
+const stranded = proposals.reconcileOnBoot();
+if (stranded.length > 0) {
+  console.error(
+    `phosphor: ${stranded.length} proposal(s) were mid-execution when this app last stopped and may or may not have sent. ` +
+      `Open the window to re-check them.`,
+  );
+}
+
 // Who is driving, plural. The roster, the roles and the per-member TTL live in
 // src/agents.ts; what lives here is the sweep that turns a silent expiry into a line in the
 // log and a push to the window.

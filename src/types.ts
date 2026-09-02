@@ -430,6 +430,10 @@ export type ProposalStatus =
   | 'approved'
   | 'refused'
   | 'executing'
+  // What a proposal becomes when the process died between "executing" and the rail's answer.
+  // Neither executed nor failed, and the difference matters: money may have left the wallet.
+  // Excluded from the 24h spend cap, and cleared only by POST /api/reconcile asking the chain.
+  | 'needs_reconciliation'
   | 'executed'
   | 'failed'
   | 'policy_refused';
@@ -770,4 +774,10 @@ export type ProposalService = {
   get(id: string): Proposal | undefined;
   list(): Proposal[];
   sessionSpentUsd(): number; // executed fund-moving usd in the last 24h
+  // Boot sweep: every row left `executing` by a process that is gone becomes
+  // `needs_reconciliation`. Returns what it changed. Ran once, before the port opens.
+  reconcileOnBoot(): Proposal[];
+  // Re-check one such row against the chain. Never guesses: a hash it cannot look up leaves
+  // the proposal where it is, with a sentence saying why.
+  reconcile(id: string): Promise<Proposal>;
 };

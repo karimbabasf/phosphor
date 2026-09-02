@@ -28,6 +28,7 @@ import { evaluate } from '../policy/engine.ts';
 import type { EngineCtx } from '../policy/engine.ts';
 import { loadPolicy } from '../policy/file.ts';
 import type { RailRegistry } from '../rails/index.ts';
+import type { TxLookup } from './reconcile.ts';
 
 export const ALL_CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 const EVM_CHAINS: ChainId[] = ['eth', 'base', 'arb'];
@@ -48,6 +49,10 @@ export type ProposalDeps = {
   dataDir: string;
   rails?: RailRegistry; // src/rails/index.ts; absent means no rail can execute
   onChange?: () => void;
+  // How a recorded transaction hash is checked against the chain, for reconcile. Defaulted to
+  // the viem readers the rails already use; a test hands in a fake so the four outcomes can be
+  // driven without a network.
+  txLookup?: TxLookup;
 };
 
 export function nowIso(): string {
@@ -148,6 +153,10 @@ export type PCtx = {
   /* land() from execute.ts, wired by the service for the same reason `execute` is: this file is
      the leaf of the directory and importing the module that imports it would be a cycle. */
   land: (p: Proposal) => Promise<Proposal>;
+  // How a recorded transaction hash is checked against the chain, for reconcile. Same
+  // indirection for a different reason: it is a seam, so a test can drive the four outcomes
+  // without a network.
+  txLookup: TxLookup;
 };
 
 export function persist(ctx: PCtx, p: Proposal): Proposal {
@@ -293,6 +302,9 @@ export function sessionSpentUsd(ctx: PCtx): number {
     // Committed-but-unconfirmed money is spent for budgeting purposes. Over-counting a
     // send that later fails costs a refusal the human can retry; under-counting one that
     // succeeds costs the cap itself.
+    // `needs_reconciliation` is deliberately NOT here. A row the app cannot say moved money is
+    // a row that must not hold the budget hostage: one crash used to eat the 24h cap for the
+    // whole window, and the human had no surface to clear it from. It is reported instead.
     .filter(p => (p.status === 'executed' || p.status === 'executing') && p.kind !== 'policy_change')
     .filter(p => {
       const at = Date.parse(p.decidedAt ?? p.createdAt);

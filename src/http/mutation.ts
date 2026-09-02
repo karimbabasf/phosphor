@@ -228,6 +228,21 @@ export async function handleMutation(
     fail(res, 400, 'id is required');
     return;
   }
+
+  /* Re-checking an unknown outcome is neither an approval nor a refusal: it decides nothing and
+     signs nothing, it only asks the chain what already happened. It carries the window token
+     anyway, because it is a browser write that changes a row a human is reading. */
+  if (route === '/api/reconcile') {
+    try {
+      const proposal = await ctx.proposals.reconcile(id);
+      ctx.sse.broadcastState();
+      sendJson(res, 200, { ok: true, status: proposal.status, detail: proposal.result?.detail ?? null, id: proposal.id });
+    } catch (err) {
+      fail(res, 400, errText(err));
+    }
+    return;
+  }
+
   try {
     // approve() and refuse() own their own audit trail and any execution.
     const proposal = route === '/api/approve' ? await ctx.proposals.approve(id) : await ctx.proposals.refuse(id);

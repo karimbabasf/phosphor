@@ -96,6 +96,8 @@ async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
       list: () => [],
       sessionSpentUsd: () => 0,
       releaseQueued: async () => 0,
+      reconcileOnBoot: () => [],
+      reconcile: () => Promise.reject(new Error('not wired in this stub')),
     },
     getPolicy: () => defaultPolicy(),
     setKill: () => {},

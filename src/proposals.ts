@@ -12,8 +12,9 @@
 // This file is the door. The work is in src/proposals/, split by job: lifecycle.ts is what a
 // proposal is and what a click does to it, execute.ts is what actually runs, draft.ts is how a
 // fund move is planned and priced, rails.ts holds the four drafts that move money somewhere
-// else, and positions.ts the five that open or close a position. Everything
-// anything outside this directory imports is re-exported here, so no caller changed.
+// else, positions.ts the five that open or close a position, and reconcile.ts what becomes of a
+// proposal the process died in the middle of. Everything anything outside this directory imports
+// is re-exported here, so no caller changed.
 
 import type { Proposal, ProposalService } from './types.ts';
 import {
@@ -27,6 +28,7 @@ import {
 } from './proposals/lifecycle.ts';
 import type { PCtx, ProposalDeps } from './proposals/lifecycle.ts';
 import { executeApproved, land } from './proposals/execute.ts';
+import { chainTxLookup, reconcileOnBoot, reconcileProposal } from './proposals/reconcile.ts';
 import { proposeConsolidate, proposePolicyChange } from './proposals/draft.ts';
 import { proposeHlDeposit, proposeIntentsDeposit, proposeIntentsWithdraw, proposeSwap } from './proposals/rails.ts';
 import {
@@ -50,6 +52,7 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     notify: () => deps.onChange?.(),
     execute: (p: Proposal) => executeApproved(ctx, p),
     land: (p: Proposal) => land(ctx, p),
+    txLookup: deps.txLookup ?? chainTxLookup(),
   };
 
   const serialise = createSerialiser();
@@ -76,5 +79,10 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     get: (id: string) => deps.store.get(id),
     list: () => deps.store.list(),
     sessionSpentUsd: () => sessionSpentUsd(ctx),
+    reconcileOnBoot: () => reconcileOnBoot(ctx),
+    // Outside the serialiser on purpose. It reads the chain and writes one row, it never
+    // reserves budget, and holding the spend queue open for a network read is the thing task
+    // 13 exists to stop.
+    reconcile: (id: string) => reconcileProposal(ctx, id),
   };
 }

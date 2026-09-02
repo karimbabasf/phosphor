@@ -81,6 +81,7 @@ const POST: Record<string, Route> = {
   '/api/wallet/migrate': (ctx, req, res) => handleWalletMigrate(ctx, req, res),
   '/api/wallet/reveal': (ctx, req, res) => handleRevealStart(ctx, req, res),
   '/api/wallet/export': (ctx, req, res) => handleWalletExport(ctx, req, res),
+  '/api/reconcile': (ctx, req, res) => handleMutation(ctx, '/api/reconcile', req, res),
 };
 
 // The one path with a variable in it. A table cannot hold it, and a second table of patterns

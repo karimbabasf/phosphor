@@ -390,6 +390,8 @@ var PhosphorViews = (function () {
     action.appendChild(document.createTextNode(entry.action));
     if (entry.status === 'failed') action.appendChild(el('span', 'red', ' FAILED'));
     if (entry.status === 'executing') action.appendChild(el('span', 'hi', ' RUNNING'));
+    // Neither sent nor not sent, and the row must say so rather than looking finished.
+    if (entry.status === 'needs_reconciliation') action.appendChild(el('span', 'hi', ' THIS MAY OR MAY NOT HAVE SENT'));
     tr.appendChild(action);
 
     var move = el('td', 'move');

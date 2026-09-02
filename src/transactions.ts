@@ -108,7 +108,10 @@ export type TxEntry = {
   ts: string; // when it settled, or when it was created if it never did
   action: 'swap' | 'deposit' | 'withdraw' | 'transfer' | 'consolidate' | 'lp add' | 'lp remove';
   kind: WriteDraft['kind'];
-  status: 'executed' | 'failed' | 'executing';
+  // 'needs_reconciliation' is a row the app cannot say moved money or did not. It belongs in
+  // the history precisely because of that: dropping it would hide the one transaction a person
+  // most needs to look at.
+  status: 'executed' | 'failed' | 'executing' | 'needs_reconciliation';
   venue: string | null;
   place: TxPlace; // where it started
   toPlace: TxPlace; // where it landed; the same place for a same-chain move
@@ -439,7 +442,7 @@ export function buildTransactions(params: BuildParams): TxEntry[] {
   for (const p of proposals) {
     const action = ACTIONS[p.draft.kind];
     if (action === null || action === undefined) continue;
-    if (p.status !== 'executed' && p.status !== 'failed' && p.status !== 'executing') continue;
+    if (p.status !== 'executed' && p.status !== 'failed' && p.status !== 'executing' && p.status !== 'needs_reconciliation') continue;
 
     const sides = sidesOf(p.draft);
     const detail = p.result?.detail ?? '';

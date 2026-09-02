@@ -131,6 +131,8 @@ async function boot(opts: { view?: ViewMode; proposals?: Proposal[] } = {}): Pro
       list: () => list,
       sessionSpentUsd: () => 0,
       releaseQueued: async () => 0,
+      reconcileOnBoot: () => [],
+      reconcile: () => Promise.reject(new Error('not wired in this stub')),
     },
     getPolicy: () => defaultPolicy(),
     setKill: () => {},
