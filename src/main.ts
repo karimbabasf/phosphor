@@ -11,6 +11,7 @@ import { readViewMode, writeViewMode } from './view/mode.ts';
 import { readTheme, writeTheme, type Theme } from './view/theme.ts';
 import { loadConfig } from './config.ts';
 import { createAudit } from './audit.ts';
+import { createKeystore, useKeystore } from './keystore/index.ts';
 import { createStore } from './store.ts';
 import { loadPolicy, savePolicy, defaultPolicy } from './policy/file.ts';
 import { renderSentences } from './policy/render.ts';
@@ -36,6 +37,14 @@ const cfg = loadConfig(root);
 
 const audit = createAudit(cfg.dataDir);
 const store = createStore(cfg.dataDir);
+
+/* The keys, and the lock over them. Installed before anything that could ask for a signature,
+   because src/keystore/index.ts is the door every signer in this app knocks on and an
+   uninstalled keystore means every one of them falls back to reading a plaintext file.
+   Booting never asks for a password: the app comes up locked (or with no wallet at all) and
+   the window is where a person unlocks it. */
+const keystore = createKeystore({ keysPath: cfg.keysPath });
+useKeystore(keystore);
 
 /* Anything the last run left behind, before this one can add to it. See the note above
    sweepOrphans in src/driver.ts for why this is safe here and nowhere else: it runs from the
@@ -378,10 +387,12 @@ trade.onUpdate(() => {
 server.listen(cfg.port, '127.0.0.1', () => {
   audit.append('app_start', `phosphor up on http://127.0.0.1:${cfg.port} (${cfg.mode} mode)`);
   console.log(`phosphor: http://127.0.0.1:${cfg.port} (${cfg.mode} mode)`);
-  // Say where the signing key is read from, every boot. The path only, never a byte of the key.
-  // "I don't know where my private key is" should not survive a single startup. `npm run
-  // keys:where` prints the same, with permissions, on demand.
-  console.log(`phosphor: signing key at ${cfg.keysPath}`);
+  // Say where the signing key is read from and what state it is in, every boot. The path only,
+  // never a byte of the key. "I don't know where my private key is" should not survive a single
+  // startup. `npm run keys:where` prints the same, with permissions, on demand.
+  const lockState = keystore.state();
+  console.log(`phosphor: wallet ${lockState} at ${lockState === 'needs_migration' ? cfg.keysPath : keystore.path()}`);
+  audit.append('app_start', `wallet ${lockState}`, { state: lockState });
 });
 
 // Ledger refresh loop. Demo mode is static between writes but the refresh also

@@ -11,9 +11,10 @@
 // them wrote a keccak by hand that failed its own test vector. Hand-rolling the one
 // thing that must never be wrong is a bad trade for a dependency count.
 
-import fs from 'node:fs';
 import { createPublicClient, createWalletClient, http, encodeFunctionData, parseAbi } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
+
+import { evmPrivateKey, walletAddresses } from '../keystore/index.ts';
 import type { Address, Hex, PublicClient, WalletClient } from 'viem';
 import type { ChainId } from '../types.ts';
 
@@ -39,23 +40,20 @@ export function chainSpec(chain: ChainId): EvmChainSpec {
 
 // ---------- keys ----------
 
-type KeysFile = { evm?: { privateKey?: string }; [k: string]: unknown };
-
-// Read the key only at the moment it is needed and never hold it in module state, so a
-// heap dump of a long-running process is less likely to carry it.
+// SIGNING material, from the keystore. It is asked for at the moment it is needed and never
+// held in module state, so a heap dump of a long-running process is less likely to carry it,
+// and while the wallet is locked this throws by name rather than returning a key.
 function readEvmKey(keysPath: string): Hex {
-  if (!fs.existsSync(keysPath)) {
-    throw new Error(`no keys file at ${keysPath}. Run: npm run keygen`);
-  }
-  const parsed = JSON.parse(fs.readFileSync(keysPath, 'utf8')) as KeysFile;
-  const key = parsed.evm?.privateKey;
-  if (typeof key !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(key)) {
-    throw new Error(`keys file at ${keysPath} has no valid evm.privateKey`);
-  }
-  return key as Hex;
+  return evmPrivateKey(keysPath);
 }
 
+/* The ADDRESS, which is not signing material and must not behave like it. Every balance read
+   in this app ends here, and a locked wallet still has balances: the address comes from the
+   keystore's plaintext header, so the whole read surface works while locked. The derivation
+   below is the fallback for an install that has not migrated yet and has no header. */
 export function evmAddress(keysPath: string): Address {
+  const fromHeader = walletAddresses().evm;
+  if (fromHeader !== null) return fromHeader as Address;
   return privateKeyToAccount(readEvmKey(keysPath)).address;
 }
 

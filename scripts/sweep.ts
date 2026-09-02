@@ -331,7 +331,7 @@ let blobs: Blob[] = [];
 
 // 3. ignored paths
 {
-  const mustBeHidden = ['config.local.json', 'keys.json', '.env', '.env.local', '.env.production', 'state/', 'state/audit.jsonl', 'secret.key'];
+  const mustBeHidden = ['config.local.json', 'keys.json', 'keys.enc.json', '.env', '.env.local', '.env.production', 'state/', 'state/audit.jsonl', 'secret.key'];
   const tracked = new Set(files);
   const problems: string[] = [];
   for (const p of mustBeHidden) {

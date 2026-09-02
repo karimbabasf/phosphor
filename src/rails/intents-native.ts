@@ -37,10 +37,12 @@
 // time, naming what to obtain, rather than surfacing as a confusing 401 at the moment of
 // signing.
 
-import fs from 'node:fs';
 import { formatUnits, hexToBytes } from 'viem';
 import type { Address, Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
+
+import { evmAddress } from '../chain/evm.ts';
+import { evmPrivateKey } from '../keystore/index.ts';
 import type { Rail, RailResult, SimulationResult, SwapDraft } from '../types.ts';
 import {
   ONECLICK_BASE,
@@ -212,33 +214,18 @@ export type IntentsSignerPort = {
   signErc191(keysPath: string, payload: string): Promise<string>;
 };
 
-type KeysFile = { evm?: { privateKey?: string }; [k: string]: unknown };
-
-// A copy of the discipline in src/chain/evm.ts: read the key at the moment it is needed,
-// never keep it in module state, never let it reach a log or a return value.
-//
-// It is a copy because evm.ts exports evmAddress() but not a signing function and not the
-// key itself, and this rail signs a message rather than a transaction. The right home for
-// this is evm.ts, next to sendTx, so that "the one place Phosphor signs" stays true; moving
-// it is a change to a file this module is not allowed to touch.
-function readEvmKey(keysPath: string): Hex {
-  if (!fs.existsSync(keysPath)) {
-    throw new Error(`no keys file at ${keysPath}. Run: npm run keygen`);
-  }
-  const parsed = JSON.parse(fs.readFileSync(keysPath, 'utf8')) as KeysFile;
-  const key = parsed.evm?.privateKey;
-  if (typeof key !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(key)) {
-    throw new Error(`keys file at ${keysPath} has no valid evm.privateKey`);
-  }
-  return key as Hex;
-}
+/* The third copy of "read the key at the moment of use" is gone. There is one door now,
+   src/keystore, and the property it adds is the one a duplicate reader could not have: a
+   locked wallet has no key to hand out, so this signer fails by name rather than opening a
+   file that is not there any more. */
 
 export const liveIntentsSigner: IntentsSignerPort = {
   address(keysPath: string): Address {
-    return privateKeyToAccount(readEvmKey(keysPath)).address;
+    // The ADDRESS, so it comes from the keystore header and works while locked.
+    return evmAddress(keysPath);
   },
   async signErc191(keysPath: string, payload: string): Promise<string> {
-    const account = privateKeyToAccount(readEvmKey(keysPath));
+    const account = privateKeyToAccount(evmPrivateKey(keysPath));
     // viem's signMessage is EIP-191 personal_sign: it prefixes the payload and hashes it the
     // way the verifier expects for the erc191 standard.
     const signature = await account.signMessage({ message: payload });

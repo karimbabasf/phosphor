@@ -298,7 +298,7 @@ test('a secret key of the wrong length is refused', () => {
 
 test('a missing near entry names the fix', () => {
   const none = keysFile({});
-  assert.throws(() => readNearSigner(none), /no near.accountId/);
+  assert.throws(() => readNearSigner(none), /no NEAR account id/);
 });
 
 test('the derived public key matches the seed, so accountId is never signed for by the wrong key', () => {
