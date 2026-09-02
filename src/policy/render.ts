@@ -28,7 +28,7 @@ export function renderSentences(p: Policy): string[] {
   const lines: string[] = [];
 
   lines.push(`Refuse any single transaction above ${formatUsd(p.outbound.maxPerTransactionUsd)}.`);
-  lines.push(`Refuse more than ${formatUsd(p.outbound.maxPerSessionUsd)} total per session.`);
+  lines.push(`Refuse more than ${formatUsd(p.outbound.maxPerSessionUsd)} in any 24 hours.`);
   lines.push(`Ask me before anything above ${formatUsd(p.outbound.humanClickAboveUsd)}.`);
 
   if (p.outbound.destinationAllowlist.length > 0) {

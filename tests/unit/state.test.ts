@@ -161,6 +161,15 @@ test('renderSentences(defaultPolicy()) includes the $10,000 and $100 sentences v
   assert.ok(sentences.includes('Ask me before anything above $100.'));
 });
 
+test('the cap is named as a day, because a session is not a thing a person can count', () => {
+  // It used to read "total per session", which described a cap that reset when
+  // the app did. The spec makes it a rolling 24 hours that survives a restart,
+  // and the glossary calls it Limit per day.
+  const sentences = renderSentences(defaultPolicy());
+  assert.ok(sentences.some((line) => /in any 24 hours\.$/.test(line)));
+  assert.equal(sentences.some((line) => /per session/.test(line)), false);
+});
+
 test('renderSentences puts the kill switch line last when on', () => {
   const p = defaultPolicy();
   p.killSwitch = true;

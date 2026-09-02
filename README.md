@@ -456,7 +456,7 @@ Policy lives on disk as JSON but is read as English. The renderer is pure and de
 what the app shows is what the engine enforces:
 
     Refuse any single transaction above $10,000.
-    Refuse more than $25,000 total per session.
+    Refuse more than $25,000 in any 24 hours.
     Ask me before anything above $100.
     Keep at least $5 of gas on eth.
     Keep at least $1 of gas on base.

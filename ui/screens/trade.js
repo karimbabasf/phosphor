@@ -277,7 +277,8 @@
       || typeof account.free === 'number'
       || typeof account.health === 'number');
     if (!funded) {
-      host.appendChild(emptyBlock('No trading money', 'Ask your assistant to fund the trading account.'));
+      host.appendChild(emptyBlock('No trading money yet',
+        'Ask your assistant to fund the trading account, and it will ask you first.'));
       return;
     }
     var facts = dom.el('div', 'facts');

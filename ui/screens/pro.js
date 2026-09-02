@@ -21,6 +21,14 @@
     eth: 'Ethereum', base: 'Base', arb: 'Arbitrum', sol: 'Solana', near: 'NEAR'
   };
 
+  /* Allowlist entries that are venues rather than addresses. The policy stores
+     the id it checks against; the window shows the name a person knows it by. */
+  var VENUE_NAMES = {
+    'oneclick:1click.chaindefuser.com': '1Click',
+    'intents.near': 'NEAR Intents',
+    'hyperliquid-perps': 'Hyperliquid'
+  };
+
   function boot() {
     var host = document.getElementById('view-pro');
     if (!host) return;
@@ -315,13 +323,21 @@
       ? policy.outbound.destinationAllowlist
       : [];
     var wrap = dom.el('div', 'stack-2');
-    wrap.appendChild(dom.el('p', 'label', 'Money can only go to these'));
+    wrap.appendChild(dom.el('p', 'label', 'Money can only go to your own wallets and these venues'));
     if (!allow.length) {
       wrap.appendChild(dom.el('p', 'meta', 'No list is set, so a destination is checked against your limits alone.'));
     } else {
       var box = dom.el('div', 'allowlist');
       for (var a = 0; a < allow.length; a += 1) {
-        box.appendChild(dom.el('p', 'addr dim', allow[a]));
+        var entry = allow[a];
+        var named = VENUE_NAMES[entry];
+        if (named) {
+          /* A venue is a name, not an id. An address has to be read character
+             by character to be checked, and these two cannot be. */
+          box.appendChild(dom.el('p', 'body', named));
+          continue;
+        }
+        box.appendChild(dom.el('p', 'addr dim', entry));
       }
       wrap.appendChild(box);
     }
