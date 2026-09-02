@@ -9,7 +9,7 @@
 
 <p align="center">
   <a href="DISCLAIMER.md"><img src="https://img.shields.io/badge/status-alpha-ff3b30?style=flat-square" alt="Alpha software that moves real money" /></a>
-  <img src="https://img.shields.io/badge/license-MIT-33ff66?style=flat-square" alt="MIT license" />
+  <img src="https://img.shields.io/badge/license-MIT-9A9EA8?style=flat-square" alt="MIT license" />
   <img src="https://img.shields.io/badge/no%20AI-in%20the%20execution%20path-0b0d0b?style=flat-square" alt="No AI in the execution path" />
   <img src="https://img.shields.io/badge/built%20with-MCP%20%C2%B7%20TypeScript%20%C2%B7%20viem-1b6f3a?style=flat-square" alt="Built with MCP, TypeScript, and viem" />
 </p>
