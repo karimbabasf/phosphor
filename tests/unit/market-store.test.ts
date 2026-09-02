@@ -164,3 +164,118 @@ test('a live bar folded in does not cost a network call', async () => {
   store.put('BTC-USD', 1, [{ t: 1_699_999_200 + 100 * 60, o: 1, h: 1, l: 1, c: 1, v: 1 }]);
   assert.equal(calls, after, 'the trade stream feeds the cache directly');
 });
+
+test('a live bar reaches the emitter, carrying the bar rather than a nudge', async () => {
+  const seen: { product: string; baseSec: number; candle: Candle; provider: string }[] = [];
+  const store = createMarketStore({
+    fetchWindow: async () => minutes(100),
+    onLive: (product, baseSec, candle, provider) => seen.push({ product, baseSec, candle, provider }),
+  });
+
+  await store.warm('BTC-USD', 60, 60, 50, 'coinbase');
+  const bar: Candle = { t: 1_699_999_200 + 100 * 60, o: 1, h: 2, l: 0.5, c: 1.5, v: 9 };
+  store.put('BTC-USD', 60, [bar], 'coinbase');
+
+  assert.equal(seen.length, 1);
+  // The venue rides along, because one venue's bar landing under another venue's name is the
+  // splice this store's keyOf comment exists to prevent, and the SSE frame carries the key.
+  assert.deepEqual(seen[0], { product: 'BTC-USD', baseSec: 60, candle: bar, provider: 'coinbase' });
+});
+
+test('a fill is not a live bar, so it does not reach the live emitter', async () => {
+  let live = 0;
+  const store = createMarketStore({ fetchWindow: async () => minutes(100), onLive: () => (live += 1) });
+  await store.warm('BTC-USD', 60, 60, 50);
+  assert.equal(live, 0, 'the REST rail has its own signal and it is onUpdate');
+});
+
+test('while a socket is feeding a series, REST relaxes instead of polling every second', async () => {
+  let clock = 1_800_000_000_000;
+  let calls = 0;
+  const store = createMarketStore({
+    fetchWindow: async () => {
+      calls++;
+      return minutes(100);
+    },
+    now: () => clock,
+  });
+
+  await store.warm('BTC-USD', 60, 60, 50);
+  const filled = calls;
+
+  // No live bar: the 1 s gate applies and a read two seconds later refills.
+  clock += 2000;
+  store.read('BTC-USD', 60, 60, 50);
+  assert.equal(calls, filled + 1, 'the fallback cadence is unchanged when nothing is live');
+
+  await new Promise((resolve) => setImmediate(resolve));
+  store.put('BTC-USD', 60, [{ t: 1_699_999_200 + 100 * 60, o: 1, h: 1, l: 1, c: 1, v: 1 }]);
+  const afterLive = calls;
+
+  clock += 4000;
+  store.read('BTC-USD', 60, 60, 50);
+  assert.equal(calls, afterLive, 'the rail is moving the price, so REST stays out of the way');
+
+  // The relaxed gate is 30 s, not forever. Past it the backstop reconciles the closed bar.
+  clock += 40_000;
+  store.read('BTC-USD', 60, 60, 50);
+  assert.equal(calls, afterLive + 1);
+});
+
+test('a series stops counting as live the moment the deltas stop', async () => {
+  let clock = 1_800_000_000_000;
+  const store = createMarketStore({ fetchWindow: async () => minutes(100), now: () => clock });
+  await store.warm('BTC-USD', 60, 60, 50);
+
+  assert.equal(store.read('BTC-USD', 60, 60, 50).liveAgeSec, null, 'nothing has ever been live');
+  store.put('BTC-USD', 60, [{ t: 1_699_999_200 + 100 * 60, o: 1, h: 1, l: 1, c: 1, v: 1 }]);
+  assert.equal(store.read('BTC-USD', 60, 60, 50).liveAgeSec, 0);
+  clock += 9000;
+  assert.equal(store.read('BTC-USD', 60, 60, 50).liveAgeSec, 9);
+});
+
+test('a coarser timeframe of a live market reads as live, because the rail only carries minutes', async () => {
+  let clock = 1_800_000_000_000;
+  const store = createMarketStore({ fetchWindow: async () => minutes(400), now: () => clock });
+  await store.warm('BTC-USD', 60, 60, 50);
+  await store.warm('BTC-USD', 300, 300, 50);
+
+  store.put('BTC-USD', 60, [{ t: 1_699_999_200 + 400 * 60, o: 1, h: 1, l: 1, c: 1, v: 1 }]);
+  // Without this the dot beside the price would go hollow on every timeframe but one, while
+  // the socket driving that very market is wide awake.
+  assert.equal(store.read('BTC-USD', 300, 300, 50).liveAgeSec, 0);
+});
+
+test('peek returns the newest bar and starts nothing', () => {
+  let calls = 0;
+  const store = createMarketStore({
+    fetchWindow: async () => {
+      calls++;
+      return minutes(10);
+    },
+  });
+
+  // The Coinbase fold asks per trade, several times a second, so a peek that filled or
+  // reordered the eviction queue would turn a read into a rate limit.
+  assert.equal(store.peek('BTC-USD', 60, 'coinbase'), null);
+  assert.equal(calls, 0);
+});
+
+test('a single bar folded onto the newest one replaces it rather than rebuilding the series', async () => {
+  const store = createMarketStore({ fetchWindow: async () => minutes(100) });
+  await store.warm('BTC-USD', 60, 60, 200);
+  const before = store.read('BTC-USD', 60, 60, 200);
+  const held = before.candles;
+  const last = held[held.length - 1] as Candle;
+
+  store.put('BTC-USD', 60, [{ ...last, c: 999 }]);
+  const after = store.read('BTC-USD', 60, 60, 200);
+  assert.equal(after.candles.length, before.candles.length, 'the same bar is not a new bar');
+  assert.equal((after.candles[after.candles.length - 1] as Candle).c, 999);
+  // The array a caller already holds must not change under it.
+  assert.equal(last.c, (held[held.length - 1] as Candle).c);
+  assert.notEqual(last.c, 999);
+
+  store.put('BTC-USD', 60, [{ t: last.t + 60, o: 1, h: 1, l: 1, c: 1, v: 1 }]);
+  assert.equal(store.read('BTC-USD', 60, 60, 200).candles.length, before.candles.length + 1);
+});

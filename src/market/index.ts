@@ -12,6 +12,15 @@ import { createCatalog, type Catalog, type MarketRef, type Provider } from './ca
 import { createProviders, planBase } from './providers.ts';
 import { createMarketStore, staleAfterSec, type MarketStore } from './store.ts';
 import { formatTimeframe, parseTimeframe, MIN_TIMEFRAME_SEC } from './aggregate.ts';
+import { createMarketLive, LIVE_BASE_SEC, type LiveProvider, type LiveRef, type LiveSocket, type VenueStatus } from './live.ts';
+
+// A market read this long ago is not being watched any more, and its socket subscription goes
+// back. Five minutes outlives a person flipping timeframes and does not outlive a window that
+// was closed.
+const WATCH_IDLE_MS = 300_000;
+// How many markets the rail follows at once. The chart is one, the trading window one, and the
+// basic screen's three prices are three. Six leaves a spare and is nowhere near a catalogue.
+const WATCH_MAX = 6;
 
 /* How far back the bars in hand actually reach. */
 function coverage(candles: readonly Candle[], stepSec: number): number {
@@ -39,6 +48,9 @@ export type MarketRead = {
   // the window, and a chart that does not say so is pretending.
   coverageSec: number;
   bars: number;
+  // Seconds since a live bar last arrived for this market on this venue, null if none ever
+  // has. The three feed states are derived from it in src/market/push.ts.
+  liveAgeSec: number | null;
   note: string | null;
   error: string | null;
 };
@@ -49,6 +61,12 @@ export type MarketDeps = {
   fetchImpl?: typeof fetch;
   cachePath?: string;
   onUpdate?: (product: string, baseSec: number) => void;
+  // Told when a live bar reaches the cache, carrying the bar. The server turns this into the
+  // SSE candle frame.
+  onLive?: (product: string, baseSec: number, candle: Candle, provider: string) => void;
+  // The live rail. Off unless asked for, because turning it on opens a websocket to a venue
+  // and a test that builds a market service should not dial one by accident.
+  live?: { enabled?: boolean; wsImpl?: (url: string) => LiveSocket; urls?: Partial<Record<LiveProvider, string>> };
   now?: () => number;
 };
 
@@ -57,7 +75,53 @@ export function createMarketData(deps: MarketDeps = {}) {
   const catalog = deps.catalog ?? createCatalog({ fetchImpl: deps.fetchImpl, cachePath: deps.cachePath, now });
   const providers = createProviders({ catalog, fetchImpl: deps.fetchImpl, now });
   const store =
-    deps.store ?? createMarketStore({ fetchWindow: providers.fetchWindow, onUpdate: deps.onUpdate, now });
+    deps.store ??
+    createMarketStore({ fetchWindow: providers.fetchWindow, onUpdate: deps.onUpdate, onLive: deps.onLive, now });
+
+  /* The live rail, wired to the same cache the REST rail fills.
+     store.put() was written for a trade stream that was deleted on 2026-08-13 and has had no
+     caller since. This is that caller: a socket bar goes into the cache exactly like a fetched
+     one, so nothing downstream of the store learns a second way to receive a candle. */
+  const live =
+    deps.live?.enabled === true
+      ? createMarketLive({
+          onCandle: (product, baseSec, candle, provider) => store.put(product, baseSec, [candle], provider),
+          seedBar: (product, provider) => store.peek(product, LIVE_BASE_SEC, provider),
+          wsImpl: deps.live.wsImpl,
+          urls: deps.live.urls,
+          now,
+        })
+      : null;
+
+  /* Which markets the rail follows, and how it learns.
+
+     Demand-driven, exactly like the fill behind read(): no read, no subscription. The
+     alternative was for the server to tell the rail what the chart is looking at, which means
+     the chart's view, the trading window's watchlist and the basic screen's three prices each
+     grow a wire into this module, and any window that closes without saying so leaves a
+     socket subscribed to a market nobody can see. Reading is the one signal every one of them
+     already sends, it is exact, and it expires on its own. */
+  const watched = new Map<string, { ref: LiveRef; at: number }>();
+  let tracking = '';
+
+  function follow(product: string, provider: Provider): void {
+    if (live === null) return;
+    const at = now();
+    watched.set(`${provider}:${product}`, { ref: { product, provider }, at });
+
+    const alive = [...watched.entries()].filter(([, held]) => at - held.at < WATCH_IDLE_MS);
+    for (const [key] of watched) if (!alive.some(([k]) => k === key)) watched.delete(key);
+
+    alive.sort((a, b) => b[1].at - a[1].at);
+    const keep = alive.slice(0, WATCH_MAX);
+    const signature = keep
+      .map(([key]) => key)
+      .sort()
+      .join('|');
+    if (signature === tracking) return;
+    tracking = signature;
+    live.track('read', keep.map(([, held]) => held.ref));
+  }
 
   /* Which venue answers, and on what interval. One series, one venue, always.
 
@@ -92,12 +156,14 @@ export function createMarketData(deps: MarketDeps = {}) {
         stale: false,
         coverageSec: 0,
         bars: 0,
+        liveAgeSec: null,
         note: null,
         error: `${want} does not list ${product}`,
       };
     }
     const venue = ref?.provider ?? 'hyperliquid';
     const held = store.read(product, base.baseSec, targetSec, bars, venue);
+    follow(product, venue);
     const reached = coverage(held.candles, targetSec);
     const note = base.note;
 
@@ -115,6 +181,7 @@ export function createMarketData(deps: MarketDeps = {}) {
       stale: held.error !== null || held.ageSec > staleAfterSec(base.baseSec) * 4,
       coverageSec: reached,
       bars: held.candles.length,
+      liveAgeSec: held.liveAgeSec,
       note,
       error: held.error,
     };
@@ -144,6 +211,10 @@ export function createMarketData(deps: MarketDeps = {}) {
     catalogLoadedAt: () => catalog.loadedAt(),
     all: () => catalog.all(),
     stats: () => store.stats(),
+    // What the rail is carrying, for the health route and the feed dot's venue half.
+    liveStatus: (): VenueStatus[] => (live === null ? [] : live.status()),
+    liveConnected: (provider: Provider): boolean => (live === null ? false : live.connected(provider)),
+    stopLive: (): void => live?.stop(),
   };
 }
 

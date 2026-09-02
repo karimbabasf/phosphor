@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { Policy, RiskRow, ViewMode } from './types.ts';
+import type { Candle, Policy, RiskRow, ViewMode } from './types.ts';
 import { readViewMode, writeViewMode } from './view/mode.ts';
 import { readTheme, writeTheme, type Theme } from './view/theme.ts';
 import { loadConfig } from './config.ts';
@@ -104,10 +104,17 @@ const candles = cachedCandles(hyperliquidSource(), coinbaseSource());
 // Assigned once the server exists, because the server is what has the SSE clients to tell.
 // Until then a fill that lands simply has nobody to announce it to, which is correct.
 let marketUpdated: () => void = () => {};
+// The same, for the live rail. A socket bar carries the bar itself rather than a nudge, so
+// the browser repaints without refetching a hundred kilobytes of JSON to move one close.
+let marketLive: (product: string, baseSec: number, candle: Candle, provider: string) => void = () => {};
 
 const market = createMarketData({
   cachePath: path.join(cfg.dataDir, 'market-catalog.json'),
   onUpdate: () => marketUpdated(),
+  onLive: (product, baseSec, candle, provider) => marketLive(product, baseSec, candle, provider),
+  // The venue sockets. On in the app, off in every test that builds a market service, because
+  // dialling a venue is not something a unit test should do by accident.
+  live: { enabled: true },
 });
 
 // The catalogue is what makes a symbol beyond the config list reachable. A cold start with
@@ -360,6 +367,11 @@ setInterval(() => {
 // A background fill that lands is worth exactly one SSE frame: the browser is holding the
 // previous candles and needs to be told there are better ones, not polled at.
 marketUpdated = () => server.broadcastCandles();
+
+// A bar off a venue socket. Still the contentless nudge here, which is already coalesced and
+// costs nothing extra beside the timer that fires at the same rate. The frame that carries the
+// bar itself, and deletes the browser's hundred-kilobyte refetch, is wired in src/market/push.ts.
+marketLive = () => server.broadcastCandles();
 
 // The feed moving is the only thing that makes the trading surface change without anyone
 // touching it, so it is what drives the push. Coalesced by the feed already.

@@ -22,6 +22,7 @@ import {
   type LiveProvider,
   type LiveSocket,
 } from '../../src/market/live.ts';
+import { createMarketData } from '../../src/market/index.ts';
 
 type FakeSocket = LiveSocket & {
   url: string;
@@ -393,4 +394,58 @@ test('stopping the rail closes every socket and refuses further tracking', () =>
   assert.ok(sockets.all.every((s) => s.readyState === 3));
   live.track('chart', [{ product: 'SOL-USD', provider: 'hyperliquid' }]);
   assert.equal(sockets.all.length, 2, 'a stopped rail does not dial again');
+});
+
+// ---------- the rail wired to the cache ----------
+
+test('the rail follows what is being read, and a socket bar lands in the cache under its own venue', async () => {
+  const sockets = fakeSockets();
+  const emitted: { product: string; candle: Candle; provider: string }[] = [];
+  const market = createMarketData({
+    cachePath: '/nonexistent/phosphor-test-catalog.json',
+    fetchImpl: (async () => ({
+      ok: true,
+      json: async () => [],
+      text: async () => '',
+      headers: new Headers(),
+    })) as unknown as typeof fetch,
+    onLive: (product, _baseSec, candle, provider) => emitted.push({ product, candle, provider }),
+    live: { enabled: true, wsImpl: sockets.make },
+  });
+
+  // Demand-driven, exactly like the fill behind read(): nothing was watched until something
+  // was read, so a window nobody opened costs no connection.
+  assert.equal(sockets.all.length, 0);
+  market.read('BTC-USD', '1m', 100);
+  assert.equal(sockets.all.length, 1, 'reading a market is what subscribes it');
+  sockets.last().open();
+
+  sockets.last().deliver({ channel: 'candle', data: hlBar() });
+  assert.equal(emitted.length, 1);
+  assert.equal(emitted[0]?.provider, 'hyperliquid');
+  assert.equal(emitted[0]?.candle.c, 100.5);
+
+  // And the cache now holds it, so the next read paints the socket's bar with no fetch.
+  const held = market.read('BTC-USD', '1m', 100);
+  assert.equal(held.candles[held.candles.length - 1]?.c, 100.5);
+  assert.equal(held.liveAgeSec, 0);
+  assert.equal(market.liveConnected('hyperliquid'), true);
+  market.stopLive();
+});
+
+test('a market service with the rail switched off dials nothing at all', () => {
+  const market = createMarketData({
+    cachePath: '/nonexistent/phosphor-test-catalog.json',
+    fetchImpl: (async () => ({
+      ok: true,
+      json: async () => [],
+      text: async () => '',
+      headers: new Headers(),
+    })) as unknown as typeof fetch,
+  });
+  // The default. Every test in this repo that builds a market service gets this one, and a
+  // unit test dialling a venue by accident is how a suite starts depending on the weather.
+  market.read('BTC-USD', '1m', 100);
+  assert.deepEqual(market.liveStatus(), []);
+  assert.equal(market.liveConnected('hyperliquid'), false);
 });

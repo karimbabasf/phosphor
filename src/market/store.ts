@@ -25,6 +25,11 @@ export type ReadResult = {
   candles: Candle[];
   // Seconds since the newest bar in the cache was refreshed. The chart shows this.
   ageSec: number;
+  // Seconds since a live bar was folded into this product on this venue, or null if none ever
+  // has. This is what the feed dot is derived from, and it is deliberately not a boolean: the
+  // difference between "a socket is open" and "a socket is open and sent something recently"
+  // is the whole difference between a chart that is live and one that only claims to be.
+  liveAgeSec: number | null;
   // True while a fill for this series is in flight, so the UI can say "filling" rather
   // than showing a stalled chart and letting the human guess.
   filling: boolean;
@@ -39,6 +44,10 @@ export type MarketStoreOptions = {
   // Told after a fill changes a series, so the server can push one SSE frame instead of
   // the browser polling. Never called for a fill that changed nothing.
   onUpdate?: (product: string, baseSec: number) => void;
+  // Told when a live bar is folded in, carrying the bar rather than a nudge. One emission
+  // point for anything that reaches the cache without a network call, so the SSE frame is
+  // wired once here rather than at each caller of put().
+  onLive?: (product: string, baseSec: number, candle: Candle, provider: string) => void;
   // Most recent bars kept per series. Five thousand 1m bars is about three and a half
   // days, and the deepest window the chart offers is two thousand.
   maxBars?: number;
@@ -60,7 +69,20 @@ type Series = {
   // yet" and refetches forever: the margin in baseBarsNeeded means the ask is always a
   // couple of bars past what exists, so the window is never technically full.
   exhausted: boolean;
+  // When a live bar was last folded into this series. Zero means never.
+  liveAt: number;
 };
+
+// How long after the last live bar a series still counts as being driven by a socket.
+// The audit's threshold: under 5 s is live, 5 to 30 s is delayed, past that the socket is not
+// serving this market whatever its readyState says.
+export const LIVE_FRESH_MS = 5000;
+
+// What the REST gate relaxes to while a series is live. The rail is what moves the price, so
+// REST becomes a correctness backstop reconciling the closed bar rather than the thing driving
+// the screen. When the socket goes down the gate below resumes and behaviour is exactly what
+// it was before the rail existed.
+export const LIVE_RELAXED_STALE_SEC = 30;
 
 /* Union two oldest-first series by open time, letting the incoming bar win.
    The incoming copy is fresher by definition: it is either the same closed bar or the
@@ -95,7 +117,7 @@ export function staleAfterSec(baseSec: number): number {
 }
 
 export function createMarketStore(options: MarketStoreOptions) {
-  const { fetchWindow, onUpdate } = options;
+  const { fetchWindow, onUpdate, onLive } = options;
   const maxBars = options.maxBars ?? 5000;
   const maxSeries = options.maxSeries ?? 24;
   const now = options.now ?? (() => Date.now());
@@ -115,6 +137,20 @@ export function createMarketStore(options: MarketStoreOptions) {
   // duplicate series and never a spliced one.
   function keyOf(product: string, baseSec: number, provider: string): string {
     return `${provider}:${product}:${baseSec}`;
+  }
+
+  /* When this product last had a live bar on this venue, at any base interval.
+     Deliberately not per-series: the rail only ever puts 1m bars (see live.ts), so a 5m
+     series would report itself dead while the socket driving the very same market is wide
+     awake, and the dot beside the price would go hollow on every timeframe but one. */
+  function liveAtFor(product: string, provider: string): number {
+    let at = 0;
+    for (const [key, entry] of series) {
+      if (entry.liveAt <= at) continue;
+      if (!key.startsWith(`${provider}:${product}:`)) continue;
+      at = entry.liveAt;
+    }
+    return at;
   }
 
   function evictIfNeeded(): void {
@@ -162,6 +198,7 @@ export function createMarketStore(options: MarketStoreOptions) {
           source: 'live',
           error: null,
           exhausted: fetched.length < bars,
+          liveAt: current?.liveAt ?? 0,
         });
         evictIfNeeded();
         if (changed && onUpdate) onUpdate(product, baseSec);
@@ -176,6 +213,7 @@ export function createMarketStore(options: MarketStoreOptions) {
           source: current?.source ?? 'unavailable',
           error: message,
           exhausted: current?.exhausted ?? false,
+          liveAt: current?.liveAt ?? 0,
         });
       } finally {
         inflight.delete(key);
@@ -195,16 +233,23 @@ export function createMarketStore(options: MarketStoreOptions) {
     const at = now();
     const needBase = baseBarsNeeded(bars, baseSec, targetSec);
 
+    const liveAt = liveAtFor(product, provider);
+    const liveAgeSec = liveAt === 0 ? null : (at - liveAt) / 1000;
+
     if (entry === undefined) {
       void fill(product, baseSec, needBase, provider);
-      return { candles: [], ageSec: 0, filling: true, bars: 0, source: 'filling', error: null };
+      return { candles: [], ageSec: 0, liveAgeSec, filling: true, bars: 0, source: 'filling', error: null };
     }
 
     entry.lastReadAt = at;
     const ageSec = (at - entry.fetchedAt) / 1000;
+    // A series a socket is driving does not need REST every second. The rail moves the price
+    // and REST reconciles the closed bar, so the gate relaxes while the deltas keep landing
+    // and snaps back the moment they stop.
+    const gateSec = at - liveAt < LIVE_FRESH_MS ? LIVE_RELAXED_STALE_SEC : staleAfterSec(baseSec);
     // Short only counts when the venue has not already said it is out of history.
     const short = !entry.exhausted && entry.candles.length < needBase;
-    if (ageSec >= staleAfterSec(baseSec) || short) {
+    if (ageSec >= gateSec || short) {
       // Background only. The caller gets the bars already in hand.
       void fill(product, baseSec, needBase, provider);
     }
@@ -215,11 +260,21 @@ export function createMarketStore(options: MarketStoreOptions) {
     return {
       candles: windowed,
       ageSec,
+      liveAgeSec,
       filling: inflight.has(key),
       bars: windowed.length,
       source: entry.source,
       error: entry.error,
     };
+  }
+
+  /* The newest bar held for a series, with no fill, no eviction and no bookkeeping.
+     The live rail's Coinbase fold needs the venue's own open for the minute it is attaching
+     to, and it asks per trade, so this must stay free of side effects. */
+  function peek(product: string, baseSec: number, provider = 'hyperliquid'): Candle | null {
+    const entry = series.get(keyOf(product, baseSec, provider));
+    if (entry === undefined || entry.candles.length === 0) return null;
+    return entry.candles[entry.candles.length - 1] as Candle;
   }
 
   /* Wait for a series to be usable. Only for callers that genuinely cannot draw without
@@ -238,22 +293,52 @@ export function createMarketStore(options: MarketStoreOptions) {
     return read(product, baseSec, targetSec, bars, provider);
   }
 
-  /* Fold a freshly built bar in without a network call. The trade stream uses this so the
-     forming bar moves at trade speed while the REST rail stays on its slow cadence. */
+  /* Fold a freshly built bar in without a network call. The live rail uses this so the
+     forming bar moves at socket speed while the REST rail stays on its slow cadence.
+
+     The fast path matters here in a way it does not for a fill. mergeSeries builds a Map of
+     every bar it holds and sorts the result, which is the right shape for a five hundred bar
+     window landing from a venue and the wrong one for a single bar arriving six times a
+     second: five thousand entries hashed and sorted to move one close. The overwhelmingly
+     common cases are the bar that is already newest and the bar one step past it, and both
+     are a copy and an assignment. The array is copied rather than mutated because a reader
+     may still be holding the one it was given, and a candle changing under a caller that
+     already returned it is the kind of bug that only shows up as a wrong number on a screen. */
   function put(product: string, baseSec: number, candles: readonly Candle[], provider = 'hyperliquid'): void {
     if (candles.length === 0) return;
     const key = keyOf(product, baseSec, provider);
     const current = series.get(key);
+    const at = now();
+
+    let next: Candle[];
+    const held = current?.candles;
+    const newest = held !== undefined && held.length > 0 ? (held[held.length - 1] as Candle) : null;
+    const only = candles.length === 1 ? (candles[0] as Candle) : null;
+    if (held !== undefined && only !== null && newest !== null && only.t === newest.t) {
+      next = held.slice();
+      next[next.length - 1] = only;
+    } else if (held !== undefined && only !== null && newest !== null && only.t > newest.t) {
+      next = held.slice();
+      next.push(only);
+      if (next.length > maxBars) next = next.slice(-maxBars);
+    } else {
+      next = mergeSeries(held ?? [], candles, maxBars);
+    }
+
     series.set(key, {
-      candles: mergeSeries(current?.candles ?? [], candles, maxBars),
-      fetchedAt: now(),
-      lastReadAt: current?.lastReadAt ?? now(),
+      candles: next,
+      fetchedAt: at,
+      lastReadAt: current?.lastReadAt ?? at,
       filling: current?.filling ?? false,
       source: current?.source ?? 'live',
       error: null,
       exhausted: current?.exhausted ?? false,
+      liveAt: at,
     });
     evictIfNeeded();
+    if (onLive) {
+      for (const candle of candles) onLive(product, baseSec, candle, provider);
+    }
   }
 
   function stats(): { series: number; inflight: number; bars: number } {
@@ -262,7 +347,7 @@ export function createMarketStore(options: MarketStoreOptions) {
     return { series: series.size, inflight: inflight.size, bars };
   }
 
-  return { read, warm, fill, put, stats };
+  return { read, warm, fill, put, peek, stats };
 }
 
 export type MarketStore = ReturnType<typeof createMarketStore>;
