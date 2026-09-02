@@ -60,6 +60,11 @@ export type CrewOptions = {
   maxWorkers?: number;
   defaultTimeoutMs?: number;
   onChange?(job: CrewJob): void;
+  /* Told the session id of every worker this crew starts, so the app can decide that session's
+     role from the seat rather than from what the process claims on the wire. See the note above
+     createAgents in src/agents.ts: a worker announcing `role: "analyst"` was the app trusting a
+     claim made by the thing being restricted. */
+  onSpawned?(sessionId: string): void;
   /* How a worker's process is made. The app never passes this and gets createDriver, which
      spawns a real Claude Code child; tests/unit/crew.test.ts passes a fake one, because the
      lifecycle below (a report accumulating, a deadline firing, a cap refusing, a stop landing
@@ -210,6 +215,11 @@ export function createCrew(opts: CrewOptions): Crew {
 
       try {
         driver.start();
+        /* The id is minted inside start(), so this is the first moment it exists. Registering it
+           before the brief goes down means the seat is already known when the worker's own MCP
+           proxy makes its first call. */
+        const sessionId = driver.status().sessionId;
+        if (sessionId !== '') opts.onSpawned?.(sessionId);
         // The brief is the whole conversation. Claude Code does not emit its init event until a
         // turn arrives, so the send is what starts the session as well as what asks the
         // question; see the note on `spawn` in src/driver.ts.

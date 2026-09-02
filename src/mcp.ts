@@ -85,7 +85,7 @@ async function proxy(body: Record<string, unknown>) {
     res = await fetch(`${BASE_URL}/api/mcp`, {
       method: 'POST',
       headers: POST_HEADERS,
-      body: JSON.stringify({ ...body, session: SESSION, client: CLIENT, role: ROLE, label: LABEL, parent: PARENT }),
+      body: JSON.stringify({ ...body, session: SESSION, client: CLIENT, label: LABEL, parent: PARENT }),
     });
   } catch {
     return textResult(NOT_RUNNING);
@@ -139,7 +139,9 @@ async function sendHello(): Promise<void> {
         client: CLIENT,
         session: SESSION,
         intervalMs: HELLO_MS,
-        role: ROLE,
+        // No role. The app decides it from the seat, because a role this process announced
+        // would be a claim made by the thing being restricted. ROLE below still governs which
+        // tools this process REGISTERS, which is the restriction that actually binds.
         label: LABEL,
         parent: PARENT,
       }),

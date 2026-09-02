@@ -63,7 +63,15 @@ export type JoinBusy = { ok: false; member: AgentMember | null; error: string; r
 export type JoinResult = JoinOk | JoinBusy;
 
 export type AgentPresence = {
-  claim(params: { session?: unknown; client?: unknown; intervalMs?: unknown; role?: unknown; label?: unknown; parent?: unknown }): JoinResult;
+  /* No `role`. It used to be read off the body and it is decided by the seat now; a client may
+     still send one and it is ignored, which is what makes the wire claim stop mattering. */
+  /* Named by the app when it spawns a worker, before that worker's first call. This is the
+     whole of the role decision: a session in here is an analyst and everything else is an
+     operator, because everything else is an agent a human attached on purpose. */
+  markAnalyst(session: string): void;
+  /* No `role`. It used to be read off the body and it is decided by the seat now; a client may
+     still send one and it is ignored, which is what makes the wire claim stop mattering. */
+  claim(params: { session?: unknown; client?: unknown; intervalMs?: unknown; label?: unknown; parent?: unknown }): JoinResult;
   check(params: { session?: unknown; client?: unknown }): JoinResult;
   release(session: unknown): AgentMember | null;
   // The human replacing the agents, from the window. Frees the roster AND revokes every
@@ -121,19 +129,23 @@ function ttlFrom(intervalMs: unknown): number {
   return Math.min(MAX_TTL_MS, Math.max(MIN_TTL_MS, Math.round(n * 2.5)));
 }
 
-// A role an agent claims for itself is a role it can lower and never raise. The app decides
-// what a session may do by which tools it registered for that process (src/mcp.ts reads
-// PHOSPHOR_ROLE from the environment the app itself wrote), so this field is a LABEL for the
-// roster and the audit log, not the gate. Reading it as the gate would be the classic mistake:
-// trusting a claim made by the thing being restricted.
-function roleFrom(value: unknown): AgentRole {
-  return value === 'analyst' ? 'analyst' : 'operator';
-}
-
+/* THE ROLE IS DECIDED HERE, NOT ON THE WIRE.
+   `body.role` used to set it. That was documented as a label rather than a gate, and it was
+   true as far as it went: the real restriction is which tools src/mcp.ts REGISTERS for a
+   process, from the PHOSPHOR_ROLE the app itself wrote into that child's environment. Reading
+   a self-claim into anything is still the classic mistake, and the wire field is gone.
+   What decides instead is the seat: this app knows which sessions it spawned, because it minted
+   their ids, and it spawns analysts. Everything else is an agent a human attached on purpose,
+   which is an operator. A worker that posted `role: "operator"` now gets analyst, and a
+   hand-written client claiming either gets the answer the app already held. */
 export function createAgents(now: () => number = Date.now, max: number = MAX_AGENTS): AgentPresence {
   const members = new Map<string, AgentMember>();
   let lastActivity: number | null = null;
   const revoked = new Map<string, number>();
+  /* Sessions this app spawned as workers. Ids are never removed: a worker's id becoming an
+     operator's id by being forgotten is the one way this could widen, and they are uuids, one
+     per worker, a few tens over a long session. */
+  const analysts = new Set<string>();
 
   function expired(m: AgentMember): boolean {
     return now() - Date.parse(m.lastSeen) >= m.ttlMs;
@@ -169,7 +181,7 @@ export function createAgents(now: () => number = Date.now, max: number = MAX_AGE
   }
 
   function resolve(
-    params: { session?: unknown; client?: unknown; intervalMs?: unknown; role?: unknown; label?: unknown; parent?: unknown },
+    params: { session?: unknown; client?: unknown; intervalMs?: unknown; label?: unknown; parent?: unknown },
     claiming: boolean,
   ): JoinResult {
     // An op with no session id is a curl, the e2e script, or an older mcp.ts. It is one member
@@ -220,7 +232,7 @@ export function createAgents(now: () => number = Date.now, max: number = MAX_AGE
     const member: AgentMember = {
       session,
       client,
-      role: roleFrom(params.role),
+      role: analysts.has(session) ? 'analyst' : 'operator',
       label: clean(params.label, client, 40),
       parent: typeof params.parent === 'string' ? clean(params.parent, '', 64) || null : null,
       since: stamp,
@@ -237,6 +249,9 @@ export function createAgents(now: () => number = Date.now, max: number = MAX_AGE
   }
 
   return {
+    markAnalyst(session: string) {
+      analysts.add(session);
+    },
     claim: (params) => resolve(params, true),
     check: (params) => {
       const result = resolve(params, false);

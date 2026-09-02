@@ -14,9 +14,12 @@ import assert from 'node:assert/strict';
 
 import { createAgents, MAX_AGENTS } from '../../src/agents.ts';
 
-function clockFrom(start: number, max?: number): { agents: ReturnType<typeof createAgents>; advance: (ms: number) => void } {
+/* `analysts` is the set of sessions the APP spawned. It is what decides a role now: the wire
+   claim is gone, and a test that wants an analyst names the session the way the server does. */
+function clockFrom(start: number, max?: number, analysts: string[] = []): { agents: ReturnType<typeof createAgents>; advance: (ms: number) => void } {
   let now = start;
   const agents = createAgents(() => now, max);
+  for (const session of analysts) agents.markAnalyst(session);
   return {
     agents,
     advance: (ms: number) => {
@@ -53,10 +56,10 @@ test('a second agent attaches beside the first instead of being refused', () => 
 });
 
 test('the lead is the longest-attached operator and does not change when others join', () => {
-  const { agents, advance } = clockFrom(1_000_000);
+  const { agents, advance } = clockFrom(1_000_000, undefined, ['b']);
   agents.claim({ session: 'a', client: 'claude-code', intervalMs: 5000 });
   advance(1000);
-  agents.claim({ session: 'b', client: 'worker', role: 'analyst', intervalMs: 5000 });
+  agents.claim({ session: 'b', client: 'worker', intervalMs: 5000 });
   advance(1000);
   agents.claim({ session: 'c', client: 'codex', intervalMs: 5000 });
 
@@ -65,23 +68,30 @@ test('the lead is the longest-attached operator and does not change when others 
 });
 
 test('an analyst never becomes the lead while an operator is attached', () => {
-  const { agents, advance } = clockFrom(1_000_000);
-  agents.claim({ session: 'worker', client: 'phosphor-worker', role: 'analyst', intervalMs: 5000 });
+  const { agents, advance } = clockFrom(1_000_000, undefined, ['worker']);
+  agents.claim({ session: 'worker', client: 'phosphor-worker', intervalMs: 5000 });
   advance(1000);
   agents.claim({ session: 'human-side', client: 'claude-code', intervalMs: 5000 });
 
   assert.equal(agents.lead()?.session, 'human-side', 'the lead is the one that can act, not merely the oldest');
 });
 
-test('a role an agent claims is recorded but is a label, never a widening', () => {
-  const { agents } = clockFrom(1_000_000);
-  const claim = agents.claim({ session: 'a', client: 'x', role: 'operator' });
-  assert.equal(claim.ok && claim.member.role, 'operator');
-  const analyst = agents.claim({ session: 'b', client: 'y', role: 'analyst' });
-  assert.equal(analyst.ok && analyst.member.role, 'analyst');
-  // Anything unrecognised is an operator, because the tool surface is what actually decides
-  // and a mistyped role must not silently produce a member nothing can explain.
-  const odd = agents.claim({ session: 'c', client: 'z', role: 'captain' });
+// P2-2: the role used to be whatever the body said. Now the app decides it from the seat, and
+// the wire field is ignored whatever it holds.
+test('the role comes from the seat, so a claim on the wire cannot raise or lower it', () => {
+  const { agents } = clockFrom(1_000_000, undefined, ['worker']);
+
+  // A session this app spawned is an analyst even when it says otherwise.
+  const lying = agents.claim({ session: 'worker', client: 'phosphor-worker', role: 'operator' } as never);
+  assert.equal(lying.ok && lying.member.role, 'analyst');
+
+  // A session this app did not spawn is an operator, and claiming analyst does not lower it
+  // either: the tool surface is what actually decides, and it is set by the environment the
+  // app writes, not by a field the process being restricted fills in.
+  const human = agents.claim({ session: 'human-side', client: 'claude-code', role: 'analyst' } as never);
+  assert.equal(human.ok && human.member.role, 'operator');
+
+  const odd = agents.claim({ session: 'c', client: 'z', role: 'captain' } as never);
   assert.equal(odd.ok && odd.member.role, 'operator');
 });
 
@@ -216,12 +226,11 @@ test('a re-hello may change the name but never restarts the membership', () => {
 });
 
 test('a member records who spawned it, so the roster reads as a tree', () => {
-  const { agents } = clockFrom(1_000_000);
+  const { agents } = clockFrom(1_000_000, undefined, ['w1']);
   agents.claim({ session: 'lead', client: 'claude-code', intervalMs: 5000 });
   const worker = agents.claim({
     session: 'w1',
     client: 'phosphor-worker',
-    role: 'analyst',
     label: 'four hour',
     parent: 'lead',
     intervalMs: 5000,
@@ -250,7 +259,7 @@ test('ops are counted per member, so an attached-but-idle agent is visible as on
 test('evict with no argument clears the whole roster and reports everyone dropped', () => {
   const { agents } = clockFrom(1000);
   agents.claim({ session: 'old', client: 'claude-code', intervalMs: 5000 });
-  agents.claim({ session: 'w1', client: 'phosphor-worker', role: 'analyst', intervalMs: 5000 });
+  agents.claim({ session: 'w1', client: 'phosphor-worker', intervalMs: 5000 });
 
   const dropped = agents.evict();
   assert.deepEqual(dropped.map((m) => m.client).sort(), ['claude-code', 'phosphor-worker']);

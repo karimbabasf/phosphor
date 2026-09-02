@@ -87,6 +87,9 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         claudeBin: cfg.driver?.claudeBin,
         model: cfg.driver?.model,
         workerPrompt: (brief, label) => buildWorkerRole({ brief, label, root: PROJECT_DIR }),
+        // The role, decided by the seat: this app spawned it, so it is an analyst whatever
+        // its own process announces. See the note above createAgents in src/agents.ts.
+        onSpawned: (session) => agents.markAnalyst(session),
         onChange: (job) => {
           audit.append('tool_call', `worker ${job.label}: ${job.state}`, {
             id: job.id,
