@@ -29,9 +29,10 @@
 // The fee is 1.0 USDC and it comes OUT OF the amount: the destination receives amount - 1.
 // See MIN_WITHDRAW_USDC below for how that figure was established.
 
-import fs from 'node:fs';
 import { isAddress, parseSignature } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
+
+import { evmPrivateKey } from '../keystore/index.ts';
 import type { Address, Hex } from 'viem';
 import { evmAddress } from '../chain/evm.ts';
 
@@ -241,26 +242,14 @@ export type HlSignPort = {
   signTypedData(keysPath: string, typed: HlTypedData): Promise<HlSignature>;
 };
 
-// DEBT, flagged for review rather than hidden: src/chain/evm.ts opens by saying it is the ONE
-// module that reads the key, and this is a second one. evm.ts exports evmAddress but no signer
-// and keeps its readEvmKey private, and this module was scoped without permission to edit it.
-// The fix is one additive export there (signTypedDataEvm) and deleting this function. Until
-// then the key is read at the moment of use, handed straight to viem, and never stored in
-// module state, logged, or returned.
-function readEvmKey(keysPath: string): Hex {
-  if (!fs.existsSync(keysPath)) throw new Error(`no keys file at ${keysPath}. Run: npm run keygen`);
-  const parsed = JSON.parse(fs.readFileSync(keysPath, 'utf8')) as { evm?: { privateKey?: string } };
-  const key = parsed.evm?.privateKey;
-  if (typeof key !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(key)) {
-    throw new Error(`keys file at ${keysPath} has no valid evm.privateKey`);
-  }
-  return key as Hex;
-}
+// The DEBT this file carried is paid: it used to open the key file itself, because
+// src/chain/evm.ts kept its reader private and this module could not edit it. Both now ask
+// src/keystore for the material, so there is one door, and a locked wallet closes it.
 
 export const liveSignPort: HlSignPort = {
   address: evmAddress,
   async signTypedData(keysPath, typed) {
-    const account = privateKeyToAccount(readEvmKey(keysPath));
+    const account = privateKeyToAccount(evmPrivateKey(keysPath));
     const packed = await account.signTypedData(typed as never);
     // Hyperliquid wants {r, s, v} with v as 27 or 28, not viem's packed 65-byte hex.
     const { r, s, v, yParity } = parseSignature(packed);

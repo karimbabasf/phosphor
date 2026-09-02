@@ -19,17 +19,8 @@
 // writes that file back and never removes anything from it: it is key material, and a human
 // removes what a human put there.
 
-import fs from 'node:fs';
-
-type AgentEntry = { privateKey?: string; address?: string; name?: string; approvedAt?: string };
-type KeysFile = {
-  // The flat shape, written before 2026-08-20 and again from now on.
-  hyperliquidAgent?: AgentEntry;
-  // The keyed shape written between 2026-08-20 and 2026-09-01. Only the 'mainnet' entry is
-  // read; any other entry is left alone rather than deleted.
-  hyperliquidAgents?: { mainnet?: AgentEntry; [k: string]: AgentEntry | undefined };
-  [k: string]: unknown;
-};
+import { isLocked, keyMaterial } from '../keystore/index.ts';
+import type { AgentEntry } from '../keystore/store.ts';
 
 function validKey(value: unknown): value is `0x${string}` {
   return typeof value === 'string' && /^0x[0-9a-fA-F]{64}$/.test(value);
@@ -37,15 +28,18 @@ function validKey(value: unknown): value is `0x${string}` {
 
 export type ApiWalletRead = {
   key: `0x${string}` | null;
-  source: 'present' | 'absent';
+  // 'locked' is its own answer, not a flavour of 'absent'. A bot that will not arm because the
+  // wallet is locked and a bot that will not arm because nobody has approved an agent wallet
+  // need two different sentences: one is a password away and the other is a script away.
+  source: 'present' | 'absent' | 'locked';
   address: string | null;
 };
 
 export function readApiWallet(keysPath: string): ApiWalletRead {
   const absent: ApiWalletRead = { key: null, source: 'absent', address: null };
-  if (!fs.existsSync(keysPath)) return absent;
+  if (isLocked()) return { key: null, source: 'locked', address: null };
   try {
-    const parsed = JSON.parse(fs.readFileSync(keysPath, 'utf8')) as KeysFile;
+    const parsed = keyMaterial(keysPath);
 
     const keyed = parsed.hyperliquidAgents?.mainnet;
     if (validKey(keyed?.privateKey)) {
@@ -54,15 +48,15 @@ export function readApiWallet(keysPath: string): ApiWalletRead {
 
     // The flat entry. Read it rather than refuse: a file written under either older shape
     // has a perfectly good key in it, and a shape change should not cost an install its agent.
-    const flat = parsed.hyperliquidAgent;
+    const flat: AgentEntry | undefined = parsed.hyperliquidAgent;
     if (validKey(flat?.privateKey)) {
       return { key: flat.privateKey, source: 'present', address: flat.address ?? null };
     }
 
     return absent;
   } catch {
-    // A malformed keys file reads as no key rather than as an exception. Nothing can arm
-    // without a key, which is the safe direction for this failure to point.
+    // A malformed or missing wallet reads as no key rather than as an exception. Nothing can
+    // arm without a key, which is the safe direction for this failure to point.
     return absent;
   }
 }

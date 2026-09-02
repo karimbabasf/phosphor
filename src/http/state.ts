@@ -66,6 +66,14 @@ export function buildState(ctx: Ctx): unknown {
     policy,
     // Unconditional. Kept in the payload so the window states it rather than assumes it.
     gate: { required: true, banner: null },
+    /* The custody state, so the window can draw the lock chip and the lock screen without a
+       second read. `state` is one of unlocked, locked, no_wallet or needs_migration, and the
+       last two are what the first-run and migration screens key off. Never carries a key. */
+    lock: {
+      state: ctx.keystore.state(),
+      idleLocksInSec: ctx.session.idleLocksInSec(),
+      addresses: ctx.keystore.addresses(),
+    },
     sentences: sentencesOf(policy),
     proposals: list,
     mode: ctx.cfg.mode,

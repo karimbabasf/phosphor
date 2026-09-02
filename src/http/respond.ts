@@ -31,7 +31,9 @@ const MIME: Record<string, string> = {
 };
 
 export type JsonBody = Record<string, unknown>;
-export type BodyResult = { ok: true; value: JsonBody } | { ok: false; error: string };
+// `status` is on the failure because the two refusals are different answers: a body this
+// surface will not read at all is 415, a body it read and could not parse is 400.
+export type BodyResult = { ok: true; value: JsonBody } | { ok: false; error: string; status: number };
 
 export function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -147,15 +149,36 @@ export function serveStatic(pathname: string, res: http.ServerResponse): void {
   res.end(body);
 }
 
+// application/json and nothing else, which is a security boundary rather than a formality.
+//
+// text/plain, multipart/form-data and application/x-www-form-urlencoded are the three types a
+// browser can post cross-origin with NO preflight, so a page could shape a JSON body, label it
+// text/plain and have this surface parse it. Requiring a type that is not on that list means
+// any cross-origin post has to ask permission first, and this app answers no CORS headers, so
+// the preflight fails and the request never arrives. Defence in depth behind sameOrigin: two
+// independent reasons the same page is refused.
+function jsonContentType(req: http.IncomingMessage): boolean {
+  const raw = req.headers['content-type'];
+  if (typeof raw !== 'string') return false;
+  return raw.split(';')[0].trim().toLowerCase() === 'application/json';
+}
+
 export function readBody(req: http.IncomingMessage): Promise<BodyResult> {
   return new Promise((resolve) => {
+    if (!jsonContentType(req)) {
+      // Read nothing and answer. A body this surface will not parse is not a body it should
+      // spend a megabyte of memory buffering first.
+      req.resume();
+      resolve({ ok: false, error: 'content-type must be application/json', status: 415 });
+      return;
+    }
     const chunks: Buffer[] = [];
     let size = 0;
     req.on('data', (chunk: Buffer) => {
       size += chunk.length;
       if (size > MAX_BODY_BYTES) {
         req.destroy();
-        resolve({ ok: false, error: 'request body too large' });
+        resolve({ ok: false, error: 'request body too large', status: 413 });
         return;
       }
       chunks.push(chunk);
@@ -169,9 +192,9 @@ export function readBody(req: http.IncomingMessage): Promise<BodyResult> {
       try {
         resolve({ ok: true, value: asRecord(JSON.parse(raw)) });
       } catch {
-        resolve({ ok: false, error: 'invalid json body' });
+        resolve({ ok: false, error: 'invalid json body', status: 400 });
       }
     });
-    req.on('error', (err) => resolve({ ok: false, error: errText(err) }));
+    req.on('error', (err) => resolve({ ok: false, error: errText(err), status: 400 }));
   });
 }

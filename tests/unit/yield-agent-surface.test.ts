@@ -215,6 +215,7 @@ async function boot(opts: { yieldView?: YieldView | null } = {}): Promise<Harnes
       get: () => undefined,
       list: () => [],
       sessionSpentUsd: () => 0,
+      releaseQueued: async () => 0,
     },
     getPolicy: () => defaultPolicy(),
     setKill: () => {},
@@ -247,7 +248,7 @@ async function boot(opts: { yieldView?: YieldView | null } = {}): Promise<Harnes
 async function postMcp(h: Harness, body: unknown): Promise<{ status: number; json: any }> {
   const res = await fetch(`${h.url}/api/mcp`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', origin: h.url },
     body: JSON.stringify(body),
   });
   return { status: res.status, json: await res.json() };

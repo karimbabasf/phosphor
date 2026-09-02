@@ -18,6 +18,18 @@ import { chartPayload, handleChartWrite, sendCandles } from './chart.ts';
 import { handleMutation } from './mutation.ts';
 import { handleTradeAction, handleTradeWrite } from './trade.ts';
 import { handleMcp } from './mcp.ts';
+import {
+  handleActivity,
+  handleLock,
+  handleReceive,
+  handleRevealFetch,
+  handleRevealStart,
+  handleUnlock,
+  handleWalletCreate,
+  handleWalletExport,
+  handleWalletImport,
+  handleWalletMigrate,
+} from './wallet.ts';
 import { LOG_LIMIT_MAX } from './context.ts';
 import type { Ctx } from './context.ts';
 
@@ -42,8 +54,10 @@ const GET: Record<string, Route> = {
     sendJson(res, report.status, report.body);
   },
   '/api/trade': (ctx, _req, res) => sendJson(res, 200, ctx.trade.payload()),
-  '/api/session': (ctx, _req, res) => sendJson(res, 200, { token: ctx.token }),
   '/api/driver': (ctx, _req, res) => sendJson(res, 200, ctx.chats.payload()),
+  // Money arriving is the one thing nobody should have to unlock for, so this reads the
+  // addresses out of the keystore's plaintext header and answers while locked.
+  '/api/receive': (ctx, _req, res) => handleReceive(ctx, res),
   '/api/events': (ctx, req, res) => ctx.sse.open(req, res),
 };
 
@@ -57,7 +71,22 @@ const POST: Record<string, Route> = {
   '/api/kill': (ctx, req, res) => handleMutation(ctx, '/api/kill', req, res),
   '/api/yield/withdraw': (ctx, req, res) => handleMutation(ctx, '/api/yield/withdraw', req, res),
   '/api/driver': (ctx, req, res) => handleMutation(ctx, '/api/driver', req, res),
+  // Custody. Every one of these carries the window token, and no agent op reaches any of them:
+  // there is no unlock op in /api/mcp and no unlock tool in src/mcp.ts.
+  '/api/unlock': (ctx, req, res) => handleUnlock(ctx, req, res),
+  '/api/lock': (ctx, req, res) => handleLock(ctx, req, res),
+  '/api/activity': (ctx, req, res) => handleActivity(ctx, req, res),
+  '/api/wallet/create': (ctx, req, res) => handleWalletCreate(ctx, req, res),
+  '/api/wallet/import': (ctx, req, res) => handleWalletImport(ctx, req, res),
+  '/api/wallet/migrate': (ctx, req, res) => handleWalletMigrate(ctx, req, res),
+  '/api/wallet/reveal': (ctx, req, res) => handleRevealStart(ctx, req, res),
+  '/api/wallet/export': (ctx, req, res) => handleWalletExport(ctx, req, res),
 };
+
+// The one path with a variable in it. A table cannot hold it, and a second table of patterns
+// for one route would be a mechanism built for a single caller, so it is one branch named
+// where the reader is already looking for the route.
+const REVEAL_PREFIX = '/api/wallet/reveal/';
 
 export async function handle(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const url = new URL(req.url ?? '/', `http://${HOST}`);
@@ -73,6 +102,9 @@ export async function handle(ctx: Ctx, req: http.IncomingMessage, res: http.Serv
     if (req.method === 'GET' || req.method === 'HEAD') {
       const handler = GET[route];
       if (handler !== undefined) return await handler(ctx, req, res, url);
+      if (route.startsWith(REVEAL_PREFIX)) {
+        return handleRevealFetch(ctx, route.slice(REVEAL_PREFIX.length), req, res);
+      }
       if (route.startsWith('/api/')) return fail(res, 404, `unknown route: ${route}`);
       // The second surface. A bare /trade is the page; everything else still resolves as a
       // file, so the two pages share one static root and one stylesheet.

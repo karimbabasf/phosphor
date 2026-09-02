@@ -28,7 +28,8 @@
 // said. Deciding what to send is the rails' job.
 
 import crypto from 'node:crypto';
-import fs from 'node:fs';
+
+import { keyMaterial, walletAddresses } from '../keystore/index.ts';
 
 // ---------- chain identity ----------
 
@@ -263,7 +264,6 @@ export function formatNear(yocto: bigint): string {
 // ---------- keys ----------
 
 type NearKeyEntry = { accountId?: string; publicKey?: string; secretKey?: string };
-type KeysFile = { near?: NearKeyEntry; [k: string]: unknown };
 
 export type NearSigner = {
   accountId: string;
@@ -294,20 +294,16 @@ function publicKeyFromPrivate(privateKey: crypto.KeyObject): Uint8Array {
 // Read the key only at the moment it is needed and never hold it in module state, so a heap
 // dump of a long-running process is less likely to carry it. Same posture as evm.ts.
 export function readNearSigner(keysPath: string): NearSigner {
-  if (!fs.existsSync(keysPath)) {
-    throw new Error(`no keys file at ${keysPath}. Run: npm run keygen`);
-  }
-  const parsed = JSON.parse(fs.readFileSync(keysPath, 'utf8')) as KeysFile;
-  const entry = parsed.near;
-  if (entry === undefined) throw new Error(`keys file at ${keysPath} has no near entry`);
+  const entry = keyMaterial(keysPath).near as NearKeyEntry | undefined;
+  if (entry === undefined) throw new Error('this wallet has no NEAR key');
 
   const accountId = entry.accountId;
   if (typeof accountId !== 'string' || accountId.trim() === '') {
-    throw new Error(`keys file at ${keysPath} has no near.accountId`);
+    throw new Error('this wallet has no NEAR account id');
   }
   const secret = entry.secretKey;
   if (typeof secret !== 'string' || !secret.startsWith('ed25519:')) {
-    throw new Error(`keys file at ${keysPath} has no ed25519 near.secretKey`);
+    throw new Error('this wallet has no ed25519 NEAR secret key');
   }
 
   // NEAR's secret key format is base58 of seed(32) || publicKey(32). The trailing copy of
@@ -339,8 +335,12 @@ export function readNearSigner(keysPath: string): NearSigner {
   return { accountId, publicKey, publicKeyBytes: derived, privateKey };
 }
 
-// The account id alone, for callers that need the address without touching key material.
+/* The account id alone, for callers that need the address without touching key material, and
+   it takes that literally: the keystore header answers while the wallet is locked, and only an
+   install with no header falls through to reading the key to derive it. */
 export function nearAccountId(keysPath: string): string {
+  const fromHeader = walletAddresses().near;
+  if (fromHeader !== null) return fromHeader;
   return readNearSigner(keysPath).accountId;
 }
 

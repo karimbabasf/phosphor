@@ -2,14 +2,14 @@
 // an SSE change stream, and the single /api/mcp route the MCP proxy speaks.
 //
 // Approve, refuse and kill are the only mutating browser routes and every one of
-// them requires the per-boot token that GET /api/session hands out. Every /api/mcp
+// them requires the window token, which arrives in the environment and is served by
+// no route at all. Every /api/mcp
 // op is audit-logged as a tool_call before dispatch, and every rejected mutation is
 // audit-logged as approve_attempt_rejected. The one op that is not a tool_call is the
 // presence heartbeat: it is logged as agent_connected and agent_disconnected on the
 // edges, because a line every 15s buries the transcript it is meant to sit in.
 //
-// The approval token, the Host check and the origin check live in src/http/auth.ts, and the
-// known hole in all three is written up in that file header.
+// The window token, the Host check and the origin check live in src/http/auth.ts.
 
 import http from 'node:http';
 
@@ -26,7 +26,9 @@ import { createCrew } from './crew.ts';
 import { createHistory } from './history.ts';
 import { BASIC_EVENT_SCAN, PROJECT_DIR } from './http/context.ts';
 import type { Ctx, GasFill, PriceCache, ServerDeps, PhosphorServer, SseHub } from './http/context.ts';
-import { HOST, mintToken } from './http/auth.ts';
+import { HOST, windowToken } from './http/auth.ts';
+import { createKeystore } from './keystore/index.ts';
+import { createSession } from './keystore/session.ts';
 import { createSseHub } from './http/sse.ts';
 import { createCandlePush } from './market/push.ts';
 import { createChatRegistry } from './http/chats.ts';
@@ -45,8 +47,10 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       localTheme = next;
     });
 
-  const token = mintToken();
-  audit.append('app_start', 'approval surface armed: browser approval token minted for this boot');
+  /* The window token, read from the environment the shell wrote. No route serves it: the only
+     holder is the webview the shell injected it into. See src/http/auth.ts. */
+  const token = windowToken();
+  audit.append('app_start', 'approval surface armed: the window token is held by the window only');
 
   // The bounded audit tail the basic screen's activity list reads. Seeded once here, then
   // appended by the SSE hub's own audit subscription. See the note beside it in sse.ts.
@@ -110,6 +114,9 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         claudeBin: cfg.driver?.claudeBin,
         model: cfg.driver?.model,
         workerPrompt: (brief, label) => buildWorkerRole({ brief, label, root: PROJECT_DIR }),
+        // The role, decided by the seat: this app spawned it, so it is an analyst whatever
+        // its own process announces. See the note above createAgents in src/agents.ts.
+        onSpawned: (session) => agents.markAnalyst(session),
         onChange: (job) => {
           audit.append('tool_call', `worker ${job.label}: ${job.state}`, {
             id: job.id,
@@ -174,6 +181,32 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   const prices: PriceCache = { coins: readCoins(cfg.dataDir), readings: [] };
   prices.readings = prices.coins.map(() => null);
 
+  /* The keys and the clock over them. main.ts passes the keystore it installed as the process
+     keystore, so the app has exactly one; a test that passes none gets one over its own temp
+     keysPath, which reads that path and writes nothing until a wallet route is called. */
+  const keystore = deps.keystore ?? createKeystore({ keysPath: cfg.keysPath });
+  const session =
+    deps.session ??
+    createSession({
+      isUnlocked: () => keystore.isUnlocked(),
+      lock: (reason) => {
+        keystore.lock();
+        audit.append(
+          'app_start',
+          reason === 'sleep'
+            ? 'the wallet locked: this machine was asleep'
+            : 'the wallet locked after fifteen minutes with nobody at the window',
+          { reason },
+        );
+        sse.broadcastLock(keystore.state());
+        broadcastState();
+      },
+    });
+  /* Only when this server owns the session. main.ts starts the one it built and shares with the
+     runner, and starting it twice would put two intervals on one clock. */
+  if (deps.session === undefined) session.start();
+  const stopSession = deps.session === undefined ? () => session.stop() : () => {};
+
   /* Everything the handlers read, in one object. It is assembled here rather than passed around
      as a dozen arguments because src/server.ts used to be one closure over these bindings, and
      the split turned each read into a field. `history` and `crew` close over `ctx` itself and
@@ -181,6 +214,9 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   const ctx: Ctx = {
     ...deps,
     token,
+    keystore,
+    session,
+    releaseQueued: () => deps.proposals.releaseQueued(),
     theme: { get: getTheme, set: setTheme },
     sse,
     chats,
@@ -219,6 +255,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   base.on('close', () => {
     sse.stop();
     candlePush.stop();
+    stopSession();
     clearInterval(priceTimer);
     chats.stopAll();
   });

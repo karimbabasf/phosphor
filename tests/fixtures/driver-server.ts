@@ -12,6 +12,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 
 import { createServer } from '../../src/server.ts';
@@ -53,7 +54,7 @@ export interface Booted {
   calls: DriverCalls;
   agents: ReturnType<typeof createAgents>;
   auditLines: () => string[];
-  // The per-boot approval token, already fetched. Every POST needs it.
+  // The window token this server was booted with. Every POST needs it.
   token: () => Promise<string>;
   // POST /api/driver with the token filled in. Returns status and parsed body together, because
   // a 409 with a message is as much of a result here as a 200.
@@ -85,7 +86,10 @@ export async function bootDriverServer(opts: BootOptions = {}): Promise<Booted> 
   const state: DriverState = opts.state ?? 'ready';
   const agents = createAgents();
 
-  let cachedToken = '';
+  // The window token arrives in the environment, so a test that wants to decide anything plays
+  // the shell and puts one there before the server reads it.
+  const windowToken = crypto.randomBytes(32).toString('hex');
+  process.env.PHOSPHOR_WINDOW_TOKEN = windowToken;
   const booted: Booted = {
     url: '',
     close: async () => {},
@@ -96,17 +100,11 @@ export async function bootDriverServer(opts: BootOptions = {}): Promise<Booted> 
         .readFileSync(path.join(dataDir, 'audit.jsonl'), 'utf8')
         .split('\n')
         .filter((l) => l.trim() !== ''),
-    token: async () => {
-      if (cachedToken === '') {
-        const res = await fetch(`${booted.url}/api/session`);
-        cachedToken = String(((await res.json()) as { token: string }).token);
-      }
-      return cachedToken;
-    },
+    token: async () => windowToken,
     driver: async (body) => {
       const res = await fetch(`${booted.url}/api/driver`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', origin: booted.url },
         body: JSON.stringify({ token: await booted.token(), ...body }),
       });
       return { status: res.status, body: (await res.json()) as Record<string, unknown> };
@@ -149,6 +147,7 @@ export async function bootDriverServer(opts: BootOptions = {}): Promise<Booted> 
       get: () => undefined,
       list: () => [],
       sessionSpentUsd: () => 0,
+      releaseQueued: async () => 0,
     },
     getPolicy: () => defaultPolicy(),
     setKill: () => {},

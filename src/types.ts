@@ -423,6 +423,10 @@ export type SimulationResult = {
 
 export type ProposalStatus =
   | 'pending'
+  // Authored and policy-checked while the wallet was locked, and waiting for the unlock that
+  // makes signing possible. Never refused: refusing throws away the agent's work and teaches
+  // people to turn the lock off. See decision 6 in the v1 spec.
+  | 'pending_unlock'
   | 'approved'
   | 'refused'
   | 'executing'
@@ -617,6 +621,11 @@ export type LogEvent = {
     | 'error';
   msg: string; // one human-readable line
   data?: unknown;
+  /* SHA-256 of the previous line, exactly as it was written. It is what makes the file a chain
+     and an edit detectable; see the header of src/audit.ts. Null on the first line of a file,
+     and absent on any line written before the chain existed, which verify() treats as a restart
+     rather than as damage. */
+  prev?: string | null;
 };
 
 // ---------- External rails ----------
@@ -755,6 +764,9 @@ export type ProposalService = {
   proposeYieldWithdraw(params: YieldWithdrawParams): Promise<Proposal>;
   approve(id: string): Promise<Proposal>; // human path only; executes on approval
   refuse(id: string): Promise<Proposal>;
+  /* Re-decide everything queued while the wallet was locked, against the policy and balances
+     as they are now rather than as they were when the agent asked. Returns how many moved. */
+  releaseQueued(): Promise<number>;
   get(id: string): Proposal | undefined;
   list(): Proposal[];
   sessionSpentUsd(): number; // executed fund-moving usd in the last 24h

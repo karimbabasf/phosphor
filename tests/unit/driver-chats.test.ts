@@ -46,7 +46,7 @@ test('the plus opens a second chat and leaves the roster alone', async () => {
 
     // Something joins beside the window's own agent: a second terminal, or a worker one of
     // these chats spawned. Either way it is on the roster when the plus is pressed.
-    b.agents.claim({ session: 'worker-1', client: 'an analyst', role: 'analyst' });
+    b.agents.claim({ session: 'worker-1', client: 'an analyst' });
     const opened = await b.driver({ action: 'open' });
 
     assert.equal(opened.status, 200);

@@ -2107,11 +2107,13 @@ async function boot() {
   // on the page as a black rectangle for as long as the wallet read took, which is the one
   // place a reader is most likely to read a wait as a failure.
   chartBoot();
-  try {
-    TOKEN = (await getJson('/api/session')).token;
-  } catch (err) {
-    alertLine('no approval token: ' + (err.message || String(err)));
-  }
+  /* The window token, injected by the shell that opened this window and served by no route.
+     A page opened in an ordinary browser has none, which is the design: it can read
+     everything and decide nothing. */
+  TOKEN = window.__PHOSPHOR_TOKEN__ || '';
+  if (!TOKEN) alertLine('this window holds no approval token, so it can read but not decide');
+  /* The idle beacon. Nothing else pushes the auto-lock out, deliberately: see ui/activity.js. */
+  if (window.PhosphorActivity) PhosphorActivity.start(function () { return TOKEN; });
   await refreshState();
   await refreshLog();
   // The transcript and the driver's own state, once. Everything after this arrives on the

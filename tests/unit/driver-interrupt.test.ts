@@ -81,7 +81,7 @@ test('an interrupt without the approval token is refused', async () => {
   try {
     const res = await fetch(`${b.url}/api/driver`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: b.url },
       body: JSON.stringify({ action: 'interrupt' }),
     });
     assert.ok(res.status === 400 || res.status === 403, `expected a refusal, got ${res.status}`);
@@ -96,7 +96,7 @@ test('an interrupt with somebody else token is refused', async () => {
   try {
     const res = await fetch(`${b.url}/api/driver`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: b.url },
       body: JSON.stringify({ action: 'interrupt', token: 'not-the-token' }),
     });
     assert.equal(res.status, 403);

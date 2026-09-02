@@ -9,6 +9,7 @@ import type { Proposal, Rail, RailResult, TransferLeg } from '../types.ts';
 import { loadPolicy, savePolicy } from '../policy/file.ts';
 import { renderSentences } from '../policy/render.ts';
 import { isRailKind } from '../rails/index.ts';
+import { isLocked } from '../keystore/index.ts';
 import { errText, mergePatch, money, nowIso, persist, totalUsdOf } from './lifecycle.ts';
 import type { PCtx } from './lifecycle.ts';
 
@@ -55,6 +56,21 @@ export async function land(ctx: PCtx, p: Proposal): Promise<Proposal> {
     verdict: p.verdict,
     totalUsd: totalUsdOf(p.draft),
   });
+
+  /* A LOCKED WALLET QUEUES, it never refuses. The proposal has been drafted, priced, simulated
+     and ruled on; the only thing missing is a signature, and the person who can produce one is
+     the person who will read this proposal anyway. Refusing here would throw away all of that
+     work and, worse, would teach the owner that locking the app breaks their assistant, which
+     is how a lock ends up switched off.
+     It sits ahead of both remaining outcomes on purpose. An 'allow' must not execute while
+     locked because there is no key to sign with, and a 'needs_approval' must not sit in the
+     pending list either, because a human clicking approve on a locked wallet would get a
+     failure rather than a transaction. Both are re-decided at unlock, against the policy as it
+     stands then. */
+  if (isLocked()) {
+    ctx.audit.append('proposal_created', `${p.id} is waiting for the wallet to be unlocked`, { id: p.id });
+    return persist(ctx, { ...p, status: 'pending_unlock' });
+  }
 
   if (p.verdict.outcome === 'needs_approval') {
     // Above the click threshold nothing decides but a person. There is no exemption:

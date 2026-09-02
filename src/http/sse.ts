@@ -65,6 +65,15 @@ export function createSseHub(deps: {
     stateTimer.unref();
   }
 
+  /* The lock. Its own frame rather than a state push, because the window's answer to it is a
+     whole screen rather than a repaint: locked draws the lock screen over everything, and a
+     state frame arriving first would have the wallet redraw with the old lock chip on it. The
+     state it carries is the whole payload, so the window needs no follow-up read to know
+     whether it is looking at locked, unlocked, no wallet, or a wallet waiting to be migrated. */
+  function broadcastLock(state: string): void {
+    for (const client of sseClients) sseSend(client, { type: 'lock', state });
+  }
+
   // The history panel refetches on its own signal rather than on state, because a gas
   // receipt landing changes one cell in a table nobody may even be looking at, and a state
   // push redraws the wallet, the gate, the policy and the basic screen.
@@ -192,6 +201,7 @@ export function createSseHub(deps: {
     broadcastTrade,
     broadcastActivity,
     broadcastCandles,
+    broadcastLock,
     open,
     stop,
   };

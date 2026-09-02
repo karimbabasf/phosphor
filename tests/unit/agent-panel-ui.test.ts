@@ -155,7 +155,6 @@ function load(opts: { startFails?: string; driver?: Any; veilNeverFires?: boolea
       if (i >= 0) timers.splice(i, 1);
     },
     fetch: (url: string, init?: Any) => {
-      if (url === '/api/session') return Promise.resolve({ ok: true, json: () => Promise.resolve({ token: 'T' }) });
       if (url === '/api/driver' && init) {
         const body = JSON.parse(init.body);
         posts.push(body);
@@ -167,6 +166,7 @@ function load(opts: { startFails?: string; driver?: Any; veilNeverFires?: boolea
       return Promise.resolve({ ok: true, json: () => Promise.resolve(opts.driver ?? { state: 'off', transcript: [] }) });
     },
   };
+  sandbox.__PHOSPHOR_TOKEN__ = 'T';
   sandbox.window = sandbox;
   /* One record per globe, in the order the panel creates them: the idle one that fills the
      panel, then the badge in the corner of the live one. A stub that reported `running: true`

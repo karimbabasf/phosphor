@@ -29,7 +29,7 @@ export type TradeRunner = {
   disarm(id: string, reason: string): Promise<{ ok: boolean; detail: string }>;
   manual(action: ManualAction): Promise<{ ok: boolean; detail: string }>;
   events(): RunnerEvent[];
-  armedDetail(): { mandate: Mandate; program: Program | null; since: string }[];
+  armedDetail(): { mandate: Mandate; program: Program | null; since: string; signingExpiresAt: string }[];
 };
 
 export type TradeService = {
@@ -145,6 +145,10 @@ export function createTradeService(deps: TradeServiceDeps): TradeService {
         armed: true,
         running,
         since: a.since,
+        // When this bot loses the trading key, which is not the same as when the mandate
+        // expires: the app clamps the key's life to a day whatever the mandate says. A row
+        // that showed only the mandate's expiry would promise more than the app allows.
+        signingExpiresAt: a.signingExpiresAt,
         realisedUsd,
         lastRule,
         haltedReason,

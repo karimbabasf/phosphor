@@ -145,6 +145,9 @@ export type PCtx = {
   stables: Set<string>;
   notify: () => void;
   execute: (p: Proposal) => Promise<Proposal>;
+  /* land() from execute.ts, wired by the service for the same reason `execute` is: this file is
+     the leaf of the directory and importing the module that imports it would be a cycle. */
+  land: (p: Proposal) => Promise<Proposal>;
 };
 
 export function persist(ctx: PCtx, p: Proposal): Proposal {
@@ -230,6 +233,38 @@ export async function approve(ctx: PCtx, id: string): Promise<Proposal> {
   // Through the context rather than a direct import: execute.ts reads from this file, so calling
   // it by name here would make the two modules a cycle. createProposalService wires it.
   return ctx.execute(approved);
+}
+
+/* Everything queued while the wallet was locked, decided now.
+   Re-EVALUATED rather than replayed. The proposals were ruled on against the policy, the kill
+   switch and the balances as they stood when the agent asked, and an unlock can be hours later:
+   a rule the owner tightened in between has to bind, and money that has since moved has to be
+   what the size check reads. So each one goes back through the engine and then through land(),
+   which is the same door a fresh proposal uses. A queued proposal that is now too large simply
+   lands pending; one the policy now refuses is refused, with the reason recorded.
+   Oldest first, so the order the agent asked in is the order the owner sees. */
+export async function releaseQueued(ctx: PCtx): Promise<number> {
+  const waiting = ctx.store
+    .list()
+    .filter((p) => p.status === 'pending_unlock')
+    .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+  if (waiting.length === 0) return 0;
+
+  const snapshot = ctx.ledger.snapshot();
+  const policy = loadPolicy(ctx.dataDir);
+  let released = 0;
+  for (const p of waiting) {
+    const verdict = evaluate(p.draft, buildCtx(ctx, snapshot, policy));
+    ctx.audit.append('proposal_created', `${p.id} was re-decided after the wallet was unlocked: ${verdict.outcome}`, {
+      id: p.id,
+      verdict,
+    });
+    // Back to pending first, because land() reads the status of nothing but writes one: this
+    // is what keeps a released proposal from carrying the queued status into execution.
+    await ctx.land({ ...p, status: 'pending', verdict });
+    released += 1;
+  }
+  return released;
 }
 
 export async function refuse(ctx: PCtx, id: string): Promise<Proposal> {

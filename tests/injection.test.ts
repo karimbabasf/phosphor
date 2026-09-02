@@ -13,6 +13,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, type ChildProcessByStdio } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
@@ -107,15 +108,10 @@ function freePort(): Promise<number> {
   });
 }
 
-async function getJson(route: string): Promise<Json> {
-  const res = await fetch(`${base}${route}`);
-  return await res.json();
-}
-
 async function postJson(route: string, body: unknown): Promise<{ status: number; json: Json }> {
   const res = await fetch(`${base}${route}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', origin: base },
     body: JSON.stringify(body),
   });
   let json: Json = null;
@@ -154,7 +150,17 @@ before(async () => {
   base = `http://127.0.0.1:${port}`;
   // Module-scoped, because the worker-surface test below starts a SECOND mcp.ts against this
   // same app and has to reach it the same way this one does.
-  env = { ...cleanEnv(), ACC_PORT: String(port), ACC_MODE: 'demo', ACC_DATA_DIR: dataDir, PHOSPHOR_APPROVAL_GATE: 'true' };
+  // The window token is handed to the app in its environment and served by no route, so this
+  // test plays the shell: it mints one, passes it down, and uses the same value to decide.
+  token = crypto.randomBytes(32).toString('hex');
+  env = {
+    ...cleanEnv(),
+    ACC_PORT: String(port),
+    ACC_MODE: 'demo',
+    ACC_DATA_DIR: dataDir,
+    PHOSPHOR_APPROVAL_GATE: 'true',
+    PHOSPHOR_WINDOW_TOKEN: token,
+  };
 
   const child: AppProcess = spawn(process.execPath, ['src/main.ts'], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
   child.stdout.resume();
@@ -187,8 +193,6 @@ before(async () => {
   client = new Client({ name: 'phosphor-injection', version: '0.1.0' });
   await client.connect(transport);
   mcpPid = transport.pid;
-
-  token = (await getJson('/api/session')).token;
 });
 
 after(async () => {
@@ -327,7 +331,7 @@ test('the capability index and the real tool surface name the same tools', async
 test('the MCP process holds no path to an approval', async () => {
   assert.ok(client !== null);
   const source = fs.readFileSync(path.join(ROOT, 'src', 'mcp.ts'), 'utf8');
-  for (const route of ['/api/approve', '/api/refuse', '/api/kill', '/api/session']) {
+  for (const route of ['/api/approve', '/api/refuse', '/api/kill']) {
     assert.ok(!source.includes(route), `src/mcp.ts references ${route}`);
   }
 

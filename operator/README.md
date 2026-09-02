@@ -25,9 +25,16 @@ the working directory. Arguments pass through.
 every command runner, Monitor included because it takes the Bash rules. `BashOutput` and
 `KillShell`, the rest of the shell surface. `Agent`, so no subagent is spawned to do it instead.
 `Read(~/.phosphor/**)`, so the key file is unreadable to the thing that asks for signatures.
+`Grep` and `Glob`, for the same reason and by the same argument.
 
-`Read`, `Grep` and `Glob` stay, so the operator can read the code it drives. Every
-`mcp__phosphor__*` tool is allowed outright and runs without a prompt, so the surface still works.
+`Grep` and `Glob` used to stay. That was the hole: the deny list named the key file by path and
+those two tools took no path at all, so one `Grep(pattern: "0x[0-9a-f]{64}", path: "~/.phosphor")`
+put the key in the transcript, and the transcript leaves the machine on the next turn. A search
+tool is a read tool that answers about files it never has to name.
+
+`Read` stays, so the operator can read the code it drives, and it stays scoped: the key file is
+denied by path. Every `mcp__phosphor__*` tool is allowed outright and runs without a prompt, so
+the surface still works.
 
 A deny rule naming a bare tool removes it from the model's context, in every permission mode,
 `bypassPermissions` included: the operator never sees an editor, so it cannot be talked into one.
@@ -35,8 +42,8 @@ A deny rule naming a bare tool removes it from the model's context, in every per
 ## The second profile
 
 `driver.settings.json` is the one the app itself uses when a human presses START THE AGENT in the
-window. It is the same idea taken all the way: `Read`, `Grep` and `Glob` are denied there too, so
-the agent holds `mcp__phosphor__*` and nothing else at all. The reasoning is only that the person
+window. It is the same idea taken all the way: `Read` is denied there too, so the agent holds
+`mcp__phosphor__*` and nothing else at all. The reasoning is only that the person
 using the desktop app is not the person reading the code, and a tool nobody needs is a tool that
 can only be misused.
 

@@ -42,13 +42,13 @@
       "MultiEdit",
       "NotebookRead",
       "KillBash",
+      "Grep",
+      "Glob",
       "Read(~/.phosphor/**)"
     ],
     "allow": [
       "mcp__phosphor__*",
-      "Read",
-      "Grep",
-      "Glob"
+      "Read"
     ],
     "defaultMode": "default",
     "disableBypassPermissionsMode": "disable"

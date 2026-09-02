@@ -1523,12 +1523,9 @@ function actionButton(label, action, args) {
 async function reportWriteFailure(err) {
   var message = err && err.message ? err.message : String(err);
   if (/token/i.test(message)) {
-    try {
-      TOKEN = (await getJson('/api/session')).token;
-    } catch (err2) {
-      TOKEN = null;
-    }
-    alertText('Approval token is stale. The page reloaded it, try again.');
+    /* Nothing to reload: the token is injected once by the shell and served by no route, so a
+       token this window's writes are refused for is a window the shell has to open again. */
+    alertText('This window holds no valid approval token. Close it and open the app again.');
     return;
   }
   if (err && err.fromServer) refusedLine(message);
@@ -2103,11 +2100,10 @@ async function boot() {
   // and the banner saying what is being waited on. No spinner: the shell is the answer.
   renderKill(null);
   renderAll(null);
-  try {
-    TOKEN = (await getJson('/api/session')).token;
-  } catch (err) {
-    alertLine('no approval token: ' + (err.message || String(err)));
-  }
+  TOKEN = window.__PHOSPHOR_TOKEN__ || '';
+  if (!TOKEN) alertLine('this window holds no approval token, so it can read but not decide');
+  /* The idle beacon. Nothing else pushes the auto-lock out, deliberately: see ui/activity.js. */
+  if (window.PhosphorActivity) PhosphorActivity.start(function () { return TOKEN; });
   await refreshState();
   await refreshTrade();
   await refreshLog();

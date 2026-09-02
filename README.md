@@ -479,19 +479,21 @@ A fresh clone carries no keys and no addresses. Creating those two things is the
 
     git clone <repo> phosphor && cd phosphor
     npm install
-    npm run keygen
+    npm run app
 
 **Every address this app holds is a real address holding real money.** There is no practice mode
 and no second world to try it in. Size the first deposit accordingly.
 
-`npm run keygen` mints one keypair per rail (EVM secp256k1, NEAR ed25519, Solana ed25519) and
-writes them to `~/.phosphor/keys.json`, file mode 0600, in a directory mode 0700. Those keys sit
-UNENCRYPTED on disk: file permissions are the only thing protecting them, and anything that can
-read your home directory can spend what those addresses hold. That path is outside the working
-copy on purpose: a key file inside a git working copy is one `git add -f` from being published,
-and one outside it cannot be reached by git at all. The `.gitignore` entry is the second line of
-defence, not the first. Move the file with `PHOSPHOR_KEYS` or a `keysPath` config key; the app
-refuses to start if that path lands inside the repo.
+The wallet is made in the window. Set a password, write down the twelve words it shows once, and
+it writes `keys.enc.json` beside `keysPath`, file mode 0600, in a directory mode 0700. That path
+is outside the working copy on purpose: a key file inside a git working copy is one `git add -f`
+from being published, and one outside it cannot be reached by git at all. The `.gitignore` entry
+is the second line of defence, not the first. Move the file with `PHOSPHOR_KEYS` or a `keysPath`
+config key; the app refuses to start if that path lands inside the repo.
+
+`npm run keygen` still exists and mints RAW UNENCRYPTED keys for development. It is not the setup
+path any more: a file it writes reads as `needs_migration` in the app, and the migration screen is
+what turns it into a keystore.
 
 The command prints public addresses only. No branch of it prints a private key. It refuses to
 overwrite an existing key file, because silently replacing a funded key loses the funds with it:
@@ -552,17 +554,59 @@ gitignored, and merges over the template key by key. The environment variables `
 
 ## Keys and signing
 
-Key material never enters the repo tree. It lives at `keysPath`, default `~/.phosphor/keys.json`,
-and `npm run sweep` is the standing check that this stayed true. The file shape, with the private
-values named rather than shown:
+Key material never enters the repo tree. It lives beside `keysPath`, default
+`~/.phosphor/<project>/`, and `npm run sweep` is the standing check that this stayed true.
+
+The file is `keys.enc.json`, at 0600: one AES-256-GCM envelope over the whole key set, with a
+plaintext header the app can read without a password. A random 32-byte data key encrypts the
+payload and a scrypt key derived from the password (N=2^18, r=8, p=1, 32-byte salt) wraps that
+data key, so changing the password rewraps 32 bytes rather than re-encrypting the file. The header
+is the additional authenticated data for both, which is what stops anyone editing the addresses in
+it: they are what every balance read uses while the wallet is locked.
 
     {
-      "version": 1,
+      "header": {
+        "version": 1,
+        "createdAt": "<ISO>",
+        "kdf": { "name": "scrypt", "N": 262144, "r": 8, "p": 1, "salt": "<64 hex>" },
+        "addresses": { "evm": "0x...", "solana": "<base58>", "near": "<64 hex>",
+                       "nearPublicKey": "ed25519:<base58>" },
+        "hasMnemonic": true
+      },
+      "wrap":    { "iv": "<24 hex>", "tag": "<32 hex>", "data": "<base64>" },
+      "payload": { "iv": "<24 hex>", "tag": "<32 hex>", "data": "<base64>" }
+    }
+
+The payload decrypts to the same shape the old plaintext `keys.json` had, so a migration is a copy
+rather than a translation:
+
+    {
+      "mnemonic": "<twelve words>",
       "evm":    { "address": "0x...",       "privateKey": "0x<32 bytes hex>" },
       "near":   { "accountId": "<64 hex>",  "publicKey": "ed25519:<base58>",
                   "secretKey": "ed25519:<base58 of seed || public>" },
       "solana": { "address": "<base58>",    "secretKey": "<base58 of seed || public>" }
     }
+
+A new wallet derives from twelve BIP39 words: EVM at m/44'/60'/0'/0/0 through viem, Solana at
+m/44'/501'/0'/0' and NEAR at m/44'/397'/0' through SLIP-0010 ed25519 written in house with
+node:crypto. The published vector "abandon abandon ... about" derives
+`0x9858EfFD232B4033E47d90003D41EC34EcaEda94` and `HAgk14JpMQLgt6rVgv7cBQFJWFto5Dqxi472uT3DKpqk`,
+which `tests/unit/keystore.test.ts` asserts: a wallet made here opens in MetaMask and Phantom.
+
+The wallet locks after fifteen minutes with nobody at the window, when the machine sleeps, when
+the window closes, and on demand. Locked, every read still works, and every write proposal an
+agent makes is drafted, priced and policy-checked and then waits as `pending_unlock` until
+somebody unlocks, at which point it is decided again against the policy as it stands then. An
+armed trading rule is the one exception: it keeps the Hyperliquid API wallet key on a session with
+an expiry set when it was armed, eight hours by default and a day at most. That key can place
+orders and cannot withdraw, so a bot that outlives a lock holds trading authority, not custody.
+
+An install with an older plaintext `keys.json` reads as `needs_migration` and keeps working.
+`POST /api/wallet/migrate` encrypts it, verifies the round trip decrypts byte-identical and the
+EVM address is unchanged, and only then overwrites the plaintext with random bytes, fsyncs,
+truncates and unlinks it, along with every `keys.json.bak*` beside it. On APFS with snapshots an
+overwrite is not an erasure, so the honest answer after migrating is to rotate to a fresh wallet.
 
 EVM address derivation goes through viem, the same library the rails sign with, so the codebase has
 one derivation path rather than two that have to agree. The trap this avoids is silent and
@@ -592,12 +636,28 @@ RFC 8032 ed25519 vector 1 must derive its published public key, and base58 must 
 published vectors. Any mismatch stops the program instead of printing an address that no private
 key opens.
 
-**Key custody is the open problem, and it is open right now.** These keys are generated on a
-laptop, stored unencrypted behind file permissions, and handled by a process that also talks to the
-network. That is the wrong posture for real money, and real money is what they hold. The answer is
-one of an OS keychain, a hardware signer, or a separate signing process the app talks to but does
-not contain. Until one of those ships, treat the balance behind these keys as the amount you are
-willing to lose to anything that can read your home directory.
+### Code signing, which is configured and not performed
+
+Encryption at rest with no hardened runtime moves a key from a file anyone can read to a heap
+anyone can read: any process running as you can attach to the backend with `task_for_pid` and take
+the unlocked key out of memory. `fill(0)` on lock is best effort and says so in the source.
+
+So the bundle carries `src-tauri/entitlements.plist` and a `bundle.macOS` block asking for the
+hardened runtime without `get-task-allow`, which is the entitlement that would let a debugger
+attach. `signingIdentity` is `-` in the config so a local build still works; a real build reads
+`APPLE_SIGNING_IDENTITY` from the environment, which Tauri honours and which overrides the config:
+
+    APPLE_SIGNING_IDENTITY="Developer ID Application: <name> (<team id>)" npm run app:build
+
+Only the owner holds that identity, so this repo configures signing and does not perform it. Touch
+ID is designed and deliberately not built: a Keychain item is scoped by code signature, so on an
+unsigned app anything you run could read it.
+
+**What is still open.** A software keystore on a laptop is not a hardware signer. The key is in
+this process's memory whenever the wallet is unlocked, and the answer to that is a separate signing
+process or a hardware device, neither of which ships here. Treat the balance behind these keys as
+the amount you are willing to lose to something that gets code execution as you while the app is
+unlocked.
 
 Execution routes through NEAR Intents. One rail, no bridges, 1 basis point, 25+ chains, 125+
 assets. The alternative was per-chain bridges, which multiplies the number of things that can steal
