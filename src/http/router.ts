@@ -32,6 +32,7 @@ import {
   handleWalletMigrate,
 } from './wallet.ts';
 import { sendHealth } from './health.ts';
+import { sendReceipts } from './receipts.ts';
 import { LOG_LIMIT_MAX } from './context.ts';
 import type { Ctx } from './context.ts';
 
@@ -63,6 +64,12 @@ const GET: Record<string, Route> = {
   '/api/events': (ctx, req, res) => ctx.sse.open(req, res),
   // No token, no secret, and deliberately the only unauthenticated proof of life. See health.ts.
   '/api/health': (ctx, _req, res) => sendHealth(ctx, res),
+  /* One card per action that actually happened. The same background gas fill the history uses,
+     for the same reason: the panel draws immediately with whatever receipts are already read. */
+  '/api/receipts': (ctx, _req, res, url) => {
+    sendReceipts(ctx, url, res);
+    fillGas(ctx, transactionsPayload(ctx).entries);
+  },
 };
 
 const POST: Record<string, Route> = {

@@ -459,6 +459,14 @@ export type Proposal = {
   // are also written to the audit log, but the log is compactable and this record is not,
   // so the transaction history keeps its explorer links after a compaction.
   result?: { ok: boolean; detail: string; txids?: string[] };
+  /* What the wallet was worth either side of this action, in USD, as the app knew it.
+     `before` is the snapshot as execution began. `after` is taken once the ledger has re-read
+     the chains, so it reflects the move rather than the stale numbers that were on screen a
+     moment earlier; null means that re-read failed or timed out, which is a different fact from
+     a balance of zero and is rendered as "not re-read" rather than as a number.
+     These are what make a receipt answer "did my money change", which is the question a person
+     actually has and which no amount of transaction hashes answers on its own. */
+  balances?: { beforeUsd: number; afterUsd: number | null };
 };
 
 // ---------- Basic view ----------

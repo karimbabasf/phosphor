@@ -12,6 +12,7 @@ import { isRailKind } from '../rails/index.ts';
 import { isLocked } from '../keystore/index.ts';
 import { errText, mergePatch, money, nowIso, persist, totalUsdOf } from './lifecycle.ts';
 import { reservationMade } from './reservation.ts';
+import { within } from '../shutdown.ts';
 import type { PCtx } from './lifecycle.ts';
 
 // Single exit for a freshly evaluated proposal. This is the only place a proposal can become
@@ -110,8 +111,30 @@ export async function executeApproved(ctx: PCtx, p: Proposal): Promise<Proposal>
   return executeFundMove(ctx, p);
 }
 
+/* The wallet total the app currently believes, in USD. Synchronous: the snapshot is memory the
+   refresh loop fills, so this costs nothing and never waits. */
+export function walletUsd(ctx: PCtx): number {
+  return ctx.ledger.snapshot().holdings.reduce((sum, h) => sum + h.usd, 0);
+}
+
+/* The balance after the move, once the chains have actually been re-read.
+   Taking a snapshot the instant the rail returns would report the numbers that were on screen
+   BEFORE the move, because the ledger is a poll and the poll has not run yet. So the refresh is
+   awaited, bounded, and a failure reports null rather than a number that would be wrong.
+   This runs outside the one-at-a-time queue (the reservation was released when the row was
+   written), so nobody waits behind it. */
+async function balanceAfter(ctx: PCtx): Promise<number | null> {
+  const refreshed = await within(BALANCE_REFRESH_CAP_MS, ctx.ledger.refresh());
+  return refreshed ? walletUsd(ctx) : null;
+}
+
+// Long enough for five chains of RPC reads that each carry a 10 s deadline of their own, short
+// enough that a receipt is not held open on a provider having a bad day.
+const BALANCE_REFRESH_CAP_MS = 15_000;
+
 export async function executeRail(ctx: PCtx, p: Proposal, rail: Rail): Promise<Proposal> {
-  const executing = persist(ctx, { ...p, status: 'executing' });
+  const beforeUsd = walletUsd(ctx);
+  const executing = persist(ctx, { ...p, status: 'executing', balances: { beforeUsd, afterUsd: null } });
   /* The budget is now on disk and sessionSpentUsd counts it, so the next caller can safely read,
      decide and reserve. Everything below is a network wait with no shared state in it. Before
      this the whole rail ran inside the queue, and a rail in watchStatus held every approve and
@@ -128,12 +151,13 @@ export async function executeRail(ctx: PCtx, p: Proposal, rail: Rail): Promise<P
   }
 
   const txids = result.txids ?? [];
+  const balances = { beforeUsd, afterUsd: await balanceAfter(ctx) };
   if (!result.ok) {
     ctx.audit.append('execution_failed', `${p.id}: ${result.detail}`, { id: p.id, txids });
-    return persist(ctx, { ...executing, status: 'failed', result: { ok: false, detail: result.detail, txids } });
+    return persist(ctx, { ...executing, status: 'failed', balances, result: { ok: false, detail: result.detail, txids } });
   }
   ctx.audit.append('executed', `${p.id}: ${result.detail}`, { id: p.id, txids });
-  return persist(ctx, { ...executing, status: 'executed', result: { ok: true, detail: result.detail, txids } });
+  return persist(ctx, { ...executing, status: 'executed', balances, result: { ok: true, detail: result.detail, txids } });
 }
 
 export function legKey(leg: TransferLeg): string {
@@ -187,7 +211,8 @@ export function depositAddressMismatch(p: Proposal, legs: TransferLeg[]): string
 
 export async function executeFundMove(ctx: PCtx, p: Proposal): Promise<Proposal> {
   const legs = p.draft.kind === 'consolidate' ? p.draft.legs : p.draft.kind === 'transfer' ? [p.draft.leg] : [];
-  const executing = persist(ctx, { ...p, status: 'executing' });
+  const beforeUsd = walletUsd(ctx);
+  const executing = persist(ctx, { ...p, status: 'executing', balances: { beforeUsd, afterUsd: null } });
   // As executeRail: reserved, so the queue moves on and the sends below run outside it.
   reservationMade();
 
@@ -224,15 +249,16 @@ export async function executeFundMove(ctx: PCtx, p: Proposal): Promise<Proposal>
     }
   }
 
+  const balances = { beforeUsd, afterUsd: await balanceAfter(ctx) };
   if (failures.length > 0) {
     const detail = failures.join('; ');
     ctx.audit.append('execution_failed', `${p.id}: ${detail}`, { id: p.id, txids });
-    return persist(ctx, { ...executing, status: 'failed', result: { ok: false, detail, txids } });
+    return persist(ctx, { ...executing, status: 'failed', balances, result: { ok: false, detail, txids } });
   }
 
   const detail = `sent ${legs.length} leg(s): ${txids.join(', ')}`;
   ctx.audit.append('executed', `${p.id}: ${detail}`, { id: p.id, txids });
-  return persist(ctx, { ...executing, status: 'executed', result: { ok: true, detail, txids } });
+  return persist(ctx, { ...executing, status: 'executed', balances, result: { ok: true, detail, txids } });
 }
 
 export async function applyPolicyChange(ctx: PCtx, p: Proposal): Promise<Proposal> {
