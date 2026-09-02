@@ -395,3 +395,30 @@ test('no op on the agent door unlocks, locks, creates or reveals anything', asyn
     await b.close();
   }
 });
+
+// ---------- the beacon ----------
+
+test('the beacon moves the lock countdown and an agent call does not', async () => {
+  const b = await boot();
+  try {
+    await b.post('/api/wallet/create', { token: b.token, password: PASSWORD });
+    const opening = (await b.get('/api/state')).json.lock.idleLocksInSec as number;
+    assert.ok(opening > 0);
+
+    // Twenty agent reads, back to back. Every one is audited, every one answers, and the
+    // countdown must be no further away afterwards than it was before.
+    for (let i = 0; i < 20; i += 1) {
+      const out = await b.post('/api/mcp', { op: 'read', tool: 'balances', session: 'agent-1', client: 'test' });
+      assert.equal(out.status, 200, 'the agent can still work while this is being asserted');
+    }
+    const afterAgent = (await b.get('/api/state')).json.lock.idleLocksInSec as number;
+    assert.ok(afterAgent <= opening, 'agent traffic must never push the lock out');
+
+    // The window says a person is here.
+    const beacon = await b.post('/api/activity', { token: b.token });
+    assert.equal(beacon.status, 200);
+    assert.ok(beacon.json.idleLocksInSec >= afterAgent, 'the beacon is the one thing that resets it');
+  } finally {
+    await b.close();
+  }
+});

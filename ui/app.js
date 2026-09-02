@@ -2107,6 +2107,8 @@ async function boot() {
      everything and decide nothing. */
   TOKEN = window.__PHOSPHOR_TOKEN__ || '';
   if (!TOKEN) alertLine('this window holds no approval token, so it can read but not decide');
+  /* The idle beacon. Nothing else pushes the auto-lock out, deliberately: see ui/activity.js. */
+  if (window.PhosphorActivity) PhosphorActivity.start(function () { return TOKEN; });
   await refreshState();
   await refreshLog();
   // The transcript and the driver's own state, once. Everything after this arrives on the
