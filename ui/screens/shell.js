@@ -64,13 +64,23 @@
 
   function mountField() {
     if (!refs.fieldHost || !window.PhosphorPattern) return;
-    field = window.PhosphorPattern.mount(refs.fieldHost, { cells: 17, state: 'idle' });
+    field = window.PhosphorPattern.mount(refs.fieldHost, { cellPx: 42, state: 'idle' });
     window.patternTheme = function () {
       if (field) field.refreshColors();
     };
-    window.addEventListener('resize', dom.debounce(function () {
+
+    var refit = dom.debounce(function () {
       if (field) field.resize();
-    }, 140));
+    }, 140);
+    window.addEventListener('resize', refit);
+    window.addEventListener('phosphor:view', refit);
+
+    /* The field is as tall as the document, and the document changes height
+       when a fold opens or a table fills. One observer on the page beats
+       remembering to call resize from every renderer that can grow it. */
+    if (typeof ResizeObserver === 'function' && refs.page) {
+      new ResizeObserver(refit).observe(refs.page);
+    }
   }
 
   /* The field is the app's pulse, so exactly one thing decides its intensity
@@ -121,6 +131,10 @@
     }
     dom.setAttr(document.body, 'data-view', name);
     dom.setHidden(refs.feedChip, name !== 'trade');
+    /* Basic carries this button at the foot of its own column, with the
+       sentence that says what it does. A second copy in the top bar is the
+       same action twice on one screen. */
+    dom.setHidden(refs.freeze, name === 'basic');
 
     /* Nothing animates on a keyboard-initiated action, and a swap the server
        asked for is not something the person triggered either. */

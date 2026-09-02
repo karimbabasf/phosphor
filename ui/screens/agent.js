@@ -172,11 +172,8 @@
 
     var external = dom.el('div', 'agent-external');
     external.appendChild(dom.el('p', 'label', 'Connect your own assistant'));
-    var row = dom.el('div', 'field-row');
-    var line = dom.el('input', 'input');
-    line.type = 'text';
-    line.readOnly = true;
-    line.value = '';
+    var row = dom.el('div', 'connection-row');
+    var line = dom.el('code', 'connection-line');
     var copy = dom.el('button', 'btn btn-ghost');
     copy.type = 'button';
     copy.appendChild(dom.el('span', 'btn-label', 'Copy'));
@@ -225,15 +222,25 @@
     });
 
     if (window.PhosphorPattern) {
-      node.field = window.PhosphorPattern.mount(emptyField, { cells: 9, state: 'idle', seed: 7 });
+      /* Same cell size as every other field, so the panel reads as a window
+         onto the one field rather than as a second, coarser pattern. Nine
+         cells across a 300 px rail gave 33 px rectangles; nine across a
+         1200 px pro panel gave 133 px ones, and they were the same component. */
+      node.field = window.PhosphorPattern.mount(emptyField, {
+        cellPx: 22, state: 'idle', seed: 7
+      });
     }
 
-    /* This panel is mounted once per view, and two of the three are hidden when
-       they are built. A canvas in a hidden subtree measures 1 by 1, so each one
-       re-fits when its view comes on screen. */
-    window.addEventListener('phosphor:view', function () {
-      if (node.field && node.host.offsetParent !== null) node.field.resize();
-    });
+    /* This panel is mounted once per view and two of the three are hidden when
+       they are built, so their canvases measure 1 by 1 and then get stretched
+       by CSS when the view opens. An observer on the box is the only thing that
+       knows when it has a real size; listening for the view change fires before
+       layout has flushed and re-fits against the old numbers. */
+    if (typeof ResizeObserver === 'function') {
+      new ResizeObserver(function () {
+        if (node.field) node.field.resize();
+      }).observe(empty);
+    }
   }
 
   /* ---------- actions ---------- */
@@ -263,7 +270,7 @@
   }
 
   function copyLine(node) {
-    var value = node.refs.line.value;
+    var value = node.refs.line.textContent;
     if (!value) return;
     var done = function () {
       dom.setText(node.refs.copy.querySelector('.btn-label'), 'Copied');
@@ -272,12 +279,8 @@
       }, 1600);
     };
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(value).then(done).catch(function () {
-        node.refs.line.select();
-      });
-      return;
+      navigator.clipboard.writeText(value).then(done).catch(function () { /* the line is on screen to read */ });
     }
-    node.refs.line.select();
   }
 
   /* ---------- state ---------- */
@@ -324,7 +327,7 @@
     if (node.field) node.field.setState(phase === 'working' ? 'working' : 'idle');
 
     renderTranscript(refs.list);
-    if (refs.line.value !== connection.command) refs.line.value = connection.command || '';
+    dom.setText(refs.line, connection.command || '');
     dom.setHidden(refs.lineRow, !connection.command);
 
     dom.reconcile(refs.clients, connection.connected || [], function (client, i) {

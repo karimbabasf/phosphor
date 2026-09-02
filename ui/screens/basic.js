@@ -24,9 +24,6 @@
     window.PhosphorActivity.onChange(function () {
       if (refs.activityBody) window.PhosphorActivity.render(refs.activityBody, { limit: 8 });
     });
-    window.addEventListener('phosphor:view', function (event) {
-      if (event.detail && event.detail.view === 'basic' && refs.field) refs.field.resize();
-    });
   }
 
   function build(host) {
@@ -34,9 +31,11 @@
 
     /* The hero. One number, one sentence of what just happened, one sentence of
        what protects the money. The pattern sits behind it. */
+    /* The hero has no field of its own. A second canvas at a second cell size
+       drew a rectangle you could see the edges of, which is worse than the
+       quieter field it was buying. The one page field runs behind it and a
+       scrim holds it down so the balance wins. */
     var hero = dom.el('section', 'hero');
-    var heroField = dom.el('div', 'pattern-local');
-    hero.appendChild(heroField);
     var inner = dom.el('div', 'hero-inner');
     var total = dom.el('p', 'balance tick');
     total.dataset.role = 'total';
@@ -93,10 +92,10 @@
     var activity = fold('Activity', 'What happened, newest first');
     col.appendChild(activity.node);
 
-    /* Stop everything, at the bottom, where a brake belongs. */
+    /* Freeze everything, at the bottom, where a brake belongs. */
     var stop = dom.el('div', 'basic-stop');
     var stopBtn = dom.el('button', 'btn btn-danger btn-lg btn-block');
-    stopBtn.appendChild(dom.el('span', 'btn-label', 'Stop everything'));
+    stopBtn.appendChild(dom.el('span', 'btn-label', 'Freeze everything'));
     stop.appendChild(stopBtn);
     stop.appendChild(dom.el('p', 'meta', 'This cancels every working order and disarms every rule. It does not sell anything.'));
     col.appendChild(stop);
@@ -120,24 +119,20 @@
       activity: activity,
       activityBody: activity.body,
       stopBtn: stopBtn,
-      heroField: heroField,
       field: null
     };
 
-    if (window.PhosphorPattern) {
-      refs.field = window.PhosphorPattern.mount(heroField, { cells: 11, state: 'idle', seed: 2 });
-    }
     window.PhosphorAgent.mount(assistantBody, { compact: true });
 
     dom.on(stopBtn, 'click', function () {
       window.PhosphorConfirm.ask({
-        title: 'Stop everything',
+        title: 'Freeze everything',
         body: 'This cancels every working order and disarms every rule. Nothing gets sold and nothing gets closed.',
-        confirm: 'Stop everything',
+        confirm: 'Freeze everything',
         tone: 'down'
       }).then(function (yes) {
         if (!yes) return;
-        window.PhosphorShell.setPending(stopBtn, true, 'Stopping');
+        window.PhosphorShell.setPending(stopBtn, true, 'Freezing');
         api.kill(true)
           .then(function () { return window.PhosphorShell.refresh({}); })
           .catch(function (err) { window.PhosphorToast.show(net.readable(err), 'down'); })
