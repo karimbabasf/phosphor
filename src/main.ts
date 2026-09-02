@@ -21,6 +21,7 @@ import { installShutdownHandlers } from './shutdown.ts';
 import { beginDraining } from './draining.ts';
 import { loadPolicy, savePolicy, defaultPolicy } from './policy/file.ts';
 import { renderSentences } from './policy/render.ts';
+import { missingVenues, proposeVenueGap } from './policy/venues.ts';
 import { createRails, venueAllowlist } from './rails/index.ts';
 import { createLedger } from './ledger/index.ts';
 import { oneClickQuoter, syntheticQuoter, stubSigner, type TokensFile } from './intents.ts';
@@ -143,8 +144,11 @@ if (collected.length > 0) {
 // An EXISTING policy.json is never rewritten, not even to add a venue. A human may
 // have curated it, and an app whose whole claim is that software does not change the
 // rules behind your back cannot change the rules behind your back. A missing venue is
-// named once in the audit log and left alone.
+// named in the audit log and then ASKED FOR: see the proposal filed further down, which
+// is how the app gets a venue added without editing anybody's rules for them.
 const venues = venueAllowlist();
+// Held for the proposal below, which cannot be filed until the proposal service exists.
+let existingPolicy: Policy | null;
 if (!fs.existsSync(path.join(cfg.dataDir, 'policy.json'))) {
   const seeded = defaultPolicy();
   seeded.outbound.destinationAllowlist = venues;
@@ -155,11 +159,11 @@ if (!fs.existsSync(path.join(cfg.dataDir, 'policy.json'))) {
     `seeded default policy on first boot, allowing ${venues.length} rail venue(s)`,
     { destinationAllowlist: venues },
   );
+  existingPolicy = null;
 } else {
-  const existing = loadPolicy(cfg.dataDir);
-  const listed = new Set((existing?.outbound.destinationAllowlist ?? []).map(a => a.toLowerCase()));
-  const missing = venues.filter(v => !listed.has(v));
-  if (existing !== null && missing.length > 0) {
+  existingPolicy = loadPolicy(cfg.dataDir);
+  const missing = missingVenues(existingPolicy, venues);
+  if (missing.length > 0) {
     audit.append(
       'error',
       `policy.json does not allow ${missing.length} rail venue(s), so those rails refuse every proposal until a human adds them: ${missing.join(', ')}`,
@@ -255,6 +259,24 @@ const proposals = createProposalService({
   signer,
   rails,
   dataDir: cfg.dataDir,
+});
+
+/* ASKING for the venues an existing policy.json does not list, rather than adding them.
+   The block above will not rewrite somebody's rules, and the consequence was that every install
+   predating a venue had rails that were not gated but dead: evaluateRail refuses an unlisted
+   counterparty outright. So the app files one proposal, a person clicks it, and the decision
+   card carries the exact addresses as a policy diff. It cannot approve itself, because a policy
+   change is always needs_approval, and it is deduplicated by content so a second boot does not
+   file a second copy. See src/policy/venues.ts.
+   Not awaited: it writes one row and the window is what reads it. */
+void proposeVenueGap({
+  policy: existingPolicy,
+  seeded: venues,
+  list: () => store.list(),
+  propose: (params) => proposals.proposePolicyChange(params),
+  audit,
+}).catch((err: unknown) => {
+  audit.append('error', `could not ask for the missing rail venues: ${err instanceof Error ? err.message : String(err)}`);
 });
 
 /* Before the port opens, and before anything renders. A proposal left `executing` by a process

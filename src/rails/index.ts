@@ -19,11 +19,11 @@
 //      which is better than a rail reaching for an RPC and a private key that the demo
 //      user never meant to involve.
 
-import type { AppConfig, Rail, SwapDraft, WriteDraft } from '../types.ts';
+import type { AppConfig, ChainId, Rail, SwapDraft, WriteDraft } from '../types.ts';
 import type { TokensFile } from '../intents.ts';
 import { uniswapRails } from './uniswap.ts';
 import { chainsWithDeployment, deploymentFor } from './uniswap-abi.ts';
-import { aaveCounterparties } from '../yield/aave.ts';
+import { aaveChains, marketFor } from '../yield/aave.ts';
 import { hypercoreDepositRail } from './hypercore-deposit.ts';
 import { ONECLICK_COUNTERPARTY, oneClickRail } from './oneclick.ts';
 import { INTENTS_NATIVE_COUNTERPARTY, intentsNativeRail } from './intents-native.ts';
@@ -122,6 +122,25 @@ export function createRails(deps: RailDeps): RailRegistry {
 
 // Every counterparty a rail can hand funds to on this network, lowercased.
 //
+/* The CONTRACTS on that list, each labelled with the venue and chain it belongs to.
+   Same two verified deployment tables, read once, so the allowlist below and any sentence
+   written about it cannot disagree about which addresses exist. The three venue STRINGS are
+   deliberately absent: 1Click, the intents verifier and the perps venue are not contracts and
+   there is nothing to verify on chain about them. */
+export function verifiedVenueContracts(): Array<{ address: string; venue: string; chain: ChainId }> {
+  const out: Array<{ address: string; venue: string; chain: ChainId }> = [];
+  for (const chain of chainsWithDeployment()) {
+    const dep = deploymentFor(chain);
+    out.push({ address: dep.router.toLowerCase(), venue: 'Uniswap', chain }); // SwapRouter02, for kind 'swap'
+    out.push({ address: dep.positionManager.toLowerCase(), venue: 'Uniswap', chain }); // NPM, for lp_add and lp_remove
+  }
+  // The Aave v3 pools, for yield_deposit and yield_withdraw. Same rule as the Uniswap rows
+  // above: the addresses come from the verified deployment table in src/yield/aave.ts and
+  // from nowhere else, so no agent input can reach this list.
+  for (const chain of aaveChains()) out.push({ address: marketFor(chain).pool.toLowerCase(), venue: 'Aave', chain });
+  return out;
+}
+
 // This is what the policy allowlist has to contain for the rails to be usable at all:
 // evaluateRail refuses an unlisted counterparty outright (rule 'destination_not_allowed'),
 // never as needs_approval, so a missing entry does not mean "ask a human", it means the
@@ -131,22 +150,11 @@ export function createRails(deps: RailDeps): RailRegistry {
 // reaches this list, which is what makes "the agent cannot name where the money goes" true
 // for the rails as well as for a transfer.
 export function venueAllowlist(): string[] {
-  const out = new Set<string>();
-
-  for (const chain of chainsWithDeployment()) {
-    const dep = deploymentFor(chain);
-    out.add(dep.router.toLowerCase()); // SwapRouter02, for kind 'swap'
-    out.add(dep.positionManager.toLowerCase()); // NPM, for lp_add and lp_remove
-  }
+  const out = new Set<string>(verifiedVenueContracts().map((v) => v.address));
 
   // Hyperliquid funding used to add Bridge2's address here. It routes through 1Click now, so
   // it has no address of its own to list either, and its counterparty string IS ONECLICK_COUNTERPARTY:
   // one host, one allowlist entry, added just below.
-
-  // The Aave v3 pools, for yield_deposit and yield_withdraw. Same rule as the Uniswap rows
-  // above: the addresses come from the verified deployment table in src/yield/aave.ts and
-  // from nowhere else, so no agent input can reach this list.
-  for (const pool of aaveCounterparties()) out.add(pool);
 
   // 1Click mints a fresh deposit address per quote, so no address of its own can ever sit
   // on a static list; the venue string is the allowlist entry (see the comment on
