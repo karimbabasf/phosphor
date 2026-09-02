@@ -181,3 +181,15 @@ test('a different installation of Phosphor is a different path, and is left alon
   const ps = ` 6001 claude --print --input-format stream-json --settings ${other}`;
   assert.deepEqual(findOrphans(SETTINGS, ps, 999), []);
 });
+
+/* The approval token is never handed to a spawned agent, and this is defence in depth twice over.
+   It no longer lives in this process's environment at all: it arrives on the backend's stdin
+   (src/http/auth.ts). The name is stripped anyway, because a child holding it could approve its
+   own proposals, which is the one thing this app claims cannot happen, and that claim should not
+   rest on operator/driver.settings.json continuing to deny Bash and Read. The same argument
+   already put PHOSPHOR_KEYS on this list. */
+test('the window token is stripped from every child environment this app builds', async () => {
+  const { STRIPPED } = await import('../../src/driver.ts');
+  assert.ok(STRIPPED.includes('PHOSPHOR_WINDOW_TOKEN'), 'the approval token is not passed to an agent');
+  assert.ok(STRIPPED.includes('PHOSPHOR_KEYS'), 'and neither is the key path, as before');
+});

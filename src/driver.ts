@@ -120,7 +120,14 @@ export function resolveClaudeBin(override?: string): string {
 // The child inherits a scrubbed environment. ANTHROPIC_API_KEY would silently move billing off
 // the subscription this whole design is built on, and a stray OPENAI_API_KEY has no business in
 // a process that talks to a wallet. Removing them is not politeness, it is the business model.
-const STRIPPED = [
+export const STRIPPED = [
+  /* The approval token, if anything ever puts it here again. It travels down the backend's stdin
+     now (src/http/auth.ts), so this process has none to pass on, and the line stays because the
+     failure it guards is total: a child holding the token could approve its own proposals, which
+     is the one thing this app claims cannot happen. The lockdown in
+     operator/driver.settings.json is what stops the agent reading its own environment today, and
+     defence in depth means not resting a claim like that on one file. */
+  'PHOSPHOR_WINDOW_TOKEN',
   'ANTHROPIC_API_KEY',
   'ANTHROPIC_AUTH_TOKEN',
   'ANTHROPIC_BASE_URL',
