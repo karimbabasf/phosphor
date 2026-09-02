@@ -122,8 +122,16 @@
             <span class="tfs" id="timeframes"></span>
             <label class="k" for="chart-cmd">ind</label>
             <input id="chart-cmd" type="text" autocomplete="off" spellcheck="false" placeholder="ema 21" aria-label="add an indicator, for example: ema 21">
-            <span class="wait" id="chart-wait" aria-hidden="true" hidden><span>&#9617;</span><span>&#9617;</span><span>&#9617;</span></span>
-            <span class="meta dim" id="chart-meta">--</span>
+            <!-- The status cluster: what the data is doing, and which venue it came from.
+                 One place, right-aligned, and nothing else. The three loading blocks and the
+                 meta line that used to sit here each said part of the same thing, so a person
+                 reading "is this price current" had three places to look and no answer in any
+                 of them. The dot is that answer; the notes that were beside it are drawn on
+                 the chart now, next to the bars they describe. -->
+            <span class="chartstatus" id="chart-status">
+              <span class="feed" id="chart-feed" data-feed="offline" role="status"><i></i><b>offline</b></span>
+              <button type="button" class="venue" id="chart-provider">--</button>
+            </span>
           </p>
           <div class="chartwrap" id="chartwrap" tabindex="0" role="img"
                aria-label="price chart: drag to pan, wheel to zoom, arrow keys to move, 0 for live">

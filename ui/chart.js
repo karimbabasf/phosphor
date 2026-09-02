@@ -18,24 +18,50 @@
 
 'use strict';
 
-/* The chart's colours are no longer constants: src/view/theme.ts holds them and the window
-   applies them through chartTheme() below. The values here are the defaults that file ships,
-   duplicated deliberately so a chart drawn before the first state frame lands is the right
-   colour rather than black on black.
+/* The chart's palette, and where it comes from.
 
-   Down is deliberately darker than the approval gate's #ff3b30 so the gate stays the only
-   alarm red on the page even though the chart uses red at all. Nothing here can repaint that
-   gate: it is a CSS token this file never touches, and it is not a theme slot either. */
-var C_BG = '#0b0d0b';
-var C_UP = '#33ff66';
-var C_DOWN = '#cc3a30';
-var C_HI = '#8cffab';
+   The design system owns these values (ui/design/tokens.css, and the token table in the v1
+   spec). They are written out here as well because a canvas cannot read a CSS variable while
+   it draws, and because the first frame is painted before any stylesheet has been consulted:
+   a chart drawn black on black for one frame is worse than one duplicated constant. readTokens
+   below pulls the live values off the document at boot, so the stylesheet stays the source of
+   truth and this table is only the floor.
 
-/* The ramps. green() and red() used to carry these triples inline, which is what made the
-   whole engine one hue at edit time rather than at run time. */
-var RGB_ACCENT = '51, 255, 102';
-var RGB_DOWN = '204, 58, 48';
-var RGB_AGENT = '51, 255, 102';
+   The engine used to be green on near-black, and every ink in it came off one accent through
+   green() and red(). It is not green any more. Up is #5B8DEF, blue, which is the accent slot
+   for the whole application; down is #FF5A6E. That pairing does the same job for the roughly
+   one person in twelve who cannot separate the old pair, and it stops the chart being the one
+   surface with its own hue.
+
+   Down is still lighter than the approval gate's alarm red so the gate stays the only alarm on
+   the page. Nothing here can repaint that gate: it is a CSS token this file never touches. */
+var CHART_TOKENS = {
+  bg0: '#09090B',
+  bg1: '#0F1013',
+  line: '#22242A',
+  text: '#EDEEF0',
+  text2: '#9A9EA8',
+  up: '#5B8DEF',
+  down: '#FF5A6E',
+  agent: '#B79CFF',
+  warn: '#F2B544'
+};
+
+// The panel, not the window ground. The chart sits inside a panel and painting it --bg-0
+// would make it a hole rather than a surface.
+var C_BG = CHART_TOKENS.bg1;
+var C_UP = CHART_TOKENS.up;
+var C_DOWN = CHART_TOKENS.down;
+var C_HI = '#A9C2F6';
+
+/* The ramps every ink in the engine is mixed from. Triples rather than hex, because every
+   call site wants an alpha and building "rgba(...)" from a triple is one concatenation. */
+var RGB_ACCENT = '91, 141, 239';
+var RGB_DOWN = '255, 90, 110';
+var RGB_AGENT = '183, 156, 255';
+var RGB_LINE = '34, 36, 42';
+var RGB_TEXT = '237, 238, 240';
+var RGB_TEXT2 = '154, 158, 168';
 
 /* "#33ff66" or "#3f6" to "51, 255, 102". Returns null on anything else, and every caller
    treats null as "leave the colour alone": a bad value from the server must never be able to
@@ -65,23 +91,47 @@ function lighten(hex, amount) {
   return 'rgb(' + out.join(', ') + ')';
 }
 
+/* The theme src/view/theme.ts ships, before anyone chose one.
+
+   TRANSITIONAL, and it deletes itself. The chart has moved onto the design tokens; the rest of
+   the window has not yet, so DEFAULT_THEME is still the old green and a state frame carrying it
+   would repaint this canvas green on the first tick, undoing the move. A slot still holding its
+   shipped value is a slot nobody chose, so the chart keeps its token. A slot somebody DID
+   choose still wins, which is the whole point of the tool.
+
+   When the theme defaults become the tokens, every comparison below is false and this constant
+   can go. Nothing else depends on it. */
+var SHIPPED_THEME = { accent: '#33ff66', background: '#0b0d0b', up: '#33ff66', down: '#cc3a30', agent: '#33ff66' };
+
+function chosen(value, slot) {
+  if (typeof value !== 'string') return null;
+  if (value.trim().toLowerCase() === SHIPPED_THEME[slot]) return null;
+  return rgbTriple(value);
+}
+
 /* Called by app.js on every state frame. Cheap and idempotent: it compares before it repaints,
-   so the once-a-second state read does not force a full scene redraw for nothing. */
+   so the once-a-second state read does not force a full scene redraw for nothing.
+
+   What a theme may repaint is narrower than it was. The candles, the ground and the agent's own
+   ink are per-window choices and stay. The grids, the axes and the labels are not: they are
+   --line and --text-2, structure rather than accent, and a window whose chrome tracked whatever
+   hue somebody typed is what made this engine one colour at edit time instead of a chart with a
+   palette. The bright highlight follows the chosen accent, because it is a highlight. */
 function chartTheme(theme) {
   if (!theme) return;
-  var accent = rgbTriple(theme.accent);
-  var ground = rgbTriple(theme.background);
-  var up = rgbTriple(theme.up);
-  var down = rgbTriple(theme.down);
-  var agent = rgbTriple(theme.agent);
+  var accent = chosen(theme.accent, 'accent');
+  var ground = chosen(theme.background, 'background');
+  var up = chosen(theme.up, 'up');
+  var down = chosen(theme.down, 'down');
+  var agent = chosen(theme.agent, 'agent');
   var before = [C_BG, C_UP, C_DOWN, C_HI, RGB_ACCENT, RGB_DOWN, RGB_AGENT].join('|');
 
-  if (accent !== null) {
-    RGB_ACCENT = accent;
-    C_HI = lighten(theme.accent, 0.45);
-  }
+  if (accent !== null) C_HI = lighten(theme.accent, 0.45);
   if (ground !== null) C_BG = 'rgb(' + ground + ')';
-  if (up !== null) C_UP = 'rgb(' + up + ')';
+  if (up !== null) {
+    C_UP = 'rgb(' + up + ')';
+    RGB_ACCENT = up;
+  }
   if (down !== null) {
     C_DOWN = 'rgb(' + down + ')';
     RGB_DOWN = down;
@@ -154,7 +204,10 @@ var CHART_PUSH = null; // debounce timer for writing the view back
    arrived cannot answer it, so it is not allowed to overrule the hand that just moved. */
 var CHART_PUSH_WAIT = 0;
 var CHART_DRAG = null;
-var CHART_AXIS_W = 62; // price axis width, measured from the labels it actually carries
+/* The price axis, and the gutter the tag and its countdown live in. It is measured from the
+   labels it carries, but the floor is not about labels: the last price tag and the draining
+   rule under it both sit in this column, and at 48 the two were competing for it. */
+var CHART_AXIS_W = 72;
 var DPR = 1;
 
 function chartCanvas() {
@@ -167,11 +220,58 @@ function chartWrap() {
   return document.getElementById('chartwrap');
 }
 
-function green(alpha) {
+/* Four inks, named for what they mean rather than for a colour, which is the whole reason the
+   engine could not be recoloured before: a function called green() returning blue is a comment
+   that lies, and there were thirty eight of them. */
+function accent(alpha) {
   return 'rgba(' + RGB_ACCENT + ', ' + alpha + ')';
 }
-function red(alpha) {
+function danger(alpha) {
   return 'rgba(' + RGB_DOWN + ', ' + alpha + ')';
+}
+// Hairlines and separators: --line. It is a colour, not a tint of the accent, so the alphas
+// beside it are higher than the ones the accent ramp used for the same lines.
+function lineInk(alpha) {
+  return 'rgba(' + RGB_LINE + ', ' + alpha + ')';
+}
+function textInk(alpha) {
+  return 'rgba(' + RGB_TEXT + ', ' + alpha + ')';
+}
+function text2(alpha) {
+  return 'rgba(' + RGB_TEXT2 + ', ' + alpha + ')';
+}
+
+/* The live values, read off the document once the stylesheet is in. Called from chartBoot, so
+   a token Track E changes moves the canvas without this file being edited. Anything missing or
+   malformed leaves the constant above in place: a stylesheet that has not loaded must not be
+   able to blank the chart. */
+function readTokens() {
+  if (typeof window.getComputedStyle !== 'function' || !document.documentElement) return;
+  var style = window.getComputedStyle(document.documentElement);
+  var slots = [
+    ['bg1', 'bg-1'],
+    ['line', 'line'],
+    ['text', 'text'],
+    ['text2', 'text-2'],
+    ['up', 'up'],
+    ['down', 'down'],
+    ['agent', 'agent'],
+    ['warn', 'warn']
+  ];
+  for (var i = 0; i < slots.length; i++) {
+    var value = String(style.getPropertyValue('--' + slots[i][1]) || '').trim();
+    if (rgbTriple(value) !== null) CHART_TOKENS[slots[i][0]] = value;
+  }
+  C_BG = CHART_TOKENS.bg1;
+  C_UP = CHART_TOKENS.up;
+  C_DOWN = CHART_TOKENS.down;
+  C_HI = lighten(CHART_TOKENS.up, 0.45);
+  RGB_ACCENT = rgbTriple(CHART_TOKENS.up) || RGB_ACCENT;
+  RGB_DOWN = rgbTriple(CHART_TOKENS.down) || RGB_DOWN;
+  RGB_AGENT = rgbTriple(CHART_TOKENS.agent) || RGB_AGENT;
+  RGB_LINE = rgbTriple(CHART_TOKENS.line) || RGB_LINE;
+  RGB_TEXT = rgbTriple(CHART_TOKENS.text) || RGB_TEXT;
+  RGB_TEXT2 = rgbTriple(CHART_TOKENS.text2) || RGB_TEXT2;
 }
 /* The ink the agent's own drawings are in. Defaults to the accent, so until someone sets it
    the chart looks exactly as it did and the dash pattern is still what tells the two apart. */
@@ -266,22 +366,41 @@ function buildLayout(width, height, ctx) {
 
   var overlays = [];
   var paneIndicators = [];
+  var hasVolume = false;
   for (var i = 0; i < CHART.indicators.length; i++) {
     var ind = CHART.indicators[i];
     if (ind.pane === 'price') overlays.push(ind);
     else paneIndicators.push(ind);
+    if (isVolumeIndicator(ind)) hasVolume = true;
   }
+  // Volume is a default, not something to type. Every chart a trader compares this one to
+  // shows it without being asked, and it was an indicator you had to know the word for.
+  // Built here rather than fetched, so it is exactly the candles being drawn: a socket bar
+  // folded in by candleLive moves the histogram in the same frame it moves the price.
+  var volumePane = VOLUME_ON && !hasVolume ? volumeIndicator(candles) : null;
 
   var usable = height - AXIS_BOTTOM - PAD_TOP;
   var paneCount = paneIndicators.length;
   var paneHeight = clampNum(usable * 0.19, PANE_MIN, PANE_MAX);
-  // Drop panes off the bottom until the price pane is readable again. A chart that quietly
-  // squashes everything to fit is worse than one that says what it could not show.
-  while (paneCount > 0 && usable - paneCount * paneHeight < PRICE_MIN) paneCount--;
+  // Volume is shorter than an indicator pane. It is read as a shape beside the price, not as
+  // a series with values to pick off, so it gets the 14 percent the design calls for.
+  var volumeHeight = volumePane === null ? 0 : clampNum(usable * 0.14, 40, PANE_MAX);
+  /* Drop panes off the bottom until the price pane is readable again. A chart that quietly
+     squashes everything to fit is worse than one that says what it could not show.
+
+     Volume goes FIRST, and silently. It is the only pane on the chart nobody asked for, so a
+     short panel that can hold one indicator has to hold the indicator: taking a typed pane off
+     to keep a default would be the chart overruling the person using it. */
+  if (volumePane !== null && usable - volumeHeight - paneCount * paneHeight < PRICE_MIN) {
+    volumePane = null;
+    volumeHeight = 0;
+  }
+  while (paneCount > 0 && usable - volumeHeight - paneCount * paneHeight < PRICE_MIN) paneCount--;
   var dropped = paneIndicators.slice(paneCount).map(function (p) {
     return p.label;
   });
   var shownPanes = paneIndicators.slice(0, paneCount);
+  if (volumePane !== null) shownPanes = [volumePane].concat(shownPanes);
 
   // The price axis is as wide as the widest label it has to carry. The width feeds the
   // plot width, which feeds the visible range, which decides the labels, so it is measured
@@ -352,7 +471,7 @@ function buildLayout(width, height, ctx) {
     high += margin;
   }
 
-  var priceHeight = usable - paneCount * paneHeight;
+  var priceHeight = usable - volumeHeight - paneCount * paneHeight;
   var priceTop = PAD_TOP;
   var span = high - low;
 
@@ -410,8 +529,10 @@ function buildLayout(width, height, ctx) {
       // negative, and an axis that says it might is simply wrong.
       if (floored) lo = 0;
     }
-    panes.push({ indicator: pane, top: top, height: paneHeight, low: lo, high: hi });
-    top += paneHeight;
+    // Volume is the one pane with a height of its own; every other one shares the budget.
+    var tall = pane === volumePane ? volumeHeight : paneHeight;
+    panes.push({ indicator: pane, top: top, height: tall, low: lo, high: hi });
+    top += tall;
   }
 
   // The band the last price tag and its countdown occupy on the axis. The grid draws its
@@ -429,7 +550,7 @@ function buildLayout(width, height, ctx) {
     ctx.measureText(priceText(high, decimals)).width,
     ctx.measureText(priceText(low, decimals)).width
   );
-  var wanted = clampNum(Math.ceil(widest) + 12, 48, 104);
+  var wanted = clampNum(Math.ceil(widest) + 16, 66, 112);
   /* The axis is measured from the frame just drawn and applied to the next one, which is fine
      for a static chart and visibly wrong during a tween: a price magnitude crossing a digit
      boundary makes the whole plot width step sideways a frame late, mid-motion. So while a
@@ -461,12 +582,70 @@ function buildLayout(width, height, ctx) {
     overlays: overlays,
     panes: panes,
     dropped: dropped,
-    axisTop: PAD_TOP + priceHeight + paneCount * paneHeight,
+    axisTop: PAD_TOP + priceHeight + volumeHeight + paneCount * paneHeight,
     xOf: xOf,
     yOf: yOf,
     indexAt: indexAt,
     priceAt: priceAt
   };
+}
+
+/* ---------- the volume pane ----------
+
+   Not an indicator. It is built in the window from the candles being drawn, which is what makes
+   it default-on without the agent's indicator list growing an entry nobody added, and what makes
+   it move with a live bar instead of with the next server payload.
+
+   An indicator the human or the agent actually typed still wins: a `volume` command puts a real
+   one on the chart, computed by src/indicators.ts alongside every other, and this steps aside so
+   the same histogram is not drawn twice. */
+var VOLUME_ON = true;
+var VOLUME_ID = '__volume';
+
+function isVolumeIndicator(ind) {
+  if (!ind || ind.pane === 'price') return false;
+  var label = String(ind.label || ind.id || '').toLowerCase();
+  return label === 'volume' || label.indexOf('volume') === 0;
+}
+
+/* The histogram, plus the direction beside it. They are separate series on purpose: volume is
+   never negative, so folding the direction into the value would put half the bars under an axis
+   that does not exist. drawPaneHistogram already knows this shape. */
+function volumeIndicator(candles) {
+  var values = new Array(candles.length);
+  var signs = new Array(candles.length);
+  for (var i = 0; i < candles.length; i++) {
+    var bar = candles[i];
+    values[i] = typeof bar.v === 'number' && isFinite(bar.v) ? bar.v : null;
+    signs[i] = bar.c >= bar.o ? 1 : -1;
+  }
+  return {
+    id: VOLUME_ID,
+    label: 'volume',
+    pane: 'volume',
+    source: 'window',
+    plots: [{ key: 'v', style: 'histogram', values: values, signs: signs }]
+  };
+}
+
+/* Collapsible, from the pane's own label. There is no room on the control row for a switch
+   nobody will touch twice, and the label is already drawn where a person would look for it. */
+function toggleVolume() {
+  VOLUME_ON = !VOLUME_ON;
+  try {
+    window.localStorage.setItem('phosphor.chart.volume', VOLUME_ON ? '1' : '0');
+  } catch (err) {
+    // A window with storage blocked still draws a chart; it just forgets this between loads.
+  }
+  chartInvalidate(true);
+}
+
+function readVolumePreference() {
+  try {
+    if (window.localStorage.getItem('phosphor.chart.volume') === '0') VOLUME_ON = false;
+  } catch (err) {
+    /* see toggleVolume */
+  }
 }
 
 function paneYOf(pane, value) {
@@ -809,7 +988,7 @@ function drawWaiting(ctx, width, height) {
 
   // The frame first, so the panel has the shape of a chart before it has the contents of one.
   ctx.lineWidth = 1 / DPR;
-  ctx.strokeStyle = green(0.07);
+  ctx.strokeStyle = lineInk(0.7);
   ctx.beginPath();
   for (var g = 1; g < 5; g++) {
     var y = hair(top + (area * g) / 5);
@@ -817,7 +996,7 @@ function drawWaiting(ctx, width, height) {
     ctx.lineTo(plotWidth, y);
   }
   ctx.stroke();
-  ctx.strokeStyle = green(0.16);
+  ctx.strokeStyle = lineInk(1);
   ctx.beginPath();
   ctx.moveTo(hair(plotWidth), top);
   ctx.lineTo(hair(plotWidth), bottom);
@@ -843,20 +1022,20 @@ function drawWaiting(ctx, width, height) {
     else alpha = 0.1 + 0.42 * Math.exp(-(lead * 7) * (lead * 7));
     var x = 6 + i * slot;
     var cy = top + area * bar.mid;
-    ctx.strokeStyle = green(alpha * 0.8);
+    ctx.strokeStyle = accent(alpha * 0.8);
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(hair(x), cy - area * bar.wick);
     ctx.lineTo(hair(x), cy + area * bar.wick);
     ctx.stroke();
-    ctx.fillStyle = green(alpha);
+    ctx.fillStyle = accent(alpha);
     ctx.fillRect(Math.round(x - bodyWidth / 2), Math.round(cy - area * bar.body), bodyWidth, Math.max(1, Math.round(area * bar.body * 2)));
   }
 
   // The scan column itself, so the eye has one thing to follow instead of a field of flicker.
   if (state.live && !still && sweep >= 0 && sweep <= 1) {
     var sx = hair(6 + sweep * (count - 1) * slot);
-    ctx.strokeStyle = green(0.3);
+    ctx.strokeStyle = accent(0.3);
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(sx, top);
@@ -875,9 +1054,9 @@ function drawWaiting(ctx, width, height) {
   var subWidth = ctx.measureText(state.sub).width;
   ctx.fillStyle = C_BG;
   ctx.fillRect(cx - Math.max(headWidth, subWidth) / 2 - 8, midY - 15, Math.max(headWidth, subWidth) + 16, 30);
-  ctx.fillStyle = CHART.meta.error ? red(0.9) : green(0.72);
+  ctx.fillStyle = CHART.meta.error ? danger(0.9) : textInk(0.85);
   ctx.fillText(headText, cx, midY - 6);
-  ctx.fillStyle = green(0.38);
+  ctx.fillStyle = text2(0.85);
   ctx.fillText(state.sub, cx, midY + 8);
   ctx.textAlign = 'left';
 
@@ -891,8 +1070,8 @@ function drawPriceGrid(ctx, L) {
   var step = niceStep(L.span / lines);
   var first = Math.ceil(L.low / step) * step;
   ctx.lineWidth = 1 / DPR;
-  ctx.strokeStyle = green(0.07);
-  ctx.fillStyle = green(0.42);
+  ctx.strokeStyle = lineInk(0.7);
+  ctx.fillStyle = text2(0.8);
   ctx.textAlign = 'left';
   ctx.beginPath();
   var labels = [];
@@ -937,7 +1116,7 @@ function drawTimeGrid(ctx, L) {
 
   var bottom = L.axisTop;
   ctx.lineWidth = 1 / DPR;
-  ctx.strokeStyle = green(0.07);
+  ctx.strokeStyle = lineInk(0.7);
   ctx.beginPath();
   var ticks = [];
   var prevDay = null;
@@ -959,7 +1138,7 @@ function drawTimeGrid(ctx, L) {
   ctx.textAlign = 'center';
   for (var k = 0; k < ticks.length; k++) {
     var newDay = ticks[k][2];
-    ctx.fillStyle = newDay ? green(0.7) : green(0.42);
+    ctx.fillStyle = newDay ? textInk(0.8) : text2(0.8);
     ctx.fillText(stampOf(ticks[k][1], granularity, newDay), ticks[k][0], bottom + 9);
   }
   ctx.textAlign = 'left';
@@ -1010,7 +1189,7 @@ function drawCandles(ctx, L) {
 
 function plotColour(plot, alphaScale) {
   var alpha = clampNum((plot.emphasis === undefined ? 0.8 : plot.emphasis) * (alphaScale || 1), 0.08, 1);
-  return green(alpha);
+  return accent(alpha);
 }
 
 function strokeSeries(ctx, values, from, to, xOf, yOf) {
@@ -1045,7 +1224,7 @@ function drawOverlayBands(ctx, L) {
         if (plots[q].key === plot.fillTo) other = plots[q];
       }
       if (!other) continue;
-      ctx.fillStyle = green(0.05);
+      ctx.fillStyle = accent(0.08);
       ctx.beginPath();
       var open = false;
       var k;
@@ -1091,7 +1270,7 @@ function drawPanes(ctx, L) {
     var pane = L.panes[i];
     var ind = pane.indicator;
 
-    ctx.strokeStyle = green(0.16);
+    ctx.strokeStyle = lineInk(1);
     ctx.lineWidth = 1 / DPR;
     ctx.beginPath();
     ctx.moveTo(0, hair(pane.top));
@@ -1099,8 +1278,8 @@ function drawPanes(ctx, L) {
     ctx.stroke();
 
     var guides = ind.guides || [];
-    ctx.strokeStyle = green(0.1);
-    ctx.fillStyle = green(0.34);
+    ctx.strokeStyle = lineInk(0.6);
+    ctx.fillStyle = text2(0.7);
     ctx.beginPath();
     for (var g = 0; g < guides.length; g++) {
       var gy = paneYOf(pane, guides[g].value);
@@ -1133,7 +1312,7 @@ function drawPanes(ctx, L) {
     // grid cutting the pane into strips. A pane with a fixed domain already says 0 to 100
     // through its guides, and printing the edges again only collides with them.
     if (!ind.range) {
-      ctx.fillStyle = green(0.34);
+      ctx.fillStyle = text2(0.7);
       ctx.fillText(paneText(pane.high), L.plotWidth + 6, pane.top + 7);
       ctx.fillText(paneText(pane.low), L.plotWidth + 6, pane.top + pane.height - 6);
     }
@@ -1151,7 +1330,7 @@ function drawPaneHistogram(ctx, L, pane, plot) {
   var sets = plot.signed === true || signs ? [1, -1] : [1];
   for (var s = 0; s < sets.length; s++) {
     var sign = sets[s];
-    ctx.fillStyle = sets.length === 1 ? green(0.3) : sign > 0 ? green(0.34) : red(0.4);
+    ctx.fillStyle = sets.length === 1 ? accent(0.34) : sign > 0 ? accent(0.4) : danger(0.45);
     ctx.beginPath();
     for (var i = L.start; i <= L.end; i++) {
       var v = plot.values[i];
@@ -1180,11 +1359,11 @@ function drawLevels(ctx, L) {
       // Off the top or the bottom of what is on screen. The line cannot be drawn where it
       // belongs, so it is pinned to the edge it went off, with an arrow saying which way.
       var edge = y < top ? top + 6 : bottom - 6;
-      ctx.fillStyle = fromAgent ? agentInk(0.4) : green(0.4);
+      ctx.fillStyle = fromAgent ? agentInk(0.4) : accent(0.5);
       ctx.fillText((y < top ? '↑ ' : '↓ ') + level.label + ' ' + priceText(level.price, L.decimals), 4, edge);
       continue;
     }
-    ctx.strokeStyle = fromAgent ? agentInk(0.5) : green(0.7);
+    ctx.strokeStyle = fromAgent ? agentInk(0.5) : accent(0.7);
     // Agent lines are dotted, human lines are dashed. Attribution is in the label as well,
     // but the eye reads the dash first.
     ctx.setLineDash(fromAgent ? [2, 3] : [6, 4]);
@@ -1193,7 +1372,7 @@ function drawLevels(ctx, L) {
     ctx.lineTo(L.plotWidth, hair(y));
     ctx.stroke();
     ctx.setLineDash([]);
-    ctx.fillStyle = green(fromAgent ? 0.6 : 0.85);
+    ctx.fillStyle = accent(fromAgent ? 0.6 : 0.85);
     ctx.fillText(level.label, 4, y - 7);
   }
 }
@@ -1238,9 +1417,9 @@ function drawDrawings(ctx, L) {
       var boxTop = Math.max(top, Math.min(yHigh, yLow));
       var boxBottom = Math.min(bottom, Math.max(yHigh, yLow));
       if (boxBottom <= top || boxTop >= bottom) continue;
-      ctx.fillStyle = green(0.12);
+      ctx.fillStyle = accent(0.14);
       ctx.fillRect(0, boxTop, L.plotWidth, boxBottom - boxTop);
-      ctx.fillStyle = green(fromAgent ? 0.6 : 0.85);
+      ctx.fillStyle = accent(fromAgent ? 0.6 : 0.85);
       // Right-aligned, like the trend line labels. Left-aligning collided with the OHLC
       // legend whenever a zone reached the top of the plot, which is exactly what a wide
       // zone does, so the collision was the common case rather than an edge one.
@@ -1264,7 +1443,7 @@ function drawDrawings(ctx, L) {
     ctx.rect(0, top, L.plotWidth, L.priceHeight);
     ctx.clip();
     ctx.lineWidth = 1;
-    ctx.strokeStyle = green(fromAgent ? 0.5 : 0.7);
+    ctx.strokeStyle = accent(fromAgent ? 0.5 : 0.7);
     ctx.setLineDash(fromAgent ? [2, 3] : [6, 4]);
     ctx.beginPath();
     ctx.moveTo(x0, y0);
@@ -1275,7 +1454,7 @@ function drawDrawings(ctx, L) {
 
     // The label rides the right end, where the line is heading.
     var labelY = Math.max(top + 10, Math.min(bottom - 3, y1 - 5));
-    ctx.fillStyle = green(fromAgent ? 0.6 : 0.85);
+    ctx.fillStyle = accent(fromAgent ? 0.6 : 0.85);
     ctx.textAlign = 'right';
     ctx.fillText(label, L.plotWidth - 4, labelY);
     ctx.textAlign = 'left';
@@ -1318,7 +1497,7 @@ function indexOfTime(tSec, granularity) {
 }
 
 function drawAxisFrame(ctx, L) {
-  ctx.strokeStyle = green(0.16);
+  ctx.strokeStyle = lineInk(1);
   ctx.lineWidth = 1 / DPR;
   ctx.beginPath();
   ctx.moveTo(hair(L.plotWidth), 0);
@@ -1354,7 +1533,7 @@ function drawLastPrice(ctx, L) {
   var shown = shownPrice();
   var y = L.yOf(shown === null ? last.c : shown);
   if (y >= L.priceTop && y <= L.priceTop + L.priceHeight) {
-    ctx.strokeStyle = up ? green(0.45) : red(0.55);
+    ctx.strokeStyle = up ? accent(0.5) : danger(0.6);
     ctx.lineWidth = 1;
     ctx.setLineDash([3, 3]);
     ctx.beginPath();
@@ -1391,14 +1570,14 @@ function drawLastPrice(ctx, L) {
       // The unlit track carries the whole width at every moment. Without it the last few
       // seconds are a stub floating under the tag, which reads as a stray mark rather than
       // as a rule that has nearly emptied.
-      ctx.fillStyle = green(0.14);
+      ctx.fillStyle = lineInk(0.9);
       ctx.fillRect(left, ruleTop, wide, 2);
       var run = clampNum(closesIn / CHART.view.granularitySec, 0, 1) * wide;
-      ctx.fillStyle = up ? green(0.38) : red(0.5);
+      ctx.fillStyle = up ? accent(0.45) : danger(0.55);
       ctx.fillRect(left, ruleTop, Math.max(1, Math.round(run)), 2);
     }
     ctx.font = CHART_FONT_SMALL;
-    ctx.fillStyle = green(0.4);
+    ctx.fillStyle = text2(0.75);
     ctx.textAlign = 'center';
     ctx.fillText(countdownText(closesIn), left + wide / 2, ruleTop + 7);
     ctx.textAlign = 'left';
@@ -1414,7 +1593,7 @@ function drawCrosshair(ctx, L) {
   var y = CHART_HOVER.y;
   if (x < 0 || x > L.plotWidth) return;
 
-  ctx.strokeStyle = green(0.3);
+  ctx.strokeStyle = text2(0.5);
   ctx.lineWidth = 1 / DPR;
   ctx.setLineDash([2, 3]);
   ctx.beginPath();
@@ -1480,7 +1659,7 @@ function drawLegend(ctx, L) {
   ctx.fillStyle = C_HI;
   ctx.fillText(identity.product, x, y);
   x += ctx.measureText(identity.product).width + 6;
-  ctx.fillStyle = green(0.5);
+  ctx.fillStyle = text2(0.85);
   var tf = timeframeOf(identity.granularitySec);
   ctx.fillText(tf, x, y);
   x += ctx.measureText(tf).width + 10;
@@ -1492,7 +1671,7 @@ function drawLegend(ctx, L) {
     ['C', priceText(candle.c, L.decimals)]
   ];
   for (var i = 0; i < parts.length; i++) {
-    ctx.fillStyle = green(0.4);
+    ctx.fillStyle = text2(0.7);
     ctx.fillText(parts[i][0], x, y);
     x += ctx.measureText(parts[i][0]).width + 3;
     ctx.fillStyle = up ? C_UP : C_DOWN;
@@ -1513,16 +1692,52 @@ function drawLegend(ctx, L) {
     drawIndicatorLine(ctx, L, L.panes[p].indicator, 3, L.panes[p].top + 9, index);
   }
 
-  if (L.dropped.length) {
-    ctx.fillStyle = C_DOWN;
-    ctx.fillText('no room for: ' + L.dropped.join(', '), 3, L.axisTop - 6);
+  drawChartNotes(ctx, L);
+}
+
+/* The bottom rule of the plot, where the chart says what it could not do and offers back the
+   one pane it lets you put away.
+
+   These notes used to live on the control row above the canvas. They are facts about the bars
+   on screen, not controls, and reading them meant looking away from the thing they described
+   while the row they sat on grew into a toolbar. They are here now, in the same ink as the
+   legend, next to the bars they are about. */
+function drawChartNotes(ctx, L) {
+  var x = 3;
+  var y = L.axisTop - 6;
+
+  if (!VOLUME_ON) {
+    var back = '+ volume';
+    ctx.fillStyle = text2(0.55);
+    ctx.fillText(back, x, y);
+    var wide = ctx.measureText(back).width;
+    // The only way back once the pane is put away, so it is a hit target rather than a label.
+    CHART_HITS.push({ x: x - 2, y: y - 7, w: wide + 4, h: 14, remove: VOLUME_ID });
+    x += wide + 12;
   }
+
+  if (L.dropped.length) {
+    var full = 'no room for: ' + L.dropped.join(', ');
+    ctx.fillStyle = C_DOWN;
+    ctx.fillText(full, x, y);
+    x += ctx.measureText(full).width + 12;
+  }
+
+  // Squeezed past the end of what the source will serve. The window is wider than the data,
+  // which is a fact about the exchange rather than a fault in the chart.
+  var asked = Math.round(CHART.view.barCount);
+  var notes = [];
+  if (CHART.candles.length && CHART.candles.length < asked) notes.push('history ends at ' + CHART.candles.length + ' bars');
+  if (CHART.view.panOffset > 0) notes.push('panned back ' + Math.round(CHART.view.panOffset));
+  if (notes.length === 0) return;
+  ctx.fillStyle = text2(0.55);
+  ctx.fillText(notes.join('   '), x, y);
 }
 
 /* One line per indicator, with the values at the hovered bar and a cross that removes it.
    The cross is the human's way out of anything an agent put on the chart. */
 function drawIndicatorLine(ctx, L, indicator, x, y, index) {
-  ctx.fillStyle = indicator.source === 'agent' ? green(0.62) : green(0.8);
+  ctx.fillStyle = indicator.source === 'agent' ? agentInk(0.85) : textInk(0.85);
   ctx.fillText(indicator.label, x, y);
   var cursor = x + ctx.measureText(indicator.label).width + 8;
   var plots = indicator.plots || [];
@@ -1530,11 +1745,11 @@ function drawIndicatorLine(ctx, L, indicator, x, y, index) {
     var value = plots[i].values[index];
     if (value === null || value === undefined || !isFinite(value)) continue;
     var text = indicator.pane === 'price' ? priceText(value, L.decimals) : paneText(value);
-    ctx.fillStyle = green(0.55);
+    ctx.fillStyle = text2(0.9);
     ctx.fillText(text, cursor, y);
     cursor += ctx.measureText(text).width + 7;
   }
-  ctx.fillStyle = green(0.4);
+  ctx.fillStyle = text2(0.7);
   ctx.fillText('×', cursor, y);
   CHART_HITS.push({ x: cursor - 4, y: y - 7, w: 14, h: 14, remove: indicator.id });
   return y + 13;
@@ -1587,8 +1802,8 @@ async function refreshChart() {
    A chart that already has candles keeps them: this is the only sign of a refresh, which is
    what stops a timeframe switch looking like a freeze. */
 function chartBusy(on) {
-  var node = document.getElementById('chart-wait');
-  if (node) node.hidden = !on;
+  var node = document.getElementById('chart-feed');
+  if (node) node.dataset.busy = on ? '1' : '0';
 }
 
 /* Whether a payload names a different market or a different bar length than the window is
@@ -1747,9 +1962,9 @@ async function pushChart(extra) {
 /* A one-line answer under the chart bar, for a refused indicator or a clamped parameter.
    It clears itself: nothing on this page is allowed to accumulate chrome. */
 function chartNote(text) {
-  var meta = document.getElementById('chart-meta');
+  var meta = document.getElementById('chart-status');
   if (!meta) return;
-  var note = chartSpan('hi', '   ' + text);
+  var note = chartSpan('hi', text);
   meta.appendChild(note);
   setTimeout(function () {
     if (note.parentNode) note.parentNode.removeChild(note);
@@ -1951,46 +2166,79 @@ function renderChartBar() {
     }
   }
 
-  var meta = document.getElementById('chart-meta');
-  if (!meta) return;
-  var line = '';
-  // Squeezed past the end of what the source will serve. The window is wider than the data,
-  // which is a fact about the exchange and not a fault in the chart, so it is reported in the
-  // same line as the source rather than left to look like bars that failed to draw.
-  var asked = Math.round(CHART.view.barCount);
-  if (CHART.candles.length && CHART.candles.length < asked) {
-    line += '  history ends at ' + CHART.candles.length + ' bars';
+  renderChartStatus();
+}
+
+/* What the data is doing, in one place.
+
+   Three states and no more, because a person reading a chart has one question about the feed
+   and it is "can I trust this number now". The server derives them (see meta.feed) from the
+   socket and the age of the last delta; the fallback below is for a payload that predates the
+   field, and it is the same reading made from what such a payload does carry. */
+function feedState() {
+  var feed = CHART.meta.feed;
+  if (feed === 'live' || feed === 'delayed' || feed === 'offline') return feed;
+  if (CHART.meta.error || CHART.meta.stale) return 'offline';
+  if (!CHART.candles.length) return 'offline';
+  return 'delayed';
+}
+
+var FEED_TITLE = {
+  live: 'the venue is pushing this price',
+  delayed: 'no live feed, refreshing on a timer',
+  offline: 'the source is unreachable, showing the last bars it served'
+};
+
+function renderChartStatus() {
+  var cluster = document.getElementById('chart-status');
+  if (!cluster) return;
+
+  var state = feedState();
+  var feed = document.getElementById('chart-feed');
+  if (feed) {
+    feed.dataset.feed = state;
+    // The one loading sign on the surface. It used to be three blocks of its own beside a
+    // separate meta line, which is two places saying halves of one thing.
+    feed.dataset.busy = CHART_FETCH.inflight ? '1' : '0';
+    var label = feed.querySelector('b');
+    if (label) label.textContent = state;
+    feed.title = CHART.meta.error || FEED_TITLE[state];
   }
-  if (CHART.view.panOffset > 0) line += '  panned back ' + Math.round(CHART.view.panOffset);
-  meta.textContent = '';
-  // Warnings first. This line gives up its width before the controls do, so anything that
-  // truncates has to be the source name, never the reason the price might be wrong.
-  if (CHART.meta.stale) meta.appendChild(chartSpan('hi', 'STALE: source unreachable, showing last known   '));
-  if (CHART.meta.error) meta.appendChild(chartSpan('hi', CHART.meta.error + '   '));
-  /* The venue, and the control that changes it. The name was already printed here; making it
-     the button is what keeps this line from growing a toolbar. The same vocabulary the agent
-     has over chart_set_view, one click: auto, then each venue, then back.
-     It prints what is actually SERVING the candles, and says "pinned" only when the choice was
-     made rather than inherited, so a pin can never be mistaken for the default. */
-  var venue = chartSpan(CHART.view.provider === 'auto' ? 'faint' : 'tf on', CHART.meta.source);
-  venue.id = 'chart-provider';
-  venue.title =
-    CHART.view.provider === 'auto'
-      ? 'venue chosen automatically. click to pin one'
-      : 'venue pinned to ' + CHART.view.provider + '. click to change';
-  meta.appendChild(venue);
-  if (CHART.view.provider !== 'auto') meta.appendChild(chartSpan('faint', ' pinned'));
-  meta.appendChild(chartSpan('faint', line));
+
+  /* The venue, and the control that changes it. The same vocabulary the agent has over
+     chart_set_view, one click: auto, then each venue, then back. It prints what is actually
+     SERVING the candles, and says "pinned" only when the choice was made rather than
+     inherited, so a pin can never be mistaken for the default. */
+  var venue = document.getElementById('chart-provider');
+  if (venue) {
+    var pinned = CHART.view.provider !== 'auto';
+    venue.textContent = (CHART.meta.source || '--') + (pinned ? ' pinned' : '');
+    venue.dataset.pinned = pinned ? '1' : '0';
+    venue.title = pinned
+      ? 'venue pinned to ' + CHART.view.provider + '. click to change'
+      : 'venue chosen automatically. click to pin one';
+  }
+
+  // Two controls that only exist when there is something to act on. Neither is a note about
+  // the data: a note goes on the chart, beside the bars it is about.
+  var extras = cluster.querySelectorAll('[data-extra]');
+  for (var i = 0; i < extras.length; i++) extras[i].remove();
+
   if (CHART.view.panOffset > 0) {
     var live = chartSpan('tf', '» live');
     live.id = 'chart-live';
-    meta.appendChild(live);
+    live.dataset.extra = '1';
+    live.title = 'back to the newest bar';
+    cluster.appendChild(live);
   }
   if (CHART.agentObjects > 0) {
-    meta.appendChild(chartSpan('faint', '  agent drew ' + CHART.agentObjects + ' '));
+    var count = chartSpan('faint', 'agent drew ' + CHART.agentObjects);
+    count.dataset.extra = '1';
+    cluster.appendChild(count);
     var clear = chartSpan('tf', '[clear]');
     clear.id = 'chart-clear-agent';
-    meta.appendChild(clear);
+    clear.dataset.extra = '1';
+    cluster.appendChild(clear);
   }
 }
 
@@ -2082,7 +2330,10 @@ function wireChart() {
     for (var i = 0; i < CHART_HITS.length; i++) {
       var hit = CHART_HITS[i];
       if (point.x >= hit.x && point.x <= hit.x + hit.w && point.y >= hit.y && point.y <= hit.y + hit.h) {
-        void pushChart({ removeIndicator: hit.remove });
+        // The volume pane is built in this window and the server has never heard of it, so
+        // asking the server to remove it would be a round trip that answers "remove what?".
+        if (hit.remove === VOLUME_ID) toggleVolume();
+        else void pushChart({ removeIndicator: hit.remove });
         return;
       }
     }
@@ -2260,7 +2511,7 @@ function wireChart() {
     });
   }
 
-  var meta = document.getElementById('chart-meta');
+  var meta = document.getElementById('chart-status');
   if (meta) {
     meta.addEventListener('click', function (ev) {
       var id = ev.target && ev.target.id;
@@ -2357,6 +2608,10 @@ function parseCommand(raw) {
 }
 
 function chartBoot() {
+  // The stylesheet is in by now, so the canvas can take its palette from the same tokens the
+  // rest of the window is painted with rather than from the copy at the top of this file.
+  readTokens();
+  readVolumePreference();
   wireChart();
   chartInvalidate(true);
   void refreshChart();

@@ -213,17 +213,75 @@ body.waiting .basic-headline {
   animation: waiting 1.6s steps(1) infinite;
 }
 
-/* A read is in flight over a panel that already has real candles in it. The chart keeps them
-   and this marches instead: a timeframe switch should look like work, not like a freeze. */
-.chartbar .wait { color: var(--green-faint); flex: none; }
-.chartbar .wait span { animation: waiting 0.72s steps(1) infinite; }
-.chartbar .wait span:nth-child(2) { animation-delay: 0.24s; }
-.chartbar .wait span:nth-child(3) { animation-delay: 0.48s; }
+/* The chart's status cluster: what the data is doing, and which venue served it.
+   Painted from the design system's tokens with the shipped values behind them, so it is right
+   both before and after ui/design/tokens.css lands. It replaced two things that each said half
+   of one: three marching blocks for "a read is in flight" and a meta line for everything else.
+
+   The dot carries the state in its fill as well as its hue. Solid is live, outlined is not, so
+   the difference survives being printed, being screenshotted, and the roughly one reader in
+   twelve for whom blue against amber is not a difference at all. */
+.chartstatus {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 1ch;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.chartstatus .feed {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6ch;
+  flex: none;
+  color: var(--text-2, #9a9ea8);
+}
+.chartstatus .feed i {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  flex: none;
+  background: currentColor;
+}
+.chartstatus .feed b { font-weight: 400; }
+.chartstatus .feed[data-feed="live"] { color: var(--up, #5b8def); }
+.chartstatus .feed[data-feed="delayed"] { color: var(--warn, #f2b544); }
+.chartstatus .feed[data-feed="offline"] { color: var(--down, #ff5a6e); }
+.chartstatus .feed[data-feed="delayed"] i,
+.chartstatus .feed[data-feed="offline"] i {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+/* A read in flight. The chart keeps the candles it has and this breathes instead: a timeframe
+   switch should look like work, not like a freeze. */
+.chartstatus .feed[data-busy="1"] i { animation: feedpulse 0.9s ease-in-out infinite; }
+
+@keyframes feedpulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+.chartstatus .venue {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  flex: none;
+  font: var(--fs) / var(--lh) var(--mono);
+  color: var(--text-2, #9a9ea8);
+}
+.chartstatus .venue:hover,
+.chartstatus .venue[data-pinned="1"] { color: var(--text, #edeef0); }
+.chartstatus .venue:focus-visible { outline: 1px dotted var(--up, #5b8def); outline-offset: 1px; }
 
 @media (prefers-reduced-motion: reduce) {
   .cursor,
   .skel,
-  .chartbar .wait span,
+  .chartstatus .feed[data-busy="1"] i,
   body.waiting .statusbar .v,
   body.waiting #kill-btn,
   body.waiting .basic-total,
@@ -631,20 +689,11 @@ button.frame:focus-visible { outline: 1px dotted var(--green); outline-offset: 1
   border-bottom: 1px solid var(--green-ghost);
   font: var(--fs) / var(--lh) var(--mono);
   padding: 0 0.5ch;
-  /* Fixed basis: the meta line beside it is the elastic one, not this. */
+  /* Fixed basis: the status cluster beside it is the elastic one, not this. */
   flex: 0 0 10ch;
   min-width: 0;
 }
 
-/* Source, staleness and the agent's object count. It gives up its width first and
-   truncates rather than pushing the controls off the line. */
-.chartbar .meta {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 #chart-cmd::placeholder { color: var(--green-ghost); }
 #chart-cmd:focus-visible { outline: none; border-bottom-color: var(--green); }
