@@ -6,8 +6,8 @@
 // PHOSPHOR_CONFIG_DIR moves config.local.json off the root for the installed .app.
 //
 // dataDir is resolved relative to root and created if missing, so every other module
-// can assume it exists. keysPath is resolved against $HOME and is REQUIRED to sit
-// outside the working copy: see assertOutsideRepo below.
+// can assume it exists. keysPath is derived from dataDir (see defaultKeysPath) and is
+// REQUIRED to sit outside the working copy: see assertOutsideRepo below.
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -37,14 +37,31 @@ function env(...names: string[]): string | undefined {
   return undefined;
 }
 
-// Where the key lives when nothing overrides it. Two goals, both asked for: the key should be
-// TIED TO THIS PROJECT rather than one global ~/.phosphor/keys.json blob shared by everything,
-// and an existing setup must not break. So the default prefers a per-project directory keyed by
-// the repo's own folder name, and falls back to the legacy global file when that is still where
-// the key lives, so no migration is forced. A fresh setup gets a per-project key from the start.
-// It stays OUTSIDE the working copy either way, so assertOutsideRepo still holds. An explicit
-// PHOSPHOR_KEYS or a keysPath in config overrides all of this.
-function defaultKeysPath(baseDir: string): string {
+// The data directory the app runs on when nobody says otherwise. Named because the key file
+// resolver below has to be able to recognise it.
+const DEFAULT_DATA_DIR = 'state';
+
+/* Where the key lives when nothing overrides it. THE DATA DIRECTORY DECIDES, and that is the
+   fix: this used to key off the repo folder name alone, so every backend started from this
+   checkout shared one key directory whatever data dir it was given. A demo backend on a
+   throwaway data dir therefore opened the owner's real wallet, reported it as needing
+   migration, and could destroy it. One checkout, several data directories, one key file: the
+   scratch instance was never a separate wallet, it was the same wallet with a different name.
+
+   So a data directory the owner did not choose carries its OWN key file, beside its own state.
+   A demo run, a test, a second profile: each gets an empty wallet rather than the real one.
+
+   Only the app's own default data directory reaches ~/.phosphor, and there the two earlier
+   goals still hold: prefer a per-project file keyed by the repo's folder name, and fall back to
+   the legacy global file when that is still where the key lives, so an existing install is not
+   forced to migrate. A fresh setup gets a per-project key from the start.
+
+   An explicit PHOSPHOR_KEYS or a keysPath in config overrides all of this, because a person
+   naming a path has said which wallet they mean. */
+function defaultKeysPath(baseDir: string, dataDir: string): string {
+  if (dataDir !== path.resolve(baseDir, DEFAULT_DATA_DIR)) {
+    return path.join(dataDir, 'keys.json');
+  }
   const home = os.homedir();
   const slug = path.basename(baseDir) || 'default';
   const perProject = path.join(home, '.phosphor', slug, 'keys.json');
@@ -62,7 +79,9 @@ function assertOutsideRepo(keysPath: string, root: string): void {
   if (inside) {
     throw new Error(
       `keysPath must sit outside the repo working copy (got ${keysPath} inside ${root}). ` +
-        'Keys in the working copy can be committed by accident; keys outside it cannot.',
+        'Keys in the working copy can be committed by accident; keys outside it cannot. ' +
+        'A data directory inside the working copy is one way to land here, because the key file ' +
+        'is derived from it: point PHOSPHOR_DATA_DIR or PHOSPHOR_KEYS somewhere outside.',
     );
   }
 }
@@ -91,10 +110,10 @@ export function loadConfig(root?: string): AppConfig {
 
   const portRaw = env('PHOSPHOR_PORT', 'ACC_PORT');
   const port = portRaw !== undefined ? Number(portRaw) : (parsed.port ?? 4177);
-  const dataDirInput = env('PHOSPHOR_DATA_DIR', 'ACC_DATA_DIR') ?? parsed.dataDir ?? 'state';
+  const dataDirInput = env('PHOSPHOR_DATA_DIR', 'ACC_DATA_DIR') ?? parsed.dataDir ?? DEFAULT_DATA_DIR;
   const dataDir = path.resolve(baseDir, dataDirInput);
 
-  const keysInput = env('PHOSPHOR_KEYS') ?? parsed.keysPath ?? defaultKeysPath(baseDir);
+  const keysInput = env('PHOSPHOR_KEYS') ?? parsed.keysPath ?? defaultKeysPath(baseDir, dataDir);
   const keysPath = path.resolve(keysInput.replace(/^~(?=$|\/)/, os.homedir()));
   assertOutsideRepo(keysPath, baseDir);
 

@@ -38,6 +38,23 @@ export const KEYSTORE_FILENAME = 'keys.enc.json';
 export const MAX_FAILURES = 5;
 export const BACKOFF_MS = 30_000;
 
+/* DEMO MODE NEVER DESTROYS A KEY FILE, and this is the second lock on a door the config file
+   already shut. The first lock is that keysPath now comes from the data directory, so a demo
+   backend on a throwaway data dir has its own empty wallet and cannot see the real one. This
+   one holds even when a demo process is pointed at a real key file by hand: migration shreds
+   the plaintext file AND every backup beside it, and that is not something a throwaway
+   instance may ever do.
+   The mode is read from the environment here because destroyPlaintext is a free function with
+   no config in reach. createKeystore is told the mode outright, so a demo set in config.json
+   rather than in the environment is covered too. */
+const DEMO_REFUSAL =
+  'demo mode never migrates a wallet, because migrating destroys the plaintext key file and every backup beside it. Start Phosphor in live mode to do this.';
+
+function envIsDemo(): boolean {
+  const mode = process.env.PHOSPHOR_MODE ?? process.env.ACC_MODE;
+  return mode === 'demo';
+}
+
 export type LockState = 'unlocked' | 'locked' | 'no_wallet' | 'needs_migration';
 
 export type AgentEntry = { privateKey?: string; address?: string; name?: string; approvedAt?: string };
@@ -157,10 +174,11 @@ function payloadFrom(mnemonic: string | null, keys: RailKeys, addresses: Address
 
 // ---------- the store ----------
 
-export function createKeystore(opts: { keysPath: string; now?: () => number; kdf?: () => KdfParams }): Keystore {
+export function createKeystore(opts: { keysPath: string; mode?: string; now?: () => number; kdf?: () => KdfParams }): Keystore {
   const keysPath = opts.keysPath;
   const file = keystorePathFor(keysPath);
   const now = opts.now ?? Date.now;
+  const demo = opts.mode === 'demo' || envIsDemo();
   /* The parameters a NEW file is written with. Injected only so the test suite can run the
      same code at a cost that is not 256 MiB and half a second per case; src/main.ts never
      passes it, and an existing file is always opened with the parameters in its own header. */
@@ -369,7 +387,10 @@ export function createKeystore(opts: { keysPath: string; now?: () => number; kdf
     lock,
     create,
     importWallet,
-    migrate: (password) => migrateInto({ keysPath, file, write, kdf: params, setPlain: (b) => { plain = b; announce(); } }, password),
+    migrate: async (password) => {
+      if (demo) throw new Error(DEMO_REFUSAL);
+      return migrateInto({ keysPath, file, write, kdf: params, setPlain: (b) => { plain = b; announce(); } }, password);
+    },
     exportTo,
     reveal,
     keys,
@@ -419,7 +440,12 @@ export function backupCopies(keysPath: string): string[] {
    Honest limit, and the window says it too: on APFS with snapshots or Time Machine local
    snapshots this does not guarantee erasure. The only complete answer is rotating to a fresh
    wallet after migrating, which is why the screen offers it. */
-export function destroyPlaintext(target: string): void {
+export function destroyPlaintext(target: string, demo: boolean = envIsDemo()): void {
+  if (demo) {
+    throw new Error(
+      `demo mode never destroys a plaintext key file (refused to shred ${path.basename(target)}). ${DEMO_REFUSAL}`,
+    );
+  }
   const size = fs.statSync(target).size;
   const fd = fs.openSync(target, 'r+');
   try {

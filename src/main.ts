@@ -75,7 +75,7 @@ const store = createStore(cfg.dataDir);
    uninstalled keystore means every one of them falls back to reading a plaintext file.
    Booting never asks for a password: the app comes up locked (or with no wallet at all) and
    the window is where a person unlocks it. */
-const keystore = createKeystore({ keysPath: cfg.keysPath });
+const keystore = createKeystore({ keysPath: cfg.keysPath, mode: cfg.mode });
 useKeystore(keystore);
 
 /* The lock's clock, and the signing sessions armed rules hold, in one object because they are

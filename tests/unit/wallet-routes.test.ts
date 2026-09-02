@@ -55,14 +55,17 @@ type Booted = {
   close: () => Promise<void>;
 };
 
-async function boot(): Promise<Booted> {
+// Demo by default, because that is what every route here behaves the same in. The one
+// exception is migrate, which demo mode refuses outright: it destroys a plaintext key file and
+// a throwaway instance has no business doing that. That test boots live.
+async function boot(mode: AppConfig['mode'] = 'demo'): Promise<Booted> {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-wallet-'));
   const token = crypto.randomBytes(32).toString('hex');
   process.env.PHOSPHOR_WINDOW_TOKEN = token;
   const keysPath = path.join(dataDir, 'keys', 'keys.json');
-  const keystore = createKeystore({ keysPath, kdf: fast });
+  const keystore = createKeystore({ keysPath, mode, kdf: fast });
   const cfg: AppConfig = {
-    mode: 'demo',
+    mode,
     port: 0,
     addresses: { evm: [], solana: [], near: [] },
     economicTransferUsd: 10,
@@ -302,7 +305,7 @@ test('receive answers while locked, with a warning per chain and no key anywhere
 });
 
 test('migrate encrypts a plaintext file, destroys it, and says the state changed', async () => {
-  const b = await boot();
+  const b = await boot('live');
   try {
     const { walletFromMnemonic } = await import('../../src/keystore/derive.ts');
     const wallet = walletFromMnemonic(VECTOR);
@@ -320,6 +323,31 @@ test('migrate encrypts a plaintext file, destroys it, and says the state changed
     assert.match(out.json.note, /snapshot/i, 'the honest caveat travels with the answer');
     assert.ok(!fs.existsSync(b.keysPath));
     assert.equal((await b.get('/api/state')).json.lock.state, 'unlocked');
+  } finally {
+    await b.close();
+  }
+});
+
+/* The route a demo instance must never reach. Migration overwrites the plaintext key file and
+   every backup beside it with random bytes and then unlinks them, which is not undoable, and a
+   demo backend is a throwaway. The key path is scoped by the data directory now so there is
+   normally nothing real in reach; this is the lock that holds when one is pointed at by hand. */
+test('a demo instance refuses to migrate, and the plaintext file it was pointed at survives', async () => {
+  const b = await boot();
+  try {
+    const { walletFromMnemonic } = await import('../../src/keystore/derive.ts');
+    const wallet = walletFromMnemonic(VECTOR);
+    fs.mkdirSync(path.dirname(b.keysPath), { recursive: true });
+    fs.writeFileSync(
+      b.keysPath,
+      JSON.stringify({ evm: { address: wallet.addresses.evm, privateKey: wallet.keys.evm } }),
+      { mode: 0o600 },
+    );
+
+    const out = await b.post('/api/wallet/migrate', { token: b.token, password: PASSWORD });
+    assert.equal(out.status, 403);
+    assert.match(out.json.error, /demo mode never migrates/);
+    assert.ok(fs.existsSync(b.keysPath), 'the file it refused to migrate is still there');
   } finally {
     await b.close();
   }

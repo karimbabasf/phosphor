@@ -184,7 +184,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   /* The keys and the clock over them. main.ts passes the keystore it installed as the process
      keystore, so the app has exactly one; a test that passes none gets one over its own temp
      keysPath, which reads that path and writes nothing until a wallet route is called. */
-  const keystore = deps.keystore ?? createKeystore({ keysPath: cfg.keysPath });
+  const keystore = deps.keystore ?? createKeystore({ keysPath: cfg.keysPath, mode: cfg.mode });
   const session =
     deps.session ??
     createSession({

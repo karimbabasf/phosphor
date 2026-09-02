@@ -223,6 +223,10 @@ test('loadConfig applies ACC_PORT, ACC_MODE, ACC_DATA_DIR env overrides', () => 
   process.env.ACC_PORT = '5555';
   process.env.ACC_MODE = 'live';
   process.env.ACC_DATA_DIR = overrideDataDir;
+  // Pinned because the key file is derived from the data directory now, and this data
+  // directory sits inside the fake root, which assertOutsideRepo refuses. What is under test
+  // here is the three env overrides, not where the key lands.
+  process.env.PHOSPHOR_KEYS = path.join(os.tmpdir(), 'phosphor-state-keys', 'keys.json');
   try {
     const cfg = loadConfig(dir);
     assert.equal(cfg.port, 5555);
@@ -233,5 +237,6 @@ test('loadConfig applies ACC_PORT, ACC_MODE, ACC_DATA_DIR env overrides', () => 
     delete process.env.ACC_PORT;
     delete process.env.ACC_MODE;
     delete process.env.ACC_DATA_DIR;
+    delete process.env.PHOSPHOR_KEYS;
   }
 });

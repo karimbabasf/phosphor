@@ -179,6 +179,14 @@ export async function handleWalletImport(ctx: Ctx, req: http.IncomingMessage, re
 export async function handleWalletMigrate(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const body = await guarded(ctx, '/api/wallet/migrate', req, res);
   if (body === null) return;
+  /* Refused outright in demo mode, before the password is even looked at. This route shreds a
+     plaintext key file and every backup beside it, and a demo backend is by definition a
+     throwaway instance: it has no business destroying anything. The keystore refuses the same
+     call from underneath, and the key path is scoped by the data directory so there is normally
+     nothing real in reach. Three locks, because the failure here is irreversible. */
+  if (ctx.cfg.mode === 'demo') {
+    return fail(res, 403, 'demo mode never migrates a wallet, because migrating destroys a plaintext key file. Start Phosphor in live mode to do this.');
+  }
   const password = passwordOf(body);
   if (password === null) return fail(res, 400, `the password must be at least ${MIN_PASSWORD} characters`);
   try {
