@@ -118,9 +118,10 @@ export async function handle(ctx: Ctx, req: http.IncomingMessage, res: http.Serv
         return handleRevealFetch(ctx, route.slice(REVEAL_PREFIX.length), req, res);
       }
       if (route.startsWith('/api/')) return fail(res, 404, `unknown route: ${route}`);
-      // The second surface. A bare /trade is the page; everything else still resolves as a
-      // file, so the two pages share one static root and one stylesheet.
-      if (route === '/trade' || route === '/trade/') return serveStatic('/trade.html', res);
+      /* One page, and one static root under it. There used to be a second surface here: a bare
+         /trade served ui/trade.html. The UI rewrite moved the trading screen inside the one
+         window and deleted that file, so the branch answered 404 for every request it ever took
+         while still reading like a supported entry point. */
       return serveStatic(route, res);
     }
     if (req.method === 'POST') {
