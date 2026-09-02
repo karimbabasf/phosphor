@@ -279,3 +279,70 @@ test('a single bar folded onto the newest one replaces it rather than rebuilding
   store.put('BTC-USD', 60, [{ t: last.t + 60, o: 1, h: 1, l: 1, c: 1, v: 1 }]);
   assert.equal(store.read('BTC-USD', 60, 60, 200).candles.length, before.candles.length + 1);
 });
+
+test('switching timeframe with a warm cache draws bars, not a skeleton', async () => {
+  let calls = 0;
+  const store = createMarketStore({
+    fetchWindow: async (_product, baseSec) => {
+      calls++;
+      // The 5m fill never settles, so what comes back can only have been bridged.
+      if (baseSec !== 60) await new Promise<void>(() => {});
+      return minutes(600);
+    },
+  });
+
+  await store.warm('BTC-USD', 60, 60, 500);
+  const cold = store.read('BTC-USD', 300, 300, 100);
+
+  assert.ok(cold.candles.length > 0, 'the 1m bars that build these 5m bars were already here');
+  assert.equal(cold.filling, true, 'the real fill is still on its way');
+  assert.equal(cold.source, 'bridged');
+  // The fold is exact or it is a lie, so every bucket has to open on a boundary.
+  for (const candle of cold.candles) assert.equal(candle.t % 300, 0);
+  assert.ok(calls >= 2);
+});
+
+test('the oldest bridged bucket is dropped rather than drawn half built', async () => {
+  // A 1m series that starts at 09:03, three minutes into a 5m bucket. Folding it whole would
+  // draw the 09:00 bucket from two of its five minutes and call it a bar.
+  const store = createMarketStore({
+    fetchWindow: async (_product, baseSec) => {
+      if (baseSec !== 60) await new Promise<void>(() => {});
+      return minutes(60, 1_699_999_200 + 180);
+    },
+  });
+  await store.warm('BTC-USD', 60, 60, 60);
+  const cold = store.read('BTC-USD', 300, 300, 100);
+  const first = cold.candles[0] as Candle;
+  assert.ok(first.t >= 1_699_999_200 + 300, 'the partial bucket at the old end is not drawn');
+});
+
+test('a bridged bar wins over a stale coarse one, which is what makes a 5m chart move', async () => {
+  const store = createMarketStore({
+    fetchWindow: async (_product, baseSec) => (baseSec === 60 ? minutes(600) : minutes(120, 1_699_999_200, 100)),
+  });
+  await store.warm('BTC-USD', 60, 60, 500);
+  await store.warm('BTC-USD', 300, 300, 100);
+
+  // A socket bar lands on the 1m series only. Without the bridge the 5m chart would sit still
+  // while the very same market is being pushed at it several times a second.
+  const newest = store.read('BTC-USD', 60, 60, 1).candles[0] as Candle;
+  store.put('BTC-USD', 60, [{ ...newest, c: 4242 }]);
+  const held = store.read('BTC-USD', 300, 300, 50);
+  assert.equal((held.candles[held.candles.length - 1] as Candle).c, 4242);
+});
+
+test('a base that does not divide the timeframe is never bridged from', async () => {
+  const store = createMarketStore({
+    fetchWindow: async (_product, baseSec) => {
+      if (baseSec !== 180) await new Promise<void>(() => {});
+      return minutes(600);
+    },
+  });
+  // 3m bars fold into 9m but not into 5m, and a bucket built from bars that straddle it is a
+  // price that never traded.
+  await store.warm('BTC-USD', 180, 180, 100);
+  const cold = store.read('BTC-USD', 300, 300, 50);
+  assert.equal(cold.candles.length, 0);
+  assert.equal(cold.source, 'filling');
+});

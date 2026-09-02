@@ -17,7 +17,7 @@
 // Coinbase spot and second candles bucketed from trades.
 
 import type { Candle } from '../types.ts';
-import { aggregate, baseBarsNeeded } from './aggregate.ts';
+import { aggregate, baseBarsNeeded, bucketStart } from './aggregate.ts';
 
 export type FetchWindow = (product: string, baseSec: number, bars: number, provider: string) => Promise<Candle[]>;
 
@@ -153,6 +153,41 @@ export function createMarketStore(options: MarketStoreOptions) {
     return at;
   }
 
+  /* Bars for a timeframe, folded from a finer base this cache already holds.
+
+     Two problems, one answer. The visible one is the blank: clicking 1m to 5m keys a fresh
+     series, whose first read returns an empty array with filling true, which draws the
+     skeleton, while the 1m bars needed to build every one of those 5m bars are already in
+     memory. The second is that the live rail only ever carries minutes (see live.ts), so
+     without this a 5m chart would sit still while a socket drove the very same market.
+
+     The fold has to be exact or it is a lie, so only a base that divides the target is used,
+     and the oldest bucket is dropped unless the bars feeding it start on a boundary: half a
+     bucket drawn as a whole one is a bar that never happened. The coarsest qualifying base
+     wins rather than the finest, because coarser bars reach further back for the same count
+     and the fold is exact either way. */
+  function bridge(product: string, provider: string, baseSec: number, targetSec: number, bars: number): Candle[] {
+    const prefix = `${provider}:${product}:`;
+    let fromSec = 0;
+    let source: Series | null = null;
+    for (const [key, entry] of series) {
+      if (!key.startsWith(prefix)) continue;
+      const held = Number(key.slice(prefix.length));
+      if (!Number.isFinite(held) || held >= baseSec || held <= fromSec) continue;
+      if (targetSec % held !== 0 || entry.candles.length === 0) continue;
+      fromSec = held;
+      source = entry;
+    }
+    if (source === null) return [];
+
+    const need = baseBarsNeeded(bars, fromSec, targetSec);
+    const tail = source.candles.length > need ? source.candles.slice(-need) : source.candles;
+    const folded = aggregate(tail, fromSec, targetSec);
+    const first = tail[0] as Candle;
+    if (folded.length > 0 && bucketStart(first.t, targetSec) !== first.t) folded.shift();
+    return folded;
+  }
+
   function evictIfNeeded(): void {
     if (series.size <= maxSeries) return;
     let oldestKey: string | null = null;
@@ -236,9 +271,23 @@ export function createMarketStore(options: MarketStoreOptions) {
     const liveAt = liveAtFor(product, provider);
     const liveAgeSec = liveAt === 0 ? null : (at - liveAt) / 1000;
 
+    const bridged = bridge(product, provider, baseSec, targetSec, bars);
+
     if (entry === undefined) {
       void fill(product, baseSec, needBase, provider);
-      return { candles: [], ageSec: 0, liveAgeSec, filling: true, bars: 0, source: 'filling', error: null };
+      // A cold series with a warm finer one is not a blank chart, it is the same market at a
+      // different bucket size, and the human clicked one timeframe rather than asking for a
+      // skeleton. The real fill lands behind this and replaces it.
+      const held = bridged.length > bars ? bridged.slice(-bars) : bridged;
+      return {
+        candles: held,
+        ageSec: 0,
+        liveAgeSec,
+        filling: true,
+        bars: held.length,
+        source: held.length > 0 ? 'bridged' : 'filling',
+        error: null,
+      };
     }
 
     entry.lastReadAt = at;
@@ -254,7 +303,11 @@ export function createMarketStore(options: MarketStoreOptions) {
       void fill(product, baseSec, needBase, provider);
     }
 
-    const folded = aggregate(entry.candles, baseSec, targetSec);
+    // The finer bars win where the two overlap. They are fresher by construction: the rail
+    // folds into the 1m series several times a second and this series is refetched at best
+    // once. This is also the only thing that makes a 5m chart move between REST fills.
+    const own = aggregate(entry.candles, baseSec, targetSec);
+    const folded = bridged.length === 0 ? own : mergeSeries(own, bridged, maxBars);
     const windowed = folded.length > bars ? folded.slice(-bars) : folded;
 
     return {
