@@ -13,6 +13,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { AppConfig, Mode } from './types.ts';
+// The keystore owns where a keystore file sits. Imported rather than restated, because a second
+// copy of that filename is a second thing to keep in step with the first.
+import { keystorePathFor } from './keystore/store.ts';
 
 // addresses is overridden rather than intersected: an intersection keeps the required
 // fields from AppConfig and defeats the whole point of a partial file.
@@ -58,6 +61,19 @@ const DEFAULT_DATA_DIR = 'state';
 
    An explicit PHOSPHOR_KEYS or a keysPath in config overrides all of this, because a person
    naming a path has said which wallet they mean. */
+/* Whether a wallet lives at this key path, in EITHER of the two shapes a wallet is stored as.
+   `keys.json` is the plaintext one and `keys.enc.json` is what migrating produces beside it.
+
+   Asking only about the plaintext file is what made a migration hide the wallet: migrating
+   deletes `keys.json`, so the next boot matched neither candidate, fell through to the
+   project-local path and reported no_wallet against a funded mainnet keystore that was sitting
+   in the global directory the whole time. Nothing was lost and everything looked lost, which is
+   the worst thing a wallet can do. The question is "is there a wallet here", never "is there
+   one particular file here". */
+function holdsWallet(keysPath: string): boolean {
+  return fs.existsSync(keysPath) || fs.existsSync(keystorePathFor(keysPath));
+}
+
 function defaultKeysPath(baseDir: string, dataDir: string): string {
   /* PHOSPHOR_APP_DATA=1 is the installed app saying this data directory is its own rather than
      one somebody pointed at. It sits under Application Support and so is not the repo default,
@@ -72,8 +88,8 @@ function defaultKeysPath(baseDir: string, dataDir: string): string {
   const slug = path.basename(baseDir) || 'default';
   const perProject = path.join(home, '.phosphor', slug, 'keys.json');
   const legacy = path.join(home, '.phosphor', 'keys.json');
-  if (fs.existsSync(perProject)) return perProject;
-  if (fs.existsSync(legacy)) return legacy; // an existing global key keeps working, no migration
+  if (holdsWallet(perProject)) return perProject;
+  if (holdsWallet(legacy)) return legacy; // an existing global key keeps working, no migration
   return perProject; // nothing yet: a new key is created project-local, not global
 }
 

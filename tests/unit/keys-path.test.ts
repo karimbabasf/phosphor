@@ -188,3 +188,56 @@ test('without that flag the same data directory carries its own wallet', () => {
 
   assert.equal(cfg.keysPath, path.join(support, 'state', 'keys.json'));
 });
+
+// A home directory as it looks AFTER the legacy wallet has been migrated: the plaintext file is
+// gone, because migrating consumed it, and the encrypted one is what remains.
+function homeWithMigratedKeys(): string {
+  const home = scratch('phosphor-home-');
+  fs.mkdirSync(path.join(home, '.phosphor'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.phosphor', 'keys.enc.json'), JSON.stringify({ header: {} }));
+  return home;
+}
+
+/* Migrating the legacy wallet used to hide it.
+
+   defaultKeysPath chose between the per-project path and the global one by asking which held a
+   `keys.json`, and migration deletes exactly that file. So the boot after a migration found
+   neither candidate, fell through to the per-project path, looked for a keystore beside it,
+   found none, and told the owner of a funded mainnet wallet that they had no wallet. The keys
+   were never lost. They were at ~/.phosphor/keys.enc.json the whole time, which the app had
+   stopped looking at.
+
+   The resolution has to ask about the wallet, not about one of the two files a wallet can be
+   stored as. */
+test('a migrated global wallet is still found once the plaintext file is gone', () => {
+  const home = homeWithMigratedKeys();
+  const root = repo();
+
+  const cfg = withEnv(
+    { HOME: home, PHOSPHOR_KEYS: undefined, PHOSPHOR_MODE: 'live', PHOSPHOR_DATA_DIR: undefined, PHOSPHOR_CONFIG_DIR: undefined },
+    () => loadConfig(root),
+  );
+
+  assert.equal(
+    cfg.keysPath,
+    path.join(home, '.phosphor', 'keys.json'),
+    'the global location still owns the wallet, because the keystore that migration wrote sits there',
+  );
+
+  const keystore = createKeystore({ keysPath: cfg.keysPath, mode: cfg.mode });
+  assert.equal(keystore.state(), 'locked', 'a migrated wallet reads as locked, never as absent');
+});
+
+// The other direction, so the fix cannot quietly pin every install to the global path: a home
+// with nothing in it at all still gets a project-local wallet.
+test('a home with no wallet anywhere still starts a new one project-local', () => {
+  const home = scratch('phosphor-home-');
+  const root = repo();
+
+  const cfg = withEnv(
+    { HOME: home, PHOSPHOR_KEYS: undefined, PHOSPHOR_MODE: 'live', PHOSPHOR_DATA_DIR: undefined, PHOSPHOR_CONFIG_DIR: undefined },
+    () => loadConfig(root),
+  );
+
+  assert.equal(cfg.keysPath, path.join(home, '.phosphor', path.basename(root), 'keys.json'));
+});
