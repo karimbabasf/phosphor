@@ -40,7 +40,19 @@ async function readPrice(ctx: Ctx, product: string): Promise<PriceReading> {
       // both figures, so the line and the percentage can never disagree on screen.
       closes: candles.map((candle) => candle.c),
     };
-  } catch {
+  } catch (err) {
+    /* A venue outage and a bug in this file both used to return null, so the price path was the
+       one place a ReferenceError could hide completely: `ctx` is read here from a closure that is
+       assembled directly above the first poll, and had that order ever slipped, this catch would
+       have swallowed the temporal-dead-zone error and the screen would simply have shown three
+       blank prices. A fault in the app is named; a network failure is not, because it is expected
+       and a line per poll would bury the log. */
+    if (err instanceof TypeError || err instanceof ReferenceError || err instanceof SyntaxError) {
+      ctx.audit.append(
+        'error',
+        `reading the price of ${product} hit a fault in Phosphor rather than in the venue: ${err.name}: ${err.message}`,
+      );
+    }
     return null;
   }
 }
@@ -174,7 +186,15 @@ export function chartPayload(ctx: Ctx): unknown {
   // Memory only, and it cannot throw: an outage shows the last good candles marked stale
   // rather than an empty chart. This is the render path, so nothing here may await.
   const load = readCandles(ctx, state.view.product, state.view.granularitySec, ctx.chart.historyNeeded(), state.view.provider);
-  const error: string | null = null;
+  /* This was `const error: string | null = null` and had been since the render path stopped
+     awaiting: a field whose only possible value was "nothing is wrong". It now carries the one
+     failure this synchronous path CAN see, which is nothing on screen and nothing on the way.
+     The field stays rather than going because the browser writes its own fetch failures into it
+     (ui/chart.js) and a good payload arriving is what clears them. */
+  const error =
+    load.candles.length === 0 && !load.filling
+      ? `no candles for ${state.view.product} at ${String(state.view.granularitySec)}s, and none are being fetched`
+      : null;
   const computed = computeIndicators(state, load.candles);
   return {
     rev: state.rev,

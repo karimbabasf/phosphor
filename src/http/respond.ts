@@ -71,17 +71,20 @@ export function sendJson(res: http.ServerResponse, status: number, payload: unkn
   res.end(body);
 }
 
-// The one door every refusal goes through. `extra` carries the keys a particular refusal adds
-// beside the message (the notes on a chart write, the coins on a rejected coin list, the
-// duplicate id, the seat marker), and `error` stays first so the shape on the wire is the one
-// every caller already reads.
-//
-// TRACK B: `message` is optional because five chart and trade sites pass an `Outcome.error` that
-// the type says may be undefined, and JSON.stringify then drops the key, so those refusals go out
-// as `{ notes: [...] }` with no `error` field at all. That is what they do today and this keeps
-// it. The fix belongs where the outcome is built: a refusal with no sentence in it.
-export function fail(res: http.ServerResponse, status: number, message: string | undefined, extra?: JsonBody): void {
-  sendJson(res, status, extra === undefined ? { error: message } : { error: message, ...extra });
+/* The one door every refusal goes through. `extra` carries the keys a particular refusal adds
+   beside the message (the notes on a chart write, the coins on a rejected coin list, the
+   duplicate id, the seat marker), and `error` stays first so the shape on the wire is the one
+   every caller already reads.
+
+   `message` is REQUIRED, and it took a type change elsewhere to make that possible. Eight sites
+   in this directory used to pass an `Outcome.error` the type said might be undefined, and
+   JSON.stringify drops an undefined value, so those refusals went out as `{ notes: [...] }` or
+   `{}`: a 400 with nothing in it to render. Outcome is a discriminated union now (src/chart.ts,
+   src/trade/view.ts), so a failure cannot be built without a sentence and this signature can
+   insist on one. The fallback below is for the untyped edges only. */
+export function fail(res: http.ServerResponse, status: number, message: string, extra?: JsonBody): void {
+  const error = message.trim().length > 0 ? message : 'the request was refused and no reason was recorded';
+  sendJson(res, status, extra === undefined ? { error } : { error, ...extra });
 }
 
 // As sendJson, but the caller may ask whether anything changed since last time.

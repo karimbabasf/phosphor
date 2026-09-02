@@ -27,7 +27,11 @@
 
 export type Source = 'agent' | 'human';
 
-export type Outcome = { ok: boolean; notes: string[]; error?: string };
+// A discriminated union for the same reason as src/chart.ts: a refusal has to carry a sentence,
+// and the type is the only thing that can keep saying so.
+export type Outcome =
+  | { ok: true; notes: string[]; error?: undefined }
+  | { ok: false; notes: string[]; error: string };
 
 // The row kinds that can be pointed at. Each one is something the trading page renders as a
 // list with stable ids, which is the whole requirement for being addressable.

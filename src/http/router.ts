@@ -31,6 +31,7 @@ import {
   handleWalletImport,
   handleWalletMigrate,
 } from './wallet.ts';
+import { sendHealth } from './health.ts';
 import { LOG_LIMIT_MAX } from './context.ts';
 import type { Ctx } from './context.ts';
 
@@ -60,6 +61,8 @@ const GET: Record<string, Route> = {
   // addresses out of the keystore's plaintext header and answers while locked.
   '/api/receive': (ctx, _req, res) => handleReceive(ctx, res),
   '/api/events': (ctx, req, res) => ctx.sse.open(req, res),
+  // No token, no secret, and deliberately the only unauthenticated proof of life. See health.ts.
+  '/api/health': (ctx, _req, res) => sendHealth(ctx, res),
 };
 
 const POST: Record<string, Route> = {

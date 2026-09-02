@@ -437,3 +437,71 @@ test('a good amount still gets through, so the bound is a bound and not a wall',
     await h.close();
   }
 });
+
+// ---------- /api/health ----------
+//
+// The only unauthenticated GET that proved the app was up used to be /api/session, which answered
+// by handing out the approval token. "Is Phosphor running" and "take control of Phosphor" were
+// the same request, so any supervisor or shell script that wanted the first reached for the
+// second. This one carries no credential and no secret, which is what makes it usable.
+
+test('health answers without a token and in the shape the spec fixes', async () => {
+  const h = await boot();
+  try {
+    const out = await raw(h.url, '/api/health');
+    assert.equal(out.status, 200);
+    const body = JSON.parse(out.body) as Record<string, unknown>;
+    assert.deepEqual(Object.keys(body).sort(), [
+      'killSwitch',
+      'lastError',
+      'locked',
+      'ok',
+      'pending',
+      'uptimeSec',
+      'version',
+    ]);
+    assert.equal(body.ok, true);
+    assert.equal(typeof body.version, 'string');
+    assert.equal(typeof body.killSwitch, 'boolean');
+    assert.equal(typeof body.pending, 'number');
+    assert.equal(typeof body.locked, 'boolean');
+    assert.equal(typeof body.uptimeSec, 'number');
+    assert.ok(body.uptimeSec as number >= 0);
+    assert.equal(body.lastError, null);
+  } finally {
+    await h.close();
+  }
+});
+
+test('health names no secret, no token and no balance', async () => {
+  const h = await boot();
+  try {
+    const out = await raw(h.url, '/api/health');
+    // The whole body, not a field list: a future addition that leaks has to fail something.
+    for (const forbidden of ['token', 'key', 'secret', 'address', 'holdings', 'balance', 'mnemonic']) {
+      assert.doesNotMatch(out.body.toLowerCase(), new RegExp(forbidden), `health mentioned ${forbidden}`);
+    }
+  } finally {
+    await h.close();
+  }
+});
+
+test('health is a GET only', async () => {
+  const h = await boot();
+  try {
+    const out = await raw(h.url, '/api/health', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    assert.equal(out.status, 404, 'nothing on this route writes anything');
+  } finally {
+    await h.close();
+  }
+});
+
+test('a forged Host cannot reach health either', async () => {
+  const h = await boot();
+  try {
+    const out = await raw(h.url, '/api/health', { headers: { Host: 'evil.com' } });
+    assert.equal(out.status, 403);
+  } finally {
+    await h.close();
+  }
+});

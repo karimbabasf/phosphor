@@ -68,10 +68,15 @@ export const walletReads: ReadTable = {
   policy_show: (ctx, _body, _args, res) => {
     const policy = ctx.getPolicy();
     if (policy === null) {
+      /* `reason`, not `error`. The status is right: the question "what are the rules" HAS an
+         answer here, and the answer is that they cannot be read and nothing may be written. A
+         client switching on `error` was reading a failure out of a 200, which is the one shape
+         `fail()` deliberately does not cover, because what was wrong was the key rather than the
+         status. `readable: false` is the discriminator and always has been. */
       sendJson(res, 200, {
         readable: false,
         sentences: [],
-        error: 'policy file unreadable: every write is refused until it is fixed',
+        reason: 'policy file unreadable: every write is refused until it is fixed',
       });
       return;
     }

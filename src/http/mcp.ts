@@ -39,6 +39,13 @@ const READS: ReadTable = {
   ...tradeReads,
 };
 
+// The table's own keys, for the test that holds READ_TOOLS and this in step. A tool listed in
+// the refusal message and missing from the table is a tool an agent is told it has and cannot
+// call; a tool in the table and off the list is one nobody is told about. Both were possible.
+export function readToolNames(): string[] {
+  return Object.keys(READS);
+}
+
 export async function handleRead(ctx: Ctx, body: JsonBody, res: http.ServerResponse): Promise<void> {
   const tool = String(body.tool ?? '');
   const handler = READS[tool];

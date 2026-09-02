@@ -119,7 +119,15 @@ export type ChartState = {
   lastChangeAt: string;
 };
 
-export type Outcome = { ok: boolean; notes: string[]; error?: string; id?: string; label?: string };
+/* A discriminated union, not `{ ok: boolean; error?: string }`.
+   The old shape let a refusal be built with no sentence in it, and eight sites in src/http then
+   passed that undefined straight to `fail()`, where JSON.stringify dropped the key: the refusal
+   went out as `{ notes: [...] }` or `{}` and the window had nothing to show. The compiler now
+   refuses to build a failure without a reason, which is the only version of this rule that
+   cannot rot. */
+export type Outcome =
+  | { ok: true; notes: string[]; error?: undefined; id?: string; label?: string }
+  | { ok: false; notes: string[]; error: string; id?: string; label?: string };
 
 // What is on the chart that probably should not be, counted so the agent does not have to work
 // it out from a list. It rides on every chart_read, which is what makes cleaning up automatic
