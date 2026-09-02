@@ -338,3 +338,102 @@ test('no route serves the window token (P0-1)', async () => {
     await h.close();
   }
 });
+
+// ---------- amount bounds at the edge ----------
+//
+// numField accepted any finite number, so a negative or a 1e308 amount reached
+// proposeHlDeposit, proposeIntentsDeposit, proposeIntentsWithdraw and all four mandate ceilings.
+// Only swap and yield_deposit had a `> 0` check. The mandate numbers never pass through
+// TransferLeg, so nothing downstream re-checked them: a negative maxLossUsd is a bot with no
+// loss limit, and a negative amount is a NEGATIVE spend that makes the day's cap look emptier.
+
+const BAD_AMOUNTS: Array<[string, number]> = [
+  ['zero', 0],
+  ['negative', -100],
+  ['1e308', 1e308],
+];
+
+async function proposeWith(url: string, kind: string, params: Record<string, unknown>): Promise<{ status: number; body: string }> {
+  return raw(url, '/api/mcp', {
+    method: 'POST',
+    /* Origin as well as Content-Type. sameOrigin() refuses a write with an ABSENT Origin, which
+       closes the door where any local process could claim to be "a local tool, not a browser".
+       Origin is a forbidden header name, so no page can set it: a matching one can only come
+       from a page this app served or from a local process that chose to send it. */
+    headers: { 'content-type': 'application/json', origin: new URL(url).origin },
+    body: JSON.stringify({ op: 'propose', kind, params }),
+  });
+}
+
+for (const [label, amount] of BAD_AMOUNTS) {
+  test(`a ${label} amount is refused on every propose kind that takes one`, async () => {
+    const h = await boot();
+    try {
+      const cases: Array<[string, Record<string, unknown>]> = [
+        ['hl_deposit', { chain: 'arb', symbol: 'USDC', amount }],
+        ['intents_deposit', { chain: 'arb', symbol: 'USDC', amount }],
+        ['intents_withdraw', { chain: 'arb', symbol: 'USDC', amount }],
+        ['swap', { chain: 'arb', toChain: 'arb', fromSymbol: 'USDC', toSymbol: 'WETH', amountIn: amount, minAmountOut: 1 }],
+        ['yield_deposit', { chain: 'arb', symbol: 'USDC', amount }],
+        ['lp_remove', { positionId: '1', liquidityPct: amount }],
+      ];
+      for (const [kind, params] of cases) {
+        const out = await proposeWith(h.url, kind, params);
+        assert.equal(out.status, 400, `${kind} accepted a ${label} amount: ${out.body.slice(0, 200)}`);
+        assert.match(out.body, /must be (greater than 0|a finite number)|larger than this app can represent/, `${kind}: ${out.body.slice(0, 200)}`);
+      }
+    } finally {
+      await h.close();
+    }
+  });
+}
+
+for (const [label, value] of BAD_AMOUNTS) {
+  test(`a ${label} value is refused on every mandate ceiling`, async () => {
+    const h = await boot();
+    try {
+      const good = {
+        symbol: 'ETH',
+        maxNotionalUsd: 50,
+        maxLeverage: 2,
+        maxOrdersPerMin: 4,
+        maxLossUsd: 10,
+        expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+        allowedActions: ['open'],
+        program: { symbol: 'ETH', rules: [] },
+      };
+      for (const field of ['maxNotionalUsd', 'maxLeverage', 'maxOrdersPerMin', 'maxLossUsd']) {
+        const out = await proposeWith(h.url, 'mandate_arm', { ...good, [field]: value });
+        assert.equal(out.status, 400, `mandate_arm accepted a ${label} ${field}: ${out.body.slice(0, 200)}`);
+        assert.match(out.body, new RegExp(`${field} (must be|is larger than)`), out.body.slice(0, 200));
+      }
+    } finally {
+      await h.close();
+    }
+  });
+}
+
+test('an unknown chain is refused rather than silently drafted against ethereum', async () => {
+  const h = await boot();
+  try {
+    // chainField used to return 'eth' as its sentinel. Every caller checks problems.length
+    // first, so it was latent; the point of returning null is that the next branch that forgets
+    // cannot spend on the wrong chain.
+    const out = await proposeWith(h.url, 'intents_deposit', { chain: 'polygon', symbol: 'USDC', amount: 10 });
+    assert.equal(out.status, 400);
+    assert.match(out.body, /chain must be one of/);
+    assert.doesNotMatch(out.body, /"id"/, 'no proposal was created');
+  } finally {
+    await h.close();
+  }
+});
+
+test('a good amount still gets through, so the bound is a bound and not a wall', async () => {
+  const h = await boot();
+  try {
+    const out = await proposeWith(h.url, 'intents_deposit', { chain: 'arb', symbol: 'USDC', amount: 10 });
+    assert.equal(out.status, 200, out.body.slice(0, 200));
+  } finally {
+    await h.close();
+  }
+});

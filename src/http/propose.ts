@@ -39,6 +39,34 @@ export function numField(params: JsonBody, name: string, problems: string[]): nu
   return raw;
 }
 
+/* A number that must be above zero, at the edge.
+   The header above says value questions belong to the policy engine, and mostly they do: too
+   big, too much of the portfolio, over the day's cap. Zero and negative are different. They are
+   not amounts at all, and the engine budgets on `amountUsd` derived from them, so a negative one
+   arrives as a NEGATIVE spend that makes the cap look emptier than it is, and 1e308 arrives as
+   Infinity. Neither is a policy question; both are a caller sending something that is not a
+   quantity. `numField` already rejects NaN and Infinity, so this only has to rule out the sign
+   and the zero. */
+export function positiveField(params: JsonBody, name: string, problems: string[]): number {
+  const value = numField(params, name, problems);
+  if (!Number.isFinite(value)) return value; // numField has already said so
+  if (value <= 0) {
+    problems.push(`${name} must be greater than 0`);
+    return value;
+  }
+  /* And an upper bound, which is not the same kind of rule as the policy engine's.
+     MAX_SAFE_INTEGER is where a double stops being able to represent whole numbers exactly, so
+     above it every figure derived from this one is already wrong before any limit is consulted:
+     multiply 1e308 by a price and the answer is Infinity, and "Infinity cannot be checked
+     against a limit" is a refusal that arrives by accident of the arithmetic rather than by a
+     rule. A number this large is not an amount somebody meant. How much is TOO MUCH remains the
+     policy engine's question, and this does not answer it. */
+  if (value > Number.MAX_SAFE_INTEGER) {
+    problems.push(`${name} is larger than this app can represent exactly (${Number.MAX_SAFE_INTEGER} is the ceiling)`);
+  }
+  return value;
+}
+
 export function strField(params: JsonBody, name: string, problems: string[]): string {
   const raw = params[name];
   if (typeof raw !== 'string' || raw.trim().length === 0) {
@@ -48,11 +76,16 @@ export function strField(params: JsonBody, name: string, problems: string[]): st
   return raw.trim();
 }
 
-export function chainField(params: JsonBody, name: string, problems: string[]): ChainId {
+/* null on an unknown chain, never a sentinel.
+   This used to return 'eth'. Every caller checks `problems.length` before using the value, so it
+   was latent rather than live, but the next branch that forgets silently drafts a transaction
+   against Ethereum: the wrong chain, the wrong token contracts, and a caller who named something
+   else entirely. A null cannot be spent by accident, and the type says so. */
+export function chainField(params: JsonBody, name: string, problems: string[]): ChainId | null {
   const raw = String(params[name] ?? '');
   if (!CHAINS.includes(raw)) {
     problems.push(`${name} must be one of: ${CHAINS.join(', ')}`);
-    return 'eth';
+    return null;
   }
   return raw as ChainId;
 }
@@ -110,13 +143,15 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
       }
       const fromSymbol = strField(params, 'fromSymbol', problems);
       const toSymbol = strField(params, 'toSymbol', problems);
-      const amountIn = numField(params, 'amountIn', problems);
-      // A negative or zero input has no honest swap. Rejected at the edge so it never reaches
-      // usdOf, where a negative amount became "$Infinity ... cannot be checked against a limit"
-      // and only failed closed by accident of the arithmetic.
-      if (amountIn <= 0) problems.push('amountIn must be greater than 0');
+      // A negative or zero input has no honest swap, and neither does one too large to be
+      // represented exactly. Rejected at the edge so it never reaches usdOf, where a negative
+      // amount became "$Infinity ... cannot be checked against a limit" and only failed closed
+      // by accident of the arithmetic. Through positiveField now, so one rule covers every kind.
+      const amountIn = positiveField(params, 'amountIn', problems);
       const minAmountOut = numField(params, 'minAmountOut', problems);
-      if (problems.length > 0) {
+      // `chain === null` is already in `problems`; naming it here is what convinces the type
+      // system, and what stops the next edit reaching for a chain that was never resolved.
+      if (problems.length > 0 || chain === null || toChain === null) {
         fail(res, 400, problems.join('; '));
         return;
       }
@@ -135,10 +170,15 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
     }
     if (kind === 'mandate_arm') {
       const symbol = strField(params, 'symbol', problems);
-      const maxNotionalUsd = numField(params, 'maxNotionalUsd', problems);
-      const maxLeverage = numField(params, 'maxLeverage', problems);
-      const maxOrdersPerMin = numField(params, 'maxOrdersPerMin', problems);
-      const maxLossUsd = numField(params, 'maxLossUsd', problems);
+      /* Four ceilings, and every one of them has to be a positive quantity.
+         None of these passes through TransferLeg, so nothing downstream re-checks them: a
+         negative maxLossUsd is a bot with no loss limit, a maxOrdersPerMin of 0 or below is a
+         rate limit that can never be satisfied, and 1e308 on either is the same as no limit at
+         all. numField rejects Infinity; this rejects the rest. */
+      const maxNotionalUsd = positiveField(params, 'maxNotionalUsd', problems);
+      const maxLeverage = positiveField(params, 'maxLeverage', problems);
+      const maxOrdersPerMin = positiveField(params, 'maxOrdersPerMin', problems);
+      const maxLossUsd = positiveField(params, 'maxLossUsd', problems);
       const expiresAt = strField(params, 'expiresAt', problems);
       const allowedActions = Array.isArray(params.allowedActions)
         ? params.allowedActions.map((v) => String(v))
@@ -169,12 +209,14 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
       // keeps the old call shape working and naming it is the new capability.
       const chain = params.chain === undefined ? undefined : chainField(params, 'chain', problems);
       const symbol = params.symbol === undefined ? undefined : strField(params, 'symbol', problems);
-      const amount = numField(params, 'amount', problems);
+      const amount = positiveField(params, 'amount', problems);
       if (problems.length > 0) {
         fail(res, 400, problems.join('; '));
         return;
       }
-      respond(await ctx.proposals.proposeHlDeposit({ chain, symbol, amount }));
+      // null here only happens when a chain was named and rejected, which is already a problem
+      // above, so this is the omitted case: let proposeHlDeposit pick the origin.
+      respond(await ctx.proposals.proposeHlDeposit({ chain: chain ?? undefined, symbol, amount }));
       return;
     }
     if (kind === 'intents_deposit') {
@@ -182,8 +224,8 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
       // symbol is optional: absent means the chain's gas asset, which is the common case
       // and the one the ERC-20 path could not serve.
       const symbol = params.symbol === undefined ? undefined : strField(params, 'symbol', problems);
-      const amount = numField(params, 'amount', problems);
-      if (problems.length > 0) {
+      const amount = positiveField(params, 'amount', problems);
+      if (problems.length > 0 || chain === null) {
         fail(res, 400, problems.join('; '));
         return;
       }
@@ -197,8 +239,8 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
       // payout lands in is resolved from config by the proposal service and re-derived by the
       // rail. tests/injection.test.ts holds this schema to that.
       const symbol = params.symbol === undefined ? undefined : strField(params, 'symbol', problems);
-      const amount = numField(params, 'amount', problems);
-      if (problems.length > 0) {
+      const amount = positiveField(params, 'amount', problems);
+      if (problems.length > 0 || chain === null) {
         fail(res, 400, problems.join('; '));
         return;
       }
@@ -236,13 +278,10 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
       // included. See the comment on YieldWithdrawParams in src/types.ts.
       const amount =
         kind === 'yield_deposit'
-          ? numField(params, 'amount', problems)
+          ? positiveField(params, 'amount', problems)
           : params.amount === undefined
             ? undefined
-            : numField(params, 'amount', problems);
-      if (kind === 'yield_deposit' && amount !== undefined && amount <= 0) {
-        problems.push('amount must be greater than 0');
-      }
+            : positiveField(params, 'amount', problems);
       if (problems.length > 0 || chain === null) {
         fail(res, 400, problems.join('; ') || 'chain could not be resolved');
         return;
@@ -260,12 +299,12 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
       const chain = chainField(params, 'chain', problems);
       const token0Symbol = strField(params, 'token0Symbol', problems);
       const token1Symbol = strField(params, 'token1Symbol', problems);
-      const amount0 = numField(params, 'amount0', problems);
-      const amount1 = numField(params, 'amount1', problems);
+      const amount0 = positiveField(params, 'amount0', problems);
+      const amount1 = positiveField(params, 'amount1', problems);
       const feeTier = numField(params, 'feeTier', problems);
       const tickLower = numField(params, 'tickLower', problems);
       const tickUpper = numField(params, 'tickUpper', problems);
-      if (problems.length > 0) {
+      if (problems.length > 0 || chain === null) {
         fail(res, 400, problems.join('; '));
         return;
       }
@@ -285,7 +324,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
     }
     if (kind === 'lp_remove') {
       const positionId = strField(params, 'positionId', problems);
-      const liquidityPct = numField(params, 'liquidityPct', problems);
+      const liquidityPct = positiveField(params, 'liquidityPct', problems);
       if (problems.length > 0) {
         fail(res, 400, problems.join('; '));
         return;

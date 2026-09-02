@@ -106,7 +106,6 @@ async function boot(): Promise<Booted> {
       reconcileOnBoot: () => [],
       reconcile: () => Promise.reject(new Error('not wired in this stub')),
       settle: () => Promise.resolve(true),
-      dailyLimit: (capUsd: number) => ({ capUsd, spentUsd: 0, resetsAt: null }),
     },
     getPolicy: () => defaultPolicy(),
     setKill: () => {},
