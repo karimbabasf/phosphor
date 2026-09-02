@@ -222,6 +222,20 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
   sweepSigningSessions(): string[];
 } {
   let child: ChildProcess | null = null;
+  /* THE FORK IN FLIGHT, and there is exactly one of it.
+     ensureChild checked `child === null` and then AWAITED the API wallet key before forking,
+     and nothing guarded that gap. Mandate rails run outside the proposal serialiser (the
+     reservation is released as soon as the row is written), so two arms could sit inside one
+     key read together. The second fork overwrote this binding; the first process stayed alive,
+     had already been sent its arm message through its own returned handle, and held the same
+     Hyperliquid API key. stopAll, setKilled, the kill switch and the SIGKILL backstop all
+     address `child`, so the orphan kept placing orders with nothing able to stop it short of a
+     reboot. One promise, shared by every concurrent caller, is the whole fix. */
+  let starting: Promise<ChildProcess> | null = null;
+  /* Bumped by stopAll. A fork whose key read finishes after everything was stopped belongs to
+     a generation nobody wants, so it never happens: a kill switch that leaves a process behind
+     because the process had not started yet is not a kill switch. */
+  let generation = 0;
   // The program is held beside the mandate, not because this process runs it (the child does),
   // but because the trading window renders it in English. Reading it back off the child would
   // mean the screen showing a copy of the program rather than the program, and "the thing on
@@ -290,10 +304,29 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
     deps.onEvent(e);
   }
 
-  async function ensureChild(): Promise<ChildProcess> {
-    if (child !== null && child.connected) return child;
+  // Every caller that wants the child comes through here, and concurrent callers get the same
+  // promise rather than each starting a fork of their own.
+  function ensureChild(): Promise<ChildProcess> {
+    if (child !== null && child.connected) return Promise.resolve(child);
+    if (starting !== null) return starting;
 
+    const job = forkChild();
+    starting = job;
+    /* Cleared however it ends, so a fork that failed does not wedge every later arm on a
+       rejected promise it would keep handing out. The rejection still reaches this caller. */
+    const clear = (): void => {
+      if (starting === job) starting = null;
+    };
+    void job.then(clear, clear);
+    return job;
+  }
+
+  async function forkChild(): Promise<ChildProcess> {
+    const mine = generation;
     const key = await deps.apiWalletKey();
+    if (mine !== generation) {
+      throw new Error('everything was stopped while this runner was starting, so nothing was armed');
+    }
     if (key === null) throw new Error('no API wallet key: run scripts/hl-agent.ts to approve one');
 
     const entry = path.join(__dirname, 'main.ts');
@@ -306,14 +339,15 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
        `forkImpl` is a test seam, the same shape as fetchImpl on the rails. The guards below
        (child.on('error'), and the `connected` check on every send) are what a test needs to
        drive, and they cannot be reached against a real fork without a real key and a real venue. */
-    child = (deps.forkImpl ?? fork)(entry, [], {
+    const spawned = (deps.forkImpl ?? fork)(entry, [], {
       env: { ...process.env, PHOSPHOR_HL_URL: deps.baseUrl },
       stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
     });
-    child.stdin?.write(`${key}\n`);
-    child.stdin?.end();
+    child = spawned;
+    spawned.stdin?.write(`${key}\n`);
+    spawned.stdin?.end();
 
-    child.on('message', (m) => {
+    spawned.on('message', (m) => {
       const e = m as RunnerEvent;
       // A manual result answers one waiting HTTP request rather than going to the log as an
       // event nobody asked for. It is still recorded, because a human closing a position is
@@ -333,30 +367,32 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
       if (e.type === 'halted' || e.type === 'disarmed') armed.delete(e.id);
       record(e);
     });
-    child.on('exit', (code) => {
+    spawned.on('exit', (code) => {
       // Anything armed when the child dies is no longer armed, whatever the exit code. Leaving
       // a mandate listed as live after its executor is gone would misreport the safety state,
       // which this repo already decided is worse than the safety being off.
       for (const [id] of armed) record({ type: 'disarmed', id, reason: `runner exited (${code})` });
       armed.clear();
       stopPump();
-      child = null;
+      // Only if this is still the current one. A process taken out by stopAll has already been
+      // let go of, and clearing the binding here would clear one somebody else is holding.
+      if (child === spawned) child = null;
     });
-    child.stderr?.on('data', (b) => record({ type: 'error', id: null, message: String(b).trim() }));
+    spawned.stderr?.on('data', (b) => record({ type: 'error', id: null, message: String(b).trim() }));
 
     /* A fork that cannot start, and a send on an IPC channel that has closed, both raise 'error'
        on the child rather than throwing at the call site. With no listener Node re-raises it as
        an uncaught exception from nextTick, which ends the app rather than the mandate. Every
        other child in this repo has this listener (see driver.ts); this one did not. */
-    child.on('error', (err) => {
+    spawned.on('error', (err) => {
       for (const [id] of armed) record({ type: 'disarmed', id, reason: `runner child failed: ${err.message}` });
       armed.clear();
       stopPump();
-      child = null;
+      if (child === spawned) child = null;
       record({ type: 'error', id: null, message: `runner child failed: ${err.message}` });
     });
 
-    return child;
+    return spawned;
   }
 
   const api = {
@@ -418,6 +454,12 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
     },
 
     async stopAll(reason: string) {
+      /* First, before anything else: a fork whose key read is still in flight belongs to the
+         world this call is ending, so it never becomes a process. Without this the kill switch
+         could return having killed nothing, and a child would appear a moment later with the
+         trading key and no handle on it anywhere. */
+      generation += 1;
+      starting = null;
       for (const [id] of armed) record({ type: 'disarmed', id, reason });
       armed.clear();
       /* Every signing session goes, not only the ones this map knows about. Freeze everything
@@ -435,6 +477,11 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
         // switch killed the app. The SIGKILL below still runs, so the outcome is unchanged.
         if (child.connected) child.send({ cmd: 'flatten_and_exit', reason });
         const doomed = child;
+        /* Let go of it here rather than waiting for its exit. It has been told to close
+           everything and go, so it is not the child a later arm should be handed: reusing a
+           process that is on its way out would arm a mandate onto something about to be
+           SIGKILLed. The timer below still holds it, so nothing escapes. */
+        child = null;
         setTimeout(() => {
           if (doomed.connected || doomed.exitCode === null) doomed.kill('SIGKILL');
         }, 3000).unref();

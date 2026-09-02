@@ -140,8 +140,10 @@ test('the key goes over stdin and is nowhere in the environment', () => {
 
   assert.ok(!/PHOSPHOR_HL_KEY/.test(host), 'the host must not put the key in the child environment');
   assert.ok(!/PHOSPHOR_HL_KEY/.test(child), 'the child must not read a key from its environment');
-  assert.match(host, /child\.stdin\?\.write/, 'the host writes the key to the pipe');
-  assert.match(host, /child\.stdin\?\.end\(\)/, 'and closes it behind the key');
+  // The handle is named for the process it just forked rather than for the shared binding, so
+  // the pattern allows either: what is under test is the pipe, not the variable.
+  assert.match(host, /\.stdin\?\.write/, 'the host writes the key to the pipe');
+  assert.match(host, /\.stdin\?\.end\(\)/, 'and closes it behind the key');
   assert.match(child, /process\.stdin\.on\('data'/, 'the child reads it from the pipe');
   // The fork has to open a pipe on fd 0 or the write above has nowhere to go.
   assert.match(host, /stdio: \['pipe', 'pipe', 'pipe', 'ipc'\]/);
