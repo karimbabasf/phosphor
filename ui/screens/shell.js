@@ -299,7 +299,14 @@
   }
 
   /* A pending button keeps its width, swaps its label for the progress verb and
-     stops accepting the press. Every wait in this window goes through here. */
+     stops accepting the press. Every wait in this window goes through here.
+
+     `disabled` is the half that was missing, and it mattered most on Unlock.
+     That request does not answer until every proposal queued behind the lock has
+     been sent, which is a rail apiece and can be a minute, so the window looked
+     frozen and the natural thing to do was press it again. The dataset flag and
+     aria-busy said "working" to a screen reader and to the stylesheet and to
+     nothing else: the button still took the click. */
   function setPending(button, pending, label) {
     if (!button) return;
     if (pending) {
@@ -315,10 +322,12 @@
       dom.setText(slot.querySelector('.btn-pending-label'), label || 'Working');
       button.dataset.pending = 'true';
       button.setAttribute('aria-busy', 'true');
+      button.disabled = true;
       return;
     }
     delete button.dataset.pending;
     button.removeAttribute('aria-busy');
+    button.disabled = false;
     button.style.minWidth = '';
   }
 

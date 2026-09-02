@@ -252,7 +252,18 @@ export async function approve(ctx: PCtx, id: string): Promise<Proposal> {
    what the size check reads. So each one goes back through the engine and then through land(),
    which is the same door a fresh proposal uses. A queued proposal that is now too large simply
    lands pending; one the policy now refuses is refused, with the reason recorded.
-   Oldest first, so the order the agent asked in is the order the owner sees. */
+   Oldest first, so the order the agent asked in is the order the owner sees.
+
+   EACH ROW IS RE-READ AND CLAIMED BEFORE IT IS LANDED, and that pair is the fix for a double
+   send. This loop awaits land() per row and each of those ends in a network wait of up to
+   thirty seconds, so a person who clicks Unlock, sees nothing happen for a minute and clicks
+   again used to start a second release over the rows this one had not reached: they were all
+   still pending_unlock, and land() takes the proposal it is handed without ever reading the
+   stored status. Two sends, one intent.
+   The list at the top is therefore a plan, not an authority. The authority is the row on disk
+   at the moment it is its turn, and it is rewritten to `pending` with no await in between, so
+   no second reader can see it as queued. Node runs one thing at a time: read then write with
+   nothing suspended between them is atomic, and that is the whole mechanism. */
 export async function releaseQueued(ctx: PCtx): Promise<number> {
   const waiting = ctx.store
     .list()
@@ -264,14 +275,20 @@ export async function releaseQueued(ctx: PCtx): Promise<number> {
   const policy = loadPolicy(ctx.dataDir);
   let released = 0;
   for (const p of waiting) {
-    const verdict = evaluate(p.draft, buildCtx(ctx, snapshot, policy));
+    // Anything a human refused, or another release already took, is somebody else's now.
+    const current = ctx.store.get(p.id);
+    if (current === undefined || current.status !== 'pending_unlock') continue;
+
+    const verdict = evaluate(current.draft, buildCtx(ctx, snapshot, policy));
+    // Back to pending, because land() reads the status of nothing but writes one: this is what
+    // keeps a released proposal from carrying the queued status into execution, and it is what
+    // claims the row.
+    const claimed = persist(ctx, { ...current, status: 'pending', verdict });
     ctx.audit.append('proposal_created', `${p.id} was re-decided after the wallet was unlocked: ${verdict.outcome}`, {
       id: p.id,
       verdict,
     });
-    // Back to pending first, because land() reads the status of nothing but writes one: this
-    // is what keeps a released proposal from carrying the queued status into execution.
-    await ctx.land({ ...p, status: 'pending', verdict });
+    await ctx.land(claimed);
     released += 1;
   }
   return released;

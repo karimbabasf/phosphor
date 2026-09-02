@@ -46,7 +46,11 @@
   transform: scale(0.97);
 }
 
-.btn:disabled {
+/* A pending button is disabled as well, and that is what stops a second press on a
+   wait that can run to a minute. It keeps its full weight though: the spinner and
+   the progress verb already say what is happening, and dimming it on top of that
+   would read as "not available" rather than "working". */
+.btn:disabled:not([data-pending="true"]) {
   opacity: 0.5;
 }
 

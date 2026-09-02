@@ -87,18 +87,24 @@ function announce(ctx: Ctx): void {
 
 // ---------- unlock and lock ----------
 
-export async function handleUnlock(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  const body = await guarded(ctx, '/api/unlock', req, res);
-  if (body === null) return;
-  const password = typeof body.password === 'string' ? body.password : '';
-  if (password === '') return sendJson(res, 200, { ok: false, error: 'wrong_password' });
+/* ONE UNLOCK AT A TIME, and the second caller is handed the first one's answer.
+   The request does not return until the queue has been released, and releasing a queue means
+   sending every rail that was waiting, so this route can legitimately take a minute. The window
+   disables the button for that whole time, but a disabled button is a courtesy and not a
+   control: anything holding the window token can post twice. So the promise is the control.
+   Sharing the answer regardless of which password the second request carried is deliberate.
+   The wallet is one keystore, so once the first request has opened it the honest answer to the
+   second is that it is open, and that is what GET /api/state already says. No password is held
+   here to compare against, which is the property this file is built on. */
+let unlocking: Promise<JsonBody> | null = null;
 
+async function unlockOnce(ctx: Ctx, password: string): Promise<JsonBody> {
   const out = await ctx.keystore.unlock(password);
   if (!out.ok) {
     // The reason is logged, the attempt is not counted in a way that could be mistaken for a
     // decision, and the password is nowhere near this line.
     ctx.audit.append('approve_attempt_rejected', `unlock refused: ${out.error}`, { error: out.error });
-    return sendJson(res, 200, { ok: false, error: out.error, ...(out.retryInSec !== undefined ? { retryInSec: out.retryInSec } : {}) });
+    return { ok: false, error: out.error, ...(out.retryInSec !== undefined ? { retryInSec: out.retryInSec } : {}) };
   }
   ctx.audit.append('app_start', 'the wallet was unlocked in the window');
   ctx.session.touch();
@@ -106,7 +112,24 @@ export async function handleUnlock(ctx: Ctx, req: http.IncomingMessage, res: htt
   // Anything an agent proposed while the wallet was locked is re-decided now, under the
   // policy as it stands at this moment rather than as it stood when the agent asked.
   const released = await ctx.releaseQueued();
-  sendJson(res, 200, { ok: true, released });
+  return { ok: true, released };
+}
+
+export async function handleUnlock(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  const body = await guarded(ctx, '/api/unlock', req, res);
+  if (body === null) return;
+  const password = typeof body.password === 'string' ? body.password : '';
+  if (password === '') return sendJson(res, 200, { ok: false, error: 'wrong_password' });
+
+  if (unlocking !== null) return sendJson(res, 200, await unlocking);
+
+  const job = unlockOnce(ctx, password);
+  unlocking = job;
+  try {
+    sendJson(res, 200, await job);
+  } finally {
+    if (unlocking === job) unlocking = null;
+  }
 }
 
 export async function handleLock(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {

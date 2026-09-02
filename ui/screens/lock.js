@@ -85,10 +85,20 @@
 
     card.appendChild(dom.el('p', 'meta', 'Your money is still here and still being read. Nothing moves while this app is locked.'));
 
+    /* One unlock in flight at a time. The disabled button covers the click; this
+       covers Enter in the password field, which submits the form without going
+       anywhere near the button. Unlocking sends every proposal that was queued
+       behind the lock, so this wait can run to a minute and pressing again is the
+       obvious thing to do. The route holds its own single in-flight promise, so
+       a second request would be answered rather than acted on; this is what keeps
+       one from being made at all. */
+    var inFlight = false;
+
     var submit = function () {
       var password = input.value;
-      if (!password) return;
+      if (!password || inFlight) return;
       error.hidden = true;
+      inFlight = true;
       window.PhosphorShell.setPending(unlock, true, 'Unlocking');
       api.unlock(password)
         .then(function (answer) {
@@ -107,6 +117,7 @@
           fail(error, net.readable(err));
         })
         .finally(function () {
+          inFlight = false;
           window.PhosphorShell.setPending(unlock, false);
         });
     };

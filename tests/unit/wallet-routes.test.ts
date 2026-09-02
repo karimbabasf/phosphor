@@ -52,13 +52,21 @@ type Booted = {
   post: (route: string, body: unknown, opts?: { origin?: string; contentType?: string }) => Promise<{ status: number; json: any }>;
   get: (route: string, opts?: { origin?: string }) => Promise<{ status: number; json: any }>;
   getRaw: (route: string, headers: Record<string, string>) => Promise<{ status: number; json: any }>;
+  // How many times the queue behind the lock has been released. One unlock is one release.
+  releases: () => number;
   close: () => Promise<void>;
 };
 
 // Demo by default, because that is what every route here behaves the same in. The one
 // exception is migrate, which demo mode refuses outright: it destroys a plaintext key file and
 // a throwaway instance has no business doing that. That test boots live.
-async function boot(mode: AppConfig['mode'] = 'demo'): Promise<Booted> {
+//
+// `releaseDelayMs` stands in for the thing that made a double unlock possible: releasing the
+// queue means sending a rail apiece, so the unlock response can be a minute away, and the
+// window in which a second click lands is that whole wait. Zero everywhere but the one test
+// that needs the wait to be real.
+async function boot(mode: AppConfig['mode'] = 'demo', opts: { releaseDelayMs?: number } = {}): Promise<Booted> {
+  let releases = 0;
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-wallet-'));
   const token = crypto.randomBytes(32).toString('hex');
   process.env.PHOSPHOR_WINDOW_TOKEN = token;
@@ -107,7 +115,11 @@ async function boot(mode: AppConfig['mode'] = 'demo'): Promise<Booted> {
       get: () => undefined,
       list: () => [],
       sessionSpentUsd: () => 0,
-      releaseQueued: async () => 2,
+      releaseQueued: async () => {
+        releases += 1;
+        if (opts.releaseDelayMs) await new Promise((resolve) => setTimeout(resolve, opts.releaseDelayMs));
+        return 2;
+      },
       reconcileOnBoot: () => [],
       reconcile: () => Promise.reject(new Error('not wired in this stub')),
       settle: () => Promise.resolve(true),
@@ -167,7 +179,7 @@ async function boot(mode: AppConfig['mode'] = 'demo'): Promise<Booted> {
     });
   }
 
-  return { url, token, keystore, keysPath, post, get, getRaw, close: () => new Promise<void>((r) => server.close(() => r())) };
+  return { url, token, keystore, keysPath, post, get, getRaw, releases: () => releases, close: () => new Promise<void>((r) => server.close(() => r())) };
 }
 
 // ---------- the guard ----------
@@ -242,6 +254,32 @@ test('lock and unlock move the state, and a wrong password does not', async () =
     assert.equal(right.json.ok, true);
     assert.equal(right.json.released, 2, 'unlocking re-decides what was queued while it was shut');
     assert.equal(b.keystore.state(), 'unlocked');
+  } finally {
+    await b.close();
+  }
+});
+
+/* Two clicks on Unlock, which is what a person does when the first one appears to do nothing.
+   The response waits for the queue to be released and releasing a queue means sending a rail
+   apiece, so the wait is real and the second press is reasonable. What must not happen is a
+   second release: land() takes the proposal it is handed without re-reading the stored status,
+   so two loops over the same queued rows are two sends of one intent. */
+test('two unlocks at once are one unlock, and the queue is released once', async () => {
+  const b = await boot('demo', { releaseDelayMs: 400 });
+  try {
+    await b.post('/api/wallet/create', { token: b.token, password: PASSWORD });
+    await b.post('/api/lock', { token: b.token });
+
+    const first = b.post('/api/unlock', { token: b.token, password: PASSWORD });
+    // Wait until the server is actually inside the release, so the second press lands in the
+    // window the bug lived in rather than after it.
+    while (b.releases() === 0) await new Promise((resolve) => setTimeout(resolve, 5));
+    const second = await b.post('/api/unlock', { token: b.token, password: PASSWORD });
+
+    assert.equal(b.releases(), 1, 'the second press waits on the first rather than releasing the queue again');
+    assert.equal((await first).json.ok, true);
+    assert.equal(second.json.ok, true);
+    assert.equal(second.json.released, 2, 'and it is handed the first one\'s answer');
   } finally {
     await b.close();
   }
