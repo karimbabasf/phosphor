@@ -144,3 +144,47 @@ test('destroyPlaintext refuses outright while the process is in demo mode', () =
   });
   assert.ok(fs.existsSync(target));
 });
+
+/* The installed app is the one case where a data directory the repo default does not name is
+   still the app's own. It lives under Application Support, and the wallet it opens is the wallet
+   it has always opened: an upgrade that moved it would be an app coming up as though the keys
+   were gone. src-tauri/src/backend.rs sets PHOSPHOR_APP_DATA=1 to say so, and nothing else does. */
+test('the installed app keeps the key file it has always had, wherever its data directory is', () => {
+  const home = homeWithLegacyKeys();
+  const root = repo();
+  const support = scratch('phosphor-support-');
+
+  const cfg = withEnv(
+    {
+      HOME: home,
+      PHOSPHOR_KEYS: undefined,
+      PHOSPHOR_MODE: 'live',
+      PHOSPHOR_DATA_DIR: path.join(support, 'state'),
+      PHOSPHOR_CONFIG_DIR: support,
+      PHOSPHOR_APP_DATA: '1',
+    },
+    () => loadConfig(root),
+  );
+
+  assert.equal(cfg.keysPath, path.join(home, '.phosphor', 'keys.json'));
+});
+
+test('without that flag the same data directory carries its own wallet', () => {
+  const home = homeWithLegacyKeys();
+  const root = repo();
+  const support = scratch('phosphor-support-');
+
+  const cfg = withEnv(
+    {
+      HOME: home,
+      PHOSPHOR_KEYS: undefined,
+      PHOSPHOR_MODE: 'demo',
+      PHOSPHOR_DATA_DIR: path.join(support, 'state'),
+      PHOSPHOR_CONFIG_DIR: support,
+      PHOSPHOR_APP_DATA: undefined,
+    },
+    () => loadConfig(root),
+  );
+
+  assert.equal(cfg.keysPath, path.join(support, 'state', 'keys.json'));
+});

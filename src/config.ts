@@ -59,7 +59,13 @@ const DEFAULT_DATA_DIR = 'state';
    An explicit PHOSPHOR_KEYS or a keysPath in config overrides all of this, because a person
    naming a path has said which wallet they mean. */
 function defaultKeysPath(baseDir: string, dataDir: string): string {
-  if (dataDir !== path.resolve(baseDir, DEFAULT_DATA_DIR)) {
+  /* PHOSPHOR_APP_DATA=1 is the installed app saying this data directory is its own rather than
+     one somebody pointed at. It sits under Application Support and so is not the repo default,
+     but the wallet it opens is the same wallet it has always opened, and moving that on upgrade
+     would be an installed app coming up as though it had no keys. Set in src-tauri/backend.rs
+     and nowhere else. */
+  const ownDataDir = dataDir === path.resolve(baseDir, DEFAULT_DATA_DIR) || env('PHOSPHOR_APP_DATA') === '1';
+  if (!ownDataDir) {
     return path.join(dataDir, 'keys.json');
   }
   const home = os.homedir();

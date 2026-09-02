@@ -304,6 +304,12 @@ pub fn spawn_backend(payload: &Path, data: &Path, token: &str) -> Result<Child, 
         .current_dir(payload)
         .env("PHOSPHOR_DATA_DIR", data.join("state"))
         .env("PHOSPHOR_CONFIG_DIR", data)
+        // This data directory is the app's OWN, not a scratch one somebody pointed at. The
+        // backend derives the key file from the data directory now, so that a demo or test
+        // instance gets its own empty wallet instead of the owner's; saying so here is what
+        // keeps the installed app reading the key file in ~/.phosphor that it always has.
+        // See defaultKeysPath in src/config.ts.
+        .env("PHOSPHOR_APP_DATA", "1")
         .env("PHOSPHOR_WINDOW_TOKEN", token)
         // Inherited so a crash on boot is readable in Console.app rather than swallowed.
         .stdout(Stdio::inherit())
