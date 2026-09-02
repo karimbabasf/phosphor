@@ -136,7 +136,7 @@ test('the stop is announced once, not twice', () => {
   // from interrupt(), so the window printed "the human stopped this answer" on two lines. The
   // route no longer speaks for the driver, and this reads the source to say so, because the
   // duplicate is invisible in any assertion about the route's own answer.
-  const source = fs.readFileSync(path.join(ROOT, 'src', 'server.ts'), 'utf8');
+  const source = fs.readFileSync(path.join(ROOT, 'src', 'http', 'mutation.ts'), 'utf8');
   const route = source.slice(source.indexOf("if (action === 'interrupt')"), source.indexOf("if (action === 'stop')"));
   assert.ok(route.length > 0, 'the interrupt branch moved');
   assert.ok(!route.includes('driverEvent('), 'the interrupt route emits a driver event of its own');
