@@ -617,6 +617,11 @@ export type LogEvent = {
     | 'error';
   msg: string; // one human-readable line
   data?: unknown;
+  /* SHA-256 of the previous line, exactly as it was written. It is what makes the file a chain
+     and an edit detectable; see the header of src/audit.ts. Null on the first line of a file,
+     and absent on any line written before the chain existed, which verify() treats as a restart
+     rather than as damage. */
+  prev?: string | null;
 };
 
 // ---------- External rails ----------
