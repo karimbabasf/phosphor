@@ -12,6 +12,7 @@ html, body {
 }
 
 #page {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-height: 100vh;
@@ -20,11 +21,15 @@ html, body {
 
 /* ---------- The pattern field ---------- */
 
+/* The field covers the whole document, not the viewport. Fixed to the window
+   it ended in a hard edge wherever the content ran past the fold, and a person
+   scrolling a tall pro grid met the ground halfway down. */
 .pattern-field {
-  position: fixed;
+  position: absolute;
   inset: 0;
   z-index: 0;
   pointer-events: none;
+  overflow: hidden;
 }
 
 .pattern-local {
@@ -150,10 +155,11 @@ html, body {
 
 /* ---------- Basic: one 720 px column ---------- */
 
-/* The content columns paint the ground themselves, so the field shows in the
-   margins beyond them and nowhere else. Without this it reads through every
-   gutter and the grid looks like it is sitting on static. */
-.basic-col,
+/* Pro and trade paint their own ground, because a twelve column grid with
+   24 px gutters reads as sitting on static when the field shows through every
+   one of them. Basic does not: its cards are full width in a 720 px column, so
+   the only gaps are the thin strips between them, and leaving the field there
+   is what lets the hero have it behind the balance. */
 .pro-grid,
 .trade-wrap {
   background: var(--bg-0);
@@ -168,11 +174,15 @@ html, body {
   gap: var(--s-5);
 }
 
+/* The hero is the one place the field is meant to be seen through the content
+   rather than beside it. The scrim holds it down so the balance wins, which is
+   what "quieter behind the hero" means once the second canvas is gone. */
 .hero {
   position: relative;
   overflow: hidden;
   border-radius: var(--radius);
   padding: var(--s-7) var(--s-5) var(--s-6);
+  background: color-mix(in srgb, var(--bg-0) 62%, transparent);
 }
 
 .hero-inner {

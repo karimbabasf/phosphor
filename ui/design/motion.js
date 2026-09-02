@@ -40,7 +40,9 @@
         if (handle.visible && !wasVisible) handle.due = true;
       }
       pump();
-    }, { threshold: 0.01 });
+      /* A margin, so a field starts drifting just before it is scrolled to
+         rather than snapping into motion under the reader's eye. */
+    }, { threshold: 0.01, rootMargin: '240px' });
   }
 
   function reduced() {
@@ -50,6 +52,11 @@
   function wants(handle) {
     if (!handle.alive) return false;
     if (document.hidden) return false;
+    /* A canvas that has never painted gets its first frame wherever it is. A
+       2d context taken with alpha:false starts opaque black, so an unpainted
+       canvas below the fold is not an empty area, it is a black rectangle, and
+       a person who scrolls to it sees the hole before they see the paint. */
+    if (handle.frames === 0) return true;
     if (!handle.visible) return false;
     if (handle.due) return true;
     if (!handle.running) return false;

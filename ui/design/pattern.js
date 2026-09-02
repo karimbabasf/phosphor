@@ -160,7 +160,15 @@
   function mount(node, options) {
     var opts = options || {};
     var motion = window.PhosphorMotion;
-    var cells = Math.max(2, Math.round(opts.cells || 17));
+    /* A cell has a size, not a count. Seventeen across a 1440 window made
+       85 px tiles that read as a floor rather than a field, and the same count
+       inside a 300 px panel made 17 px ones. The target is a physical size and
+       the count follows the container. */
+    var cellPx = Math.max(8, opts.cellPx || 42);
+    var fixedCells = opts.cells ? Math.max(2, Math.round(opts.cells)) : 0;
+    /* Scales the whole amplitude. The hero card sits on top of the field and
+       wants it quieter there than out in the margins. */
+    var amp = opts.amplitude === undefined ? 1 : opts.amplitude;
     var seed = (opts.seed === undefined ? 1 : opts.seed) >>> 0;
     var fps = opts.fps || 24;
 
@@ -193,7 +201,7 @@
     var groundFill = '#09090B';
 
     var viewW = 0, viewH = 0, dpr = 1;
-    var cell = 1, cellHalf = 0.5, cols = cells, rows = 1;
+    var cell = 1, cellHalf = 0.5, cols = 2, rows = 1;
     var originX = 0, originY = 0, shiftRow = 0;
     var colPx = null, rowPx = null, colN = null, rowN = null;
 
@@ -217,6 +225,7 @@
       var fit = motion.fitCanvas(canvas, 2);
       viewW = fit.w; viewH = fit.h; dpr = fit.dpr;
 
+      cols = fixedCells || Math.max(2, Math.round(viewW / cellPx));
       cell = viewW / cols;
       cellHalf = cell * 0.5;
       rows = Math.max(1, Math.ceil(viewH / cell) + 1);
@@ -282,7 +291,7 @@
       var span = 1 - gate;
       if (span < 0.02) span = 0.02;
       var invSpan = 1 / span;
-      var slide = OFFSET * cell;
+      var slide = OFFSET * cell * amp;
       var rowShift = cell * 0.42 * rowMix;
       var rowKeep = 1 - rowMix;
       var rowSide = cell * 0.84;
@@ -346,8 +355,11 @@
               ctx.setTransform(base, 0, 0, base, 0, 0);
               transformed = false;
             }
-            ctx.fillRect(cx + dx - half - HALF_BLEED, cy + dy - half - HALF_BLEED,
-                         side + BLEED, side + BLEED);
+            var x0 = Math.round((cx + dx - half) * dpr) / dpr;
+            var y0 = Math.round((cy + dy - half) * dpr) / dpr;
+            var x1 = Math.round((cx + dx + half) * dpr) / dpr;
+            var y1 = Math.round((cy + dy + half) * dpr) / dpr;
+            ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
           }
         }
       }
