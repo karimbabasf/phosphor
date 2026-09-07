@@ -140,28 +140,43 @@ async function fetchSpotUsd(product: string, fetchImpl: typeof fetch): Promise<n
   return close;
 }
 
-// Best-effort spot prices for the three native gas assets. A failure here must never throw
-// refresh() itself; it falls back to the last known price (or 0 on the very first refresh).
+/* Best-effort spot prices for the three native gas assets. A failure here must never throw
+   refresh() itself; it falls back to the last known price (or 0 on the very first refresh).
+
+   The fallback is what makes the timestamp necessary. Reusing the last known price is the right
+   behaviour for a display, which is why it stays, and the wrong behaviour for a cap, because a
+   number reused indefinitely reads exactly like a fresh one. So each price carries the time it
+   was FETCHED, never the time it was copied forward: a failed fetch keeps the old stamp and the
+   value ages out of use on its own. What the panel shows and what the policy engine will govern
+   against are then two different questions with two different answers, instead of one number
+   silently answering both. */
+type LivePrices = { prices: Record<string, number>; asOf: Record<string, number> };
+
 async function resolveLivePrices(
   fetchImpl: typeof fetch,
   fallback: Record<string, number>,
-): Promise<Record<string, number>> {
+  fallbackAsOf: Record<string, number>,
+  now: () => number = Date.now,
+): Promise<LivePrices> {
   const products: Array<[string, string]> = [
     ['ETH', 'ETH-USD'],
     ['SOL', 'SOL-USD'],
     ['NEAR', 'NEAR-USD'],
   ];
   const prices: Record<string, number> = { ...fallback };
+  const asOf: Record<string, number> = { ...fallbackAsOf };
   await Promise.all(
     products.map(async ([symbol, product]) => {
       try {
         prices[symbol] = await fetchSpotUsd(product, fetchImpl);
+        asOf[symbol] = now();
       } catch {
         prices[symbol] = fallback[symbol] ?? 0;
+        // The stamp is deliberately NOT touched. This price was not read now.
       }
     }),
   );
-  return prices;
+  return { prices, asOf };
 }
 
 // The chain readers set usd = amount for every non-native token, which is this app's
@@ -325,6 +340,7 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch): Ledger {
     chainStatus: emptyChainStatus(),
     mode: 'live',
     prices: {},
+    priceAsOf: {},
     gas: Object.fromEntries(ALL_CHAINS.map(c => [c, { transferCostUsd: 0 }])) as Record<ChainId, { transferCostUsd: number }>,
   };
 
@@ -348,9 +364,11 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch): Ledger {
   async function refresh(): Promise<LedgerSnapshot> {
     // Started, not awaited. Everything below runs against this promise and joins it only
     // where a dollar figure is actually needed.
-    const pricesPromise = resolveLivePrices(fetchImpl, current.prices);
+    const livePrices = resolveLivePrices(fetchImpl, current.prices, current.priceAsOf ?? {});
+    // The chain readers want the table alone, so they never have to know a price carries a time.
+    const pricesPromise = livePrices.then((p) => p.prices);
 
-    const [ethR, baseR, arbR, solR, nearR, positions, intentsRead, prices] = await Promise.all([
+    const [ethR, baseR, arbR, solR, nearR, positions, intentsRead, priced] = await Promise.all([
       refreshEvmChain('eth', cfg, tokens, pricesPromise, current, fetchImpl),
       refreshEvmChain('base', cfg, tokens, pricesPromise, current, fetchImpl),
       refreshEvmChain('arb', cfg, tokens, pricesPromise, current, fetchImpl),
@@ -358,8 +376,9 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch): Ledger {
       refreshNearChain(cfg, tokens, pricesPromise, current, fetchImpl),
       refreshPositions(cfg, livePositions),
       refreshIntents(),
-      pricesPromise,
+      livePrices,
     ]);
+    const prices = priced.prices;
     livePositions = positions;
     liveIntents = intentsRead;
 
@@ -373,6 +392,7 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch): Ledger {
       chainStatus: { eth: ethR.status, base: baseR.status, arb: arbR.status, sol: solR.status, near: nearR.status },
       mode: 'live',
       prices,
+      priceAsOf: priced.asOf,
       gas: {
         eth: { transferCostUsd: ethR.transferCostUsd },
         base: { transferCostUsd: baseR.transferCostUsd },
