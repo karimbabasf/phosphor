@@ -152,14 +152,23 @@ export async function executeRail(ctx: PCtx, p: Proposal, rail: Rail): Promise<P
     result = { ok: false, detail: `${p.draft.kind} rail threw: ${errText(err)}` };
   }
 
+  /* THE HASH IS THE RECORD. THE BALANCE IS A DECORATION.
+     Both used to be written together, after `balanceAfter`, which is up to fifteen seconds of
+     RPC reads across five chains. A process that ended inside that window (SIGKILL, Force Quit,
+     power loss, or the uncaught-exception handler in src/crash.ts, which exits with no drain)
+     had broadcast a transaction and recorded nothing about it: reconcileOnBoot found an
+     `executing` row with no txids and could only say "this may or may not have sent", and
+     reconcileProposal had nothing to look it up by. Money moved and no hash existed anywhere.
+     The shutdown drain does not cover it either; SETTLE_CAP_MS is 32s and a 30s venue write plus
+     a 15s refresh is 45s.
+     So the durable write happens the instant the rail answers, and the balance is a second
+     update afterwards. */
   const txids = result.txids ?? [];
-  const balances = { beforeUsd, afterUsd: await balanceAfter(ctx) };
-  if (!result.ok) {
-    ctx.audit.append('execution_failed', `${p.id}: ${result.detail}`, { id: p.id, txids });
-    return persist(ctx, { ...executing, status: 'failed', balances, result: { ok: false, detail: result.detail, txids } });
-  }
-  ctx.audit.append('executed', `${p.id}: ${result.detail}`, { id: p.id, txids });
-  return persist(ctx, { ...executing, status: 'executed', balances, result: { ok: true, detail: result.detail, txids } });
+  const status = result.ok ? 'executed' : 'failed';
+  ctx.audit.append(result.ok ? 'executed' : 'execution_failed', `${p.id}: ${result.detail}`, { id: p.id, txids });
+  const recorded = persist(ctx, { ...executing, status, result: { ok: result.ok, detail: result.detail, txids } });
+
+  return persist(ctx, { ...recorded, balances: { beforeUsd, afterUsd: await balanceAfter(ctx) } });
 }
 
 function legKey(leg: TransferLeg): string {
@@ -245,6 +254,7 @@ async function executeFundMove(ctx: PCtx, p: Proposal): Promise<Proposal> {
 
   const failures: string[] = [];
   const txids: string[] = [];
+  let row = executing;
   for (const leg of legs) {
     try {
       const res = await ctx.signer.send(leg, depositAddressFor(leg));
@@ -253,18 +263,21 @@ async function executeFundMove(ctx: PCtx, p: Proposal): Promise<Proposal> {
     } catch (err) {
       failures.push(`${leg.fromChain} -> ${leg.toChain}: ${errText(err)}`);
     }
+    /* AFTER EVERY LEG, not once at the end. Nothing used to be written between legs, so a
+       three-leg consolidation that died on the third lost the hashes of the first two along with
+       the one still in flight. The row stays `executing` until the loop finishes, which is what
+       it is; what changes is that the hashes it has already collected are on disk. */
+    row = persist(ctx, { ...row, result: { ok: failures.length === 0, detail: `${txids.length} of ${legs.length} leg(s) sent`, txids } });
   }
 
-  const balances = { beforeUsd, afterUsd: await balanceAfter(ctx) };
-  if (failures.length > 0) {
-    const detail = failures.join('; ');
-    ctx.audit.append('execution_failed', `${p.id}: ${detail}`, { id: p.id, txids });
-    return persist(ctx, { ...executing, status: 'failed', balances, result: { ok: false, detail, txids } });
-  }
+  const ok = failures.length === 0;
+  const detail = ok ? `sent ${legs.length} leg(s): ${txids.join(', ')}` : failures.join('; ');
+  ctx.audit.append(ok ? 'executed' : 'execution_failed', `${p.id}: ${detail}`, { id: p.id, txids });
+  const recorded = persist(ctx, { ...row, status: ok ? 'executed' : 'failed', result: { ok, detail, txids } });
 
-  const detail = `sent ${legs.length} leg(s): ${txids.join(', ')}`;
-  ctx.audit.append('executed', `${p.id}: ${detail}`, { id: p.id, txids });
-  return persist(ctx, { ...executing, status: 'executed', balances, result: { ok: true, detail, txids } });
+  // The balance last, as a second update. It is a receipt decoration and it costs up to fifteen
+  // seconds; the hashes above are the record and they are already durable.
+  return persist(ctx, { ...recorded, balances: { beforeUsd, afterUsd: await balanceAfter(ctx) } });
 }
 
 async function applyPolicyChange(ctx: PCtx, p: Proposal): Promise<Proposal> {
