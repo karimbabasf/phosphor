@@ -37,6 +37,7 @@ import {
   NATIVE_TOKEN_ID,
   ONECLICK_TERMINAL,
   assetIdFor,
+  baseUnits,
   nativeAssetIdFor,
   oneClickClient,
   oneLine,
@@ -146,19 +147,6 @@ export type IntentsDepositRail = Rail<IntentsDepositDraft>;
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
-}
-
-// A base-unit field from the API. Never Number(): 18-decimal amounts do not survive a
-// double, and a garbage string must fail loudly rather than become NaN.
-function baseUnits(value: unknown, field: string): bigint {
-  if (typeof value !== 'string' && typeof value !== 'number') {
-    throw new Error(`1click quote is missing ${field}`);
-  }
-  try {
-    return BigInt(value);
-  } catch {
-    throw new Error(`1click quote returned a non-integer ${field}: ${oneLine(value, 40)}`);
-  }
 }
 
 export function intentsDepositRail(deps: IntentsDepositRailDeps): IntentsDepositRail {

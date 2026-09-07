@@ -47,6 +47,7 @@ import type { Rail, RailResult, SimulationResult, SwapDraft } from '../types.ts'
 import {
   ONECLICK_BASE,
   ONECLICK_TERMINAL,
+  baseUnits,
   oneClickClient,
   oneLine,
   resolveAsset,
@@ -854,17 +855,6 @@ export type IntentsNativeRail = Rail<SwapDraft>;
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
-}
-
-function baseUnits(value: unknown, field: string): bigint {
-  if (typeof value !== 'string' && typeof value !== 'number') {
-    throw new Error(`1click quote is missing ${field}`);
-  }
-  try {
-    return BigInt(value);
-  } catch {
-    throw new Error(`1click quote returned a non-integer ${field}: ${oneLine(value, 40)}`);
-  }
 }
 
 export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRail {

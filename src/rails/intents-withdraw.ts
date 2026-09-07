@@ -53,7 +53,7 @@ import type {
   RailResult,
   SimulationResult,
 } from '../types.ts';
-import { ONECLICK_TERMINAL, oneLine, resolveAsset, toBaseUnits } from '../intents.ts';
+import { ONECLICK_TERMINAL, baseUnits, oneLine, resolveAsset, toBaseUnits } from '../intents.ts';
 import type { OneClickQuote, OneClickStatus, TokensFile } from '../intents.ts';
 import {
   INTENTS_SIGNING_STANDARD,
@@ -168,17 +168,6 @@ export type IntentsWithdrawRail = Rail<IntentsWithdrawDraft>;
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
-}
-
-function baseUnits(value: unknown, field: string): bigint {
-  if (typeof value !== 'string' && typeof value !== 'number') {
-    throw new Error(`1click quote is missing ${field}`);
-  }
-  try {
-    return BigInt(value);
-  } catch {
-    throw new Error(`1click quote returned a non-integer ${field}: ${oneLine(value, 40)}`);
-  }
 }
 
 export function intentsWithdrawRail(deps: IntentsWithdrawRailDeps): IntentsWithdrawRail {

@@ -50,7 +50,7 @@
 // parameters are the narrow part: toPerp is always true and the amount comes from a balance
 // this rail just observed, so the worst it can do is move our own money between our own books.
 
-import { getAddress, isAddress } from 'viem';
+import { formatUnits, getAddress, isAddress } from 'viem';
 import type { Address } from 'viem';
 import { erc20Balance, erc20TransferData, evmAddress, reader, sendTx } from '../chain/evm.ts';
 import type { SendOutcome, SendParams } from '../chain/evm.ts';
@@ -66,7 +66,7 @@ import {
 } from '../chain/near.ts';
 import type { NearSendOutcome, NearSendParams } from '../chain/near.ts';
 import type { ChainId, HlDepositDraft, Rail, RailResult, SimulationResult } from '../types.ts';
-import { ONECLICK_TERMINAL, assetIdFor, oneClickClient, oneLine, toBaseUnits } from '../intents.ts';
+import { ONECLICK_TERMINAL, assetIdFor, baseUnits, oneClickClient, oneLine, toBaseUnits } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickStatus, TokensFile } from '../intents.ts';
 import { ONECLICK_COUNTERPARTY } from './oneclick.ts';
 import { usdClassTransfer } from './hyperliquid-withdraw.ts';
@@ -122,8 +122,25 @@ export const MAX_FEE_PCT = 5;
 // So the floor is the measured fee with headroom on both terms, roughly doubled on the bp side
 // and rounded up on the flat side. It still caps the loss, and it caps it against the shape the
 // fee actually has.
-export const HYPERCORE_FLAT_FEE_USDC = 0.35; // measured 0.315
+export const HYPERCORE_FLAT_FEE_USDC = 0.45; // measured 0.315
 export const HYPERCORE_FEE_BPS = 20; // measured about 10
+
+/* The slippage tolerance this rail ASKS FOR, and the reason the flat term above went from 0.35
+   to 0.45 when the floor check moved onto the guaranteed number.
+
+   1Click returns two outputs: amountOutFormatted, which it expects to deliver, and
+   minAmountOut, which it guarantees. The gap between them is this tolerance. The rail never set
+   one, so it inherited the API default of 100 bps, and the guarantee then sat about a percent
+   under the promise: on 100 USDC the quote promised 99.58 and guaranteed about 98.59, against a
+   floor claiming 99.65. Checking the guarantee against that floor would have refused every
+   honest deposit, so the tolerance and the floor have to be set together or neither is real.
+
+   10 bps because the route is stable to stable across a bridge with a nearly flat fee, not a
+   volatile swap: there is no real price to slip against. Against the measured table the floor
+   then clears the guarantee by about 13 cents at every size, which is headroom for fee drift
+   rather than headroom for loss. If the venue cannot honour it the quote is refused and the
+   refusal names this number, which is the visible failure a silent one percent was not. */
+export const HYPERCORE_SLIPPAGE_BPS = 10;
 
 export function minCreditedFor(amount: number): number {
   if (!Number.isFinite(amount) || amount <= 0) return 0;
@@ -448,6 +465,24 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
       problems.push(`the quote credits ${out} USDC and the approved draft required at least ${draft.minCredited}`);
     }
 
+    /* And the GUARANTEED floor, which is the gate. The comparison above reads
+       amountOutFormatted, the solver's EXPECTED output; minAmountOut is what it commits to, and
+       it is the field every sibling rail checks. In base units, as they do, because comparing
+       two decimal strings through a double is how a floor stops being exact.
+
+       A missing minAmountOut throws rather than reading as zero: a quote that guarantees
+       nothing is not a quote this rail can measure against a floor. */
+    const guaranteed = baseUnits(quote.minAmountOut, 'minAmountOut');
+    const floor = toBaseUnits(draft.minCredited, HYPERCORE_USDC_DECIMALS);
+    if (guaranteed < floor) {
+      problems.push(
+        `the quote guarantees only ${formatUnits(guaranteed, HYPERCORE_USDC_DECIMALS)} USDC against the ` +
+          `${draft.minCredited} the approved draft floors at, whatever the ${out} it expects to deliver. ` +
+          `This rail asks for ${HYPERCORE_SLIPPAGE_BPS} bps of tolerance, so a wider gap than that is the ` +
+          'venue offering a guarantee it was not asked for',
+      );
+    }
+
     if (Number.isFinite(feePct) && feePct > MAX_FEE_PCT) {
       problems.push(
         `the routing cost is ${feePct.toFixed(2)} percent of the deposit, above the ${MAX_FEE_PCT} percent ceiling. ` +
@@ -678,6 +713,9 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
         amount: p.amountBase.toString(),
         refundTo: draft.from,
         recipient: draft.hlAccount,
+        // Named, not inherited. checkQuote gates on the guarantee this tolerance produces, so
+        // the number asked for and the number checked have to be the same number.
+        slippageToleranceBps: HYPERCORE_SLIPPAGE_BPS,
         recipientType: 'DESTINATION_CHAIN',
         refundType: 'ORIGIN_CHAIN',
         depositType: 'ORIGIN_CHAIN',
@@ -746,6 +784,7 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
       amount: p.amountBase.toString(),
       refundTo: draft.from,
       recipient: draft.hlAccount,
+      slippageToleranceBps: HYPERCORE_SLIPPAGE_BPS,
       recipientType: 'DESTINATION_CHAIN',
       refundType: 'ORIGIN_CHAIN',
       depositType: 'ORIGIN_CHAIN',

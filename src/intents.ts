@@ -162,6 +162,25 @@ export function toBaseUnits(amount: number, decimals: number): bigint {
   return parseUnits(plainDecimal(amount), decimals);
 }
 
+// A base-unit field off a quote. Never Number(): 18-decimal amounts do not survive a double, and
+// a garbage string must fail loudly rather than become NaN.
+//
+// One copy, here, because four rails each had their own and the fifth caller was about to make a
+// fifth. A missing field throws rather than defaulting to zero, which matters most for the field
+// this was added for: minAmountOut absent is a quote that guarantees nothing, and reading it as
+// a floor of zero is how a rail accepts exactly that.
+export function baseUnits(value: unknown, field: string): bigint {
+  if (typeof value !== 'string' && typeof value !== 'number') {
+    throw new Error(`1click quote is missing ${field}`);
+  }
+  if (value === '') throw new Error(`1click quote is missing ${field}`);
+  try {
+    return BigInt(value);
+  } catch {
+    throw new Error(`1click quote returned a non-integer ${field}: ${oneLine(value, 40)}`);
+  }
+}
+
 // ---------- responses, treated as data ----------
 
 export type OneClickQuote = {
