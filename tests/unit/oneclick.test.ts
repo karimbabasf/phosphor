@@ -117,7 +117,6 @@ function quoteBody(over: Record<string, unknown> = {}): Record<string, unknown> 
       depositAddress: DEPOSIT,
       ...over,
     },
-    quoteRequest: {},
     signature: 'ed25519:test',
     timestamp: '2026-08-12T01:42:11.047Z',
     correlationId: 'test-correlation-id',
@@ -149,6 +148,10 @@ function harness(
   options: {
     quote?: Record<string, unknown>;
     quoteStatus?: number;
+    // What the API echoes back in quoteRequest. Left out it is the request itself, verbatim,
+    // which is what the live API returns; a patch simulates a server pricing something else,
+    // and null a server that echoes nothing at all.
+    echo?: Record<string, unknown> | null;
     statuses?: unknown[]; // one payload per /v0/status call; the last one repeats
     send?: SendOutcome;
     nearSend?: NearSendOutcome;
@@ -165,8 +168,14 @@ function harness(
     const u = String(url);
     if (u.endsWith('/v0/tokens')) return jsonResponse(oneClickTokens);
     if (u.endsWith('/v0/quote')) {
-      quoteBodies.push(JSON.parse(String(init?.body)));
-      return jsonResponse(options.quote ?? quoteBody(), options.quoteStatus ?? 201);
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      quoteBodies.push(body);
+      const payload = options.quote ?? quoteBody();
+      const echoed = options.echo === null ? null : { ...body, ...(options.echo ?? {}) };
+      return jsonResponse(
+        echoed === null ? payload : { ...payload, quoteRequest: echoed },
+        options.quoteStatus ?? 201,
+      );
     }
     if (u.endsWith('/v0/deposit/submit')) {
       depositSubmits.push(JSON.parse(String(init?.body)));
@@ -702,4 +711,143 @@ test('a transfer that never broadcast still says plainly that nothing moved', as
   assert.equal(out.ok, false);
   assert.deepEqual(out.txids, []);
   assert.match(out.detail, /No funds left the wallet/, 'with no hash the sentence is true and stays');
+});
+
+// ---------- the slippage floor ----------
+//
+// The Uniswap rail refuses a floor of zero and a floor far under its own quote, and says why in
+// a comment that names the threat: the tool surface has no recipient field, so a hijacked agent
+// cannot name an attacker, but it can name a price at which a sandwich takes the money. That
+// reasoning is venue-independent and this rail did not have it.
+
+test('a swap with minAmountOut 0 is refused before any quote', async () => {
+  const h = harness();
+  const out = await railOf(h).simulate(draftOf({ minAmountOut: 0 }));
+
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /no slippage floor/);
+  assert.equal(h.quoteBodies.length, 0, 'refused before the API was asked for anything');
+});
+
+test('and execute refuses the same draft rather than signing it', async () => {
+  const h = harness();
+  await assert.rejects(() => railOf(h).execute(draftOf({ minAmountOut: 0 })), /no slippage floor/);
+  assert.equal(h.sends.length, 0, 'nothing was signed');
+});
+
+test('a solver floor more than 20 percent below the quote is refused', async () => {
+  // The quote's own output is 99.85 USDT and the solver guarantees 70, which is 30 percent
+  // under it. The draft floor of 60 is lower still, so the old floor check passed this.
+  const h = harness({ quote: quoteBody({ minAmountOut: '70000000' }) });
+  const out = await railOf(h).simulate(draftOf({ minAmountOut: 60 }));
+
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /below the .* this swap quotes/);
+});
+
+test('a solver floor a normal distance under the quote still passes', async () => {
+  const h = harness();
+  const out = await railOf(h).simulate(draftOf({ minAmountOut: 99 }));
+  assert.equal(out.ok, true, out.summary);
+});
+
+// ---------- the destination side ----------
+//
+// checkDepositAddress validates the ORIGIN deposit address against the origin family and
+// nothing validated the other end, so draft.to went to the solver as whatever config held. A
+// live config.local.json carrying "phosphor.testnet" under addresses.near therefore made a
+// testnet account the payout address of a real cross-chain swap: the transfer leaves the origin
+// chain and the solver is asked to pay out on NEAR mainnet to an account that does not exist.
+
+test('a swap whose destination is not a settlable account on toChain is refused before any quote', async () => {
+  const h = harness();
+  const out = await railOf(h).simulate(draftOf({ toChain: 'near', toSymbol: 'wNEAR', to: 'phosphor.testnet' }));
+
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /phosphor\.testnet/);
+  assert.equal(h.quoteBodies.length, 0, 'refused before the API was asked for anything');
+});
+
+test('an EVM address as the destination of a NEAR payout is refused too', async () => {
+  const h = harness();
+  const out = await railOf(h).simulate(draftOf({ toChain: 'near', toSymbol: 'wNEAR', to: OWNER }));
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /near/);
+});
+
+test('a named mainnet account on toChain near is accepted', async () => {
+  // wNEAR is 24 decimals, so the quote has to be scaled for the destination token rather than
+  // reusing the 6-decimal fixture: otherwise the slippage floor refuses this and the test would
+  // pass for the wrong reason.
+  const h = harness({
+    quote: quoteBody({ amountOut: '99850000000000000000000000', minAmountOut: '99500000000000000000000000' }),
+  });
+  const out = await railOf(h).simulate(draftOf({ toChain: 'near', toSymbol: 'wNEAR', to: 'phosphor.near' }));
+  assert.equal(out.ok, true, out.summary);
+});
+
+test('a NEAR account id as the destination of an EVM payout is refused', async () => {
+  const h = harness();
+  const out = await railOf(h).simulate(draftOf({ to: 'phosphor.near' }));
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /not an EVM address/);
+});
+
+// ---------- the quoteRequest echo ----------
+//
+// The API echoes the request it priced, and until now this rail read the amounts and nothing
+// else. A quote priced to a different recipient, or with recipientType silently moved from
+// DESTINATION_CHAIN to INTENTS, passed every check: the proceeds land in a verifier balance
+// instead of the wallet, which reads as a successful swap and is not.
+
+test('a quote that echoes a different recipient is refused', async () => {
+  const h = harness({ echo: { recipient: '0x000000000000000000000000000000000000dEaD' } });
+  const out = await railOf(h).simulate(draftOf());
+
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /priced to pay/);
+});
+
+test('a quote with no echo at all is refused rather than trusted', async () => {
+  const h = harness({ echo: null });
+  const out = await railOf(h).simulate(draftOf());
+
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /no quoteRequest echo/);
+});
+
+test('a payout quietly rerouted into a verifier balance is refused', async () => {
+  const h = harness({ echo: { recipientType: 'INTENTS' } });
+  const out = await railOf(h).simulate(draftOf());
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /not DESTINATION_CHAIN/);
+});
+
+test('the echo is checked again on the live quote, before anything is signed', async () => {
+  const h = harness({ echo: { refundTo: '0x000000000000000000000000000000000000dEaD' } });
+  await assert.rejects(() => railOf(h).execute(draftOf()), /refund on this quote goes to/);
+  assert.equal(h.sends.length, 0, 'nothing was signed');
+});
+
+test('a token whose 1Click decimals disagree with the registry is refused before any quote', async () => {
+  // 18 on the wire against 6 in data/tokens.json. Every amount this rail sent would be wrong by
+  // twelve orders of magnitude, and nothing downstream compares the two numbers.
+  const wrong = oneClickTokens.map((t) => (t.symbol === 'USDC' ? { ...t, decimals: 18 } : t));
+  const h = harness();
+  const original = h.fetchImpl;
+  const rail = oneClickRail({
+    keysPath: '/nowhere/keys.json',
+    tokens: tokensFixture,
+    evm: h.evm,
+    near: h.near,
+    fetchImpl: (async (url: unknown, init: unknown) => {
+      if (String(url).endsWith('/v0/tokens')) return jsonResponse(wrong);
+      return original(url as never, init as never);
+    }) as unknown as typeof fetch,
+  });
+
+  const out = await rail.simulate(draftOf());
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /decimals/);
+  assert.equal(h.quoteBodies.length, 0, 'refused before the API was asked to price anything');
 });

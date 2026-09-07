@@ -72,6 +72,52 @@ function lower(s: string): string {
   return s.toLowerCase();
 }
 
+/* ---------- who counts as one of our own addresses ----------
+
+   This used to be one lowercased Set, which is right for an EVM address and wrong for base58.
+   src/rails/intents-withdraw.ts states the rule: "base58 case carries key material, and two
+   strings differing only in case are two different accounts." The rail compares case-correctly
+   and catches it; this layer, which is meant to hold regardless of which rail ran, did not. A
+   Solana payout to a case variant of our address is not theft, it is a total loss.
+
+   So a Solana-shaped destination is compared EXACTLY, and everything else keeps the
+   case-insensitive comparison it had: an EVM address has two legitimate spellings of the same
+   20 bytes, a NEAR account id is lowercase by its own rule, and a venue string on the allowlist
+   is not an address at all.
+
+   The shape test only decides WHICH comparison to use. It is not an address check, and the rails
+   decode properly before anything is signed. `0x` prefixed hex cannot match it, because 0 is not
+   in the base58 alphabet, and neither can a NEAR id, which is either 64 hex characters or
+   carries a dot. */
+const SOLANA_SHAPED = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
+/* The two sets, and why there are two.
+   src/proposals/lifecycle.ts lowercases every address before it reaches this engine, so the real
+   casing of a configured address does not survive the trip. The ledger's holdings do carry it,
+   and so does the policy allowlist, and those are the two places an exact spelling can come from.
+
+   A Solana destination matches when it is one of those exact spellings. When NO exact spelling
+   for it exists anywhere, the engine has only the lowercased copy and genuinely cannot tell the
+   two apart, so it allows rather than refusing an address that may well be ours. That case is a
+   chain we hold nothing on, where the exact spelling never reached this layer at all. */
+type AddressSet = { exact: Set<string>; lowered: Set<string> };
+
+function addressSet(lowered: string[], exact: string[]): AddressSet {
+  return {
+    exact: new Set(exact.map((a) => a.trim())),
+    lowered: new Set([...lowered, ...exact].map((a) => lower(a.trim()))),
+  };
+}
+
+function isOurs(set: AddressSet, destination: string): boolean {
+  const value = destination.trim();
+  if (!SOLANA_SHAPED.test(value)) return set.lowered.has(lower(value));
+  if (set.exact.has(value)) return true;
+  // An exact spelling exists for this account and it is not the one we were handed.
+  const contradicted = [...set.exact].some((a) => lower(a) === lower(value));
+  return !contradicted && set.lowered.has(lower(value));
+}
+
 function money(usd: number): string {
   return '$' + usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
@@ -319,11 +365,11 @@ function evaluateRail(draft: RailDraft, policy: Policy, ctx: EngineCtx, reasons:
   // The venue must be explicitly blessed. Unlike a transfer, the recipient here is a
   // contract the app chose, so an unknown one means either a misconfiguration or a
   // rail pointed somewhere it should not be. Both are refusals.
-  const allowed = new Set<string>([
-    ...ctx.selfAddresses.map(lower),
-    ...policy.outbound.destinationAllowlist.map(lower),
+  const allowed = addressSet(ctx.selfAddresses, [
+    ...ctx.ledger.holdings.map((h) => h.address),
+    ...policy.outbound.destinationAllowlist,
   ]);
-  if (!allowed.has(lower(counterparty))) {
+  if (!isOurs(allowed, counterparty)) {
     return refusal(
       reasons,
       'destination_not_allowed',
@@ -338,7 +384,7 @@ function evaluateRail(draft: RailDraft, policy: Policy, ctx: EngineCtx, reasons:
   // currently expose `to`, which is what stops that today, but a governance rule that holds
   // only because of the shape of the caller is not a governance rule.
   const destination = destinationOf(draft);
-  if (destination !== null && !allowed.has(lower(destination))) {
+  if (destination !== null && !isOurs(allowed, destination)) {
     return refusal(
       reasons,
       'destination_not_allowed',
@@ -422,11 +468,11 @@ export function evaluate(draft: WriteDraft, ctx: EngineCtx): Verdict {
   reasons.push(`Moving ${money(totalUsd)} in total.`);
 
   // 5. Destination. Self addresses are implicitly allowed, everything else must be listed.
-  const allowedDestinations = new Set<string>([
-    ...ctx.selfAddresses.map(lower),
-    ...policy.outbound.destinationAllowlist.map(lower),
+  const allowedDestinations = addressSet(ctx.selfAddresses, [
+    ...ctx.ledger.holdings.map((h) => h.address),
+    ...policy.outbound.destinationAllowlist,
   ]);
-  const badDestination = legs.find(l => !allowedDestinations.has(lower(l.to)));
+  const badDestination = legs.find(l => !isOurs(allowedDestinations, l.to));
   if (badDestination) {
     return refusal(
       reasons,

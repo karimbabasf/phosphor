@@ -124,6 +124,35 @@ function compositionDelta(ctx: PCtx, snapshot: LedgerSnapshot, legs: TransferLeg
   return { lines, post };
 }
 
+/* How old a spot price may be before this app stops sizing money against it.
+
+   Two minutes, and the shape of the failure decides the number rather than taste. Prices come
+   from one endpoint on a one-minute candle, so a reading inside two minutes is at worst one
+   candle behind and a reading past it means the fetch has failed at least once and the value is
+   being reused. The old loader reused it forever: on failure it wrote back the last known price
+   with no timestamp, so a degraded endpoint during a real move meant every cap was measured
+   against a price that no longer existed and nothing anywhere could tell.
+
+   An expired price behaves exactly like an absent one, which already means priceOf returns null,
+   usdOf returns Infinity and the engine refuses as invalid_amount. That path was built for the
+   cold start and was already correct; this only widens what reaches it. Refusing beats guessing:
+   a cap decided on a price this app cannot vouch for is not a cap. */
+export const PRICE_STALENESS_MS = 120_000;
+
+/* Whether the price for a symbol is one this app is still willing to govern against.
+
+   A snapshot with no priceAsOf map is a demo or fixture snapshot, whose prices are a static
+   table rather than a reading off a wire: there is no fetch time and nothing to be stale. A
+   snapshot that HAS the map and no entry for this symbol is the opposite case, a live snapshot
+   that cannot say when this number was read, and an unknown age is not a fresh one. */
+function priceIsFresh(snapshot: LedgerSnapshot, symbol: string): boolean {
+  const stamps = snapshot.priceAsOf;
+  if (stamps === undefined) return true;
+  const asOf = stamps[symbol];
+  if (typeof asOf !== 'number' || !Number.isFinite(asOf)) return false;
+  return Date.now() - asOf <= PRICE_STALENESS_MS;
+}
+
 // What one unit of a symbol is worth, from what the app already knows: the risk table
 // (stables are 1.0 everywhere in this app), then the ledger's own holdings, then the
 // native spot table. null means this app cannot honestly price it.
@@ -142,8 +171,11 @@ export function priceOf(ctx: PCtx, symbol: string, snapshot: LedgerSnapshot): nu
   // $0.01, meaning 10 WETH (~$18,800) would have passed a $10,000 per-transaction cap.
   //
   // WETH is ETH wrapped: one dollar value, two contracts.
-  const spot = snapshot.prices[upper === 'WETH' ? 'ETH' : upper];
-  if (typeof spot === 'number' && Number.isFinite(spot) && spot > 0) return spot;
+  const key = upper === 'WETH' ? 'ETH' : upper;
+  const spot = snapshot.prices[key];
+  if (typeof spot === 'number' && Number.isFinite(spot) && spot > 0) {
+    return priceIsFresh(snapshot, key) ? spot : null;
+  }
 
   // Fall back to the holdings table only for something we already treat as a dollar.
   // For anything else, return null: usdOf turns that into Infinity and the engine refuses

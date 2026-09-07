@@ -123,6 +123,22 @@ export function isNearAccountId(value: unknown): value is string {
   return typeof value === 'string' && NEAR_ACCOUNT_ID.test(value);
 }
 
+// The two shapes a NEAR account id that anything can SETTLE to takes: a named account under
+// the .near top-level account, or a 64-character implicit account, which is the hex of an
+// ed25519 public key. Stricter than isNearAccountId above, which answers the different question
+// of whether a string is a structurally valid account id at all.
+//
+// The difference is the whole of the distance between "well formed" and "exists on the network
+// this app runs against". A .testnet account satisfies the structural rule and satisfies nothing
+// else: it is not on mainnet, so a payout to it can only stall or refund. Three callers need
+// that answer, the HyperCore rail, the 1Click swap rail's destination check and the config
+// loader, so it lives here with the rule it refines rather than inside any one of them.
+export function isSettlableNearAccount(raw: string): boolean {
+  const id = raw.trim().toLowerCase();
+  if (/^[0-9a-f]{64}$/.test(id)) return true;
+  return /^(?:[a-z0-9_-]+\.)+near$/.test(id);
+}
+
 // An EVM address, lowercased, is 42 characters of [0-9a-fx] and therefore a STRUCTURALLY
 // VALID NEAR account id. That is not a flaw in the rule above, it is what NEAR allows, and
 // it means the account-id check alone cannot tell the two families apart: '0xd8da6bf...' in

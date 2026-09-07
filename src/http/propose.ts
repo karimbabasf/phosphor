@@ -158,7 +158,12 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
       // amount became "$Infinity ... cannot be checked against a limit" and only failed closed
       // by accident of the arithmetic. Through positiveField now, so one rule covers every kind.
       const amountIn = positiveField(params, 'amountIn', problems);
-      const minAmountOut = numField(params, 'minAmountOut', problems);
+      // Through positiveField for the same reason amountIn is, and one the rails cannot make up
+      // for on their own: minAmountOut is the only slippage protection a swap carries, and a
+      // floor of zero is not a floor. It is the one field on this whole surface whose value a
+      // caller chooses and money depends on, so zero and negative are stopped at the door as
+      // well as inside every venue.
+      const minAmountOut = positiveField(params, 'minAmountOut', problems);
       // `chain === null` is already in `problems`; naming it here is what convinces the type
       // system, and what stops the next edit reaching for a chain that was never resolved.
       if (problems.length > 0 || chain === null || toChain === null) {

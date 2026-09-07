@@ -41,15 +41,40 @@ const CHAIN_TO_BLOCKCHAIN: Record<ChainId, string> = {
   near: 'near',
 };
 
-// Matches a chain + our token registry id against 1Click's token list. For near-chain
-// tokens contractAddress carries the NEAR account id, so one field covers both cases.
-export function assetIdFor(chain: ChainId, tokenId: string, list: OneClickToken[]): string | null {
+/* Matches a chain + our token registry id against 1Click's token list. For near-chain
+   tokens contractAddress carries the NEAR account id, so one field covers both cases.
+
+   `expectDecimals` is the registry's own figure for the same token, and passing it is what turns
+   this from a lookup into an agreement. The matched entry carries decimals too, and this used to
+   discard them: every amount was then scaled by the repo's number while the venue quoted against
+   its own, so the two disagreeing would misprice a transfer by a power of ten. Checked against
+   the live list and against on-chain decimals() on 2026-09-07 there were no mismatches, so this
+   is hardening rather than a live bug, and the HyperCore rail already does exactly this check
+   for its one pinned asset.
+
+   A mismatch throws rather than returning null, because null already means "the venue does not
+   list this" and the two are different facts with different fixes. Every call site is already
+   inside the try that wraps fetching the list. */
+export function assetIdFor(
+  chain: ChainId,
+  tokenId: string,
+  list: OneClickToken[],
+  expectDecimals?: number,
+): string | null {
   const blockchain = CHAIN_TO_BLOCKCHAIN[chain];
   const wantId = tokenId.toLowerCase();
   const match = list.find(
     (t) => t.blockchain.toLowerCase() === blockchain && (t.contractAddress ?? '').toLowerCase() === wantId,
   );
-  return match ? match.assetId : null;
+  if (!match) return null;
+  if (expectDecimals !== undefined && match.decimals !== expectDecimals) {
+    throw new Error(
+      `1click lists ${oneLine(tokenId, 60)} on ${chain} with ${match.decimals} decimals and this app's registry ` +
+        `says ${expectDecimals}. Every amount sent would be wrong by a factor of ten, so nothing is quoted until ` +
+        'the two agree',
+    );
+  }
+  return match.assetId;
 }
 
 // The gas asset of a chain, which assetIdFor cannot find because 1Click lists a native asset
@@ -108,7 +133,7 @@ export function resolveAsset(
 ): { assetId: string; decimals: number; native: boolean } {
   const registry = tokens[chain]?.[symbol];
   if (registry !== undefined) {
-    const assetId = assetIdFor(chain, registry.tokenId, list);
+    const assetId = assetIdFor(chain, registry.tokenId, list, registry.decimals);
     if (assetId === null) throw new Error(`1click does not list ${symbol} on ${chain}`);
     return { assetId, decimals: registry.decimals, native: false };
   }
@@ -160,6 +185,25 @@ export function toBaseUnits(amount: number, decimals: number): bigint {
     throw new Error(`decimals must be an integer in 0..36 (got ${decimals})`);
   }
   return parseUnits(plainDecimal(amount), decimals);
+}
+
+// A base-unit field off a quote. Never Number(): 18-decimal amounts do not survive a double, and
+// a garbage string must fail loudly rather than become NaN.
+//
+// One copy, here, because four rails each had their own and the fifth caller was about to make a
+// fifth. A missing field throws rather than defaulting to zero, which matters most for the field
+// this was added for: minAmountOut absent is a quote that guarantees nothing, and reading it as
+// a floor of zero is how a rail accepts exactly that.
+export function baseUnits(value: unknown, field: string): bigint {
+  if (typeof value !== 'string' && typeof value !== 'number') {
+    throw new Error(`1click quote is missing ${field}`);
+  }
+  if (value === '') throw new Error(`1click quote is missing ${field}`);
+  try {
+    return BigInt(value);
+  } catch {
+    throw new Error(`1click quote returned a non-integer ${field}: ${oneLine(value, 40)}`);
+  }
 }
 
 // ---------- responses, treated as data ----------
@@ -266,6 +310,98 @@ export type OneClickQuoteParams = {
   refundType?: OneClickEndpointType;
   depositType?: OneClickEndpointType;
 };
+
+/* ---------- the quote echo, checked once for every rail ----------
+
+   The API echoes the request it priced, verbatim, in `quoteRequest` (verified live 2026-08-13).
+   That echo is the only place a quote states where the money ends up, so every field that
+   decides that is compared against what the rail asked for.
+
+   This lived in two rails and not in the other three, which is how the same defect was found
+   twice: a quote priced to credit a DIFFERENT recipient, to take its input from a chain transfer
+   rather than the verifier balance, or to refund somewhere that is not our account passed every
+   check the two rails without it made. So it is one function now. Four copies of a check is how
+   the fourth one gets forgotten, which is exactly what happened.
+
+   A missing echo is a refusal, not a shrug. Each rail says in `noEcho` why it cannot proceed
+   without one, because the reason differs: an intent names no destination at all, and an
+   ordinary transfer goes to an address only the echo ties to a payout. */
+export type QuoteEcho = {
+  // Where the proceeds land. `verb` and `noun` are the rail's own words for it, so the refusal
+  // reads as a sentence about this rail rather than a generic mismatch.
+  recipient: string;
+  recipientVerb: 'pay' | 'credit';
+  recipientNoun: string;
+  recipientType: OneClickEndpointType;
+  recipientTypeWhy: string;
+  // Where the input comes from, and where a failure puts it back.
+  depositType: OneClickEndpointType;
+  refundType: OneClickEndpointType;
+  refundTypeWhy: string;
+  refundTo: string;
+  // The assets and the size, as a complete second opinion rather than a partial one.
+  originAsset: string;
+  destinationAsset: string;
+  amount: string; // base units, as a decimal integer string
+  noEcho: string;
+};
+
+/* Whether two endpoints in a quote are the same one.
+   Exact by default, because base58 case carries key material and two Solana strings differing
+   only in case are two different accounts. EVM addresses are the exception and only the
+   exception: the same 20 bytes have a checksummed spelling and a lowercase one, and both name
+   the same account. Recognising the exception by shape rather than by chain is what lets one
+   comparison serve a rail whose recipient may be an EVM address, a Solana key or a NEAR id. */
+const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+
+function sameEndpoint(value: unknown, want: string): boolean {
+  if (typeof value !== 'string') return false;
+  if (EVM_ADDRESS.test(value) && EVM_ADDRESS.test(want)) return value.toLowerCase() === want.toLowerCase();
+  return value === want;
+}
+
+export function quoteEchoProblems(raw: unknown, want: QuoteEcho): string[] {
+  if (raw === null || typeof raw !== 'object') {
+    return [`the quote response is not an object (got ${oneLine(raw, 60)})`];
+  }
+  const echo = (raw as Record<string, unknown>)['quoteRequest'];
+  if (echo === null || typeof echo !== 'object' || Array.isArray(echo)) {
+    return [`the quote carries no quoteRequest echo, so ${want.noEcho}`];
+  }
+  const req = echo as Record<string, unknown>;
+  const problems: string[] = [];
+  const say = (field: string): string => oneLine(req[field], 60);
+
+  if (!sameEndpoint(req['recipient'], want.recipient)) {
+    problems.push(
+      `the quote was priced to ${want.recipientVerb} ${say('recipient')}, not our ${want.recipientNoun} ` +
+        `${oneLine(want.recipient, 60)}`,
+    );
+  }
+  if (req['recipientType'] !== want.recipientType) {
+    problems.push(`the quote pays out as ${say('recipientType')}, not ${want.recipientType}: ${want.recipientTypeWhy}`);
+  }
+  if (req['depositType'] !== want.depositType) {
+    problems.push(`the quote takes its input as ${say('depositType')}, not the ${want.depositType} balance this rail spends`);
+  }
+  if (req['refundType'] !== want.refundType) {
+    problems.push(`a refund on this quote goes to ${say('refundType')}, not ${want.refundTypeWhy}`);
+  }
+  if (!sameEndpoint(req['refundTo'], want.refundTo)) {
+    problems.push(`a refund on this quote goes to ${say('refundTo')}, not to our account ${oneLine(want.refundTo, 60)}`);
+  }
+  if (req['originAsset'] !== want.originAsset || req['destinationAsset'] !== want.destinationAsset) {
+    problems.push(
+      `the quote moves ${say('originAsset')} to ${say('destinationAsset')}, not the ` +
+        `${oneLine(want.originAsset, 40)} to ${oneLine(want.destinationAsset, 40)} the draft names`,
+    );
+  }
+  if (req['amount'] !== want.amount) {
+    problems.push(`the quote was priced for ${say('amount')} base units, not the ${want.amount} approved`);
+  }
+
+  return problems;
+}
 
 export type OneClickDeps = { fetchImpl?: typeof fetch };
 
@@ -408,8 +544,8 @@ export function oneClickQuoter(tokens: TokensFile, deps?: { fetchImpl?: typeof f
     if (!destInfo) throw new Error(`no token registry entry for ${leg.symbol} on ${leg.toChain}`);
 
     const list = await client.tokens();
-    const originAsset = assetIdFor(leg.fromChain, originInfo.tokenId, list);
-    const destinationAsset = assetIdFor(leg.toChain, destInfo.tokenId, list);
+    const originAsset = assetIdFor(leg.fromChain, originInfo.tokenId, list, originInfo.decimals);
+    const destinationAsset = assetIdFor(leg.toChain, destInfo.tokenId, list, destInfo.decimals);
     if (!originAsset) throw new Error(`no 1click asset id for ${leg.symbol} on ${leg.fromChain}`);
     if (!destinationAsset) throw new Error(`no 1click asset id for ${leg.symbol} on ${leg.toChain}`);
 

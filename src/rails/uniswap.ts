@@ -56,7 +56,10 @@ export const VENUE = 'uniswap-v3';
 // than this far below the app's OWN quote is refused here. Generous on purpose (a real swap's
 // floor is a percent or two below the quote, never twenty), so it rejects the absurd without
 // touching the legitimate. A tighter, policy-configurable slippage is the follow-up.
-const MAX_SLIPPAGE_BPS = 2000;
+// Exported because the reasoning above is venue-independent and was applied to one venue out of
+// three. The two NEAR Intents swap rails import this and floorTooLow rather than carry a second
+// and a third copy of the number.
+export const MAX_SLIPPAGE_BPS = 2000;
 const MIN_TICK = -887272;
 const MAX_TICK = 887272;
 const Q96 = 1n << 96n;
