@@ -154,15 +154,11 @@
     var account = panel('Account');
     var rules = panel('Your rules');
     var happened = panel('What happened');
-    var assistant = panel('');
-    assistant.head.hidden = true;
-    assistant.node.classList.add('grow');
 
     rail.appendChild(position.node);
     rail.appendChild(account.node);
     rail.appendChild(rules.node);
     rail.appendChild(happened.node);
-    rail.appendChild(assistant.node);
 
     wrap.appendChild(main);
     wrap.appendChild(resizer);
@@ -178,7 +174,6 @@
       status: status
     };
 
-    window.PhosphorAgent.mount(assistant.body, { compact: true });
     if (typeof window.splitBoot === 'function') window.splitBoot();
   }
 

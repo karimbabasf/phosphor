@@ -95,13 +95,6 @@
     activity.body.appendChild(feeRow);
     grid.appendChild(activity.node);
 
-    /* Your assistant. */
-    var assistant = panel('', 'span-12');
-    assistant.head.hidden = true;
-    var assistantBody = dom.el('div', 'agent-panel');
-    assistant.body.appendChild(assistantBody);
-    grid.appendChild(assistant.node);
-
     host.appendChild(grid);
 
     refs = {
@@ -117,7 +110,6 @@
       feeValue: feeValue
     };
 
-    window.PhosphorAgent.mount(assistantBody);
     window.PhosphorReceipts.load();
   }
 

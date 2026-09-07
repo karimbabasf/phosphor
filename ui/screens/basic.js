@@ -78,13 +78,6 @@
     earning.node.hidden = true;
     col.appendChild(earning.node);
 
-    /* Your assistant. */
-    var assistant = panel('Your assistant', { bare: true });
-    var assistantBody = dom.el('div', 'panel-body agent-panel');
-    assistant.node.appendChild(assistantBody);
-    assistant.head.hidden = true;
-    col.appendChild(assistant.node);
-
     /* Folds: Money in, then Activity. */
     var moneyIn = fold('Money in', 'Where to send money');
     col.appendChild(moneyIn.node);
@@ -114,15 +107,12 @@
       smallNote: smallNote,
       earningPanel: earning.node,
       earningBody: earningBody,
-      assistantBody: assistantBody,
       moneyIn: moneyIn,
       activity: activity,
       activityBody: activity.body,
       stopBtn: stopBtn,
       field: null
     };
-
-    window.PhosphorAgent.mount(assistantBody, { compact: true });
 
     dom.on(stopBtn, 'click', function () {
       window.PhosphorConfirm.ask({

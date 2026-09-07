@@ -1,29 +1,29 @@
-/* Phosphor layout: one shell, three views.
+/* Phosphor layout: one stage, two columns, three modes.
 
-   The page scrolls when the content is taller than the window. There is no
-   max-width on the shell and no 100dvh cap with overflow hidden at the page
-   level: those two together are what made a big screen show a square with its
-   edges cut off. Panels do not scroll inside themselves except tables. */
+   The conversation column is the constant. It is on screen in every mode, in
+   the same place, and never below the fold. The world beside it is everything
+   the assistant can touch, and it is the only part that changes with the mode.
+   The window does not scroll as a page: the world scrolls, the transcript
+   scrolls, and the two never move each other. */
 
 html, body {
-  height: auto;
-  min-height: 100%;
-  overflow-x: hidden;
+  height: 100%;
+  overflow: hidden;
 }
 
 #page {
   position: relative;
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  height: 100vh;
   width: 100%;
 }
 
-/* ---------- The pattern field ---------- */
+/* ---------- The afterglow field ---------- */
 
-/* The field covers the whole document, not the viewport. Fixed to the window
-   it ended in a hard edge wherever the content ran past the fold, and a person
-   scrolling a tall pro grid met the ground halfway down. */
+/* The field is the conversation column's ground: the living part of the window
+   is where the assistant lives. Absolute inside the column, so it is the
+   column's size and no larger, which is most of its frame budget. */
 .pattern-field {
   position: absolute;
   inset: 0;
@@ -44,8 +44,7 @@ html, body {
 /* ---------- Top bar ---------- */
 
 .topbar {
-  position: sticky;
-  top: 0;
+  position: relative;
   z-index: 40;
   display: grid;
   grid-template-columns: 1fr auto 1fr;
@@ -53,10 +52,36 @@ html, body {
   gap: var(--s-4);
   height: var(--topbar-h);
   padding: 0 var(--s-4);
-  background: color-mix(in srgb, var(--bg-0) 88%, transparent);
-  backdrop-filter: blur(12px);
+  background: var(--bg-0);
   border-bottom: 1px solid var(--line);
   flex: 0 0 auto;
+}
+
+/* The one page-load moment: a beam sweeps the topbar's hairline once and
+   lights the glyph. The shell adds data-boot after first paint and removes it
+   when the sweep is done, so nothing repeats. */
+.topbar::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: -1px;
+  height: 1px;
+  width: 22%;
+  background: linear-gradient(90deg, transparent, var(--agent), transparent);
+  opacity: 0;
+  transform: translateX(-100%);
+  pointer-events: none;
+}
+
+.topbar[data-boot="true"]::after {
+  animation: bootsweep 600ms var(--ease-in-out) both;
+}
+
+@keyframes bootsweep {
+  0% { opacity: 0; transform: translateX(-100%); }
+  15% { opacity: 1; }
+  85% { opacity: 1; }
+  100% { opacity: 0; transform: translateX(460%); }
 }
 
 .wordmark {
@@ -69,24 +94,73 @@ html, body {
   color: var(--text);
 }
 
+/* The glyph carries the assistant's state: dim when off, lit when ready,
+   breathing while working. It is the smallest phosphor in the window. */
 .wordmark-glyph {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   border-radius: 3px;
-  background: var(--ink);
+  background: var(--agent);
+  opacity: 0.35;
+  box-shadow: 0 0 0 0 transparent;
+  transition: opacity var(--dur-enter) var(--ease-out);
 }
 
+.wordmark-glyph[data-state="ready"] {
+  opacity: 1;
+  box-shadow: 0 0 10px -2px var(--agent);
+}
+
+.wordmark-glyph[data-state="working"] {
+  opacity: 1;
+  box-shadow: 0 0 10px -2px var(--agent);
+  animation: breathe 1600ms var(--ease-in-out) infinite;
+}
+
+.wordmark-glyph[data-state="error"] {
+  opacity: 1;
+  background: var(--down);
+}
+
+@keyframes breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+/* The mode switch: a segmented control whose indicator slides between the
+   three words instead of each word lighting on its own. */
 .tabs {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: var(--s-1);
+  gap: 0;
   padding: 3px;
   border-radius: var(--radius-pill);
   background: var(--bg-1);
   border: 1px solid var(--line);
+  isolation: isolate;
+}
+
+.tabs-indicator {
+  position: absolute;
+  top: 3px;
+  left: 0;
+  height: calc(100% - 6px);
+  width: 0;
+  border-radius: var(--radius-pill);
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
+  transform: translateX(var(--tab-x, 0px));
+  width: var(--tab-w, 0px);
+  transition: transform var(--dur-swap) var(--ease-in-out),
+              width var(--dur-swap) var(--ease-in-out);
+  z-index: 0;
+  pointer-events: none;
 }
 
 .tab {
+  position: relative;
+  z-index: 1;
   height: 28px;
   padding: 0 var(--s-4);
   border-radius: var(--radius-pill);
@@ -94,7 +168,6 @@ html, body {
   font-weight: 500;
   color: var(--text-2);
   transition: color var(--dur-press) var(--ease-out),
-              background-color var(--dur-press) var(--ease-out),
               transform var(--dur-press) var(--ease-out);
 }
 
@@ -103,8 +176,13 @@ html, body {
 }
 
 .tab[aria-selected="true"] {
-  background: var(--bg-2);
   color: var(--text);
+}
+
+/* A tab is also a surface: a tool aimed at a mode that is not on screen lands
+   on its word. */
+.tab[data-glow="on"] {
+  color: var(--agent);
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -121,16 +199,88 @@ html, body {
   min-width: 0;
 }
 
-/* ---------- Views ---------- */
+/* ---------- The stage ---------- */
 
-.views {
+.stage {
   position: relative;
   z-index: 1;
   flex: 1 1 auto;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: clamp(var(--conv-min), var(--conv, var(--conv-w)), var(--conv-max)) 6px minmax(var(--world-min), 1fr);
   min-height: 0;
 }
+
+body[data-view="trade"] .stage {
+  --conv-w: 360px;
+}
+
+.conversation {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-0);
+  border-right: 1px solid var(--line);
+  container-type: inline-size;
+  container-name: conversation;
+}
+
+.conversation-body {
+  position: relative;
+  z-index: 1;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--s-4) var(--s-4) var(--s-3);
+  display: flex;
+  flex-direction: column;
+}
+
+.composer-host {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
+}
+
+.composer-host:empty {
+  display: none;
+}
+
+.world {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--bg-0);
+  display: flex;
+  flex-direction: column;
+  container-type: inline-size;
+  container-name: world;
+}
+
+/* ---------- The divider ---------- */
+
+.split-v {
+  cursor: col-resize;
+  background: transparent;
+  border: 0;
+  border-left: 1px solid transparent;
+  transition: background-color var(--dur-press) var(--ease-out);
+  touch-action: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .split-v:hover { background: var(--line-strong); }
+}
+
+.split-v:focus-visible { background: var(--ink); outline: none; }
+.split-v[data-dragging="true"] { background: var(--line-strong); }
+
+/* ---------- Views inside the world ---------- */
 
 .view {
   display: none;
@@ -144,7 +294,7 @@ html, body {
 }
 
 /* The crossfade: 180 ms, 2 px of blur to bridge the two states. */
-.views[data-swapping="true"] .view[data-active="true"] {
+.world[data-swapping="true"] .view[data-active="true"] {
   animation: viewin var(--dur-swap) var(--ease-out) both;
 }
 
@@ -153,17 +303,7 @@ html, body {
   to { opacity: 1; filter: blur(0); }
 }
 
-/* ---------- Basic: one 720 px column ---------- */
-
-/* Pro and trade paint their own ground, because a twelve column grid with
-   24 px gutters reads as sitting on static when the field shows through every
-   one of them. Basic does not: its cards are full width in a 720 px column, so
-   the only gaps are the thin strips between them, and leaving the field there
-   is what lets the hero have it behind the balance. */
-.pro-grid,
-.trade-wrap {
-  background: var(--bg-0);
-}
+/* ---------- Basic: one 640 px column ---------- */
 
 .basic-col {
   width: min(var(--basic-col), 100%);
@@ -174,15 +314,11 @@ html, body {
   gap: var(--s-5);
 }
 
-/* The hero is the one place the field is meant to be seen through the content
-   rather than beside it. The scrim holds it down so the balance wins, which is
-   what "quieter behind the hero" means once the second canvas is gone. */
+/* The hero is unboxed: the total sits on the ground, and the one sentence under
+   it is the state of the money. */
 .hero {
   position: relative;
-  overflow: hidden;
-  border-radius: var(--radius);
-  padding: var(--s-7) var(--s-5) var(--s-6);
-  background: color-mix(in srgb, var(--bg-0) 62%, transparent);
+  padding: var(--s-3) 0 var(--s-2);
 }
 
 .hero-inner {
@@ -193,7 +329,7 @@ html, body {
   gap: var(--s-3);
 }
 
-/* ---------- Pro: 12 columns, max 1440, the pattern fills the margins ---------- */
+/* ---------- Pro: 12 columns, max 1440 ---------- */
 
 .pro-grid {
   width: min(var(--pro-max), 100%);
@@ -212,24 +348,20 @@ html, body {
 .span-8 { grid-column: span 8; }
 .span-12 { grid-column: span 12; }
 
-@media (max-width: 1100px) {
+@container world (max-width: 1100px) {
   .pro-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
   .span-4, .span-5, .span-6, .span-7, .span-8, .span-12 { grid-column: span 6; }
 }
 
-/* ---------- Trade: full bleed, chart left, 360 px rail ---------- */
+/* ---------- Trade: chart left, 320 px rail ---------- */
 
- /* Trade is the one view with a fixed height rather than a minimum. The rail
-   holds five panels and a transcript, and as a min-height grid its content
-   stretched the row past the window: the chart grew with it, its bottom ran
-   off the screen, and the volume pane went with it. A fixed height gives the
-   chart exactly the room there is, and the rail scrolls inside itself, which
-   is the one place in this window a panel is allowed to. */
+/* The world has a definite height now, so the chart takes exactly the room
+   there is and the rail scrolls inside itself. */
 .trade-wrap {
   flex: 1 1 auto;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 6px var(--rail, var(--rail-w));
-  height: calc(100vh - var(--topbar-h));
+  height: 100%;
   min-height: 0;
 }
 
@@ -274,20 +406,18 @@ html, body {
   height: 100%;
 }
 
-@media (max-width: 1100px) {
-  /* Stacked, the page scrolls again and the rail goes back to its full length. */
+@container world (max-width: 1000px) {
   .trade-wrap {
     grid-template-columns: minmax(0, 1fr);
     height: auto;
-    min-height: calc(100vh - var(--topbar-h));
+    min-height: 100%;
   }
-  .trade-rail { overflow-y: visible; }
+  .trade-rail { overflow-y: visible; max-height: none; }
   .trade-main { border-right: 0; border-bottom: 1px solid var(--line); }
-  .trade-rail { max-height: none; }
   .split-h { display: none; }
 }
 
-/* ---------- The resizer ---------- */
+/* ---------- The rail resizer inside trade ---------- */
 
 .split-h {
   cursor: col-resize;
@@ -303,39 +433,53 @@ html, body {
 
 .split-h:focus-visible { background: var(--ink); }
 
-/* ---------- The decision overlay ---------- */
+/* ---------- Stacked: the world above, the conversation docked below ---------- */
 
-.overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 70;
-  display: grid;
-  place-items: center;
-  padding: var(--s-5);
-  background: color-mix(in srgb, var(--bg-0) 72%, transparent);
-  backdrop-filter: blur(6px);
+@media (max-width: 959px) {
+  .stage {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) 6px 46vh;
+  }
+  .conversation {
+    order: 3;
+    border-right: 0;
+    border-top: 1px solid var(--line);
+  }
+  .split-v { order: 2; cursor: row-resize; }
+  .world { order: 1; }
 }
 
-.overlay[hidden] { display: none; }
+/* ---------- The decision dock ---------- */
 
-.overlay-card {
-  width: min(560px, 100%);
-  max-height: calc(100vh - var(--s-8));
+/* Inside the conversation column, between the transcript and the composer, and
+   the one region drawn in amber: a transcript row cannot look like it. */
+.dock {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 auto;
+  max-height: 56%;
   overflow-y: auto;
-  background: var(--bg-1);
-  border: 1px solid var(--line-strong);
+  overscroll-behavior: contain;
+  margin: 0 var(--s-3) var(--s-2);
+  border: 1px solid color-mix(in srgb, var(--warn) 55%, transparent);
   border-radius: var(--radius);
-  box-shadow: var(--lift);
-  padding: var(--s-5);
+  background: color-mix(in srgb, var(--bg-1) 94%, var(--warn));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--warn) 45%, transparent);
+}
+
+.dock[hidden] { display: none; }
+
+.dock-card {
+  padding: var(--s-4);
   display: flex;
   flex-direction: column;
-  gap: var(--s-4);
+  gap: var(--s-3);
   animation: cardin var(--dur-enter) var(--ease-out) both;
 }
 
 @keyframes cardin {
-  from { opacity: 0; transform: scale(0.97) translateY(6px); }
-  to { opacity: 1; transform: scale(1) translateY(0); }
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 /* ---------- The screen cards: first run, lock, migration ---------- */

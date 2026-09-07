@@ -428,6 +428,7 @@
     mount: mount,
     start: start,
     isWorking: isWorking,
+    phase: function () { return phase; },
     toolLabel: toolLabel
   };
 })();

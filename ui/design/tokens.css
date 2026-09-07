@@ -1,43 +1,50 @@
 /* Phosphor design tokens. One dark look, painted, never inherited from the OS.
    Colour means state. Nothing is coloured for decoration.
 
-   Five of these are the set_theme contract and are rewritten at runtime by
-   ui/theme.js: --ink (accent), --bg-0 (background), --up, --down, --agent.
-   Everything else derives from them or stands on its own. */
+   The window is one colour on graphite, and that colour is light, not paint: it
+   is emitted where the assistant touches the window and it decays. Five of these
+   are the set_theme contract and are rewritten at runtime by ui/theme.js:
+   --ink (accent), --bg-0 (background), --up, --down, --agent. Everything else
+   derives from them or stands on its own. */
 
 :root {
   color-scheme: dark;
 
-  /* Ground and surfaces */
-  --bg-0: #09090B;
-  --bg-1: #0F1013;
-  --bg-2: #16171B;
-  --line: #22242A;
-  --line-strong: #2E3138;
+  /* Ground and surfaces. A cool graphite rather than a tinted black, and three
+     steps that can be told apart without a shadow between them. */
+  --bg-0: #0B0D10;
+  --bg-1: #111418;
+  --bg-2: #181C22;
+  --line: #232830;
+  --line-strong: #313843;
 
   /* Text */
-  --text: #EDEEF0;
-  --text-2: #9A9EA8;
-  --text-3: #5F636C;
+  --text: #ECEEF1;
+  --text-2: #9BA1AB;
+  --text-3: #5E656F;
 
-  /* State colour. Phosphor green is the action colour, and it is the same green
-     that means up: the app is named for one colour on near-black, so the action
-     and the direction are one decision rather than two decorated separately. */
+  /* State colour. Phosphor green is the action colour, the direction up, and the
+     assistant's own light: the app is named for one colour on graphite, so the
+     three are one decision. --agent keeps its own slot so a theme can move the
+     beam without moving the buttons. */
   --ink: #33FF66;
-  --on-ink: #09090B;
+  --on-ink: #0B0D10;
   --up: #33FF66;
   --down: #FF5A6E;
-  --warn: #F2B544;
-  --agent: #B79CFF;
+  --warn: #F5B942;
+  --agent: #33FF66;
+
+  /* Where the afterglow settles before it reaches the ground. */
+  --glow-ash: #0F3A1E;
 
   /* Tints derived from the five slots. theme.js rewrites these with the slots. */
   --ink-wash: rgba(51, 255, 102, 0.08);
   --ink-edge: rgba(51, 255, 102, 0.16);
   --up-wash: rgba(51, 255, 102, 0.14);
   --down-wash: rgba(255, 90, 110, 0.14);
-  --warn-wash: rgba(242, 181, 68, 0.14);
-  --agent-wash: rgba(183, 156, 255, 0.13);
-  --agent-edge: rgba(183, 156, 255, 0.28);
+  --warn-wash: rgba(245, 185, 66, 0.14);
+  --agent-wash: rgba(51, 255, 102, 0.10);
+  --agent-edge: rgba(51, 255, 102, 0.28);
 
   /* Type */
   --font-ui: "Geist", ui-sans-serif, system-ui, sans-serif;
@@ -45,10 +52,12 @@
   --fs-12: 12px;
   --fs-13: 13px;
   --fs-14: 14px;
+  --fs-15: 15px;
   --fs-16: 16px;
   --fs-20: 20px;
   --fs-28: 28px;
-  --fs-56: 56px;
+  --fs-44: 44px;
+  --fs-56: 44px;
 
   /* Space. A four-step rhythm, everything is a multiple of 4. */
   --s-1: 4px;
@@ -61,8 +70,8 @@
   --s-8: 64px;
 
   /* Shape */
-  --radius: 12px;
-  --radius-sm: 8px;
+  --radius: 14px;
+  --radius-sm: 10px;
   --radius-pill: 999px;
 
   /* Motion */
@@ -72,16 +81,28 @@
   --dur-enter: 220ms;
   --dur-swap: 180ms;
   --dur-number: 300ms;
+  --dur-beam: 320ms;
+  --dur-glow-in: 120ms;
+  --dur-glow-out: 2400ms;
+  --dur-scan: 900ms;
 
-  /* Layout */
+  /* Layout. The conversation column is the constant; the world is the rest. */
   --topbar-h: 48px;
-  --basic-col: 720px;
+  --conv-w: 440px;
+  --conv-min: 360px;
+  --conv-max: 640px;
+  --world-min: 560px;
+  --basic-col: 640px;
   --pro-max: 1440px;
-  --rail-w: 360px;
+  --rail-w: 320px;
   --gutter: 24px;
 
-  /* Depth. One shadow in the whole app, for things that float. */
+  /* Depth. One shadow in the whole app, for the few things that float. */
   --lift: 0 12px 40px rgba(0, 0, 0, 0.55), 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+}
+
+@media (max-width: 1279px) {
+  :root { --conv-w: 400px; }
 }
 
 /* The five slots keep their meaning when an agent recolours the window, so the

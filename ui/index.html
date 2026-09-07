@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Phosphor</title>
 
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%23fff'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%2333FF66'/%3E%3C/svg%3E">
 
 <link rel="preload" href="./fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="./fonts/GeistMono-Variable.woff2" as="font" type="font/woff2" crossorigin>
@@ -21,21 +21,24 @@
 
 <div id="page">
 
-  <div id="field" class="pattern-field" aria-hidden="true"></div>
-
-  <header class="topbar">
+  <header class="topbar" id="topbar">
     <div class="wordmark">
-      <span class="wordmark-glyph" aria-hidden="true"></span>
+      <span class="wordmark-glyph" id="wordmark-glyph" data-state="off" aria-hidden="true"></span>
       <span>Phosphor</span>
     </div>
 
     <nav class="tabs" role="tablist" aria-label="Modes">
-      <button class="tab" role="tab" data-tab="basic" aria-selected="true">Basic</button>
-      <button class="tab" role="tab" data-tab="pro" aria-selected="false">Pro</button>
-      <button class="tab" role="tab" data-tab="trade" aria-selected="false">Trade</button>
+      <span class="tabs-indicator" id="tabs-indicator" aria-hidden="true"></span>
+      <button class="tab" role="tab" data-tab="basic" data-surface="tab-basic" aria-selected="true">Basic</button>
+      <button class="tab" role="tab" data-tab="pro" data-surface="tab-pro" aria-selected="false">Pro</button>
+      <button class="tab" role="tab" data-tab="trade" data-surface="tab-trade" aria-selected="false">Trade</button>
     </nav>
 
     <div class="status-cluster">
+      <span class="chip" id="chip-waiting" data-tone="warn" hidden>
+        <span class="dot" aria-hidden="true"></span>
+        <span data-role="waiting-text">1 waiting</span>
+      </span>
       <span class="chip" id="chip-lock">
         <span class="dot" aria-hidden="true"></span>
         <span data-role="lock-text">Unlocked</span>
@@ -55,20 +58,33 @@
     <span data-role="offline-text"></span>
   </div>
 
-  <main class="views" id="views">
-    <section class="view" id="view-basic" role="tabpanel" aria-label="Basic" data-active="true"></section>
-    <section class="view" id="view-pro" role="tabpanel" aria-label="Pro"></section>
-    <section class="view" id="view-trade" role="tabpanel" aria-label="Trade"></section>
-  </main>
+  <div class="stage" id="stage" data-split="stage" data-surface="window">
 
-</div>
+    <aside class="conversation" id="conversation" aria-label="Your assistant" data-surface="assistant">
+      <div id="field" class="pattern-field" aria-hidden="true"></div>
+      <div class="conversation-body" id="conversation-body"></div>
+      <div class="dock" id="overlay" role="region" aria-label="Waiting for you" hidden>
+        <div class="dock-card" id="overlay-card"></div>
+      </div>
+      <div class="composer-host" id="composer-host"></div>
+    </aside>
 
-<div class="overlay" id="overlay" role="dialog" aria-modal="true" aria-label="Waiting for you" hidden>
-  <div class="overlay-card" id="overlay-card"></div>
+    <div class="split-v" data-split-handle="conversation" role="separator" aria-orientation="vertical" aria-label="Resize the conversation" tabindex="0"></div>
+
+    <main class="world" id="views">
+      <section class="view" id="view-basic" role="tabpanel" aria-label="Basic" data-active="true"></section>
+      <section class="view" id="view-pro" role="tabpanel" aria-label="Pro"></section>
+      <section class="view" id="view-trade" role="tabpanel" aria-label="Trade"></section>
+    </main>
+
+  </div>
+
 </div>
 
 <div class="screen" id="screen-lock" hidden></div>
 <div class="screen" id="screen-firstrun" hidden></div>
+
+<canvas id="beam" class="beam-layer" aria-hidden="true"></canvas>
 
 <script src="./design/motion.js" defer></script>
 <script src="./design/pattern.js" defer></script>
@@ -86,7 +102,9 @@
 <script src="./activity.js" defer></script>
 <script src="./screens/receipts.js" defer></script>
 <script src="./screens/moneyin.js" defer></script>
+<script src="./beam/beam.js" defer></script>
 <script src="./screens/agent.js" defer></script>
+<script src="./beam/trace.js" defer></script>
 <script src="./screens/decision.js" defer></script>
 <script src="./screens/shell.js" defer></script>
 <script src="./screens/basic.js" defer></script>
