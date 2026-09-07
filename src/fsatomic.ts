@@ -115,3 +115,16 @@ export function atomicWrite(
 export function atomicWriteJson(filePath: string, value: unknown, space: number | undefined = 2): void {
   atomicWrite(filePath, JSON.stringify(value, null, space), { mode: 0o600 });
 }
+
+/* Push a file this app appended to onto the disk. appendFileSync writes into the page cache and
+   returns; the audit log's anchor is written durably a moment later and names those lines, so
+   the lines have to be on disk first or a power cut leaves an anchor ahead of its log. Lives here
+   so src/ keeps one place that calls fsync for a write. */
+export function syncFile(filePath: string): void {
+  const fd = fs.openSync(filePath, 'r');
+  try {
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+}

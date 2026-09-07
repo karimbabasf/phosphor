@@ -13,7 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Proposal } from './types.ts';
-import { atomicWrite } from './fsatomic.ts';
+import { atomicWrite, atomicWriteJson } from './fsatomic.ts';
 
 export type Store = {
   list(): Proposal[];
@@ -108,11 +108,44 @@ export function createStore(dataDir: string): Store {
      result is a zero-byte proposals.json indistinguishable from a fresh install. src/fsatomic.ts
      closes the writing half; this closes the reading half. A parse failure had the opposite
      fault, throwing out of every caller including the one at boot. */
+  /* THE ANCHOR beside the file remembers how many rows this app has written. A proposals.json
+     emptied to [] or deleted outright used to come up as "no proposals yet", and the 24 hour spend
+     is computed from these rows, so one file write restored the whole budget in silence. A list
+     shorter than the anchor is damage and is quarantined; a missing file with an anchor behind it
+     is refused by name, and the way to start over on purpose is to move the anchor aside. */
+  const anchorPath = path.join(dataDir, 'proposals.anchor.json');
+
+  function readAnchor(): { count: number; at: string } | null {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(anchorPath, 'utf8')) as { count?: unknown; at?: unknown };
+      if (typeof parsed.count !== 'number' || !Number.isInteger(parsed.count) || parsed.count < 0) return null;
+      return { count: parsed.count, at: typeof parsed.at === 'string' ? parsed.at : '' };
+    } catch {
+      return null;
+    }
+  }
+
+  function writeAnchor(count: number): void {
+    atomicWriteJson(anchorPath, { count, at: new Date().toISOString() });
+  }
+
+  function refuse(why: string): CorruptStateError {
+    corrupt = new CorruptStateError(filePath, why);
+    return corrupt;
+  }
+
   function readAll(): Proposal[] {
     if (corrupt !== null) throw corrupt;
     const stat = fileKey();
     if (stat === null) {
       held = null;
+      const anchor = readAnchor();
+      if (anchor !== null && anchor.count > 0) {
+        throw refuse(
+          `proposals.json is gone, but proposals.anchor.json says this app wrote ${anchor.count} rows to it` +
+            `${anchor.at ? ` (last on ${anchor.at})` : ''}. Restore the file, or move the anchor aside to start empty on purpose.`,
+        );
+      }
       return [];
     }
     if (held !== null && held.key === stat.key) return held.rows;
@@ -125,6 +158,16 @@ export function createStore(dataDir: string): Store {
       throw quarantine(err instanceof Error ? err.message : String(err));
     }
     if (!Array.isArray(parsed)) throw quarantine(`the file holds ${parsed === null ? 'null' : typeof parsed}, not a list`);
+    for (let i = 0; i < parsed.length; i += 1) {
+      const row = parsed[i] as { id?: unknown; status?: unknown } | null;
+      if (row === null || typeof row !== 'object' || typeof row.id !== 'string' || typeof row.status !== 'string') {
+        throw quarantine(`row ${i + 1} is not a proposal: it has no id and status`);
+      }
+    }
+    const anchor = readAnchor();
+    if (anchor !== null && parsed.length < anchor.count) {
+      throw quarantine(`the file holds ${parsed.length} rows and this app recorded ${anchor.count}. Something removed ${anchor.count - parsed.length} of them.`);
+    }
     const rows = parsed as Proposal[];
     // Keyed on what the file looked like BEFORE the read, so a write that landed during it is
     // seen by the next call rather than hidden behind a key that already names the new bytes.
@@ -161,7 +204,8 @@ export function createStore(dataDir: string): Store {
      written around. */
   function writeAll(list: Proposal[]): void {
     const text = JSON.stringify(list, null, 2);
-    atomicWrite(filePath, text);
+    atomicWrite(filePath, text, { mode: 0o600 });
+    writeAnchor(list.length);
     const stat = fileKey();
     held = stat !== null && stat.size === Buffer.byteLength(text) ? { rows: list, key: stat.key } : null;
   }

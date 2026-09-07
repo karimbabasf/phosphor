@@ -29,7 +29,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { LogEvent } from './types.ts';
-import { atomicWriteJson } from './fsatomic.ts';
+import { atomicWriteJson, syncFile } from './fsatomic.ts';
 
 export type ChainBreak = {
   // Line number in the file, 1-based, so it reads the way an editor numbers it.
@@ -93,7 +93,7 @@ export type Audit = {
   subscribe(fn: (e: LogEvent) => void): () => void;
   // Walks the whole file and reports the first line whose link does not hold. `ok` on an
   // absent or empty file: no lines is a chain nobody has broken.
-  verify(): { ok: true; lines: number } | { ok: false; lines: number; break: ChainBreak };
+  verify(): { ok: true; lines: number; anchored: boolean } | { ok: false; lines: number; break: ChainBreak };
   // How many lines tail() has had to skip since boot. A torn line is normal after a power loss
   // mid-append and abnormal any other time, so the number is reported (health) rather than
   // logged: logging it would append a line per poll to the file that is torn.
@@ -180,7 +180,7 @@ function scanLines(filePath: string, wantIndex: number): { count: number; line: 
 export function verifyChain(
   lines: string[],
   tip: ChainTip | null = null,
-): { ok: true; lines: number } | { ok: false; lines: number; break: ChainBreak } {
+): { ok: true; lines: number; anchored: boolean } | { ok: false; lines: number; break: ChainBreak } {
   /* The anchor first, because it is the cheap check and because a truncated file's REMAINING
      lines chain perfectly: walking them would answer ok before anything noticed the file is
      shorter than the record of it. */
@@ -211,6 +211,9 @@ export function verifyChain(
   }
 
   let expected: string | null = null;
+  // Set by the first line that carries a prev field at all. Before it, lines without one are the
+  // pre-chain prefix an upgraded install has; after it, a line without one is a stripped link.
+  let chainStarted = false;
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
     let parsed: { prev?: unknown };
@@ -221,12 +224,25 @@ export function verifyChain(
     }
     const claimed = parsed.prev === null || typeof parsed.prev === 'string' ? parsed.prev : undefined;
     if (claimed === undefined) {
-      // A line written before the chain existed. It is not a break in itself, and the file it
-      // sits in has no link to check, so the walk restarts from it rather than reporting every
-      // pre-chain line as damage.
-      expected = hashLine(line);
-      continue;
+      /* A line with no prev field is a pre-chain line, and pre-chain lines can only be a prefix:
+         the chain started once and never stopped. Accepting one anywhere later let a single
+         regex defeat the whole record: edit line k, strip prev from k onward, re-anchor the tip,
+         and the walk restarted at every stripped line and answered ok. */
+      if (!chainStarted) {
+        expected = hashLine(line);
+        continue;
+      }
+      return {
+        ok: false,
+        lines: lines.length,
+        break: {
+          line: i + 1,
+          reason: 'missing_link',
+          detail: 'this line carries no prev field, but the chain had already started above it',
+        },
+      };
     }
+    chainStarted = true;
     if (expected !== null && claimed !== expected) {
       return {
         ok: false,
@@ -240,7 +256,7 @@ export function verifyChain(
     }
     expected = hashLine(line);
   }
-  return { ok: true, lines: lines.length };
+  return { ok: true, lines: lines.length, anchored: tip !== null && tip.count > 0 };
 }
 
 export function createAudit(dataDir: string): Audit {
@@ -282,6 +298,13 @@ export function createAudit(dataDir: string): Audit {
      So the first flush of a process checks the anchor it inherited before it moves it, and leaves
      it exactly where it is when the file no longer matches. Appending onto a broken log is fine
      and is what an append-only log does; overwriting the evidence is not. */
+  /* A log this app wrote before 2026-09-07 landed 0644. Holdings, addresses and the whole
+     decision history are in it, so it is pulled back to the owner alone on the next boot. */
+  try {
+    if (fs.existsSync(filePath)) fs.chmodSync(filePath, 0o600);
+  } catch {
+    // A file system that refuses the mode change is not one this app can do anything about here.
+  }
   const bootTip = readTip(dataDir);
   let anchorHeld = false;
 
@@ -322,6 +345,10 @@ export function createAudit(dataDir: string): Audit {
         }
         written = scan.count;
       }
+      /* The lines go to disk before the anchor that names them. appendFileSync does not fsync,
+         the anchor's writer does, and a power cut between the two left the anchor ahead of the
+         log: a false tamper alarm that reads exactly like a real one. */
+      syncFile(filePath);
       atomicWriteJson(path.join(dataDir, TIP_FILENAME), { count: written, hash: previous } satisfies ChainTip, undefined);
     } catch {
       // The log lines are already on disk and they are the record. A tip that could not be
@@ -347,7 +374,7 @@ export function createAudit(dataDir: string): Audit {
       prev: previous,
     };
     const line = JSON.stringify(event);
-    fs.appendFileSync(filePath, line + '\n');
+    fs.appendFileSync(filePath, line + '\n', { mode: 0o600 });
     previous = hashLine(line);
     appended += 1;
     if (written !== null) written += 1;

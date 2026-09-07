@@ -138,7 +138,9 @@ function checkAuditChain(): void {
   try {
     const chain = audit.verify();
     if (chain.ok) {
-      recordAuditChain('ok');
+      /* Verified against nothing is not verified. A deleted anchor used to fold into ok, which
+         turned a truncated log into a clean boot; it is named now and the window can say so. */
+      recordAuditChain(chain.anchored ? 'ok' : 'unanchored');
     } else {
       const why = `${chain.break.reason} at line ${chain.break.line}: ${chain.break.detail}`;
       recordAuditChain(`broken: ${why}`);
