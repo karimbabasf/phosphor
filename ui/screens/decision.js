@@ -311,15 +311,16 @@
        deposit lines into this string on purpose, with a comment saying the
        approval gate renders it, and the gate never did.
 
-       A policy change is the one kind whose summary is the assistant's own
-       sentence read back, so it is labelled as that and not as the venue's
-       report. For that card the diff below is the truth. */
+       A policy change is the one kind held back, and not for tidiness. Its
+       summary is `the agent asked for: <the assistant's sentence>`, so rendering
+       it would put the assistant's own wording at the top of the card that
+       decides whether to trust it, above the diff that says the same thing from
+       the engine. The backend keeps the +/- lines out of the summary for this
+       reason: the diff is the disclosure for that card. */
     var summary = typeof sim.summary === 'string' ? sim.summary.trim() : '';
-    if (summary) {
+    if (summary && draft.kind !== 'policy_change') {
       var swrap = dom.el('div', 'stack-2');
-      swrap.appendChild(dom.el('p', 'label', draft.kind === 'policy_change'
-        ? 'What the assistant asked for'
-        : 'What the venue reports'));
+      swrap.appendChild(dom.el('p', 'label', 'What the venue reports'));
       swrap.appendChild(dom.el('p', 'body dock-summary', summary));
       refs.card.appendChild(swrap);
     }

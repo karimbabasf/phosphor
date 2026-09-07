@@ -259,9 +259,14 @@ test('a rule change lists every line it adds and every line it takes away', () =
   assert.ok(text.includes('- intents.near'), 'a removed destination is not shown as lost');
   assert.ok(text.some((t) => t.includes('$10,000')), 'the line being removed is not shown');
   assert.ok(text.some((t) => t.includes('$20,000')), 'the line being added is not shown');
-  // The assistant's own sentence is on the card, labelled as the assistant's,
-  // never as the venue's report.
-  assert.ok(textOf(card).includes('What the assistant asked for'));
+  // The assistant's own wording is kept off this card. Its summary is
+  // "the agent asked for: <sentence>", and putting that at the top of the card
+  // that decides whether to trust the assistant would let it write its own ask
+  // above the engine's diff, which is the disclosure here.
+  const all = textOf(card);
+  assert.equal(all.some((t) => t.includes('the agent asked for')), false,
+    'the assistant wrote a line on the card deciding its own request');
+  assert.equal(all.includes('What the venue reports'), false);
 });
 
 // B17. The engine writes a draft called mandate_arm. Nothing has ever authored
