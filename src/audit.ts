@@ -177,6 +177,23 @@ function scanLines(filePath: string, wantIndex: number): { count: number; line: 
   }
 }
 
+/* Where the anchored line actually sits. The HASH is the anchor; the count says where to look
+   first. Builds before 2026-09-07 wrote the tip on every line from an in-process counter, and a
+   second process appending to the same log (a peer session, a driver child) left that counter
+   behind the file: a real install here carried count 4336 with the hash of line 4747. Reading
+   that as truncation cried wolf on an intact log. So a count that does not hash to the anchor
+   is looked past, from the end of the file backwards, and only a hash that appears nowhere is
+   damage. Nothing weakens: a rewrite below the anchored line changes every prev after it and
+   so the anchored line's own text; a truncation below it removes it; a deletion above it breaks
+   the walk at the gap. */
+export function anchorLine(lines: string[], tip: ChainTip): number {
+  if (tip.count > 0 && tip.count <= lines.length && hashLine(lines[tip.count - 1]) === tip.hash) return tip.count;
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if (hashLine(lines[i]) === tip.hash) return i + 1;
+  }
+  return -1;
+}
+
 export function verifyChain(
   lines: string[],
   tip: ChainTip | null = null,
@@ -197,14 +214,14 @@ export function verifyChain(
       };
     }
     const anchored = hashLine(lines[tip.count - 1]);
-    if (anchored !== tip.hash) {
+    if (anchored !== tip.hash && anchorLine(lines, tip) === -1) {
       return {
         ok: false,
         lines: lines.length,
         break: {
           line: tip.count,
           reason: 'truncated',
-          detail: `line ${tip.count} hashes to ${anchored.slice(0, 12)} and this app recorded ${tip.hash.slice(0, 12)} there. The lines before it are not the ones that were written.`,
+          detail: `line ${tip.count} hashes to ${anchored.slice(0, 12)} and this app recorded ${tip.hash.slice(0, 12)} there, and no line in the file hashes to it. The lines that were written are not the ones in the file.`,
         },
       };
     }
@@ -335,7 +352,8 @@ export function createAudit(dataDir: string): Audit {
         if (
           bootTip !== null &&
           bootTip.count > 0 &&
-          (scan.count < bootTip.count || scan.line === null || hashLine(scan.line) !== bootTip.hash)
+          (scan.count < bootTip.count || scan.line === null || hashLine(scan.line) !== bootTip.hash) &&
+          anchorLine(readLines(filePath), bootTip) === -1
         ) {
           // The log no longer matches what this app recorded about it. verify() is what reports
           // that; this refuses to write over the anchor that proves it, for the life of the

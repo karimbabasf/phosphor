@@ -95,11 +95,11 @@ test('reordering two lines is caught', () => {
 
   const result = createAudit(dir).verify();
   assert.equal(result.ok, false);
-  /* The tip anchor now reaches this first: the line at the recorded count is not the one that was
-     written there, which a reorder makes true as surely as a truncation does. The WALK still
-     catches it on its own, which is what the second half asserts, so the older detection is not
-     resting on the newer one. */
-  assert.equal(result.ok === false && result.break.reason, 'truncated');
+  /* The anchor is the HASH, and the count only says where to look first (src/audit.ts,
+     anchorLine): a reorder leaves the anchored line in the file, so the walk is what names it,
+     as a broken link at the swapped line. The second half asserts the walk catches it with no
+     anchor at all, so the older detection is not resting on the newer one. */
+  assert.equal(result.ok === false && ['truncated', 'broken_link'].includes(result.break.reason), true);
   const walked = verifyChain([written[0], written[2], written[1]]);
   assert.equal(walked.ok, false, 'and the chain walk catches it with no anchor at all');
   assert.equal(walked.ok === false && walked.break.line, 2);

@@ -95,3 +95,34 @@ test('an old 0644 log is pulled back to 0600 when the app opens it', () => {
   createAudit(dir);
   assert.equal(fs.statSync(file).mode & 0o777, 0o600);
 });
+
+test('a legacy tip whose count fell behind its own hash is an anchor, not a truncation', () => {
+  // Builds before 2026-09-07 wrote the count from an in-process counter that a second process
+  // appending to the same log left behind. The hash is the anchor and it still names a real line.
+  const { dir, file } = seeded(8);
+  const rows = lines(file);
+  atomicWriteJson(path.join(dir, TIP_FILENAME), { count: 3, hash: hashLine(rows[6]) });
+  const result = verifyChain(lines(file), readTip(dir));
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.ok && result.anchored, true);
+});
+
+test('a tip whose hash appears nowhere in the file is still named as damage', () => {
+  const { dir, file } = seeded(8);
+  atomicWriteJson(path.join(dir, TIP_FILENAME), { count: 3, hash: hashLine('a line that was never written') });
+  const result = verifyChain(lines(file), readTip(dir));
+  assert.equal(result.ok, false);
+  assert.equal(!result.ok && result.break.reason, 'truncated');
+});
+
+test('a process that inherits a legacy tip moves the anchor forward instead of holding it for life', () => {
+  const { dir, file } = seeded(8);
+  const rows = lines(file);
+  atomicWriteJson(path.join(dir, TIP_FILENAME), { count: 3, hash: hashLine(rows[6]) });
+  const audit = createAudit(dir);
+  audit.append('tool_call', 'after the upgrade');
+  audit.flushTip();
+  const tip = readTip(dir);
+  assert.ok(tip !== null && tip.count === 9, JSON.stringify(tip));
+  assert.equal(verifyChain(lines(file), tip).ok, true);
+});
