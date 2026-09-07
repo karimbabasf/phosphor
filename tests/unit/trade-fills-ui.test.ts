@@ -192,15 +192,6 @@ function funded() {
   };
 }
 
-function findByDataset(node: Node, key: string): Node | null {
-  if (node.dataset[key] !== undefined) return node;
-  for (const child of node.childNodes) {
-    const hit = findByDataset(child, key);
-    if (hit !== null) return hit;
-  }
-  return null;
-}
-
 function allWithDataset(node: Node, key: string, out: Node[] = []): Node[] {
   if (node.dataset[key] !== undefined) out.push(node);
   for (const child of node.childNodes) allWithDataset(child, key, out);

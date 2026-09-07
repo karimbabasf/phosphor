@@ -33,7 +33,7 @@ function makeEl(tag: string, id = ''): Any {
     className: '',
     attrs: Object.create(null) as Any,
     children: [] as Any[],
-    parentNode: null as Any,
+    parentNode: null as unknown as Any,
     styles: Object.create(null) as Any,
     offsetHeight: 220,
     style: {
@@ -220,7 +220,7 @@ function build(options: { reduced?: boolean } = {}): World {
     sandbox,
     beam: sandbox.PhosphorBeam,
     doc,
-    el: (id: string) => nodes.get(id),
+    el: (id: string): Any => nodes.get(id) as Any,
     frame: (now: number) => {
       if (draw) draw(now, 16);
     },
