@@ -279,9 +279,12 @@ test('no path writes the retired gate_disabled decision', async () => {
 // thing this app exists to prevent.
 test('a policy change never auto-approves', async () => {
   const h = setup();
+  /* $50,000 rather than the $999,999 this used to ask for. A patch may loosen a limit by up to
+     ten times (src/policy/engine.ts, cap_raised_too_far), and a hundredfold jump is now refused
+     rather than queued, which would make this assert the wrong thing about the wrong verdict. */
   const p = await h.svc.proposePolicyChange({
-    patch: { outbound: { maxPerTransactionUsd: 999999 } },
-    sentence: 'Refuse any single transaction above $999,999.',
+    patch: { outbound: { maxPerTransactionUsd: 50_000 } },
+    sentence: 'Refuse any single transaction above $50,000.',
   });
 
   assert.equal(p.status, 'pending');
@@ -292,8 +295,8 @@ test('the policy on disk is untouched while that change sits pending', async () 
   const h = setup();
   const before = loadPolicy(h.dataDir)?.outbound.maxPerTransactionUsd;
   await h.svc.proposePolicyChange({
-    patch: { outbound: { maxPerTransactionUsd: 999999 } },
-    sentence: 'Refuse any single transaction above $999,999.',
+    patch: { outbound: { maxPerTransactionUsd: 50_000 } },
+    sentence: 'Refuse any single transaction above $50,000.',
   });
 
   assert.equal(loadPolicy(h.dataDir)?.outbound.maxPerTransactionUsd, before);

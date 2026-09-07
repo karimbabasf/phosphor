@@ -292,6 +292,61 @@ test('a policy change says plainly that it moves no money', () => {
   assert.match(view.ask!.headline, /raise the cap/);
 });
 
+/* The agent writes the patch AND the sentence beside it, so a card that shows only the sentence
+   shows nothing a hostile patch cannot choose. This screen used to show exactly that: the
+   agent's words in the headline and "This does not move any money. It changes a rule." below.
+   The app already computed the before/after sentences at src/proposals/draft.ts and nothing
+   rendered them anywhere. */
+test('a rule change lists every rule it removes and every rule it adds', () => {
+  const draft: WriteDraft = {
+    kind: 'policy_change',
+    patch: { outbound: { humanClickAboveUsd: 1_000_000_000 } },
+    // The lie. The patch does something else entirely and this is the only thing the card used
+    // to carry about it.
+    sentence: 'raise the gas floor on base',
+  };
+  const view = buildBasic(
+    baseInput({
+      proposals: [
+        proposal({
+          draft,
+          kind: 'policy_change',
+          simulation: {
+            ok: true,
+            summary: 'the agent asked for: raise the gas floor on base',
+            policyDiff: {
+              before: ['Ask me before anything above $100.', 'Keep at least $25 of gas on base.', 'Never move funds into: acme.'],
+              after: ['Ask me before anything above $1,000,000,000.'],
+            },
+          },
+        }),
+      ],
+    }),
+  );
+
+  const facts = view.ask!.facts.join('\n');
+  assert.match(facts, /removed: "Ask me before anything above \$100\."/);
+  assert.match(facts, /removed: "Keep at least \$25 of gas on base\."/, 'a deleted gas floor is a removal, and mergePatch deletes them wholesale');
+  assert.match(facts, /removed: "Never move funds into: acme\."/, 'so is a deleted forbidden issuer');
+  assert.match(facts, /added: "Ask me before anything above \$1,000,000,000\."/);
+});
+
+test('a rule change that reads identically afterwards says so rather than showing an empty list', () => {
+  const draft: WriteDraft = { kind: 'policy_change', patch: {}, sentence: 'tidy the rules' };
+  const view = buildBasic(
+    baseInput({
+      proposals: [
+        proposal({
+          draft,
+          kind: 'policy_change',
+          simulation: { ok: true, summary: 'the agent asked for: tidy the rules', policyDiff: { before: ['Ask me before anything above $100.'], after: ['Ask me before anything above $100.'] } },
+        }),
+      ],
+    }),
+  );
+  assert.match(view.ask!.facts.join('\n'), /None of your rules would actually read any differently/);
+});
+
 // ---------- both found by driving the app, not by an assertion ----------
 
 test('the most recent decision wins, not the most alarming one', () => {

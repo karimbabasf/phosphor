@@ -34,6 +34,7 @@ import type {
   ChainStatus,
   LogEvent,
   Proposal,
+  SimulationResult,
   WalletView,
   WriteDraft,
 } from '../types.ts';
@@ -310,6 +311,36 @@ function askAfterLine(draft: WriteDraft, totalUsd: number | null, amountUsd: num
   return `You would have about ${money(totalUsd - amountUsd)} left afterwards.`;
 }
 
+/* WHAT THE RULE CHANGE ACTUALLY SAYS, line by line.
+
+   The only thing this screen used to tell a person about a policy change was the agent's own
+   sentence in the headline and "This does not move any money. It changes a rule." below it. The
+   agent writes both halves of that: the patch AND the sentence beside it. So a patch setting the
+   click threshold to a billion dollars and replacing the destination allowlist, described as
+   "raise the gas floor on base", produced a card that named neither. One click and every later
+   proposal executed with no human in it.
+
+   The app already renders the policy as deterministic sentences (src/policy/render.ts) and
+   already computes the before and after pair at src/proposals/draft.ts. Nothing displayed it.
+   These lines are that diff, and they are facts rather than prose because facts are the lines
+   this screen may not drop. Every removal gets its own line: mergePatch REPLACES the destination
+   allowlist, the gas floors and the forbidden issuers rather than merging them, so the deletions
+   are the part a reader would otherwise never see. */
+function ruleChangeFacts(simulation: SimulationResult | null): string[] {
+  const diff = simulation?.policyDiff;
+  if (diff === undefined) return [];
+  const before = diff.before;
+  const after = diff.after;
+  const removed = before.filter((line) => !after.includes(line));
+  const added = after.filter((line) => !before.includes(line));
+  // Removals first. A rule that stops applying is the dangerous half of any policy change, and
+  // it is the half a person skimming a list of additions reads past.
+  const facts = removed.map((line) => `This rule would be removed: "${line}"`);
+  for (const line of added) facts.push(`This rule would be added: "${line}"`);
+  if (facts.length === 0) facts.push('None of your rules would actually read any differently afterwards.');
+  return facts;
+}
+
 function factsOf(draft: WriteDraft, amountUsd: number, destinations: BasicDestination[]): string[] {
   const facts: string[] = [];
   if (draft.kind !== 'policy_change') facts.push(`Amount: ${money(amountUsd)}.`);
@@ -339,7 +370,7 @@ function buildAsk(proposal: Proposal, totalUsd: number | null, selfAddresses: st
     symbols: symbolsOf(draft),
     chains: chainsOf(draft),
     destinations,
-    facts: factsOf(draft, amountUsd, destinations),
+    facts: [...factsOf(draft, amountUsd, destinations), ...ruleChangeFacts(proposal.simulation)],
   };
 }
 

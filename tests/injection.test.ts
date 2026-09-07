@@ -377,8 +377,15 @@ test('a transfer to the attacker is refused by the engine itself', () => {
 
 for (const [index, sentence] of hostile.sentences.entries()) {
   test(`hostile sentence ${index + 1} is data, never an instruction`, async () => {
+    /* The attacker is ADDED to the allowlist rather than substituted for it, because a patch
+       that substitutes is now refused outright: mergePatch replaces the list wholesale, so
+       `destinationAllowlist: [attacker]` deletes all nine venue addresses the app needs as well
+       as adding one it must not have, and the engine names that (allowlist_shortened) instead of
+       queueing it. What this test is about is the SENTENCE, so the patch is the mildest one that
+       still asks for the attacker: it has to reach `pending` for the human to refuse it. */
+    const current = await callTool('policy_show');
     const proposed = await callTool('propose_policy_change', {
-      patch: { outbound: { destinationAllowlist: [hostile.attacker] } },
+      patch: { outbound: { destinationAllowlist: [...(current.policy.outbound.destinationAllowlist as string[]), hostile.attacker] } },
       sentence,
     });
 

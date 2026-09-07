@@ -20,6 +20,7 @@ import type {
   CompositionView,
   LedgerSnapshot,
   Policy,
+  PolicyPatch,
   RiskRow,
   TransferLeg,
   Verdict,
@@ -39,7 +40,12 @@ const CHAIN_IDS = ['eth', 'base', 'arb', 'sol', 'near'] as const;
 // Structural shape of a PolicyPatch on the wire. Strict everywhere: an unknown key is an
 // invalid patch rather than a silently ignored one, since a patch that half applies is worse
 // than a patch that is refused.
-const usdField = z.number().finite().nonnegative();
+/* An upper bound as well as a lower one. Not a policy judgement: a cap of 1e308 is still a
+   finite number, and every comparison downstream is arithmetic on it. Beyond the safe integer
+   range the arithmetic stops being reliable, so a patch asking for it is refused as malformed
+   rather than accepted and quietly rounded. The rules that stop a cap being RAISED too far are
+   in policyChangeCeiling below, because those need the policy in force to compare against. */
+const usdField = z.number().finite().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const shareField = z.number().finite().min(0).max(1);
 const patchSchema = z
   .object({
@@ -67,6 +73,92 @@ const patchSchema = z
 // Fields a patch may never reach. killSwitch is human-only hardware; version and sentences are
 // what the human reads to know what the policy is.
 const UNPATCHABLE = ['killSwitch', 'version', 'sentences'];
+
+/* HOW FAR ONE PATCH MAY MOVE THE WALLS, and why there is a limit at all.
+
+   A policy change is the one draft that removes the controls on every draft after it, and until
+   now the only thing standing in front of it was a click on a card that named the change in the
+   agent's own words. `humanClickAboveUsd: 1e9` with the sentence "raise the gas floor on base"
+   came back needs_approval, so the whole attack was one click on a card that said "Change your
+   limits" and nothing else. The card now renders the diff (src/view/basic.ts), and these three
+   rules are the half that does not depend on anybody reading it.
+
+   They are RELATIVE to the policy in force rather than absolute, because an absolute dollar
+   ceiling is a number nobody can justify: it is wrong for a wallet holding $500 and wrong for
+   one holding $5m. Ten times is a wall a legitimate change walks up to in steps, each of them
+   read and clicked, and it is a wall an "adjust the gas floor" patch never touches. */
+const MAX_RAISE_FACTOR = 10;
+
+// The three that get looser as they get bigger. The share fields are already bounded at 1 by
+// their own schema, and the gas floors get SAFER as they rise, so neither belongs here.
+const RAISABLE_CAPS = ['maxPerTransactionUsd', 'maxPerSessionUsd', 'humanClickAboveUsd'] as const;
+
+function policyChangeCeiling(patch: PolicyPatch, policy: Policy, reasons: string[]): Verdict | null {
+  const o = patch.outbound;
+  if (o === undefined) return null;
+
+  /* A click threshold above the transaction cap is a click threshold that never fires: every
+     move small enough to be allowed at all is then small enough to auto-execute. Checked against
+     the cap as it would stand AFTER the patch, and only when the patch is the thing RAISING the
+     threshold. A patch that merely lowers the transaction cap under a threshold it never touched
+     is a tightening, and refusing a tightening is the wrong direction to fail in.
+     First, because it names the specific thing being asked for. Raising the threshold past the
+     cap also trips the ten-times rule below, and "nothing would ever wait for you" is the more
+     useful sentence to hand somebody. */
+  if (o.humanClickAboveUsd !== undefined && o.humanClickAboveUsd > policy.outbound.humanClickAboveUsd) {
+    const perTransaction = o.maxPerTransactionUsd ?? policy.outbound.maxPerTransactionUsd;
+    if (o.humanClickAboveUsd > perTransaction) {
+      return refusal(
+        reasons,
+        'click_threshold_above_cap',
+        `This patch would ask for a click above ${money(o.humanClickAboveUsd)} while refusing anything above ${money(perTransaction)}, so nothing would ever wait for you. Lower the click threshold, or raise the transaction limit first.`,
+      );
+    }
+  }
+
+  for (const field of RAISABLE_CAPS) {
+    const next = o[field];
+    if (next === undefined) continue;
+    const current = policy.outbound[field];
+    if (next <= current) continue;
+    /* Zero is not a small number here, it is a different policy: humanClickAboveUsd at 0 means
+       every action waits for a person, and maxPerTransactionUsd at 0 means nothing moves. Ten
+       times zero is zero, so raising either is not a step, it is a reversal, and a person writes
+       that in the file themselves. */
+    if (current === 0) {
+      return refusal(
+        reasons,
+        'cap_raised_from_zero',
+        `This patch raises ${field} from ${money(0)} to ${money(next)}. A limit of zero is not a small limit, it is a rule that nothing passes, and lifting it is a decision for the policy file rather than for a patch.`,
+      );
+    }
+    if (next > current * MAX_RAISE_FACTOR) {
+      return refusal(
+        reasons,
+        'cap_raised_too_far',
+        `This patch raises ${field} from ${money(current)} to ${money(next)}, more than ${MAX_RAISE_FACTOR} times. One change may loosen a limit by up to ${MAX_RAISE_FACTOR} times; past that, make it in steps you read each time.`,
+      );
+    }
+  }
+
+  /* The allowlist is REPLACED rather than merged (see mergePatch), so a patch carrying one
+     address deletes every other one. Adding is fine and is the reason the field exists;
+     dropping an address a person put there is a removal dressed as an addition, and it is the
+     removals that a diff read in a hurry is most likely to miss. */
+  if (o.destinationAllowlist !== undefined) {
+    const next = new Set(o.destinationAllowlist.map(lower));
+    const dropped = policy.outbound.destinationAllowlist.filter(a => !next.has(lower(a)));
+    if (dropped.length > 0) {
+      return refusal(
+        reasons,
+        'allowlist_shortened',
+        `This patch drops ${dropped.length} allowed destination(s) (${dropped.join(', ')}). A patch may add destinations; removing one is a decision for the policy file.`,
+      );
+    }
+  }
+
+  return null;
+}
 
 function lower(s: string): string {
   return s.toLowerCase();
@@ -278,7 +370,7 @@ function nativeUsdByChain(snapshot: LedgerSnapshot): Map<ChainId, number> {
 }
 
 // Rule 3. A policy change is the one draft that can never be auto-executed.
-function evaluatePolicyChange(draft: Extract<WriteDraft, { kind: 'policy_change' }>, reasons: string[]): Verdict {
+function evaluatePolicyChange(draft: Extract<WriteDraft, { kind: 'policy_change' }>, policy: Policy, reasons: string[]): Verdict {
   const patch = draft.patch as unknown as Record<string, unknown>;
   const raw = patch !== null && typeof patch === 'object' ? patch : {};
 
@@ -298,6 +390,9 @@ function evaluatePolicyChange(draft: Extract<WriteDraft, { kind: 'policy_change'
     const detail = parsed.error.issues.map(i => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; ');
     return refusal(reasons, 'invalid_patch', `Patch is not a valid policy change: ${detail}`);
   }
+
+  const tooFar = policyChangeCeiling(parsed.data as PolicyPatch, policy, reasons);
+  if (tooFar !== null) return tooFar;
 
   reasons.push('Policy changes always require a human click.');
   return { outcome: 'needs_approval', reasons };
@@ -386,7 +481,7 @@ export function evaluate(draft: WriteDraft, ctx: EngineCtx): Verdict {
   }
 
   // 3. Policy changes.
-  if (draft.kind === 'policy_change') return evaluatePolicyChange(draft, reasons);
+  if (draft.kind === 'policy_change') return evaluatePolicyChange(draft, policy, reasons);
 
   // 3b. Rails: swap, hyperliquid deposit, LP add/remove.
   if (isRailDraft(draft)) return evaluateRail(draft, policy, ctx, reasons);
