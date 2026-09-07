@@ -296,6 +296,22 @@ test('a genuinely wrong password on an untouched wallet is still a wrong passwor
   assert.equal(out.ok === false && out.error, 'wrong_password', 'the tamper answer must not swallow the ordinary case');
 });
 
+test('twenty concurrent wrong guesses hit the backoff, exactly as five sequential ones do', async () => {
+  const keysPath = tempKeys();
+  await keystore(keysPath).create('a long enough password');
+  const store = keystore(keysPath);
+
+  /* The reproduction from the audit. openWith read backoffUntil, then suspended for the whole
+     key derivation, so twenty callers all passed the check before any of them had recorded a
+     failure: sequential guessing walls at five, concurrent guessing walled at nothing. The
+     reveal and export routes call verify() and unlock() directly, so this was reachable with a
+     window token and no rate limit at all. */
+  const results = await Promise.all(Array.from({ length: 20 }, (_, i) => store.verify(`wrong guess ${i}`)));
+  const lockedOut = results.filter((r) => r.ok === false && r.error === 'locked_out').length;
+  assert.ok(lockedOut >= 15, `at least fifteen of twenty should be locked out, got ${lockedOut}`);
+  assert.equal(results.some((r) => r.ok), false, 'and none of them opened anything');
+});
+
 test('an imported mnemonic produces the same wallet as creating one from those words', async () => {
   const keysPath = tempKeys();
   const store = keystore(keysPath);

@@ -355,7 +355,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
      until somebody locked and unlocked again.
      The failure counter and the backoff belong here rather than in unlock, because they are the
      brute-force control and a route that checks a password is a route that can be ground. */
-  async function openWith(password: string): Promise<{ ok: true; body: Buffer } | Extract<UnlockResult, { ok: false }>> {
+  async function openOnce(password: string): Promise<{ ok: true; body: Buffer } | Extract<UnlockResult, { ok: false }>> {
     if (now() < backoffUntil) {
       return { ok: false, error: 'locked_out', retryInSec: Math.ceil((backoffUntil - now()) / 1000) };
     }
@@ -369,6 +369,16 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
 
     const aad = aadFor(stored.header);
     const kek = await deriveKek(password, stored.header.kdf);
+    /* READ AGAIN AFTER THE DERIVATION, and this is the whole of the concurrency fix on this
+       side. The check at the top of this function runs before an await that takes half a second,
+       so twenty callers arriving together all passed it before any of them had failed, and the
+       backoff never engaged: sequential guessing walled at five while twenty concurrent guesses
+       all came back "wrong password". The queue above serialises them; this line is what makes
+       the wall hold even for a caller that somehow gets past it. */
+    if (now() < backoffUntil) {
+      wipe(kek);
+      return { ok: false, error: 'locked_out', retryInSec: Math.ceil((backoffUntil - now()) / 1000) };
+    }
     let dataKey: Buffer | null = null;
     try {
       dataKey = open(stored.wrap, kek, aad);
@@ -421,6 +431,27 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     failures = 0;
     backoffUntil = 0;
     return { ok: true, body };
+  }
+
+  /* ONE PASSWORD CHECK AT A TIME, for every route that makes one.
+     The failure counter and the backoff are the only thing between a weak password and a script
+     that grinds it, and they were bypassable by asking twenty times at once: openOnce reads the
+     backoff, then suspends for half a second inside the key derivation, so every concurrent
+     caller passed the check before any of them had recorded a failure. /api/unlock had its own
+     in-flight guard and was safe; /api/wallet/reveal and /api/wallet/export call unlock() and
+     verify() directly and were not. Reproduced at twenty concurrent guesses: all twenty came
+     back "wrong password" where five sequential ones already wall.
+     The guard belongs here rather than in the routes because here is where the counter lives, so
+     a route added later cannot forget it. Serialised rather than deduplicated: two different
+     guesses are two attempts and both must be counted. */
+  let queue: Promise<unknown> = Promise.resolve();
+  function openWith(password: string): Promise<{ ok: true; body: Buffer } | Extract<UnlockResult, { ok: false }>> {
+    const run = queue.then(
+      () => openOnce(password),
+      () => openOnce(password),
+    );
+    queue = run.catch(() => undefined);
+    return run;
   }
 
   async function unlock(password: string): Promise<UnlockResult> {
