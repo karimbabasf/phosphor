@@ -5,6 +5,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import type { Candle, Policy, RiskRow, ViewMode } from './types.ts';
 import { readViewMode, writeViewMode } from './view/mode.ts';
@@ -39,6 +40,7 @@ import { createInfoClient } from './hl/info.ts';
 import { atr } from './analysis/regime.ts';
 import { createServer } from './server.ts';
 import { readWindowToken } from './http/auth.ts';
+import { useIdentityValue } from './http/respond.ts';
 import { sweepOrphans } from './driver.ts';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -323,6 +325,76 @@ if (stranded.length > 0) {
 // for it: one agent_connected when an agent attaches, one agent_disconnected when it goes.
 // Two lines per session instead of 240 an hour, and the transcript still answers "was an
 // agent attached at 19:52".
+/* THE SHELL'S HANDSHAKE, off the pipe and before the port opens.
+   Three lines, in this order, written by src-tauri/src/backend.rs and then the pipe is closed:
+
+     1. the window token, which every write from the control page carries
+     2. the boot nonce, which this process echoes in its x-phosphor header so the shell can tell
+        its OWN backend from anything else that took the port
+     3. the roster seat secret, which reaches the agents this app spawns and nothing else
+
+   Why a pipe and not the environment: `ps eww <pid>` prints the environment of any process this
+   user owns, which is the attacker this app is built against. A local process read the token back
+   that way and drove the kill switch, the idle beacon and approve on a real pending proposal,
+   which the audit then recorded as a human's click. Same channel and same argument as the runner's
+   Hyperliquid key. See src/http/auth.ts.
+
+   A bare `npm run app` has nobody above it to send any of this. It gets a terminal on stdin, reads
+   nothing, mints its own token and says so on stderr, and answers the identity header with the
+   fixed word. Nothing is weakened: a backend with no nonce is a backend no shell is waiting on. */
+const HANDSHAKE_WAIT_MS = 2_000;
+
+function readHandshake(
+  stdin: NodeJS.ReadableStream & { isTTY?: boolean } = process.stdin,
+  waitMs = HANDSHAKE_WAIT_MS,
+): Promise<string[]> {
+  // A terminal is nobody about to pipe a secret, so there is nothing to wait for.
+  if (stdin.isTTY === true) return Promise.resolve([]);
+  return new Promise((resolve) => {
+    let buffered = '';
+    let done = false;
+
+    const finish = (): void => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      stdin.off('data', onData);
+      stdin.off('end', finish);
+      stdin.off('error', finish);
+      // Read no further. The handshake is the only thing this process ever wants from stdin.
+      stdin.pause?.();
+      resolve(buffered.split('\n').map((line) => line.trim()));
+    };
+
+    const onData = (chunk: Buffer | string): void => {
+      buffered += String(chunk);
+      // Three values means three newlines, because the shell writes one after the last of them.
+      if (buffered.split('\n').length > 3) finish();
+    };
+
+    const timer = setTimeout(finish, waitMs);
+    timer.unref?.();
+    stdin.on('data', onData);
+    stdin.on('end', finish);
+    stdin.on('error', finish);
+    stdin.resume?.();
+  });
+}
+
+const handshake = await readHandshake();
+
+/* The token still goes through readWindowToken, which owns the rules around it: the length floor,
+   the refusal to mint one when the shell started this process, and the single stderr print for the
+   developer case. It is handed the first line as a stream of its own rather than the real stdin,
+   because the real stdin has already been read to the end of the handshake by then. */
+const windowTokenValue = await readWindowToken({
+  stdin: Readable.from([`${handshake[0] ?? ''}\n`]) as NodeJS.ReadableStream,
+});
+
+// The identity header answers with this boot's nonce from here on. Set before the port opens, so
+// there is no window in which this app answers with the fixed word the shell would refuse.
+useIdentityValue(handshake[1] ?? '');
+
 const agents = createAgents();
 
 // The drop is swept for because a killed MCP process has no request to ride on. mcp.ts does
@@ -460,16 +532,9 @@ const allocator =
         onChange: () => server.broadcastState(),
       });
 
-/* THE WINDOW TOKEN, off the pipe and before the port opens.
-   It used to arrive in PHOSPHOR_WINDOW_TOKEN, and `ps eww <pid>` prints the environment of any
-   process this user owns: a local process read it back and drove the kill switch, the idle
-   beacon and approve on a real proposal, which the audit then recorded as a human's click. The
-   shell writes it as the first line of this process's stdin instead and closes the pipe behind
-   it, the same channel and the same argument as the runner's Hyperliquid key.
-   Awaited here rather than inside createServer because every test in this repo builds a server
-   and none of them has a pipe to read. See src/http/auth.ts. */
-const windowTokenValue = await readWindowToken();
-
+/* The window token is read off the shell's pipe far above, beside the boot nonce and the seat
+   secret. It is passed in rather than resolved inside createServer because every test in this repo
+   builds a server and none of them has a pipe to read. See readHandshake and src/http/auth.ts. */
 const server = createServer({
   cfg,
   token: windowTokenValue,

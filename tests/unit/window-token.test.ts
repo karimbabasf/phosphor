@@ -57,7 +57,12 @@ test('the shell and the backend agree on the channel and the injected global', (
   /* Down the pipe, never through the environment. `ps eww <pid>` prints the environment of any
      process this user owns, so a token that travelled there was readable by every process on the
      machine: a local one drove the kill switch and approved a real proposal with it. */
-  assert.ok(child.includes('writeln!(pipe, "{token}")'), 'the shell writes the token to the backend\'s stdin');
+  // Three lines now: the window token, the boot nonce the shell recognises its own backend by, and
+  // the roster seat secret. The token is still line one, which is what src/http/auth.ts reads.
+  assert.ok(
+    child.includes('writeln!(pipe, "{}\\n{}\\n{}", hand.token, hand.nonce, hand.seat)'),
+    "the shell writes the handshake to the backend's stdin, token first",
+  );
   assert.ok(child.includes('.stdin(Stdio::piped())'), 'and opens a pipe for it to go down');
   assert.ok(!child.includes(WINDOW_TOKEN_VAR), 'the token is nowhere in the environment the shell hands over');
   assert.ok(shell.includes('window.__PHOSPHOR_TOKEN__'), 'the shell injects the token into the page');
@@ -112,7 +117,10 @@ test('a launch never attaches to a backend it did not start', () => {
   // and that is how the orphan became permanent: the window attached to a process the shell held
   // no handle for, so every later quit killed nothing.
   const start = shell.slice(shell.indexOf('fn start(app: &tauri::AppHandle)'));
-  assert.match(start, /if phosphor_is_listening\(port\) \{\s*return Err\(refuse_existing/);
+  // `None` on purpose: this is the loose question, "is a Phosphor holding this port", and the only
+  // place it is still asked. It names a process to quit rather than opening a window onto one.
+  // tests/unit/boot-nonce.test.ts holds the other side, where the nonce is required.
+  assert.match(start, /if phosphor_is_listening\(port, None\) \{\s*return Err\(refuse_existing/);
   assert.ok(shell.includes('fn refuse_existing'), 'and the refusal names the process holding the port');
   assert.ok(shell.includes('Quit it (`kill {}`)'), 'with a command the person can actually run');
 });
