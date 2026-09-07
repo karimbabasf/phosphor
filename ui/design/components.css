@@ -197,7 +197,7 @@
    and never touches a style property. */
 [data-surface] {
   position: relative;
-  --glow-c: var(--agent);
+  --glow-c: var(--beam);
 }
 
 [data-surface][data-glow-tone="wait"] { --glow-c: var(--warn); }
@@ -210,9 +210,12 @@
   border-radius: inherit;
   pointer-events: none;
   opacity: 0;
-  box-shadow: inset 0 0 0 1px var(--glow-c),
-              inset 0 0 28px -10px var(--glow-c),
-              0 0 22px -8px var(--glow-c);
+  /* The edge is held back to a little over half the tone and the bloom carries
+     the rest. At full strength the hairline reads as a selected border, which
+     is a different thing from a surface something just lit up. */
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--glow-c) 55%, transparent),
+              inset 0 0 34px -12px var(--glow-c),
+              0 0 26px -6px var(--glow-c);
   transition: opacity var(--dur-glow-out) var(--ease-out);
   z-index: 3;
 }
@@ -301,7 +304,7 @@
 
 /* A row whose value just changed carries the afterglow for a moment. */
 .row[data-changed="true"] {
-  background: color-mix(in srgb, var(--agent) 7%, transparent);
+  background: color-mix(in srgb, var(--beam) 7%, transparent);
   transition: background-color var(--dur-glow-out) var(--ease-out);
 }
 
@@ -384,6 +387,7 @@ button.chip:active {
 }
 
 .chip[data-tone="agent"] { color: var(--agent); border-color: var(--agent-edge); }
+.chip[data-tone="beam"] { color: var(--beam); border-color: var(--beam-edge); }
 .chip[data-tone="warn"] { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 34%, transparent); }
 .chip[data-tone="down"] { color: var(--down); border-color: color-mix(in srgb, var(--down) 34%, transparent); }
 .chip[data-tone="up"] { color: var(--up); border-color: color-mix(in srgb, var(--up) 34%, transparent); }

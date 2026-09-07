@@ -222,7 +222,8 @@ is one decision, not two.
 | `--text-2` | `#9BA1AB` | secondary |
 | `--text-3` | `#5E656F` | tertiary, disabled |
 | `--ink` | `#33FF66` | accent slot: primary buttons, links, the live dot; `--on-ink` `#0B0D10` |
-| `--agent` | `#33FF66` | the beam and the glow; the same light, its own slot |
+| `--beam` | `var(--ink)` | the beam, the glow, the step dots and the glyph: the assistant's light follows the accent |
+| `--agent` | `#B79CFF` | unchanged slot: what the assistant drew on the chart, told from the person's drawings by colour |
 | `--glow-ash` | `#0F3A1E` | the last stop of the decay, what a surface settles to before the ground |
 | `--up` | `#33FF66` | price up, positive delta |
 | `--down` | `#FF5A6E` | price down, danger, an errored step, Freeze |

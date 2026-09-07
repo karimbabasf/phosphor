@@ -28,14 +28,22 @@
      state             current name
      resize()          re-fit after a layout change
      refreshColors()   re-read the CSS custom properties after a theme change
+     stop()            freeze it; the last painted frame stays on screen
+     resume()          start it drifting again
      destroy()         drop the motion handle and the canvas
      stats()           motion handle stats, for the measurement harness
 
-   Cheap on purpose. It paints at 30 fps behind the entire document, so the
-   backing store is capped at 1x device pixels rather than the display's: a
-   field with no edge in it has nothing for the extra pixels to resolve, and
-   the upscale is invisible. prefers-reduced-motion paints one frame and stops.
+   Cheap on purpose. The shader costs 49 hash evaluations per pixel, so the
+   backing store is HALF the CSS size and the browser upscales it: this is a
+   wash with no edge in it, nothing in the field survives to the pixel, and
+   quartering the pixel count is the single largest saving available without
+   changing how it looks. prefers-reduced-motion paints one frame and stops.
    No WebGL means a static wash rather than a hole.
+
+   It also stops entirely when something covers it: a dialog is open or the
+   wallet is locked. A blurred or dimmed overlay over a 30 fps canvas is a
+   compositor pass that runs for as long as the overlay is up, and the locked
+   screen is the state an unattended app sits in longest.
 */
 (function () {
   'use strict';
@@ -220,6 +228,8 @@
       setState: function (name) { this.state = STATES[name] ? name : this.state; },
       resize: function () {},
       refreshColors: function () {},
+      stop: function () {},
+      resume: function () {},
       stats: function () { return { frames: 0, meanMs: 0, worstMs: 0 }; },
       destroy: function () { if (wash.parentNode) wash.parentNode.removeChild(wash); }
     };
@@ -305,9 +315,11 @@
     });
 
     function fit() {
-      /* 1x, not the display's ratio: there is no edge in this field for a
-         second device pixel to resolve, and it paints behind everything. */
-      var size = window.PhosphorMotion.fitCanvas(canvas, 1);
+      /* Half a CSS pixel, not the display's ratio: there is no edge in this
+         field for even the first device pixel to resolve, let alone a second,
+         and the canvas is stretched back to full size by the compositor for
+         free. A quarter of the pixels, the same picture. */
+      var size = window.PhosphorMotion.fitCanvas(canvas, 0.5);
       gl.viewport(0, 0, canvas.width, canvas.height);
       return size;
     }
@@ -352,6 +364,42 @@
       handle.setStatic(window.PhosphorMotion.reduced());
     });
 
+    /* Covered means a dialog is open or the wallet is locked. Both put an
+       opaque or dimmed layer over the whole field, so every frame it paints
+       under one is a frame nobody sees and a compositor pass nobody asked for.
+       The attribute filter is what makes this cheap: the observer only wakes
+       for `data-locked` and `open`, which move a handful of times a session,
+       and the selector runs only then. Nothing here polls. */
+    var covered = false;
+    var watcher = null;
+
+    function coveredNow() {
+      try {
+        if (document.body && document.body.getAttribute('data-locked') === 'true') return true;
+        return document.querySelector('dialog[open]') !== null;
+      } catch (err) {
+        return false;
+      }
+    }
+
+    function recheck() {
+      var next = coveredNow();
+      if (next === covered) return;
+      covered = next;
+      if (covered) handle.stop();
+      else handle.start();
+    }
+
+    if (typeof MutationObserver === 'function') {
+      watcher = new MutationObserver(recheck);
+      watcher.observe(document.documentElement, {
+        attributes: true,
+        subtree: true,
+        attributeFilter: ['data-locked', 'open']
+      });
+      recheck();
+    }
+
     var field = {
       state: stateName,
       setState: function (name) {
@@ -370,9 +418,12 @@
         ground = readToken('--bg-0', FALLBACK_GROUND);
         handle.invalidate();
       },
+      stop: function () { handle.stop(); },
+      resume: function () { if (!covered) handle.start(); },
       stats: function () { return handle.stats(); },
       destroy: function () {
         dropReduced();
+        if (watcher) watcher.disconnect();
         handle.destroy();
         gl.deleteProgram(program);
         gl.deleteBuffer(buffer);

@@ -51,28 +51,30 @@
   border-top: 1px solid var(--line);
 }
 
-/* The rules strip: one sentence about the safety model, unboxed, and the
-   surface policy_show lands on. */
-.strip {
-  padding: var(--s-3) var(--s-4);
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  font-size: var(--fs-13);
+/* One sentence under the total, and it is the state of the money rather than a
+   caption on it. */
+.hero-line {
+  font-size: var(--fs-16);
+  line-height: 1.4;
   color: var(--text-2);
 }
 
-.basic-stop {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-2);
-  align-items: center;
-  padding-top: var(--s-5);
-  text-align: center;
+/* The rules strip: one sentence about the safety model. Hairlines rather than a
+   box, because a box in this window means the assistant can act on the thing
+   inside it, and these are the rules it acts under. It is still a surface: the
+   glow marks it when policy_show lands. */
+.strip {
+  padding: var(--s-3) 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-13);
+  line-height: 1.5;
+  color: var(--text-2);
 }
 
-.basic-stop .meta {
-  max-width: 42ch;
+/* Under the five newest receipts, and only while there are more than five. */
+.see-all {
+  margin-top: var(--s-2);
 }
 
 /* ---------- money in ---------- */
@@ -334,7 +336,7 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--agent);
+  background: var(--beam);
   opacity: 0.5;
   align-self: center;
   transition: opacity var(--dur-enter) var(--ease-out),
@@ -343,7 +345,7 @@
 
 .step[data-state="live"] .step-dot {
   opacity: 1;
-  box-shadow: 0 0 8px -1px var(--agent);
+  box-shadow: 0 0 8px -1px var(--beam);
   animation: breathe 1200ms var(--ease-in-out) infinite;
 }
 
@@ -408,7 +410,7 @@
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: var(--agent);
+  background: var(--beam);
   opacity: 0.3;
   animation: breathe 1400ms var(--ease-in-out) infinite;
 }
@@ -546,6 +548,18 @@
 
 /* ---------- trade ---------- */
 
+/* The one-line answer under the bar: a refused indicator, a clamped parameter.
+   It clears itself after six seconds, and it never carries a refusal a person
+   cannot act on. */
+.chart-note {
+  font-size: var(--fs-12);
+  color: var(--warn);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .chart-select {
   width: auto;
   min-width: 132px;
@@ -649,6 +663,12 @@
   font-size: var(--fs-13);
 }
 
+/* Four panels in a 320 px rail, most of them empty most of the time. They keep
+   the sentence that says why they are empty and give up the air around it. */
+.trade-rail .empty {
+  padding: var(--s-4) var(--s-2);
+}
+
 .timeframe {
   height: 26px;
   padding: 0 var(--s-3);
@@ -678,9 +698,12 @@ dialog.confirm {
   max-width: min(460px, calc(100vw - var(--s-6)));
 }
 
+/* A scrim, not a blur. A backdrop-filter over this document re-runs whenever
+   anything under it repaints, and the field behind it repaints at 30 fps for as
+   long as the dialog is up. The scrim is heavier to make up the separation the
+   blur was buying. */
 dialog.confirm::backdrop {
-  background: color-mix(in srgb, #000 62%, transparent);
-  backdrop-filter: blur(4px);
+  background: color-mix(in srgb, var(--bg-0) 82%, transparent);
 }
 
 .confirm-card {
@@ -697,12 +720,14 @@ dialog.confirm::backdrop {
 
 /* ---------- locked: the shell behind the card keeps reading ---------- */
 
-/* The stage keeps reading behind the lock, and it has to stay legible enough
-   that a person can see their balance without unlocking. Blurred and dimmed,
-   not hidden. */
+/* The stage keeps reading behind the lock: a person should see the shape of
+   their window without unlocking it. Dimmed, not blurred. A filter on a
+   container promotes it to its own layer and re-blurs on every repaint
+   underneath it, and locked is the state an unattended app sits in longest, so
+   that was a full-viewport compositor pass running all night. Opacity and the
+   screen's own scrim say the same thing for nothing. */
 body[data-locked="true"] .stage {
-  filter: blur(2px);
-  opacity: 0.62;
+  opacity: 0.55;
   pointer-events: none;
 }
 
@@ -711,11 +736,13 @@ body[data-locked="true"] .topbar .tabs {
   pointer-events: none;
 }
 
+/* The screen's ground carries what the blur used to: enough of it to push the
+   stage back, little enough to leave it there. */
 .screen {
   position: fixed;
   inset: var(--topbar-h) 0 0 0;
   z-index: 60;
-  background: color-mix(in srgb, var(--bg-0) 52%, transparent);
+  background: color-mix(in srgb, var(--bg-0) 74%, transparent);
 }
 
 .destinations {
