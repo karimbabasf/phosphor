@@ -270,10 +270,29 @@ async function executeFundMove(ctx: PCtx, p: Proposal): Promise<Proposal> {
     row = persist(ctx, { ...row, result: { ok: failures.length === 0, detail: `${txids.length} of ${legs.length} leg(s) sent`, txids } });
   }
 
+  /* A PARTLY SUCCESSFUL SEND IS NOT A FAILURE, and calling it one cost the 24 hour cap.
+     Three legs totalling $3,000, a gas shortfall on the third: the first two broadcast, their
+     hashes were recorded, and the row was written `failed`. `failed` counts nothing against the
+     rolling spend, so $2,000 left the wallet and the budget said $0 had. The agent then retried
+     against a cap that had forgotten it.
+     `needs_reconciliation` is the honest name for a row where some money moved and the rest did
+     not: it is the state the boot sweep already writes for a send interrupted halfway, it has a
+     screen of its own, and the human can re-check it against the chain. It counts against the
+     cap, because a hash is evidence that funds left. All legs failing is still a plain failure,
+     because nothing moved and holding a day's budget for it would be the opposite mistake. */
   const ok = failures.length === 0;
-  const detail = ok ? `sent ${legs.length} leg(s): ${txids.join(', ')}` : failures.join('; ');
+  const partial = !ok && txids.length > 0;
+  const detail = ok
+    ? `sent ${legs.length} leg(s): ${txids.join(', ')}`
+    : partial
+      ? `${txids.length} of ${legs.length} leg(s) sent (${txids.join(', ')}); the rest failed: ${failures.join('; ')}`
+      : failures.join('; ');
   ctx.audit.append(ok ? 'executed' : 'execution_failed', `${p.id}: ${detail}`, { id: p.id, txids });
-  const recorded = persist(ctx, { ...row, status: ok ? 'executed' : 'failed', result: { ok, detail, txids } });
+  const recorded = persist(ctx, {
+    ...row,
+    status: ok ? 'executed' : partial ? 'needs_reconciliation' : 'failed',
+    result: { ok, detail, txids },
+  });
 
   // The balance last, as a second update. It is a receipt decoration and it costs up to fifteen
   // seconds; the hashes above are the record and they are already durable.

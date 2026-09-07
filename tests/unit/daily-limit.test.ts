@@ -12,8 +12,9 @@
 //   The number on screen is the number the engine budgets on. Two derivations of one figure
 //   would let the screen and the refusal disagree, which is the worst version of this feature.
 //
-//   `needs_reconciliation` is excluded. A row the app cannot say moved money must not hold the
-//   budget for a day.
+//   `needs_reconciliation` counts only when it carries a transaction hash. A hash is evidence
+//   that funds left the wallet; a row with none is the app not knowing, and a row it cannot
+//   speak for must not hold a day's budget hostage.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -28,7 +29,9 @@ import { defaultPolicy, savePolicy } from '../../src/policy/file.ts';
 import { renderSentences } from '../../src/policy/render.ts';
 import { syntheticQuoter, stubSigner } from '../../src/intents.ts';
 import { createProposalService } from '../../src/proposals.ts';
-import type { AppConfig, Policy, Proposal, ProposalService, ProposalStatus, RiskRow } from '../../src/types.ts';
+import { loadDemoLedger } from '../../src/ledger/demo.ts';
+import type { Ledger } from '../../src/ledger/index.ts';
+import type { AppConfig, LedgerSnapshot, Policy, Proposal, ProposalService, ProposalStatus, RiskRow } from '../../src/types.ts';
 
 const RISK_ROWS: RiskRow[] = [{ symbol: 'USDC', issuer: 'Circle', freezable: true, tier: 'A' } as unknown as RiskRow];
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -64,10 +67,35 @@ function serviceOn(dir: string, policy?: Policy): ProposalService {
   });
 }
 
+/* A live-mode ledger over the demo fixture, so the signer path runs with no RPC. Same shape as
+   the one in proposals.test.ts and for the same reason. */
+function liveLedgerOn(_dir: string): Ledger {
+  const snap: LedgerSnapshot = { ...loadDemoLedger(), mode: 'live' };
+  return {
+    snapshot: () => snap,
+    positions: () => [],
+    intents: () => undefined,
+    refresh: async () => snap,
+    applyDemoTransfer: () => {
+      throw new Error('applyDemoTransfer must never be called in live mode');
+    },
+  };
+}
+
+// The demo fixture's NEAR account holds $0.003 against the default $0.50 gas floor, so the
+// shipped policy refuses to move its USDT at all. The floors go, and nothing else does.
+function permissivePolicy(): Policy {
+  const p = defaultPolicy();
+  p.composition.minNativeGasUsd = {};
+  p.sentences = renderSentences(p);
+  return p;
+}
+
 // Written straight to the store, so the fixture states the row rather than the route that made it.
-function spend(dir: string, id: string, usd: number, status: ProposalStatus, agoMs = 0): void {
+function spend(dir: string, id: string, usd: number, status: ProposalStatus, agoMs = 0, txids?: string[]): void {
   const at = new Date(Date.now() - agoMs).toISOString();
   createStore(dir).put({
+    ...(txids === undefined ? {} : { result: { ok: false, detail: 'part done', txids } }),
     id,
     kind: 'intents_deposit',
     createdAt: at,
@@ -245,4 +273,63 @@ test('a released queue is decided one at a time against one cap, not all against
   const spent = svc.list().filter(p => p.status === 'executed' || p.status === 'executing');
   assert.equal(spent.length, 1, `one fits the cap, ${spent.length} spent: ${svc.list().map(p => p.status).join(', ')}`);
   assert.equal(svc.list().filter(p => p.status === 'policy_refused').length, 2, 'and the rest are refused, not run');
+});
+
+
+// ---------- a send that half worked ----------
+//
+// Three legs totalling $3,000 and a gas shortfall on the third: the first two broadcast, their
+// hashes were recorded, and the row was written `failed`. `failed` charges nothing, so $2,000
+// left the wallet against a budget that recorded $0, and the agent's retry was evaluated against
+// a cap that had forgotten it. The honest state for that row is needs_reconciliation, which the
+// human can re-check against the chain, and it counts.
+
+test('a send that partly succeeded lands as an unknown outcome rather than a failure', async () => {
+  const dir = tmpDir();
+  let sent = 0;
+  const svc = createProposalService({
+    cfg: {
+      mode: 'live',
+      dataDir: dir,
+      port: 0,
+      keysPath: path.join(dir, 'keys.json'),
+      addresses: { evm: ['0x1111111111111111111111111111111111111111'], solana: [], near: [] },
+      economicTransferUsd: 5,
+      candleProducts: ['BTC-USD'],
+    } as unknown as AppConfig,
+    audit: createAudit(dir),
+    store: createStore(dir),
+    ledger: liveLedgerOn(dir),
+    riskRows: RISK_ROWS,
+    quoter: syntheticQuoter(),
+    // The first leg broadcasts, the second one does not.
+    signer: {
+      ready: true,
+      describe: () => 'one leg then a gas shortfall',
+      async send() {
+        sent += 1;
+        return sent === 1 ? { ok: true, txid: '0xleg1' } : { ok: false, error: 'not enough gas on that chain' };
+      },
+    },
+    dataDir: dir,
+  });
+  savePolicy(dir, permissivePolicy());
+
+  const p = await svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDC' });
+  assert.ok(p.draft.kind === 'consolidate' && p.draft.legs.length > 1, 'this needs more than one leg to mean anything');
+  const done = p.status === 'pending' ? await svc.approve(p.id) : p;
+
+  assert.equal(done.status, 'needs_reconciliation', 'money left on one leg, so this is not a failure');
+  assert.deepEqual(done.result?.txids, ['0xleg1']);
+  assert.ok(svc.sessionSpentUsd() > 0, 'and the dollars that left are charged against the day');
+  assert.equal(svc.dailyLimit(25_000).spentUsd, svc.sessionSpentUsd(), 'screen and engine agree, as always');
+});
+
+test('a stranded row with no hash still holds none of the budget', () => {
+  const dir = tmpDir();
+  const svc = serviceOn(dir);
+  spend(dir, 'moved', 300, 'needs_reconciliation', 0, ['0xhash']);
+  spend(dir, 'unknown', 900, 'needs_reconciliation', 0, []);
+  assert.equal(svc.sessionSpentUsd(), 300, 'the hash is evidence; the absence of one is not');
+  assert.equal(svc.dailyLimit(25_000).spentUsd, 300);
 });
