@@ -141,6 +141,9 @@ function checkAuditChain(): void {
       /* Verified against nothing is not verified. A deleted anchor used to fold into ok, which
          turned a truncated log into a clean boot; it is named now and the window can say so. */
       recordAuditChain(chain.anchored ? 'ok' : 'unanchored');
+      if (chain.interleaved > 0) {
+        console.error(`phosphor: the audit log verifies, with ${chain.interleaved} run(s) of lines an older build wrote after the chain began`);
+      }
     } else {
       const why = `${chain.break.reason} at line ${chain.break.line}: ${chain.break.detail}`;
       recordAuditChain(`broken: ${why}`);

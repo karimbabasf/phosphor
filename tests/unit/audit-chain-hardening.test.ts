@@ -126,3 +126,41 @@ test('a process that inherits a legacy tip moves the anchor forward instead of h
   assert.ok(tip !== null && tip.count === 9, JSON.stringify(tip));
   assert.equal(verifyChain(lines(file), tip).ok, true);
 });
+
+test('an older build that ran after the chain began leaves an island the chain resumes across', () => {
+  // The new build seeds its first prev from the last line in the file, so the link across the
+  // island holds. A real install carried exactly this at line 4326.
+  const { dir, file } = seeded(4);
+  const rows = lines(file);
+  const island = [
+    JSON.stringify({ ts: 'later', type: 'app_start', msg: 'an older build, no prev' }),
+    JSON.stringify({ ts: 'later', type: 'tool_call', msg: 'still the older build' }),
+  ];
+  fs.writeFileSync(file, [...rows, ...island].map((l) => `${l}\n`).join(''));
+  fs.rmSync(path.join(dir, TIP_FILENAME));
+  const audit = createAudit(dir);
+  audit.append('tool_call', 'the newer build again');
+  audit.append('tool_call', 'and once more');
+  audit.flushTip();
+  const result = verifyChain(lines(file), readTip(dir));
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.ok && result.interleaved, 1);
+  assert.equal(result.ok && result.anchored, true);
+});
+
+test('stripping prev up to a line and leaving the rest chained breaks at the first chained line', () => {
+  const { dir, file } = seeded(8);
+  const rows = lines(file);
+  const edited = rows.map((line, i) => {
+    if (i < 2 || i > 4) return line;
+    const parsed = JSON.parse(line) as Record<string, unknown>;
+    if (i === 2) parsed.msg = 'rewritten';
+    delete parsed.prev;
+    return JSON.stringify(parsed);
+  });
+  fs.writeFileSync(file, edited.map((l) => `${l}\n`).join(''));
+  const result = verifyChain(lines(file), readTip(dir));
+  assert.equal(result.ok, false);
+  assert.equal(!result.ok && result.break.reason, 'broken_link');
+  assert.equal(!result.ok && result.break.line, 6);
+});

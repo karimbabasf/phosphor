@@ -93,7 +93,7 @@ export type Audit = {
   subscribe(fn: (e: LogEvent) => void): () => void;
   // Walks the whole file and reports the first line whose link does not hold. `ok` on an
   // absent or empty file: no lines is a chain nobody has broken.
-  verify(): { ok: true; lines: number; anchored: boolean } | { ok: false; lines: number; break: ChainBreak };
+  verify(): { ok: true; lines: number; anchored: boolean; interleaved: number } | { ok: false; lines: number; break: ChainBreak };
   // How many lines tail() has had to skip since boot. A torn line is normal after a power loss
   // mid-append and abnormal any other time, so the number is reported (health) rather than
   // logged: logging it would append a line per poll to the file that is torn.
@@ -197,7 +197,7 @@ export function anchorLine(lines: string[], tip: ChainTip): number {
 export function verifyChain(
   lines: string[],
   tip: ChainTip | null = null,
-): { ok: true; lines: number; anchored: boolean } | { ok: false; lines: number; break: ChainBreak } {
+): { ok: true; lines: number; anchored: boolean; interleaved: number } | { ok: false; lines: number; break: ChainBreak } {
   /* The anchor first, because it is the cheap check and because a truncated file's REMAINING
      lines chain perfectly: walking them would answer ok before anything noticed the file is
      shorter than the record of it. */
@@ -229,8 +229,18 @@ export function verifyChain(
 
   let expected: string | null = null;
   // Set by the first line that carries a prev field at all. Before it, lines without one are the
-  // pre-chain prefix an upgraded install has; after it, a line without one is a stripped link.
+  // pre-chain prefix an upgraded install has; after it, a line without one is either a stripped
+  // link or an older build that ran against this log after the upgrade.
   let chainStarted = false;
+  /* Islands: runs of pre-chain lines in the middle of a chained log. A real install carried one,
+     written by a build from before the chain that was started against the same data directory
+     later. It is not the attack, because the attack (edit line k, strip prev from k onward) has
+     no chained line after it that links back correctly, and a run that is stripped only up to
+     line m changes line m's hash, so the first chained line after it breaks. An island is
+     accepted only when the chain resumes after it with a link that holds, which is what a newer
+     build does on its own: it seeds prev from the last line in the file. */
+  let interleaved = 0;
+  let islandOpen = false;
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
     let parsed: { prev?: unknown };
@@ -249,17 +259,34 @@ export function verifyChain(
         expected = hashLine(line);
         continue;
       }
-      return {
-        ok: false,
-        lines: lines.length,
-        break: {
-          line: i + 1,
-          reason: 'missing_link',
-          detail: 'this line carries no prev field, but the chain had already started above it',
-        },
-      };
+      if (!islandOpen) {
+        // The island is only acceptable if a chained line follows it somewhere.
+        let resumes = false;
+        for (let j = i + 1; j < lines.length; j += 1) {
+          if (/"prev":/.test(lines[j])) {
+            resumes = true;
+            break;
+          }
+        }
+        if (!resumes) {
+          return {
+            ok: false,
+            lines: lines.length,
+            break: {
+              line: i + 1,
+              reason: 'missing_link',
+              detail: 'this line carries no prev field, the chain had already started above it, and nothing after it is chained',
+            },
+          };
+        }
+        islandOpen = true;
+        interleaved += 1;
+      }
+      expected = hashLine(line);
+      continue;
     }
     chainStarted = true;
+    islandOpen = false;
     if (expected !== null && claimed !== expected) {
       return {
         ok: false,
@@ -273,7 +300,7 @@ export function verifyChain(
     }
     expected = hashLine(line);
   }
-  return { ok: true, lines: lines.length, anchored: tip !== null && tip.count > 0 };
+  return { ok: true, lines: lines.length, anchored: tip !== null && tip.count > 0, interleaved };
 }
 
 export function createAudit(dataDir: string): Audit {
