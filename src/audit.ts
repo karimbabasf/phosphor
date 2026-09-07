@@ -111,6 +111,12 @@ export type Audit = {
      wired in src/main.ts. Never throws, and does nothing when nothing has been appended since
      the last write. */
   flushTip(): void;
+  /* How many lines this process has appended. Same contract as the store's revision(): a caller
+     holding a derivation of what the log carries (the state payload carries the agent roster, the
+     recent-events list and the last activity time, all of which move on an audit line) compares
+     this to decide whether the derivation is still current. A count rather than a subscription,
+     for the same reason: nothing to leak and nothing to forget. */
+  lineCount(): number;
 };
 
 export function hashLine(line: string): string {
@@ -225,6 +231,7 @@ export function createAudit(dataDir: string): Audit {
   const filePath = path.join(dataDir, 'audit.jsonl');
   const subscribers = new Set<(e: LogEvent) => void>();
   let torn = 0;
+  let appended = 0;
   let latestError: { at: string; msg: string } | null = null;
 
   /* The hash of the last line written, held in memory so an append is one write rather than a
@@ -294,6 +301,7 @@ export function createAudit(dataDir: string): Audit {
     const line = JSON.stringify(event);
     fs.appendFileSync(filePath, line + '\n');
     previous = hashLine(line);
+    appended += 1;
     if (written !== null) written += 1;
     /* The anchor is marked, not written. See TIP_FLUSH_MS: writing it here cost 8.02 ms of an
        8.15 ms append, and every agent tool call comes through this line. */
@@ -377,5 +385,6 @@ export function createAudit(dataDir: string): Audit {
     tornLines: () => torn,
     lastError: () => latestError,
     flushTip,
+    lineCount: () => appended,
   };
 }

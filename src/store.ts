@@ -20,6 +20,13 @@ export type Store = {
   get(id: string): Proposal | undefined;
   put(p: Proposal): void;
   subscribe(fn: () => void): () => void;
+  /* How many writes this process has made, and nothing else. A caller holding a derivation of
+     the proposal list (the state payload does) compares this to decide whether the derivation is
+     still current, which is a number rather than a subscription and so cannot leak a listener or
+     be forgotten by a caller that closes. It never goes backwards and it means nothing across
+     processes: a restart begins at zero, which is correct, because a restart has no derivation
+     to keep. */
+  revision(): number;
 };
 
 // Thrown when proposals.json exists and cannot be read as a list of proposals. It carries the
@@ -41,6 +48,7 @@ export function createStore(dataDir: string): Store {
   fs.mkdirSync(dataDir, { recursive: true });
   const filePath = path.join(dataDir, 'proposals.json');
   const subscribers = new Set<() => void>();
+  let revision = 0;
 
   /* ONCE THIS PROCESS HAS SEEN THE FILE CORRUPT, IT NEVER READS AGAIN.
      Quarantine renames the bad bytes aside and throws once, and every later read then found no
@@ -105,6 +113,7 @@ export function createStore(dataDir: string): Store {
     if (idx === -1) all.push(p);
     else all[idx] = p;
     writeAll(all);
+    revision += 1;
     for (const fn of subscribers) fn();
   }
 
@@ -113,5 +122,5 @@ export function createStore(dataDir: string): Store {
     return () => subscribers.delete(fn);
   }
 
-  return { list, get, put, subscribe };
+  return { list, get, put, subscribe, revision: () => revision };
 }

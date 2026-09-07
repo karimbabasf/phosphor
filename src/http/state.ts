@@ -15,7 +15,8 @@ import { buildGasReport } from '../gas/report.ts';
 import type { GasReport, GasWindow } from '../gas/report.ts';
 import { renderSentences } from '../policy/render.ts';
 import { LOG_LIMIT_MAX } from './context.ts';
-import { intParam } from './respond.ts';
+import { intParam, jsonWithEtag } from './respond.ts';
+import type { CachedJson } from './respond.ts';
 import type { Ctx } from './context.ts';
 
 /* NOTHING UNBOUNDED RIDES ON /api/state, and this is where that rule is kept.
@@ -234,6 +235,76 @@ export function buildState(ctx: Ctx): unknown {
       events: ctx.recent,
     }),
   };
+}
+
+/* ---------- the built payload, cached behind what it reads ----------
+
+   State is pushed whether or not it moved. The heartbeat fires every 15 s, the ledger refresh
+   broadcasts on every pass, and with a trading feed live the hub can push 8.3 frames a second. The
+   browser answers each one with a conditional GET, and the ETag made those cheap for the browser
+   and free for nobody: the body and the tag were built BEFORE the if-none-match comparison, so a
+   304 cost 4.49 ms against a 200's 4.66 ms at 1000 proposals. That is about 37 ms of blocked event
+   loop every second, for as long as the trading page is open, on a payload nobody receives.
+
+   So the pair is built once and kept until something it reads moves. What it reads, and how each
+   one is noticed:
+
+     the proposal store   ctx.store.revision(), bumped by every put
+     the audit log        ctx.audit.lineCount(), which moves on every line and so covers the policy,
+                          the kill switch, the view, the theme, the agent roster, the board, the
+                          workers and the recent-events list, all of which are written through it
+     the lock             ctx.keystore.state(), a string compared by value
+     the chains           the identity of ctx.ledger.snapshot(), which src/ledger/index.ts holds
+                          and replaces on refresh
+
+   Counters and identities rather than subscriptions, deliberately: there is no listener to leak
+   and no caller that has to remember to unsubscribe, and a server that is closed takes its entry
+   with it because the map is weak.
+
+   THE CEILING IS THE SAFETY NET, and it is why this is not a list of hooks to get exactly right.
+   The lending view refreshes on a 60 s timer, the price poll on a 30 s one, and the idle countdown
+   ticks every second, and none of the three announces itself. A cache that only ever invalidated
+   on the four inputs above would show a stale price for as long as nothing else moved, which for a
+   number a person reads is the wrong kind of wrong. One second bounds every input nobody
+   enumerated, including one added later by somebody who never read this comment. */
+export const STATE_CACHE_MAX_MS = 1_000;
+
+type StateCache = {
+  built: CachedJson;
+  at: number;
+  storeRevision: number;
+  auditLines: number;
+  lockState: string;
+  snapshot: unknown;
+};
+
+const caches = new WeakMap<Ctx, StateCache>();
+
+function stateKey(ctx: Ctx): Omit<StateCache, 'built' | 'at'> {
+  return {
+    storeRevision: ctx.store.revision(),
+    auditLines: ctx.audit.lineCount(),
+    lockState: ctx.keystore.state(),
+    snapshot: ctx.ledger.snapshot(),
+  };
+}
+
+export function buildStateCached(ctx: Ctx): CachedJson {
+  const key = stateKey(ctx);
+  const held = caches.get(ctx);
+  if (
+    held !== undefined &&
+    held.storeRevision === key.storeRevision &&
+    held.auditLines === key.auditLines &&
+    held.lockState === key.lockState &&
+    held.snapshot === key.snapshot &&
+    Date.now() - held.at < STATE_CACHE_MAX_MS
+  ) {
+    return held.built;
+  }
+  const built = jsonWithEtag(buildState(ctx));
+  caches.set(ctx, { built, at: Date.now(), ...key });
+  return built;
 }
 
 // ---------- transaction history ----------

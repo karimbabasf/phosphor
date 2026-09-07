@@ -35,7 +35,11 @@ import type { AppConfig, ChainId, ChainStatus, LedgerSnapshot, LpPosition, Propo
 const CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 const SELF = '0x1111111111111111111111111111111111111111';
 
-function snapshot(): LedgerSnapshot {
+/* One snapshot object, handed back by reference, because that is what the real ledger does:
+   src/ledger/index.ts holds `current` and replaces it on refresh. The state cache keys off that
+   identity, so a harness that built a fresh object per call would be testing a ledger no install
+   has. */
+function buildSnapshot(): LedgerSnapshot {
   const chainStatus = Object.fromEntries(
     CHAINS.map((c) => [c, { ok: true, fetchedAt: new Date().toISOString() } as unknown as ChainStatus]),
   ) as Record<ChainId, ChainStatus>;
@@ -47,6 +51,9 @@ function snapshot(): LedgerSnapshot {
     fetchedAt: new Date().toISOString(),
   } as unknown as LedgerSnapshot;
 }
+
+const SNAPSHOT = buildSnapshot();
+const snapshot = (): LedgerSnapshot => SNAPSHOT;
 
 /* A row the size of a real one. The point of the size assertion is lost against a stub: a real
    proposal carries a draft, a simulation with its quote echo, a verdict and a result, which is
@@ -83,7 +90,12 @@ function row(id: string, status: ProposalStatus, ageMin: number): Proposal {
   } as unknown as Proposal;
 }
 
-async function boot(proposals: Proposal[]): Promise<{ url: string; close: () => Promise<void> }> {
+/* How many times the state build has read the proposal store. buildState is the only thing in
+   this harness that calls list(), so this counts builds, which is what the cache tests below
+   assert on: a cached answer reads nothing. */
+let builds = 0;
+
+async function boot(proposals: Proposal[]): Promise<{ url: string; store: ReturnType<typeof createStore>; close: () => Promise<void> }> {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-state-payload-'));
   // Seeded as a file rather than through a thousand put() calls: the store rewrites the whole
   // array on every put, so seeding through it is quadratic and measures the wrong thing.
@@ -109,7 +121,7 @@ async function boot(proposals: Proposal[]): Promise<{ url: string; close: () => 
       snapshot,
       positions: (): LpPosition[] => [],
       intents: () => undefined,
-      refresh: async () => snapshot(),
+      refresh: async () => SNAPSHOT,
       applyDemoTransfer: () => {},
     },
     candles: {
@@ -134,7 +146,10 @@ async function boot(proposals: Proposal[]): Promise<{ url: string; close: () => 
       approve: async () => settled,
       refuse: async () => settled,
       get: (id: string) => store.get(id),
-      list: () => store.list(),
+      list: () => {
+        builds += 1;
+        return store.list();
+      },
       sessionSpentUsd: () => 0,
       releaseQueued: async () => 0,
       reconcileOnBoot: () => [],
@@ -159,7 +174,8 @@ async function boot(proposals: Proposal[]): Promise<{ url: string; close: () => 
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const port = (server.address() as AddressInfo).port;
-  return { url: `http://127.0.0.1:${port}`, close: () => new Promise<void>((r) => server.close(() => r())) };
+  builds = 0;
+  return { url: `http://127.0.0.1:${port}`, store, close: () => new Promise<void>((r) => server.close(() => r())) };
 }
 
 function get(urlBase: string, route: string): Promise<{ status: number; body: string }> {
@@ -323,6 +339,80 @@ test('the paged route refuses a forged Host like every other read', async () => 
       req.end();
     });
     assert.equal(out.status, 403);
+  } finally {
+    await h.close();
+  }
+});
+
+/* ---------- how often the payload is built ----------
+
+   The body and its ETag used to be built BEFORE the if-none-match comparison, so a 304 cost the
+   server everything a 200 did and saved only the wire and the browser's redraw. Measured at 1000
+   proposals: 4.49 ms on the 304 path against 4.66 ms on the 200 path. With a trading feed live the
+   hub can push 8.3 state frames a second, so that was about 37 ms of blocked event loop every
+   second, permanently, on a payload that had not changed.
+
+   The build is cached behind the things it reads: the store's revision, the audit's line count,
+   the lock state and the ledger snapshot's identity, plus a one second ceiling for the handful of
+   inputs with no hook (the price poll, the lending view, the idle countdown). */
+
+function getWithEtag(urlBase: string, etag: string): Promise<{ status: number; body: string; etag: string | null }> {
+  const u = new URL(urlBase + '/api/state');
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      { hostname: u.hostname, port: u.port, path: u.pathname, headers: { 'if-none-match': etag } },
+      (res) => {
+        let d = '';
+        res.on('data', (c) => (d += c));
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body: d, etag: res.headers.etag ?? null }));
+      },
+    );
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+test('two reads with nothing changed build the payload once', async () => {
+  const h = await boot(history(50));
+  try {
+    const first = await get(h.url, '/api/state');
+    const after = builds;
+    assert.equal(after, 1, 'the first read builds');
+    const second = await get(h.url, '/api/state');
+    assert.equal(builds, after, 'the second read did not touch the store');
+    assert.equal(second.body, first.body, 'and answered the same bytes');
+  } finally {
+    await h.close();
+  }
+});
+
+test('a 304 costs no build either, which is what it used to cost', async () => {
+  const h = await boot(history(50));
+  try {
+    const first = await getWithEtag(h.url, 'a tag from nowhere');
+    assert.equal(first.status, 200);
+    assert.equal(builds, 1, 'the first read builds');
+
+    const tagged = await getWithEtag(h.url, first.etag ?? '');
+    assert.equal(tagged.status, 304, "a read carrying the answer's own tag is a 304");
+    assert.equal(tagged.body, '', 'and carries no body');
+    assert.equal(builds, 1, 'and built nothing to work that out');
+  } finally {
+    await h.close();
+  }
+});
+
+test('a store write invalidates the cached body', async () => {
+  const h = await boot(history(50));
+  try {
+    await get(h.url, '/api/state');
+    assert.equal(builds, 1);
+
+    h.store.put(row('w-new', 'pending', 0));
+    const after = await get(h.url, '/api/state');
+    assert.equal(builds, 2, 'a write to the store is a rebuild');
+    const ids = (JSON.parse(after.body) as { proposals: Proposal[] }).proposals.map((p) => p.id);
+    assert.ok(ids.includes('w-new'), 'and the new row is in what came back');
   } finally {
     await h.close();
   }
