@@ -434,6 +434,13 @@
     return (s < 100 ? s.toFixed(1) : String(Math.round(s))) + ' s';
   }
 
+  function anyError(block) {
+    for (var i = 0; i < block.steps.length; i += 1) {
+      if (block.steps[i].state === 'error') return true;
+    }
+    return false;
+  }
+
   function foldLabel(block, now) {
     var steps = block.steps;
     if (!steps.length) return '';
@@ -622,6 +629,9 @@
     var fold = wrap.children[0];
     var list = wrap.children[1];
     dom.setHidden(fold, !block.done);
+    /* A folded turn that hid a failed call would look like a turn that worked.
+       The one row left on screen carries the worst outcome under it. */
+    dom.setAttr(fold, 'data-state', block.done && anyError(block) ? 'error' : null);
     dom.setText(fold.children[1], block.done ? foldLabel(block, now) : '');
     dom.setAttr(fold, 'aria-expanded', block.folded ? 'false' : 'true');
     dom.setAttr(list, 'data-folded', block.folded ? 'true' : null);

@@ -386,6 +386,7 @@
 }
 
 .steps-fold .step-dot { opacity: 0.6; }
+.steps-fold[data-state="error"] .step-dot { background: var(--down); opacity: 1; }
 
 @media (hover: hover) and (pointer: fine) {
   .steps-fold:hover { color: var(--text-2); }
