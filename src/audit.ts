@@ -128,27 +128,44 @@ function readLines(filePath: string): string[] {
   return fs.readFileSync(filePath, 'utf8').split('\n').filter((line) => line.length > 0);
 }
 
-/* How many complete lines the file holds, counted rather than read.
-   The anchor needs a count and nothing else, and readLines pulls the whole history into one
-   string and splits it into one string per line to get it: 154 ms and a 54 MB allocation on a
-   200k-line log. This walks the bytes in 64 KB chunks counting newlines, so it costs a read and
-   no allocation, and a torn last line with no newline after it is not counted, which is the
+/* How many complete lines the file holds, and one named line out of it, in a single pass.
+   The anchor needs a count and one line, and readLines pulls the whole history into one string and
+   splits it into one string per line to get them: 154 ms and a 54 MB allocation on a 200k-line log.
+   This walks the bytes in 64 KB chunks, counting newlines and keeping only the line it was asked
+   for, so it costs a read and one small string. `wantIndex` is 0-based; pass -1 to count only. A
+   torn last line with no newline after it is neither counted nor returned, which is the
    conservative answer: an anchor that claims fewer lines than are there still verifies. */
-function countLines(filePath: string): number {
+function scanLines(filePath: string, wantIndex: number): { count: number; line: string | null } {
   let fd: number | undefined;
   try {
     fd = fs.openSync(filePath, 'r');
     const buffer = Buffer.allocUnsafe(64 * 1024);
     let count = 0;
+    let capturing = wantIndex === 0;
+    let parts: Buffer[] = [];
+    let line: string | null = null;
     for (;;) {
       const read = fs.readSync(fd, buffer, 0, buffer.length, null);
       if (read === 0) break;
-      for (let i = 0; i < read; i += 1) if (buffer[i] === 0x0a) count += 1;
+      let start = 0;
+      for (let i = 0; i < read; i += 1) {
+        if (buffer[i] !== 0x0a) continue;
+        if (capturing) {
+          parts.push(Buffer.from(buffer.subarray(start, i)));
+          line = Buffer.concat(parts).toString('utf8');
+          parts = [];
+          capturing = false;
+        }
+        count += 1;
+        start = i + 1;
+        if (count === wantIndex) capturing = true;
+      }
+      if (capturing) parts.push(Buffer.from(buffer.subarray(start, read)));
     }
-    return count;
+    return { count, line };
   } catch {
     // No file is no lines, which is what a fresh data directory looks like.
-    return 0;
+    return { count: 0, line: null };
   } finally {
     if (fd !== undefined) {
       try {
@@ -252,6 +269,22 @@ export function createAudit(dataDir: string): Audit {
   let tipDirty = false;
   let tipTimer: ReturnType<typeof setTimeout> | null = null;
 
+  /* THE ANCHOR THIS PROCESS INHERITED, and the rule that it may not be moved over a file that has
+     lost lines.
+
+     The chain walk used to run before this process wrote anything at all, so a boot on a truncated
+     log read the old anchor, found the file short of it, and said so. It runs after the port opens
+     now, which means this process has appended its own app_start lines and flushed its own anchor
+     first, and an anchor recounted from a truncated file is a true statement about a forgery: the
+     count matches, the walk passes, and the only record that lines were removed has been written
+     over by the app itself.
+
+     So the first flush of a process checks the anchor it inherited before it moves it, and leaves
+     it exactly where it is when the file no longer matches. Appending onto a broken log is fine
+     and is what an append-only log does; overwriting the evidence is not. */
+  const bootTip = readTip(dataDir);
+  let anchorHeld = false;
+
   let previous: string | null = (() => {
     /* Seeded from the tail window rather than from the whole file. The seed needs exactly one
        line, the last, and the window is the END of the file, so the last line is always inside
@@ -273,7 +306,22 @@ export function createAudit(dataDir: string): Audit {
     // try the same failing write once a second for the life of the process.
     tipDirty = false;
     try {
-      if (written === null) written = countLines(filePath);
+      if (anchorHeld) return;
+      if (written === null) {
+        const scan = scanLines(filePath, bootTip === null ? -1 : bootTip.count - 1);
+        if (
+          bootTip !== null &&
+          bootTip.count > 0 &&
+          (scan.count < bootTip.count || scan.line === null || hashLine(scan.line) !== bootTip.hash)
+        ) {
+          // The log no longer matches what this app recorded about it. verify() is what reports
+          // that; this refuses to write over the anchor that proves it, for the life of the
+          // process.
+          anchorHeld = true;
+          return;
+        }
+        written = scan.count;
+      }
       atomicWriteJson(path.join(dataDir, TIP_FILENAME), { count: written, hash: previous } satisfies ChainTip, undefined);
     } catch {
       // The log lines are already on disk and they are the record. A tip that could not be

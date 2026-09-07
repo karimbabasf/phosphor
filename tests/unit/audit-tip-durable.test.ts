@@ -178,3 +178,48 @@ test('a process taken down by the crash handler leaves the anchor on disk', asyn
   assert.deepEqual(tip, { count: rows.length, hash: hashLine(rows[rows.length - 1]) });
   assert.equal(createAudit(dir).verify().ok, true);
 });
+
+/* ---------- the anchor is not moved over a file that has lost lines ----------
+
+   The chain walk used to run before this process appended anything. It runs after the port opens
+   now, so by the time it looks, this process has written its own app_start lines and flushed its
+   own anchor. An anchor recounted from a truncated file is a true statement about a forgery: the
+   count matches, the walk passes, and the app has written over the only record that lines were
+   removed. The first flush of a process therefore checks the anchor it inherited before it moves
+   it. */
+test('a boot on a truncated log leaves the anchor that proves it alone', () => {
+  const dir = tmpDir();
+  const first = createAudit(dir);
+  for (let i = 0; i < 10; i += 1) first.append('tool_call', `line ${i}`);
+  first.flushTip();
+  const anchor = readTip(dir);
+
+  // The newest five removed, which is the tamper the anchor exists to catch.
+  const kept = lines(dir).slice(0, 5);
+  fs.writeFileSync(path.join(dir, 'audit.jsonl'), kept.map((r) => `${r}\n`).join(''));
+
+  // A boot on the damaged file, appending and flushing before anything walks the chain.
+  const second = createAudit(dir);
+  for (let i = 0; i < 8; i += 1) second.append('app_start', `phosphor up ${i}`);
+  second.flushTip();
+
+  assert.deepEqual(readTip(dir), anchor, 'the anchor is where the previous process left it');
+  const out = second.verify();
+  assert.equal(out.ok, false, 'and the truncation is still there to be found');
+  if (out.ok) return;
+  assert.equal(out.break.reason, 'truncated');
+});
+
+test('a log that matches its anchor still gets a new one, however far behind it was', () => {
+  const dir = tmpDir();
+  const first = createAudit(dir);
+  for (let i = 0; i < 4; i += 1) first.append('tool_call', `line ${i}`);
+  first.flushTip();
+  for (let i = 4; i < 20; i += 1) first.append('tool_call', `line ${i}`);
+
+  const second = createAudit(dir);
+  second.append('app_start', 'phosphor up');
+  second.flushTip();
+  assert.deepEqual(readTip(dir), { count: 21, hash: hashLine(lines(dir)[20]) });
+  assert.equal(second.verify().ok, true);
+});
