@@ -351,6 +351,13 @@ export function createAudit(dataDir: string): Audit {
   }
   const bootTip = readTip(dataDir);
   let anchorHeld = false;
+  /* Whether this process inherited an anchor at all, decided once at boot. verify() runs after the
+     port opens, by which time this process has appended its own lines and flushed a fresh anchor
+     at the new end of the file, so a log truncated and stripped of its anchor before boot would
+     verify clean against the anchor this process just wrote. What the boot inherited is the fact
+     that matters, and it does not change for the life of the process. A file with no lines at
+     boot is a fresh install and has nothing to launder. */
+  const inheritedAnchor = (bootTip !== null && bootTip.count > 0) || readLines(filePath).length === 0;
 
   let previous: string | null = (() => {
     /* Seeded from the tail window rather than from the whole file. The seed needs exactly one
@@ -501,7 +508,10 @@ export function createAudit(dataDir: string): Audit {
     subscribe,
     // The one reader that must see every line: a chain cannot be verified through a window, and
     // the anchor beside it is what turns truncation from invisible into named.
-    verify: () => verifyChain(readLines(filePath), readTip(dataDir)),
+    verify: () => {
+      const result = verifyChain(readLines(filePath), readTip(dataDir));
+      return result.ok ? { ...result, anchored: result.anchored && inheritedAnchor } : result;
+    },
     tornLines: () => torn,
     lastError: () => latestError,
     flushTip,

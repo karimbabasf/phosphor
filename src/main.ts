@@ -134,6 +134,11 @@ export const AUDIT_VERIFY_DELAY_MS = 2_000;
 
 recordAuditChain('checking');
 
+/* Not a frozen answer. verify() used to run once at boot and /api/health served that string for
+   the life of the process, so a log tampered with an hour later read ok until a restart. The walk
+   runs again every five minutes, unref'd so it never keeps the process alive. */
+export const AUDIT_REVERIFY_MS = 5 * 60_000;
+
 function checkAuditChain(): void {
   try {
     const chain = audit.verify();
@@ -720,6 +725,7 @@ server.listen(cfg.port, '127.0.0.1', () => {
 
   // The chain walk, now that there is a window to report it in. See AUDIT_VERIFY_DELAY_MS.
   const chainTimer = setTimeout(checkAuditChain, AUDIT_VERIFY_DELAY_MS);
+  setInterval(checkAuditChain, AUDIT_REVERIFY_MS).unref();
   // Never a reason on its own for this process to stay up.
   chainTimer.unref?.();
 });

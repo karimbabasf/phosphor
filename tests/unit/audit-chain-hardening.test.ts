@@ -164,3 +164,26 @@ test('stripping prev up to a line and leaving the rest chained breaks at the fir
   assert.equal(!result.ok && result.break.reason, 'broken_link');
   assert.equal(!result.ok && result.break.line, 6);
 });
+
+test('a boot on a truncated log with its anchor deleted stays unanchored after this process flushes its own', () => {
+  const { dir, file } = seeded(6);
+  const rows = lines(file);
+  fs.writeFileSync(file, rows.slice(0, 4).map((l) => `${l}\n`).join(''));
+  fs.rmSync(path.join(dir, TIP_FILENAME));
+  const audit = createAudit(dir);
+  audit.append('app_start', 'booting on the damaged log');
+  audit.flushTip();
+  assert.ok(readTip(dir) !== null, 'this process wrote a fresh anchor');
+  const result = audit.verify();
+  assert.equal(result.ok, true);
+  assert.equal(result.ok && result.anchored, false, 'the fresh anchor must not launder the missing one');
+});
+
+test('a fresh install has nothing to launder and reports anchored once it has written', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-chain-fresh-'));
+  const audit = createAudit(dir);
+  audit.append('app_start', 'first ever line');
+  audit.flushTip();
+  const result = audit.verify();
+  assert.equal(result.ok && result.anchored, true);
+});
