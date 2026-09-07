@@ -86,6 +86,9 @@ test('reordering two lines is caught', () => {
   const dir = tempDir();
   const audit = createAudit(dir);
   for (const msg of ['one', 'two', 'three']) audit.append('tool_call', msg);
+  // The anchor is written on a timer now, so a data directory that has been used and stopped has
+  // one and this seed has to put it down the same way the shutdown path does.
+  audit.flushTip();
 
   const written = lines(dir);
   write(dir, [written[0], written[2], written[1]]);

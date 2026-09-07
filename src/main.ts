@@ -71,6 +71,14 @@ try {
 // behind, which is what the pid inside it is for: the next boot sees a dead pid and clears it.
 process.on('exit', () => instanceLock.release());
 
+/* The audit chain's anchor, on the same event and for the same reason. It is written on a one
+   second timer rather than per line (src/audit.ts, TIP_FLUSH_MS), so every way out this process
+   gets to run code on has to put it down: the shutdown path and the crash handler both end in
+   process.exit, and this is the one listener that covers both without either of them knowing
+   about the audit log. A SIGKILL still leaves the anchor lagging, which is exactly the case
+   verifyChain was built to accept. */
+process.on('exit', () => audit.flushTip());
+
 const store = createStore(cfg.dataDir);
 
 /* The keys, and the lock over them. Installed before anything that could ask for a signature,
@@ -369,6 +377,10 @@ function setKill(on: boolean): void {
   p.killSwitch = on;
   savePolicy(cfg.dataDir, p);
   audit.append('kill_switch', on ? 'kill switch ON: all writes refused' : 'kill switch off');
+  /* Anchored now rather than on the next tick of the timer. This is the line somebody goes
+     looking for straight after pulling the switch, and what usually follows a kill switch is
+     somebody stopping the app in a hurry. */
+  audit.flushTip();
 
   // Stop what is already running, not just what tries to start next.
   //

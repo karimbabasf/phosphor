@@ -28,6 +28,10 @@ function seeded(lines = 8): { dir: string; file: string; audit: ReturnType<typeo
   const dir = tmpDir();
   const audit = createAudit(dir);
   for (let i = 0; i < lines; i += 1) audit.append('tool_call', `line ${i}`);
+  /* The anchor is debounced now (src/audit.ts, TIP_FLUSH_MS) and put down on the way out, so a
+     data directory that has been used and stopped carries one. This seed stands in for that prior
+     run, and flushing here is what that run's exit handler does. */
+  audit.flushTip();
   return { dir, file: path.join(dir, 'audit.jsonl'), audit };
 }
 
@@ -140,6 +144,7 @@ test('a real boot on a truncated log says so through health rather than starting
   const dir = tmpDir();
   const seed = createAudit(dir);
   for (let i = 0; i < 10; i += 1) seed.append('tool_call', `line ${i}`);
+  seed.flushTip();
   const file = path.join(dir, 'audit.jsonl');
   write(file, lines(file).slice(0, 5)); // the newest five removed
 
@@ -186,6 +191,7 @@ test('an intact log boots reporting ok', async () => {
   const dir = tmpDir();
   const seed = createAudit(dir);
   for (let i = 0; i < 5; i += 1) seed.append('tool_call', `line ${i}`);
+  seed.flushTip();
 
   const port = 4390 + Math.floor(Math.random() * 30);
   const child = spawn(process.execPath, ['src/main.ts'], {
