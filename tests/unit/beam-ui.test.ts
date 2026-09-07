@@ -117,6 +117,11 @@ function build(options: { reduced?: boolean } = {}): World {
     arc() {
       drawn += 1;
     },
+    moveTo() {},
+    lineTo() {},
+    stroke() {
+      drawn += 1;
+    },
     fill() {},
     fillRect() {},
     createRadialGradient() {
@@ -125,6 +130,9 @@ function build(options: { reduced?: boolean } = {}): World {
     globalAlpha: 1,
     globalCompositeOperation: 'source-over',
     fillStyle: '',
+    strokeStyle: '',
+    lineWidth: 1,
+    lineCap: 'butt',
   };
   canvas.getContext = () => ctx;
   nodes.set('beam', canvas);

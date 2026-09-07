@@ -40,11 +40,14 @@
 
   /* Twelve samples lagging by 0.022 of the path each: the tail covers about a
      quarter of the curve, which at 320 ms is roughly 85 ms of trail. Shorter
-     reads as a dot being dragged, longer as a stripe. */
+     reads as a dot being dragged, longer as a stripe. The samples are joined
+     rather than stamped: twelve dots along a 700 px path is a dotted line, and
+     what this is meant to look like is light. */
   var TAIL = 12;
   var TAIL_LAG = 0.022;
+  var TAIL_W = 3.2; /* the tail's width where it meets the head */
   var HEAD_R = 1.5; /* 3 px across, the spec's head */
-  var HALO_R = 12;
+  var HALO_R = 17;
   var LIFT = 80; /* the control point, lifted toward the top of the window */
   var TAU = Math.PI * 2;
   var GLOW_IN_MS = 120;
@@ -416,17 +419,35 @@
       if (p < 0) p = 0;
       var t = easeAt(f.ease, p > 1 ? 1 : p);
 
-      ctx.fillStyle = f.css;
-      for (var s = TAIL; s >= 1; s -= 1) {
+      /* The tail, drawn from the far end forward as twelve joined segments,
+         each thinner and fainter than the one in front of it. Round caps, so
+         the joins disappear and the taper reads as one stroke of light rather
+         than twelve of anything. */
+      ctx.strokeStyle = f.css;
+      ctx.lineCap = 'round';
+      var hasPrev = false;
+      var lastX = 0;
+      var lastY = 0;
+      for (var s = TAIL; s >= 0; s -= 1) {
         var tt = t - s * TAIL_LAG;
-        if (tt <= 0) continue;
+        if (tt <= 0) {
+          hasPrev = false;
+          continue;
+        }
         var k = 1 - s / (TAIL + 1);
         at(f, tt);
-        ctx.globalAlpha = 0.40 * k * k;
-        ctx.beginPath();
-        ctx.arc(px, py, 0.5 + 2.0 * k, 0, TAU);
-        ctx.fill();
-        bound(px, py, 3);
+        if (hasPrev) {
+          ctx.globalAlpha = 0.34 * k * k;
+          ctx.lineWidth = 0.4 + TAIL_W * k;
+          ctx.beginPath();
+          ctx.moveTo(lastX, lastY);
+          ctx.lineTo(px, py);
+          ctx.stroke();
+          bound(px, py, TAIL_W);
+        }
+        lastX = px;
+        lastY = py;
+        hasPrev = true;
       }
 
       at(f, t);
@@ -435,14 +456,23 @@
 
       /* The halo is one gradient built at fire time and stamped by moving the
          transform, so the loop allocates nothing. */
-      ctx.globalAlpha = 0.9;
+      ctx.globalAlpha = 1;
       ctx.setTransform(dpr, 0, 0, dpr, hx * dpr, hy * dpr);
       ctx.fillStyle = f.halo;
       ctx.fillRect(-HALO_R, -HALO_R, HALO_R * 2, HALO_R * 2);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-      ctx.globalAlpha = 1;
+      /* Two discs make the head: the tone at three pixels, then a white core
+         inside it. Under a lighter composite that is what a bright point of
+         coloured light does, rather than a coloured dot with a hard edge. */
+      ctx.globalAlpha = 0.85;
       ctx.fillStyle = f.css;
+      ctx.beginPath();
+      ctx.arc(hx, hy, HEAD_R * 2, 0, TAU);
+      ctx.fill();
+
+      ctx.globalAlpha = 0.95;
+      ctx.fillStyle = '#FFFFFF';
       ctx.beginPath();
       ctx.arc(hx, hy, HEAD_R, 0, TAU);
       ctx.fill();
@@ -529,8 +559,9 @@
     var duration = slow ? SLOW_MS : millis(root.getPropertyValue('--dur-beam'), DEFAULT_MS);
 
     var halo = ctx.createRadialGradient(0, 0, 0, 0, 0, HALO_R);
-    halo.addColorStop(0, 'rgba(' + rgb + ',0.55)');
-    halo.addColorStop(0.45, 'rgba(' + rgb + ',0.16)');
+    halo.addColorStop(0, 'rgba(' + rgb + ',0.62)');
+    halo.addColorStop(0.25, 'rgba(' + rgb + ',0.30)');
+    halo.addColorStop(0.6, 'rgba(' + rgb + ',0.08)');
     halo.addColorStop(1, 'rgba(' + rgb + ',0)');
 
     flights.push({
