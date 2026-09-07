@@ -85,13 +85,16 @@ test('the chart is not green any more, and every ink is a design token', () => {
   const s = loadChartUi();
   assert.equal(s.C_UP, '#33FF66');
   assert.equal(s.C_DOWN, '#FF5A6E');
-  assert.equal(s.CHART_TOKENS.line, '#22242A');
-  assert.equal(s.CHART_TOKENS.text2, '#9A9EA8');
+  // The window moved its graphite in the v2 rebuild and the canvas follows it: these two
+  // are the fallbacks the engine draws with before the stylesheet is in, so a hairline that
+  // does not match --line is a seam a person can see for the first frame.
+  assert.equal(s.CHART_TOKENS.line, '#232830');
+  assert.equal(s.CHART_TOKENS.text2, '#9BA1AB');
   // The four inks the engine mixes from, named for meaning rather than for a colour.
   assert.equal(s.accent(0.5), 'rgba(91, 141, 239, 0.5)');
   assert.equal(s.danger(1), 'rgba(255, 90, 110, 1)');
-  assert.equal(s.lineInk(1), 'rgba(34, 36, 42, 1)');
-  assert.equal(s.text2(0.7), 'rgba(154, 158, 168, 0.7)');
+  assert.equal(s.lineInk(1), 'rgba(35, 40, 48, 1)');
+  assert.equal(s.text2(0.7), 'rgba(155, 161, 171, 0.7)');
   assert.equal(typeof s.green, 'undefined', 'a function called green() returning blue is a lie');
 });
 
