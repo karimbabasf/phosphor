@@ -20,36 +20,22 @@
 
 ---
 
-A local app that holds your wallet state, chain connections and policy, and contains no AI. It
-exposes an MCP server. An agent you already pay for (Claude Code, Codex, anything speaking MCP)
-connects and drives it. The app is the car, the agent is the person with the key.
+Phosphor exists so anyone can use DeFi without learning DeFi. You talk to an assistant you
+already pay for (Claude Code, Codex, anything that speaks MCP) and it drives this app for you:
+reads your money, finds the best place to put it, prices a move, and asks. The app holds the keys,
+the chain connections and your rules, and contains no AI at all. The app is the car, the agent is
+the person with the key.
 
-You say "swap 20 USDC into WETH" or "short SOL if it loses this trend line". The agent turns that
-into a proposal. The app prices it, runs it through your policy, and either executes it or waits
-for your click. What an agent can propose: a swap inside NEAR Intents, funding that balance and
-taking it back out, funding the Hyperliquid perps account from any chain this app signs for,
-gathering a stablecoin onto one chain, a change to the policy itself, and arming a rule-driven
-bot on Hyperliquid perpetuals.
-
-It also earns. A stablecoin balance can be supplied to a lending venue, a loop keeps it in the
-best-paying venue it can reach, and the window shows what it has actually made with a button
-that takes it back out. The percentage there is realized and backward-looking, the window it
-covers is printed next to it, and under an hour no percentage is shown at all, because
-annualising twelve minutes of interest is arithmetically correct and rhetorically a lie. See
-[Earning](#earning).
-
-Uniswap v3 liquidity is implemented, tested and drivable by a human, but it is deliberately not a
-tool an agent is handed: it has not run on a live chain, and an unproven fund-moving rail is not
-one to discover the edges of with real money.
+You say "put $500 to work" or "short SOL if it loses this trend line". The agent turns that into a
+proposal. The app prices it, runs it through your policy, and either executes it or waits for your
+click. What an agent can propose: a swap inside NEAR Intents, funding that balance and taking it
+back out, funding the Hyperliquid perps account from any chain this app signs for, gathering a
+stablecoin onto one chain, putting a stablecoin to work in a lending venue and taking it back, a
+change to the policy itself, and arming a rule-driven bot on Hyperliquid perpetuals.
 
 The agent can read everything and propose actions. It can never approve, never execute, and never
 touch policy without a human click in the app window. The policy engine enforces authored rules at
 machine speed with no model in the execution path.
-
-![The phosphor window before the 2026-09-01 rebuild: status bar, chart, wallet with donut, approval gate, policy, log](docs/screenshots/full-page.png)
-
-That shot predates the window rebuild and is kept as history: the chart and the composition donut
-both left pro, which is five panels and one modal now. The screenshots further down are current.
 
 ## The two rules
 
@@ -206,30 +192,42 @@ human approval or a recorded `allow` verdict.
 
 ## The window
 
-Three windows, no framework and no build, and an agent moves between them with `switch`.
+One window, no framework and no build. The conversation with your assistant is on the left in
+every mode; everything it can touch is on the right, and an agent moves between the three modes
+with `switch`.
 
-**pro**, the operator view, is a 12-column grid in five panels and one modal: status bar (total
-held, agent connection, policy state, kill switch), wallet, activity and transactions with their
-fees, policy sentences, approval gate. The chart moved to trade, which is one word away, and the
-composition donut and the fragmentation block went with it. **basic** is the same app rewritten for
-a non-technical reader, computed server-side in `src/view/basic.ts` so every word a person reads is
-written in one place. **trade** is the trading surface: the chart, positions with liquidation
-distance, working orders, fills and armed mandates.
+**The conversation** is the product. Start the assistant that is built in, or connect one you
+already use, and talk to it. Under each answer sits the trace: every tool it called, in plain
+words, with the time it took. A call that leaves this computer says so.
 
-The approval block renders identically on all three, which is what let the pending-proposal
-refusal be removed: a decision follows the human between windows instead of being left behind on
-the screen they came from.
+**The beam** is how you watch it work. A phosphor screen glows where the beam lands and fades
+after it leaves, so every tool call sends a point of light from its step to the panel it touched:
+your holdings, the earning panel, the rules, the chart. The panel glows, holds a scan line while the
+call is in flight, and decays once the result is back. Rose when a call fails. Amber when what
+landed is a proposal waiting for you.
+
+**The decision** sits inside the conversation, above the composer, in amber, and it is the one
+region drawn in that colour. It shows what moves, where it goes, what it costs, why you are being
+asked, and for a rule change every sentence removed and added. You can ask the assistant about it
+before you click. Nothing an assistant writes can draw a button that moves money: the transcript is
+text only and the card renders from the server's own pending list.
+
+**Basic** is the same app for a non-technical reader: the total, one sentence that is the state of
+your money, one sentence that is your rules, what you hold, what is earning, where to send money,
+what happened. **Pro** is the operator's density: the money table, the earning panel, the limits,
+the receipts. **Trade** is the chart with the position, the account, the rules and the fills beside
+it.
 
 Geist for the words and Geist Mono with tabular figures for anything that can change, so a value
-never moves its neighbours when it ticks. Up is blue (`--up: #5B8DEF`) and down is red, and red is
-also what a pending approval and a refusal wear, because a safety gate that does not visually shout
-is a safety bug.
+never moves its neighbours when it ticks. Phosphor green is one colour used three ways: the action,
+the direction up, and the assistant's light. Red is down and danger. Amber is only ever a person
+being waited on.
 
-| ![Approval gate with a pending proposal](docs/screenshots/pending.png) | ![Kill switch on](docs/screenshots/kill-switch.png) |
+| ![Basic, with the assistant working](docs/screenshots/window-basic.png) | ![The decision dock waiting on a click](docs/screenshots/window-dock.png) |
 |---|---|
-| A proposal waiting on a human click | Kill switch on: every write refused |
-| ![Policy file unreadable](docs/screenshots/policy-unreadable.png) | ![Resting state](docs/screenshots/resting.png) |
-| Corrupt policy file: every write refused until a human repairs it | Resting: nothing pending, nothing to decide |
+| Basic: the conversation, the trace, the money | A proposal waiting for you, inside the conversation |
+| ![Trade, funded](docs/screenshots/window-trade.png) | ![Pro](docs/screenshots/window-pro.png) |
+| Trade: the chart, the position, the rules | Pro: the operator's density |
 
 ### The chart, which lives on trade
 

@@ -20,6 +20,15 @@
      surface's decay, because it is the same idea at row scale. */
   var CHANGED_MS = 2400;
 
+  /* The three chains POST /api/yield/withdraw accepts. Anything else, including
+     nothing, is refused 400 before the request reaches a rail. */
+  var WITHDRAW_CHAINS = ['eth', 'base', 'arb'];
+
+  /* Basic does not name a chain anywhere else, on purpose. It names one here,
+     and only when money is earning on more than one, because the alternative is
+     a button that moves one of two positions and does not say which. */
+  var CHAIN_NAMES = { eth: 'Ethereum', base: 'Base', arb: 'Arbitrum' };
+
   var refs = {};
   var mounted = false;
   var allActivity = false;
@@ -317,9 +326,13 @@
 
   /* The panel is always here, empty or not. It is where yield_read lands, and a
      surface that only exists once it has something on it is a surface the beam
-     cannot aim at. */
+     cannot aim at.
+
+     BasicView.earning is a sentence the server already wrote, not an object.
+     This read .line, .summary and .madeLine off it, so the panel unhid on a
+     truthy string and rendered an empty paragraph over the button. */
   function renderEarning(state, basic) {
-    var earning = basic.earning;
+    var earning = typeof basic.earning === 'string' ? basic.earning : '';
     var y = state.yield;
     dom.clear(refs.earningBody);
 
@@ -329,24 +342,46 @@
       return;
     }
 
-    var text = '';
-    if (typeof earning === 'string') text = earning;
-    else if (earning) text = earning.line || earning.summary || '';
-    if (text) refs.earningBody.appendChild(dom.el('p', 'body', text));
-    if (earning && earning.madeLine) {
-      refs.earningBody.appendChild(dom.el('p', 'meta', earning.madeLine));
-    }
+    if (earning) refs.earningBody.appendChild(dom.el('p', 'body', earning));
 
-    var withdraw = dom.el('button', 'btn');
-    withdraw.appendChild(dom.el('span', 'btn-label', 'Bring it back'));
-    refs.earningBody.appendChild(withdraw);
-    dom.on(withdraw, 'click', function () {
-      window.PhosphorShell.setPending(withdraw, true, 'Bringing it back');
-      api.yieldWithdraw({})
+    var chains = withdrawChains(y);
+    if (!chains.length) return;
+    var actions = dom.el('div', 'hstack-2 wrap');
+    for (var c = 0; c < chains.length; c += 1) {
+      actions.appendChild(withdrawButton(chains[c], chains.length > 1));
+    }
+    refs.earningBody.appendChild(actions);
+  }
+
+  /* Which chains the money is actually on. The route takes the whole position on
+     one named chain and refuses any other value, so a button that sends nothing
+     comes back "chain must be one of eth, base, arb; got ''" and moves no money.
+     Both Bring it back buttons in this window did exactly that. */
+  function withdrawChains(y) {
+    var out = [];
+    var positions = (y && Array.isArray(y.positions)) ? y.positions : [];
+    for (var i = 0; i < positions.length; i += 1) {
+      var chain = positions[i].chain;
+      if (WITHDRAW_CHAINS.indexOf(chain) < 0 || out.indexOf(chain) >= 0) continue;
+      out.push(chain);
+    }
+    if (!out.length && y && WITHDRAW_CHAINS.indexOf(y.chain) >= 0) out.push(y.chain);
+    return out;
+  }
+
+  function withdrawButton(chain, name) {
+    var button = dom.el('button', 'btn');
+    button.type = 'button';
+    button.appendChild(dom.el('span', 'btn-label',
+      name ? 'Bring back the money on ' + CHAIN_NAMES[chain] : 'Bring it back'));
+    dom.on(button, 'click', function () {
+      window.PhosphorShell.setPending(button, true, 'Bringing it back');
+      api.yieldWithdraw({ chain: chain })
         .then(function () { return window.PhosphorShell.refresh({}); })
         .catch(function (err) { window.PhosphorToast.show(net.readable(err, true), 'down'); })
-        .finally(function () { window.PhosphorShell.setPending(withdraw, false); });
+        .finally(function () { window.PhosphorShell.setPending(button, false); });
     });
+    return button;
   }
 
   /* Five rows, newest first, and a way to the rest that is a real action rather
