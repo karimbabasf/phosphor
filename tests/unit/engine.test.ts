@@ -184,6 +184,14 @@ const cases: Case[] = [
     }),
     out: 'needs_approval',
   },
+  /* An empty patch parked as needs_approval and put a card in front of a person asking them to
+     click yes to a change of nothing. A missing patch arrived the same way: asRecord in
+     src/http/respond.ts turns an absent field into `{}`, and the MCP schema takes any object. */
+  { name: 'a patch that names no rule is refused rather than queued for a pointless click', draft: policyChange({}), out: 'refuse', rule: 'nothing_to_change' },
+  { name: 'a missing patch reaches the engine as an empty one and is refused the same way', draft: rawPolicyChange(undefined), out: 'refuse', rule: 'nothing_to_change' },
+  { name: 'a patch whose only key is an empty group still names no rule', draft: rawPolicyChange({ outbound: {} }), out: 'refuse', rule: 'nothing_to_change' },
+  { name: 'both groups empty is still nothing to change', draft: rawPolicyChange({ outbound: {}, composition: {} }), out: 'refuse', rule: 'nothing_to_change' },
+  { name: 'one named field is enough to be a real change', draft: policyChange({ composition: { maxFreezableShare: 0.2 } }), out: 'needs_approval' },
   { name: 'policy change cannot touch kill switch', draft: rawPolicyChange({ killSwitch: false }), out: 'refuse', rule: 'kill_switch_not_patchable' },
   { name: 'policy change cannot touch version', draft: rawPolicyChange({ version: 99 }), out: 'refuse', rule: 'kill_switch_not_patchable' },
   {

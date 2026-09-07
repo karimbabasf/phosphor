@@ -89,6 +89,21 @@ const UNPATCHABLE = ['killSwitch', 'version', 'sentences'];
    read and clicked, and it is a wall an "adjust the gas floor" patch never touches. */
 const MAX_RAISE_FACTOR = 10;
 
+/* A patch that names no rule at all. `{}` is what a caller sends when it forgets the field:
+   asRecord in src/http/respond.ts turns a missing `patch` into an empty object, and the MCP
+   schema is `z.object({}).passthrough()`, so both a missing patch and an empty one arrive here
+   the same way. Both used to park as needs_approval, which put a card in front of a person
+   asking them to click yes to a change of nothing. That is worse than a wasted click: the whole
+   weight of this app rests on a click meaning something, and a click that changes nothing is
+   practice at clicking yes.
+   `{ outbound: {} }` counts as empty too, which is why this looks at the leaves rather than at
+   the top-level keys. */
+function patchNamesNothing(patch: PolicyPatch): boolean {
+  return [patch.outbound, patch.composition].every(
+    group => group === undefined || Object.values(group).every(value => value === undefined),
+  );
+}
+
 // The three that get looser as they get bigger. The share fields are already bounded at 1 by
 // their own schema, and the gas floors get SAFER as they rise, so neither belongs here.
 const RAISABLE_CAPS = ['maxPerTransactionUsd', 'maxPerSessionUsd', 'humanClickAboveUsd'] as const;
@@ -385,10 +400,25 @@ function evaluatePolicyChange(draft: Extract<WriteDraft, { kind: 'policy_change'
     );
   }
 
+  /* An ABSENT patch, before the schema gets to call it malformed. It is the same ask as an empty
+     one and deserves the same answer: over HTTP a missing field already arrives as `{}` (asRecord
+     in src/http/respond.ts), so leaving this to the schema would have made the engine's answer
+     depend on which door the caller used. A patch that is present but is not an object is a
+     different fault and stays `invalid_patch`. */
+  if (draft.patch === undefined || draft.patch === null) {
+    return refusal(reasons, 'nothing_to_change', 'Patch names no rule, so there is nothing to change and nothing to approve.');
+  }
+
   const parsed = patchSchema.safeParse(draft.patch);
   if (!parsed.success) {
     const detail = parsed.error.issues.map(i => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; ');
     return refusal(reasons, 'invalid_patch', `Patch is not a valid policy change: ${detail}`);
+  }
+
+  // Same shape as nothing_to_move for a draft with no legs, and for the same reason: an empty
+  // ask is refused where it is made rather than carried to a human as a decision.
+  if (patchNamesNothing(parsed.data as PolicyPatch)) {
+    return refusal(reasons, 'nothing_to_change', 'Patch names no rule, so there is nothing to change and nothing to approve.');
   }
 
   const tooFar = policyChangeCeiling(parsed.data as PolicyPatch, policy, reasons);
