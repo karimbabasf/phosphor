@@ -78,6 +78,10 @@ type ClientOverrides = {
   quoteThrows?: string;
   assetMissing?: boolean;
   assetDecimals?: number;
+  // What the API echoes back in quoteRequest. Left out it is the request itself, which is what
+  // the live API returns; a patch simulates a server pricing something else, and null a server
+  // that echoes nothing.
+  echo?: Record<string, unknown> | null;
 };
 
 function fakeClient(over: ClientOverrides = {}): { client: OneClickClient; quotes: OneClickQuoteParams[]; submitted: string[] } {
@@ -120,6 +124,22 @@ function fakeClient(over: ClientOverrides = {}): { client: OneClickClient; quote
           depositAddress: params.dry ? undefined : (over.depositAddress ?? DEPOSIT_ADDR),
           ...(over.depositMemo !== undefined ? { depositMemo: over.depositMemo } : {}),
         },
+        raw:
+          over.echo === null
+            ? {}
+            : {
+                quoteRequest: {
+                  originAsset: params.originAsset,
+                  destinationAsset: params.destinationAsset,
+                  amount: params.amount,
+                  refundTo: params.refundTo,
+                  refundType: params.refundType,
+                  recipient: params.recipient,
+                  recipientType: params.recipientType,
+                  depositType: params.depositType,
+                  ...(over.echo ?? {}),
+                },
+              },
       } as never;
     },
     async submitDeposit(address, hash) {
@@ -681,4 +701,34 @@ test('the floor the draft promises is one the venue can guarantee at every measu
       `floor ${minCreditedFor(sent).toFixed(4)} for ${sent} is above the ${guaranteed.toFixed(4)} the venue guarantees`,
     );
   }
+});
+
+// ---------- the quoteRequest echo ----------
+//
+// checkQuote read the amounts and nothing else, so a quote priced to credit a different
+// Hyperliquid account passed. The account this rail credits is derived from the app's own key,
+// and collateral in any other book is money this app cannot trade.
+
+test('a quote that echoes a different Hyperliquid account is refused', async () => {
+  const h = rail({}, { echo: { recipient: STRANGER } });
+  const out = await h.rail.simulate(draft());
+
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /priced to credit/);
+  assert.match(out.error ?? '', new RegExp(STRANGER));
+});
+
+test('a quote with no echo at all is refused rather than trusted', async () => {
+  const h = rail({}, { echo: null });
+  const out = await h.rail.simulate(draft());
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /no quoteRequest echo/);
+});
+
+test('the echo is checked again at execute, before anything is signed', async () => {
+  const h = rail({}, { echo: { refundTo: STRANGER } });
+  const out = await h.rail.execute(draft());
+  assert.equal(out.ok, false);
+  assert.match(out.detail, /refund on this quote goes to/);
+  assert.equal(h.sends.length, 0, 'nothing was signed');
 });

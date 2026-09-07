@@ -66,7 +66,15 @@ import {
 } from '../chain/near.ts';
 import type { NearSendOutcome, NearSendParams } from '../chain/near.ts';
 import type { ChainId, HlDepositDraft, Rail, RailResult, SimulationResult } from '../types.ts';
-import { ONECLICK_TERMINAL, assetIdFor, baseUnits, oneClickClient, oneLine, toBaseUnits } from '../intents.ts';
+import {
+  ONECLICK_TERMINAL,
+  assetIdFor,
+  baseUnits,
+  oneClickClient,
+  oneLine,
+  quoteEchoProblems,
+  toBaseUnits,
+} from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickStatus, TokensFile } from '../intents.ts';
 import { ONECLICK_COUNTERPARTY } from './oneclick.ts';
 import { usdClassTransfer } from './hyperliquid-withdraw.ts';
@@ -499,6 +507,32 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     return problems;
   }
 
+  /* The quote's echo of what we asked for. checkQuote above reads the amounts and nothing else,
+     so a quote priced to credit a DIFFERENT Hyperliquid account, or to refund somewhere that is
+     not this wallet, passed every check. The account credited here is the one this app signs
+     for, derived from its own key, and a deposit credited to any other account is collateral in
+     a book this app cannot trade. */
+  function checkQuoteEcho(draft: HlDepositDraft, originAsset: string, amountBase: bigint, raw: unknown): string[] {
+    return quoteEchoProblems(raw, {
+      recipient: draft.hlAccount,
+      recipientVerb: 'credit',
+      recipientNoun: 'Hyperliquid account',
+      recipientType: 'DESTINATION_CHAIN',
+      recipientTypeWhy: 'collateral credited anywhere else is not margin this app can trade',
+      depositType: 'ORIGIN_CHAIN',
+      refundType: 'ORIGIN_CHAIN',
+      refundTypeWhy: 'back to the wallet the deposit left',
+      refundTo: draft.from,
+      originAsset,
+      destinationAsset: HYPERCORE_USDC_ASSET_ID,
+      amount: amountBase.toString(),
+      noEcho:
+        'there is nothing tying it to the Hyperliquid account the draft credits. The deposit is an ordinary ' +
+        `transfer to an address the solver picked and names ${oneLine(draft.hlAccount, 60)} nowhere, so without ` +
+        'the echo this funding cannot be checked and is refused.',
+    });
+  }
+
   function checkDepositAddress(family: 'evm' | 'near', value: string): string {
     if (family === 'evm') {
       if (!isAddress(value, { strict: false })) {
@@ -722,7 +756,10 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
       });
 
       const priced = priceLines(draft, response.quote);
-      const problems = checkQuote(draft, response.quote, priced.feePct);
+      const problems = [
+        ...checkQuote(draft, response.quote, priced.feePct),
+        ...checkQuoteEcho(draft, p.originAsset, p.amountBase, response.raw),
+      ];
       if (problems.length > 0) return refusal(draft, problems, priced.lines);
 
       priced.lines.push('execution sends the input to a deposit address the solver picks; only the amounts above are guaranteed');
@@ -792,7 +829,10 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     const quote = response.quote;
 
     const priced = priceLines(draft, quote);
-    const problems = checkQuote(draft, quote, priced.feePct);
+    const problems = [
+      ...checkQuote(draft, quote, priced.feePct),
+      ...checkQuoteEcho(draft, p.originAsset, p.amountBase, response.raw),
+    ];
     if (problems.length > 0) {
       return { ok: false, detail: `live quote does not match the approved draft: ${problems.join('; ')}. Nothing was sent.` };
     }

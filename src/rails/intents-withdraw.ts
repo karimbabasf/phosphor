@@ -53,7 +53,7 @@ import type {
   RailResult,
   SimulationResult,
 } from '../types.ts';
-import { ONECLICK_TERMINAL, baseUnits, oneLine, resolveAsset, toBaseUnits } from '../intents.ts';
+import { ONECLICK_TERMINAL, baseUnits, oneLine, quoteEchoProblems, resolveAsset, toBaseUnits } from '../intents.ts';
 import type { OneClickQuote, OneClickStatus, TokensFile } from '../intents.ts';
 import {
   INTENTS_SIGNING_STANDARD,
@@ -290,64 +290,29 @@ export function intentsWithdrawRail(deps: IntentsWithdrawRailDeps): IntentsWithd
   // The check that stands in for reading the destination out of the signed payload, because the
   // payload does not contain one. See the header.
   //
-  // `raw` is the whole quote response. The API echoes the request it priced in `quoteRequest`,
-  // so every field that decides where the money goes is compared against the draft here. A
-  // missing echo is refused: without it the signature is tied to no destination at all.
+  // The comparison itself is in src/intents.ts now, shared with every other rail that quotes.
+  // What stays here is what this rail asked for, spelled out, so reading this function tells you
+  // where the money goes without reading the transport.
   function checkQuoteEcho(draft: IntentsWithdrawDraft, p: Plan, raw: unknown): string[] {
-    if (raw === null || typeof raw !== 'object') {
-      return [`the quote response is not an object (got ${oneLine(raw, 60)})`];
-    }
-    const echo = (raw as Record<string, unknown>)['quoteRequest'];
-    if (echo === null || typeof echo !== 'object' || Array.isArray(echo)) {
-      return [
-        'the quote carries no quoteRequest echo, so there is nothing tying it to the destination the draft ' +
-          `names. The signed intent hands our balance to a solver handle and does not name ${oneLine(p.to, 60)} ` +
-          'anywhere, so without the echo this withdrawal cannot be checked and is refused.',
-      ];
-    }
-    const req = echo as Record<string, unknown>;
-    const problems: string[] = [];
-
-    const say = (field: string): string => oneLine(req[field], 60);
-
-    // The two that decide where the payout lands. Exact string comparison, including case: the
-    // recipient we sent was our configured address verbatim.
-    if (req['recipient'] !== p.to) {
-      problems.push(`the quote was priced to pay ${say('recipient')}, not our wallet ${oneLine(p.to, 60)}`);
-    }
-    if (req['recipientType'] !== 'DESTINATION_CHAIN') {
-      problems.push(
-        `the quote pays out as ${say('recipientType')}, not DESTINATION_CHAIN; a withdrawal that credits ` +
-          'another intents balance instead of a wallet is not what was approved',
-      );
-    }
-
-    // The input side. depositType INTENTS is what makes this spend the verifier balance rather
-    // than expect a transfer from the wallet, and refundType INTENTS is what puts a failed
-    // withdrawal back where it started instead of pushing it onto a chain by another route.
-    if (req['depositType'] !== 'INTENTS') {
-      problems.push(`the quote takes its input as ${say('depositType')}, not the INTENTS balance the draft spends`);
-    }
-    if (req['refundType'] !== 'INTENTS') {
-      problems.push(`a refund on this quote goes to ${say('refundType')}, not back to our balance inside the verifier`);
-    }
-    if (typeof req['refundTo'] !== 'string' || (req['refundTo'] as string).toLowerCase() !== draft.from.toLowerCase()) {
-      problems.push(`a refund on this quote goes to ${say('refundTo')}, not to our account ${draft.from}`);
-    }
-
-    // The asset and the size, checked here as well as in checkQuote so the echo is a complete
-    // second opinion rather than a partial one.
-    if (req['originAsset'] !== p.asset || req['destinationAsset'] !== p.asset) {
-      problems.push(
-        `the quote moves ${say('originAsset')} to ${say('destinationAsset')}, not the ${oneLine(p.asset, 60)} ` +
-          'the draft withdraws on both sides',
-      );
-    }
-    if (req['amount'] !== p.amountBase.toString()) {
-      problems.push(`the quote was priced for ${say('amount')} base units, not the ${p.amountBase.toString()} approved`);
-    }
-
-    return problems;
+    return quoteEchoProblems(raw, {
+      recipient: p.to,
+      recipientVerb: 'pay',
+      recipientNoun: 'wallet',
+      recipientType: 'DESTINATION_CHAIN',
+      recipientTypeWhy:
+        'a withdrawal that credits another intents balance instead of a wallet is not what was approved',
+      depositType: 'INTENTS',
+      refundType: 'INTENTS',
+      refundTypeWhy: 'back to our balance inside the verifier',
+      refundTo: draft.from,
+      originAsset: p.asset,
+      destinationAsset: p.asset,
+      amount: p.amountBase.toString(),
+      noEcho:
+        'there is nothing tying it to the destination the draft names. The signed intent hands our balance to a ' +
+        `solver handle and does not name ${oneLine(p.to, 60)} anywhere, so without the echo this withdrawal ` +
+        'cannot be checked and is refused.',
+    });
   }
 
   function priceLines(draft: IntentsWithdrawDraft, p: Plan, quote: OneClickQuote): string[] {

@@ -117,7 +117,6 @@ function quoteBody(over: Record<string, unknown> = {}): Record<string, unknown> 
       depositAddress: DEPOSIT,
       ...over,
     },
-    quoteRequest: {},
     signature: 'ed25519:test',
     timestamp: '2026-08-12T01:42:11.047Z',
     correlationId: 'test-correlation-id',
@@ -149,6 +148,10 @@ function harness(
   options: {
     quote?: Record<string, unknown>;
     quoteStatus?: number;
+    // What the API echoes back in quoteRequest. Left out it is the request itself, verbatim,
+    // which is what the live API returns; a patch simulates a server pricing something else,
+    // and null a server that echoes nothing at all.
+    echo?: Record<string, unknown> | null;
     statuses?: unknown[]; // one payload per /v0/status call; the last one repeats
     send?: SendOutcome;
     nearSend?: NearSendOutcome;
@@ -165,8 +168,14 @@ function harness(
     const u = String(url);
     if (u.endsWith('/v0/tokens')) return jsonResponse(oneClickTokens);
     if (u.endsWith('/v0/quote')) {
-      quoteBodies.push(JSON.parse(String(init?.body)));
-      return jsonResponse(options.quote ?? quoteBody(), options.quoteStatus ?? 201);
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      quoteBodies.push(body);
+      const payload = options.quote ?? quoteBody();
+      const echoed = options.echo === null ? null : { ...body, ...(options.echo ?? {}) };
+      return jsonResponse(
+        echoed === null ? payload : { ...payload, quoteRequest: echoed },
+        options.quoteStatus ?? 201,
+      );
     }
     if (u.endsWith('/v0/deposit/submit')) {
       depositSubmits.push(JSON.parse(String(init?.body)));
@@ -782,4 +791,40 @@ test('a NEAR account id as the destination of an EVM payout is refused', async (
   const out = await railOf(h).simulate(draftOf({ to: 'phosphor.near' }));
   assert.equal(out.ok, false);
   assert.match(out.error ?? '', /not an EVM address/);
+});
+
+// ---------- the quoteRequest echo ----------
+//
+// The API echoes the request it priced, and until now this rail read the amounts and nothing
+// else. A quote priced to a different recipient, or with recipientType silently moved from
+// DESTINATION_CHAIN to INTENTS, passed every check: the proceeds land in a verifier balance
+// instead of the wallet, which reads as a successful swap and is not.
+
+test('a quote that echoes a different recipient is refused', async () => {
+  const h = harness({ echo: { recipient: '0x000000000000000000000000000000000000dEaD' } });
+  const out = await railOf(h).simulate(draftOf());
+
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /priced to pay/);
+});
+
+test('a quote with no echo at all is refused rather than trusted', async () => {
+  const h = harness({ echo: null });
+  const out = await railOf(h).simulate(draftOf());
+
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /no quoteRequest echo/);
+});
+
+test('a payout quietly rerouted into a verifier balance is refused', async () => {
+  const h = harness({ echo: { recipientType: 'INTENTS' } });
+  const out = await railOf(h).simulate(draftOf());
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /not DESTINATION_CHAIN/);
+});
+
+test('the echo is checked again on the live quote, before anything is signed', async () => {
+  const h = harness({ echo: { refundTo: '0x000000000000000000000000000000000000dEaD' } });
+  await assert.rejects(() => railOf(h).execute(draftOf()), /refund on this quote goes to/);
+  assert.equal(h.sends.length, 0, 'nothing was signed');
 });

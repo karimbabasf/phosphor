@@ -286,6 +286,98 @@ export type OneClickQuoteParams = {
   depositType?: OneClickEndpointType;
 };
 
+/* ---------- the quote echo, checked once for every rail ----------
+
+   The API echoes the request it priced, verbatim, in `quoteRequest` (verified live 2026-08-13).
+   That echo is the only place a quote states where the money ends up, so every field that
+   decides that is compared against what the rail asked for.
+
+   This lived in two rails and not in the other three, which is how the same defect was found
+   twice: a quote priced to credit a DIFFERENT recipient, to take its input from a chain transfer
+   rather than the verifier balance, or to refund somewhere that is not our account passed every
+   check the two rails without it made. So it is one function now. Four copies of a check is how
+   the fourth one gets forgotten, which is exactly what happened.
+
+   A missing echo is a refusal, not a shrug. Each rail says in `noEcho` why it cannot proceed
+   without one, because the reason differs: an intent names no destination at all, and an
+   ordinary transfer goes to an address only the echo ties to a payout. */
+export type QuoteEcho = {
+  // Where the proceeds land. `verb` and `noun` are the rail's own words for it, so the refusal
+  // reads as a sentence about this rail rather than a generic mismatch.
+  recipient: string;
+  recipientVerb: 'pay' | 'credit';
+  recipientNoun: string;
+  recipientType: OneClickEndpointType;
+  recipientTypeWhy: string;
+  // Where the input comes from, and where a failure puts it back.
+  depositType: OneClickEndpointType;
+  refundType: OneClickEndpointType;
+  refundTypeWhy: string;
+  refundTo: string;
+  // The assets and the size, as a complete second opinion rather than a partial one.
+  originAsset: string;
+  destinationAsset: string;
+  amount: string; // base units, as a decimal integer string
+  noEcho: string;
+};
+
+/* Whether two endpoints in a quote are the same one.
+   Exact by default, because base58 case carries key material and two Solana strings differing
+   only in case are two different accounts. EVM addresses are the exception and only the
+   exception: the same 20 bytes have a checksummed spelling and a lowercase one, and both name
+   the same account. Recognising the exception by shape rather than by chain is what lets one
+   comparison serve a rail whose recipient may be an EVM address, a Solana key or a NEAR id. */
+const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+
+function sameEndpoint(value: unknown, want: string): boolean {
+  if (typeof value !== 'string') return false;
+  if (EVM_ADDRESS.test(value) && EVM_ADDRESS.test(want)) return value.toLowerCase() === want.toLowerCase();
+  return value === want;
+}
+
+export function quoteEchoProblems(raw: unknown, want: QuoteEcho): string[] {
+  if (raw === null || typeof raw !== 'object') {
+    return [`the quote response is not an object (got ${oneLine(raw, 60)})`];
+  }
+  const echo = (raw as Record<string, unknown>)['quoteRequest'];
+  if (echo === null || typeof echo !== 'object' || Array.isArray(echo)) {
+    return [`the quote carries no quoteRequest echo, so ${want.noEcho}`];
+  }
+  const req = echo as Record<string, unknown>;
+  const problems: string[] = [];
+  const say = (field: string): string => oneLine(req[field], 60);
+
+  if (!sameEndpoint(req['recipient'], want.recipient)) {
+    problems.push(
+      `the quote was priced to ${want.recipientVerb} ${say('recipient')}, not our ${want.recipientNoun} ` +
+        `${oneLine(want.recipient, 60)}`,
+    );
+  }
+  if (req['recipientType'] !== want.recipientType) {
+    problems.push(`the quote pays out as ${say('recipientType')}, not ${want.recipientType}: ${want.recipientTypeWhy}`);
+  }
+  if (req['depositType'] !== want.depositType) {
+    problems.push(`the quote takes its input as ${say('depositType')}, not the ${want.depositType} balance this rail spends`);
+  }
+  if (req['refundType'] !== want.refundType) {
+    problems.push(`a refund on this quote goes to ${say('refundType')}, not ${want.refundTypeWhy}`);
+  }
+  if (!sameEndpoint(req['refundTo'], want.refundTo)) {
+    problems.push(`a refund on this quote goes to ${say('refundTo')}, not to our account ${oneLine(want.refundTo, 60)}`);
+  }
+  if (req['originAsset'] !== want.originAsset || req['destinationAsset'] !== want.destinationAsset) {
+    problems.push(
+      `the quote moves ${say('originAsset')} to ${say('destinationAsset')}, not the ` +
+        `${oneLine(want.originAsset, 40)} to ${oneLine(want.destinationAsset, 40)} the draft names`,
+    );
+  }
+  if (req['amount'] !== want.amount) {
+    problems.push(`the quote was priced for ${say('amount')} base units, not the ${want.amount} approved`);
+  }
+
+  return problems;
+}
+
 export type OneClickDeps = { fetchImpl?: typeof fetch };
 
 export type OneClickClient = {

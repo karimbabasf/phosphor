@@ -41,6 +41,7 @@ import {
   nativeAssetIdFor,
   oneClickClient,
   oneLine,
+  quoteEchoProblems,
   toBaseUnits,
 } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickStatus, TokensFile } from '../intents.ts';
@@ -282,6 +283,32 @@ export function intentsDepositRail(deps: IntentsDepositRailDeps): IntentsDeposit
     return null;
   }
 
+  /* The quote's echo of what we asked for. checkQuote above reads the amounts and nothing else,
+     so a quote priced to credit a DIFFERENT account inside the verifier, or with recipientType
+     quietly moved from INTENTS to DESTINATION_CHAIN, passed every check. Either one is a
+     balance this app cannot spend: the account credited here is derived from our own key and
+     the rail refuses any other, so the echo is that rule stated where the server answers. */
+  function checkQuoteEcho(draft: IntentsDepositDraft, p: Plan, raw: unknown): string[] {
+    return quoteEchoProblems(raw, {
+      recipient: draft.intentsAccount,
+      recipientVerb: 'credit',
+      recipientNoun: 'account',
+      recipientType: 'INTENTS',
+      recipientTypeWhy: 'a payout onto a chain is not the deposit that was approved',
+      depositType: 'ORIGIN_CHAIN',
+      refundType: 'ORIGIN_CHAIN',
+      refundTypeWhy: 'back to the wallet the deposit left',
+      refundTo: draft.from,
+      originAsset: p.asset,
+      destinationAsset: p.asset,
+      amount: p.amountBase.toString(),
+      noEcho:
+        'there is nothing tying it to the account the draft credits. The deposit is an ordinary transfer to an ' +
+        `address the solver picked and names ${oneLine(draft.intentsAccount, 60)} nowhere, so without the echo ` +
+        'this deposit cannot be checked and is refused.',
+    });
+  }
+
   function priceLines(draft: IntentsDepositDraft, quote: OneClickQuote): string[] {
     const inUsd = Number(quote.amountInUsd);
     const outUsd = Number(quote.amountOutUsd);
@@ -317,7 +344,7 @@ export function intentsDepositRail(deps: IntentsDepositRailDeps): IntentsDeposit
       });
 
       const lines = priceLines(draft, response.quote);
-      const problems = checkQuote(draft, p, response.quote);
+      const problems = [...checkQuote(draft, p, response.quote), ...checkQuoteEcho(draft, p, response.raw)];
 
       if (problems.length > 0) {
         const joined = problems.join('; ');
@@ -381,7 +408,7 @@ export function intentsDepositRail(deps: IntentsDepositRailDeps): IntentsDeposit
     });
     const quote = response.quote;
 
-    const problems = checkQuote(draft, p, quote);
+    const problems = [...checkQuote(draft, p, quote), ...checkQuoteEcho(draft, p, response.raw)];
     if (problems.length > 0) throw new Error(`live quote does not match the approved draft: ${problems.join('; ')}`);
 
     if (typeof quote.depositMemo === 'string' && quote.depositMemo !== '') {

@@ -49,6 +49,7 @@ import {
   ONECLICK_TERMINAL,
   baseUnits,
   oneClickClient,
+  quoteEchoProblems,
   oneLine,
   resolveAsset,
   toBaseUnits,
@@ -989,63 +990,29 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
      checkQuote above reads amountIn and minAmountOut and nothing else, so a quote priced to
      credit a DIFFERENT recipient, to take its input from a chain transfer rather than the
      verifier balance, or to refund somewhere that is not our account, passed every check and was
-     signed, submitted and reported as SUCCESS. The sibling withdraw rail closed exactly this gap
-     with its own checkQuoteEcho; this rail never got it.
+     signed, submitted and reported as SUCCESS.
 
-     A missing echo is a refusal, not a shrug. The signed intent hands a balance to a solver
-     handle and does not name the destination anywhere, so with no echo there is nothing tying
-     the signature to where the proceeds land. */
+     The comparison is in src/intents.ts, shared with every rail that quotes. What stays here is
+     what this rail asked for, spelled out. */
   function checkQuoteEcho(p: Plan, owner: string, raw: unknown): string[] {
-    if (raw === null || typeof raw !== 'object') {
-      return [`the quote response is not an object (got ${oneLine(raw, 60)})`];
-    }
-    const echo = (raw as Record<string, unknown>)['quoteRequest'];
-    if (echo === null || typeof echo !== 'object' || Array.isArray(echo)) {
-      return [
-        'the quote carries no quoteRequest echo, so there is nothing tying it to the account the draft ' +
-          `credits. The signed intent hands our balance to a solver handle and does not name ${oneLine(owner, 60)} ` +
-          'anywhere, so without the echo this swap cannot be checked and is refused.',
-      ];
-    }
-    const req = echo as Record<string, unknown>;
-    const problems: string[] = [];
-    const say = (field: string): string => oneLine(req[field], 60);
-    const same = (value: unknown, want: string): boolean =>
-      typeof value === 'string' && value.toLowerCase() === want.toLowerCase();
-
-    // Where the proceeds land. Everything else on this quote is a price; this is the answer to
-    // "whose money is it afterwards".
-    if (!same(req['recipient'], owner)) {
-      problems.push(`the quote was priced to credit ${say('recipient')}, not our account ${oneLine(owner, 60)}`);
-    }
-    // INTENTS on both sides is what makes this a swap inside the verifier rather than a bridge:
-    // a DESTINATION_CHAIN payout would push the proceeds onto a chain nobody approved.
-    if (req['recipientType'] !== 'INTENTS') {
-      problems.push(
-        `the quote pays out as ${say('recipientType')}, not INTENTS; this rail swaps inside the verifier and ` +
-          'moves nothing onto any chain',
-      );
-    }
-    if (req['depositType'] !== 'INTENTS') {
-      problems.push(`the quote takes its input as ${say('depositType')}, not the INTENTS balance this rail spends`);
-    }
-    if (req['refundType'] !== 'INTENTS') {
-      problems.push(`a refund on this quote goes to ${say('refundType')}, not back to our balance inside the verifier`);
-    }
-    if (!same(req['refundTo'], owner)) {
-      problems.push(`a refund on this quote goes to ${say('refundTo')}, not to our account ${oneLine(owner, 60)}`);
-    }
-    // The assets and the size, as a complete second opinion rather than a partial one.
-    if (req['originAsset'] !== p.originAsset || req['destinationAsset'] !== p.destinationAsset) {
-      problems.push(
-        `the quote moves ${say('originAsset')} to ${say('destinationAsset')}, not the ` +
-          `${oneLine(p.originAsset, 40)} to ${oneLine(p.destinationAsset, 40)} the draft names`,
-      );
-    }
-    if (req['amount'] !== p.amountBase.toString()) {
-      problems.push(`the quote was priced for ${say('amount')} base units, not the ${p.amountBase.toString()} approved`);
-    }
-    return problems;
+    return quoteEchoProblems(raw, {
+      recipient: owner,
+      recipientVerb: 'credit',
+      recipientNoun: 'account',
+      recipientType: 'INTENTS',
+      recipientTypeWhy: 'this rail swaps inside the verifier and moves nothing onto any chain',
+      depositType: 'INTENTS',
+      refundType: 'INTENTS',
+      refundTypeWhy: 'back to our balance inside the verifier',
+      refundTo: owner,
+      originAsset: p.originAsset,
+      destinationAsset: p.destinationAsset,
+      amount: p.amountBase.toString(),
+      noEcho:
+        'there is nothing tying it to the account the draft credits. The signed intent hands our balance to a ' +
+        `solver handle and does not name ${oneLine(owner, 60)} anywhere, so without the echo this swap cannot ` +
+        'be checked and is refused.',
+    });
   }
 
   function priceLines(draft: SwapDraft, quote: OneClickQuote): string[] {

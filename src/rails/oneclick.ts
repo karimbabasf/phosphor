@@ -39,7 +39,15 @@ import type { NearSendOutcome, NearSendParams } from '../chain/near.ts';
 import { MAX_SLIPPAGE_BPS, floorTooLow } from './uniswap.ts';
 import { addressProblem } from './intents-withdraw.ts';
 import type { ChainId, Rail, RailResult, SimulationResult, SwapDraft } from '../types.ts';
-import { ONECLICK_TERMINAL, assetIdFor, baseUnits, oneClickClient, oneLine, toBaseUnits } from '../intents.ts';
+import {
+  ONECLICK_TERMINAL,
+  assetIdFor,
+  baseUnits,
+  oneClickClient,
+  oneLine,
+  quoteEchoProblems,
+  toBaseUnits,
+} from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickStatus, TokensFile } from '../intents.ts';
 
 // The chains this rail can deposit from, by signer family.
@@ -296,6 +304,39 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
     return problems;
   }
 
+  /* The quote's echo of what we asked for, checked against what we asked for.
+     checkQuote above reads amountIn, minAmountOut and amountOut, and nothing else. A quote
+     priced to a DIFFERENT recipient, or with recipientType silently changed from
+     DESTINATION_CHAIN to INTENTS, passed every one of those checks: the proceeds land in a
+     verifier balance instead of the wallet, which reads as a successful swap and is not. The
+     sibling withdraw rail has had this check since it was written; this one never got it.
+
+     It does not close the trust this rail already accepts and states in its header: the deposit
+     address is chosen by the API and no signature proves who holds it, so a hostile server can
+     still keep the money. What it closes is the quieter case, a server that accepts the request
+     and prices something else. */
+  function checkQuoteEcho(draft: SwapDraft, p: Plan, raw: unknown): string[] {
+    return quoteEchoProblems(raw, {
+      recipient: draft.to,
+      recipientVerb: 'pay',
+      recipientNoun: 'wallet',
+      recipientType: 'DESTINATION_CHAIN',
+      recipientTypeWhy:
+        'a payout credited to an intents balance instead of the wallet is not the swap that was approved',
+      depositType: 'ORIGIN_CHAIN',
+      refundType: 'ORIGIN_CHAIN',
+      refundTypeWhy: 'back to the wallet the deposit left',
+      refundTo: draft.from,
+      originAsset: p.originAsset,
+      destinationAsset: p.destinationAsset,
+      amount: p.amountBase.toString(),
+      noEcho:
+        'there is nothing tying it to the wallet the draft pays out to. The deposit is an ordinary transfer ' +
+        `to an address the solver picked and names ${oneLine(draft.to, 60)} nowhere, so without the echo this ` +
+        'swap cannot be checked and is refused.',
+    });
+  }
+
   function priceLines(draft: SwapDraft, quote: OneClickQuote): string[] {
     const inUsd = Number(quote.amountInUsd);
     const outUsd = Number(quote.amountOutUsd);
@@ -405,7 +446,7 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
       });
 
       const lines = priceLines(draft, response.quote);
-      const problems = checkQuote(draft, p, response.quote);
+      const problems = [...checkQuote(draft, p, response.quote), ...checkQuoteEcho(draft, p, response.raw)];
 
       if (problems.length > 0) {
         const joined = problems.join('; ');
@@ -440,7 +481,7 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
     });
     const quote = response.quote;
 
-    const problems = checkQuote(draft, p, quote);
+    const problems = [...checkQuote(draft, p, quote), ...checkQuoteEcho(draft, p, response.raw)];
     if (problems.length > 0) throw new Error(`live quote does not match the approved draft: ${problems.join('; ')}`);
 
     if (typeof quote.depositMemo === 'string' && quote.depositMemo !== '') {
