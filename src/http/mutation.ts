@@ -72,12 +72,22 @@ export async function handleMutation(
         : null;
 
   if (reason !== null) {
-    // The supplied token itself never enters the audit log. Its SHA-256 prefix does, and that
-    // is the difference between "a token was rejected" and "which client is holding which
-    // token": two rejections sharing a fingerprint are one stale page retrying, and a
-    // fingerprint that matches no boot this app has served is a client that never had one.
-    // The same argument covers origin and agent: a rejection that cannot say who sent it
-    // cannot tell a human reloading a dead tab apart from something hammering the endpoint.
+    /* The supplied token itself never enters the audit log. Its SHA-256 prefix does, and that
+       is the difference between "a token was rejected" and "which client is holding which
+       token": two rejections sharing a fingerprint are one stale page retrying, and a
+       fingerprint that matches no boot this app has served is a client that never had one.
+       The same argument covers origin and agent: a rejection that cannot say who sent it
+       cannot tell a human reloading a dead tab apart from something hammering the endpoint.
+
+       NOTHING DERIVED FROM ctx.token GOES IN. `expectedFp` used to sit beside tokenFp, and
+       GET /api/log has no credential, so one unauthenticated POST followed by one
+       unauthenticated GET handed any local process a stable fingerprint of the one secret in
+       this system. It is not invertible and it was still worth deleting: it is an offline
+       oracle, so a candidate token obtained anywhere else (a crash dump, a stale window, a
+       partial disclosure) could be confirmed against it without contacting this app and
+       without leaving the log line a real attempt leaves. Nothing above needs it either. A
+       rejection already means the supplied token did not match, so tokenFp alone tells one
+       stale page retrying apart from a client that never had a token. */
     const supplied = typeof body.token === 'string' ? body.token : '';
     ctx.audit.append('approve_attempt_rejected', `POST ${route} rejected: ${reason}`, {
       route,
@@ -85,7 +95,6 @@ export async function handleMutation(
       reason,
       tokenPresent: supplied.length > 0,
       tokenFp: supplied === '' ? null : tokenFingerprint(supplied),
-      expectedFp: tokenFingerprint(ctx.token),
       origin: req.headers.origin ?? '(absent)',
       agent: String(req.headers['user-agent'] ?? '(absent)').slice(0, 120),
     });
