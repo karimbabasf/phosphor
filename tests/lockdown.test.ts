@@ -17,6 +17,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -32,8 +33,8 @@ function claudeAvailable(): string | null {
   }
 }
 
-// Reads the init event and nothing else, then kills the child. Resolves with the whole event:
-// the tool list is what the two profile tests read, and memory_paths is what the auto-memory test
+// Reads the init event and nothing else, then kills the child. Resolves with the whole event: the
+// tool list is what the two profile tests read, and memory_paths is what the auto-memory test
 // reads. Rejects on anything that is not a clean init, because "could not tell" has to fail.
 function announcedInit(bin: string, settings: string, env?: NodeJS.ProcessEnv): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
@@ -169,3 +170,35 @@ test(
     );
   },
 );
+
+/* Deny rules that name nothing.
+   Not a hole, and that is why it is a separate test rather than a failure of the two above: the
+   allow list is `mcp__phosphor__*` and assertSurface in src/driver.ts reads the announced surface
+   back, so a tool the deny list misses is refused anyway. These three were the visible symptom of
+   exactly the drift this file exists to catch. Claude Code 2.1.263 printed one line per rule on
+   stderr for each of them, and a profile that names tools the release has never heard of is a
+   profile nobody has checked against a release.
+
+   Measured while removing them, and worth writing down because the report that found them said
+   otherwise: the warning is printed under `--output-format text` and NOT under the
+   `--output-format stream-json --verbose` the driver actually spawns with. So they never reached
+   the window through the stderr forwarding in src/driver.ts. They were noise for anyone running
+   the profile by hand, and a stale claim in a file whose whole job is to not be stale.
+
+   A general check would need the release's full tool list, which nothing announces, so this names
+   the three. The live tests above are the general check. */
+test('neither profile names a tool this Claude Code release has never heard of', () => {
+  const dead = ['SlashCommand', 'NotebookRead', 'MultiEdit'];
+  for (const name of ['driver.settings.json', 'settings.json']) {
+    const profile = JSON.parse(fs.readFileSync(path.join(REPO, 'operator', name), 'utf8')) as {
+      permissions: { deny: string[] };
+    };
+    for (const tool of dead) {
+      assert.ok(
+        !profile.permissions.deny.includes(tool),
+        `operator/${name} denies ${tool}, which matched no tool in 2.1.263. Check it against the ` +
+          'installed release before putting it back.',
+      );
+    }
+  }
+});
