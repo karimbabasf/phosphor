@@ -116,6 +116,9 @@ function harness(
     // sendOk:false with no hash, which is a transfer that never went out at all.
     sendHashOnFailure?: string;
     statuses?: string[];
+    // What the API echoes back in quoteRequest. Left out it is the request itself; a patch
+    // simulates a server pricing something else, and null a server that echoes nothing.
+    echo?: Record<string, unknown> | null;
   } = {},
 ): Harness {
   const quotes: Array<Record<string, unknown>> = [];
@@ -134,7 +137,26 @@ function harness(
       },
       async quote(params) {
         quotes.push(params as unknown as Record<string, unknown>);
-        return { quote: options.quote ?? quoteOf(), raw: {} };
+        return {
+          quote: options.quote ?? quoteOf(),
+          // The live API echoes the request it priced, verbatim, and the rail checks it.
+          raw:
+            options.echo === null
+              ? {}
+              : {
+                  quoteRequest: {
+                    originAsset: params.originAsset,
+                    destinationAsset: params.destinationAsset,
+                    amount: params.amount,
+                    refundTo: params.refundTo,
+                    refundType: params.refundType,
+                    recipient: params.recipient,
+                    recipientType: params.recipientType,
+                    depositType: params.depositType,
+                    ...(options.echo ?? {}),
+                  },
+                },
+        };
       },
       async submitDeposit() {
         return { ok: true, detail: 'deposit notified' };
@@ -483,4 +505,33 @@ test('a deposit that never broadcast still says nothing moved', async () => {
   assert.equal(out.ok, false);
   assert.deepEqual(out.txids, []);
   assert.match(out.detail, /No funds left the wallet/);
+});
+
+// ---------- the quoteRequest echo ----------
+//
+// The account credited inside the verifier is derived from this app's own key, and the rail
+// refuses a draft naming any other. Until now nothing checked that the SERVER had priced the
+// same account: checkQuote read the amounts alone, so a quote crediting a stranger, or one that
+// pushed the funds onto a chain instead of into the verifier, passed every check.
+
+test('a quote that echoes a different intents account is refused', async () => {
+  const h = harness({ echo: { recipient: '0x000000000000000000000000000000000000dEaD' } });
+  const out = await railOf(h).simulate(draftOf());
+
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /priced to credit/);
+});
+
+test('a quote with no echo at all is refused rather than trusted', async () => {
+  const h = harness({ echo: null });
+  const out = await railOf(h).simulate(draftOf());
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /no quoteRequest echo/);
+});
+
+test('a deposit quietly rerouted onto a chain instead of into the verifier is refused', async () => {
+  const h = harness({ echo: { recipientType: 'DESTINATION_CHAIN' } });
+  const out = await railOf(h).simulate(draftOf());
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /not INTENTS/);
 });

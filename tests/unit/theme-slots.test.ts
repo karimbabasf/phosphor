@@ -26,26 +26,48 @@ test('the shipped defaults pass their own contrast floors', () => {
   assert.equal(result.ok, true, result.ok ? '' : result.error);
 });
 
-test('no slot is green', () => {
-  // The build has one rule about colour that is absolute: no green anywhere.
-  // Hue is checked rather than a hex list, so a new green cannot slip past by
-  // being a shade nobody wrote down.
-  for (const slot of SLOTS) {
-    const hex = DEFAULT_THEME[slot];
-    const r = parseInt(hex.slice(1, 3), 16) / 255;
-    const g = parseInt(hex.slice(3, 5), 16) / 255;
-    const b = parseInt(hex.slice(5, 7), 16) / 255;
-    const max = Math.max(r, g, b);
-    const min = Math.min(r, g, b);
-    const chroma = max - min;
-    if (chroma < 0.08) continue; // a grey has no hue to be green
-    let hue = 0;
-    if (max === r) hue = 60 * (((g - b) / chroma) % 6);
-    else if (max === g) hue = 60 * ((b - r) / chroma + 2);
-    else hue = 60 * ((r - g) / chroma + 4);
-    if (hue < 0) hue += 360;
-    assert.ok(hue < 70 || hue > 175, `${slot} ${hex} sits at hue ${hue.toFixed(0)}, which reads as green`);
-  }
+function hueOf(hex: string): number | null {
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const chroma = max - min;
+  if (chroma < 0.08) return null; // a grey has no hue to read
+  let hue = 0;
+  if (max === r) hue = 60 * (((g - b) / chroma) % 6);
+  else if (max === g) hue = 60 * ((b - r) / chroma + 2);
+  else hue = 60 * ((r - g) / chroma + 4);
+  return hue < 0 ? hue + 360 : hue;
+}
+
+/* This test used to assert the opposite: no slot is green, anywhere. That was
+   the v1 direction (monochrome graphite, white acts, blue is up), and the
+   reason for it was real: blue against rose is separable by the roughly one
+   person in twelve who cannot separate green from red.
+
+   It was reversed on 2026-09-02 by the person who owns the product, looking at
+   the built result: a window with no green in it reads as a filter laid over
+   the app rather than a design, and it costs Phosphor the one colour it is
+   named after. The accessible pairing is a set_theme call away and nothing in
+   the code prevents it, which is the right place for that choice to live.
+
+   What is guarded now is the thing that actually has to hold: up and down must
+   stay far apart, so the pair never collapses into two shades of one hue. */
+test('the identity green is the accent and the up colour', () => {
+  assert.equal(DEFAULT_THEME.accent, DEFAULT_THEME.up, 'the action colour and up are one decision');
+  const hue = hueOf(DEFAULT_THEME.accent);
+  assert.notEqual(hue, null, 'the accent has a hue to read');
+  assert.ok(hue !== null && hue > 90 && hue < 165, `accent sits at hue ${hue?.toFixed(0)}, which is not phosphor green`);
+});
+
+test('up and down are far enough apart to never read as one hue', () => {
+  const up = hueOf(DEFAULT_THEME.up);
+  const down = hueOf(DEFAULT_THEME.down);
+  assert.ok(up !== null && down !== null, 'both directions carry a hue');
+  const raw = Math.abs((up as number) - (down as number));
+  const apart = Math.min(raw, 360 - raw);
+  assert.ok(apart > 90, `up and down are ${apart.toFixed(0)} degrees apart, close enough to be confused`);
 });
 
 test('a slot that is not a hex colour is refused whole', () => {

@@ -27,21 +27,27 @@
    below pulls the live values off the document at boot, so the stylesheet stays the source of
    truth and this table is only the floor.
 
-   The engine used to be green on near-black, and every ink in it came off one accent through
-   green() and red(). It is not green any more. Up is #5B8DEF, blue, which is the accent slot
-   for the whole application; down is #FF5A6E. That pairing does the same job for the roughly
-   one person in twelve who cannot separate the old pair, and it stops the chart being the one
-   surface with its own hue.
+   Up is #33FF66, the phosphor green the app is named for and the accent slot for the whole
+   application; down is #FF5A6E. The chart is not the one surface with its own hue, because the
+   green is the window's green.
+
+   This pair was blue and red for a while, chosen because blue against red is separable by the
+   roughly one person in twelve who cannot separate green from red. It cost the product its
+   identity and read to its owner as a filter laid over the app, so green is the default again.
+   The accessible pairing is not gone: up and down are theme slots, so set_theme up #5B8DEF
+   restores it in one call, and no code has to change. What keeps this readable for everyone
+   meanwhile is that the two are far apart in luminance rather than only in hue, and that a
+   candle's meaning is carried by where it sits, not by what colour it is.
 
    Down is still lighter than the approval gate's alarm red so the gate stays the only alarm on
    the page. Nothing here can repaint that gate: it is a CSS token this file never touches. */
 var CHART_TOKENS = {
-  bg0: '#09090B',
-  bg1: '#0F1013',
-  line: '#22242A',
-  text: '#EDEEF0',
-  text2: '#9A9EA8',
-  up: '#5B8DEF',
+  bg0: '#0B0D10',
+  bg1: '#111418',
+  line: '#232830',
+  text: '#ECEEF1',
+  text2: '#9BA1AB',
+  up: '#33FF66',
   down: '#FF5A6E',
   agent: '#B79CFF',
   warn: '#F2B544'
@@ -52,16 +58,16 @@ var CHART_TOKENS = {
 var C_BG = CHART_TOKENS.bg1;
 var C_UP = CHART_TOKENS.up;
 var C_DOWN = CHART_TOKENS.down;
-var C_HI = '#A9C2F6';
+var C_HI = '#8FFFAB';
 
 /* The ramps every ink in the engine is mixed from. Triples rather than hex, because every
    call site wants an alpha and building "rgba(...)" from a triple is one concatenation. */
 var RGB_ACCENT = '91, 141, 239';
 var RGB_DOWN = '255, 90, 110';
 var RGB_AGENT = '183, 156, 255';
-var RGB_LINE = '34, 36, 42';
-var RGB_TEXT = '237, 238, 240';
-var RGB_TEXT2 = '154, 158, 168';
+var RGB_LINE = '35, 40, 48';
+var RGB_TEXT = '236, 238, 241';
+var RGB_TEXT2 = '155, 161, 171';
 
 /* "#5b8def" or "#5be" to "91, 141, 239". Returns null on anything else, and every caller
    treats null as "leave the colour alone": a bad value from the server must never be able to
@@ -1936,7 +1942,9 @@ async function pushChart(extra) {
     });
     var answer = await res.json();
     if (answer && typeof answer.rev === 'number') CHART_MY_REV = answer.rev;
-    if (answer && answer.error) chartNote(answer.error);
+    if (answer && answer.error && typeof body.token === 'string' && body.token.length) {
+      chartNote(answer.error);
+    }
     // The answer to our own write, so the clamps the server applied land here rather than
     // leaving the window showing something the agent's read does not agree with.
     if (answer && answer.view && CHART_DRAG === null && CHART_PUSH === null) CHART.view = answer.view;
@@ -1956,7 +1964,7 @@ async function pushChart(extra) {
 function chartNote(text) {
   var meta = document.getElementById('chart-status');
   if (!meta) return;
-  var note = chartSpan('hi', text);
+  var note = chartSpan('chart-note', text);
   meta.appendChild(note);
   setTimeout(function () {
     if (note.parentNode) note.parentNode.removeChild(note);
@@ -2145,7 +2153,7 @@ function renderChartBar() {
         var tf = CHART.timeframes[t];
         var button = document.createElement('button');
         button.type = 'button';
-        button.className = 'tf';
+        button.className = 'timeframe';
         button.dataset.sec = String(tf.sec);
         button.textContent = tf.label;
         box.appendChild(button);
@@ -2154,7 +2162,9 @@ function renderChartBar() {
     }
     var kids = box.childNodes;
     for (var k = 0; k < kids.length; k++) {
-      kids[k].className = Number(kids[k].dataset.sec) === CHART.view.granularitySec ? 'tf on' : 'tf';
+      kids[k].className = Number(kids[k].dataset.sec) === CHART.view.granularitySec
+        ? 'timeframe on'
+        : 'timeframe';
     }
   }
 
@@ -2217,17 +2227,17 @@ function renderChartStatus() {
   for (var i = 0; i < extras.length; i++) extras[i].remove();
 
   if (CHART.view.panOffset > 0) {
-    var live = chartSpan('tf', '» live');
+    var live = chartSpan('timeframe', 'Live');
     live.id = 'chart-live';
     live.dataset.extra = '1';
     live.title = 'back to the newest bar';
     cluster.appendChild(live);
   }
   if (CHART.agentObjects > 0) {
-    var count = chartSpan('faint', 'agent drew ' + CHART.agentObjects);
+    var count = chartSpan('meta', 'agent drew ' + CHART.agentObjects);
     count.dataset.extra = '1';
     cluster.appendChild(count);
-    var clear = chartSpan('tf', '[clear]');
+    var clear = chartSpan('timeframe', 'Clear');
     clear.id = 'chart-clear-agent';
     clear.dataset.extra = '1';
     cluster.appendChild(clear);

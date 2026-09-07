@@ -25,8 +25,7 @@
 /* ---------- offline ---------- */
 
 .offline-bar {
-  position: sticky;
-  top: var(--topbar-h);
+  position: relative;
   z-index: 35;
   display: flex;
   align-items: center;
@@ -36,6 +35,7 @@
   border-bottom: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
   font-size: var(--fs-13);
   color: var(--text);
+  flex: 0 0 auto;
 }
 
 /* ---------- basic ---------- */
@@ -51,17 +51,30 @@
   border-top: 1px solid var(--line);
 }
 
-.basic-stop {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-2);
-  align-items: center;
-  padding-top: var(--s-5);
-  text-align: center;
+/* One sentence under the total, and it is the state of the money rather than a
+   caption on it. */
+.hero-line {
+  font-size: var(--fs-16);
+  line-height: 1.4;
+  color: var(--text-2);
 }
 
-.basic-stop .meta {
-  max-width: 42ch;
+/* The rules strip: one sentence about the safety model. Hairlines rather than a
+   box, because a box in this window means the assistant can act on the thing
+   inside it, and these are the rules it acts under. It is still a surface: the
+   glow marks it when policy_show lands. */
+.strip {
+  padding: var(--s-3) 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-13);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+/* Under the five newest receipts, and only while there are more than five. */
+.see-all {
+  margin-top: var(--s-2);
 }
 
 /* ---------- money in ---------- */
@@ -88,7 +101,7 @@
   padding: var(--s-1);
 }
 
-@media (max-width: 560px) {
+@container world (max-width: 560px) {
   .receive-card { flex-direction: column-reverse; }
 }
 
@@ -148,65 +161,124 @@
   gap: var(--s-2);
 }
 
-/* ---------- the agent panel ---------- */
-
-.agent-panel {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-3);
-  min-height: 220px;
-}
+/* ---------- the conversation column ---------- */
 
 .agent-head {
-  align-items: flex-start;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: var(--s-3);
 }
 
-/* The ground, not a darker box. A panel is --bg-1, so an empty state painted
-   --bg-0 with a border read as a hole cut in the panel. The field carries it
-   instead, and the field's own ground is --bg-0 by definition. */
+.agent-detail {
+  flex: 0 0 auto;
+  padding-top: var(--s-1);
+}
+
+/* Who else is holding the reins, under the head, in one quiet row apiece. */
+.agent-clients {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  padding-top: var(--s-2);
+}
+
+.agent-clients:empty {
+  display: none;
+}
+
+.agent-client .dot {
+  color: var(--up);
+}
+
+/* The empty column. The field behind the whole column is the ground, so this
+   draws nothing of its own: the two ways to get an assistant are all there is. */
 .agent-empty {
   position: relative;
-  overflow: hidden;
-  min-height: 148px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--line);
+  flex: 1 1 auto;
+  min-height: 0;
   display: grid;
   place-items: center;
-  padding: var(--s-5);
+  padding: var(--s-5) var(--s-3);
   text-align: center;
+  overflow: hidden;
 }
 
 .agent-empty-inner {
   position: relative;
   z-index: 1;
   text-align: center;
-  max-width: 44ch;
+  max-width: 34ch;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  align-items: center;
+}
+
+/* The command is one long path and it has to be read before it is pasted, so
+   the block gets the width the sentence above it does not need. The width
+   snaps rather than easing: a measure that animates is a layout on every frame. */
+.agent-empty-inner[data-connect="true"] {
+  max-width: 46ch;
+}
+
+.agent-empty-inner .title {
+  color: var(--text);
+}
+
+.agent-empty-actions {
+  display: flex;
+  gap: var(--s-2);
+  margin-top: var(--s-2);
+}
+
+.connection-block {
   display: flex;
   flex-direction: column;
   gap: var(--s-2);
+  width: 100%;
+  text-align: left;
+  animation: revealin var(--dur-enter) var(--ease-out) both;
+}
+
+@keyframes revealin {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .transcript {
   display: flex;
   flex-direction: column;
-  gap: var(--s-2);
-  max-height: 320px;
+  gap: var(--s-4);
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
-  padding-right: var(--s-2);
+  overscroll-behavior: contain;
+  padding-right: var(--s-1);
+  scrollbar-gutter: stable;
 }
 
+/* A short conversation sits against the composer rather than floating at the top
+   of an empty column. The auto margin resolves to zero once the transcript is
+   taller than its box, so it costs the scroll nothing. */
+.transcript > :first-child {
+  margin-top: auto;
+}
+
+/* Rows. The person's words sit on a raised ground; the assistant's words are
+   plain text on the field, because they are the surface. */
 .chat-row {
-  display: grid;
-  grid-template-columns: 72px 1fr;
-  gap: var(--s-3);
-  align-items: baseline;
-  font-size: var(--fs-13);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  font-size: var(--fs-15);
+  line-height: 1.5;
+  max-width: 68ch;
 }
 
 .chat-who {
   color: var(--text-3);
   font-size: var(--fs-12);
-  text-align: right;
 }
 
 .chat-text {
@@ -215,32 +287,159 @@
   overflow-wrap: anywhere;
 }
 
-.chat-tool .chat-text,
-.chat-status .chat-text,
-.chat-boot .chat-text {
-  color: var(--text-2);
+/* The bubble hugs what was said. A raised ground stretched across the column
+   for four words reads as a panel rather than as a person talking. */
+.chat-said {
+  align-self: flex-start;
 }
 
-.chat-tool .chat-who {
-  color: var(--agent);
+.chat-said .chat-text {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: var(--s-2) var(--s-3);
 }
 
+.chat-error .chat-who,
 .chat-error .chat-text {
   color: var(--down);
 }
 
-.chat-said .chat-text {
-  color: var(--text-2);
+/* Steps: the trace of a turn, between what was asked and what came back. One
+   row per tool call, a dot that is lit while the call is in flight, the phrase,
+   and the elapsed time in mono. */
+.steps-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 68ch;
 }
 
+.steps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: var(--s-1);
+}
+
+.step {
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  gap: var(--s-2);
+  align-items: baseline;
+  font-size: var(--fs-13);
+  color: var(--text-2);
+  min-height: 22px;
+}
+
+.step-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--beam);
+  opacity: 0.5;
+  align-self: center;
+  transition: opacity var(--dur-enter) var(--ease-out),
+              background-color var(--dur-enter) var(--ease-out);
+}
+
+.step[data-state="live"] .step-dot {
+  opacity: 1;
+  box-shadow: 0 0 8px -1px var(--beam);
+  animation: breathe 1200ms var(--ease-in-out) infinite;
+}
+
+.step[data-state="done"] .step-dot { opacity: 0.7; }
+.step[data-state="error"] .step-dot { background: var(--down); opacity: 1; animation: none; }
+
+.step-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.step-time {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  color: var(--text-3);
+  font-feature-settings: "tnum" 1;
+}
+
+/* The tool that reaches past this machine says so on its own row. */
+.step-leaves {
+  color: var(--warn);
+}
+
+.step-leaves::before {
+  content: ", ";
+  color: var(--text-3);
+}
+
+/* A finished turn folds its steps to one line. */
+.steps-fold {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--fs-12);
+  color: var(--text-3);
+  padding: 2px 0;
+  text-align: left;
+  align-self: flex-start;
+  transition: color var(--dur-press) var(--ease-out);
+}
+
+.steps-fold .step-dot { opacity: 0.6; }
+.steps-fold[data-state="error"] .step-dot { background: var(--down); opacity: 1; }
+
+@media (hover: hover) and (pointer: fine) {
+  .steps-fold:hover { color: var(--text-2); }
+}
+
+.steps[data-folded="true"] .step { display: none; }
+
+/* Thinking: three dots breathing on opacity, nothing else. */
+.thinking {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 22px;
+  color: var(--text-3);
+  font-size: var(--fs-13);
+}
+
+.thinking i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--beam);
+  opacity: 0.3;
+  animation: breathe 1400ms var(--ease-in-out) infinite;
+}
+
+.thinking i:first-of-type { margin-left: var(--s-1); }
+.thinking i:nth-of-type(2) { animation-delay: 180ms; }
+.thinking i:nth-of-type(3) { animation-delay: 360ms; }
+
+/* The composer: a textarea that grows to five lines, Enter sends. */
 .agent-composer {
   display: flex;
   gap: var(--s-2);
+  align-items: flex-end;
+  padding: var(--s-3) var(--s-4) var(--s-4);
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--bg-0) 92%, transparent);
 }
 
 .agent-composer .input {
   flex: 1 1 auto;
   min-width: 0;
+}
+
+.composer-note {
+  padding: 0 var(--s-4) var(--s-4);
+  margin-top: calc(var(--s-4) * -1 + var(--s-2));
+  font-size: var(--fs-12);
+  color: var(--text-3);
+  background: color-mix(in srgb, var(--bg-0) 92%, transparent);
 }
 
 /* The whole command, wrapped, because a person has to read it before they
@@ -264,18 +463,6 @@
   color: var(--text-2);
   overflow-wrap: anywhere;
   user-select: all;
-}
-
-.agent-external {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-2);
-  padding-top: var(--s-3);
-  border-top: 1px solid var(--line);
-}
-
-.agent-client .dot {
-  color: var(--up);
 }
 
 /* ---------- first run ---------- */
@@ -360,6 +547,18 @@
 }
 
 /* ---------- trade ---------- */
+
+/* The one-line answer under the bar: a refused indicator, a clamped parameter.
+   It clears itself after six seconds, and it never carries a refusal a person
+   cannot act on. */
+.chart-note {
+  font-size: var(--fs-12);
+  color: var(--warn);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .chart-select {
   width: auto;
@@ -454,11 +653,20 @@
 
 @media (prefers-reduced-motion: reduce) {
   .feed[data-busy="1"] i { animation: none; opacity: 0.6; }
+  .step[data-state="live"] .step-dot,
+  .thinking i,
+  .wordmark-glyph[data-state="working"] { animation: none; opacity: 0.8; }
 }
 
 .fill-row {
   padding: var(--s-1) 0;
   font-size: var(--fs-13);
+}
+
+/* Four panels in a 320 px rail, most of them empty most of the time. They keep
+   the sentence that says why they are empty and give up the air around it. */
+.trade-rail .empty {
+  padding: var(--s-4) var(--s-2);
 }
 
 .timeframe {
@@ -490,9 +698,12 @@ dialog.confirm {
   max-width: min(460px, calc(100vw - var(--s-6)));
 }
 
+/* A scrim, not a blur. A backdrop-filter over this document re-runs whenever
+   anything under it repaints, and the field behind it repaints at 30 fps for as
+   long as the dialog is up. The scrim is heavier to make up the separation the
+   blur was buying. */
 dialog.confirm::backdrop {
-  background: color-mix(in srgb, #000 62%, transparent);
-  backdrop-filter: blur(4px);
+  background: color-mix(in srgb, var(--bg-0) 82%, transparent);
 }
 
 .confirm-card {
@@ -509,12 +720,14 @@ dialog.confirm::backdrop {
 
 /* ---------- locked: the shell behind the card keeps reading ---------- */
 
-/* The shell keeps reading behind the lock, and it has to stay legible enough
-   that a person can see their balance without unlocking. Blurred and dimmed,
-   not hidden. */
-body[data-locked="true"] .views {
-  filter: blur(2px);
-  opacity: 0.62;
+/* The stage keeps reading behind the lock: a person should see the shape of
+   their window without unlocking it. Dimmed, not blurred. A filter on a
+   container promotes it to its own layer and re-blurs on every repaint
+   underneath it, and locked is the state an unattended app sits in longest, so
+   that was a full-viewport compositor pass running all night. Opacity and the
+   screen's own scrim say the same thing for nothing. */
+body[data-locked="true"] .stage {
+  opacity: 0.55;
   pointer-events: none;
 }
 
@@ -523,11 +736,13 @@ body[data-locked="true"] .topbar .tabs {
   pointer-events: none;
 }
 
+/* The screen's ground carries what the blur used to: enough of it to push the
+   stage back, little enough to leave it there. */
 .screen {
   position: fixed;
   inset: var(--topbar-h) 0 0 0;
   z-index: 60;
-  background: color-mix(in srgb, var(--bg-0) 52%, transparent);
+  background: color-mix(in srgb, var(--bg-0) 74%, transparent);
 }
 
 .destinations {

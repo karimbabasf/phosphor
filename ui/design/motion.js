@@ -22,7 +22,16 @@
   var handles = [];
   var onceQueue = [];
   var rafId = 0;
+  var timerId = 0;
   var lastTick = 0;
+
+  /* How close a handle's next paint has to be before the loop waits for it in
+     requestAnimationFrame rather than in a timer. On a 120 Hz display a 30 fps
+     field is due every 33 ms, so waiting in rAF means 90 of every 120 callbacks
+     walk the list and return having done nothing. One 60 Hz frame plus a little
+     is the threshold that idles on both refresh rates without ever landing
+     late. */
+  var FRAME_SLACK = 20;
 
   var motionQuery = window.matchMedia
     ? window.matchMedia('(prefers-reduced-motion: reduce)')
@@ -64,15 +73,44 @@
     return true;
   }
 
+  /* The loop sleeps between paints rather than waking on every display frame to
+     discover it has nothing to do. It finds the soonest handle, and if that is
+     more than one frame away it waits in a timer and re-enters rAF just before
+     the paint is due, so the frame still lands on the compositor's clock. */
   function pump() {
-    if (rafId) return;
-    for (var i = 0; i < handles.length; i += 1) {
-      if (wants(handles[i])) {
-        rafId = requestAnimationFrame(tick);
-        return;
+    if (rafId || timerId) return;
+
+    var soonest = Infinity;
+    if (onceQueue.length) soonest = 0;
+    var now = performance.now();
+    for (var i = 0; i < handles.length && soonest > 0; i += 1) {
+      var handle = handles[i];
+      if (!wants(handle)) continue;
+      if (handle.due || !handle.lastPaint) {
+        soonest = 0;
+        break;
       }
+      var gap = handle.frameMs - (now - handle.lastPaint);
+      if (gap < 0) gap = 0;
+      if (gap < soonest) soonest = gap;
     }
-    if (onceQueue.length) rafId = requestAnimationFrame(tick);
+    if (soonest === Infinity) return;
+
+    if (soonest > FRAME_SLACK) {
+      timerId = window.setTimeout(function () {
+        timerId = 0;
+        rafId = requestAnimationFrame(tick);
+      }, soonest - FRAME_SLACK);
+      return;
+    }
+    rafId = requestAnimationFrame(tick);
+  }
+
+  function idle() {
+    if (rafId) cancelAnimationFrame(rafId);
+    if (timerId) window.clearTimeout(timerId);
+    rafId = 0;
+    timerId = 0;
   }
 
   function tick(now) {
@@ -118,13 +156,17 @@
 
   function register(node, draw, opts) {
     var options = opts || {};
+    /* A fixed full-window overlay is never off screen, so watching it is work
+       for nothing and the first frames would wait on an observer callback that
+       can only ever say yes. observe:false is for those. */
+    var watched = options.observe !== false && observer !== null && !!node;
     var handle = {
       node: node,
       draw: draw,
       alive: true,
       running: options.autoStart !== false,
       isStatic: options.isStatic === true,
-      visible: observer ? false : true,
+      visible: !watched,
       due: true,
       frameMs: 1000 / (options.fps || 24),
       lastPaint: 0,
@@ -152,14 +194,14 @@
         handle.alive = false;
         var at = handles.indexOf(handle);
         if (at >= 0) handles.splice(at, 1);
-        if (observer && node) observer.unobserve(node);
+        if (watched) observer.unobserve(node);
         if (node) delete node.__phosphorMotion;
       }
     };
     handles.push(handle);
     if (node) {
       node.__phosphorMotion = handle;
-      if (observer) observer.observe(node);
+      if (watched) observer.observe(node);
     }
     pump();
     return handle;
@@ -206,8 +248,7 @@
 
   document.addEventListener('visibilitychange', function () {
     if (document.hidden) {
-      if (rafId) cancelAnimationFrame(rafId);
-      rafId = 0;
+      idle();
       lastTick = 0;
       return;
     }

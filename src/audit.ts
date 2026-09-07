@@ -29,7 +29,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { LogEvent } from './types.ts';
-import { atomicWriteJson } from './fsatomic.ts';
+import { atomicWriteJson, syncFile } from './fsatomic.ts';
 
 export type ChainBreak = {
   // Line number in the file, 1-based, so it reads the way an editor numbers it.
@@ -46,10 +46,25 @@ export type ChainBreak = {
    count, written durably beside the log, so a file shorter than the count or one whose line at
    that count hashes differently is a file that lost something.
 
-   IT MAY LAG BY A LINE, and that is deliberate. A SIGKILL between the append and the tip write
-   leaves exactly that, so lines AFTER the anchor are accepted and lines missing before it are
-   not. Appending is what this file is for; removing is not. */
+   IT MAY LAG, and that is deliberate. A SIGKILL between the append and the tip write leaves
+   exactly that, so lines AFTER the anchor are accepted and lines missing before it are not.
+   Appending is what this file is for; removing is not.
+
+   The lag used to be one line, because the tip was written durably on every append. Measured in
+   situ, append() cost 8.15 ms and the tip was 8.02 ms of it: 99.7% of the price of writing an
+   audit line was the anchor beside it. Every agent tool call appends at least one line, so twenty
+   calls blocked the event loop for about 160 ms and the window stuttered whenever an agent was
+   working. It is written on a timer now, TIP_FLUSH_MS apart, and flushed on the way out: the
+   shutdown path, the crash handler and the kill switch all call flushTip(). The lag is therefore
+   a second's worth of lines where the process was killed outright, and nothing anywhere else.
+   That is the same property with a bigger constant, and the asymmetry it exists for is
+   untouched. */
 export const TIP_FILENAME = 'audit.tip.json';
+
+/* One second. Long enough that a burst of tool calls costs one write instead of one per line,
+   short enough that the window somebody would go looking in is never more than a second stale.
+   The timer is unref'd: a pending anchor may never be a reason this process stays up. */
+export const TIP_FLUSH_MS = 1_000;
 
 export type ChainTip = { count: number; hash: string };
 
@@ -78,7 +93,7 @@ export type Audit = {
   subscribe(fn: (e: LogEvent) => void): () => void;
   // Walks the whole file and reports the first line whose link does not hold. `ok` on an
   // absent or empty file: no lines is a chain nobody has broken.
-  verify(): { ok: true; lines: number } | { ok: false; lines: number; break: ChainBreak };
+  verify(): { ok: true; lines: number; anchored: boolean } | { ok: false; lines: number; break: ChainBreak };
   // How many lines tail() has had to skip since boot. A torn line is normal after a power loss
   // mid-append and abnormal any other time, so the number is reported (health) rather than
   // logged: logging it would append a line per poll to the file that is torn.
@@ -91,6 +106,17 @@ export type Audit = {
   // The most recent `error` event, in memory. What /api/health reports and what the window shows
   // when it needs to say something went wrong without making a person open a log file.
   lastError(): { at: string; msg: string } | null;
+  /* Write the anchor now rather than on the next tick of the timer. Called on every way out this
+     process gets to run code on: the shutdown path, the crash handler and the kill switch, all
+     wired in src/main.ts. Never throws, and does nothing when nothing has been appended since
+     the last write. */
+  flushTip(): void;
+  /* How many lines this process has appended. Same contract as the store's revision(): a caller
+     holding a derivation of what the log carries (the state payload carries the agent roster, the
+     recent-events list and the last activity time, all of which move on an audit line) compares
+     this to decide whether the derivation is still current. A count rather than a subscription,
+     for the same reason: nothing to leak and nothing to forget. */
+  lineCount(): number;
 };
 
 export function hashLine(line: string): string {
@@ -102,10 +128,76 @@ function readLines(filePath: string): string[] {
   return fs.readFileSync(filePath, 'utf8').split('\n').filter((line) => line.length > 0);
 }
 
+/* How many complete lines the file holds, and one named line out of it, in a single pass.
+   The anchor needs a count and one line, and readLines pulls the whole history into one string and
+   splits it into one string per line to get them: 154 ms and a 54 MB allocation on a 200k-line log.
+   This walks the bytes in 64 KB chunks, counting newlines and keeping only the line it was asked
+   for, so it costs a read and one small string. `wantIndex` is 0-based; pass -1 to count only. A
+   torn last line with no newline after it is neither counted nor returned, which is the
+   conservative answer: an anchor that claims fewer lines than are there still verifies. */
+function scanLines(filePath: string, wantIndex: number): { count: number; line: string | null } {
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(filePath, 'r');
+    const buffer = Buffer.allocUnsafe(64 * 1024);
+    let count = 0;
+    let capturing = wantIndex === 0;
+    let parts: Buffer[] = [];
+    let line: string | null = null;
+    for (;;) {
+      const read = fs.readSync(fd, buffer, 0, buffer.length, null);
+      if (read === 0) break;
+      let start = 0;
+      for (let i = 0; i < read; i += 1) {
+        if (buffer[i] !== 0x0a) continue;
+        if (capturing) {
+          parts.push(Buffer.from(buffer.subarray(start, i)));
+          line = Buffer.concat(parts).toString('utf8');
+          parts = [];
+          capturing = false;
+        }
+        count += 1;
+        start = i + 1;
+        if (count === wantIndex) capturing = true;
+      }
+      if (capturing) parts.push(Buffer.from(buffer.subarray(start, read)));
+    }
+    return { count, line };
+  } catch {
+    // No file is no lines, which is what a fresh data directory looks like.
+    return { count: 0, line: null };
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        // nothing to do
+      }
+    }
+  }
+}
+
+/* Where the anchored line actually sits. The HASH is the anchor; the count says where to look
+   first. Builds before 2026-09-07 wrote the tip on every line from an in-process counter, and a
+   second process appending to the same log (a peer session, a driver child) left that counter
+   behind the file: a real install here carried count 4336 with the hash of line 4747. Reading
+   that as truncation cried wolf on an intact log. So a count that does not hash to the anchor
+   is looked past, from the end of the file backwards, and only a hash that appears nowhere is
+   damage. Nothing weakens: a rewrite below the anchored line changes every prev after it and
+   so the anchored line's own text; a truncation below it removes it; a deletion above it breaks
+   the walk at the gap. */
+export function anchorLine(lines: string[], tip: ChainTip): number {
+  if (tip.count > 0 && tip.count <= lines.length && hashLine(lines[tip.count - 1]) === tip.hash) return tip.count;
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if (hashLine(lines[i]) === tip.hash) return i + 1;
+  }
+  return -1;
+}
+
 export function verifyChain(
   lines: string[],
   tip: ChainTip | null = null,
-): { ok: true; lines: number } | { ok: false; lines: number; break: ChainBreak } {
+): { ok: true; lines: number; anchored: boolean } | { ok: false; lines: number; break: ChainBreak } {
   /* The anchor first, because it is the cheap check and because a truncated file's REMAINING
      lines chain perfectly: walking them would answer ok before anything noticed the file is
      shorter than the record of it. */
@@ -122,20 +214,23 @@ export function verifyChain(
       };
     }
     const anchored = hashLine(lines[tip.count - 1]);
-    if (anchored !== tip.hash) {
+    if (anchored !== tip.hash && anchorLine(lines, tip) === -1) {
       return {
         ok: false,
         lines: lines.length,
         break: {
           line: tip.count,
           reason: 'truncated',
-          detail: `line ${tip.count} hashes to ${anchored.slice(0, 12)} and this app recorded ${tip.hash.slice(0, 12)} there. The lines before it are not the ones that were written.`,
+          detail: `line ${tip.count} hashes to ${anchored.slice(0, 12)} and this app recorded ${tip.hash.slice(0, 12)} there, and no line in the file hashes to it. The lines that were written are not the ones in the file.`,
         },
       };
     }
   }
 
   let expected: string | null = null;
+  // Set by the first line that carries a prev field at all. Before it, lines without one are the
+  // pre-chain prefix an upgraded install has; after it, a line without one is a stripped link.
+  let chainStarted = false;
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
     let parsed: { prev?: unknown };
@@ -146,12 +241,25 @@ export function verifyChain(
     }
     const claimed = parsed.prev === null || typeof parsed.prev === 'string' ? parsed.prev : undefined;
     if (claimed === undefined) {
-      // A line written before the chain existed. It is not a break in itself, and the file it
-      // sits in has no link to check, so the walk restarts from it rather than reporting every
-      // pre-chain line as damage.
-      expected = hashLine(line);
-      continue;
+      /* A line with no prev field is a pre-chain line, and pre-chain lines can only be a prefix:
+         the chain started once and never stopped. Accepting one anywhere later let a single
+         regex defeat the whole record: edit line k, strip prev from k onward, re-anchor the tip,
+         and the walk restarted at every stripped line and answered ok. */
+      if (!chainStarted) {
+        expected = hashLine(line);
+        continue;
+      }
+      return {
+        ok: false,
+        lines: lines.length,
+        break: {
+          line: i + 1,
+          reason: 'missing_link',
+          detail: 'this line carries no prev field, but the chain had already started above it',
+        },
+      };
     }
+    chainStarted = true;
     if (expected !== null && claimed !== expected) {
       return {
         ok: false,
@@ -165,7 +273,7 @@ export function verifyChain(
     }
     expected = hashLine(line);
   }
-  return { ok: true, lines: lines.length };
+  return { ok: true, lines: lines.length, anchored: tip !== null && tip.count > 0 };
 }
 
 export function createAudit(dataDir: string): Audit {
@@ -173,6 +281,7 @@ export function createAudit(dataDir: string): Audit {
   const filePath = path.join(dataDir, 'audit.jsonl');
   const subscribers = new Set<(e: LogEvent) => void>();
   let torn = 0;
+  let appended = 0;
   let latestError: { at: string; msg: string } | null = null;
 
   /* The hash of the last line written, held in memory so an append is one write rather than a
@@ -180,14 +289,41 @@ export function createAudit(dataDir: string): Audit {
      previous process left, and a chain that restarted from null on every boot would report
      every boot as a break. */
   /* How many lines this app believes are in the file, which is the count half of the anchor.
-     Seeded from the tip on disk when there is one, and from the file otherwise: a data directory
-     written before the anchor existed has to acquire one without claiming the whole history was
-     counted by this process. */
-  let written: number = (() => {
-    const tip = readTip(dataDir);
-    if (tip !== null) return tip.count;
-    return readLines(filePath).length;
-  })();
+     Null until the first flush counts them, and that is the fix as much as it is the deferral.
+
+     It used to be seeded from the tip on disk, and a tip is allowed to lag: a data directory left
+     by a process that died in the gap has an anchor one line short, and seeding from it made this
+     process believe the file was one line shorter than it is. The next anchor then named a count
+     that pointed at the wrong line, and the boot after THAT reported a break in a chain nobody
+     had touched. Debouncing would have widened that from one line to a second's worth of them.
+     Counting the file at the first flush costs one read, off the boot path and off the request
+     path, and it is right rather than inherited. */
+  let written: number | null = null;
+  let tipDirty = false;
+  let tipTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /* THE ANCHOR THIS PROCESS INHERITED, and the rule that it may not be moved over a file that has
+     lost lines.
+
+     The chain walk used to run before this process wrote anything at all, so a boot on a truncated
+     log read the old anchor, found the file short of it, and said so. It runs after the port opens
+     now, which means this process has appended its own app_start lines and flushed its own anchor
+     first, and an anchor recounted from a truncated file is a true statement about a forgery: the
+     count matches, the walk passes, and the only record that lines were removed has been written
+     over by the app itself.
+
+     So the first flush of a process checks the anchor it inherited before it moves it, and leaves
+     it exactly where it is when the file no longer matches. Appending onto a broken log is fine
+     and is what an append-only log does; overwriting the evidence is not. */
+  /* A log this app wrote before 2026-09-07 landed 0644. Holdings, addresses and the whole
+     decision history are in it, so it is pulled back to the owner alone on the next boot. */
+  try {
+    if (fs.existsSync(filePath)) fs.chmodSync(filePath, 0o600);
+  } catch {
+    // A file system that refuses the mode change is not one this app can do anything about here.
+  }
+  const bootTip = readTip(dataDir);
+  let anchorHeld = false;
 
   let previous: string | null = (() => {
     /* Seeded from the tail window rather than from the whole file. The seed needs exactly one
@@ -200,6 +336,53 @@ export function createAudit(dataDir: string): Audit {
     return lines.length === 0 ? null : hashLine(lines[lines.length - 1]);
   })();
 
+  function flushTip(): void {
+    if (tipTimer !== null) {
+      clearTimeout(tipTimer);
+      tipTimer = null;
+    }
+    if (!tipDirty || previous === null) return;
+    // Cleared before the write, not after: a write that throws must not leave the timer armed to
+    // try the same failing write once a second for the life of the process.
+    tipDirty = false;
+    try {
+      if (anchorHeld) return;
+      if (written === null) {
+        const scan = scanLines(filePath, bootTip === null ? -1 : bootTip.count - 1);
+        if (
+          bootTip !== null &&
+          bootTip.count > 0 &&
+          (scan.count < bootTip.count || scan.line === null || hashLine(scan.line) !== bootTip.hash) &&
+          anchorLine(readLines(filePath), bootTip) === -1
+        ) {
+          // The log no longer matches what this app recorded about it. verify() is what reports
+          // that; this refuses to write over the anchor that proves it, for the life of the
+          // process.
+          anchorHeld = true;
+          return;
+        }
+        written = scan.count;
+      }
+      /* The lines go to disk before the anchor that names them. appendFileSync does not fsync,
+         the anchor's writer does, and a power cut between the two left the anchor ahead of the
+         log: a false tamper alarm that reads exactly like a real one. */
+      syncFile(filePath);
+      atomicWriteJson(path.join(dataDir, TIP_FILENAME), { count: written, hash: previous } satisfies ChainTip, undefined);
+    } catch {
+      // The log lines are already on disk and they are the record. A tip that could not be
+      // written makes the next verify() read an older anchor, which is a weaker check and not a
+      // wrong one; throwing here would turn a full disk into a backend that cannot log.
+    }
+  }
+
+  function markTip(): void {
+    tipDirty = true;
+    if (tipTimer !== null) return;
+    tipTimer = setTimeout(flushTip, TIP_FLUSH_MS);
+    // Never a reason on its own for this process to stay up, and the ways out all flush.
+    tipTimer.unref?.();
+  }
+
   function append(type: LogEvent['type'], msg: string, data?: unknown): LogEvent {
     const event: LogEvent = {
       ts: new Date().toISOString(),
@@ -209,19 +392,13 @@ export function createAudit(dataDir: string): Audit {
       prev: previous,
     };
     const line = JSON.stringify(event);
-    fs.appendFileSync(filePath, line + '\n');
+    fs.appendFileSync(filePath, line + '\n', { mode: 0o600 });
     previous = hashLine(line);
-    written += 1;
-    /* Durably, through fsatomic, because a tip that is not on disk anchors nothing. It may end up
-       one line behind the log if this process dies in the gap, and verifyChain accepts that: what
-       it will not accept is a log that has lost a line the tip already counted. */
-    try {
-      atomicWriteJson(path.join(dataDir, TIP_FILENAME), { count: written, hash: previous } satisfies ChainTip, undefined);
-    } catch {
-      // The log line is already on disk and it is the record. A tip that could not be written
-      // makes the next verify() read an older anchor, which is a weaker check and not a wrong
-      // one; throwing here would turn a full disk into a backend that cannot log.
-    }
+    appended += 1;
+    if (written !== null) written += 1;
+    /* The anchor is marked, not written. See TIP_FLUSH_MS: writing it here cost 8.02 ms of an
+       8.15 ms append, and every agent tool call comes through this line. */
+    markTip();
     if (type === 'error') latestError = { at: event.ts, msg };
     // Mirrored, not moved: the file is still the record. This is the copy a human reading
     // Console.app or a terminal can see without opening anything.
@@ -300,5 +477,7 @@ export function createAudit(dataDir: string): Audit {
     verify: () => verifyChain(readLines(filePath), readTip(dataDir)),
     tornLines: () => torn,
     lastError: () => latestError,
+    flushTip,
+    lineCount: () => appended,
   };
 }

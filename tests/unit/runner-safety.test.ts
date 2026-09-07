@@ -8,11 +8,70 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { unrunnableRefusal } from '../../src/runner/host.ts';
-import { checkEnvelope } from '../../src/strategy/envelope.ts';
+import { EventEmitter } from 'node:events';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
+import type { ChildProcess } from 'node:child_process';
+import { createRunnerHost, unrunnableRefusal } from '../../src/runner/host.ts';
+import { applyRealised, realisedSince, type FillRow } from '../../src/runner/realised.ts';
+import { checkEnvelope, lossUsd } from '../../src/strategy/envelope.ts';
 import type { Mandate, RunState } from '../../src/strategy/envelope.ts';
 import { programHash } from '../../src/strategy/grammar.ts';
 import type { Action, Program } from '../../src/strategy/grammar.ts';
+
+/* A child that records what it was sent and forks nothing. Same shape as the one in
+   runner-fork-race.test.ts, and for the same reason: the guards worth testing here sit between
+   the app and the child, and a real fork needs a real key and a real venue. */
+class FakeChild extends EventEmitter {
+  connected = true;
+  exitCode: number | null = null;
+  killed = false;
+  readonly sent: unknown[] = [];
+  stderr = null;
+  readonly stdin = new (class extends EventEmitter {
+    write(): boolean {
+      return true;
+    }
+    end(): void {}
+  })();
+
+  send(msg: unknown): boolean {
+    this.sent.push(msg);
+    return true;
+  }
+
+  kill(): boolean {
+    this.killed = true;
+    this.connected = false;
+    return true;
+  }
+}
+
+/* The venue's /info endpoint, enough of it for feed.book() to answer: the universe, the
+   per-coin active data and the account's positions. Bound to loopback on a port the OS picks,
+   so nothing here reaches the network. */
+async function fakeVenue(): Promise<{ url: string; close(): Promise<void> }> {
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => (body += c));
+    req.on('end', () => {
+      const type = (JSON.parse(body || '{}') as { type?: string }).type;
+      const answers: Record<string, unknown> = {
+        meta: { universe: [{ name: 'ETH', szDecimals: 4, maxLeverage: 25 }] },
+        activeAssetData: { markPx: '3000', availableToTrade: ['1000'], leverage: { value: 3 } },
+        clearinghouseState: { assetPositions: [] },
+      };
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(answers[type ?? ''] ?? {}));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = (server.address() as AddressInfo).port;
+  return {
+    url: `http://127.0.0.1:${port}`,
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  };
+}
 
 const PROGRAM: Program = {
   symbol: 'ETH',
@@ -314,4 +373,87 @@ test('the refusal reaches into nested conditions, exits and the invalidate claus
 test('a program written entirely on prices arms', () => {
   assert.equal(unrunnableRefusal(PROGRAM), null);
   assert.equal(unrunnableRefusal(null), null, 'no program is not an unrunnable program');
+});
+
+// ---------- the realised half of the loss ceiling ----------
+//
+// The gap was not in the envelope, which has always been right, and not in the supervisor,
+// which asks the right question every tick. It was that nothing ever told the child what the
+// venue had actually booked. `realisedUsd` was initialised to 0 at arm time and assigned
+// nowhere else in the process, so `-(realised + unrealised)` only ever measured an OPEN
+// position. A program that stops out and re-enters, which is the shape src/strategy/catalog.ts
+// teaches, therefore had no loss ceiling at all: the stop fills at minus $50, the position goes
+// flat, unrealised is 0, the loss computes as 0, and the entry rule fires again on the next
+// cross. Roughly the whole approved allowance per cycle, until the signing session expired.
+//
+// The chain has three links and each one is asserted below: the app computes the figure from
+// the venue's own fills, the host pushes it to the child on the book message, and the child
+// assigns it before anything reads the run state.
+
+test('realised PnL is the venue closed profit for the window, net of fees', () => {
+  const armedAt = 1_000_000;
+  const fills: FillRow[] = [
+    // Before this mandate armed: a position carried in from earlier is not its loss.
+    { coin: 'ETH', atMs: armedAt - 1, closedPnlUsd: -500, feeUsd: 1 },
+    { coin: 'ETH', atMs: armedAt + 10, closedPnlUsd: -55, feeUsd: 2 },
+    { coin: 'ETH', atMs: armedAt + 20, closedPnlUsd: null, feeUsd: 3 }, // an opening fill: fee only
+    { coin: 'BTC', atMs: armedAt + 30, closedPnlUsd: -900, feeUsd: 1 }, // another market
+  ];
+  assert.equal(realisedSince(fills, 'ETH', armedAt), -60, 'minus 55 booked, minus 5 in fees');
+  assert.equal(realisedSince(fills, 'eth', armedAt), -60, 'the coin match is case insensitive');
+});
+
+test('the host pushes realised PnL to the child on the book message', async () => {
+  const venue = await fakeVenue();
+  try {
+    const forked: FakeChild[] = [];
+    const runner = createRunnerHost({
+      apiWalletKey: async () => '0x'.padEnd(66, '1') as `0x${string}`,
+      baseUrl: venue.url,
+      user: '0x0000000000000000000000000000000000000001',
+      killSwitch: () => false,
+      pollMs: 100_000, // the immediate pump inside arm() is the one under test
+      onEvent: () => {},
+      // The portfolio ceiling is not what is under test here, and this mandate's $1,000 of
+      // notional is above the shipped aggregate default.
+      limits: { maxArmedMandates: 3, maxAggregateNotionalUsd: 5_000 },
+      forkImpl: (() => {
+        const child = new FakeChild();
+        forked.push(child);
+        return child as unknown as ChildProcess;
+      }) as never,
+    });
+
+    runner.setRealised({ md_1: -60 });
+    const armedOut = await runner.arm({ ...mandate, maxLossUsd: 50 }, PROGRAM);
+    assert.equal(armedOut.ok, true, armedOut.detail);
+
+    const books = forked[0].sent.filter((m) => (m as { cmd?: string }).cmd === 'book') as Array<{ realised?: Record<string, number> }>;
+    assert.ok(books.length > 0, 'arming pushes one book before the child can act');
+    assert.equal(books[books.length - 1].realised?.md_1, -60, 'and the book carries what the venue booked');
+  } finally {
+    await venue.close();
+  }
+});
+
+test('the child assigns realised PnL, so a stopped-out mandate halts instead of re-entering', () => {
+  const a = { mandate: { id: 'md_1' }, realisedUsd: 0 };
+  applyRealised(a, { md_1: -60 });
+  assert.equal(a.realisedUsd, -60);
+
+  // Flat, so nothing is unrealised: this is the exact state the old code read as unharmed.
+  const flatAfterStop = state({ realisedUsd: a.realisedUsd, unrealisedUsd: 0, positionUsd: 0, positionSide: 'flat' });
+  assert.equal(lossUsd(flatAfterStop.realisedUsd, flatAfterStop.unrealisedUsd), 60);
+  assert.ok(60 >= 50, 'sixty down against a fifty dollar ceiling is a halt, which is what supervise now sees');
+
+  const ruling = checkEnvelope(open500, { ...mandate, maxLossUsd: 50 }, flatAfterStop);
+  assert.equal(ruling.allow, false, 'and no further order is placed');
+  assert.equal(ruling.halt, true);
+  assert.match(String(ruling.reason), /reached the 50\.00 limit/);
+
+  // A book that carries no figure leaves the last one standing: a feed that goes quiet is not
+  // a wallet that stopped losing money.
+  applyRealised(a, undefined);
+  applyRealised(a, {});
+  assert.equal(a.realisedUsd, -60);
 });

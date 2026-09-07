@@ -27,8 +27,19 @@
      value so a dev run can override, and it is the only path here that takes a
      token from a place a person could paste one. */
   var token = typeof window.__PHOSPHOR_TOKEN__ === 'string' ? window.__PHOSPHOR_TOKEN__ : '';
-  var devToken = new URLSearchParams(window.location.search).get('token');
-  if (devToken) token = devToken;
+  var devParams = new URLSearchParams(window.location.search);
+  var devToken = devParams.get('token');
+  if (devToken) {
+    token = devToken;
+    /* Read once and taken out of the address bar, so the token is not left in
+       the history, a bookmark or a screenshot of the URL. The page keeps it in
+       this closure and nowhere else. */
+    devParams.delete('token');
+    var rest = devParams.toString();
+    try {
+      window.history.replaceState(null, '', window.location.pathname + (rest ? '?' + rest : '') + window.location.hash);
+    } catch (err) { /* a browser that refuses the rewrite still has the token in memory */ }
+  }
 
   function getToken() {
     return token;

@@ -17,12 +17,14 @@
 //      MCP config lives on a native menu item rather than a button in the UI: the menu is on the
 //      side of the trust boundary the agent can never reach.
 //
-// THE WINDOW TOKEN. This shell mints 32 random bytes, hands them to the backend over the
-// environment as PHOSPHOR_WINDOW_TOKEN, and injects them into the control webview alone with an
-// initialization script. The token is therefore reachable by exactly two processes and served
-// over HTTP by neither. That is what replaces `GET /api/session`, which handed the approval token
-// to any local caller that asked and made "an agent cannot approve its own actions" untrue for
-// anything with a shell.
+// THE HANDSHAKE. This shell mints three independent 32-byte values per boot and writes them down
+// the backend's stdin, one per line, then closes the pipe. The window token is injected into the
+// control webview alone with an initialization script, so it is reachable by exactly two processes
+// and served over HTTP by neither; that is what replaces `GET /api/session`, which handed the
+// approval token to any local caller that asked. The boot nonce is what the backend echoes in its
+// x-phosphor header, so this shell can tell its OWN backend from anything else that took the port.
+// The seat secret goes on to the agents the backend spawns, so a roster claimed from outside
+// cannot lock the human's own agent out. See src-tauri/src/backend.rs.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -37,8 +39,8 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 use backend::{
-    configured_port, get_root, mint_token, node_binary, phosphor_is_listening, pid_file_path,
-    pid_is_alive, post_lock, read_pid_file, spawn_backend, Backend,
+    configured_port, get_root, node_binary, phosphor_is_listening, pid_file_path, pid_is_alive,
+    post_lock, read_pid_file, spawn_backend, Backend, Handshake,
 };
 
 const READY_TIMEOUT: Duration = Duration::from_secs(45);
@@ -52,9 +54,35 @@ const WATCH_INTERVAL: Duration = Duration::from_secs(2);
 /// crash loop in front of a wallet is worse than a stopped app with a sentence on it.
 const RESPAWN_BACKOFF: Duration = Duration::from_secs(3);
 
-/// The token this shell minted, held so the window can be given it and the close handler can use
-/// it. Never written to disk and never served.
-struct WindowToken(String);
+/// How long to wait between asking the port whether the backend is up yet.
+///
+/// This was a flat 250 ms. The backend answers in 250 to 450 ms, so a 250 ms granularity added a
+/// uniform 0 to 250 ms of dead time, a mean of 125 ms, to a boot that is itself under half a
+/// second: the app was already up and the splash was waiting for the next look. A refused connect
+/// on loopback is sub-millisecond, so looking more often costs nothing worth counting.
+///
+/// It only stays fast for the first two seconds. Past that the backend is slow or stuck, nobody is
+/// helped by forty probes a second, and each one opens a connection and GETs `/`, which serves
+/// ui/index.html off the disk.
+const FAST_PROBE_WINDOW: Duration = Duration::from_secs(2);
+const FAST_PROBE_INTERVAL: Duration = Duration::from_millis(25);
+const SLOW_PROBE_INTERVAL: Duration = Duration::from_millis(250);
+
+/// Takes the elapsed time rather than the start instant, so the rule can be read back in a test
+/// without waiting two seconds to see the second half of it.
+fn probe_interval(elapsed: Duration) -> Duration {
+    if elapsed < FAST_PROBE_WINDOW {
+        FAST_PROBE_INTERVAL
+    } else {
+        SLOW_PROBE_INTERVAL
+    }
+}
+
+/// What this shell minted, held so the window can be given the token, the close handler can lock
+/// with it, and the readiness polls can recognise the backend by its nonce. Never written to disk.
+/// The token and the seat secret are never served; the nonce is served, on purpose, and is the one
+/// of the three that is not a secret from anyone who can already reach the port.
+struct Secrets(Handshake);
 
 /// Everything `start` resolved, so the supervisor thread does not have to resolve it again.
 #[derive(Clone)]
@@ -196,7 +224,7 @@ fn open_control_window(app: &tauri::AppHandle, port: u16) -> Result<(), String> 
     let url = format!("http://127.0.0.1:{port}")
         .parse()
         .map_err(|e| format!("cannot parse the control app URL: {e}"))?;
-    let token = app.state::<WindowToken>().0.clone();
+    let token = app.state::<Secrets>().0.token.clone();
     // The token is hex from mint_token, so it cannot carry a quote or a backslash and the literal
     // below cannot be broken out of. Asserted rather than assumed: a token that is not hex is a
     // bug in mint_token, and injecting it would be worse than refusing to open the window.
@@ -220,7 +248,7 @@ fn open_control_window(app: &tauri::AppHandle, port: u16) -> Result<(), String> 
        legitimate use. The route belongs to the custody track and may not exist yet; a 404 is a
        perfectly good outcome and this stays best effort either way. Off the main thread, because
        it is a socket round trip and this handler runs on the event loop. */
-    let lock_token = app.state::<WindowToken>().0.clone();
+    let lock_token = app.state::<Secrets>().0.token.clone();
     window.on_window_event(move |event| {
         if matches!(event, WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed) {
             let token = lock_token.clone();
@@ -297,24 +325,53 @@ fn watch(app: tauri::AppHandle, paths: Paths, port: u16) {
         respawned = true;
 
         std::thread::sleep(RESPAWN_BACKOFF);
-        let token = app.state::<WindowToken>().0.clone();
-        match spawn_backend(&paths.payload, &paths.data, &token) {
+
+        /* NOTHING MAY BE ON THE PORT BEFORE THE RESPAWN. This path had no check at all, which made
+           it the deterministic half of the finding: the backend dies, this thread sleeps three
+           seconds, and a local process that binds the port in that window gets the readiness poll
+           below reporting a healthy restart while the real backend dies on EADDRINUSE. The control
+           window from the first boot is still open, still holds the token, and goes on posting
+           writes and the keystore passphrase to whatever is now answering. `start` has had this
+           check since the orphan bug; the respawn is where it was missing. */
+        if get_root(port).is_some() {
+            let taken = app.clone();
+            let _ = taken.clone().run_on_main_thread(move || {
+                fail(
+                    &taken,
+                    format!(
+                        "The control app stopped and something else took 127.0.0.1:{port} before it could be \
+                         restarted. Phosphor will not open a window onto a process it did not start. Quit \
+                         whatever is holding the port and start Phosphor again."
+                    ),
+                );
+            });
+            return;
+        }
+
+        let hand = app.state::<Secrets>();
+        match spawn_backend(&paths.payload, &paths.data, &hand.0) {
             Ok(child) => {
                 app.state::<Backend>().adopt(child, pid_file_path(&paths.data));
                 // Wait for it to bind before saying it is back. "Restarted" over a process that
                 // spawned and then failed to listen is the same lie as the silent death this
                 // whole thread exists to end.
-                let deadline = Instant::now() + READY_TIMEOUT;
+                let started = Instant::now();
+                let deadline = started + READY_TIMEOUT;
                 let mut answered = false;
+                let nonce = app.state::<Secrets>().0.nonce.clone();
                 while Instant::now() < deadline {
-                    if phosphor_is_listening(port) {
+                    /* The dead child is asked about FIRST. Tested the other way round, a backend
+                       that failed to bind and a squatter that did are the same observation, and the
+                       squatter wins the first iteration. This order means a child that is gone ends
+                       the loop whatever is answering on the port. */
+                    if app_backend_exited(&app) {
+                        break;
+                    }
+                    if phosphor_is_listening(port, Some(&nonce)) {
                         answered = true;
                         break;
                     }
-                    if matches!(app.state::<Backend>().exited(), Some(true)) {
-                        break;
-                    }
-                    std::thread::sleep(Duration::from_millis(250));
+                    std::thread::sleep(probe_interval(started.elapsed()));
                 }
                 let back = app.clone();
                 let _ = back.clone().run_on_main_thread(move || {
@@ -356,8 +413,10 @@ fn start(app: &tauri::AppHandle) -> Result<(), String> {
     let data = data_dir(app)?;
     let port = configured_port(&payload, &data);
 
-    // Anything already on the port is refused by name. See refuse_existing.
-    if phosphor_is_listening(port) {
+    // Anything already on the port is refused by name. `None` on purpose: the question here is
+    // "is a Phosphor holding this port", which names a process to quit, and an instance from an
+    // earlier boot answers with that boot's nonce rather than this one's. See refuse_existing.
+    if phosphor_is_listening(port, None) {
         return Err(refuse_existing(port, &data));
     }
     if get_root(port).is_some() {
@@ -366,8 +425,10 @@ fn start(app: &tauri::AppHandle) -> Result<(), String> {
         ));
     }
 
-    let token = app.state::<WindowToken>().0.clone();
-    let child = spawn_backend(&payload, &data, &token)?;
+    let child = {
+        let hand = app.state::<Secrets>();
+        spawn_backend(&payload, &data, &hand.0)?
+    };
     app.state::<Backend>().adopt(child, pid_file_path(&data));
 
     // Polled on a worker so the event loop keeps running and the splash keeps painting. The same
@@ -375,21 +436,16 @@ fn start(app: &tauri::AppHandle) -> Result<(), String> {
     // watching it".
     let handle = app.clone();
     let paths = Paths { payload, data };
+    let nonce = app.state::<Secrets>().0.nonce.clone();
     std::thread::spawn(move || {
-        let deadline = Instant::now() + READY_TIMEOUT;
+        let started = Instant::now();
+        let deadline = started + READY_TIMEOUT;
         while Instant::now() < deadline {
-            if phosphor_is_listening(port) {
-                let ready = handle.clone();
-                let _ = ready.clone().run_on_main_thread(move || {
-                    if let Err(err) = open_control_window(&ready, port) {
-                        fail(&ready, err);
-                    }
-                });
-                watch(handle, paths, port);
-                return;
-            }
-            // The child exiting means the backend refused to boot; its reason is already on
-            // stderr. It names the two refusals that have a fix the person can act on.
+            /* The child exiting means the backend refused to boot; its reason is already on
+               stderr. Asked BEFORE the port is probed, because a backend that died on EADDRINUSE
+               and a local process that took the port during the boot race look identical from the
+               port's side, and the old order let that process win the first iteration and be
+               handed a window with the token in it. */
             if app_backend_exited(&handle) {
                 let dead = handle.clone();
                 let _ = dead.clone().run_on_main_thread(move || {
@@ -402,7 +458,19 @@ fn start(app: &tauri::AppHandle) -> Result<(), String> {
                 });
                 return;
             }
-            std::thread::sleep(Duration::from_millis(250));
+            // Our backend, by the nonce it was given on stdin, and not merely a Phosphor-shaped
+            // answer. This is the poll that opens the window and injects the approval token.
+            if phosphor_is_listening(port, Some(&nonce)) {
+                let ready = handle.clone();
+                let _ = ready.clone().run_on_main_thread(move || {
+                    if let Err(err) = open_control_window(&ready, port) {
+                        fail(&ready, err);
+                    }
+                });
+                watch(handle, paths, port);
+                return;
+            }
+            std::thread::sleep(probe_interval(started.elapsed()));
         }
         let late = handle.clone();
         let _ = late.clone().run_on_main_thread(move || {
@@ -419,8 +487,9 @@ fn app_backend_exited(app: &tauri::AppHandle) -> bool {
 fn main() {
     // Minted before anything else, because the backend cannot be spawned without it and the
     // window cannot be opened without it. A shell that cannot produce one starts nothing: a
-    // guessable token would be no token at all.
-    let token = match mint_token() {
+    // guessable token would be no token at all, and the same goes for the nonce that decides
+    // which process this shell is willing to open a window onto.
+    let secrets = match Handshake::mint() {
         Ok(value) => value,
         Err(err) => {
             eprintln!("phosphor: {err}");
@@ -432,7 +501,7 @@ fn main() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(Backend::new())
-        .manage(WindowToken(token))
+        .manage(Secrets(secrets))
         .setup(|app| {
             let handle = app.handle().clone();
             app.set_menu(build_menu(&handle)?)?;
@@ -461,4 +530,31 @@ fn main() {
                 app.state::<Backend>().kill();
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{probe_interval, FAST_PROBE_INTERVAL, FAST_PROBE_WINDOW, SLOW_PROBE_INTERVAL};
+    use std::time::Duration;
+
+    #[test]
+    fn the_first_two_seconds_are_looked_at_forty_times_a_second() {
+        assert_eq!(probe_interval(Duration::from_millis(0)), FAST_PROBE_INTERVAL);
+        assert_eq!(probe_interval(Duration::from_millis(450)), FAST_PROBE_INTERVAL);
+        assert_eq!(probe_interval(FAST_PROBE_WINDOW - Duration::from_millis(1)), FAST_PROBE_INTERVAL);
+    }
+
+    #[test]
+    fn a_backend_that_is_late_is_asked_less_often() {
+        assert_eq!(probe_interval(FAST_PROBE_WINDOW), SLOW_PROBE_INTERVAL);
+        assert_eq!(probe_interval(Duration::from_secs(30)), SLOW_PROBE_INTERVAL);
+    }
+
+    #[test]
+    fn the_fast_cadence_cannot_add_more_than_it_saves() {
+        // The dead time a probe granularity adds is bounded by the interval itself, and the
+        // backend answers in 250 to 450 ms, which is inside the fast window.
+        assert!(FAST_PROBE_INTERVAL < SLOW_PROBE_INTERVAL);
+        assert!(FAST_PROBE_WINDOW > Duration::from_millis(450));
+    }
 }

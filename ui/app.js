@@ -40,8 +40,9 @@
     window.PhosphorTrade.boot();
     window.PhosphorFirstRun.boot();
     window.PhosphorLock.boot();
-    window.PhosphorAgent.start();
     window.PhosphorShell.boot();
+    window.PhosphorAgent.start();
+    if (window.PhosphorTrace) window.PhosphorTrace.start();
 
     var fixtures = window.PhosphorFixtures;
     if (fixtures.active) {

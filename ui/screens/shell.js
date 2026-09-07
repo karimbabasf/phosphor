@@ -1,9 +1,10 @@
-/* Phosphor shell: the top bar, the three views, and the one place the app
-   decides what the window is showing.
+/* Phosphor shell: the top bar, the stage, and the one place the app decides
+   what the window is showing.
 
-   The old build had two documents and two event streams. This one has a single
-   document, a single stream, and a view swap that is a crossfade rather than a
-   navigation, so switching modes never reloads and never flashes. */
+   One document, one stream, one stage. The conversation column is mounted
+   once here and stays on screen in every mode; the world beside it swaps
+   views with a crossfade rather than a navigation, so switching modes never
+   reloads and never flashes. */
 (function () {
   'use strict';
 
@@ -23,22 +24,31 @@
 
   function boot() {
     refs.page = document.getElementById('page');
+    refs.topbar = document.getElementById('topbar');
+    refs.glyph = document.getElementById('wordmark-glyph');
+    refs.stage = document.getElementById('stage');
+    refs.conversation = document.getElementById('conversation');
+    refs.conversationBody = document.getElementById('conversation-body');
     refs.views = document.getElementById('views');
     refs.tabs = Array.prototype.slice.call(document.querySelectorAll('[data-tab]'));
+    refs.tabsIndicator = document.getElementById('tabs-indicator');
     refs.lockChip = document.getElementById('chip-lock');
-    refs.agentChip = document.getElementById('chip-agent');
+    refs.waitingChip = document.getElementById('chip-waiting');
     refs.feedChip = document.getElementById('chip-feed');
     refs.freeze = document.getElementById('btn-freeze');
     refs.offline = document.getElementById('offline-bar');
     refs.fieldHost = document.getElementById('field');
 
     mountField();
+    mountConversation();
     wireTabs();
     wireFreeze();
     wireStream();
 
     window.PhosphorShell.setView(readInitialView(), { silent: true });
     refresh({ first: true });
+    if (typeof window.splitBoot === 'function') window.splitBoot();
+    bootSweep();
   }
 
   /* ?view= pins the window to one mode and the server's own value is ignored.
@@ -60,8 +70,26 @@
     return pinned !== null;
   }
 
-  /* ---------- the pattern field ---------- */
+  /* ---------- the one page-load moment ---------- */
 
+  /* A single beam sweeps the topbar's hairline and the glyph lights. Once,
+     after first paint, never again in the session, and not under reduced
+     motion, where the glyph simply is what it is. */
+  function bootSweep() {
+    if (!refs.topbar || window.PhosphorMotion.reduced()) return;
+    window.requestAnimationFrame(function () {
+      dom.setAttr(refs.topbar, 'data-boot', 'true');
+      window.setTimeout(function () {
+        dom.setAttr(refs.topbar, 'data-boot', null);
+      }, 700);
+    });
+  }
+
+  /* ---------- the afterglow field ---------- */
+
+  /* The field is the conversation column's ground, and the column's size:
+     the living part of the window is where the assistant lives, and a canvas
+     one column wide is most of the frame budget saved. */
   function mountField() {
     if (!refs.fieldHost || !window.PhosphorPattern) return;
     field = window.PhosphorPattern.mount(refs.fieldHost, { cellPx: 42, state: 'idle' });
@@ -73,13 +101,9 @@
       if (field) field.resize();
     }, 140);
     window.addEventListener('resize', refit);
-    window.addEventListener('phosphor:view', refit);
 
-    /* The field is as tall as the document, and the document changes height
-       when a fold opens or a table fills. One observer on the page beats
-       remembering to call resize from every renderer that can grow it. */
-    if (typeof ResizeObserver === 'function' && refs.page) {
-      new ResizeObserver(refit).observe(refs.page);
+    if (typeof ResizeObserver === 'function' && refs.conversation) {
+      new ResizeObserver(refit).observe(refs.conversation);
     }
   }
 
@@ -89,9 +113,7 @@
   function updateField() {
     var state = store.get() || {};
     var lock = state.lock || {};
-    var pending = Array.isArray(state.proposals)
-      ? state.proposals.filter(function (p) { return p && p.status === 'pending'; })
-      : [];
+    var pending = pendingOf(state);
     var next = 'idle';
     if (lock.state === 'locked' || lock.state === 'no_wallet' || lock.state === 'needs_migration') {
       next = 'locked';
@@ -100,9 +122,39 @@
     } else if (window.PhosphorAgent && window.PhosphorAgent.isWorking()) {
       next = 'working';
     }
+    renderGlyph();
     if (next === patternState) return;
     patternState = next;
     if (field) field.setState(next);
+  }
+
+  function pendingOf(state) {
+    if (!Array.isArray(state.proposals)) return [];
+    return state.proposals.filter(function (p) {
+      return p && (p.status === 'pending' || p.status === 'pending_unlock');
+    });
+  }
+
+  /* The glyph in the wordmark is the smallest phosphor in the window and it
+     carries the assistant's state: off, ready, working, or could not start. */
+  function renderGlyph() {
+    if (!refs.glyph || !window.PhosphorAgent) return;
+    var phase = typeof window.PhosphorAgent.phase === 'function' ? window.PhosphorAgent.phase() : 'idle';
+    var word = 'off';
+    if (phase === 'working' || phase === 'starting') word = 'working';
+    else if (phase === 'connected') word = 'ready';
+    else if (phase === 'error') word = 'error';
+    dom.setAttr(refs.glyph, 'data-state', word);
+  }
+
+  /* ---------- the conversation column ---------- */
+
+  /* Mounted once, here, and never inside a view: it is the constant. */
+  function mountConversation() {
+    if (!refs.conversationBody || !window.PhosphorAgent) return;
+    window.PhosphorAgent.mount(refs.conversationBody, {
+      composerHost: document.getElementById('composer-host')
+    });
   }
 
   /* ---------- views ---------- */
@@ -113,6 +165,20 @@
         setView(event.currentTarget.dataset.tab, { fromClick: true });
       });
     }
+    window.addEventListener('resize', dom.debounce(placeIndicator, 100));
+  }
+
+  /* The segmented control's indicator slides to the selected word. Measured
+     from the tab itself so a font swap or a width change cannot strand it. */
+  function placeIndicator() {
+    if (!refs.tabsIndicator) return;
+    var selected = null;
+    for (var i = 0; i < refs.tabs.length; i += 1) {
+      if (refs.tabs[i].getAttribute('aria-selected') === 'true') selected = refs.tabs[i];
+    }
+    if (!selected) return;
+    refs.tabsIndicator.style.setProperty('--tab-x', selected.offsetLeft + 'px');
+    refs.tabsIndicator.style.setProperty('--tab-w', selected.offsetWidth + 'px');
   }
 
   function setView(name, options) {
@@ -131,10 +197,7 @@
     }
     dom.setAttr(document.body, 'data-view', name);
     dom.setHidden(refs.feedChip, name !== 'trade');
-    /* Basic carries this button at the foot of its own column, with the
-       sentence that says what it does. A second copy in the top bar is the
-       same action twice on one screen. */
-    dom.setHidden(refs.freeze, name === 'basic');
+    placeIndicator();
 
     /* Nothing animates on a keyboard-initiated action, and a swap the server
        asked for is not something the person triggered either. */
@@ -144,10 +207,8 @@
     }
 
     if (changed) {
-      /* Canvases mounted in a hidden view have no size to fit to, so every
-         local field and the chart are told to re-measure once their view is on
-         screen. Without this an agent panel that was built in the background
-         paints into a 1 by 1 canvas forever. */
+      /* Canvases mounted in a hidden view have no size to fit to, so the chart
+         is told to re-measure once its view is on screen. */
       window.dispatchEvent(new CustomEvent('phosphor:view', { detail: { view: name } }));
     }
   }
@@ -256,6 +317,13 @@
       }
       dom.setText(refs.lockChip.querySelector('[data-role="lock-text"]'), word);
       dom.setAttr(refs.lockChip, 'data-tone', locked ? 'warn' : null);
+    }
+
+    if (refs.waitingChip) {
+      var pending = pendingOf(state);
+      dom.setHidden(refs.waitingChip, pending.length === 0);
+      dom.setText(refs.waitingChip.querySelector('[data-role="waiting-text"]'),
+        pending.length === 1 ? '1 waiting' : pending.length + ' waiting');
     }
 
     if (refs.freeze) {

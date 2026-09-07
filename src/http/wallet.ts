@@ -410,15 +410,22 @@ const CHAIN_NAMES: Array<{ id: string; name: string; of: 'evm' | 'solana' | 'nea
   { id: 'near', name: 'NEAR', of: 'near', warning: 'NEAR only. This account exists once something is sent to it.' },
 ];
 
-// Works while locked, and that is the feature: money arriving is the one thing a person should
-// never have to unlock for. The addresses come from the keystore's plaintext header.
+/* Works while locked, and that is the feature: money arriving is the one thing a person should
+   never have to unlock for.
+
+   `verified` is the fact this route used to leave out, and leaving it out is what made the
+   locked case dangerous. An open wallet serves addresses derived from the keys themselves and
+   this is true. A wallet this process has never opened serves the plaintext header, which
+   nothing authenticates, and this is false: the window says so rather than implying an
+   assurance the file cannot give. `tampered` is the third case, where a correct password has
+   proved the header was edited; the address list is empty there, on purpose. */
 export function handleReceive(ctx: Ctx, res: http.ServerResponse): void {
-  const addresses = ctx.keystore.addresses();
-  const chains = CHAIN_NAMES.filter((c) => addresses[c.of] !== null).map((c) => ({
+  const report = ctx.keystore.addressReport();
+  const chains = CHAIN_NAMES.filter((c) => report.addresses[c.of] !== null).map((c) => ({
     id: c.id,
     name: c.name,
-    address: addresses[c.of],
+    address: report.addresses[c.of],
     warning: c.warning,
   }));
-  sendJson(res, 200, { chains, state: ctx.keystore.state() });
+  sendJson(res, 200, { chains, state: ctx.keystore.state(), verified: report.verified, tampered: report.tampered });
 }

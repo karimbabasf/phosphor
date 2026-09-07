@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { loadConfig } from '../../src/config.ts';
+import { assertOutsideRepo, loadConfig } from '../../src/config.ts';
 import { createKeystore, destroyPlaintext } from '../../src/keystore/store.ts';
 import { defaultParams } from '../../src/keystore/kdf.ts';
 
@@ -187,4 +187,102 @@ test('without that flag the same data directory carries its own wallet', () => {
   );
 
   assert.equal(cfg.keysPath, path.join(support, 'state', 'keys.json'));
+});
+
+// A home directory as it looks AFTER the legacy wallet has been migrated: the plaintext file is
+// gone, because migrating consumed it, and the encrypted one is what remains.
+function homeWithMigratedKeys(): string {
+  const home = scratch('phosphor-home-');
+  fs.mkdirSync(path.join(home, '.phosphor'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.phosphor', 'keys.enc.json'), JSON.stringify({ header: {} }));
+  return home;
+}
+
+/* Migrating the legacy wallet used to hide it.
+
+   defaultKeysPath chose between the per-project path and the global one by asking which held a
+   `keys.json`, and migration deletes exactly that file. So the boot after a migration found
+   neither candidate, fell through to the per-project path, looked for a keystore beside it,
+   found none, and told the owner of a funded mainnet wallet that they had no wallet. The keys
+   were never lost. They were at ~/.phosphor/keys.enc.json the whole time, which the app had
+   stopped looking at.
+
+   The resolution has to ask about the wallet, not about one of the two files a wallet can be
+   stored as. */
+test('a migrated global wallet is still found once the plaintext file is gone', () => {
+  const home = homeWithMigratedKeys();
+  const root = repo();
+
+  const cfg = withEnv(
+    { HOME: home, PHOSPHOR_KEYS: undefined, PHOSPHOR_MODE: 'live', PHOSPHOR_DATA_DIR: undefined, PHOSPHOR_CONFIG_DIR: undefined },
+    () => loadConfig(root),
+  );
+
+  assert.equal(
+    cfg.keysPath,
+    path.join(home, '.phosphor', 'keys.json'),
+    'the global location still owns the wallet, because the keystore that migration wrote sits there',
+  );
+
+  const keystore = createKeystore({ keysPath: cfg.keysPath, mode: cfg.mode });
+  assert.equal(keystore.state(), 'locked', 'a migrated wallet reads as locked, never as absent');
+});
+
+// The other direction, so the fix cannot quietly pin every install to the global path: a home
+// with nothing in it at all still gets a project-local wallet.
+test('a home with no wallet anywhere still starts a new one project-local', () => {
+  const home = scratch('phosphor-home-');
+  const root = repo();
+
+  const cfg = withEnv(
+    { HOME: home, PHOSPHOR_KEYS: undefined, PHOSPHOR_MODE: 'live', PHOSPHOR_DATA_DIR: undefined, PHOSPHOR_CONFIG_DIR: undefined },
+    () => loadConfig(root),
+  );
+
+  assert.equal(cfg.keysPath, path.join(home, '.phosphor', path.basename(root), 'keys.json'));
+});
+
+// ---------- the repo boundary, against a filesystem rather than against a string ----------
+//
+// Private keys inside a git working copy are one `git add -f` from being published, and keeping
+// them outside it is meant to be structural. The check compared strings, and two strings that
+// are not equal can still be one directory: on a default APFS volume the filesystem is case
+// insensitive, so a lowercase spelling of the repo root judged the path outside the working copy
+// while the filesystem resolved it to exactly that directory. A symlink did the same with no
+// typo at all. `npm run sweep` reported the same false pass, from its own copy of the check.
+
+test('a differently cased spelling of the repo root is still the repo root', () => {
+  const root = scratch('phosphor-root-');
+  const inside = path.join(root, 'state', 'keys.json');
+  fs.mkdirSync(path.dirname(inside), { recursive: true });
+  fs.writeFileSync(inside, '{}');
+
+  assert.throws(() => assertOutsideRepo(inside, root), /outside the repo/, 'the plain spelling was always caught');
+
+  // The same directory, spelled in a case the volume accepts. Skipped where it does not: a
+  // case-sensitive volume genuinely has no such path, and the check is right to allow it.
+  const shouted = root.toUpperCase();
+  let sameDirectory = false;
+  try {
+    sameDirectory = fs.realpathSync.native(shouted) === fs.realpathSync.native(root);
+  } catch {
+    sameDirectory = false;
+  }
+  if (sameDirectory) {
+    assert.throws(() => assertOutsideRepo(path.join(shouted, 'state', 'keys.json'), root), /outside the repo/);
+  }
+});
+
+test('a symlink pointing into the working copy is not a way out of it', () => {
+  const root = scratch('phosphor-root-');
+  fs.mkdirSync(path.join(root, 'state'), { recursive: true });
+  const elsewhere = path.join(scratch('phosphor-link-'), 'state');
+  fs.symlinkSync(path.join(root, 'state'), elsewhere);
+
+  assert.throws(() => assertOutsideRepo(path.join(elsewhere, 'keys.json'), root), /outside the repo/);
+});
+
+test('a key file genuinely outside the working copy is still allowed', () => {
+  const root = scratch('phosphor-root-');
+  assert.doesNotThrow(() => assertOutsideRepo(path.join(scratch('phosphor-home-'), '.phosphor', 'keys.json'), root));
 });

@@ -47,7 +47,9 @@ import type { Rail, RailResult, SimulationResult, SwapDraft } from '../types.ts'
 import {
   ONECLICK_BASE,
   ONECLICK_TERMINAL,
+  baseUnits,
   oneClickClient,
+  quoteEchoProblems,
   oneLine,
   resolveAsset,
   toBaseUnits,
@@ -69,6 +71,7 @@ import {
 } from '../chain/near.ts';
 import type { NearSendOutcome, NearSendParams } from '../chain/near.ts';
 import { venueWriteTimeout } from '../net.ts';
+import { MAX_SLIPPAGE_BPS, floorTooLow } from './uniswap.ts';
 
 // The verifier contract. This is the whole point of the rail: one fixed account that goes on
 // the policy allowlist once and stays there, unlike a deposit address minted per quote.
@@ -430,6 +433,18 @@ export type IntentPayloadExpectation = {
 //
 // Returns the problems it found. An empty array means the payload says what the draft says.
 export function checkIntentPayload(raw: unknown, expect: IntentPayloadExpectation): string[] {
+  /* The floor first, before the payload is even read. Every amount check below compares against
+     minOutBase, so a floor of zero turns all of them into "receive >= 0", which every payload
+     satisfies: a token_diff crediting nothing was accepted and would have been signed.
+
+     plan() now refuses a zero floor before this is ever reached, and that is exactly why the
+     guard belongs here too. Leaning on an upstream check to enforce a property this function
+     claims is how the claim quietly stops being true, which is the defect this whole file's
+     comments keep describing. */
+  if (expect.minOutBase <= 0n) {
+    return ['the draft carries no slippage floor, so no payload can be checked against one'];
+  }
+
   if (typeof raw !== 'string' || raw.trim() === '') {
     return [`the erc191 intent payload must be a JSON string, got ${oneLine(raw, 60)}`];
   }
@@ -855,17 +870,6 @@ function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function baseUnits(value: unknown, field: string): bigint {
-  if (typeof value !== 'string' && typeof value !== 'number') {
-    throw new Error(`1click quote is missing ${field}`);
-  }
-  try {
-    return BigInt(value);
-  } catch {
-    throw new Error(`1click quote returned a non-integer ${field}: ${oneLine(value, 40)}`);
-  }
-}
-
 export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRail {
   const { keysPath, tokens } = deps;
   const apiKey = deps.apiKey ?? process.env[INTENTS_API_KEY_ENV];
@@ -925,6 +929,15 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     requireVenue(draft);
     requireUsable();
 
+    /* A floor of zero is not a floor, and it does more damage on this rail than on any other.
+       minOutBase is the number the signed payload is checked against, and the number the
+       balance read-back subtracts against after the swap. That read-back exists so a swap
+       crediting nothing is not reported as a success; against a zero floor it reported a total
+       loss as a measured success, in the sentence that advertises the measurement. */
+    if (!(draft.minAmountOut > 0)) {
+      throw new Error('minAmountOut is 0: refusing to swap with no slippage floor');
+    }
+
     // No EVM-origin restriction, unlike the oneclick rail. Nothing is signed on the origin
     // chain here, so the asset's home chain only has to be one the verifier holds a bridged
     // balance for; a base USDC to NEAR USDT swap needs no NEAR key and no Solana key.
@@ -970,6 +983,18 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
       );
     }
 
+    /* And the floor against the price. The check above only says the solver guarantees at least
+       what the draft asked for, so a draft floor of one base unit passes it against any quote.
+       Both amounts are base units of the destination asset, so this compares exactly. */
+    const amountOut = baseUnits(quote.amountOut, 'amountOut');
+    if (floorTooLow(amountOut, p.minOutBase, MAX_SLIPPAGE_BPS)) {
+      problems.push(
+        `the draft floor of ${draft.minAmountOut} ${draft.toSymbol} is more than ${MAX_SLIPPAGE_BPS / 100}% ` +
+          `below the ${formatUnits(amountOut, p.destDecimals)} ${draft.toSymbol} this swap quotes: a floor ` +
+          'that low is an invitation to a sandwich, not slippage protection',
+      );
+    }
+
     return problems;
   }
 
@@ -977,63 +1002,29 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
      checkQuote above reads amountIn and minAmountOut and nothing else, so a quote priced to
      credit a DIFFERENT recipient, to take its input from a chain transfer rather than the
      verifier balance, or to refund somewhere that is not our account, passed every check and was
-     signed, submitted and reported as SUCCESS. The sibling withdraw rail closed exactly this gap
-     with its own checkQuoteEcho; this rail never got it.
+     signed, submitted and reported as SUCCESS.
 
-     A missing echo is a refusal, not a shrug. The signed intent hands a balance to a solver
-     handle and does not name the destination anywhere, so with no echo there is nothing tying
-     the signature to where the proceeds land. */
+     The comparison is in src/intents.ts, shared with every rail that quotes. What stays here is
+     what this rail asked for, spelled out. */
   function checkQuoteEcho(p: Plan, owner: string, raw: unknown): string[] {
-    if (raw === null || typeof raw !== 'object') {
-      return [`the quote response is not an object (got ${oneLine(raw, 60)})`];
-    }
-    const echo = (raw as Record<string, unknown>)['quoteRequest'];
-    if (echo === null || typeof echo !== 'object' || Array.isArray(echo)) {
-      return [
-        'the quote carries no quoteRequest echo, so there is nothing tying it to the account the draft ' +
-          `credits. The signed intent hands our balance to a solver handle and does not name ${oneLine(owner, 60)} ` +
-          'anywhere, so without the echo this swap cannot be checked and is refused.',
-      ];
-    }
-    const req = echo as Record<string, unknown>;
-    const problems: string[] = [];
-    const say = (field: string): string => oneLine(req[field], 60);
-    const same = (value: unknown, want: string): boolean =>
-      typeof value === 'string' && value.toLowerCase() === want.toLowerCase();
-
-    // Where the proceeds land. Everything else on this quote is a price; this is the answer to
-    // "whose money is it afterwards".
-    if (!same(req['recipient'], owner)) {
-      problems.push(`the quote was priced to credit ${say('recipient')}, not our account ${oneLine(owner, 60)}`);
-    }
-    // INTENTS on both sides is what makes this a swap inside the verifier rather than a bridge:
-    // a DESTINATION_CHAIN payout would push the proceeds onto a chain nobody approved.
-    if (req['recipientType'] !== 'INTENTS') {
-      problems.push(
-        `the quote pays out as ${say('recipientType')}, not INTENTS; this rail swaps inside the verifier and ` +
-          'moves nothing onto any chain',
-      );
-    }
-    if (req['depositType'] !== 'INTENTS') {
-      problems.push(`the quote takes its input as ${say('depositType')}, not the INTENTS balance this rail spends`);
-    }
-    if (req['refundType'] !== 'INTENTS') {
-      problems.push(`a refund on this quote goes to ${say('refundType')}, not back to our balance inside the verifier`);
-    }
-    if (!same(req['refundTo'], owner)) {
-      problems.push(`a refund on this quote goes to ${say('refundTo')}, not to our account ${oneLine(owner, 60)}`);
-    }
-    // The assets and the size, as a complete second opinion rather than a partial one.
-    if (req['originAsset'] !== p.originAsset || req['destinationAsset'] !== p.destinationAsset) {
-      problems.push(
-        `the quote moves ${say('originAsset')} to ${say('destinationAsset')}, not the ` +
-          `${oneLine(p.originAsset, 40)} to ${oneLine(p.destinationAsset, 40)} the draft names`,
-      );
-    }
-    if (req['amount'] !== p.amountBase.toString()) {
-      problems.push(`the quote was priced for ${say('amount')} base units, not the ${p.amountBase.toString()} approved`);
-    }
-    return problems;
+    return quoteEchoProblems(raw, {
+      recipient: owner,
+      recipientVerb: 'credit',
+      recipientNoun: 'account',
+      recipientType: 'INTENTS',
+      recipientTypeWhy: 'this rail swaps inside the verifier and moves nothing onto any chain',
+      depositType: 'INTENTS',
+      refundType: 'INTENTS',
+      refundTypeWhy: 'back to our balance inside the verifier',
+      refundTo: owner,
+      originAsset: p.originAsset,
+      destinationAsset: p.destinationAsset,
+      amount: p.amountBase.toString(),
+      noEcho:
+        'there is nothing tying it to the account the draft credits. The signed intent hands our balance to a ' +
+        `solver handle and does not name ${oneLine(owner, 60)} anywhere, so without the echo this swap cannot ` +
+        'be checked and is refused.',
+    });
   }
 
   function priceLines(draft: SwapDraft, quote: OneClickQuote): string[] {
@@ -1072,7 +1063,12 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
       });
 
       const lines = priceLines(draft, response.quote);
-      const problems = checkQuote(draft, p, response.quote);
+      // Both checks, in both places. simulate ran checkQuote alone and execute added the echo,
+      // so a quote priced to another account passed the approval gate and failed after a human
+      // had clicked. draft.from is the account here rather than the signer address, because
+      // simulate stays key-free; requireVenue has already tied from and to together, and execute
+      // checks both against the real key a moment before signing.
+      const problems = [...checkQuote(draft, p, response.quote), ...checkQuoteEcho(p, draft.from, response.raw)];
       if (problems.length > 0) {
         const joined = problems.join('; ');
         return { ok: false, summary: [`REFUSED: ${joined}`, ...lines].join('\n'), error: joined };

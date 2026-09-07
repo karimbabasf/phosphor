@@ -1,10 +1,10 @@
 /* Pro: a 12-column grid at most 1440 wide, for a person who already holds
    crypto and wants to see everything and set the rules.
 
-   Five panels and one modal. The chart moved to trade, which is the single
-   biggest de-noising move available and costs nothing because trade is one
-   word away. The donut, the fragmentation block and the LOG and GAS modals are
-   gone: fees ride on the Activity rows now, with a total for the window. */
+   The same four components Basic has, at higher density: rows 36 px instead of
+   48, labels 13 px instead of 14. Four panels, four surfaces, and the chart is
+   in trade, which is the single biggest de-noising move available and costs
+   nothing because trade is one word away. */
 (function () {
   'use strict';
 
@@ -13,12 +13,20 @@
   var api = window.PhosphorApi;
   var store = window.PhosphorState;
 
+  /* The same figure as a surface's decay: a row that just moved keeps the
+     afterglow for as long as the panel it sits in would. */
+  var CHANGED_MS = 2400;
+
   var refs = {};
   var mounted = false;
 
   var CHAIN_NAMES = {
     eth: 'Ethereum', base: 'Base', arb: 'Arbitrum', sol: 'Solana', near: 'NEAR'
   };
+
+  /* The three chains POST /api/yield/withdraw accepts. Anything else, including
+     nothing, is refused 400 before the request reaches a rail. */
+  var WITHDRAW_CHAINS = ['eth', 'base', 'arb'];
 
   /* Allowlist entries that are venues rather than addresses. The policy stores
      the id it checks against; the window shows the name a person knows it by. */
@@ -43,11 +51,11 @@
   }
 
   function build(host) {
-    var grid = dom.el('div', 'pro-grid');
+    var grid = dom.el('div', 'pro-grid pro-dense');
 
     /* Money: one table. Ready to move and Trading money are rows in it rather
        than panels of their own, because they are money the person holds. */
-    var money = panel('Money', 'span-8');
+    var money = panel('Money', 'span-7', 'holdings');
     var moneyWrap = dom.el('div', 'table-wrap');
     moneyWrap.style.setProperty('--table-max', '440px');
     var table = dom.el('table', 'table');
@@ -73,19 +81,19 @@
     grid.appendChild(money.node);
 
     /* Earning. */
-    var earning = panel('Earning', 'span-4');
+    var earning = panel('Earning', 'span-5', 'earning');
     var earningBody = dom.el('div', 'stack');
     earning.body.appendChild(earningBody);
     grid.appendChild(earning.node);
 
     /* Your limits: the policy as sentences, the daily limit, the allowlist. */
-    var limits = panel('Your limits', 'span-5');
+    var limits = panel('Limits', 'span-5', 'rules');
     var limitsBody = dom.el('div', 'stack');
     limits.body.appendChild(limitsBody);
     grid.appendChild(limits.node);
 
     /* Activity: receipts, with fees per row and a total for the window. */
-    var activity = panel('Activity', 'span-7');
+    var activity = panel('Activity', 'span-7', 'activity');
     var activityBody = dom.el('div', 'panel-body-flush activity-list');
     activity.body.appendChild(activityBody);
     var feeRow = dom.el('div', 'between panel-total');
@@ -94,13 +102,6 @@
     feeRow.appendChild(feeValue);
     activity.body.appendChild(feeRow);
     grid.appendChild(activity.node);
-
-    /* Your assistant. */
-    var assistant = panel('', 'span-12');
-    assistant.head.hidden = true;
-    var assistantBody = dom.el('div', 'agent-panel');
-    assistant.body.appendChild(assistantBody);
-    grid.appendChild(assistant.node);
 
     host.appendChild(grid);
 
@@ -117,12 +118,12 @@
       feeValue: feeValue
     };
 
-    window.PhosphorAgent.mount(assistantBody);
     window.PhosphorReceipts.load();
   }
 
-  function panel(title, span) {
+  function panel(title, span, surface) {
     var node = dom.el('section', 'panel ' + span);
+    node.dataset.surface = surface;
     var head = dom.el('div', 'panel-head');
     head.appendChild(dom.el('h2', 'title-sm', title));
     var body = dom.el('div', 'panel-body');
@@ -150,29 +151,13 @@
     var wallet = state.wallet || {};
     var rows = Array.isArray(wallet.rows) ? wallet.rows.slice() : [];
 
-    /* Ready to move and Trading money join the table as rows. */
-    var extra = [];
-    if (state.intents && typeof state.intents.totalUsd === 'number' && state.intents.totalUsd > 0) {
-      extra.push({
-        kind: 'intents',
-        symbol: 'Ready to move',
-        chain: '',
-        quantity: null,
-        valueUsd: state.intents.totalUsd,
-        share: wallet.totalUsd ? state.intents.totalUsd / wallet.totalUsd : 0
-      });
-    }
-    if (state.trade && state.trade.account && typeof state.trade.account.equity === 'number') {
-      extra.push({
-        kind: 'trading',
-        symbol: 'Trading money',
-        chain: '',
-        quantity: null,
-        valueUsd: state.trade.account.equity,
-        share: wallet.totalUsd ? state.trade.account.equity / wallet.totalUsd : 0
-      });
-    }
-    var all = rows.concat(extra);
+    /* Two blocks used to sit here adding Ready to move and Trading money rows
+       from state.intents and state.trade. buildState emits neither key, so both
+       were dead and the table never gained either row. Money held at Intents is
+       already in wallet.rows as a row of kind intents; money at the trading
+       venue is only in /api/trade, which this screen does not read, and inventing
+       it from a key that does not exist was never going to show it. */
+    var all = rows;
 
     if (!all.length && !store.loaded()) {
       renderMoneySkeleton();
@@ -197,6 +182,7 @@
         ? '' : dom.qty(row.quantity));
       dom.setNumber(tr.children[3], dom.usd(row.valueUsd));
       dom.setText(tr.children[4], dom.pct(row.share || 0));
+      markChanged(tr, dom.usd(row.valueUsd));
     });
 
     dom.setNumber(refs.totalValue, dom.usd(wallet.totalUsd || 0));
@@ -212,6 +198,22 @@
     dom.setText(refs.emptyNote, notes.join('. '));
     dom.setHidden(refs.emptyNote, !notes.length);
     dom.setAttr(refs.emptyNote, 'class', stale.length ? 'meta warn' : 'meta');
+  }
+
+  /* A row whose number just moved carries the afterglow for a moment, so a
+     change that arrived while the person was reading something else is still
+     visible when they look back. The first fill is not a change. */
+  function markChanged(node, value) {
+    var next = value === undefined || value === null ? '' : String(value);
+    var had = node.dataset.shown;
+    node.dataset.shown = next;
+    if (had === undefined || had === next) return;
+    node.dataset.changed = 'true';
+    if (node.__changeTimer) window.clearTimeout(node.__changeTimer);
+    node.__changeTimer = window.setTimeout(function () {
+      delete node.dataset.changed;
+      node.__changeTimer = 0;
+    }, CHANGED_MS);
   }
 
   function renderMoneySkeleton() {
@@ -231,10 +233,14 @@
     }
   }
 
+  /* Every name here is YieldView's own: totalPrincipalUsd, totalEarnedUsd,
+     autoAllocate. This read principalUsd, earnedUsd, apy and auto, and fact()
+     skips an empty value, so all three figures were dropped and the panel was
+     two buttons with the auto one permanently reading off. */
   function renderEarning(state) {
     var y = state.yield;
     dom.clear(refs.earningBody);
-    if (!y) {
+    if (!y || (!y.totalPrincipalUsd && !y.totalValueUsd)) {
       var empty = dom.el('div', 'empty');
       empty.appendChild(dom.el('p', 'empty-title', 'Nothing is earning'));
       empty.appendChild(dom.el('p', '', 'Ask your assistant to put some of your dollars to work.'));
@@ -243,28 +249,84 @@
     }
 
     var facts = dom.el('div', 'facts');
-    fact(facts, 'Supplied', typeof y.principalUsd === 'number' ? dom.usd(y.principalUsd) : '');
-    fact(facts, 'Earned', typeof y.earnedUsd === 'number' ? dom.usd(y.earnedUsd, 4) : '');
-    fact(facts, 'Rate today', typeof y.apy === 'number' ? dom.pct(y.apy, 2) : '');
+    fact(facts, 'Supplied', typeof y.totalPrincipalUsd === 'number' ? dom.usd(y.totalPrincipalUsd) : '');
+    /* Places follow the number, the same rule fees use: four only when two would
+       round the figure to nothing. A day's interest is fractions of a cent and a
+       year's is not, and $94.1200 reads as a machine printing a float. */
+    fact(facts, 'Earned', typeof y.totalEarnedUsd === 'number'
+      ? dom.usd(y.totalEarnedUsd, Math.abs(y.totalEarnedUsd) < 0.01 ? 4 : 2)
+      : '');
+    var rate = rateOn(y);
+    fact(facts, 'Rate', rate === null ? '' : dom.pct(rate, 2));
     refs.earningBody.appendChild(facts);
 
-    var actions = dom.el('div', 'hstack-2');
-    var withdraw = dom.el('button', 'btn');
-    withdraw.appendChild(dom.el('span', 'btn-label', 'Bring it back'));
-    actions.appendChild(withdraw);
+    /* basisUnknown counts positions this app can derive no cost for, so their
+       value is in the total and what they made is in nothing. A figure that is
+       short by an unknown amount is printed with the reason beside it. */
+    if (y.basisUnknown > 0) {
+      refs.earningBody.appendChild(dom.el('p', 'meta', y.basisUnknown === 1
+        ? 'One position has no cost on record, so what it made is not in that figure.'
+        : y.basisUnknown + ' positions have no cost on record, so what they made is not in that figure.'));
+    }
+    if (y.stale) {
+      refs.earningBody.appendChild(dom.el('p', 'meta warn',
+        'The last read of these failed. These are the numbers from the one before it.'));
+    }
+
+    var actions = dom.el('div', 'hstack-2 wrap');
+    var chains = withdrawChains(y);
+    for (var c = 0; c < chains.length; c += 1) {
+      actions.appendChild(withdrawButton(chains[c], chains.length > 1));
+    }
 
     var auto = dom.el('button', 'btn btn-ghost');
-    auto.appendChild(dom.el('span', 'btn-label', y.auto ? 'Auto-earn is on' : 'Auto-earn is off'));
+    auto.appendChild(dom.el('span', 'btn-label', y.autoAllocate ? 'Auto-earn is on' : 'Auto-earn is off'));
     actions.appendChild(auto);
     refs.earningBody.appendChild(actions);
+  }
 
-    dom.on(withdraw, 'click', function () {
-      window.PhosphorShell.setPending(withdraw, true, 'Bringing it back');
-      api.yieldWithdraw({})
+  /* The rate the money is actually getting, from the venue quote for the chain it
+     is on. y.best is the best rate available anywhere, which is a different fact
+     and would overstate the return every time the money is not on that chain. */
+  function rateOn(y) {
+    var chains = withdrawChains(y);
+    var venues = Array.isArray(y.venues) ? y.venues : [];
+    for (var i = 0; i < venues.length; i += 1) {
+      if (chains.indexOf(venues[i].chain) < 0) continue;
+      if (venues[i].rate && typeof venues[i].rate.apy === 'number') return venues[i].rate.apy;
+    }
+    return null;
+  }
+
+  /* Which chains the money is actually on. The route takes the whole position on
+     one named chain and refuses any other value, so a button that sends nothing
+     comes back "chain must be one of eth, base, arb; got ''" and moves no money.
+     Both Bring it back buttons in this window did exactly that. */
+  function withdrawChains(y) {
+    var out = [];
+    var positions = (y && Array.isArray(y.positions)) ? y.positions : [];
+    for (var i = 0; i < positions.length; i += 1) {
+      var chain = positions[i].chain;
+      if (WITHDRAW_CHAINS.indexOf(chain) < 0 || out.indexOf(chain) >= 0) continue;
+      out.push(chain);
+    }
+    if (!out.length && y && WITHDRAW_CHAINS.indexOf(y.chain) >= 0) out.push(y.chain);
+    return out;
+  }
+
+  function withdrawButton(chain, name) {
+    var button = dom.el('button', 'btn');
+    button.type = 'button';
+    button.appendChild(dom.el('span', 'btn-label',
+      name ? 'Bring it back from ' + chainName(chain) : 'Bring it back'));
+    dom.on(button, 'click', function () {
+      window.PhosphorShell.setPending(button, true, 'Bringing it back');
+      api.yieldWithdraw({ chain: chain })
         .then(function () { return window.PhosphorShell.refresh({}); })
         .catch(function (err) { window.PhosphorToast.show(net.readable(err, true), 'down'); })
-        .finally(function () { window.PhosphorShell.setPending(withdraw, false); });
+        .finally(function () { window.PhosphorShell.setPending(button, false); });
     });
+    return button;
   }
 
   function renderLimits(state) {
@@ -309,7 +371,7 @@
       for (var i = 0; i < spoken.length; i += 1) {
         var row = dom.el('div', 'between limit-row');
         row.appendChild(dom.el('span', 'body grow', spoken[i]));
-        var edit = dom.el('button', 'btn btn-quiet');
+        var edit = dom.el('button', 'btn btn-quiet btn-sm');
         edit.appendChild(dom.el('span', 'btn-label', 'Edit'));
         row.appendChild(edit);
         dom.on(edit, 'click', function () {

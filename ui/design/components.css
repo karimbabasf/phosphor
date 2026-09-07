@@ -1,4 +1,6 @@
-/* Phosphor components. Every pressable presses. Every wait names a noun. */
+/* Phosphor components. Every pressable presses. Every wait names a noun.
+   Panels carry no shadow: depth is ground steps and hairlines, light is the
+   glow the assistant leaves on a surface. */
 
 /* ---------- Button ---------- */
 
@@ -87,6 +89,12 @@
 
 .btn-block {
   width: 100%;
+}
+
+.btn-sm {
+  min-height: 30px;
+  padding: 0 var(--s-3);
+  font-size: var(--fs-13);
 }
 
 /* A pending button keeps its width, swaps its label for the progress verb and
@@ -180,6 +188,89 @@
   box-shadow: var(--lift);
 }
 
+/* ---------- Surfaces: where the beam lands ---------- */
+
+/* Any element with data-surface can glow. The glow is a layer whose OPACITY
+   moves, never a shadow that animates: in at 120 ms, out over 2.4 s. The tone
+   is the assistant's light by default, amber for a proposal waiting on a
+   person, rose for a tool that failed. ui/beam/beam.js writes the attributes
+   and never touches a style property. */
+[data-surface] {
+  position: relative;
+  --glow-c: var(--beam);
+}
+
+[data-surface][data-glow-tone="wait"] { --glow-c: var(--warn); }
+[data-surface][data-glow-tone="down"] { --glow-c: var(--down); }
+
+[data-surface]::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  /* The edge is held back to a little over half the tone and the bloom carries
+     the rest. At full strength the hairline reads as a selected border, which
+     is a different thing from a surface something just lit up. */
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--glow-c) 55%, transparent),
+              inset 0 0 34px -12px var(--glow-c),
+              0 0 26px -6px var(--glow-c);
+  transition: opacity var(--dur-glow-out) var(--ease-out);
+  z-index: 3;
+}
+
+[data-surface][data-glow="on"]::after {
+  opacity: 1;
+  transition-duration: var(--dur-glow-in);
+}
+
+/* The rules strip and the tabs are inline surfaces: no inset box, only the edge. */
+.tab::after,
+.strip::after {
+  box-shadow: inset 0 0 0 1px var(--glow-c), 0 0 14px -4px var(--glow-c);
+}
+
+/* The scan: one line travelling down a surface while its tool is in flight.
+   beam.js appends and removes this element. */
+.surface-scan {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.surface-scan::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--glow-c), transparent);
+  opacity: 0.85;
+  transform: translateY(-2px);
+  animation: scan var(--dur-scan) linear infinite;
+}
+
+@keyframes scan {
+  from { transform: translateY(-2px); }
+  to { transform: translateY(var(--scan-h, 400px)); }
+}
+
+/* The beam itself is drawn on one fixed canvas over the whole window. It is
+   pointer transparent and the loop runs only while a flight is in the air. */
+.beam-layer {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 80;
+  pointer-events: none;
+}
+
 /* ---------- Rows ---------- */
 
 .row {
@@ -209,6 +300,12 @@
   .row-hover:hover {
     background: var(--bg-2);
   }
+}
+
+/* A row whose value just changed carries the afterglow for a moment. */
+.row[data-changed="true"] {
+  background: color-mix(in srgb, var(--beam) 7%, transparent);
+  transition: background-color var(--dur-glow-out) var(--ease-out);
 }
 
 /* ---------- Table ---------- */
@@ -290,6 +387,7 @@ button.chip:active {
 }
 
 .chip[data-tone="agent"] { color: var(--agent); border-color: var(--agent-edge); }
+.chip[data-tone="beam"] { color: var(--beam); border-color: var(--beam-edge); }
 .chip[data-tone="warn"] { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 34%, transparent); }
 .chip[data-tone="down"] { color: var(--down); border-color: color-mix(in srgb, var(--down) 34%, transparent); }
 .chip[data-tone="up"] { color: var(--up); border-color: color-mix(in srgb, var(--up) 34%, transparent); }
@@ -378,7 +476,7 @@ button.chip:active {
   position: relative;
 }
 
-.panel[data-refreshing="true"]::after {
+.panel[data-refreshing="true"]::before {
   content: "";
   position: absolute;
   inset: -1px auto auto -1px;
@@ -389,6 +487,7 @@ button.chip:active {
   background-size: 40% 100%;
   background-repeat: no-repeat;
   animation: sweep 1100ms var(--ease-in-out) infinite;
+  z-index: 3;
 }
 
 @keyframes sweep {
@@ -422,6 +521,15 @@ button.chip:active {
   color: var(--text-2);
   font-family: var(--font-mono);
   font-size: var(--fs-13);
+}
+
+textarea.input {
+  padding: var(--s-2) var(--s-3);
+  line-height: 1.5;
+  resize: none;
+  min-height: 40px;
+  max-height: 148px;
+  field-sizing: content;
 }
 
 .field {
@@ -529,6 +637,13 @@ button.chip:active {
     animation-iteration-count: 1 !important;
     transition-duration: 1ms !important;
   }
+
+  /* The glow keeps a short fade: it is the one motion that carries meaning. */
+  [data-surface]::after {
+    transition-duration: 200ms !important;
+  }
+
+  .surface-scan { display: none; }
 
   .spinner {
     animation: none;

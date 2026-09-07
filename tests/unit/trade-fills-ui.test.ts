@@ -1,8 +1,14 @@
-// The What happened list, which is where a person reads what their bot actually did.
+// The trade rail, which is where a person reads what their bot actually did and what it is
+// holding while it does it.
 //
-// It read `fill.sz || fill.size || 0` and `fill.time || fill.at`. The payload carries neither:
-// a Fill is { tid, coin, side, px, sizeCoin, atMs, ... } (src/trade/state.ts). So every fill in
-// the list said "Bought BTC 0" with no time beside it, whatever had been traded.
+// The list read `fill.sz || fill.size || 0` and `fill.time || fill.at`. The payload carries
+// neither: a Fill is { tid, coin, side, px, sizeCoin, atMs, ... } (src/trade/state.ts). So every
+// fill said "Bought BTC 0" with no time beside it, whatever had been traded.
+//
+// The three panels beside it had the same bug and no test. Account read equity/free/health,
+// Position read valueUsd/size/unrealizedPnl/liquidationPx and Rules read summary/spentUsd/
+// budgetUsd. None of those names is in the payload, so a funded account with an open position
+// under an armed rule rendered three empty states and a heading. Those are covered here now.
 //
 // Run against the REAL ui/core/dom.js and ui/screens/trade.js over a small stand-in DOM, so what
 // is asserted is the text a person would read rather than the shape of the source.
@@ -18,6 +24,7 @@ type Node = {
   textContent: string;
   hidden: boolean;
   dataset: Record<string, string>;
+  style: Record<string, string>;
   classList: { add: (c: string) => void; remove: (c: string) => void };
   childNodes: Node[];
   parentNode: Node | null;
@@ -48,6 +55,10 @@ function makeNode(tagName: string): Node {
     textContent: '',
     hidden: false,
     dataset: {} as Record<string, string>,
+    // The meter fill sets a width through style. Without this the whole rail render throws
+    // half way down and the panels below Account come back blank, which reads as a product
+    // bug and is a hole in the stand-in.
+    style: {} as Record<string, string>,
     classList: { add: () => {}, remove: () => {} },
     childNodes: [] as Node[],
     parentNode: null as Node | null,
@@ -138,7 +149,56 @@ function payload(sizeCoin: number, szDecimals: number | null) {
   };
 }
 
-async function render(sizeCoin: number, szDecimals: number | null): Promise<string[]> {
+// The rail with money in it: a funded account, one open position and one armed rule. Every
+// field name below is the one src/trade/state.ts emits.
+function funded() {
+  return {
+    overlays: { position: true, liquidation: false, mandateWall: true },
+    account: {
+      equityUsd: 4200.5,
+      freeUsd: 3100.25,
+      marginUsedUsd: 1100.25,
+      healthPct: 0.62,
+      unified: false,
+      accountKnown: true,
+    },
+    markets: [{ coin: 'BTC', markPx: 60000, szDecimals: 5, maxLeverage: 20, assetId: 0 }],
+    positions: [
+      {
+        coin: 'BTC',
+        side: 'long',
+        sizeCoin: 0.5,
+        notionalUsd: 30000,
+        entryPx: 58000,
+        markPx: 60000,
+        liqPx: 52800,
+        unrealisedUsd: 1000,
+        liqReachable: true,
+        liqDistancePct: 12,
+        liqDistanceUsd: 3600,
+      },
+    ],
+    orders: [],
+    mandates: [
+      {
+        id: 'mnd_01',
+        english: ['Buy up to $5,000 of BTC while it holds above 58,000.'],
+        envelope: { maxNotionalUsd: 5000, maxLossUsd: 400 },
+        used: { notionalUsd: 1250, lossUsd: 0 },
+      },
+    ],
+    products: ['BTC-USD'],
+    fills: [],
+  };
+}
+
+function allWithDataset(node: Node, key: string, out: Node[] = []): Node[] {
+  if (node.dataset[key] !== undefined) out.push(node);
+  for (const child of node.childNodes) allWithDataset(child, key, out);
+  return out;
+}
+
+async function renderPayload(data: unknown): Promise<{ host: Node; lines: string[] }> {
   const host = makeNode('div');
   const sandbox: Record<string, any> = {
     console,
@@ -160,7 +220,7 @@ async function render(sizeCoin: number, szDecimals: number | null): Promise<stri
     PhosphorMotion: { reduced: () => true },
     PhosphorEvents: { on: () => {} },
     PhosphorNet: { readable: (e: unknown) => String(e) },
-    PhosphorApi: { trade: async () => ({ fresh: true, data: payload(sizeCoin, szDecimals) }) },
+    PhosphorApi: { trade: async () => ({ fresh: true, data }) },
     PhosphorShell: { view: () => 'basic', setPending: () => {} },
     PhosphorAgent: { mount: () => {} },
   };
@@ -172,7 +232,12 @@ async function render(sizeCoin: number, szDecimals: number | null): Promise<stri
   }
   sandbox.window.PhosphorTrade.boot();
   await sandbox.window.PhosphorTrade.refresh();
-  return textOf(host);
+  return { host, lines: textOf(host) };
+}
+
+async function render(sizeCoin: number, szDecimals: number | null): Promise<string[]> {
+  const out = await renderPayload(payload(sizeCoin, szDecimals));
+  return out.lines;
 }
 
 test('a fill prints the size that was actually traded, not zero', async () => {
@@ -211,4 +276,85 @@ test('a whole-number asset still shows a fraction rather than rounding it to not
 test('a large fill keeps the thousands separator and does not grow decimals it does not need', async () => {
   const lines = await render(12500, 2);
   assert.ok(lines.some((l) => l === 'Bought BTC 12,500'), JSON.stringify(lines));
+});
+
+
+// ---------- the three panels beside the list ----------
+
+test('a funded account shows the money in it rather than the empty state', async () => {
+  const { lines } = await renderPayload(funded());
+  assert.ok(
+    !lines.includes('No trading money yet'),
+    `a funded account was told it had none: ${JSON.stringify(lines)}`,
+  );
+  assert.ok(lines.includes('$4,200.50'), JSON.stringify(lines));
+  assert.ok(lines.includes('$3,100.25'), JSON.stringify(lines));
+  assert.ok(lines.includes('62.0%'), JSON.stringify(lines));
+});
+
+test('an account the feed has not settled yet says it is waiting, not that it is empty', async () => {
+  // accountKnown false means every figure above it is null on purpose. Answering that with
+  // "no trading money" is the window inventing a fact the venue has not stated.
+  const data = funded();
+  data.account = { ...data.account, accountKnown: false, equityUsd: null, freeUsd: null, healthPct: null } as never;
+  const { lines } = await renderPayload(data);
+  assert.ok(lines.includes('Still reading the account'), JSON.stringify(lines));
+  assert.ok(!lines.includes('No trading money yet'), JSON.stringify(lines));
+});
+
+test('an open position prints its value, its size and what it is up', async () => {
+  const { lines } = await renderPayload(funded());
+  assert.ok(lines.includes('Long BTC'), JSON.stringify(lines));
+  assert.ok(lines.includes('$30,000.00'), `no notional: ${JSON.stringify(lines)}`);
+  assert.ok(lines.includes('0.5'), `no size: ${JSON.stringify(lines)}`);
+  assert.ok(lines.includes('$1,000.00'), `no profit line: ${JSON.stringify(lines)}`);
+});
+
+test('the forced close line uses the distance the server sent, at the scale it sent it', async () => {
+  // liqDistancePct is already a percentage: the server sends gap * 100 / mark. Running it
+  // through dom.pct would report a position 12% from liquidation as 1,200% away, which reads
+  // as perfectly safe.
+  const { lines } = await renderPayload(funded());
+  const line = lines.find((l) => l.startsWith('Forced close at '));
+  assert.ok(line !== undefined, `no forced close line: ${JSON.stringify(lines)}`);
+  assert.equal(line, 'Forced close at $52,800.00, 12.0% away');
+});
+
+test('a position nothing can force closed says so instead of printing a price', async () => {
+  const data = funded();
+  data.positions[0] = { ...data.positions[0], liqReachable: false, liqDistancePct: null } as never;
+  const { lines } = await renderPayload(data);
+  assert.ok(lines.includes('Nothing can force this closed at the size it is.'), JSON.stringify(lines));
+  assert.ok(!lines.some((l) => l.startsWith('Forced close at ')), JSON.stringify(lines));
+});
+
+test('an armed rule prints the sentences it was approved as, and what it has spent', async () => {
+  // A mandate is approved as words. Rendering its id instead is showing a person the hash of
+  // the thing they agreed to rather than the thing.
+  const { lines } = await renderPayload(funded());
+  assert.ok(
+    lines.includes('Buy up to $5,000 of BTC while it holds above 58,000.'),
+    `the rule rendered as something other than its own sentence: ${JSON.stringify(lines)}`,
+  );
+  assert.ok(!lines.includes('mnd_01'), JSON.stringify(lines));
+  assert.ok(lines.includes('$1,250.00 of $5,000'), JSON.stringify(lines));
+});
+
+test('the overlay chips follow the payload, because the canvas reads the payload', async () => {
+  // ui/chart/trade-overlay.js reads data.overlays. These three used to write a window global
+  // nothing has ever read, so a chip could sit pressed while the overlay under it was off.
+  const { host } = await renderPayload(funded());
+  const chips = allWithDataset(host, 'overlay');
+  assert.equal(chips.length, 3);
+  const state: Record<string, string | null> = {};
+  for (const chip of chips) state[chip.dataset.overlay] = chip.getAttribute('aria-pressed');
+  assert.equal(state.position, 'true');
+  assert.equal(state.liquidation, 'false');
+  assert.equal(state.mandateWall, 'true');
+});
+
+test('the toggles no longer write a global nothing reads', async () => {
+  const source = readFileSync(new URL('../../ui/screens/trade.js', import.meta.url), 'utf8');
+  assert.ok(!source.includes('TRADE_OVERLAYS'));
+  assert.ok(source.includes("'/api/trade'"), 'the toggle has to reach the server to reach the canvas');
 });

@@ -210,6 +210,32 @@ pub fn mint_token() -> Result<String, String> {
     Err("Phosphor's desktop shell needs a random source and only supports unix today".to_string())
 }
 
+/// The three secrets this shell mints per boot and hands to the backend down one pipe.
+///
+/// `token` is the approval token, injected into the control webview and checked on every write.
+/// `nonce` is how this shell recognises its OWN backend: the backend echoes it in the x-phosphor
+/// header and nowhere else, so a local process that grabs the port cannot answer with it.
+/// `seat` is the roster handshake secret, which the backend passes to the agents it spawns so a
+/// seat claimed from outside cannot fill the roster the human's own agent needs.
+///
+/// All three are separate values. A secret reused for a second purpose is a secret whose exposure
+/// in the weaker place costs you the stronger one, and the nonce is deliberately public.
+pub struct Handshake {
+    pub token: String,
+    pub nonce: String,
+    pub seat: String,
+}
+
+impl Handshake {
+    pub fn mint() -> Result<Self, String> {
+        Ok(Handshake {
+            token: mint_token()?,
+            nonce: mint_token()?,
+            seat: mint_token()?,
+        })
+    }
+}
+
 /// One request to loopback, hand-rolled. The Host header is set to the address actually dialled,
 /// which is what src/http/auth.ts requires: a DNS-rebinding page cannot produce that header, and
 /// a client that omits it is refused.
@@ -250,12 +276,45 @@ pub fn post_lock(port: u16, token: &str, reason: &str) -> bool {
     request(port, &head, Some(&body)).is_some_and(|out| out.starts_with("HTTP/1.1 2"))
 }
 
-/// Whether what answers on this port is Phosphor. The served page titles itself, which is enough
-/// to tell "a Phosphor is already up" apart from "something else owns this port", and those two
-/// cases must not be treated the same: the first names a process to quit, the second a port to
-/// free.
-pub fn phosphor_is_listening(port: u16) -> bool {
-    get_root(port).is_some_and(|body| body.contains("<title>PHOSPHOR</title>"))
+/// The value of one header in a raw HTTP response, lowercased by the caller.
+fn header_value<'a>(lowered: &'a str, name: &str) -> Option<&'a str> {
+    lowered
+        .lines()
+        .find_map(|line| line.strip_prefix(name))
+        .map(str::trim)
+}
+
+/// Does this response come from the backend this shell started?
+///
+/// TWO QUESTIONS, AND THEY WERE THE SAME FUNCTION UNTIL NOW. "Is a Phosphor on this port" names a
+/// process to quit. "Is MY backend on this port" gates the window, which is where the approval
+/// token gets injected. Answering the second with the first is what made the check defeatable: the
+/// marker used to be the fixed string `x-phosphor: control`, which any server can send, so a local
+/// process that took the port during the boot race or the respawn backoff was handed the token and
+/// then the keystore passphrase, in a window titled PHOSPHOR.
+///
+/// So `nonce` decides which question is being asked. `None` accepts any Phosphor-shaped answer and
+/// is only used where the next thing that happens is a refusal by name. `Some` requires the header
+/// to carry the value this shell minted this boot and gave the backend over its stdin, which is a
+/// channel no other process can read and no other process can guess.
+///
+/// The marker is still a header rather than the page's <title>, and that half has not changed: a
+/// retitle of ui/index.html once left this polling a healthy server it could not recognise and the
+/// app died on a 45-second timeout with nothing wrong with it. Header names are case-insensitive
+/// on the wire, so the match is too, and the value is hex.
+pub fn identity_matches(response: &str, nonce: Option<&str>) -> bool {
+    let lowered = response.to_ascii_lowercase();
+    let Some(value) = header_value(&lowered, "x-phosphor:") else {
+        return false;
+    };
+    match nonce {
+        None => true,
+        Some(want) => value == want.to_ascii_lowercase(),
+    }
+}
+
+pub fn phosphor_is_listening(port: u16, nonce: Option<&str>) -> bool {
+    get_root(port).is_some_and(|res| identity_matches(&res, nonce))
 }
 
 /// Reads the port the way src/config.ts does, and only the port.
@@ -296,14 +355,18 @@ pub fn node_binary() -> Result<PathBuf, String> {
 
 /// Start the control app.
 ///
-/// THE WINDOW TOKEN GOES OVER STDIN, as the first line, and the pipe is closed behind it. It used
-/// to go over the environment, which is not a channel between two processes at all: `ps eww <pid>`
-/// prints the environment of any process this user owns, which is the attacker this app is built
-/// against. A local process read the token back and drove the kill switch, the idle beacon and
-/// approve on a real pending proposal, which the audit then recorded as a human's click. A signed
-/// hardened runtime does not close that either. It is the same channel and the same argument the
-/// runner already uses for the Hyperliquid API wallet key.
-pub fn spawn_backend(payload: &Path, data: &Path, token: &str) -> Result<Child, String> {
+/// THE HANDSHAKE GOES OVER STDIN, three lines, and the pipe is closed behind them. It used to be
+/// one value over the environment, which is not a channel between two processes at all: `ps eww
+/// <pid>` prints the environment of any process this user owns, which is the attacker this app is
+/// built against. A local process read the token back and drove the kill switch, the idle beacon
+/// and approve on a real pending proposal, which the audit then recorded as a human's click. A
+/// signed hardened runtime does not close that either. It is the same channel and the same
+/// argument the runner already uses for the Hyperliquid API wallet key.
+///
+/// Line 1 is the window token, line 2 the boot nonce, line 3 the roster seat secret. Order is the
+/// contract; src/main.ts reads them in it. A backend started with no pipe at all is a developer
+/// running `npm run app`, and it mints what it needs and says so.
+pub fn spawn_backend(payload: &Path, data: &Path, hand: &Handshake) -> Result<Child, String> {
     let node = node_binary()?;
     let mut child = Command::new(&node)
         .arg(payload.join("src").join("main.ts"))
@@ -324,12 +387,79 @@ pub fn spawn_backend(payload: &Path, data: &Path, token: &str) -> Result<Child, 
         .spawn()
         .map_err(|e| format!("could not start the control app with {node:?}: {e}"))?;
 
-    // Taken and dropped, so the pipe closes as soon as the line is written: the backend reads one
-    // line and wants nothing else from stdin ever again.
+    // Taken and dropped, so the pipe closes as soon as the lines are written: the backend reads the
+    // handshake and wants nothing else from stdin ever again.
     match child.stdin.take() {
-        Some(mut pipe) => writeln!(pipe, "{token}")
-            .map_err(|e| format!("could not hand the window token to the control app: {e}"))?,
-        None => return Err("the control app was started with no stdin to hand the window token to".into()),
+        Some(mut pipe) => writeln!(pipe, "{}\n{}\n{}", hand.token, hand.nonce, hand.seat)
+            .map_err(|e| format!("could not hand the handshake to the control app: {e}"))?,
+        None => return Err("the control app was started with no stdin to hand the handshake to".into()),
     }
     Ok(child)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::TcpListener;
+
+    /// A server that answers `GET /` with one `x-phosphor` header and the value it was given.
+    /// This is the attacker in variant A and B of the finding: any local process can send the
+    /// header, and until the nonce existed that was enough to be handed the window token.
+    fn stub(value: &'static str) -> u16 {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind a loopback port");
+        let port = listener.local_addr().expect("read the bound port").port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().take(8) {
+                let Ok(mut sock) = stream else { continue };
+                let mut scratch = [0u8; 1024];
+                let _ = sock.read(&mut scratch);
+                let res = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nX-Phosphor: {value}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                );
+                let _ = sock.write_all(res.as_bytes());
+                let _ = sock.shutdown(Shutdown::Both);
+            }
+        });
+        port
+    }
+
+    #[test]
+    fn a_squatter_sending_the_old_fixed_marker_is_not_this_shells_backend() {
+        let port = stub("control");
+        assert!(
+            phosphor_is_listening(port, None),
+            "it is still Phosphor-shaped, which is what names a process to quit"
+        );
+        assert!(
+            !phosphor_is_listening(port, Some("a1b2c3d4")),
+            "but it is not the backend this shell started, so no window may open onto it"
+        );
+    }
+
+    #[test]
+    fn the_backend_that_echoes_this_boots_nonce_is_recognised() {
+        let port = stub("a1b2c3d4");
+        assert!(phosphor_is_listening(port, Some("a1b2c3d4")));
+        assert!(
+            phosphor_is_listening(port, Some("A1B2C3D4")),
+            "header values are compared case-insensitively, as the names are"
+        );
+        assert!(!phosphor_is_listening(port, Some("a1b2c3d5")), "one character off is not ours");
+    }
+
+    #[test]
+    fn nothing_on_the_port_is_never_a_match() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind a loopback port");
+        let port = listener.local_addr().expect("read the bound port").port();
+        drop(listener);
+        assert!(!phosphor_is_listening(port, None));
+        assert!(!phosphor_is_listening(port, Some("a1b2c3d4")));
+    }
+
+    #[test]
+    fn a_response_with_no_marker_at_all_is_never_a_match() {
+        let res = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n";
+        assert!(!identity_matches(res, None));
+        assert!(!identity_matches(res, Some("a1b2c3d4")));
+    }
 }

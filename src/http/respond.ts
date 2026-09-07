@@ -101,10 +101,26 @@ export function fail(res: http.ServerResponse, status: number, message: string, 
 //
 // no-store stays. The browser's own HTTP cache must not hold a wallet balance; the conditional
 // request here is driven by an ETag the page holds in memory and loses on reload.
-export function sendJsonConditional(req: http.IncomingMessage, res: http.ServerResponse, payload: unknown): void {
+//
+// THE BODY AND THE TAG ARE SEPARABLE from the sending, and that is what CachedJson is for. Both
+// used to be built here, in front of the if-none-match comparison, so a 304 cost the server
+// everything a 200 did: measured at 1000 proposals, 4.49 ms on the 304 path against 4.66 ms on the
+// 200 path. The ETag saved the wire and the browser's redraw and saved the server nothing. A
+// caller that can tell when its payload last changed builds the pair once and hands it here.
+export type CachedJson = { body: string; etag: string };
+
+export function jsonWithEtag(payload: unknown): CachedJson {
   const body = JSON.stringify(payload);
   // Not a security boundary, just a change detector, so speed beats collision resistance.
-  const etag = `"${crypto.createHash('sha1').update(body).digest('base64')}"`;
+  return { body, etag: `"${crypto.createHash('sha1').update(body).digest('base64')}"` };
+}
+
+export function sendJsonConditional(req: http.IncomingMessage, res: http.ServerResponse, payload: unknown): void {
+  sendCachedJson(req, res, jsonWithEtag(payload));
+}
+
+export function sendCachedJson(req: http.IncomingMessage, res: http.ServerResponse, cached: CachedJson): void {
+  const { body, etag } = cached;
   if (req.headers['if-none-match'] === etag) {
     res.writeHead(304, { etag, 'cache-control': 'no-store' });
     res.end();
@@ -145,6 +161,41 @@ const CONTROL_CSP = [
   "frame-ancestors 'none'",
 ].join('; ');
 
+/* HOW THE SHELL KNOWS THIS IS PHOSPHOR. The desktop shell spawns this process, then polls the
+   port until something there names itself, and opens the window only once it has an answer. That
+   marker used to be the page's <title>, which put a boot on the wrong side of a cosmetic edit:
+   retitling ui/index.html to "Phosphor" left the shell polling a healthy server it no longer
+   recognised, and the app failed as a 45-second timeout with nothing actually wrong with it.
+   A response header cannot be moved by a redesign. src-tauri/src/backend.rs reads it.
+
+   THE NAME IS FIXED AND THE VALUE IS NOT, and that is the security half. The value used to be the
+   word below, always, which made the marker a liveness probe being used as an identity check: any
+   local process can send `x-phosphor: control`, so a process that took the port during the boot
+   race or the three-second respawn backoff was recognised as the backend and handed a window with
+   the approval token injected into it, and then the keystore passphrase. The shell now mints a
+   nonce per boot, writes it down this process's stdin beside the window token, and this process
+   echoes it here. A squatter cannot read the pipe and cannot guess 32 random bytes, so it cannot
+   answer as this boot's backend.
+
+   The word below stays as the fallback, for `npm run app` with no shell above it. Nothing is
+   weakened by that: a backend with no nonce is a backend no shell is waiting on, and a shell that
+   minted a nonce refuses anything that answers with anything else. */
+export const IDENTITY_HEADER = 'x-phosphor';
+export const IDENTITY_VALUE = 'control';
+
+let identity = IDENTITY_VALUE;
+
+/* Written once at boot from src/main.ts, off the shell's pipe, before the port opens. A caller
+   with nothing to say leaves the fallback in place rather than blanking the header, because a
+   missing marker is a boot the shell cannot recognise at all. */
+export function useIdentityValue(nonce: string): void {
+  if (nonce.length > 0) identity = nonce;
+}
+
+export function identityValue(): string {
+  return identity;
+}
+
 export function serveStatic(pathname: string, res: http.ServerResponse): void {
   let rel: string;
   try {
@@ -178,6 +229,7 @@ export function serveStatic(pathname: string, res: http.ServerResponse): void {
     'content-type': type,
     'content-length': body.length,
     'cache-control': cache,
+    [IDENTITY_HEADER]: identityValue(),
     ...(type === MIME['.html'] ? { 'content-security-policy': CONTROL_CSP } : {}),
   });
   res.end(body);

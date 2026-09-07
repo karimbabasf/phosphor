@@ -30,13 +30,24 @@ import {
   ftStorageRegistered,
   functionCall,
   isNearAccountId,
+  isSettlableNearAccount,
   looksLikeEvmAddress,
   nearAccountId,
   sendTx as nearSendTx,
 } from '../chain/near.ts';
 import type { NearSendOutcome, NearSendParams } from '../chain/near.ts';
+import { MAX_SLIPPAGE_BPS, floorTooLow } from './uniswap.ts';
+import { addressProblem } from './intents-withdraw.ts';
 import type { ChainId, Rail, RailResult, SimulationResult, SwapDraft } from '../types.ts';
-import { ONECLICK_TERMINAL, assetIdFor, oneClickClient, oneLine, toBaseUnits } from '../intents.ts';
+import {
+  ONECLICK_TERMINAL,
+  assetIdFor,
+  baseUnits,
+  oneClickClient,
+  oneLine,
+  quoteEchoProblems,
+  toBaseUnits,
+} from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickStatus, TokensFile } from '../intents.ts';
 
 // The chains this rail can deposit from, by signer family.
@@ -53,6 +64,27 @@ function originFamily(chain: ChainId): 'evm' | 'near' | null {
   if (EVM_ORIGINS.includes(chain)) return 'evm';
   if (NEAR_ORIGINS.includes(chain)) return 'near';
   return null;
+}
+
+/* The DESTINATION side of the same question, and the side nothing asked.
+   checkDepositAddress below validates the address the solver mints on the ORIGIN chain, so the
+   origin end was covered and the payout end was not. draft.to reached the solver as whatever
+   config held, which made any wrong entry in the address book an allowlisted payout address:
+   the policy engine folds every configured address into the set it treats as our own, so a
+   testnet account id passed every layer and the money left the origin chain anyway.
+
+   Returns the problem, or null when the address is one the destination chain can settle to. The
+   EVM and Solana rules come from the withdraw rail, which decodes rather than pattern-matches;
+   NEAR gets the settlement shape in chain/near.ts, because a solver paying out on NEAR mainnet
+   needs a name under .near or a 64-character implicit id and nothing else. */
+function destinationProblem(chain: ChainId, address: string): string | null {
+  if (chain === 'near') {
+    return isSettlableNearAccount(address)
+      ? null
+      : `${oneLine(address, 60)} is not a NEAR mainnet account id, so a payout on near cannot reach it: ` +
+          'a mainnet account is a name under .near or a 64-character implicit id';
+  }
+  return addressProblem(chain, address);
 }
 
 // ft_transfer is one cross-contract hop and finishes well inside 30 TGas. The unburnt
@@ -131,19 +163,6 @@ function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-// A base-unit field from the API. Never Number(): 18-decimal amounts do not survive a
-// double, and a garbage string must fail loudly rather than become NaN.
-function baseUnits(value: unknown, field: string): bigint {
-  if (typeof value !== 'string' && typeof value !== 'number') {
-    throw new Error(`1click quote is missing ${field}`);
-  }
-  try {
-    return BigInt(value);
-  } catch {
-    throw new Error(`1click quote returned a non-integer ${field}: ${oneLine(value, 40)}`);
-  }
-}
-
 export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
   const { keysPath, tokens } = deps;
   const evm = deps.evm ?? liveEvmPort;
@@ -187,6 +206,15 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
   async function plan(draft: SwapDraft): Promise<Plan> {
     requireVenue(draft);
 
+    /* A floor of zero is not a floor, and the Uniswap rail has refused it since the day its
+       comment was written. The threat is the same on this venue: the tool surface has no
+       recipient field, so a hijacked agent cannot name an attacker, but it can name a price at
+       which one takes the money. Nothing else catches it here either, because the policy engine
+       budgets the INPUT dollars and never sees the floor. */
+    if (!(draft.minAmountOut > 0)) {
+      throw new Error('minAmountOut is 0: refusing to swap with no slippage floor');
+    }
+
     const family = originFamily(draft.chain);
     if (family === null) {
       throw new Error(
@@ -210,9 +238,16 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
       throw new Error(`token registry entry for ${draft.fromSymbol} on ${draft.chain} is not a NEAR account id`);
     }
 
+    // And the payout end, against the family of the chain it lands on rather than the one it
+    // leaves. Before any quote, so a destination nobody can be paid at costs no round trip.
+    const badDestination = destinationProblem(draft.toChain, draft.to);
+    if (badDestination !== null) {
+      throw new Error(`this swap would pay out on ${draft.toChain} to an address it cannot reach: ${badDestination}`);
+    }
+
     const list = await client.tokens();
-    const originAsset = assetIdFor(draft.chain, originInfo.tokenId, list);
-    const destinationAsset = assetIdFor(draft.toChain, destInfo.tokenId, list);
+    const originAsset = assetIdFor(draft.chain, originInfo.tokenId, list, originInfo.decimals);
+    const destinationAsset = assetIdFor(draft.toChain, destInfo.tokenId, list, destInfo.decimals);
     if (!originAsset) throw new Error(`1click does not list ${draft.fromSymbol} on ${draft.chain}`);
     if (!destinationAsset) throw new Error(`1click does not list ${draft.toSymbol} on ${draft.toChain}`);
 
@@ -252,7 +287,54 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
       );
     }
 
+    /* And the floor against the price, which is the half a positive number does not give you.
+       The check above only says the solver guarantees at least what the draft asked for, so a
+       draft floor of one base unit passes it against any quote. Both amounts are base units of
+       the destination token, so this compares exactly. With the two together the solver's
+       guarantee is also inside the bound, since it sits at or above the draft floor. */
+    const amountOut = baseUnits(quote.amountOut, 'amountOut');
+    if (floorTooLow(amountOut, p.minOutBase, MAX_SLIPPAGE_BPS)) {
+      problems.push(
+        `the draft floor of ${draft.minAmountOut} ${draft.toSymbol} is more than ${MAX_SLIPPAGE_BPS / 100}% ` +
+          `below the ${formatUnits(amountOut, p.destDecimals)} ${draft.toSymbol} this swap quotes: a floor ` +
+          'that low is an invitation to a sandwich, not slippage protection',
+      );
+    }
+
     return problems;
+  }
+
+  /* The quote's echo of what we asked for, checked against what we asked for.
+     checkQuote above reads amountIn, minAmountOut and amountOut, and nothing else. A quote
+     priced to a DIFFERENT recipient, or with recipientType silently changed from
+     DESTINATION_CHAIN to INTENTS, passed every one of those checks: the proceeds land in a
+     verifier balance instead of the wallet, which reads as a successful swap and is not. The
+     sibling withdraw rail has had this check since it was written; this one never got it.
+
+     It does not close the trust this rail already accepts and states in its header: the deposit
+     address is chosen by the API and no signature proves who holds it, so a hostile server can
+     still keep the money. What it closes is the quieter case, a server that accepts the request
+     and prices something else. */
+  function checkQuoteEcho(draft: SwapDraft, p: Plan, raw: unknown): string[] {
+    return quoteEchoProblems(raw, {
+      recipient: draft.to,
+      recipientVerb: 'pay',
+      recipientNoun: 'wallet',
+      recipientType: 'DESTINATION_CHAIN',
+      recipientTypeWhy:
+        'a payout credited to an intents balance instead of the wallet is not the swap that was approved',
+      depositType: 'ORIGIN_CHAIN',
+      refundType: 'ORIGIN_CHAIN',
+      refundTypeWhy: 'back to the wallet the deposit left',
+      refundTo: draft.from,
+      originAsset: p.originAsset,
+      destinationAsset: p.destinationAsset,
+      amount: p.amountBase.toString(),
+      noEcho:
+        'there is nothing tying it to the wallet the draft pays out to. The deposit is an ordinary transfer ' +
+        `to an address the solver picked and names ${oneLine(draft.to, 60)} nowhere, so without the echo this ` +
+        'swap cannot be checked and is refused.',
+    });
   }
 
   function priceLines(draft: SwapDraft, quote: OneClickQuote): string[] {
@@ -364,7 +446,7 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
       });
 
       const lines = priceLines(draft, response.quote);
-      const problems = checkQuote(draft, p, response.quote);
+      const problems = [...checkQuote(draft, p, response.quote), ...checkQuoteEcho(draft, p, response.raw)];
 
       if (problems.length > 0) {
         const joined = problems.join('; ');
@@ -399,7 +481,7 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
     });
     const quote = response.quote;
 
-    const problems = checkQuote(draft, p, quote);
+    const problems = [...checkQuote(draft, p, quote), ...checkQuoteEcho(draft, p, response.raw)];
     if (problems.length > 0) throw new Error(`live quote does not match the approved draft: ${problems.join('; ')}`);
 
     if (typeof quote.depositMemo === 'string' && quote.depositMemo !== '') {

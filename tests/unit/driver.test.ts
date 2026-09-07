@@ -87,17 +87,15 @@ test('buildArgv points the child at this repo copy of the MCP server', () => {
   assert.deepEqual(config.mcpServers.phosphor.args, ['/repo/src/mcp.ts']);
 });
 
-test('buildArgv appends a system prompt only when one was given', () => {
-  const bare = buildArgv({ repo: '/repo', nodeBin: '/n', settings: '/s.json', sessionId: 'x' });
-  assert.ok(!bare.includes('--append-system-prompt'));
-  const withPrompt = buildArgv({
-    repo: '/repo',
-    nodeBin: '/n',
-    settings: '/s.json',
-    sessionId: 'x',
-    systemPrompt: 'you drive a wallet',
-  });
-  assert.equal(withPrompt[withPrompt.indexOf('--append-system-prompt') + 1], 'you drive a wallet');
+test('buildArgv puts no prose on the command line at all', () => {
+  /* The role text used to arrive as `--append-system-prompt`, and for a worker that text is built
+     around the brief an operator agent wrote, so `ps -axo args=` published one agent's
+     instructions to every process on the machine. It goes down stdin now, ahead of the first turn.
+     tests/unit/driver-prompt.test.ts is where that half is asserted. */
+  const argv = buildArgv({ repo: '/repo', nodeBin: '/n', settings: '/s.json', sessionId: 'x', model: 'sonnet' });
+  assert.ok(!argv.includes('--append-system-prompt'));
+  assert.ok(!argv.includes('--system-prompt'));
+  assert.ok(!argv.some((flag) => flag.startsWith('--append-system-prompt')));
 });
 
 test('resolveClaudeBin refuses a configured path that does not exist', () => {
@@ -118,7 +116,7 @@ test('buildArgv names a model only when one was chosen', () => {
   assert.equal(chosen[chosen.indexOf('--model') + 1], 'sonnet');
 });
 
-test('buildArgv keeps the lockdown flags when a model and a prompt are both set', () => {
+test('buildArgv keeps the lockdown flags when a model is set', () => {
   // The regression this guards: a flag appended after the lockdown flags is easy to write in a
   // way that lands before --strict-mcp-config or replaces --permission-mode. Both would be
   // silent, and both would end the isolation.
@@ -128,12 +126,11 @@ test('buildArgv keeps the lockdown flags when a model and a prompt are both set'
     settings: '/s.json',
     sessionId: 'x',
     model: 'sonnet',
-    systemPrompt: 'you are phosphor',
   });
   assert.ok(argv.includes('--strict-mcp-config'));
   assert.equal(argv[argv.indexOf('--permission-mode') + 1], 'dontAsk');
   assert.ok(argv.includes('--setting-sources='));
-  assert.equal(argv[argv.indexOf('--append-system-prompt') + 1], 'you are phosphor');
+  assert.equal(argv[argv.indexOf('--model') + 1], 'sonnet');
 });
 
 /* ---------- orphans ----------

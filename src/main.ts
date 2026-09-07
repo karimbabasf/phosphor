@@ -5,6 +5,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import type { Candle, Policy, RiskRow, ViewMode } from './types.ts';
 import { readViewMode, writeViewMode } from './view/mode.ts';
@@ -30,7 +31,7 @@ import { coinbaseSource, cachedCandles } from './candles.ts';
 import { hyperliquidSource } from './hyperliquid.ts';
 import { createMarketData } from './market/index.ts';
 import { createProposalService } from './proposals.ts';
-import { createAgents } from './agents.ts';
+import { MAX_AGENTS, RESERVED_SEATS, createAgents } from './agents.ts';
 import { TRADING_LIMITS, createRunnerHost } from './runner/host.ts';
 import { createAllocator } from './yield/allocator.ts';
 import { readApiWalletKey } from './runner/keys.ts';
@@ -38,8 +39,9 @@ import { createTradeService } from './trade/service.ts';
 import { createInfoClient } from './hl/info.ts';
 import { atr } from './analysis/regime.ts';
 import { createServer } from './server.ts';
-import { readWindowToken } from './http/auth.ts';
-import { sweepOrphans } from './driver.ts';
+import { mintToken, readWindowToken } from './http/auth.ts';
+import { useIdentityValue } from './http/respond.ts';
+import { sweepOrphans, useSeatSecret } from './driver.ts';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const cfg = loadConfig(root);
@@ -70,6 +72,14 @@ try {
 // Released on any ordinary exit, including the crash handler's. A SIGKILL leaves the file
 // behind, which is what the pid inside it is for: the next boot sees a dead pid and clears it.
 process.on('exit', () => instanceLock.release());
+
+/* The audit chain's anchor, on the same event and for the same reason. It is written on a one
+   second timer rather than per line (src/audit.ts, TIP_FLUSH_MS), so every way out this process
+   gets to run code on has to put it down: the shutdown path and the crash handler both end in
+   process.exit, and this is the one listener that covers both without either of them knowing
+   about the audit log. A SIGKILL still leaves the anchor lagging, which is exactly the case
+   verifyChain was built to accept. */
+process.on('exit', () => audit.flushTip());
 
 const store = createStore(cfg.dataDir);
 
@@ -102,26 +112,46 @@ const session = createSession({
   },
 });
 
-/* THE AUDIT CHAIN, CHECKED, once and before the port opens.
+/* THE AUDIT CHAIN, CHECKED, and behind the port rather than in front of it.
    verify() had no caller outside the tests: nothing on boot, no route, not health, so the hash
-   chain that exists to detect tampering was never actually read in production. It walks the whole
-   file, which is why it runs here rather than on a poll, and the answer is reported through
-   /api/health rather than being made a refusal to boot: a damaged record is a thing the owner has
-   to be told about, and refusing to start would take away the app they would read it in. */
-try {
-  const chain = audit.verify();
-  if (chain.ok) {
-    recordAuditChain('ok');
-  } else {
-    const why = `${chain.break.reason} at line ${chain.break.line}: ${chain.break.detail}`;
-    recordAuditChain(`broken: ${why}`);
-    console.error(`phosphor: the audit log does not verify. ${why}`);
-    audit.append('error', `the audit log does not verify: ${why}`, { break: chain.break, lines: chain.lines });
+   chain that exists to detect tampering was never actually read in production. The answer is
+   reported through /api/health rather than being made a refusal to boot: a damaged record is a
+   thing the owner has to be told about, and refusing to start would take away the app they would
+   read it in.
+
+   It used to run HERE, before listen, and it walks the whole file: measured at 1.0 ms on a 1k line
+   log, 7.4 ms at 10k, 37.2 ms at 50k and 154.0 ms at 200k. That is directly in front of first
+   paint, and it is the one boot cost that grows every month the app is used, so an old data
+   directory booted slower than a new one for a reason nobody was waiting on.
+
+   Not a setImmediate, and the difference matters. An immediate scheduled from the listen callback
+   runs in the same loop iteration, before the poll phase takes the first connection, so the socket
+   opens earlier and the first request still waits behind the walk: the port would be open and the
+   window would not be drawn. A delay lets the window's first reads through and spends the walk
+   while the app is idle. Health says `checking` until it lands, which is a different fact from
+   `not checked` and from `ok`, and the window reads all three. */
+export const AUDIT_VERIFY_DELAY_MS = 2_000;
+
+recordAuditChain('checking');
+
+function checkAuditChain(): void {
+  try {
+    const chain = audit.verify();
+    if (chain.ok) {
+      /* Verified against nothing is not verified. A deleted anchor used to fold into ok, which
+         turned a truncated log into a clean boot; it is named now and the window can say so. */
+      recordAuditChain(chain.anchored ? 'ok' : 'unanchored');
+    } else {
+      const why = `${chain.break.reason} at line ${chain.break.line}: ${chain.break.detail}`;
+      recordAuditChain(`broken: ${why}`);
+      console.error(`phosphor: the audit log does not verify. ${why}`);
+      audit.append('error', `the audit log does not verify: ${why}`, { break: chain.break, lines: chain.lines });
+    }
+  } catch (err) {
+    const why = err instanceof Error ? err.message : String(err);
+    recordAuditChain(`broken: the chain could not be read (${why})`);
+    console.error(`phosphor: the audit log could not be verified: ${why}`);
   }
-} catch (err) {
-  const why = err instanceof Error ? err.message : String(err);
-  recordAuditChain(`broken: the chain could not be read (${why})`);
-  console.error(`phosphor: the audit log could not be verified: ${why}`);
 }
 
 /* Read the proposal file once, here, before anything else touches it. An unreadable state file
@@ -323,7 +353,86 @@ if (stranded.length > 0) {
 // for it: one agent_connected when an agent attaches, one agent_disconnected when it goes.
 // Two lines per session instead of 240 an hour, and the transcript still answers "was an
 // agent attached at 19:52".
-const agents = createAgents();
+/* THE SHELL'S HANDSHAKE, off the pipe and before the port opens.
+   Three lines, in this order, written by src-tauri/src/backend.rs and then the pipe is closed:
+
+     1. the window token, which every write from the control page carries
+     2. the boot nonce, which this process echoes in its x-phosphor header so the shell can tell
+        its OWN backend from anything else that took the port
+     3. the roster seat secret, which reaches the agents this app spawns and nothing else
+
+   Why a pipe and not the environment: `ps eww <pid>` prints the environment of any process this
+   user owns, which is the attacker this app is built against. A local process read the token back
+   that way and drove the kill switch, the idle beacon and approve on a real pending proposal,
+   which the audit then recorded as a human's click. Same channel and same argument as the runner's
+   Hyperliquid key. See src/http/auth.ts.
+
+   A bare `npm run app` has nobody above it to send any of this. It gets a terminal on stdin, reads
+   nothing, mints its own token and says so on stderr, and answers the identity header with the
+   fixed word. Nothing is weakened: a backend with no nonce is a backend no shell is waiting on. */
+const HANDSHAKE_WAIT_MS = 2_000;
+
+function readHandshake(
+  stdin: NodeJS.ReadableStream & { isTTY?: boolean } = process.stdin,
+  waitMs = HANDSHAKE_WAIT_MS,
+): Promise<string[]> {
+  // A terminal is nobody about to pipe a secret, so there is nothing to wait for.
+  if (stdin.isTTY === true) return Promise.resolve([]);
+  return new Promise((resolve) => {
+    let buffered = '';
+    let done = false;
+
+    const finish = (): void => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      stdin.off('data', onData);
+      stdin.off('end', finish);
+      stdin.off('error', finish);
+      // Read no further. The handshake is the only thing this process ever wants from stdin.
+      stdin.pause?.();
+      resolve(buffered.split('\n').map((line) => line.trim()));
+    };
+
+    const onData = (chunk: Buffer | string): void => {
+      buffered += String(chunk);
+      // Three values means three newlines, because the shell writes one after the last of them.
+      if (buffered.split('\n').length > 3) finish();
+    };
+
+    const timer = setTimeout(finish, waitMs);
+    timer.unref?.();
+    stdin.on('data', onData);
+    stdin.on('end', finish);
+    stdin.on('error', finish);
+    stdin.resume?.();
+  });
+}
+
+const handshake = await readHandshake();
+
+/* The token still goes through readWindowToken, which owns the rules around it: the length floor,
+   the refusal to mint one when the shell started this process, and the single stderr print for the
+   developer case. It is handed the first line as a stream of its own rather than the real stdin,
+   because the real stdin has already been read to the end of the handshake by then. */
+const windowTokenValue = await readWindowToken({
+  stdin: Readable.from([`${handshake[0] ?? ''}\n`]) as NodeJS.ReadableStream,
+});
+
+// The identity header answers with this boot's nonce from here on. Set before the port opens, so
+// there is no window in which this app answers with the fixed word the shell would refuse.
+useIdentityValue(handshake[1] ?? '');
+
+/* The roster seat secret, and a minted one when nobody sent it.
+   Minting here rather than doing without is what keeps a `npm run app` install working the same
+   way as an installed one: the app's own driver child is recognised because it carries this value,
+   and a developer running the app by hand has an in-app driver too. It is never served, never
+   logged and never printed. It goes to the agents this app spawns, through childEnv, and nowhere
+   else. See RESERVED_SEATS in src/agents.ts for what it decides and what it does not. */
+const seatSecret = (handshake[2] ?? '').length >= 32 ? (handshake[2] as string) : mintToken();
+useSeatSecret(seatSecret);
+
+const agents = createAgents(Date.now, MAX_AGENTS, { reserved: RESERVED_SEATS, secret: seatSecret });
 
 // The drop is swept for because a killed MCP process has no request to ride on. mcp.ts does
 // send a bye on a clean shutdown, so this is the backstop for a SIGKILL rather than the
@@ -369,6 +478,10 @@ function setKill(on: boolean): void {
   p.killSwitch = on;
   savePolicy(cfg.dataDir, p);
   audit.append('kill_switch', on ? 'kill switch ON: all writes refused' : 'kill switch off');
+  /* Anchored now rather than on the next tick of the timer. This is the line somebody goes
+     looking for straight after pulling the switch, and what usually follows a kill switch is
+     somebody stopping the app in a hurry. */
+  audit.flushTip();
 
   // Stop what is already running, not just what tries to start next.
   //
@@ -460,16 +573,9 @@ const allocator =
         onChange: () => server.broadcastState(),
       });
 
-/* THE WINDOW TOKEN, off the pipe and before the port opens.
-   It used to arrive in PHOSPHOR_WINDOW_TOKEN, and `ps eww <pid>` prints the environment of any
-   process this user owns: a local process read it back and drove the kill switch, the idle
-   beacon and approve on a real proposal, which the audit then recorded as a human's click. The
-   shell writes it as the first line of this process's stdin instead and closes the pipe behind
-   it, the same channel and the same argument as the runner's Hyperliquid key.
-   Awaited here rather than inside createServer because every test in this repo builds a server
-   and none of them has a pipe to read. See src/http/auth.ts. */
-const windowTokenValue = await readWindowToken();
-
+/* The window token is read off the shell's pipe far above, beside the boot nonce and the seat
+   secret. It is passed in rather than resolved inside createServer because every test in this repo
+   builds a server and none of them has a pipe to read. See readHandshake and src/http/auth.ts. */
 const server = createServer({
   cfg,
   token: windowTokenValue,
@@ -608,6 +714,11 @@ server.listen(cfg.port, '127.0.0.1', () => {
   const lockState = keystore.state();
   console.log(`phosphor: wallet ${lockState} at ${lockState === 'needs_migration' ? cfg.keysPath : keystore.path()}`);
   audit.append('app_start', `wallet ${lockState}`, { state: lockState });
+
+  // The chain walk, now that there is a window to report it in. See AUDIT_VERIFY_DELAY_MS.
+  const chainTimer = setTimeout(checkAuditChain, AUDIT_VERIFY_DELAY_MS);
+  // Never a reason on its own for this process to stay up.
+  chainTimer.unref?.();
 });
 
 // Ledger refresh loop. Demo mode is static between writes but the refresh also

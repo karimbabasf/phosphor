@@ -39,6 +39,14 @@ export type LedgerSnapshot = {
   chainStatus: Record<ChainId, ChainStatus>; // a failed chain is marked stale, never silently zero
   mode: Mode;
   prices: Record<string, number>; // native symbol -> usd used for pricing
+  /* When each of those prices was fetched, in epoch ms. Present on a live snapshot and absent on
+     a demo or fixture one, and the difference is real: a live price is a reading off one endpoint
+     that can fail, and the old loader then reused the last known value forever with no way for
+     anything downstream to know how old it was. Every budget in the policy engine is measured
+     against a number derived from these, so an unknown age has to be refusable. A snapshot with
+     no map at all carries a static table rather than a reading, and there is no fetch time to be
+     old. See PRICE_STALENESS_MS in src/proposals/draft.ts for the bound. */
+  priceAsOf?: Record<string, number>;
   gas: Record<ChainId, { transferCostUsd: number }>; // est. cost of one stable transfer out of this chain
 };
 

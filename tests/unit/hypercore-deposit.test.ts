@@ -24,6 +24,7 @@ import {
   MIN_DEPOSIT_USDC,
   hypercoreDepositRail,
   minCreditedFor,
+  HYPERCORE_SLIPPAGE_BPS,
 } from '../../src/rails/hypercore-deposit.ts';
 import type { HypercoreDepositDeps, HypercoreEvmPort, HypercoreNearPort } from '../../src/rails/hypercore-deposit.ts';
 import type { HlDepositDraft } from '../../src/types.ts';
@@ -67,12 +68,20 @@ type ClientOverrides = {
   // The live shape, from a real dry quote on 2026-08-20: 50 in, 49.6347 out.
   amountOut?: string;
   amountIn?: string;
+  // The GUARANTEED floor, in base units. Left out it is derived from amountOut and the
+  // tolerance the rail asks for, which is what a real quote returns; null omits the field
+  // entirely, which is a quote that guarantees nothing.
+  minOut?: string | null;
   depositAddress?: unknown;
   depositMemo?: string;
   statuses?: string[];
   quoteThrows?: string;
   assetMissing?: boolean;
   assetDecimals?: number;
+  // What the API echoes back in quoteRequest. Left out it is the request itself, which is what
+  // the live API returns; a patch simulates a server pricing something else, and null a server
+  // that echoes nothing.
+  echo?: Record<string, unknown> | null;
 };
 
 function fakeClient(over: ClientOverrides = {}): { client: OneClickClient; quotes: OneClickQuoteParams[]; submitted: string[] } {
@@ -104,10 +113,33 @@ function fakeClient(over: ClientOverrides = {}): { client: OneClickClient; quote
         quote: {
           amountInFormatted: over.amountIn ?? '50',
           amountOutFormatted: over.amountOut ?? '49.6347',
+          ...(over.minOut === null
+            ? {}
+            : {
+                minAmountOut:
+                  over.minOut ??
+                  String(Math.floor(Number(over.amountOut ?? '49.6347') * (1 - HYPERCORE_SLIPPAGE_BPS / 10_000) * 1e6)),
+              }),
           timeEstimate: 35,
           depositAddress: params.dry ? undefined : (over.depositAddress ?? DEPOSIT_ADDR),
           ...(over.depositMemo !== undefined ? { depositMemo: over.depositMemo } : {}),
         },
+        raw:
+          over.echo === null
+            ? {}
+            : {
+                quoteRequest: {
+                  originAsset: params.originAsset,
+                  destinationAsset: params.destinationAsset,
+                  amount: params.amount,
+                  refundTo: params.refundTo,
+                  refundType: params.refundType,
+                  recipient: params.recipient,
+                  recipientType: params.recipientType,
+                  depositType: params.depositType,
+                  ...(over.echo ?? {}),
+                },
+              },
       } as never;
     },
     async submitDeposit(address, hash) {
@@ -608,4 +640,95 @@ test('a classic account is still read the classic way', async () => {
   assert.equal(state.unified, false);
   assert.equal(state.availableUsdc, 80, 'the perp withdrawable figure');
   assert.equal(state.spot.find((b) => b.coin === 'USDC')?.total, 20);
+});
+
+// ---------- the guaranteed floor, not the expected one ----------
+//
+// checkQuote gated on amountOutFormatted, which is the solver's EXPECTED output. The
+// GUARANTEED floor is minAmountOut, and it is the field every sibling rail checks. The gap
+// between the two is the slippage tolerance, and this rail never set one, so it inherited the
+// API default of one percent: on a 100 USDC deposit the quote promised 99.68, the draft
+// claimed a floor of 99.45, and the number actually guaranteed was about 98.68. The receipt
+// then quoted the promise. Same shape as the bug the floor comment above describes, one field
+// over: the value checked was not the value used.
+
+test('a quote whose guaranteed floor is below minCredited is refused even when its expected output is above it', async () => {
+  // 49.6347 expected clears a floor of 49.45, and 49.00 guaranteed does not.
+  const h = rail({}, { minOut: '49000000' });
+  const out = await h.rail.simulate(draft({ amount: 50, minCredited: 49.45 }));
+
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /guarantees/);
+  assert.match(out.error ?? '', /49\.45/);
+});
+
+test('and the same quote is refused at execute, before anything is signed', async () => {
+  const h = rail({}, { minOut: '49000000' });
+  const out = await h.rail.execute(draft({ amount: 50, minCredited: 49.45 }));
+  assert.equal(out.ok, false);
+  assert.match(out.detail, /guarantees/);
+  assert.equal(h.sends.length, 0, 'nothing was signed');
+});
+
+test('a quote carrying no guaranteed floor at all is refused rather than measured on the expected output', async () => {
+  const h = rail({}, { minOut: null });
+  const out = await h.rail.simulate(draft({ amount: 50, minCredited: 49.45 }));
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /minAmountOut/);
+});
+
+test('the rail names the slippage tolerance it wants rather than inheriting the venue default', async () => {
+  const h = rail();
+  await h.rail.simulate(draft());
+  assert.equal(h.quotes[0]?.slippageToleranceBps, HYPERCORE_SLIPPAGE_BPS);
+});
+
+test('the floor the draft promises is one the venue can guarantee at every measured size', () => {
+  // The same live table as the fee test above, now read the other way: at the tolerance this
+  // rail asks for, the guarantee the venue returns has to clear the floor the draft promises.
+  // Otherwise the promise is one the rail refuses to honour and every honest deposit fails.
+  const live: Array<[number, number]> = [
+    [5, 4.6797],
+    [10, 9.6747],
+    [50, 49.6347],
+    [100, 99.5847],
+    [1000, 998.685],
+  ];
+  for (const [sent, delivered] of live) {
+    const guaranteed = delivered * (1 - HYPERCORE_SLIPPAGE_BPS / 10_000);
+    assert.ok(
+      minCreditedFor(sent) <= guaranteed,
+      `floor ${minCreditedFor(sent).toFixed(4)} for ${sent} is above the ${guaranteed.toFixed(4)} the venue guarantees`,
+    );
+  }
+});
+
+// ---------- the quoteRequest echo ----------
+//
+// checkQuote read the amounts and nothing else, so a quote priced to credit a different
+// Hyperliquid account passed. The account this rail credits is derived from the app's own key,
+// and collateral in any other book is money this app cannot trade.
+
+test('a quote that echoes a different Hyperliquid account is refused', async () => {
+  const h = rail({}, { echo: { recipient: STRANGER } });
+  const out = await h.rail.simulate(draft());
+
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /priced to credit/);
+  assert.match(out.error ?? '', new RegExp(STRANGER));
+});
+
+test('a quote with no echo at all is refused rather than trusted', async () => {
+  const h = rail({}, { echo: null });
+  const out = await h.rail.simulate(draft());
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /no quoteRequest echo/);
+});
+
+test('the echo is checked again at execute, before anything is signed', async () => {
+  const h = rail({}, { echo: { refundTo: STRANGER } });
+  const out = await h.rail.execute(draft());
+  assert.equal(out.ok, false);
+  assert.match(out.detail, /refund on this quote goes to/);
+  assert.equal(h.sends.length, 0, 'nothing was signed');
 });

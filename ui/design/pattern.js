@@ -1,13 +1,24 @@
-/* Phosphor pattern: the hiding-squares field.
+/* Phosphor field: the afterglow.
 
-   A grid of square cells. Each cell holds a square. 3D value-gradient noise
-   (two space axes, one slow time axis) decides how far each square opens:
-   where the noise is low the square fills its cell and the field reads solid,
-   where it is high the square shrinks, slides and twists, and the ground shows
-   at the cell corners.
+   A WebGL shader, not geometry. Slow domain-warped noise lights the app's own
+   green on the ground colour, very faintly, with a vignette that keeps the
+   brightness off the edges where panels and text sit. It should read as the
+   persistence on a phosphor screen: something the window is lit by rather than
+   something drawn on it.
 
-   The field is the app's status light. Four intensities: idle, working,
-   waiting, locked. State changes ease over about 600 ms, they never jump.
+   It replaced a grid of opening squares. That field was legible but loud: it
+   was the only high-contrast surface in a window whose whole job is to be
+   quiet, and hard geometry behind soft panels fought the content instead of
+   sitting under it.
+
+   THE FIELD IS STILL THE STATUS LIGHT. Four intensities, and they are carried
+   by how alive the glow is rather than by how sharp it is: idle drifts, working
+   brightens and quickens, waiting nearly stops and breathes once, locked dims
+   and loses its colour. Every state change eases over about 600 ms. Nothing
+   jumps, because a background that snaps is a background you look at.
+
+   Colour comes from --bg-0 and --ink at mount, so set_theme repaints the field
+   with the rest of the window and refreshColors() is how it is told.
 
    window.PhosphorPattern
      mount(node, options) -> field
@@ -17,411 +28,408 @@
      state             current name
      resize()          re-fit after a layout change
      refreshColors()   re-read the CSS custom properties after a theme change
+     stop()            freeze it; the last painted frame stays on screen
+     resume()          start it drifting again
      destroy()         drop the motion handle and the canvas
      stats()           motion handle stats, for the measurement harness
 
-   Geometry is constrained so a square never leaves its own cell, which is why
-   there is no per-cell clip. Squares share one fill colour, so the only thing
-   that reads is the ground between them.
+   Cheap on purpose. The shader costs 49 hash evaluations per pixel, so the
+   backing store is HALF the CSS size and the browser upscales it: this is a
+   wash with no edge in it, nothing in the field survives to the pixel, and
+   quartering the pixel count is the single largest saving available without
+   changing how it looks. prefers-reduced-motion paints one frame and stops.
+   No WebGL means a static wash rather than a hole.
+
+   It also stops entirely when something covers it: a dialog is open or the
+   wallet is locked. A blurred or dimmed overlay over a 30 fps canvas is a
+   compositor pass that runs for as long as the overlay is up, and the locked
+   screen is the state an unattended app sits in longest.
 */
 (function () {
   'use strict';
 
-  var FALLBACK_SQUARE = [0x16, 0x17, 0x1b];
-  var FALLBACK_GROUND = [0x09, 0x09, 0x0b];
+  var FALLBACK_INK = [0.20, 1.00, 0.40];
+  var FALLBACK_GROUND = [0.035, 0.035, 0.043];
 
-  /* Shape limits at full openness, as fractions of the cell. */
-  var SHRINK = 0.46;      /* how much smaller a fully open square gets */
-  var OFFSET = 0.22;      /* slide, the reference intensity of 18 per 100 */
-  var ROT_MAX = 0.30;     /* radians */
-  var NOISE_SPAN = 4.0;   /* noise units across the whole field width */
-  var BLEED = 0.6;        /* px of overdraw, hides antialiased cell seams */
-  var HALF_BLEED = 0.3;
-  var ROT_EPS = 0.006;    /* below this the cheap fillRect path is used */
-  var EASE_TAU = 200;     /* ms, about 600 ms to settle */
-  var RAMP_STEPS = 32;
-  var NOISE_GAIN = 1.35;  /* lifts Perlin's practical range toward -1..1 */
-
+  /* amp is how far the glow lifts off the ground, and it is the number that
+     keeps this subtle: at 0.10 the brightest point of the field is a tenth of
+     the way from the ground to full green. speed is drift, sat is how much
+     colour survives, pulse is the slow breath only waiting uses. */
   var STATES = {
-    idle:    { open: 0.52, gate: 0.46, zRate: 0.025, contrast: 1.00, rowMix: 0 },
-    working: { open: 1.00, gate: 0.28, zRate: 0.115, contrast: 1.00, rowMix: 0 },
-    waiting: { open: 0.30, gate: 0.50, zRate: 0.000, contrast: 1.00, rowMix: 1 },
-    locked:  { open: 0.26, gate: 0.58, zRate: 0.011, contrast: 0.66, rowMix: 0 }
+    idle:    { amp: 0.085, speed: 0.30, sat: 1.00, pulse: 0.00 },
+    working: { amp: 0.140, speed: 1.00, sat: 1.00, pulse: 0.00 },
+    waiting: { amp: 0.095, speed: 0.06, sat: 1.00, pulse: 1.00 },
+    locked:  { amp: 0.045, speed: 0.12, sat: 0.18, pulse: 0.00 }
   };
 
-  /* ---------------------------------------------------------------- noise */
+  var EASE_TAU = 200; /* ms; about 600 ms to settle, the same as the old field */
 
-  /* Improved Perlin in 3D over a permutation table shuffled from the seed.
-     No dependency: the table, the fade curve and the gradients are all here. */
-  function makeNoise(seed) {
-    var base = new Uint8Array(256);
-    var i;
-    for (i = 0; i < 256; i += 1) base[i] = i;
+  var VERT = [
+    'attribute vec2 a_pos;',
+    'void main() { gl_Position = vec4(a_pos, 0.0, 1.0); }'
+  ].join('\n');
 
-    var s = (seed >>> 0) || 0x9e3779b9;
-    for (i = 255; i > 0; i -= 1) {
-      s ^= (s << 13); s = s >>> 0;
-      s ^= (s >>> 17);
-      s ^= (s << 5); s = s >>> 0;
-      var j = s % (i + 1);
-      var swap = base[i]; base[i] = base[j]; base[j] = swap;
+  /* Value noise rather than a texture or a permutation table: four octaves of
+     it, warped by two more, is all the structure a field this faint can show.
+     Anything sharper is thrown away by the amplitude before it reaches a pixel. */
+  var FRAG = [
+    /* highp where the hardware has it. The hash below multiplies a sine by
+       43758, which at mediump loses enough mantissa to break the noise into
+       visible blocks, and a field whose whole job is to be smooth cannot pay
+       that. mediump is the fallback rather than the default. */
+    '#ifdef GL_FRAGMENT_PRECISION_HIGH',
+    'precision highp float;',
+    '#else',
+    'precision mediump float;',
+    '#endif',
+    'uniform vec2 u_res;',
+    'uniform float u_time;',
+    'uniform vec3 u_ink;',
+    'uniform vec3 u_ground;',
+    'uniform float u_amp;',
+    'uniform float u_sat;',
+    'uniform float u_pulse;',
+    '',
+    'float hash(vec2 p) {',
+    '  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);',
+    '}',
+    '',
+    'float noise(vec2 p) {',
+    '  vec2 i = floor(p);',
+    '  vec2 f = fract(p);',
+    '  vec2 u = f * f * (3.0 - 2.0 * f);',
+    '  return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x),',
+    '             mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);',
+    '}',
+    '',
+    'float fbm(vec2 p) {',
+    '  float v = 0.0;',
+    '  float a = 0.5;',
+    '  for (int i = 0; i < 4; i++) {',
+    '    v += a * noise(p);',
+    '    p *= 2.02;',
+    '    a *= 0.5;',
+    '  }',
+    '  return v;',
+    '}',
+    '',
+    'void main() {',
+    '  vec2 uv = gl_FragCoord.xy / u_res;',
+    '  vec2 p = uv * 2.6;',
+    '  p.x *= u_res.x / max(u_res.y, 1.0);',
+    '',
+    '  vec2 q = vec2(fbm(p + vec2(0.0, u_time * 0.06)),',
+    '                fbm(p + vec2(5.2, 1.3) - u_time * 0.05));',
+    '  float f = fbm(p + 1.7 * q + vec2(u_time * 0.02, 0.0));',
+    '',
+    '  float glow = smoothstep(0.22, 0.86, f);',
+    '',
+    /* The breath only exists while waiting, so idle never pulses and the one
+       state that means "a person has to look at this" is the one that moves
+       differently rather than more. */
+    '  float breath = 1.0 + u_pulse * 0.35 * sin(u_time * 0.9);',
+    '',
+    /* NO VIGNETTE, deliberately. A centre-bright field is the wrong shape for
+       this window: pro caps its grid at 1440 and the field is what fills the
+       margins, so the only part of it anyone sees is the part a vignette darkens
+       most. An even field with panels laid over it puts the glow where there is
+       no content and nothing where there is, which is the same result honestly. */
+    '  float grey = dot(u_ink, vec3(0.2126, 0.7152, 0.0722));',
+    '  vec3 ink = mix(vec3(grey), u_ink, u_sat);',
+    '  vec3 col = u_ground + ink * glow * u_amp * breath;',
+    '',
+    /* A gradient this dark banks into visible bands on an 8-bit display. A
+       sub-step of noise costs nothing and removes them. */
+    '  col += (hash(gl_FragCoord.xy + fract(u_time)) - 0.5) * 0.006;',
+    '',
+    '  gl_FragColor = vec4(col, 1.0);',
+    '}'
+  ].join('\n');
+
+  /* ------------------------------------------------------------- colours */
+
+  /* The tokens arrive as "#33FF66" from the stylesheet or "rgb(51, 255, 102)"
+     once theme.js has written them, so both shapes are read. Anything else
+     leaves the fallback in place rather than painting black on black. */
+  function parseColour(raw) {
+    if (typeof raw !== 'string') return null;
+    var value = raw.trim();
+    var hex = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.exec(value);
+    if (hex) {
+      var body = hex[1];
+      if (body.length === 3) body = body[0] + body[0] + body[1] + body[1] + body[2] + body[2];
+      return [
+        parseInt(body.slice(0, 2), 16) / 255,
+        parseInt(body.slice(2, 4), 16) / 255,
+        parseInt(body.slice(4, 6), 16) / 255
+      ];
     }
-
-    var p = new Uint8Array(512);
-    for (i = 0; i < 512; i += 1) p[i] = base[i & 255];
-
-    function grad(hash, x, y, z) {
-      var h = hash & 15;
-      var u = h < 8 ? x : y;
-      var v = h < 4 ? y : (h === 12 || h === 14 ? x : z);
-      return ((h & 1) === 0 ? u : -u) + ((h & 2) === 0 ? v : -v);
+    var rgb = /^rgba?\(\s*([0-9.]+)[,\s]+([0-9.]+)[,\s]+([0-9.]+)/.exec(value);
+    if (rgb) {
+      return [Number(rgb[1]) / 255, Number(rgb[2]) / 255, Number(rgb[3]) / 255];
     }
-
-    return function noise3(x, y, z) {
-      var fx = Math.floor(x), fy = Math.floor(y), fz = Math.floor(z);
-      var X = fx & 255, Y = fy & 255, Z = fz & 255;
-      x -= fx; y -= fy; z -= fz;
-
-      var u = x * x * x * (x * (x * 6 - 15) + 10);
-      var v = y * y * y * (y * (y * 6 - 15) + 10);
-      var w = z * z * z * (z * (z * 6 - 15) + 10);
-
-      var A = p[X] + Y, AA = p[A] + Z, AB = p[A + 1] + Z;
-      var B = p[X + 1] + Y, BA = p[B] + Z, BB = p[B + 1] + Z;
-
-      var x1 = x - 1, y1 = y - 1, z1 = z - 1;
-
-      var g0 = grad(p[AA], x, y, z);
-      var g1 = grad(p[BA], x1, y, z);
-      var g2 = grad(p[AB], x, y1, z);
-      var g3 = grad(p[BB], x1, y1, z);
-      var g4 = grad(p[AA + 1], x, y, z1);
-      var g5 = grad(p[BA + 1], x1, y, z1);
-      var g6 = grad(p[AB + 1], x, y1, z1);
-      var g7 = grad(p[BB + 1], x1, y1, z1);
-
-      var a0 = g0 + u * (g1 - g0);
-      var a1 = g2 + u * (g3 - g2);
-      var a2 = g4 + u * (g5 - g4);
-      var a3 = g6 + u * (g7 - g6);
-
-      var b0 = a0 + v * (a1 - a0);
-      var b1 = a2 + v * (a3 - a2);
-      return b0 + w * (b1 - b0);
-    };
-  }
-
-  /* ---------------------------------------------------------------- colour */
-
-  function parseColor(text, fallback) {
-    var raw = (text || '').replace(/^\s+|\s+$/g, '');
-    if (!raw) return fallback;
-    if (raw.charAt(0) === '#') {
-      var hex = raw.slice(1);
-      if (hex.length === 3) {
-        hex = hex.charAt(0) + hex.charAt(0) + hex.charAt(1) + hex.charAt(1) +
-              hex.charAt(2) + hex.charAt(2);
-      }
-      if (hex.length < 6) return fallback;
-      var n = parseInt(hex.slice(0, 6), 16);
-      if (isNaN(n)) return fallback;
-      return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-    }
-    var parts = raw.match(/[\d.]+/g);
-    if (parts && parts.length >= 3) {
-      return [Math.round(+parts[0]) & 255, Math.round(+parts[1]) & 255, Math.round(+parts[2]) & 255];
-    }
-    return fallback;
+    return null;
   }
 
   function readToken(name, fallback) {
-    if (!name) return fallback;
-    if (name.charAt(0) !== '-') return parseColor(name, fallback);
-    var style = getComputedStyle(document.documentElement);
-    return parseColor(style.getPropertyValue(name), fallback);
-  }
-
-  /* A ladder of fill strings from the ground colour up to the square colour.
-     Built once, indexed per frame, so easing contrast allocates nothing. */
-  function buildRamp(ground, square) {
-    var ramp = new Array(RAMP_STEPS + 1);
-    for (var i = 0; i <= RAMP_STEPS; i += 1) {
-      var t = i / RAMP_STEPS;
-      var r = Math.round(ground[0] + (square[0] - ground[0]) * t);
-      var g = Math.round(ground[1] + (square[1] - ground[1]) * t);
-      var b = Math.round(ground[2] + (square[2] - ground[2]) * t);
-      ramp[i] = 'rgb(' + r + ',' + g + ',' + b + ')';
+    try {
+      var raw = getComputedStyle(document.documentElement).getPropertyValue(name);
+      return parseColour(raw) || fallback;
+    } catch (err) {
+      return fallback;
     }
-    return ramp;
   }
 
-  /* ----------------------------------------------------------------- mount */
+  /* ---------------------------------------------------------------- gl */
+
+  function compile(gl, type, source) {
+    var shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+      var log = gl.getShaderInfoLog(shader);
+      gl.deleteShader(shader);
+      throw new Error('field shader: ' + log);
+    }
+    return shader;
+  }
+
+  function buildProgram(gl) {
+    var vert = compile(gl, gl.VERTEX_SHADER, VERT);
+    var frag = compile(gl, gl.FRAGMENT_SHADER, FRAG);
+    var program = gl.createProgram();
+    gl.attachShader(program, vert);
+    gl.attachShader(program, frag);
+    gl.linkProgram(program);
+    gl.deleteShader(vert);
+    gl.deleteShader(frag);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      var log = gl.getProgramInfoLog(program);
+      gl.deleteProgram(program);
+      throw new Error('field program: ' + log);
+    }
+    return program;
+  }
+
+  /* The last resort. A field that cannot compile is still a surface the window
+     sits on, so it gets the one static wash CSS can draw rather than nothing. */
+  function mountFallback(node, ink) {
+    var wash = document.createElement('div');
+    wash.style.position = 'absolute';
+    wash.style.inset = '0';
+    wash.style.pointerEvents = 'none';
+    wash.style.background =
+      'radial-gradient(ellipse 120% 90% at 50% 42%, rgba(' +
+      Math.round(ink[0] * 255) + ',' + Math.round(ink[1] * 255) + ',' + Math.round(ink[2] * 255) +
+      ',0.05), transparent 70%)';
+    node.appendChild(wash);
+    return {
+      state: 'idle',
+      setState: function (name) { this.state = STATES[name] ? name : this.state; },
+      resize: function () {},
+      refreshColors: function () {},
+      stop: function () {},
+      resume: function () {},
+      stats: function () { return { frames: 0, meanMs: 0, worstMs: 0 }; },
+      destroy: function () { if (wash.parentNode) wash.parentNode.removeChild(wash); }
+    };
+  }
+
+  /* -------------------------------------------------------------- mount */
 
   function mount(node, options) {
+    if (!node) return null;
     var opts = options || {};
-    var motion = window.PhosphorMotion;
-    /* A cell has a size, not a count. Seventeen across a 1440 window made
-       85 px tiles that read as a floor rather than a field, and the same count
-       inside a 300 px panel made 17 px ones. The target is a physical size and
-       the count follows the container. */
-    var cellPx = Math.max(8, opts.cellPx || 42);
-    var fixedCells = opts.cells ? Math.max(2, Math.round(opts.cells)) : 0;
-    /* Scales the whole amplitude. The hero card sits on top of the field and
-       wants it quieter there than out in the margins. */
-    var amp = opts.amplitude === undefined ? 1 : opts.amplitude;
-    var seed = (opts.seed === undefined ? 1 : opts.seed) >>> 0;
-    var fps = opts.fps || 24;
+    var ink = readToken('--ink', FALLBACK_INK);
+    var ground = readToken('--bg-0', FALLBACK_GROUND);
 
     var canvas = document.createElement('canvas');
-    var css = canvas.style;
-    css.position = 'absolute';
-    css.inset = '0';
-    css.top = '0'; css.left = '0';
-    css.width = '100%';
-    css.height = '100%';
-    css.display = 'block';
-    css.pointerEvents = 'none';
-    css.opacity = String(opts.opacity === undefined ? 1 : opts.opacity);
+    canvas.style.position = 'absolute';
+    canvas.style.inset = '0';
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
+    canvas.style.display = 'block';
+    canvas.style.pointerEvents = 'none';
     node.appendChild(canvas);
 
-    var ctx = canvas.getContext('2d', { alpha: false });
-    var noise3 = makeNoise(seed);
-
-    /* One extra pull on the seed picks the row that shifts while waiting.
-       It never moves once chosen, so a state change cannot make it jump. */
-    var pick = seed || 1;
-    pick ^= (pick << 13); pick = pick >>> 0;
-    pick ^= (pick >>> 17);
-    pick ^= (pick << 5); pick = pick >>> 0;
-    var rowPick = (pick % 1000) / 1000;
-
-    var squareRgb = FALLBACK_SQUARE;
-    var groundRgb = FALLBACK_GROUND;
-    var ramp = null;
-    var groundFill = '#09090B';
-
-    var viewW = 0, viewH = 0, dpr = 1;
-    var cell = 1, cellHalf = 0.5, cols = 2, rows = 1;
-    var originX = 0, originY = 0, shiftRow = 0;
-    var colPx = null, rowPx = null, colN = null, rowN = null;
-
-    var state = STATES[opts.state] ? opts.state : 'idle';
-    var target = STATES[state];
-    var open = target.open, gate = target.gate, zRate = target.zRate;
-    var contrast = target.contrast, rowMix = target.rowMix;
-    var z = 0;
-    var handle = null;
-    var destroyed = false;
-
-    function refreshColors() {
-      squareRgb = readToken(opts.squareColor || '--bg-2', FALLBACK_SQUARE);
-      groundRgb = readToken(opts.groundColor || '--bg-0', FALLBACK_GROUND);
-      ramp = buildRamp(groundRgb, squareRgb);
-      groundFill = ramp[0];
-      if (handle) handle.invalidate();
+    /* The field is the only canvas that mounts before its own screen does, so
+       it checks for the loop rather than assuming the tag above it ran. */
+    if (!window.PhosphorMotion) {
+      if (canvas.parentNode) canvas.parentNode.removeChild(canvas);
+      return mountFallback(node, ink);
     }
 
-    function layout() {
-      var fit = motion.fitCanvas(canvas, 2);
-      viewW = fit.w; viewH = fit.h; dpr = fit.dpr;
-
-      cols = fixedCells || Math.max(2, Math.round(viewW / cellPx));
-      cell = viewW / cols;
-      cellHalf = cell * 0.5;
-      rows = Math.max(1, Math.ceil(viewH / cell) + 1);
-      originX = 0;
-      originY = -(rows * cell - viewH) * 0.5;
-      shiftRow = Math.min(rows - 1, Math.floor(rowPick * rows));
-
-      var step = NOISE_SPAN / cols;
-      colPx = new Float32Array(cols);
-      colN = new Float32Array(cols);
-      rowPx = new Float32Array(rows);
-      rowN = new Float32Array(rows);
-      var i;
-      for (i = 0; i < cols; i += 1) {
-        colPx[i] = originX + i * cell;
-        colN[i] = i * step;
-      }
-      for (i = 0; i < rows; i += 1) {
-        rowPx[i] = originY + i * cell;
-        rowN[i] = i * step;
-      }
+    var gl = null;
+    try {
+      var attrs = { alpha: false, antialias: false, depth: false, stencil: false, powerPreference: 'low-power' };
+      gl = canvas.getContext('webgl', attrs) || canvas.getContext('experimental-webgl', attrs);
+    } catch (err) {
+      gl = null;
+    }
+    if (!gl) {
+      if (canvas.parentNode) canvas.parentNode.removeChild(canvas);
+      return mountFallback(node, ink);
     }
 
-    /* Every param eases toward its target with the same framerate independent
-       exponential step, so a state change is one smooth slide, not a cut. */
-    function ease(dtMs) {
-      var k = 1 - Math.exp(-dtMs / EASE_TAU);
-      open += (target.open - open) * k;
-      gate += (target.gate - gate) * k;
-      zRate += (target.zRate - zRate) * k;
-      contrast += (target.contrast - contrast) * k;
-      rowMix += (target.rowMix - rowMix) * k;
+    var program;
+    try {
+      program = buildProgram(gl);
+    } catch (err) {
+      if (window.console && console.error) console.error('[field]', err);
+      if (canvas.parentNode) canvas.parentNode.removeChild(canvas);
+      return mountFallback(node, ink);
     }
 
-    function snap() {
-      open = target.open; gate = target.gate; zRate = target.zRate;
-      contrast = target.contrast; rowMix = target.rowMix;
-    }
+    var buffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+    var aPos = gl.getAttribLocation(program, 'a_pos');
+    gl.enableVertexAttribArray(aPos);
+    gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+    gl.useProgram(program);
 
-    function settled() {
-      return Math.abs(target.open - open) < 0.002 &&
-             Math.abs(target.gate - gate) < 0.002 &&
-             Math.abs(target.zRate - zRate) < 0.0004 &&
-             Math.abs(target.contrast - contrast) < 0.004 &&
-             Math.abs(target.rowMix - rowMix) < 0.004;
-    }
+    var uni = {
+      res: gl.getUniformLocation(program, 'u_res'),
+      time: gl.getUniformLocation(program, 'u_time'),
+      ink: gl.getUniformLocation(program, 'u_ink'),
+      ground: gl.getUniformLocation(program, 'u_ground'),
+      amp: gl.getUniformLocation(program, 'u_amp'),
+      sat: gl.getUniformLocation(program, 'u_sat'),
+      pulse: gl.getUniformLocation(program, 'u_pulse')
+    };
 
-    function draw(now, dtMs) {
-      var dt = dtMs > 0 ? (dtMs > 100 ? 100 : dtMs) : 16;
-      if (motion.reduced()) snap(); else ease(dt);
-      z += zRate * dt * 0.001;
+    var stateName = STATES[opts.state] ? opts.state : 'idle';
+    var target = STATES[stateName];
+    /* Current values start ON the target, so the first paint is the state the
+       window is actually in rather than a fade up from idle. */
+    var live = { amp: target.amp, speed: target.speed, sat: target.sat, pulse: target.pulse };
+    var clock = 0;
+    var lost = false;
 
-      var base = dpr;
-      ctx.setTransform(base, 0, 0, base, 0, 0);
-      ctx.fillStyle = groundFill;
-      ctx.fillRect(0, 0, viewW, viewH);
-
-      var level = Math.round(contrast * RAMP_STEPS);
-      if (level < 0) level = 0; else if (level > RAMP_STEPS) level = RAMP_STEPS;
-      if (level === 0) { finish(); return; }
-      ctx.fillStyle = ramp[level];
-
-      var span = 1 - gate;
-      if (span < 0.02) span = 0.02;
-      var invSpan = 1 / span;
-      var slide = OFFSET * cell * amp;
-      var rowShift = cell * 0.42 * rowMix;
-      var rowKeep = 1 - rowMix;
-      var rowSide = cell * 0.84;
-      var transformed = false;
-      var r, c;
-
-      for (r = 0; r < rows; r += 1) {
-        var py = rowPx[r];
-        var ny = rowN[r];
-        var isShift = (r === shiftRow && rowMix > 0.002);
-
-        for (c = 0; c < cols; c += 1) {
-          var nx = colN[c];
-
-          var hn = (noise3(nx, ny, z) * NOISE_GAIN * 0.5 + 0.5 - gate) * invSpan;
-          if (hn < 0) hn = 0; else if (hn > 1) hn = 1;
-          hn = hn * hn * (3 - 2 * hn); /* pushes cells toward shut or open */
-
-          var mag = hn * open;
-          var side = cell - cell * SHRINK * mag;
-          var dx = 0, dy = 0, rot = 0;
-
-          if (mag > 0.0005) {
-            var ox = noise3(nx + 41.3, ny + 17.7, z * 0.83 + 9.1);
-            var oy = noise3(nx + 5.9, ny + 63.1, z * 0.71 + 31.4);
-            dx = ox * slide * mag;
-            dy = oy * slide * mag;
-            rot = (ox * 0.6 - oy * 0.6) * ROT_MAX * mag;
-          }
-
-          if (isShift) {
-            side = side + (rowSide - side) * rowMix;
-            dx = dx * rowKeep + rowShift;
-            dy = dy * rowKeep;
-            rot = rot * rowKeep;
-          }
-
-          var half = side * 0.5;
-          var cx = colPx[c] + cellHalf;
-          var cy = py + cellHalf;
-          var spin = rot < 0 ? -rot : rot;
-
-          if (spin > ROT_EPS) {
-            var co = Math.cos(rot), si = Math.sin(rot);
-            var reach = half * ((co < 0 ? -co : co) + (si < 0 ? -si : si));
-            var room = cellHalf - reach;
-            if (room < 0) room = 0;
-            if (dx > room) dx = room; else if (dx < -room) dx = -room;
-            if (dy > room) dy = room; else if (dy < -room) dy = -room;
-            ctx.setTransform(base * co, base * si, -base * si, base * co,
-                             base * (cx + dx), base * (cy + dy));
-            ctx.fillRect(-half - HALF_BLEED, -half - HALF_BLEED,
-                         side + BLEED, side + BLEED);
-            transformed = true;
-          } else {
-            var flat = cellHalf - half;
-            if (flat < 0) flat = 0;
-            if (dx > flat) dx = flat; else if (dx < -flat) dx = -flat;
-            if (dy > flat) dy = flat; else if (dy < -flat) dy = -flat;
-            if (transformed) {
-              ctx.setTransform(base, 0, 0, base, 0, 0);
-              transformed = false;
-            }
-            var x0 = Math.round((cx + dx - half) * dpr) / dpr;
-            var y0 = Math.round((cy + dy - half) * dpr) / dpr;
-            var x1 = Math.round((cx + dx + half) * dpr) / dpr;
-            var y1 = Math.round((cy + dy + half) * dpr) / dpr;
-            ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
-          }
-        }
-      }
-
-      if (transformed) ctx.setTransform(base, 0, 0, base, 0, 0);
-      finish();
-    }
-
-    /* Waiting settles into a held frame. Once nothing is left to move there is
-       nothing to redraw, so the handle goes static and stops costing frames. */
-    function finish() {
-      if (!handle || motion.reduced()) return;
-      if (zRate < 0.0004 && zRate > -0.0004 && settled() && !handle.isStatic) {
-        handle.setStatic(true);
-      }
-    }
-
-    refreshColors();
-    layout();
-    if (motion.reduced()) snap();
-
-    handle = motion.register(node, draw, {
-      fps: fps,
-      isStatic: motion.reduced()
+    canvas.addEventListener('webglcontextlost', function (event) {
+      event.preventDefault();
+      lost = true;
+    });
+    canvas.addEventListener('webglcontextrestored', function () {
+      lost = false;
     });
 
-    var unsubscribe = motion.onReducedChange(function (isReduced) {
-      if (destroyed) return;
-      if (isReduced) { snap(); handle.setStatic(true); }
-      else { handle.setStatic(false); handle.start(); }
-      handle.invalidate();
+    function fit() {
+      /* Half a CSS pixel, not the display's ratio: there is no edge in this
+         field for even the first device pixel to resolve, let alone a second,
+         and the canvas is stretched back to full size by the compositor for
+         free. A quarter of the pixels, the same picture. */
+      var size = window.PhosphorMotion.fitCanvas(canvas, 0.5);
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      return size;
+    }
+    fit();
+
+    function draw(now, since) {
+      if (lost) return;
+      var step = Math.min(since || 16, 64);
+
+      /* Exponential ease toward the target, frame-rate independent, so a state
+         change is a settle rather than a cut and a dropped frame cannot make it
+         jump. */
+      var k = 1 - Math.exp(-step / EASE_TAU);
+      live.amp += (target.amp - live.amp) * k;
+      live.speed += (target.speed - live.speed) * k;
+      live.sat += (target.sat - live.sat) * k;
+      live.pulse += (target.pulse - live.pulse) * k;
+
+      /* Time advances by the eased speed rather than the wall clock, so slowing
+         the drift never rewinds or skips the field. */
+      clock += (step / 1000) * live.speed;
+
+      gl.uniform2f(uni.res, canvas.width, canvas.height);
+      gl.uniform1f(uni.time, clock);
+      gl.uniform3f(uni.ink, ink[0], ink[1], ink[2]);
+      gl.uniform3f(uni.ground, ground[0], ground[1], ground[2]);
+      gl.uniform1f(uni.amp, live.amp);
+      gl.uniform1f(uni.sat, live.sat);
+      gl.uniform1f(uni.pulse, live.pulse);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    }
+
+    var handle = window.PhosphorMotion.register(node, draw, {
+      fps: 30,
+      isStatic: window.PhosphorMotion.reduced()
     });
+
+    /* Reduced motion is a still field, not an absent one: the glow is painted
+       once and left there. Turning the preference off starts it drifting
+       without a reload. */
+    var dropReduced = window.PhosphorMotion.onReducedChange(function () {
+      handle.setStatic(window.PhosphorMotion.reduced());
+    });
+
+    /* Covered means a dialog is open or the wallet is locked. Both put an
+       opaque or dimmed layer over the whole field, so every frame it paints
+       under one is a frame nobody sees and a compositor pass nobody asked for.
+       The attribute filter is what makes this cheap: the observer only wakes
+       for `data-locked` and `open`, which move a handful of times a session,
+       and the selector runs only then. Nothing here polls. */
+    var covered = false;
+    var watcher = null;
+
+    function coveredNow() {
+      try {
+        if (document.body && document.body.getAttribute('data-locked') === 'true') return true;
+        return document.querySelector('dialog[open]') !== null;
+      } catch (err) {
+        return false;
+      }
+    }
+
+    function recheck() {
+      var next = coveredNow();
+      if (next === covered) return;
+      covered = next;
+      if (covered) handle.stop();
+      else handle.start();
+    }
+
+    if (typeof MutationObserver === 'function') {
+      watcher = new MutationObserver(recheck);
+      watcher.observe(document.documentElement, {
+        attributes: true,
+        subtree: true,
+        attributeFilter: ['data-locked', 'open']
+      });
+      recheck();
+    }
 
     var field = {
-      state: state,
+      state: stateName,
       setState: function (name) {
-        if (!STATES[name] || name === state) return;
-        state = name;
-        field.state = name;
+        if (!STATES[name] || name === stateName) return;
+        stateName = name;
         target = STATES[name];
-        if (motion.reduced()) { snap(); handle.invalidate(); return; }
-        handle.setStatic(false);
-        handle.start();
+        field.state = name;
         handle.invalidate();
       },
       resize: function () {
-        layout();
-        handle.setStatic(motion.reduced());
+        fit();
         handle.invalidate();
       },
-      refreshColors: refreshColors,
+      refreshColors: function () {
+        ink = readToken('--ink', FALLBACK_INK);
+        ground = readToken('--bg-0', FALLBACK_GROUND);
+        handle.invalidate();
+      },
+      stop: function () { handle.stop(); },
+      resume: function () { if (!covered) handle.start(); },
       stats: function () { return handle.stats(); },
-      resetStats: function () { handle.resetStats(); },
       destroy: function () {
-        if (destroyed) return;
-        destroyed = true;
-        unsubscribe();
+        dropReduced();
+        if (watcher) watcher.disconnect();
         handle.destroy();
+        gl.deleteProgram(program);
+        gl.deleteBuffer(buffer);
         if (canvas.parentNode) canvas.parentNode.removeChild(canvas);
       }
     };
-
     return field;
   }
 

@@ -51,6 +51,16 @@ var SPLIT_DOUBLE_MS = 400; /* two presses this close together are one double cli
  * 96 for the gate is one pending proposal with its two buttons still on screen.
  */
 var SPLIT_PAGES = {
+  /* The stage: the conversation column against the world. The person may widen
+     the transcript to 640 and narrow it to 360; the world never goes under 560,
+     which is one Basic column with its margins. */
+  stage: {
+    conversation: {
+      axis: 'x', sign: 1, min: 360,
+      pane: '.conversation', host: '.stage', prop: '--conv',
+      give: '.world', giveMin: 560,
+    },
+  },
   /* One handle in the whole window now, because pro is a grid and basic is a
      column: neither needs dragging. Trade keeps its rail, and the floors are
      raised so nothing can be squeezed below its own content.
@@ -285,38 +295,47 @@ function splitWire(h) {
 }
 
 function splitBoot() {
-  var deck = document.querySelector('[data-split]');
-  if (!deck) return;
-  var page = deck.getAttribute('data-split');
-  var table = SPLIT_PAGES[page];
-  if (!table) return;
+  /* Every deck in the document, each booted once. The stage boots from the shell
+     and trade boots when its view is built, and both go through here. */
+  var decks = document.querySelectorAll('[data-split]');
+  var fresh = [];
+  for (var d = 0; d < decks.length; d++) {
+    var deck = decks[d];
+    if (deck.getAttribute('data-split-booted') === 'true') continue;
+    var page = deck.getAttribute('data-split');
+    var table = SPLIT_PAGES[page];
+    if (!table) continue;
+    deck.setAttribute('data-split-booted', 'true');
 
-  var nodes = deck.querySelectorAll('[data-split-handle]');
-  for (var i = 0; i < nodes.length; i++) {
-    var node = nodes[i];
-    var id = node.getAttribute('data-split-handle');
-    var conf = table[id];
-    /* A handle with no entry in the table above is markup that got ahead of this file. It
-       stays inert rather than guessing at a geometry nobody wrote down. */
-    if (!conf) continue;
-    var pane = document.querySelector(conf.pane);
-    var host = conf.host === conf.pane ? pane : document.querySelector(conf.host);
-    if (!pane || !host) continue;
-    SPLIT_LIVE.push({
-      page: page, id: id, conf: conf, node: node, pane: pane, host: host,
-      give: conf.give ? document.querySelector(conf.give) : null,
-      bounds: null, size: null, frame: 0, from: 0, start: 0, pending: 0, active: false, lastDown: 0,
-    });
+    var nodes = deck.querySelectorAll('[data-split-handle]');
+    for (var i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      var id = node.getAttribute('data-split-handle');
+      var conf = table[id];
+      /* A handle with no entry in the table above is markup that got ahead of this file. It
+         stays inert rather than guessing at a geometry nobody wrote down. */
+      if (!conf) continue;
+      var pane = document.querySelector(conf.pane);
+      var host = conf.host === conf.pane ? pane : document.querySelector(conf.host);
+      if (!pane || !host) continue;
+      var live = {
+        page: page, id: id, conf: conf, node: node, pane: pane, host: host,
+        give: conf.give ? document.querySelector(conf.give) : null,
+        bounds: null, size: null, frame: 0, from: 0, start: 0, pending: 0, active: false, lastDown: 0,
+      };
+      SPLIT_LIVE.push(live);
+      fresh.push(live);
+    }
   }
 
   /* Columns before panels, and it is not cosmetic: a panel's height depends on how wide its
      column is, so restoring a height against a column that is about to move would clamp it
      against a layout that never existed. */
-  for (var x = 0; x < SPLIT_LIVE.length; x++) {
-    if (SPLIT_LIVE[x].conf.axis === 'x') splitRestore(SPLIT_LIVE[x]);
+  for (var x = 0; x < fresh.length; x++) {
+    if (fresh[x].conf.axis === 'x') splitRestore(fresh[x]);
   }
-  for (var y = 0; y < SPLIT_LIVE.length; y++) {
-    if (SPLIT_LIVE[y].conf.axis === 'y') splitRestore(SPLIT_LIVE[y]);
+  for (var y = 0; y < fresh.length; y++) {
+    if (fresh[y].conf.axis === 'y') splitRestore(fresh[y]);
   }
-  for (var w = 0; w < SPLIT_LIVE.length; w++) splitWire(SPLIT_LIVE[w]);
+  for (var w = 0; w < fresh.length; w++) splitWire(fresh[w]);
 }

@@ -1051,3 +1051,88 @@ test('the balance is read for our own account and the destination asset', async 
     `${OWNER.toLowerCase()}:${DEST_ASSET}`,
   ]);
 });
+
+// ---------- the slippage floor ----------
+//
+// Worse here than on any other venue. The read-back below subtracts the verifier balance before
+// the swap from the balance after it, so that a swap crediting nothing is not reported as a
+// success. Against a floor of zero that read-back reported a total loss as a measured success,
+// in the sentence that advertises the measurement.
+
+test('a swap with minAmountOut 0 is refused before any quote', async () => {
+  const h = harness();
+  const out = await railOf(h).simulate(draftOf({ minAmountOut: 0 }));
+
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /no slippage floor/);
+  assert.equal(h.quotes.length, 0, 'refused before the API was asked for anything');
+});
+
+test('and execute refuses the same draft rather than signing it', async () => {
+  const h = harness();
+  await assert.rejects(() => railOf(h).execute(draftOf({ minAmountOut: 0 })), /no slippage floor/);
+  assert.equal(h.signedPayloads.length, 0, 'nothing was signed');
+});
+
+test('a solver floor more than 20 percent below the quote is refused', async () => {
+  const h = harness({ quote: quoteOf({ minAmountOut: '70000000' }) });
+  const out = await railOf(h).simulate(draftOf({ minAmountOut: 60 }));
+
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /below the .* this swap quotes/);
+});
+
+test('a solver floor a normal distance under the quote still passes', async () => {
+  const h = harness();
+  const out = await railOf(h).simulate(draftOf({ minAmountOut: 99 }));
+  assert.equal(out.ok, true, out.summary);
+});
+
+// ---------- the echo, at simulate as well as execute ----------
+//
+// simulate built its problems from checkQuote alone and execute added checkQuoteEcho, so a
+// proposal whose quote echoed another account passed the approval gate and failed after a human
+// had clicked. No funds move either way; it costs a click and reads as a bug. The withdraw rail
+// has run both checks in both places since it was written.
+
+test('a quote whose echo names another account is refused at simulate, not only at execute', async () => {
+  const h = harness({ echo: echoOf({ recipient: '0x000000000000000000000000000000000000dEaD' }) });
+  const out = await railOf(h).simulate(draftOf());
+
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /priced to credit .* not our account/);
+});
+
+test('and a quote with no echo at all never reaches the approval gate either', async () => {
+  const h = harness({ echo: null });
+  const out = await railOf(h).simulate(draftOf());
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /carries no quoteRequest echo/);
+});
+
+test('a token_diff crediting zero is refused when the draft floor is zero', () => {
+  // The pure checker, called directly with the floor the rail no longer produces. Every amount
+  // check inside compares against minOutBase, so a floor of zero made all of them "receive >= 0"
+  // and a payload crediting nothing was accepted and would have been signed.
+  const problems = checkIntentPayload(
+    JSON.stringify({
+      signer_id: OWNER,
+      verifying_contract: INTENTS_VERIFIER,
+      nonce: 'n',
+      deadline: new Date(NOW + 60_000).toISOString(),
+      intents: [{ intent: 'token_diff', diff: { [ORIGIN_ASSET]: '-100000000', [DEST_ASSET]: '0' } }],
+    }),
+    {
+      signerId: OWNER,
+      originAsset: ORIGIN_ASSET,
+      destinationAsset: DEST_ASSET,
+      amountBase: 100000000n,
+      minOutBase: 0n,
+      now: NOW,
+      maxDeadlineMs: 4 * 24 * 3600e3,
+    },
+  );
+
+  assert.ok(problems.length > 0, 'a zero floor is not a floor, whatever the payload says');
+  assert.match(problems[0], /no slippage floor/);
+});

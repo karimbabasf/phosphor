@@ -144,10 +144,11 @@ test('a SIGKILL mid-run loses nothing that was already written', async () => {
 
 test('a proposal stranded mid-execution comes back as an unknown outcome, not as running', async () => {
   const dir = tmpDir();
-  // Written by hand: this is exactly the row a process killed between "executing" and the rail's
-  // answer leaves behind, and nothing on any surface could act on it.
-  createStore(dir).put({
-    id: 'stranded',
+  const store = createStore(dir);
+  // Written by hand: these are exactly the rows a process killed between "executing" and the
+  // rail's answer leaves behind, and nothing on any surface could act on them.
+  const stranded = (id: string, amountUsd: number, txids: string[]): Proposal => ({
+    id,
     kind: 'intents_deposit',
     createdAt: new Date().toISOString(),
     decidedAt: new Date().toISOString(),
@@ -157,25 +158,36 @@ test('a proposal stranded mid-execution comes back as an unknown outcome, not as
       kind: 'intents_deposit',
       chain: 'arb',
       symbol: 'USDC',
-      amount: 50,
-      amountUsd: 50,
+      amount: amountUsd,
+      amountUsd,
       from: '0x1111111111111111111111111111111111111111',
       to: '0x2222222222222222222222222222222222222222',
     } as unknown as Proposal['draft'],
     simulation: null,
     verdict: { outcome: 'allow', reasons: [] },
-    result: { ok: false, detail: 'mid flight', txids: ['0x' + 'c'.repeat(64)] },
+    result: { ok: false, detail: 'mid flight', txids },
   });
+  store.put(stranded('with-hash', 50, ['0x' + 'c'.repeat(64)]));
+  store.put(stranded('no-hash', 700, []));
 
   const port = takePort();
   const app = await boot(dir, port);
   try {
     const out = await request(port, '/api/state');
     const state = JSON.parse(out.body) as { proposals: Proposal[]; dailyLimit: { spentUsd: number } | null };
-    const row = state.proposals.find((p) => p.id === 'stranded');
-    assert.equal(row?.status, 'needs_reconciliation');
-    assert.match(row?.result?.detail ?? '', /may already have sent/);
-    assert.equal(state.dailyLimit?.spentUsd, 0, 'and it does not hold the day\'s budget');
+    const withHash = state.proposals.find((p) => p.id === 'with-hash');
+    const noHash = state.proposals.find((p) => p.id === 'no-hash');
+    assert.equal(withHash?.status, 'needs_reconciliation');
+    assert.match(withHash?.result?.detail ?? '', /may already have sent/);
+    assert.equal(noHash?.status, 'needs_reconciliation');
+    assert.match(noHash?.result?.detail ?? '', /may or may not have sent/);
+
+    /* The two halves are different facts and used to be treated as one. A hash is evidence that
+       funds left the wallet, so it is charged: the same row written as `failed` used to charge
+       nothing, which is how $2,000 of a $3,000 send could leave against a budget that recorded
+       zero. No hash is the app genuinely not knowing, and a row it cannot speak for must not
+       hold a day's budget hostage with no way for the human to clear it. */
+    assert.equal(state.dailyLimit?.spentUsd, 50, 'the hash is charged and the row without one is not');
   } finally {
     await app.stop();
   }

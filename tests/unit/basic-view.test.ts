@@ -8,6 +8,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { buildBasic } from '../../src/view/basic.ts';
 import type { BasicInput, PriceReading } from '../../src/view/basic.ts';
 import type {
@@ -290,6 +291,61 @@ test('a policy change says plainly that it moves no money', () => {
   const view = buildBasic(baseInput({ proposals: [proposal({ draft, kind: 'policy_change' })] }));
   assert.match(view.ask!.afterLine, /does not move any money/);
   assert.match(view.ask!.headline, /raise the cap/);
+});
+
+/* The agent writes the patch AND the sentence beside it, so a card that shows only the sentence
+   shows nothing a hostile patch cannot choose. This screen used to show exactly that: the
+   agent's words in the headline and "This does not move any money. It changes a rule." below.
+   The app already computed the before/after sentences at src/proposals/draft.ts and nothing
+   rendered them anywhere. */
+test('a rule change lists every rule it removes and every rule it adds', () => {
+  const draft: WriteDraft = {
+    kind: 'policy_change',
+    patch: { outbound: { humanClickAboveUsd: 1_000_000_000 } },
+    // The lie. The patch does something else entirely and this is the only thing the card used
+    // to carry about it.
+    sentence: 'raise the gas floor on base',
+  };
+  const view = buildBasic(
+    baseInput({
+      proposals: [
+        proposal({
+          draft,
+          kind: 'policy_change',
+          simulation: {
+            ok: true,
+            summary: 'the agent asked for: raise the gas floor on base',
+            policyDiff: {
+              before: ['Ask me before anything above $100.', 'Keep at least $25 of gas on base.', 'Never move funds into: acme.'],
+              after: ['Ask me before anything above $1,000,000,000.'],
+            },
+          },
+        }),
+      ],
+    }),
+  );
+
+  const facts = view.ask!.facts.join('\n');
+  assert.match(facts, /removed: "Ask me before anything above \$100\."/);
+  assert.match(facts, /removed: "Keep at least \$25 of gas on base\."/, 'a deleted gas floor is a removal, and mergePatch deletes them wholesale');
+  assert.match(facts, /removed: "Never move funds into: acme\."/, 'so is a deleted forbidden issuer');
+  assert.match(facts, /added: "Ask me before anything above \$1,000,000,000\."/);
+});
+
+test('a rule change that reads identically afterwards says so rather than showing an empty list', () => {
+  const draft: WriteDraft = { kind: 'policy_change', patch: {}, sentence: 'tidy the rules' };
+  const view = buildBasic(
+    baseInput({
+      proposals: [
+        proposal({
+          draft,
+          kind: 'policy_change',
+          simulation: { ok: true, summary: 'the agent asked for: tidy the rules', policyDiff: { before: ['Ask me before anything above $100.'], after: ['Ask me before anything above $100.'] } },
+        }),
+      ],
+    }),
+  );
+  assert.match(view.ask!.facts.join('\n'), /None of your rules would actually read any differently/);
 });
 
 // ---------- both found by driving the app, not by an assertion ----------
@@ -825,4 +881,51 @@ test('a stale chain suppresses the earning line, like every other number here', 
   );
   assert.equal(view.totalUsd, null);
   assert.equal(view.earning, null);
+});
+
+// ---------- the window that renders it ----------
+//
+// The five surfaces are how the beam finds its targets: ui/beam/trace.js maps a tool to a
+// data-surface id and ui/beam/beam.js looks that id up inside the active view. A panel that
+// loses its id does not fail here at render time, it fails silently as a tool call that lands
+// nowhere, which is exactly the feedback this window exists to give.
+
+// The source with its comments taken out. A comment that names the bug it fixed would
+// otherwise satisfy an assertion looking for the bug.
+function codeOf(path: string): string {
+  return readFileSync(new URL(path, import.meta.url), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+}
+
+test('Basic carries every surface the beam aims at, and no Freeze of its own', () => {
+  const source = codeOf('../../ui/screens/basic.js');
+  for (const id of ['holdings', 'rules', 'earning', 'moneyin', 'activity']) {
+    assert.ok(source.includes(`'${id}'`), `ui/screens/basic.js must place the ${id} surface`);
+  }
+  // The top bar carries the brake now. Two copies of one action on one screen is how a person
+  // stops believing either of them.
+  assert.ok(!source.includes('Freeze everything'));
+});
+
+test('Bring it back names the chain the route demands', () => {
+  // POST /api/yield/withdraw refuses any chain but eth, base or arb, and an absent one with
+  // them: "chain must be one of eth, base, arb; got ''". The button used to send {} , so every
+  // press came back as that sentence with " Nothing left your wallet." on the end, and the one
+  // control for taking money out of a lending position had never worked.
+  const source = codeOf('../../ui/screens/basic.js');
+  assert.ok(!source.includes('yieldWithdraw({})'), 'the withdraw call must carry a chain');
+  assert.ok(source.includes('yieldWithdraw({ chain: chain })'));
+  assert.ok(source.includes("['eth', 'base', 'arb']"), 'the chains the route accepts');
+});
+
+test('the earning line is read as the sentence the server sends, not as an object', () => {
+  // BasicView.earning is `string | null` (src/types.ts, built in src/view/basic.ts). Reading
+  // .line, .summary and .madeLine off a string yields undefined three times, and because the
+  // string itself is truthy the panel unhid and drew an empty paragraph above the button.
+  const source = codeOf('../../ui/screens/basic.js');
+  for (const key of ['.madeLine', 'earning.line', 'earning.summary']) {
+    assert.ok(!source.includes(key), `ui/screens/basic.js still treats earning as an object: ${key}`);
+  }
+  assert.ok(source.includes("typeof basic.earning === 'string'"));
 });

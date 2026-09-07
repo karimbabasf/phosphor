@@ -1,15 +1,25 @@
 // The keystore: one encrypted file, one unlocked handle, and the four things that produce it
 // (create, import, migrate, unlock).
 //
-// THE FILE. `keys.enc.json` sits beside where `keys.json` lived, at 0600, and holds three
-// parts: a plaintext header, the data key wrapped under the password, and the payload
-// encrypted under the data key. The header is the additional authenticated data for both, so
-// it cannot be edited: the addresses in it are what every read path uses while the wallet is
-// locked, and an attacker who could swap the EVM address there would own the receive screen.
+// THE FILE. `keys.enc.json` sits beside where `keys.json` lived, at 0600, and holds four
+// parts: a plaintext header, the data key wrapped under the password, the payload encrypted
+// under the data key, and a proof of the header's addresses under the same password.
+//
+// THE HEADER IS NOT A SOURCE OF TRUTH, and treating it as one cost this app its worst bug. It
+// is the additional authenticated data for both envelopes, so an edit to it does break the tag
+// -- on the next unlock, which is the only place the tag is ever checked. Until then it is a
+// plaintext field any process running as the owner can rewrite, and every read path used to
+// serve the addresses in it as fact, locked or unlocked. Swapping the EVM address there was a
+// one-line edit that pointed the Money-in screen at somebody else's wallet, with no password
+// and no window token, and the only signal was a later unlock reporting a wrong password. So:
+// once this process has opened the wallet it serves the addresses it DERIVED and never the
+// header's, a header it has not opened is served marked unverified, and a header a correct
+// password proves was edited is served not at all. See addressReport().
 //
 // WHAT LOCKED MEANS. Locked is not "the app stops". Every read works, because addresses come
-// from the header. Every write proposal is still authored and policy-checked and queued; see
-// pending_unlock in src/proposals/lifecycle.ts. What locked removes is the ability to SIGN.
+// from the header, or better from the last open. Every write proposal is still authored and
+// policy-checked and queued; see pending_unlock in src/proposals/lifecycle.ts. What locked
+// removes is the ability to SIGN.
 //
 // THE PLAINTEXT FALLBACK, and it is deliberate. An install that has a `keys.json` and has not
 // migrated yet keeps working: state() reports `needs_migration` and the readers below fall
@@ -21,7 +31,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { aadFor, newDataKey, open, seal, wipe } from './envelope.ts';
+import { aadFor, canonical, newDataKey, open, seal, wipe } from './envelope.ts';
 import type { Sealed } from './envelope.ts';
 import { defaultParams, deriveKek } from './kdf.ts';
 import type { KdfParams } from './kdf.ts';
@@ -84,16 +94,45 @@ export type KeystoreHeader = {
   hasMnemonic: boolean;
 };
 
-type KeystoreFile = { header: KeystoreHeader; wrap: Sealed; payload: Sealed };
+/* `headerProof` is what lets a failed unlock say WHY it failed, and it is additive: a file
+   written before it existed simply has none and behaves exactly as it always did.
+
+   The problem it solves. The header is the AAD for both envelopes, so editing the addresses in
+   it breaks the wrap's tag. Good. What is not good is what the owner is then told: the wrap is
+   opened first and a wrap that fails has always been reported as a wrong password, so somebody
+   who had just had their receive address swapped was sent off to retype a password that was
+   right all along.
+
+   The proof is the same addresses sealed under the SAME password-derived key, with an AAD that
+   covers every header field EXCEPT the addresses. So when the wrap fails, opening the proof
+   answers "was the password right": if it opens, the password is right and the addresses in the
+   header are not the ones this file was written with. That is a tamper, and it is named. */
+type KeystoreFile = { header: KeystoreHeader; wrap: Sealed; payload: Sealed; headerProof?: Sealed };
 
 export type UnlockResult =
   | { ok: true }
-  | { ok: false; error: 'wrong_password' | 'no_wallet' | 'damaged' | 'locked_out'; retryInSec?: number; detail?: string };
+  | { ok: false; error: 'wrong_password' | 'no_wallet' | 'damaged' | 'locked_out' | 'tampered'; retryInSec?: number; detail?: string };
+
+/* The addresses plus how much they can be believed, which is a different fact and used to be
+   silently missing.
+
+   `verified` means these came out of key material this process decrypted, so nobody can have
+   edited them. It is false for addresses read from the plaintext header of a locked wallet that
+   this process has never opened: nothing authenticates that header without the password, and a
+   screen that says "send money here" has to say which of the two it is showing.
+
+   `tampered` means a password that opens this file proved the header's addresses are not the
+   ones it was written with. No address is served in that state. */
+export type AddressReport = { addresses: StoredAddresses; verified: boolean; tampered: boolean };
 
 export type Keystore = {
   state(): LockState;
   isUnlocked(): boolean;
   addresses(): StoredAddresses;
+  // The same addresses with the two facts a display needs beside them. Every route that puts an
+  // address in front of a person reads this one; addresses() stays for the signers and readers
+  // that only need the string.
+  addressReport(): AddressReport;
   header(): KeystoreHeader | null;
   unlock(password: string): Promise<UnlockResult>;
   // Proves a password against the file and changes nothing. What a route that re-asks for the
@@ -141,8 +180,15 @@ function readKeystoreFile(file: string): KeystoreFile | null {
   return parsed;
 }
 
-// The header alone, with no password. This is what makes a locked app useful: the addresses
-// every balance read needs are here, in the clear, authenticated by the tag on the payload.
+/* The header alone, with no password. This is what makes a locked app useful: the addresses
+   every balance read needs are here, in the clear.
+
+   NOT AUTHENTICATED, and this comment used to claim it was. The tag on the payload does bind the
+   header, because the header is the AAD, but that tag is only ever checked inside openWith, and
+   openWith needs the password. So a header read by this function is a header nobody has checked:
+   any process running as the owner can edit the addresses in it, and every reader downstream
+   used to serve the result as fact. Callers that show an address to a person go through
+   addressReport() instead, which says whether the addresses were decrypted or merely read. */
 export function readHeader(keysPath: string): KeystoreHeader | null {
   const file = keystorePathFor(keysPath);
   try {
@@ -164,6 +210,18 @@ function addressesOf(keys: KeysPayload): StoredAddresses {
     near: derived.near ?? keys.near?.accountId ?? null,
     nearPublicKey: derived.nearPublicKey ?? keys.near?.publicKey ?? null,
   };
+}
+
+const NO_ADDRESSES: StoredAddresses = { evm: null, solana: null, near: null, nearPublicKey: null };
+
+/* The AAD for the header proof: every header field except the addresses. Excluding them is the
+   whole point, because the proof has to stay openable on the one file where the addresses have
+   been changed. Everything else the header carries (the version, the KDF parameters and whether
+   there is a mnemonic) is still covered, so a downgrade of any of those breaks the proof too and
+   reads as a wrong password, which is the fail-closed answer. */
+function proofAad(header: KeystoreHeader): Buffer {
+  const { addresses: _addresses, ...rest } = header;
+  return aadFor(rest);
 }
 
 function payloadFrom(mnemonic: string | null, keys: RailKeys, addresses: Addresses): KeysPayload {
@@ -193,6 +251,15 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
   let plain: Buffer | null = null;
   let failures = 0;
   let backoffUntil = 0;
+  /* The addresses this process has DECRYPTED, which is the only version of them worth serving.
+     Kept after a lock on purpose: they are public data, they cannot go stale (this app has no
+     path that changes a wallet's keys), and keeping them means the receive screen after a
+     fifteen-minute auto-lock still shows the address the wallet actually holds rather than
+     whatever the file says by then. Null only until the first open. */
+  let openAddresses: StoredAddresses | null = null;
+  // Set when a correct password proved the header's addresses are not the ones this file was
+  // written with. From then on this store serves no address at all.
+  let tampered = false;
 
   function announce(): void {
     const s = state();
@@ -210,19 +277,41 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     return 'no_wallet';
   }
 
-  function addresses(): StoredAddresses {
-    const head = readHeader(keysPath);
-    if (head !== null) return head.addresses;
+  /* WHERE THE RECEIVE ADDRESS COMES FROM, in order of how much it can be believed.
+
+     This used to be one line: return the header's addresses. The header is plaintext and nothing
+     checks it without the password, so any process running as the owner could edit one field of
+     one file and the Money-in screen would hand out an address it controls, locked or unlocked,
+     with no password and no window token. Everything sent to the wallet after that is gone, and
+     the only signal was a later unlock reporting a wrong password.
+
+     So: what was decrypted beats what was read, and a file known to have been edited serves
+     nothing at all. */
+  function addressReport(): AddressReport {
+    if (tampered) return { addresses: NO_ADDRESSES, verified: false, tampered: true };
+    if (openAddresses !== null) return { addresses: openAddresses, verified: true, tampered: false };
+
     // Before migration the addresses come from the plaintext file, which is the only place
-    // they exist yet. Same answer, worse storage, and the migration screen says so.
-    if (plain === null && fs.existsSync(keysPath)) {
+    // they exist yet. Same answer, worse storage, and the migration screen says so. Derived
+    // from the keys in it rather than copied out of it, so they are as good as an unlock.
+    if (plain === null && !hasKeystore() && fs.existsSync(keysPath)) {
       try {
-        return addressesOf(JSON.parse(fs.readFileSync(keysPath, 'utf8')) as KeysPayload);
+        return { addresses: addressesOf(JSON.parse(fs.readFileSync(keysPath, 'utf8')) as KeysPayload), verified: true, tampered: false };
       } catch {
-        return { evm: null, solana: null, near: null, nearPublicKey: null };
+        return { addresses: NO_ADDRESSES, verified: false, tampered: false };
       }
     }
-    return { evm: null, solana: null, near: null, nearPublicKey: null };
+
+    /* A locked wallet this process has never opened. The header is all there is, and nothing
+       authenticates it, so it is served with verified: false rather than as fact. The window
+       says so, and one unlock replaces it with the decrypted answer. */
+    const head = readHeader(keysPath);
+    if (head !== null) return { addresses: head.addresses, verified: false, tampered: false };
+    return { addresses: NO_ADDRESSES, verified: false, tampered: false };
+  }
+
+  function addresses(): StoredAddresses {
+    return addressReport().addresses;
   }
 
   function keys(): KeysPayload {
@@ -247,7 +336,8 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
       const body = Buffer.from(JSON.stringify(payload), 'utf8');
       const sealedPayload = seal(body, dataKey, aad);
       const wrap = seal(dataKey, kek, aad);
-      writeSecret(file, JSON.stringify({ header, wrap, payload: sealedPayload }, null, 2) + '\n');
+      const headerProof = seal(Buffer.from(canonical(header.addresses), 'utf8'), kek, proofAad(header));
+      writeSecret(file, JSON.stringify({ header, wrap, payload: sealedPayload, headerProof }, null, 2) + '\n');
       wipe(body);
       return header.addresses;
     } finally {
@@ -265,7 +355,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
      until somebody locked and unlocked again.
      The failure counter and the backoff belong here rather than in unlock, because they are the
      brute-force control and a route that checks a password is a route that can be ground. */
-  async function openWith(password: string): Promise<{ ok: true; body: Buffer } | Extract<UnlockResult, { ok: false }>> {
+  async function openOnce(password: string): Promise<{ ok: true; body: Buffer } | Extract<UnlockResult, { ok: false }>> {
     if (now() < backoffUntil) {
       return { ok: false, error: 'locked_out', retryInSec: Math.ceil((backoffUntil - now()) / 1000) };
     }
@@ -279,13 +369,44 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
 
     const aad = aadFor(stored.header);
     const kek = await deriveKek(password, stored.header.kdf);
+    /* READ AGAIN AFTER THE DERIVATION, and this is the whole of the concurrency fix on this
+       side. The check at the top of this function runs before an await that takes half a second,
+       so twenty callers arriving together all passed it before any of them had failed, and the
+       backoff never engaged: sequential guessing walled at five while twenty concurrent guesses
+       all came back "wrong password". The queue above serialises them; this line is what makes
+       the wall hold even for a caller that somehow gets past it. */
+    if (now() < backoffUntil) {
+      wipe(kek);
+      return { ok: false, error: 'locked_out', retryInSec: Math.ceil((backoffUntil - now()) / 1000) };
+    }
     let dataKey: Buffer | null = null;
     try {
       dataKey = open(stored.wrap, kek, aad);
     } catch {
-      /* The wrap failed, which is the password. A tampered header fails here too, because the
-         header is the AAD, and calling that a wrong password would send the owner off typing
-         it again; the payload check below is what tells the two apart when the wrap opens. */
+      /* The wrap failed. That is either the password or an edited header, because the header is
+         the AAD, and the two used to be reported as the same thing: "wrong password", which sends
+         somebody whose receive address has just been swapped off to retype a password that was
+         right. The proof tells them apart. It is the addresses sealed under this same key with an
+         AAD that covers everything in the header EXCEPT the addresses, so it still opens on the
+         one file where they were changed. It opening means the password is right.
+         An attacker who edits the header can also delete this field, and then this is a wrong
+         password again. What they cannot do is make an OPEN wallet serve their address, which is
+         the loss this finding was about; this half is so the owner is told why. */
+      if (stored.headerProof !== undefined) {
+        try {
+          const proof = open(stored.headerProof, kek, proofAad(stored.header));
+          wipe(proof, kek);
+          tampered = true;
+          return {
+            ok: false,
+            error: 'tampered',
+            detail:
+              'the password is right and the wallet file has been edited: the addresses in its header are not the ones it was written with. No address is being shown until this is resolved. Restore the file from a backup, or move it aside and import your recovery phrase.',
+          };
+        } catch {
+          // The proof did not open either, so the password really is wrong.
+        }
+      }
       failures += 1;
       if (failures >= MAX_FAILURES) {
         backoffUntil = now() + BACKOFF_MS;
@@ -312,6 +433,27 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     return { ok: true, body };
   }
 
+  /* ONE PASSWORD CHECK AT A TIME, for every route that makes one.
+     The failure counter and the backoff are the only thing between a weak password and a script
+     that grinds it, and they were bypassable by asking twenty times at once: openOnce reads the
+     backoff, then suspends for half a second inside the key derivation, so every concurrent
+     caller passed the check before any of them had recorded a failure. /api/unlock had its own
+     in-flight guard and was safe; /api/wallet/reveal and /api/wallet/export call unlock() and
+     verify() directly and were not. Reproduced at twenty concurrent guesses: all twenty came
+     back "wrong password" where five sequential ones already wall.
+     The guard belongs here rather than in the routes because here is where the counter lives, so
+     a route added later cannot forget it. Serialised rather than deduplicated: two different
+     guesses are two attempts and both must be counted. */
+  let queue: Promise<unknown> = Promise.resolve();
+  function openWith(password: string): Promise<{ ok: true; body: Buffer } | Extract<UnlockResult, { ok: false }>> {
+    const run = queue.then(
+      () => openOnce(password),
+      () => openOnce(password),
+    );
+    queue = run.catch(() => undefined);
+    return run;
+  }
+
   async function unlock(password: string): Promise<UnlockResult> {
     const opened = await openWith(password);
     if (!opened.ok) return opened;
@@ -320,6 +462,11 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     // holding the payload as bytes rather than as an object exists to make possible.
     if (plain !== null) wipe(plain);
     plain = opened.body;
+    /* The addresses this wallet actually holds, derived from the keys that just came out of the
+       envelope. Everything that shows somebody an address reads these from here on, so an edited
+       header cannot reach the Money-in screen of an open wallet. */
+    openAddresses = addressesOf(JSON.parse(plain.toString('utf8')) as KeysPayload);
+    tampered = false;
     announce();
     return { ok: true };
   }
@@ -349,6 +496,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     // Unlocked immediately: the person is standing there having just typed the password, and
     // making them type it twice teaches nothing.
     plain = Buffer.from(JSON.stringify(payload), 'utf8');
+    openAddresses = addrs;
     announce();
     return { mnemonic: made.mnemonic, addresses: addrs };
   }
@@ -375,6 +523,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     }
     const addrs = await write(password, payload, params());
     plain = Buffer.from(JSON.stringify(payload), 'utf8');
+    openAddresses = addrs;
     announce();
     return { addresses: addrs };
   }
@@ -408,7 +557,12 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     const kek = await deriveKek(password, kdf);
     try {
       const body = Buffer.from(JSON.stringify(payload), 'utf8');
-      const out = { header, wrap: seal(dataKey, kek, aad), payload: seal(body, dataKey, aad) };
+      const out = {
+        header,
+        wrap: seal(dataKey, kek, aad),
+        payload: seal(body, dataKey, aad),
+        headerProof: seal(Buffer.from(canonical(header.addresses), 'utf8'), kek, proofAad(header)),
+      };
       writeSecret(target, JSON.stringify(out, null, 2) + '\n', false);
       wipe(body);
     } finally {
@@ -426,6 +580,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     state,
     isUnlocked: () => plain !== null,
     addresses,
+    addressReport,
     header: () => readHeader(keysPath),
     unlock,
     verify,
@@ -434,7 +589,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     importWallet,
     migrate: async (password) => {
       if (demo) throw new Error(DEMO_REFUSAL);
-      return migrateInto({ keysPath, file, write, kdf: params, setPlain: (b) => { plain = b; announce(); } }, password);
+      return migrateInto({ keysPath, file, write, kdf: params, setPlain: (b) => { plain = b; openAddresses = addressesOf(JSON.parse(b.toString('utf8')) as KeysPayload); announce(); } }, password);
     },
     exportTo,
     reveal,
@@ -509,8 +664,68 @@ export function destroyPlaintext(target: string, demo: boolean = envIsDemo()): v
 // VERIFY BEFORE DESTROYING. A half-migration that has already deleted the plaintext is fund
 // loss, so the round trip is decrypted back and the derived EVM address compared against the
 // one the plaintext file held, and only then is anything overwritten.
+/* Every plaintext copy of the key still on disk: the file itself and every backup beside it.
+   The list the destroy loop walks, and the list a resumed migration walks again. */
+function plaintextResidue(keysPath: string): string[] {
+  // BACKUPS FIRST. The loop is not atomic, and a process that died inside it used to have
+  // destroyed the primary and left a backup: state() then read `locked` because the envelope
+  // verifies, the migration screen never appeared again, migrate() refused because the envelope
+  // exists, and the master key sat on disk in the clear with nothing in the app able to reach
+  // it. Shredding the copies before the original inverts that: a death inside the loop leaves
+  // the primary, so the app still reports a plaintext key file and can be asked to finish.
+  return [...backupCopies(keysPath), ...(fs.existsSync(keysPath) ? [keysPath] : [])];
+}
+
+/* THE SECOND HALF OF THE SAME PROBLEM: finishing a migration that was interrupted.
+   Reached only when the envelope already exists AND plaintext is still beside it, which is
+   exactly the state a kill inside the destroy loop leaves. The house rule still holds and is why
+   this is not simply a delete: the envelope is opened with the password given and the addresses
+   it derives are compared against the ones the surviving plaintext derives, so nothing is
+   shredded until the encrypted wallet is proved to hold the same keys. */
+async function resumeDestroy(deps: MigrateDeps, password: string, residue: string[]): Promise<{ destroyed: string[]; addresses: StoredAddresses }> {
+  const stored = readKeystoreFile(deps.file);
+  if (stored === null) throw new Error('the encrypted wallet could not be read, so nothing was destroyed');
+  const aad = aadFor(stored.header);
+  const kek = await deriveKek(password, stored.header.kdf);
+  let body: Buffer;
+  try {
+    const dataKey = open(stored.wrap, kek, aad);
+    body = open(stored.payload, dataKey, aad);
+    wipe(dataKey);
+  } catch {
+    throw new Error('that password does not open the encrypted wallet, so the plaintext key file was left alone');
+  } finally {
+    wipe(kek);
+  }
+
+  const encrypted = addressesOf(JSON.parse(body.toString('utf8')) as KeysPayload);
+  for (const target of residue) {
+    let onDisk: StoredAddresses;
+    try {
+      onDisk = addressesOf(JSON.parse(fs.readFileSync(target, 'utf8')) as KeysPayload);
+    } catch {
+      throw new Error(`${target} is not a key file this app can read, so it was left alone`);
+    }
+    if (onDisk.evm !== encrypted.evm || onDisk.solana !== encrypted.solana || onDisk.near !== encrypted.near) {
+      throw new Error(`${target} holds a different wallet from the encrypted one, so it was left alone. Move it aside by hand.`);
+    }
+  }
+
+  const destroyed: string[] = [];
+  for (const target of residue) {
+    destroyPlaintext(target);
+    destroyed.push(target);
+  }
+  deps.setPlain(body);
+  return { destroyed, addresses: encrypted };
+}
+
 async function migrateInto(deps: MigrateDeps, password: string): Promise<{ destroyed: string[]; addresses: StoredAddresses }> {
-  if (fs.existsSync(deps.file)) throw new Error('this app already holds an encrypted wallet, so there is nothing to migrate');
+  if (fs.existsSync(deps.file)) {
+    const residue = plaintextResidue(deps.keysPath);
+    if (residue.length === 0) throw new Error('this app already holds an encrypted wallet, so there is nothing to migrate');
+    return resumeDestroy(deps, password, residue);
+  }
   if (!fs.existsSync(deps.keysPath)) throw new Error(`no plaintext key file at ${deps.keysPath}`);
 
   const raw = fs.readFileSync(deps.keysPath, 'utf8');
@@ -548,7 +763,7 @@ async function migrateInto(deps: MigrateDeps, password: string): Promise<{ destr
   }
 
   const destroyed: string[] = [];
-  for (const target of [deps.keysPath, ...backupCopies(deps.keysPath)]) {
+  for (const target of plaintextResidue(deps.keysPath)) {
     destroyPlaintext(target);
     destroyed.push(target);
   }

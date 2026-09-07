@@ -101,7 +101,30 @@ export function atomicWrite(
   syncDir(dir); // the entry, so the rename itself survives a power loss
 }
 
-// The shape every caller in this app actually wants: pretty-printed JSON, durably.
+/* The shape every caller in this app actually wants: pretty-printed JSON, durably, and readable
+   by its owner alone.
+
+   0600 rather than the process umask, which on a default install is 0644. Every file that goes
+   through here is the app's own state in the app's own data directory: the proposal list, the
+   audit anchor, the policy, the view and theme, the transaction cache. Between them they carry
+   holdings, addresses, amounts and the whole decision history, and world-readable is the wrong
+   default for any of it on a machine with a second account on it. The keystore has always passed
+   0600 explicitly; there was no reason the rest of the state was different, other than that
+   nobody had said so. A caller that genuinely wants a shareable file calls atomicWrite and says
+   which mode it wants. */
 export function atomicWriteJson(filePath: string, value: unknown, space: number | undefined = 2): void {
-  atomicWrite(filePath, JSON.stringify(value, null, space));
+  atomicWrite(filePath, JSON.stringify(value, null, space), { mode: 0o600 });
+}
+
+/* Push a file this app appended to onto the disk. appendFileSync writes into the page cache and
+   returns; the audit log's anchor is written durably a moment later and names those lines, so
+   the lines have to be on disk first or a power cut leaves an anchor ahead of its log. Lives here
+   so src/ keeps one place that calls fsync for a write. */
+export function syncFile(filePath: string): void {
+  const fd = fs.openSync(filePath, 'r');
+  try {
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
 }

@@ -41,12 +41,12 @@ kbd {
   letter-spacing: -0.01em;
 }
 
-/* The balance. One number, the largest thing on the screen. */
+/* The balance. One number, the largest thing on the screen, and quiet. */
 .balance {
   font-family: var(--font-ui);
-  font-size: var(--fs-56);
+  font-size: var(--fs-44);
   font-weight: 500;
-  letter-spacing: -0.025em;
+  letter-spacing: -0.02em;
   line-height: 1.05;
   font-feature-settings: "tnum" 1;
   font-variant-numeric: tabular-nums;
@@ -76,6 +76,13 @@ kbd {
 .body {
   font-size: var(--fs-14);
   line-height: 1.55;
+}
+
+/* The transcript reads at one size up, on a comfortable measure. */
+.prose {
+  font-size: var(--fs-15);
+  line-height: 1.5;
+  max-width: 68ch;
 }
 
 .meta {
