@@ -279,9 +279,12 @@ test('no path writes the retired gate_disabled decision', async () => {
 // thing this app exists to prevent.
 test('a policy change never auto-approves', async () => {
   const h = setup();
+  /* $50,000 rather than the $999,999 this used to ask for. A patch may loosen a limit by up to
+     ten times (src/policy/engine.ts, cap_raised_too_far), and a hundredfold jump is now refused
+     rather than queued, which would make this assert the wrong thing about the wrong verdict. */
   const p = await h.svc.proposePolicyChange({
-    patch: { outbound: { maxPerTransactionUsd: 999999 } },
-    sentence: 'Refuse any single transaction above $999,999.',
+    patch: { outbound: { maxPerTransactionUsd: 50_000 } },
+    sentence: 'Refuse any single transaction above $50,000.',
   });
 
   assert.equal(p.status, 'pending');
@@ -292,8 +295,8 @@ test('the policy on disk is untouched while that change sits pending', async () 
   const h = setup();
   const before = loadPolicy(h.dataDir)?.outbound.maxPerTransactionUsd;
   await h.svc.proposePolicyChange({
-    patch: { outbound: { maxPerTransactionUsd: 999999 } },
-    sentence: 'Refuse any single transaction above $999,999.',
+    patch: { outbound: { maxPerTransactionUsd: 50_000 } },
+    sentence: 'Refuse any single transaction above $50,000.',
   });
 
   assert.equal(loadPolicy(h.dataDir)?.outbound.maxPerTransactionUsd, before);
@@ -676,4 +679,70 @@ test('an in-flight proposal counts against the cap while it is still executing',
   const before = h.svc.sessionSpentUsd();
   await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
   assert.ok(h.svc.sessionSpentUsd() > before, 'a completed move must register');
+});
+
+// ---------- the hash is the record, the balance is a decoration ----------
+//
+// Both used to be written together, after `balanceAfter`, which waits up to fifteen seconds for
+// five chains of RPC reads. A process ending inside that window had broadcast a transaction and
+// recorded nothing about it, and there is no drain that covers it: SETTLE_CAP_MS is 32s while a
+// 30s venue write plus a 15s refresh is 45s. reconcileOnBoot then found an `executing` row with
+// no txids, could only say "this may or may not have sent", and reconcileProposal had nothing to
+// look it up by. Money moved and no hash existed anywhere.
+
+// A ledger whose refresh never settles: exactly the fifteen seconds the old code spent between
+// the broadcast and the durable write, held open forever so the assertion is deterministic.
+function stuckLedger(): Ledger {
+  const snap: LedgerSnapshot = { ...loadDemoLedger(), mode: 'live' };
+  return {
+    snapshot: () => snap,
+    positions: () => [],
+    intents: () => undefined,
+    refresh: () => new Promise<LedgerSnapshot>(() => {}),
+    applyDemoTransfer: () => {
+      throw new Error('applyDemoTransfer must never be called in live mode');
+    },
+  };
+}
+
+test('the transaction hash is on disk before the balance refresh has even answered', async () => {
+  const signer = recordingSigner();
+  const h = setup({ mode: 'live', quoter: depositQuoter(), signer, ledger: stuckLedger() });
+  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
+
+  // Deliberately NOT awaited: the refresh inside never settles, so awaiting approve() would
+  // hang. What matters is the state of the file while it is still in there.
+  const running = h.svc.approve(p.id);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const stored = h.store.get(p.id) as Proposal;
+  assert.ok((stored.result?.txids ?? []).includes('0xtest'), 'the hash the signer returned is durable already');
+  assert.equal(stored.status, 'executed', 'and so is the outcome');
+  assert.equal(stored.balances?.afterUsd, null, 'while the balance is still being read');
+  void running;
+});
+
+test('a multi-leg send records each hash as it lands, not once at the end', async () => {
+  let sent = 0;
+  const signer: Signer = {
+    ready: true,
+    describe: () => 'one leg then a wall',
+    async send() {
+      sent += 1;
+      if (sent === 1) return { ok: true, txid: '0xleg1' };
+      // Never settles, exactly as a chain that has stopped answering does.
+      return new Promise<{ ok: boolean; txid?: string }>(() => {});
+    },
+  };
+  const h = setup({ mode: 'live', signer, ledger: fakeLiveLedger() });
+  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
+  assert.ok(p.draft.kind === 'consolidate' && p.draft.legs.length > 1, 'this needs more than one leg to mean anything');
+
+  const running = h.svc.approve(p.id);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const stored = h.store.get(p.id) as Proposal;
+  assert.ok((stored.result?.txids ?? []).includes('0xleg1'), 'the first leg is recorded while the second is still in flight');
+  assert.equal(stored.status, 'executing', 'and the row still says what it is');
+  void running;
 });

@@ -344,10 +344,32 @@ export async function refuse(ctx: PCtx, id: string): Promise<Proposal> {
    elsewhere; this is the read that depends on them. */
 type DailyLimit = { capUsd: number; spentUsd: number; resetsAt: string | null };
 
+/* WHAT THE ROLLING 24 HOUR CAP CHARGES FOR, in one predicate, read by both the number on screen
+   and the number a proposal is refused against. Two copies of this is how a gauge comes to read
+   "at the limit" while the thing enforcing it disagrees.
+
+   Everything that moved funds or is moving them right now, which is every kind except a policy
+   change. Written as an exclusion so a rail added later counts by default: an inclusion list
+   would leave the new kind silently unbudgeted.
+
+   'executing' counts, and that was the original fix. Counting only 'executed' meant a proposal
+   was invisible to the cap for the whole duration of an on-chain send, and nothing serialises
+   proposal handling, so N proposals arriving together were each evaluated against a spend of 0.
+   Demonstrated: five concurrent $10,000 consolidations moved $50,000 against a $25,000 cap.
+
+   'needs_reconciliation' counts ONLY when the row carries a transaction hash, and the two halves
+   of that are different facts. With a hash, money left the wallet: a three-leg send that broke on
+   the third leg lands here, and it used to land `failed` and charge nothing, so $2,000 could
+   leave against a budget that recorded $0. Without a hash, the app genuinely does not know
+   whether anything moved, and a row it cannot speak for must not hold a day's budget hostage:
+   one crash used to eat the whole window with no surface to clear it from.
+
+   Over-counting a send that later turns out to have failed costs a refusal the human can retry.
+   Under-counting one that succeeded costs the cap itself. */
 function countsAgainstCap(p: Proposal): boolean {
-  // 'needs_reconciliation' is deliberately absent, and task 4 says why: a row the app cannot
-  // say moved money must not hold the budget hostage for a day.
-  return (p.status === 'executed' || p.status === 'executing') && p.kind !== 'policy_change';
+  if (p.kind === 'policy_change') return false;
+  if (p.status === 'executed' || p.status === 'executing') return true;
+  return p.status === 'needs_reconciliation' && (p.result?.txids?.length ?? 0) > 0;
 }
 
 export function dailyLimit(ctx: PCtx, capUsd: number): DailyLimit {
@@ -370,26 +392,10 @@ export function sessionSpentUsd(ctx: PCtx): number {
   const cutoff = Date.now() - SESSION_WINDOW_MS;
   return ctx.store
     .list()
-    // Everything that moved funds OR is moving them right now, which is every kind except
-    // a policy change. Written as an exclusion so a rail added later counts against the
-    // session cap by default: an inclusion list would leave the new kind silently
-    // unbudgeted.
-    //
-    // 'executing' counts, and that is the whole fix. Counting only 'executed' meant a
-    // proposal was invisible to the cap for the entire duration of an on-chain send, and
-    // nothing serialises proposal handling: node:http runs them concurrently and there is
-    // no queue anywhere. So N proposals arriving together each evaluated against a spend
-    // of 0 and all N executed. Demonstrated: five concurrent $10,000 consolidations moved
-    // $50,000 against a $25,000 session cap, and the window's width tracks send latency,
-    // so a slower chain is a wider hole.
-    //
-    // Committed-but-unconfirmed money is spent for budgeting purposes. Over-counting a
-    // send that later fails costs a refusal the human can retry; under-counting one that
-    // succeeds costs the cap itself.
-    // `needs_reconciliation` is deliberately NOT here. A row the app cannot say moved money is
-    // a row that must not hold the budget hostage: one crash used to eat the 24h cap for the
-    // whole window, and the human had no surface to clear it from. It is reported instead.
-    .filter(p => (p.status === 'executed' || p.status === 'executing') && p.kind !== 'policy_change')
+    // One predicate, shared with dailyLimit above. These two used to spell out the same filter
+    // separately, which is how the figure on screen and the figure a proposal is refused against
+    // come to disagree.
+    .filter(countsAgainstCap)
     .filter(p => {
       const at = Date.parse(p.decidedAt ?? p.createdAt);
       return Number.isFinite(at) && at >= cutoff;

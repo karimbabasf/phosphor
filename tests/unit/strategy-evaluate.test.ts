@@ -159,3 +159,28 @@ test('the caller memory is not mutated', () => {
   evaluate(p, market(), run(), mem);
   assert.deepEqual(mem, emptyMemory(), 'memory is carried in and out, never held or mutated');
 });
+
+/* A rule id of `__proto__` used to turn `once` and `cooldownSec` off while renderProgram still
+   printed "(once)" beside the rule. Writing firedEver['__proto__'] = true reached
+   Object.prototype's setter, which ignores a non-object value, so the write was a no-op and the
+   read back was Object.prototype, making `=== true` false. firedAtMs['__proto__'] read back an
+   object, so (nowMs - obj) / 1000 was NaN and `NaN < cooldownSec` was false. Both guards off,
+   on a 250 ms tick, on a rule a person had read as one-shot. */
+test('a rule named after an Object.prototype key still fires only once', () => {
+  const p = program({ op: 'price_above', ref: { kind: 'price', value: 50 } });
+  p.rules[0].id = '__proto__';
+  p.rules[0].once = true;
+  const first = evaluate(p, market(), run(), emptyMemory());
+  assert.equal(first.actions.length, 1);
+  const second = evaluate(p, market(), run(), first.memory);
+  assert.equal(second.actions.length, 0, 'the firing memory is a map, not an object with a prototype');
+});
+
+test('a cooldown holds for a rule named after an Object.prototype key', () => {
+  const p = program({ op: 'price_above', ref: { kind: 'price', value: 50 } });
+  p.rules[0].id = 'constructor';
+  p.rules[0].cooldownSec = 300;
+  const first = evaluate(p, market(), run(), emptyMemory());
+  assert.equal(first.actions.length, 1);
+  assert.equal(evaluate(p, market({ nowMs: NOW + 100_000 }), run(), first.memory).actions.length, 0);
+});

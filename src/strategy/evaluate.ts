@@ -52,8 +52,13 @@ export type MarketState = {
 // Per-rule firing memory. Carried in and out rather than held, for the same purity reason.
 export type RuleMemory = { firedAtMs: Record<string, number>; firedEver: Record<string, boolean> };
 
+/* Null-prototype maps, not object literals. A rule id of `__proto__` writing into a plain
+   object hits Object.prototype's setter rather than the map, which silently disabled both the
+   `once` guard and the cooldown while the rendered program still said "(once)". The grammar
+   refuses that id now; this is the half that holds whatever the grammar lets through, because a
+   guard that depends on a validator elsewhere is a guard with a seam in it. */
 export function emptyMemory(): RuleMemory {
-  return { firedAtMs: {}, firedEver: {} };
+  return { firedAtMs: Object.create(null) as Record<string, number>, firedEver: Object.create(null) as Record<string, boolean> };
 }
 
 function condition(c: Condition, m: MarketState, s: RunState): boolean {
@@ -119,9 +124,12 @@ export function evaluate(
   s: RunState,
   mem: RuleMemory,
 ): { actions: Action[]; memory: RuleMemory; invalidated: boolean } {
+  /* Copied into null-prototype maps, not into object literals. A spread into `{}` produces an
+     object with a prototype again, so the copy would undo what emptyMemory() is for and a rule
+     id of `__proto__` would go back to silently disabling its own `once` and cooldown. */
   const memory: RuleMemory = {
-    firedAtMs: { ...mem.firedAtMs },
-    firedEver: { ...mem.firedEver },
+    firedAtMs: Object.assign(Object.create(null) as Record<string, number>, mem.firedAtMs),
+    firedEver: Object.assign(Object.create(null) as Record<string, boolean>, mem.firedEver),
   };
 
   // Invalidation is checked before any rule. A program whose thesis is dead should stand down

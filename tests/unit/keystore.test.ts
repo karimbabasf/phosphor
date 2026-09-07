@@ -223,21 +223,93 @@ test('a tampered ciphertext fails the GCM tag rather than opening to something e
   assert.equal(out.ok === false && out.error, 'damaged', 'a right password against a broken file says damaged, not wrong password');
 });
 
-test('a tampered header is caught, so the receive address cannot be swapped under a locked wallet', async () => {
+/* The receive address, against the attacker this whole file is built for: a process running as
+   the owner with write access to one file. No password, no window token, no unlock.
+
+   This test used to assert the opposite of what it was named. It edited the header, checked that
+   readHeader now returned the attacker's address, and called the finding closed because a later
+   unlock failed. But nothing unlocks before somebody copies an address off the Money-in screen,
+   and addresses() served the header to that screen without ever checking a tag. Reproduced on a
+   throwaway wallet: with the wallet OPEN, addresses().evm returned 0xdeadbeef... The assertion
+   that was there was true and measured the wrong thing. */
+const TAMPERED_EVM = '0x000000000000000000000000000000000000dEaD';
+
+function tamperHeader(keysPath: string): void {
+  const file = keystorePathFor(keysPath);
+  const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as { header: { addresses: { evm: string } } };
+  parsed.header.addresses.evm = TAMPERED_EVM;
+  fs.writeFileSync(file, JSON.stringify(parsed));
+}
+
+test('an edited header cannot change the address an open wallet hands out', async () => {
   const keysPath = tempKeys();
   const store = keystore(keysPath);
   const made = await store.create('a long enough password');
+
+  tamperHeader(keysPath);
+  assert.equal(readHeader(keysPath)?.addresses.evm, TAMPERED_EVM, 'the file really was edited');
+
+  const open = store.addressReport();
+  assert.equal(open.addresses.evm, made.addresses.evm, 'an open wallet answers from the keys it decrypted');
+  assert.equal(open.verified, true);
+
+  // And it stays right across the lock, because those addresses were derived, not read.
   store.lock();
+  const shut = store.addressReport();
+  assert.equal(shut.addresses.evm, made.addresses.evm, 'the address a locked wallet last proved is still the right one');
+  assert.equal(shut.verified, true);
+});
 
-  const file = keystorePathFor(keysPath);
-  const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as { header: { addresses: { evm: string } } };
-  parsed.header.addresses.evm = '0x000000000000000000000000000000000000dEaD';
-  fs.writeFileSync(file, JSON.stringify(parsed));
+test('a locked wallet this process has never opened says its addresses are unverified', async () => {
+  const keysPath = tempKeys();
+  await keystore(keysPath).create('a long enough password');
+  tamperHeader(keysPath);
 
-  // The edit is visible while locked, which is exactly why the tag has to catch it.
-  assert.notEqual(readHeader(keysPath)?.addresses.evm, made.addresses.evm);
-  const out = await keystore(keysPath).unlock('a long enough password');
-  assert.equal(out.ok, false, 'the header is the additional authenticated data, so editing it breaks the tag');
+  // Nothing can authenticate a header without the password, so the honest answer is not to
+  // claim the address is right. It is served flagged, and the window says which it is.
+  const cold = keystore(keysPath).addressReport();
+  assert.equal(cold.verified, false, 'a header nobody has checked is not a verified address');
+  assert.equal(cold.tampered, false, 'and nothing has proved it wrong yet either');
+});
+
+test('unlocking a wallet whose header was edited reports tampering, not a wrong password, and then serves no address', async () => {
+  const keysPath = tempKeys();
+  await keystore(keysPath).create('a long enough password');
+  tamperHeader(keysPath);
+
+  const store = keystore(keysPath);
+  const out = await store.unlock('a long enough password');
+  assert.equal(out.ok, false);
+  assert.equal(out.ok === false && out.error, 'tampered', 'the password was right; the file was edited');
+
+  const after = store.addressReport();
+  assert.equal(after.tampered, true);
+  assert.equal(after.verified, false);
+  assert.equal(after.addresses.evm, null, 'a file known to have been edited hands out no address at all');
+  assert.deepEqual(store.addresses(), { evm: null, solana: null, near: null, nearPublicKey: null });
+});
+
+test('a genuinely wrong password on an untouched wallet is still a wrong password', async () => {
+  const keysPath = tempKeys();
+  await keystore(keysPath).create('a long enough password');
+  const out = await keystore(keysPath).unlock('not the password at all');
+  assert.equal(out.ok === false && out.error, 'wrong_password', 'the tamper answer must not swallow the ordinary case');
+});
+
+test('twenty concurrent wrong guesses hit the backoff, exactly as five sequential ones do', async () => {
+  const keysPath = tempKeys();
+  await keystore(keysPath).create('a long enough password');
+  const store = keystore(keysPath);
+
+  /* The reproduction from the audit. openWith read backoffUntil, then suspended for the whole
+     key derivation, so twenty callers all passed the check before any of them had recorded a
+     failure: sequential guessing walls at five, concurrent guessing walled at nothing. The
+     reveal and export routes call verify() and unlock() directly, so this was reachable with a
+     window token and no rate limit at all. */
+  const results = await Promise.all(Array.from({ length: 20 }, (_, i) => store.verify(`wrong guess ${i}`)));
+  const lockedOut = results.filter((r) => r.ok === false && r.error === 'locked_out').length;
+  assert.ok(lockedOut >= 15, `at least fifteen of twenty should be locked out, got ${lockedOut}`);
+  assert.equal(results.some((r) => r.ok), false, 'and none of them opened anything');
 });
 
 test('an imported mnemonic produces the same wallet as creating one from those words', async () => {
@@ -339,6 +411,57 @@ test('migration verifies the round trip and the address before it destroys anyth
   assert.equal(reopened.state(), 'locked');
   assert.equal((await reopened.unlock('a long enough password')).ok, true);
   assert.equal(reopened.addresses().evm, before.evm);
+});
+
+/* A KILL INSIDE THE DESTROY LOOP used to strand the master key on disk in the clear, forever.
+   The loop shredded the primary first and the backups after it, so a process that died between
+   the two left `keys.json.bak-*` behind while `keys.enc.json` verified: state() read `locked`,
+   the migration screen never appeared again, and migrate() refused because the envelope existed.
+   Nothing in the app could reach the survivor.
+   Two changes. The copies go first, so the file the app keys its migration state off is the last
+   thing destroyed. And migrate() finishes an interrupted run rather than refusing it, after
+   proving the encrypted wallet holds the same keys as the plaintext still on disk. */
+test('a migration killed inside the destroy loop can be finished, and leaves no plaintext behind', async () => {
+  const keysPath = tempKeys();
+  const before = plaintextWallet(keysPath);
+  const bak = `${keysPath}.bak-2026-08-20`;
+  const bytes = fs.readFileSync(keysPath);
+
+  // The kill: the encrypted wallet exists and verifies, and one plaintext copy survives.
+  await keystore(keysPath).migrate('a long enough password');
+  fs.writeFileSync(bak, bytes);
+
+  const resumed = keystore(keysPath);
+  assert.equal(resumed.state(), 'locked', 'the envelope is fine, which is exactly why this used to be invisible');
+  const out = await resumed.migrate('a long enough password');
+  assert.deepEqual(out.destroyed, [bak]);
+  assert.equal(fs.existsSync(bak), false, 'the survivor is gone');
+  assert.equal(out.addresses.evm, before.evm);
+});
+
+test('finishing an interrupted migration refuses a password that does not open the encrypted wallet', async () => {
+  const keysPath = tempKeys();
+  plaintextWallet(keysPath);
+  const bak = `${keysPath}.bak-2026-08-20`;
+  const bytes = fs.readFileSync(keysPath);
+  await keystore(keysPath).migrate('a long enough password');
+  fs.writeFileSync(bak, bytes);
+
+  await assert.rejects(() => keystore(keysPath).migrate('some other password'), /does not open/);
+  assert.ok(fs.existsSync(bak), 'and nothing was destroyed on the way to finding that out');
+});
+
+test('finishing an interrupted migration refuses a plaintext file holding a different wallet', async () => {
+  const keysPath = tempKeys();
+  plaintextWallet(keysPath);
+  const bak = `${keysPath}.bak-2026-08-20`;
+  await keystore(keysPath).migrate('a long enough password');
+  // Somebody else's key, sitting under a name that looks like a backup of this one.
+  const other = newWallet();
+  fs.writeFileSync(bak, JSON.stringify({ mnemonic: other.mnemonic, evm: { privateKey: other.wallet.keys.evm } }));
+
+  await assert.rejects(() => keystore(keysPath).migrate('a long enough password'), /different wallet/);
+  assert.ok(fs.existsSync(bak), 'a file this app cannot account for is never shredded');
 });
 
 test('migration refuses to run twice, so an encrypted wallet is never overwritten', async () => {

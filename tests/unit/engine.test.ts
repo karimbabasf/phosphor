@@ -123,11 +123,75 @@ const cases: Case[] = [
 
   // ---- rule 3: policy changes ----
   { name: 'policy change never allows', draft: policyChange({ outbound: { maxPerSessionUsd: 50000 } }), out: 'needs_approval' },
+  /* This row used to assert the opposite, and it was the finding. A patch reading
+     `{ maxPerTransactionUsd: 1e9, humanClickAboveUsd: 1e9 }` came back needs_approval, so the
+     whole of "one click removes the human gate for every proposal after it" was one click on a
+     card that showed neither number. The card renders the diff now (src/view/basic.ts); this is
+     the half that does not depend on anybody reading it. */
   {
-    name: 'a policy change that loosens everything still only needs approval',
+    name: 'a patch that raises a limit a hundred thousand times is refused, not merely queued for a click',
     draft: policyChange({ outbound: { maxPerTransactionUsd: 1e9, humanClickAboveUsd: 1e9 } }),
+    out: 'refuse',
+    rule: 'cap_raised_too_far',
+  },
+  {
+    name: 'the session cap cannot be lifted past ten times either',
+    draft: policyChange({ outbound: { maxPerSessionUsd: 25_000 * 10 + 1 } }),
+    out: 'refuse',
+    rule: 'cap_raised_too_far',
+  },
+  {
+    name: 'a tenfold loosening is still a decision the human makes, so it is queued rather than refused',
+    draft: policyChange({ outbound: { maxPerSessionUsd: 25_000 * 10 } }),
     out: 'needs_approval',
   },
+  { name: 'tightening a limit is never refused by the ceiling', draft: policyChange({ outbound: { maxPerTransactionUsd: 1 } }), out: 'needs_approval' },
+  {
+    name: 'a click threshold above the transaction cap would mean nothing ever waits for a person',
+    draft: policyChange({ outbound: { humanClickAboveUsd: 20_000 } }),
+    out: 'refuse',
+    rule: 'click_threshold_above_cap',
+  },
+  {
+    name: 'a limit of zero is a rule that nothing passes, and a patch may not lift it',
+    policyMut: p => {
+      p.outbound.humanClickAboveUsd = 0;
+    },
+    draft: policyChange({ outbound: { humanClickAboveUsd: 500 } }),
+    out: 'refuse',
+    rule: 'cap_raised_from_zero',
+  },
+  /* The allowlist is REPLACED rather than merged, so a patch carrying one address deletes every
+     other one. Adding is the reason the field exists; a removal dressed as an addition is not. */
+  {
+    name: 'a patch that drops an allowed destination is refused',
+    policyMut: p => {
+      p.outbound.destinationAllowlist.push('0xf00d000000000000000000000000000000000000');
+    },
+    draft: policyChange({ outbound: { destinationAllowlist: ['0xattacker00000000000000000000000000000000'] } }),
+    out: 'refuse',
+    rule: 'allowlist_shortened',
+  },
+  {
+    name: 'a patch that only adds a destination is queued for a click',
+    policyMut: p => {
+      p.outbound.destinationAllowlist.push('0xF00D000000000000000000000000000000000000');
+    },
+    draft: policyChange({
+      outbound: {
+        destinationAllowlist: ['0xf00d000000000000000000000000000000000000', '0xbeef00000000000000000000000000000000beef'],
+      },
+    }),
+    out: 'needs_approval',
+  },
+  /* An empty patch parked as needs_approval and put a card in front of a person asking them to
+     click yes to a change of nothing. A missing patch arrived the same way: asRecord in
+     src/http/respond.ts turns an absent field into `{}`, and the MCP schema takes any object. */
+  { name: 'a patch that names no rule is refused rather than queued for a pointless click', draft: policyChange({}), out: 'refuse', rule: 'nothing_to_change' },
+  { name: 'a missing patch reaches the engine as an empty one and is refused the same way', draft: rawPolicyChange(undefined), out: 'refuse', rule: 'nothing_to_change' },
+  { name: 'a patch whose only key is an empty group still names no rule', draft: rawPolicyChange({ outbound: {} }), out: 'refuse', rule: 'nothing_to_change' },
+  { name: 'both groups empty is still nothing to change', draft: rawPolicyChange({ outbound: {}, composition: {} }), out: 'refuse', rule: 'nothing_to_change' },
+  { name: 'one named field is enough to be a real change', draft: policyChange({ composition: { maxFreezableShare: 0.2 } }), out: 'needs_approval' },
   { name: 'policy change cannot touch kill switch', draft: rawPolicyChange({ killSwitch: false }), out: 'refuse', rule: 'kill_switch_not_patchable' },
   { name: 'policy change cannot touch version', draft: rawPolicyChange({ version: 99 }), out: 'refuse', rule: 'kill_switch_not_patchable' },
   {

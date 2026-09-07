@@ -159,3 +159,58 @@ test('a second backend process on one data directory exits with the named error'
     lock.release();
   }
 });
+
+// ---------- the two races, each closed at the moment it used to open ----------
+//
+// Neither of these can be written as two calls in one test, because acquireInstanceLock is
+// synchronous and a synchronous function cannot interleave with itself. Both use the seams the
+// module exposes for exactly this: each one acts at the instant the other process used to.
+
+test('the lock is never observable with nothing in it, so a live holder cannot be read as stale', () => {
+  const dir = tmpDir();
+  const lockPath = path.join(dir, '.lock');
+
+  /* THE WINDOW. `ps` is a process spawn and it used to run between creating the lock file and
+     writing the pid into it, so for those milliseconds the lock existed at zero bytes. A second
+     process arriving then read an empty file, parsed no pid, called the lock unreadable and
+     therefore stale, and deleted a live holder's claim. This callback runs at that instant and
+     asks the one question the second process would have asked. */
+  let sawEmptyLock: boolean | null = null;
+  const lock = acquireInstanceLock(dir, {
+    startedAt: () => {
+      sawEmptyLock = fs.existsSync(lockPath) && fs.readFileSync(lockPath, 'utf8').trim() === '';
+      return 'Mon Sep  7 10:00:00 2026';
+    },
+  });
+
+  assert.equal(sawEmptyLock, false, 'no lock file exists yet at the moment the start time is read');
+  assert.equal(heldPid(dir), process.pid, 'and when one does exist it already names its holder');
+  lock.release();
+});
+
+test('a caller that decided a lock was stale will not delete the lock that replaced it', () => {
+  const dir = tmpDir();
+  const lockPath = path.join(dir, '.lock');
+  // A lock left behind by a process that is long gone. Both callers read this one.
+  fs.writeFileSync(lockPath, '999999 Mon Sep  7 09:00:00 2026');
+
+  /* The second caller's view of the world. It has just judged the stale lock removable; between
+     that judgement and the removal, the first caller cleared the same file and took the
+     directory. The old code's unlink named a path and asked no questions, so it deleted a live
+     holder's lock and then took the directory for itself: two processes, one data directory,
+     and store.put quietly dropping one of them's proposals. */
+  let winner: { path: string; release(): void } | null = null;
+  assert.throws(
+    () =>
+      acquireInstanceLock(dir, {
+        beforeUnlink: () => {
+          if (winner === null) winner = acquireInstanceLock(dir);
+        },
+      }),
+    InstanceLockedError,
+    'the second caller refuses rather than removing a lock that is no longer the one it judged',
+  );
+
+  assert.equal(heldPid(dir), process.pid, 'the winner still holds the directory');
+  winner!.release();
+});

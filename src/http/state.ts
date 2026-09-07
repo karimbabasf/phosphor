@@ -57,6 +57,7 @@ export function buildState(ctx: Ctx): unknown {
     })),
   );
   const list = ctx.proposals.list();
+  const lockAddresses = ctx.keystore.addressReport();
   return {
     ledger: snapshot,
     // wallet is what the UI renders; composition stays because the policy engine
@@ -69,10 +70,16 @@ export function buildState(ctx: Ctx): unknown {
     /* The custody state, so the window can draw the lock chip and the lock screen without a
        second read. `state` is one of unlocked, locked, no_wallet or needs_migration, and the
        last two are what the first-run and migration screens key off. Never carries a key. */
+    /* `verified` says whether the addresses beside it were decrypted or merely read out of the
+       file's plaintext header, which nothing authenticates while the wallet is shut. `tampered`
+       says a correct password proved the header was edited, and the addresses are empty in that
+       state. The window draws the difference; the server does not decide what it looks like. */
     lock: {
       state: ctx.keystore.state(),
       idleLocksInSec: ctx.session.idleLocksInSec(),
-      addresses: ctx.keystore.addresses(),
+      addresses: lockAddresses.addresses,
+      verified: lockAddresses.verified,
+      tampered: lockAddresses.tampered,
     },
     sentences: sentencesOf(policy),
     proposals: list,
