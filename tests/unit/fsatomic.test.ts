@@ -126,3 +126,21 @@ test('src/ holds exactly one durable writer', () => {
   // store.ts renames a file it refuses to read; that is quarantine, not a state write.
   assert.deepEqual(rolledByHand, ['src/store.ts']);
 });
+
+test('the state files this app writes are readable by their owner and nobody else', () => {
+  /* 0644 was the process umask, not a decision. Between them these files carry holdings,
+     addresses, amounts, the policy in force and the whole decision history, and on a machine
+     with a second account on it every one of those was world readable. The keystore has always
+     passed 0600 explicitly; there was no reason the rest of the state was different. */
+  const dir = tmpDir();
+  const store = createStore(dir);
+  store.put({ id: 'a', kind: 'transfer', createdAt: new Date().toISOString(), status: 'pending', draft: {}, simulation: null, verdict: { outcome: 'needs_approval', reasons: [] } } as unknown as Proposal);
+  savePolicy(dir, defaultPolicy());
+  writeTheme(dir, DEFAULT_THEME);
+
+  for (const name of ['proposals.json', 'policy.json', 'theme.json']) {
+    const file = path.join(dir, name);
+    assert.ok(fs.existsSync(file), `${name} was not written`);
+    assert.equal(fs.statSync(file).mode & 0o777, 0o600, `${name} is readable by other accounts`);
+  }
+});
