@@ -179,6 +179,23 @@ export function assertMemory(memoryPaths: unknown): string[] {
   return found;
 }
 
+/* THE ROSTER SEAT SECRET, written once at boot from src/main.ts and read by every child spawned
+   after that. It is here rather than on DriverOptions because there is exactly one backend process
+   and exactly one secret in it, and threading it through every caller that builds a driver would
+   mean the app's two spawn sites (src/http/chats.ts and src/crew.ts) could each forget it.
+   What it buys: src/agents.ts holds back seats for the agents this app starts, so six
+   unauthenticated hellos can no longer fill the roster and lock the human's own agent out. What it
+   is not: an authorisation for anything the agent does. Every tool the child holds it would hold
+   without this, and nothing in the propose path reads it.
+   It travels to the child in its environment, which `ps eww <pid>` prints for any process this
+   user owns, so it is weaker than the window token and deliberately guards something smaller.
+   The window token is stripped from that same environment for exactly that reason (see STRIPPED). */
+let seatSecret = '';
+
+export function useSeatSecret(value: string): void {
+  seatSecret = value;
+}
+
 export function childEnv(
   repo: string,
   port: number,
@@ -190,6 +207,10 @@ export function childEnv(
   // See the note above assertMemory. This is what keeps ~/.claude/projects/<slug>/memory/ out of
   // a session that can move money; assertMemory is what checks that it worked.
   env[DISABLE_AUTO_MEMORY] = '1';
+  // See useSeatSecret. src/mcp.ts sends it on every call so the roster can tell an agent this app
+  // started from any other local process. Absent in a boot that never got one, which is a roster
+  // that seats app-minted session ids and nothing else.
+  if (seatSecret) env.PHOSPHOR_SEAT = seatSecret;
   // The MCP proxy the child spawns has to find the same app instance the window is talking to.
   env.ACC_PORT = String(port);
   env.PHOSPHOR_REPO = repo;

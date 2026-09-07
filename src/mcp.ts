@@ -70,6 +70,16 @@ const ROLE = process.env.PHOSPHOR_ROLE === 'analyst' ? 'analyst' : 'operator';
 const LABEL = process.env.PHOSPHOR_LABEL ?? '';
 const PARENT = process.env.PHOSPHOR_PARENT ?? '';
 
+/* THIS BOOT'S ROSTER SEAT SECRET, put here by the app that spawned this process (src/driver.ts).
+   It says one thing and nothing else: this session is an agent Phosphor started, so it may take one
+   of the seats src/agents.ts holds back. Six unauthenticated hellos used to fill the roster and
+   lock the human's own agent out, and that is the whole of what this closes.
+   It is not a role and it is not an authorisation. The role is decided by the seat, the tools this
+   process registers are decided by PHOSPHOR_ROLE below, and a proposal still needs a human click.
+   An MCP server a human started by hand has none of this, which is correct: it is one of the
+   unreserved seats, and there are enough of those for the humans the cap was sized for. */
+const SEAT = process.env.PHOSPHOR_SEAT ?? '';
+
 // The app derives its expiry window from this number, so the two cannot drift apart. Five
 // seconds costs nothing on loopback and takes the worst-case "still shows connected" from
 // about a minute down to about twelve seconds when an agent is killed outright.
@@ -89,7 +99,7 @@ async function proxy(body: Record<string, unknown>) {
     res = await fetch(`${BASE_URL}/api/mcp`, {
       method: 'POST',
       headers: POST_HEADERS,
-      body: JSON.stringify({ ...body, session: SESSION, client: CLIENT, label: LABEL, parent: PARENT }),
+      body: JSON.stringify({ ...body, session: SESSION, client: CLIENT, label: LABEL, parent: PARENT, secret: SEAT }),
       signal: venueWriteTimeout(),
     });
   } catch {
@@ -145,6 +155,7 @@ async function sendHello(): Promise<void> {
         client: CLIENT,
         session: SESSION,
         intervalMs: HELLO_MS,
+        secret: SEAT,
         // No role. The app decides it from the seat, because a role this process announced
         // would be a claim made by the thing being restricted. ROLE below still governs which
         // tools this process REGISTERS, which is the restriction that actually binds.

@@ -31,7 +31,7 @@ import { coinbaseSource, cachedCandles } from './candles.ts';
 import { hyperliquidSource } from './hyperliquid.ts';
 import { createMarketData } from './market/index.ts';
 import { createProposalService } from './proposals.ts';
-import { createAgents } from './agents.ts';
+import { MAX_AGENTS, RESERVED_SEATS, createAgents } from './agents.ts';
 import { TRADING_LIMITS, createRunnerHost } from './runner/host.ts';
 import { createAllocator } from './yield/allocator.ts';
 import { readApiWalletKey } from './runner/keys.ts';
@@ -39,9 +39,9 @@ import { createTradeService } from './trade/service.ts';
 import { createInfoClient } from './hl/info.ts';
 import { atr } from './analysis/regime.ts';
 import { createServer } from './server.ts';
-import { readWindowToken } from './http/auth.ts';
+import { mintToken, readWindowToken } from './http/auth.ts';
 import { useIdentityValue } from './http/respond.ts';
-import { sweepOrphans } from './driver.ts';
+import { sweepOrphans, useSeatSecret } from './driver.ts';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const cfg = loadConfig(root);
@@ -395,7 +395,16 @@ const windowTokenValue = await readWindowToken({
 // there is no window in which this app answers with the fixed word the shell would refuse.
 useIdentityValue(handshake[1] ?? '');
 
-const agents = createAgents();
+/* The roster seat secret, and a minted one when nobody sent it.
+   Minting here rather than doing without is what keeps a `npm run app` install working the same
+   way as an installed one: the app's own driver child is recognised because it carries this value,
+   and a developer running the app by hand has an in-app driver too. It is never served, never
+   logged and never printed. It goes to the agents this app spawns, through childEnv, and nowhere
+   else. See RESERVED_SEATS in src/agents.ts for what it decides and what it does not. */
+const seatSecret = (handshake[2] ?? '').length >= 32 ? (handshake[2] as string) : mintToken();
+useSeatSecret(seatSecret);
+
+const agents = createAgents(Date.now, MAX_AGENTS, { reserved: RESERVED_SEATS, secret: seatSecret });
 
 // The drop is swept for because a killed MCP process has no request to ride on. mcp.ts does
 // send a bye on a clean shutdown, so this is the backstop for a SIGKILL rather than the
