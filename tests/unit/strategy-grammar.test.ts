@@ -336,3 +336,18 @@ test('validateProgram reports where the problem is without echoing the input bac
 test('a program with no rules is refused', () => {
   assert.equal(validateProgram({ symbol: 'ETH', rules: [] }).ok, false);
 });
+
+test('the three names that are not names are refused as rule ids', () => {
+  // A rule id is a key in the firing memory, so a name that means something to the language and
+  // nothing to a person has no legitimate use. Refused here as well as handled in the memory:
+  // a guard that depends on a validator somewhere else is a guard with a seam in it.
+  for (const id of ['__proto__', 'constructor', 'prototype']) {
+    const p = clone(valid);
+    p.rules[0].id = id;
+    const out = validateProgram(p);
+    assert.equal(out.ok, false, `${id} was accepted as a rule id`);
+  }
+  const ordinary = clone(valid);
+  ordinary.rules[0].id = 'entry';
+  assert.equal(validateProgram(ordinary).ok, true, 'and an ordinary id still validates');
+});

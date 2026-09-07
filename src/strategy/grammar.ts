@@ -86,11 +86,22 @@ function hasControlChars(s: string): boolean {
   return false;
 }
 
+/* Three names that are not names. The firing memory is keyed by rule id (see RuleMemory in
+   src/strategy/evaluate.ts), and a rule called `__proto__` reached Object.prototype's setter
+   instead of the map: writing `firedEver['__proto__'] = true` was silently a no-op, so the
+   read back was Object.prototype and `=== true` was false, and `firedAtMs['__proto__']` read
+   back an object, so `(nowMs - obj) / 1000` was NaN and `NaN < cooldownSec` was false. Both
+   guards were off while renderProgram still printed "(once)" beside the rule. Refused here as
+   well as fixed in the memory, because a rule id that means something to the language and
+   nothing to a person has no legitimate use. */
+const RESERVED_IDS = ['__proto__', 'constructor', 'prototype'];
+
 const identifier = z
   .string()
   .min(1)
   .max(ID_MAX)
-  .regex(/^[A-Za-z0-9_.:-]+$/, 'letters, digits, and _ . : - only');
+  .regex(/^[A-Za-z0-9_.:-]+$/, 'letters, digits, and _ . : - only')
+  .refine((s) => !RESERVED_IDS.includes(s), `${RESERVED_IDS.join(', ')} are not usable as ids`);
 
 const displayText = z
   .string()
