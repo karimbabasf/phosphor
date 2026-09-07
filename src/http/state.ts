@@ -5,7 +5,7 @@
 // poller fills (see chart.ts) and the yield view from a background refresh, because a position
 // lives on a chain and a state build must never wait on one.
 
-import type { ChainId, Policy } from '../types.ts';
+import type { ChainId, Policy, Proposal } from '../types.ts';
 import { buildBasic } from '../view/basic.ts';
 import { classify } from '../composition.ts';
 import { buildWallet } from '../wallet.ts';
@@ -15,7 +15,96 @@ import { buildGasReport } from '../gas/report.ts';
 import type { GasReport, GasWindow } from '../gas/report.ts';
 import { renderSentences } from '../policy/render.ts';
 import { LOG_LIMIT_MAX } from './context.ts';
+import { intParam } from './respond.ts';
 import type { Ctx } from './context.ts';
+
+/* NOTHING UNBOUNDED RIDES ON /api/state, and this is where that rule is kept.
+   The payload used to carry every proposal the data directory had ever held. Measured on a demo
+   instance: 14.4 KB with none, 216 KB at 200, 1027 KB at 1000, of which the proposals key was
+   1014 KB, or 98% of the response. The window reads that list filtered to pending in exactly two
+   places (ui/screens/shell.js and ui/screens/decision.js) and draws at most two cards from it, so
+   the growth was history nothing rendered, re-serialised on the server and re-parsed in the
+   browser on every state frame.
+
+   What stays: everything still waiting on a person, whatever its age, because a pending ask that
+   fell off a page would be an ask nobody is shown. What goes behind /api/proposals: the decided
+   history, newest first, paged.
+
+   The 20 decided rows that stay are the recent-activity window: enough for a screen to draw what
+   just happened without a second read, few enough that the payload does not grow with the data
+   directory. tests/unit/state-payload.test.ts asserts the size, so a key added later that grows
+   with use fails there rather than in front of somebody a year in.
+
+   A COUNT ALONE DOES NOT BOUND BYTES, which is why there is a budget beside it. A proposal is not
+   a fixed size: a swap carries its draft, its quote echo, a simulation and a result, and twenty of
+   those measured 21.4 KB against a 20 KB target on their own. So the twenty is a ceiling on rows
+   and the budget is a ceiling on bytes, and whichever runs out first stops the walk. The rest is
+   one fetch away. */
+export const STATE_DECIDED_KEPT = 20;
+export const STATE_DECIDED_BYTES = 6 * 1024;
+export const PROPOSAL_PAGE_DEFAULT = 25;
+export const PROPOSAL_PAGE_MAX = 200;
+
+// Still waiting on someone: a person, an unlock, or a look at the chain. Never trimmed.
+const WAITING: ReadonlySet<string> = new Set(['pending', 'pending_unlock', 'needs_reconciliation']);
+
+/* The trim, in store order.
+   The order is load-bearing rather than cosmetic: ui/screens/decision.js takes pending[0] out of
+   the filtered list, so reversing here would silently change which proposal a person is asked
+   about first. The walk is backwards to find the newest decided rows and the result is put back
+   the way the store wrote it. */
+export function stateProposals(all: Proposal[]): Proposal[] {
+  const out: Proposal[] = [];
+  let decided = 0;
+  let bytes = 0;
+  for (let i = all.length - 1; i >= 0; i -= 1) {
+    const p = all[i];
+    if (WAITING.has(p.status)) {
+      out.push(p);
+      continue;
+    }
+    if (decided >= STATE_DECIDED_KEPT || bytes >= STATE_DECIDED_BYTES) continue;
+    out.push(p);
+    decided += 1;
+    // At most twenty of these, so measuring them costs microseconds and buys a payload that
+    // cannot be blown out by one unusually fat row.
+    bytes += JSON.stringify(p).length;
+  }
+  out.reverse();
+  return out;
+}
+
+/* GET /api/proposals?limit=&before=: the whole history, newest first, a page at a time.
+   `before` is the id of the last row of the page before it rather than a timestamp, because two
+   proposals filed in the same millisecond are ordinary and a timestamp cursor drops one of them.
+   An id nobody has heard of is a 400 with the id in the sentence: answering an empty page would
+   read as "your history ends here", which is the one wrong answer this route can give. */
+export function proposalPage(ctx: Ctx, url: URL): { status: number; body: unknown } {
+  const limit = intParam(url.searchParams.get('limit'), PROPOSAL_PAGE_DEFAULT, PROPOSAL_PAGE_MAX);
+  const before = url.searchParams.get('before');
+  const all = ctx.proposals.list();
+
+  let end = all.length;
+  if (before !== null && before.length > 0) {
+    const at = all.findIndex((p) => p.id === before);
+    if (at === -1) {
+      return { status: 400, body: { error: `there is no proposal called '${before}', so there is nothing to page back from.` } };
+    }
+    end = at;
+  }
+  const start = Math.max(0, end - limit);
+  const rows = all.slice(start, end).reverse();
+  return {
+    status: 200,
+    body: {
+      proposals: rows,
+      // null means this was the last page. The caller stops rather than asking again with a
+      // cursor that would answer the same rows.
+      nextBefore: start > 0 && rows.length > 0 ? rows[rows.length - 1].id : null,
+      total: all.length,
+    },
+  };
+}
 
 export function sentencesOf(policy: Policy | null): string[] {
   if (policy === null) return [];
@@ -75,7 +164,9 @@ export function buildState(ctx: Ctx): unknown {
       addresses: ctx.keystore.addresses(),
     },
     sentences: sentencesOf(policy),
-    proposals: list,
+    // Everything still waiting on a person, plus the last 20 decided. The rest is paged behind
+    // GET /api/proposals; see the note on STATE_DECIDED_KEPT above.
+    proposals: stateProposals(list),
     mode: ctx.cfg.mode,
     /* The rolling 24h cap, as a fact rather than a sentence.
        It was already in `sentences` as prose and nowhere as a number, so the window could tell a
