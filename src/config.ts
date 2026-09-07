@@ -93,10 +93,36 @@ function defaultKeysPath(baseDir: string, dataDir: string): string {
   return perProject; // nothing yet: a new key is created project-local, not global
 }
 
+/* The path as the FILESYSTEM sees it, not as it was typed.
+   `path.relative` compares strings, and two strings that are not equal can still be one
+   directory. On a default APFS volume the filesystem is case insensitive, so
+   /Users/x/developer/apps/phosphor/state/keys.json is the repo working copy and reads as
+   somewhere else entirely to a string comparison; a symlink pointing into the working copy has
+   the same effect and needs no typo at all. realpathSync.native resolves both: it follows
+   symlinks and, on macOS, returns the true on-disk spelling of every component.
+   The path may not exist yet, which is the normal case for a key file that has not been created.
+   So the deepest ancestor that DOES exist is resolved and the remaining components are put back
+   on: that is enough, because the components that decide whether this is inside the repo are the
+   ones near the root, and those exist. */
+function resolveReal(target: string): string {
+  let head = path.resolve(target);
+  const tail: string[] = [];
+  for (;;) {
+    try {
+      return path.join(fs.realpathSync.native(head), ...tail);
+    } catch {
+      const parent = path.dirname(head);
+      if (parent === head) return path.resolve(target);
+      tail.unshift(path.basename(head));
+      head = parent;
+    }
+  }
+}
+
 // Private keys inside a git working copy are one `git add -f` away from being published.
 // Keeping them outside it is the structural guarantee, not the .gitignore entry.
-function assertOutsideRepo(keysPath: string, root: string): void {
-  const rel = path.relative(root, keysPath);
+export function assertOutsideRepo(keysPath: string, root: string): void {
+  const rel = path.relative(resolveReal(root), resolveReal(keysPath));
   const inside = rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
   if (inside) {
     throw new Error(

@@ -26,7 +26,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { loadConfig } from '../src/config.ts';
+import { assertOutsideRepo, loadConfig } from '../src/config.ts';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
@@ -354,9 +354,19 @@ let blobs: Blob[] = [];
   if (keysPath === '') {
     add('keys outside repo', false, 'config did not load, keysPath unknown');
   } else {
-    const rel = path.relative(ROOT, keysPath);
-    const inside = rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
-    add('keys outside repo', !inside, inside ? `keysPath ${keysPath} is INSIDE the working copy` : `keysPath resolves to ${keysPath}`);
+    /* The app's own check, called rather than copied. The copy that used to live here compared
+       strings, so it reported the same false pass the app did for a differently-cased spelling
+       of the repo root or a symlink pointing into it: a sweep that agrees with the bug it is
+       sweeping for is worse than no sweep. */
+    let inside = false;
+    let why = `keysPath resolves to ${keysPath}`;
+    try {
+      assertOutsideRepo(keysPath, ROOT);
+    } catch (err) {
+      inside = true;
+      why = err instanceof Error ? err.message : String(err);
+    }
+    add('keys outside repo', !inside, why);
   }
 }
 

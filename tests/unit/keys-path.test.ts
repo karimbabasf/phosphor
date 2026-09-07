@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { loadConfig } from '../../src/config.ts';
+import { assertOutsideRepo, loadConfig } from '../../src/config.ts';
 import { createKeystore, destroyPlaintext } from '../../src/keystore/store.ts';
 import { defaultParams } from '../../src/keystore/kdf.ts';
 
@@ -240,4 +240,49 @@ test('a home with no wallet anywhere still starts a new one project-local', () =
   );
 
   assert.equal(cfg.keysPath, path.join(home, '.phosphor', path.basename(root), 'keys.json'));
+});
+
+// ---------- the repo boundary, against a filesystem rather than against a string ----------
+//
+// Private keys inside a git working copy are one `git add -f` from being published, and keeping
+// them outside it is meant to be structural. The check compared strings, and two strings that
+// are not equal can still be one directory: on a default APFS volume the filesystem is case
+// insensitive, so a lowercase spelling of the repo root judged the path outside the working copy
+// while the filesystem resolved it to exactly that directory. A symlink did the same with no
+// typo at all. `npm run sweep` reported the same false pass, from its own copy of the check.
+
+test('a differently cased spelling of the repo root is still the repo root', () => {
+  const root = scratch('phosphor-root-');
+  const inside = path.join(root, 'state', 'keys.json');
+  fs.mkdirSync(path.dirname(inside), { recursive: true });
+  fs.writeFileSync(inside, '{}');
+
+  assert.throws(() => assertOutsideRepo(inside, root), /outside the repo/, 'the plain spelling was always caught');
+
+  // The same directory, spelled in a case the volume accepts. Skipped where it does not: a
+  // case-sensitive volume genuinely has no such path, and the check is right to allow it.
+  const shouted = root.toUpperCase();
+  let sameDirectory = false;
+  try {
+    sameDirectory = fs.realpathSync.native(shouted) === fs.realpathSync.native(root);
+  } catch {
+    sameDirectory = false;
+  }
+  if (sameDirectory) {
+    assert.throws(() => assertOutsideRepo(path.join(shouted, 'state', 'keys.json'), root), /outside the repo/);
+  }
+});
+
+test('a symlink pointing into the working copy is not a way out of it', () => {
+  const root = scratch('phosphor-root-');
+  fs.mkdirSync(path.join(root, 'state'), { recursive: true });
+  const elsewhere = path.join(scratch('phosphor-link-'), 'state');
+  fs.symlinkSync(path.join(root, 'state'), elsewhere);
+
+  assert.throws(() => assertOutsideRepo(path.join(elsewhere, 'keys.json'), root), /outside the repo/);
+});
+
+test('a key file genuinely outside the working copy is still allowed', () => {
+  const root = scratch('phosphor-root-');
+  assert.doesNotThrow(() => assertOutsideRepo(path.join(scratch('phosphor-home-'), '.phosphor', 'keys.json'), root));
 });
