@@ -24,6 +24,10 @@
     eth: 'Ethereum', base: 'Base', arb: 'Arbitrum', sol: 'Solana', near: 'NEAR'
   };
 
+  /* The three chains POST /api/yield/withdraw accepts. Anything else, including
+     nothing, is refused 400 before the request reaches a rail. */
+  var WITHDRAW_CHAINS = ['eth', 'base', 'arb'];
+
   /* Allowlist entries that are venues rather than addresses. The policy stores
      the id it checks against; the window shows the name a person knows it by. */
   var VENUE_NAMES = {
@@ -147,29 +151,13 @@
     var wallet = state.wallet || {};
     var rows = Array.isArray(wallet.rows) ? wallet.rows.slice() : [];
 
-    /* Ready to move and Trading money join the table as rows. */
-    var extra = [];
-    if (state.intents && typeof state.intents.totalUsd === 'number' && state.intents.totalUsd > 0) {
-      extra.push({
-        kind: 'intents',
-        symbol: 'Ready to move',
-        chain: '',
-        quantity: null,
-        valueUsd: state.intents.totalUsd,
-        share: wallet.totalUsd ? state.intents.totalUsd / wallet.totalUsd : 0
-      });
-    }
-    if (state.trade && state.trade.account && typeof state.trade.account.equity === 'number') {
-      extra.push({
-        kind: 'trading',
-        symbol: 'Trading money',
-        chain: '',
-        quantity: null,
-        valueUsd: state.trade.account.equity,
-        share: wallet.totalUsd ? state.trade.account.equity / wallet.totalUsd : 0
-      });
-    }
-    var all = rows.concat(extra);
+    /* Two blocks used to sit here adding Ready to move and Trading money rows
+       from state.intents and state.trade. buildState emits neither key, so both
+       were dead and the table never gained either row. Money held at Intents is
+       already in wallet.rows as a row of kind intents; money at the trading
+       venue is only in /api/trade, which this screen does not read, and inventing
+       it from a key that does not exist was never going to show it. */
+    var all = rows;
 
     if (!all.length && !store.loaded()) {
       renderMoneySkeleton();
@@ -245,10 +233,14 @@
     }
   }
 
+  /* Every name here is YieldView's own: totalPrincipalUsd, totalEarnedUsd,
+     autoAllocate. This read principalUsd, earnedUsd, apy and auto, and fact()
+     skips an empty value, so all three figures were dropped and the panel was
+     two buttons with the auto one permanently reading off. */
   function renderEarning(state) {
     var y = state.yield;
     dom.clear(refs.earningBody);
-    if (!y) {
+    if (!y || (!y.totalPrincipalUsd && !y.totalValueUsd)) {
       var empty = dom.el('div', 'empty');
       empty.appendChild(dom.el('p', 'empty-title', 'Nothing is earning'));
       empty.appendChild(dom.el('p', '', 'Ask your assistant to put some of your dollars to work.'));
@@ -257,28 +249,84 @@
     }
 
     var facts = dom.el('div', 'facts');
-    fact(facts, 'Supplied', typeof y.principalUsd === 'number' ? dom.usd(y.principalUsd) : '');
-    fact(facts, 'Earned', typeof y.earnedUsd === 'number' ? dom.usd(y.earnedUsd, 4) : '');
-    fact(facts, 'Rate today', typeof y.apy === 'number' ? dom.pct(y.apy, 2) : '');
+    fact(facts, 'Supplied', typeof y.totalPrincipalUsd === 'number' ? dom.usd(y.totalPrincipalUsd) : '');
+    /* Places follow the number, the same rule fees use: four only when two would
+       round the figure to nothing. A day's interest is fractions of a cent and a
+       year's is not, and $94.1200 reads as a machine printing a float. */
+    fact(facts, 'Earned', typeof y.totalEarnedUsd === 'number'
+      ? dom.usd(y.totalEarnedUsd, Math.abs(y.totalEarnedUsd) < 0.01 ? 4 : 2)
+      : '');
+    var rate = rateOn(y);
+    fact(facts, 'Rate', rate === null ? '' : dom.pct(rate, 2));
     refs.earningBody.appendChild(facts);
 
-    var actions = dom.el('div', 'hstack-2');
-    var withdraw = dom.el('button', 'btn');
-    withdraw.appendChild(dom.el('span', 'btn-label', 'Bring it back'));
-    actions.appendChild(withdraw);
+    /* basisUnknown counts positions this app can derive no cost for, so their
+       value is in the total and what they made is in nothing. A figure that is
+       short by an unknown amount is printed with the reason beside it. */
+    if (y.basisUnknown > 0) {
+      refs.earningBody.appendChild(dom.el('p', 'meta', y.basisUnknown === 1
+        ? 'One position has no cost on record, so what it made is not in that figure.'
+        : y.basisUnknown + ' positions have no cost on record, so what they made is not in that figure.'));
+    }
+    if (y.stale) {
+      refs.earningBody.appendChild(dom.el('p', 'meta warn',
+        'The last read of these failed. These are the numbers from the one before it.'));
+    }
+
+    var actions = dom.el('div', 'hstack-2 wrap');
+    var chains = withdrawChains(y);
+    for (var c = 0; c < chains.length; c += 1) {
+      actions.appendChild(withdrawButton(chains[c], chains.length > 1));
+    }
 
     var auto = dom.el('button', 'btn btn-ghost');
-    auto.appendChild(dom.el('span', 'btn-label', y.auto ? 'Auto-earn is on' : 'Auto-earn is off'));
+    auto.appendChild(dom.el('span', 'btn-label', y.autoAllocate ? 'Auto-earn is on' : 'Auto-earn is off'));
     actions.appendChild(auto);
     refs.earningBody.appendChild(actions);
+  }
 
-    dom.on(withdraw, 'click', function () {
-      window.PhosphorShell.setPending(withdraw, true, 'Bringing it back');
-      api.yieldWithdraw({})
+  /* The rate the money is actually getting, from the venue quote for the chain it
+     is on. y.best is the best rate available anywhere, which is a different fact
+     and would overstate the return every time the money is not on that chain. */
+  function rateOn(y) {
+    var chains = withdrawChains(y);
+    var venues = Array.isArray(y.venues) ? y.venues : [];
+    for (var i = 0; i < venues.length; i += 1) {
+      if (chains.indexOf(venues[i].chain) < 0) continue;
+      if (venues[i].rate && typeof venues[i].rate.apy === 'number') return venues[i].rate.apy;
+    }
+    return null;
+  }
+
+  /* Which chains the money is actually on. The route takes the whole position on
+     one named chain and refuses any other value, so a button that sends nothing
+     comes back "chain must be one of eth, base, arb; got ''" and moves no money.
+     Both Bring it back buttons in this window did exactly that. */
+  function withdrawChains(y) {
+    var out = [];
+    var positions = (y && Array.isArray(y.positions)) ? y.positions : [];
+    for (var i = 0; i < positions.length; i += 1) {
+      var chain = positions[i].chain;
+      if (WITHDRAW_CHAINS.indexOf(chain) < 0 || out.indexOf(chain) >= 0) continue;
+      out.push(chain);
+    }
+    if (!out.length && y && WITHDRAW_CHAINS.indexOf(y.chain) >= 0) out.push(y.chain);
+    return out;
+  }
+
+  function withdrawButton(chain, name) {
+    var button = dom.el('button', 'btn');
+    button.type = 'button';
+    button.appendChild(dom.el('span', 'btn-label',
+      name ? 'Bring it back from ' + chainName(chain) : 'Bring it back'));
+    dom.on(button, 'click', function () {
+      window.PhosphorShell.setPending(button, true, 'Bringing it back');
+      api.yieldWithdraw({ chain: chain })
         .then(function () { return window.PhosphorShell.refresh({}); })
         .catch(function (err) { window.PhosphorToast.show(net.readable(err, true), 'down'); })
-        .finally(function () { window.PhosphorShell.setPending(withdraw, false); });
+        .finally(function () { window.PhosphorShell.setPending(button, false); });
     });
+    return button;
   }
 
   function renderLimits(state) {
