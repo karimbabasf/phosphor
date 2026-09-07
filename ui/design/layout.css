@@ -507,6 +507,27 @@ body[data-view="trade"] .stage {
   flex: 1 1 0;
 }
 
+/* The rail's own report, which arrives as lines rather than a paragraph. */
+.dock-summary {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-2);
+  font-size: var(--fs-13);
+}
+
+/* One address and the answer to "who picked this". An address the venue minted
+   is the one a person is least expecting, so it is the one that carries a
+   colour: the rest of the card is quiet on purpose. */
+.destination {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.destination[data-chosen="venue"] .meta {
+  color: var(--warn);
+}
+
 @keyframes cardin {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }

@@ -31,6 +31,10 @@
   var DONE_MS = 6000;
   var REFUSED_MS = 2000;
 
+  /* The sentence src/view/basic.ts uses for the same address, word for word. A
+     quoter-chosen address is never described as the person's own wallet. */
+  var VENUE_CHOSE = 'an address the swap service chose, not your wallet';
+
   var refs = {};
   var showing = null;
   var held = null;
@@ -130,6 +134,12 @@
         : draft.chain + ' to ' + draft.toChain;
       return 'Swap ' + draft.fromSymbol + ' for ' + draft.toSymbol + ' ' + where;
     }
+    /* The draft the engine writes is `mandate_arm`; nothing has ever authored a
+       draft called `mandate`, so this fell through and headlined the card with
+       the raw enum. The symbol is the only plain name a mandate carries. */
+    if (draft.kind === 'mandate_arm') {
+      return draft.symbol ? 'Arm a trading rule on ' + draft.symbol : 'Arm a trading rule';
+    }
     if (draft.kind === 'mandate') return 'Arm a rule';
     if (draft.kind === 'policy_change') return 'Change your limits';
     if (draft.kind === 'yield_deposit') return 'Put money to work';
@@ -201,9 +211,14 @@
   function signature(entry) {
     var p = entry.proposal || {};
     var sim = p.simulation || {};
-    var destinations = Array.isArray(sim.destinations) ? sim.destinations.length : 0;
+    /* The deposit address and the summary both arrive with the quote, which can
+       land after the card is already up. A signature that ignored them would
+       leave a person reading a card that had since learned where the money goes. */
+    var deposits = Array.isArray(sim.depositAddresses) ? sim.depositAddresses.length : 0;
+    var diff = sim.policyDiff ? (sim.policyDiff.after || []).length : 0;
     return [entry.kind, p.id, p.status, entry.queued, sim.feeUsd, sim.gasUsd,
-      sim.priceImpact, sim.amountOut, destinations,
+      sim.priceImpact, sim.amountOut, deposits, diff, sim.summary || '',
+      (Array.isArray(p.verdict && p.verdict.reasons) ? p.verdict.reasons.join(' ') : ''),
       (p.verdict && p.verdict.reason) || ''].join('|');
   }
 
@@ -292,15 +307,36 @@
     addFact(facts, 'Why you are being asked', whyLine(proposal));
     refs.card.appendChild(facts);
 
-    /* Where the money actually lands. This is the field with a track record:
-       an amount that was correct while the screen said "your wallet" and the
-       funds went to a solver-chosen address. It is never abbreviated. */
+    /* The rail's own words about what it is about to do. The backend writes the
+       deposit lines into this string on purpose, with a comment saying the
+       approval gate renders it, and the gate never did.
+
+       A policy change is the one kind whose summary is the assistant's own
+       sentence read back, so it is labelled as that and not as the venue's
+       report. For that card the diff below is the truth. */
+    var summary = typeof sim.summary === 'string' ? sim.summary.trim() : '';
+    if (summary) {
+      var swrap = dom.el('div', 'stack-2');
+      swrap.appendChild(dom.el('p', 'label', draft.kind === 'policy_change'
+        ? 'What the assistant asked for'
+        : 'What the venue reports'));
+      swrap.appendChild(dom.el('p', 'body dock-summary', summary));
+      refs.card.appendChild(swrap);
+    }
+
+    /* Never abbreviated. This is the field with a track record: an amount that
+       was correct while the screen said "your wallet" and the funds went to a
+       solver-chosen address. */
     var destinations = destinationsOf(proposal);
     if (destinations.length) {
       var dwrap = dom.el('div', 'stack-2 destinations');
       dwrap.appendChild(dom.el('p', 'label', 'Where it goes'));
       for (var d = 0; d < destinations.length; d += 1) {
-        dwrap.appendChild(dom.el('p', 'addr', destinations[d]));
+        var drow = dom.el('div', 'destination');
+        dom.setAttr(drow, 'data-chosen', destinations[d].chosenBy);
+        drow.appendChild(dom.el('p', 'addr', destinations[d].address));
+        drow.appendChild(dom.el('p', 'meta', destinations[d].label));
+        dwrap.appendChild(drow);
       }
       refs.card.appendChild(dwrap);
     }
@@ -528,20 +564,53 @@
     return 'Your limits say this one needs a click.';
   }
 
+  /* Where the money actually lands, every address in full, labelled by who chose
+     it.
+
+     This read `simulation.destinations`, a field no simulation has ever carried,
+     so the only addresses on the card were the ones this app picked. The venue
+     mints a fresh deposit address per quote, which is why it can never sit on an
+     allowlist, and it is the address the funds are signed over to. The backend
+     records it in `depositAddresses` for this card and says so in a comment.
+     Showing the allowlisted leg while hiding that one is the exact shape of F2:
+     an amount that was correct while the screen named the wrong destination. */
   function destinationsOf(proposal) {
     var draft = proposal.draft || {};
     var out = [];
-    if (typeof draft.to === 'string') out.push(draft.to);
-    if (draft.leg && typeof draft.leg.to === 'string') out.push(draft.leg.to);
-    var sim = proposal.simulation;
-    if (sim && Array.isArray(sim.destinations)) {
-      for (var i = 0; i < sim.destinations.length; i += 1) {
-        var value = sim.destinations[i];
-        var text = typeof value === 'string' ? value : (value && value.address);
-        if (text && out.indexOf(text) === -1) out.push(text);
+    pushDestination(out, draft.to, 'app');
+    if (draft.leg) pushDestination(out, draft.leg.to, 'app');
+    if (Array.isArray(draft.legs)) {
+      for (var l = 0; l < draft.legs.length; l += 1) {
+        pushDestination(out, draft.legs[l] && draft.legs[l].to, 'app');
       }
     }
+    var sim = proposal.simulation;
+    var deposits = sim && Array.isArray(sim.depositAddresses) ? sim.depositAddresses : [];
+    for (var i = 0; i < deposits.length; i += 1) {
+      pushDestination(out, deposits[i] && deposits[i].address, 'venue');
+    }
     return out;
+  }
+
+  function pushDestination(out, address, chosenBy) {
+    if (typeof address !== 'string') return;
+    var clean = address.trim();
+    if (!clean.length) return;
+    for (var i = 0; i < out.length; i += 1) {
+      if (out[i].address.toLowerCase() !== clean.toLowerCase()) continue;
+      /* An address that is both is still one the venue minted, and under
+         disclosing is the failure this whole function exists to prevent. */
+      if (chosenBy === 'venue') {
+        out[i].chosenBy = 'venue';
+        out[i].label = VENUE_CHOSE;
+      }
+      return;
+    }
+    out.push({
+      address: clean,
+      chosenBy: chosenBy,
+      label: chosenBy === 'venue' ? VENUE_CHOSE : 'the destination this app chose'
+    });
   }
 
   /* The rule change, as the engine rendered it either side of the patch.
