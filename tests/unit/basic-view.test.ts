@@ -8,6 +8,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { buildBasic } from '../../src/view/basic.ts';
 import type { BasicInput, PriceReading } from '../../src/view/basic.ts';
 import type {
@@ -825,4 +826,21 @@ test('a stale chain suppresses the earning line, like every other number here', 
   );
   assert.equal(view.totalUsd, null);
   assert.equal(view.earning, null);
+});
+
+// ---------- the window that renders it ----------
+//
+// The five surfaces are how the beam finds its targets: ui/beam/trace.js maps a tool to a
+// data-surface id and ui/beam/beam.js looks that id up inside the active view. A panel that
+// loses its id does not fail here at render time, it fails silently as a tool call that lands
+// nowhere, which is exactly the feedback this window exists to give.
+
+test('Basic carries every surface the beam aims at, and no Freeze of its own', () => {
+  const source = readFileSync(new URL('../../ui/screens/basic.js', import.meta.url), 'utf8');
+  for (const id of ['holdings', 'rules', 'earning', 'moneyin', 'activity']) {
+    assert.ok(source.includes(`'${id}'`), `ui/screens/basic.js must place the ${id} surface`);
+  }
+  // The top bar carries the brake now. Two copies of one action on one screen is how a person
+  // stops believing either of them.
+  assert.ok(!source.includes('Freeze everything'));
 });

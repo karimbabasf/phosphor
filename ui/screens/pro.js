@@ -1,10 +1,10 @@
 /* Pro: a 12-column grid at most 1440 wide, for a person who already holds
    crypto and wants to see everything and set the rules.
 
-   Five panels and one modal. The chart moved to trade, which is the single
-   biggest de-noising move available and costs nothing because trade is one
-   word away. The donut, the fragmentation block and the LOG and GAS modals are
-   gone: fees ride on the Activity rows now, with a total for the window. */
+   The same four components Basic has, at higher density: rows 36 px instead of
+   48, labels 13 px instead of 14. Four panels, four surfaces, and the chart is
+   in trade, which is the single biggest de-noising move available and costs
+   nothing because trade is one word away. */
 (function () {
   'use strict';
 
@@ -12,6 +12,10 @@
   var net = window.PhosphorNet;
   var api = window.PhosphorApi;
   var store = window.PhosphorState;
+
+  /* The same figure as a surface's decay: a row that just moved keeps the
+     afterglow for as long as the panel it sits in would. */
+  var CHANGED_MS = 2400;
 
   var refs = {};
   var mounted = false;
@@ -43,11 +47,11 @@
   }
 
   function build(host) {
-    var grid = dom.el('div', 'pro-grid');
+    var grid = dom.el('div', 'pro-grid pro-dense');
 
     /* Money: one table. Ready to move and Trading money are rows in it rather
        than panels of their own, because they are money the person holds. */
-    var money = panel('Money', 'span-8');
+    var money = panel('Money', 'span-7', 'holdings');
     var moneyWrap = dom.el('div', 'table-wrap');
     moneyWrap.style.setProperty('--table-max', '440px');
     var table = dom.el('table', 'table');
@@ -73,19 +77,19 @@
     grid.appendChild(money.node);
 
     /* Earning. */
-    var earning = panel('Earning', 'span-4');
+    var earning = panel('Earning', 'span-5', 'earning');
     var earningBody = dom.el('div', 'stack');
     earning.body.appendChild(earningBody);
     grid.appendChild(earning.node);
 
     /* Your limits: the policy as sentences, the daily limit, the allowlist. */
-    var limits = panel('Your limits', 'span-5');
+    var limits = panel('Limits', 'span-5', 'rules');
     var limitsBody = dom.el('div', 'stack');
     limits.body.appendChild(limitsBody);
     grid.appendChild(limits.node);
 
     /* Activity: receipts, with fees per row and a total for the window. */
-    var activity = panel('Activity', 'span-7');
+    var activity = panel('Activity', 'span-7', 'activity');
     var activityBody = dom.el('div', 'panel-body-flush activity-list');
     activity.body.appendChild(activityBody);
     var feeRow = dom.el('div', 'between panel-total');
@@ -113,8 +117,9 @@
     window.PhosphorReceipts.load();
   }
 
-  function panel(title, span) {
+  function panel(title, span, surface) {
     var node = dom.el('section', 'panel ' + span);
+    node.dataset.surface = surface;
     var head = dom.el('div', 'panel-head');
     head.appendChild(dom.el('h2', 'title-sm', title));
     var body = dom.el('div', 'panel-body');
@@ -189,6 +194,7 @@
         ? '' : dom.qty(row.quantity));
       dom.setNumber(tr.children[3], dom.usd(row.valueUsd));
       dom.setText(tr.children[4], dom.pct(row.share || 0));
+      markChanged(tr, dom.usd(row.valueUsd));
     });
 
     dom.setNumber(refs.totalValue, dom.usd(wallet.totalUsd || 0));
@@ -204,6 +210,22 @@
     dom.setText(refs.emptyNote, notes.join('. '));
     dom.setHidden(refs.emptyNote, !notes.length);
     dom.setAttr(refs.emptyNote, 'class', stale.length ? 'meta warn' : 'meta');
+  }
+
+  /* A row whose number just moved carries the afterglow for a moment, so a
+     change that arrived while the person was reading something else is still
+     visible when they look back. The first fill is not a change. */
+  function markChanged(node, value) {
+    var next = value === undefined || value === null ? '' : String(value);
+    var had = node.dataset.shown;
+    node.dataset.shown = next;
+    if (had === undefined || had === next) return;
+    node.dataset.changed = 'true';
+    if (node.__changeTimer) window.clearTimeout(node.__changeTimer);
+    node.__changeTimer = window.setTimeout(function () {
+      delete node.dataset.changed;
+      node.__changeTimer = 0;
+    }, CHANGED_MS);
   }
 
   function renderMoneySkeleton() {
@@ -301,7 +323,7 @@
       for (var i = 0; i < spoken.length; i += 1) {
         var row = dom.el('div', 'between limit-row');
         row.appendChild(dom.el('span', 'body grow', spoken[i]));
-        var edit = dom.el('button', 'btn btn-quiet');
+        var edit = dom.el('button', 'btn btn-quiet btn-sm');
         edit.appendChild(dom.el('span', 'btn-label', 'Edit'));
         row.appendChild(edit);
         dom.on(edit, 'click', function () {

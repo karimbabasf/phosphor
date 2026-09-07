@@ -34,7 +34,7 @@
    anything waiting on a person, and the venue's wall keeps the gate's red so the
    one thing nobody chose stays the one alarm on the glass. */
 var TRADE_C_LIQ = '#ff3b30'; // the venue's wall. The one red on this canvas.
-var TRADE_C_WALL = '#F2B544'; // the human's wall: the approved loss, reached.
+var TRADE_C_WALL = '#F5B942'; // the human's wall: the approved loss, reached. --warn.
 var TRADE_C_LONG = '#33FF66';
 var TRADE_C_SHORT = '#FF5A6E'; // the chart's own down colour, lighter than the gate red on purpose
 var TRADE_LABEL_H = 13; // minimum vertical gap between two stacked labels, in CSS pixels
