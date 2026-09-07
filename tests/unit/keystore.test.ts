@@ -413,6 +413,57 @@ test('migration verifies the round trip and the address before it destroys anyth
   assert.equal(reopened.addresses().evm, before.evm);
 });
 
+/* A KILL INSIDE THE DESTROY LOOP used to strand the master key on disk in the clear, forever.
+   The loop shredded the primary first and the backups after it, so a process that died between
+   the two left `keys.json.bak-*` behind while `keys.enc.json` verified: state() read `locked`,
+   the migration screen never appeared again, and migrate() refused because the envelope existed.
+   Nothing in the app could reach the survivor.
+   Two changes. The copies go first, so the file the app keys its migration state off is the last
+   thing destroyed. And migrate() finishes an interrupted run rather than refusing it, after
+   proving the encrypted wallet holds the same keys as the plaintext still on disk. */
+test('a migration killed inside the destroy loop can be finished, and leaves no plaintext behind', async () => {
+  const keysPath = tempKeys();
+  const before = plaintextWallet(keysPath);
+  const bak = `${keysPath}.bak-2026-08-20`;
+  const bytes = fs.readFileSync(keysPath);
+
+  // The kill: the encrypted wallet exists and verifies, and one plaintext copy survives.
+  await keystore(keysPath).migrate('a long enough password');
+  fs.writeFileSync(bak, bytes);
+
+  const resumed = keystore(keysPath);
+  assert.equal(resumed.state(), 'locked', 'the envelope is fine, which is exactly why this used to be invisible');
+  const out = await resumed.migrate('a long enough password');
+  assert.deepEqual(out.destroyed, [bak]);
+  assert.equal(fs.existsSync(bak), false, 'the survivor is gone');
+  assert.equal(out.addresses.evm, before.evm);
+});
+
+test('finishing an interrupted migration refuses a password that does not open the encrypted wallet', async () => {
+  const keysPath = tempKeys();
+  plaintextWallet(keysPath);
+  const bak = `${keysPath}.bak-2026-08-20`;
+  const bytes = fs.readFileSync(keysPath);
+  await keystore(keysPath).migrate('a long enough password');
+  fs.writeFileSync(bak, bytes);
+
+  await assert.rejects(() => keystore(keysPath).migrate('some other password'), /does not open/);
+  assert.ok(fs.existsSync(bak), 'and nothing was destroyed on the way to finding that out');
+});
+
+test('finishing an interrupted migration refuses a plaintext file holding a different wallet', async () => {
+  const keysPath = tempKeys();
+  plaintextWallet(keysPath);
+  const bak = `${keysPath}.bak-2026-08-20`;
+  await keystore(keysPath).migrate('a long enough password');
+  // Somebody else's key, sitting under a name that looks like a backup of this one.
+  const other = newWallet();
+  fs.writeFileSync(bak, JSON.stringify({ mnemonic: other.mnemonic, evm: { privateKey: other.wallet.keys.evm } }));
+
+  await assert.rejects(() => keystore(keysPath).migrate('a long enough password'), /different wallet/);
+  assert.ok(fs.existsSync(bak), 'a file this app cannot account for is never shredded');
+});
+
 test('migration refuses to run twice, so an encrypted wallet is never overwritten', async () => {
   const keysPath = tempKeys();
   plaintextWallet(keysPath);

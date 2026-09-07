@@ -664,8 +664,68 @@ export function destroyPlaintext(target: string, demo: boolean = envIsDemo()): v
 // VERIFY BEFORE DESTROYING. A half-migration that has already deleted the plaintext is fund
 // loss, so the round trip is decrypted back and the derived EVM address compared against the
 // one the plaintext file held, and only then is anything overwritten.
+/* Every plaintext copy of the key still on disk: the file itself and every backup beside it.
+   The list the destroy loop walks, and the list a resumed migration walks again. */
+function plaintextResidue(keysPath: string): string[] {
+  // BACKUPS FIRST. The loop is not atomic, and a process that died inside it used to have
+  // destroyed the primary and left a backup: state() then read `locked` because the envelope
+  // verifies, the migration screen never appeared again, migrate() refused because the envelope
+  // exists, and the master key sat on disk in the clear with nothing in the app able to reach
+  // it. Shredding the copies before the original inverts that: a death inside the loop leaves
+  // the primary, so the app still reports a plaintext key file and can be asked to finish.
+  return [...backupCopies(keysPath), ...(fs.existsSync(keysPath) ? [keysPath] : [])];
+}
+
+/* THE SECOND HALF OF THE SAME PROBLEM: finishing a migration that was interrupted.
+   Reached only when the envelope already exists AND plaintext is still beside it, which is
+   exactly the state a kill inside the destroy loop leaves. The house rule still holds and is why
+   this is not simply a delete: the envelope is opened with the password given and the addresses
+   it derives are compared against the ones the surviving plaintext derives, so nothing is
+   shredded until the encrypted wallet is proved to hold the same keys. */
+async function resumeDestroy(deps: MigrateDeps, password: string, residue: string[]): Promise<{ destroyed: string[]; addresses: StoredAddresses }> {
+  const stored = readKeystoreFile(deps.file);
+  if (stored === null) throw new Error('the encrypted wallet could not be read, so nothing was destroyed');
+  const aad = aadFor(stored.header);
+  const kek = await deriveKek(password, stored.header.kdf);
+  let body: Buffer;
+  try {
+    const dataKey = open(stored.wrap, kek, aad);
+    body = open(stored.payload, dataKey, aad);
+    wipe(dataKey);
+  } catch {
+    throw new Error('that password does not open the encrypted wallet, so the plaintext key file was left alone');
+  } finally {
+    wipe(kek);
+  }
+
+  const encrypted = addressesOf(JSON.parse(body.toString('utf8')) as KeysPayload);
+  for (const target of residue) {
+    let onDisk: StoredAddresses;
+    try {
+      onDisk = addressesOf(JSON.parse(fs.readFileSync(target, 'utf8')) as KeysPayload);
+    } catch {
+      throw new Error(`${target} is not a key file this app can read, so it was left alone`);
+    }
+    if (onDisk.evm !== encrypted.evm || onDisk.solana !== encrypted.solana || onDisk.near !== encrypted.near) {
+      throw new Error(`${target} holds a different wallet from the encrypted one, so it was left alone. Move it aside by hand.`);
+    }
+  }
+
+  const destroyed: string[] = [];
+  for (const target of residue) {
+    destroyPlaintext(target);
+    destroyed.push(target);
+  }
+  deps.setPlain(body);
+  return { destroyed, addresses: encrypted };
+}
+
 async function migrateInto(deps: MigrateDeps, password: string): Promise<{ destroyed: string[]; addresses: StoredAddresses }> {
-  if (fs.existsSync(deps.file)) throw new Error('this app already holds an encrypted wallet, so there is nothing to migrate');
+  if (fs.existsSync(deps.file)) {
+    const residue = plaintextResidue(deps.keysPath);
+    if (residue.length === 0) throw new Error('this app already holds an encrypted wallet, so there is nothing to migrate');
+    return resumeDestroy(deps, password, residue);
+  }
   if (!fs.existsSync(deps.keysPath)) throw new Error(`no plaintext key file at ${deps.keysPath}`);
 
   const raw = fs.readFileSync(deps.keysPath, 'utf8');
@@ -703,7 +763,7 @@ async function migrateInto(deps: MigrateDeps, password: string): Promise<{ destr
   }
 
   const destroyed: string[] = [];
-  for (const target of [deps.keysPath, ...backupCopies(deps.keysPath)]) {
+  for (const target of plaintextResidue(deps.keysPath)) {
     destroyPlaintext(target);
     destroyed.push(target);
   }
