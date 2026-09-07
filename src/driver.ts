@@ -145,7 +145,41 @@ export const STRIPPED = [
   'PHOSPHOR_KEYS',
 ];
 
-function childEnv(
+/* AUTO-MEMORY, which is the one context source `--setting-sources=` does not cover.
+   The flag above keeps somebody's settings, hooks, plugins and CLAUDE.md out of a session that
+   drives a wallet, and measured against 2.1.263 it does exactly that for all three. It does not
+   touch auto-memory: Claude Code loads <config root>/projects/<cwd slug>/memory/ before the first
+   turn whatever the setting sources are. The child's cwd is this repo, so the path is computable
+   by anyone who can write in the user's home directory, and a file there is system-level context
+   in every future driver session. It can file proposals, and the ones at or below the policy click
+   threshold execute with no human click at all. Reproduced with a canary on 2.1.263: the child
+   read it and named it.
+   CLAUDE_CODE_DISABLE_AUTO_MEMORY is what closes it, and the init event then carries no
+   memory_paths at all. Two other routes were measured and refused. `--bare` skips auto-memory and
+   makes Anthropic auth strictly ANTHROPIC_API_KEY or apiKeyHelper, and STRIPPED above deletes the
+   first on purpose, so it would move billing off the subscription. CLAUDE_CONFIG_DIR does move the
+   memory path into a directory this app owns, and it moves .credentials.json with it: a child
+   spawned that way answers "Not logged in - Please run /login" and the driver is dead.
+   The variable is a claim, so it is not where the guarantee rests. assertMemory below reads the
+   child's own answer back, exactly as assertSurface does for tools, which is what survives a
+   release that renames it. */
+const DISABLE_AUTO_MEMORY = 'CLAUDE_CODE_DISABLE_AUTO_MEMORY';
+
+/* Every memory file the child says it loaded. Empty is the only acceptable answer.
+   Absent and null are both empty, because a release that stops reporting the field is reporting
+   nothing rather than reporting memory; the value being a surprise shape is not, and reads as one
+   offender so the session still refuses. */
+export function assertMemory(memoryPaths: unknown): string[] {
+  if (memoryPaths === undefined || memoryPaths === null) return [];
+  if (typeof memoryPaths !== 'object') return ['<the init event carried a memory_paths this app cannot read>'];
+  const found: string[] = [];
+  for (const [kind, value] of Object.entries(memoryPaths as Record<string, unknown>)) {
+    if (typeof value === 'string' && value.length > 0) found.push(`${kind}: ${value}`);
+  }
+  return found;
+}
+
+export function childEnv(
   repo: string,
   port: number,
   sessionId: string,
@@ -153,6 +187,9 @@ function childEnv(
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   for (const key of STRIPPED) delete env[key];
+  // See the note above assertMemory. This is what keeps ~/.claude/projects/<slug>/memory/ out of
+  // a session that can move money; assertMemory is what checks that it worked.
+  env[DISABLE_AUTO_MEMORY] = '1';
   // The MCP proxy the child spawns has to find the same app instance the window is talking to.
   env.ACC_PORT = String(port);
   env.PHOSPHOR_REPO = repo;
@@ -332,6 +369,18 @@ export function createDriver(opts: DriverOptions) {
       if (unexpected.length > 0) {
         fail(
           `refusing to drive: the agent was given ${unexpected.length} tool(s) outside Phosphor's own surface (${unexpected.join(', ')}). This is a lockdown failure, not a configuration preference.`,
+        );
+        return;
+      }
+      /* The same check for context that the line above makes for tools. A memory file the app
+         never wrote is somebody else's instructions arriving as the system prompt of a session
+         that proposes with the user's money, and childEnv setting a variable is a claim about
+         somebody else's release. This is the answer the child gave. */
+      const memories = assertMemory(event.memory_paths);
+      if (memories.length > 0) {
+        fail(
+          `refusing to drive: the agent loaded ${memories.length} memory file(s) this app did not write (${memories.join(', ')}). ` +
+            `${DISABLE_AUTO_MEMORY} did not take, and auto-memory is a file anyone on this machine can write into a session that moves money.`,
         );
         return;
       }
