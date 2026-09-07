@@ -828,3 +828,26 @@ test('the echo is checked again on the live quote, before anything is signed', a
   await assert.rejects(() => railOf(h).execute(draftOf()), /refund on this quote goes to/);
   assert.equal(h.sends.length, 0, 'nothing was signed');
 });
+
+test('a token whose 1Click decimals disagree with the registry is refused before any quote', async () => {
+  // 18 on the wire against 6 in data/tokens.json. Every amount this rail sent would be wrong by
+  // twelve orders of magnitude, and nothing downstream compares the two numbers.
+  const wrong = oneClickTokens.map((t) => (t.symbol === 'USDC' ? { ...t, decimals: 18 } : t));
+  const h = harness();
+  const original = h.fetchImpl;
+  const rail = oneClickRail({
+    keysPath: '/nowhere/keys.json',
+    tokens: tokensFixture,
+    evm: h.evm,
+    near: h.near,
+    fetchImpl: (async (url: unknown, init: unknown) => {
+      if (String(url).endsWith('/v0/tokens')) return jsonResponse(wrong);
+      return original(url as never, init as never);
+    }) as unknown as typeof fetch,
+  });
+
+  const out = await rail.simulate(draftOf());
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /decimals/);
+  assert.equal(h.quoteBodies.length, 0, 'refused before the API was asked to price anything');
+});

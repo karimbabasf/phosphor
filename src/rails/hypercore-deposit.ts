@@ -420,7 +420,7 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
         };
       }
 
-      originAsset = assetIdFor(draft.chain, registry.tokenId, list);
+      originAsset = assetIdFor(draft.chain, registry.tokenId, list, registry.decimals);
     } catch (err) {
       return { reasons: [`could not read the 1Click token list: ${errText(err)}`] };
     }

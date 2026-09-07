@@ -41,15 +41,40 @@ const CHAIN_TO_BLOCKCHAIN: Record<ChainId, string> = {
   near: 'near',
 };
 
-// Matches a chain + our token registry id against 1Click's token list. For near-chain
-// tokens contractAddress carries the NEAR account id, so one field covers both cases.
-export function assetIdFor(chain: ChainId, tokenId: string, list: OneClickToken[]): string | null {
+/* Matches a chain + our token registry id against 1Click's token list. For near-chain
+   tokens contractAddress carries the NEAR account id, so one field covers both cases.
+
+   `expectDecimals` is the registry's own figure for the same token, and passing it is what turns
+   this from a lookup into an agreement. The matched entry carries decimals too, and this used to
+   discard them: every amount was then scaled by the repo's number while the venue quoted against
+   its own, so the two disagreeing would misprice a transfer by a power of ten. Checked against
+   the live list and against on-chain decimals() on 2026-09-07 there were no mismatches, so this
+   is hardening rather than a live bug, and the HyperCore rail already does exactly this check
+   for its one pinned asset.
+
+   A mismatch throws rather than returning null, because null already means "the venue does not
+   list this" and the two are different facts with different fixes. Every call site is already
+   inside the try that wraps fetching the list. */
+export function assetIdFor(
+  chain: ChainId,
+  tokenId: string,
+  list: OneClickToken[],
+  expectDecimals?: number,
+): string | null {
   const blockchain = CHAIN_TO_BLOCKCHAIN[chain];
   const wantId = tokenId.toLowerCase();
   const match = list.find(
     (t) => t.blockchain.toLowerCase() === blockchain && (t.contractAddress ?? '').toLowerCase() === wantId,
   );
-  return match ? match.assetId : null;
+  if (!match) return null;
+  if (expectDecimals !== undefined && match.decimals !== expectDecimals) {
+    throw new Error(
+      `1click lists ${oneLine(tokenId, 60)} on ${chain} with ${match.decimals} decimals and this app's registry ` +
+        `says ${expectDecimals}. Every amount sent would be wrong by a factor of ten, so nothing is quoted until ` +
+        'the two agree',
+    );
+  }
+  return match.assetId;
 }
 
 // The gas asset of a chain, which assetIdFor cannot find because 1Click lists a native asset
@@ -108,7 +133,7 @@ export function resolveAsset(
 ): { assetId: string; decimals: number; native: boolean } {
   const registry = tokens[chain]?.[symbol];
   if (registry !== undefined) {
-    const assetId = assetIdFor(chain, registry.tokenId, list);
+    const assetId = assetIdFor(chain, registry.tokenId, list, registry.decimals);
     if (assetId === null) throw new Error(`1click does not list ${symbol} on ${chain}`);
     return { assetId, decimals: registry.decimals, native: false };
   }
@@ -519,8 +544,8 @@ export function oneClickQuoter(tokens: TokensFile, deps?: { fetchImpl?: typeof f
     if (!destInfo) throw new Error(`no token registry entry for ${leg.symbol} on ${leg.toChain}`);
 
     const list = await client.tokens();
-    const originAsset = assetIdFor(leg.fromChain, originInfo.tokenId, list);
-    const destinationAsset = assetIdFor(leg.toChain, destInfo.tokenId, list);
+    const originAsset = assetIdFor(leg.fromChain, originInfo.tokenId, list, originInfo.decimals);
+    const destinationAsset = assetIdFor(leg.toChain, destInfo.tokenId, list, destInfo.decimals);
     if (!originAsset) throw new Error(`no 1click asset id for ${leg.symbol} on ${leg.fromChain}`);
     if (!destinationAsset) throw new Error(`no 1click asset id for ${leg.symbol} on ${leg.toChain}`);
 

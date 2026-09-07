@@ -246,8 +246,8 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
     }
 
     const list = await client.tokens();
-    const originAsset = assetIdFor(draft.chain, originInfo.tokenId, list);
-    const destinationAsset = assetIdFor(draft.toChain, destInfo.tokenId, list);
+    const originAsset = assetIdFor(draft.chain, originInfo.tokenId, list, originInfo.decimals);
+    const destinationAsset = assetIdFor(draft.toChain, destInfo.tokenId, list, destInfo.decimals);
     if (!originAsset) throw new Error(`1click does not list ${draft.fromSymbol} on ${draft.chain}`);
     if (!destinationAsset) throw new Error(`1click does not list ${draft.toSymbol} on ${draft.toChain}`);
 

@@ -212,7 +212,7 @@ export function intentsDepositRail(deps: IntentsDepositRailDeps): IntentsDeposit
       if (!isAddress(info.tokenId, { strict: false })) {
         throw new Error(`token registry entry for ${draft.symbol} on ${draft.chain} is not an EVM address`);
       }
-      asset = assetIdFor(draft.chain, info.tokenId, list);
+      asset = assetIdFor(draft.chain, info.tokenId, list, info.decimals);
       decimals = info.decimals;
       token = getAddress(info.tokenId);
       if (asset === null) throw new Error(`1click does not list ${draft.symbol} on ${draft.chain}`);
