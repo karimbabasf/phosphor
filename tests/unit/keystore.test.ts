@@ -223,21 +223,77 @@ test('a tampered ciphertext fails the GCM tag rather than opening to something e
   assert.equal(out.ok === false && out.error, 'damaged', 'a right password against a broken file says damaged, not wrong password');
 });
 
-test('a tampered header is caught, so the receive address cannot be swapped under a locked wallet', async () => {
+/* The receive address, against the attacker this whole file is built for: a process running as
+   the owner with write access to one file. No password, no window token, no unlock.
+
+   This test used to assert the opposite of what it was named. It edited the header, checked that
+   readHeader now returned the attacker's address, and called the finding closed because a later
+   unlock failed. But nothing unlocks before somebody copies an address off the Money-in screen,
+   and addresses() served the header to that screen without ever checking a tag. Reproduced on a
+   throwaway wallet: with the wallet OPEN, addresses().evm returned 0xdeadbeef... The assertion
+   that was there was true and measured the wrong thing. */
+const TAMPERED_EVM = '0x000000000000000000000000000000000000dEaD';
+
+function tamperHeader(keysPath: string): void {
+  const file = keystorePathFor(keysPath);
+  const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as { header: { addresses: { evm: string } } };
+  parsed.header.addresses.evm = TAMPERED_EVM;
+  fs.writeFileSync(file, JSON.stringify(parsed));
+}
+
+test('an edited header cannot change the address an open wallet hands out', async () => {
   const keysPath = tempKeys();
   const store = keystore(keysPath);
   const made = await store.create('a long enough password');
+
+  tamperHeader(keysPath);
+  assert.equal(readHeader(keysPath)?.addresses.evm, TAMPERED_EVM, 'the file really was edited');
+
+  const open = store.addressReport();
+  assert.equal(open.addresses.evm, made.addresses.evm, 'an open wallet answers from the keys it decrypted');
+  assert.equal(open.verified, true);
+
+  // And it stays right across the lock, because those addresses were derived, not read.
   store.lock();
+  const shut = store.addressReport();
+  assert.equal(shut.addresses.evm, made.addresses.evm, 'the address a locked wallet last proved is still the right one');
+  assert.equal(shut.verified, true);
+});
 
-  const file = keystorePathFor(keysPath);
-  const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as { header: { addresses: { evm: string } } };
-  parsed.header.addresses.evm = '0x000000000000000000000000000000000000dEaD';
-  fs.writeFileSync(file, JSON.stringify(parsed));
+test('a locked wallet this process has never opened says its addresses are unverified', async () => {
+  const keysPath = tempKeys();
+  await keystore(keysPath).create('a long enough password');
+  tamperHeader(keysPath);
 
-  // The edit is visible while locked, which is exactly why the tag has to catch it.
-  assert.notEqual(readHeader(keysPath)?.addresses.evm, made.addresses.evm);
-  const out = await keystore(keysPath).unlock('a long enough password');
-  assert.equal(out.ok, false, 'the header is the additional authenticated data, so editing it breaks the tag');
+  // Nothing can authenticate a header without the password, so the honest answer is not to
+  // claim the address is right. It is served flagged, and the window says which it is.
+  const cold = keystore(keysPath).addressReport();
+  assert.equal(cold.verified, false, 'a header nobody has checked is not a verified address');
+  assert.equal(cold.tampered, false, 'and nothing has proved it wrong yet either');
+});
+
+test('unlocking a wallet whose header was edited reports tampering, not a wrong password, and then serves no address', async () => {
+  const keysPath = tempKeys();
+  await keystore(keysPath).create('a long enough password');
+  tamperHeader(keysPath);
+
+  const store = keystore(keysPath);
+  const out = await store.unlock('a long enough password');
+  assert.equal(out.ok, false);
+  assert.equal(out.ok === false && out.error, 'tampered', 'the password was right; the file was edited');
+
+  const after = store.addressReport();
+  assert.equal(after.tampered, true);
+  assert.equal(after.verified, false);
+  assert.equal(after.addresses.evm, null, 'a file known to have been edited hands out no address at all');
+  assert.deepEqual(store.addresses(), { evm: null, solana: null, near: null, nearPublicKey: null });
+});
+
+test('a genuinely wrong password on an untouched wallet is still a wrong password', async () => {
+  const keysPath = tempKeys();
+  await keystore(keysPath).create('a long enough password');
+  const out = await keystore(keysPath).unlock('not the password at all');
+  assert.equal(out.ok === false && out.error, 'wrong_password', 'the tamper answer must not swallow the ordinary case');
 });
 
 test('an imported mnemonic produces the same wallet as creating one from those words', async () => {
