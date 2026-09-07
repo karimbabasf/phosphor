@@ -13,8 +13,8 @@ import http from 'node:http';
 
 import { HOST, hostIsLocal } from './auth.ts';
 import { isDraining } from '../draining.ts';
-import { errText, fail, intParam, sendJson, sendJsonConditional, serveStatic } from './respond.ts';
-import { buildState, fillGas, gasReport, transactionsPayload } from './state.ts';
+import { errText, fail, intParam, sendCachedJson, sendJson, serveStatic } from './respond.ts';
+import { buildStateCached, fillGas, gasReport, proposalPage, transactionsPayload } from './state.ts';
 import { chartPayload, handleChartWrite, sendCandles } from './chart.ts';
 import { handleMutation } from './mutation.ts';
 import { handleTradeAction, handleTradeWrite } from './trade.ts';
@@ -39,7 +39,16 @@ import type { Ctx } from './context.ts';
 type Route = (ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse, url: URL) => void | Promise<void>;
 
 const GET: Record<string, Route> = {
-  '/api/state': (ctx, req, res) => sendJsonConditional(req, res, buildState(ctx)),
+  // The body and the tag are built by buildStateCached, which keeps them until something the
+  // payload reads moves. See the note beside it: a 304 used to cost the server as much as a 200.
+  '/api/state': (ctx, req, res) => sendCachedJson(req, res, buildStateCached(ctx)),
+  /* The proposal history, paged, because it is the one list that grows for the life of a data
+     directory and /api/state may not carry it. Same gate as every other read here: the Host
+     check above, and nothing else, because this answers only on 127.0.0.1. */
+  '/api/proposals': (ctx, _req, res, url) => {
+    const page = proposalPage(ctx, url);
+    sendJson(res, page.status, page.body);
+  },
   '/api/candles': (ctx, _req, res, url) => sendCandles(ctx, url, res),
   '/api/chart': (ctx, _req, res) => sendJson(res, 200, chartPayload(ctx)),
   '/api/log': (ctx, _req, res, url) =>

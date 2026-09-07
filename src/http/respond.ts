@@ -101,10 +101,26 @@ export function fail(res: http.ServerResponse, status: number, message: string, 
 //
 // no-store stays. The browser's own HTTP cache must not hold a wallet balance; the conditional
 // request here is driven by an ETag the page holds in memory and loses on reload.
-export function sendJsonConditional(req: http.IncomingMessage, res: http.ServerResponse, payload: unknown): void {
+//
+// THE BODY AND THE TAG ARE SEPARABLE from the sending, and that is what CachedJson is for. Both
+// used to be built here, in front of the if-none-match comparison, so a 304 cost the server
+// everything a 200 did: measured at 1000 proposals, 4.49 ms on the 304 path against 4.66 ms on the
+// 200 path. The ETag saved the wire and the browser's redraw and saved the server nothing. A
+// caller that can tell when its payload last changed builds the pair once and hands it here.
+export type CachedJson = { body: string; etag: string };
+
+export function jsonWithEtag(payload: unknown): CachedJson {
   const body = JSON.stringify(payload);
   // Not a security boundary, just a change detector, so speed beats collision resistance.
-  const etag = `"${crypto.createHash('sha1').update(body).digest('base64')}"`;
+  return { body, etag: `"${crypto.createHash('sha1').update(body).digest('base64')}"` };
+}
+
+export function sendJsonConditional(req: http.IncomingMessage, res: http.ServerResponse, payload: unknown): void {
+  sendCachedJson(req, res, jsonWithEtag(payload));
+}
+
+export function sendCachedJson(req: http.IncomingMessage, res: http.ServerResponse, cached: CachedJson): void {
+  const { body, etag } = cached;
   if (req.headers['if-none-match'] === etag) {
     res.writeHead(304, { etag, 'cache-control': 'no-store' });
     res.end();

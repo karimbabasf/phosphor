@@ -73,6 +73,14 @@ try {
 // behind, which is what the pid inside it is for: the next boot sees a dead pid and clears it.
 process.on('exit', () => instanceLock.release());
 
+/* The audit chain's anchor, on the same event and for the same reason. It is written on a one
+   second timer rather than per line (src/audit.ts, TIP_FLUSH_MS), so every way out this process
+   gets to run code on has to put it down: the shutdown path and the crash handler both end in
+   process.exit, and this is the one listener that covers both without either of them knowing
+   about the audit log. A SIGKILL still leaves the anchor lagging, which is exactly the case
+   verifyChain was built to accept. */
+process.on('exit', () => audit.flushTip());
+
 const store = createStore(cfg.dataDir);
 
 /* The keys, and the lock over them. Installed before anything that could ask for a signature,
@@ -104,26 +112,44 @@ const session = createSession({
   },
 });
 
-/* THE AUDIT CHAIN, CHECKED, once and before the port opens.
+/* THE AUDIT CHAIN, CHECKED, and behind the port rather than in front of it.
    verify() had no caller outside the tests: nothing on boot, no route, not health, so the hash
-   chain that exists to detect tampering was never actually read in production. It walks the whole
-   file, which is why it runs here rather than on a poll, and the answer is reported through
-   /api/health rather than being made a refusal to boot: a damaged record is a thing the owner has
-   to be told about, and refusing to start would take away the app they would read it in. */
-try {
-  const chain = audit.verify();
-  if (chain.ok) {
-    recordAuditChain('ok');
-  } else {
-    const why = `${chain.break.reason} at line ${chain.break.line}: ${chain.break.detail}`;
-    recordAuditChain(`broken: ${why}`);
-    console.error(`phosphor: the audit log does not verify. ${why}`);
-    audit.append('error', `the audit log does not verify: ${why}`, { break: chain.break, lines: chain.lines });
+   chain that exists to detect tampering was never actually read in production. The answer is
+   reported through /api/health rather than being made a refusal to boot: a damaged record is a
+   thing the owner has to be told about, and refusing to start would take away the app they would
+   read it in.
+
+   It used to run HERE, before listen, and it walks the whole file: measured at 1.0 ms on a 1k line
+   log, 7.4 ms at 10k, 37.2 ms at 50k and 154.0 ms at 200k. That is directly in front of first
+   paint, and it is the one boot cost that grows every month the app is used, so an old data
+   directory booted slower than a new one for a reason nobody was waiting on.
+
+   Not a setImmediate, and the difference matters. An immediate scheduled from the listen callback
+   runs in the same loop iteration, before the poll phase takes the first connection, so the socket
+   opens earlier and the first request still waits behind the walk: the port would be open and the
+   window would not be drawn. A delay lets the window's first reads through and spends the walk
+   while the app is idle. Health says `checking` until it lands, which is a different fact from
+   `not checked` and from `ok`, and the window reads all three. */
+export const AUDIT_VERIFY_DELAY_MS = 2_000;
+
+recordAuditChain('checking');
+
+function checkAuditChain(): void {
+  try {
+    const chain = audit.verify();
+    if (chain.ok) {
+      recordAuditChain('ok');
+    } else {
+      const why = `${chain.break.reason} at line ${chain.break.line}: ${chain.break.detail}`;
+      recordAuditChain(`broken: ${why}`);
+      console.error(`phosphor: the audit log does not verify. ${why}`);
+      audit.append('error', `the audit log does not verify: ${why}`, { break: chain.break, lines: chain.lines });
+    }
+  } catch (err) {
+    const why = err instanceof Error ? err.message : String(err);
+    recordAuditChain(`broken: the chain could not be read (${why})`);
+    console.error(`phosphor: the audit log could not be verified: ${why}`);
   }
-} catch (err) {
-  const why = err instanceof Error ? err.message : String(err);
-  recordAuditChain(`broken: the chain could not be read (${why})`);
-  console.error(`phosphor: the audit log could not be verified: ${why}`);
 }
 
 /* Read the proposal file once, here, before anything else touches it. An unreadable state file
@@ -450,6 +476,10 @@ function setKill(on: boolean): void {
   p.killSwitch = on;
   savePolicy(cfg.dataDir, p);
   audit.append('kill_switch', on ? 'kill switch ON: all writes refused' : 'kill switch off');
+  /* Anchored now rather than on the next tick of the timer. This is the line somebody goes
+     looking for straight after pulling the switch, and what usually follows a kill switch is
+     somebody stopping the app in a hurry. */
+  audit.flushTip();
 
   // Stop what is already running, not just what tries to start next.
   //
@@ -682,6 +712,11 @@ server.listen(cfg.port, '127.0.0.1', () => {
   const lockState = keystore.state();
   console.log(`phosphor: wallet ${lockState} at ${lockState === 'needs_migration' ? cfg.keysPath : keystore.path()}`);
   audit.append('app_start', `wallet ${lockState}`, { state: lockState });
+
+  // The chain walk, now that there is a window to report it in. See AUDIT_VERIFY_DELAY_MS.
+  const chainTimer = setTimeout(checkAuditChain, AUDIT_VERIFY_DELAY_MS);
+  // Never a reason on its own for this process to stay up.
+  chainTimer.unref?.();
 });
 
 // Ledger refresh loop. Demo mode is static between writes but the refresh also

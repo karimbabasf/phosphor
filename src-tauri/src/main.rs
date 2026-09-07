@@ -54,6 +54,30 @@ const WATCH_INTERVAL: Duration = Duration::from_secs(2);
 /// crash loop in front of a wallet is worse than a stopped app with a sentence on it.
 const RESPAWN_BACKOFF: Duration = Duration::from_secs(3);
 
+/// How long to wait between asking the port whether the backend is up yet.
+///
+/// This was a flat 250 ms. The backend answers in 250 to 450 ms, so a 250 ms granularity added a
+/// uniform 0 to 250 ms of dead time, a mean of 125 ms, to a boot that is itself under half a
+/// second: the app was already up and the splash was waiting for the next look. A refused connect
+/// on loopback is sub-millisecond, so looking more often costs nothing worth counting.
+///
+/// It only stays fast for the first two seconds. Past that the backend is slow or stuck, nobody is
+/// helped by forty probes a second, and each one opens a connection and GETs `/`, which serves
+/// ui/index.html off the disk.
+const FAST_PROBE_WINDOW: Duration = Duration::from_secs(2);
+const FAST_PROBE_INTERVAL: Duration = Duration::from_millis(25);
+const SLOW_PROBE_INTERVAL: Duration = Duration::from_millis(250);
+
+/// Takes the elapsed time rather than the start instant, so the rule can be read back in a test
+/// without waiting two seconds to see the second half of it.
+fn probe_interval(elapsed: Duration) -> Duration {
+    if elapsed < FAST_PROBE_WINDOW {
+        FAST_PROBE_INTERVAL
+    } else {
+        SLOW_PROBE_INTERVAL
+    }
+}
+
 /// What this shell minted, held so the window can be given the token, the close handler can lock
 /// with it, and the readiness polls can recognise the backend by its nonce. Never written to disk.
 /// The token and the seat secret are never served; the nonce is served, on purpose, and is the one
@@ -331,7 +355,8 @@ fn watch(app: tauri::AppHandle, paths: Paths, port: u16) {
                 // Wait for it to bind before saying it is back. "Restarted" over a process that
                 // spawned and then failed to listen is the same lie as the silent death this
                 // whole thread exists to end.
-                let deadline = Instant::now() + READY_TIMEOUT;
+                let started = Instant::now();
+                let deadline = started + READY_TIMEOUT;
                 let mut answered = false;
                 let nonce = app.state::<Secrets>().0.nonce.clone();
                 while Instant::now() < deadline {
@@ -346,7 +371,7 @@ fn watch(app: tauri::AppHandle, paths: Paths, port: u16) {
                         answered = true;
                         break;
                     }
-                    std::thread::sleep(Duration::from_millis(250));
+                    std::thread::sleep(probe_interval(started.elapsed()));
                 }
                 let back = app.clone();
                 let _ = back.clone().run_on_main_thread(move || {
@@ -413,7 +438,8 @@ fn start(app: &tauri::AppHandle) -> Result<(), String> {
     let paths = Paths { payload, data };
     let nonce = app.state::<Secrets>().0.nonce.clone();
     std::thread::spawn(move || {
-        let deadline = Instant::now() + READY_TIMEOUT;
+        let started = Instant::now();
+        let deadline = started + READY_TIMEOUT;
         while Instant::now() < deadline {
             /* The child exiting means the backend refused to boot; its reason is already on
                stderr. Asked BEFORE the port is probed, because a backend that died on EADDRINUSE
@@ -444,7 +470,7 @@ fn start(app: &tauri::AppHandle) -> Result<(), String> {
                 watch(handle, paths, port);
                 return;
             }
-            std::thread::sleep(Duration::from_millis(250));
+            std::thread::sleep(probe_interval(started.elapsed()));
         }
         let late = handle.clone();
         let _ = late.clone().run_on_main_thread(move || {
@@ -504,4 +530,31 @@ fn main() {
                 app.state::<Backend>().kill();
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{probe_interval, FAST_PROBE_INTERVAL, FAST_PROBE_WINDOW, SLOW_PROBE_INTERVAL};
+    use std::time::Duration;
+
+    #[test]
+    fn the_first_two_seconds_are_looked_at_forty_times_a_second() {
+        assert_eq!(probe_interval(Duration::from_millis(0)), FAST_PROBE_INTERVAL);
+        assert_eq!(probe_interval(Duration::from_millis(450)), FAST_PROBE_INTERVAL);
+        assert_eq!(probe_interval(FAST_PROBE_WINDOW - Duration::from_millis(1)), FAST_PROBE_INTERVAL);
+    }
+
+    #[test]
+    fn a_backend_that_is_late_is_asked_less_often() {
+        assert_eq!(probe_interval(FAST_PROBE_WINDOW), SLOW_PROBE_INTERVAL);
+        assert_eq!(probe_interval(Duration::from_secs(30)), SLOW_PROBE_INTERVAL);
+    }
+
+    #[test]
+    fn the_fast_cadence_cannot_add_more_than_it_saves() {
+        // The dead time a probe granularity adds is bounded by the interval itself, and the
+        // backend answers in 250 to 450 ms, which is inside the fast window.
+        assert!(FAST_PROBE_INTERVAL < SLOW_PROBE_INTERVAL);
+        assert!(FAST_PROBE_WINDOW > Duration::from_millis(450));
+    }
 }

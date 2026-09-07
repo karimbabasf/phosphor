@@ -28,6 +28,10 @@ function seeded(lines = 8): { dir: string; file: string; audit: ReturnType<typeo
   const dir = tmpDir();
   const audit = createAudit(dir);
   for (let i = 0; i < lines; i += 1) audit.append('tool_call', `line ${i}`);
+  /* The anchor is debounced now (src/audit.ts, TIP_FLUSH_MS) and put down on the way out, so a
+     data directory that has been used and stopped carries one. This seed stands in for that prior
+     run, and flushing here is what that run's exit handler does. */
+  audit.flushTip();
   return { dir, file: path.join(dir, 'audit.jsonl'), audit };
 }
 
@@ -128,6 +132,22 @@ test('verifyChain without a tip is unchanged, so the walk is still the walk', ()
   assert.equal(verifyChain(lines(h.file).slice(0, 4)).ok, true, 'no anchor, no truncation check');
 });
 
+
+/* The chain walk runs AFTER the port opens now (src/main.ts), so health answers `checking` until
+   it lands. These tests wait for the answer rather than reading the placeholder: what they are
+   about is what the walk found, not when. */
+async function chainAnswer(port: number, deadlineMs = 20_000): Promise<{ auditChain: string; lastError: string | null }> {
+  const until = Date.now() + deadlineMs;
+  for (;;) {
+    const health = (await (await fetch(`http://127.0.0.1:${port}/api/health`)).json()) as {
+      auditChain: string;
+      lastError: string | null;
+    };
+    if (health.auditChain !== 'checking' || Date.now() > until) return health;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
 /* ---------- the chain is actually checked now ----------
 
    verify() had no caller outside the tests: nothing on boot, no route, not health. A chain that
@@ -140,6 +160,7 @@ test('a real boot on a truncated log says so through health rather than starting
   const dir = tmpDir();
   const seed = createAudit(dir);
   for (let i = 0; i < 10; i += 1) seed.append('tool_call', `line ${i}`);
+  seed.flushTip();
   const file = path.join(dir, 'audit.jsonl');
   write(file, lines(file).slice(0, 5)); // the newest five removed
 
@@ -170,7 +191,7 @@ test('a real boot on a truncated log says so through health rather than starting
     });
     assert.ok(up, 'the app still starts: taking away the window they would read this in helps nobody');
 
-    const health = (await (await fetch(`http://127.0.0.1:${port}/api/health`)).json()) as { auditChain: string; lastError: string | null };
+    const health = await chainAnswer(port);
     assert.match(health.auditChain, /^broken: truncated/, `health said ${health.auditChain}`);
     assert.match(String(health.lastError), /the audit log is damaged/);
   } finally {
@@ -186,6 +207,7 @@ test('an intact log boots reporting ok', async () => {
   const dir = tmpDir();
   const seed = createAudit(dir);
   for (let i = 0; i < 5; i += 1) seed.append('tool_call', `line ${i}`);
+  seed.flushTip();
 
   const port = 4390 + Math.floor(Math.random() * 30);
   const child = spawn(process.execPath, ['src/main.ts'], {
@@ -214,8 +236,12 @@ test('an intact log boots reporting ok', async () => {
       });
     });
     assert.ok(up);
-    const health = (await (await fetch(`http://127.0.0.1:${port}/api/health`)).json()) as { auditChain: string };
-    assert.equal(health.auditChain, 'ok');
+    // Read once before the walk can have finished: the port is open and the answer is not in yet,
+    // which is the whole point of moving the walk behind listen.
+    const early = (await (await fetch(`http://127.0.0.1:${port}/api/health`)).json()) as { auditChain: string };
+    assert.equal(early.auditChain, 'checking', 'the port answered before the chain had been walked');
+
+    assert.equal((await chainAnswer(port)).auditChain, 'ok');
   } finally {
     child.kill('SIGKILL');
   }

@@ -31,6 +31,17 @@
       return net.getJson('/api/state', options);
     },
 
+    /* The proposal history, a page at a time. /api/state carries what is still waiting
+       plus the last twenty decided, and nothing else: the full list grows for the life of
+       a data directory and used to be 98% of the biggest response in the app.
+
+       `query` is a search string the caller builds, '?limit=50&before=<id>'. `before` is
+       the id of the last row of the page before it, which the previous answer returns as
+       `nextBefore`; null there means that was the last page. */
+    proposals: function (query) {
+      return net.getJson('/api/proposals' + (query || ''), { busy: 'activity', label: 'Reading what happened' });
+    },
+
     driverState: function () {
       return net.getJson('/api/driver', { noCache: true });
     },
