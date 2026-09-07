@@ -1087,3 +1087,25 @@ test('a solver floor a normal distance under the quote still passes', async () =
   const out = await railOf(h).simulate(draftOf({ minAmountOut: 99 }));
   assert.equal(out.ok, true, out.summary);
 });
+
+// ---------- the echo, at simulate as well as execute ----------
+//
+// simulate built its problems from checkQuote alone and execute added checkQuoteEcho, so a
+// proposal whose quote echoed another account passed the approval gate and failed after a human
+// had clicked. No funds move either way; it costs a click and reads as a bug. The withdraw rail
+// has run both checks in both places since it was written.
+
+test('a quote whose echo names another account is refused at simulate, not only at execute', async () => {
+  const h = harness({ echo: echoOf({ recipient: '0x000000000000000000000000000000000000dEaD' }) });
+  const out = await railOf(h).simulate(draftOf());
+
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /priced to credit .* not our account/);
+});
+
+test('and a quote with no echo at all never reaches the approval gate either', async () => {
+  const h = harness({ echo: null });
+  const out = await railOf(h).simulate(draftOf());
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /carries no quoteRequest echo/);
+});

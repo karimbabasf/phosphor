@@ -1051,7 +1051,12 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
       });
 
       const lines = priceLines(draft, response.quote);
-      const problems = checkQuote(draft, p, response.quote);
+      // Both checks, in both places. simulate ran checkQuote alone and execute added the echo,
+      // so a quote priced to another account passed the approval gate and failed after a human
+      // had clicked. draft.from is the account here rather than the signer address, because
+      // simulate stays key-free; requireVenue has already tied from and to together, and execute
+      // checks both against the real key a moment before signing.
+      const problems = [...checkQuote(draft, p, response.quote), ...checkQuoteEcho(p, draft.from, response.raw)];
       if (problems.length > 0) {
         const joined = problems.join('; ');
         return { ok: false, summary: [`REFUSED: ${joined}`, ...lines].join('\n'), error: joined };
