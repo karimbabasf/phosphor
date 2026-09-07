@@ -7,9 +7,11 @@
 // reads a list without the first writer's proposal and rewrites the file without it. A
 // proposal a human approved simply stops existing, and nothing reports it.
 //
-// `wx` is the whole mechanism: open-for-write-and-fail-if-it-exists is one atomic syscall, so
-// two processes racing at boot cannot both win. The pid inside is what makes a lock left by a
-// killed process recoverable rather than permanent, and the START TIME beside it is what stops a
+// An atomic create is the whole mechanism. The lock file is built complete under a temporary
+// name and then link()ed into place: link fails when the target exists, so two processes racing
+// at boot cannot both win, and unlike the plain `wx` open this replaced there is no instant at
+// which the lock exists with nothing in it. The pid inside is what makes a lock left by a killed
+// process recoverable rather than permanent, and the START TIME beside it is what stops a
 // recycled pid making the app permanently unstartable in the name of an unrelated process.
 
 import { execFileSync } from 'node:child_process';
@@ -91,46 +93,114 @@ function stillHeld(holder: Holder): boolean {
   return now === null || now === holder.startedAt;
 }
 
+/* Test seams. Both name a moment the two old races lived in, and neither exists to make the
+   code easier to read: the races are between two PROCESSES, and a synchronous function cannot
+   interleave with itself, so without a way to act at those two instants the only test possible
+   would be spawning children and hoping the timing lands. */
+export type LockSeams = {
+  // What computes this process's start time. Called BEFORE the lock file is created now; the
+  // old order called it in between creating the file and writing to it.
+  startedAt?: (pid: number) => string | null;
+  // Called after this caller decides an existing lock is stale and before it removes it. The
+  // window another process used to be able to take the lock in.
+  beforeUnlink?: () => void;
+};
+
 /* Take the lock, or throw InstanceLockedError naming the process that holds it.
    A lock file whose pid is dead, or whose contents are unreadable, is stale: a SIGKILL leaves
    one behind and it must not make the app permanently unstartable. It is removed and the open
    is retried exactly once, so two processes both finding the same stale lock still end with one
-   winner rather than two. */
-export function acquireInstanceLock(dataDir: string): InstanceLock {
+   winner rather than two.
+
+   TWO RACES CLOSED HERE, both found by reading and both a few milliseconds wide, which is
+   exactly the width of a shell relaunching after a crash.
+
+   1. THE EMPTY FILE. `wx` created the lock and the pid was written to it afterwards, with a call
+      out to `ps` in between, so for the length of a process spawn the lock existed at zero
+      bytes. A second process arriving in that window got EEXIST, read an empty file, parsed no
+      pid, concluded the lock was unreadable and therefore stale, and deleted a LIVE holder's
+      lock. The file is now built complete under a temporary name and put in place with link(),
+      which fails when the target exists and is atomic. A lock file at this path is therefore
+      never observable in a state that has no pid in it.
+
+      link() rather than rename(): rename REPLACES whatever is at the target, so two processes
+      renaming into place would both succeed and both believe they held the directory, which is
+      the failure this whole module exists to prevent. link() is the primitive that means "create
+      this name, only if it does not exist", with the content already in it.
+
+   2. THE UNCONDITIONAL UNLINK. Both processes reading the same stale lock is not a race at all
+      under the old code: the first removes it and takes the lock, and the second then removes
+      the FIRST's fresh lock, because the unlink named a path and asked no questions. The removal
+      is now a compare-and-delete: the file is read again immediately before it goes, and
+      anything other than the exact bytes this caller judged stale is left alone. */
+export function acquireInstanceLock(dataDir: string, seams: LockSeams = {}): InstanceLock {
   fs.mkdirSync(dataDir, { recursive: true });
   const lockPath = path.join(dataDir, '.lock');
 
-  function open(): number | null {
+  // Everything slow happens before the lock exists, which is half of race 1: `ps` is a process
+  // spawn, and it used to run with the lock already created and still empty.
+  const startedAt = (seams.startedAt ?? pidStartedAt)(process.pid);
+  const body = startedAt === null ? String(process.pid) : `${process.pid} ${startedAt}`;
+
+  /* Create the file under a name nobody looks at, fill it, then claim the real name in one
+     atomic step. The temp name carries the pid and eight random characters so two attempts
+     cannot collide on it, and it is removed whichever way this goes. */
+  function claim(): boolean {
+    const tmpPath = `${lockPath}.${process.pid}.${Math.random().toString(36).slice(2, 10)}.tmp`;
+    /* No fsync, deliberately, and src/fsatomic.ts stays the app's only durable writer. What this
+       file needs is atomicity against another PROCESS, which link() gives whether or not the
+       bytes have reached the platter. Durability across a power cut is worth nothing here: the
+       holder is dead on the other side of one, and its lock is stale by definition. */
+    const fd = fs.openSync(tmpPath, 'wx');
     try {
-      return fs.openSync(lockPath, 'wx');
+      fs.writeFileSync(fd, body);
+    } finally {
+      fs.closeSync(fd);
+    }
+    try {
+      fs.linkSync(tmpPath, lockPath);
+      return true;
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'EEXIST') return null;
+      if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false;
       throw err;
+    } finally {
+      try {
+        fs.unlinkSync(tmpPath);
+      } catch {
+        // Nothing to clean up, which is the state we wanted.
+      }
     }
   }
 
-  let fd = open();
-  if (fd === null) {
-    const holder = readHolder(lockPath);
-    if (holder !== null && stillHeld(holder)) throw new InstanceLockedError(holder.pid, lockPath);
-    // Stale, or unreadable and therefore useless as a claim. Clear it and try once more.
+  // The exact bytes, not the parsed holder: two different holders can parse to the same pid
+  // when neither start time is readable, and the point of this read is to prove the file has
+  // not been replaced since the decision to remove it was made.
+  function rawLock(): string | null {
     try {
-      fs.unlinkSync(lockPath);
+      return fs.readFileSync(lockPath, 'utf8');
     } catch {
-      // Someone else got there first; the retry below will find their lock and refuse.
+      return null;
     }
-    fd = open();
-    if (fd === null) {
+  }
+
+  if (!claim()) {
+    const raw = rawLock();
+    const holder = raw === null ? null : readHolder(lockPath);
+    if (holder !== null && stillHeld(holder)) throw new InstanceLockedError(holder.pid, lockPath);
+
+    // Stale, or unreadable and therefore useless as a claim. Clear it and try once more.
+    seams.beforeUnlink?.();
+    if (raw !== null && rawLock() === raw) {
+      try {
+        fs.unlinkSync(lockPath);
+      } catch {
+        // Someone else got there first; the retry below will find their lock and refuse.
+      }
+    }
+    if (!claim()) {
       const now = readHolder(lockPath);
       throw new InstanceLockedError(now?.pid ?? 0, lockPath);
     }
-  }
-
-  const startedAt = pidStartedAt(process.pid);
-  try {
-    fs.writeFileSync(fd, startedAt === null ? String(process.pid) : `${process.pid} ${startedAt}`);
-  } finally {
-    fs.closeSync(fd);
   }
 
   let released = false;
