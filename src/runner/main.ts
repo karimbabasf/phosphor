@@ -20,7 +20,7 @@
 // watching the wrong number. Below two thirds of maintenance margin the liquidator vault takes
 // the position AND keeps the maintenance margin, so getting out early is worth real money.
 
-import { checkEnvelope } from '../strategy/envelope.ts';
+import { checkEnvelope, lossUsd } from '../strategy/envelope.ts';
 import { programHash } from '../strategy/grammar.ts';
 import type { Mandate, RunState } from '../strategy/envelope.ts';
 import { emptyMemory, evaluate } from '../strategy/evaluate.ts';
@@ -29,6 +29,8 @@ import type { Action, Program, Ref } from '../strategy/grammar.ts';
 import { createExchange, aggressiveLimitPrice, cloidFor, orderErrors } from '../hl/exchange.ts';
 import { roundToValidPrice } from '../hl/format.ts';
 import { distanceToLiquidationPct, liquidationPrice } from '../hl/liquidation.ts';
+import { applyRealised } from './realised.ts';
+import type { RealisedByMandate } from './realised.ts';
 
 const BASE_URL = process.env.PHOSPHOR_HL_URL ?? 'https://api.hyperliquid.xyz';
 
@@ -608,7 +610,7 @@ async function supervise(id: string, a: Armed): Promise<boolean> {
     return true;
   }
 
-  const loss = -(s.realisedUsd + s.unrealisedUsd);
+  const loss = lossUsd(s.realisedUsd, s.unrealisedUsd);
   if (loss >= a.mandate.maxLossUsd) {
     await flatten(id, `loss ${loss.toFixed(2)} reached the ${a.mandate.maxLossUsd} limit`);
     return true;
@@ -795,6 +797,14 @@ async function handleCommand(msg: Record<string, unknown>): Promise<void> {
     const nextBook = msg.book as Book;
     for (const a of armed.values()) {
       if (a.mandate.symbol !== String(msg.symbol)) continue;
+      /* REALISED PnL, which this process could not previously know and which is half of the
+         mandate's loss ceiling. It was initialised to 0 at arm time and assigned nowhere, so
+         `-(realisedUsd + unrealisedUsd)` only ever measured an OPEN position: a program that
+         stopped out at minus $50 went flat, computed a loss of zero, and re-entered on the next
+         cross, against an approved ceiling of $50 in total. The app reads the venue's own fills
+         and sends the figure here, ahead of the supervisor and the envelope check that both
+         read it off runState. */
+      applyRealised(a, msg.realised as RealisedByMandate | undefined);
       const grew = Math.max(0, nextBook.positionUsd - a.lastPositionUsd);
       a.inFlightUsd = Math.max(0, a.inFlightUsd - grew);
       a.lastPositionUsd = nextBook.positionUsd;

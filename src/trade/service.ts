@@ -16,6 +16,7 @@ import { buildTradePayload, buildTradeRead, type TradePayload } from './state.ts
 import { createTradeFeed } from './feed-ws.ts';
 import type { InfoClient } from '../hl/info.ts';
 import type { ManualAction, RunnerEvent } from '../runner/host.ts';
+import { realisedSince, type RealisedByMandate } from '../runner/realised.ts';
 import type { Mandate } from '../strategy/envelope.ts';
 import type { Program } from '../strategy/grammar.ts';
 
@@ -30,6 +31,12 @@ export type TradeRunner = {
   manual(action: ManualAction): Promise<{ ok: boolean; detail: string }>;
   events(): RunnerEvent[];
   armedDetail(): { mandate: Mandate; program: Program | null; since: string; signingExpiresAt: string }[];
+  /* Where the number this service computes off the venue's fills has to end up. The child
+     enforces a mandate's loss ceiling as `-(realised + unrealised)` and had no way to learn the
+     realised half, so a bot that stopped out and re-entered lost its whole allowance per cycle
+     against a ceiling of one. This service is the only thing in the process holding the fills,
+     so pushing is the honest direction. */
+  setRealised(byMandate: RealisedByMandate): void;
 };
 
 export type TradeService = {
@@ -81,7 +88,22 @@ export function createTradeService(deps: TradeServiceDeps): TradeService {
     })
     .catch(() => undefined);
 
+  /* THE SAME NUMBER THE SCREEN SHOWS, HANDED TO THE THING THAT ENFORCES IT.
+     Recomputed on every feed update rather than inside payload(), which only runs when the
+     window renders: a loss ceiling that refreshes while somebody is watching and freezes when
+     they look away is not a ceiling. It is cheap (a filter over the fills already in memory)
+     and it runs at the rate the socket delivers. */
+  function pushRealised(): void {
+    const fills = feed.fills();
+    const byMandate: RealisedByMandate = {};
+    for (const a of deps.runner.armedDetail()) {
+      byMandate[a.mandate.id] = realisedSince(fills, a.mandate.symbol, Date.parse(a.since));
+    }
+    deps.runner.setRealised(byMandate);
+  }
+
   function notify(): void {
+    pushRealised();
     for (const fn of listeners) fn();
   }
 
@@ -120,9 +142,7 @@ export function createTradeService(deps: TradeServiceDeps): TradeService {
 
     return deps.runner.armedDetail().map((a) => {
       const sinceMs = Date.parse(a.since);
-      const realisedUsd = fills
-        .filter((f) => f.coin.toUpperCase() === a.mandate.symbol.toUpperCase() && f.atMs >= sinceMs)
-        .reduce((sum, f) => sum + (f.closedPnlUsd ?? 0) - f.feeUsd, 0);
+      const realisedUsd = realisedSince(fills, a.mandate.symbol, sinceMs);
 
       let lastRule: { id: string; at: string; action: string } | null = null;
       let haltedReason: string | null = null;

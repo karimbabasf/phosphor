@@ -91,6 +91,15 @@ function placesOrder(a: Action): boolean {
 
 const refuse = (reason: string, halt: boolean): Ruling => ({ allow: false, halt, reason });
 
+/* How far down a mandate is, positive when it is losing. Exported because the supervisor in
+   src/runner/main.ts asks the same question every tick and used to spell it out for itself, and
+   two copies of an expression that decides whether a bot keeps trading is one copy too many.
+   Both halves matter: unrealised alone reads a stopped-out position as flat and unharmed, which
+   is exactly how an armed mandate used to lose its whole allowance once per cycle. */
+export function lossUsd(realisedUsd: number, unrealisedUsd: number): number {
+  return -(realisedUsd + unrealisedUsd);
+}
+
 export function checkEnvelope(action: Action, m: Mandate, s: RunState): Ruling {
   // The program identity check comes first. A hash mismatch means the thing about to run is
   // not the thing the human read and clicked, which makes every other check meaningless.
@@ -110,7 +119,7 @@ export function checkEnvelope(action: Action, m: Mandate, s: RunState): Ruling {
   }
 
   const expired = s.nowMs >= Date.parse(m.expiresAt);
-  const loss = -(s.realisedUsd + s.unrealisedUsd); // positive when down
+  const loss = lossUsd(s.realisedUsd, s.unrealisedUsd);
   const lossBreached = loss >= m.maxLossUsd;
 
   // Safety verbs clear the remaining checks deliberately. Everything above still applies to

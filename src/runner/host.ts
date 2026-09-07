@@ -24,6 +24,7 @@ import type { Condition, Program, Ref } from '../strategy/grammar.ts';
 import { SIGNING_SESSION_DEFAULT_MS } from '../keystore/session.ts';
 import type { Session } from '../keystore/session.ts';
 import { createFeed } from './feed.ts';
+import type { RealisedByMandate } from './realised.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -214,6 +215,7 @@ export function unrunnableRefusal(program: Program | null): string | null {
 export function createRunnerHost(deps: HostDeps): MandateRunner & {
   stopAll(reason: string): Promise<void>;
   setKilled(on: boolean): void;
+  setRealised(byMandate: RealisedByMandate): void;
   events(): RunnerEvent[];
   manual(action: ManualAction): Promise<{ ok: boolean; detail: string }>;
   feedHealth(): ReturnType<ReturnType<typeof createFeed>['health']>;
@@ -242,6 +244,13 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
   // screen is the thing running" is the property the whole approval step depends on.
   const armed = new Map<string, { mandate: Mandate; program: Program | null; since: string; signingExpiresAt: string }>();
   const recent: RunnerEvent[] = [];
+  /* What the venue says each armed mandate has actually made or lost since it armed, pushed in
+     by whatever owns the fills feed (src/trade/service.ts) rather than read here. The app owns
+     the read side so there is one view of the account across the process tree; a second reader
+     in this file would be a second answer to "how much has it lost", and the one the child
+     enforced would differ from the one on screen. Empty until something pushes, and an empty
+     map leaves the child on its last known figure. */
+  const realisedByMandate: RealisedByMandate = {};
   const feed = createFeed({ baseUrl: deps.baseUrl, user: deps.user });
   let pump: NodeJS.Timeout | null = null;
   // Human actions in flight, keyed by the id sent to the child. Held here so an HTTP request
@@ -260,7 +269,18 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
       try {
         const b = await feed.book(symbol);
         if (b !== null && child !== null && child.connected) {
-          child.send({ cmd: 'book', symbol, book: b });
+          /* Realised PnL rides along with the book, because the child's loss ceiling is
+             `-(realised + unrealised)` and it had no way to learn the first half. It arrives per
+             mandate rather than per symbol: the window each figure covers starts when that
+             mandate armed. Only the mandates on this symbol are sent, so a book message stays
+             about one market. */
+          const realised: RealisedByMandate = {};
+          for (const [id, a] of armed) {
+            if (a.mandate.symbol !== symbol) continue;
+            const usd = realisedByMandate[id];
+            if (typeof usd === 'number') realised[id] = usd;
+          }
+          child.send({ cmd: 'book', symbol, book: b, realised });
         }
       } catch (err) {
         record({ type: 'error', id: null, message: `feed ${symbol}: ${err instanceof Error ? err.message : err}` });
@@ -402,6 +422,17 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
   }
 
   const api = {
+    /* The venue's realised PnL for every armed mandate, from the process that holds the fills
+       feed. Pushed rather than pulled, and pushed on every feed update rather than on a render,
+       because a safety ceiling that only refreshes while somebody is looking at the trading
+       screen is not a ceiling. */
+    setRealised(byMandate: RealisedByMandate): void {
+      for (const id of Object.keys(realisedByMandate)) delete realisedByMandate[id];
+      for (const [id, usd] of Object.entries(byMandate)) {
+        if (Number.isFinite(usd)) realisedByMandate[id] = usd;
+      }
+    },
+
     async arm(mandate: Mandate, program: unknown) {
       if (deps.killSwitch()) return { ok: false, detail: 'kill switch is on; nothing can arm' };
 
