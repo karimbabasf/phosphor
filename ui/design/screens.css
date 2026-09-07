@@ -336,7 +336,7 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--agent);
+  background: var(--beam);
   opacity: 0.5;
   align-self: center;
   transition: opacity var(--dur-enter) var(--ease-out),
@@ -345,7 +345,7 @@
 
 .step[data-state="live"] .step-dot {
   opacity: 1;
-  box-shadow: 0 0 8px -1px var(--agent);
+  box-shadow: 0 0 8px -1px var(--beam);
   animation: breathe 1200ms var(--ease-in-out) infinite;
 }
 
@@ -410,7 +410,7 @@
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: var(--agent);
+  background: var(--beam);
   opacity: 0.3;
   animation: breathe 1400ms var(--ease-in-out) infinite;
 }

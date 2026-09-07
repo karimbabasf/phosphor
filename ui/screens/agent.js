@@ -503,7 +503,7 @@
     node.live = [];
 
     dom.setText(refs.word, chipWord());
-    dom.setAttr(refs.chip, 'data-tone', phase === 'error' ? 'down' : (phase === 'idle' ? null : 'agent'));
+    dom.setAttr(refs.chip, 'data-tone', phase === 'error' ? 'down' : (phase === 'idle' ? null : 'beam'));
     dom.setAttr(refs.dot, 'class', phase === 'working' ? 'dot dot-live' : 'dot');
 
     var empty = blocks.length === 0;

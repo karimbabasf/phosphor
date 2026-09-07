@@ -67,7 +67,7 @@ html, body {
   bottom: -1px;
   height: 1px;
   width: 22%;
-  background: linear-gradient(90deg, transparent, var(--agent), transparent);
+  background: linear-gradient(90deg, transparent, var(--beam), transparent);
   opacity: 0;
   transform: translateX(-100%);
   pointer-events: none;
@@ -100,7 +100,7 @@ html, body {
   width: 12px;
   height: 12px;
   border-radius: 3px;
-  background: var(--agent);
+  background: var(--beam);
   opacity: 0.35;
   box-shadow: 0 0 0 0 transparent;
   transition: opacity var(--dur-enter) var(--ease-out);
@@ -108,12 +108,12 @@ html, body {
 
 .wordmark-glyph[data-state="ready"] {
   opacity: 1;
-  box-shadow: 0 0 10px -2px var(--agent);
+  box-shadow: 0 0 10px -2px var(--beam);
 }
 
 .wordmark-glyph[data-state="working"] {
   opacity: 1;
-  box-shadow: 0 0 10px -2px var(--agent);
+  box-shadow: 0 0 10px -2px var(--beam);
   animation: breathe 1600ms var(--ease-in-out) infinite;
 }
 
@@ -182,7 +182,7 @@ html, body {
 /* A tab is also a surface: a tool aimed at a mode that is not on screen lands
    on its word. */
 .tab[data-glow="on"] {
-  color: var(--agent);
+  color: var(--beam);
 }
 
 @media (hover: hover) and (pointer: fine) {

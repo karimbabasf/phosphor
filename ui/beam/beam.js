@@ -35,7 +35,7 @@
 (function () {
   'use strict';
 
-  var TONE_TOKEN = { glow: '--agent', wait: '--warn', down: '--down' };
+  var TONE_TOKEN = { glow: '--beam', wait: '--warn', down: '--down' };
   var TONE_FALLBACK = { glow: '51,255,102', wait: '245,185,66', down: '255,90,110' };
 
   /* Twelve samples lagging by 0.022 of the path each: the tail covers about a

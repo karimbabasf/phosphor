@@ -197,7 +197,7 @@
    and never touches a style property. */
 [data-surface] {
   position: relative;
-  --glow-c: var(--agent);
+  --glow-c: var(--beam);
 }
 
 [data-surface][data-glow-tone="wait"] { --glow-c: var(--warn); }
@@ -304,7 +304,7 @@
 
 /* A row whose value just changed carries the afterglow for a moment. */
 .row[data-changed="true"] {
-  background: color-mix(in srgb, var(--agent) 7%, transparent);
+  background: color-mix(in srgb, var(--beam) 7%, transparent);
   transition: background-color var(--dur-glow-out) var(--ease-out);
 }
 
@@ -387,6 +387,7 @@ button.chip:active {
 }
 
 .chip[data-tone="agent"] { color: var(--agent); border-color: var(--agent-edge); }
+.chip[data-tone="beam"] { color: var(--beam); border-color: var(--beam-edge); }
 .chip[data-tone="warn"] { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 34%, transparent); }
 .chip[data-tone="down"] { color: var(--down); border-color: color-mix(in srgb, var(--down) 34%, transparent); }
 .chip[data-tone="up"] { color: var(--up); border-color: color-mix(in srgb, var(--up) 34%, transparent); }
