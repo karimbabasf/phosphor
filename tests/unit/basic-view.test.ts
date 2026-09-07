@@ -835,12 +835,42 @@ test('a stale chain suppresses the earning line, like every other number here', 
 // loses its id does not fail here at render time, it fails silently as a tool call that lands
 // nowhere, which is exactly the feedback this window exists to give.
 
+// The source with its comments taken out. A comment that names the bug it fixed would
+// otherwise satisfy an assertion looking for the bug.
+function codeOf(path: string): string {
+  return readFileSync(new URL(path, import.meta.url), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+}
+
 test('Basic carries every surface the beam aims at, and no Freeze of its own', () => {
-  const source = readFileSync(new URL('../../ui/screens/basic.js', import.meta.url), 'utf8');
+  const source = codeOf('../../ui/screens/basic.js');
   for (const id of ['holdings', 'rules', 'earning', 'moneyin', 'activity']) {
     assert.ok(source.includes(`'${id}'`), `ui/screens/basic.js must place the ${id} surface`);
   }
   // The top bar carries the brake now. Two copies of one action on one screen is how a person
   // stops believing either of them.
   assert.ok(!source.includes('Freeze everything'));
+});
+
+test('Bring it back names the chain the route demands', () => {
+  // POST /api/yield/withdraw refuses any chain but eth, base or arb, and an absent one with
+  // them: "chain must be one of eth, base, arb; got ''". The button used to send {} , so every
+  // press came back as that sentence with " Nothing left your wallet." on the end, and the one
+  // control for taking money out of a lending position had never worked.
+  const source = codeOf('../../ui/screens/basic.js');
+  assert.ok(!source.includes('yieldWithdraw({})'), 'the withdraw call must carry a chain');
+  assert.ok(source.includes('yieldWithdraw({ chain: chain })'));
+  assert.ok(source.includes("['eth', 'base', 'arb']"), 'the chains the route accepts');
+});
+
+test('the earning line is read as the sentence the server sends, not as an object', () => {
+  // BasicView.earning is `string | null` (src/types.ts, built in src/view/basic.ts). Reading
+  // .line, .summary and .madeLine off a string yields undefined three times, and because the
+  // string itself is truthy the panel unhid and drew an empty paragraph above the button.
+  const source = codeOf('../../ui/screens/basic.js');
+  for (const key of ['.madeLine', 'earning.line', 'earning.summary']) {
+    assert.ok(!source.includes(key), `ui/screens/basic.js still treats earning as an object: ${key}`);
+  }
+  assert.ok(source.includes("typeof basic.earning === 'string'"));
 });
