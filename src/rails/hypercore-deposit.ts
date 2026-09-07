@@ -59,6 +59,7 @@ import {
   functionCall,
   ftStorageRegistered,
   isNearAccountId,
+  isSettlableNearAccount,
   looksLikeEvmAddress,
   nearAccountId,
   sendTx as nearSendTx,
@@ -217,16 +218,6 @@ function errText(err: unknown): string {
 
 function sameAddress(a: string, b: string): boolean {
   return a.trim().toLowerCase() === b.trim().toLowerCase();
-}
-
-// The two shapes a NEAR account id that 1Click can settle to takes: a named account under
-// the .near top-level account, or a 64-character implicit account, which is the hex of an
-// ed25519 public key. Stricter than isNearAccountId() in chain/near.ts, which answers the
-// different question of whether a string is a structurally valid account id at all.
-function isSettlableNearAccount(raw: string): boolean {
-  const id = raw.trim().toLowerCase();
-  if (/^[0-9a-f]{64}$/.test(id)) return true;
-  return /^(?:[a-z0-9_-]+\.)+near$/.test(id);
 }
 
 const INFO_URL = 'https://api.hyperliquid.xyz/info';

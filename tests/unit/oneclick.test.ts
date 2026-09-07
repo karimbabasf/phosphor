@@ -741,3 +741,45 @@ test('a solver floor a normal distance under the quote still passes', async () =
   const out = await railOf(h).simulate(draftOf({ minAmountOut: 99 }));
   assert.equal(out.ok, true, out.summary);
 });
+
+// ---------- the destination side ----------
+//
+// checkDepositAddress validates the ORIGIN deposit address against the origin family and
+// nothing validated the other end, so draft.to went to the solver as whatever config held. A
+// live config.local.json carrying "phosphor.testnet" under addresses.near therefore made a
+// testnet account the payout address of a real cross-chain swap: the transfer leaves the origin
+// chain and the solver is asked to pay out on NEAR mainnet to an account that does not exist.
+
+test('a swap whose destination is not a settlable account on toChain is refused before any quote', async () => {
+  const h = harness();
+  const out = await railOf(h).simulate(draftOf({ toChain: 'near', toSymbol: 'wNEAR', to: 'phosphor.testnet' }));
+
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /phosphor\.testnet/);
+  assert.equal(h.quoteBodies.length, 0, 'refused before the API was asked for anything');
+});
+
+test('an EVM address as the destination of a NEAR payout is refused too', async () => {
+  const h = harness();
+  const out = await railOf(h).simulate(draftOf({ toChain: 'near', toSymbol: 'wNEAR', to: OWNER }));
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /near/);
+});
+
+test('a named mainnet account on toChain near is accepted', async () => {
+  // wNEAR is 24 decimals, so the quote has to be scaled for the destination token rather than
+  // reusing the 6-decimal fixture: otherwise the slippage floor refuses this and the test would
+  // pass for the wrong reason.
+  const h = harness({
+    quote: quoteBody({ amountOut: '99850000000000000000000000', minAmountOut: '99500000000000000000000000' }),
+  });
+  const out = await railOf(h).simulate(draftOf({ toChain: 'near', toSymbol: 'wNEAR', to: 'phosphor.near' }));
+  assert.equal(out.ok, true, out.summary);
+});
+
+test('a NEAR account id as the destination of an EVM payout is refused', async () => {
+  const h = harness();
+  const out = await railOf(h).simulate(draftOf({ to: 'phosphor.near' }));
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /not an EVM address/);
+});

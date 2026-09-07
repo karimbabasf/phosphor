@@ -12,23 +12,155 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { AppConfig, Mode } from './types.ts';
+import { z } from 'zod';
+import type { AppConfig, ChainId, Mode } from './types.ts';
 // The keystore owns where a keystore file sits. Imported rather than restated, because a second
 // copy of that filename is a second thing to keep in step with the first.
 import { keystorePathFor } from './keystore/store.ts';
+// The address rules, imported from the modules that already own them rather than restated here.
+// addressProblem decodes an EVM or Solana address instead of matching a regex over it, and
+// isSettlableNearAccount is the shape a NEAR account has to have before anything can pay out to
+// it. A second copy of either is a second thing that goes out of step with the first.
+import { addressProblem } from './rails/intents-withdraw.ts';
+import { isNearAccountId, isSettlableNearAccount } from './chain/near.ts';
 
 // addresses is overridden rather than intersected: an intersection keeps the required
 // fields from AppConfig and defeats the whole point of a partial file.
 type PartialConfig = Omit<Partial<AppConfig>, 'addresses'> & { addresses?: Partial<AppConfig['addresses']> };
 
+/* The shape of a config file on disk, strict everywhere, exactly as patchSchema in
+   policy/engine.ts is strict about a policy patch: an unknown key is an invalid config rather
+   than a silently ignored one.
+
+   The old loader named the fields it read and dropped the rest, which is how the live
+   config.local.json came to carry "approvalGate": false and "network": "mainnet". Neither
+   appears anywhere in src, ui or tests. approvalGate is the dangerous shape of a dead key: it
+   reads as a switch that turns the approval gate off, so an owner could believe either polarity
+   meant something, and both beliefs were wrong. A config key that does nothing has to say so at
+   boot, because there is no later moment when anybody finds out. */
+const skillNames = z.array(z.string());
+const addressBookSchema = z
+  .object({
+    evm: z.array(z.string()).optional(),
+    solana: z.array(z.string()).optional(),
+    near: z.array(z.string()).optional(),
+  })
+  .strict();
+
+const configSchema = z
+  .object({
+    mode: z.enum(['live', 'demo']).optional(),
+    port: z.number().int().positive().optional(),
+    addresses: addressBookSchema.optional(),
+    economicTransferUsd: z.number().finite().nonnegative().optional(),
+    candleProducts: z.array(z.string()).optional(),
+    dataDir: z.string().optional(),
+    keysPath: z.string().optional(),
+    // Read by src/skills.ts straight off the file rather than through AppConfig, which does not
+    // make it any less a key of this file: leaving it out of the schema would refuse every
+    // install that has one.
+    skills: skillNames.optional(),
+    driver: z
+      .object({
+        claudeBin: z.string().optional(),
+        systemPrompt: z.string().optional(),
+        autostart: z.boolean().optional(),
+        model: z.string().optional(),
+      })
+      .strict()
+      .optional(),
+    yield: z
+      .object({
+        autoAllocate: z.boolean().optional(),
+        intervalMs: z.number().finite().positive().optional(),
+        dustUsd: z.number().finite().nonnegative().optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
+// JSON has no comment syntax, so the committed template carries its prose under keys named
+// _comment and _skills. That convention predates this schema and is not an unknown key.
+function withoutComments(raw: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(raw).filter(([key]) => !key.startsWith('_')));
+}
+
 function readJsonIfPresent(file: string): PartialConfig {
   if (!fs.existsSync(file)) return {};
+  let raw: unknown;
   try {
-    return JSON.parse(fs.readFileSync(file, 'utf8')) as PartialConfig;
+    raw = JSON.parse(fs.readFileSync(file, 'utf8'));
   } catch (err) {
     // A corrupt local override is a mistake worth stopping for, not one to paper over
     // by silently running against the template's empty address list.
     throw new Error(`${path.basename(file)} is present but unparseable: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(`${path.basename(file)} must hold a JSON object`);
+  }
+
+  const parsed = configSchema.safeParse(withoutComments(raw as Record<string, unknown>));
+  if (!parsed.success) {
+    const detail = parsed.error.issues
+      .map((issue) => (issue.path.length > 0 ? `${issue.path.join('.')}: ${issue.message}` : issue.message))
+      .join('; ');
+    throw new Error(
+      `${path.basename(file)} is not a valid config: ${detail}. ` +
+        'Every key this app reads is listed in src/config.ts; fix or remove the ones named above.',
+    );
+  }
+  return parsed.data as PartialConfig;
+}
+
+/* Every configured address, checked for the shape its chain actually uses, before anything
+   trusts it.
+
+   Nothing checked these, and the policy engine folds all of them into the set of destinations it
+   treats as our own. A live config carrying "phosphor.testnet" under addresses.near therefore
+   made a testnet account an allowlisted destination for a cross-chain swap: the ERC-20 transfer
+   leaves the origin chain and the solver is asked to pay out on NEAR mainnet to an account that
+   does not exist. Best case the swap ends REFUNDED and the wallet is down the round trip; worst
+   case it stalls past the poll and the receipt says the funds were sent.
+
+   Deleting one string would not have fixed it, because any wrong entry behaves the same way. */
+function assertAddressesUsable(addresses: AppConfig['addresses'], mode: Mode, file: string): void {
+  const problems: string[] = [];
+
+  const check = (chain: ChainId, list: string[]): void => {
+    for (const address of list) {
+      const problem = addressProblem(chain, address);
+      if (problem !== null) problems.push(problem);
+    }
+  };
+  check('eth', addresses.evm);
+  check('sol', addresses.solana);
+
+  /* NEAR goes through its own rule because addressProblem refuses the chain outright: no rail
+     withdraws to NEAR, so it has no shape to offer. Live means the settlement shape, a named
+     account under .near or a 64-character implicit id, since that is what a solver can pay out
+     to. Demo asks only that the id is structurally valid, because demo signs nothing. */
+  for (const address of addresses.near) {
+    const id = address.trim();
+    if (id === '') {
+      problems.push('addresses.near carries an empty entry');
+      continue;
+    }
+    if (mode === 'live' ? !isSettlableNearAccount(id) : !isNearAccountId(id)) {
+      problems.push(
+        `${id} is not a NEAR mainnet account id, so it cannot receive anything: a mainnet account is a name ` +
+          'under .near or a 64-character implicit id, and a .testnet account does not exist on the network ' +
+          'this app runs against',
+      );
+    }
+  }
+
+  if (problems.length > 0) {
+    throw new Error(
+      `${file} names an address this app cannot use: ${problems.join('; ')}. ` +
+        'A configured address is treated as one of ours by the policy engine, so a wrong one is a destination ' +
+        'nobody vetted.',
+    );
   }
 }
 
@@ -168,6 +300,11 @@ export function loadConfig(root?: string): AppConfig {
       dustUsd: parsed.yield?.dustUsd ?? 5,
     },
   };
+
+  // After the merge, because config.local.json overrides the template key by key and it is the
+  // merged book every other module reads. The file named is the local one when it carries an
+  // address book at all, since that is the file an owner edits.
+  assertAddressesUsable(cfg.addresses, mode, local.addresses !== undefined ? 'config.local.json' : 'config.json');
 
   fs.mkdirSync(dataDir, { recursive: true });
 

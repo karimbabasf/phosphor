@@ -30,12 +30,14 @@ import {
   ftStorageRegistered,
   functionCall,
   isNearAccountId,
+  isSettlableNearAccount,
   looksLikeEvmAddress,
   nearAccountId,
   sendTx as nearSendTx,
 } from '../chain/near.ts';
 import type { NearSendOutcome, NearSendParams } from '../chain/near.ts';
 import { MAX_SLIPPAGE_BPS, floorTooLow } from './uniswap.ts';
+import { addressProblem } from './intents-withdraw.ts';
 import type { ChainId, Rail, RailResult, SimulationResult, SwapDraft } from '../types.ts';
 import { ONECLICK_TERMINAL, assetIdFor, oneClickClient, oneLine, toBaseUnits } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickStatus, TokensFile } from '../intents.ts';
@@ -54,6 +56,27 @@ function originFamily(chain: ChainId): 'evm' | 'near' | null {
   if (EVM_ORIGINS.includes(chain)) return 'evm';
   if (NEAR_ORIGINS.includes(chain)) return 'near';
   return null;
+}
+
+/* The DESTINATION side of the same question, and the side nothing asked.
+   checkDepositAddress below validates the address the solver mints on the ORIGIN chain, so the
+   origin end was covered and the payout end was not. draft.to reached the solver as whatever
+   config held, which made any wrong entry in the address book an allowlisted payout address:
+   the policy engine folds every configured address into the set it treats as our own, so a
+   testnet account id passed every layer and the money left the origin chain anyway.
+
+   Returns the problem, or null when the address is one the destination chain can settle to. The
+   EVM and Solana rules come from the withdraw rail, which decodes rather than pattern-matches;
+   NEAR gets the settlement shape in chain/near.ts, because a solver paying out on NEAR mainnet
+   needs a name under .near or a 64-character implicit id and nothing else. */
+function destinationProblem(chain: ChainId, address: string): string | null {
+  if (chain === 'near') {
+    return isSettlableNearAccount(address)
+      ? null
+      : `${oneLine(address, 60)} is not a NEAR mainnet account id, so a payout on near cannot reach it: ` +
+          'a mainnet account is a name under .near or a 64-character implicit id';
+  }
+  return addressProblem(chain, address);
 }
 
 // ft_transfer is one cross-contract hop and finishes well inside 30 TGas. The unburnt
@@ -218,6 +241,13 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
     }
     if (family === 'near' && !isNearAccountId(originInfo.tokenId)) {
       throw new Error(`token registry entry for ${draft.fromSymbol} on ${draft.chain} is not a NEAR account id`);
+    }
+
+    // And the payout end, against the family of the chain it lands on rather than the one it
+    // leaves. Before any quote, so a destination nobody can be paid at costs no round trip.
+    const badDestination = destinationProblem(draft.toChain, draft.to);
+    if (badDestination !== null) {
+      throw new Error(`this swap would pay out on ${draft.toChain} to an address it cannot reach: ${badDestination}`);
     }
 
     const list = await client.tokens();
