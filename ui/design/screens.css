@@ -161,29 +161,45 @@
 
 /* ---------- the conversation column ---------- */
 
-.agent-panel {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-3);
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
 .agent-head {
   align-items: center;
   flex: 0 0 auto;
+  gap: var(--s-3);
 }
 
-/* The empty column: the field shows through, and the two ways to get an
-   assistant are the only things on it. */
+.agent-detail {
+  flex: 0 0 auto;
+  padding-top: var(--s-1);
+}
+
+/* Who else is holding the reins, under the head, in one quiet row apiece. */
+.agent-clients {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  padding-top: var(--s-2);
+}
+
+.agent-clients:empty {
+  display: none;
+}
+
+.agent-client .dot {
+  color: var(--up);
+}
+
+/* The empty column. The field behind the whole column is the ground, so this
+   draws nothing of its own: the two ways to get an assistant are all there is. */
 .agent-empty {
   position: relative;
   flex: 1 1 auto;
-  min-height: 220px;
+  min-height: 0;
   display: grid;
   place-items: center;
-  padding: var(--s-5);
+  padding: var(--s-5) var(--s-3);
   text-align: center;
+  overflow: hidden;
 }
 
 .agent-empty-inner {
@@ -197,6 +213,13 @@
   align-items: center;
 }
 
+/* The command is one long path and it has to be read before it is pasted, so
+   the block gets the width the sentence above it does not need. The width
+   snaps rather than easing: a measure that animates is a layout on every frame. */
+.agent-empty-inner[data-connect="true"] {
+  max-width: 46ch;
+}
+
 .agent-empty-inner .title {
   color: var(--text);
 }
@@ -207,16 +230,37 @@
   margin-top: var(--s-2);
 }
 
+.connection-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  width: 100%;
+  text-align: left;
+  animation: revealin var(--dur-enter) var(--ease-out) both;
+}
+
+@keyframes revealin {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 .transcript {
   display: flex;
   flex-direction: column;
-  gap: var(--s-3);
+  gap: var(--s-4);
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   padding-right: var(--s-1);
   scrollbar-gutter: stable;
+}
+
+/* A short conversation sits against the composer rather than floating at the top
+   of an empty column. The auto margin resolves to zero once the transcript is
+   taller than its box, so it costs the scroll nothing. */
+.transcript > :first-child {
+  margin-top: auto;
 }
 
 /* Rows. The person's words sit on a raised ground; the assistant's words are
@@ -241,35 +285,34 @@
   overflow-wrap: anywhere;
 }
 
+/* The bubble hugs what was said. A raised ground stretched across the column
+   for four words reads as a panel rather than as a person talking. */
 .chat-said {
-  align-self: stretch;
+  align-self: flex-start;
 }
 
 .chat-said .chat-text {
-  color: var(--text);
   background: var(--bg-2);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   padding: var(--s-2) var(--s-3);
 }
 
-.chat-tool .chat-text,
-.chat-status .chat-text,
-.chat-boot .chat-text {
-  color: var(--text-2);
-  font-size: var(--fs-13);
-}
-
-.chat-tool .chat-who {
-  color: var(--agent);
-}
-
+.chat-error .chat-who,
 .chat-error .chat-text {
   color: var(--down);
 }
 
-/* Steps: the trace of a turn. One row per tool call, a dot that is lit while
-   the call is in flight, the phrase, and the elapsed time in mono. */
+/* Steps: the trace of a turn, between what was asked and what came back. One
+   row per tool call, a dot that is lit while the call is in flight, the phrase,
+   and the elapsed time in mono. */
+.steps-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 68ch;
+}
+
 .steps {
   display: flex;
   flex-direction: column;
@@ -319,8 +362,14 @@
   font-feature-settings: "tnum" 1;
 }
 
+/* The tool that reaches past this machine says so on its own row. */
 .step-leaves {
   color: var(--warn);
+}
+
+.step-leaves::before {
+  content: ", ";
+  color: var(--text-3);
 }
 
 /* A finished turn folds its steps to one line. */
@@ -332,9 +381,15 @@
   color: var(--text-3);
   padding: 2px 0;
   text-align: left;
+  align-self: flex-start;
+  transition: color var(--dur-press) var(--ease-out);
 }
 
 .steps-fold .step-dot { opacity: 0.6; }
+
+@media (hover: hover) and (pointer: fine) {
+  .steps-fold:hover { color: var(--text-2); }
+}
 
 .steps[data-folded="true"] .step { display: none; }
 
@@ -357,8 +412,9 @@
   animation: breathe 1400ms var(--ease-in-out) infinite;
 }
 
-.thinking i:nth-child(2) { animation-delay: 180ms; }
-.thinking i:nth-child(3) { animation-delay: 360ms; }
+.thinking i:first-of-type { margin-left: var(--s-1); }
+.thinking i:nth-of-type(2) { animation-delay: 180ms; }
+.thinking i:nth-of-type(3) { animation-delay: 360ms; }
 
 /* The composer: a textarea that grows to five lines, Enter sends. */
 .agent-composer {
@@ -376,9 +432,11 @@
 }
 
 .composer-note {
-  padding: 0 var(--s-4) var(--s-3);
+  padding: 0 var(--s-4) var(--s-4);
+  margin-top: calc(var(--s-4) * -1 + var(--s-2));
   font-size: var(--fs-12);
   color: var(--text-3);
+  background: color-mix(in srgb, var(--bg-0) 92%, transparent);
 }
 
 /* The whole command, wrapped, because a person has to read it before they
@@ -402,22 +460,6 @@
   color: var(--text-2);
   overflow-wrap: anywhere;
   user-select: all;
-}
-
-.agent-external {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-2);
-  padding-top: var(--s-3);
-  border-top: 1px solid var(--line);
-}
-
-.agent-clients {
-  flex: 0 0 auto;
-}
-
-.agent-client .dot {
-  color: var(--up);
 }
 
 /* ---------- first run ---------- */
