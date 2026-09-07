@@ -74,6 +74,34 @@ export function createStore(dataDir: string): Store {
     return corrupt;
   }
 
+  /* THE PARSE IS CACHED, THE LOOK IS NOT, and the distinction is the whole design.
+
+     list() and get() each did a readFileSync plus a JSON.parse of the whole list, and buildState
+     reaches list() twice: once for the payload and once through dailyLimit. Measured: 0.021 ms at
+     10 proposals, 0.549 at 500, 2.46 at 2000, 10.6 at 10000. Two calls per build is 4.9 ms at 2000
+     rows and 21.3 ms at 10000, half of it re-parsing bytes read a microsecond earlier.
+
+     The header above promises that a freshly created Store against an existing dataDir sees prior
+     proposals immediately, with no in-memory cache to go stale. That promise is kept: every read
+     still stats the file and re-parses the moment its identity moves. A stat is a couple of
+     microseconds against a parse that is milliseconds, and a stale proposal list is the one thing
+     this file may never hand back.
+
+     The key is device, inode, size and both timestamps in nanoseconds. The inode is what makes it
+     exact for this app's own writes: fsatomic renames a fresh file into place, so every put lands
+     a new inode. The rest covers an edit made in place by something that is not this app. */
+  let held: { rows: Proposal[]; key: string } | null = null;
+
+  function fileKey(): string | null {
+    try {
+      const st = fs.statSync(filePath, { bigint: true });
+      return `${st.dev}:${st.ino}:${st.size}:${st.mtimeNs}:${st.ctimeNs}`;
+    } catch {
+      // No file. A fresh data directory looks exactly like this and it is not damage.
+      return null;
+    }
+  }
+
   /* An empty-but-existing file is corruption, never "no proposals yet".
      Before this, `if (raw.trim().length === 0) return []` erased history in silence: with no
      flush behind the rename, a crash can land the new directory entry without the body, and the
@@ -82,7 +110,12 @@ export function createStore(dataDir: string): Store {
      fault, throwing out of every caller including the one at boot. */
   function readAll(): Proposal[] {
     if (corrupt !== null) throw corrupt;
-    if (!fs.existsSync(filePath)) return [];
+    const key = fileKey();
+    if (key === null) {
+      held = null;
+      return [];
+    }
+    if (held !== null && held.key === key) return held.rows;
     const raw = fs.readFileSync(filePath, 'utf8');
     if (raw.trim().length === 0) throw quarantine('the file is empty');
     let parsed: unknown;
@@ -92,7 +125,21 @@ export function createStore(dataDir: string): Store {
       throw quarantine(err instanceof Error ? err.message : String(err));
     }
     if (!Array.isArray(parsed)) throw quarantine(`the file holds ${parsed === null ? 'null' : typeof parsed}, not a list`);
-    return parsed as Proposal[];
+    const rows = parsed as Proposal[];
+    // Keyed on what the file looked like BEFORE the read, so a write that landed during it is
+    // seen by the next call rather than hidden behind a key that already names the new bytes.
+    held = { rows, key };
+    return rows;
+  }
+
+  /* What a caller is handed. The array is its own, because put() below pushes into one and
+     reconcileOnBoot filters one, and a caller that splices what it was given must not be splicing
+     the store. The ROWS are shared, and that is safe because nothing in this app mutates a
+     proposal: every writer builds a new object with a spread and puts it back (see persist in
+     src/proposals/lifecycle.ts). Copying the pointers is microseconds; copying the objects would
+     put back most of the parse this cache exists to remove. */
+  function handOut(rows: Proposal[]): Proposal[] {
+    return rows.slice();
   }
 
   function writeAll(list: Proposal[]): void {
@@ -100,7 +147,7 @@ export function createStore(dataDir: string): Store {
   }
 
   function list(): Proposal[] {
-    return readAll();
+    return handOut(readAll());
   }
 
   function get(id: string): Proposal | undefined {
@@ -108,7 +155,9 @@ export function createStore(dataDir: string): Store {
   }
 
   function put(p: Proposal): void {
-    const all = readAll();
+    // A copy, because the array readAll hands back is the cached one and a write that throws must
+    // not leave this process holding a row that never reached the disk.
+    const all = handOut(readAll());
     const idx = all.findIndex((x) => x.id === p.id);
     if (idx === -1) all.push(p);
     else all[idx] = p;
