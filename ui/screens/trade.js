@@ -1,9 +1,9 @@
-/* Trade: full bleed, chart on the left, a 360 px rail on the right.
+/* Trade: the chart fills the world, a 320 px rail on its right.
 
-   Five things in the rail: Position, Account, Your rules, What happened, Your
-   assistant. The BOOK panel is merged into Position, the MARKET block is gone
-   with its eight derived restatements, and ACCOUNT is three figures rather
-   than eleven. Three overlay toggles, not seven. */
+   Four things in the rail, and each is a surface: Position, Account, Rules,
+   What happened. The conversation column is to the left of all of it and stays.
+   The chart engine is not rewritten here: its chrome takes the window's tokens
+   and its canvas takes the window's palette. Three overlay toggles, not seven. */
 (function () {
   'use strict';
 
@@ -100,7 +100,6 @@
     venue.type = 'button';
     venue.textContent = '--';
     status.appendChild(venue);
-    bar.appendChild(status);
 
     var toggles = dom.el('div', 'hstack-2');
     for (var i = 0; i < OVERLAYS.length; i += 1) {
@@ -114,6 +113,7 @@
       dom.on(toggle, 'click', onToggle);
     }
     bar.appendChild(toggles);
+    bar.appendChild(status);
     main.appendChild(bar);
 
     /* Three toggles, all on. The old build shipped seven with six defaulting to
@@ -125,6 +125,7 @@
        above, which the engine sets busy while a read is out. */
     var stage = dom.el('div', 'chart-stage');
     stage.id = 'panel-chart';
+    stage.dataset.surface = 'chart';
     var chartwrap = dom.el('div', 'chartwrap');
     chartwrap.id = 'chartwrap';
     chartwrap.tabIndex = 0;
@@ -150,10 +151,10 @@
 
     var rail = dom.el('div', 'trade-rail');
 
-    var position = panel('Position');
-    var account = panel('Account');
-    var rules = panel('Your rules');
-    var happened = panel('What happened');
+    var position = panel('Position', 'position');
+    var account = panel('Account', 'account');
+    var rules = panel('Rules', 'rules');
+    var happened = panel('What happened', 'fills');
 
     rail.appendChild(position.node);
     rail.appendChild(account.node);
@@ -177,8 +178,9 @@
     if (typeof window.splitBoot === 'function') window.splitBoot();
   }
 
-  function panel(title) {
+  function panel(title, surface) {
     var node = dom.el('section', 'panel');
+    node.dataset.surface = surface;
     var head = dom.el('div', 'panel-head');
     head.appendChild(dom.el('h2', 'title-sm', title));
     var body = dom.el('div', 'panel-body stack');
