@@ -12,13 +12,14 @@ being asked to resist is the same thing being asked to comply.
 
 So approval is not a message. It is a click in a window the agent's process cannot reach:
 
-- The MCP process (`src/mcp.ts`) has no route that decides anything. `/api/approve`, `/api/refuse`,
-  `/api/kill` and `/api/session` do not appear in its source, which a test asserts by reading the
-  file.
+- The MCP process (`src/mcp.ts`) has no route that decides anything. `/api/approve`, `/api/refuse`
+  and `/api/kill` do not appear in its source, which a test asserts by reading the file.
 - The tool surface has no verb that decides. No tool name starts with `approve`, `refuse`, `kill`,
   `dismiss` or `execute`, which a test asserts against the live tool list.
-- The decision routes require an approval token minted per boot (24 random bytes, hex) and served at
-  `/api/session`. The MCP process never sees it.
+- The decision routes require a window token minted per boot (32 random bytes, hex) by the desktop
+  shell, written to the backend's stdin, and injected into one webview. No route serves it. The MCP
+  process never sees it, and `src/driver.ts` deletes it from the environment of every child the app
+  spawns.
 - A pending proposal cannot be dismissed from the chat. If the agent disconnects, the proposal is
   still there and still the human's to decide.
 
@@ -26,10 +27,10 @@ The agent is treated as a compromised-but-useful participant throughout: fully t
 fully trusted to draft, never trusted to decide.
 
 **Read [the honest v1 boundary](#the-honest-v1-boundary) before relying on any of this.** Those four
-properties describe the MCP surface, and they hold. The window is not currently a boundary against
-an agent that can also run a shell on the same machine, which most coding agents can. The gap is
-open at the time of writing, it is documented rather than implied, and it is the top of the fix
-list.
+properties describe the MCP surface, and they hold. Approval authority holds against a local shell
+too, which it did not when this document was first written. What does not hold against a local
+shell is everything `/api/mcp` can do without a credential, which is reading and proposing. The next
+section says exactly what that is.
 
 ## The three verdicts, and no fourth
 
@@ -167,69 +168,130 @@ The approval routes are POST-only and defended in layers:
 
 - **Bind**: the server binds `127.0.0.1` explicitly, not `0.0.0.0`, so nothing on the network can
   reach it.
-- **Token**: a per-boot 24-byte hex token, handed to the page by `GET /api/session`, required in the
-  body of every decision route, compared with a length-safe constant-time check (a raw
-  `timingSafeEqual` on the tokens themselves would throw on a length mismatch and leak the length
-  through the error). Read the next section before treating this as a boundary: `/api/session`
-  itself requires no credential, so the token stops other browser origins, not other local
-  processes.
-- **Origin**: `Host` must be `127.0.0.1` or `localhost`, and an `Origin` header, if present, must
-  match. An absent `Origin` (curl, the e2e script) is allowed, which is why it is paired with the
-  token rather than relied on alone. The two gaps compose: absent `Origin` is allowed and the token
-  is free to fetch, so a local non-browser caller satisfies both checks.
+- **Token**: a per-boot 32-byte hex token, required in the body of every decision route, compared
+  with a length-safe constant-time check (a raw `timingSafeEqual` on the tokens themselves would
+  throw on a length mismatch and leak the length through the error). Where it comes from is the
+  whole of why it is a boundary, and it is set out under [the handshake](#the-handshake) below.
+- **Origin**: `Host` must be `127.0.0.1` or `localhost`, and `Origin` must be present and must
+  match. An absent `Origin` is refused, and so is the literal string `null`, which is what a
+  sandboxed iframe sends. `Origin` is a forbidden header name, so no page can set it: a matching one
+  comes either from a page this app served or from a local process that chose to send it. On the
+  decision routes the local process is held out by the token; on `/api/mcp`, where the agent's door
+  deliberately has none, this is the whole of what makes the door unreachable from a browser.
 - **Logging**: a rejected attempt is logged with the reason (`cross-origin request`, `wrong approval
-  token`, `approval token missing`) and with whether a token was present. The supplied token itself
-  never enters the audit log.
+  token`, `approval token missing`), with whether a token was present, and with the SHA-256 prefix
+  of the token the caller supplied. Neither the supplied token nor anything derived from the token
+  this app holds enters the audit log. The second half of that sentence is newer than the first:
+  the record used to carry a fingerprint of the app's own token beside the caller's, and `GET
+  /api/log` has no credential, so two unauthenticated requests handed any local process an offline
+  oracle for confirming a candidate token.
 
 The e2e proof includes the negative case: `POST /api/approve` with a wrong token returns 403.
 
+## The handshake
+
+Three secrets are minted per boot, by the desktop shell (`src-tauri/src/backend.rs`,
+`Handshake::mint`), and written to the backend's stdin as three lines before the pipe is closed.
+Nothing about them travels by the environment, because `ps eww <pid>` prints the environment of any
+process this user owns, which is the attacker this app is built against. A local process once read
+the window token back that way and drove the kill switch, the idle beacon and approve on a real
+pending proposal, which the audit then recorded as a human's click.
+
+| Line | What it is | Who ever sees it |
+|---|---|---|
+| 1 | the **window token**, checked on every decision route | the shell, the backend, and the one webview it is injected into |
+| 2 | the **boot nonce**, echoed in the `x-phosphor` response header | anyone who can reach the port; it is deliberately public |
+| 3 | the **seat secret**, which decides who may take a reserved roster seat | the backend and the agents it spawns, through `childEnv` |
+
+**The window token is never served.** `GET /api/session` used to hand it to any local caller and is
+deleted; it appears in no route table (`src/http/router.ts`), in no `/api/state` payload, in no
+`/api/log` entry and in no SSE frame. The shell injects it into the control webview with an
+initialization script (`src-tauri/src/main.rs`, `open_control_window`), so it is reachable by
+exactly two processes and served over HTTP by neither. `src/driver.ts` strips it from the
+environment of every agent the app spawns, which is defence in depth rather than the control: the
+control is that this process has none to pass on.
+
+**The boot nonce is how the shell recognises its own backend.** The marker used to be the fixed
+string `x-phosphor: control`, which any local process can send, so a process that took the port
+during the boot race or the three-second respawn backoff was recognised as the backend, handed a
+window with the token injected into it, and then handed the keystore passphrase. The value is the
+nonce now (`src/http/respond.ts`, `identityValue`), and `phosphor_is_listening` compares against the
+value this shell minted. A bare `npm run app` has no shell above it, answers with the fixed word,
+and nothing is waiting on it.
+
+**The seat secret decides seats, and nothing else.** `src/agents.ts` holds four of the six roster
+seats for sessions the app recognises: an id it minted, or a caller presenting this secret. It
+reaches an agent Phosphor spawned through `childEnv` and reaches nothing else, so the browser cannot
+obtain it. It is weaker than the window token and guards something smaller on purpose: `childEnv` is
+an environment, and `ps eww` prints one, so a local process can read it off a running driver child.
+That is survivable because the roster is filled before the human presses Start, when there is no
+child to read it from, and because recognition by minted session id does not use the secret at all.
+
 ## The honest v1 boundary
 
-**An agent with arbitrary local shell access is out of scope, and this is the real hole, not a
-theoretical one.** Phosphor separates the agent's MCP process from the app's decision routes, and
-that separation holds for everything the agent can do *through MCP*. It does not hold against an
-agent that can run `curl` on the same machine. Most coding agents can, including the two named in
-the README, so for the usual deployment the boundary is the machine, not the app window.
+**`/api/mcp` deliberately requires no credential, so any local process can read this app and file
+proposals into it.** That is the boundary, and it is narrower than it used to be: the decision
+routes are closed to a local shell now, and this one is open by design because it is the agent's own
+door and the agent holds no token.
 
-The path is short and was verified against a running build rather than reasoned about:
+Verified against a running build rather than reasoned about. Every call below carries an `Origin`
+header, which any local process can set and no web page can forge:
 
-    # 1. the token is handed to any local caller, no credential required
-    TOK=$(curl -s http://127.0.0.1:4177/api/session | jq -r .token)
+    P=4177
+    post() { curl -s -X POST "http://127.0.0.1:$P/api/mcp" \
+      -H 'content-type: application/json' -H "origin: http://127.0.0.1:$P" -d "$1"; }
 
-    # 2. spend it on a decision route, no Origin header
-    curl -s -X POST -H 'content-type: application/json' \
-      -d "{\"id\":\"<pending-id>\",\"token\":\"$TOK\"}" \
-      http://127.0.0.1:4177/api/approve
+    post '{"op":"read","tool":"wallet"}'         # 200: balances and addresses
+    post '{"op":"read","tool":"policy_show"}'    # 200: every rule, the click threshold included
+    post '{"op":"set_view_mode","mode":"basic"}' # 200: picks the screen the human is looking at
 
-Against a nonexistent proposal id that returns `400 unknown proposal <id>`, while the same request
-with a wrong token returns `403 invalid approval token`. The difference between those two responses
-is the finding: authentication passed, and only the id was unknown. Against a real pending id it
-approves, and the audit log records `decidedBy: 'human'`, because from the server's position that
-is what a valid token means.
+    # 200, with a verdict from the policy engine in the body. On this wallet the engine refused
+    # for want of an address on that chain, which is the point: authentication is not what
+    # stopped it. On a funded wallet a size at or under the click threshold returns allow and
+    # executes with decidedBy: 'policy'.
+    post '{"op":"propose","kind":"swap","params":{"chain":"arb","fromSymbol":"USDC",
+           "toSymbol":"WETH","amountIn":25,"minAmountOut":0.005}}'
 
-Two things follow, and both are stated rather than hidden, because implying the current build is
-airtight against a hostile local shell is the kind of claim that gets someone robbed:
+    curl -s "http://127.0.0.1:$P/api/log?limit=30"  # 200: the whole audit tail, no credential
 
-1. **Prompt injection into a shell-capable agent is not currently contained.** The injection suite
-   below proves the tool surface holds. It cannot prove anything about an agent that stops using the
-   tool surface and opens a socket instead.
-2. **The audit log cannot distinguish this from a real click.** Everything else in this document
-   survives the gap, since the policy engine still refuses what it refuses, caps still bind and the
-   kill switch still works. Approval authority is the single guarantee that does not survive it.
+So a local process can read the wallet, the addresses, the policy and the audit log; can file a
+proposal; can have a proposal at or below `humanClickAboveUsd` executed with `decidedBy: 'policy'`
+and no click; and can move the window between screens. What it cannot do is approve. Verified on the
+same build:
 
-What v1 does defend, completely, is the case the tool surface covers: an agent driving the app
-through the tools it was given, reading hostile text, and being talked into trying something. That
-agent has no tool to approve with, no field to name a recipient in, and no way to remove a rule
-without a human click.
+    POST /api/approve  wrong token, good Origin -> 403 invalid approval token
+    POST /api/approve  no token, good Origin    -> 403 invalid approval token
+    POST /api/approve  token, no Origin         -> 403 invalid approval token
+    POST /api/kill     no token                 -> 403 invalid approval token
+    POST /api/unlock   no token                 -> 403 the window token is missing or wrong
+    GET  /api/session                           -> 404 unknown route: /api/session
 
-**Fix direction, in the order the value lands.** Bind the token to the browser session rather than
-to the process (set it as an `HttpOnly` `SameSite=Strict` cookie at first page load and stop serving
-it as JSON, so a second local caller that never loaded the page cannot obtain one), then require a
-real `Origin` on decision routes and give the e2e script an explicit test-only escape rather than
-letting every credential-less caller through the same door. Both are small and neither is the real
-answer. The real answer is the Tauri window below, where the approval surface has no HTTP route
-behind it at all: no token to fetch, no endpoint to post to. That is packaging work rather than a
-redesign, and the two-process split is already drawn where it needs to be for the move.
+Three things follow, and all three are stated rather than hidden, because implying the current build
+is airtight against a hostile local shell is the kind of claim that gets someone robbed:
+
+1. **The sub-threshold path is the money exposure that remains.** A proposal sized under the click
+   threshold executes with no human involved, and the threshold is readable for free through
+   `policy_show`. Lower it, or set it to zero, if a hostile local process is in your threat model.
+2. **Prompt injection into a shell-capable agent is contained for approval and not for proposal.**
+   The injection suite proves the tool surface holds and the token gate proves a decision needs the
+   window. Neither proves anything about what a sub-threshold proposal can cost.
+3. **The audit log tells the two apart now.** A local process filing a proposal is recorded as a
+   tool call from an agent, and an execution under the threshold is recorded with
+   `decidedBy: 'policy'`. Only a click is recorded as `decidedBy: 'human'`, and a click needs the
+   token, and the token is not on the wire.
+
+What v1 defends, completely, is the case the tool surface covers: an agent driving the app through
+the tools it was given, reading hostile text, and being talked into trying something. That agent has
+no tool to approve with, no field to name a recipient in, and no way to remove a rule without a
+human click.
+
+**Fix direction, in the order the value lands.** Put a credential on `/api/mcp` for the ops that are
+not reads, which means deciding what an agent a human started by hand is supposed to present and is
+the reason it has not been done. Then move the sub-threshold path behind a per-boot budget the human
+sets in the window rather than a number the policy file carries, so a local process that reads the
+threshold cannot spend against it repeatedly. Neither is the real answer. The real answer is that
+the approval surface has no HTTP route behind it at all, which is what the Tauri window below is
+for.
 
 Two smaller boundaries worth naming: the risk table is curated by a human with a source per row, so
 a wrong row is a wrong risk decision (which is why it is never model-generated and is versioned in

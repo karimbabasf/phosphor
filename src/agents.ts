@@ -35,6 +35,8 @@
 //   Approval is still a physical click a human makes. Nothing here approves anything, and
 //   three agents cannot outvote a human.
 
+import crypto from 'node:crypto';
+
 export type AgentRole = 'operator' | 'analyst';
 
 export type AgentMember = {
@@ -71,8 +73,11 @@ export type AgentPresence = {
   markAnalyst(session: string): void;
   /* No `role`. It used to be read off the body and it is decided by the seat now; a client may
      still send one and it is ignored, which is what makes the wire claim stop mattering. */
-  claim(params: { session?: unknown; client?: unknown; intervalMs?: unknown; label?: unknown; parent?: unknown }): JoinResult;
-  check(params: { session?: unknown; client?: unknown }): JoinResult;
+  /* `secret` is this boot's seat secret, if the caller has one. It is not a role and it is not an
+     authorisation for anything the agent does: it only decides whether a NEW session may take one
+     of the seats reserved for the agents this app starts. See RESERVED_SEATS. */
+  claim(params: { session?: unknown; client?: unknown; intervalMs?: unknown; label?: unknown; parent?: unknown; secret?: unknown }): JoinResult;
+  check(params: { session?: unknown; client?: unknown; secret?: unknown }): JoinResult;
   release(session: unknown): AgentMember | null;
   // The human replacing the agents, from the window. Frees the roster AND revokes every
   // session on it, which are two different things and both are needed: freeing alone would let
@@ -109,6 +114,32 @@ const MAX_TTL_MS = 60_000;
 // tags say. Six is two humans' worth of parallel work plus the workers they spawn.
 export const MAX_AGENTS = 6;
 
+/* How many of those seats an unrecognised session may never take.
+
+   THE FAILURE THIS PREVENTS. `hello` runs before any credential check and there is none on that
+   route, so six unauthenticated POSTs filled the roster and every later arrival got the 409 above,
+   including the app's own agent. The human pressed Start and nothing could attach; re-sending the
+   six every five seconds held it there. Availability of the money surface, taken by anything with
+   a shell and a loop.
+   Four is one driver plus the three workers MAX_WORKERS in src/crew.ts allows, so the app can run
+   a full crew while an attacker holds every seat it is allowed to hold. The two that are left are
+   the two hand-attached agents the cap was sized for in the first place.
+   RECOGNISED means one of two things, and neither can be claimed on the wire: the session id is
+   one this app minted (it spawns the driver and every worker, so it knows their ids before their
+   first call), or the caller presented this boot's seat secret, which reaches an agent this app
+   spawned through childEnv and reaches nothing else. */
+export const RESERVED_SEATS = 4;
+
+export type AgentOptions = {
+  // Seats an unrecognised session may not take. Zero, the default, is the old behaviour and is
+  // what every test that is about presence rather than about this gate keeps using.
+  reserved?: number;
+  /* This boot's seat secret, off the shell's pipe (src/main.ts). Empty means no caller can ever
+     present one, which is correct rather than open: the app's own sessions are still recognised by
+     id, and everything else is held to the unreserved seats. */
+  secret?: string;
+};
+
 // How long an evicted session stays refused. It only has to outlive the evicted proxy's own
 // exit, which happens on its very next heartbeat, so this is a wide margin and not a policy.
 const REVOKE_MS = 300_000;
@@ -138,10 +169,16 @@ function ttlFrom(intervalMs: unknown): number {
    their ids, and it spawns analysts. Everything else is an agent a human attached on purpose,
    which is an operator. A worker that posted `role: "operator"` now gets analyst, and a
    hand-written client claiming either gets the answer the app already held. */
-export function createAgents(now: () => number = Date.now, max: number = MAX_AGENTS): AgentPresence {
+export function createAgents(
+  now: () => number = Date.now,
+  max: number = MAX_AGENTS,
+  opts: AgentOptions = {},
+): AgentPresence {
   const members = new Map<string, AgentMember>();
   let lastActivity: number | null = null;
   const revoked = new Map<string, number>();
+  const reserved = Math.max(0, Math.min(max, opts.reserved ?? 0));
+  const secret = opts.secret ?? '';
   /* Sessions this app spawned as workers. Ids are never removed: a worker's id becoming an
      operator's id by being forgotten is the one way this could widen, and they are uuids, one
      per worker, a few tens over a long session. */
@@ -180,8 +217,37 @@ export function createAgents(now: () => number = Date.now, max: number = MAX_AGE
     };
   }
 
+  /* The seat secret, compared the way src/http/auth.ts compares the window token: both sides
+     hashed first, so neither length nor content leaks through the comparison, and an app with no
+     secret matches nothing rather than matching everything.
+     It is NOT as strong as the window token and the difference is worth stating. It reaches the
+     agents this app spawns through childEnv, and `ps eww <pid>` prints the environment of any
+     process this user owns, so a local process can read it off a running driver child. That is
+     survivable because of when the attack lands: the roster is filled BEFORE the human presses
+     Start, when there is no child to read it from. Recognition by minted session id, below, does
+     not depend on it at all. */
+  function presentedSecret(supplied: unknown): boolean {
+    if (secret.length === 0) return false;
+    if (typeof supplied !== 'string' || supplied.length === 0) return false;
+    const a = crypto.createHash('sha256').update(supplied).digest();
+    const b = crypto.createHash('sha256').update(secret).digest();
+    return crypto.timingSafeEqual(a, b);
+  }
+
+  function heldBack(free: number): JoinBusy {
+    return {
+      ok: false,
+      member: null,
+      full: true,
+      error:
+        `phosphor is holding its last ${reserved} seat(s) for the agents it starts itself, and ${free} are free to ` +
+        'anything else. Ask the human to drop an agent from the window, or start this one from inside Phosphor. ' +
+        'This is a capacity rule, not a rule against a second agent: several may drive at once.',
+    };
+  }
+
   function resolve(
-    params: { session?: unknown; client?: unknown; intervalMs?: unknown; label?: unknown; parent?: unknown },
+    params: { session?: unknown; client?: unknown; intervalMs?: unknown; label?: unknown; parent?: unknown; secret?: unknown },
     claiming: boolean,
   ): JoinResult {
     // An op with no session id is a curl, the e2e script, or an older mcp.ts. It is one member
@@ -227,6 +293,11 @@ export function createAgents(now: () => number = Date.now, max: number = MAX_AGE
     // cold does not keep a live agent out until the next tick.
     for (const [id, m] of [...members]) if (expired(m)) members.delete(id);
     if (members.size >= max) return full();
+    /* Recognised sessions reach the whole roster; everything else stops at the unreserved seats.
+       Checked on this branch only, which is the one that creates a member: a session already
+       seated keeps its seat, and neither the heartbeat nor a tool call re-argues for it. */
+    const recognised = analysts.has(session) || presentedSecret(params.secret);
+    if (!recognised && members.size >= max - reserved) return heldBack(max - reserved);
 
     const stamp = new Date(now()).toISOString();
     const member: AgentMember = {

@@ -150,10 +150,35 @@ const CONTROL_CSP = [
    marker used to be the page's <title>, which put a boot on the wrong side of a cosmetic edit:
    retitling ui/index.html to "Phosphor" left the shell polling a healthy server it no longer
    recognised, and the app failed as a 45-second timeout with nothing actually wrong with it.
-   A response header cannot be moved by a redesign, and it is a fixed word rather than the version
-   so that a bump cannot break a boot either. src-tauri/src/backend.rs reads it. */
+   A response header cannot be moved by a redesign. src-tauri/src/backend.rs reads it.
+
+   THE NAME IS FIXED AND THE VALUE IS NOT, and that is the security half. The value used to be the
+   word below, always, which made the marker a liveness probe being used as an identity check: any
+   local process can send `x-phosphor: control`, so a process that took the port during the boot
+   race or the three-second respawn backoff was recognised as the backend and handed a window with
+   the approval token injected into it, and then the keystore passphrase. The shell now mints a
+   nonce per boot, writes it down this process's stdin beside the window token, and this process
+   echoes it here. A squatter cannot read the pipe and cannot guess 32 random bytes, so it cannot
+   answer as this boot's backend.
+
+   The word below stays as the fallback, for `npm run app` with no shell above it. Nothing is
+   weakened by that: a backend with no nonce is a backend no shell is waiting on, and a shell that
+   minted a nonce refuses anything that answers with anything else. */
 export const IDENTITY_HEADER = 'x-phosphor';
 export const IDENTITY_VALUE = 'control';
+
+let identity = IDENTITY_VALUE;
+
+/* Written once at boot from src/main.ts, off the shell's pipe, before the port opens. A caller
+   with nothing to say leaves the fallback in place rather than blanking the header, because a
+   missing marker is a boot the shell cannot recognise at all. */
+export function useIdentityValue(nonce: string): void {
+  if (nonce.length > 0) identity = nonce;
+}
+
+export function identityValue(): string {
+  return identity;
+}
 
 export function serveStatic(pathname: string, res: http.ServerResponse): void {
   let rel: string;
@@ -188,7 +213,7 @@ export function serveStatic(pathname: string, res: http.ServerResponse): void {
     'content-type': type,
     'content-length': body.length,
     'cache-control': cache,
-    [IDENTITY_HEADER]: IDENTITY_VALUE,
+    [IDENTITY_HEADER]: identityValue(),
     ...(type === MIME['.html'] ? { 'content-security-policy': CONTROL_CSP } : {}),
   });
   res.end(body);

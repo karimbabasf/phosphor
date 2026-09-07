@@ -145,7 +145,58 @@ export const STRIPPED = [
   'PHOSPHOR_KEYS',
 ];
 
-function childEnv(
+/* AUTO-MEMORY, which is the one context source `--setting-sources=` does not cover.
+   The flag above keeps somebody's settings, hooks, plugins and CLAUDE.md out of a session that
+   drives a wallet, and measured against 2.1.263 it does exactly that for all three. It does not
+   touch auto-memory: Claude Code loads <config root>/projects/<cwd slug>/memory/ before the first
+   turn whatever the setting sources are. The child's cwd is this repo, so the path is computable
+   by anyone who can write in the user's home directory, and a file there is system-level context
+   in every future driver session. It can file proposals, and the ones at or below the policy click
+   threshold execute with no human click at all. Reproduced with a canary on 2.1.263: the child
+   read it and named it.
+   CLAUDE_CODE_DISABLE_AUTO_MEMORY is what closes it, and the init event then carries no
+   memory_paths at all. Two other routes were measured and refused. `--bare` skips auto-memory and
+   makes Anthropic auth strictly ANTHROPIC_API_KEY or apiKeyHelper, and STRIPPED above deletes the
+   first on purpose, so it would move billing off the subscription. CLAUDE_CONFIG_DIR does move the
+   memory path into a directory this app owns, and it moves .credentials.json with it: a child
+   spawned that way answers "Not logged in - Please run /login" and the driver is dead.
+   The variable is a claim, so it is not where the guarantee rests. assertMemory below reads the
+   child's own answer back, exactly as assertSurface does for tools, which is what survives a
+   release that renames it. */
+const DISABLE_AUTO_MEMORY = 'CLAUDE_CODE_DISABLE_AUTO_MEMORY';
+
+/* Every memory file the child says it loaded. Empty is the only acceptable answer.
+   Absent and null are both empty, because a release that stops reporting the field is reporting
+   nothing rather than reporting memory; the value being a surprise shape is not, and reads as one
+   offender so the session still refuses. */
+export function assertMemory(memoryPaths: unknown): string[] {
+  if (memoryPaths === undefined || memoryPaths === null) return [];
+  if (typeof memoryPaths !== 'object') return ['<the init event carried a memory_paths this app cannot read>'];
+  const found: string[] = [];
+  for (const [kind, value] of Object.entries(memoryPaths as Record<string, unknown>)) {
+    if (typeof value === 'string' && value.length > 0) found.push(`${kind}: ${value}`);
+  }
+  return found;
+}
+
+/* THE ROSTER SEAT SECRET, written once at boot from src/main.ts and read by every child spawned
+   after that. It is here rather than on DriverOptions because there is exactly one backend process
+   and exactly one secret in it, and threading it through every caller that builds a driver would
+   mean the app's two spawn sites (src/http/chats.ts and src/crew.ts) could each forget it.
+   What it buys: src/agents.ts holds back seats for the agents this app starts, so six
+   unauthenticated hellos can no longer fill the roster and lock the human's own agent out. What it
+   is not: an authorisation for anything the agent does. Every tool the child holds it would hold
+   without this, and nothing in the propose path reads it.
+   It travels to the child in its environment, which `ps eww <pid>` prints for any process this
+   user owns, so it is weaker than the window token and deliberately guards something smaller.
+   The window token is stripped from that same environment for exactly that reason (see STRIPPED). */
+let seatSecret = '';
+
+export function useSeatSecret(value: string): void {
+  seatSecret = value;
+}
+
+export function childEnv(
   repo: string,
   port: number,
   sessionId: string,
@@ -153,6 +204,13 @@ function childEnv(
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   for (const key of STRIPPED) delete env[key];
+  // See the note above assertMemory. This is what keeps ~/.claude/projects/<slug>/memory/ out of
+  // a session that can move money; assertMemory is what checks that it worked.
+  env[DISABLE_AUTO_MEMORY] = '1';
+  // See useSeatSecret. src/mcp.ts sends it on every call so the roster can tell an agent this app
+  // started from any other local process. Absent in a boot that never got one, which is a roster
+  // that seats app-minted session ids and nothing else.
+  if (seatSecret) env.PHOSPHOR_SEAT = seatSecret;
   // The MCP proxy the child spawns has to find the same app instance the window is talking to.
   env.ACC_PORT = String(port);
   env.PHOSPHOR_REPO = repo;
@@ -169,12 +227,21 @@ function childEnv(
   return env;
 }
 
+/* NOTHING CALLER-AUTHORED GOES IN ARGV, and the role text is the reason.
+   `ps -axo args=` prints the argv of any process this user owns, which is the same fact
+   src/http/auth.ts moved the window token off the environment for. The role text used to arrive
+   here as `--append-system-prompt`, and for a worker that text is built around the BRIEF an
+   operator agent wrote (src/crew.ts, buildWorkerRole), so every worker published its instructions
+   to every process on the machine. Information disclosure only, no money path and no privilege
+   gain, and it costs nothing to close: createDriver puts the role text down stdin instead, ahead
+   of the first turn, which is the channel `send` already uses.
+   findOrphans is unaffected. It matches on the settings path and the stream flags, never on the
+   prompt. */
 export function buildArgv(opts: {
   repo: string;
   nodeBin: string;
   settings: string;
   sessionId: string;
-  systemPrompt?: string;
   model?: string;
 }): string[] {
   const mcp = JSON.stringify({
@@ -204,7 +271,6 @@ export function buildArgv(opts: {
     opts.sessionId,
   ];
   if (opts.model) argv.push('--model', opts.model);
-  if (opts.systemPrompt) argv.push('--append-system-prompt', opts.systemPrompt);
   return argv;
 }
 
@@ -305,6 +371,9 @@ export function createDriver(opts: DriverOptions) {
   let state: DriverState = 'off';
   let sessionId = '';
   let buffer = '';
+  /* The role text, waiting for the turn it rides in on. Armed at every start, so a driver that is
+     stopped and started again tells its child who it is again. Cleared once it has gone. */
+  let pendingPrompt = '';
 
   function set(next: DriverState, detail?: string): void {
     state = next;
@@ -332,6 +401,18 @@ export function createDriver(opts: DriverOptions) {
       if (unexpected.length > 0) {
         fail(
           `refusing to drive: the agent was given ${unexpected.length} tool(s) outside Phosphor's own surface (${unexpected.join(', ')}). This is a lockdown failure, not a configuration preference.`,
+        );
+        return;
+      }
+      /* The same check for context that the line above makes for tools. A memory file the app
+         never wrote is somebody else's instructions arriving as the system prompt of a session
+         that proposes with the user's money, and childEnv setting a variable is a claim about
+         somebody else's release. This is the answer the child gave. */
+      const memories = assertMemory(event.memory_paths);
+      if (memories.length > 0) {
+        fail(
+          `refusing to drive: the agent loaded ${memories.length} memory file(s) this app did not write (${memories.join(', ')}). ` +
+            `${DISABLE_AUTO_MEMORY} did not take, and auto-memory is a file anyone on this machine can write into a session that moves money.`,
         );
         return;
       }
@@ -406,12 +487,12 @@ export function createDriver(opts: DriverOptions) {
     }
 
     sessionId = randomUUID();
+    pendingPrompt = opts.systemPrompt ?? '';
     const argv = buildArgv({
       repo: opts.repo,
       nodeBin: opts.nodeBin ?? process.execPath,
       settings,
       sessionId,
-      systemPrompt: opts.systemPrompt,
       model: opts.model,
     });
 
@@ -473,9 +554,19 @@ export function createDriver(opts: DriverOptions) {
     });
   }
 
+  /* The role text rides in on the first turn rather than on argv. See buildArgv.
+     Merged into that turn rather than sent as one of its own, which matters: Claude Code does not
+     emit its init event until a turn arrives, so a role text sent alone would start a model turn
+     of its own and the human would watch the agent answer a question nobody asked. Merged, the
+     number of round trips is exactly what it was. What changes is that the text is read as the
+     user's rather than as an appended system prompt, and for this app that is a fair trade: the
+     text is written by the app either way, and what an agent may DO is decided by the tools
+     src/mcp.ts registers and by the lockdown above, never by prose. */
   function send(text: string): void {
     if (!child || state === 'failed') throw new Error('driver: no agent is running');
-    const turn = { type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } };
+    const body = pendingPrompt === '' ? text : `${pendingPrompt}\n\n${text}`;
+    pendingPrompt = '';
+    const turn = { type: 'user', message: { role: 'user', content: [{ type: 'text', text: body }] } };
     child.stdin.write(`${JSON.stringify(turn)}\n`);
     set('thinking');
   }

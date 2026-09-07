@@ -89,12 +89,16 @@ function rejectSeat(ctx: Ctx, error: string, body: JsonBody, res: http.ServerRes
 }
 
 export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  // The money surface gets the same cross-origin guard the approval and trade routes already
-  // carry. handleMcp is where an agent proposes and, under the click threshold, executes, so a
-  // page that could POST here blind (classic CSRF: a cross-origin fetch still sends Origin) was
-  // the one mutating route a browser could drive. sameOrigin refuses a foreign Origin, and the
-  // seat is not a credential, so this is what stands between a web page and a swap. An absent
-  // Origin (the MCP proxy over stdio->HTTP, curl, the e2e script) is still allowed.
+  /* The money surface gets the same cross-origin guard the approval and trade routes already
+     carry. handleMcp is where an agent proposes and, at or under the click threshold, executes, so
+     a page that could POST here blind (classic CSRF: a cross-origin fetch still sends Origin) was
+     the one mutating route a browser could drive. The seat is not a credential, so this line is
+     what stands between a web page and a swap.
+     AN ABSENT ORIGIN IS REFUSED, and so is the literal `null` a sandboxed iframe sends. This
+     comment said the opposite for a while and src/http/auth.ts had already stopped meaning it: a
+     present, matching Origin is required. Origin is a forbidden header name, so a page cannot set
+     one, and a local process can, which is exactly the split this door wants. The MCP proxy sends
+     it (POST_HEADERS in src/mcp.ts) and so must anything else calling this route by hand. */
   if (!sameOrigin(req)) {
     ctx.audit.append('agent_rejected', 'an /api/mcp call was refused as cross-origin', {
       origin: req.headers.origin ?? '(absent)',

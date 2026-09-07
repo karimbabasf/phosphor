@@ -23,7 +23,6 @@
       "WebSearch",
       "ToolSearch",
       "Skill",
-      "SlashCommand",
       "CronCreate",
       "CronDelete",
       "CronList",
@@ -44,9 +43,7 @@
       "ReadMcpResourceTool",
       "ReadMcpResourceDirTool",
       "TodoWrite",
-      "KillBash",
-      "NotebookRead",
-      "MultiEdit"
+      "KillBash"
     ],
     "allow": [
       "mcp__phosphor__*"
