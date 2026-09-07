@@ -433,6 +433,18 @@ export type IntentPayloadExpectation = {
 //
 // Returns the problems it found. An empty array means the payload says what the draft says.
 export function checkIntentPayload(raw: unknown, expect: IntentPayloadExpectation): string[] {
+  /* The floor first, before the payload is even read. Every amount check below compares against
+     minOutBase, so a floor of zero turns all of them into "receive >= 0", which every payload
+     satisfies: a token_diff crediting nothing was accepted and would have been signed.
+
+     plan() now refuses a zero floor before this is ever reached, and that is exactly why the
+     guard belongs here too. Leaning on an upstream check to enforce a property this function
+     claims is how the claim quietly stops being true, which is the defect this whole file's
+     comments keep describing. */
+  if (expect.minOutBase <= 0n) {
+    return ['the draft carries no slippage floor, so no payload can be checked against one'];
+  }
+
   if (typeof raw !== 'string' || raw.trim() === '') {
     return [`the erc191 intent payload must be a JSON string, got ${oneLine(raw, 60)}`];
   }

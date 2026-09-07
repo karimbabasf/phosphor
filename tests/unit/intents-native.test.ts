@@ -1109,3 +1109,30 @@ test('and a quote with no echo at all never reaches the approval gate either', a
   assert.equal(out.ok, false);
   assert.match(out.error ?? '', /carries no quoteRequest echo/);
 });
+
+test('a token_diff crediting zero is refused when the draft floor is zero', () => {
+  // The pure checker, called directly with the floor the rail no longer produces. Every amount
+  // check inside compares against minOutBase, so a floor of zero made all of them "receive >= 0"
+  // and a payload crediting nothing was accepted and would have been signed.
+  const problems = checkIntentPayload(
+    JSON.stringify({
+      signer_id: OWNER,
+      verifying_contract: INTENTS_VERIFIER,
+      nonce: 'n',
+      deadline: new Date(NOW + 60_000).toISOString(),
+      intents: [{ intent: 'token_diff', diff: { [ORIGIN_ASSET]: '-100000000', [DEST_ASSET]: '0' } }],
+    }),
+    {
+      signerId: OWNER,
+      originAsset: ORIGIN_ASSET,
+      destinationAsset: DEST_ASSET,
+      amountBase: 100000000n,
+      minOutBase: 0n,
+      now: NOW,
+      maxDeadlineMs: 4 * 24 * 3600e3,
+    },
+  );
+
+  assert.ok(problems.length > 0, 'a zero floor is not a floor, whatever the payload says');
+  assert.match(problems[0], /no slippage floor/);
+});
