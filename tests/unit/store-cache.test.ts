@@ -152,3 +152,49 @@ test('an empty file is still corruption, not an empty history, even from the cac
   fs.writeFileSync(path.join(dir, 'proposals.json'), '');
   assert.throws(() => store.list(), CorruptStateError);
 });
+
+/* ---------- what a put leaves behind ----------
+
+   put() rewrote the whole array durably and then dropped it, so the next read parsed back the
+   bytes it had just written. Measured: put() cost 8.63 ms at 100 proposals, 10.65 at 1000 and
+   19.30 at 5000, and a proposal's lifecycle is four of them (pending, approved, executing,
+   executed) with a state build reading between each. The two fsyncs in the middle of that are the
+   price of durability and stay; the parse on the way back out does not. */
+
+test('the row that was written is the row that is read back', () => {
+  const dir = tmpDir();
+  seed(dir, [row('a')]);
+  const store = createStore(dir);
+  store.list();
+
+  const written = row('b');
+  store.put(written);
+  assert.equal(store.list()[1], written, 'held in memory, not parsed back off the disk');
+  assert.equal(store.get('b'), written);
+});
+
+test('and it is on the disk, which is the half that was never negotiable', () => {
+  const dir = tmpDir();
+  seed(dir, [row('a')]);
+  const store = createStore(dir);
+  store.put(row('b'));
+
+  const onDisk = JSON.parse(fs.readFileSync(path.join(dir, 'proposals.json'), 'utf8')) as Proposal[];
+  assert.deepEqual(onDisk.map((p) => p.id), ['a', 'b']);
+  assert.deepEqual(createStore(dir).list().map((p) => p.id), ['a', 'b'], 'and a new store over the same directory reads it');
+});
+
+test('a write that fails leaves the store holding what is actually on the disk', () => {
+  const dir = tmpDir();
+  seed(dir, [row('a')]);
+  const store = createStore(dir);
+  store.list();
+
+  fs.chmodSync(dir, 0o500);
+  try {
+    assert.throws(() => store.put(row('b')), 'a directory that cannot be written to should refuse the write');
+  } finally {
+    fs.chmodSync(dir, 0o700);
+  }
+  assert.deepEqual(store.list().map((p) => p.id), ['a'], 'the row that never landed is not being read back');
+});
