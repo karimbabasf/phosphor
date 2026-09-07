@@ -677,12 +677,14 @@ dialog.confirm::backdrop {
 
 /* ---------- locked: the shell behind the card keeps reading ---------- */
 
-/* The stage keeps reading behind the lock, and it has to stay legible enough
-   that a person can see their balance without unlocking. Blurred and dimmed,
-   not hidden. */
+/* The stage keeps reading behind the lock: a person should see the shape of
+   their window without unlocking it. Dimmed, not blurred. A filter on a
+   container promotes it to its own layer and re-blurs on every repaint
+   underneath it, and locked is the state an unattended app sits in longest, so
+   that was a full-viewport compositor pass running all night. Opacity and the
+   screen's own scrim say the same thing for nothing. */
 body[data-locked="true"] .stage {
-  filter: blur(2px);
-  opacity: 0.62;
+  opacity: 0.55;
   pointer-events: none;
 }
 
@@ -691,11 +693,13 @@ body[data-locked="true"] .topbar .tabs {
   pointer-events: none;
 }
 
+/* The screen's ground carries what the blur used to: enough of it to push the
+   stage back, little enough to leave it there. */
 .screen {
   position: fixed;
   inset: var(--topbar-h) 0 0 0;
   z-index: 60;
-  background: color-mix(in srgb, var(--bg-0) 52%, transparent);
+  background: color-mix(in srgb, var(--bg-0) 74%, transparent);
 }
 
 .destinations {
