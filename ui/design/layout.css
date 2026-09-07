@@ -227,16 +227,19 @@ body[data-view="trade"] .stage {
   container-name: conversation;
 }
 
+/* The body does not scroll: the transcript inside it does. Two nested scrollers
+   put the head out of reach the moment a turn got long, and the head is where
+   the assistant's state and its stop button live. */
 .conversation-body {
   position: relative;
   z-index: 1;
   flex: 1 1 auto;
   min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  overflow: hidden;
   padding: var(--s-4) var(--s-4) var(--s-3);
   display: flex;
   flex-direction: column;
+  gap: var(--s-3);
 }
 
 .composer-host {
@@ -496,7 +499,7 @@ body[data-view="trade"] .stage {
   position: relative;
   z-index: 2;
   flex: 0 0 auto;
-  max-height: 56%;
+  max-height: 62%;
   overflow-y: auto;
   overscroll-behavior: contain;
   margin: 0 var(--s-3) var(--s-2);
@@ -508,12 +511,39 @@ body[data-view="trade"] .stage {
 
 .dock[hidden] { display: none; }
 
+/* The answer, for its own beat. Amber is the colour of a request waiting on a
+   person, so holding it after the click would be the window still asking. */
+.dock[data-state="done"] {
+  border-color: var(--ink-edge);
+  background: var(--bg-1);
+  box-shadow: inset 0 1px 0 var(--ink-edge);
+}
+
+.dock[data-state="refused"],
+.dock[data-state="read"] {
+  border-color: var(--line);
+  background: var(--bg-1);
+  box-shadow: none;
+}
+
 .dock-card {
   padding: var(--s-4);
   display: flex;
   flex-direction: column;
   gap: var(--s-3);
   animation: cardin var(--dur-enter) var(--ease-out) both;
+}
+
+/* No first, so the harmless answer is the one the hand reaches. They share the
+   row rather than filling it: a full-width Yes is a button pressed by accident. */
+.dock-actions {
+  display: flex;
+  gap: var(--s-2);
+  margin-top: var(--s-1);
+}
+
+.dock-actions .btn {
+  flex: 1 1 0;
 }
 
 @keyframes cardin {
