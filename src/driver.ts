@@ -227,12 +227,21 @@ export function childEnv(
   return env;
 }
 
+/* NOTHING CALLER-AUTHORED GOES IN ARGV, and the role text is the reason.
+   `ps -axo args=` prints the argv of any process this user owns, which is the same fact
+   src/http/auth.ts moved the window token off the environment for. The role text used to arrive
+   here as `--append-system-prompt`, and for a worker that text is built around the BRIEF an
+   operator agent wrote (src/crew.ts, buildWorkerRole), so every worker published its instructions
+   to every process on the machine. Information disclosure only, no money path and no privilege
+   gain, and it costs nothing to close: createDriver puts the role text down stdin instead, ahead
+   of the first turn, which is the channel `send` already uses.
+   findOrphans is unaffected. It matches on the settings path and the stream flags, never on the
+   prompt. */
 export function buildArgv(opts: {
   repo: string;
   nodeBin: string;
   settings: string;
   sessionId: string;
-  systemPrompt?: string;
   model?: string;
 }): string[] {
   const mcp = JSON.stringify({
@@ -262,7 +271,6 @@ export function buildArgv(opts: {
     opts.sessionId,
   ];
   if (opts.model) argv.push('--model', opts.model);
-  if (opts.systemPrompt) argv.push('--append-system-prompt', opts.systemPrompt);
   return argv;
 }
 
@@ -363,6 +371,9 @@ export function createDriver(opts: DriverOptions) {
   let state: DriverState = 'off';
   let sessionId = '';
   let buffer = '';
+  /* The role text, waiting for the turn it rides in on. Armed at every start, so a driver that is
+     stopped and started again tells its child who it is again. Cleared once it has gone. */
+  let pendingPrompt = '';
 
   function set(next: DriverState, detail?: string): void {
     state = next;
@@ -476,12 +487,12 @@ export function createDriver(opts: DriverOptions) {
     }
 
     sessionId = randomUUID();
+    pendingPrompt = opts.systemPrompt ?? '';
     const argv = buildArgv({
       repo: opts.repo,
       nodeBin: opts.nodeBin ?? process.execPath,
       settings,
       sessionId,
-      systemPrompt: opts.systemPrompt,
       model: opts.model,
     });
 
@@ -543,9 +554,19 @@ export function createDriver(opts: DriverOptions) {
     });
   }
 
+  /* The role text rides in on the first turn rather than on argv. See buildArgv.
+     Merged into that turn rather than sent as one of its own, which matters: Claude Code does not
+     emit its init event until a turn arrives, so a role text sent alone would start a model turn
+     of its own and the human would watch the agent answer a question nobody asked. Merged, the
+     number of round trips is exactly what it was. What changes is that the text is read as the
+     user's rather than as an appended system prompt, and for this app that is a fair trade: the
+     text is written by the app either way, and what an agent may DO is decided by the tools
+     src/mcp.ts registers and by the lockdown above, never by prose. */
   function send(text: string): void {
     if (!child || state === 'failed') throw new Error('driver: no agent is running');
-    const turn = { type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } };
+    const body = pendingPrompt === '' ? text : `${pendingPrompt}\n\n${text}`;
+    pendingPrompt = '';
+    const turn = { type: 'user', message: { role: 'user', content: [{ type: 'text', text: body }] } };
     child.stdin.write(`${JSON.stringify(turn)}\n`);
     set('thinking');
   }
