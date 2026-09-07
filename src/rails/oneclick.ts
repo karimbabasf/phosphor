@@ -35,6 +35,7 @@ import {
   sendTx as nearSendTx,
 } from '../chain/near.ts';
 import type { NearSendOutcome, NearSendParams } from '../chain/near.ts';
+import { MAX_SLIPPAGE_BPS, floorTooLow } from './uniswap.ts';
 import type { ChainId, Rail, RailResult, SimulationResult, SwapDraft } from '../types.ts';
 import { ONECLICK_TERMINAL, assetIdFor, oneClickClient, oneLine, toBaseUnits } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickStatus, TokensFile } from '../intents.ts';
@@ -187,6 +188,15 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
   async function plan(draft: SwapDraft): Promise<Plan> {
     requireVenue(draft);
 
+    /* A floor of zero is not a floor, and the Uniswap rail has refused it since the day its
+       comment was written. The threat is the same on this venue: the tool surface has no
+       recipient field, so a hijacked agent cannot name an attacker, but it can name a price at
+       which one takes the money. Nothing else catches it here either, because the policy engine
+       budgets the INPUT dollars and never sees the floor. */
+    if (!(draft.minAmountOut > 0)) {
+      throw new Error('minAmountOut is 0: refusing to swap with no slippage floor');
+    }
+
     const family = originFamily(draft.chain);
     if (family === null) {
       throw new Error(
@@ -249,6 +259,20 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
       problems.push(
         `the solver floor of ${formatUnits(minOut, p.destDecimals)} ${draft.toSymbol} is below the ` +
           `draft floor of ${draft.minAmountOut}`,
+      );
+    }
+
+    /* And the floor against the price, which is the half a positive number does not give you.
+       The check above only says the solver guarantees at least what the draft asked for, so a
+       draft floor of one base unit passes it against any quote. Both amounts are base units of
+       the destination token, so this compares exactly. With the two together the solver's
+       guarantee is also inside the bound, since it sits at or above the draft floor. */
+    const amountOut = baseUnits(quote.amountOut, 'amountOut');
+    if (floorTooLow(amountOut, p.minOutBase, MAX_SLIPPAGE_BPS)) {
+      problems.push(
+        `the draft floor of ${draft.minAmountOut} ${draft.toSymbol} is more than ${MAX_SLIPPAGE_BPS / 100}% ` +
+          `below the ${formatUnits(amountOut, p.destDecimals)} ${draft.toSymbol} this swap quotes: a floor ` +
+          'that low is an invitation to a sandwich, not slippage protection',
       );
     }
 

@@ -69,6 +69,7 @@ import {
 } from '../chain/near.ts';
 import type { NearSendOutcome, NearSendParams } from '../chain/near.ts';
 import { venueWriteTimeout } from '../net.ts';
+import { MAX_SLIPPAGE_BPS, floorTooLow } from './uniswap.ts';
 
 // The verifier contract. This is the whole point of the rail: one fixed account that goes on
 // the policy allowlist once and stays there, unlike a deposit address minted per quote.
@@ -925,6 +926,15 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     requireVenue(draft);
     requireUsable();
 
+    /* A floor of zero is not a floor, and it does more damage on this rail than on any other.
+       minOutBase is the number the signed payload is checked against, and the number the
+       balance read-back subtracts against after the swap. That read-back exists so a swap
+       crediting nothing is not reported as a success; against a zero floor it reported a total
+       loss as a measured success, in the sentence that advertises the measurement. */
+    if (!(draft.minAmountOut > 0)) {
+      throw new Error('minAmountOut is 0: refusing to swap with no slippage floor');
+    }
+
     // No EVM-origin restriction, unlike the oneclick rail. Nothing is signed on the origin
     // chain here, so the asset's home chain only has to be one the verifier holds a bridged
     // balance for; a base USDC to NEAR USDT swap needs no NEAR key and no Solana key.
@@ -967,6 +977,18 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
       problems.push(
         `the solver floor of ${formatUnits(minOut, p.destDecimals)} ${draft.toSymbol} is below the ` +
           `draft floor of ${draft.minAmountOut}`,
+      );
+    }
+
+    /* And the floor against the price. The check above only says the solver guarantees at least
+       what the draft asked for, so a draft floor of one base unit passes it against any quote.
+       Both amounts are base units of the destination asset, so this compares exactly. */
+    const amountOut = baseUnits(quote.amountOut, 'amountOut');
+    if (floorTooLow(amountOut, p.minOutBase, MAX_SLIPPAGE_BPS)) {
+      problems.push(
+        `the draft floor of ${draft.minAmountOut} ${draft.toSymbol} is more than ${MAX_SLIPPAGE_BPS / 100}% ` +
+          `below the ${formatUnits(amountOut, p.destDecimals)} ${draft.toSymbol} this swap quotes: a floor ` +
+          'that low is an invitation to a sandwich, not slippage protection',
       );
     }
 

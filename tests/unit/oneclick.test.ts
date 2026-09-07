@@ -703,3 +703,41 @@ test('a transfer that never broadcast still says plainly that nothing moved', as
   assert.deepEqual(out.txids, []);
   assert.match(out.detail, /No funds left the wallet/, 'with no hash the sentence is true and stays');
 });
+
+// ---------- the slippage floor ----------
+//
+// The Uniswap rail refuses a floor of zero and a floor far under its own quote, and says why in
+// a comment that names the threat: the tool surface has no recipient field, so a hijacked agent
+// cannot name an attacker, but it can name a price at which a sandwich takes the money. That
+// reasoning is venue-independent and this rail did not have it.
+
+test('a swap with minAmountOut 0 is refused before any quote', async () => {
+  const h = harness();
+  const out = await railOf(h).simulate(draftOf({ minAmountOut: 0 }));
+
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /no slippage floor/);
+  assert.equal(h.quoteBodies.length, 0, 'refused before the API was asked for anything');
+});
+
+test('and execute refuses the same draft rather than signing it', async () => {
+  const h = harness();
+  await assert.rejects(() => railOf(h).execute(draftOf({ minAmountOut: 0 })), /no slippage floor/);
+  assert.equal(h.sends.length, 0, 'nothing was signed');
+});
+
+test('a solver floor more than 20 percent below the quote is refused', async () => {
+  // The quote's own output is 99.85 USDT and the solver guarantees 70, which is 30 percent
+  // under it. The draft floor of 60 is lower still, so the old floor check passed this.
+  const h = harness({ quote: quoteBody({ minAmountOut: '70000000' }) });
+  const out = await railOf(h).simulate(draftOf({ minAmountOut: 60 }));
+
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /below the .* this swap quotes/);
+});
+
+test('a solver floor a normal distance under the quote still passes', async () => {
+  const h = harness();
+  const out = await railOf(h).simulate(draftOf({ minAmountOut: 99 }));
+  assert.equal(out.ok, true, out.summary);
+});

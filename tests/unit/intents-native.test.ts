@@ -1051,3 +1051,39 @@ test('the balance is read for our own account and the destination asset', async 
     `${OWNER.toLowerCase()}:${DEST_ASSET}`,
   ]);
 });
+
+// ---------- the slippage floor ----------
+//
+// Worse here than on any other venue. The read-back below subtracts the verifier balance before
+// the swap from the balance after it, so that a swap crediting nothing is not reported as a
+// success. Against a floor of zero that read-back reported a total loss as a measured success,
+// in the sentence that advertises the measurement.
+
+test('a swap with minAmountOut 0 is refused before any quote', async () => {
+  const h = harness();
+  const out = await railOf(h).simulate(draftOf({ minAmountOut: 0 }));
+
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /no slippage floor/);
+  assert.equal(h.quotes.length, 0, 'refused before the API was asked for anything');
+});
+
+test('and execute refuses the same draft rather than signing it', async () => {
+  const h = harness();
+  await assert.rejects(() => railOf(h).execute(draftOf({ minAmountOut: 0 })), /no slippage floor/);
+  assert.equal(h.signedPayloads.length, 0, 'nothing was signed');
+});
+
+test('a solver floor more than 20 percent below the quote is refused', async () => {
+  const h = harness({ quote: quoteOf({ minAmountOut: '70000000' }) });
+  const out = await railOf(h).simulate(draftOf({ minAmountOut: 60 }));
+
+  assert.equal(out.ok, false);
+  assert.match(out.error ?? '', /below the .* this swap quotes/);
+});
+
+test('a solver floor a normal distance under the quote still passes', async () => {
+  const h = harness();
+  const out = await railOf(h).simulate(draftOf({ minAmountOut: 99 }));
+  assert.equal(out.ok, true, out.summary);
+});
