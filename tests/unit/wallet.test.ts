@@ -183,3 +183,70 @@ test('an empty wallet does not divide by zero', () => {
   assert.equal(wallet.totalUsd, 0);
   assert.deepEqual(wallet.rows, []);
 });
+
+// ---------- a balance the wallet does not also hold on a chain ----------
+//
+// The bug this block exists for, seen in Karim's own window on 2026-09-08: 3.694727 USDC sitting
+// in the intents verifier, priced at 0, valued at 0, and a wallet total reading $25.90 when it
+// was $29.60. Money he owns, on screen as nothing.
+//
+// The cause is that this file learns prices from the holdings it is given and tops up from the
+// snapshot's native price table. A stablecoin held ONLY inside the verifier appears in neither,
+// so it was priced off nothing. The dollar is the assumption src/ledger/index.ts already makes
+// for every non-native holding it has no spot for, so agreeing with it here is not a guess.
+
+const intentsOf = (symbol: string, amount: number) => ({
+  holdings: [{ accountId: '0xabc', assetId: `nep141:${symbol.toLowerCase()}.omft.near`, symbol, originChain: 'eth', amount, decimals: 6 }],
+  ok: true,
+  fetchedAt: 'now',
+});
+
+test('a stablecoin held only in the verifier is worth a dollar, not nothing', () => {
+  const snap = loadDemoLedger();
+  snap.holdings = snap.holdings.filter(h => h.symbol !== 'USDC');
+  const wallet = buildWallet(snap, [], intentsOf('USDC', 3.694727));
+
+  const row = wallet.rows.find(r => r.kind === 'intents');
+  assert.equal(row?.priceUsd, 1);
+  assert.ok(Math.abs((row?.valueUsd ?? 0) - 3.694727) < 1e-9);
+  assert.equal(row?.priced, true);
+});
+
+test('the total counts it, because a total that leaves money out is the number a person acts on', () => {
+  const snap = loadDemoLedger();
+  snap.holdings = snap.holdings.filter(h => h.symbol !== 'USDC');
+  const without = buildWallet(snap, []).totalUsd;
+  const withIt = buildWallet(snap, [], intentsOf('USDC', 10)).totalUsd;
+  assert.ok(Math.abs(withIt - without - 10) < 1e-9, `total moved by ${withIt - without}, not by 10`);
+});
+
+test('a symbol in the other case is the same symbol', () => {
+  // The price map was keyed by whatever case each side happened to use, so a lookup only landed
+  // when the two agreed. src/ledger/index.ts already normalises; this did not.
+  const snap = loadDemoLedger();
+  const wallet = buildWallet(snap, [], intentsOf('usdc', 5));
+  assert.equal(wallet.rows.find(r => r.kind === 'intents')?.priceUsd, 1);
+});
+
+test('WETH in the verifier is worth what an ETH is worth', () => {
+  const snap = loadDemoLedger();
+  const eth = snap.holdings.find(h => h.symbol === 'ETH' && h.native);
+  assert.ok(eth, 'the demo ledger holds no native ETH, so this test is not looking at anything');
+  const spot = eth!.usd / eth!.amount;
+  const wallet = buildWallet(snap, [], intentsOf('WETH', 1));
+  assert.ok(Math.abs((wallet.rows.find(r => r.kind === 'intents')?.priceUsd ?? 0) - spot) < 1e-6);
+});
+
+test('an asset this app cannot price is a hole, and says so rather than printing zero', () => {
+  /* The floor is a named list and not a guess at what looks like a dollar: a token called
+     USDCoin is not a dollar because its name starts the same way, and this figure is added to a
+     total somebody makes decisions against. So an unknown asset still values at zero, and it
+     carries the flag that stops the window printing "$0.00" beside a balance somebody owns. */
+  const snap = loadDemoLedger();
+  const wallet = buildWallet(snap, [], intentsOf('WIF', 412.5));
+
+  const row = wallet.rows.find(r => r.kind === 'intents');
+  assert.equal(row?.priceUsd, 0, 'a price was invented for an asset nothing prices');
+  assert.equal(row?.valueUsd, 0);
+  assert.equal(row?.priced, false, 'the window cannot tell this apart from a worthless balance');
+});

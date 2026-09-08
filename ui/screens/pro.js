@@ -53,47 +53,26 @@
   function build(host) {
     var grid = dom.el('div', 'pro-grid pro-dense');
 
-    /* Money: one table. Ready to move and Trading money are rows in it rather
-       than panels of their own, because they are money the person holds. */
+    /* Money: one row per COIN, with the places it sits in folded under it.
+       It used to be one flat row per holding, so ETH in four places was four
+       rows that a person had to add up themselves to answer "how much ETH do I
+       have", and the coin they own was never on screen as one thing. */
     var money = panel('Money', 'span-7', 'holdings');
-    var moneyWrap = dom.el('div', 'table-wrap');
-    moneyWrap.style.setProperty('--table-max', '440px');
-    var table = dom.el('table', 'table');
-    var head = dom.el('thead');
-    var headRow = dom.el('tr');
-    ['What', 'Where', 'Amount', 'Value', 'Share'].forEach(function (label, i) {
-      var th = dom.el('th', i >= 2 ? 'num' : '', label);
-      headRow.appendChild(th);
-    });
-    head.appendChild(headRow);
-    var body = dom.el('tbody');
-    table.appendChild(head);
-    table.appendChild(body);
-    moneyWrap.appendChild(table);
-    money.body.appendChild(moneyWrap);
-    var moneyTotal = dom.el('div', 'between panel-total');
-    moneyTotal.appendChild(dom.el('span', 'label', 'Total'));
-    var totalValue = dom.el('span', 'title mono tick');
-    moneyTotal.appendChild(totalValue);
-    money.body.appendChild(moneyTotal);
+    var moneyList = dom.el('div', 'holding-list');
+    money.body.appendChild(moneyList);
     var emptyNote = dom.el('p', 'meta');
     money.body.appendChild(emptyNote);
     grid.appendChild(money.node);
 
-    /* Earning. */
-    var earning = panel('Earning', 'span-5', 'earning');
+    /* Earning. Folded when it is empty, because "nothing is earning" is a whole
+       sentence and does not need a panel opened to be read. */
+    var earning = panel('Earning', 'span-5', 'earning', { folded: true });
     var earningBody = dom.el('div', 'stack');
     earning.body.appendChild(earningBody);
     grid.appendChild(earning.node);
 
-    /* Your limits: the policy as sentences, the daily limit, the allowlist. */
-    var limits = panel('Limits', 'span-5', 'rules');
-    var limitsBody = dom.el('div', 'stack');
-    limits.body.appendChild(limitsBody);
-    grid.appendChild(limits.node);
-
     /* Activity: receipts, with fees per row and a total for the window. */
-    var activity = panel('Activity', 'span-7', 'activity');
+    var activity = panel('Activity', 'span-7', 'activity', { folded: true });
     var activityBody = dom.el('div', 'panel-body-flush activity-list');
     activity.body.appendChild(activityBody);
     var feeRow = dom.el('div', 'between panel-total');
@@ -103,16 +82,28 @@
     activity.body.appendChild(feeRow);
     grid.appendChild(activity.node);
 
+    /* Limits: the policy, the daily spend and the allowlist. Folded, and it is
+       the panel the complaint was really about: seven sentences, seven buttons
+       that only ever said "ask your assistant", and five raw addresses. It is
+       reference material, so it reads as reference material now. */
+    var limits = panel('Limits', 'span-5', 'rules', { folded: true });
+    var limitsBody = dom.el('div', 'stack');
+    limits.body.appendChild(limitsBody);
+    grid.appendChild(limits.node);
+
     host.appendChild(grid);
 
     refs = {
+      money: money,
       moneyPanel: money.node,
-      moneyBody: body,
-      totalValue: totalValue,
+      moneyList: moneyList,
       emptyNote: emptyNote,
+      earning: earning,
       earningPanel: earning.node,
       earningBody: earningBody,
+      limits: limits,
       limitsBody: limitsBody,
+      activity: activity,
       activityPanel: activity.node,
       activityBody: activityBody,
       feeValue: feeValue
@@ -121,15 +112,73 @@
     window.PhosphorReceipts.load();
   }
 
-  function panel(title, span, surface) {
+  /* A PANEL IS A TITLE, ONE LINE THAT STANDS IN FOR THE REST, AND A FOLD.
+
+     Karim, 2026-09-08: "i fucking hate the pro mode, looks too full of
+     information, looks like a dictionary. we need titles, maybe sub
+     information, and the rest fucking foldable."
+
+     He is describing a screen with no hierarchy. Every panel was open, every
+     panel was the same weight, and the Limits panel alone was seven full
+     sentences with seven buttons and five raw addresses under them, so the
+     screen had no shape and nothing to land on. Density is not the problem on
+     an operator deck: undifferentiated density is.
+
+     So a panel now owes a person one line even when it is shut. The summary is
+     the fact you would have opened it for, and a section is folded by default
+     when its detail is reference rather than news. The fold is remembered for
+     the session, because a person who opens the allowlist to read it should not
+     have to open it again on the next state frame. */
+  function panel(title, span, surface, options) {
+    var opts = options || {};
     var node = dom.el('section', 'panel ' + span);
     node.dataset.surface = surface;
-    var head = dom.el('div', 'panel-head');
-    head.appendChild(dom.el('h2', 'title-sm', title));
+
+    var head = dom.el('button', 'panel-head panel-fold');
+    head.type = 'button';
+    var heading = dom.el('div', 'panel-heading');
+    heading.appendChild(dom.el('h2', 'title-sm', title));
+    var summary = dom.el('p', 'panel-summary');
+    heading.appendChild(summary);
+    head.appendChild(heading);
+
+    var right = dom.el('div', 'panel-head-right');
+    var lead = dom.el('span', 'panel-lead mono tick');
+    right.appendChild(lead);
+    right.appendChild(dom.el('span', 'panel-caret'));
+    head.appendChild(right);
+
     var body = dom.el('div', 'panel-body');
     node.appendChild(head);
     node.appendChild(body);
-    return { node: node, head: head, body: body };
+
+    var folded = opts.folded === true;
+    function paint() {
+      dom.setAttr(node, 'data-folded', folded ? 'true' : null);
+      dom.setAttr(head, 'aria-expanded', folded ? 'false' : 'true');
+      dom.setHidden(body, folded);
+    }
+    dom.on(head, 'click', function () {
+      folded = !folded;
+      paint();
+    });
+    paint();
+
+    return { node: node, head: head, body: body, summary: summary, lead: lead };
+  }
+
+  /* The one number on this screen that is the answer to the question somebody
+     opened it for. It sits in the head of the Money panel rather than under its
+     table, because a total below five rows of a table is a footnote and this is
+     the headline. */
+  function setSummary(p, text) {
+    dom.setText(p.summary, text || '');
+    dom.setHidden(p.summary, !text);
+  }
+
+  function setLead(p, text) {
+    dom.setNumber(p.lead, text || '');
+    dom.setHidden(p.lead, !text);
   }
 
   function chainName(id) {
@@ -145,6 +194,68 @@
     renderEarning(state);
     renderLimits(state);
     renderFeeTotal();
+  }
+
+  /* WHAT YOU OWN, ONE ROW PER COIN.
+
+     The window listed one row per holding, so ETH sitting in four places was
+     four rows and the question "how much ETH do I have" was arithmetic the
+     person had to do. Karim, 2026-09-08: "the what we own thing should show all
+     of what we own and what coins and the value."
+
+     A coin is the row. Its places are under it, and they are only drawn when
+     there is more than one, because a fold over a single place hides nothing
+     and costs a click. */
+  function groupByCoin(rows) {
+    var order = [];
+    var bySymbol = {};
+    for (var i = 0; i < rows.length; i += 1) {
+      var row = rows[i];
+      var symbol = String(row.symbol || '');
+      /* A pool position is its own thing: its symbol is a pair and its quantity
+         is a count of positions, so adding it to a coin's amount would be
+         adding two different units together. */
+      var id = row.kind === 'lp' ? 'lp:' + symbol + ':' + (row.tokenId || i) : symbol;
+      var group = bySymbol[id];
+      if (!group) {
+        group = {
+          id: id,
+          symbol: symbol,
+          kind: row.kind,
+          quantity: 0,
+          valueUsd: 0,
+          share: 0,
+          places: [],
+          priced: true,
+          countable: row.kind !== 'lp'
+        };
+        bySymbol[id] = group;
+        order.push(group);
+      }
+      group.quantity += Number(row.quantity) || 0;
+      group.valueUsd += Number(row.valueUsd) || 0;
+      group.share += Number(row.share) || 0;
+      if (row.priced === false) group.priced = false;
+      group.places.push(row);
+    }
+    order.sort(function (a, b) { return b.valueUsd - a.valueUsd; });
+    return order;
+  }
+
+  /* Where a holding sits, in the words the rest of the window uses. `intents`
+     was reaching the screen as the raw id while every other place said
+     Ethereum or Arbitrum, so one row in five was speaking a different language. */
+  function placeName(row) {
+    if (row.kind === 'intents') return 'NEAR Intents';
+    if (row.kind === 'yield') return 'Earning' + (row.chain ? ', ' + chainName(row.chain) : '');
+    if (row.kind === 'lp') return 'Pool' + (row.chain ? ', ' + chainName(row.chain) : '');
+    return chainName(row.chain);
+  }
+
+  /* A value this app could not work out is not a value of zero, and the two
+     printed the same. */
+  function valueText(row) {
+    return row.priced === false ? 'not priced' : dom.usd(row.valueUsd);
   }
 
   function renderMoney(state) {
@@ -163,29 +274,72 @@
       renderMoneySkeleton();
       return;
     }
-    delete refs.moneyBody.dataset.skeleton;
+    delete refs.moneyList.dataset.skeleton;
 
-    dom.reconcile(refs.moneyBody, all, function (row, i) {
-      return (row.kind || 'token') + ':' + row.symbol + ':' + (row.chain || '') + ':' + i;
+    var coins = groupByCoin(all);
+
+    dom.reconcile(refs.moneyList, coins, function (coin) {
+      return coin.id;
     }, function () {
-      var tr = dom.el('tr');
-      tr.appendChild(dom.el('td', 'strong'));
-      tr.appendChild(dom.el('td', 'dim'));
-      tr.appendChild(dom.el('td', 'num mono'));
-      tr.appendChild(dom.el('td', 'num mono tick'));
-      tr.appendChild(dom.el('td', 'num mono dim'));
-      return tr;
-    }, function (tr, row) {
-      dom.setText(tr.children[0], row.symbol);
-      dom.setText(tr.children[1], row.chain ? chainName(row.chain) : '');
-      dom.setText(tr.children[2], row.quantity === null || row.quantity === undefined
-        ? '' : dom.qty(row.quantity));
-      dom.setNumber(tr.children[3], dom.usd(row.valueUsd));
-      dom.setText(tr.children[4], dom.pct(row.share || 0));
-      markChanged(tr, dom.usd(row.valueUsd));
+      var wrap = dom.el('div', 'holding');
+      var head = dom.el('button', 'holding-head');
+      head.type = 'button';
+      var name = dom.el('div', 'holding-name');
+      name.appendChild(dom.el('span', 'holding-symbol'));
+      name.appendChild(dom.el('span', 'holding-where meta'));
+      head.appendChild(name);
+      var figures = dom.el('div', 'holding-figures');
+      figures.appendChild(dom.el('span', 'holding-qty mono meta'));
+      figures.appendChild(dom.el('span', 'holding-value mono tick'));
+      figures.appendChild(dom.el('span', 'holding-share mono meta'));
+      head.appendChild(figures);
+      wrap.appendChild(head);
+      var places = dom.el('div', 'holding-places');
+      wrap.appendChild(places);
+      dom.on(head, 'click', function () {
+        if (wrap.dataset.single === 'true') return;
+        var open = wrap.dataset.open === 'true';
+        dom.setAttr(wrap, 'data-open', open ? null : 'true');
+      });
+      return wrap;
+    }, function (wrap, coin) {
+      var head = wrap.children[0];
+      var name = head.children[0];
+      var figures = head.children[1];
+      var single = coin.places.length < 2;
+      dom.setAttr(wrap, 'data-single', single ? 'true' : null);
+
+      dom.setText(name.children[0], coin.symbol);
+      /* One place is named on the row itself, because a fold that opens onto a
+         single line is a click that tells a person what they already knew. */
+      dom.setText(name.children[1], single ? placeName(coin.places[0])
+        : coin.places.length + ' places');
+      dom.setText(figures.children[0], coin.countable ? dom.qty(coin.quantity) : '');
+      dom.setNumber(figures.children[1], coin.priced ? dom.usd(coin.valueUsd) : 'not priced');
+      dom.setAttr(figures.children[1], 'data-unpriced', coin.priced ? null : 'true');
+      dom.setText(figures.children[2], coin.priced ? dom.pct(coin.share || 0) : '');
+      markChanged(figures.children[1], coin.priced ? dom.usd(coin.valueUsd) : 'not priced');
+
+      dom.reconcile(wrap.children[1], single ? [] : coin.places, function (row, i) {
+        return (row.kind || 'token') + ':' + (row.chain || '') + ':' + i;
+      }, function () {
+        var line = dom.el('div', 'holding-place');
+        line.appendChild(dom.el('span', 'meta grow'));
+        line.appendChild(dom.el('span', 'mono meta'));
+        line.appendChild(dom.el('span', 'mono'));
+        return line;
+      }, function (line, row) {
+        dom.setText(line.children[0], placeName(row));
+        dom.setText(line.children[1], dom.qty(row.quantity));
+        dom.setText(line.children[2], valueText(row));
+        dom.setAttr(line.children[2], 'data-unpriced', row.priced === false ? 'true' : null);
+      });
     });
 
-    dom.setNumber(refs.totalValue, dom.usd(wallet.totalUsd || 0));
+    /* The total is the head of the panel, so it is on screen whether or not
+       anybody has the holdings open. */
+    setLead(refs.money, dom.usd(wallet.totalUsd || 0));
+    setSummary(refs.money, moneySummary(coins, wallet));
 
     var notes = [];
     if (wallet.emptyCount) notes.push(wallet.emptyCount + ' empty, not listed');
@@ -216,20 +370,36 @@
     }, CHANGED_MS);
   }
 
+  /* The coins, counted, plus anything the panel could not price. An unpriced
+     row is named in the summary rather than left for somebody to spot in the
+     list, because it is the one thing on this panel that makes the total wrong. */
+  function moneySummary(coins, wallet) {
+    if (!coins.length) return 'Nothing held';
+    var unpriced = [];
+    for (var i = 0; i < coins.length; i += 1) {
+      if (!coins[i].priced) unpriced.push(coins[i].symbol);
+    }
+    var parts = [coins.length === 1 ? '1 coin' : coins.length + ' coins'];
+    var places = 0;
+    for (var j = 0; j < coins.length; j += 1) places += coins[j].places.length;
+    if (places > coins.length) parts.push(places + ' places');
+    if (Array.isArray(wallet.stale) && wallet.stale.length) {
+      parts.push(wallet.stale.length === 1 ? '1 chain unread' : wallet.stale.length + ' chains unread');
+    }
+    if (unpriced.length) parts.push(unpriced.join(', ') + ' not priced');
+    return parts.join(', ');
+  }
+
   function renderMoneySkeleton() {
-    if (refs.moneyBody.dataset.skeleton === 'true') return;
-    refs.moneyBody.dataset.skeleton = 'true';
-    dom.clear(refs.moneyBody);
-    for (var i = 0; i < 5; i += 1) {
-      var tr = dom.el('tr');
-      for (var c = 0; c < 5; c += 1) {
-        var td = dom.el('td');
-        var bar = dom.el('div', 'skel');
-        bar.style.height = '14px';
-        td.appendChild(bar);
-        tr.appendChild(td);
-      }
-      refs.moneyBody.appendChild(tr);
+    if (refs.moneyList.dataset.skeleton === 'true') return;
+    refs.moneyList.dataset.skeleton = 'true';
+    dom.clear(refs.moneyList);
+    for (var i = 0; i < 4; i += 1) {
+      var line = dom.el('div', 'holding-place');
+      var bar = dom.el('div', 'skel grow');
+      bar.style.height = '14px';
+      line.appendChild(bar);
+      refs.moneyList.appendChild(line);
     }
   }
 
@@ -241,12 +411,19 @@
     var y = state.yield;
     dom.clear(refs.earningBody);
     if (!y || (!y.totalPrincipalUsd && !y.totalValueUsd)) {
+      setSummary(refs.earning, 'Nothing is earning');
+      setLead(refs.earning, '');
       var empty = dom.el('div', 'empty');
       empty.appendChild(dom.el('p', 'empty-title', 'Nothing is earning'));
       empty.appendChild(dom.el('p', '', 'Ask your assistant to put some of your dollars to work.'));
       refs.earningBody.appendChild(empty);
       return;
     }
+
+    var apy = rateOn(y);
+    setLead(refs.earning, typeof y.totalValueUsd === 'number' ? dom.usd(y.totalValueUsd)
+      : (typeof y.totalPrincipalUsd === 'number' ? dom.usd(y.totalPrincipalUsd) : ''));
+    setSummary(refs.earning, apy === null ? 'Supplied and earning' : 'Earning ' + dom.pct(apy, 2));
 
     var facts = dom.el('div', 'facts');
     fact(facts, 'Supplied', typeof y.totalPrincipalUsd === 'number' ? dom.usd(y.totalPrincipalUsd) : '');
@@ -349,6 +526,10 @@
       var fill = dom.el('div', 'meter-fill');
       var used = daily.capUsd ? Math.min(1, daily.spentUsd / daily.capUsd) : 0;
       fill.style.width = (used * 100).toFixed(1) + '%';
+      /* Something spent is drawn as something spent. Against a $25,000 cap a
+         real $22.84 is 0.09 percent, which rounds to a sub-pixel sliver and
+         reads as a fault rather than as a number. */
+      dom.setAttr(fill, 'data-spent', daily.spentUsd > 0 ? 'true' : null);
       if (used > 0.8) fill.dataset.tone = 'warn';
       meter.appendChild(fill);
       block.appendChild(meter);
@@ -366,21 +547,44 @@
     var spoken = sentences.filter(function (line) {
       return !/allowed destinations/i.test(String(line));
     });
-    if (spoken.length) {
+
+    /* THE GAS FLOORS ARE ONE RULE, NOT FOUR.
+       They arrived as four sentences of identical shape, one per chain, and
+       four lines that differ in two words each are four lines nobody reads. One
+       line naming the four numbers says the same thing and can be taken in at a
+       glance. Anything that is not a gas floor keeps its own sentence, because
+       those genuinely are separate rules. */
+    var gas = [];
+    var rules = [];
+    for (var i = 0; i < spoken.length; i += 1) {
+      var line = String(spoken[i]);
+      var found = /^keep at least (.+) of gas on (\w+)\.?$/i.exec(line);
+      if (found) gas.push({ amount: found[1], chain: found[2] });
+      else rules.push(line);
+    }
+
+    if (rules.length) {
       var list = dom.el('div', 'stack-2');
-      for (var i = 0; i < spoken.length; i += 1) {
-        var row = dom.el('div', 'between limit-row');
-        row.appendChild(dom.el('span', 'body grow', spoken[i]));
-        var edit = dom.el('button', 'btn btn-quiet btn-sm');
-        edit.appendChild(dom.el('span', 'btn-label', 'Edit'));
-        row.appendChild(edit);
-        dom.on(edit, 'click', function () {
-          window.PhosphorToast.show('Ask your assistant to change this. A limit change files a request you have to click.');
-        });
-        list.appendChild(row);
+      for (var r = 0; r < rules.length; r += 1) {
+        list.appendChild(dom.el('p', 'body limit-line', rules[r]));
       }
       refs.limitsBody.appendChild(list);
     }
+
+    if (gas.length) {
+      var gasRow = dom.el('div', 'between limit-line');
+      gasRow.appendChild(dom.el('span', 'body', gas.length === 1 ? 'Gas kept back' : 'Gas kept back on each chain'));
+      var amounts = gas.map(function (g) { return chainName(g.chain) + ' ' + g.amount; }).join(', ');
+      gasRow.appendChild(dom.el('span', 'meta mono', amounts));
+      refs.limitsBody.appendChild(gasRow);
+    }
+
+    /* One sentence at the bottom, rather than an Edit button on every rule that
+       only ever opened a toast saying the same thing. Seven buttons that cannot
+       do what they offer is worse than no button: it teaches a person that the
+       controls on this screen are decoration. */
+    refs.limitsBody.appendChild(dom.el('p', 'meta',
+      'Ask your assistant to change any of these. A limit change files a request you have to click.'));
 
     /* The destination allowlist existed in the policy engine with no way to see
        it. This is where it lives now. */
@@ -388,25 +592,70 @@
       ? policy.outbound.destinationAllowlist
       : [];
     var wrap = dom.el('div', 'stack-2');
-    wrap.appendChild(dom.el('p', 'label', 'Money can only go to your own wallets and these venues'));
     if (!allow.length) {
+      wrap.appendChild(dom.el('p', 'label', 'Money can only go to your own wallets and these venues'));
       wrap.appendChild(dom.el('p', 'meta', 'No list is set, so a destination is checked against your limits alone.'));
-    } else {
-      var box = dom.el('div', 'allowlist');
-      for (var a = 0; a < allow.length; a += 1) {
-        var entry = allow[a];
-        var named = VENUE_NAMES[entry];
-        if (named) {
-          /* A venue is a name, not an id. An address has to be read character
-             by character to be checked, and these two cannot be. */
-          box.appendChild(dom.el('p', 'body', named));
-          continue;
-        }
-        box.appendChild(dom.el('p', 'addr dim', entry));
-      }
-      wrap.appendChild(box);
+      refs.limitsBody.appendChild(wrap);
+      return;
     }
+
+    /* The allowlist folds inside the folded panel, and that is not one fold too
+       many. Five addresses of forty characters were the tallest thing on this
+       screen and the least often read: an address is checked character by
+       character on the day somebody has a reason to, and is noise on every
+       other day. The venues keep their names on the outside because a name is
+       read at a glance and is the half of this list that answers a question. */
+    var venues = [];
+    var addresses = [];
+    for (var a = 0; a < allow.length; a += 1) {
+      if (VENUE_NAMES[allow[a]]) venues.push(VENUE_NAMES[allow[a]]);
+      else addresses.push(allow[a]);
+    }
+
+    var head = dom.el('button', 'allow-head');
+    head.type = 'button';
+    var headText = addresses.length === 1 ? '1 wallet of yours' : addresses.length + ' wallets of yours';
+    if (venues.length) headText += ', ' + venues.join(', ');
+    head.appendChild(dom.el('span', 'body grow', 'Money can only go to ' + headText));
+    head.appendChild(dom.el('span', 'panel-caret'));
+    wrap.appendChild(head);
+
+    var box = dom.el('div', 'allowlist');
+    box.hidden = true;
+    for (var b = 0; b < addresses.length; b += 1) {
+      box.appendChild(dom.el('p', 'addr dim', addresses[b]));
+    }
+    dom.on(head, 'click', function () {
+      var open = !box.hidden;
+      dom.setHidden(box, open);
+      dom.setAttr(head, 'aria-expanded', open ? 'false' : 'true');
+    });
+    dom.setAttr(head, 'aria-expanded', 'false');
+    if (addresses.length) wrap.appendChild(box);
     refs.limitsBody.appendChild(wrap);
+
+    setSummary(refs.limits, limitsSummary(state));
+  }
+
+  /* The three facts somebody opens Limits to check: what gets asked, what gets
+     refused, and how much of today's room is gone. */
+  function limitsSummary(state) {
+    var parts = [];
+    var gate = state.policy && state.policy.approval;
+    var ask = gate && typeof gate.thresholdUsd === 'number' ? gate.thresholdUsd : null;
+    if (ask === null) {
+      var sentences = state.sentences || (state.policy && state.policy.sentences) || [];
+      for (var i = 0; i < sentences.length; i += 1) {
+        var found = /ask me before anything above \$([\d,.]+)/i.exec(String(sentences[i]));
+        if (found) { ask = Number(found[1].replace(/,/g, '')); break; }
+      }
+    }
+    if (ask !== null && isFinite(ask)) parts.push('Asks above ' + dom.usd(ask, 0));
+    var daily = state.dailyLimit;
+    if (daily && daily.capUsd) {
+      parts.push(dom.usd(daily.spentUsd) + ' of ' + dom.usd(daily.capUsd, 0) + ' used today');
+    }
+    return parts.join(', ');
   }
 
   function resetWords(iso) {
@@ -422,6 +671,11 @@
     if (!refs.feeValue) return;
     var total = window.PhosphorReceipts.feeTotal();
     dom.setText(refs.feeValue, total > 0 ? dom.fee(total) : 'None yet');
+
+    var list = window.PhosphorReceipts.get();
+    var count = Array.isArray(list) ? list.length : 0;
+    setSummary(refs.activity, count === 0 ? 'Nothing has happened yet'
+      : (count === 1 ? '1 receipt' : count + ' receipts') + (total > 0 ? ', ' + dom.fee(total) + ' in fees' : ''));
   }
 
   function fact(host, label, value) {

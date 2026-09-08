@@ -116,6 +116,11 @@ export type WalletRow = {
   quantity: number;
   priceUsd: number; // 1.0 for stables, spot for natives
   valueUsd: number;
+  /* False when this app could not price the asset at all, so valueUsd is a hole rather than a
+     figure. Absent means priced, because every other rail derives its value from a number it
+     already holds. It exists because "$0.00" and "we do not know" printed identically, and the
+     first one reads as "you own nothing" against a balance somebody does own. */
+  priced?: boolean;
   share: number; // 0..1 of wallet total
   native: boolean;
   lp?: LpPosition;

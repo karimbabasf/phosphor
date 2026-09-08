@@ -167,6 +167,69 @@
   min-height: 0;
 }
 
+/* A FOLDING PANEL. The head is the control, so it is a button across the full
+   width: a caret you have to hit is a target the size of a full stop. */
+.panel-fold {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  align-items: flex-start;
+}
+
+.panel-heading {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* The line that stands in for the panel when it is shut. It is the fact you
+   would have opened it for, so it is never the panel's own name said again. */
+.panel-summary {
+  font-size: var(--fs-12);
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel-head-right {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  flex: 0 0 auto;
+}
+
+.panel-lead {
+  font-size: var(--fs-20);
+  color: var(--text);
+  font-feature-settings: "tnum" 1;
+  letter-spacing: -0.01em;
+}
+
+.panel-caret {
+  width: 8px;
+  height: 8px;
+  border-right: 1.5px solid var(--text-3);
+  border-bottom: 1.5px solid var(--text-3);
+  transform: rotate(45deg) translate(-2px, -2px);
+  transition: transform var(--dur-swap) var(--ease-out),
+              border-color var(--dur-press) var(--ease-out);
+}
+
+[data-folded="true"] > .panel-fold .panel-caret,
+[aria-expanded="false"] > .panel-caret,
+[aria-expanded="false"] .panel-caret {
+  transform: rotate(-45deg) translate(-2px, 2px);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .panel-fold:hover .panel-caret { border-color: var(--text-2); }
+  .panel-fold:hover .panel-summary { color: var(--text-2); }
+}
+
 .panel-body {
   padding: 0 var(--s-4) var(--s-4);
   min-height: 0;
@@ -473,11 +536,20 @@ button.chip:active {
   overflow: hidden;
 }
 
+/* A fill that is not empty is drawn as not empty. $22.84 against a $25,000 cap
+   is 0.09 percent, which rounded to a sub-pixel sliver and read as a rendering
+   fault rather than as a number. The floor is the bar's own height, so the
+   smallest thing it can draw is a dot rather than a hairline, and zero still
+   draws nothing at all. */
 .meter-fill {
   height: 100%;
   border-radius: inherit;
   background: var(--text-2);
   transition: width var(--dur-enter) var(--ease-out);
+}
+
+.meter-fill[data-spent="true"] {
+  min-width: 4px;
 }
 
 .meter-fill[data-tone="warn"] { background: var(--warn); }

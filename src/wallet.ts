@@ -55,15 +55,50 @@ export function buildWallet(
 ): WalletView {
   // Symbol -> unit price, learned from the holdings themselves and topped up from the
   // snapshot's native price table for symbols held only inside a pool.
+  //
+  // KEYED UPPERCASE, AND WETH IS ETH. src/ledger/index.ts prices the wallet's own holdings
+  // through exactly this normalisation and this map did not, so a lookup only landed when the
+  // two sides happened to agree on case. The mapping is not a nicety either: WETH and ETH are
+  // the same dollar behind two contracts, which is the argument priceHoldings already makes.
   const priceBySymbol = new Map<string, number>();
+  const key = (symbol: string): string => {
+    const upper = String(symbol ?? '').toUpperCase();
+    return upper === 'WETH' ? 'ETH' : upper;
+  };
   for (const h of snapshot.holdings) {
     const price = unitPrice(h.amount, h.usd);
-    if (price > 0) priceBySymbol.set(h.symbol, price);
+    if (price > 0) priceBySymbol.set(key(h.symbol), price);
   }
   for (const [symbol, price] of Object.entries(snapshot.prices)) {
-    if (!priceBySymbol.has(symbol)) priceBySymbol.set(symbol, price);
+    if (!priceBySymbol.has(key(symbol))) priceBySymbol.set(key(symbol), price);
   }
-  const priceOf = (symbol: string): number => priceBySymbol.get(symbol) ?? 0;
+
+  /* WHY A STABLECOIN FLOOR EXISTS HERE, AND WHY IT IS NOT AN INVENTED PRICE.
+     This map learns prices from what the wallet holds. A balance held ONLY inside the intents
+     verifier is therefore priced off nothing: the snapshot's own price table carries the gas
+     assets, and a stablecoin the wallet does not also hold on some chain appears in neither.
+     Karim, 2026-09-08, looking at his own window: 3.694727 USDC in NEAR Intents, priced at 0,
+     valued at 0, and a total that was $25.90 when it was $29.60. Money he owns, on screen as
+     nothing.
+     The dollar is the assumption src/ledger/index.ts already makes for every non-native
+     holding it has no spot price for, so applying it here is agreeing with the rest of the app
+     rather than making something up. It is deliberately a NAMED LIST and not a guess at what
+     looks like a stablecoin: a token called USDCoin is not a dollar because its name starts
+     the same way, and this figure is added to a total somebody makes decisions against. */
+  const DOLLARS = new Set(['USDC', 'USDT', 'DAI', 'USDC.E', 'FRAX', 'PYUSD', 'USDE', 'LUSD', 'TUSD', 'USDP']);
+  const priceOf = (symbol: string): number => {
+    const found = priceBySymbol.get(key(symbol));
+    if (found !== undefined && found > 0) return found;
+    return DOLLARS.has(key(symbol)) ? 1 : 0;
+  };
+
+  /* Is this a price or is it a hole. Zero is a real answer for a worthless token and it is also
+     what "we could not price this" looks like, and the two must not print the same, because
+     "$0.00" beside a balance a person owns reads as "you have nothing". Every row carries the
+     answer so the window can say "not priced" instead.
+     No guard for a zero balance: an empty holding never becomes a row, so a row with nothing in
+     it does not exist to be asked about. */
+  const pricedOf = (symbol: string): boolean => priceOf(symbol) > 0;
 
   const tokenRows: WalletRow[] = snapshot.holdings.map(h => ({
     kind: 'token',
@@ -112,6 +147,7 @@ export function buildWallet(
       valueUsd: h.amount * priceUsd,
       share: 0,
       native: false,
+      priced: pricedOf(h.symbol),
       intents: { accountId: h.accountId, assetId: h.assetId },
     };
   });
