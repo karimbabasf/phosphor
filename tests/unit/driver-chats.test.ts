@@ -103,13 +103,19 @@ test('a prompt reaches the chat it names and is written into that chat alone', a
     const id = String(second.body.id);
 
     await b.driver({ action: 'prompt', chat: id, text: 'read the four hour' });
-    assert.deepEqual(b.calls.sends, ['read the four hour']);
+    // The screen rides with the message, because the system prompt's copy of it went stale the
+    // moment the human clicked a tab. The human's own words are still the whole of the front.
+    assert.equal(b.calls.sends.length, 1);
+    assert.ok(b.calls.sends[0].startsWith('read the four hour'));
+    assert.ok(/\[phosphor: the window is on the (basic|pro|trade) screen\]$/.test(b.calls.sends[0]));
 
     const list = (await chats(b.url)).chats as Array<Record<string, unknown>>;
     const target = list.find((c) => c.id === id);
     const other = list.find((c) => c.id !== id);
     const said = (t: unknown) => (t as Array<Record<string, unknown>>).filter((e) => e.kind === 'said');
     assert.equal(said(target?.transcript).length, 1);
+    // What the window draws is what the human typed. The app's own line is for the model.
+    assert.equal((said(target?.transcript)[0] as Record<string, unknown>).text, 'read the four hour');
     assert.equal(said(other?.transcript).length, 0, 'the sentence was written into a conversation it was not for');
   } finally {
     await b.close();

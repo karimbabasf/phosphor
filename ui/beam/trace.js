@@ -112,6 +112,31 @@
     return lookup(String(kind || '')) || 'assistant';
   }
 
+  /* The positions in a ledger snapshot as one comparable string: chain, token
+     and amount, and nothing that a price can move. A chain that went stale
+     counts, because a wallet the app can no longer read is a change worth
+     seeing. Sorted, so the order the chains answered in is not a change. */
+  function positionsOf(slice) {
+    if (!slice || typeof slice !== 'object') return '';
+    var rows = [];
+    var holdings = slice.holdings;
+    if (Array.isArray(holdings)) {
+      for (var i = 0; i < holdings.length; i += 1) {
+        var row = holdings[i] || {};
+        rows.push(String(row.chain) + '/' + String(row.tokenId) + '=' + String(row.amount));
+      }
+    }
+    var status = slice.chainStatus;
+    if (status && typeof status === 'object') {
+      for (var chain in status) {
+        if (!Object.prototype.hasOwnProperty.call(status, chain)) continue;
+        rows.push(chain + ':' + (status[chain] && status[chain].ok ? 'ok' : 'stale'));
+      }
+    }
+    rows.sort();
+    return rows.join('|');
+  }
+
   /* ---------------------------------------------------------------- steps */
 
   var open = Object.create(null);
@@ -177,15 +202,29 @@
 
     /* What changed after an execution glows on its own, so money arriving looks
        like money arriving rather than like nothing. The first call is the
-       subscription handing over what it already had, which is not a change. */
+       subscription handing over what it already had, which is not a change.
+
+       WHAT COUNTS AS MONEY ARRIVING, and this is the whole bug that was here.
+       The subscription was on the `ledger` slice, which carries prices and the
+       dollar value they produce. Those move on every price poll, and the state
+       hub pushes up to 8 frames a second with a trading feed live, so the
+       holdings panel lit for a reading of the market rather than for anything
+       that happened to this wallet. On the basic screen, where holdings is the
+       biggest thing on the page, it looked like a fault.
+
+       A price is not a transaction. What is compared is the position itself:
+       which chain, which token, and how much of it is held. A number on screen
+       that moved because Ether moved still updates, it just does not announce
+       itself as an event. */
     var store = window.PhosphorState;
     if (store) {
-      var seen = false;
-      store.select('ledger', function () {
-        if (!seen) {
-          seen = true;
-          return;
-        }
+      var held = null;
+      store.select('ledger', function (slice) {
+        var next = positionsOf(slice);
+        var first = held === null;
+        var changed = held !== next;
+        held = next;
+        if (first || !changed) return;
         var light = beam();
         if (light) light.decay('holdings');
       });

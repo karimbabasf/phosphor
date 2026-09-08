@@ -298,6 +298,24 @@
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   padding: var(--s-2) var(--s-3);
+  transition: color var(--dur-enter) var(--ease-out),
+              border-color var(--dur-enter) var(--ease-out);
+}
+
+/* A message the app has not taken responsibility for yet reads as one: the
+   words are there in full, held back a step, and they settle the moment the
+   server has it. Nothing moves, because a line of text that shifts under the
+   eye is worse than one that waits. */
+.chat-said[data-state="pending"] .chat-text {
+  color: var(--text-2);
+  border-color: color-mix(in srgb, var(--line) 55%, transparent);
+}
+
+.chat-said[data-state="failed"] .chat-who { color: var(--down); }
+
+.chat-said[data-state="failed"] .chat-text {
+  color: var(--text-2);
+  border-color: color-mix(in srgb, var(--down) 45%, transparent);
 }
 
 .chat-error .chat-who,
@@ -332,16 +350,22 @@
   min-height: 22px;
 }
 
+/* Pinned to the first line rather than centred, because a row that wraps put
+   the dot in the gutter between its two lines and pointed at neither. Eight
+   pixels is the row's own 22 less the dot, halved. */
 .step-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--beam);
   opacity: 0.5;
-  align-self: center;
+  align-self: start;
+  margin-top: 8px;
   transition: opacity var(--dur-enter) var(--ease-out),
               background-color var(--dur-enter) var(--ease-out);
 }
+
+.steps-fold .step-dot { align-self: center; margin-top: 0; }
 
 .step[data-state="live"] .step-dot {
   opacity: 1;
@@ -364,14 +388,26 @@
   font-feature-settings: "tnum" 1;
 }
 
-/* The tool that reaches past this machine says so on its own row. */
-.step-leaves {
-  color: var(--warn);
+/* WHAT the call was about. It is the half of a step row that proves the app is
+   working on the thing that was asked for, so it is the assistant's own light
+   rather than another grey, and it is mono because most of what lands here is a
+   ticker, a chain or an amount. */
+.step-args {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  color: color-mix(in srgb, var(--beam) 62%, var(--text-3));
 }
 
+.step-args::before,
 .step-leaves::before {
   content: ", ";
   color: var(--text-3);
+  font-family: var(--font-ui);
+}
+
+/* The tool that reaches past this machine says so on its own row. */
+.step-leaves {
+  color: var(--warn);
 }
 
 /* A finished turn folds its steps to one line. */
@@ -396,28 +432,70 @@
 
 .steps[data-folded="true"] .step { display: none; }
 
-/* Thinking: three dots breathing on opacity, nothing else. */
-.thinking {
-  display: inline-flex;
+/* THE TURN BAR. One line between the transcript and the composer, present only
+   while the assistant is answering, saying what it is doing right now and how
+   long it has been at it. It sits outside the scroll on purpose: a person who
+   has scrolled back to read something still has to be able to tell a working
+   agent from a dead one. */
+.turn-bar {
+  display: grid;
+  grid-template-columns: 6px 1fr auto;
+  gap: var(--s-2);
   align-items: center;
-  gap: 4px;
-  min-height: 22px;
-  color: var(--text-3);
+  min-height: 30px;
+  padding: 0 var(--s-4);
   font-size: var(--fs-13);
+  color: var(--text-2);
+  border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
+  background: color-mix(in srgb, var(--bg-0) 92%, transparent);
+  animation: turnin var(--dur-enter) var(--ease-out) both;
 }
 
-.thinking i {
-  width: 5px;
-  height: 5px;
+@keyframes turnin {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.turn-what {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.turn-time {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  color: var(--text-3);
+  font-feature-settings: "tnum" 1;
+}
+
+/* THE STRIKE, and it is the one piece of motion in this window that is not
+   borrowed from somewhere else. A phosphor pixel is hit and then decays, so the
+   dot does that: it comes up in a tenth of a second and falls away over the
+   rest of the cycle. A dot that eases up and down at the same rate is a
+   breathing dot, which is what every other app's spinner does. */
+.turn-dot {
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: var(--beam);
-  opacity: 0.3;
-  animation: breathe 1400ms var(--ease-in-out) infinite;
+  box-shadow: 0 0 8px -1px var(--beam);
+  animation: strike 1500ms linear infinite;
 }
 
-.thinking i:first-of-type { margin-left: var(--s-1); }
-.thinking i:nth-of-type(2) { animation-delay: 180ms; }
-.thinking i:nth-of-type(3) { animation-delay: 360ms; }
+@keyframes strike {
+  0% { opacity: 0.18; }
+  6% { opacity: 1; }
+  100% { opacity: 0.18; }
+}
+
+/* Writing is the one state that is not a wait: the answer is arriving, so the
+   dot holds rather than pulsing. */
+.turn-bar[data-state="writing"] .turn-dot {
+  animation: none;
+  opacity: 1;
+}
 
 /* The composer: a textarea that grows to five lines, Enter sends. */
 .agent-composer {
@@ -654,8 +732,9 @@
 @media (prefers-reduced-motion: reduce) {
   .feed[data-busy="1"] i { animation: none; opacity: 0.6; }
   .step[data-state="live"] .step-dot,
-  .thinking i,
+  .turn-dot,
   .wordmark-glyph[data-state="working"] { animation: none; opacity: 0.8; }
+  .turn-bar { animation: none; }
 }
 
 .fill-row {

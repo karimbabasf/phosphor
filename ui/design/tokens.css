@@ -88,7 +88,7 @@
   --dur-beam: 320ms;
   --dur-glow-in: 120ms;
   --dur-glow-out: 2400ms;
-  --dur-scan: 900ms;
+  --dur-scan: 2500ms;
 
   /* Layout. The conversation column is the constant; the world is the rest. */
   --topbar-h: 48px;

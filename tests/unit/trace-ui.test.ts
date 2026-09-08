@@ -229,11 +229,48 @@ test('what changed after an execution glows on its own', () => {
   world.frame('transactions', { type: 'transactions' });
   assert.deepEqual(world.calls, [{ call: 'decay', id: 'activity' }]);
   world.calls.length = 0;
+  const held = (amount: number, usd: number) => ({
+    holdings: [{ chain: 'base', tokenId: 'usdc', symbol: 'USDC', amount, usd }],
+    chainStatus: { base: { ok: true, fetchedAt: '' } },
+    prices: { ETH: usd },
+  });
   // The first call is the subscription handing over what it already had, which
   // is not a change and must not light anything.
-  world.ledger({ total: 1 });
+  world.ledger(held(10, 10));
   assert.deepEqual(world.calls, []);
-  world.ledger({ total: 2 });
+  world.ledger(held(12, 12));
+  assert.deepEqual(world.calls, [{ call: 'decay', id: 'holdings' }]);
+});
+
+test('a price that moved is not money arriving', () => {
+  /* The subscription was on the whole ledger slice, which carries prices and the dollar values
+     they produce. Those move on every price poll and the hub pushes up to 8 frames a second with
+     a trading feed live, so the holdings panel flashed for a reading of the market rather than
+     for anything that happened to this wallet. On the basic screen it looked like a fault. */
+  const world = build();
+  const priced = (usd: number) => ({
+    holdings: [{ chain: 'base', tokenId: 'weth', symbol: 'ETH', amount: 0.5, usd }],
+    chainStatus: { base: { ok: true, fetchedAt: '2026-09-08T00:00:00Z' } },
+    prices: { ETH: usd * 2 },
+    priceAsOf: { ETH: Date.now() },
+  });
+  world.ledger(priced(1000));
+  world.calls.length = 0;
+  world.ledger(priced(1001));
+  world.ledger(priced(999));
+  assert.deepEqual(world.calls, [], 'the holdings panel lit for a price tick');
+});
+
+test('a chain going stale is a change worth seeing', () => {
+  const world = build();
+  const rows = (ok: boolean) => ({
+    holdings: [{ chain: 'base', tokenId: 'usdc', symbol: 'USDC', amount: 3, usd: 3 }],
+    chainStatus: { base: { ok, fetchedAt: '' } },
+    prices: {},
+  });
+  world.ledger(rows(true));
+  world.calls.length = 0;
+  world.ledger(rows(false));
   assert.deepEqual(world.calls, [{ call: 'decay', id: 'holdings' }]);
 });
 

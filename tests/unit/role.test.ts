@@ -80,8 +80,19 @@ test('the role tells the agent not to spend a turn orienting itself', () => {
 });
 
 test('the role says where the window is when it knows, and says nothing when it does not', () => {
-  assert.ok(role('trade').includes('showing the trade screen'));
-  assert.ok(!role().includes('showing the'));
+  assert.ok(role('trade').includes('was on the trade screen when this session opened'));
+  assert.ok(!role().includes('screen when this session opened'));
+});
+
+test('the role never states the screen as a present fact', () => {
+  /* The system prompt is fixed for the life of the child, so any present-tense claim about the
+     window is a claim that goes stale the first time the human clicks a tab. It said "the window
+     is showing the trade screen right now" and the agent repeated it while the human sat on
+     basic. The text has to send it to the live reading instead. */
+  const text = role('trade');
+  assert.ok(!/window is showing/.test(text));
+  assert.ok(!/screen right now/.test(text));
+  assert.ok(text.includes('appended to every message'));
 });
 
 test('the role never mentions where the signing key lives', () => {

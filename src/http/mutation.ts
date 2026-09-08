@@ -173,8 +173,17 @@ export async function handleMutation(
       const text = typeof body.text === 'string' ? body.text.trim() : '';
       if (text === '') return fail(res, 400, 'text is required');
       if (text.length > 8000) return fail(res, 400, 'text is too long: 8000 characters maximum');
+      /* THE SCREEN RIDES WITH THE MESSAGE.
+         The agent's system prompt names the screen the window was on when the child was
+         spawned and can never be corrected after that, so an agent whose human clicked a tab
+         went on describing the screen they had left. Seen doing exactly that: it said the
+         window was on trade while the human sat on basic.
+         One line, written by this app rather than by anybody's text, appended to what the
+         human said. It costs a tool call nobody has to make and it is right on every turn.
+         It is fenced and named so the model can tell it apart from the person talking, and it
+         is not put in the transcript: the window already draws what was typed. */
       try {
-        instance.send(text);
+        instance.send(`${text}\n\n[phosphor: the window is on the ${ctx.getView()} screen]`);
       } catch (err) {
         return fail(res, 409, errText(err));
       }

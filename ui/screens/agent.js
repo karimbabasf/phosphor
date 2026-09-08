@@ -96,10 +96,30 @@
      wallet app opening the internet is a fact a person is owed in words. */
   var LEAVES = { research: true };
 
+  /* WHAT the call was about, not just what kind of call it was. The tool event
+     already carries the arguments the model sent, and dropping them was the
+     difference between "reading prices" and "reading prices, SOL-PERP 1h": one
+     says a category of work is happening, the other proves the app is working
+     on the thing that was asked for.
+
+     Read through a fixed list of field names rather than by tool, so a tool
+     added later says something without a second table to keep in step. Values
+     come from a language model, so each one is cut to length and only strings,
+     numbers and booleans are ever read: an object stringifies to nothing a
+     person can use, and this row is not the place to find out. */
+  var ARG_FIELDS = [
+    'product', 'symbol', 'query', 'coins', 'mode', 'name', 'indicator',
+    'chain', 'toChain', 'venue', 'label', 'text', 'sentence', 'what', 'source', 'id'
+  ];
+  var ARG_MAX = 38;
+
   var TRANSCRIPT_CAP = 400;
-  var THINKING_MS = 300;
   var TICK_MS = 100;
   var STICK_PX = 40;
+  /* Five lines, and the line's height is read off the box rather than written
+     down here: the fallback is only for a computed style that says `normal`. */
+  var COMPOSER_MAX_LINES = 5;
+  var COMPOSER_LINE_FALLBACK_PX = 21;
 
   /* typeof, not truthiness: the tool id arrives from a language model, and a
      lookup on a plain object hands back Object.prototype's own members for ids
@@ -114,6 +134,44 @@
     return LEAVES[String(name || '').replace(/^mcp__phosphor__/, '')] === true;
   }
 
+  /* One scalar, trimmed and bounded. An array of scalars reads as a list
+     because that is what `coins` and the chart's clear lists are. */
+  function argText(value) {
+    if (typeof value === 'string') return value.trim();
+    if (typeof value === 'number' && isFinite(value)) return String(value);
+    if (typeof value === 'boolean') return value ? 'on' : 'off';
+    if (Array.isArray(value)) {
+      var parts = [];
+      for (var i = 0; i < value.length && parts.length < 4; i += 1) {
+        var one = argText(value[i]);
+        if (one) parts.push(one);
+      }
+      return parts.join(' ');
+    }
+    return '';
+  }
+
+  /* The subject of the call in a few words. An amount leads when there is one,
+     because the number is the thing a person looks for on a row that moves
+     money, and it is followed by what the number counts. */
+  function argsLabel(input) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return '';
+    var parts = [];
+    var amount = argText(input.amount);
+    if (amount) parts.push(amount);
+    for (var i = 0; i < ARG_FIELDS.length && parts.length < 3; i += 1) {
+      var key = ARG_FIELDS[i];
+      if (!Object.prototype.hasOwnProperty.call(input, key)) continue;
+      var text = argText(input[key]);
+      if (!text) continue;
+      if (parts.indexOf(text) !== -1) continue;
+      parts.push(text);
+    }
+    var joined = parts.join(' ');
+    if (joined.length > ARG_MAX) joined = joined.slice(0, ARG_MAX - 1).replace(/\s+\S*$/, '') + '…';
+    return joined;
+  }
+
   var mounts = [];
   var blocks = [];
   var seq = 0;
@@ -122,10 +180,31 @@
   var detail = '';
   var connection = { command: '', connected: [] };
   var openSteps = null;
-  var thinking = null;
-  var thinkingTimer = 0;
   var ticker = 0;
   var announced = [];
+
+  /* THE TURN, and why it is not a transcript row.
+
+     The old build put a "thinking" row in the transcript, removed it the moment
+     any frame arrived, and never brought it back. So the two longest silences
+     in a turn were the two with nothing on screen: before the first tool call,
+     and after the last one while the answer is being written. A person watching
+     that has no way to tell a working agent from a dead one.
+
+     This is one line that lives between the transcript and the composer, from
+     the moment a prompt goes out until the turn ends. It does not scroll away,
+     it names what is happening now in the same words the step rows use, and it
+     carries the turn's own clock. Three states, each one an event rather than a
+     guess: `thinking` (sent, nothing back yet), `calling` (a tool is open) and
+     `writing` (text has arrived and no tool is open). */
+  var turn = null;
+
+  /* WHICH CONVERSATION THIS COLUMN IS. The stream carries every chat's events
+     and the app opens up to four, so an untagged reader printed another
+     conversation's tool calls into this one and fired the beam for work this
+     agent never did. The column adopts the first chat it hears from and
+     ignores the rest. */
+  var chatId = null;
 
   /* Five phases for the rest of the window, six words for the person. `ready`
      and `stopped` are both a live assistant that is not answering, so they share
@@ -233,6 +312,17 @@
     list.setAttribute('aria-live', 'polite');
     host.appendChild(list);
 
+    /* The turn bar sits above the composer rather than in the transcript, so
+       it is in the same place every time and a scrolled-back reader still has
+       it. It is text and one dot: no control, nothing that decides anything. */
+    var turnBar = dom.el('div', 'turn-bar');
+    turnBar.setAttribute('role', 'status');
+    turnBar.setAttribute('aria-live', 'polite');
+    turnBar.appendChild(dom.el('span', 'turn-dot'));
+    turnBar.appendChild(dom.el('span', 'turn-what'));
+    turnBar.appendChild(dom.el('span', 'turn-time'));
+    turnBar.hidden = true;
+
     var composer = dom.el('form', 'agent-composer');
     var input = dom.el('textarea', 'input');
     input.rows = 1;
@@ -245,6 +335,7 @@
     composer.appendChild(send);
     var note = dom.el('p', 'composer-note', 'Start your assistant to talk to it.');
     var composerHost = node.composerHost || host;
+    composerHost.appendChild(turnBar);
     composerHost.appendChild(composer);
     composerHost.appendChild(note);
 
@@ -269,7 +360,11 @@
       line: line,
       row: row,
       copy: copy,
-      clients: clients
+      clients: clients,
+      turnBar: turnBar,
+      turnDot: turnBar.children[0],
+      turnWhat: turnBar.children[1],
+      turnTime: turnBar.children[2]
     };
 
     dom.on(start, 'click', function () { doStart(node, start); });
@@ -295,22 +390,63 @@
       event.preventDefault();
       submit(node);
     });
+    /* The box has always been described as growing to five lines and never did:
+       it was one row of a textarea and a paragraph scrolled inside it. */
+    dom.on(input, 'input', function () { autogrow(input); });
+  }
+
+  /* Height from content, capped at five lines, and measured from zero so
+     deleting a line gives the space back. No transition on it: the box has to
+     be under the caret on the frame the character lands, not on the way there.
+
+     scrollHeight counts the padding and not the border, and the box is
+     border-box, so the border is added back or every growth step leaves a two
+     pixel scrollbar behind. */
+  function autogrow(input) {
+    input.style.height = 'auto';
+    var style = window.getComputedStyle(input);
+    var line = parseFloat(style.lineHeight);
+    if (!isFinite(line) || line <= 0) line = COMPOSER_LINE_FALLBACK_PX;
+    var pad = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+    var border = input.offsetHeight - input.clientHeight;
+    var content = input.scrollHeight;
+    /* The cap is a whole number of lines, read from the box rather than
+       guessed, so the sixth line is scrolled away rather than half drawn. */
+    var cap = Math.round(COMPOSER_MAX_LINES * line + pad);
+    input.style.height = Math.min(content, cap) + border + 'px';
+    input.style.overflowY = content > cap ? 'auto' : 'hidden';
   }
 
   /* ---------- actions ---------- */
 
+  /* THE ECHO AND THE EVENT ARE ONE MESSAGE, WHICH IS WHY THIS BOOKS A PLACE.
+
+     The window used to draw the message the moment it was typed AND again when
+     the server broadcast it back, so every prompt appeared twice. Waiting for
+     the server instead would fix the count and cost a round trip before a
+     person sees their own words, which is the wrong trade.
+
+     So the local row goes in straight away as `pending` and the server's own
+     `said` event adopts it rather than pushing a second one. The state is not
+     decoration: it is the difference between a message this app has taken
+     responsibility for and one still in the air. */
   function submit(node) {
     var text = node.refs.input.value.trim();
     if (!text || !canTalk()) return;
     node.refs.input.value = '';
-    said(text);
+    autogrow(node.refs.input);
+    var mine = said(text, 'pending');
     api.driver({ action: 'prompt', text: text, chat: '' }).catch(function (err) {
-      clearThinking();
+      mine.state = 'failed';
+      endTurnBar();
       pushBlock({ type: 'error', text: net.readable(err) });
     });
   }
 
   function doStart(node, button) {
+    /* Starting over gives the app a new chat with a new id, so the column has
+       to forget the one it was following or it filters out its own agent. */
+    chatId = null;
     setPhase('starting', 'starting', 'Starting your assistant.');
     window.PhosphorShell.setPending(button, true, 'Starting');
     api.driver({ action: 'start', chat: '' })
@@ -361,27 +497,53 @@
     return block;
   }
 
-  function said(text) {
-    clearThinking();
+  function said(text, state) {
     openSteps = null;
-    pushBlock({ type: 'said', text: text });
-    /* Three hundred milliseconds of nothing is a wait; less than that is the
-       network. The row goes in only if the first frame has not arrived. */
-    thinkingTimer = window.setTimeout(function () {
-      thinkingTimer = 0;
-      thinking = pushBlock({ type: 'thinking' });
-    }, THINKING_MS);
+    var block = pushBlock({ type: 'said', text: text, state: state || 'sent' });
+    startTurnBar();
+    return block;
   }
 
-  function clearThinking() {
-    if (thinkingTimer) {
-      window.clearTimeout(thinkingTimer);
-      thinkingTimer = 0;
+  /* The pending row this event is the receipt for, newest first. Matching on
+     the text is enough and matching on more would be wrong: the server echoes
+     the string it stored, and two identical prompts sent in a row are two rows
+     that each want a receipt, so the newest unconfirmed one takes it. */
+  function adoptPending(text) {
+    for (var i = blocks.length - 1; i >= 0; i -= 1) {
+      var block = blocks[i];
+      if (block.type !== 'said') continue;
+      if (block.state !== 'pending') continue;
+      if (block.text !== text) continue;
+      block.state = 'sent';
+      return block;
     }
-    if (!thinking) return;
-    var at = blocks.indexOf(thinking);
-    if (at !== -1) blocks.splice(at, 1);
-    thinking = null;
+    return null;
+  }
+
+  /* ---------- the turn ---------- */
+
+  function startTurnBar() {
+    turn = { startedAt: Date.now(), state: 'thinking', label: '' };
+    renderAll();
+  }
+
+  function endTurnBar() {
+    turn = null;
+    renderAll();
+  }
+
+  /* WHAT THE BAR SAYS, and what it deliberately does not.
+
+     It named the open tool call at first, and that was wrong: the step row
+     directly above it already names the call and times it, so the two lines
+     said the same thing one under the other. The bar carries what the
+     transcript cannot, which is the state of the TURN. The step rows answer
+     "on what", this answers "still going, and for how long". */
+  function turnLine() {
+    if (!turn) return '';
+    if (turn.state === 'writing') return 'writing the answer';
+    if (turn.state === 'calling') return 'working';
+    return 'thinking';
   }
 
   function stepsBlock() {
@@ -390,13 +552,14 @@
     return openSteps;
   }
 
-  function openStep(name, at) {
+  function openStep(name, at, input) {
     var block = stepsBlock();
     seq += 1;
     var step = {
       id: 's' + seq,
       name: name,
       label: toolLabel(name),
+      args: argsLabel(input),
       leaves: leavesMachine(name),
       state: 'live',
       startedAt: at,
@@ -528,6 +691,13 @@
     refs.send.disabled = !canTalk();
     dom.setHidden(refs.note, canTalk());
 
+    dom.setHidden(refs.turnBar, !turn);
+    if (turn) {
+      dom.setText(refs.turnWhat, turnLine());
+      dom.setText(refs.turnTime, secondsText(Date.now() - turn.startedAt));
+      dom.setAttr(refs.turnBar, 'data-state', turn.state);
+    }
+
     var stick = refs.list.scrollHeight - refs.list.scrollTop - refs.list.clientHeight < STICK_PX;
     renderBlocks(node, primary);
     if (stick) refs.list.scrollTop = refs.list.scrollHeight;
@@ -587,14 +757,6 @@
       });
       return wrap;
     }
-    if (block.type === 'thinking') {
-      var think = dom.el('div', 'thinking');
-      think.appendChild(dom.el('span', '', 'thinking'));
-      think.appendChild(dom.el('i'));
-      think.appendChild(dom.el('i'));
-      think.appendChild(dom.el('i'));
-      return think;
-    }
     var kind = block.type === 'said' ? 'chat-said'
       : (block.type === 'error' ? 'chat-error' : 'chat-reply');
     var chat = dom.el('div', 'chat-row ' + kind);
@@ -604,7 +766,6 @@
   }
 
   function updateBlock(node, row, block, now, primary) {
-    if (block.type === 'thinking') return;
     if (block.type === 'steps') {
       updateSteps(node, row, block, now, primary);
       return;
@@ -612,8 +773,12 @@
     var who = row.children[0];
     var text = row.children[1];
     if (block.type === 'said') {
-      dom.setText(who, 'you');
+      /* Three words for three states, and the row only says one of them out
+         loud. A delivered message needs no label: it is the normal case and
+         labelling it would put a receipt under every line a person types. */
+      dom.setText(who, block.state === 'failed' ? 'you, not sent' : 'you');
       dom.setText(text, block.text);
+      dom.setAttr(row, 'data-state', block.state || 'sent');
       return;
     }
     if (block.type === 'error') {
@@ -643,6 +808,7 @@
       step.appendChild(dom.el('span', 'step-dot'));
       var text = dom.el('span', 'step-text');
       text.appendChild(dom.el('span', ''));
+      text.appendChild(dom.el('span', 'step-args'));
       text.appendChild(dom.el('span', 'step-leaves'));
       step.appendChild(text);
       step.appendChild(dom.el('span', 'step-time'));
@@ -653,8 +819,10 @@
       var time = row.children[2];
       dom.setAttr(row, 'data-state', step.state);
       dom.setText(text.children[0], step.label);
-      dom.setText(text.children[1], step.leaves ? 'leaves this computer' : '');
-      dom.setHidden(text.children[1], !step.leaves);
+      dom.setText(text.children[1], step.args || '');
+      dom.setHidden(text.children[1], !step.args);
+      dom.setText(text.children[2], step.leaves ? 'leaves this computer' : '');
+      dom.setHidden(text.children[2], !step.leaves);
       dom.setText(time, secondsText(elapsedOf(step, now)));
       if (step.state === 'live') node.live.push({ step: step, time: time });
       if (primary && step.announce) {
@@ -667,9 +835,9 @@
   /* One interval, and only while something is in flight. A clock that keeps
      running behind a finished turn is the window doing work for nobody. */
   function tickerCheck() {
-    var live = false;
-    for (var i = 0; i < mounts.length; i += 1) {
-      if (mounts[i].live.length) { live = true; break; }
+    var live = turn !== null;
+    for (var i = 0; i < mounts.length && !live; i += 1) {
+      if (mounts[i].live.length) live = true;
     }
     if (live && !ticker) {
       ticker = window.setInterval(tick, TICK_MS);
@@ -689,6 +857,7 @@
       for (var j = 0; j < live.length; j += 1) {
         dom.setText(live[j].time, secondsText(elapsedOf(live[j].step, now)));
       }
+      if (turn) dom.setText(mounts[i].refs.turnTime, secondsText(now - turn.startedAt));
     }
   }
 
@@ -708,42 +877,61 @@
   function ingest(event, replay) {
     var at = typeof event.at === 'number' ? event.at : Date.now();
     if (event.kind === 'status') {
-      if (!replay) setPhase(mapState(event.state), event.state, event.detail || '');
+      if (replay) return;
+      /* A stopped answer, a failed session and a plain return to ready all end
+         the turn. Without this the bar kept counting for an agent that was no
+         longer working, which is the one lie it exists to prevent. */
+      var next = mapState(event.state);
+      if (next !== 'working' && next !== 'starting') {
+        endTurn();
+        turn = null;
+      }
+      setPhase(next, event.state, event.detail || '');
       return;
     }
-    if (!replay) clearThinking();
     if (event.kind === 'said') {
       if (replay) {
         openSteps = null;
-        pushBlock({ type: 'said', text: event.text });
-      } else {
+        pushBlock({ type: 'said', text: event.text, state: 'sent' });
+      } else if (!adoptPending(event.text)) {
+        /* Nothing to adopt means the prompt came from somewhere else: a second
+           window on the same chat, or the app replaying a restored session. It
+           is still this conversation's message, so it goes in. */
         said(event.text);
+      } else {
+        startTurnBar();
       }
       return;
     }
     if (event.kind === 'tool') {
       if (phase === 'connected') phase = 'working';
-      openStep(event.name, at);
+      if (!replay && !turn) startTurnBar();
+      openStep(event.name, at, event.input);
+      if (turn) turn.state = 'calling';
       if (!replay) renderAll();
       return;
     }
     if (event.kind === 'tool_result') {
       closeStep(event.name, event.ok, at);
+      if (turn) turn.state = 'thinking';
       if (!replay) renderAll();
       return;
     }
     if (event.kind === 'text') {
       if (phase === 'connected') phase = 'working';
+      if (turn) turn.state = 'writing';
       openSteps = null;
       pushBlock({ type: 'reply', text: event.text });
       return;
     }
     if (event.kind === 'turn_end') {
       endTurn();
+      turn = null;
       if (!replay) renderAll();
       return;
     }
     if (event.kind === 'error') {
+      turn = null;
       pushBlock({ type: 'error', text: event.message });
       return;
     }
@@ -772,12 +960,24 @@
     events.on('driver', function (frame) {
       var event = frame && frame.event;
       if (!event) return;
+      /* One column, one conversation. The stream carries every chat the app has
+         open and the tagged frames were being read untagged, so a second
+         conversation printed its tool calls here and lit this window's panels
+         for work this agent never did. */
+      var from = frame.chat === undefined ? null : String(frame.chat);
+      if (from !== null) {
+        if (chatId === null) chatId = from;
+        if (chatId !== from) return;
+      }
       ingest(event, false);
     });
 
     api.driverState().then(function (result) {
       var data = result.data || {};
       var chat = (data.chats && data.chats[0]) || {};
+      /* The payload names an empty id when no chat is open yet, and adopting
+         that would filter out the real one the moment it starts. */
+      if (chat.id) chatId = String(chat.id);
       if (Array.isArray(chat.transcript)) {
         for (var i = 0; i < chat.transcript.length; i += 1) ingest(chat.transcript[i], true);
         endTurn();

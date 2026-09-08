@@ -231,8 +231,20 @@
   box-shadow: inset 0 0 0 1px var(--glow-c), 0 0 14px -4px var(--glow-c);
 }
 
-/* The scan: one line travelling down a surface while its tool is in flight.
-   beam.js appends and removes this element. */
+/* THE SCAN: a surface with a call open on it. beam.js appends and removes this
+   element while the tool is in flight.
+
+   It used to be a one pixel hairline crossing the panel every 900 ms on a
+   linear curve, and it read as a barcode reader rather than as a screen. Three
+   things were wrong with it and all three are the same mistake, which is that
+   the line was drawn as a rule instead of as light: it was hard edged, it was
+   at full strength the whole way down, and it teleported back to the top the
+   instant it reached the bottom.
+
+   So it is a soft band the height of the panel's own text now, it fades up as
+   it enters and away before it leaves, and one pass takes two and a half
+   seconds. The gap between passes is deliberate: an empty beat is what makes
+   the next one read as another sweep rather than as a loop that never stops. */
 .surface-scan {
   position: absolute;
   inset: 0;
@@ -248,16 +260,37 @@
   left: 0;
   right: 0;
   top: 0;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, var(--glow-c), transparent);
-  opacity: 0.85;
-  transform: translateY(-2px);
+  height: 72px;
+  /* The bright part is INSET from the leading edge and falls away on both
+     sides. A gradient that peaks at its own last pixel is a hairline with a
+     wash behind it, which is the thing this replaced. */
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    color-mix(in srgb, var(--glow-c) 8%, transparent) 38%,
+    color-mix(in srgb, var(--glow-c) 20%, transparent) 62%,
+    color-mix(in srgb, var(--glow-c) 34%, transparent) 80%,
+    color-mix(in srgb, var(--glow-c) 16%, transparent) 92%,
+    transparent 100%
+  );
+  opacity: 0;
+  transform: translate3d(0, -72px, 0);
+  /* Linear, and deliberately. This is constant motion, not an element entering
+     or leaving, and a strong ease-in-out on a sweep makes it lurch: slow, snap,
+     slow. The entering and the leaving are carried by the opacity ramp in the
+     keyframes instead, which is the part that was missing. */
   animation: scan var(--dur-scan) linear infinite;
+  will-change: transform, opacity;
 }
 
+/* One pass, then a beat of nothing. The gap is what makes the next one read as
+   another sweep rather than as a loop that never stops. */
 @keyframes scan {
-  from { transform: translateY(-2px); }
-  to { transform: translateY(var(--scan-h, 400px)); }
+  0% { transform: translate3d(0, -72px, 0); opacity: 0; }
+  12% { opacity: 1; }
+  70% { opacity: 1; }
+  80% { transform: translate3d(0, var(--scan-h, 400px), 0); opacity: 0; }
+  100% { transform: translate3d(0, var(--scan-h, 400px), 0); opacity: 0; }
 }
 
 /* The beam itself is drawn on one fixed canvas over the whole window. It is

@@ -65,10 +65,19 @@ function capabilityIndex(): string {
 }
 
 export function buildRole(opts: RoleOptions): string {
+  /* WHICH SCREEN, AND WHY THIS IS PAST TENSE.
+     This text is built once, when the child is spawned, and is then fixed for the life of the
+     process. It used to say "the window is showing the X screen right now", which was true for
+     about as long as it took the human to click a tab, and after that the agent was asserting a
+     screen the person was not looking at. It cannot be corrected in place either: a system
+     prompt is an argument to a process that is already running.
+     So it says when it was true, and it names the two places that carry the live answer. Every
+     prompt arrives with the current screen appended by the app (see src/http/mutation.ts), and
+     `start` reads it too. */
   const where =
     opts.view === undefined
       ? ''
-      : `\nThe window is showing the ${opts.view} screen right now. That can change: "switch to trading" is one call to \`switch\`, so make the move instead of asking which screen they meant.\n`;
+      : `\nThe window was on the ${opts.view} screen when this session opened. It changes whenever the human clicks a tab, so treat that as a starting point and never as the current state: the live screen is appended to every message they send and is in what \`start\` returns. Read it there before you say which screen they are on. Moving it costs one call: "switch to trading" is one \`switch\`, so make the move instead of asking which screen they meant.\n`;
 
   const world =
     opts.network === undefined
