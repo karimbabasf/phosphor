@@ -122,6 +122,10 @@ function make(tag: string): Node {
   };
   node.removeEventListener = () => {};
   node.querySelector = () => null;
+  (node as unknown as { focus: () => void; focused: boolean }).focus = () => {
+    (node as unknown as { focused: boolean }).focused = true;
+  };
+  (node as unknown as { focused: boolean }).focused = false;
   return node;
 }
 
@@ -150,12 +154,22 @@ function build() {
     navigator: {},
     document: { createElement: (tag: string) => make(tag), addEventListener: () => {} },
   };
+  /* Timers are collected rather than run, so a test can say when they fire. The starting floor
+     below is the only thing here that depends on one, and running it eagerly would erase the
+     state it exists to keep on screen. */
+  const timers: Array<{ id: number; fn: () => void }> = [];
+  let timerSeq = 0;
+
   const win: Record<string, unknown> = {
     setTimeout: (fn: () => void) => {
-      void fn;
-      return 0;
+      timerSeq += 1;
+      timers.push({ id: timerSeq, fn });
+      return timerSeq;
     },
-    clearTimeout: () => {},
+    clearTimeout: (id: number) => {
+      const at = timers.findIndex((t) => t.id === id);
+      if (at !== -1) timers.splice(at, 1);
+    },
     setInterval: () => 0,
     clearInterval: () => {},
     getComputedStyle: () => ({ lineHeight: '21px', paddingTop: '8px', paddingBottom: '8px' }),
@@ -216,6 +230,16 @@ function build() {
     saidRows: () => all(host, 'chat-said'),
     stepRows: () => all(host, 'step'),
     turnBar: () => all(composerHost, 'turn-bar')[0],
+    seat: () => all(host, 'agent-seat')[0].getAttribute('data-seat'),
+    card: () => all(host, 'agent-empty-inner')[0].textContent,
+    actionsHidden: () => all(host, 'agent-empty-actions')[0].hidden,
+    input,
+    /* Fire every timer the column has booked. The starting floor is the one that matters, and a
+       test that could not hold it open could not tell a state that stays from one that flickers. */
+    runTimers() {
+      const due = timers.splice(0, timers.length);
+      for (const timer of due) timer.fn();
+    },
   };
 }
 
@@ -338,4 +362,99 @@ test('another conversation does not print into this one', () => {
 
   assert.equal(world.saidRows().length, 1);
   assert.equal(world.stepRows().length, 0);
+});
+
+/* ---------- Starting an agent ----------
+
+   Karim, 2026-09-08: "i need much better feedback when i click start an agent, right now nothing
+   changes." He was right and the reason was structural. The empty card keyed on an empty
+   transcript and nothing else, so it went on saying "Nobody is at the wheel" and offering a Start
+   button for the whole time an agent was up and simply had not been spoken to yet. The chip in the
+   corner changed. Nothing he was looking at did. */
+
+test('the card says nobody is there only when nobody is there', () => {
+  const world = build();
+  world.emit({ kind: 'status', state: 'off' });
+  assert.equal(world.seat(), 'off');
+  assert.ok(world.card().includes('Nobody is at the wheel'));
+  assert.equal(world.actionsHidden(), false, 'Start is the thing to do here and it is not offered');
+});
+
+test('an agent that is up does not get asked to start again', () => {
+  const world = build();
+  world.emit({ kind: 'status', state: 'ready' });
+  assert.equal(world.seat(), 'live');
+  assert.ok(world.card().includes('at the wheel'));
+  assert.ok(!world.card().includes('Nobody'), 'the card still says nobody is driving a running agent');
+  assert.equal(world.actionsHidden(), true, 'Start is offered to somebody whose agent is running');
+});
+
+test('coming up is its own state and it survives long enough to be seen', () => {
+  /* The driver reports ready on the child's spawn event, so the real start is a couple of hundred
+     milliseconds. Without a floor the state existed and no eye could catch it, which is the same
+     thing as not existing. */
+  const world = build();
+  world.emit({ kind: 'status', state: 'starting', detail: 'Starting your assistant.' });
+  assert.equal(world.seat(), 'coming');
+  assert.equal(world.actionsHidden(), true, 'a button offered to somebody mid press');
+
+  world.emit({ kind: 'status', state: 'ready' });
+  assert.equal(world.seat(), 'coming', 'the starting state was gone before it could be seen');
+
+  world.runTimers();
+  assert.equal(world.seat(), 'live');
+});
+
+test('arriving hands the person the caret', () => {
+  const world = build();
+  world.emit({ kind: 'status', state: 'off' });
+  assert.equal((world.input as unknown as { focused: boolean }).focused, false);
+
+  world.emit({ kind: 'status', state: 'starting' });
+  world.emit({ kind: 'status', state: 'ready' });
+  world.runTimers();
+  assert.equal((world.input as unknown as { focused: boolean }).focused, true);
+});
+
+test('a window that opens onto a running agent does not steal focus', () => {
+  // The transition is what hands over the caret, not the state. Somebody who was reading the chart
+  // when the window reloaded should keep what they were doing.
+  const world = build();
+  assert.equal((world.input as unknown as { focused: boolean }).focused, false);
+});
+
+test('a start that failed says so where the person is looking', () => {
+  const world = build();
+  world.emit({ kind: 'status', state: 'starting' });
+  world.emit({ kind: 'status', state: 'failed', detail: 'claude was not found on PATH.' });
+  world.runTimers();
+  assert.equal(world.seat(), 'error');
+  assert.ok(world.card().includes('could not start'));
+  assert.ok(world.card().includes('claude was not found on PATH.'));
+  assert.equal(world.actionsHidden(), false, 'no way back from a failed start');
+});
+
+test('the same sentence is not printed twice on one screen', () => {
+  // The head's detail line and the empty card carried the same string, one under the other.
+  const world = build();
+  world.emit({ kind: 'status', state: 'starting', detail: 'Starting your assistant.' });
+  const head = all(world.host, 'agent-detail')[0];
+  assert.equal(head.hidden, true);
+  assert.ok(world.card().includes('Starting your assistant.'));
+});
+
+test('once there is a transcript the card is gone and the detail line takes the sentence back', () => {
+  const world = build();
+  world.emit({ kind: 'status', state: 'starting', detail: 'Starting your assistant.' });
+  assert.equal(all(world.host, 'agent-detail')[0].hidden, true, 'both places said it at once');
+
+  world.emit({ kind: 'status', state: 'ready' });
+  world.runTimers();
+  world.type('hello');
+  assert.equal(all(world.host, 'agent-empty')[0].hidden, true);
+
+  world.emit({ kind: 'status', state: 'failed', detail: 'the agent exited with code 1' });
+  const head = all(world.host, 'agent-detail')[0];
+  assert.equal(head.hidden, false, 'with the card gone, nothing carries the reason');
+  assert.equal(head.textContent, 'the agent exited with code 1');
 });

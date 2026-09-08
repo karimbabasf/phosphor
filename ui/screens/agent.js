@@ -277,12 +277,28 @@
     var detailLine = dom.el('p', 'meta agent-detail');
     host.appendChild(detailLine);
 
-    /* The empty state sits on the column's own afterglow field, so the two ways
-       to get an assistant are the only things drawn on it. */
+    /* THE EMPTY STATE, AND WHY IT HAS THREE OF THEM NOW.
+
+       It used to be one card keyed on nothing but an empty transcript, so it
+       said "Nobody is at the wheel" and offered a Start button for the whole
+       time an agent was running and simply had not been spoken to yet. Starting
+       one changed the chip and nothing else, because the biggest thing on the
+       screen went on saying the opposite. Karim, 2026-09-08: "I need much
+       better feedback when I click start an agent, right now nothing changes."
+
+       The three states are the three true answers to "is anybody there": no,
+       coming, and yes. The seat, the headline and the buttons all follow the
+       phase, and the Start button is drawn only in the state where starting is
+       a thing that can be done. */
     var empty = dom.el('div', 'agent-empty');
     var emptyInner = dom.el('div', 'agent-empty-inner');
-    emptyInner.appendChild(dom.el('p', 'title', 'Nobody is at the wheel.'));
-    emptyInner.appendChild(dom.el('p', 'meta', 'Start your assistant, or connect one you already use.'));
+    var emptySeat = dom.el('div', 'agent-seat');
+    emptySeat.appendChild(dom.el('span', 'agent-seat-dot'));
+    emptyInner.appendChild(emptySeat);
+    var emptyTitle = dom.el('p', 'title', 'Nobody is at the wheel.');
+    var emptyNote = dom.el('p', 'meta', 'Start your assistant, or connect one you already use.');
+    emptyInner.appendChild(emptyTitle);
+    emptyInner.appendChild(emptyNote);
     var emptyActions = dom.el('div', 'agent-empty-actions');
     var startBig = dom.el('button', 'btn btn-primary');
     startBig.appendChild(dom.el('span', 'btn-label', 'Start your assistant'));
@@ -364,7 +380,11 @@
       turnBar: turnBar,
       turnDot: turnBar.children[0],
       turnWhat: turnBar.children[1],
-      turnTime: turnBar.children[2]
+      turnTime: turnBar.children[2],
+      emptySeat: emptySeat,
+      emptyTitle: emptyTitle,
+      emptyNote: emptyNote,
+      emptyActions: emptyActions
     };
 
     dom.on(start, 'click', function () { doStart(node, start); });
@@ -619,12 +639,56 @@
 
   /* ---------- state ---------- */
 
+  /* HOW LONG "STARTING" HAS TO BE ON SCREEN, and this is not a fake progress bar.
+
+     The driver reports ready on the child's `spawn` event rather than on its
+     init event, deliberately (see the note in src/driver.ts), so the whole
+     start is a couple of hundred milliseconds. The state is real and it is
+     over before a person can see it: pressing Start flashed one frame of
+     something and landed on the answer, which reads as nothing having
+     happened at all.
+
+     So the transition OUT of starting waits for a floor. Nothing is invented
+     and nothing is measured that is not real: the app is not pretending to work
+     for 450 ms, it is making a change that already happened legible to the eye
+     that was watching for it. A failure waits the same beat, because a Start
+     button that flickers into an error is worse than one that takes a moment
+     and then says what went wrong. */
+  var STARTING_FLOOR_MS = 450;
+  var startingAt = 0;
+  var floorTimer = 0;
+
   function setPhase(next, word, note) {
+    if (floorTimer) {
+      window.clearTimeout(floorTimer);
+      floorTimer = 0;
+    }
+    if (phase === 'starting' && next !== 'starting') {
+      var waited = Date.now() - startingAt;
+      if (waited < STARTING_FLOOR_MS) {
+        floorTimer = window.setTimeout(function () {
+          floorTimer = 0;
+          applyPhase(next, word, note);
+        }, STARTING_FLOOR_MS - waited);
+        return;
+      }
+    }
+    if (next === 'starting' && phase !== 'starting') startingAt = Date.now();
+    applyPhase(next, word, note);
+  }
+
+  function applyPhase(next, word, note) {
     var changed = phase !== next;
+    /* Coming up and then arriving is the one transition a person was watching,
+       so it is the one that hands them the caret. Keyed on `starting` rather
+       than on canTalk() so a window that loads with an agent already running
+       does not take focus off whatever they were doing. */
+    var arrived = phase === 'starting' && (next === 'connected' || next === 'working');
     phase = next;
     if (word) serverWord = word;
     detail = note || '';
     renderAll();
+    if (arrived) focusComposer();
     window.PhosphorShell.updateField();
     /* The world reads the assistant's state to write its own hero sentence, and
        polling a getter on every heartbeat frame is a read the event replaces. */
@@ -679,11 +743,15 @@
 
     dom.setHidden(refs.empty, !empty);
     dom.setHidden(refs.list, empty);
+    if (empty) renderEmpty(node);
 
     var note = detail;
     if (!note && phase === 'starting') note = 'Starting your assistant.';
     dom.setText(refs.detail, note);
-    dom.setHidden(refs.detail, !note);
+    /* One place says it. The empty card carries the same sentence in the middle
+       of the column and larger, so printing it under the head as well was the
+       window telling somebody twice. */
+    dom.setHidden(refs.detail, !note || empty);
 
     /* The composer is present in every phase and says why it cannot be used,
        because a box that vanishes teaches nothing about how to get it back. */
@@ -724,6 +792,55 @@
       dom.setText(kids[1], client.name + ', ' + (client.role === 'analyst' ? 'read only' : 'can ask'));
       dom.setText(kids[2], String(client.calls || 0) + ' calls');
     });
+  }
+
+  /* No, coming, and yes. The seat carries the state as an attribute so the
+     stylesheet draws the light, and the two buttons are present only in the one
+     state where pressing them means anything.
+
+     The connected copy names the first thing that has to happen rather than
+     congratulating anybody: an agent nobody has spoken to has not attached its
+     tools yet, because Claude Code does not emit its init event until a turn
+     arrives. Saying so is the difference between a screen that is friendly and
+     one that is true. */
+  function renderEmpty(node) {
+    var refs = node.refs;
+    var seat = phase === 'connected' || phase === 'working' ? 'live'
+      : (phase === 'starting' ? 'coming' : (phase === 'error' ? 'error' : 'off'));
+    if (seat === 'live' && serverWord === 'stopped') seat = 'off';
+    dom.setAttr(refs.emptySeat, 'data-seat', seat);
+
+    if (seat === 'live') {
+      dom.setText(refs.emptyTitle, 'Your assistant is at the wheel.');
+      dom.setText(refs.emptyNote, 'Tell it what to do. It picks up your wallet, the policy and the chart on your first message.');
+    } else if (seat === 'coming') {
+      dom.setText(refs.emptyTitle, 'Taking the wheel.');
+      dom.setText(refs.emptyNote, detail || 'Starting your assistant.');
+    } else if (seat === 'error') {
+      dom.setText(refs.emptyTitle, 'It could not start.');
+      dom.setText(refs.emptyNote, detail || 'The assistant did not come up. Try again, or connect one you already use.');
+    } else {
+      dom.setText(refs.emptyTitle, 'Nobody is at the wheel.');
+      dom.setText(refs.emptyNote, 'Start your assistant, or connect one you already use.');
+    }
+
+    /* Offering Start to somebody whose agent is already running is the window
+       asking a question it knows the answer to, and it was the whole reason
+       pressing the button looked like it did nothing. */
+    dom.setHidden(refs.emptyActions, seat === 'live' || seat === 'coming');
+  }
+
+  /* The caret lands in the box the moment the box can take a message. It is the
+     smallest possible change and it is the one a person feels: the window is
+     ready and the next move is theirs. Only on the transition, so it never
+     steals focus from somewhere else mid-session. */
+  function focusComposer() {
+    for (var i = 0; i < mounts.length; i += 1) {
+      var input = mounts[i].refs.input;
+      if (!input || input.disabled || typeof input.focus !== 'function') continue;
+      input.focus();
+      return;
+    }
   }
 
   /* The transcript renders as text only, never as markup, and never renders a

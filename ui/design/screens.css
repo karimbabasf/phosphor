@@ -226,6 +226,82 @@
   color: var(--text);
 }
 
+/* THE SEAT. One ring above the headline, and it is the only thing on this card
+   that a person can read from across the room. Empty and grey when nobody is
+   there, filling while one comes up, lit and holding once one is. The card said
+   the same sentence in all three states before it existed, so pressing Start
+   changed the chip and nothing a person was looking at. */
+.agent-seat {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  transition: border-color var(--dur-enter) var(--ease-out),
+              box-shadow var(--dur-enter) var(--ease-out);
+}
+
+.agent-seat-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-3);
+  transition: background-color var(--dur-enter) var(--ease-out),
+              box-shadow var(--dur-enter) var(--ease-out),
+              transform var(--dur-enter) var(--ease-out);
+}
+
+.agent-seat[data-seat="coming"] {
+  border-color: color-mix(in srgb, var(--beam) 45%, var(--line));
+}
+
+/* The ring fills while the agent comes up. It is a real measure of nothing, so
+   it is a sweep rather than a percentage: a progress bar that is not measuring
+   anything is the lie this deliberately does not tell. */
+.agent-seat[data-seat="coming"]::after {
+  content: "";
+  position: absolute;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  border-top-color: var(--beam);
+  animation: seatspin 900ms linear infinite;
+}
+
+@keyframes seatspin {
+  to { transform: rotate(360deg); }
+}
+
+.agent-seat[data-seat="coming"] .agent-seat-dot {
+  background: color-mix(in srgb, var(--beam) 60%, var(--text-3));
+}
+
+/* Mixed against the line colour rather than against `transparent`. Mixing a
+   tone into transparency premultiplies it toward nothing and lands on a
+   near-neutral, which on this ground is the grey it was trying not to be. */
+.agent-seat[data-seat="live"] {
+  border-color: color-mix(in srgb, var(--beam) 65%, var(--line));
+  box-shadow: 0 0 24px -8px var(--beam);
+}
+
+.agent-seat[data-seat="live"] .agent-seat-dot {
+  background: var(--beam);
+  box-shadow: 0 0 10px -1px var(--beam);
+  animation: strike 1500ms linear infinite;
+}
+
+.agent-seat[data-seat="error"] {
+  border-color: color-mix(in srgb, var(--down) 65%, var(--line));
+  box-shadow: 0 0 20px -10px var(--down);
+}
+
+.agent-seat[data-seat="error"] .agent-seat-dot { background: var(--down); }
+
+.agent-empty-inner:has(.agent-seat[data-seat="error"]) .title { color: var(--down); }
+
 .agent-empty-actions {
   display: flex;
   gap: var(--s-2);
@@ -733,8 +809,12 @@
   .feed[data-busy="1"] i { animation: none; opacity: 0.6; }
   .step[data-state="live"] .step-dot,
   .turn-dot,
+  .agent-seat[data-seat="live"] .agent-seat-dot,
   .wordmark-glyph[data-state="working"] { animation: none; opacity: 0.8; }
   .turn-bar { animation: none; }
+  /* The ring stops turning and stays a ring: the state is carried by its
+     colour, which is the half of it that meant something. */
+  .agent-seat[data-seat="coming"]::after { animation: none; border-color: var(--beam); opacity: 0.4; }
 }
 
 .fill-row {
