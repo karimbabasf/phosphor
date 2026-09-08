@@ -198,7 +198,11 @@ with `switch`.
 
 **The conversation** is the product. Start the assistant that is built in, or connect one you
 already use, and talk to it. Under each answer sits the trace: every tool it called, in plain
-words, with the time it took. A call that leaves this computer says so.
+words, with what the call was about and the time it took, so "reading prices, SOL-USD" rather than
+a tool id. A call that leaves this computer says so. While an answer is being written, one line
+between the transcript and the composer says whether it is thinking, working or writing, and how
+long it has been at it; it sits outside the scroll, so scrolling back to read something never
+costs you the ability to tell a working agent from a dead one.
 
 **The beam** is how you watch it work. A phosphor screen glows where the beam lands and fades
 after it leaves, so every tool call sends a point of light from its step to the panel it touched:
@@ -214,9 +218,12 @@ text only and the card renders from the server's own pending list.
 
 **Basic** is the same app for a non-technical reader: the total, one sentence that is the state of
 your money, one sentence that is your rules, what you hold, what is earning, where to send money,
-what happened. **Pro** is the operator's density: the money table, the earning panel, the limits,
-the receipts. **Trade** is the chart with the position, the account, the rules and the fills beside
-it.
+what happened. **Pro** is the operator's density, as four sections that each owe you one line even
+when they are shut: Money holds your total in its head and lists one row per coin with the places
+it sits in a click below, and Earning, Activity and Limits fold behind a summary of the fact you
+would have opened them for. An asset this app cannot price says "not priced" rather than $0.00,
+because a zero beside a balance you own reads as nothing owned. **Trade** is the chart with the
+position, the account, the rules and the fills beside it.
 
 Geist for the words and Geist Mono with tabular figures for anything that can change, so a value
 never moves its neighbours when it ticks. Phosphor green is one colour used three ways: the action,
@@ -238,6 +245,10 @@ redraws only when the data or the view changes; the hud canvas draws the crossha
 last price tag and the countdown, and redraws on pointer move. Moving the mouse repaints an almost
 empty canvas instead of five hundred candles, which is most of why it keeps up with a drag.
 
+The control row above it carries the market, the timeframes from 1m to 1d, the Indicators field,
+three toggles for what the trading side draws over the candles (Position, Forced close, Rules), and
+a dot that says whether the price is live and which venue it came from.
+
     drag the plot          pan, in fractional bars, so it tracks the pointer
     drag up or down        takes the price scale off auto and shifts it
     wheel                  zoom about the cursor: the bar under it stays under it
@@ -249,9 +260,10 @@ empty canvas instead of five hundred candles, which is most of why it keeps up w
     the Indicators field   ema 21, bbands 20 2.5, remove rsi, clear
 
 The Indicators field is a command line rather than a toolbar, and it takes the same words the agent
-uses over MCP. Indicators that need their own pane get one, up to three, with the price pane held to a
-150px floor: past that the chart refuses the pane and says why, and a window too short to hold what
-is already there drops panes and names them on screen. It never quietly squeezes.
+uses over MCP. Eight overlays share the price pane; anything that needs its own gets one, up to
+three, with the price pane held to a 150px floor. Past either cap the chart refuses and says why,
+and a window too short to hold what is already there drops panes and names them on screen. It never
+quietly squeezes.
 
 The view state lives on the server, in `src/chart.ts`, not in the browser. That is what lets an
 agent read the chart and drive it while the window may not even be open, and it means the number
