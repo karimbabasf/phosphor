@@ -36,7 +36,7 @@ import {
   sendTx as nearSendTx,
 } from '../chain/near.ts';
 import type { NearSendOutcome, NearSendParams } from '../chain/near.ts';
-import { MAX_SLIPPAGE_BPS, floorTooLow } from './uniswap.ts';
+import { MAX_SLIPPAGE_BPS, floorTooLow } from './slippage.ts';
 import { addressProblem } from './intents-withdraw.ts';
 import type { ChainId, Rail, RailResult, SimulationResult, SwapDraft } from '../types.ts';
 import {

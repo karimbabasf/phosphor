@@ -8,10 +8,10 @@
 // Two things are deliberate:
 //
 //   1. 'swap' maps to ONE rail that dispatches on venue. Two venues share the kind
-//      (uniswap-v3 same-chain, oneclick cross-chain), and the alternative, keying the
-//      registry on kind+venue, would push that pair into every call site. Each rail still
-//      refuses a draft for the other venue on its own (requireVenue in both modules), so
-//      this dispatch is a router, not the check.
+//      (oneclick cross-chain, intents-native inside the verifier), and the alternative,
+//      keying the registry on kind+venue, would push that pair into every call site. Each
+//      rail still refuses a draft for the other venue on its own (requireVenue in both
+//      modules), so this dispatch is a router, not the check.
 //
 //   2. Demo mode holds NO rails. The demo ledger is a fixture, not a chain: there is
 //      nothing for a swap to quote against and nothing for a bridge deposit to land in.
@@ -20,17 +20,14 @@
 //      user never meant to involve.
 
 import type { AppConfig, ChainId, Rail, SwapDraft, WriteDraft } from '../types.ts';
-import type { TokensFile } from '../intents.ts';
-import { uniswapRails } from './uniswap.ts';
-import { chainsWithDeployment, deploymentFor } from './uniswap-abi.ts';
-import { aaveChains, marketFor } from '../yield/aave.ts';
+import type { OneClickClient, TokensFile } from '../intents.ts';
+import { oneClickClient } from '../intents.ts';
 import { hypercoreDepositRail } from './hypercore-deposit.ts';
 import { ONECLICK_COUNTERPARTY, oneClickRail } from './oneclick.ts';
 import { INTENTS_NATIVE_COUNTERPARTY, intentsNativeRail } from './intents-native.ts';
 import { intentsDepositRail } from './intents-deposit.ts';
 import { intentsWithdrawRail } from './intents-withdraw.ts';
 import { HYPERLIQUID_PERPS_COUNTERPARTY, mandateRail } from './mandate.ts';
-import { yieldRails } from './yield.ts';
 import type { MandateRunner } from './mandate.ts';
 import { isRailDraft, isRailKind, RAIL_KINDS } from './kinds.ts';
 import type { RailDraft, RailKind } from './kinds.ts';
@@ -54,25 +51,43 @@ export type RailDeps = {
   runner: MandateRunner; // owns the armed bots; the mandate rail only starts and stops them
 };
 
+// Refuses by name rather than by silence. There is no fallback venue any more: a swap for a
+// venue this app does not run used to fall through to Uniswap, which meant a draft meant for
+// somewhere else was quietly executed on an on-chain DEX. Naming the venue in the error is
+// what turns "nothing happened" into a sentence a human can act on.
+function unknownSwapVenue(venue: string): Rail<SwapDraft> {
+  const refuse = (): never => {
+    throw new Error(
+      `no rail runs swaps on '${venue}'; this app swaps through 1Click (venue 'oneclick') or ` +
+        "inside the NEAR Intents verifier (venue 'intents-native')",
+    );
+  };
+  return {
+    kind: 'swap',
+    valueUsd: (draft) => draft.amountUsd,
+    simulate: async () => refuse(),
+    execute: async () => refuse(),
+  };
+}
+
 // One rail for kind 'swap', routing on the draft's venue.
-function swapRail(deps: RailDeps): Rail<SwapDraft> {
-  const uniswap = uniswapRails(deps.cfg).swap;
+function swapRail(deps: RailDeps, client: OneClickClient): Rail<SwapDraft> {
   const oneclick = oneClickRail({
     keysPath: deps.cfg.keysPath,
     tokens: deps.tokens,
+    client,
   });
   const intentsNative = intentsNativeRail({
     keysPath: deps.cfg.keysPath,
     tokens: deps.tokens,
+    client,
   });
-  // Explicit per venue, not a two-way test with a default. uniswap is the fallback because
-  // it was here first, and a new venue falling into it silently would route a draft meant
-  // for NEAR Intents into an on-chain DEX swap. Each rail still refuses a draft for another
-  // venue on its own, so this is a router and not the check.
+  // Explicit per venue, with no default. Each rail still refuses a draft for another venue on
+  // its own, so this is a router and not the check.
   const pick = (draft: SwapDraft): Rail<SwapDraft> => {
     if (draft.venue === 'oneclick') return oneclick;
     if (draft.venue === 'intents-native') return intentsNative;
-    return uniswap;
+    return unknownSwapVenue(draft.venue);
   };
 
   return {
@@ -88,16 +103,25 @@ export function createRails(deps: RailDeps): RailRegistry {
     return { for: () => null, kinds: () => [] };
   }
 
-  const uniswap = uniswapRails(deps.cfg);
+  /* ONE 1Click client for every rail that talks to 1Click, built here and injected.
+     Each rail used to construct its own, and the client caches the token list per instance
+     (src/intents.ts:415-428), so five rails meant five fetches of the same ~186-row list and
+     five copies of it in memory. Sharing the instance makes the first rail to ask pay for it
+     and the rest read the cache. The rails still accept their own client, which is what the
+     tests inject. */
+  const client = oneClickClient();
+
   const table: Record<RailKind, Rail> = {
-    swap: swapRail(deps) as Rail,
+    swap: swapRail(deps, client) as Rail,
     hl_deposit: hypercoreDepositRail({
       keysPath: deps.cfg.keysPath,
       tokens: deps.tokens,
+      client,
     }) as Rail,
     intents_deposit: intentsDepositRail({
       keysPath: deps.cfg.keysPath,
       tokens: deps.tokens,
+      client,
     }) as Rail,
     // The only rail that is handed the address book. It pays out to a wallet on a real chain,
     // so it re-derives the destination from config itself rather than trusting the draft that
@@ -106,11 +130,8 @@ export function createRails(deps: RailDeps): RailRegistry {
       keysPath: deps.cfg.keysPath,
       tokens: deps.tokens,
       addresses: deps.cfg.addresses,
+      client,
     }) as Rail,
-    lp_add: uniswap.lpAdd as Rail,
-    lp_remove: uniswap.lpRemove as Rail,
-    yield_deposit: yieldRails(deps.cfg).deposit as Rail,
-    yield_withdraw: yieldRails(deps.cfg).withdraw as Rail,
     mandate_arm: mandateRail({ runner: deps.runner }) as Rail,
   };
 
@@ -123,22 +144,17 @@ export function createRails(deps: RailDeps): RailRegistry {
 // Every counterparty a rail can hand funds to on this network, lowercased.
 //
 /* The CONTRACTS on that list, each labelled with the venue and chain it belongs to.
-   Same two verified deployment tables, read once, so the allowlist below and any sentence
-   written about it cannot disagree about which addresses exist. The three venue STRINGS are
-   deliberately absent: 1Click, the intents verifier and the perps venue are not contracts and
-   there is nothing to verify on chain about them. */
+   EMPTY, and that is the shape of this app now rather than a hole in it. Both surviving
+   venues are reached by a venue STRING and not by a contract we can verify a deployment for:
+   1Click mints a deposit address per quote, the intents verifier is a NEAR account, and a
+   perp order hands funds to nobody. The third-party EVM contracts that used to fill this list
+   (the Uniswap router and position manager, the Aave pools) went with their rails.
+
+   Kept as a function rather than deleted because it is the seam a contract venue would come
+   back through, and because venueAllowlist() and the sentence venues.ts writes about it must
+   keep reading the same source. */
 export function verifiedVenueContracts(): Array<{ address: string; venue: string; chain: ChainId }> {
-  const out: Array<{ address: string; venue: string; chain: ChainId }> = [];
-  for (const chain of chainsWithDeployment()) {
-    const dep = deploymentFor(chain);
-    out.push({ address: dep.router.toLowerCase(), venue: 'Uniswap', chain }); // SwapRouter02, for kind 'swap'
-    out.push({ address: dep.positionManager.toLowerCase(), venue: 'Uniswap', chain }); // NPM, for lp_add and lp_remove
-  }
-  // The Aave v3 pools, for yield_deposit and yield_withdraw. Same rule as the Uniswap rows
-  // above: the addresses come from the verified deployment table in src/yield/aave.ts and
-  // from nowhere else, so no agent input can reach this list.
-  for (const chain of aaveChains()) out.push({ address: marketFor(chain).pool.toLowerCase(), venue: 'Aave', chain });
-  return out;
+  return [];
 }
 
 // This is what the policy allowlist has to contain for the rails to be usable at all:

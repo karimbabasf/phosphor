@@ -55,6 +55,7 @@ import {
   toBaseUnits,
 } from '../intents.ts';
 import type {
+  OneClickClient,
   OneClickEndpointType,
   OneClickQuote,
   OneClickStatus,
@@ -71,7 +72,7 @@ import {
 } from '../chain/near.ts';
 import type { NearSendOutcome, NearSendParams } from '../chain/near.ts';
 import { venueWriteTimeout } from '../net.ts';
-import { MAX_SLIPPAGE_BPS, floorTooLow } from './uniswap.ts';
+import { MAX_SLIPPAGE_BPS, floorTooLow } from './slippage.ts';
 
 // The verifier contract. This is the whole point of the rail: one fixed account that goes on
 // the policy allowlist once and stays there, unlike a deposit address minted per quote.
@@ -275,9 +276,17 @@ export type IntentsApiPort = {
 // The two endpoints that need the key are the two written here. Quoting, the token list and
 // the status poll are unauthenticated and reuse the client in src/intents.ts rather than
 // growing a second copy of them.
-export function intentsApi(deps: { apiKey: string; fetchImpl?: typeof fetch }): IntentsApiPort {
+//
+// `client` is accepted so the registry can hand every rail the SAME 1Click client: that
+// client caches the token list per instance, and a fresh one per rail re-fetches the whole
+// list. Absent, it builds its own, which is what a test or a one-off caller gets.
+export function intentsApi(deps: {
+  apiKey: string;
+  fetchImpl?: typeof fetch;
+  client?: OneClickClient;
+}): IntentsApiPort {
   const fetchImpl = deps.fetchImpl ?? fetch;
-  const shared = oneClickClient({ fetchImpl: deps.fetchImpl });
+  const shared = deps.client ?? oneClickClient({ fetchImpl: deps.fetchImpl });
 
   // The key goes in a header and nowhere else. It is never interpolated into a message, a
   // thrown error or a returned detail string. An empty key means no header at all rather
@@ -828,6 +837,7 @@ export type IntentsNativeRailDeps = {
   apiKey?: string; // defaults to process.env[INTENTS_API_KEY_ENV]
   signer?: IntentsSignerPort;
   api?: IntentsApiPort;
+  client?: OneClickClient; // the registry's shared 1Click client, so the token list is fetched once
   fetchImpl?: typeof fetch;
   sleepImpl?: (ms: number) => Promise<void>;
   now?: () => number;
@@ -885,7 +895,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
 
   // The key is optional: it selects a fee tier, it does not authorise the calls. See the
   // comment on INTENTS_NO_API_KEY_REASON for what was re-tested and when.
-  const api = deps.api ?? intentsApi({ apiKey: apiKey ?? '', fetchImpl: deps.fetchImpl });
+  const api = deps.api ?? intentsApi({ apiKey: apiKey ?? '', fetchImpl: deps.fetchImpl, client: deps.client });
   const verifierBalance = deps.verifierBalance ?? liveVerifierBalance(deps.fetchImpl);
 
   type Plan = {

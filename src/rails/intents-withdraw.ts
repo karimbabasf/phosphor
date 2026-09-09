@@ -54,7 +54,7 @@ import type {
   SimulationResult,
 } from '../types.ts';
 import { ONECLICK_TERMINAL, baseUnits, oneLine, quoteEchoProblems, resolveAsset, toBaseUnits } from '../intents.ts';
-import type { OneClickQuote, OneClickStatus, TokensFile } from '../intents.ts';
+import type { OneClickClient, OneClickQuote, OneClickStatus, TokensFile } from '../intents.ts';
 import {
   INTENTS_SIGNING_STANDARD,
   INTENTS_VERIFIER,
@@ -156,6 +156,7 @@ export type IntentsWithdrawRailDeps = {
   apiKey?: string;
   signer?: IntentsSignerPort;
   api?: IntentsApiPort;
+  client?: OneClickClient; // the registry's shared 1Click client, so the token list is fetched once
   fetchImpl?: typeof fetch;
   sleepImpl?: (ms: number) => Promise<void>;
   now?: () => number;
@@ -180,7 +181,7 @@ export function intentsWithdrawRail(deps: IntentsWithdrawRailDeps): IntentsWithd
   // Four days, matching the swap rail. See MAX_DEADLINE_MS there for why the deadline is not
   // what prevents replay and the nonce is.
   const maxDeadlineMs = deps.maxDeadlineMs ?? 4 * 24 * 60 * 60 * 1000;
-  const api = deps.api ?? intentsApi({ apiKey: deps.apiKey ?? '', fetchImpl: deps.fetchImpl });
+  const api = deps.api ?? intentsApi({ apiKey: deps.apiKey ?? '', fetchImpl: deps.fetchImpl, client: deps.client });
 
   type Plan = {
     asset: string; // the 1Click asset id; the same one on both sides, since nothing is swapped

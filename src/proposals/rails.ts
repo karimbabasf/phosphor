@@ -15,8 +15,6 @@ import type {
   SwapDraft,
   SwapParams,
 } from '../types.ts';
-import { VENUE as UNISWAP_VENUE } from '../rails/uniswap.ts';
-import { deploymentFor } from '../rails/uniswap-abi.ts';
 import {
   HYPERCORE_COUNTERPARTY,
   minCreditedFor as minCreditedForHypercore,
@@ -31,17 +29,23 @@ import {
   ourWalletOn,
 } from '../rails/intents-withdraw.ts';
 import { NATIVE_ASSET, NATIVE_TOKEN_ID } from '../intents.ts';
-import { ourAddress, ourIntentsAddress, proposeRail, refuseDraft, resolve, usdOf } from './draft.ts';
+import { ourAddress, ourIntentsAddress, proposeRail, refuseDraft, usdOf } from './draft.ts';
 import type { PCtx } from './lifecycle.ts';
 
 export async function proposeSwap(ctx: PCtx, params: SwapParams): Promise<Proposal> {
   const snapshot = ctx.ledger.snapshot();
   const problems: string[] = [];
-  // Explicit per venue, not a two-way test with a default, for the reason the rail router
-  // gives: a new venue falling through to uniswap silently would route a draft meant for
-  // NEAR Intents into an on-chain DEX swap.
-  const venue =
-    params.venue === 'oneclick' || params.venue === 'intents-native' ? params.venue : UNISWAP_VENUE;
+  // Two venues, and no default. There used to be a third (an on-chain DEX) that anything
+  // unrecognised fell through to, so a name this app did not run was silently swapped
+  // somewhere else. It refuses by name now, which is the only honest answer once the
+  // fallback is gone.
+  const venue = params.venue === 'intents-native' ? 'intents-native' : 'oneclick';
+  if (params.venue !== undefined && params.venue !== 'oneclick' && params.venue !== 'intents-native') {
+    problems.push(
+      `'${params.venue}' is not a venue this app swaps on. It swaps through 1Click ('oneclick') or ` +
+        "inside the NEAR Intents verifier ('intents-native').",
+    );
+  }
   const toChain = params.toChain ?? params.chain;
 
   // Both sides are our own wallet. The agent picks the chains and the symbols; it has no
@@ -74,12 +78,7 @@ export async function proposeSwap(ctx: PCtx, params: SwapParams): Promise<Propos
       ? from
       : ourAddress(ctx, toChain, snapshot, problems);
 
-  const counterparty =
-    venue === 'oneclick'
-      ? ONECLICK_COUNTERPARTY
-      : venue === 'intents-native'
-        ? INTENTS_NATIVE_COUNTERPARTY
-        : resolve(() => String(deploymentFor(params.chain).router), problems, '');
+  const counterparty = venue === 'intents-native' ? INTENTS_NATIVE_COUNTERPARTY : ONECLICK_COUNTERPARTY;
 
   const draft: SwapDraft = {
     kind: 'swap',
