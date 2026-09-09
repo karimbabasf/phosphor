@@ -168,7 +168,28 @@ export async function executeRail(ctx: PCtx, p: Proposal, rail: Rail): Promise<P
   ctx.audit.append(result.ok ? 'executed' : 'execution_failed', `${p.id}: ${result.detail}`, { id: p.id, txids });
   const recorded = persist(ctx, { ...executing, status, result: { ok: result.ok, detail: result.detail, txids } });
 
-  return persist(ctx, { ...recorded, balances: { beforeUsd, afterUsd: await balanceAfter(ctx) } });
+  /* And the decoration is not on the caller's clock either. `balanceAfter` is up to fifteen
+     seconds of RPC across every chain, and until now the agent's tool call and the HTTP
+     response both sat behind it AFTER the receipt was already durable. Nothing in those
+     fifteen seconds could change the outcome, so they were fifteen seconds of a person
+     watching a spinner for a number the screen updates on its own anyway.
+
+     It runs detached now. `persist` calls `ctx.notify()`, which is the SSE broadcast the
+     window already listens to, so the balance lands on screen when the chains answer. A
+     refresh that fails, or a process that exits first, leaves `afterUsd` null, which is the
+     same thing it has always meant: the move is recorded, the balance was not read. */
+  void balanceAfter(ctx)
+    .then((afterUsd) => {
+      if (afterUsd === null) return;
+      const current = ctx.store.get(recorded.id) ?? recorded;
+      persist(ctx, { ...current, balances: { beforeUsd, afterUsd } });
+    })
+    .catch(() => {
+      // A decoration that cannot be read is not an error anyone is told about; the row
+      // already says afterUsd is null.
+    });
+
+  return recorded;
 }
 
 function legKey(leg: TransferLeg): string {

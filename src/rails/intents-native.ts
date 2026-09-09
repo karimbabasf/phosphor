@@ -833,6 +833,7 @@ export type IntentsNativeRailDeps = {
   now?: () => number;
   pollIntervalMs?: number;
   pollTimeoutMs?: number;
+  firstPollMs?: number;
   maxDeadlineMs?: number;
   verifierBalance?: VerifierBalancePort;
 };
@@ -843,21 +844,16 @@ export type IntentsNativeRailDeps = {
 export function liveVerifierBalance(fetchImpl?: typeof fetch): VerifierBalancePort {
   return async (accountId, assetId) => {
     try {
-      const [{ fetchIntentsHoldings }, { nearChainSpec }] = await Promise.all([
+      const [{ fetchIntentsAssetBalance }, { nearChainSpec }] = await Promise.all([
         import('../ledger/intents.ts'),
         import('../chain/near.ts'),
       ]);
-      const read = await fetchIntentsHoldings({
+      return await fetchIntentsAssetBalance({
         accountId,
+        assetId,
         rpcUrl: nearChainSpec().rpcUrl,
-        tokenList: async () => [],
         fetchImpl: fetchImpl ?? fetch,
       });
-      if (!read.ok) return null;
-      const held = read.holdings.find((h) => h.assetId === assetId);
-      if (held === undefined) return 0n;
-      // The ledger carries UI units for rendering; base units are what a floor is checked in.
-      return BigInt(Math.round(held.amount * 10 ** held.decimals));
     } catch {
       return null;
     }
@@ -878,6 +874,13 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
   const now = deps.now ?? Date.now;
   const pollIntervalMs = deps.pollIntervalMs ?? 5_000;
   const pollTimeoutMs = deps.pollTimeoutMs ?? 5 * 60_000;
+  // How long to wait before the SECOND status read. The oneclick rail's 5s is right for a
+  // swap that bridges: its own estimate is ~42s, so 5s granularity costs 12%. This rail
+  // never leaves the verifier (depositType and recipientType are both INTENTS), so the
+  // solver settles in about one NEAR block and a flat 5s sleep IS the observed latency.
+  // Start at a quarter second and double up to the interval, so a fast swap is seen fast
+  // and a slow one still backs off to one poll every 5s.
+  const firstPollMs = deps.firstPollMs ?? 250;
   const maxDeadlineMs = deps.maxDeadlineMs ?? MAX_DEADLINE_MS;
 
   // The key is optional: it selects a fee tier, it does not authorise the calls. See the
@@ -1122,10 +1125,16 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
 
     /* Read before, so the after-read below has something to subtract. A read that fails costs
        the check and nothing else: this is deliberately taken before anything is signed, so a
-       verifier that will not answer refuses nothing and delays nothing. */
-    const beforeBase = await verifierBalance(owner.toLowerCase(), p.destinationAsset);
+       verifier that will not answer refuses nothing and delays nothing.
 
-    const generated = await client.generateIntent({ signerId: owner, depositAddress });
+       Taken alongside generate-intent rather than ahead of it. The two are independent: the
+       read needs the owner and the destination asset, both known since plan(), and generate
+       needs only the deposit handle. Both still land before the signature, which is the
+       property the paragraph above is about. */
+    const [beforeBase, generated] = await Promise.all([
+      verifierBalance(owner.toLowerCase(), p.destinationAsset),
+      client.generateIntent({ signerId: owner, depositAddress }),
+    ]);
 
     // We asked for erc191 and we can only sign erc191. A different standard coming back is
     // never something to attempt: signing the wrong scheme releases a signature over bytes we
@@ -1237,7 +1246,6 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
   async function watchStatus(depositAddress: string): Promise<OneClickStatus> {
     const client = api as IntentsApiPort;
     const deadline = now() + pollTimeoutMs;
-    const maxPolls = Math.max(1, Math.ceil(pollTimeoutMs / pollIntervalMs));
     let last: OneClickStatus = {
       found: false,
       status: 'PENDING_DEPOSIT',
@@ -1246,15 +1254,23 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
       destinationTxHashes: [],
     };
 
-    for (let attempt = 0; attempt < maxPolls; attempt += 1) {
+    /* Bounded by the deadline AND by the waits it has already spent. A precomputed attempt
+       count is wrong once the interval ramps, because many more short waits fit inside the
+       same timeout. But the clock alone is not enough either: `now` is injectable and the
+       tests freeze it, so a loop that only reads the clock never leaves. Counting what it
+       asked to sleep for terminates on a stopped clock and agrees with it on a running one. */
+    let waited = 0;
+    for (let attempt = 0; now() < deadline && waited < pollTimeoutMs; attempt += 1) {
       try {
         last = await client.status(depositAddress);
         if ((ONECLICK_TERMINAL as readonly string[]).includes(last.status)) return last;
       } catch (err) {
         last = { ...last, reported: `status check failed: ${oneLine(errText(err), 80)}` };
       }
-      if (now() >= deadline) break;
-      await sleep(pollIntervalMs);
+      const wait = Math.min(pollIntervalMs, firstPollMs * 2 ** attempt);
+      if (now() + wait >= deadline || waited + wait >= pollTimeoutMs) break;
+      await sleep(wait);
+      waited += wait;
     }
 
     return last;

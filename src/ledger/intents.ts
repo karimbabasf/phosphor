@@ -120,6 +120,41 @@ export type IntentsBalanceDeps = {
   fetchImpl: typeof fetch;
 };
 
+export type IntentsAssetBalanceDeps = {
+  rpcUrl: string;
+  accountId: string;
+  assetId: string;
+  fetchImpl: typeof fetch;
+};
+
+/* One asset, one round trip, for a caller that already knows which asset it is moving.
+   fetchIntentsHoldings enumerates first because the wallet panel does not know what it will
+   find. A swap does know, so mt_batch_balance_of over a one-element list answers it without
+   the enumeration, and the balance floor a swap checks costs one view call instead of two.
+
+   It also returns the verifier's own integer. Reading a base-unit floor off the panel's UI
+   amount meant multiplying a float back up by the decimals, and that round trip is not a
+   thing to do to a number that decides whether a swap is reported as short.
+
+   Never throws. null means the verifier would not answer, which every caller reads as "no
+   check was made" and never as a zero balance. */
+export async function fetchIntentsAssetBalance(deps: IntentsAssetBalanceDeps): Promise<bigint | null> {
+  try {
+    const amounts = (await view(
+      deps.rpcUrl,
+      'mt_batch_balance_of',
+      { account_id: deps.accountId.toLowerCase(), token_ids: [deps.assetId] },
+      deps.fetchImpl,
+    )) as unknown;
+    if (!Array.isArray(amounts) || amounts.length !== 1) return null;
+    const raw = amounts[0] as unknown;
+    if (typeof raw !== 'string' || !/^\d+$/.test(raw)) return null;
+    return BigInt(raw);
+  } catch {
+    return null;
+  }
+}
+
 // Two round trips in the common case, one when the account holds nothing. Never throws:
 // the caller folds this into a refresh where a verifier problem must not blank the chains.
 export async function fetchIntentsHoldings(deps: IntentsBalanceDeps): Promise<IntentsRead> {
