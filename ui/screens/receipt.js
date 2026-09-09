@@ -28,7 +28,7 @@
     var failed = receipt.status === 'failed';
 
     host.appendChild(dom.el('p', 'label', unknown ? 'We cannot tell what happened' : (failed ? 'This did not go through' : 'Receipt')));
-    host.appendChild(dom.el('h2', 'title', receipt.summary || 'Something moved'));
+    host.appendChild(dom.el('h2', 'title', receipt.headline || receipt.summary || 'Something moved'));
 
     if (unknown) {
       var warn = dom.el('div', 'banner');
@@ -54,6 +54,16 @@
       addFact(facts, 'Your money after', dom.usd(receipt.balanceAfter));
     }
     host.appendChild(facts);
+
+    /* The rail's own sentence, kept whole and kept here. It names the intent and the quote it
+       was filed under, which is what to quote at a venue when something is disputed, so it is
+       never summarised and never truncated. It is the row title that was wrong, not this. */
+    if (receipt.summary && receipt.summary !== receipt.headline) {
+      var said = dom.el('div', 'said stack-2');
+      said.appendChild(dom.el('p', 'label', 'What the rail recorded'));
+      said.appendChild(dom.el('p', 'meta said-body', receipt.summary));
+      host.appendChild(said);
+    }
 
     var txids = Array.isArray(receipt.txids) ? receipt.txids : [];
     if (txids.length) {
@@ -175,7 +185,11 @@
   function updateRow(node, receipt) {
     var main = node.children[0];
     var side = node.children[1];
-    dom.setText(main.children[0], receipt.summary || 'Something moved');
+    /* The headline, not the rail's sentence. `summary` carries an intent hash and a quote
+       handle: six lines of it as a row title buried the fee and the time underneath, and ran
+       under the amount column on the right. It is still on the opened receipt, which is where
+       evidence belongs. */
+    dom.setText(main.children[0], receipt.headline || receipt.summary || 'Something moved');
     var note = dom.ago(receipt.at);
     if (receipt.status === 'needs_reconciliation') note = 'We cannot tell what happened';
     else if (receipt.status === 'failed') note = 'Did not go through';

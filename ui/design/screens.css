@@ -151,6 +151,34 @@
   transition: background-color var(--dur-press) var(--ease-out);
 }
 
+/* A row is one line of what happened and one line of when. The title used to be the rail's
+   verbatim sentence, which wrapped to six lines, buried the time under itself and ran across
+   the amount on the right, so two receipts filled the whole panel. The sentence now lives on
+   the opened receipt and the row's title is clamped, so a long one ends in an ellipsis instead
+   of rewriting the layout. */
+.receipt-row .row-main > .body {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The rail's own words, on the opened receipt. Wrapped rather than clamped, because here the
+   whole thing is the point, and broken anywhere because an intent hash is one 44 character
+   word that would otherwise push the card sideways. */
+.said {
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-1);
+}
+
+.said-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.55;
+}
+
 .tx-row {
   padding: var(--s-3);
   border-radius: var(--radius-sm);

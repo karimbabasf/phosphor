@@ -172,6 +172,7 @@ test('a receipt carries every field the contract fixes', async () => {
       'balanceBefore',
       'feesUsd',
       'fromChain',
+      'headline',
       'id',
       'kind',
       'status',
@@ -260,6 +261,26 @@ test('the summary is the rail\'s own sentence, verbatim', async () => {
   try {
     const [receipt] = await receipts(h.url);
     assert.equal(receipt.summary, 'the rail said what it did about a');
+  } finally {
+    await h.close();
+  }
+});
+
+/* The row and the opened receipt answer to two different readers, and the Activity panel was
+   handing the wrong sentence to the wrong one: the rail's line, with its intent hash and quote
+   handle, as the title of every row. It wrapped to six lines, buried the time under itself and
+   ran across the amount, so two receipts filled the panel. The verbatim line is evidence and it
+   stays. What a ROW says is this one. */
+test('the headline is the owner\'s sentence and it is not the rail\'s', async () => {
+  const h = await boot([settled('a', 'executed')]);
+  try {
+    const [receipt] = await receipts(h.url);
+    assert.ok(receipt.headline.length > 0, 'a row has something to say');
+    assert.notEqual(receipt.headline, receipt.summary, 'two readers, two sentences');
+    // The tells of a rail sentence: what somebody debugging this app needs and an owner does not.
+    for (const noise of ['intent ', 'quote handle', '0x']) {
+      assert.ok(!receipt.headline.includes(noise), `a headline never carries "${noise}"`);
+    }
   } finally {
     await h.close();
   }

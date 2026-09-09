@@ -18,6 +18,7 @@ import type { TxEntry } from '../transactions.ts';
 import { intParam, sendJson } from './respond.ts';
 import { transactionsPayload } from './state.ts';
 import type { Ctx } from './context.ts';
+import { amountUsdOf, didHeadline } from '../view/basic.ts';
 
 export const RECEIPT_LIMIT_DEFAULT = 25;
 export const RECEIPT_LIMIT_MAX = 200;
@@ -28,6 +29,7 @@ export type Receipt = {
   id: string;
   kind: string;
   at: string;
+  headline: string;
   summary: string;
   fromChain: string;
   toChain: string;
@@ -66,6 +68,14 @@ function feesOf(entry: TxEntry): number | null {
   return (entry.venueFeeUsd ?? 0) + (gas ?? 0);
 }
 
+/* The row's sentence. Falls back to null rather than to a guess: a receipt whose proposal
+   has been pruned from the store still has the rail's own line to show, and inventing a
+   headline for a draft we cannot read would be the one thing worse than showing the raw one. */
+function headlineFor(proposal: Proposal | undefined): string {
+  if (proposal === undefined) return '';
+  return didHeadline(proposal.draft, amountUsdOf(proposal.draft));
+}
+
 function buildReceipts(ctx: Ctx, limit: number): Receipt[] {
   const proposals = new Map<string, Proposal>();
   for (const p of ctx.proposals.list()) proposals.set(p.id, p);
@@ -79,8 +89,18 @@ function buildReceipts(ctx: Ctx, limit: number): Receipt[] {
       id: entry.id,
       kind: entry.kind,
       at: entry.ts,
-      // The rail's own sentence, verbatim. It is the one line in the record written by the
-      // thing that actually did the work.
+      /* TWO SENTENCES, because they are written for two different readers and this panel
+         was showing the wrong one.
+
+         `headline` is what happened, in the owner's own words, built from the typed draft
+         the way src/view/basic.ts builds its history. It is what a row in a list says.
+
+         `summary` is the rail's own sentence, verbatim, carrying the intent hash and the
+         quote handle. It is evidence and it stays, because it is the one line in the record
+         written by the thing that actually did the work. It belongs on the opened receipt,
+         not as the title of a row: basic.ts:570 already says why, that text is written for
+         whoever is debugging this app and reads as noise to the person who owns the money. */
+      headline: headlineFor(proposals.get(entry.id)),
       summary: entry.detail,
       fromChain: entry.place,
       toChain: entry.toPlace,

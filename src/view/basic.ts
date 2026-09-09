@@ -185,7 +185,7 @@ function isRetired(draft: WriteDraft): boolean {
   return RETIRED_KINDS.includes(kindOf(draft));
 }
 
-function amountUsdOf(draft: WriteDraft): number {
+export function amountUsdOf(draft: WriteDraft): number {
   if (draft.kind === 'consolidate') return draft.totalUsd;
   if (draft.kind === 'transfer') return draft.leg.amountUsd;
   if (draft.kind === 'policy_change') return 0;
@@ -529,12 +529,21 @@ function buildPrices(readings: PriceReading[]): BasicPrice[] {
 // Found by reading the rendered screen with real refusals on it, not from the object.
 
 // Past tense, for something that actually happened.
-function didHeadline(draft: WriteDraft, amountUsd: number): string {
+export function didHeadline(draft: WriteDraft, amountUsd: number): string {
   const amt = amountClause(amountUsd);
   if (draft.kind === 'swap') {
     return `Changed ${amt}your ${plainSymbol(draft.fromSymbol)} into ${plainSymbol(draft.toSymbol)}.`;
   }
   if (draft.kind === 'hl_deposit') return `Moved ${amt}your ${plainSymbol(draft.symbol)} to your Hyperliquid trading account.`;
+  /* The two rails that now carry nearly all of it, and neither had a sentence: both fell
+     through to the safety-rules line at the bottom, so a NEAR Intents deposit read as
+     "Changed one of your safety rules." on this screen and on every receipt. */
+  if (draft.kind === 'intents_deposit') {
+    return `Moved ${amt}your ${plainSymbol(draft.symbol)} from ${plainChain(draft.chain)} into NEAR Intents.`;
+  }
+  if (draft.kind === 'intents_withdraw') {
+    return `Brought ${amt}your ${plainSymbol(draft.symbol)} out of NEAR Intents onto ${plainChain(draft.chain)}.`;
+  }
   if (kindOf(draft) === 'lp_add') return `Put ${amt}your money into a pool.`;
   if (kindOf(draft) === 'lp_remove') return 'Took money back out of a pool.';
   if (kindOf(draft) === 'yield_deposit') return `Put ${amt}your money somewhere it earns interest.`;
@@ -551,6 +560,12 @@ function wantedPhrase(draft: WriteDraft, amountUsd: number): string {
     return `changing ${amt}your ${plainSymbol(draft.fromSymbol)} into ${plainSymbol(draft.toSymbol)}`;
   }
   if (draft.kind === 'hl_deposit') return `moving ${amt}your ${plainSymbol(draft.symbol)} to your Hyperliquid trading account`;
+  if (draft.kind === 'intents_deposit') {
+    return `moving ${amt}your ${plainSymbol(draft.symbol)} from ${plainChain(draft.chain)} into NEAR Intents`;
+  }
+  if (draft.kind === 'intents_withdraw') {
+    return `bringing ${amt}your ${plainSymbol(draft.symbol)} out of NEAR Intents onto ${plainChain(draft.chain)}`;
+  }
   if (kindOf(draft) === 'lp_add') return `putting ${amt}your money into a pool`;
   if (kindOf(draft) === 'lp_remove') return 'taking money back out of a pool';
   if (kindOf(draft) === 'yield_deposit') return `putting ${amt}your money somewhere it earns interest`;
