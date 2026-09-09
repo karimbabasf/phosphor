@@ -98,7 +98,7 @@
   --world-min: 560px;
   --basic-col: 640px;
   --pro-max: 1440px;
-  --rail-w: 320px;
+  --rail-h: 260px;
   --gutter: 24px;
 
   /* Depth. One shadow in the whole app, for the few things that float. */

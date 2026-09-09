@@ -74,9 +74,9 @@ var SPLIT_PAGES = {
      gone with the panels they sized. */
   trade: {
     'deck-rail': {
-      axis: 'x', sign: -1, min: 320,
+      axis: 'y', sign: -1, min: 150,
       pane: '.trade-rail', host: '.trade-wrap', prop: '--rail',
-      give: '.trade-main', giveMin: 620,
+      give: '.trade-main', giveMin: 260,
     },
   },
 };

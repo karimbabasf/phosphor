@@ -108,7 +108,8 @@
     var resizer = dom.el('div', 'split-h');
     resizer.dataset.splitHandle = 'deck-rail';
     resizer.setAttribute('role', 'separator');
-    resizer.setAttribute('aria-orientation', 'vertical');
+    // The deck sits under the chart, so the bar between them is a horizontal one.
+    resizer.setAttribute('aria-orientation', 'horizontal');
     resizer.tabIndex = 0;
 
     var rail = dom.el('div', 'trade-rail');

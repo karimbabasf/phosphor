@@ -124,16 +124,16 @@ function applied(h: Any): number | null {
 test('the rail has a floor, and a drag that asks for zero lands on it', () => {
   const s = load();
   // One handle in the window now. Pro is a grid and basic is a column, so
-  // neither needs dragging; trade keeps its rail and it is the only thing a
-  // pointer can squeeze.
-  const h = handle(s, 'trade', 'deck-rail', { pane: 400, give: 900 });
-  s.splitBegin(h, 400);
+  // neither needs dragging; trade keeps its deck and it is the only thing a
+  // pointer can squeeze. The deck sits UNDER the chart, so this is a height.
+  const h = handle(s, 'trade', 'deck-rail', { pane: 260, give: 600 });
+  s.splitBegin(h, 260);
 
-  // The pointer is thrown at the far edge of the window: the rail, gone.
+  // The pointer is thrown at the far edge of the window: the deck, gone.
   s.splitApply(h, s.splitAt(h, 2000));
 
-  assert.equal(applied(h), s.SPLIT_PAGES.trade['deck-rail'].min, 'the rail stops at its floor');
-  assert.ok(applied(h)! >= 320, 'and the floor keeps a forced-close line on one line');
+  assert.equal(applied(h), s.SPLIT_PAGES.trade['deck-rail'].min, 'the deck stops at its floor');
+  assert.ok(applied(h)! >= 150, 'and the floor keeps the account figures and a zone head visible');
 });
 
 test('every handle has a floor, and so does the pane it takes from', () => {
@@ -145,52 +145,55 @@ test('every handle has a floor, and so does the pane it takes from', () => {
       assert.ok(conf.giveMin > 0, page + '.' + id + ' leaves its neighbour a floor');
     }
   }
-  // Raised from the old table: 320 keeps the rail's longest line unwrapped and
-  // 620 keeps the chart wide enough to hold the bars its own controls offer.
-  assert.equal(s.SPLIT_PAGES.trade['deck-rail'].min, 320);
-  assert.equal(s.SPLIT_PAGES.trade['deck-rail'].giveMin, 620);
+  /* The deck moved from a column on the right to a band under the chart, so both
+     floors are heights now. 150 is a zone head plus its first rows; 260 is the
+     least a candle plot can be and still be read. The old 320 and 620 were the
+     widths the same two panes needed when they sat side by side. */
+  assert.equal(s.SPLIT_PAGES.trade['deck-rail'].axis, 'y', 'the deck is sized by height');
+  assert.equal(s.SPLIT_PAGES.trade['deck-rail'].min, 150);
+  assert.equal(s.SPLIT_PAGES.trade['deck-rail'].giveMin, 260);
 });
 
 test('a pane cannot be grown past the point where its neighbour hits its own floor', () => {
   const s = load();
-  // The rail is 400 wide and the chart has 900: the chart's floor is 620, so
-  // there are 280 pixels to take and not one more. The rail sits on the RIGHT,
-  // so the drag that grows it runs left, which is why the signs read backwards.
-  const h = handle(s, 'trade', 'deck-rail', { pane: 400, give: 900 });
+  // The deck is 260 tall and the chart has 600: the chart's floor is 260, so
+  // there are 340 pixels to take and not one more. The deck sits BELOW, so the
+  // drag that grows it runs up, which is why the signs read backwards.
+  const h = handle(s, 'trade', 'deck-rail', { pane: 260, give: 600 });
   s.splitBegin(h, 0);
 
-  assert.equal(s.splitAt(h, -60), 460, 'a small drag moves the boundary one for one');
-  assert.equal(s.splitAt(h, -5000), 680, 'a big one stops where the chart would be squeezed');
-  assert.equal(s.splitAt(h, 5000), 320, 'and the other way, at the rail own floor');
+  assert.equal(s.splitAt(h, -60), 320, 'a small drag moves the boundary one for one');
+  assert.equal(s.splitAt(h, -5000), 600, 'a big one stops where the chart would be squeezed');
+  assert.equal(s.splitAt(h, 5000), 150, 'and the other way, at the deck own floor');
 });
 
 test('a handle whose pointer runs the other way still grows the right pane', () => {
   const s = load();
-  // The rail is a right-hand pane, so dragging the pointer LEFT makes it wider.
-  const h = handle(s, 'trade', 'deck-rail', { pane: 400, give: 900 });
+  // The deck is the lower pane, so dragging the pointer UP makes it taller.
+  const h = handle(s, 'trade', 'deck-rail', { pane: 260, give: 600 });
   s.splitBegin(h, 0);
 
-  assert.equal(s.splitAt(h, -60), 460, 'left widens the rail');
-  assert.equal(s.splitAt(h, 60), 340, 'right narrows it');
-  assert.equal(s.splitAt(h, 5000), 320, 'and it stops at its floor');
+  assert.equal(s.splitAt(h, -60), 320, 'up grows the deck');
+  assert.equal(s.splitAt(h, 60), 200, 'down shrinks it');
+  assert.equal(s.splitAt(h, 5000), 150, 'and it stops at its floor');
 });
 
 test('a size survives a reload, and a reset forgets it', () => {
   const storage = makeStorage();
 
   const first = load(storage);
-  const h = handle(first, 'trade', 'deck-rail', { pane: 400, give: 900 });
+  const h = handle(first, 'trade', 'deck-rail', { pane: 260, give: 600 });
   first.splitBegin(h, 0);
-  first.splitApply(h, first.splitAt(h, -140)); // dragged left: the rail grew by 140
-  assert.equal(applied(h), 540);
+  first.splitApply(h, first.splitAt(h, -140)); // dragged up: the deck grew by 140
+  assert.equal(applied(h), 400);
   first.splitWrite(h.page, h.id, h.size);
 
   // A new page, a new script, the same browser profile.
   const second = load(storage);
-  assert.equal(second.splitRead('trade', 'deck-rail'), 540, 'the size came back');
-  const back = handle(second, 'trade', 'deck-rail', { pane: 400, give: 900 });
+  assert.equal(second.splitRead('trade', 'deck-rail'), 400, 'the size came back');
+  const back = handle(second, 'trade', 'deck-rail', { pane: 260, give: 600 });
   second.splitRestore(back);
-  assert.equal(applied(back), 540);
+  assert.equal(applied(back), 400);
   assert.equal(back.pane.getAttribute('data-sized'), '', 'and the pane is marked as one a person sized');
 
   // Reset: the property goes, the mark goes, the key goes. The default is the stylesheet's.
@@ -206,11 +209,11 @@ test('a stored size that no longer fits is clamped, and the stored one is left a
   storage.setItem('phosphor.split.trade.deck-rail', '900');
 
   const s = load(storage);
-  // A much smaller window: 400 in the rail, 900 in the chart, the chart's floor 620.
-  const h = handle(s, 'trade', 'deck-rail', { pane: 400, give: 900 });
+  // A much shorter window: 260 in the deck, 600 in the chart, the chart's floor 260.
+  const h = handle(s, 'trade', 'deck-rail', { pane: 260, give: 600 });
   s.splitRestore(h);
 
-  assert.equal(applied(h), 680, 'clamped to what this window can give');
+  assert.equal(applied(h), 600, 'clamped to what this window can give');
   assert.equal(
     storage.map.get('phosphor.split.trade.deck-rail'),
     '900',
@@ -242,15 +245,16 @@ test('a stored value that is not a size is treated as absent', () => {
 test('a keyboard press moves the same boundary the pointer does, and is written down', () => {
   const storage = makeStorage();
   const s = load(storage);
-  const h = handle(s, 'trade', 'deck-rail', { pane: 400, give: 900 });
+  const h = handle(s, 'trade', 'deck-rail', { pane: 260, give: 600 });
   const events: string[] = [];
   s.window.dispatchEvent = (ev: Any) => events.push(ev.type);
   s.CustomEvent = function (type: string) { return { type }; } as any;
   s.Event = function (type: string) { return { type }; } as any;
 
-  s.splitKeydown(h, { key: 'ArrowLeft', preventDefault() {} });
-  assert.equal(applied(h), 416, 'one arrow is one nudge, in the direction the pointer goes');
-  assert.equal(storage.map.get('phosphor.split.trade.deck-rail'), '416', 'and it is remembered');
+  // A horizontal separator takes the vertical arrows, which is what split.js keys off the axis for.
+  s.splitKeydown(h, { key: 'ArrowUp', preventDefault() {} });
+  assert.equal(applied(h), 276, 'one arrow is one nudge, in the direction the pointer goes');
+  assert.equal(storage.map.get('phosphor.split.trade.deck-rail'), '276', 'and it is remembered');
 
   s.splitKeydown(h, { key: 'Enter', preventDefault() {} });
   assert.equal(applied(h), null, 'Enter puts it back to the stylesheet default');
@@ -261,23 +265,23 @@ test('a keyboard press moves the same boundary the pointer does, and is written 
 
 test('a keyboard press on the inverted handle respects the same inversion', () => {
   const s = load();
-  const h = handle(s, 'trade', 'deck-rail', { pane: 400, give: 900 });
+  const h = handle(s, 'trade', 'deck-rail', { pane: 260, give: 600 });
   s.window.dispatchEvent = () => {};
   s.CustomEvent = function (type: string) { return { type }; } as any;
   s.Event = function (type: string) { return { type }; } as any;
 
-  s.splitKeydown(h, { key: 'ArrowRight', preventDefault() {} });
-  assert.equal(applied(h), 384, 'right narrows a right-hand pane, the way dragging right does');
+  s.splitKeydown(h, { key: 'ArrowDown', preventDefault() {} });
+  assert.equal(applied(h), 244, 'down shrinks a lower pane, the way dragging down does');
 });
 
 test('a handle with no neighbour to take from can still take the spare room, and no more', () => {
   const s = load();
-  // No slack at all: the chart is already on its own floor, so the rail has
+  // No slack at all: the chart is already on its own floor, so the deck has
   // nothing left to take.
-  const h = handle(s, 'trade', 'deck-rail', { pane: 400, give: 620 });
+  const h = handle(s, 'trade', 'deck-rail', { pane: 260, give: 260 });
   s.splitBegin(h, 0);
-  assert.equal(s.splitAt(h, -5000), 400, 'there is nothing to take, so nothing moves');
-  assert.equal(s.splitAt(h, 5000), 320, 'and it can always be given back, down to the floor');
+  assert.equal(s.splitAt(h, -5000), 260, 'there is nothing to take, so nothing moves');
+  assert.equal(s.splitAt(h, 5000), 150, 'and it can always be given back, down to the floor');
 });
 
 test('a window too small for both floors keeps the safety surface', () => {
@@ -294,20 +298,23 @@ test('two presses on a handle put it back to the stylesheet default', () => {
   s.CustomEvent = function (type: string) { return { type }; } as any;
   s.Event = function (type: string) { return { type }; } as any;
 
-  const h = handle(s, 'trade', 'deck-rail', { pane: 400, give: 900 });
+  const h = handle(s, 'trade', 'deck-rail', { pane: 260, give: 600 });
   h.lastDown = 0;
   s.splitWire(h);
 
-  // One press, a drag, a release: the rail is 480 wide and the browser remembers.
-  h.node.fire('pointerdown', { button: 0, clientX: 0, pointerId: 1 });
+  /* One press, a drag, a release: the deck is 340 tall and the browser remembers.
+     Both coordinates are on the event because this handle reads clientY now, and a
+     pointer event carrying only the axis it used to read is a test that passes for
+     the wrong reason. */
+  h.node.fire('pointerdown', { button: 0, clientX: 0, clientY: 0, pointerId: 1 });
   s.splitApply(h, s.splitAt(h, -80));
   h.node.fire('pointerup', {});
-  assert.equal(applied(h), 480);
-  assert.equal(storage.map.get('phosphor.split.trade.deck-rail'), '480');
+  assert.equal(applied(h), 340);
+  assert.equal(storage.map.get('phosphor.split.trade.deck-rail'), '340');
 
   // Two presses in a row, which is a double click on the handle.
-  h.node.fire('pointerdown', { button: 0, clientX: 0, pointerId: 2 });
-  h.node.fire('pointerdown', { button: 0, clientX: 0, pointerId: 3 });
+  h.node.fire('pointerdown', { button: 0, clientX: 0, clientY: 0, pointerId: 2 });
+  h.node.fire('pointerdown', { button: 0, clientX: 0, clientY: 0, pointerId: 3 });
 
   assert.equal(applied(h), null, 'the property is gone, so the CSS default is what shows');
   assert.equal(h.pane.getAttribute('data-sized'), null);
