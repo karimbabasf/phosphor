@@ -79,28 +79,49 @@ test('nothing in this file lets a debugger attach', () => {
   assert.equal(entitlement('com.apple.security.cs.debugger'), false);
 });
 
-test('the process may not make its own memory executable', () => {
-  assert.equal(entitlement('com.apple.security.cs.allow-jit'), false);
+/* allow-jit was <false/> here and this test asserted it, and between them they meant every signed
+   build shipped a working window over a dead backend. V8 cannot start without it: the node child
+   died instantly with "Failed to reserve virtual memory for CodeRange", and because the shell's
+   window opens either way, the app looked installed. Settled by building it, 2026-09-09.
+
+   It is not a hole in what this file protects. allow-jit lets THIS process map its OWN memory
+   executable through MAP_JIT and grants nothing to any other process; the control that stops
+   another process reading an unlocked key out of this heap is the absence of get-task-allow,
+   asserted above and untouched. The blanket version stays denied, because V8 uses MAP_JIT
+   properly and does not need it. */
+test('the runtime allows this process to jit, and nothing broader', () => {
+  assert.equal(entitlement('com.apple.security.cs.allow-jit'), true, 'node cannot start without it');
   assert.equal(entitlement('com.apple.security.cs.allow-unsigned-executable-memory'), false);
 });
 
-/* The one entitlement here that WEAKENS the runtime, so it carries its own note.
-   It is present because the bundle ships its own node binary in externalBin, which is the usual
-   reason given for it. It may well be unnecessary: library validation governs dylibs loaded INTO
-   a process, `tauri build` signs the sidecar with the same identity as the app, and the payload's
-   dependencies are pure JavaScript with no native addons. That cannot be settled without a real
-   signed build. The test asserts the note is there rather than asserting the value, so whichever
-   way the first signed build resolves it, the reasoning has to be written down. */
-test('the library-validation opt-out carries the note that says how to retire it', () => {
+/* This was the one entitlement here that weakened the runtime, and it was carried as an open
+   question with a note saying what would settle it. The first signed build settled it on
+   2026-09-09: the key is gone, library validation is enforced, and the backend still comes up.
+   `tauri build` signs the sidecar with the app's own identity, so a same-team sidecar satisfies
+   validation without an opt-out, and the payload's dependencies are pure JavaScript.
+
+   The test now guards the retirement rather than the note. Re-adding it should take evidence,
+   and the evidence is a health check, because "the app launches" is the wrong check and the
+   tempting one: library validation bites the CHILD, and a shell whose backend never spawned
+   still shows a window. */
+test('the library-validation opt-out is retired and stays retired', () => {
+  assert.equal(
+    entitlement('com.apple.security.cs.disable-library-validation'),
+    null,
+    'settled at the first signed build: the sidecar is same-team signed and needs no opt-out',
+  );
+  assert.match(plist(), /api\/health/, 'the file still names the check that would reopen it');
+});
+
+/* codesign does not use plutil's parser. It uses AMFI's, which enforces the XML rule that a
+   comment may not contain a double hyphen, and it fails the ENTIRE bundle when it finds one:
+   "Failed to parse entitlements: AMFIUnserializeXML: syntax error near line 31". A command-line
+   flag written out longhand in the comment cost exactly that, and `plutil -lint` called the file
+   OK the whole time, so the local check disagreed with the build. */
+test('the comment carries no double hyphen, which codesign refuses to parse', () => {
   const raw = plist();
-  if (entitlement('com.apple.security.cs.disable-library-validation') !== true) return; // retired, as hoped
-  assert.match(raw, /OPEN QUESTION/, 'a weakening entitlement has to say why it is there');
-  assert.match(raw, /first signed build/, 'and what would settle it');
-  /* And the probe, named. "Does the app launch" is the wrong check and the tempting one: library
-     validation bites the CHILD process, and a shell whose backend never spawned still shows a
-     window. /api/health is the route that answers whether node is actually alive. */
-  assert.match(raw, /api\/health/, 'the retirement check has to name what to probe');
-  assert.doesNotMatch(raw, /If it launches and the\n  backend spawns/, 'launching is not the check');
+  const comment = raw.slice(raw.indexOf('<!--') + 4, raw.indexOf('-->'));
+  assert.doesNotMatch(comment, /--/, 'a double hyphen inside the comment fails codesign, not plutil');
 });
 
 /* Ad-hoc, so a local build still produces something that runs. The real build reads
