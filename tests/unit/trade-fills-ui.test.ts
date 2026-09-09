@@ -10,6 +10,10 @@
 // budgetUsd. None of those names is in the payload, so a funded account with an open position
 // under an armed rule rendered three empty states and a heading. Those are covered here now.
 //
+// The rail is three zones rather than four cards since 2026-09-09, so what is asserted below
+// also covers the shape of an empty answer: a routine one is a line, and the sentence that
+// explains the surface is kept for somebody who has never seen it.
+//
 // Run against the REAL ui/core/dom.js and ui/screens/trade.js over a small stand-in DOM, so what
 // is asserted is the text a person would read rather than the shape of the source.
 
@@ -124,6 +128,7 @@ function textOf(node: Node): string[] {
 // One fill of a tenth of a BTC-sized asset, priced. The shape is what buildTradePayload emits.
 function payload(sizeCoin: number, szDecimals: number | null) {
   return {
+    symbol: 'BTC',
     account: { equityUsd: 0, freeUsd: 0, marginUsedUsd: 0 },
     markets: [{ coin: 'BTC', markPx: 60000, szDecimals, maxLeverage: 20, assetId: 0 }],
     positions: [],
@@ -153,6 +158,7 @@ function payload(sizeCoin: number, szDecimals: number | null) {
 // field name below is the one src/trade/state.ts emits.
 function funded() {
   return {
+    symbol: 'BTC',
     overlays: { position: true, liquidation: false, mandateWall: true },
     account: {
       equityUsd: 4200.5,
@@ -298,8 +304,11 @@ test('an account the feed has not settled yet says it is waiting, not that it is
   const data = funded();
   data.account = { ...data.account, accountKnown: false, equityUsd: null, freeUsd: null, healthPct: null } as never;
   const { lines } = await renderPayload(data);
-  assert.ok(lines.includes('Still reading the account'), JSON.stringify(lines));
-  assert.ok(!lines.includes('No trading money yet'), JSON.stringify(lines));
+  assert.ok(
+    lines.some((l) => l.startsWith('Still reading the account')),
+    JSON.stringify(lines),
+  );
+  assert.ok(!lines.some((l) => l.startsWith('No trading money yet')), JSON.stringify(lines));
 });
 
 test('an open position prints its value, its size and what it is up', async () => {
@@ -357,4 +366,117 @@ test('the toggles no longer write a global nothing reads', async () => {
   const source = readFileSync(new URL('../../ui/screens/trade.js', import.meta.url), 'utf8');
   assert.ok(!source.includes('TRADE_OVERLAYS'));
   assert.ok(source.includes("'/api/trade'"), 'the toggle has to reach the server to reach the canvas');
+});
+
+
+// ---------- the shape of the rail ----------
+
+function allWithTag(node: Node, tag: string, out: Node[] = []): Node[] {
+  if (node.tagName === tag) out.push(node);
+  for (const child of node.childNodes) allWithTag(child, tag, out);
+  return out;
+}
+
+function withClass(node: Node, name: string, out: Node[] = []): Node[] {
+  if (node.className.split(' ').includes(name)) out.push(node);
+  for (const child of node.childNodes) withClass(child, name, out);
+  return out;
+}
+
+// Flat: the account has answered, there is money history, nothing is open and nothing is armed.
+// This is the state the rail is in most of the time, and the one the old build spent three
+// bordered cards on.
+function flat() {
+  const data = funded() as Record<string, unknown>;
+  data.account = { equityUsd: 4200.5, freeUsd: 4200.5, healthPct: 1, unified: false, accountKnown: true };
+  data.positions = [];
+  data.mandates = [];
+  data.fills = payload(0.001, 5).fills;
+  return data;
+}
+
+test('nothing open and nothing armed is one line each, not a heading and a paragraph each', async () => {
+  const { lines } = await renderPayload(flat());
+  assert.ok(lines.includes('Nothing is open.'), JSON.stringify(lines));
+  assert.ok(lines.includes('No rules are armed.'), JSON.stringify(lines));
+  // The sentence that explains what a mandate is belongs to a person who has never seen this
+  // screen. Somebody with fills behind them has read it.
+  assert.ok(
+    !lines.some((l) => l.includes('the only thing that opens or closes anything here')),
+    `a routine empty state spent its explanation again: ${JSON.stringify(lines)}`,
+  );
+});
+
+test('a person who has never seen this screen still gets the sentence that says what it is for', async () => {
+  const data = flat();
+  data.account = { equityUsd: null, freeUsd: null, healthPct: null, unified: false, accountKnown: true };
+  data.fills = [];
+  const { lines } = await renderPayload(data);
+  assert.ok(
+    lines.some((l) => l.includes('the only thing that opens or closes anything here')),
+    `a first run was answered with the short line: ${JSON.stringify(lines)}`,
+  );
+  assert.ok(lines.some((l) => l.includes('Fills and cancels land here as they happen')), JSON.stringify(lines));
+});
+
+test('the mark price is on the rail whether or not anything is open', async () => {
+  // It is the first number a person looks for, and the old rail only ever carried it inside an
+  // open position, so a flat screen never showed the price of the market it was drawing.
+  const { host, lines } = await renderPayload(flat());
+  assert.ok(lines.includes('$60,000.00'), `no mark price: ${JSON.stringify(lines)}`);
+  const [mark] = withClass(host, 'trade-mark-price');
+  assert.ok(mark !== undefined, 'the mark price has no type of its own');
+  assert.equal(mark.textContent, '$60,000.00');
+});
+
+test('a market the payload does not price reads as unknown rather than as zero', async () => {
+  const data = flat();
+  data.markets = [];
+  const { host } = await renderPayload(data);
+  assert.equal(withClass(host, 'trade-mark-price')[0].textContent, '--');
+});
+
+test('the market control is a listbox this window drew, not a native select', async () => {
+  // A <select> renders with the operating system's own chrome, which was the one thing on the
+  // surface that did not look finished.
+  const { host } = await renderPayload(flat());
+  assert.equal(allWithTag(host, 'select').length, 0, 'the native select is back');
+  const options = withClass(host, 'trade-option');
+  assert.deepEqual(options.map((o) => o.textContent), ['BTC-USD']);
+  assert.equal(options[0].getAttribute('role'), 'option');
+  assert.equal(options[0].getAttribute('aria-selected'), 'true');
+});
+
+test('an unreachable venue says so rather than drawing its last numbers as current', async () => {
+  const data = flat();
+  data.venue = { connected: false, source: 'none', ageMs: null, latencyMs: null, error: 'connect ECONNREFUSED', degraded: true };
+  const { lines } = await renderPayload(data);
+  assert.ok(
+    lines.some((l) => l.startsWith('No route to the venue') && l.includes('connect ECONNREFUSED')),
+    `the venue failed silently: ${JSON.stringify(lines)}`,
+  );
+});
+
+test('the fills list owns its host, so nothing is left under it for the reconciler to trip on', async () => {
+  // dom.reconcile removes everything after the last row it placed. A footer under the list would
+  // have to be put back every pass, so there is none.
+  const { host } = await renderPayload(payload(0.001, 5));
+  const [list] = withClass(host, 'trade-zone-body').filter((n) =>
+    n.childNodes.some((c) => c.className.includes('fill-row')),
+  );
+  assert.ok(list !== undefined, 'no fills list');
+  for (const child of list.childNodes) {
+    assert.ok(child.className.includes('fill-row'), `something else is in the list: ${child.className}`);
+  }
+});
+
+test('an unreachable venue leaves the figures unknown rather than calling them empty', async () => {
+  // Silence is not the same answer as zero. Printing the empty state here would be the window
+  // stating a fact the venue has not stated.
+  const data = flat();
+  data.account = { equityUsd: null, freeUsd: null, healthPct: null, unified: false, accountKnown: true };
+  data.venue = { connected: false, source: 'none', ageMs: null, latencyMs: null, error: 'no route to host', degraded: true };
+  const { lines } = await renderPayload(data);
+  assert.ok(!lines.some((l) => l.startsWith('No trading money yet')), JSON.stringify(lines));
+  assert.equal(lines.filter((l) => l === '--').length, 4, `expected the mark and three figures as --: ${JSON.stringify(lines)}`);
 });

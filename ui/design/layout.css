@@ -473,38 +473,132 @@ body[data-view="trade"] .stage {
   min-height: 0;
 }
 
+/* Its own container, because the bar above the chart lays out against the room
+   the CHART has rather than against the window: the conversation column and the
+   rail both take from it and neither is in a media query. */
 .trade-main {
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
   border-right: 1px solid var(--line);
+  container-type: inline-size;
+  container-name: trade;
 }
 
+/* ONE SURFACE DOWN THE SIDE, NOT A STACK OF CARDS. Three zones, hairline ruled,
+   and only the last of them grows. Four bordered panels made an empty answer
+   cost a heading, a centred title, a sentence and two paddings, so three empty
+   ones pushed the one zone carrying real data off the bottom of the rail. The
+   rail itself never scrolls: the zone that outgrows its box scrolls inside it. */
 .trade-rail {
   display: flex;
   flex-direction: column;
-  gap: var(--s-3);
-  padding: var(--s-3);
   min-width: 0;
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
+  background: var(--bg-1);
 }
 
-.chart-bar {
+.trade-zone {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: var(--s-3) var(--s-4);
+  border-top: 1px solid var(--line);
+}
+
+.trade-zone:first-child {
+  border-top: 0;
+  padding-top: var(--s-4);
+}
+
+.trade-status { flex: 0 0 auto; }
+
+/* What is running is bounded rather than free: a page of armed rules must not
+   take the tape's room. It takes what it needs up to the cap and no more, and
+   past the cap it scrolls inside itself with a fade at the cut. It must not
+   merely shrink: sharing the squeeze with the tape gave both of them a hidden
+   overflow and neither of them a fade. */
+.trade-running {
+  flex: 0 0 auto;
+  max-height: 40%;
+}
+
+.trade-fills { flex: 1 1 auto; }
+
+.trade-zone-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
   gap: var(--s-2);
-  flex-wrap: wrap;
+  flex: 0 0 auto;
+  padding-bottom: var(--s-2);
+}
+
+.trade-zone-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-height: 0;
+}
+
+/* The tape is dense: the rows carry their own rhythm, so the column adds none.
+   It takes the whole zone rather than only the height of what is in it, so the
+   room under a short list belongs to the list and a long one scrolls in place
+   instead of leaving a dead strip at the bottom of the rail. */
+.trade-fills .trade-zone-body {
+  gap: 0;
+  flex: 1 1 auto;
+}
+
+/* WHAT THE CHART IS OF, THEN WHAT IS DRAWN ON IT.
+
+   A grid rather than a wrapping row: the old bar wrapped wherever it ran out of
+   room, so the same five controls landed differently at every width and the
+   line between the two halves fell in the middle of one of them. Everything on
+   one row while the chart is wide enough for it, and a deliberate second row
+   when it is not. */
+.chart-bar {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: auto auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--s-3);
   padding: var(--s-2) var(--s-3);
   border-bottom: 1px solid var(--line);
   min-height: 44px;
 }
 
+/* Under about 1140 px the two halves cannot share a row. The market and its
+   feed take the first, what is drawn takes the second, and the rule between
+   them gives way to the row break, which says the same thing louder. */
+@container trade (max-width: 1139px) {
+  .chart-bar {
+    grid-template-columns: auto minmax(0, 1fr);
+    row-gap: var(--s-2);
+  }
+  .trade-bar-div { display: none; }
+  .chart-bar > .trade-bar-group:nth-child(3) { grid-area: 2 / 1 / 3 / -1; }
+}
+
+/* Stacked over the chart there is no room to pair anything: one control group
+   to a row, and the feed under them. */
+@container trade (max-width: 559px) {
+  .chart-bar { grid-template-columns: minmax(0, 1fr); }
+  .chart-bar > .trade-bar-group:nth-child(3) { grid-area: auto; }
+  .chartstatus { justify-content: flex-start; }
+}
+
+/* The canvases inside are pinned to its edges, so clipping hides no bar. What it
+   does hide is the sub-pixel the stage spills when the bar above it lands on a
+   fraction, which was one scrollable pixel on a page that never scrolls. */
 .chart-stage {
   position: relative;
   flex: 1 1 auto;
   min-height: 320px;
+  overflow: hidden;
 }
 
 .chart-stage canvas {
@@ -514,13 +608,29 @@ body[data-view="trade"] .stage {
   height: 100%;
 }
 
-@container world (max-width: 1000px) {
+/* When the chart can no longer hold a usable plot beside a 320 px rail, the two
+   stack and the world scrolls, which is the fallback the brief allows.
+
+   The threshold was 1000 px, which stacked a 1280 x 720 laptop: the world there
+   is 914 px, the chart would have had 588 of it, and the page scrolled for no
+   reason. It is the width at which the chart drops under about 530 px. */
+@container world (max-width: 859px) {
+  /* flex: 0 0 auto, not the base row's 1 1: stacked, the wrap is taller than the
+     world and must say so. Shrinking to fit put a 1,700 px column inside a
+     400 px box, so the rail's own ground stopped under the first zone and the
+     two below it painted on the world. */
   .trade-wrap {
+    flex: 0 0 auto;
     grid-template-columns: minmax(0, 1fr);
     height: auto;
     min-height: 100%;
   }
-  .trade-rail { overflow-y: visible; max-height: none; }
+  /* Stacked, the world scrolls again, so nothing in the rail holds a height of
+     its own: every zone is as tall as what is in it. */
+  .trade-rail { overflow: visible; max-height: none; }
+  .trade-running { max-height: none; }
+  .trade-fills { flex: 0 0 auto; }
+  .trade-zone .trade-zone-body { overflow: visible; }
   .trade-main { border-right: 0; border-bottom: 1px solid var(--line); }
   .split-h { display: none; }
 }

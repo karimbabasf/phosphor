@@ -714,17 +714,192 @@
   white-space: nowrap;
 }
 
-.chart-select {
-  width: auto;
-  min-width: 132px;
-  min-height: 30px;
+/* ---------- the bar above the chart ----------
+
+   Two halves with a rule between them: what the chart is OF on the left, what
+   is drawn ON it on the right. Everything in it is one height, so the row reads
+   as a control surface rather than as four controls that happen to be near
+   each other. */
+.trade-bar-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+/* Six pills is a lot of horizontal room for a control a person uses by reading
+   it. They keep their height and give up their side padding, which is what buys
+   the market and its feed a row together. */
+#timeframes .timeframe { padding: 0 var(--s-2); }
+
+.trade-bar-div {
+  flex: 0 0 auto;
+  width: 1px;
+  height: 18px;
+  background: var(--line);
+}
+
+.trade-bar-label {
+  font-size: var(--fs-12);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+/* The word and the three toggles are one thing and wrap as one. */
+.trade-draw {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
 }
 
 .chart-cmd {
-  width: 168px;
-  min-height: 30px;
+  width: 152px;
+  min-height: 26px;
+  height: 26px;
   font-family: var(--font-mono);
   font-size: var(--fs-12);
+}
+
+/* ---------- the market ----------
+
+   A native select drew OS chrome in a window that paints everything itself, and
+   it was the one control on the surface that looked unfinished. This is on the
+   timeframe pills' metrics and carries the window's opening grammar whole. */
+.trade-symbol-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.trade-symbol {
+  --opens-line: var(--line);
+  --opens-bg: var(--bg-1);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  height: 26px;
+  padding: 0 var(--s-2) 0 var(--s-3);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  color: var(--text);
+}
+
+.trade-symbol[disabled] {
+  color: var(--text-3);
+  cursor: default;
+}
+
+/* The caret points at the list, which is under the button rather than beside
+   it, so it travels down on hover instead of right. */
+.trade-symbol .chev {
+  transform: rotate(135deg);
+  margin-top: -2px;
+}
+
+.trade-menu {
+  position: absolute;
+  top: calc(100% + var(--s-1));
+  left: 0;
+  z-index: 20;
+  min-width: 132px;
+  max-height: 264px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--s-1);
+  background: var(--bg-1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--lift);
+  opacity: 0;
+  visibility: hidden;
+  transform: scale(0.97) translateY(-4px);
+  transform-origin: top left;
+  transition: opacity var(--dur-swap) var(--ease-out),
+              transform var(--dur-swap) var(--ease-out),
+              visibility 0s linear var(--dur-swap);
+}
+
+.trade-menu[data-open="true"] {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition-delay: 0s;
+}
+
+.trade-menu:focus {
+  outline: none;
+}
+
+.trade-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  height: 28px;
+  padding: 0 var(--s-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  color: var(--text-2);
+  transition: background-color var(--dur-press) var(--ease-out),
+              color var(--dur-press) var(--ease-out);
+}
+
+/* Where the keyboard is. It is the same paint as hover, because they are the
+   same thing said by two devices. */
+.trade-option[data-active="true"] {
+  background: var(--bg-2);
+  color: var(--text);
+}
+
+.trade-option[aria-selected="true"] { color: var(--text); }
+
+.trade-option[aria-selected="true"]::after {
+  content: "";
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ink);
+}
+
+/* ---------- what the chart draws ----------
+
+   Three toggles, and they read as toggles. They were chips named after the rail
+   panels, so pressing one looked like it would navigate there. The dot is the
+   on state and it is the accent, which is the only colour this window uses for
+   a thing that is live. */
+.trade-toggle {
+  background: transparent;
+  border-color: var(--line);
+}
+
+button.trade-toggle {
+  transition: transform var(--dur-press) var(--ease-out),
+              border-color var(--dur-press) var(--ease-out),
+              background-color var(--dur-press) var(--ease-out),
+              color var(--dur-press) var(--ease-out);
+}
+
+.trade-toggle .dot {
+  background: var(--text-3);
+  transition: background-color var(--dur-press) var(--ease-out);
+}
+
+.trade-toggle[aria-pressed="true"] {
+  background: var(--bg-2);
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+.trade-toggle[aria-pressed="true"] .dot { background: var(--ink); }
+
+.trade-toggle:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
 }
 
 .chartwrap {
@@ -803,10 +978,20 @@
 
 @media (hover: hover) and (pointer: fine) {
   .venue:hover { color: var(--text); }
+
+  .trade-symbol:hover .chev { transform: translateY(2px) rotate(135deg); }
+
+  .trade-option:hover {
+    background: var(--bg-2);
+    color: var(--text);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .feed[data-busy="1"] i { animation: none; opacity: 0.6; }
+  /* The caret stops travelling and stays a caret, the same reading the
+     dashboards' own chevron gets. */
+  .trade-symbol:hover .chev { transform: rotate(135deg); }
   .step[data-state="live"] .step-dot,
   .turn-dot,
   .agent-seat[data-seat="live"] .agent-seat-dot,
@@ -822,10 +1007,68 @@
   font-size: var(--fs-13);
 }
 
-/* Four panels in a 320 px rail, most of them empty most of the time. They keep
-   the sentence that says why they are empty and give up the air around it. */
-.trade-rail .empty {
-  padding: var(--s-4) var(--s-2);
+/* ---------- the rail ----------
+
+   Three zone headings, all quiet. The rail has exactly one loud thing in it and
+   it is the mark price. */
+.trade-zone-head h2 {
+  font-size: var(--fs-12);
+  font-weight: 500;
+  color: var(--text-3);
+  letter-spacing: 0.02em;
+}
+
+.trade-zone-note {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+/* The mark price and the account's health are what a person looks at first, so
+   the mark is the biggest type on this surface by a clear step and everything
+   else sits at 12 or 13 px under it. */
+.trade-mark {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.trade-mark-coin {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  color: var(--text-2);
+  letter-spacing: 0.04em;
+}
+
+.trade-mark-price {
+  font-family: var(--font-mono);
+  font-size: var(--fs-28);
+  line-height: 1.05;
+  color: var(--text);
+  letter-spacing: -0.02em;
+  font-feature-settings: "tnum" 1;
+  font-optical-sizing: auto;
+}
+
+/* A routine empty answer is one line. It used to be a heading, a centred title
+   and an explanatory sentence in a bordered card, which cost an empty zone as
+   much of the rail as a full one. */
+.trade-line {
+  font-size: var(--fs-13);
+  line-height: 1.45;
+  color: var(--text-2);
+}
+
+/* The colour utilities are declared before this file, so a line that has to be
+   read as a warning or as the thing itself names its own colour here. */
+.trade-line.strong { color: var(--text); }
+.trade-line.warn { color: var(--warn); }
+
+.trade-strong {
+  font-size: var(--fs-14);
+  font-weight: 500;
+  color: var(--text);
 }
 
 .timeframe {

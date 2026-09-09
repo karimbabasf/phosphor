@@ -159,10 +159,37 @@
 
   /* ---------- views ---------- */
 
+  /* A tablist is ONE tab stop, and on this app that is a safety property rather than an
+     accessibility nicety. ux/flow.md budgets the brake at two tab stops from a cold load,
+     because the primary control on a trading surface is the thing that stops it. Three
+     separately tabbable mode buttons pushed "Freeze everything" to the fourth stop.
+
+     So: roving tabindex. Only the selected tab is in the tab order, and the arrows move
+     between them, which is what the ARIA tabs pattern asks for anyway. Without the arrow
+     half, tabindex -1 would make the other two modes unreachable from a keyboard, which
+     would be a worse bug than the one being fixed. */
+  function focusTab(index) {
+    var count = refs.tabs.length;
+    if (count === 0) return;
+    var wrapped = ((index % count) + count) % count;
+    var tab = refs.tabs[wrapped];
+    setView(tab.dataset.tab, { fromClick: true });
+    tab.focus();
+  }
+
   function wireTabs() {
     for (var i = 0; i < refs.tabs.length; i += 1) {
       dom.on(refs.tabs[i], 'click', function (event) {
         setView(event.currentTarget.dataset.tab, { fromClick: true });
+      });
+      dom.on(refs.tabs[i], 'keydown', function (event) {
+        var here = refs.tabs.indexOf(event.currentTarget);
+        if (event.key === 'ArrowRight' || event.key === 'ArrowDown') focusTab(here + 1);
+        else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') focusTab(here - 1);
+        else if (event.key === 'Home') focusTab(0);
+        else if (event.key === 'End') focusTab(refs.tabs.length - 1);
+        else return;
+        event.preventDefault();
       });
     }
     window.addEventListener('resize', dom.debounce(placeIndicator, 100));
@@ -193,7 +220,10 @@
     }
     for (var j = 0; j < refs.tabs.length; j += 1) {
       var tab = refs.tabs[j];
-      dom.setAttr(tab, 'aria-selected', tab.dataset.tab === name ? 'true' : 'false');
+      var selected = tab.dataset.tab === name;
+      dom.setAttr(tab, 'aria-selected', selected ? 'true' : 'false');
+      // The roving half of the tabs pattern. See wireTabs for why this is a brake question.
+      tab.tabIndex = selected ? 0 : -1;
     }
     dom.setAttr(document.body, 'data-view', name);
     dom.setHidden(refs.feedChip, name !== 'trade');
