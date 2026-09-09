@@ -37,6 +37,12 @@ Two venues, and only two: NEAR Intents and Hyperliquid. The five chains are stil
 money still crosses them, but nothing is held on one: a balance lives inside the Intents verifier
 or inside the Hyperliquid account.
 
+Money gets in the way it does in any wallet. Ask for a deposit address and you get one per network,
+the same address every time, no quote and no expiry, and you send to it from an exchange or another
+wallet. The address belongs to the NEAR Intents bridge and forwards to your balance, so it is
+deliberately not on the policy allowlist: that list governs where this app may send, and this is
+somewhere other people send.
+
 The agent can read everything and propose actions. It can never approve, never execute, and never
 touch policy without a human click in the app window. The policy engine enforces authored rules at
 machine speed with no model in the execution path.
@@ -170,7 +176,7 @@ file. To run both at once, give the installed app its own port in its `config.lo
 ## Test it
 
     npm test            # the unit suite: policy engine, proposals, ledger, composition, cost, rails, signers, injection
-    npm run e2e         # boots the app + a real MCP client, drives 35 checks, exits 0/1
+    npm run e2e         # boots the app + a real MCP client, drives 34 checks, exits 0/1
     npm run typecheck   # tsc --noEmit over src, tests and scripts
 
 One more goes to the real venue, because a unit test cannot tell you a remote API accepts what you
@@ -186,7 +192,7 @@ The e2e run is the proof rather than a smoke test: it boots the real app, connec
 client over stdio, and checks that reads work, that a write lands as pending, that approving it
 executes, that the kill switch refuses, and that a forged approval token gets a 403.
 
-The injection suite (11 of the 1745, in `tests/injection.test.ts`) feeds hostile strings from
+The injection suite (18 of the 1991, in `tests/injection.test.ts`) feeds hostile strings from
 `tests/fixtures/hostile.json`
 through the real MCP surface: sentences that claim to be the account owner, that declare policy
 checks disabled, that carry a forged approval blob. Every one lands as a refusal or a pending
@@ -222,22 +228,45 @@ text only and the card renders from the server's own pending list.
 
 **Basic** is the same app for a non-technical reader: the total, one sentence that is the state of
 your money, one sentence that is your rules, what you hold, where to send money, what happened.
-**Pro** is the operator's density, as sections that each owe you one line even when they are shut:
-Money holds your total in its head and lists one row per coin with the places it sits in a click
-below, and Activity and Limits fold behind a summary of the fact you would have opened them for. An asset this app cannot price says "not priced" rather than $0.00,
-because a zero beside a balance you own reads as nothing owned. **Trade** is the chart with the
-position, the account, the rules and the fills beside it.
+
+**Pro** is the operator's density, and nothing on it is folded. Four panels split the height of the
+window: Money, the Hyperliquid account, Activity and Limits. Each one carries its content, and a
+list that outgrows its panel scrolls inside itself rather than making the page scroll. Every coin
+carries its mark, drawn as inline SVG in one colour, so this page still loads no images. The share
+each coin holds is one stacked bar under the total instead of a third column of numbers. An asset
+this app cannot price says "not priced" rather than $0.00, because a zero beside a balance you own
+reads as nothing owned, and a wallet that could not be read says so instead of reporting zero.
+
+Anything that opens says so the same way everywhere: the pointer changes, the border lifts, the
+chevron travels, it scales on press and it takes a focus ring. Anything that is only a readout
+never moves.
+
+**Trade** is the chart with one rail beside it, in three zones: the account and its margin, then
+whatever is running, then the fills taking the rest of the height. Nothing armed and nothing open
+are one line each, because an empty panel should not cost as much room as a full one.
 
 Geist for the words and Geist Mono with tabular figures for anything that can change, so a value
 never moves its neighbours when it ticks. Phosphor green is one colour used three ways: the action,
 the direction up, and the assistant's light. Red is down and danger. Amber is only ever a person
 being waited on.
 
-| ![Basic, with the assistant working](docs/screenshots/window-basic.png) | ![The decision dock waiting on a click](docs/screenshots/window-dock.png) |
+![Pro: four panels, nothing folded](docs/screenshots/window-pro.png)
+
+Pro. Money and the trading account across the top, Activity and Limits filling the rest. The bar
+under the total is what share each coin holds.
+
+| ![Basic](docs/screenshots/window-basic.png) | ![A proposal waiting for a click](docs/screenshots/window-dock.png) |
 |---|---|
-| Basic: the conversation, the trace, the money | A proposal waiting for you, inside the conversation |
-| ![Trade, funded](docs/screenshots/window-trade.png) | ![Pro](docs/screenshots/window-pro.png) |
-| Trade: the chart, the position, the rules | Pro: the operator's density |
+| Basic: the same money, read at arm's length | A proposal waiting for you, inside the conversation |
+| ![The trade rail](docs/screenshots/trade-rail.png) | ![Picking a market](docs/screenshots/trade-toolbar.png) |
+| Trade, the rail: the account, what is running, the fills | Trade, the bar: the market, the timeframes, what to draw |
+
+![The coin marks](docs/screenshots/coin-marks.png)
+
+The marks are the real logos as path data on a 24 box, filled with `currentColor`, so they are one
+colour at any size and this page loads no image files to draw them.
+
+The numbers in these are a fixture, not a wallet.
 
 ### The chart, which lives on trade
 
