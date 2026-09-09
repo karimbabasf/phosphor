@@ -73,6 +73,9 @@ export const READ_TOOLS: readonly string[] = [
   'balances',
   'composition',
   'wallet',
+  // Where money comes IN. One stable bridge address per network, so an agent can answer "how do
+  // I fund this" without sending somebody hunting for a screen. It moves nothing.
+  'intents_receive',
   'policy_show',
   'log_tail',
   'candles',
