@@ -1,79 +1,102 @@
 <!doctype html>
 <meta charset="utf-8" />
-<title>PHOSPHOR</title>
+<title>Phosphor</title>
 <!--
   The only page Tauri itself serves. It is on screen for the couple of seconds the Node
   backend takes to bind its port, and it is replaced, not navigated: the real window is a
   separate webview pointed at http://127.0.0.1, so the page that holds the approval surface
   never shares an origin or a webview with anything Tauri controls.
+
+  It is the app's own wordmark, in the state the wordmark already has a meaning for. In the
+  window, the glyph beside "Phosphor" sits at 0.35 opacity until the backend answers and then
+  lights up (see .wordmark-glyph in ui/design/layout.css). So this screen is not a separate
+  loading animation at all: it is that glyph, not yet lit, on the same graphite the window
+  paints. When the real window arrives, the same mark is in the top left, on.
+
+  It used to be the terminal look the whole app has moved away from: green monospace on green
+  black, letter-spaced caps, scanlines, a pulsing ring. Every one of those is now wrong. The
+  ground is graphite, the words are Geist, and phosphor green is an accent that means something
+  rather than a colour the screen is painted in.
 -->
 <style>
+  /* Copied from ui/design/tokens.css rather than imported, because this page is served by
+     Tauri and shares no origin with the app. Only the tokens this screen actually uses. */
   :root {
-    --bg: #0b0d0b;
-    --green: #33ff66;
-    --green-dim: rgba(51, 255, 102, 0.62);
-    --green-ghost: rgba(51, 255, 102, 0.22);
+    color-scheme: dark;
+    --bg-0: #0B0D10;
+    --text: #ECEEF1;
+    --text-2: #9BA1AB;
+    --ink: #33FF66;
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   }
+
+  @font-face {
+    font-family: "Geist";
+    src: url("Geist-Variable.woff2") format("woff2-variations");
+    font-weight: 100 900;
+    font-display: swap;
+  }
+
   html, body {
     height: 100%;
     margin: 0;
-    background: var(--bg);
-    color: var(--green);
-    font: 13px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: var(--bg-0);
+    color: var(--text);
+    font-family: "Geist", ui-sans-serif, system-ui, sans-serif;
     -webkit-user-select: none;
     user-select: none;
     overflow: hidden;
   }
+
   main {
     height: 100%;
     display: grid;
     place-content: center;
     justify-items: center;
-    gap: 22px;
+    gap: 10px;
     text-align: center;
   }
-  .mark {
-    width: 54px;
-    height: 54px;
-    border: 3px solid var(--green);
-    border-radius: 50%;
-    box-shadow: 0 0 18px var(--green-ghost), inset 0 0 12px var(--green-ghost);
-    animation: breathe 1.6s ease-in-out infinite;
+
+  .wordmark {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 15px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
   }
-  h1 {
-    margin: 0;
-    font-size: 13px;
-    font-weight: 400;
-    letter-spacing: 0.42em;
-    text-indent: 0.42em;
+
+  /* The same 3px-radius square the window draws, at the same not-ready opacity. It breathes
+     rather than spins: a spinner would promise progress this screen cannot measure, and the
+     one thing it honestly knows is that something is still coming. */
+  .glyph {
+    width: 13px;
+    height: 13px;
+    border-radius: 3px;
+    background: var(--ink);
+    opacity: 0.35;
+    animation: waking 1800ms var(--ease-out) infinite;
   }
+
   p {
     margin: 0;
-    color: var(--green-dim);
-    letter-spacing: 0.08em;
+    font-size: 12px;
+    color: var(--text-2);
   }
-  /* Scanlines, the same motif the app uses, so the first frame already looks like Phosphor. */
-  body::after {
-    content: "";
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    background: repeating-linear-gradient(
-      to bottom,
-      rgba(51, 255, 102, 0.05) 0 1px,
-      transparent 1px 3px
-    );
+
+  @keyframes waking {
+    0%, 100% { opacity: 0.28; }
+    50%      { opacity: 0.72; }
   }
-  @keyframes breathe {
-    0%, 100% { opacity: 0.45; transform: scale(0.97); }
-    50%      { opacity: 1;    transform: scale(1); }
-  }
+
   @media (prefers-reduced-motion: reduce) {
-    .mark { animation: none; opacity: 1; }
+    .glyph { animation: none; opacity: 0.55; }
   }
 </style>
 <main>
-  <div class="mark"></div>
-  <h1>PHOSPHOR</h1>
-  <p>starting the control app</p>
+  <div class="wordmark">
+    <span class="glyph" aria-hidden="true"></span>
+    <span>Phosphor</span>
+  </div>
+  <p>Starting the control app</p>
 </main>
