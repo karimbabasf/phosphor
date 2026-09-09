@@ -23,6 +23,8 @@ import type http from 'node:http';
 import path from 'node:path';
 
 import { sameOrigin, tokenMatches } from './auth.ts';
+import { POA_NETWORK, intentsDepositAddress, poaSupportedTokens } from '../rails/intents-address.ts';
+import type { ChainId } from '../types.ts';
 import { errText, fail, readBody, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
 import { mnemonicProblem } from '../keystore/derive.ts';
@@ -419,6 +421,97 @@ const CHAIN_NAMES: Array<{ id: string; name: string; of: 'evm' | 'solana' | 'nea
    nothing authenticates, and this is false: the window says so rather than implying an
    assurance the file cannot give. `tampered` is the third case, where a correct password has
    proved the header was edited; the address list is empty there, on purpose. */
+// ---------- receive into the verifier ----------
+
+/* The other receive. handleReceive above answers "where do I send money so THIS WALLET holds
+   it"; this answers "where do I send money so NEAR INTENTS holds it", which after the cut to two
+   venues is where the money actually lives.
+
+   Different address, different owner, and the difference matters enough to be two routes rather
+   than a flag. The addresses above are ours, derived from our own keys. The addresses below
+   belong to the POA bridge and forward to the verifier under our account id, which is the EVM
+   address lowercased. Phosphor never sends to them and they are deliberately not on the policy
+   allowlist: the allowlist governs where this app may send, and nothing here is a destination
+   this app chooses.
+
+   Works while locked, for the same reason the wallet one does. It reads the account id out of
+   the keystore's address report rather than out of an unlocked key, so money arriving never
+   waits on a password. */
+const INTENTS_NETWORKS: Array<{ id: ChainId; name: string }> = [
+  { id: 'eth', name: 'Ethereum' },
+  { id: 'base', name: 'Base' },
+  { id: 'arb', name: 'Arbitrum' },
+  { id: 'sol', name: 'Solana' },
+  { id: 'near', name: 'NEAR' },
+];
+
+export async function handleIntentsReceive(ctx: Ctx, res: http.ServerResponse): Promise<void> {
+  const report = ctx.keystore.addressReport();
+  const account = report.addresses.evm;
+
+  /* No EVM address is not an empty list, it is a different sentence. The verifier keys balances
+     by this id, so without it there is no account to deposit into and a screen showing five
+     blank cards would imply otherwise. */
+  if (account === null) {
+    sendJson(res, 200, {
+      account: null,
+      verified: report.verified,
+      tampered: report.tampered,
+      networks: [],
+      reason: report.tampered
+        ? 'the keystore header was edited, so no address here can be trusted'
+        : 'no wallet yet, so there is no intents account to deposit into',
+    });
+    return;
+  }
+
+  const [addresses, tokens] = await Promise.all([
+    Promise.all(
+      INTENTS_NETWORKS.map(async (n) => {
+        try {
+          return { net: n, got: await intentsDepositAddress(account, n.id), why: null as string | null };
+        } catch (err) {
+          // One network refusing is not the others failing. The row says why and the rest draw.
+          return { net: n, got: null, why: err instanceof Error ? err.message : String(err) };
+        }
+      }),
+    ),
+    poaSupportedTokens(),
+  ]);
+
+  const networks = addresses.map((row) => {
+    const network = POA_NETWORK[row.net.id];
+    const accepts = tokens.filter((t) => t.network === network);
+    return {
+      id: row.net.id,
+      name: row.net.name,
+      address: row.got?.address ?? null,
+      memo: row.got?.memo ?? null,
+      unavailable: row.why,
+      /* What the bridge will credit on this network. An asset that is not on this list is not
+         credited and is not refunded, which is the one loss this screen exists to prevent, so
+         the list is shown rather than left to the address to imply. */
+      accepts: accepts.map((t) => ({ symbol: t.symbol, minDeposit: t.minDeposit, decimals: t.decimals })),
+      warning:
+        row.net.id === 'sol'
+          ? 'Solana only. Anything sent here from another network is lost.'
+          : row.net.id === 'near'
+            ? 'NEAR only. Anything sent here from another network is lost.'
+            : 'Ethereum, Base and Arbitrum share this address, but send only on the network you picked.',
+    };
+  });
+
+  sendJson(res, 200, {
+    account,
+    verified: report.verified,
+    tampered: report.tampered,
+    networks,
+    // Said plainly, because it is the one thing about this screen that surprises people: the
+    // address is not ours, it is a bridge address that forwards.
+    note: 'These addresses belong to the NEAR Intents bridge. It forwards what it receives to your intents balance.',
+  });
+}
+
 export function handleReceive(ctx: Ctx, res: http.ServerResponse): void {
   const report = ctx.keystore.addressReport();
   const chains = CHAIN_NAMES.filter((c) => report.addresses[c.of] !== null).map((c) => ({

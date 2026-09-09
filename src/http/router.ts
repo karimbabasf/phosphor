@@ -30,6 +30,7 @@ import {
   handleWalletExport,
   handleWalletImport,
   handleWalletMigrate,
+  handleIntentsReceive,
 } from './wallet.ts';
 import { sendHealth } from './health.ts';
 import { sendReceipts } from './receipts.ts';
@@ -70,6 +71,9 @@ const GET: Record<string, Route> = {
   // Money arriving is the one thing nobody should have to unlock for, so this reads the
   // addresses out of the keystore's plaintext header and answers while locked.
   '/api/receive': (ctx, _req, res) => handleReceive(ctx, res),
+  // The same question asked of the other place money can sit. Reaches the network, so it
+  // is the one receive route that can be slow; it still answers while locked.
+  '/api/intents-receive': (ctx, _req, res) => handleIntentsReceive(ctx, res),
   '/api/events': (ctx, req, res) => ctx.sse.open(req, res),
   // No token, no secret, and deliberately the only unauthenticated proof of life. See health.ts.
   '/api/health': (ctx, _req, res) => sendHealth(ctx, res),

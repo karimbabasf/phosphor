@@ -10,6 +10,7 @@ import { fail, intParam, round2, sendJson } from '../respond.ts';
 import { LOG_LIMIT_MAX } from '../context.ts';
 import type { ReadTable } from '../context.ts';
 import { sentencesOf } from '../state.ts';
+import { handleIntentsReceive } from '../wallet.ts';
 
 export const walletReads: ReadTable = {
   // What an agent calls the moment it attaches. Everything in it is read live, because a
@@ -64,6 +65,13 @@ export const walletReads: ReadTable = {
   },
   wallet: (ctx, _body, _args, res) => {
     sendJson(res, 200, buildWallet(ctx.ledger.snapshot(), ctx.ledger.intents()));
+  },
+  /* Where somebody sends money so that NEAR Intents holds it: one stable address per network,
+     from the POA bridge, plus what each network will actually credit. The agent gets this so it
+     can answer "how do I fund this" without the person hunting for the screen. It moves nothing
+     and needs no unlock. */
+  intents_receive: async (ctx, _body, _args, res) => {
+    await handleIntentsReceive(ctx, res);
   },
   policy_show: (ctx, _body, _args, res) => {
     const policy = ctx.getPolicy();
