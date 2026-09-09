@@ -21,7 +21,7 @@ import { createAudit } from '../../src/audit.ts';
 import { createStore } from '../../src/store.ts';
 import { defaultPolicy } from '../../src/policy/file.ts';
 import { createMarketData } from '../../src/market/index.ts';
-import type { AppConfig, ChainId, ChainStatus, LedgerSnapshot, LpPosition, Proposal } from '../../src/types.ts';
+import type { AppConfig, ChainId, ChainStatus, LedgerSnapshot, Proposal } from '../../src/types.ts';
 
 const CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 
@@ -86,7 +86,6 @@ async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
     riskRows: [],
     ledger: {
       snapshot,
-      positions: (): LpPosition[] => [],
       intents: () => undefined,
       refresh: async () => snapshot(),
       applyDemoTransfer: () => {},
@@ -107,10 +106,6 @@ async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
       proposeIntentsDeposit: async () => builtSwap(),
       proposeIntentsWithdraw: async () => builtSwap(),
       proposeMandate: async () => builtSwap(),
-      proposeLpAdd: async () => builtSwap(),
-      proposeLpRemove: async () => builtSwap(),
-      proposeYieldDeposit: async () => builtSwap(),
-      proposeYieldWithdraw: async () => builtSwap(),
       approve: async () => builtSwap(),
       refuse: async () => builtSwap(),
       get: () => undefined,
@@ -252,7 +247,12 @@ test('a body that is not application/json is refused with 415', async () => {
   }
 });
 
-test('a cross-chain swap that names no venue is refused with the venue to use (S3, the reported bug)', async () => {
+/* S3, the reported bug, and its ending. A cross-chain swap that named no venue used to be
+   refused: the default was an on-chain DEX that could not cross chains, so the caller was told
+   to name one and try again. There is no on-chain venue left, the default crosses chains, and
+   the same call now builds. The refusal is gone because the condition that caused it is gone,
+   not because the guard was loosened. */
+test('a cross-chain swap that names no venue now builds, because the default venue crosses chains', async () => {
   const h = await boot();
   try {
     const out = await raw(h.url, '/api/mcp', {
@@ -264,9 +264,26 @@ test('a cross-chain swap that names no venue is refused with the venue to use (S
         params: { chain: 'arb', toChain: 'sol', fromSymbol: 'USDC', toSymbol: 'SOL', amountIn: 100, minAmountOut: 0.5 },
       }),
     });
+    assert.equal(out.status, 200, out.body.slice(0, 200));
+  } finally {
+    await h.close();
+  }
+});
+
+test('a venue this app does not run is refused by name rather than swapped somewhere else', async () => {
+  const h = await boot();
+  try {
+    const out = await raw(h.url, '/api/mcp', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Origin: h.url },
+      body: JSON.stringify({
+        op: 'propose',
+        kind: 'swap',
+        params: { chain: 'arb', toChain: 'arb', fromSymbol: 'USDC', toSymbol: 'WETH', amountIn: 100, minAmountOut: 0.5, venue: 'uniswap-v3' },
+      }),
+    });
     assert.equal(out.status, 400);
-    assert.match(out.body, /uniswap-v3 is a same-chain venue/);
-    assert.match(out.body, /oneclick|intents-native/);
+    assert.match(out.body, /venue must be oneclick or intents-native/);
   } finally {
     await h.close();
   }
@@ -375,8 +392,6 @@ for (const [label, amount] of BAD_AMOUNTS) {
         ['intents_deposit', { chain: 'arb', symbol: 'USDC', amount }],
         ['intents_withdraw', { chain: 'arb', symbol: 'USDC', amount }],
         ['swap', { chain: 'arb', toChain: 'arb', fromSymbol: 'USDC', toSymbol: 'WETH', amountIn: amount, minAmountOut: 1 }],
-        ['yield_deposit', { chain: 'arb', symbol: 'USDC', amount }],
-        ['lp_remove', { positionId: '1', liquidityPct: amount }],
       ];
       for (const [kind, params] of cases) {
         const out = await proposeWith(h.url, kind, params);

@@ -1,13 +1,12 @@
 // What the composition panel renders: everything held, the way a normal wallet shows it.
 // Karim, 2026-08-11: "the composition thing should just show what a normal crypto wallet
-// would show". So natives are in (classify() filters them out for the policy engine's
-// purposes, which is a different question) and pool positions sit in the same table as
-// one line each, because a wallet that hides your LP is lying about what you hold.
+// would show". So natives are in; classify() filters them out for the policy engine's
+// purposes, which is a different question.
 //
-// Pure function, no IO. LP positions are passed in rather than fetched here: the chain
-// readers own fetching, this owns presentation.
+// Pure function, no IO. Everything it renders is passed in: the chain readers and the
+// verifier reader own fetching, this owns presentation.
 
-import type { ChainId, LedgerSnapshot, LpPosition, WalletPlace, WalletRow, WalletView } from './types.ts';
+import type { ChainId, LedgerSnapshot, WalletPlace, WalletRow, WalletView } from './types.ts';
 import type { IntentsRead } from './ledger/intents.ts';
 
 // Price per unit, derived from what the ledger already priced rather than re-fetched.
@@ -16,43 +15,7 @@ function unitPrice(amount: number, usd: number): number {
   return amount > 0 ? usd / amount : 0;
 }
 
-function lpLabel(pos: LpPosition): string {
-  const pair = `${pos.token0.symbol}/${pos.token1.symbol}`;
-  if (pos.feeTier === null) return pair;
-  return `${pair} ${(pos.feeTier / 10_000).toFixed(2)}%`;
-}
-
-// An LP position's value is the two sides plus whatever fees it has accrued. Prices come
-// from the same snapshot the tokens are priced from, so a pool position and a loose token
-// of the same symbol never disagree about what that symbol is worth.
-function lpValueUsd(pos: LpPosition, priceOf: (symbol: string) => number): number {
-  const sides = pos.token0.amount * priceOf(pos.token0.symbol) + pos.token1.amount * priceOf(pos.token1.symbol);
-  return sides + (pos.uncollectedFeesUsd ?? 0);
-}
-
-// Just enough of a yield position for the wallet to price it. Deliberately not the whole
-// YieldHolding: this module has no business with a credit ledger or an annualised window,
-// and a narrower input is one fewer thing that can change under it.
-export type YieldWalletHolding = {
-  chain: ChainId;
-  venue: string;
-  symbol: string;
-  receipt: string;
-  receiptSymbol: string;
-  valueUsd: number;
-  // Null when this app holds no executed deposit behind the balance, so it cannot say what
-  // the position cost. See YieldHolding.basisKnown: zero is not a synonym for unknown, and
-  // treating it as one prints the whole position as profit.
-  principalUsd: number | null;
-  earnedUsd: number | null;
-};
-
-export function buildWallet(
-  snapshot: LedgerSnapshot,
-  positions: LpPosition[] = [],
-  intents?: IntentsRead,
-  yieldHoldings: YieldWalletHolding[] = [],
-): WalletView {
+export function buildWallet(snapshot: LedgerSnapshot, intents?: IntentsRead): WalletView {
   // Symbol -> unit price, learned from the holdings themselves and topped up from the
   // snapshot's native price table for symbols held only inside a pool.
   //
@@ -112,25 +75,6 @@ export function buildWallet(
     native: h.native,
   }));
 
-  const lpRows: WalletRow[] = positions.map(pos => {
-    const valueUsd = lpValueUsd(pos, priceOf);
-    return {
-      kind: 'lp',
-      chain: pos.chain,
-      symbol: lpLabel(pos),
-      tokenId: pos.poolId,
-      // A pool position has no meaningful unit count, so quantity carries the position
-      // count (always 1) and price carries its value. Showing a fabricated "LP token
-      // amount" for a v3 NFT would be inventing a number the chain does not have.
-      quantity: 1,
-      priceUsd: valueUsd,
-      valueUsd,
-      share: 0,
-      native: false,
-      lp: pos,
-    };
-  });
-
   // A balance inside the intents.near verifier. It is priced off the same symbol map as
   // everything else, so ETH held in the verifier and ETH held in the wallet agree about
   // what an ETH is worth. An asset we have no price for keeps its quantity and values at
@@ -157,49 +101,9 @@ export function buildWallet(
   // three quarters of the lines are 0.0000 buries the five that are real.
   //
   // The test is quantity, not value: a token we hold but have no price for is still held,
-  // and dropping it would be the app deciding you own less than you do. A pool position is
-  // kept whatever it is worth, because the position exists on chain either way.
-  // Money supplied to a lending venue.
-  //
-  // This row exists because the wallet total was WRONG without it. A deposit leaves the
-  // token balance the chain reader sees, so $56 in an Aave position simply vanished from a
-  // $294 total, and the one number a person checks first quietly said they owned less than
-  // they did. The receipt token is not in data/tokens.json and adding it there would fix the
-  // arithmetic while calling the row aArbUSDCn, which tells a reader nothing.
-  //
-  // The value is the aToken balance, so it already includes the interest. Nothing is double
-  // counted: the underlying left the wallet when it was supplied, and this is the same money
-  // in the only place it now exists.
-  const yieldRows: WalletRow[] = yieldHoldings.map(h => {
-    // quantity is a TOKEN COUNT, and price is what one of them is worth, the same contract
-    // every other row on this table keeps. Putting the dollar figure in the quantity column
-    // reads correctly only while USDC prices at exactly 1.0; off peg the row contradicts
-    // itself, because quantity times price no longer equals the value beside them.
-    const unit = priceOf(h.symbol) || 1;
-    return {
-    kind: 'yield',
-    chain: h.chain,
-    symbol: `${h.symbol} earning`,
-    tokenId: h.receipt,
-    quantity: h.valueUsd / unit,
-    priceUsd: unit,
-    valueUsd: h.valueUsd,
-    share: 0,
-    native: false,
-    yield: {
-      venue: h.venue,
-      receiptSymbol: h.receiptSymbol,
-      receipt: h.receipt,
-      principalUsd: h.principalUsd,
-      earnedUsd: h.earnedUsd,
-    },
-    };
-  });
-
-  const held = [...tokenRows, ...lpRows, ...intentsRows, ...yieldRows].filter(
-    r => r.kind === 'lp' || r.quantity > 0 || r.valueUsd > 0,
-  );
-  const emptyCount = tokenRows.length + intentsRows.length - held.filter(r => r.kind !== 'lp' && r.kind !== 'yield').length;
+  // and dropping it would be the app deciding you own less than you do.
+  const held = [...tokenRows, ...intentsRows].filter(r => r.quantity > 0 || r.valueUsd > 0);
+  const emptyCount = tokenRows.length + intentsRows.length - held.length;
 
   const rows = held.sort((a, b) => b.valueUsd - a.valueUsd);
   const totalUsd = rows.reduce((sum, r) => sum + r.valueUsd, 0);

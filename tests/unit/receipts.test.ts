@@ -26,7 +26,7 @@ import { defaultPolicy } from '../../src/policy/file.ts';
 import { createMarketData } from '../../src/market/index.ts';
 import { RECEIPT_LIMIT_DEFAULT, RECEIPT_LIMIT_MAX } from '../../src/http/receipts.ts';
 import type { Receipt } from '../../src/http/receipts.ts';
-import type { AppConfig, ChainId, ChainStatus, LedgerSnapshot, LpPosition, Proposal, ProposalStatus } from '../../src/types.ts';
+import type { AppConfig, ChainId, ChainStatus, LedgerSnapshot, Proposal, ProposalStatus } from '../../src/types.ts';
 
 const CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 const SELF = '0x1111111111111111111111111111111111111111';
@@ -91,7 +91,6 @@ async function boot(proposals: Proposal[]): Promise<{ url: string; close: () => 
     riskRows: [],
     ledger: {
       snapshot,
-      positions: (): LpPosition[] => [],
       intents: () => undefined,
       refresh: async () => snapshot(),
       applyDemoTransfer: () => {},
@@ -111,10 +110,6 @@ async function boot(proposals: Proposal[]): Promise<{ url: string; close: () => 
       proposeIntentsDeposit: async () => settled('x', 'executed'),
       proposeIntentsWithdraw: async () => settled('x', 'executed'),
       proposeMandate: async () => settled('x', 'executed'),
-      proposeLpAdd: async () => settled('x', 'executed'),
-      proposeLpRemove: async () => settled('x', 'executed'),
-      proposeYieldDeposit: async () => settled('x', 'executed'),
-      proposeYieldWithdraw: async () => settled('x', 'executed'),
       approve: async () => settled('x', 'executed'),
       refuse: async () => settled('x', 'refused'),
       get: (id: string) => store.get(id),

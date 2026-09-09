@@ -24,9 +24,8 @@ import { fileURLToPath } from 'node:url';
 import type {
   AppConfig,
   HlDepositDraft,
+  IntentsWithdrawDraft,
   LedgerSnapshot,
-  LpPosition,
-  LpRemoveDraft,
   Policy,
   Rail,
   RailResult,
@@ -45,10 +44,10 @@ import { renderSentences } from '../../src/policy/render.ts';
 import { syntheticQuoter, stubSigner } from '../../src/intents.ts';
 import { createProposalService } from '../../src/proposals.ts';
 import { createRails, venueAllowlist } from '../../src/rails/index.ts';
-import { chainsWithDeployment, deploymentFor } from '../../src/rails/uniswap-abi.ts';
 import { HYPERCORE_COUNTERPARTY } from '../../src/rails/hypercore-deposit.ts';
 import { ONECLICK_COUNTERPARTY } from '../../src/rails/oneclick.ts';
 import { INTENTS_NATIVE_COUNTERPARTY } from '../../src/rails/intents-native.ts';
+import { INTENTS_WITHDRAW_COUNTERPARTY } from '../../src/rails/intents-withdraw.ts';
 import { evaluate } from '../../src/policy/engine.ts';
 import { classify } from '../../src/composition.ts';
 
@@ -57,22 +56,6 @@ const ROOT = path.dirname(path.dirname(__dirname));
 const riskRows = (JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'risk-table.json'), 'utf8')) as { rows: RiskRow[] }).rows;
 
 const SELF_EVM = '0x1111111111111111111111111111111111111111';
-const ARB = deploymentFor('arb');
-
-// A position the wallet already holds, so lp_remove has something to resolve against.
-// Priced off the demo fixture: USDC at 1.00 and ETH at 4,520.
-const POSITION: LpPosition = {
-  chain: 'arb',
-  venue: 'uniswap-v3',
-  poolId: '0x66eeab70ac52459dd74c6ad50d578ef76a441bbf',
-  positionId: '4242',
-  token0: { symbol: 'USDC', tokenId: '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d', amount: 100 },
-  token1: { symbol: 'WETH', tokenId: '0x980B62Da83eFf3D4576C647993b0c1D7faf17c73', amount: 0.05 },
-  feeTier: 3000,
-  inRange: true,
-  uncollectedFeesUsd: 1.5,
-};
-const POSITION_USD = 100 + 0.05 * 4520 + 1.5;
 
 // ---------- harness ----------
 
@@ -107,8 +90,8 @@ function spyRails(over: { simulation?: SimulationResult; result?: RailResult } =
   const table: Record<string, Rail> = {
     swap: rail('swap'),
     hl_deposit: rail('hl_deposit'),
-    lp_add: rail('lp_add'),
-    lp_remove: rail('lp_remove'),
+    intents_deposit: rail('intents_deposit'),
+    intents_withdraw: rail('intents_withdraw'),
   };
 
   return {
@@ -116,7 +99,7 @@ function spyRails(over: { simulation?: SimulationResult; result?: RailResult } =
     executed,
     registry: {
       for: (draft) => table[draft.kind] ?? null,
-      kinds: () => ['swap', 'hl_deposit', 'lp_add', 'lp_remove'],
+      kinds: () => ['swap', 'hl_deposit', 'intents_deposit', 'intents_withdraw'],
     },
   };
 }
@@ -138,7 +121,7 @@ type Harness = {
   eventTypes(): string[];
 };
 
-function setup(over: { policy?: Policy; rails?: Spy; positions?: LpPosition[] } = {}): Harness {
+function setup(over: { policy?: Policy; rails?: Spy } = {}): Harness {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-rail-wiring-'));
   const cfg: AppConfig = {
     mode: 'live', // demo mode owns no rails at all; that is its own test below
@@ -152,10 +135,8 @@ function setup(over: { policy?: Policy; rails?: Spy; positions?: LpPosition[] } 
 
   // A live-mode ledger over the demo fixture, so addresses and prices resolve without RPCs.
   const snapshot: LedgerSnapshot = { ...loadDemoLedger(), mode: 'live' };
-  const positions = over.positions ?? [POSITION];
   const ledger: Ledger = {
     snapshot: () => snapshot,
-    positions: () => positions,
     intents: () => undefined,
     refresh: async () => snapshot,
     applyDemoTransfer: () => {
@@ -188,7 +169,7 @@ function setup(over: { policy?: Policy; rails?: Spy; positions?: LpPosition[] } 
 }
 
 function swapParams(amountIn: number) {
-  return { venue: 'uniswap-v3' as const, chain: 'arb' as const, fromSymbol: 'USDT', toSymbol: 'USDC', amountIn, minAmountOut: amountIn * 0.99 };
+  return { venue: 'oneclick' as const, chain: 'arb' as const, fromSymbol: 'USDT', toSymbol: 'USDC', amountIn, minAmountOut: amountIn * 0.99 };
 }
 
 // ---------- the allowlist ----------
@@ -196,12 +177,12 @@ function swapParams(amountIn: number) {
 test('venueAllowlist names every contract the rails can hand funds to', () => {
   const allowed = venueAllowlist();
 
-  for (const chain of chainsWithDeployment()) {
-    const dep = deploymentFor(chain);
-    assert.ok(allowed.includes(dep.router.toLowerCase()), `${chain} router is missing`);
-    assert.ok(allowed.includes(dep.positionManager.toLowerCase()), `${chain} position manager is missing`);
-  }
+  // Three entries, all venue STRINGS. There is no contract on this list any more: 1Click mints
+  // a deposit address per quote, the verifier is a NEAR account, and a perp order hands funds
+  // to nobody. That is the whole allowlist, and a fourth entry would mean a new rail.
+  assert.equal(allowed.length, 3, `the allowlist is ${JSON.stringify(allowed)}`);
   assert.ok(allowed.includes(ONECLICK_COUNTERPARTY), 'the oneclick venue is missing');
+  assert.ok(allowed.includes(INTENTS_NATIVE_COUNTERPARTY.toLowerCase()), 'the intents verifier is missing');
   assert.ok(allowed.every(a => a === a.toLowerCase()), 'the engine lowercases the list it compares against');
 
   // Hyperliquid funding used to put Bridge2's address here, and the worst mistake this app
@@ -224,21 +205,12 @@ test('every rail draft the service builds names a counterparty the seeded allowl
 
   const swap = await h.svc.proposeSwap(swapParams(50));
   const deposit = await h.svc.proposeHlDeposit({ amount: 50 });
-  const add = await h.svc.proposeLpAdd({
-    chain: 'arb',
-    token0Symbol: 'USDC',
-    token1Symbol: 'WETH',
-    amount0: 10,
-    amount1: 0.001,
-    feeTier: 3000,
-    tickLower: -60,
-    tickUpper: 60,
-  });
-  const remove = await h.svc.proposeLpRemove({ positionId: POSITION.positionId, liquidityPct: 0.5 });
+  const intentsIn = await h.svc.proposeIntentsDeposit({ chain: 'arb', symbol: 'USDC', amount: 20 });
+  const intentsOut = await h.svc.proposeIntentsWithdraw({ chain: 'arb', symbol: 'USDC', amount: 10 });
 
-  for (const p of [swap, deposit, add, remove]) {
-    const draft = p.draft as { counterparty?: string; bridge?: string };
-    const counterparty = (draft.counterparty ?? draft.bridge ?? '').toLowerCase();
+  for (const p of [swap, deposit, intentsIn, intentsOut]) {
+    const draft = p.draft as { counterparty?: string };
+    const counterparty = (draft.counterparty ?? '').toLowerCase();
     assert.ok(allowed.has(counterparty), `${p.kind} points at ${counterparty}, which the seeded policy does not allow`);
     assert.notEqual(p.status, 'policy_refused', `${p.kind} was refused: ${JSON.stringify(p.verdict)}`);
   }
@@ -288,11 +260,11 @@ test('each rail kind reaches its own rail with the draft the service built', asy
 
   await h.svc.proposeSwap(swapParams(50));
   await h.svc.proposeHlDeposit({ amount: 40 });
-  await h.svc.proposeLpRemove({ positionId: POSITION.positionId, liquidityPct: 0.1 });
+  await h.svc.proposeIntentsDeposit({ chain: 'arb', symbol: 'USDC', amount: 20 });
 
   assert.deepEqual(
     h.rails.executed.map(d => d.kind),
-    ['swap', 'hl_deposit', 'lp_remove'],
+    ['swap', 'hl_deposit', 'intents_deposit'],
   );
 });
 
@@ -304,7 +276,7 @@ test('the app resolves every address in a rail draft, so the agent names none of
   const swap = (await h.svc.proposeSwap(swapParams(500))).draft as SwapDraft;
   assert.equal(swap.from, SELF_EVM);
   assert.equal(swap.to, SELF_EVM, 'a swap returns to our own wallet');
-  assert.equal(swap.counterparty, ARB.router, 'the counterparty is the verified router, not a parameter');
+  assert.equal(swap.counterparty, ONECLICK_COUNTERPARTY, 'the counterparty is the venue string, not a parameter');
   assert.equal(swap.amountUsd, 500, 'the app prices the draft; the agent cannot declare a smaller number');
 
   const deposit = (await h.svc.proposeHlDeposit({ amount: 40 })).draft as HlDepositDraft;
@@ -313,10 +285,10 @@ test('the app resolves every address in a rail draft, so the agent names none of
   assert.equal(deposit.from, SELF_EVM);
   assert.equal(deposit.hlAccount, SELF_EVM, 'the trading account is ours, resolved by the app');
 
-  const remove = (await h.svc.proposeLpRemove({ positionId: POSITION.positionId, liquidityPct: 0.5 })).draft as LpRemoveDraft;
-  assert.equal(remove.counterparty, ARB.positionManager);
-  assert.equal(remove.chain, POSITION.chain, 'the chain comes from the position in the wallet');
-  assert.ok(Math.abs(remove.amountUsd - POSITION_USD * 0.5) < 1e-9);
+  const out = (await h.svc.proposeIntentsWithdraw({ chain: 'arb', symbol: 'USDC', amount: 10 })).draft as IntentsWithdrawDraft;
+  assert.equal(out.counterparty, INTENTS_WITHDRAW_COUNTERPARTY);
+  assert.equal(out.from, SELF_EVM.toLowerCase(), 'the verifier account is our EVM address lowercased, derived not passed');
+  assert.equal(out.to, SELF_EVM, 'a withdrawal lands in our own wallet');
 });
 
 // toChain carries two different meanings and only one of them is a recipient. On an on-chain
@@ -423,16 +395,6 @@ test('the intents-native carve-out is scoped to that venue and does not follow o
   );
 });
 
-test('a position id the wallet does not hold cannot be turned into a draft', async () => {
-  const h = setup();
-  const p = await h.svc.proposeLpRemove({ positionId: '999999', liquidityPct: 1 });
-
-  assert.equal(p.status, 'policy_refused');
-  assert.equal(p.verdict.outcome === 'refuse' ? p.verdict.rule : '', 'invalid_draft');
-  assert.equal(h.rails.simulated.length, 0, 'a draft that could not be built never reached a rail');
-  assert.equal(h.rails.executed.length, 0);
-});
-
 test('a symbol the app cannot price is refused rather than budgeted at NaN', async () => {
   const h = setup();
   // ZZZ is in no risk table, no holding and no price table, so there is no honest USD value
@@ -455,24 +417,15 @@ test('a rail whose counterparty is not on the allowlist is refused outright, nev
 
   const swap = await h.svc.proposeSwap(swapParams(500));
   const deposit = await h.svc.proposeHlDeposit({ amount: 50 });
-  const add = await h.svc.proposeLpAdd({
-    chain: 'arb',
-    token0Symbol: 'USDC',
-    token1Symbol: 'WETH',
-    amount0: 10,
-    amount1: 0.001,
-    feeTier: 3000,
-    tickLower: -60,
-    tickUpper: 60,
-  });
-  const remove = await h.svc.proposeLpRemove({ positionId: POSITION.positionId, liquidityPct: 0.5 });
+  const intentsIn = await h.svc.proposeIntentsDeposit({ chain: 'arb', symbol: 'USDC', amount: 20 });
+  const intentsOut = await h.svc.proposeIntentsWithdraw({ chain: 'arb', symbol: 'USDC', amount: 10 });
 
-  for (const p of [swap, deposit, add, remove]) {
+  for (const p of [swap, deposit, intentsIn, intentsOut]) {
     assert.equal(p.status, 'policy_refused', `${p.kind} was not refused`);
     assert.equal(p.verdict.outcome === 'refuse' ? p.verdict.rule : '', 'destination_not_allowed', `${p.kind} refused for the wrong reason`);
   }
 
-  assert.ok(swap.verdict.reasons.join(' ').includes(ARB.router), 'the refusal names the venue it refused');
+  assert.ok(swap.verdict.reasons.join(' ').includes(ONECLICK_COUNTERPARTY), 'the refusal names the venue it refused');
   assert.equal(h.rails.simulated.length, 0, 'a refused draft costs no network round trips');
   assert.equal(h.rails.executed.length, 0, 'nothing executed');
 });
@@ -584,12 +537,8 @@ test('the live registry holds every rail kind and nothing else', () => {
     'hl_deposit',
     'intents_deposit',
     'intents_withdraw',
-    'lp_add',
-    'lp_remove',
     'mandate_arm',
     'swap',
-    'yield_deposit',
-    'yield_withdraw',
   ]);
   for (const kind of registry.kinds()) {
     const rail = registry.for({ kind } as WriteDraft);
@@ -623,7 +572,6 @@ test('demo mode owns no rails, and a rail proposal there refuses instead of reac
     store: createStore(dataDir),
     ledger: {
       snapshot: () => snapshot,
-      positions: () => [],
       intents: () => undefined,
       refresh: async () => snapshot,
       applyDemoTransfer: () => {},

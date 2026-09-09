@@ -308,13 +308,43 @@ body[data-view="trade"] .stage {
 
 /* ---------- Basic: one 640 px column ---------- */
 
+/* ONE COLUMN THAT TAKES THE HEIGHT OF THE WINDOW.
+
+   Basic is a deck, not a page: everything it holds is on screen at once, and
+   the list of what is held is the region that gives when there is more of it
+   than there is room. It fell back to a scrolling column here because the
+   column was sized by its content, so a seventh coin pushed Activity under the
+   fold and the deck became a page after all. */
 .basic-col {
   width: min(var(--basic-col), 100%);
   margin: 0 auto;
-  padding: var(--s-7) var(--s-5) var(--s-8);
+  padding: var(--s-6) var(--s-5) var(--s-5);
   display: flex;
   flex-direction: column;
-  gap: var(--s-5);
+  gap: var(--s-4);
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* The holdings panel absorbs the slack, so a wallet of three coins does not
+   leave a hole and a wallet of twenty does not push the folds off the screen. */
+.basic-col .panel[data-surface="holdings"] {
+  flex: 1 1 auto;
+  min-height: 132px;
+}
+
+/* Short window or narrow window, and it goes back to being a column that
+   scrolls as a column: below this there is no height left to give. */
+@media (max-height: 640px) {
+  .basic-col { flex: 0 0 auto; padding-bottom: var(--s-8); }
+  .basic-col .panel[data-surface="holdings"] { flex: 0 0 auto; }
+  .basic-col .scrolls { overflow-y: visible; }
+}
+
+@container world (max-width: 560px) {
+  .basic-col { flex: 0 0 auto; padding-bottom: var(--s-8); }
+  .basic-col .panel[data-surface="holdings"] { flex: 0 0 auto; }
+  .basic-col .scrolls { overflow-y: visible; }
 }
 
 /* The hero is unboxed: the total sits on the ground, and the one sentence under
@@ -356,14 +386,33 @@ body[data-view="trade"] .stage {
 
 /* ---------- Pro: 12 columns, max 1440 ---------- */
 
+/* TWO ROWS ON A FULL HEIGHT WORLD, and the second one closes the page.
+
+   The grid used to be one auto row of panels sitting at the top of the world,
+   three of them shut, so the deck was a strip of title bars over half a screen
+   of ground. It takes the height it is given now: row one sizes to what Money
+   and Trading hold, row two takes whatever is left, and a panel with more in it
+   than its box scrolls inside the box. */
 .pro-grid {
   width: min(var(--pro-max), 100%);
   margin: 0 auto;
-  padding: var(--s-5) var(--s-5) var(--s-8);
+  padding: var(--s-5);
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-template-rows: auto minmax(0, 1fr);
   gap: var(--gutter);
-  align-items: start;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Row one is sized by its content, so the wallet is the one thing on it that
+   can run away, and how tall it grows is what the two panels beside and below
+   it are left with. A quarter of the window is the balance: enough coins to
+   read the wallet at a glance, and the rest of the height goes to the two
+   panels that fill the page. */
+.pro-grid .holding-list {
+  max-height: 26vh;
 }
 
 .span-4 { grid-column: span 4; }
@@ -390,9 +439,20 @@ body[data-view="trade"] .stage {
   font-size: var(--fs-13);
 }
 
+/* Narrow enough and the four panels stack, which is four rows rather than two,
+   so the world goes back to being a column that scrolls as a column. */
 @container world (max-width: 900px) {
-  .pro-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .pro-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-rows: auto;
+    align-items: start;
+    flex: 0 0 auto;
+    padding-bottom: var(--s-8);
+  }
+
   .span-4, .span-5, .span-6, .span-7, .span-8, .span-12 { grid-column: span 6; }
+  .pro-grid .holding-list { max-height: none; }
+  .pro-grid .scrolls { overflow-y: visible; }
 }
 
 /* ---------- Trade: chart left, 320 px rail ---------- */

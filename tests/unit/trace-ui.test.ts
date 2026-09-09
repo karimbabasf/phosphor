@@ -89,8 +89,6 @@ const READS: Array<[string, string]> = [
   ['wallet', 'holdings'],
   ['composition', 'holdings'],
   ['gas_report', 'holdings'],
-  ['yield_read', 'earning'],
-  ['yield_auto', 'earning'],
   ['policy_show', 'rules'],
   ['mandate_catalog', 'rules'],
   ['proposal_status', 'activity'],
@@ -124,8 +122,6 @@ const ASKS: Array<[string, string]> = [
   ['propose_swap', 'holdings'],
   ['propose_consolidate', 'holdings'],
   ['propose_intents_withdraw', 'holdings'],
-  ['propose_yield_deposit', 'earning'],
-  ['propose_yield_withdraw', 'earning'],
   ['propose_policy_change', 'rules'],
   ['propose_mandate', 'rules'],
   ['propose_intents_deposit', 'moneyin'],
@@ -159,6 +155,11 @@ test('the server prefix is stripped and a tool nobody has mapped lands on the as
   const world = build();
   assert.equal(world.trace.surfaceOf('mcp__phosphor__balances').id, 'holdings');
   assert.equal(world.trace.surfaceOf('some_new_tool').id, 'assistant');
+  // Earning left the window with the capability. A yield tool is now a tool
+  // nobody has mapped, which lights the assistant rather than a panel that is
+  // no longer on either deck.
+  assert.equal(world.trace.surfaceOf('yield_read').id, 'assistant');
+  assert.equal(world.trace.surfaceOf('propose_yield_deposit').id, 'assistant');
   // The id comes from a language model, so a lookup on a plain object must not
   // hand back Object.prototype's own members.
   assert.equal(world.trace.surfaceOf('constructor').id, 'assistant');
@@ -170,12 +171,11 @@ test('a proposal card lands on the panel its kind belongs to', () => {
   assert.equal(world.trace.surfaceForProposal('swap'), 'holdings');
   assert.equal(world.trace.surfaceForProposal('consolidate'), 'holdings');
   assert.equal(world.trace.surfaceForProposal('intents_withdraw'), 'holdings');
-  assert.equal(world.trace.surfaceForProposal('yield_deposit'), 'earning');
-  assert.equal(world.trace.surfaceForProposal('yield_withdraw'), 'earning');
   assert.equal(world.trace.surfaceForProposal('intents_deposit'), 'moneyin');
   assert.equal(world.trace.surfaceForProposal('hl_deposit'), 'account');
   assert.equal(world.trace.surfaceForProposal('policy_change'), 'rules');
   assert.equal(world.trace.surfaceForProposal('mandate'), 'rules');
+  assert.equal(world.trace.surfaceForProposal('yield_deposit'), 'assistant');
   assert.equal(world.trace.surfaceForProposal('something_new'), 'assistant');
 });
 

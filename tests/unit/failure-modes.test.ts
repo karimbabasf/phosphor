@@ -30,9 +30,6 @@ import { createStore } from '../../src/store.ts';
 import { createAudit } from '../../src/audit.ts';
 import { defaultPolicy, savePolicy } from '../../src/policy/file.ts';
 import { renderSentences } from '../../src/policy/render.ts';
-import { fetchHoldings as solanaHoldings } from '../../src/ledger/solana.ts';
-import { fetchHoldings as nearHoldings } from '../../src/ledger/near.ts';
-import { fetchChainState as evmChainState } from '../../src/ledger/evm.ts';
 import { fetchIntentsHoldings } from '../../src/ledger/intents.ts';
 import type { LogEvent, Proposal } from '../../src/types.ts';
 
@@ -442,88 +439,9 @@ test('a read and a write arriving together both answer', async () => {
 
 // ---------- 5. malformed RPC shapes ----------
 
-function replying(payload: unknown, status = 200): typeof fetch {
-  return (async () =>
-    ({
-      ok: status >= 200 && status < 300,
-      status,
-      json: async () => payload,
-      text: async () => JSON.stringify(payload),
-    }) as unknown as Response) as typeof fetch;
-}
-
-const TOKENS = { USDC: { tokenId: 'So11111111111111111111111111111111111111112', decimals: 6 } };
-
-test('a Solana node answering base64 is a read failure, never a balance of zero', async () => {
-  // What a node does when it does not honour the jsonParsed encoding: the account data comes
-  // back as a base64 pair instead of an object. This used to throw a TypeError five levels deep,
-  // get caught by the chain refresh, and mark the chain stale with no reason named.
-  const base64Shaped = {
-    result: { value: [{ account: { data: ['Rk9PQkFS', 'base64'] } }] },
-  };
-  await assert.rejects(
-    () => solanaHoldings('sol', 'http://rpc.invalid', 'addr', TOKENS, replying(base64Shaped)),
-    /not jsonParsed/,
-  );
-});
-
-test('a Solana getBalance with no usable value never reports zero SOL', async () => {
-  for (const answer of [{ result: {} }, { result: { value: 'lots' } }, { result: null }]) {
-    await assert.rejects(
-      () => solanaHoldings('sol', 'http://rpc.invalid', 'addr', {}, replying(answer)),
-      /no usable value/,
-      `${JSON.stringify(answer)} must not read as an empty wallet`,
-    );
-  }
-});
-
-test('a genuinely empty Solana account still reads as zero', async () => {
-  const empty = { result: { value: [{ account: { data: { parsed: { info: { tokenAmount: { uiAmount: null } } } } } }] } };
-  let call = 0;
-  const fetchImpl = (async () => {
-    call += 1;
-    return {
-      ok: true,
-      status: 200,
-      json: async () => (call === 1 ? empty : { result: { value: 2_500_000_000 } }),
-      text: async () => '',
-    } as unknown as Response;
-  }) as typeof fetch;
-
-  const holdings = await solanaHoldings('sol', 'http://rpc.invalid', 'addr', TOKENS, fetchImpl);
-  assert.equal(holdings.length, 1, 'a zero token balance is dropped; the native holding stays');
-  assert.equal(holdings[0].symbol, 'SOL');
-  assert.equal(holdings[0].amount, 2.5);
-});
-
-test('an EVM node returning the wrong number of results is a read failure', async () => {
-  // A batch RPC answers positionally. A short array is not a partial answer, it is an answer
-  // whose fields no longer line up with the questions.
-  await assert.rejects(
-    () => evmChainState('arb', 'http://rpc.invalid', '0x1111111111111111111111111111111111111111', TOKENS, replying([])),
-    /.+/,
-  );
-});
-
-test('an EVM node returning an error envelope does not read as a balance', async () => {
-  await assert.rejects(
-    () =>
-      evmChainState('arb', 'http://rpc.invalid', '0x1111111111111111111111111111111111111111', TOKENS, replying({
-        error: { message: 'method not supported' },
-      })),
-    /.+/,
-  );
-});
-
-test('a NEAR node answering a shape the reader does not know is a read failure', async () => {
-  for (const answer of [{ result: {} }, { result: { result: 'not an array' } }, { error: { message: 'nope' } }]) {
-    await assert.rejects(
-      () => nearHoldings('near', 'http://rpc.invalid', 'phosphor.near', { USDC: { tokenId: 'usdc.near', decimals: 6 } }, replying(answer)),
-      /.+/,
-      `${JSON.stringify(answer)} must not read as a balance`,
-    );
-  }
-});
+/* The Solana, EVM and NEAR chain balance readers used to be asserted here. All three modules
+   are gone: this app holds nothing on a chain any more, so there is no chain balance to misread.
+   What is left below is the verifier read, which is the only balance Phosphor now has. */
 
 // NEAR answers a view call as a byte array of UTF-8 JSON, which is what these have to be.
 function nearView(json: string): { result: { result: number[] } } {

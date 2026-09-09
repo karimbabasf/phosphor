@@ -281,11 +281,10 @@ server.registerTool(
   },
 );
 
-// The kinds this DOOR opens onto, which is deliberately narrower than the set the app can
-// execute. lp_add and lp_remove are still implemented, still reachable by a human and still
-// tested; they are simply not tools an agent is handed, because neither has ever been run on a
-// live chain and an unproven fund-moving rail is not something to discover the edges of with
-// real money.
+// The kinds this DOOR opens onto, and it is now the whole set the app can execute. The rails
+// that used to sit behind this door without a tool in front of them (an on-chain DEX swap, the
+// two liquidity positions, the two lending moves) are gone from the app entirely, so the door
+// and the rail table finally name the same five things.
 //
 // Absent rather than guarded, on purpose. A check can be wrong; a capability that was never
 // registered cannot be called at all. The same argument the trading surface already makes for
@@ -318,10 +317,7 @@ type ProposeKind =
   | 'intents_deposit'
   | 'intents_withdraw'
   | 'hl_deposit'
-  | 'mandate_arm'
-  // Added 2026-08-20.
-  | 'yield_deposit'
-  | 'yield_withdraw';
+  | 'mandate_arm';
 
 /* NOT REGISTERED FOR AN ANALYST, and that early return is the whole of what makes a spawned
    worker safe to hand out freely.
@@ -329,8 +325,8 @@ type ProposeKind =
    the parent model wrote a brief for: nothing about that chain is a human, and the app must not
    let a chain of models reach the money path. The alternative shapes were a role check inside
    each handler or a deny list in the app, and both are checks, which can be wrong. This is the
-   same argument the ProposeKind list above already makes about lp_add: a capability that was
-   never registered cannot be called, cannot be argued into existence, and cannot be reached by
+   same argument the ProposeKind list above already makes: a capability that was never
+   registered cannot be called, cannot be argued into existence, and cannot be reached by
    text a model read somewhere. */
 function registerPropose(
   name: string,
@@ -361,8 +357,8 @@ const SELF_CUSTODY_CHAIN = z.enum(['eth', 'base', 'arb']);
 
 // This sentence used to read "Execution only ever happens after a human approves in the
 // app window". That is false below the click threshold, where the policy engine decides
-// and the proposal executes immediately with decidedBy 'policy' (verified 2026-08-12: a
-// $60.64 lp_add). One shared constant put the same false claim on all six propose tools.
+// and the proposal executes immediately with decidedBy 'policy' (verified 2026-08-12 on a
+// $60.64 move). One shared constant put the same false claim on every propose tool.
 //
 // A tool description is the whole interface an agent reasons from before it acts, so a
 // description that overstates the safety net is a defect in the safety net.
@@ -882,12 +878,11 @@ registerPropose('propose_policy_change', 'policy_change', `Proposes a change to 
 registerPropose(
   'propose_swap',
   'swap',
-  `Proposes swapping one token for another. The VENUE decides what actually happens, and they are not interchangeable, so name it:
-- 'intents-native': signs an intent over a balance ALREADY inside the intents.near verifier, moving nothing on chain. propose_intents_deposit is the funding step first. This is the only venue where chain/toChain name the ASSET's home chain rather than a wallet, so sol and near are meaningful here.
+  `Proposes swapping one token for another. There are two venues, they are not interchangeable, so name the one you mean:
+- 'intents-native': signs an intent over a balance ALREADY inside the intents.near verifier, moving nothing on chain. propose_intents_deposit is the funding step first. On this venue chain/toChain name the ASSET's home chain rather than a wallet, so sol and near are meaningful here.
 - 'oneclick': a cross-chain swap that transfers wallet funds to a per-quote NEAR Intents deposit address. Use for moving between chains.
-- 'uniswap-v3': an on-chain DEX swap, SAME CHAIN ONLY, out of this app's EVM wallet. chain must equal toChain; sol and near are not on-chain venues here.
 
-If you omit venue it defaults to 'uniswap-v3', so a cross-chain swap (chain != toChain) MUST name 'oneclick' or 'intents-native' or it is refused. A refusal names the venue to use.
+Omitting venue means 'oneclick'. There is no on-chain DEX venue: this app swaps through NEAR Intents and nowhere else.
 
 IMPORTANT: for 'intents-native', chain: 'sol' means "the SOL-flavoured balance held in the verifier", not "my Solana wallet". ${CANNOT_APPROVE}`,
   {
@@ -898,10 +893,10 @@ IMPORTANT: for 'intents-native', chain: 'sol' means "the SOL-flavoured balance h
     amountIn: z.number(),
     minAmountOut: z.number(),
     venue: z
-      .enum(['uniswap-v3', 'oneclick', 'intents-native'])
+      .enum(['oneclick', 'intents-native'])
       .optional()
       .describe(
-        "which rail: 'uniswap-v3' (on-chain, same-chain), 'oneclick' or 'intents-native' (both NEAR Intents, cross-chain). Omitting it means uniswap-v3, so a cross-chain swap must name one of the intents venues.",
+        "which rail: 'oneclick' (wallet funds, cross-chain) or 'intents-native' (a balance already inside the verifier). Omitting it means oneclick.",
       ),
   },
 );
@@ -993,150 +988,15 @@ THE DIRECTION IS ONE WAY AND THAT IS THE POINT: 1Click cannot quote out of Hyper
   },
 );
 
-// propose_lp_add and propose_lp_remove used to be registered here and are deliberately gone.
-// The rails still exist under src/rails/ and a human can still drive them; what changed is that
-// they are no longer tools an agent holds. Neither has been run on a live chain, and the wallet
-// read after an lp_add is known to serve pre-trade balances while claiming nothing is stale, so
-// sizing a second move off the first is already wrong on that path. Removing them shrinks what
-// an agent can get wrong with real money to the set that has actually been proven end to end.
+// propose_lp_add and propose_lp_remove used to be registered here and are gone with their rail.
+// So are propose_yield_deposit, propose_yield_withdraw, yield_read and yield_auto. The rails
+// behind all six were removed from the app: this door is no longer narrower than what the app
+// can execute, it is the same set.
 //
-// propose_hl_deposit was on that list until 2026-08-20 and is now registered just above. It
+// propose_hl_deposit was off this list until 2026-08-20 and is now registered just above. It
 // earned its way back not by being tested more but by changing shape: the bespoke Arbitrum
 // bridge became a NEAR Intents route, and that route is structurally one-way. See the note on
 // ProposeKind.
-//
-// The yield rail shipped earlier on 2026-08-20 with no tools at all, held off this door by the
-// same rule and said so in its own spec. The four tools below went on later the same day because
-// the rule was SATISFIED, not waived: five real movements on Arbitrum Sepolia, three by hand and
-// two filed by the loop, every one through the real proposal service and the real policy engine,
-// ending in a full exit that returned 56.292312 USDC to the wallet. The realized 4.2672 percent
-// the app derived and the 4.2687 percent APR the reserve reports were computed independently and
-// agree, which is what makes the position read believable rather than merely present.
-//
-// The lp_add objection does not carry across either. A yield position is one balanceOf on a
-// rebasing receipt, and buildWallet already takes the yield holdings, so there is no pre-trade
-// balance here to size a second move off.
-//
-// lp_add and lp_remove are unchanged and stay off.
-
-// ---------- the yield rail ----------
-//
-// Registered as a group rather than filed under the reads and the proposes, because an agent
-// that can deposit and cannot read the position back is holding half a rail. The order below is
-// the order to use them in.
-//
-// The venue is wired to the chains in DEPLOYMENTS in src/yield/aave.ts, each row verified by
-// reading getReserveData from the Pool. A chain with no row answers "Earning is not available
-// on <chain>" rather than throwing, and adding a chain means reading that Pool and writing the
-// aToken down, on purpose, by a human.
-
-registerRead(
-  'yield_read',
-  [
-    'What the yield rail is doing, in one call: every position with its principal, what it is worth',
-    'now and what it has earned, the realized percentage with the window it was measured over, the',
-    'venue table with each live rate and whether that venue is healthy and reachable, the idle',
-    'stablecoin not yet working, and what the loop decided on its recent looks, including its refusals.',
-    '',
-    'THE `caveat` FIELD TRAVELS WITH THE PERCENTAGE AND SO MUST YOU. It reads "Observed, not promised.',
-    'This is what it did, not what it will do." The realized number is backward-looking and annualised',
-    'from a window that may be hours long, so quoting it without that sentence turns a measurement into',
-    'a forecast. Under an hour there is no percentage at all, only dollars, and that is deliberate.',
-    '',
-    'The realized percentage and the venue rate now are different numbers measured different ways, and',
-    'both are correct: one is what this position did, one is what the reserve pays at this block. Never',
-    'present one as the other. When no allocator is configured the answer is { available: false, reason },',
-    'which is a different claim from an empty position: it means this app is not wired for yield, not',
-    'that you have nothing supplied. Read-only, changes nothing.',
-  ].join(' '),
-  {},
-);
-
-registerPropose(
-  'propose_yield_deposit',
-  'yield_deposit',
-  `Proposes supplying a stablecoin to a lending venue, so a balance that is sitting still earns instead. The venue is Aave v3 and its receipt token rebases, which is why this rail can prove what it is worth: the position IS the balance, one balanceOf, with no accounting layer between the chain and the number.
-
-Leave chain out and the app supplies the best-paying venue that is healthy and reachable, which is exactly what the allocator loop does. Name a chain only when a human asked for that chain. symbol defaults to USDC. amount is the TOKEN amount and not dollars: 50 means 50 USDC.
-
-Where the funds land is the venue's own Pool contract, resolved from the verified deployment table in src/yield/aave.ts and already on the counterparty allowlist. There is no argument on this tool that can point them anywhere else.
-
-Only the chains with a verified market can be named. Anything else is refused with "Earning is not available on that chain", which is the venue table talking rather than the policy. ${CANNOT_APPROVE}`,
-  {
-    chain: SELF_CUSTODY_CHAIN.optional().describe(
-      'omit it and the app picks the best-paying healthy venue, which is what the loop does; name one only when a human asked for that chain',
-    ),
-    symbol: z.string().optional().describe('defaults to USDC'),
-    amount: z.number().describe('the token amount, not dollars'),
-  },
-);
-
-registerPropose(
-  'propose_yield_withdraw',
-  'yield_withdraw',
-  `Proposes taking a stablecoin position back out of the lending venue, all of it or part of it.
-
-OMIT amount TO CLOSE THE POSITION, and prefer that over computing the size yourself. It is not a shortcut, it is the correct call: the receipt token rebases, so interest lands while the proposal waits for a click, and a figure worked out a block ago is already smaller than the position and leaves dust behind every time. Pass a number only for a partial exit that is MEANT to leave something working.
-
-Leave chain out and the app uses the chain the position is on. When positions sit on more than one chain it refuses and names them, so read that list and call again naming one. symbol defaults to USDC. The funds come back to this app's own wallet, derived from the key it holds, and nothing here can name another one.
-
-Only the chains with a verified market can be named, the same list propose_yield_deposit takes. ${CANNOT_APPROVE}`,
-  {
-    chain: SELF_CUSTODY_CHAIN.optional().describe(
-      'omit it and the app uses the chain the position is on; it refuses and names them when positions sit on more than one',
-    ),
-    symbol: z.string().optional().describe('defaults to USDC'),
-    amount: z
-      .number()
-      .optional()
-      .describe('OMIT to take the whole position out, interest included. A number is a partial exit and leaves dust on a rebasing receipt'),
-  },
-);
-
-// Neither a read nor a propose, and the argument for that is worth having in front of anyone
-// reading this, because starting a loop looks like standing authority and this repo reserves
-// standing authority for propose_mandate, which never auto-approves on any network.
-//
-// It is not the same thing. What the loop can do is FILE a yield_deposit proposal, which is a
-// capability the agent already holds outright one tool up. Every proposal the loop files meets
-// the identical policy engine, click threshold, 24-hour session cap and audit log. Starting it
-// grants no authority over money the agent did not already have; it grants a schedule.
-//
-// propose_mandate is genuinely different: an armed bot sends orders to a venue directly, at
-// machine speed, with no proposal per order and no gate inside the loop. That is why it is
-// gated and this is not.
-server.registerTool(
-  'yield_auto',
-  {
-    description: [
-      'Starts or stops the allocator loop: the thing that keeps looking after you have disconnected.',
-      '',
-      'Started, it looks every sixty seconds. It reads each venue live rate and the idle balance, and when',
-      'idle stablecoin is worth putting to work it FILES a yield_deposit proposal. It files and stops there:',
-      'the loop never executes. Every proposal it files meets the same policy engine, the same click',
-      'threshold, the same 24-hour session cap and the same audit log as one you file yourself, so starting',
-      'it hands over no authority over money that propose_yield_deposit did not already hand you. What it',
-      'adds is time.',
-      '',
-      'Three limits bound that and none of them is an argument here: fifteen minutes between proposals',
-      'whatever the tick rate, consecutive failures backing off by doubling to a four hour ceiling, and a',
-      'move between venues only when the spread over thirty days beats what the move costs.',
-      '',
-      'This tool moves no money and gets no policy verdict, which puts it in the same class as `switch` and',
-      '`watch`: it changes what the app does next, and every flip is written to the audit log. A human has',
-      'the same switch in the window and the kill switch above it. Returns the new state and when the loop',
-      'next looks.',
-    ].join(' '),
-    inputSchema: {
-      enabled: z
-        .boolean()
-        .describe(
-          'true starts the loop, false stops it. Required, with no default: a switch whose default is one of its two states gets flipped by an agent that meant to read it. Call yield_read to see the current state.',
-        ),
-    },
-  },
-  async (args) => proxy({ op: 'yield_auto', enabled: args.enabled }),
-);
 
 // Neither a read nor a propose: it mutates, but it moves no money and gets no policy
 // verdict. What it does change is what a HUMAN sees before they decide, which is why

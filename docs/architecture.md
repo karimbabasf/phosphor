@@ -70,7 +70,7 @@ brief was written by another model, and nothing in that chain is a human.
 | `src/config.ts` | Merges `config.local.json` over `config.json`, applies the `PHOSPHOR_*` env overrides, resolves `keysPath` and asserts it sits outside the repo, creates the data dir. |
 | `src/server.ts` | HTTP surface: the UI, the read APIs, `/api/mcp`, and the token-gated decision routes. |
 | `src/mcp.ts` | The stdio MCP server. A proxy, nothing else. |
-| `src/ledger/` | `evm.ts`, `solana.ts`, `near.ts` readers plus `demo.ts` fixtures, behind one interface in `index.ts`. Read-only by construction. `snapshot()` reads token balances; `positions()` reads pool positions separately, so a venue being down cannot mark a whole chain stale. |
+| `src/ledger/` | `intents.ts` reads the NEAR Intents verifier, `near.ts` reads NEAR chain balances, `demo.ts` holds the fixtures, and `index.ts` is the one interface over them. Read-only by construction. Live mode reads ONE place: the verifier. Nothing is held on a chain, so `snapshot().holdings` is empty on a live snapshot and `intents()` carries what this app owns, with its own ok flag. |
 | `src/wallet.ts` | The wallet view: one row per token and per LP position, with chain, quantity, unit price, USD value and share. Natives included. |
 | `src/composition.ts` | Classifies holdings against `data/risk-table.json`: issuer, freeze power, shares. Natives excluded, because composition rules are about stablecoin issuer concentration. |
 | `src/policy/engine.ts` | Pure. Takes a draft and a context, returns one of three verdicts. No IO, no clock, no network. |

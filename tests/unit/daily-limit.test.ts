@@ -73,7 +73,6 @@ function liveLedgerOn(_dir: string): Ledger {
   const snap: LedgerSnapshot = { ...loadDemoLedger(), mode: 'live' };
   return {
     snapshot: () => snap,
-    positions: () => [],
     intents: () => undefined,
     refresh: async () => snap,
     applyDemoTransfer: () => {

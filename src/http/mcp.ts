@@ -18,10 +18,9 @@ import { gasReads } from './read/gas.ts';
 import { marketReads } from './read/market.ts';
 import { tradeReads } from './read/trade.ts';
 import { walletReads } from './read/wallet.ts';
-import { yieldReads } from './read/yield.ts';
 import { handlePropose } from './propose.ts';
 import { handleView } from './view.ts';
-import { handleSetBasicCoins, handleSetViewMode, handleYieldAuto } from './mutation.ts';
+import { handleSetBasicCoins, handleSetViewMode } from './mutation.ts';
 import { READ_TOOLS } from './context.ts';
 import type { Ctx, ReadTable } from './context.ts';
 
@@ -34,7 +33,6 @@ const READS: ReadTable = {
   ...marketReads,
   ...chartReads,
   ...agentReads,
-  ...yieldReads,
   ...gasReads,
   ...tradeReads,
 };
@@ -189,9 +187,7 @@ export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.S
             ? `set_view_mode ${String(body.mode ?? '?')}`
             : op === 'set_basic_coins'
               ? `set_basic_coins ${(Array.isArray(body.coins) ? body.coins : []).join(' ')}`
-              : op === 'yield_auto'
-                ? `yield_auto ${body.enabled === true ? 'on' : 'off'}`
-                : `unknown op ${op}`;
+              : `unknown op ${op}`;
   // Contract: every op that reads, proposes or moves the window is audit-logged
   // before dispatch, arguments included verbatim.
   ctx.audit.append('tool_call', `agent: ${capLabel(label)}`, body);
@@ -216,13 +212,9 @@ export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.S
     await handleSetBasicCoins(ctx, body, res);
     return;
   }
-  if (op === 'yield_auto') {
-    handleYieldAuto(ctx, body, res);
-    return;
-  }
   fail(
     res,
     400,
-    `unknown op: ${op}. known ops: hello, bye, read, propose, view, set_view_mode, set_basic_coins, yield_auto`,
+    `unknown op: ${op}. known ops: hello, bye, read, propose, view, set_view_mode, set_basic_coins`,
   );
 }

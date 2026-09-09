@@ -25,7 +25,7 @@ import { createAudit } from '../../src/audit.ts';
 import { createStore } from '../../src/store.ts';
 import { defaultPolicy } from '../../src/policy/file.ts';
 import { createMarketData } from '../../src/market/index.ts';
-import type { AppConfig, ChainId, ChainStatus, Holding, LedgerSnapshot, LpPosition } from '../../src/types.ts';
+import type { AppConfig, ChainId, ChainStatus, Holding, LedgerSnapshot } from '../../src/types.ts';
 
 const CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 
@@ -66,7 +66,6 @@ async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
     riskRows: [],
     ledger: {
       snapshot,
-      positions: (): LpPosition[] => [],
       intents: () => undefined,
       refresh: async () => snapshot(),
       applyDemoTransfer: () => {},
@@ -86,10 +85,6 @@ async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
       proposeIntentsDeposit: async () => { throw new Error('unused'); },
       proposeIntentsWithdraw: async () => { throw new Error('unused'); },
       proposeMandate: async () => { throw new Error('unused'); },
-      proposeLpAdd: async () => { throw new Error('unused'); },
-      proposeLpRemove: async () => { throw new Error('unused'); },
-      proposeYieldDeposit: async () => { throw new Error('unused'); },
-      proposeYieldWithdraw: async () => { throw new Error('unused'); },
       approve: async () => { throw new Error('unused'); },
       refuse: async () => { throw new Error('unused'); },
       get: () => undefined,

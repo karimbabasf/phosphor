@@ -1,10 +1,16 @@
 /* Pro: a 12-column grid at most 1440 wide, for a person who already holds
    crypto and wants to see everything and set the rules.
 
-   The same four components Basic has, at higher density: rows 36 px instead of
-   48, labels 13 px instead of 14. Four panels, four surfaces, and the chart is
-   in trade, which is the single biggest de-noising move available and costs
-   nothing because trade is one word away. */
+   Four panels on a full-height grid, and none of them starts shut. Three of
+   them used to, so the screen a person landed on was one open panel and three
+   title bars over half a page of nothing, and a shut panel head looked exactly
+   like a static one, so nothing on the deck read as clickable either. Karim,
+   2026-09-09: "nothing clickable, nothing unclickable ... has to be dynamic and
+   always fill the blank spaces."
+
+   A panel now carries its content. The grid is two rows, the second one grows
+   to close the page, and anything taller than its box scrolls inside the box
+   with a fade at the cut rather than pushing the page down. */
 (function () {
   'use strict';
 
@@ -12,21 +18,26 @@
   var net = window.PhosphorNet;
   var api = window.PhosphorApi;
   var store = window.PhosphorState;
+  var marks = window.PhosphorMarks;
 
   /* The same figure as a surface's decay: a row that just moved keeps the
      afterglow for as long as the panel it sits in would. */
   var CHANGED_MS = 2400;
 
+  /* The trading venue is a second feed, not part of the state frame, so this
+     screen asks for it on its own clock and only while it is the visible one. */
+  var TRADE_POLL_MS = 20000;
+
   var refs = {};
   var mounted = false;
+
+  /* What the venue last said, and whether the last ask worked. A number from a
+     read that failed is not a number this panel is allowed to print. */
+  var trade = { data: null, failed: false, reason: '' };
 
   var CHAIN_NAMES = {
     eth: 'Ethereum', base: 'Base', arb: 'Arbitrum', sol: 'Solana', near: 'NEAR'
   };
-
-  /* The three chains POST /api/yield/withdraw accepts. Anything else, including
-     nothing, is refused 400 before the request reaches a rail. */
-  var WITHDRAW_CHAINS = ['eth', 'base', 'arb'];
 
   /* Allowlist entries that are venues rather than addresses. The policy stores
      the id it checks against; the window shows the name a person knows it by. */
@@ -44,10 +55,17 @@
     store.subscribe(render);
     window.PhosphorReceipts.onChange(function () {
       if (refs.activityBody) {
-        window.PhosphorReceipts.render(refs.activityBody, { limit: 12 });
+        window.PhosphorReceipts.render(refs.activityBody, { limit: 25 });
         renderFeeTotal();
+        refs.activityCut();
       }
     });
+    loadTrade();
+    window.setInterval(function () {
+      if (document.hidden) return;
+      if (document.body.dataset.view !== 'pro') return;
+      loadTrade();
+    }, TRADE_POLL_MS);
   }
 
   function build(host) {
@@ -58,22 +76,26 @@
        rows that a person had to add up themselves to answer "how much ETH do I
        have", and the coin they own was never on screen as one thing. */
     var money = panel('Money', 'span-7', 'holdings');
-    var moneyList = dom.el('div', 'holding-list');
+    var bar = dom.el('div', 'comp-bar');
+    bar.setAttribute('aria-hidden', 'true');
+    money.body.appendChild(bar);
+    var moneyList = dom.el('div', 'holding-list scrolls');
     money.body.appendChild(moneyList);
     var emptyNote = dom.el('p', 'meta');
     money.body.appendChild(emptyNote);
     grid.appendChild(money.node);
 
-    /* Earning. Folded when it is empty, because "nothing is earning" is a whole
-       sentence and does not need a panel opened to be read. */
-    var earning = panel('Earning', 'span-5', 'earning', { folded: true });
-    var earningBody = dom.el('div', 'stack');
-    earning.body.appendChild(earningBody);
-    grid.appendChild(earning.node);
+    /* Trading. Phosphor reaches two venues and this deck named one of them: the
+       money at NEAR Intents is a row in the wallet above, and the money at the
+       trading venue was on no screen but the trade screen. */
+    var trading = linkPanel('Trading', 'span-5', 'account', 'Open the trade screen');
+    var tradingBody = dom.el('div', 'stack grow');
+    trading.body.appendChild(tradingBody);
+    grid.appendChild(trading.node);
 
     /* Activity: receipts, with fees per row and a total for the window. */
-    var activity = panel('Activity', 'span-7', 'activity', { folded: true });
-    var activityBody = dom.el('div', 'panel-body-flush activity-list');
+    var activity = panel('Activity', 'span-7', 'activity');
+    var activityBody = dom.el('div', 'panel-body-flush activity-list scrolls grow');
     activity.body.appendChild(activityBody);
     var feeRow = dom.el('div', 'between panel-total');
     feeRow.appendChild(dom.el('span', 'label', 'Fees in this window'));
@@ -82,12 +104,11 @@
     activity.body.appendChild(feeRow);
     grid.appendChild(activity.node);
 
-    /* Limits: the policy, the daily spend and the allowlist. Folded, and it is
-       the panel the complaint was really about: seven sentences, seven buttons
-       that only ever said "ask your assistant", and five raw addresses. It is
-       reference material, so it reads as reference material now. */
-    var limits = panel('Limits', 'span-5', 'rules', { folded: true });
-    var limitsBody = dom.el('div', 'stack');
+    /* Limits: the policy, the daily spend and the allowlist. It is reference
+       material, so it reads as reference material: sentences, one meter, and
+       the addresses behind the one thing on this deck worth a click to open. */
+    var limits = panel('Limits', 'span-5', 'rules');
+    var limitsBody = dom.el('div', 'stack scrolls grow');
     limits.body.appendChild(limitsBody);
     grid.appendChild(limits.node);
 
@@ -97,45 +118,35 @@
       money: money,
       moneyPanel: money.node,
       moneyList: moneyList,
+      bar: bar,
       emptyNote: emptyNote,
-      earning: earning,
-      earningPanel: earning.node,
-      earningBody: earningBody,
+      trading: trading,
+      tradingBody: tradingBody,
       limits: limits,
       limitsBody: limitsBody,
       activity: activity,
-      activityPanel: activity.node,
       activityBody: activityBody,
-      feeValue: feeValue
+      feeValue: feeValue,
+      moneyCut: cuts(moneyList),
+      activityCut: cuts(activityBody),
+      limitsCut: cuts(limitsBody)
     };
 
     window.PhosphorReceipts.load();
   }
 
-  /* A PANEL IS A TITLE, ONE LINE THAT STANDS IN FOR THE REST, AND A FOLD.
+  /* A PANEL IS A TITLE, ONE LINE THAT STANDS IN FOR THE REST, AND ITS CONTENT.
 
-     Karim, 2026-09-08: "i fucking hate the pro mode, looks too full of
-     information, looks like a dictionary. we need titles, maybe sub
-     information, and the rest fucking foldable."
-
-     He is describing a screen with no hierarchy. Every panel was open, every
-     panel was the same weight, and the Limits panel alone was seven full
-     sentences with seven buttons and five raw addresses under them, so the
-     screen had no shape and nothing to land on. Density is not the problem on
-     an operator deck: undifferentiated density is.
-
-     So a panel now owes a person one line even when it is shut. The summary is
-     the fact you would have opened it for, and a section is folded by default
-     when its detail is reference rather than news. The fold is remembered for
-     the session, because a person who opens the allowlist to read it should not
-     have to open it again on the next state frame. */
-  function panel(title, span, surface, options) {
-    var opts = options || {};
+     The head used to be a button and the panel used to fold. Three of the four
+     started shut, which is why the deck was half empty, and a head that folds
+     is drawn exactly like a head that does nothing, which is why nothing read
+     as clickable. So a head is a static readout now: no caret, no cursor, no
+     hover. The things that open on this screen say so instead. */
+  function panel(title, span, surface) {
     var node = dom.el('section', 'panel ' + span);
     node.dataset.surface = surface;
 
-    var head = dom.el('button', 'panel-head panel-fold');
-    head.type = 'button';
+    var head = dom.el('div', 'panel-head');
     var heading = dom.el('div', 'panel-heading');
     heading.appendChild(dom.el('h2', 'title-sm', title));
     var summary = dom.el('p', 'panel-summary');
@@ -145,26 +156,57 @@
     var right = dom.el('div', 'panel-head-right');
     var lead = dom.el('span', 'panel-lead mono tick');
     right.appendChild(lead);
-    right.appendChild(dom.el('span', 'panel-caret'));
     head.appendChild(right);
 
-    var body = dom.el('div', 'panel-body');
+    var body = dom.el('div', 'panel-body panel-fill');
     node.appendChild(head);
     node.appendChild(body);
 
-    var folded = opts.folded === true;
-    function paint() {
-      dom.setAttr(node, 'data-folded', folded ? 'true' : null);
-      dom.setAttr(head, 'aria-expanded', folded ? 'false' : 'true');
-      dom.setHidden(body, folded);
-    }
-    dom.on(head, 'click', function () {
-      folded = !folded;
-      paint();
-    });
-    paint();
-
     return { node: node, head: head, body: body, summary: summary, lead: lead };
+  }
+
+  /* The same panel, whole, as one target. It is a link rather than a button
+     because it goes somewhere: role and keys say so, and the foot says so in
+     words, because a surface that navigates and does not admit it is the thing
+     this screen was rebuilt to stop doing. */
+  function linkPanel(title, span, surface, hint) {
+    var p = panel(title, span, surface);
+    p.node.className += ' opens';
+    p.node.setAttribute('role', 'link');
+    p.node.tabIndex = 0;
+    p.node.setAttribute('aria-label', title + '. ' + hint);
+
+    var foot = dom.el('div', 'panel-foot');
+    foot.appendChild(dom.el('span', 'meta', hint));
+    foot.appendChild(dom.el('span', 'chev'));
+    p.node.appendChild(foot);
+
+    function go() {
+      window.PhosphorShell.setView('trade', { fromClick: true });
+    }
+    dom.on(p.node, 'click', go);
+    dom.on(p.node, 'keydown', function (event) {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      go();
+    });
+    return p;
+  }
+
+  /* A region that scrolls inside itself says where it was cut, so a sentence
+     sliced in half is drawn as a sentence sliced in half rather than as the end
+     of the list. The attribute drives the mask; the mask is not painted at all
+     when there is nothing over the edge. */
+  function cuts(node) {
+    function paint() {
+      var top = node.scrollTop > 2;
+      var bottom = node.scrollTop + node.clientHeight < node.scrollHeight - 2;
+      dom.setAttr(node, 'data-cut', top && bottom ? 'both' : (top ? 'top' : (bottom ? 'bottom' : null)));
+    }
+    dom.on(node, 'scroll', paint, { passive: true });
+    if (window.ResizeObserver) new window.ResizeObserver(paint).observe(node);
+    paint();
+    return paint;
   }
 
   /* The one number on this screen that is the answer to the question somebody
@@ -191,7 +233,6 @@
     if (!mounted) return;
     var state = store.get() || {};
     renderMoney(state);
-    renderEarning(state);
     renderLimits(state);
     renderFeeTotal();
   }
@@ -247,7 +288,6 @@
      Ethereum or Arbitrum, so one row in five was speaking a different language. */
   function placeName(row) {
     if (row.kind === 'intents') return 'NEAR Intents';
-    if (row.kind === 'yield') return 'Earning' + (row.chain ? ', ' + chainName(row.chain) : '');
     if (row.kind === 'lp') return 'Pool' + (row.chain ? ', ' + chainName(row.chain) : '');
     return chainName(row.chain);
   }
@@ -262,21 +302,13 @@
     var wallet = state.wallet || {};
     var rows = Array.isArray(wallet.rows) ? wallet.rows.slice() : [];
 
-    /* Two blocks used to sit here adding Ready to move and Trading money rows
-       from state.intents and state.trade. buildState emits neither key, so both
-       were dead and the table never gained either row. Money held at Intents is
-       already in wallet.rows as a row of kind intents; money at the trading
-       venue is only in /api/trade, which this screen does not read, and inventing
-       it from a key that does not exist was never going to show it. */
-    var all = rows;
-
-    if (!all.length && !store.loaded()) {
+    if (!rows.length && !store.loaded()) {
       renderMoneySkeleton();
       return;
     }
     delete refs.moneyList.dataset.skeleton;
 
-    var coins = groupByCoin(all);
+    var coins = groupByCoin(rows);
 
     dom.reconcile(refs.moneyList, coins, function (coin) {
       return coin.id;
@@ -284,15 +316,18 @@
       var wrap = dom.el('div', 'holding');
       var head = dom.el('button', 'holding-head');
       head.type = 'button';
+      head.appendChild(marks.disc(''));
       var name = dom.el('div', 'holding-name');
       name.appendChild(dom.el('span', 'holding-symbol'));
       name.appendChild(dom.el('span', 'holding-where meta'));
       head.appendChild(name);
+      /* The value is the figure, the amount is the footnote under it. Three
+         right-aligned number columns is what made every row read the same. */
       var figures = dom.el('div', 'holding-figures');
-      figures.appendChild(dom.el('span', 'holding-qty mono meta'));
-      figures.appendChild(dom.el('span', 'holding-value mono tick'));
-      figures.appendChild(dom.el('span', 'holding-share mono meta'));
+      figures.appendChild(dom.el('span', 'holding-value tick'));
+      figures.appendChild(dom.el('span', 'holding-qty mono'));
       head.appendChild(figures);
+      head.appendChild(dom.el('span', 'chev'));
       wrap.appendChild(head);
       var places = dom.el('div', 'holding-places');
       wrap.appendChild(places);
@@ -300,25 +335,37 @@
         if (wrap.dataset.single === 'true') return;
         var open = wrap.dataset.open === 'true';
         dom.setAttr(wrap, 'data-open', open ? null : 'true');
+        refs.moneyCut();
       });
+      lightWith(wrap, head);
       return wrap;
     }, function (wrap, coin) {
       var head = wrap.children[0];
-      var name = head.children[0];
-      var figures = head.children[1];
+      var mark = head.children[0];
+      var name = head.children[1];
+      var figures = head.children[2];
       var single = coin.places.length < 2;
       dom.setAttr(wrap, 'data-single', single ? 'true' : null);
+      wrap.dataset.coin = coin.id;
+      /* A coin in one place opens onto nothing, so it is a static readout and
+         is drawn as one. Only a row that has something under it is a target. */
+      dom.setAttr(head, 'class', single ? 'holding-head' : 'holding-head opens');
+
+      if (mark.dataset.symbol !== coin.symbol) {
+        mark.dataset.symbol = coin.symbol;
+        mark.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" focusable="false">'
+          + marks.markFor(coin.symbol) + '</svg>';
+      }
 
       dom.setText(name.children[0], coin.symbol);
       /* One place is named on the row itself, because a fold that opens onto a
          single line is a click that tells a person what they already knew. */
       dom.setText(name.children[1], single ? placeName(coin.places[0])
         : coin.places.length + ' places');
-      dom.setText(figures.children[0], coin.countable ? dom.qty(coin.quantity) : '');
-      dom.setNumber(figures.children[1], coin.priced ? dom.usd(coin.valueUsd) : 'not priced');
-      dom.setAttr(figures.children[1], 'data-unpriced', coin.priced ? null : 'true');
-      dom.setText(figures.children[2], coin.priced ? dom.pct(coin.share || 0) : '');
-      markChanged(figures.children[1], coin.priced ? dom.usd(coin.valueUsd) : 'not priced');
+      dom.setNumber(figures.children[0], coin.priced ? dom.usd(coin.valueUsd) : 'not priced');
+      dom.setAttr(figures.children[0], 'data-unpriced', coin.priced ? null : 'true');
+      dom.setText(figures.children[1], coin.countable ? dom.qty(coin.quantity) : '');
+      markChanged(figures.children[0], coin.priced ? dom.usd(coin.valueUsd) : 'not priced');
 
       dom.reconcile(wrap.children[1], single ? [] : coin.places, function (row, i) {
         return (row.kind || 'token') + ':' + (row.chain || '') + ':' + i;
@@ -336,8 +383,10 @@
       });
     });
 
-    /* The total is the head of the panel, so it is on screen whether or not
-       anybody has the holdings open. */
+    renderComposition(coins);
+
+    /* The total is the head of the panel, so it is the first thing read rather
+       than a sum under a list. */
     setLead(refs.money, dom.usd(wallet.totalUsd || 0));
     setSummary(refs.money, moneySummary(coins, wallet));
 
@@ -352,6 +401,69 @@
     dom.setText(refs.emptyNote, notes.join('. '));
     dom.setHidden(refs.emptyNote, !notes.length);
     dom.setAttr(refs.emptyNote, 'class', stale.length ? 'meta warn' : 'meta');
+    refs.moneyCut();
+  }
+
+  /* THE SHAPE OF THE WALLET, ONCE, AS A BAR.
+
+     The rows carried a third number column for each coin's share of the total,
+     and three right-aligned figures per row is why they all read the same. The
+     share is one fact about the whole wallet rather than nine facts about nine
+     coins, so it is drawn once, as one 4px bar under the head.
+
+     The segments are steps of neutral lightness off --text and never a hue. A
+     coloured wallet is a wallet where the one number that means something, a
+     loss or a chain that would not answer, no longer stands out. */
+  function renderComposition(coins) {
+    var priced = [];
+    var total = 0;
+    for (var i = 0; i < coins.length; i += 1) {
+      if (!coins[i].priced || coins[i].valueUsd <= 0) continue;
+      priced.push(coins[i]);
+      total += coins[i].valueUsd;
+    }
+    dom.setHidden(refs.bar, priced.length < 2 || total <= 0);
+    if (priced.length < 2 || total <= 0) {
+      dom.clear(refs.bar);
+      return;
+    }
+
+    var last = priced.length - 1;
+    dom.reconcile(refs.bar, priced, function (coin) {
+      return coin.id;
+    }, function () {
+      var seg = dom.el('span', 'comp-seg');
+      lightWith(seg, seg);
+      return seg;
+    }, function (seg, coin, index) {
+      seg.dataset.coin = coin.id;
+      seg.style.flexGrow = String(coin.valueUsd / total);
+      /* Lightest first, and the run is spread over however many coins there
+         are, so two coins are told apart as easily as nine. */
+      var step = last === 0 ? 0 : (index / last);
+      seg.style.setProperty('--seg', 'color-mix(in srgb, var(--text) '
+        + Math.round(88 - step * 66) + '%, var(--bg-2))');
+      seg.title = coin.symbol + ' ' + dom.pct(coin.valueUsd / total);
+    });
+  }
+
+  /* A coin is one thing in two places on this panel, so pointing at either one
+     lights both. Pointer only: on a touch screen a hover is a tap that has not
+     decided yet, and this would fire on the way to opening a row. */
+  function lightWith(owner, target) {
+    if (!window.matchMedia || !window.matchMedia('(hover: hover) and (pointer: fine)').matches) return;
+    dom.on(target, 'mouseenter', function () { light(owner.dataset.coin, true); });
+    dom.on(target, 'mouseleave', function () { light(owner.dataset.coin, false); });
+    dom.on(target, 'focus', function () { light(owner.dataset.coin, true); });
+    dom.on(target, 'blur', function () { light(owner.dataset.coin, false); });
+  }
+
+  function light(id, on) {
+    if (!id || !refs.moneyPanel) return;
+    var found = refs.moneyPanel.querySelectorAll('[data-coin="' + CSS.escape(id) + '"]');
+    for (var i = 0; i < found.length; i += 1) {
+      dom.setAttr(found[i], 'data-lit', on ? 'true' : null);
+    }
   }
 
   /* A row whose number just moved carries the afterglow for a moment, so a
@@ -394,6 +506,7 @@
     if (refs.moneyList.dataset.skeleton === 'true') return;
     refs.moneyList.dataset.skeleton = 'true';
     dom.clear(refs.moneyList);
+    dom.setHidden(refs.bar, true);
     for (var i = 0; i < 4; i += 1) {
       var line = dom.el('div', 'holding-place');
       var bar = dom.el('div', 'skel grow');
@@ -403,107 +516,134 @@
     }
   }
 
-  /* Every name here is YieldView's own: totalPrincipalUsd, totalEarnedUsd,
-     autoAllocate. This read principalUsd, earnedUsd, apy and auto, and fact()
-     skips an empty value, so all three figures were dropped and the panel was
-     two buttons with the auto one permanently reading off. */
-  function renderEarning(state) {
-    var y = state.yield;
-    dom.clear(refs.earningBody);
-    if (!y || (!y.totalPrincipalUsd && !y.totalValueUsd)) {
-      setSummary(refs.earning, 'Nothing is earning');
-      setLead(refs.earning, '');
-      var empty = dom.el('div', 'empty');
-      empty.appendChild(dom.el('p', 'empty-title', 'Nothing is earning'));
-      empty.appendChild(dom.el('p', '', 'Ask your assistant to put some of your dollars to work.'));
-      refs.earningBody.appendChild(empty);
+  /* ---------- the trading venue ---------- */
+
+  /* The second of the two venues this app reaches. Its money is in no state
+     frame: /api/trade is the only place it exists, and this deck did not read
+     it, so a person holding a position could see every dollar except the ones
+     at risk. */
+  function loadTrade() {
+    if (!mounted) return;
+    return api.trade()
+      .then(function (result) {
+        trade.data = result && result.data ? result.data : null;
+        trade.failed = false;
+        trade.reason = '';
+        renderTrading();
+      })
+      .catch(function (err) {
+        /* Nothing that arrived before is redrawn as if it were current. A
+           number from a read that failed is a claim this panel cannot make. */
+        trade.failed = true;
+        trade.reason = net.readable(err, true);
+        renderTrading();
+      });
+  }
+
+  function renderTrading() {
+    if (!refs.tradingBody) return;
+    var host = refs.tradingBody;
+    dom.clear(host);
+
+    if (trade.failed) {
+      setLead(refs.trading, '--');
+      setSummary(refs.trading, 'Hyperliquid, unread');
+      var facts = dom.el('div', 'facts');
+      fact(facts, 'Trading money', '--');
+      fact(facts, 'Spare', '--');
+      host.appendChild(facts);
+      host.appendChild(dom.el('p', 'meta warn', trade.reason
+        || 'The trading venue did not answer, so these are unknown rather than zero.'));
       return;
     }
 
-    var apy = rateOn(y);
-    setLead(refs.earning, typeof y.totalValueUsd === 'number' ? dom.usd(y.totalValueUsd)
-      : (typeof y.totalPrincipalUsd === 'number' ? dom.usd(y.totalPrincipalUsd) : ''));
-    setSummary(refs.earning, apy === null ? 'Supplied and earning' : 'Earning ' + dom.pct(apy, 2));
-
-    var facts = dom.el('div', 'facts');
-    fact(facts, 'Supplied', typeof y.totalPrincipalUsd === 'number' ? dom.usd(y.totalPrincipalUsd) : '');
-    /* Places follow the number, the same rule fees use: four only when two would
-       round the figure to nothing. A day's interest is fractions of a cent and a
-       year's is not, and $94.1200 reads as a machine printing a float. */
-    fact(facts, 'Earned', typeof y.totalEarnedUsd === 'number'
-      ? dom.usd(y.totalEarnedUsd, Math.abs(y.totalEarnedUsd) < 0.01 ? 4 : 2)
-      : '');
-    var rate = rateOn(y);
-    fact(facts, 'Rate', rate === null ? '' : dom.pct(rate, 2));
-    refs.earningBody.appendChild(facts);
-
-    /* basisUnknown counts positions this app can derive no cost for, so their
-       value is in the total and what they made is in nothing. A figure that is
-       short by an unknown amount is printed with the reason beside it. */
-    if (y.basisUnknown > 0) {
-      refs.earningBody.appendChild(dom.el('p', 'meta', y.basisUnknown === 1
-        ? 'One position has no cost on record, so what it made is not in that figure.'
-        : y.basisUnknown + ' positions have no cost on record, so what they made is not in that figure.'));
-    }
-    if (y.stale) {
-      refs.earningBody.appendChild(dom.el('p', 'meta warn',
-        'The last read of these failed. These are the numbers from the one before it.'));
+    var data = trade.data;
+    var account = data && data.account;
+    if (!data || !account || account.accountKnown === false) {
+      setLead(refs.trading, '');
+      setSummary(refs.trading, 'Hyperliquid');
+      host.appendChild(emptyBlock('Still reading the account',
+        'The venue has not said yet what kind of account this is.'));
+      return;
     }
 
-    var actions = dom.el('div', 'hstack-2 wrap');
-    var chains = withdrawChains(y);
-    for (var c = 0; c < chains.length; c += 1) {
-      actions.appendChild(withdrawButton(chains[c], chains.length > 1));
+    var funded = typeof account.equityUsd === 'number'
+      || typeof account.freeUsd === 'number';
+    if (!funded) {
+      setLead(refs.trading, '');
+      setSummary(refs.trading, 'Hyperliquid, not funded');
+      host.appendChild(emptyBlock('No trading money yet',
+        'Ask your assistant to fund the trading account, and it will ask you first.'));
+      return;
     }
 
-    var auto = dom.el('button', 'btn btn-ghost');
-    auto.appendChild(dom.el('span', 'btn-label', y.autoAllocate ? 'Auto-earn is on' : 'Auto-earn is off'));
-    actions.appendChild(auto);
-    refs.earningBody.appendChild(actions);
+    setLead(refs.trading, typeof account.equityUsd === 'number' ? dom.usd(account.equityUsd) : '');
+    var positions = Array.isArray(data.positions) ? data.positions : [];
+    setSummary(refs.trading, 'Hyperliquid' + (positions.length
+      ? ', ' + (positions.length === 1 ? '1 position open' : positions.length + ' positions open')
+      : ', nothing open'));
+
+    var box = dom.el('div', 'facts');
+    fact(box, 'Trading money', typeof account.equityUsd === 'number' ? dom.usd(account.equityUsd) : '--');
+    fact(box, 'Spare', typeof account.freeUsd === 'number' ? dom.usd(account.freeUsd) : '--');
+    host.appendChild(box);
+
+    /* How much of the account is still between the position and a forced close.
+       It is the third figure of a leveraged account and it comes off the same
+       read as the other two, drawn with the meter the trade screen uses so the
+       two screens do not disagree about what a margin bar looks like. */
+    if (typeof account.healthPct === 'number') {
+      var wrap = dom.el('div', 'stack-2');
+      var top = dom.el('div', 'between');
+      top.appendChild(dom.el('span', 'label', 'Safety margin'));
+      var value = dom.el('span', 'body mono');
+      dom.setText(value, dom.pct(account.healthPct));
+      top.appendChild(value);
+      wrap.appendChild(top);
+      var meter = dom.el('div', 'meter');
+      var fill = dom.el('div', 'meter-fill');
+      fill.style.width = Math.max(0, Math.min(1, account.healthPct)) * 100 + '%';
+      if (account.healthPct < 0.3) fill.dataset.tone = 'down';
+      else if (account.healthPct < 0.5) fill.dataset.tone = 'warn';
+      meter.appendChild(fill);
+      wrap.appendChild(meter);
+      host.appendChild(wrap);
+    } else if (account.unified) {
+      /* The venue publishes no whole-account health figure for a unified
+         account, and approximating one from numbers this feed does not carry is
+         the one thing not to do on a panel about money at risk. */
+      host.appendChild(dom.el('p', 'meta',
+        'This is a unified account, so the venue publishes no single safety margin for it.'));
+    }
+
+    /* One line per position: which way, how much, and what it is worth so far.
+       The whole panel goes to the trade screen, which is where the rest is. */
+    var block = dom.el('div', 'position-block stack-2');
+    if (!positions.length) {
+      block.appendChild(dom.el('p', 'body dim', 'Nothing open'));
+    } else {
+      for (var i = 0; i < positions.length; i += 1) {
+        block.appendChild(positionLine(positions[i]));
+      }
+    }
+    host.appendChild(block);
   }
 
-  /* The rate the money is actually getting, from the venue quote for the chain it
-     is on. y.best is the best rate available anywhere, which is a different fact
-     and would overstate the return every time the money is not on that chain. */
-  function rateOn(y) {
-    var chains = withdrawChains(y);
-    var venues = Array.isArray(y.venues) ? y.venues : [];
-    for (var i = 0; i < venues.length; i += 1) {
-      if (chains.indexOf(venues[i].chain) < 0) continue;
-      if (venues[i].rate && typeof venues[i].rate.apy === 'number') return venues[i].rate.apy;
+  function positionLine(position) {
+    var row = dom.el('div', 'between position-line');
+    var left = dom.el('span', 'body');
+    var side = position.side === 'short' ? 'Short' : 'Long';
+    var size = typeof position.sizeCoin === 'number' ? dom.qty(position.sizeCoin) + ' ' : '';
+    dom.setText(left, side + ' ' + size + String(position.coin || '')
+      + (typeof position.notionalUsd === 'number' ? ', ' + dom.usd(position.notionalUsd) : ''));
+    row.appendChild(left);
+    var pnl = dom.el('span', 'mono');
+    if (typeof position.unrealisedUsd === 'number') {
+      dom.setText(pnl, (position.unrealisedUsd >= 0 ? '+' : '') + dom.usd(position.unrealisedUsd));
+      pnl.className = 'mono ' + (position.unrealisedUsd >= 0 ? 'up' : 'down');
     }
-    return null;
-  }
-
-  /* Which chains the money is actually on. The route takes the whole position on
-     one named chain and refuses any other value, so a button that sends nothing
-     comes back "chain must be one of eth, base, arb; got ''" and moves no money.
-     Both Bring it back buttons in this window did exactly that. */
-  function withdrawChains(y) {
-    var out = [];
-    var positions = (y && Array.isArray(y.positions)) ? y.positions : [];
-    for (var i = 0; i < positions.length; i += 1) {
-      var chain = positions[i].chain;
-      if (WITHDRAW_CHAINS.indexOf(chain) < 0 || out.indexOf(chain) >= 0) continue;
-      out.push(chain);
-    }
-    if (!out.length && y && WITHDRAW_CHAINS.indexOf(y.chain) >= 0) out.push(y.chain);
-    return out;
-  }
-
-  function withdrawButton(chain, name) {
-    var button = dom.el('button', 'btn');
-    button.type = 'button';
-    button.appendChild(dom.el('span', 'btn-label',
-      name ? 'Bring it back from ' + chainName(chain) : 'Bring it back'));
-    dom.on(button, 'click', function () {
-      window.PhosphorShell.setPending(button, true, 'Bringing it back');
-      api.yieldWithdraw({ chain: chain })
-        .then(function () { return window.PhosphorShell.refresh({}); })
-        .catch(function (err) { window.PhosphorToast.show(net.readable(err, true), 'down'); })
-        .finally(function () { window.PhosphorShell.setPending(button, false); });
-    });
-    return button;
+    row.appendChild(pnl);
+    return row;
   }
 
   function renderLimits(state) {
@@ -596,15 +736,15 @@
       wrap.appendChild(dom.el('p', 'label', 'Money can only go to your own wallets and these venues'));
       wrap.appendChild(dom.el('p', 'meta', 'No list is set, so a destination is checked against your limits alone.'));
       refs.limitsBody.appendChild(wrap);
+      setSummary(refs.limits, limitsSummary(state));
+      refs.limitsCut();
       return;
     }
 
-    /* The allowlist folds inside the folded panel, and that is not one fold too
-       many. Five addresses of forty characters were the tallest thing on this
-       screen and the least often read: an address is checked character by
-       character on the day somebody has a reason to, and is noise on every
-       other day. The venues keep their names on the outside because a name is
-       read at a glance and is the half of this list that answers a question. */
+    /* The addresses fold and the names do not. An address is checked character
+       by character on the day somebody has a reason to and is noise on every
+       other day; a venue name is read at a glance and is the half of this list
+       that answers a question. */
     var venues = [];
     var addresses = [];
     for (var a = 0; a < allow.length; a += 1) {
@@ -612,12 +752,12 @@
       else addresses.push(allow[a]);
     }
 
-    var head = dom.el('button', 'allow-head');
+    var head = dom.el('button', 'allow-head opens');
     head.type = 'button';
     var headText = addresses.length === 1 ? '1 wallet of yours' : addresses.length + ' wallets of yours';
     if (venues.length) headText += ', ' + venues.join(', ');
     head.appendChild(dom.el('span', 'body grow', 'Money can only go to ' + headText));
-    head.appendChild(dom.el('span', 'panel-caret'));
+    head.appendChild(dom.el('span', 'chev'));
     wrap.appendChild(head);
 
     var box = dom.el('div', 'allowlist');
@@ -629,12 +769,14 @@
       var open = !box.hidden;
       dom.setHidden(box, open);
       dom.setAttr(head, 'aria-expanded', open ? 'false' : 'true');
+      refs.limitsCut();
     });
     dom.setAttr(head, 'aria-expanded', 'false');
     if (addresses.length) wrap.appendChild(box);
     refs.limitsBody.appendChild(wrap);
 
     setSummary(refs.limits, limitsSummary(state));
+    refs.limitsCut();
   }
 
   /* The three facts somebody opens Limits to check: what gets asked, what gets
@@ -684,6 +826,13 @@
     row.appendChild(dom.el('span', 'label', label));
     row.appendChild(dom.el('span', 'body mono', value));
     host.appendChild(row);
+  }
+
+  function emptyBlock(title, note) {
+    var empty = dom.el('div', 'empty');
+    empty.appendChild(dom.el('p', 'empty-title', title));
+    empty.appendChild(dom.el('p', '', note));
+    return empty;
   }
 
   window.PhosphorPro = { boot: boot };

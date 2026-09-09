@@ -296,8 +296,8 @@ function counterpartyOf(draft: RailDraft): string {
 // Where the OUTPUT lands, which is a different question from who we hand the funds to.
 // A swap passes tokens through an allowlisted router and the router delivers them to
 // draft.to; allowlisting only the router says nothing about who receives the proceeds.
-// lp_add and lp_remove deliver to the signer and hl_deposit credits whoever sent, so those
-// have no such field. Returns null when the kind has no destination.
+// hl_deposit credits whoever sent, so it has no such field. Returns null when the kind has
+// no destination.
 //
 // intents_deposit has one and it is not an address on any chain: it is the account id
 // credited inside the verifier contract. Checking it here matters more than for a swap, not

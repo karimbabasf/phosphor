@@ -8,7 +8,14 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-import type { HlDepositDraft, LpAddDraft, LpRemoveDraft, Policy, RiskRow, SwapDraft } from '../../src/types.ts';
+import type {
+  HlDepositDraft,
+  IntentsDepositDraft,
+  IntentsWithdrawDraft,
+  Policy,
+  RiskRow,
+  SwapDraft,
+} from '../../src/types.ts';
 import { loadDemoLedger } from '../../src/ledger/demo.ts';
 import { classify } from '../../src/composition.ts';
 import { defaultPolicy } from '../../src/policy/file.ts';
@@ -82,33 +89,32 @@ function hlDeposit(over: Partial<HlDepositDraft> = {}): HlDepositDraft {
   };
 }
 
-function lpAdd(over: Partial<LpAddDraft> = {}): LpAddDraft {
+function intentsDeposit(over: Partial<IntentsDepositDraft> = {}): IntentsDepositDraft {
   return {
-    kind: 'lp_add',
+    kind: 'intents_deposit',
     chain: 'base',
-    venue: 'uniswap-v3',
-    poolId: '0xpool',
-    token0: { symbol: 'USDC', tokenId: '0xusdc', amount: 30, decimals: 6 },
-    token1: { symbol: 'WETH', tokenId: '0xweth', amount: 0.01, decimals: 18 },
-    feeTier: 500,
-    tickLower: -60,
-    tickUpper: 60,
-    amountUsd: 60,
+    symbol: 'USDC',
+    tokenId: 'USDC',
+    amount: 30,
+    amountUsd: 30,
+    minCredited: 29.4,
     from: SELF_EVM,
+    intentsAccount: SELF_EVM.toLowerCase(),
     counterparty: VENUE,
     ...over,
   };
 }
 
-function lpRemove(over: Partial<LpRemoveDraft> = {}): LpRemoveDraft {
+function intentsWithdraw(over: Partial<IntentsWithdrawDraft> = {}): IntentsWithdrawDraft {
   return {
-    kind: 'lp_remove',
+    kind: 'intents_withdraw',
     chain: 'base',
-    venue: 'uniswap-v3',
-    positionId: '4242',
-    liquidityPct: 0.5,
-    amountUsd: 40,
-    from: SELF_EVM,
+    symbol: 'USDC',
+    amount: 20,
+    amountUsd: 20,
+    minReceived: 19.6,
+    from: SELF_EVM.toLowerCase(),
+    to: SELF_EVM,
     counterparty: VENUE,
     ...over,
   };
@@ -117,8 +123,8 @@ function lpRemove(over: Partial<LpRemoveDraft> = {}): LpRemoveDraft {
 const ALL = [
   ['swap', swap()],
   ['hl_deposit', hlDeposit()],
-  ['lp_add', lpAdd()],
-  ['lp_remove', lpRemove()],
+  ['intents_deposit', intentsDeposit()],
+  ['intents_withdraw', intentsWithdraw()],
 ] as const;
 
 // ---------- the rails are reachable at all ----------
@@ -136,8 +142,8 @@ test('a rail pointed at an unlisted venue is refused', () => {
   const cases = [
     swap({ counterparty: UNKNOWN_VENUE }),
     hlDeposit({ counterparty: UNKNOWN_VENUE }),
-    lpAdd({ counterparty: UNKNOWN_VENUE }),
-    lpRemove({ counterparty: UNKNOWN_VENUE }),
+    intentsDeposit({ counterparty: UNKNOWN_VENUE }),
+    intentsWithdraw({ counterparty: UNKNOWN_VENUE }),
   ];
   for (const draft of cases) {
     const v = evaluate(draft, ctxWith());

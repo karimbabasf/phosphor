@@ -34,11 +34,6 @@
     swap: 'holdings',
     consolidate: 'holdings',
     intents_withdraw: 'holdings',
-    /* earning */
-    yield_read: 'earning',
-    yield_auto: 'earning',
-    yield_deposit: 'earning',
-    yield_withdraw: 'earning',
     /* the rules */
     policy_show: 'rules',
     policy_change: 'rules',
@@ -91,7 +86,6 @@
       if (hit) return hit;
     }
     if (id.indexOf('chart_') === 0 || id.indexOf('trade_') === 0) return 'chart';
-    if (id.indexOf('yield_') === 0) return 'earning';
     if (id.indexOf('agent_') === 0) return 'assistant';
     /* A tool nobody has mapped still came from the assistant, so it lights the
        assistant rather than nothing. */

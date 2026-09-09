@@ -311,7 +311,7 @@ test('a withdrawal runs the other way: out of the pool, back to us', () => {
         from: SELF,
         counterparty: '0xBfC91D59fdAA134A4ED45f7B584cAf96D7792Eff',
       },
-    } as Partial<Proposal>),
+    } as unknown as Partial<Proposal>),
   ]);
   assert.equal(entry!.action, 'withdraw');
   assert.equal(entry!.place, 'arb');
@@ -341,7 +341,7 @@ test('a full exit records no amount, because the figure in the draft was stale b
         from: SELF,
         counterparty: '0xBfC91D59fdAA134A4ED45f7B584cAf96D7792Eff',
       },
-    } as Partial<Proposal>),
+    } as unknown as Partial<Proposal>),
   ]);
   assert.equal(entry!.sent, null);
   assert.equal(entry!.venue, 'aave-v3');

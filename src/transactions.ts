@@ -136,13 +136,20 @@ export type TxEntry = {
   reasons: string[]; // the policy verdict that let it through
 };
 
-const ACTIONS: Record<WriteDraft['kind'], TxEntry['action'] | null> = {
+/* Keyed on string, not on WriteDraft['kind'], and the four extra keys are the reason.
+   state/proposals.json holds EXECUTED rows naming kinds this app no longer builds: lp_add,
+   lp_remove, yield_deposit and yield_withdraw were real rails, and the money they moved was
+   real. A history that drops or throws on them would be lying about what happened, so every
+   reader that switches on kind stays tolerant of them. They cannot be proposed again; they
+   can still be read. */
+const ACTIONS: Record<string, TxEntry['action'] | null | undefined> = {
   swap: 'swap',
   hl_deposit: 'deposit',
   intents_deposit: 'deposit',
   intents_withdraw: 'withdraw',
   transfer: 'transfer',
   consolidate: 'consolidate',
+  // Retired rails, kept for the rows already on disk.
   lp_add: 'lp add',
   lp_remove: 'lp remove',
   // Money leaving the wallet for a lending pool, and coming back from one. Deliberately the
@@ -236,9 +243,70 @@ type Sides = {
   counterparty: string | undefined;
 };
 
+/* The shape a retired draft has on disk. Not a live type: nothing builds one of these any
+   more, and this exists so the four kinds the rail table dropped can still be rendered off
+   the rows already written. Every field is optional because it is being read back out of
+   JSON rather than off a draft the type system saw built. */
+type RetiredDraft = {
+  kind: string;
+  chain?: TxPlace;
+  venue?: string;
+  symbol?: string;
+  amount?: number;
+  amountBase?: string | null;
+  liquidityPct?: number;
+  token0?: { symbol: string; amount: number };
+  token1?: { symbol: string };
+  from?: string;
+  counterparty?: string;
+};
+
+const RETIRED_KINDS = ['lp_add', 'lp_remove', 'yield_deposit', 'yield_withdraw'];
+
+/* Historic rows, rendered off what the retired draft actually carries.
+   These used to fall through to `default`, which is a quiet way to be wrong: the fallback
+   returns place 'eth', so every one of these movements read as having happened on Ethereum
+   whatever chain it was actually on, with no venue, no amount and no counterparty. The gas
+   figures survived it only by accident, because TxGas.place is the chain whose RPC answered
+   and overrides the draft's guess, so the money column was wrong while the fee column beside
+   it was right.
+   A withdrawal may carry a null amountBase, which is how "the whole position, interest
+   included" was expressed: the rebasing receipt grew while the proposal waited, so the rail
+   read the balance at execution rather than trusting a number computed a block earlier.
+   `amount` still holds what was quoted, so it is the honest thing to show, and a full exit
+   says so in `note` rather than printing a figure that was already stale when written. */
+function retiredSidesOf(draft: RetiredDraft): Sides {
+  const place = draft.chain ?? 'eth';
+  const base = { place, toPlace: place, venue: draft.venue ?? null, counterparty: draft.counterparty };
+  if (draft.kind === 'lp_add') {
+    return {
+      ...base,
+      sent:
+        draft.token0 === undefined
+          ? null
+          : { symbol: `${draft.token0.symbol}/${draft.token1?.symbol ?? '?'}`, amount: draft.token0.amount },
+      from: draft.from,
+      to: draft.counterparty,
+    };
+  }
+  if (draft.kind === 'lp_remove') {
+    return { ...base, sent: null, from: draft.from, to: draft.counterparty };
+  }
+  const sent =
+    draft.symbol === undefined || draft.amount === undefined
+      ? null
+      : { symbol: draft.symbol, amount: draft.amount };
+  if (draft.kind === 'yield_deposit') {
+    return { ...base, sent, from: draft.from, to: draft.counterparty };
+  }
+  // yield_withdraw: money coming back, so from and to swap over.
+  return { ...base, sent: draft.amountBase === null ? null : sent, from: draft.counterparty, to: draft.from };
+}
+
 // One place that knows what each draft kind means in wallet terms: what left, where from,
 // where to. Every field comes off the draft the policy engine governed.
 function sidesOf(draft: WriteDraft): Sides {
+  if (RETIRED_KINDS.includes(draft.kind)) return retiredSidesOf(draft as unknown as RetiredDraft);
   switch (draft.kind) {
     case 'swap':
       return {
@@ -305,64 +373,17 @@ function sidesOf(draft: WriteDraft): Sides {
         counterparty: undefined,
       };
     }
-    case 'lp_add':
-      return {
-        place: draft.chain,
-        toPlace: draft.chain,
-        venue: draft.venue,
-        sent: { symbol: `${draft.token0.symbol}/${draft.token1.symbol}`, amount: draft.token0.amount },
-        from: draft.from,
-        to: draft.counterparty,
-        counterparty: draft.counterparty,
-      };
-    case 'lp_remove':
-      return {
-        place: draft.chain,
-        toPlace: draft.chain,
-        venue: draft.venue,
-        sent: null,
-        from: draft.from,
-        to: draft.counterparty,
-        counterparty: draft.counterparty,
-      };
-    // Supplying a stablecoin to a lending pool, and taking it back.
-    //
-    // These fell through to `default` until 2026-08-20, which is a quiet way to be wrong: the
-    // fallback returns place 'eth', so every yield movement in the history read as having
-    // happened on Ethereum whatever chain it was actually on, with no venue, no amount and no
-    // counterparty. The gas figures survived it only by accident, because TxGas.place is the
-    // chain whose RPC answered and overrides the draft's guess, so the money column was wrong
-    // while the fee column beside it was right.
-    //
-    // The two directions differ in exactly one field. A withdrawal may carry a null
-    // amountBase, which is how "the whole position, interest included" is expressed: the
-    // rebasing receipt grows while the proposal waits, so the rail reads the balance at
-    // execution rather than trusting a number computed a block earlier. `amount` still holds
-    // what was quoted, so it is the honest thing to show, and a full exit says so in `note`
-    // rather than printing a figure that was already stale when it was written.
-    case 'yield_deposit':
-      return {
-        place: draft.chain,
-        toPlace: draft.chain,
-        venue: draft.venue,
-        sent: { symbol: draft.symbol, amount: draft.amount },
-        from: draft.from,
-        to: draft.counterparty,
-        counterparty: draft.counterparty,
-      };
-    case 'yield_withdraw':
-      return {
-        place: draft.chain,
-        toPlace: draft.chain,
-        venue: draft.venue,
-        sent: draft.amountBase === null ? null : { symbol: draft.symbol, amount: draft.amount },
-        from: draft.counterparty,
-        to: draft.from,
-        counterparty: draft.counterparty,
-      };
     default:
       return { place: 'eth', toPlace: 'eth', venue: null, sent: null, from: undefined, to: undefined, counterparty: undefined };
   }
+}
+
+/* The one row detail a retired kind still needs. An lp_remove pulled a percentage of a
+   position rather than an amount, so without this its history row shows no size at all. */
+function noteOf(draft: WriteDraft): string | null {
+  const retired = draft as unknown as RetiredDraft;
+  if (retired.kind !== 'lp_remove') return null;
+  return retired.liquidityPct === undefined ? null : `${round(retired.liquidityPct * 100)}% of the position`;
 }
 
 // What arrived, when the rail recorded it. Only read off values the rail itself computed:
@@ -473,7 +494,9 @@ export function buildTransactions(params: BuildParams): TxEntry[] {
       toPlace: sides.toPlace,
       sent: sides.sent,
       received: receivedOf(p.draft, detail),
-      note: p.draft.kind === 'lp_remove' ? `${round(p.draft.liquidityPct * 100)}% of the position` : null,
+      // Historic only: lp_remove is a retired kind, and this line is why its rows still read
+      // correctly. See RETIRED_KINDS above.
+      note: noteOf(p.draft),
       valueUsd: usdOf(p.draft),
       from: party('from', sides.from, sides.place, selfAddresses),
       to: party('to', sides.to, sides.toPlace, selfAddresses),

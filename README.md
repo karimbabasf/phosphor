@@ -30,8 +30,12 @@ You say "put $500 to work" or "short SOL if it loses this trend line". The agent
 proposal. The app prices it, runs it through your policy, and either executes it or waits for your
 click. What an agent can propose: a swap inside NEAR Intents, funding that balance and taking it
 back out, funding the Hyperliquid perps account from any chain this app signs for, gathering a
-stablecoin onto one chain, putting a stablecoin to work in a lending venue and taking it back, a
-change to the policy itself, and arming a rule-driven bot on Hyperliquid perpetuals.
+stablecoin onto one chain, a change to the policy itself, and arming a rule-driven bot on
+Hyperliquid perpetuals.
+
+Two venues, and only two: NEAR Intents and Hyperliquid. The five chains are still signed for and
+money still crosses them, but nothing is held on one: a balance lives inside the Intents verifier
+or inside the Hyperliquid account.
 
 The agent can read everything and propose actions. It can never approve, never execute, and never
 touch policy without a human click in the app window. The policy engine enforces authored rules at
@@ -56,8 +60,8 @@ the agent is not in it.
 
 ## What it answers
 
-1. What do I hold, everywhere? Tokens, native gas assets and liquidity pool positions, each
-   with quantity, unit price and value, the way a wallet shows it.
+1. What do I hold? Every balance inside the NEAR Intents verifier, with quantity, unit price and
+   value, the way a wallet shows it.
 2. What is my money made of, and is that what I want? (issuer, freeze power, reserve type, depeg
    history, from a curated risk table with a source per row, never model-generated)
 3. Do this, but not more than X.
@@ -206,7 +210,7 @@ costs you the ability to tell a working agent from a dead one.
 
 **The beam** is how you watch it work. A phosphor screen glows where the beam lands and fades
 after it leaves, so every tool call sends a point of light from its step to the panel it touched:
-your holdings, the earning panel, the rules, the chart. The panel glows, holds a scan line while the
+your holdings, the rules, the chart. The panel glows, holds a scan line while the
 call is in flight, and decays once the result is back. Rose when a call fails. Amber when what
 landed is a proposal waiting for you.
 
@@ -217,11 +221,10 @@ before you click. Nothing an assistant writes can draw a button that moves money
 text only and the card renders from the server's own pending list.
 
 **Basic** is the same app for a non-technical reader: the total, one sentence that is the state of
-your money, one sentence that is your rules, what you hold, what is earning, where to send money,
-what happened. **Pro** is the operator's density, as four sections that each owe you one line even
-when they are shut: Money holds your total in its head and lists one row per coin with the places
-it sits in a click below, and Earning, Activity and Limits fold behind a summary of the fact you
-would have opened them for. An asset this app cannot price says "not priced" rather than $0.00,
+your money, one sentence that is your rules, what you hold, where to send money, what happened.
+**Pro** is the operator's density, as sections that each owe you one line even when they are shut:
+Money holds your total in its head and lists one row per coin with the places it sits in a click
+below, and Activity and Limits fold behind a summary of the fact you would have opened them for. An asset this app cannot price says "not priced" rather than $0.00,
 because a zero beside a balance you own reads as nothing owned. **Trade** is the chart with the
 position, the account, the rules and the fills beside it.
 
@@ -271,9 +274,9 @@ the agent reads and the pixel the human sees come from one implementation.
 
 ## Docs
 
-- [Reference](docs/reference.md): the tool surface, the earning loop, gas, how a proposal is
-  decided, policy as sentences, the first run, mode and config, keys and signing, the code layout
-  and the operator profile.
+- [Reference](docs/reference.md): the tool surface, gas, how a proposal is decided, policy as
+  sentences, the first run, mode and config, keys and signing, the code layout and the operator
+  profile.
 - [Window v2 design](docs/superpowers/specs/2026-09-07-phosphor-window-v2-beam-design.md): the
   conversation first, the beam, the decision dock, the palette and the performance rules.
 - [Architecture](docs/architecture.md): the two-process topology, module map, data flow, failure

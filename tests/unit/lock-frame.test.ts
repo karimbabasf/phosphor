@@ -29,7 +29,7 @@ import { createMarketData } from '../../src/market/index.ts';
 import { createKeystore } from '../../src/keystore/index.ts';
 import { createSession } from '../../src/keystore/session.ts';
 import { defaultParams } from '../../src/keystore/kdf.ts';
-import type { AppConfig, ChainId, ChainStatus, LedgerSnapshot, LpPosition } from '../../src/types.ts';
+import type { AppConfig, ChainId, ChainStatus, LedgerSnapshot } from '../../src/types.ts';
 
 const CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 const PASSWORD = 'a long enough password';
@@ -71,7 +71,6 @@ async function boot() {
     riskRows: [],
     ledger: {
       snapshot,
-      positions: (): LpPosition[] => [],
       intents: () => undefined,
       refresh: async () => snapshot(),
       applyDemoTransfer: () => {},
@@ -88,10 +87,6 @@ async function boot() {
       proposeIntentsDeposit: async () => { throw new Error('unused'); },
       proposeIntentsWithdraw: async () => { throw new Error('unused'); },
       proposeMandate: async () => { throw new Error('unused'); },
-      proposeLpAdd: async () => { throw new Error('unused'); },
-      proposeLpRemove: async () => { throw new Error('unused'); },
-      proposeYieldDeposit: async () => { throw new Error('unused'); },
-      proposeYieldWithdraw: async () => { throw new Error('unused'); },
       approve: async () => { throw new Error('unused'); },
       refuse: async () => { throw new Error('unused'); },
       get: () => undefined,

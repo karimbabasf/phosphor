@@ -167,17 +167,6 @@
   min-height: 0;
 }
 
-/* A FOLDING PANEL. The head is the control, so it is a button across the full
-   width: a caret you have to hit is a target the size of a full stop. */
-.panel-fold {
-  width: 100%;
-  text-align: left;
-  background: none;
-  border: 0;
-  cursor: pointer;
-  align-items: flex-start;
-}
-
 .panel-heading {
   min-width: 0;
   display: flex;
@@ -209,27 +198,6 @@
   letter-spacing: -0.01em;
 }
 
-.panel-caret {
-  width: 8px;
-  height: 8px;
-  border-right: 1.5px solid var(--text-3);
-  border-bottom: 1.5px solid var(--text-3);
-  transform: rotate(45deg) translate(-2px, -2px);
-  transition: transform var(--dur-swap) var(--ease-out),
-              border-color var(--dur-press) var(--ease-out);
-}
-
-[data-folded="true"] > .panel-fold .panel-caret,
-[aria-expanded="false"] > .panel-caret,
-[aria-expanded="false"] .panel-caret {
-  transform: rotate(-45deg) translate(-2px, 2px);
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .panel-fold:hover .panel-caret { border-color: var(--text-2); }
-  .panel-fold:hover .panel-summary { color: var(--text-2); }
-}
-
 .panel-body {
   padding: 0 var(--s-4) var(--s-4);
   min-height: 0;
@@ -237,6 +205,120 @@
 
 .panel-body-flush {
   padding: 0 0 var(--s-2);
+}
+
+/* A body that closes the panel. The grid gives the panel a height, so the body
+   takes what is left of it and the region inside the body that can outgrow the
+   box is the one that scrolls. */
+.panel-fill {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Where a panel that goes somewhere says so, in words, at the bottom edge. */
+.panel-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  margin-top: auto;
+  padding: var(--s-3) var(--s-4);
+  border-top: 1px solid var(--line);
+}
+
+/* ---------- What a surface says about itself ----------
+
+   Karim, 2026-09-09: "nothing clickable, nothing unclickable, overall a bad
+   experience when unfolding."
+
+   Three tiers on this window and nothing between them. A STATIC READOUT never
+   moves: no cursor, no hover, no caret, and most of this window is one. A thing
+   that OPENS or GOES somewhere carries all five of the marks below at once,
+   because four out of five reads as a bug rather than as a hint. A thing that
+   ACTS is a .btn, which presses harder than either.
+
+   The rest colour comes from two variables so one rule serves a whole bordered
+   panel and a bare row in a list: a panel keeps its line, a row has none until
+   it is pointed at. */
+.opens {
+  cursor: pointer;
+  border: 1px solid var(--opens-line, transparent);
+  background: var(--opens-bg, transparent);
+  transition: border-color var(--dur-press) var(--ease-out),
+              background-color var(--dur-press) var(--ease-out),
+              transform var(--dur-press) var(--ease-out);
+}
+
+.panel.opens {
+  --opens-line: var(--line);
+  --opens-bg: var(--bg-1);
+}
+
+/* The caret is drawn, not typed. A glyph in a label reads as an arrow in the
+   sentence, and the window has none of those. */
+.chev {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-top: 1.5px solid var(--text-3);
+  border-right: 1.5px solid var(--text-3);
+  transform: rotate(45deg);
+  transition: transform var(--dur-press) var(--ease-out),
+              border-color var(--dur-press) var(--ease-out);
+}
+
+/* A touch screen fires hover on the way to a tap, so every hover in this block
+   is behind a pointer that can actually rest on something. */
+@media (hover: hover) and (pointer: fine) {
+  .opens:hover {
+    border-color: var(--line-strong);
+    background: var(--bg-2);
+  }
+
+  .opens:hover .chev {
+    border-color: var(--text-2);
+    transform: translateX(2px) rotate(45deg);
+  }
+}
+
+.opens:active {
+  transform: scale(0.99);
+}
+
+.opens:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+  border-color: var(--line-strong);
+}
+
+/* ---------- A region that scrolls inside itself ----------
+
+   The page never scrolls, so a list with more in it than its box shows fades at
+   the cut. A sentence sliced in half by a hard edge reads as the end of the
+   list, and this window's lists are what happened to somebody's money. The mask
+   is only painted on the edge that has something behind it. */
+.scrolls {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  min-height: 0;
+}
+
+.scrolls[data-cut="top"] {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 32px);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 32px);
+}
+
+.scrolls[data-cut="bottom"] {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent 100%);
+}
+
+.scrolls[data-cut="both"] {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 32px, #000 calc(100% - 32px), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 32px, #000 calc(100% - 32px), transparent 100%);
 }
 
 .card {
@@ -749,6 +831,10 @@ textarea.input {
   }
 
   .surface-scan { display: none; }
+
+  /* The press keeps its scale, because that one is feedback rather than motion:
+     it says the window heard the click. The caret stops travelling. */
+  .opens:hover .chev { transform: rotate(45deg); }
 
   .spinner {
     animation: none;

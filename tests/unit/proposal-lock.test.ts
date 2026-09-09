@@ -167,7 +167,7 @@ test('a rail whose status poll hangs does not hold a refuse on another proposal'
   // A rail whose execute never returns: exactly what watchStatus looks like against a venue
   // that has stopped answering, and the shape that used to hold the whole app.
   const rail: Rail = {
-    kind: 'yield_deposit',
+    kind: 'intents_deposit',
     valueUsd: () => 1,
     simulate: async () => ({ ok: true, summary: 'fine' }),
     execute: async () => {
@@ -183,7 +183,7 @@ test('a rail whose status poll hangs does not hold a refuse on another proposal'
   const pending = await svc.proposeConsolidate({ toChain: 'arb', symbol: 'USDC', maxTotalUsd: 100 });
 
   // And one that goes straight into the hung rail. Not awaited: it never finishes.
-  const stuck = svc.proposeYieldDeposit({ chain: 'arb', symbol: 'USDC', amount: 1 });
+  const stuck = svc.proposeIntentsDeposit({ chain: 'arb', symbol: 'USDC', amount: 1 });
   void stuck.catch(() => undefined);
   await new Promise((r) => setTimeout(r, 100));
 
@@ -202,7 +202,7 @@ test('a rail whose status poll hangs does not hold the next propose either', asy
   let releaseRail = (): void => {};
   const hung = new Promise<void>((r) => (releaseRail = r));
   const rail: Rail = {
-    kind: 'yield_deposit',
+    kind: 'intents_deposit',
     valueUsd: () => 1,
     simulate: async () => ({ ok: true, summary: 'fine' }),
     execute: async () => {
@@ -212,7 +212,7 @@ test('a rail whose status poll hangs does not hold the next propose either', asy
   } as unknown as Rail;
 
   const { svc } = setup(rail);
-  const stuck = svc.proposeYieldDeposit({ chain: 'arb', symbol: 'USDC', amount: 1 });
+  const stuck = svc.proposeIntentsDeposit({ chain: 'arb', symbol: 'USDC', amount: 1 });
   void stuck.catch(() => undefined);
   await new Promise((r) => setTimeout(r, 100));
 
@@ -229,7 +229,7 @@ test('and the cap still holds: the reservation is on disk before the next caller
   let releaseRail = (): void => {};
   const hung = new Promise<void>((r) => (releaseRail = r));
   const rail: Rail = {
-    kind: 'yield_deposit',
+    kind: 'intents_deposit',
     valueUsd: () => 1,
     simulate: async () => ({ ok: true, summary: 'fine' }),
     execute: async () => {
@@ -239,7 +239,7 @@ test('and the cap still holds: the reservation is on disk before the next caller
   } as unknown as Rail;
 
   const { svc } = setup(rail);
-  const stuck = svc.proposeYieldDeposit({ chain: 'arb', symbol: 'USDC', amount: 250 });
+  const stuck = svc.proposeIntentsDeposit({ chain: 'arb', symbol: 'USDC', amount: 250 });
   void stuck.catch(() => undefined);
   await new Promise((r) => setTimeout(r, 100));
 

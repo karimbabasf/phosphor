@@ -9,7 +9,6 @@ import type {
   ChainId,
   Holding,
   LedgerSnapshot,
-  LpPosition,
   PolicyPatch,
   Proposal,
   SimulationResult,
@@ -193,14 +192,6 @@ export function usdOf(ctx: PCtx, symbol: string, amount: number, snapshot: Ledge
   const price = priceOf(ctx, symbol, snapshot);
   if (price === null || !Number.isFinite(amount) || amount < 0) return Infinity;
   return amount * price;
-}
-
-export function positionUsd(ctx: PCtx, pos: LpPosition, snapshot: LedgerSnapshot): number {
-  return (
-    usdOf(ctx, pos.token0.symbol, pos.token0.amount, snapshot) +
-    usdOf(ctx, pos.token1.symbol, pos.token1.amount, snapshot) +
-    (pos.uncollectedFeesUsd ?? 0)
-  );
 }
 
 // Resolve something out of a verified table, collecting the table's own error message

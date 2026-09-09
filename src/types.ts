@@ -118,7 +118,7 @@ export type WalletRow = {
 
 export type WalletView = {
   rows: WalletRow[]; // value descending; only things actually held
-  totalUsd: number; // everything: tokens, natives, LP and intents balances
+  totalUsd: number; // everything: tokens, natives and intents balances
   byChain: Record<string, number>; // place -> usd
   stale: WalletPlace[]; // places whose last read failed; never silently zero
   // How many configured tokens came back with nothing in them. The rows are gone from
@@ -189,9 +189,13 @@ export type SwapDraft = {
   // oneclick transfers wallet funds to a per-quote deposit address, intents-native signs an
   // intent over a balance already held inside the intents.near verifier and transfers
   // nothing. See the header of src/rails/intents-native.ts for which one to use.
+  //
+  // 'uniswap-v3' is retired and cannot be proposed. It stays in the union because
+  // state/proposals.json holds executed rows naming it, and a history reader that could not
+  // type those rows would have to drop them. Nothing builds one.
   venue: 'oneclick' | 'uniswap-v3' | 'intents-native';
   chain: ChainId; // origin chain
-  toChain: ChainId; // same as chain for a same-chain DEX swap
+  toChain: ChainId; // equal to chain when nothing crosses
   fromSymbol: string;
   toSymbol: string;
   amountIn: number;
@@ -453,7 +457,7 @@ export type BasicPrice = {
 // draft, never from the audit event's developer-facing msg: that text is written for
 // whoever is debugging this and reads as noise to the person who owns the money.
 export type BasicRecent = {
-  headline: string; // "Moved $36.54 of your dollars into a Uniswap pool."
+  headline: string; // "Moved $36.54 of your dollars to your Hyperliquid trading account."
   timeLine: string; // "2:14 pm"
   outcome: 'done' | 'refused' | 'blocked';
 };

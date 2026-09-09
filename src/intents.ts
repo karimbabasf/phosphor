@@ -112,8 +112,8 @@ export const NATIVE_ASSET: Partial<Record<ChainId, { symbol: string; decimals: n
   near: { symbol: 'NEAR', decimals: 24 },
 };
 
-// What src/ledger/evm.ts and src/ledger/near.ts already put in Holding.tokenId for the gas
-// asset. Kept here so a draft can name the native asset without inventing a second spelling.
+// What a Holding carries in tokenId for the gas asset. Kept here so a draft can name the
+// native asset without inventing a second spelling.
 export const NATIVE_TOKEN_ID = 'native';
 
 // One place that turns "USDC on base" or "ETH on eth" into the pair a quote needs. The token

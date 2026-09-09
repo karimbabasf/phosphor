@@ -38,26 +38,18 @@ export const EXPECTED_TOOLS: readonly string[] = [
   //
   // propose_hl_deposit, propose_lp_add and propose_lp_remove were removed from this surface
   // deliberately (2026-08-13): none had been run on a live chain, and an unproven fund-moving
-  // rail is not something to find the edges of with real money. The rails still exist under
-  // src/rails/ and a human can still drive them. If one reappears here, ask whether it has
-  // been proven since.
+  // rail is not something to find the edges of with real money.
   //
   // propose_hl_deposit reappeared on 2026-08-20, and the question above was asked. The answer
   // is not "it has been tested more". It is that the rail changed shape: it was a bespoke
   // transfer to Hyperliquid's Bridge2 contract and is now a NEAR Intents route into HyperCore,
   // and 1Click cannot quote OUT of hypercore. The direction is a property of the venue rather
   // than a check of ours, so an agent holding this can add collateral and has no path on this
-  // surface to remove any. lp_add and lp_remove are unchanged and stay off.
+  // surface to remove any.
   //
-  // The yield rail shipped earlier the same day with nothing on this list, deliberately and for
-  // the same rule, and its own spec said the tools would follow once the evidence existed. They
-  // went on later on 2026-08-20 because the evidence exists: five real movements on Arbitrum
-  // Sepolia, three by hand and two filed by the loop, each through the real proposal service and
-  // the real policy engine, ending in a full exit that returned 56.292312 USDC to the wallet, with
-  // the app's realized 4.2672 percent and the reserve's 4.2687 percent APR computed independently
-  // and agreeing. The rule was met, not waived. The lp_add half of the old objection does not
-  // reach this rail either: a yield position is one balanceOf on a rebasing receipt and buildWallet
-  // already counts it, so there is no pre-trade balance to size a second move off.
+  // propose_lp_add, propose_lp_remove and the four yield tools are gone for good rather than
+  // held back: this app now runs two venues, NEAR Intents and Hyperliquid, and the rails behind
+  // those six were removed from it. This list and the rail table finally name the same set.
   'propose_swap',
   // Funds the Hyperliquid perps account, from any chain this app signs for. One way in by
   // construction; getting money off the venue is a signed withdraw3 a human runs at a terminal
@@ -73,20 +65,6 @@ export const EXPECTED_TOOLS: readonly string[] = [
   // only, because this app derives its EVM address from a key it holds and can therefore prove
   // the destination is its own; it holds no Solana key.
   'propose_intents_withdraw',
-  // The yield rail: put an idle stablecoin to work in a lending pool, take it back, read what it
-  // did, and hand the looking to a loop. Four tools rather than three, because an agent that can
-  // deposit and cannot read the position back is holding half a rail.
-  //
-  'yield_read',
-  'propose_yield_deposit',
-  'propose_yield_withdraw',
-  // Starts and stops the allocator loop. It looks like standing authority and is not: the loop
-  // can only FILE a yield_deposit proposal, which is a capability the agent already holds one
-  // line up, and every proposal it files meets the same policy engine, click threshold, session
-  // cap and audit log. It grants a schedule, not an authority. Compare propose_mandate, where an
-  // armed bot sends orders straight to a venue with no proposal per order: that is why that one
-  // is gated and this one is not. Moves no money, gets no policy verdict, same class as `switch`.
-  'yield_auto',
   // Arming a bot. The one proposal that grants STANDING authority rather than spending once,
   // so it never auto-approves on any network.
   'propose_mandate',

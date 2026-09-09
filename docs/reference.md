@@ -1,6 +1,6 @@
 # Phosphor reference
 
-The long form of what the README says in short: the tool surface, the earning loop, gas, how a proposal is decided, policy as sentences, the first run, mode and config, keys and signing, the code layout and the operator profile. Everything here describes the code as it is; where it names a count (tools, tests), re-check the number before quoting it.
+The long form of what the README says in short: the tool surface, gas, how a proposal is decided, policy as sentences, the first run, mode and config, keys and signing, the code layout and the operator profile. Everything here describes the code as it is; where it names a count (tools, tests), re-check the number before quoting it.
 
 ## The tool surface
 
@@ -43,36 +43,31 @@ clears each.
 | Read tool | Returns |
 |---|---|
 | `start` | The greeting, the live state and the index of everything this door opens onto, grouped by intent. Call it again after a long gap: the network, the wallet and the pending decisions all move |
-| `wallet` | Everything held, one row per token and per pool position: chain, quantity, price, value, share. Only what is actually held; how many configured tokens came back empty is reported as a count |
-| `balances` | Raw holdings across every configured chain, with per-chain staleness |
+| `wallet` | Everything held, one row per balance: place, quantity, price, value, share. Only what is actually held; how many configured tokens came back empty is reported as a count |
+| `balances` | The raw snapshot behind the wallet, with staleness |
 | `composition` | Shares by issuer and chain, freezable share, unclassified holdings |
 | `policy_show` | Current policy as plain-English sentences, or a notice that the file is unreadable |
 | `log_tail` | Most recent audit lines, newest first |
 | `candles` | Recent OHLC candles for a product, with a staleness marker |
 | `proposal_status` | Status, verdict and simulation result for a proposal id |
-| `yield_read` | Every yield position with principal, current value and earnings, the realized percentage with its window and its caveat, the venue table with live rates and health, idle stablecoin, and what the loop decided on its recent looks. Answers `{ available: false, reason }` when no allocator is wired, which is a different claim from an empty position |
 | `research` | The one read that leaves this machine. The APP fetches from a fixed allowlist of documentation hosts and hands back text; the agent never gets a URL it can point anywhere, which is the whole reason this is a Phosphor tool and not a general web fetch |
 | `gas_report` | What the app has spent on gas over a window, split by action, chain, rail kind and venue, plus gas as basis points of the value moved. An aggregation of receipts the history surface already read, so it makes no chain call. The four remainders (pending, unknown, unpriced, intent-settled) and the reverted line are counted separately and named in the tool description, because a total that drops what it could not count is a wrong number said confidently |
 
 | Write tool | Does |
 |---|---|
-| `propose_swap` | Swaps one token for another. Venue `uniswap-v3` on one chain, `oneclick` across chains from the wallet, `intents-native` inside `intents.near` over an already-deposited balance |
+| `propose_swap` | Swaps one token for another. Venue `oneclick` across chains from the wallet, or `intents-native` inside `intents.near` over an already-deposited balance. Omitting the venue means `oneclick` |
 | `propose_intents_deposit` | Moves funds from this wallet into NEAR Intents, where they become a balance `intents.near` holds under this app's own account. Funds the `intents-native` swap venue. Deposits the chain's gas asset (native ETH) unless a symbol is given |
 | `propose_intents_withdraw` | Brings a balance back out of `intents.near` into one of this app's own wallets on `eth`, `base`, `arb` or `sol`. The way out of the `intents-native` venue. Withdraws the chain's gas asset unless a symbol is given. Which wallet is ours comes from `config.local.json`, never from the call |
 | `propose_consolidate` | Gathers a token's scattered balances onto one chain. Unproven: this path has never run on a live chain, and the tool description says so, so a clean simulation is not evidence it works |
 | `propose_policy_change` | Proposes a patch to the policy rules. Always waits for a human click |
 | `propose_mandate` | Arms a rule-driven bot on Hyperliquid perpetuals: a rule program plus the envelope it may never leave. The only tool that grants standing authority, so it always waits for a human click |
-| `propose_yield_deposit` | Supplies a stablecoin to the lending venue. Omit the chain and the app picks the best-paying venue that is healthy and reachable, which is what the loop does. `amount` is the token amount, not dollars |
 | `propose_hl_deposit` | Funds the Hyperliquid perpetuals account. Routes through NEAR Intents into HyperCore; there is no tool that takes money back out, and the paragraph below says why |
-| `propose_yield_withdraw` | Takes the position back out. Omitting `amount` closes it, interest included, and that is the correct way to exit: the receipt rebases, so a figure computed a block ago leaves dust behind. Omit the chain and the app uses the chain the position is on, refusing with the list when positions sit on more than one |
-| `yield_auto` | Starts or stops the allocator loop. Moves no money and gets no policy verdict, so it is a display-class tool with a rail-shaped name: all the loop can do is file a `yield_deposit` proposal, which the agent can already do itself, through the same policy engine and the same click threshold. It grants a schedule, not an authority |
 
-Two write tools were deliberately removed from this door and are not coming back on their own.
-`propose_lp_add` and `propose_lp_remove` are still implemented under `src/rails/`, still tested,
-and still drivable by a human. Neither has run on a live chain, and the wallet read after an
-`lp_add` is known to serve pre-trade balances while claiming nothing is stale, so sizing a second
-move off the first is already wrong on that path. They are absent rather than guarded, on
-purpose: a check can be wrong, but a capability that was never registered cannot be called at all.
+This door now names exactly the set the app can execute. `propose_lp_add`, `propose_lp_remove`,
+`propose_yield_deposit`, `propose_yield_withdraw`, `yield_read` and `yield_auto` were on it or
+behind it at various points; the rails under all six were removed when the app cut to two venues,
+so there is nothing left to register. What went with them: an on-chain DEX swap venue, both
+liquidity-pool moves and the whole lending loop.
 
 `propose_hl_deposit` was on that list until 2026-08-20 and is back, because the rail underneath it
 changed shape rather than because it was tested more. It used to transfer USDC to Hyperliquid's
@@ -81,16 +76,6 @@ refuses `hypercore` as an origin, so the direction is a property of the venue ra
 of ours. An agent holding it can add collateral to the trading account and has no path on its
 surface to remove any. Getting money off the venue is a signed `withdraw3` a human runs at a
 terminal, and that is deliberately not a tool.
-
-The yield rail shipped earlier on 2026-08-20 with nothing on this door, held off by the same rule
-and saying so in its own spec: the tools would follow once the evidence existed. They went on later
-that day because it does. Five real movements on Arbitrum Sepolia, three by hand and two filed by
-the loop, each through the real proposal service and the real policy engine, ending in a full exit
-that returned 56.292312 USDC to the wallet, with the app's realized 4.2672 percent and the reserve's
-4.2687 percent APR arrived at independently and agreeing. The `lp_add` half of the old objection does
-not reach this rail either: a yield position is one `balanceOf` on a rebasing receipt and the wallet
-read already counts it, so there is no pre-trade balance to size a second move off. `propose_lp_add`
-and `propose_lp_remove` are unchanged and stay off.
 
 | Chart tool | Does |
 |---|---|
@@ -158,91 +143,6 @@ the server after the label the agent supplied, agent lines are dotted where a hu
 and the chart bar carries a count with a one-click clear. An agent can never alter a candle, and a
 price line it draws is excluded from the automatic price fit, so one absurd level cannot flatten
 the chart into a hairline.
-
-## Earning
-
-A stablecoin sitting in the wallet earns nothing. This puts it to work in a lending pool and
-shows what it made.
-
-**The venue is Aave v3, not a Uniswap range**, and the reason is provability rather than
-taste. A USDC/WETH range position's value moves with ETH, so over any window short enough to
-look at, "percent earned" would mostly be reporting the ETH move. 1inch's own risk page cites
-49.5 percent of studied Uniswap v3 positions collecting less in fees than impermanent loss
-cost them. An Aave supply is single-sided, has no impermanent loss, and its receipt token
-rebases: the aToken balance itself grows, so what a position is worth is one `balanceOf` and
-what it earned is that minus what was put in. There is no accounting layer between the chain
-and the number, which is what makes the number believable.
-
-Two verified markets, both checked by behaviour rather than read off a docs page:
-
-Every row was read off the chain before it was written down: `getReserveData(USDC)` on each
-Pool, with the `aTokenAddress` it returned recorded as the receipt.
-
-| Chain | Pool | USDC | Receipt | Read at block | Supply rate then |
-|---|---|---|---|---|---|
-| Arbitrum One | `0x794a61358D6845594F94dc1DB02A252b5b4814aD` | `0xaf88d065e77c8cC2239327C5EDb3A432268e5831` | `aArbUSDCn` `0x724dc807b04555b71ed48a6896b6F41593b8C637` | 500799884 | 2.40% |
-| Base | `0xA238Dd80C259a72e81d7e4664a9801593F98d1c5` | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` | `aBasUSDC` `0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB` | 50759012 | 4.25% |
-
-The USDC on both chains is the same address the Uniswap rail already uses, so the existing swap
-rail produces exactly the token this one consumes and the feature adds no new funding step.
-
-Ethereum is deliberately absent. Gas on L1 costs more than a stablecoin position of the size
-this app moves will earn back, and the same USDC earns on both chains above. A chain with no
-row answers "Earning is not available on that chain" rather than throwing, and adding one means
-reading that Pool and writing the aToken down, on purpose, by a human.
-
-### The percentage
-
-Realized, backward-looking, and annualised from a window that is printed beside it:
-
-    earned over the window / time-weighted average principal x 365 / window days
-
-Four rules it keeps, each with a test:
-
-- **Under one hour, no percentage at all.** The dollars are shown and the panel says why.
-- **The dollars are bigger than the percentage on screen.** The ordering is the honesty.
-- **The caveat travels with the number** as a field, so a renderer cannot forget to print it:
-  "Observed, not promised. This is what it did, not what it will do."
-- **No deposit of ours behind the balance means the earnings are UNKNOWN, not zero.** The cost
-  basis is derived from this app's own executed proposals, so a fresh data dir, a store restored
-  short, or a position supplied with the same key outside this app all leave nothing to derive
-  from. Reporting that as a basis of zero turns the whole position into interest: the panel read
-  a live 56.29 USDC position as 56.29 USDC of profit before this rule existed. The value still
-  comes off the chain and is still shown; the earnings and the percentage go blank together and
-  the panel says why.
-
-The rate the venue pays right now is shown too, clearly labelled `venue rate now`. It is what
-the allocator decides on, so it has to be visible; it is not what you earned, so it does not
-get to be the headline. The shape of all this is taken from 1inch's Aqua, whose own docs call
-its rate "an observation, not a promise" and "a rear-view mirror".
-
-Under the numbers is the ledger: every movement of principal with a transaction hash that
-opens on a block explorer. If you cannot produce that list, you do not have a yield to show.
-
-### The loop
-
-`src/yield/allocator.ts` polls every minute. It reads each venue's live rate and our balance
-there, puts idle stablecoin to work in the best-paying venue it can reach, and moves money
-between venues only when
-
-    spread x principal x 30 days  >  what the move costs
-
-Without that test a loop chases a 20 basis point spread with a two dollar gas bill and loses
-money while reporting that it optimised.
-
-**The loop never executes.** It files a proposal and stops. What happens next is the policy
-engine's call and, above the click threshold, a human's, exactly as it is for an agent. It is
-off by default: set `yield.autoAllocate` in `config.local.json` to switch it on, or call
-`yield_auto` from an agent, which flips the same switch a human has in the window. Off, it still
-reads and still reports, so the panel is populated either way.
-
-An agent drives the same rail through `yield_read`, `propose_yield_deposit` and
-`propose_yield_withdraw`. Those propose like every other write tool and execute like nothing, so the
-loop and the agent reach the policy engine by the same path a human does.
-
-A move between chains needs a bridge, and this app's bridge is NEAR Intents. The allocator
-refuses a cross-chain move that costs more than the rate difference earns back, and says which
-venue pays more and why it did not move rather than moving quietly.
 
 ## Where the gas went
 
@@ -564,11 +464,10 @@ Still open, unrelated to keys:
     src/policy/        engine (pure) + policy file + sentence renderer + the venue gap
     src/proposals.ts   a 92-line door onto src/proposals/
     src/proposals/     the work: lifecycle, execute, draft, rails, positions, reconcile
-    src/rails/         the rail registry: uniswap, oneclick, intents, hyperliquid, mandate
-    src/yield/         the lending venue, the positions and the allocator loop
+    src/rails/         the rail registry: oneclick, intents, hyperliquid, mandate
     src/gas/           what a movement cost, grouped by action, chain, rail and venue
     src/chain/         the only places phosphor signs: evm.ts and near.ts
-    src/ledger/        evm, solana, near readers + demo fixtures
+    src/ledger/        the NEAR Intents verifier read + demo fixtures
     src/history.ts     the transaction list the window pages through
     src/transactions.ts  receipts and the gas cache both doors read
     src/role.ts        what the app tells an agent it is, in the MCP handshake

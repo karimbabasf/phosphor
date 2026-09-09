@@ -33,7 +33,6 @@ import { createMarketData } from './market/index.ts';
 import { createProposalService } from './proposals.ts';
 import { MAX_AGENTS, RESERVED_SEATS, createAgents } from './agents.ts';
 import { TRADING_LIMITS, createRunnerHost } from './runner/host.ts';
-import { createAllocator } from './yield/allocator.ts';
 import { readApiWalletKey } from './runner/keys.ts';
 import { createTradeService } from './trade/service.ts';
 import { createInfoClient } from './hl/info.ts';
@@ -553,34 +552,6 @@ const trade = createTradeService({
   initialSymbol: (cfg.candleProducts[0] ?? 'BTC-USD').split('-')[0],
 });
 
-// The stablecoin allocator. Constructed after the proposal service because it holds a
-// deliberately narrow handle onto it: one method, yieldDeposit. Handing it the whole service
-// would put approve() and propose_policy_change one dot away from an automated loop.
-//
-// It always READS, so the window can show what the money is earning. It only ACTS when
-// cfg.yield.autoAllocate is on, and even then it can only propose.
-//
-// NOT IN DEMO MODE, and the reason is the one the rail registry already states about itself:
-// "the demo user never meant to involve" an RPC and a private key. The allocator's read is
-// live whatever the ledger is, so a demo install was calling balanceOf against a real chain
-// with the real signing key's address, and the numbers it drew were a real position sitting
-// on top of a fixture wallet. Found on 2026-08-20 by running scripts/e2e.ts, which boots in
-// demo mode on a throwaway data dir: it read a live 56.29 USDC Aave position and, with no
-// deposit history in that fresh store to derive a cost basis from, reported every cent of it
-// as interest earned. Two defects in one line, and this is the half that is a mode boundary.
-const allocator =
-  cfg.mode === 'demo'
-    ? undefined
-    : createAllocator({
-        cfg,
-        propose: { yieldDeposit: (p) => proposals.proposeYieldDeposit(p) },
-        listProposals: () => proposals.list(),
-        autoAllocate: cfg.yield?.autoAllocate === true,
-        intervalMs: cfg.yield?.intervalMs,
-        dustUsd: cfg.yield?.dustUsd,
-        onChange: () => server.broadcastState(),
-      });
-
 /* The window token is read off the shell's pipe far above, beside the boot nonce and the seat
    secret. It is passed in rather than resolved inside createServer because every test in this repo
    builds a server and none of them has a pipe to read. See readHandshake and src/http/auth.ts. */
@@ -613,12 +584,7 @@ const server = createServer({
      seat and still spends the subscription. The press is cheap and it is the user's. Anyone
      who wants an agent started for them sets `driver.autostart: true` in config.json. */
   autostart: cfg.driver?.autostart === true,
-  allocator,
 });
-
-// Started after the server exists, because its first tick pushes a state frame and there has
-// to be something with SSE clients to push to. Absent in demo mode, where there is no loop.
-allocator?.start();
 
 /* Now that there are clients to tell, an automatic lock says so on the wire.
    The `lock` frame itself is not sent from here. The server subscribes to the keystore, so the
@@ -681,7 +647,6 @@ installShutdownHandlers({
     // The runner child holds a key that can place orders. It goes first, and stopAll does not
     // depend on the child being healthy.
     await runner.stopAll('phosphor is shutting down');
-    allocator?.stop();
     await new Promise<void>((resolve) => {
       server.close(() => resolve());
     });

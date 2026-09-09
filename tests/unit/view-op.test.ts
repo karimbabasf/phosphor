@@ -25,7 +25,6 @@ import type {
   ChainId,
   ChainStatus,
   LedgerSnapshot,
-  LpPosition,
   Proposal,
   ViewMode,
 } from '../../src/types.ts';
@@ -101,7 +100,6 @@ async function boot(opts: { view?: ViewMode; proposals?: Proposal[] } = {}): Pro
     riskRows: [],
     ledger: {
       snapshot,
-      positions: (): LpPosition[] => [],
       intents: () => undefined,
       refresh: async () => snapshot(),
       applyDemoTransfer: () => {},
@@ -121,10 +119,6 @@ async function boot(opts: { view?: ViewMode; proposals?: Proposal[] } = {}): Pro
       proposeIntentsDeposit: async () => pendingProposal(),
       proposeIntentsWithdraw: async () => pendingProposal(),
       proposeMandate: async () => pendingProposal(),
-      proposeLpAdd: async () => pendingProposal(),
-      proposeLpRemove: async () => pendingProposal(),
-      proposeYieldDeposit: async () => pendingProposal(),
-      proposeYieldWithdraw: async () => pendingProposal(),
       approve: async () => pendingProposal(),
       refuse: async () => pendingProposal(),
       get: (id: string) => list.find((p) => p.id === id),

@@ -100,5 +100,8 @@ test('every fetch site in src passes a signal', () => {
   const sites = auditFetchSites();
   const missing = sites.filter((s) => !s.hasSignal).map((s) => `${s.file}:${s.line}`);
   assert.deepEqual(missing, [], 'these network calls have no deadline');
-  assert.ok(sites.length >= 30, `expected the scanner to still be finding the call sites, found ${sites.length}`);
+  // Was 30 while this app read five chains and two third-party EVM venues. Both went with the
+  // cut to two venues, and so did their fetch sites. The floor is here to catch a scanner that
+  // silently stops matching, not to pin an exact count.
+  assert.ok(sites.length >= 25, `expected the scanner to still be finding the call sites, found ${sites.length}`);
 });

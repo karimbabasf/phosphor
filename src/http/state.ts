@@ -1,11 +1,10 @@
-// The state payload the window reads, the transaction history behind it, the gas report both
-// doors share, and the two questions the lending loop answers about which chain.
+// The state payload the window reads, the transaction history behind it, and the gas report
+// both doors share.
 //
 // buildState is synchronous and every caller depends on that: prices come from a cache the
-// poller fills (see chart.ts) and the yield view from a background refresh, because a position
-// lives on a chain and a state build must never wait on one.
+// poller fills (see chart.ts), so a state build never waits on a network read.
 
-import type { ChainId, Policy, Proposal } from '../types.ts';
+import type { Policy, Proposal } from '../types.ts';
 import { buildBasic } from '../view/basic.ts';
 import { classify } from '../composition.ts';
 import { buildWallet } from '../wallet.ts';
@@ -127,25 +126,7 @@ export function buildState(ctx: Ctx): unknown {
   const snapshot = ctx.ledger.snapshot();
   const composition = classify(snapshot, ctx.riskRows);
   const policy = ctx.getPolicy();
-  // The yield positions are handed in so the wallet TOTAL includes them. Supplying a token
-  // removes it from the balance the chain reader sees, so without this the money in a
-  // lending venue is invisible to the one number a person checks first.
-  const yieldView = ctx.allocator?.view() ?? null;
-  const wallet = buildWallet(
-    snapshot,
-    ctx.ledger.positions(),
-    ctx.ledger.intents(),
-    (yieldView?.positions ?? []).map((p) => ({
-      chain: p.chain,
-      venue: p.venue,
-      symbol: p.symbol,
-      receipt: p.receipt,
-      receiptSymbol: p.receiptSymbol,
-      valueUsd: p.valueUsd,
-      principalUsd: p.principalUsd,
-      earnedUsd: p.earnedUsd,
-    })),
-  );
+  const wallet = buildWallet(snapshot, ctx.ledger.intents());
   const list = ctx.proposals.list();
   const lockAddresses = ctx.keystore.addressReport();
   return {
@@ -215,12 +196,6 @@ export function buildState(ctx: Ctx): unknown {
       lastActivityAt: ctx.agents.activityAt(),
     },
     candleProducts: ctx.cfg.candleProducts,
-    // What the stablecoin is earning. Read from a background refresh rather than here,
-    // because buildState is synchronous and a position lives on a chain. `stale` on that
-    // view means the last read failed and these are the previous good numbers; the panel
-    // says so rather than drawing a zero, which for this feature would be the worst
-    // available lie.
-    yield: yieldView,
     view: ctx.getView(),
     // The window paints itself from this. It rides on state rather than on the chart
     // payload because the ground and the accent are the whole page, not the canvas.
@@ -385,46 +360,4 @@ export function gasReport(ctx: Ctx, windowRaw: string): { status: number; body: 
   const payload = transactionsPayload(ctx);
   fillGas(ctx, payload.entries);
   return { status: 200, body: buildGasReport({ entries: payload.entries, window, nowMs: Date.now() }) };
-}
-
-// ---------- the lending allocator's two doors ----------
-//
-// A chain omitted on a yield proposal is answered from the loop's own view rather than
-// defaulted to a constant. A constant would be right until the day a second venue paid
-// more, and then it would be quietly wrong on every call that trusted it.
-
-export function bestYieldChain(ctx: Ctx): { ok: true; chain: ChainId } | { ok: false; reason: string } {
-  const view = ctx.allocator?.view();
-  if (!view) {
-    return { ok: false, reason: 'no lending allocator is running, so there is no best venue to pick. Name a chain.' };
-  }
-  if (view.best) return { ok: true, chain: view.best.chain };
-  // Healthy venues exist and none of them quoted a rate: the read failed or the reserve is
-  // frozen. Saying which is what lets a caller decide whether to retry or to stop.
-  const unhealthy = view.venues.filter(v => !v.healthy).map(v => `${v.chain}: ${v.note}`);
-  return {
-    ok: false,
-    reason:
-      'no venue is currently paying a readable rate, so there is no best chain to deposit into. ' +
-      (unhealthy.length > 0 ? unhealthy.join('; ') : 'Name a chain to force one.'),
-  };
-}
-
-export function heldYieldChain(ctx: Ctx): { ok: true; chain: ChainId } | { ok: false; reason: string } {
-  const view = ctx.allocator?.view();
-  if (!view) {
-    return { ok: false, reason: 'no lending allocator is running, so there is no position to withdraw from.' };
-  }
-  // Only positions that actually hold something. A closed position keeps its row so the
-  // window can still show what it earned, and withdrawing from it would refuse at the rail
-  // with a message about a zero balance instead of here with one about which chain.
-  const held = view.positions.filter(pos => Number(pos.valueUsd) > 0);
-  if (held.length === 0) return { ok: false, reason: 'nothing is supplied to a lending venue, so there is nothing to withdraw.' };
-  if (held.length > 1) {
-    return {
-      ok: false,
-      reason: `money is supplied on more than one chain (${held.map(p => p.chain).join(', ')}), so name the one to withdraw from.`,
-    };
-  }
-  return { ok: true, chain: held[0]!.chain };
 }

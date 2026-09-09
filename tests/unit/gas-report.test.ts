@@ -50,7 +50,11 @@ function intent(): TxHash {
   return { hash: 'G8tyevVXKS4RA', place: 'intents', kind: 'intent', url: null, gas: null, gasPending: false };
 }
 
-function entry(over: Partial<TxEntry> = {}): TxEntry {
+/* `over` is loosened on kind and venue so a RETIRED value can be used here, and that is the
+   point rather than a convenience: state/proposals.json holds executed rows naming yield_deposit,
+   lp_add and venue 'uniswap-v3', this report groups over exactly those rows, and a test that
+   could only express live kinds would stop covering the case the report actually meets. */
+function entry(over: Partial<Omit<TxEntry, 'kind' | 'venue'>> & { kind?: string; venue?: string | null } = {}): TxEntry {
   return {
     id: 'p-1',
     ts: at(HOUR),
@@ -73,7 +77,7 @@ function entry(over: Partial<TxEntry> = {}): TxEntry {
     detail: 'swapped',
     reasons: [],
     ...over,
-  };
+  } as TxEntry;
 }
 
 function report(entries: TxEntry[], window: GasWindow = 'all') {

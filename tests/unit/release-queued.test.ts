@@ -79,7 +79,6 @@ function setup() {
     store,
     ledger: {
       snapshot,
-      positions: () => [],
       intents: () => undefined,
       refresh: async () => snapshot(),
       applyDemoTransfer: () => {},

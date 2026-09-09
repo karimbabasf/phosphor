@@ -62,10 +62,6 @@
       return net.postJson('/api/kill', { on: on }, { busy: 'kill', label: on ? 'Freezing' : 'Unfreezing' });
     },
 
-    yieldWithdraw: function (payload) {
-      return net.postJson('/api/yield/withdraw', payload, { busy: 'yield', label: 'Bringing it back' });
-    },
-
     transactions: function () {
       return net.getJson('/api/transactions', { busy: 'activity', label: 'Reading what happened' });
     },

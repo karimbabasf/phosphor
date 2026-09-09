@@ -933,20 +933,57 @@ body[data-locked="true"] .topbar .tabs {
   border-top: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
 }
 
+/* THE ROW: a mark, the coin and where it sits, then the value with the amount
+   under it. It used to end in three right aligned number columns, amount then
+   value then share, which is why nine rows read as one grey block: three
+   figures of equal weight give the eye nowhere to land. The share is one fact
+   about the whole wallet rather than nine facts about nine coins, so it is the
+   bar above the list now and the row is down to one figure and its footnote. */
 .holding-head {
-  width: 100%;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   gap: var(--s-3);
   align-items: center;
-  padding: var(--s-3) 0;
+  /* A button sizes to its content unless it is told otherwise, and a row that
+     shrinks to fit puts the figures next to the name instead of down the right
+     edge, which is the whole reason the list is readable as a column. The box
+     ends where the text does: a row that bled past the panel's padding put a
+     sideways scrollbar inside a list that only ever scrolls down. */
+  width: 100%;
+  padding: var(--s-2) 0;
+  /* Every row reserves the line, whether or not it is a row that opens, so the
+     list does not step sideways by a pixel where a clickable row sits next to
+     a static one. */
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
   text-align: left;
-  background: none;
-  border: 0;
-  transition: opacity var(--dur-press) var(--ease-out);
+  color: inherit;
+  font: inherit;
 }
 
+/* A coin in one place opens onto nothing. It is a static readout, so it is
+   drawn as one: the caret keeps its column so the figures stay in line down
+   the list, and stops being visible. */
 .holding[data-single="true"] .holding-head { cursor: default; }
+.holding[data-single="true"] .chev { visibility: hidden; }
+
+/* 20 px of mark inside a 28 px disc. The ground and the ring are the only paint
+   on it: the mark itself is currentColor and draws in the text colour, because
+   colour in this window means state, and a wallet of brand colours is a wallet
+   where the one red number no longer stands out. */
+.coin-mark {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-pill);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+}
+
+.coin-mark svg { display: block; }
 
 .holding-name {
   min-width: 0;
@@ -966,19 +1003,25 @@ body[data-locked="true"] .topbar .tabs {
   white-space: nowrap;
 }
 
-/* Amount, value, share, right aligned in one column each so the eye runs down
-   the figures rather than hunting across a row. */
+/* The value is the figure. The amount is the footnote under it, in the mono
+   face, because the amount is the thing a person checks rather than reads. */
 .holding-figures {
-  display: grid;
-  grid-template-columns: auto minmax(84px, auto) 46px;
-  gap: var(--s-4);
-  align-items: baseline;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
   text-align: right;
 }
 
 .holding-value {
   font-size: var(--fs-15);
   color: var(--text);
+  font-feature-settings: "tnum" 1;
+}
+
+.holding-qty {
+  font-size: var(--fs-12);
+  color: var(--text-2);
   font-feature-settings: "tnum" 1;
 }
 
@@ -993,7 +1036,7 @@ body[data-locked="true"] .topbar .tabs {
   display: none;
   padding: 0 0 var(--s-3) var(--s-3);
   border-left: 1px solid var(--line);
-  margin-left: 3px;
+  margin-left: 17px;
 }
 
 .holding[data-open="true"] .holding-places { display: block; }
@@ -1010,6 +1053,53 @@ body[data-locked="true"] .topbar .tabs {
 .holding-place > :last-child { min-width: 84px; text-align: right; }
 .holding-place > :nth-child(2) { min-width: 70px; text-align: right; }
 
+/* ---------- The shape of the wallet, once ----------
+
+   One 4 px bar under the Money head, one segment per coin, each a step of
+   neutral lightness off --text and never a hue. It is the one thing on this
+   deck built to be remembered, so everything around it is kept quiet.
+
+   Pointing at a coin brightens its segment and pointing at a segment brightens
+   the coin, because the bar and the list are the same facts said twice and a
+   person should not have to work out which slice is which. */
+.comp-bar {
+  display: flex;
+  gap: 2px;
+  height: 4px;
+  flex: 0 0 auto;
+  margin-bottom: var(--s-1);
+}
+
+.comp-seg {
+  flex: 1 1 0;
+  min-width: 3px;
+  border-radius: 2px;
+  background: var(--seg, var(--text-3));
+  transition: background-color var(--dur-press) var(--ease-out);
+}
+
+.comp-seg[data-lit="true"] { background: var(--text); }
+
+.holding[data-lit="true"] .holding-head { background: var(--bg-2); }
+
+/* ---------- Pro: the trading venue ---------- */
+
+/* One line per position: which way, how much, and what it is worth so far. The
+   rest is the trade screen, which the whole panel is a way to. */
+/* The account is read from the top of the panel and the position sits against
+   the foot, which is the way out to the screen that can act on it. The panel is
+   taller than either has to say, and two blocks against the two edges reads as
+   a card rather than as a column that ran out. */
+.position-block {
+  margin-top: auto;
+}
+
+.position-line {
+  gap: var(--s-3);
+  padding-top: var(--s-2);
+  border-top: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
+}
+
 /* The rules, as lines rather than as rows with a button each. */
 .limit-line {
   padding: var(--s-2) 0;
@@ -1018,7 +1108,10 @@ body[data-locked="true"] .topbar .tabs {
 }
 
 /* The gas line is a label and four figures. The label is short and fixed and
-   the figures are the part that has to wrap, so the label is told not to. */
+   the figures are the part that has to wrap, so the label is told not to, and
+   it sits on the first of the lines it names rather than floating in the
+   middle of three of them. */
+.limit-line { align-items: flex-start; }
 .limit-line > .body { flex: 0 0 auto; }
 .limit-line > .meta { text-align: right; min-width: 0; }
 
@@ -1029,12 +1122,9 @@ body[data-locked="true"] .topbar .tabs {
   display: flex;
   align-items: center;
   gap: var(--s-3);
-  padding: var(--s-2) 0;
+  padding: var(--s-2);
+  border-radius: var(--radius-sm);
   text-align: left;
-  background: none;
-  border: 0;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .allow-head:hover .panel-caret { border-color: var(--text-2); }
+  color: inherit;
+  font: inherit;
 }

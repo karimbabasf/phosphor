@@ -3,9 +3,9 @@
 // Same rule as src/chain/evm.ts and for the same reason: signing is where a bug loses funds
 // rather than throwing an error, so it lives in a single reviewable module and every rail
 // calls into it. Before this file existed the app held a NEAR key that nothing could use.
-// scripts/keygen.ts has minted an ed25519 keypair since v0.1, ledger/near.ts has read
-// balances with it, and every write path dead-ended in the same sentence: "Phosphor holds an
-// EVM key only and this call is a NEAR transaction."
+// scripts/keygen.ts has minted an ed25519 keypair since v0.1, the ledger read balances with
+// it, and every write path dead-ended in the same sentence: "Phosphor holds an EVM key only
+// and this call is a NEAR transaction."
 //
 // Why this hand-rolls borsh where evm.ts reached for viem. The keccak trap that justified a
 // dependency there does not exist here, and the failure modes are opposites:
@@ -474,7 +474,7 @@ export type NearFinality = 'final' | 'optimistic';
 export type NearRpcOptions = { fetchImpl?: typeof fetch; finality?: NearFinality };
 
 // NEAR reports the useful discriminator in error.cause.name and leaves error.message as a
-// generic string, the same shape src/ledger/near.ts already branches on.
+// generic string, so every caller branches on the cause rather than on the message.
 export class NearRpcError extends Error {
   readonly causeName: string;
   constructor(causeName: string, message: string) {
@@ -685,7 +685,8 @@ async function viewCall(
 }
 
 // Native yoctoNEAR held by an account. UNKNOWN_ACCOUNT is a balance of zero rather than a
-// failed read, the same call ledger/near.ts already makes.
+// failed read: an implicit account does not exist on chain until something funds it, and
+// reporting that as a failure blames the wrong thing.
 export async function nativeBalance(
   accountId: string,
   options: NearRpcOptions = {},

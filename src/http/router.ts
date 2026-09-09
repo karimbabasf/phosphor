@@ -89,7 +89,6 @@ const POST: Record<string, Route> = {
   '/api/approve': (ctx, req, res) => handleMutation(ctx, '/api/approve', req, res),
   '/api/refuse': (ctx, req, res) => handleMutation(ctx, '/api/refuse', req, res),
   '/api/kill': (ctx, req, res) => handleMutation(ctx, '/api/kill', req, res),
-  '/api/yield/withdraw': (ctx, req, res) => handleMutation(ctx, '/api/yield/withdraw', req, res),
   '/api/driver': (ctx, req, res) => handleMutation(ctx, '/api/driver', req, res),
   // Custody. Every one of these carries the window token, and no agent op reaches any of them:
   // there is no unlock op in /api/mcp and no unlock tool in src/mcp.ts.

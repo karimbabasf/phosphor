@@ -245,11 +245,17 @@ test('every symbol and chain the draft names survives into basic', () => {
   assert.deepEqual(view.ask!.chains, ['arb']);
 });
 
+/* The retired kinds are in this list on purpose. lp_add, lp_remove, yield_deposit and
+   yield_withdraw cannot be proposed any more, and state/proposals.json still holds rows naming
+   them, so this screen still has to write a headline for each. Cast because the live WriteDraft
+   union no longer describes them; the shape is what a row on disk actually carries. */
+const retired = (draft: Record<string, unknown>): WriteDraft => draft as unknown as WriteDraft;
+
 test('every draft kind produces a headline that names its amount', () => {
   const drafts: WriteDraft[] = [
     swapDraft(),
     { kind: 'hl_deposit', chain: 'arb', symbol: 'USDC', tokenId: 'USDC', amount: 20, amountUsd: 20, minCredited: 19.8, from: SELF, hlAccount: SELF, counterparty: ROUTER },
-    {
+    retired({
       kind: 'lp_add',
       chain: 'arb',
       venue: 'uniswap-v3',
@@ -262,8 +268,8 @@ test('every draft kind produces a headline that names its amount', () => {
       amountUsd: 60.64,
       from: SELF,
       counterparty: ROUTER,
-    },
-    {
+    }),
+    retired({
       kind: 'lp_remove',
       chain: 'arb',
       venue: 'uniswap-v3',
@@ -272,7 +278,31 @@ test('every draft kind produces a headline that names its amount', () => {
       amountUsd: 42.5,
       from: SELF,
       counterparty: ROUTER,
-    },
+    }),
+    retired({
+      kind: 'yield_deposit',
+      venue: 'aave-v3',
+      chain: 'arb',
+      symbol: 'USDC',
+      amount: 50,
+      amountBase: '50000000',
+      decimals: 6,
+      amountUsd: 50,
+      from: SELF,
+      counterparty: ROUTER,
+    }),
+    retired({
+      kind: 'yield_withdraw',
+      venue: 'aave-v3',
+      chain: 'arb',
+      symbol: 'USDC',
+      amount: 50,
+      amountBase: null,
+      decimals: 6,
+      amountUsd: 50,
+      from: SELF,
+      counterparty: ROUTER,
+    }),
     { kind: 'policy_change', patch: {}, sentence: 'never hold more than 20% in anything freezable' },
   ];
   for (const draft of drafts) {
@@ -280,7 +310,10 @@ test('every draft kind produces a headline that names its amount', () => {
     assert.ok(view.ask !== null, `${draft.kind} produced no ask`);
     assert.ok(view.ask!.headline.trim().length > 0, `${draft.kind} produced an empty headline`);
     assert.equal(view.ask!.kind, draft.kind);
-    if (draft.kind !== 'policy_change') {
+    // yield_withdraw is the one exception, and it always was: omitting the amount meant "the
+    // whole position, interest included", so the sentence names the asset and no figure. A
+    // number there would be one the draft did not have.
+    if (draft.kind !== 'policy_change' && String(draft.kind) !== 'yield_withdraw') {
       assert.match(view.ask!.headline, /\$/, `${draft.kind} headline must name money`);
     }
   }
@@ -505,44 +538,6 @@ test('one row per thing owned, not one per chain', () => {
   assert.equal(dollars.valueUsd, 1204);
   assert.equal(dollars.valueLine, '$1,204.00');
   assert.equal(dollars.quantityLine, '1,204.00');
-});
-
-test('holdings sort by value and pool positions collapse into one line', () => {
-  const v = buildBasic(
-    baseInput({
-      wallet: {
-        rows: [
-          walletRow({ symbol: 'USDC', quantity: 10, valueUsd: 10 }),
-          walletRow({ kind: 'lp', symbol: 'USDC/WETH 0.05%', valueUsd: 300, quantity: 1 }),
-          walletRow({ kind: 'lp', symbol: 'USDC/WETH 0.30%', valueUsd: 120, quantity: 1 }),
-        ],
-        totalUsd: 430,
-        byChain: { base: 430 },
-        stale: [],
-        emptyCount: 0,
-      },
-    }),
-  );
-
-  assert.deepEqual(
-    v.holdings.map((h) => h.valueLine),
-    ['$420.00', '$10.00'],
-  );
-
-  // The ring is drawn from these, and a ring whose slices do not close is a drawing of an
-  // arithmetic error. They are shares of the rows, which is what the ring sits beside.
-  assert.deepEqual(
-    v.holdings.map((h) => h.share),
-    [420 / 430, 10 / 430],
-  );
-  assert.equal(
-    v.holdings.reduce((sum, h) => sum + h.share, 0),
-    1,
-  );
-  // Two different pools summed to one quantity would be a number that means nothing,
-  // so the pool line carries a value and no quantity at all.
-  assert.equal(v.holdings[0]!.name, 'Money in Uniswap pools');
-  assert.equal(v.holdings[0]!.quantityLine, '');
 });
 
 test('holdings go empty exactly when the total goes unknown', () => {
@@ -806,83 +801,6 @@ test('a zero-priced draft drops the money clause rather than wording around it',
   assert.match(priced.recent[0]!.headline, /\$105\.00 of your/);
 });
 
-// ---------- the earning line ----------
-//
-// The rule this screen keeps is that it may render fewer WORDS, never fewer FACTS. Money
-// that is earning is a fact, so it gets a sentence. A RATE is not on this screen at all,
-// and that is the deliberate part: a percentage is the piece of a yield product most
-// likely to be heard as a promise, and this reader has nothing to check it against.
-
-function yieldRow(over: Partial<WalletRow> = {}): WalletRow {
-  return {
-    kind: 'yield',
-    chain: 'arb',
-    symbol: 'USDC earning',
-    tokenId: '0x460b97BD498E1157530AEb3086301d5225b91216',
-    quantity: 56.292142,
-    priceUsd: 1,
-    valueUsd: 56.292142,
-    share: 0.2,
-    native: false,
-    yield: {
-      venue: 'aave-v3',
-      receiptSymbol: 'aArbSepUSDC',
-      receipt: '0x460b97BD498E1157530AEb3086301d5225b91216',
-      principalUsd: 56.292032,
-      earnedUsd: 0.00011,
-    },
-    ...over,
-  };
-}
-
-test('no money earning means no sentence at all, not an empty one', () => {
-  assert.equal(buildBasic(baseInput()).earning, null);
-});
-
-test('money that is earning gets one sentence, and it carries NO percentage', () => {
-  const view = buildBasic(
-    baseInput({ wallet: { rows: [yieldRow()], totalUsd: 100, byChain: { arb: 100 }, stale: [], emptyCount: 0 } }),
-  );
-  assert.ok(view.earning !== null);
-  assert.match(view.earning, /\$56\.29 of your money is earning interest/);
-  // The whole point of the line. A rate here would be read as a promise.
-  assert.doesNotMatch(view.earning, /%/);
-  assert.doesNotMatch(view.earning, /APY|APR|annualis/i);
-});
-
-test('a sub-cent gain says so in words rather than printing $0.00', () => {
-  // $0.00 next to "is earning interest" tells this reader the thing is not working, which
-  // is the opposite of true. Yield is sub-cent for hours on any real amount.
-  const view = buildBasic(
-    baseInput({ wallet: { rows: [yieldRow()], totalUsd: 100, byChain: { arb: 100 }, stale: [], emptyCount: 0 } }),
-  );
-  assert.match(view.earning ?? '', /has not made a full cent yet/);
-  assert.doesNotMatch(view.earning ?? '', /\$0\.00/);
-});
-
-test('past a cent it prints the amount', () => {
-  const row = yieldRow();
-  const view = buildBasic(
-    baseInput({
-      wallet: {
-        rows: [{ ...row, yield: { ...row.yield!, earnedUsd: 0.41 } }],
-        totalUsd: 100, byChain: { arb: 100 }, stale: [], emptyCount: 0,
-      },
-    }),
-  );
-  assert.match(view.earning ?? '', /It has made \$0\.41 so far\./);
-});
-
-test('a stale chain suppresses the earning line, like every other number here', () => {
-  // Tied to the same condition that nulls the total. A figure here next to "still checking"
-  // would be the one number on screen claiming to be current when nothing else is.
-  const view = buildBasic(
-    baseInput({ wallet: { rows: [yieldRow()], totalUsd: 100, byChain: { arb: 100 }, stale: ['near'], emptyCount: 0 } }),
-  );
-  assert.equal(view.totalUsd, null);
-  assert.equal(view.earning, null);
-});
-
 // ---------- the window that renders it ----------
 //
 // The five surfaces are how the beam finds its targets: ui/beam/trace.js maps a tool to a
@@ -900,7 +818,7 @@ function codeOf(path: string): string {
 
 test('Basic carries every surface the beam aims at, and no Freeze of its own', () => {
   const source = codeOf('../../ui/screens/basic.js');
-  for (const id of ['holdings', 'rules', 'earning', 'moneyin', 'activity']) {
+  for (const id of ['holdings', 'rules', 'moneyin', 'activity']) {
     assert.ok(source.includes(`'${id}'`), `ui/screens/basic.js must place the ${id} surface`);
   }
   // The top bar carries the brake now. Two copies of one action on one screen is how a person
@@ -908,24 +826,3 @@ test('Basic carries every surface the beam aims at, and no Freeze of its own', (
   assert.ok(!source.includes('Freeze everything'));
 });
 
-test('Bring it back names the chain the route demands', () => {
-  // POST /api/yield/withdraw refuses any chain but eth, base or arb, and an absent one with
-  // them: "chain must be one of eth, base, arb; got ''". The button used to send {} , so every
-  // press came back as that sentence with " Nothing left your wallet." on the end, and the one
-  // control for taking money out of a lending position had never worked.
-  const source = codeOf('../../ui/screens/basic.js');
-  assert.ok(!source.includes('yieldWithdraw({})'), 'the withdraw call must carry a chain');
-  assert.ok(source.includes('yieldWithdraw({ chain: chain })'));
-  assert.ok(source.includes("['eth', 'base', 'arb']"), 'the chains the route accepts');
-});
-
-test('the earning line is read as the sentence the server sends, not as an object', () => {
-  // BasicView.earning is `string | null` (src/types.ts, built in src/view/basic.ts). Reading
-  // .line, .summary and .madeLine off a string yields undefined three times, and because the
-  // string itself is truthy the panel unhid and drew an empty paragraph above the button.
-  const source = codeOf('../../ui/screens/basic.js');
-  for (const key of ['.madeLine', 'earning.line', 'earning.summary']) {
-    assert.ok(!source.includes(key), `ui/screens/basic.js still treats earning as an object: ${key}`);
-  }
-  assert.ok(source.includes("typeof basic.earning === 'string'"));
-});

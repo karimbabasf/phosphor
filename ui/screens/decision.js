@@ -142,8 +142,6 @@
     }
     if (draft.kind === 'mandate') return 'Arm a rule';
     if (draft.kind === 'policy_change') return 'Change your limits';
-    if (draft.kind === 'yield_deposit') return 'Put money to work';
-    if (draft.kind === 'yield_withdraw') return 'Bring earnings back';
     if (draft.kind === 'hl_deposit') return 'Fund the trading account';
     return String(proposal.kind || 'A request');
   }

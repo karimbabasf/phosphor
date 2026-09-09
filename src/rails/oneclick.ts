@@ -190,8 +190,8 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
   };
 
   function requireVenue(draft: SwapDraft): void {
-    // The dispatch table keys on kind, and 'swap' is shared with the Uniswap rail. A draft
-    // for the other venue must bounce here rather than be quietly bridged through NEAR.
+    // The dispatch table keys on kind, and 'swap' is shared with the intents-native rail. A
+    // draft for the other venue must bounce here rather than be quietly bridged through NEAR.
     if (draft.venue !== 'oneclick') {
       throw new Error(`oneclick rail received a ${draft.venue} draft; kind 'swap' is shared, venue is not`);
     }
@@ -206,8 +206,7 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
   async function plan(draft: SwapDraft): Promise<Plan> {
     requireVenue(draft);
 
-    /* A floor of zero is not a floor, and the Uniswap rail has refused it since the day its
-       comment was written. The threat is the same on this venue: the tool surface has no
+    /* A floor of zero is not a floor. The threat is the same on every venue: the tool surface has no
        recipient field, so a hijacked agent cannot name an attacker, but it can name a price at
        which one takes the money. Nothing else catches it here either, because the policy engine
        budgets the INPUT dollars and never sees the floor. */

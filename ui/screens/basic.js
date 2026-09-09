@@ -12,22 +12,12 @@
   'use strict';
 
   var dom = window.PhosphorDom;
-  var net = window.PhosphorNet;
-  var api = window.PhosphorApi;
   var store = window.PhosphorState;
+  var marks = window.PhosphorMarks;
 
   /* How long a row that just moved keeps the afterglow. The same figure as a
      surface's decay, because it is the same idea at row scale. */
   var CHANGED_MS = 2400;
-
-  /* The three chains POST /api/yield/withdraw accepts. Anything else, including
-     nothing, is refused 400 before the request reaches a rail. */
-  var WITHDRAW_CHAINS = ['eth', 'base', 'arb'];
-
-  /* Basic does not name a chain anywhere else, on purpose. It names one here,
-     and only when money is earning on more than one, because the alternative is
-     a button that moves one of two positions and does not say which. */
-  var CHAIN_NAMES = { eth: 'Ethereum', base: 'Base', arb: 'Arbitrum' };
 
   var refs = {};
   var mounted = false;
@@ -79,17 +69,12 @@
     col.appendChild(strip);
 
     var hold = panel('What you hold', 'holdings');
-    var holdBody = dom.el('div', 'panel-body-flush');
+    var holdBody = dom.el('div', 'panel-body-flush scrolls');
     hold.node.appendChild(holdBody);
     var smallNote = dom.el('p', 'meta panel-body');
     smallNote.hidden = true;
     hold.node.appendChild(smallNote);
     col.appendChild(hold.node);
-
-    var earning = panel('Earning', 'earning');
-    var earningBody = dom.el('div', 'panel-body stack');
-    earning.node.appendChild(earningBody);
-    col.appendChild(earning.node);
 
     var moneyIn = fold('Money in', 'Where to send money', 'moneyin');
     col.appendChild(moneyIn.node);
@@ -107,10 +92,10 @@
       strip: strip,
       holdBody: holdBody,
       smallNote: smallNote,
-      earningBody: earningBody,
       moneyIn: moneyIn,
       activity: activity,
-      activityBody: activity.body
+      activityBody: activity.body,
+      holdCut: cuts(holdBody)
     };
 
     moneyIn.onOpen(function () {
@@ -120,6 +105,22 @@
       window.PhosphorReceipts.load();
       renderActivity();
     });
+  }
+
+  /* The column takes the height of the window, so the list of what is held is
+     what gives when there is more of it than there is room. A list cut by an
+     edge says so: a coin sliced in half by the bottom of a box reads as the end
+     of the list, and this list is the answer to "is my money OK". */
+  function cuts(node) {
+    function paint() {
+      var top = node.scrollTop > 2;
+      var bottom = node.scrollTop + node.clientHeight < node.scrollHeight - 2;
+      dom.setAttr(node, 'data-cut', top && bottom ? 'both' : (top ? 'top' : (bottom ? 'bottom' : null)));
+    }
+    dom.on(node, 'scroll', paint, { passive: true });
+    if (window.ResizeObserver) new window.ResizeObserver(paint).observe(node);
+    paint();
+    return paint;
   }
 
   function panel(title, surface) {
@@ -188,7 +189,6 @@
     dom.setHidden(refs.warning, !basic.warning);
 
     renderHoldings(basic);
-    renderEarning(state, basic);
 
     if (refs.activity.node.dataset.open === 'true') renderActivity();
   }
@@ -275,6 +275,7 @@
       return row.name;
     }, function () {
       var node = dom.el('div', 'row');
+      node.appendChild(marks.disc(''));
       var main = dom.el('div', 'row-main');
       main.appendChild(dom.el('span', 'body'));
       var side = dom.el('div', 'row-side stack-2');
@@ -284,11 +285,30 @@
       node.appendChild(side);
       return node;
     }, function (node, row) {
-      dom.setText(node.children[0].children[0], row.name);
-      dom.setNumber(node.children[1].children[0], row.valueLine);
-      dom.setText(node.children[1].children[1], row.quantityLine);
+      var mark = node.children[0];
+      var symbol = symbolOf(row.name);
+      if (mark.dataset.symbol !== symbol) {
+        mark.dataset.symbol = symbol;
+        mark.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" focusable="false">'
+          + marks.markFor(symbol) + '</svg>';
+      }
+      dom.setText(node.children[1].children[0], row.name);
+      dom.setNumber(node.children[2].children[0], row.valueLine);
+      dom.setText(node.children[2].children[1], row.quantityLine);
       markChanged(node, row.valueLine);
     });
+    refs.holdCut();
+  }
+
+  /* This screen is given names rather than tickers, because a person who has
+     never held a wallet reads "US dollars (USDC)" and not "USDC". The mark is
+     drawn off the ticker inside the name, and a name with no ticker in it, like
+     the pooled row, gets the generic coin. */
+  function symbolOf(name) {
+    var text = String(name || '');
+    var found = /\(([A-Za-z0-9]+)\)\s*$/.exec(text);
+    if (found) return found[1];
+    return /^[A-Za-z0-9]{2,6}$/.test(text) ? text : '';
   }
 
   /* A row whose number just moved carries the afterglow for a moment, so a
@@ -322,66 +342,6 @@
       row.appendChild(right);
       refs.holdBody.appendChild(row);
     }
-  }
-
-  /* The panel is always here, empty or not. It is where yield_read lands, and a
-     surface that only exists once it has something on it is a surface the beam
-     cannot aim at.
-
-     BasicView.earning is a sentence the server already wrote, not an object.
-     This read .line, .summary and .madeLine off it, so the panel unhid on a
-     truthy string and rendered an empty paragraph over the button. */
-  function renderEarning(state, basic) {
-    var earning = typeof basic.earning === 'string' ? basic.earning : '';
-    var y = state.yield;
-    dom.clear(refs.earningBody);
-
-    if (!earning && !(y && (y.totalPrincipalUsd || y.totalValueUsd))) {
-      refs.earningBody.appendChild(emptyBlock('Nothing is earning',
-        'Ask your assistant to put some of your dollars to work.'));
-      return;
-    }
-
-    if (earning) refs.earningBody.appendChild(dom.el('p', 'body', earning));
-
-    var chains = withdrawChains(y);
-    if (!chains.length) return;
-    var actions = dom.el('div', 'hstack-2 wrap');
-    for (var c = 0; c < chains.length; c += 1) {
-      actions.appendChild(withdrawButton(chains[c], chains.length > 1));
-    }
-    refs.earningBody.appendChild(actions);
-  }
-
-  /* Which chains the money is actually on. The route takes the whole position on
-     one named chain and refuses any other value, so a button that sends nothing
-     comes back "chain must be one of eth, base, arb; got ''" and moves no money.
-     Both Bring it back buttons in this window did exactly that. */
-  function withdrawChains(y) {
-    var out = [];
-    var positions = (y && Array.isArray(y.positions)) ? y.positions : [];
-    for (var i = 0; i < positions.length; i += 1) {
-      var chain = positions[i].chain;
-      if (WITHDRAW_CHAINS.indexOf(chain) < 0 || out.indexOf(chain) >= 0) continue;
-      out.push(chain);
-    }
-    if (!out.length && y && WITHDRAW_CHAINS.indexOf(y.chain) >= 0) out.push(y.chain);
-    return out;
-  }
-
-  function withdrawButton(chain, name) {
-    var button = dom.el('button', 'btn');
-    button.type = 'button';
-    button.appendChild(dom.el('span', 'btn-label',
-      name ? 'Bring back the money on ' + CHAIN_NAMES[chain] : 'Bring it back'));
-    dom.on(button, 'click', function () {
-      window.PhosphorShell.setPending(button, true, 'Bringing it back');
-      api.yieldWithdraw({ chain: chain })
-        .then(function () { return window.PhosphorShell.refresh({}); })
-        .catch(function (err) { window.PhosphorToast.show(net.readable(err, true), 'down'); })
-        .finally(function () { window.PhosphorShell.setPending(button, false); });
-    });
-    return button;
   }
 
   /* Five rows, newest first, and a way to the rest that is a real action rather

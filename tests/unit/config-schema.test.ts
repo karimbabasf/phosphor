@@ -82,7 +82,6 @@ test('every key the app actually reads still loads', () => {
     dataDir: 'state',
     skills: ['phosphor-analysis'],
     driver: { autostart: false },
-    yield: { autoAllocate: false, intervalMs: 60000, dustUsd: 5 },
   });
   assert.equal(cfg.port, 4200);
   assert.equal(cfg.economicTransferUsd, 10);

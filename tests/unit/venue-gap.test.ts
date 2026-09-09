@@ -1,6 +1,6 @@
 // The venues an existing policy.json does not list, and the one proposal that offers to add them.
 //
-// A fresh install seeds the allowlist with all nine rail venues. An existing policy.json is
+// A fresh install seeds the allowlist with every rail venue. An existing policy.json is
 // never rewritten, so every install that predates a venue had that rail DEAD rather than gated:
 // evaluateRail refuses an unlisted counterparty outright, and the only sentence anybody saw was
 // one about an allowlist nobody was going to hand-edit. The app asks now.
@@ -23,7 +23,7 @@ import { defaultPolicy, loadPolicy, savePolicy } from '../../src/policy/file.ts'
 import { renderSentences } from '../../src/policy/render.ts';
 import { syntheticQuoter, stubSigner } from '../../src/intents.ts';
 import { createProposalService } from '../../src/proposals.ts';
-import { venueAllowlist, verifiedVenueContracts } from '../../src/rails/index.ts';
+import { venueAllowlist } from '../../src/rails/index.ts';
 import { missingVenues, proposeVenueGap, venueGapSentence } from '../../src/policy/venues.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -76,11 +76,14 @@ function setup(policy: Policy) {
   return { dataDir, store, audit, svc, file };
 }
 
-const AAVE_ARB = '0x794a61358d6845594f94dc1db02a252b5b4814ad';
-const AAVE_BASE = '0xa238dd80c259a72e81d7e4664a9801593f98d1c5';
+/* Both survivors are venue STRINGS rather than contracts, so these are the two entries an
+   install that predates the cut is missing. There is no verified contract left on the seeded
+   list: 1Click mints a deposit address per quote and the verifier is a NEAR account. */
+const ONECLICK = venueAllowlist().find((v) => v.startsWith('oneclick:')) ?? '';
+const INTENTS = venueAllowlist().find((v) => v.endsWith('.near')) ?? '';
 
 test('a policy missing two venues yields one pending proposal listing both', async () => {
-  const h = setup(policyWithout(AAVE_ARB, AAVE_BASE));
+  const h = setup(policyWithout(ONECLICK, INTENTS));
 
   await h.file();
 
@@ -93,10 +96,10 @@ test('a policy missing two venues yields one pending proposal listing both', asy
   assert.equal(draft.kind, 'policy_change');
   if (draft.kind !== 'policy_change') return;
   const asked = draft.patch.outbound?.destinationAllowlist ?? [];
-  assert.ok(asked.includes(AAVE_ARB), 'the first missing venue is in the patch');
-  assert.ok(asked.includes(AAVE_BASE), 'and so is the second');
+  assert.ok(asked.includes(ONECLICK), 'the first missing venue is in the patch');
+  assert.ok(asked.includes(INTENTS), 'and so is the second');
   assert.deepEqual([...asked].sort(), [...venueAllowlist()].sort(), 'the patch asks for exactly the seeded list, nothing else');
-  assert.match(draft.sentence, /Allow the two contracts this version of Phosphor verified on chain \(Aave on Arbitrum and Base\)/);
+  assert.equal(draft.sentence, `Allow ${ONECLICK} and ${INTENTS}`);
 });
 
 test('a policy that already allows every venue yields nothing', async () => {
@@ -107,7 +110,7 @@ test('a policy that already allows every venue yields nothing', async () => {
 });
 
 test('a second boot files nothing, because the question is already on screen', async () => {
-  const h = setup(policyWithout(AAVE_ARB, AAVE_BASE));
+  const h = setup(policyWithout(ONECLICK, INTENTS));
 
   await h.file();
   await h.file();
@@ -117,14 +120,14 @@ test('a second boot files nothing, because the question is already on screen', a
 });
 
 test('a pending proposal covering only some of the gap does not suppress one covering the rest', async () => {
-  const h = setup(policyWithout(AAVE_ARB, AAVE_BASE));
+  const h = setup(policyWithout(ONECLICK, INTENTS));
 
   // Somebody asked for one of the two by hand, and it is still waiting.
   const policy = loadPolicy(h.dataDir);
   assert.ok(policy !== null);
   await h.svc.proposePolicyChange({
-    patch: { outbound: { destinationAllowlist: [...policy.outbound.destinationAllowlist, AAVE_ARB] } },
-    sentence: 'Allow the Aave pool on Arbitrum',
+    patch: { outbound: { destinationAllowlist: [...policy.outbound.destinationAllowlist, ONECLICK] } },
+    sentence: `Allow ${ONECLICK}`,
   });
 
   await h.file();
@@ -133,22 +136,23 @@ test('a pending proposal covering only some of the gap does not suppress one cov
   assert.equal(filed.length, 2, 'the partial one is not an answer to the whole gap');
 });
 
-test('the sentence a person reads names every contract this version verified, and says six when six are missing', () => {
-  const all = verifiedVenueContracts().map((v) => v.address);
-  assert.equal(
-    venueGapSentence(all),
-    'Allow the six contracts this version of Phosphor verified on chain (Aave on Arbitrum and Base, Uniswap on Arbitrum and Base)',
-  );
+/* With no contract on the seeded list the sentence is the venue strings alone, and it has to
+   read as English. The general form emitted "Allow the no contracts this version of Phosphor
+   verified on chain, and allow ...", which is the app talking to itself on the one screen where
+   a person decides about money. */
+test('the sentence a person reads names every venue being added, and reads as a sentence', () => {
+  assert.equal(venueGapSentence(venueAllowlist()), `Allow ${venueAllowlist().slice(0, -1).join(', ')} and ${venueAllowlist().at(-1)}`);
+  assert.doesNotMatch(venueGapSentence(venueAllowlist()), /the no contracts/);
 });
 
 test('the gap is computed case insensitively, because an allowlist is written by hand', () => {
-  const p = policyWithout(AAVE_ARB);
+  const p = policyWithout(ONECLICK);
   p.outbound.destinationAllowlist = p.outbound.destinationAllowlist.map((a) => a.toUpperCase());
-  assert.deepEqual(missingVenues(p, venueAllowlist()), [AAVE_ARB]);
+  assert.deepEqual(missingVenues(p, venueAllowlist()), [ONECLICK]);
 });
 
 test('an unreadable policy asks for nothing, because there is nothing to patch', async () => {
-  const h = setup(policyWithout(AAVE_ARB));
+  const h = setup(policyWithout(ONECLICK));
   fs.writeFileSync(path.join(h.dataDir, 'policy.json'), '{ not json');
 
   assert.equal(await h.file(), null);

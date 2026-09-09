@@ -1,4 +1,4 @@
-// The slippage-floor sanity bound (src/rails/uniswap.ts). minAmountOut is the only slippage
+// The slippage-floor sanity bound (src/rails/slippage.ts). minAmountOut is the only slippage
 // protection on a swap and it comes off the wire from an agent that may be hijacked. The tool
 // has no recipient field, so a near-zero floor is the exfiltration path: the agent names a price
 // at which a sandwich takes the money. floorTooLow is the pure half of the guard, asserted here
@@ -9,7 +9,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { floorTooLow } from '../../src/rails/uniswap.ts';
+import { floorTooLow } from '../../src/rails/slippage.ts';
 
 const BPS = 2000; // 20%, the shipped bound
 

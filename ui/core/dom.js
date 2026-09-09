@@ -36,6 +36,11 @@
   function clear(node) {
     if (!node) return;
     while (node.firstChild) node.removeChild(node.firstChild);
+    /* The reconciler's idea of what is on screen has to go with the nodes it
+       named. It survived a clear, so the next pass reused elements that were no
+       longer in the document and skipped the ones it thought were already
+       there. */
+    node.__keyed = null;
   }
 
   /* A number that changes crossfades rather than snapping, so a total that

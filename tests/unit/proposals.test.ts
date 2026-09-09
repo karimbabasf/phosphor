@@ -103,7 +103,6 @@ function fakeLiveLedger(): Ledger {
   const snap: LedgerSnapshot = { ...loadDemoLedger(), mode: 'live' };
   return {
     snapshot: () => snap,
-    positions: () => [],
     intents: () => undefined,
     refresh: async () => snap,
     applyDemoTransfer: () => {
@@ -126,7 +125,7 @@ test('a non-stable is priced at spot, not at the ledger stablecoin assumption', 
   snap.prices.ETH = 1880;
 
   const p = await h.svc.proposeSwap({
-    venue: 'uniswap-v3', chain: 'arb', fromSymbol: 'WETH', toSymbol: 'USDC',
+    venue: 'oneclick', chain: 'arb', fromSymbol: 'WETH', toSymbol: 'USDC',
     amountIn: 0.01, minAmountOut: 1,
   });
 
@@ -141,7 +140,7 @@ test('a token the app cannot price is refused rather than guessed at 1.0', async
   snap.holdings.push({ chain: 'arb', address: '0x1', symbol: 'MYSTERY', tokenId: '0xm', amount: 5, usd: 5, native: false });
 
   const p = await h.svc.proposeSwap({
-    venue: 'uniswap-v3', chain: 'arb', fromSymbol: 'MYSTERY', toSymbol: 'USDC',
+    venue: 'oneclick', chain: 'arb', fromSymbol: 'MYSTERY', toSymbol: 'USDC',
     amountIn: 1000, minAmountOut: 1,
   });
 
@@ -457,7 +456,7 @@ test('no address of ours on the destination chain refuses before anything is quo
     const base = loadDemoLedger();
     return { ...base, holdings: base.holdings.filter(hh => hh.chain === 'sol') };
   })();
-  const ledger: Ledger = { snapshot: () => solOnly, positions: () => [], intents: () => undefined, refresh: async () => solOnly, applyDemoTransfer: () => {} };
+  const ledger: Ledger = { snapshot: () => solOnly, intents: () => undefined, refresh: async () => solOnly, applyDemoTransfer: () => {} };
   const h = setup({ ledger });
 
   const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
@@ -696,7 +695,6 @@ function stuckLedger(): Ledger {
   const snap: LedgerSnapshot = { ...loadDemoLedger(), mode: 'live' };
   return {
     snapshot: () => snap,
-    positions: () => [],
     intents: () => undefined,
     refresh: () => new Promise<LedgerSnapshot>(() => {}),
     applyDemoTransfer: () => {

@@ -133,16 +133,12 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
   {
     group: 'see the money',
     items: [
-      { tool: 'wallet', does: 'every token and LP position held, with quantity, price, USD value and share.' },
+      { tool: 'wallet', does: 'every balance held, with quantity, price, USD value and share.' },
       { tool: 'balances', does: 'holdings per chain with staleness. Use wallet unless you need the raw per-chain view.' },
       { tool: 'composition', does: 'stablecoin exposure by issuer and chain, including the freezable share.' },
       { tool: 'policy_show', does: 'the rules currently enforced, as plain-English sentences.' },
       { tool: 'log_tail', does: 'the audit log, newest first: everything attempted, executed and refused.' },
       { tool: 'proposal_status', does: 'what happened to one proposal id.' },
-      {
-        tool: 'yield_read',
-        does: 'what is supplied to a lending venue, what it has actually earned, and what the loop last decided. The percentage here is REALIZED and backward-looking, with the window it covers printed beside it, and under an hour there is no percentage at all. Quote the caveat it returns whenever you quote the rate.',
-      },
       {
         tool: 'gas_report',
         does: 'what this app has spent on gas, grouped by action and by chain. Read the remainder counts before you state a total: receipts still being read are not zero gas, and a total quoted over them is confidently wrong.',
@@ -252,24 +248,7 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
         tool: 'propose_consolidate',
         does: 'gather one stablecoin\'s scattered balances onto a single chain. UNPROVEN: this path has never run on a live chain, so treat a clean simulation as untested and say so when you propose it.',
       },
-      {
-        tool: 'propose_yield_deposit',
-        does: 'supply a stablecoin to a lending venue so an idle balance earns. Omit the chain and the app picks the best-paying venue it can reach, which is what the loop does.',
-      },
-      {
-        tool: 'propose_yield_withdraw',
-        does: 'take a supplied balance back out. OMIT the amount to close the position: the receipt token grows every block, so any number you compute leaves dust behind.',
-      },
       { tool: 'propose_policy_change', does: 'change the rules themselves. Always waits for a human click.' },
-    ],
-  },
-  {
-    group: 'let the money work on its own',
-    items: [
-      {
-        tool: 'yield_auto',
-        does: 'start or stop the loop that keeps an idle stablecoin balance in the best-paying venue it can reach. It moves no money itself: everything the loop then does arrives as a proposal through the same policy engine, the same click threshold and the same log your own proposals go through. It keeps running after you disconnect, so say out loud that you turned it on.',
-      },
     ],
   },
   {

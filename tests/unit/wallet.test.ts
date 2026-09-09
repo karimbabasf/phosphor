@@ -1,10 +1,9 @@
-// buildWallet is what the composition panel renders. The cases that matter are the ones
-// where it must differ from classify(): natives are included, pool positions are rows.
+// buildWallet is what the composition panel renders. The case that matters is the one where it
+// must differ from classify(): natives are included.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildWallet } from '../../src/wallet.ts';
 import { loadDemoLedger } from '../../src/ledger/demo.ts';
-import type { LpPosition } from '../../src/types.ts';
 
 function closeTo(actual: number, expected: number, tolerance: number, msg?: string) {
   assert.ok(Math.abs(actual - expected) <= tolerance, msg ?? `${actual} not within ${tolerance} of ${expected}`);
@@ -36,29 +35,6 @@ test('rows sort by value descending and shares sum to 1', () => {
     assert.ok(wallet.rows[i - 1].valueUsd >= wallet.rows[i].valueUsd, 'rows must be value descending');
   }
   closeTo(wallet.rows.reduce((s, r) => s + r.share, 0), 1, 0.0001);
-});
-
-test('a pool position is one row, valued as both sides plus uncollected fees', () => {
-  const snap = loadDemoLedger();
-  const position: LpPosition = {
-    chain: 'arb',
-    venue: 'uniswap-v3',
-    poolId: '0xpool',
-    positionId: '4242',
-    token0: { symbol: 'USDC', tokenId: '0xusdc', amount: 100 },
-    token1: { symbol: 'USDT', tokenId: '0xusdt', amount: 50 },
-    feeTier: 500,
-    inRange: true,
-    uncollectedFeesUsd: 3,
-  };
-  const wallet = buildWallet(snap, [position]);
-
-  const lpRows = wallet.rows.filter(r => r.kind === 'lp');
-  assert.equal(lpRows.length, 1);
-  assert.equal(lpRows[0].symbol, 'USDC/USDT 0.05%');
-  // both stables price at ~1.0 in the fixture: 100 + 50 + 3 uncollected
-  closeTo(lpRows[0].valueUsd, 153, 0.5);
-  assert.equal(lpRows[0].lp?.positionId, '4242');
 });
 
 test('a failed chain is reported stale rather than silently zeroed', () => {
@@ -96,7 +72,7 @@ test('a token we hold but cannot price is still a row: the test is quantity, not
 
 test('an empty verifier balance is dropped like any other empty holding', () => {
   const snap = loadDemoLedger();
-  const wallet = buildWallet(snap, [], {
+  const wallet = buildWallet(snap, {
     holdings: [{ ...INTENTS_ETH, amount: 0 }],
     ok: true,
     fetchedAt: 'now',
@@ -127,7 +103,7 @@ const INTENTS_ETH = {
 
 test('a verifier balance is a wallet row, placed at intents rather than on a chain', () => {
   const snap = loadDemoLedger();
-  const wallet = buildWallet(snap, [], { holdings: [INTENTS_ETH], ok: true, fetchedAt: 'now' });
+  const wallet = buildWallet(snap, { holdings: [INTENTS_ETH], ok: true, fetchedAt: 'now' });
 
   const rows = wallet.rows.filter(r => r.kind === 'intents');
   assert.equal(rows.length, 1);
@@ -139,7 +115,7 @@ test('a verifier balance is a wallet row, placed at intents rather than on a cha
 
 test('verifier ETH and wallet ETH agree about what an ETH is worth', () => {
   const snap = loadDemoLedger();
-  const wallet = buildWallet(snap, [], { holdings: [INTENTS_ETH], ok: true, fetchedAt: 'now' });
+  const wallet = buildWallet(snap, { holdings: [INTENTS_ETH], ok: true, fetchedAt: 'now' });
 
   const onChain = wallet.rows.find(r => r.kind === 'token' && r.symbol === 'ETH' && r.native);
   const inVerifier = wallet.rows.find(r => r.kind === 'intents');
@@ -151,7 +127,7 @@ test('verifier ETH and wallet ETH agree about what an ETH is worth', () => {
 test('a verifier balance counts toward the total, which is the bug that started this', () => {
   const snap = loadDemoLedger();
   const before = buildWallet(snap);
-  const after = buildWallet(snap, [], { holdings: [INTENTS_ETH], ok: true, fetchedAt: 'now' });
+  const after = buildWallet(snap, { holdings: [INTENTS_ETH], ok: true, fetchedAt: 'now' });
 
   assert.ok(after.totalUsd > before.totalUsd, 'money in the verifier is money held');
   assert.ok(after.byChain.intents > 0, 'and it gets its own place in the breakdown');
@@ -159,7 +135,7 @@ test('a verifier balance counts toward the total, which is the bug that started 
 });
 
 test('a failed verifier read is stale, never an absent row', () => {
-  const wallet = buildWallet(loadDemoLedger(), [], {
+  const wallet = buildWallet(loadDemoLedger(), {
     holdings: [],
     ok: false,
     fetchedAt: 'now',
@@ -172,7 +148,7 @@ test('a wallet that never asked the verifier does not claim it went stale', () =
   // Demo mode: intents.near is not read at all, so there is nothing to mark.
   assert.equal(buildWallet(loadDemoLedger()).stale.includes('intents'), false);
   assert.equal(
-    buildWallet(loadDemoLedger(), [], { holdings: [], ok: true, fetchedAt: 'now' }).stale.includes('intents'),
+    buildWallet(loadDemoLedger(), { holdings: [], ok: true, fetchedAt: 'now' }).stale.includes('intents'),
     false,
   );
 });
@@ -204,7 +180,7 @@ const intentsOf = (symbol: string, amount: number) => ({
 test('a stablecoin held only in the verifier is worth a dollar, not nothing', () => {
   const snap = loadDemoLedger();
   snap.holdings = snap.holdings.filter(h => h.symbol !== 'USDC');
-  const wallet = buildWallet(snap, [], intentsOf('USDC', 3.694727));
+  const wallet = buildWallet(snap, intentsOf('USDC', 3.694727));
 
   const row = wallet.rows.find(r => r.kind === 'intents');
   assert.equal(row?.priceUsd, 1);
@@ -215,8 +191,8 @@ test('a stablecoin held only in the verifier is worth a dollar, not nothing', ()
 test('the total counts it, because a total that leaves money out is the number a person acts on', () => {
   const snap = loadDemoLedger();
   snap.holdings = snap.holdings.filter(h => h.symbol !== 'USDC');
-  const without = buildWallet(snap, []).totalUsd;
-  const withIt = buildWallet(snap, [], intentsOf('USDC', 10)).totalUsd;
+  const without = buildWallet(snap).totalUsd;
+  const withIt = buildWallet(snap, intentsOf('USDC', 10)).totalUsd;
   assert.ok(Math.abs(withIt - without - 10) < 1e-9, `total moved by ${withIt - without}, not by 10`);
 });
 
@@ -224,7 +200,7 @@ test('a symbol in the other case is the same symbol', () => {
   // The price map was keyed by whatever case each side happened to use, so a lookup only landed
   // when the two agreed. src/ledger/index.ts already normalises; this did not.
   const snap = loadDemoLedger();
-  const wallet = buildWallet(snap, [], intentsOf('usdc', 5));
+  const wallet = buildWallet(snap, intentsOf('usdc', 5));
   assert.equal(wallet.rows.find(r => r.kind === 'intents')?.priceUsd, 1);
 });
 
@@ -233,7 +209,7 @@ test('WETH in the verifier is worth what an ETH is worth', () => {
   const eth = snap.holdings.find(h => h.symbol === 'ETH' && h.native);
   assert.ok(eth, 'the demo ledger holds no native ETH, so this test is not looking at anything');
   const spot = eth!.usd / eth!.amount;
-  const wallet = buildWallet(snap, [], intentsOf('WETH', 1));
+  const wallet = buildWallet(snap, intentsOf('WETH', 1));
   assert.ok(Math.abs((wallet.rows.find(r => r.kind === 'intents')?.priceUsd ?? 0) - spot) < 1e-6);
 });
 
@@ -243,7 +219,7 @@ test('an asset this app cannot price is a hole, and says so rather than printing
      total somebody makes decisions against. So an unknown asset still values at zero, and it
      carries the flag that stops the window printing "$0.00" beside a balance somebody owns. */
   const snap = loadDemoLedger();
-  const wallet = buildWallet(snap, [], intentsOf('WIF', 412.5));
+  const wallet = buildWallet(snap, intentsOf('WIF', 412.5));
 
   const row = wallet.rows.find(r => r.kind === 'intents');
   assert.equal(row?.priceUsd, 0, 'a price was invented for an asset nothing prices');

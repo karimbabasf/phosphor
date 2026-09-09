@@ -55,14 +55,24 @@ export function missingVenues(policy: Policy | null, seeded: readonly string[]):
 
 /* The sentence on the decision card. It names how many contracts, which venues and which chains,
    and it is built from what is actually missing rather than written down, so it can never say
-   six when two are being added. With every mainnet contract missing, which is the case on an
-   install that predates them, it reads:
+   six when two are being added.
 
-     Allow the six contracts this version of Phosphor verified on chain
-     (Aave on Arbitrum and Base, Uniswap on Arbitrum and Base) */
+   BOTH SURVIVING VENUES ARE STRINGS, so on this version the contract half is normally empty and
+   the sentence is the second branch: "Allow oneclick:..., intents.near and hyperliquid-perps".
+   The contract half stays because verifiedVenueContracts() is the seam a contract venue would
+   come back through, and because it is what an install that predates this cut still has sitting
+   in its own allowlist. Special-cased rather than left to fall through: the general form emitted
+   "Allow the no contracts this version of Phosphor verified on chain, and allow ...", which is
+   the app talking to itself on the one screen where a person decides about money. */
 export function venueGapSentence(missing: readonly string[]): string {
   const known = new Map(verifiedVenueContracts().map((v) => [lower(v.address), v]));
   const contracts = missing.map(lower).filter((address) => known.has(address));
+
+  // Venue strings are not contracts and there is nothing to verify on chain about them, so they
+  // are named separately rather than counted in with the addresses.
+  const venueStrings = missing.map(lower).filter((address) => !known.has(address));
+
+  if (contracts.length === 0) return `Allow ${joinWords(venueStrings)}`;
 
   const byVenue = new Map<string, Set<ChainId>>();
   for (const address of contracts) {
@@ -80,10 +90,6 @@ export function venueGapSentence(missing: readonly string[]): string {
   const noun = contracts.length === 1 ? 'contract' : 'contracts';
   const head = `Allow the ${count(contracts.length)} ${noun} this version of Phosphor verified on chain`;
   const named = parts.length === 0 ? '' : ` (${parts.join(', ')})`;
-
-  // Venue strings are not contracts and there is nothing to verify on chain about them, so they
-  // are named separately rather than counted in with the addresses.
-  const venueStrings = missing.map(lower).filter((address) => !known.has(address));
   const also = venueStrings.length === 0 ? '' : `, and allow ${joinWords(venueStrings)}`;
 
   return `${head}${named}${also}`;

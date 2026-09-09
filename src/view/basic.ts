@@ -17,8 +17,8 @@
 //   2. A balance fetched before the most recent execution. The ledger cache serves
 //      pre-trade balances after a write and still stamps them stale: [], because
 //      stale[] tracks chains that failed to READ, not data that is out of date.
-//      Verified 2026-08-12: an executed lp_add moved 36.540787 USDC and 0.011 WETH
-//      on chain while wallet still returned every pre-trade figure.
+//      Verified 2026-08-12: an executed move sent 36.540787 USDC and 0.011 WETH on
+//      chain while wallet still returned every pre-trade figure.
 // Both fail toward saying less rather than toward stating a stale number as fact.
 
 import type {
@@ -152,11 +152,45 @@ function newestExecutionAt(proposals: Proposal[]): number {
 
 // ---------- the ask ----------
 
+/* THE KINDS THIS APP NO LONGER BUILDS, AND WHY EVERY SWITCH BELOW STILL ANSWERS FOR THEM.
+   lp_add, lp_remove, yield_deposit and yield_withdraw were real rails. state/proposals.json
+   holds executed and refused rows naming them, and the money they moved was real. This screen
+   renders that history, so a row it dropped or threw on would be this app telling its owner
+   something did not happen when it did. Nothing can propose one of these again; every one of
+   them can still be read back.
+   `kindOf` exists because draft.kind no longer includes the retired names, so TypeScript calls
+   the comparison unreachable and refuses it. Reading the same field as a string is the honest
+   way to say "this value is wider at rest than the live type is". `retired` is the matching
+   read for the fields those drafts carried. */
+const RETIRED_KINDS = ['lp_add', 'lp_remove', 'yield_deposit', 'yield_withdraw'];
+
+type RetiredDraft = {
+  chain?: ChainId;
+  symbol?: string;
+  liquidityPct?: number;
+  token0?: { symbol: string };
+  token1?: { symbol: string };
+  counterparty?: string;
+};
+
+function kindOf(draft: WriteDraft): string {
+  return draft.kind;
+}
+
+function retired(draft: WriteDraft): RetiredDraft {
+  return draft as unknown as RetiredDraft;
+}
+
+function isRetired(draft: WriteDraft): boolean {
+  return RETIRED_KINDS.includes(kindOf(draft));
+}
+
 function amountUsdOf(draft: WriteDraft): number {
   if (draft.kind === 'consolidate') return draft.totalUsd;
   if (draft.kind === 'transfer') return draft.leg.amountUsd;
   if (draft.kind === 'policy_change') return 0;
-  return draft.amountUsd;
+  // Every retired kind carried amountUsd too, so the same read serves them.
+  return (draft as { amountUsd?: number }).amountUsd ?? 0;
 }
 
 function symbolsOf(draft: WriteDraft): string[] {
@@ -166,7 +200,10 @@ function symbolsOf(draft: WriteDraft): string[] {
   // involved" line came out blank on the one screen a human approves money from.
   else if (draft.kind === 'hl_deposit' || draft.kind === 'intents_deposit' || draft.kind === 'intents_withdraw')
     out.push(draft.symbol);
-  else if (draft.kind === 'lp_add') out.push(draft.token0.symbol, draft.token1.symbol);
+  else if (kindOf(draft) === 'lp_add')
+    out.push(retired(draft).token0?.symbol ?? '', retired(draft).token1?.symbol ?? '');
+  else if (kindOf(draft) === 'yield_deposit' || kindOf(draft) === 'yield_withdraw')
+    out.push(retired(draft).symbol ?? '');
   else if (draft.kind === 'consolidate') out.push(draft.symbol);
   else if (draft.kind === 'transfer') out.push(draft.leg.symbol);
   return [...new Set(out.filter((s) => (s ?? '').length > 0))];
@@ -177,7 +214,7 @@ function chainsOf(draft: WriteDraft): string[] {
   if (draft.kind === 'swap') out.push(draft.chain, draft.toChain);
   else if (draft.kind === 'hl_deposit' || draft.kind === 'intents_deposit' || draft.kind === 'intents_withdraw')
     out.push(draft.chain);
-  else if (draft.kind === 'lp_add' || draft.kind === 'lp_remove') out.push(draft.chain);
+  else if (isRetired(draft)) out.push(retired(draft).chain ?? '');
   else if (draft.kind === 'consolidate') out.push(draft.toChain, ...draft.legs.map((l) => l.fromChain));
   else if (draft.kind === 'transfer') out.push(draft.leg.fromChain, draft.leg.toChain);
   return [...new Set(out)];
@@ -204,8 +241,8 @@ function destinationsOf(proposal: Proposal, selfAddresses: string[]): BasicDesti
   } else if (draft.kind === 'hl_deposit') {
     push(draft.counterparty, 'the NEAR Intents router this app keeps on its approved list', 'app');
     push(draft.hlAccount, isSelf(draft.hlAccount, selfAddresses) ? 'your own trading account' : NOT_YOURS, 'app');
-  } else if (draft.kind === 'lp_add' || draft.kind === 'lp_remove') {
-    push(draft.counterparty, 'the Uniswap contract this app keeps on its approved list', 'app');
+  } else if (isRetired(draft)) {
+    push(retired(draft).counterparty ?? '', 'the contract this app kept on its approved list', 'app');
   } else if (draft.kind === 'intents_withdraw') {
     // The one draft that pays out to an ordinary address on a chain. Basic exists to say
     // whose address that is, so it says it here rather than showing a withdrawal with no
@@ -250,13 +287,14 @@ function askHeadline(draft: WriteDraft, amountUsd: number): string {
   if (draft.kind === 'intents_withdraw') {
     return `It wants to bring ${amountClause(amountUsd)}your ${plainSymbol(draft.symbol)} back out of the NEAR trading service and into your ${plainChain(draft.chain)} wallet.`;
   }
-  if (draft.kind === 'lp_add') {
-    return `It wants to put ${amountClause(amountUsd)}your money into a Uniswap pool holding ${plainSymbol(draft.token0.symbol)} and ${plainSymbol(draft.token1.symbol)}.`;
+  if (kindOf(draft) === 'lp_add') {
+    const pair = `${plainSymbol(retired(draft).token0?.symbol ?? '')} and ${plainSymbol(retired(draft).token1?.symbol ?? '')}`;
+    return `It wants to put ${amountClause(amountUsd)}your money into a pool holding ${pair}.`;
   }
-  if (draft.kind === 'lp_remove') {
-    const pct = Math.round(draft.liquidityPct * 100);
+  if (kindOf(draft) === 'lp_remove') {
+    const pct = Math.round((retired(draft).liquidityPct ?? 0) * 100);
     const worth = amountUsd > 0 ? `, worth about ${money(amountUsd)}` : '';
-    return `It wants to take ${pct}% of one of your Uniswap pool positions back out${worth}.`;
+    return `It wants to take ${pct}% of one of your pool positions back out${worth}.`;
   }
   if (draft.kind === 'consolidate') {
     return `It wants to gather ${amountClause(amountUsd)}your ${plainSymbol(draft.symbol)} onto ${plainChain(draft.toChain)}.`;
@@ -272,15 +310,14 @@ function askHeadline(draft: WriteDraft, amountUsd: number): string {
   }
   // No percentage in either sentence, on purpose. This screen exists for someone who owns
   // the money and is not technical, and a rate is the part of a yield product most likely to
-  // be read as a promise. The dollars are the fact; the rate lives on the pro screen with
-  // its window and its caveat attached.
-  if (draft.kind === 'yield_deposit') {
-    return `It wants to put ${amountClause(amountUsd)}your ${plainSymbol(draft.symbol)} somewhere it earns interest.`;
+  // be read as a promise. The dollars are the fact.
+  if (kindOf(draft) === 'yield_deposit') {
+    return `It wants to put ${amountClause(amountUsd)}your ${plainSymbol(retired(draft).symbol ?? '')} somewhere it earns interest.`;
   }
-  if (draft.kind === 'yield_withdraw') {
-    return `It wants to bring your ${plainSymbol(draft.symbol)} back out of the place it has been earning interest.`;
+  if (kindOf(draft) === 'yield_withdraw') {
+    return `It wants to bring your ${plainSymbol(retired(draft).symbol ?? '')} back out of the place it has been earning interest.`;
   }
-  return `It wants to change one of your safety rules: "${draft.sentence}".`;
+  return `It wants to change one of your safety rules: "${(draft as { sentence?: string }).sentence ?? ''}".`;
 }
 
 // What actually happens to the total. A swap does NOT reduce it, so saying "you would
@@ -299,11 +336,11 @@ function askAfterLine(draft: WriteDraft, totalUsd: number | null, amountUsd: num
   // this reader they were about to have less, which is the opposite of what happens.
   if (draft.kind === 'intents_withdraw')
     return 'The money comes back into your own wallet, where you can spend it directly again.';
-  if (draft.kind === 'lp_add') return `${money(amountUsd)} moves into the pool. You can take it back out later.`;
-  if (draft.kind === 'lp_remove') return 'Money comes back out of the pool to you.';
-  if (draft.kind === 'yield_deposit')
+  if (kindOf(draft) === 'lp_add') return `${money(amountUsd)} moves into the pool. You can take it back out later.`;
+  if (kindOf(draft) === 'lp_remove') return 'Money comes back out of the pool to you.';
+  if (kindOf(draft) === 'yield_deposit')
     return `${money(amountUsd)} moves into a lending pool and starts earning. It is still yours and there is no lock: you can take it back whenever you want.`;
-  if (draft.kind === 'yield_withdraw') return 'The money comes back into your own wallet, with whatever it earned.';
+  if (kindOf(draft) === 'yield_withdraw') return 'The money comes back into your own wallet, with whatever it earned.';
   if (draft.kind === 'consolidate') return 'The money stays yours. It moves onto one chain.';
   // A transfer is the only kind that genuinely leaves, so it is the only one allowed to
   // state a balance afterwards, and only when the balance is known.
@@ -389,19 +426,12 @@ function quantity(amount: number): string {
 // One row per THING OWNED, not one per chain. The same dollars sitting on four chains
 // is one holding to this reader; which chain each part sits on is a pro-screen fact and
 // putting it here was the "extra info" that made the first version unreadable.
-// Pool positions collapse together for the same reason: a quantity summed across two
-// different pools would be a number that means nothing.
 function buildHoldings(wallet: WalletView, unknown: boolean): BasicHolding[] {
   if (unknown) return [];
 
   const tokens = new Map<string, { qty: number; usd: number }>();
-  let poolUsd = 0;
 
   for (const row of wallet.rows ?? []) {
-    if (row.kind === 'lp') {
-      poolUsd += row.valueUsd;
-      continue;
-    }
     const key = row.symbol.toUpperCase();
     const at = tokens.get(key) ?? { qty: 0, usd: 0 };
     at.qty += row.quantity;
@@ -419,16 +449,6 @@ function buildHoldings(wallet: WalletView, unknown: boolean): BasicHolding[] {
       share: 0,
     });
   }
-  if (poolUsd > 0) {
-    out.push({
-      name: 'Money in Uniswap pools',
-      quantityLine: '',
-      valueLine: money(poolUsd),
-      valueUsd: poolUsd,
-      share: 0,
-    });
-  }
-
   out.sort((a, b) => b.valueUsd - a.valueUsd);
 
   // Against the sum of the rows, not against wallet.totalUsd. They are the same number
@@ -515,8 +535,10 @@ function didHeadline(draft: WriteDraft, amountUsd: number): string {
     return `Changed ${amt}your ${plainSymbol(draft.fromSymbol)} into ${plainSymbol(draft.toSymbol)}.`;
   }
   if (draft.kind === 'hl_deposit') return `Moved ${amt}your ${plainSymbol(draft.symbol)} to your Hyperliquid trading account.`;
-  if (draft.kind === 'lp_add') return `Put ${amt}your money into a Uniswap pool.`;
-  if (draft.kind === 'lp_remove') return 'Took money back out of a Uniswap pool.';
+  if (kindOf(draft) === 'lp_add') return `Put ${amt}your money into a pool.`;
+  if (kindOf(draft) === 'lp_remove') return 'Took money back out of a pool.';
+  if (kindOf(draft) === 'yield_deposit') return `Put ${amt}your money somewhere it earns interest.`;
+  if (kindOf(draft) === 'yield_withdraw') return 'Brought your money back out of the place it was earning interest.';
   if (draft.kind === 'consolidate') return `Gathered ${amt}your ${plainSymbol(draft.symbol)} onto ${plainChain(draft.toChain)}.`;
   if (draft.kind === 'transfer') return `Sent ${amt}your ${plainSymbol(draft.leg.symbol)} to another address.`;
   return 'Changed one of your safety rules.';
@@ -529,8 +551,10 @@ function wantedPhrase(draft: WriteDraft, amountUsd: number): string {
     return `changing ${amt}your ${plainSymbol(draft.fromSymbol)} into ${plainSymbol(draft.toSymbol)}`;
   }
   if (draft.kind === 'hl_deposit') return `moving ${amt}your ${plainSymbol(draft.symbol)} to your Hyperliquid trading account`;
-  if (draft.kind === 'lp_add') return `putting ${amt}your money into a Uniswap pool`;
-  if (draft.kind === 'lp_remove') return 'taking money back out of a Uniswap pool';
+  if (kindOf(draft) === 'lp_add') return `putting ${amt}your money into a pool`;
+  if (kindOf(draft) === 'lp_remove') return 'taking money back out of a pool';
+  if (kindOf(draft) === 'yield_deposit') return `putting ${amt}your money somewhere it earns interest`;
+  if (kindOf(draft) === 'yield_withdraw') return 'bringing your money back out of the place it was earning interest';
   if (draft.kind === 'consolidate') return `gathering ${amt}your ${plainSymbol(draft.symbol)} onto ${plainChain(draft.toChain)}`;
   if (draft.kind === 'transfer') return `sending ${amt}your ${plainSymbol(draft.leg.symbol)} to another address`;
   return 'changing one of your safety rules';
@@ -769,41 +793,6 @@ export function buildBasic(input: BasicInput): BasicView {
   else if (!policyReadable) footer = 'Nothing can move until the rules are fixed.';
   else footer = 'You will be asked before anything moves.';
 
-  // One sentence about money that is earning, built from the wallet's own yield rows so
-  // this screen and the pro screen cannot disagree about the amount.
-  //
-  // No percentage, on purpose. This reader owns the money and is not technical, and a rate
-  // is the part of a yield product most likely to be heard as a promise about the future.
-  // The dollars are a fact about the past. Suppressed entirely while the total is null, for
-  // the same reason the holdings list is: a number here, next to "still checking", would be
-  // the one figure on screen claiming to be current when nothing else is.
-  const earningRows = wallet.rows.filter(r => r.kind === 'yield');
-  let earning: string | null = null;
-  if (totalUsd !== null && earningRows.length > 0) {
-    // A position this app has no deposit of its own behind cannot be told what it made, and
-    // `?? 0` would have said "it has not made a full cent yet" about money that may have been
-    // earning for months. This reader has nothing to check that against, so the sentence says
-    // the amount is working and stops, rather than putting a figure it does not have next to
-    // a figure it does. See YieldHolding.basisKnown.
-    const unknown = earningRows.filter(r => r.yield?.earnedUsd === null || r.yield?.earnedUsd === undefined);
-    if (unknown.length > 0) {
-      // The VALUE, not the principal, because the principal is the number that is missing.
-      // Saying "$56.29 is earning" is true of the balance on the chain either way.
-      const held = earningRows.reduce((sum, r) => sum + r.valueUsd, 0);
-      earning = `${money(held)} of your money is earning interest. This app did not put it there, so it cannot say how much it has made.`;
-    } else {
-      // The principal here, deliberately: it is what was put in, and the sentence goes on to
-      // name the earnings separately. Using the value would count the interest twice, once
-      // inside "is earning interest" and again after "it has made".
-      const working = earningRows.reduce((sum, r) => sum + (r.yield?.principalUsd ?? 0), 0);
-      const made = earningRows.reduce((sum, r) => sum + (r.yield?.earnedUsd ?? 0), 0);
-      // Yield is sub-cent for hours. money() would print $0.00 and tell this reader the thing
-      // is not working, which is the opposite of true, so the small case gets its own words.
-      const madeLine = made < 0.01 ? 'It has not made a full cent yet.' : `It has made ${money(made)} so far.`;
-      earning = `${money(working)} of your money is earning interest. ${madeLine}`;
-    }
-  }
-
   return {
     tone,
     totalUsd,
@@ -814,7 +803,6 @@ export function buildBasic(input: BasicInput): BasicView {
     warning,
     agentLine,
     footer,
-    earning,
     // Tied to the same condition that nulls the total. A holdings list with a chain
     // missing from it looks exactly like the holdings list of someone who owns less,
     // and this reader has nothing to check it against.

@@ -10,7 +10,6 @@ import type http from 'node:http';
 import type { ChainId, Proposal } from '../types.ts';
 import { asRecord, errText, fail, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
-import { bestYieldChain, heldYieldChain } from './state.ts';
 import { CHAINS, PROPOSE_KINDS } from './context.ts';
 import type { Ctx } from './context.ts';
 
@@ -134,23 +133,16 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
 
   try {
     if (kind === 'swap') {
-      const venueRaw = params.venue === undefined ? 'uniswap-v3' : String(params.venue);
-      if (venueRaw !== 'uniswap-v3' && venueRaw !== 'oneclick' && venueRaw !== 'intents-native') {
-        problems.push('venue must be uniswap-v3, oneclick or intents-native');
+      // Two venues, and the default crosses chains, which is what a bare "swap" means here now.
+      // The old default was an on-chain DEX that could only work same-chain, so a cross-chain
+      // swap naming no venue was refused at this door and had to be retried. There is nothing
+      // left to refuse: both venues reach every pair the token list carries.
+      const venueRaw = params.venue === undefined ? 'oneclick' : String(params.venue);
+      if (venueRaw !== 'oneclick' && venueRaw !== 'intents-native') {
+        problems.push('venue must be oneclick or intents-native');
       }
       const chain = chainField(params, 'chain', problems);
       const toChain = params.toChain === undefined ? chain : chainField(params, 'toChain', problems);
-      // uniswap-v3 is an on-chain DEX and cannot cross chains. Caught HERE, at draft time, with
-      // a message that names the fix, rather than deep in the rail as "no verified deployment"
-      // that reads like a missing config. This is also the guard against the silent default: a
-      // cross-chain swap that names no venue defaults to uniswap-v3 and lands here, told to pick
-      // oneclick or intents-native, instead of building an on-chain draft nobody asked for.
-      if (venueRaw === 'uniswap-v3' && chain !== toChain) {
-        problems.push(
-          `uniswap-v3 is a same-chain venue and cannot swap ${chain} to ${toChain}. ` +
-            'For a cross-chain swap set venue to "oneclick" or "intents-native".',
-        );
-      }
       const fromSymbol = strField(params, 'fromSymbol', problems);
       const toSymbol = strField(params, 'toSymbol', problems);
       // A negative or zero input has no honest swap, and neither does one too large to be
@@ -172,7 +164,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
       }
       respond(
         await ctx.proposals.proposeSwap({
-          venue: venueRaw as 'uniswap-v3' | 'oneclick' | 'intents-native',
+          venue: venueRaw as 'oneclick' | 'intents-native',
           chain,
           toChain,
           fromSymbol,
@@ -260,91 +252,6 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         return;
       }
       respond(await ctx.proposals.proposeIntentsWithdraw({ chain, symbol, amount }));
-      return;
-    }
-    if (kind === 'yield_deposit' || kind === 'yield_withdraw') {
-      // Both rails take EVM chains only, and chainField accepts sol and near because four
-      // other kinds need them. Narrowing here rather than there keeps the message specific:
-      // "sol is not a chain this rail supplies on" beats a generic list five items long.
-      let chain: ChainId | null = null;
-      if (params.chain === undefined) {
-        // Omitted on purpose, and it is the common case. A deposit goes where the loop
-        // would send it, and a withdrawal comes from wherever the position actually is.
-        // Both answers live in the allocator's view, so neither is a guess.
-        const picked = kind === 'yield_deposit' ? bestYieldChain(ctx) : heldYieldChain(ctx);
-        if (!picked.ok) {
-          fail(res, 400, picked.reason);
-          return;
-        }
-        chain = picked.chain;
-      } else {
-        const named = chainField(params, 'chain', problems);
-        if (named !== 'eth' && named !== 'base' && named !== 'arb') {
-          problems.push(`chain must be one of eth, base, arb for ${kind}; got '${String(params.chain)}'`);
-        } else {
-          chain = named;
-        }
-      }
-      const symbol = params.symbol === undefined ? undefined : strField(params, 'symbol', problems);
-      // The asymmetry is the whole design of the withdrawal. An amount is REQUIRED going in
-      // and OPTIONAL coming out, because the receipt token rebases: a number the caller
-      // computed a block ago is already short of the position by whatever interest landed
-      // while the proposal waited for a click, and omitting it means all of it, dust
-      // included. See the comment on YieldWithdrawParams in src/types.ts.
-      const amount =
-        kind === 'yield_deposit'
-          ? positiveField(params, 'amount', problems)
-          : params.amount === undefined
-            ? undefined
-            : positiveField(params, 'amount', problems);
-      if (problems.length > 0 || chain === null) {
-        fail(res, 400, problems.join('; ') || 'chain could not be resolved');
-        return;
-      }
-      sendProposal(
-        ctx,
-        res,
-        kind === 'yield_deposit'
-          ? await ctx.proposals.proposeYieldDeposit({ chain, symbol, amount: amount as number })
-          : await ctx.proposals.proposeYieldWithdraw({ chain, symbol, amount }),
-      );
-      return;
-    }
-    if (kind === 'lp_add') {
-      const chain = chainField(params, 'chain', problems);
-      const token0Symbol = strField(params, 'token0Symbol', problems);
-      const token1Symbol = strField(params, 'token1Symbol', problems);
-      const amount0 = positiveField(params, 'amount0', problems);
-      const amount1 = positiveField(params, 'amount1', problems);
-      const feeTier = numField(params, 'feeTier', problems);
-      const tickLower = numField(params, 'tickLower', problems);
-      const tickUpper = numField(params, 'tickUpper', problems);
-      if (problems.length > 0 || chain === null) {
-        fail(res, 400, problems.join('; '));
-        return;
-      }
-      respond(
-        await ctx.proposals.proposeLpAdd({
-          chain,
-          token0Symbol,
-          token1Symbol,
-          amount0,
-          amount1,
-          feeTier,
-          tickLower,
-          tickUpper,
-        }),
-      );
-      return;
-    }
-    if (kind === 'lp_remove') {
-      const positionId = strField(params, 'positionId', problems);
-      const liquidityPct = positiveField(params, 'liquidityPct', problems);
-      if (problems.length > 0) {
-        fail(res, 400, problems.join('; '));
-        return;
-      }
-      respond(await ctx.proposals.proposeLpRemove({ positionId, liquidityPct }));
       return;
     }
     if (kind === 'consolidate') {

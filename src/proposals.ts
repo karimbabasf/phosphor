@@ -12,7 +12,7 @@
 // This file is the door. The work is in src/proposals/, split by job: lifecycle.ts is what a
 // proposal is and what a click does to it, execute.ts is what actually runs, draft.ts is how a
 // fund move is planned and priced, rails.ts holds the four drafts that move money somewhere
-// else, positions.ts the five that open or close a position, and reconcile.ts what becomes of a
+// else, positions.ts the one that opens a position, and reconcile.ts what becomes of a
 // proposal the process died in the middle of. Everything anything outside this directory imports
 // is re-exported here, so no caller changed.
 
@@ -33,13 +33,7 @@ import { executeApproved, land } from './proposals/execute.ts';
 import { chainTxLookup, reconcileOnBoot, reconcileProposal } from './proposals/reconcile.ts';
 import { proposeConsolidate, proposePolicyChange } from './proposals/draft.ts';
 import { proposeHlDeposit, proposeIntentsDeposit, proposeIntentsWithdraw, proposeSwap } from './proposals/rails.ts';
-import {
-  proposeLpAdd,
-  proposeLpRemove,
-  proposeMandate,
-  proposeYieldDeposit,
-  proposeYieldWithdraw,
-} from './proposals/positions.ts';
+import { proposeMandate } from './proposals/positions.ts';
 
 export type { ProposalDeps };
 
@@ -67,10 +61,6 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     proposeIntentsDeposit: (p) => serialise(() => proposeIntentsDeposit(ctx, p)),
     proposeIntentsWithdraw: (p) => serialise(() => proposeIntentsWithdraw(ctx, p)),
     proposeMandate: (p) => serialise(() => proposeMandate(ctx, p)),
-    proposeLpAdd: (p) => serialise(() => proposeLpAdd(ctx, p)),
-    proposeLpRemove: (p) => serialise(() => proposeLpRemove(ctx, p)),
-    proposeYieldDeposit: (p) => serialise(() => proposeYieldDeposit(ctx, p)),
-    proposeYieldWithdraw: (p) => serialise(() => proposeYieldWithdraw(ctx, p)),
     // approve() executes, so it shares the queue: a human click landing next to an
     // auto-approval must not be able to double-spend the cap either.
     approve: (id: string) => serialise(() => approve(ctx, id)),

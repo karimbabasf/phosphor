@@ -451,40 +451,6 @@ async function run(): Promise<void> {
     rejection?.msg ?? 'no such event',
   );
 
-  // ---- the yield surface, in an app that has no lending loop ----
-  //
-  // This script runs in demo mode, which holds no rails and, since 2026-08-20, starts no
-  // allocator either. What is proved here is the honesty of the answer rather than a deposit.
-  // That is the failure mode worth catching: a read that returns an empty view in this
-  // situation tells an agent "you have nothing earning", which is a different claim from
-  // "nothing here can tell you", and an agent that cannot tell them apart says the wrong one
-  // out loud to a human.
-  //
-  // These four checks are also what caught the two defects this branch fixes. Before the fix
-  // this run started a real allocator against a real chain with the real signing key, read a
-  // live 56.29 USDC Aave position onto a fixture wallet, and reported all 56.29 of it as
-  // interest earned, because a throwaway data dir has no deposit history to derive a cost
-  // basis from and zero subtracts like a real number.
-
-  const yieldRead = (await callTool(client, 'yield_read')) as Json;
-  check(
-    'yield_read answers in an app with no allocator, and says which kind of nothing it is',
-    yieldRead?.available === false && typeof yieldRead?.reason === 'string' && yieldRead.reason.length > 0,
-    `available=${String(yieldRead?.available)} reason=${String(yieldRead?.reason).slice(0, 80)}`,
-  );
-  check(
-    'and it does not hand back an empty position list that reads as "you have nothing supplied"',
-    yieldRead?.positions === undefined,
-    `positions=${JSON.stringify(yieldRead?.positions)}`,
-  );
-
-  const autoOff = (await callTool(client, 'yield_auto', { enabled: true })) as Json;
-  check(
-    'yield_auto refuses when there is no loop, rather than reporting a switch it did not throw',
-    typeof autoOff?.error === 'string' && /no lending allocator/.test(autoOff.error),
-    String(autoOff?.error ?? JSON.stringify(autoOff)).slice(0, 90),
-  );
-
   // ---- the gas report, over the history this run just made ----
   //
   // The consolidation above executed, so there is a real movement in the store by now. In

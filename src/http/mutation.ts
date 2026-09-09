@@ -1,6 +1,6 @@
-// The mutating routes: the lending loop's on/off switch, the browser's five token-checked
-// writes (approve, refuse, kill, the yield withdrawal button, the driver), and the two pieces
-// of app state an agent may set directly (the basic screen's coins, and which window is up).
+// The mutating routes: the browser's four token-checked writes (approve, refuse, kill, the
+// driver), and the two pieces of app state an agent may set directly (the basic screen's
+// coins, and which window is up).
 //
 // Everything on this surface either changes money or changes what the human sees while they
 // decide about money, which is why every one of them is audited and every browser door carries
@@ -17,39 +17,6 @@ import type { JsonBody } from './respond.ts';
 import { pollPrice } from './chart.ts';
 import { PROJECT_DIR } from './context.ts';
 import type { Ctx } from './context.ts';
-
-// Starting and stopping the loop. It moves no money itself and gets no policy verdict,
-// which puts it in the class of set_view_mode rather than of propose: what it changes is
-// WHEN a proposal gets filed, not whether one can be. Every proposal the loop then files
-// goes through the same engine, the same threshold and the same log an agent's does.
-//
-// Audited on both edges, because "who turned the bot on" is the first question anyone asks
-// of a log after money moved without a click.
-export function handleYieldAuto(ctx: Ctx, body: JsonBody, res: http.ServerResponse): void {
-  if (!ctx.allocator) {
-    fail(res, 400, 'no lending allocator is running in this app, so there is no loop to switch.');
-    return;
-  }
-  if (typeof body.enabled !== 'boolean') {
-    // No default, deliberately. A switch that defaults to one of its two states is a switch
-    // an agent flips while trying to read it.
-    fail(res, 400, 'enabled must be true or false');
-    return;
-  }
-  const on = body.enabled;
-  if (on) ctx.allocator.start();
-  else ctx.allocator.stop();
-  ctx.audit.append(
-    'tool_call',
-    on
-      ? 'yield_auto ON: the lending loop may now file its own deposit proposals'
-      : 'yield_auto OFF: the lending loop will file nothing further',
-    { enabled: on },
-  );
-  ctx.sse.broadcastState();
-  const view = ctx.allocator.view();
-  sendJson(res, 200, { ok: true, autoAllocate: view.autoAllocate, lastTickAt: view.lastTickAt });
-}
 
 export async function handleMutation(
   ctx: Ctx,
@@ -222,32 +189,6 @@ export async function handleMutation(
     }
 
     return fail(res, 400, `unknown driver action: ${action}`);
-  }
-
-  if (route === '/api/yield/withdraw') {
-    // The button in the window, and the ONLY thing on this route.
-    //
-    // It files a yield_withdraw proposal exactly as the allocator would and then stops. It
-    // does not approve it and it cannot: above the click threshold the proposal waits in
-    // the same gate every other one waits in, and below it the policy engine decides. This
-    // is not a second path to the money, it is the same path with a human at the front.
-    //
-    // No amount is accepted from the request. Omitting it means the whole position, which
-    // is the only withdrawal that cannot leave dust behind on a balance that grows every
-    // block, and an amount on the wire would be a number this route would have to trust.
-    const chain = typeof body.chain === 'string' ? body.chain : '';
-    if (chain !== 'eth' && chain !== 'base' && chain !== 'arb') {
-      fail(res, 400, `chain must be one of eth, base, arb; got '${chain}'`);
-      return;
-    }
-    try {
-      const proposal = await ctx.proposals.proposeYieldWithdraw({ chain });
-      ctx.sse.broadcastState();
-      sendJson(res, 200, proposal);
-    } catch (err) {
-      fail(res, 400, errText(err));
-    }
-    return;
   }
 
   if (route === '/api/kill') {

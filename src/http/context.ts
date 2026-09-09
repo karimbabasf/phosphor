@@ -27,7 +27,6 @@ import type { TradeService } from '../trade/service.ts';
 import type { Driver, DriverEvent } from '../driver.ts';
 import type { AgentPresence } from '../agents.ts';
 import type { GasCache } from '../transactions.ts';
-import type { Allocator } from '../yield/allocator.ts';
 import type { createChartStore } from '../chart.ts';
 import type { Theme } from '../view/theme.ts';
 import type { DrawingStore } from '../drawings.ts';
@@ -64,15 +63,7 @@ export const PROPOSE_KINDS: readonly string[] = [
   'hl_deposit',
   'intents_deposit',
   'intents_withdraw',
-  'lp_add',
-  'lp_remove',
   'mandate_arm',
-  // Supplying a stablecoin to a lending venue and taking it back. On this list from
-  // 2026-08-20, when the rail had run on a live chain five times (see the evidence in
-  // docs/superpowers/specs/2026-08-20-stablecoin-yield.md section 5) and the agent door
-  // opened onto it. Before that the rails existed and only the window could drive them.
-  'yield_deposit',
-  'yield_withdraw',
 ];
 export const READ_TOOLS: readonly string[] = [
   // The handshake presentation: the banner a connecting agent prints, the live facts it
@@ -107,10 +98,6 @@ export const READ_TOOLS: readonly string[] = [
   'agent_roster',
   'agent_board',
   'agent_jobs',
-  // What the money is earning, what it has actually made, and what the loop last decided.
-  // The same view the window's yield panel draws from, so the two cannot disagree about a
-  // number a human and an agent might both be looking at.
-  'yield_read',
   // What this app has spent on gas, grouped. A pure aggregation over the history the
   // HISTORY overlay already derives, so it reaches no chain of its own.
   'gas_report',
@@ -191,11 +178,6 @@ export type ServerDeps = {
      to on would have each of them spawn a real Claude Code process. main.ts is the one caller
      that passes it, and it is the one caller that is an app. */
   autostart?: boolean;
-  /* The stablecoin allocator, when one is running. Optional because every test in this repo
-     builds a server and none of them should be reaching an RPC for a lending rate. Absent
-     means the window renders the panel with nothing in it and says why, which is also what a
-     demo-mode install gets. */
-  allocator?: Allocator;
   /* Injected only so a test can drive the start paths without a real Claude Code process
      appearing on the machine. main.ts never passes it, and nothing here can loosen the
      lockdown through it: the tool surface is fixed in operator/driver.settings.json and

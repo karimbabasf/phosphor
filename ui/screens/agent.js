@@ -41,7 +41,6 @@
     mandate_catalog: 'checking the mandates',
     skill: 'reading its instructions',
     trade_read: 'reading the account',
-    yield_read: 'reading what you earn',
     /* the chart */
     chart_read: 'reading the chart',
     chart_measure: 'measuring the chart',
@@ -68,8 +67,6 @@
     propose_intents_deposit: 'asking to deposit',
     propose_intents_withdraw: 'asking to withdraw',
     propose_mandate: 'asking to arm a mandate',
-    propose_yield_deposit: 'asking to put money to work',
-    propose_yield_withdraw: 'asking to take money out',
     propose_hl_deposit: 'asking to fund trading',
     propose_policy_change: 'asking to change a rule',
     /* doing, once a human has said yes */
@@ -78,7 +75,6 @@
     intents_deposit: 'depositing',
     intents_withdraw: 'withdrawing',
     mandate_arm: 'arming a mandate',
-    yield_auto: 'setting up auto earning',
     /* the helpers */
     agent_spawn: 'starting a helper',
     agent_roster: 'checking the helpers',

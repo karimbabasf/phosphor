@@ -110,30 +110,3 @@ test('a corrupt config.local.json still stops the boot when it sits in the overr
   );
 });
 
-// ---------- the yield loop's switch ----------
-//
-// This flag turns on a loop that files proposals to move money. Its polarity is the whole
-// point: the obvious form, `!== 'false'`, enables the loop for every value except that one
-// literal string, so PHOSPHOR_YIELD_AUTO=0 and =off would both switch it ON.
-
-test('only an explicit yes turns the money-moving loop on', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-yield-cfg-'));
-  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ mode: 'live', dataDir: 'state' }));
-  const prev = process.env.PHOSPHOR_YIELD_AUTO;
-  try {
-    for (const yes of ['true', 'TRUE', '1', 'yes', 'on']) {
-      process.env.PHOSPHOR_YIELD_AUTO = yes;
-      assert.equal(loadConfig(dir).yield?.autoAllocate, true, `'${yes}' should enable`);
-    }
-    for (const no of ['false', '0', 'off', 'no', 'disabled', 'nope', '']) {
-      process.env.PHOSPHOR_YIELD_AUTO = no;
-      assert.equal(loadConfig(dir).yield?.autoAllocate, false, `'${no}' must NOT enable`);
-    }
-    delete process.env.PHOSPHOR_YIELD_AUTO;
-    assert.equal(loadConfig(dir).yield?.autoAllocate, false, 'absent means off');
-  } finally {
-    if (prev === undefined) delete process.env.PHOSPHOR_YIELD_AUTO;
-    else process.env.PHOSPHOR_YIELD_AUTO = prev;
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});

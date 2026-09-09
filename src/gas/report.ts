@@ -11,7 +11,7 @@
 // Gas units never become floats. A busy chain burns past 2^53 units when a history is summed
 // over months, and a float sum past that point rounds without telling anyone: 9007199254740993
 // plus 1 gives back 9007199254740994. BigInt inside, decimal string at the edge, which is the
-// same rule src/rails/uniswap.ts keeps at 18 decimals and for the same reason.
+// same rule the rails keep at 18 decimals and for the same reason.
 //
 // Nothing that cannot be counted is quietly counted as zero. The four remainders (pending,
 // unknown, intent-settled, unpriced) leave here as their own numbers. An aggregate that drops
@@ -25,7 +25,7 @@ import type { TxEntry, TxGas } from '../transactions.ts';
 export type GasWindow = '24h' | '7d' | '30d' | 'all';
 
 export type GasSlice = {
-  key: string;          // stable grouping key: 'swap', 'arb', 'yield_deposit', 'aave-v3'
+  key: string;          // stable grouping key: 'swap', 'arb', 'intents_deposit', 'oneclick'
   label: string;        // what the legend prints
   feeUsd: number;       // summed, priced receipts only
   feeNative: number;    // summed; meaningful only when `symbol` is non-null
@@ -46,7 +46,11 @@ export type GasReport = {
   moveCount: number;          // movements that burned gas
   byAction: GasSlice[];       // TxEntry.action: swap, deposit, withdraw, transfer, ...
   byChain: GasSlice[];        // TxGas.place: eth, base, arb
-  byKind: GasSlice[];         // WriteDraft kind: yield_deposit vs intents_deposit vs hl_deposit
+  /* WriteDraft kind: intents_deposit vs hl_deposit vs swap. Retired kinds still appear here
+     (lp_add, yield_deposit and the rest), because this groups the history and that history
+     really happened. Nothing keys a decision off these values, so no branch needs updating
+     when a kind stops being proposable. */
+  byKind: GasSlice[];
   byVenue: GasSlice[];        // TxEntry.venue, with 'none' for a move that named no venue
   reverted: { feeUsd: number; txCount: number };
   unpriced: { txCount: number; gasUsed: string };
@@ -165,8 +169,9 @@ function slices(accs: Map<string, Acc>, totalNano: bigint): GasSlice[] {
   }));
 }
 
-// A kind is a machine token ('yield_deposit'); a legend is read by a person. The key stays
-// the token so the UI and the MCP tool can key off it.
+// A kind is a machine token ('intents_deposit'); a legend is read by a person. The key stays
+// the token so the UI and the MCP tool can key off it. Works on a retired kind unchanged: it
+// only reshapes the string.
 function kindLabel(kind: TxEntry['kind']): string {
   return kind.replace(/_/g, ' ');
 }

@@ -30,7 +30,7 @@ import {
   STATE_DECIDED_BYTES,
   STATE_DECIDED_KEPT,
 } from '../../src/http/state.ts';
-import type { AppConfig, ChainId, ChainStatus, LedgerSnapshot, LpPosition, Proposal, ProposalStatus } from '../../src/types.ts';
+import type { AppConfig, ChainId, ChainStatus, LedgerSnapshot, Proposal, ProposalStatus } from '../../src/types.ts';
 
 const CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 const SELF = '0x1111111111111111111111111111111111111111';
@@ -119,7 +119,6 @@ async function boot(proposals: Proposal[]): Promise<{ url: string; store: Return
     riskRows: [],
     ledger: {
       snapshot,
-      positions: (): LpPosition[] => [],
       intents: () => undefined,
       refresh: async () => SNAPSHOT,
       applyDemoTransfer: () => {},
@@ -139,10 +138,6 @@ async function boot(proposals: Proposal[]): Promise<{ url: string; store: Return
       proposeIntentsDeposit: async () => settled,
       proposeIntentsWithdraw: async () => settled,
       proposeMandate: async () => settled,
-      proposeLpAdd: async () => settled,
-      proposeLpRemove: async () => settled,
-      proposeYieldDeposit: async () => settled,
-      proposeYieldWithdraw: async () => settled,
       approve: async () => settled,
       refuse: async () => settled,
       get: (id: string) => store.get(id),
