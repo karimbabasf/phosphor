@@ -188,7 +188,7 @@
     dom.setText(refs.warnText, basic.warning || '');
     dom.setHidden(refs.warning, !basic.warning);
 
-    renderHoldings(basic);
+    renderHoldings(basic, state);
 
     if (refs.activity.node.dataset.open === 'true') renderActivity();
   }
@@ -241,7 +241,14 @@
   /* Dust is not an answer to "is my money OK". A row worth under a dollar is
      counted rather than listed, so the list is the things a person would
      actually name if you asked them what they had. */
-  function renderHoldings(basic) {
+  function renderHoldings(basic, state) {
+    /* A read that failed and a wallet with nothing in it both arrive here as an
+       empty list, and they are opposite answers to the one question this screen
+       exists for. The banner above already says the read failed; the panel used
+       to sit under it saying the wallet is empty and telling a person to go and
+       send themselves money. */
+    var wallet = (state && state.wallet) || {};
+    var unread = Array.isArray(wallet.stale) && wallet.stale.length > 0;
     var all = Array.isArray(basic.holdings) ? basic.holdings : [];
     var holdings = [];
     var small = 0;
@@ -262,8 +269,11 @@
       dom.clear(refs.holdBody);
       delete refs.holdBody.dataset.skeleton;
       refs.holdBody.__keyed = null;
-      refs.holdBody.appendChild(emptyBlock('Nothing here yet',
-        'Open Money in and send something to one of your addresses.'));
+      refs.holdBody.appendChild(unread
+        ? emptyBlock('Could not read what you hold',
+          'This is not a wallet with nothing in it. The app will show what is there as soon as the read works.')
+        : emptyBlock('Nothing here yet',
+          'Open Money in and send something to one of your addresses.'));
       return;
     }
     if (refs.holdBody.dataset.skeleton === 'true') {

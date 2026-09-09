@@ -62,7 +62,21 @@
 
   /* Reconcile a list against keyed data. `create(item)` builds a node once,
      `update(node, item, index)` fills it every pass. Nodes keep their identity
-     across renders, so a row being hovered or focused stays where it is. */
+     across renders, so a row being hovered or focused stays where it is.
+
+     THE HOST BELONGS TO THE RECONCILER. Everything in it after this returns is
+     a row this call placed, and anything else in there is removed.
+
+     It used to remove only the nodes it had named itself, tracked on __keyed,
+     which meant a hand-appended empty block was invisible to it. Rows arrived,
+     went in above the block because the first one is inserted at firstChild,
+     and the block stayed: the trade screen listed six fills with "Nothing yet.
+     Fills and cancels land here as they happen." sitting under them. A loading
+     skeleton left the same way. So a caller may still append its own empty
+     state or skeleton straight to the host, and the next populated pass takes
+     it away without being told about it. A caller that wants a footer under a
+     reconciled list has to re-append it after each pass, the way Basic's
+     See all button already does. */
   function reconcile(parent, items, keyOf, create, update) {
     if (!parent) return;
     var existing = parent.__keyed || {};
@@ -84,11 +98,15 @@
       previous = node;
     }
 
-    for (var key2 in existing) {
-      if (!Object.prototype.hasOwnProperty.call(existing, key2)) continue;
-      if (next[key2]) continue;
-      var stale = existing[key2];
-      if (stale.parentNode === parent) parent.removeChild(stale);
+    /* Every row this pass placed sits in order from the first child, so
+       everything after the last of them is a leftover: a row that has gone from
+       the data, an empty state, a skeleton. An empty list leaves nothing
+       placed, so the whole host goes. */
+    var leftover = previous ? previous.nextSibling : parent.firstChild;
+    while (leftover) {
+      var after = leftover.nextSibling;
+      parent.removeChild(leftover);
+      leftover = after;
     }
 
     parent.__keyed = next;

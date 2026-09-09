@@ -143,7 +143,18 @@
     if (draft.kind === 'mandate') return 'Arm a rule';
     if (draft.kind === 'policy_change') return 'Change your limits';
     if (draft.kind === 'hl_deposit') return 'Fund the trading account';
-    return String(proposal.kind || 'A request');
+    return kindWords(proposal.kind);
+  }
+
+  /* A kind nobody wrote a sentence for still has to read as a sentence. This is
+     reachable: the store keeps rows naming kinds this app can no longer propose,
+     yield_deposit and the two pool kinds among them, and one of those can still
+     reach the unknown-outcome card. Underscores taken out is not a headline
+     somebody wrote, but it is English, and the raw enum is not. */
+  function kindWords(kind) {
+    var words = String(kind === null || kind === undefined ? '' : kind).replace(/_/g, ' ').trim();
+    if (!words) return 'A request';
+    return words.charAt(0).toUpperCase() + words.slice(1);
   }
 
   function amountOf(proposal) {

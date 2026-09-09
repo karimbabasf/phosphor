@@ -160,6 +160,9 @@ test('the server prefix is stripped and a tool nobody has mapped lands on the as
   // no longer on either deck.
   assert.equal(world.trace.surfaceOf('yield_read').id, 'assistant');
   assert.equal(world.trace.surfaceOf('propose_yield_deposit').id, 'assistant');
+  // The historic table is for proposal kinds and must not put a live tool back on the map.
+  assert.equal(world.trace.surfaceOf('yield_deposit').id, 'assistant');
+  assert.equal(world.trace.surfaceOf('lp_add').id, 'assistant');
   // The id comes from a language model, so a lookup on a plain object must not
   // hand back Object.prototype's own members.
   assert.equal(world.trace.surfaceOf('constructor').id, 'assistant');
@@ -175,7 +178,15 @@ test('a proposal card lands on the panel its kind belongs to', () => {
   assert.equal(world.trace.surfaceForProposal('hl_deposit'), 'account');
   assert.equal(world.trace.surfaceForProposal('policy_change'), 'rules');
   assert.equal(world.trace.surfaceForProposal('mandate'), 'rules');
-  assert.equal(world.trace.surfaceForProposal('yield_deposit'), 'assistant');
+  // A kind this app can no longer propose but can still be asked to DRAW. Earning and the
+  // pools went with their venues, and state/proposals.json keeps the rows that already
+  // executed, so one of these can still reach a card. Each moved money into or out of the
+  // wallet, so the wallet is where its light belongs: a kind with no tool is not a kind
+  // with no home, and landing on the assistant would say the assistant did it to itself.
+  assert.equal(world.trace.surfaceForProposal('yield_deposit'), 'holdings');
+  assert.equal(world.trace.surfaceForProposal('yield_withdraw'), 'holdings');
+  assert.equal(world.trace.surfaceForProposal('lp_add'), 'holdings');
+  assert.equal(world.trace.surfaceForProposal('lp_remove'), 'holdings');
   assert.equal(world.trace.surfaceForProposal('something_new'), 'assistant');
 });
 

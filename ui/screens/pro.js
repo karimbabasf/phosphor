@@ -35,8 +35,12 @@
      read that failed is not a number this panel is allowed to print. */
   var trade = { data: null, failed: false, reason: '' };
 
+  /* 'intents' is a place like any other as far as the wallet is concerned, and
+     it reached the screen as the raw id in the one sentence that names a place
+     a person has to act on. */
   var CHAIN_NAMES = {
-    eth: 'Ethereum', base: 'Base', arb: 'Arbitrum', sol: 'Solana', near: 'NEAR'
+    eth: 'Ethereum', base: 'Base', arb: 'Arbitrum', sol: 'Solana', near: 'NEAR',
+    intents: 'NEAR Intents'
   };
 
   /* Allowlist entries that are venues rather than addresses. The policy stores
@@ -89,7 +93,7 @@
        money at NEAR Intents is a row in the wallet above, and the money at the
        trading venue was on no screen but the trade screen. */
     var trading = linkPanel('Trading', 'span-5', 'account', 'Open the trade screen');
-    var tradingBody = dom.el('div', 'stack grow');
+    var tradingBody = dom.el('div', 'stack grow spread');
     trading.body.appendChild(tradingBody);
     grid.appendChild(trading.node);
 
@@ -107,8 +111,23 @@
     /* Limits: the policy, the daily spend and the allowlist. It is reference
        material, so it reads as reference material: sentences, one meter, and
        the addresses behind the one thing on this deck worth a click to open. */
+    /* THREE REGIONS, AND ONLY THE MIDDLE ONE SCROLLS.
+
+       The whole body used to scroll, so on a short panel the thing under the cut
+       was whatever happened to be last: the one control on the panel, or half of
+       the sentence that tells a person how to change a limit. The sentences are
+       the part whose length this window does not control, a policy can carry
+       five of them or fifteen, so the sentences are the part that scrolls. The
+       spend meter above and the allowlist and the footnote below are fixed
+       furniture and stay on screen whatever the policy says. */
     var limits = panel('Limits', 'span-5', 'rules');
-    var limitsBody = dom.el('div', 'stack scrolls grow');
+    var limitsBody = dom.el('div', 'stack-2 grow limits-body');
+    var limitsSpend = dom.el('div', 'stack-2');
+    var limitsRules = dom.el('div', 'stack-2 scrolls grow');
+    var limitsFoot = dom.el('div', 'stack-2');
+    limitsBody.appendChild(limitsSpend);
+    limitsBody.appendChild(limitsRules);
+    limitsBody.appendChild(limitsFoot);
     limits.body.appendChild(limitsBody);
     grid.appendChild(limits.node);
 
@@ -123,13 +142,15 @@
       trading: trading,
       tradingBody: tradingBody,
       limits: limits,
-      limitsBody: limitsBody,
+      limitsSpend: limitsSpend,
+      limitsRules: limitsRules,
+      limitsFoot: limitsFoot,
       activity: activity,
       activityBody: activityBody,
       feeValue: feeValue,
       moneyCut: cuts(moneyList),
       activityCut: cuts(activityBody),
-      limitsCut: cuts(limitsBody)
+      limitsCut: cuts(limitsRules)
     };
 
     window.PhosphorReceipts.load();
@@ -308,7 +329,48 @@
     }
     delete refs.moneyList.dataset.skeleton;
 
+    var stale = Array.isArray(wallet.stale) ? wallet.stale : [];
+
+    /* NOTHING HELD AND NOTHING READ ARE DIFFERENT ANSWERS.
+
+       An empty wallet drew an empty box: no rows, no sentence, a panel with a
+       title and nothing under it, which reads as a render that failed rather
+       than as a wallet with nothing in it. And a wallet the app could not read
+       drew "Nothing held" over a total of $0.00, which is the one thing this
+       codebase says over and over not to do: a hole and a zero must never print
+       the same, because $0.00 beside money somebody owns reads as "you have
+       nothing". */
+    if (!rows.length) {
+      renderComposition([]);
+      dom.reconcile(refs.moneyList, [], function (item) { return item; });
+      if (stale.length) {
+        setLead(refs.money, '--');
+        setSummary(refs.money, 'Unread');
+        refs.moneyList.appendChild(emptyBlock('Could not read what you hold',
+          'The ' + stale.map(chainName).join(' and ') + ' read failed. What is there is unknown, not zero.'));
+      } else {
+        setLead(refs.money, dom.usd(0));
+        setSummary(refs.money, 'Nothing held');
+        refs.moneyList.appendChild(emptyBlock('Nothing here yet',
+          'Ask your assistant where to send money, and it will give you an address.'));
+      }
+      dom.setHidden(refs.emptyNote, true);
+      refs.moneyCut();
+      return;
+    }
+
     var coins = groupByCoin(rows);
+
+    /* WHERE IT SITS, SAID ONCE.
+
+       Phosphor holds money in two places and the wallet is one of them, so
+       every row on this panel now reads "NEAR Intents" under the symbol: the
+       same four words four times, which is the column doing no work. When the
+       whole wallet is in one place the panel says so in its own summary and the
+       rows drop the line. The moment a coin sits somewhere else, or in more
+       than one place, the per row label comes back, because then it is the
+       answer to a real question. */
+    var common = onePlace(coins);
 
     dom.reconcile(refs.moneyList, coins, function (coin) {
       return coin.id;
@@ -362,6 +424,7 @@
          single line is a click that tells a person what they already knew. */
       dom.setText(name.children[1], single ? placeName(coin.places[0])
         : coin.places.length + ' places');
+      dom.setHidden(name.children[1], common !== '');
       dom.setNumber(figures.children[0], coin.priced ? dom.usd(coin.valueUsd) : 'not priced');
       dom.setAttr(figures.children[0], 'data-unpriced', coin.priced ? null : 'true');
       dom.setText(figures.children[1], coin.countable ? dom.qty(coin.quantity) : '');
@@ -388,13 +451,12 @@
     /* The total is the head of the panel, so it is the first thing read rather
        than a sum under a list. */
     setLead(refs.money, dom.usd(wallet.totalUsd || 0));
-    setSummary(refs.money, moneySummary(coins, wallet));
+    setSummary(refs.money, moneySummary(coins, wallet, common));
 
     var notes = [];
     if (wallet.emptyCount) notes.push(wallet.emptyCount + ' empty, not listed');
     /* Per-chain staleness badges are gone from every row that reads fine. Only
-       a chain that actually failed is named, and it is named in words. */
-    var stale = Array.isArray(wallet.stale) ? wallet.stale : [];
+       a place that actually failed is named, and it is named in words. */
     if (stale.length) {
       notes.push('Could not check ' + stale.map(chainName).join(', ') + '. Holdings there are unknown, not zero.');
     }
@@ -485,16 +547,31 @@
   /* The coins, counted, plus anything the panel could not price. An unpriced
      row is named in the summary rather than left for somebody to spot in the
      list, because it is the one thing on this panel that makes the total wrong. */
-  function moneySummary(coins, wallet) {
+  /* The one place the whole wallet sits in, or an empty string when there is
+     more than one. Two coins in one place each is still one place; a coin in
+     two places is not. */
+  function onePlace(coins) {
+    var found = '';
+    for (var i = 0; i < coins.length; i += 1) {
+      if (coins[i].places.length !== 1) return '';
+      var where = placeName(coins[i].places[0]);
+      if (found === '') found = where;
+      else if (found !== where) return '';
+    }
+    return found;
+  }
+
+  function moneySummary(coins, wallet, common) {
     if (!coins.length) return 'Nothing held';
     var unpriced = [];
     for (var i = 0; i < coins.length; i += 1) {
       if (!coins[i].priced) unpriced.push(coins[i].symbol);
     }
     var parts = [coins.length === 1 ? '1 coin' : coins.length + ' coins'];
+    if (common) parts.push('all in ' + common);
     var places = 0;
     for (var j = 0; j < coins.length; j += 1) places += coins[j].places.length;
-    if (places > coins.length) parts.push(places + ' places');
+    if (!common && places > coins.length) parts.push(places + ' places');
     if (Array.isArray(wallet.stale) && wallet.stale.length) {
       parts.push(wallet.stale.length === 1 ? '1 chain unread' : wallet.stale.length + ' chains unread');
     }
@@ -647,7 +724,9 @@
   }
 
   function renderLimits(state) {
-    dom.clear(refs.limitsBody);
+    dom.clear(refs.limitsSpend);
+    dom.clear(refs.limitsRules);
+    dom.clear(refs.limitsFoot);
     var policy = state.policy || {};
     var sentences = state.sentences || policy.sentences || [];
 
@@ -678,7 +757,7 @@
       block.appendChild(dom.el('p', 'meta', daily.resetsAt === null
         ? 'Nothing has been spent in the last 24 hours.'
         : 'The oldest of it stops counting ' + resetWords(daily.resetsAt) + '.'));
-      refs.limitsBody.appendChild(block);
+      refs.limitsSpend.appendChild(block);
     }
 
     /* The destination sentence is dropped here because the allowlist gets its
@@ -708,7 +787,7 @@
       for (var r = 0; r < rules.length; r += 1) {
         list.appendChild(dom.el('p', 'body limit-line', rules[r]));
       }
-      refs.limitsBody.appendChild(list);
+      refs.limitsRules.appendChild(list);
     }
 
     if (gas.length) {
@@ -716,15 +795,8 @@
       gasRow.appendChild(dom.el('span', 'body', gas.length === 1 ? 'Gas kept back' : 'Gas kept back on each chain'));
       var amounts = gas.map(function (g) { return chainName(g.chain) + ' ' + g.amount; }).join(', ');
       gasRow.appendChild(dom.el('span', 'meta mono', amounts));
-      refs.limitsBody.appendChild(gasRow);
+      refs.limitsRules.appendChild(gasRow);
     }
-
-    /* One sentence at the bottom, rather than an Edit button on every rule that
-       only ever opened a toast saying the same thing. Seven buttons that cannot
-       do what they offer is worse than no button: it teaches a person that the
-       controls on this screen are decoration. */
-    refs.limitsBody.appendChild(dom.el('p', 'meta',
-      'Ask your assistant to change any of these. A limit change files a request you have to click.'));
 
     /* The destination allowlist existed in the policy engine with no way to see
        it. This is where it lives now. */
@@ -735,7 +807,8 @@
     if (!allow.length) {
       wrap.appendChild(dom.el('p', 'label', 'Money can only go to your own wallets and these venues'));
       wrap.appendChild(dom.el('p', 'meta', 'No list is set, so a destination is checked against your limits alone.'));
-      refs.limitsBody.appendChild(wrap);
+      refs.limitsFoot.appendChild(wrap);
+      refs.limitsFoot.appendChild(askLine());
       setSummary(refs.limits, limitsSummary(state));
       refs.limitsCut();
       return;
@@ -756,7 +829,13 @@
     head.type = 'button';
     var headText = addresses.length === 1 ? '1 wallet of yours' : addresses.length + ' wallets of yours';
     if (venues.length) headText += ', ' + venues.join(', ');
-    head.appendChild(dom.el('span', 'body grow', 'Money can only go to ' + headText));
+    /* One line, truncated. It wrapped to two, and on a short panel that put the
+       one control here half under the cut, which is the fade hiding a button
+       rather than a footnote. The whole list is one click away and the label
+       carries it for a reader who cannot see the end of the line. */
+    var label = dom.el('span', 'body grow truncate', 'Money can only go to ' + headText);
+    head.setAttribute('aria-label', 'Money can only go to ' + headText);
+    head.appendChild(label);
     head.appendChild(dom.el('span', 'chev'));
     wrap.appendChild(head);
 
@@ -773,10 +852,26 @@
     });
     dom.setAttr(head, 'aria-expanded', 'false');
     if (addresses.length) wrap.appendChild(box);
-    refs.limitsBody.appendChild(wrap);
+    refs.limitsFoot.appendChild(wrap);
+    refs.limitsFoot.appendChild(askLine());
 
     setSummary(refs.limits, limitsSummary(state));
     refs.limitsCut();
+  }
+
+  /* One sentence, rather than an Edit button on every rule that only ever opened
+     a toast saying the same thing. Seven buttons that cannot do what they offer
+     is worse than no button: it teaches a person that the controls on this
+     screen are decoration.
+
+     It sits last, under the allowlist, because this panel holds more than its
+     box on a short window and something has to be the thing below the cut. A
+     line of prose is the right thing: putting it above the allowlist pushed the
+     one control on the panel off the bottom, so the fade was hiding a button
+     rather than a footnote. */
+  function askLine() {
+    return dom.el('p', 'meta',
+      'Ask your assistant to change any of these. A limit change files a request you have to click.');
   }
 
   /* The three facts somebody opens Limits to check: what gets asked, what gets

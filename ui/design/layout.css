@@ -326,10 +326,14 @@ body[data-view="trade"] .stage {
   min-height: 0;
 }
 
-/* The holdings panel absorbs the slack, so a wallet of three coins does not
-   leave a hole and a wallet of twenty does not push the folds off the screen. */
+/* The holdings panel gives, and never takes. It may shrink, so a wallet of
+   twenty coins scrolls inside the panel rather than pushing the two folds off
+   the screen; it may not grow, because a wallet of four coins stretched to fill
+   the window is a panel with a hole in it, which is the same fault as a deck
+   with a hole in it. A column shorter than the window just ends, and the ground
+   below the last card is the page, not a gap inside a box. */
 .basic-col .panel[data-surface="holdings"] {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-height: 132px;
 }
 
@@ -386,33 +390,36 @@ body[data-view="trade"] .stage {
 
 /* ---------- Pro: 12 columns, max 1440 ---------- */
 
-/* TWO ROWS ON A FULL HEIGHT WORLD, and the second one closes the page.
+/* TWO ROWS THAT SPLIT THE WINDOW, and four panels that close it.
 
    The grid used to be one auto row of panels sitting at the top of the world,
    three of them shut, so the deck was a strip of title bars over half a screen
-   of ground. It takes the height it is given now: row one sizes to what Money
-   and Trading hold, row two takes whatever is left, and a panel with more in it
-   than its box scrolls inside the box. */
+   of ground. Then row one was sized by its content, which was worse in one
+   specific way: the wallet was capped at a fraction of the window and sliced a
+   coin in half while the panel beside it sat on a hundred pixels of nothing.
+   Clipping something next to unused space is the fault, not a smaller version
+   of it.
+
+   So the rows share the height evenly and every panel takes a quarter of the
+   deck. A panel with less in it than its quarter has room to breathe; a panel
+   with more scrolls inside itself, and only then. */
 .pro-grid {
   width: min(var(--pro-max), 100%);
   margin: 0 auto;
   padding: var(--s-5);
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: repeat(2, minmax(0, 1fr));
   gap: var(--gutter);
   align-items: stretch;
   flex: 1 1 auto;
   min-height: 0;
 }
 
-/* Row one is sized by its content, so the wallet is the one thing on it that
-   can run away, and how tall it grows is what the two panels beside and below
-   it are left with. A quarter of the window is the balance: enough coins to
-   read the wallet at a glance, and the rest of the height goes to the two
-   panels that fill the page. */
-.pro-grid .holding-list {
-  max-height: 26vh;
+/* A panel is allowed to be shorter than the thing inside it, which is what
+   makes the scroll region inside it the part that gives. */
+.pro-grid .panel {
+  min-height: 0;
 }
 
 .span-4 { grid-column: span 4; }
@@ -451,7 +458,6 @@ body[data-view="trade"] .stage {
   }
 
   .span-4, .span-5, .span-6, .span-7, .span-8, .span-12 { grid-column: span 6; }
-  .pro-grid .holding-list { max-height: none; }
   .pro-grid .scrolls { overflow-y: visible; }
 }
 
@@ -726,3 +732,8 @@ body[data-view="trade"] .stage {
 .between { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); }
 .grow { flex: 1 1 auto; min-width: 0; }
 .wrap { flex-wrap: wrap; }
+
+/* A column whose blocks share the height they are given rather than stacking at
+   the top of it. The trading account is three facts of equal standing, so on a
+   panel taller than they need they space out instead of leaving one hole. */
+.spread { justify-content: space-between; }

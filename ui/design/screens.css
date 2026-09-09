@@ -1082,18 +1082,18 @@ body[data-locked="true"] .topbar .tabs {
 
 .holding[data-lit="true"] .holding-head { background: var(--bg-2); }
 
+/* A flex item keeps its content height unless it is told it may shrink, so
+   without this the column holds itself open, the region inside it that scrolls
+   never gets the chance, and the allowlist and the footnote below fall out of
+   the bottom of the panel. */
+.limits-body {
+  min-height: 0;
+}
+
 /* ---------- Pro: the trading venue ---------- */
 
 /* One line per position: which way, how much, and what it is worth so far. The
    rest is the trade screen, which the whole panel is a way to. */
-/* The account is read from the top of the panel and the position sits against
-   the foot, which is the way out to the screen that can act on it. The panel is
-   taller than either has to say, and two blocks against the two edges reads as
-   a card rather than as a column that ran out. */
-.position-block {
-  margin-top: auto;
-}
-
 .position-line {
   gap: var(--s-3);
   padding-top: var(--s-2);

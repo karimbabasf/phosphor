@@ -102,8 +102,26 @@
     };
   }
 
+  /* KINDS THIS APP CAN NO LONGER PROPOSE AND STILL HAS TO DRAW.
+
+     Earning and the pools left with the venues behind them, so no tool writes
+     one of these any more. state/proposals.json keeps the rows that already
+     executed, and one of those can still reach a card, so a kind with no tool
+     is not the same thing as a kind with no home. Each of them moved money into
+     or out of the wallet, so the wallet is where their light belongs. They are
+     deliberately not in SURFACE: that table routes live tools, and a historic
+     kind must not put a tool back on the map. */
+  var HISTORIC = {
+    yield_deposit: 'holdings',
+    yield_withdraw: 'holdings',
+    lp_add: 'holdings',
+    lp_remove: 'holdings'
+  };
+
   function surfaceForProposal(kind) {
-    return lookup(String(kind || '')) || 'assistant';
+    var id = String(kind || '');
+    var historic = HISTORIC[id];
+    return lookup(id) || (typeof historic === 'string' ? historic : 'assistant');
   }
 
   /* The positions in a ledger snapshot as one comparable string: chain, token
