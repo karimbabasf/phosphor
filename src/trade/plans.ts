@@ -1,0 +1,111 @@
+// The plan registry on disk.
+//
+// Every plan that was ever armed leaves a row: the trade page says why a plan stopped by reading
+// it, and the boot reconcile decides what to re-arm by reading it against the proposal store.
+// Only an idea can be removed, because an idea has never had authority.
+//
+// Written whole, through a temp file and a rename, so a crash mid-write leaves the last good
+// file rather than half of a new one. Owner-only, like every other file under the data dir
+// that says what this app is allowed to do.
+
+import fs from 'node:fs';
+import path from 'node:path';
+
+import type { Plan } from './plan.ts';
+import type { PlanRisk } from './risk.ts';
+
+export type PlanStatus = 'idea' | 'waiting' | 'placed' | 'open' | 'done';
+export type EndReason = 'stopped' | 'targeted' | 'closed' | 'cancelled' | 'expired' | `failed:${string}`;
+
+export type PlanRow = Plan & {
+  status: PlanStatus;
+  endReason?: EndReason;
+  // The feed behind the watcher is stale, so nothing fires until it is fresh again.
+  blind?: boolean;
+  // The signing session ended with this plan still waiting. It re-arms on the next unlock.
+  locked?: boolean;
+  proposalId?: string;
+  hash: string;
+  risk?: PlanRisk;
+  // One client order id per leg and generation, minted by the host and persisted with the plan
+  // so cancel and reconcile go by an id this app owns and no oid ever needs re-reading.
+  cloids: { entry?: string; stop?: string; target?: string };
+  gen: number;
+  // The fill the entry actually got, once it has one. Changes on an open plan measure from here.
+  fillPx?: number;
+  // The position size the exits were last sized to. A fill that grows the position past it
+  // means protect has to run again.
+  exitSz?: number;
+  holds?: { condition: string; holds: boolean }[];
+  by?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PlanStore = {
+  list(): PlanRow[];
+  get(id: string): PlanRow | null;
+  put(row: PlanRow): void;
+  // Ideas only. Anything that was armed keeps its row, so the answer for those is false.
+  remove(id: string): boolean;
+};
+
+const FILE = 'plans.json';
+
+function looksLikeRow(v: unknown): v is PlanRow {
+  if (v === null || typeof v !== 'object') return false;
+  const r = v as Record<string, unknown>;
+  return typeof r.id === 'string' && typeof r.symbol === 'string' && typeof r.status === 'string' && typeof r.hash === 'string';
+}
+
+export function createPlanStore(dir: string): PlanStore {
+  const file = path.join(dir, FILE);
+  const rows = new Map<string, PlanRow>();
+
+  function load(): void {
+    if (!fs.existsSync(file)) return;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch {
+      // A file this app cannot read is moved aside rather than overwritten: the evidence stays,
+      // and the app comes up with no plans rather than not at all.
+      const aside = `${file}.${Date.now().toString(36)}.unreadable`;
+      try {
+        fs.renameSync(file, aside);
+      } catch {
+        // Nothing more to do: the next write replaces it.
+      }
+      return;
+    }
+    if (!Array.isArray(parsed)) return;
+    for (const row of parsed) if (looksLikeRow(row)) rows.set(row.id, row);
+  }
+
+  function save(): void {
+    fs.mkdirSync(dir, { recursive: true });
+    const tmp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify([...rows.values()], null, 2), { mode: 0o600 });
+    fs.renameSync(tmp, file);
+    // The rename keeps the temp file's mode; stated again so a pre-existing wider file tightens.
+    fs.chmodSync(file, 0o600);
+  }
+
+  load();
+
+  return {
+    list: () => [...rows.values()],
+    get: (id) => rows.get(id) ?? null,
+    put(row) {
+      rows.set(row.id, row);
+      save();
+    },
+    remove(id) {
+      const row = rows.get(id);
+      if (row === undefined || row.status !== 'idea') return false;
+      rows.delete(id);
+      save();
+      return true;
+    },
+  };
+}
