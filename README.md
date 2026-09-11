@@ -176,7 +176,7 @@ file. To run both at once, give the installed app its own port in its `config.lo
 ## Test it
 
     npm test            # the unit suite: policy engine, proposals, ledger, composition, rails, signers, injection
-    npm run e2e         # boots the app + a real MCP client, drives 34 checks, exits 0/1
+    npm run e2e         # boots the app + a real MCP client, drives 32 checks, exits 0/1
     npm run typecheck   # tsc --noEmit over src, tests and scripts
 
 One more goes to the real venue, because a unit test cannot tell you a remote API accepts what you

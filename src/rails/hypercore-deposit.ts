@@ -85,6 +85,7 @@ export const MAX_FEE_PCT = 5;
 // (10 from the route, about 25 from the app fee an unkeyed quote carries, minus rounding).
 // The bp term was 20 until 2026-09-11 and refused every honest deposit above about $300 once
 // the app fee appeared, which is the "value checked was not the value used" bug again.
+export const HYPERCORE_MEASURED_FLAT_USDC = 0.32; // what the sentences say; the floor below carries headroom
 export const HYPERCORE_FLAT_FEE_USDC = 0.45; // measured 0.3153
 export const HYPERCORE_FEE_BPS = 40; // measured about 26
 
@@ -215,7 +216,7 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
       return {
         reasons: [
           `${draft.amount} ${draft.symbol} is below the ${MIN_DEPOSIT_USDC} USDC floor. The routing fee is nearly flat ` +
-            `(about ${HYPERCORE_FLAT_FEE_USDC} USDC), so at this size it would be most of the deposit; deposit more at once`,
+            `(about ${HYPERCORE_MEASURED_FLAT_USDC} USDC), so at this size it would be most of the deposit; deposit more at once`,
         ],
       };
     }
