@@ -15,7 +15,7 @@ import { HOST, hostIsLocal } from './auth.ts';
 import { isDraining } from '../draining.ts';
 import { errText, fail, intParam, sendCachedJson, sendJson, serveStatic } from './respond.ts';
 import { buildStateCached, fillGas, gasReport, proposalPage, transactionsPayload } from './state.ts';
-import { chartPayload, handleChartWrite, sendCandles } from './chart.ts';
+import { chartPayload, handleChartWrite, handleSnapshotDelivery, sendCandles } from './chart.ts';
 import { handleMutation } from './mutation.ts';
 import { handleTradeAction, handleTradeWrite } from './trade.ts';
 import { handleMcp } from './mcp.ts';
@@ -95,6 +95,9 @@ const GET: Record<string, Route> = {
 const POST: Record<string, Route> = {
   '/api/mcp': (ctx, req, res) => handleMcp(ctx, req, res),
   '/api/chart': (ctx, req, res) => handleChartWrite(ctx, req, res),
+  // The window's answer to a snapshot frame. Same guard as every window write, plus a body cap
+  // of its own, because an image is the one thing the window posts that could be large.
+  '/api/chart/snapshot': (ctx, req, res) => handleSnapshotDelivery(ctx, req, res),
   '/api/trade': (ctx, req, res) => handleTradeWrite(ctx, req, res),
   '/api/trade/action': (ctx, req, res) => handleTradeAction(ctx, req, res),
   '/api/approve': (ctx, req, res) => handleMutation(ctx, '/api/approve', req, res),

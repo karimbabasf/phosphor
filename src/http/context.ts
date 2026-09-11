@@ -29,6 +29,7 @@ import type { AgentPresence } from '../agents.ts';
 import type { GasCache } from '../transactions.ts';
 import type { createChartStore } from '../chart.ts';
 import type { ChartSlots } from '../charts.ts';
+import type { SnapshotBroker } from '../snapshot.ts';
 import type { Theme } from '../view/theme.ts';
 import type { DrawingStore } from '../drawings.ts';
 import type { Board } from '../board.ts';
@@ -84,6 +85,9 @@ export const READ_TOOLS: readonly string[] = [
   'chart_read',
   'chart_measure',
   'chart_scan',
+  // A picture of one chart, rendered by the window and handed to the one call waiting for it.
+  // A read: it moves nothing and draws nothing.
+  'chart_snapshot',
   'chart_batch',
   'indicator_catalog',
   'market_search',
@@ -223,6 +227,9 @@ export type SseHub = {
   broadcastTransactions(): void;
   // Which chart moved. The window redraws one slot rather than all four; 0 is the primary.
   broadcastChart(slot?: number): void;
+  // Ask the window for a picture of one chart. It answers on POST /api/chart/snapshot with the
+  // request id, and the broker hands the image to the tool call waiting on that id.
+  broadcastSnapshot(slot: number, reqId: string): void;
   broadcastTrade(): void;
   broadcastActivity(): void;
   broadcastCandles(): void;
@@ -276,6 +283,8 @@ export type Ctx = Omit<ServerDeps, 'getTheme' | 'setTheme' | 'keystore' | 'sessi
   chart: ChartStore;
   drawings: DrawingStore;
   charts: ChartSlots;
+  // The snapshot broker: one outstanding picture per chart, a TTL, nothing stored.
+  snapshots: SnapshotBroker;
   board: Board;
   crew: () => Crew;
   // The bounded audit tail the basic screen's activity list reads. Seeded once at

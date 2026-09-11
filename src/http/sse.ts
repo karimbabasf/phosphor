@@ -104,6 +104,13 @@ export function createSseHub(deps: {
     for (const client of sseClients) sseSend(client, { type: 'chart', rev, slot });
   }
 
+  // The one frame that asks the window for something rather than telling it something moved.
+  // It carries the request id the window posts back with, so an answer can be matched to the
+  // call that asked and a late one can be dropped. See src/snapshot.ts.
+  function broadcastSnapshot(slot: number, reqId: string): void {
+    for (const client of sseClients) sseSend(client, { type: 'snapshot', slot, reqId });
+  }
+
   // The trading surface's own channel. It carries the revision and nothing else, exactly like
   // the chart's: the browser refetches, so a payload that grew would not silently become a
   // second copy of the truth travelling down a different pipe.
@@ -214,6 +221,7 @@ export function createSseHub(deps: {
     broadcastState,
     broadcastTransactions,
     broadcastChart,
+    broadcastSnapshot,
     broadcastTrade,
     broadcastActivity,
     broadcastCandles,

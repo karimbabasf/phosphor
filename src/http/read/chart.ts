@@ -13,8 +13,10 @@ import { indicatorCatalog } from '../../indicators.ts';
 import { runBatch } from '../../batch.ts';
 import { analysisHandlers } from '../../analysis/index.ts';
 import { errText, fail, intParam, sendJson } from '../respond.ts';
-import { chartRead, customIndicatorsOf, loadCandles, numOrUndefined, resolveIndicator } from '../chart.ts';
+import { chartDigest, chartRead, customIndicatorsOf, loadCandles, numOrUndefined, resolveIndicator } from '../chart.ts';
+import type { ChartDigest } from '../chart.ts';
 import { slotOf } from '../view.ts';
+import { SNAPSHOT_TTL_MS } from '../../snapshot.ts';
 import { CANDLE_LIMIT_MAX, SCAN_TIMEFRAMES_MAX } from '../context.ts';
 import type { ReadTable } from '../context.ts';
 
@@ -103,6 +105,33 @@ export const chartReads: ReadTable = {
       fail(res, 502, errText(err));
     }
   },
+  /* A picture of one chart, as the human sees it, in one small image. The window renders scene
+     and hud to a JPEG at most 1024 px wide and posts it back; the broker hands it to this call.
+     The image rides beside a one-line digest, and when there is no picture to be had (no window,
+     the window on another screen, or one that did not answer in time) the digest alone comes
+     back and says which. Asking a window that is not on the trade screen would wait the whole
+     TTL for nothing, so that case is answered without asking. */
+  chart_snapshot: async (ctx, _body, args, res) => {
+    const found = slotOf(ctx, args.chart);
+    if (!found.ok) return fail(res, 400, found.error);
+    const { slot } = found;
+    const digest = digestLine(await chartDigest(ctx, slot));
+    const view = ctx.getView();
+    if (view !== 'trade') {
+      return sendJson(res, 200, { digest: `${digest}. No picture: the window is not on the trade screen (it is on ${view}); switch puts it there` });
+    }
+    if (ctx.sse.clientCount() === 0) {
+      return sendJson(res, 200, { digest: `${digest}. No picture: no window is open` });
+    }
+    if (ctx.snapshots.pending(slot.index)) {
+      return fail(res, 409, `a snapshot of chart ${slot.index} is already being taken`);
+    }
+    const got = await ctx.snapshots.request(slot.index, SNAPSHOT_TTL_MS);
+    if (got === null) {
+      return sendJson(res, 200, { digest: `${digest}. No picture: the window did not answer within ${SNAPSHOT_TTL_MS / 1000} s` });
+    }
+    sendJson(res, 200, { image: got.jpegBase64, mimeType: 'image/jpeg', digest });
+  },
   chart_scan: async (ctx, _body, args, res) => {
     const view = ctx.chart.state().view;
     const product = typeof args.product === 'string' && args.product.trim().length > 0 ? args.product.trim().toUpperCase() : view.product;
@@ -153,6 +182,23 @@ export const chartReads: ReadTable = {
     });
   },
 };
+
+// One line under the picture, so the image block is never the only thing in the answer.
+function digestLine(d: ChartDigest): string {
+  const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
+  const parts = [
+    `${d.product} ${d.timeframe}`,
+    `${d.bars} bars`,
+    d.last === null ? 'no last price' : `last ${String(d.last)}`,
+    plural(d.indicators.length, 'indicator'),
+    plural(d.counts.levels, 'level'),
+    plural(d.counts.marks, 'mark'),
+    plural(d.counts.lines, 'line'),
+    plural(d.counts.zones, 'zone'),
+  ];
+  if (d.counts.plans > 0) parts.push(plural(d.counts.plans, 'plan'));
+  return `chart ${d.chart}: ${parts.join(', ')}`;
+}
 
 // The custom indicator loader as the op table wants it: refresh and specs, or nothing. The
 // loader is optional on the context (see customIndicatorsOf) and the op table is built without

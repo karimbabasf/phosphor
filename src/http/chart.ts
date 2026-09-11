@@ -17,6 +17,7 @@ import { errText, fail, intParam, readBody, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
 import { CANDLE_LIMIT_MAX } from './context.ts';
 import { feedFor, type FeedState } from '../market/push.ts';
+import { SNAPSHOT_MAX_BYTES } from '../snapshot.ts';
 import type { Ctx } from './context.ts';
 
 // The basic screen's price tracker. Hourly bars over a day: "today" for someone reading
@@ -425,6 +426,39 @@ export async function handleChartWrite(ctx: Ctx, req: http.IncomingMessage, res:
   // than from a refresh, because a refresh it fired itself can land before this write does
   // and snap the gesture the human just made back to where it started.
   sendJson(res, 200, { ok: true, rev: ctx.chart.rev(), view: ctx.chart.state().view, notes });
+}
+
+/* The window's answer to a snapshot frame: { token, reqId, jpeg }, the image as base64.
+
+   The same three gates as every window write (loopback host at the router, same origin, the
+   window token), and a cap of its own well under the server's general megabyte, checked on the
+   announced length before a byte is read and again on what arrived, because a chunked post
+   announces nothing. The bytes go to the broker, which hands them to the one tool call waiting
+   on that id and keeps nothing: an answer for a request nobody is waiting on is a 409, not a
+   picture kept for the next caller. */
+export async function handleSnapshotDelivery(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  const announced = Number(req.headers['content-length'] ?? 0);
+  if (Number.isFinite(announced) && announced > SNAPSHOT_MAX_BYTES + 4096) {
+    req.resume();
+    return fail(res, 413, `a snapshot is at most ${SNAPSHOT_MAX_BYTES} bytes`);
+  }
+  const parsed = await readBody(req);
+  if (!parsed.ok) return fail(res, parsed.status, parsed.error);
+  const body = parsed.value;
+  if (!sameOrigin(req)) return fail(res, 403, 'cross-origin snapshot refused');
+  if (!tokenMatches(body.token, ctx.token)) return fail(res, 403, 'invalid approval token');
+
+  const reqId = typeof body.reqId === 'string' ? body.reqId : '';
+  const jpeg = typeof body.jpeg === 'string' ? body.jpeg : '';
+  if (jpeg.length > SNAPSHOT_MAX_BYTES) return fail(res, 413, `a snapshot is at most ${SNAPSHOT_MAX_BYTES} bytes`);
+  // A JPEG and nothing else: the bytes go straight to a model as an image block, so the route
+  // says no to anything that is not the one format the window encodes.
+  const head = Buffer.from(jpeg.slice(0, 8), 'base64');
+  if (!/^[A-Za-z0-9+/=]+$/.test(jpeg) || head.length < 3 || head[0] !== 0xff || head[1] !== 0xd8 || head[2] !== 0xff) {
+    return fail(res, 400, 'the snapshot must be a base64 JPEG');
+  }
+  if (!ctx.snapshots.deliver(reqId, jpeg)) return fail(res, 409, 'no snapshot is waiting for that request id');
+  sendJson(res, 200, { ok: true });
 }
 
 export function numOrUndefined(raw: unknown): number | undefined {

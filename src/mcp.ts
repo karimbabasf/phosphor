@@ -14,6 +14,7 @@ import { VERSION } from './version.ts';
 import { listSkills, readSkill, skillsInstruction } from './skills.ts';
 import { THEME_SLOTS, SLOT_MEANING } from './view/theme.ts';
 import { readTimeout, venueWriteTimeout } from './net.ts';
+import { contentFor } from './mcp-content.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -124,7 +125,8 @@ async function proxy(body: Record<string, unknown>) {
     if (res.status === 409 && payload.seat === 'busy' && typeof payload.error === 'string') {
       return textResult(payload.error);
     }
-    return textResult(JSON.stringify(json));
+    // Text, except for the one answer that is a picture: see src/mcp-content.ts.
+    return contentFor(json);
   } catch {
     return textResult(NOT_RUNNING);
   }
@@ -240,6 +242,14 @@ function registerRead(name: string, description: string, shape: Record<string, z
   server.registerTool(name, { description, inputSchema: shape }, async (args) =>
     proxy({ op: 'read', tool: name, args }),
   );
+}
+
+/* A read the lead holds and a worker does not. The snapshot is one: it asks the window the human
+   is looking at to render, which is the lead's business for the same reason the window controls
+   are (see registerLeadView). Not registered rather than refused. */
+function registerLeadRead(name: string, description: string, shape: Record<string, z.ZodTypeAny>): void {
+  if (ROLE === 'analyst') return;
+  registerRead(name, description, shape);
 }
 
 // The one tool that is answered here rather than proxied to the app. A skill is a file on this
@@ -488,6 +498,18 @@ registerRead(
   'indicator_catalog',
   'Lists every indicator this chart can draw, with its parameters, defaults, allowed ranges, and whether it overlays the price or takes its own pane. Call this before chart_add_indicator. Read-only, changes nothing.',
   {},
+);
+registerLeadRead(
+  'chart_snapshot',
+  [
+    'A picture of the chart as the human sees it: one small JPEG (about 800 tokens) of the candles,',
+    'the studies and everything drawn, beside a one-line digest. Reach for this when you want to see',
+    'the shape of the market rather than read numbers about it; chart_read is the numbers.',
+    'If no window is open, the window is not on the trade screen, or it does not answer within 3 s, the',
+    'digest alone comes back and says which. chart: 0 to 3 for one of the charts a chart_layout put up.',
+    'Read-only, changes nothing.',
+  ].join(' '),
+  { chart: z.number().int().min(0).max(3).optional() },
 );
 registerRead(
   'market_search',

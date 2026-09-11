@@ -18,6 +18,7 @@ import { readCoins } from './view/coins.ts';
 import { createGasCache } from './transactions.ts';
 import { buildWorkerRole } from './role.ts';
 import { createChartSlots } from './charts.ts';
+import { createSnapshotBroker } from './snapshot.ts';
 import { DEFAULT_THEME, type Theme } from './view/theme.ts';
 import { createBoard } from './board.ts';
 import { createDuplicateGuard } from './duplicates.ts';
@@ -94,6 +95,10 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     broadcastTrade,
     broadcastCandles,
   } = sse;
+
+  // The snapshot broker asks the window over the hub and holds the one call waiting for each
+  // chart's picture. Nothing it receives is kept. See src/snapshot.ts.
+  const snapshots = createSnapshotBroker({ broadcast: (frame) => sse.broadcastSnapshot(frame.slot, frame.reqId) });
 
   const broadcastCandle: PhosphorServer['broadcastCandle'] = (product, baseSec, candle, provider) => {
     // Nobody watching is nobody to tell. The rail keeps filling the cache either way, so a
@@ -235,6 +240,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     chart,
     drawings,
     charts,
+    snapshots,
     board,
     crew: getCrew,
     crewIfAny: () => crew,

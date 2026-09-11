@@ -151,6 +151,10 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
       { tool: 'market_search', does: 'turn "btc" or "bitcoin" into the product id the chart wants. Start here.' },
       { tool: 'chart_read', does: 'everything about the chart as it stands, including on-screen geometry.' },
       { tool: 'chart_scan', does: 'several timeframes at once without moving the chart.' },
+      {
+        tool: 'chart_snapshot',
+        does: 'a picture of the chart as the human sees it, one small image beside a one-line digest. For the shape of the market; chart_read is the numbers.',
+      },
       { tool: 'chart_measure', does: 'change, elapsed time, path high and low, and drawdown between two points.' },
       { tool: 'candles', does: 'raw OHLC for a product. Prefer chart_batch for anything you intend to measure.' },
       {

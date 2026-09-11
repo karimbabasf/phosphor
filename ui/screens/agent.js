@@ -45,6 +45,7 @@
     chart_read: 'reading the chart',
     chart_measure: 'measuring the chart',
     chart_scan: 'scanning the timeframes',
+    chart_snapshot: 'taking a picture of the chart',
     chart_draw: 'drawing on the chart',
     chart_layout: 'arranging the charts',
     chart_batch: 'redrawing the chart',
