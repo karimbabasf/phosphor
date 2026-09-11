@@ -1,14 +1,17 @@
-// The app side of the runner: spawns the child, tracks what is armed, and can always kill it.
+// The app side of the runner: the plan registry, the watcher, and the child it can always kill.
 //
 // The runner is a separate process rather than a function call or a worker thread, and the
 // reason is scheduling before it is isolation. An order must not queue behind whatever the HTTP
 // server and the chart's SSE broadcast are doing; a wedged request in the app should not delay
-// a stop. A worker thread fixes that much but shares a process, so a hard kill is not clean and
+// a fire. A worker thread fixes that much but shares a process, so a hard kill is not clean and
 // a crash takes the window down with it. A child process costs sub-millisecond IPC and buys its
 // own event loop, its own socket, and a kill that is absolute.
 //
-// One process hosts every armed mandate over one multiplexed websocket. Per-mandate processes
-// were rejected as sprawl for no safety gain, since the envelope check is per action either way.
+// What lives HERE and what lives in the child is the whole design. The child signs and knows
+// only the plans it holds. This process decides when: it folds the live feed into the bars the
+// watcher reads, fires a plan once when its conditions hold, watches fills so a resting entry
+// is never a naked position, and keeps the registry on disk. After a fire the venue holds the
+// exits, so nothing in this process has to stay alive for a position to be protected.
 //
 // The key handed to the child is the API wallet, never the master. The venue permits it to trade
 // and forbids it from withdrawing, transferring, or approving another agent, so a compromised
@@ -18,218 +21,108 @@ import { fork } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { MandateRunner } from '../rails/mandate.ts';
-import type { Mandate } from '../strategy/envelope.ts';
-import type { Condition, Program, Ref } from '../strategy/grammar.ts';
+
 import { SIGNING_SESSION_DEFAULT_MS } from '../keystore/session.ts';
 import type { Session } from '../keystore/session.ts';
-import { createFeed } from './feed.ts';
-import type { RealisedByMandate } from './realised.ts';
+import { aggregate } from '../market/aggregate.ts';
+import { cloidFor } from '../hl/exchange.ts';
+import { planHash, TIMEFRAME_SEC, validatePlanInput } from '../trade/plan.ts';
+import type { Plan, PlanInput, Timeframe } from '../trade/plan.ts';
+import type { EndReason, PlanRow, PlanStore } from '../trade/plans.ts';
+import { DEFAULT_TAKER_FEE_BPS, planRisk } from '../trade/risk.ts';
+import { evaluate } from '../trade/watch.ts';
+import type { Bar, MarketView } from '../trade/watch.ts';
+import { isFromChild } from './protocol.ts';
+import type { AssetMeta, Command, FromChild, ToChild } from './protocol.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export type RunnerEvent =
   | { type: 'armed'; id: string; symbol: string; signingExpiresAt: string }
-  | { type: 'disarmed'; id: string; reason: string }
-  | { type: 'fill'; id: string; symbol: string; side: string; sizeUsd: number; price: number }
-  | { type: 'position'; id: string; symbol: string; sizeUsd: number; side: string; entryPx: number; liqPx: number | null; unrealisedUsd: number }
-  | { type: 'halted'; id: string; reason: string }
-  // Which rule fired. The window shows it so a person can see WHY the bot acted, not only that
-  // it did, which is the difference between watching a program and trusting one.
-  | { type: 'rule'; id: string; ruleId: string; at: string }
-  | { type: 'manual_result'; requestId: string; ok: boolean; detail: string }
+  | { type: 'fired'; id: string; symbol: string }
+  | { type: 'placed'; id: string; symbol: string; filledSz: number }
+  | { type: 'protected'; id: string; symbol: string; sz: number }
+  | { type: 'changed'; id: string; detail: string }
+  | { type: 'done'; id: string; symbol: string; reason: EndReason }
+  | { type: 'locked'; id: string }
   | { type: 'error'; id: string | null; message: string };
 
-// A button on the trading window: cancel one order, cancel every order on a market, close a
-// position, or stop everything and close everything. All four only reduce, which is why none of
-// them consults an envelope and none of them waits on an approval.
-export type ManualAction = {
-  verb: 'cancel' | 'cancel_all' | 'close' | 'flatten';
-  cancels?: { assetId: number; oid: number }[];
-  coin?: string;
-  // Which markets flatten has to look at. The child can only close a coin it holds a book for,
-  // and the book pump only runs for ARMED symbols, so with nothing armed the child's book is
-  // empty and flatten found nothing to do. It said so, cheerfully, while a position was open.
-  // The caller names the coins because the caller is the one with the account feed.
-  coins?: string[];
+// What the host reads off the trade feed, pushed by the service on every update. Positions and
+// resting orders decide placed -> open -> done; fills say why a plan ended.
+export type AccountView = {
+  atMs: number;
+  freeUsd: number | null;
+  positions: { coin: string; szi: number; entryPx: number }[];
+  orders: { coin: string; cloid: string | null }[];
+  fills: { coin: string; px: number; sizeCoin: number; atMs: number; closedPnlUsd: number | null }[];
 };
 
 export type HostDeps = {
   apiWalletKey: () => Promise<`0x${string}` | null>;
   /* THE SIGNING SESSION, and it is the one exception to the auto-lock.
-     An armed rule has to survive a lock, or the bot is useless overnight, which is when perps
-     run, and the owner turns the lock off and loses the master key with it. So arming opens a
-     session scoped to that mandate, holding ONLY the Hyperliquid API wallet key: by the venue's
-     own signing split it can place orders and cannot withdraw, transfer or approve another
-     agent. A bot that outlives a lock holds trading authority, not custody.
-     Optional so a test can build a host without one, in which case an armed mandate has no
-     expiry beyond its own. */
+     A waiting plan has to survive a lock, or a plan armed at 6pm is useless at 2am, which is when
+     perps run. So arming opens a session scoped to that plan, holding ONLY the Hyperliquid API
+     wallet key. Optional so a test can build a host without one. */
   session?: Session;
   baseUrl: string;
+  user: string;
   onEvent: (e: RunnerEvent) => void;
   killSwitch: () => boolean;
-  user: string; // the master account address; positions and collateral are read against it
-  pollMs?: number;
-  // The portfolio ceiling, and the reason it lives here rather than in the envelope.
-  //
-  // Every existing limit is PER MANDATE: notional, borrowed multiple, order rate, loss and
-  // expiry are all checked by src/strategy/envelope.ts against one mandate's own bounds. That
-  // leaves the number nobody was checking, which is the sum. Three separate $200 mandates are
-  // $600 of standing authority, each one individually within every rule, and no screen ever
-  // stated the total.
-  //
-  // It is enforced at arm() because this map IS the armed set: the policy engine sees one
-  // draft at a time and the child sees one mandate at a time, so this is the only place the
-  // question "how much is armed right now" has an answer. Same shape as the kill-switch check
-  // directly below it, and for the same reason: a refusal here happens before a child exists.
-  //
-  // It became load bearing on 2026-08-20, when the runner stopped refusing to trade real
-  // money outright. A guard removed and replaced with nothing is a hole, so this replaced it.
-  limits?: { maxArmedMandates: number; maxAggregateNotionalUsd: number };
-  // Test seam, the same shape as fetchImpl on the rails and FeedSocket on the trade feed. The
-  // guards around a DEAD child (the kill switch is the one that matters) cannot be exercised
-  // against a real fork without a real key and a real venue, and those guards are the ones that
-  // used to take the whole app down.
+  store: PlanStore;
+  meta: (coin: string) => AssetMeta | null;
+  mark: (coin: string) => number | null;
+  free: () => number | null;
+  // Closed bars for one timeframe, oldest first, from the market store. Read once per plan
+  // timeframe at arm to seed the watcher; live minute frames roll the series forward.
+  bars?: (coin: string, tf: Timeframe, count: number) => Promise<Bar[]>;
+  // Keep the live rail subscribed to a coin. Called on arm and every minute while plans wait.
+  follow?: (coin: string) => void;
+  // The proposal store's word on a waiting plan found on disk at boot. Absent means the check
+  // is skipped, which only a test should do.
+  approval?: (proposalId: string) => { hash: string; status: string } | null;
+  // Whether the runner's API wallet is still approved on the venue. Asked once per signing
+  // session, before the first fire.
+  agentApproved?: () => Promise<boolean>;
+  // Test seam, the same shape as fetchImpl on the rails: the guards around a dead child cannot
+  // be exercised against a real fork without a real key and a real venue.
   forkImpl?: typeof fork;
+  now?: () => number;
+  replyMs?: number;
 };
 
-// Deliberately small. Every run is against real collateral, and the number a human is most
-// likely to regret is the one they never had to type, so this is also the fallback when a
-// host passes no limits of its own.
-export const TRADING_LIMITS = { maxArmedMandates: 3, maxAggregateNotionalUsd: 250 };
+export type PlanRunner = ReturnType<typeof createRunnerHost>;
 
-export type TradingLimits = { maxArmedMandates: number; maxAggregateNotionalUsd: number };
+// How many done rows the payload keeps, so the rail can say why a plan stopped.
+const DONE_KEPT = 20;
+// Minute bars held per coin. Two days covers the forming bucket of every timeframe up to a day.
+const MINUTES_KEPT = 2880;
+// Closed bars kept per timeframe, seed and folded together.
+const BARS_KEPT = 60;
+const SEED_BARS = 40;
+const SWEEP_MS = 5_000;
+const FOLLOW_MS = 60_000;
+const DEFAULT_REPLY_MS = 15_000;
+const KILL_AFTER_MS = 3_000;
 
-// The ceiling as a pure function of what is armed and what wants to arm, so it can be checked
-// without a child process, a key or a venue. Returns the refusal sentence, or null to allow.
-//
-// Pure on purpose: the host can only populate its armed map after a child has spawned, which
-// would have made the only test of this rule a test of process spawning.
-export function tradingLimitRefusal(
-  armedMandates: readonly { id: string; maxNotionalUsd: number }[],
-  incoming: { id: string; maxNotionalUsd: number },
-  limits: TradingLimits,
-): string | null {
-  // Re-arming an id that is already armed replaces it rather than adding to the total, so it
-  // must not be counted twice against either ceiling.
-  const others = armedMandates.filter((a) => a.id !== incoming.id);
-
-  if (others.length + 1 > limits.maxArmedMandates) {
-    return (
-      `${others.length} mandates are already armed and the ceiling is ${limits.maxArmedMandates}. ` +
-      `Disarm one before arming another: the limit is on standing authority, not on how much you can trade.`
-    );
-  }
-
-  const armedNotional = others.reduce((sum, a) => sum + a.maxNotionalUsd, 0);
-  const wouldBe = armedNotional + incoming.maxNotionalUsd;
-  if (wouldBe > limits.maxAggregateNotionalUsd) {
-    return (
-      `arming this would put $${wouldBe.toFixed(2)} of standing authority on the account, above the ` +
-      `$${limits.maxAggregateNotionalUsd.toFixed(2)} ceiling ($${armedNotional.toFixed(2)} is already armed). ` +
-      `Every bound in a mandate is per mandate; this is the one on the sum of them.`
-    );
-  }
-
-  return null;
+function live(row: PlanRow): boolean {
+  return row.status === 'waiting' || row.status === 'placed' || row.status === 'open';
 }
 
-// WHAT THE RUNNER CAN ACTUALLY EVALUATE, checked before anything arms.
-//
-// The child builds its MarketState from ONE input: the book pumpOnce sends below. Two kinds of
-// reference have no source in that process at all:
-//
-//   - bar closes. The child hard-codes `lastClose: () => null` for every timeframe, so a
-//     `bar_close` condition is false for the entire life of the mandate.
-//   - drawings and indicators. The child holds a refCache keyed on `drawing:tl_1` and fills it
-//     from a `refs` message. Nothing in this repo sends that message. resolveRef therefore
-//     answers null for every drawing and every indicator, forever.
-//
-// Both failures are SILENT, and silent in the two worst ways. An entry rule that is permanently
-// false is a bot that sits there while the human believes it is watching. An exit rule that is
-// permanently false is a position with no stop: place() begins `if (ref === null) return` for
-// set_stop, and a limit entry falls through to `resolveRef(ref) ?? b.markPx` and quietly becomes
-// an order at the mark instead of at the line.
-//
-// This is not a hypothetical program shape. Worked example 2 in src/strategy/catalog.ts is built
-// on a trend line and a 15m bar close, so it is the shape the app's own documentation teaches an
-// agent to write.
-//
-// The right end state is to SEND those values, not to refuse programs that need them, and the
-// hooks for it exist on both sides already. Until the pump carries them, arming one of these is
-// arming a program that does not do what the human read and approved, so it is refused at the
-// door where a person can see the refusal.
-export function unrunnableRefusal(program: Program | null): string | null {
-  if (program === null) return null;
-  const gaps = new Set<string>();
-
-  function ref(r: Ref): void {
-    if (r.kind === 'drawing') gaps.add(`a drawing reference (${r.id})`);
-    if (r.kind === 'indicator') gaps.add(`an indicator reference (${r.id})`);
-  }
-
-  function walk(c: Condition): void {
-    switch (c.op) {
-      case 'price_above':
-      case 'price_below':
-      case 'price_cross_up':
-      case 'price_cross_down':
-        ref(c.ref);
-        return;
-      case 'bar_close':
-        gaps.add('a bar_close condition');
-        ref(c.ref);
-        return;
-      case 'and':
-      case 'or':
-        for (const inner of c.of) walk(inner);
-        return;
-      case 'not':
-        walk(c.of);
-        return;
-      default:
-        return;
-    }
-  }
-
-  for (const rule of program.rules) {
-    walk(rule.when);
-    for (const action of rule.then) {
-      if (action.do === 'set_stop' || action.do === 'set_target') ref(action.ref);
-      if ((action.do === 'open' || action.do === 'add') && action.entry.type === 'limit') ref(action.entry.ref);
-      if ((action.do === 'reduce' || action.do === 'close') && action.exit.type === 'limit') ref(action.exit.ref);
-    }
-  }
-  if (program.invalidate !== undefined) walk(program.invalidate);
-
-  if (gaps.size === 0) return null;
-  return (
-    `this program rests on ${[...gaps].sort().join(' and ')}, and the runner is fed the order book ` +
-    'and nothing else, so it has no value for that at any point. The condition would read false for ' +
-    'the whole life of the mandate: an entry would never fire and a stop would never be placed. ' +
-    'Rewrite those levels as fixed prices, { "kind": "price", "value": N }, and rewrite a bar close ' +
-    'as a price condition, then arm it again.'
-  );
+function nowIso(ms: number): string {
+  return new Date(ms).toISOString();
 }
 
-export function createRunnerHost(deps: HostDeps): MandateRunner & {
-  stopAll(reason: string): Promise<void>;
-  setKilled(on: boolean): void;
-  setRealised(byMandate: RealisedByMandate): void;
-  events(): RunnerEvent[];
-  manual(action: ManualAction): Promise<{ ok: boolean; detail: string }>;
-  feedHealth(): ReturnType<ReturnType<typeof createFeed>['health']>;
-  armedDetail(): { mandate: Mandate; program: Program | null; since: string; signingExpiresAt: string }[];
-  // Expired signing sessions, disarmed. Returns the ids it took the trading key back from.
-  sweepSigningSessions(): string[];
-} {
+export function createRunnerHost(deps: HostDeps) {
+  const now = deps.now ?? (() => Date.now());
+  const replyMs = deps.replyMs ?? DEFAULT_REPLY_MS;
+
   let child: ChildProcess | null = null;
   /* THE FORK IN FLIGHT, and there is exactly one of it.
      ensureChild checked `child === null` and then AWAITED the API wallet key before forking,
-     and nothing guarded that gap. Mandate rails run outside the proposal serialiser (the
-     reservation is released as soon as the row is written), so two arms could sit inside one
-     key read together. The second fork overwrote this binding; the first process stayed alive,
-     had already been sent its arm message through its own returned handle, and held the same
+     and nothing guarded that gap. Rails run outside the proposal serialiser (the reservation is
+     released as soon as the row is written), so two arms could sit inside one key read
+     together. The second fork overwrote this binding; the first process stayed alive, had
+     already been sent its arm message through its own returned handle, and held the same
      Hyperliquid API key. stopAll, setKilled, the kill switch and the SIGKILL backstop all
      address `child`, so the orphan kept placing orders with nothing able to stop it short of a
      reboot. One promise, shared by every concurrent caller, is the whole fix. */
@@ -238,85 +131,38 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
      a generation nobody wants, so it never happens: a kill switch that leaves a process behind
      because the process had not started yet is not a kill switch. */
   let generation = 0;
-  // The program is held beside the mandate, not because this process runs it (the child does),
-  // but because the trading window renders it in English. Reading it back off the child would
-  // mean the screen showing a copy of the program rather than the program, and "the thing on
-  // screen is the thing running" is the property the whole approval step depends on.
-  const armed = new Map<string, { mandate: Mandate; program: Program | null; since: string; signingExpiresAt: string }>();
+  let killed = false;
+
+  const rows = new Map<string, PlanRow>();
+  for (const row of deps.store.list()) rows.set(row.id, row);
   const recent: RunnerEvent[] = [];
-  /* What the venue says each armed mandate has actually made or lost since it armed, pushed in
-     by whatever owns the fills feed (src/trade/service.ts) rather than read here. The app owns
-     the read side so there is one view of the account across the process tree; a second reader
-     in this file would be a second answer to "how much has it lost", and the one the child
-     enforced would differ from the one on screen. Empty until something pushes, and an empty
-     map leaves the child on its last known figure. */
-  const realisedByMandate: RealisedByMandate = {};
-  const feed = createFeed({ baseUrl: deps.baseUrl, user: deps.user });
-  let pump: NodeJS.Timeout | null = null;
-  // Human actions in flight, keyed by the id sent to the child. Held here so an HTTP request
-  // can await the venue's answer rather than returning "sent" and leaving the person to guess.
-  const pending = new Map<string, (r: { ok: boolean; detail: string }) => void>();
-  let manualSeq = 0;
 
-  // Pushes market and account state to the child for every armed symbol.
-  //
-  // The app owns the read side so there is ONE view of the market across the process tree.
-  // Two independent readers would be two answers to "what is the position", and the one that
-  // signs would be the one that mattered while the one on screen disagreed.
-  async function pumpOnce(extra: string[] = []): Promise<void> {
-    const symbols = new Set([...[...armed.values()].map((a) => a.mandate.symbol), ...extra]);
-    for (const symbol of symbols) {
-      try {
-        const b = await feed.book(symbol);
-        if (b !== null && child !== null && child.connected) {
-          /* Realised PnL rides along with the book, because the child's loss ceiling is
-             `-(realised + unrealised)` and it had no way to learn the first half. It arrives per
-             mandate rather than per symbol: the window each figure covers starts when that
-             mandate armed. Only the mandates on this symbol are sent, so a book message stays
-             about one market. */
-          const realised: RealisedByMandate = {};
-          for (const [id, a] of armed) {
-            if (a.mandate.symbol !== symbol) continue;
-            const usd = realisedByMandate[id];
-            if (typeof usd === 'number') realised[id] = usd;
-          }
-          child.send({ cmd: 'book', symbol, book: b, realised });
-        }
-      } catch (err) {
-        record({ type: 'error', id: null, message: `feed ${symbol}: ${err instanceof Error ? err.message : err}` });
-      }
-    }
-  }
+  // Replies from the child, keyed by the sequence the command carried.
+  let seq = 0;
+  const pending = new Map<number, { settle: (e: FromChild) => void; timer: NodeJS.Timeout }>();
 
-  function startPump(): void {
-    if (pump !== null) return;
-    /* Two jobs on one timer, and both of them wrapped.
-       The expiry sweep rides the pump because the pump runs exactly while something is armed,
-       which is exactly when a signing session can exist. A second timer for it would be a timer
-       that ticks all night on an app with nothing running.
+  // The market, folded. Minute bars per coin, closed seed bars per coin and timeframe, and
+  // when each coin last spoke.
+  const minutes = new Map<string, Map<number, Bar>>();
+  const seeds = new Map<string, Bar[]>();
+  const lastFrameAt = new Map<string, number>();
+  let lineAt: MarketView['lineAt'];
+  let account: AccountView | null = null;
+  // When the account feed last spoke. It carries the mark for every watched coin, so it counts
+  // as freshness for a coin that has no minute frame of its own yet.
+  let accountAt = 0;
+  let accountWaiters: Array<() => void> = [];
 
-       `.catch` rather than `void` on the pump: pumpOnce awaits the feed and then calls record,
-       which reaches the caller's onEvent and the audit file, and a rejection anywhere in that
-       chain used to leave the process because a bare `void` consumes the value and not the
-       rejection. The sweep gets a try for the same reason: it takes a trading key back, and a
-       throw there must not stop the timer that would try again. */
-    pump = setInterval(() => {
-      try {
-        api.sweepSigningSessions();
-      } catch (err) {
-        record({ type: 'error', id: null, message: `signing session sweep: ${err instanceof Error ? err.message : String(err)}` });
-      }
-      pumpOnce().catch((err: unknown) => {
-        record({ type: 'error', id: null, message: `feed pump: ${err instanceof Error ? err.message : String(err)}` });
-      });
-    }, deps.pollMs ?? 2000);
-    pump.unref();
-  }
+  const firing = new Set<string>();
+  const protecting = new Set<string>();
+  // Which plans the child holds right now. Only these can fire, and a command for any other
+  // live row re-arms it first: a child that died took its plans with it.
+  const armedInChild = new Set<string>();
+  // Whether the API wallet is still approved on the venue, asked once per child.
+  let agentOk: boolean | null = null;
 
-  function stopPump(): void {
-    if (pump !== null) clearInterval(pump);
-    pump = null;
-  }
+  let sweepTimer: NodeJS.Timeout | null = null;
+  let followTimer: NodeJS.Timeout | null = null;
 
   function record(e: RunnerEvent): void {
     recent.push(e);
@@ -324,12 +170,43 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
     deps.onEvent(e);
   }
 
-  // Every caller that wants the child comes through here, and concurrent callers get the same
-  // promise rather than each starting a fork of their own.
+  function persist(row: PlanRow): void {
+    row.updatedAt = nowIso(now());
+    rows.set(row.id, row);
+    deps.store.put(row);
+  }
+
+  function finish(row: PlanRow, reason: EndReason): void {
+    row.status = 'done';
+    row.endReason = reason;
+    delete row.blind;
+    delete row.locked;
+    delete row.holds;
+    persist(row);
+    armedInChild.delete(row.id);
+    record({ type: 'done', id: row.id, symbol: row.symbol, reason });
+    deps.session?.disarm(row.id);
+    if (child !== null && child.connected) {
+      // Not awaited: a finished plan's leftover exit is the venue's own cancel most of the time,
+      // and "already canceled" is success in the child.
+      void request({ cmd: 'release', id: row.id }).catch(() => undefined);
+    }
+    maybeStopChild();
+  }
+
+  function liveRows(): PlanRow[] {
+    return [...rows.values()].filter(live);
+  }
+
+  function childNeeded(): boolean {
+    return liveRows().some((r) => (r.status === 'waiting' && r.locked !== true) || r.status === 'placed');
+  }
+
+  // ---------- the child ----------
+
   function ensureChild(): Promise<ChildProcess> {
     if (child !== null && child.connected) return Promise.resolve(child);
     if (starting !== null) return starting;
-
     const job = forkChild();
     starting = job;
     /* Cleared however it ends, so a fork that failed does not wedge every later arm on a
@@ -347,26 +224,23 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
     if (mine !== generation) {
       throw new Error('everything was stopped while this runner was starting, so nothing was armed');
     }
-    if (key === null) throw new Error('no API wallet key: run scripts/hl-agent.ts to approve one');
+    if (key === null) throw new Error('no API wallet key: unlock the wallet, or run scripts/hl-agent.ts to approve one');
 
     const entry = path.join(__dirname, 'main.ts');
     /* THE KEY GOES OVER STDIN, and stdin is closed behind it.
        It went over the environment before, which was chosen over argv on purpose (argv is
        world-readable in `ps`) and was still not private: `ps eww <pid>` prints the environment
        of any process this user owns, which is the attacker this app is built against. A pipe
-       has two ends and no third reader.
-
-       `forkImpl` is a test seam, the same shape as fetchImpl on the rails. The guards below
-       (child.on('error'), and the `connected` check on every send) are what a test needs to
-       drive, and they cannot be reached against a real fork without a real key and a real venue. */
+       has two ends and no third reader. */
     const spawned = (deps.forkImpl ?? fork)(entry, [], {
-      env: { ...process.env, PHOSPHOR_HL_URL: deps.baseUrl },
+      env: { ...process.env, PHOSPHOR_HL_URL: deps.baseUrl, PHOSPHOR_HL_USER: deps.user },
       stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
     });
     child = spawned;
+    agentOk = null;
     /* A child that dies before it reads raises EPIPE on this stream, and `child.on('error')`
        below does not cover a stream of the child rather than the child itself: with no listener
-       here it reached the process-wide crash handler and ended the app instead of the mandate. */
+       here it reached the process-wide crash handler and ended the app instead of the plan. */
     spawned.stdin?.on('error', (err: Error) => {
       record({ type: 'error', id: null, message: `runner child never read its key: ${err.message}` });
     });
@@ -374,245 +248,797 @@ export function createRunnerHost(deps: HostDeps): MandateRunner & {
     spawned.stdin?.end();
 
     spawned.on('message', (m) => {
-      const e = m as RunnerEvent;
-      // A manual result answers one waiting HTTP request rather than going to the log as an
-      // event nobody asked for. It is still recorded, because a human closing a position is
-      // exactly the kind of thing the audit trail exists for.
-      if (e.type === 'manual_result') {
-        const settle = pending.get(e.requestId);
-        if (settle !== undefined) {
-          pending.delete(e.requestId);
-          settle({ ok: e.ok, detail: e.detail });
-        }
+      if (!isFromChild(m)) return;
+      const waiting = pending.get(m.seq);
+      if (waiting !== undefined) {
+        pending.delete(m.seq);
+        clearTimeout(waiting.timer);
+        waiting.settle(m);
+        return;
       }
-      // The child can stop a mandate on its own: a halt, or a flatten the human pressed. When
-      // it does, this map has to follow, or the window keeps listing a bot as armed after the
-      // process running it has let it go. Observed live: FLATTEN closed the position and the
-      // screen still showed two armed mandates. Misreporting the safety state is the one thing
-      // this repo has already decided is worse than the safety being off.
-      if (e.type === 'halted' || e.type === 'disarmed') armed.delete(e.id);
-      record(e);
+      if (m.ev === 'error') record({ type: 'error', id: m.id, message: m.message });
     });
     spawned.on('exit', (code) => {
-      // Anything armed when the child dies is no longer armed, whatever the exit code. Leaving
-      // a mandate listed as live after its executor is gone would misreport the safety state,
-      // which this repo already decided is worse than the safety being off.
-      for (const [id] of armed) record({ type: 'disarmed', id, reason: `runner exited (${code})` });
-      armed.clear();
-      stopPump();
-      // Only if this is still the current one. A process taken out by stopAll has already been
-      // let go of, and clearing the binding here would clear one somebody else is holding.
+      // Nothing waiting for a reply gets one now. The venue may or may not have acted; the
+      // caller is told so rather than left on a promise that never settles.
+      for (const [s, waiting] of pending) {
+        pending.delete(s);
+        clearTimeout(waiting.timer);
+        waiting.settle({ ev: 'error', seq: s, id: null, message: `the runner exited (${String(code)}) before it answered` });
+      }
+      firing.clear();
+      protecting.clear();
+      armedInChild.clear();
       if (child === spawned) child = null;
     });
     spawned.stderr?.on('data', (b) => record({ type: 'error', id: null, message: String(b).trim() }));
-
     /* A fork that cannot start, and a send on an IPC channel that has closed, both raise 'error'
        on the child rather than throwing at the call site. With no listener Node re-raises it as
-       an uncaught exception from nextTick, which ends the app rather than the mandate. Every
-       other child in this repo has this listener (see driver.ts); this one did not. */
+       an uncaught exception from nextTick, which ends the app rather than the plan. */
     spawned.on('error', (err) => {
-      for (const [id] of armed) record({ type: 'disarmed', id, reason: `runner child failed: ${err.message}` });
-      armed.clear();
-      stopPump();
       if (child === spawned) child = null;
       record({ type: 'error', id: null, message: `runner child failed: ${err.message}` });
     });
-
     return spawned;
   }
 
-  const api = {
-    /* The venue's realised PnL for every armed mandate, from the process that holds the fills
-       feed. Pushed rather than pulled, and pushed on every feed update rather than on a render,
-       because a safety ceiling that only refreshes while somebody is looking at the trading
-       screen is not a ceiling. */
-    setRealised(byMandate: RealisedByMandate): void {
-      for (const id of Object.keys(realisedByMandate)) delete realisedByMandate[id];
-      for (const [id, usd] of Object.entries(byMandate)) {
-        if (Number.isFinite(usd)) realisedByMandate[id] = usd;
+  function request(cmd: Command): Promise<FromChild> {
+    seq += 1;
+    const mine = seq;
+    return new Promise<FromChild>((resolve) => {
+      if (child === null || !child.connected) {
+        resolve({ ev: 'error', seq: mine, id: 'id' in cmd ? (cmd as { id: string }).id : null, message: 'the runner is not running' });
+        return;
       }
-    },
-
-    async arm(mandate: Mandate, program: unknown) {
-      if (deps.killSwitch()) return { ok: false, detail: 'kill switch is on; nothing can arm' };
-
-      const refusal = tradingLimitRefusal(
-        [...armed.values()].map((a) => ({ id: a.mandate.id, maxNotionalUsd: a.mandate.maxNotionalUsd })),
-        { id: mandate.id, maxNotionalUsd: mandate.maxNotionalUsd },
-        deps.limits ?? TRADING_LIMITS,
-      );
-      if (refusal !== null) return { ok: false, detail: refusal };
-
-      const unrunnable = unrunnableRefusal(program as Program | null);
-      if (unrunnable !== null) return { ok: false, detail: unrunnable };
-
+      const timer = setTimeout(() => {
+        if (pending.delete(mine)) {
+          resolve({ ev: 'error', seq: mine, id: 'id' in cmd ? (cmd as { id: string }).id : null, message: `the runner did not answer within ${Math.round(replyMs / 1000)}s` });
+        }
+      }, replyMs);
+      timer.unref?.();
+      pending.set(mine, { settle: resolve, timer });
       try {
-        const c = await ensureChild();
-        c.send({ cmd: 'arm', mandate, program });
-        /* The signing session's length is the mandate's own expiry, clamped. The human already
-           chose how long this bot should live when they wrote the mandate, so asking them a
-           second question about how long it may hold a key would be two numbers for one
-           decision. The clamp is the app's own statement: eight hours by default, a day at
-           most, whatever the mandate says. */
-        const wanted = Date.parse(mandate.expiresAt) - Date.now();
-        const signing = deps.session?.arm(mandate.id, Number.isFinite(wanted) && wanted > 0 ? wanted : SIGNING_SESSION_DEFAULT_MS);
-        const signingExpiresAt = new Date(signing?.expiresAt ?? Date.now() + SIGNING_SESSION_DEFAULT_MS).toISOString();
-        armed.set(mandate.id, { mandate, program: program as Program | null, since: new Date().toISOString(), signingExpiresAt });
-        // One book pushed before the child can act, so its first tick reasons about the real
-        // market rather than the zeros it starts with.
-        await pumpOnce();
-        startPump();
-        record({ type: 'armed', id: mandate.id, symbol: mandate.symbol, signingExpiresAt });
-        return {
-          ok: true,
-          detail: `armed ${mandate.id} on ${mandate.symbol}; it holds the trading key until ${signingExpiresAt}`,
-        };
+        child.send({ ...cmd, seq: mine } as ToChild);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        record({ type: 'error', id: mandate.id, message });
-        return { ok: false, detail: message };
+        pending.delete(mine);
+        clearTimeout(timer);
+        resolve({ ev: 'error', seq: mine, id: null, message: err instanceof Error ? err.message : String(err) });
       }
-    },
+    });
+  }
 
-    async disarm(id: string, reason: string) {
-      // Disarm never fails and never waits on approval. If the child is already gone the
-      // mandate is already not running, which is the state the caller asked for.
-      armed.delete(id);
-      // The signing session goes with it. A session outliving the mandate it was opened for
-      // would be a key held for a bot that no longer exists.
-      deps.session?.disarm(id);
-      if (child !== null && child.connected) child.send({ cmd: 'disarm', id, reason });
-      record({ type: 'disarmed', id, reason });
-      if (armed.size === 0) {
-        stopPump();
-        if (child !== null && child.connected) child.send({ cmd: 'shutdown' });
-      }
-      return { ok: true, detail: `disarmed ${id}: ${reason}` };
-    },
-
-    async stopAll(reason: string) {
-      /* First, before anything else: a fork whose key read is still in flight belongs to the
-         world this call is ending, so it never becomes a process. Without this the kill switch
-         could return having killed nothing, and a child would appear a moment later with the
-         trading key and no handle on it anywhere. */
-      generation += 1;
-      starting = null;
-      for (const [id] of armed) record({ type: 'disarmed', id, reason });
-      armed.clear();
-      /* Every signing session goes, not only the ones this map knows about. Freeze everything
-         must mean no key is held anywhere, and a kill switch that depends on its own
-         bookkeeping being in step is not a kill switch. Same argument as the SIGKILL below. */
-      for (const session of deps.session?.armed() ?? []) deps.session?.disarm(session.id);
-      stopPump();
-      if (child !== null) {
-        // Ask first so it can flatten, then take the process out regardless. A kill switch that
-        // depends on the thing it is killing being healthy is not a kill switch.
-        //
-        // The `connected` guard is the whole of it. This was the one send path in the file
-        // without one, so flipping the kill switch onto a child that had already died threw
-        // ERR_IPC_CHANNEL_CLOSED into `void runner.stopAll(...)` in main.ts, uncaught: the kill
-        // switch killed the app. The SIGKILL below still runs, so the outcome is unchanged.
-        if (child.connected) child.send({ cmd: 'flatten_and_exit', reason });
-        const doomed = child;
-        /* Let go of it here rather than waiting for its exit. It has been told to close
-           everything and go, so it is not the child a later arm should be handed: reusing a
-           process that is on its way out would arm a mandate onto something about to be
-           SIGKILLed. The timer below still holds it, so nothing escapes. */
-        child = null;
-        setTimeout(() => {
-          if (doomed.connected || doomed.exitCode === null) doomed.kill('SIGKILL');
-        }, 3000).unref();
-      }
-    },
-
-    // Pushed to the child so its supervisor sees the switch every tick. stopAll is still the
-    // one that guarantees the outcome, because it does not depend on the child being healthy;
-    // this makes the child stop cleanly and flat when it IS healthy, which is the better exit.
-    setKilled(on: boolean): void {
-      if (child !== null && child.connected) child.send({ cmd: 'kill', on });
-    },
-
-    // A button on the trading window. Runs in the child because the child is the only process
-    // in the tree holding a key that can place an order, and signing a human's close in the app
-    // would put a second copy of that key in a second process for no gain.
-    //
-    // The kill switch is NOT consulted. Every verb here only reduces, and a kill switch that
-    // stopped a person closing their own position would be a trap rather than a brake.
-    async manual(action: ManualAction): Promise<{ ok: boolean; detail: string }> {
-      // Close and flatten need the market data the pump pushes, so a child that has just
-      // started has to be fed once before it can act on anything.
-      let c: ChildProcess;
+  function killChild(doomed: ChildProcess, reason: string): void {
+    // Ask first so it can let go cleanly, then take the process out regardless. A kill that
+    // depends on the thing it is killing being healthy is not a kill.
+    if (doomed.connected) {
       try {
-        c = await ensureChild();
+        doomed.send({ cmd: 'kill', seq: 0, reason } as unknown as ToChild);
+      } catch {
+        // Already gone.
+      }
+    }
+    setTimeout(() => {
+      if (doomed.connected || doomed.exitCode === null) doomed.kill('SIGKILL');
+    }, KILL_AFTER_MS).unref();
+  }
+
+  function maybeStopChild(): void {
+    if (childNeeded()) return;
+    if (child === null) return;
+    const doomed = child;
+    child = null;
+    killChild(doomed, 'nothing left to run');
+    stopTimers();
+  }
+
+  // ---------- the market ----------
+
+  function minutesOf(coin: string): Map<number, Bar> {
+    let m = minutes.get(coin);
+    if (m === undefined) {
+      m = new Map();
+      minutes.set(coin, m);
+    }
+    return m;
+  }
+
+  function closedBars(coin: string, tf: Timeframe): Bar[] {
+    const tfSec = TIMEFRAME_SEC[tf];
+    const seed = seeds.get(`${coin}:${tf}`) ?? [];
+    const lastSeed = seed[seed.length - 1];
+    const from = lastSeed === undefined ? 0 : lastSeed.t + tfSec;
+    const held = [...minutesOf(coin).values()].filter((b) => b.t >= from).sort((a, b) => a.t - b.t);
+    const newest = held[held.length - 1];
+    if (newest === undefined) return seed.slice(-BARS_KEPT);
+    // A bucket is closed once a minute bar from a later bucket has been seen.
+    const folded = aggregate(held, 60, tfSec).filter((b) => b.t + tfSec <= newest.t);
+    return [...seed, ...folded].slice(-BARS_KEPT);
+  }
+
+  function marketView(plan: Plan): MarketView {
+    const at = now();
+    const seen = Math.max(lastFrameAt.get(plan.symbol) ?? 0, accountAt);
+    const bars: MarketView['bars'] = {};
+    for (const c of plan.when ?? []) {
+      if (c.type === 'time') continue;
+      if (bars[c.tf] === undefined) bars[c.tf] = closedBars(plan.symbol, c.tf);
+    }
+    const held = [...minutesOf(plan.symbol).values()].sort((a, b) => a.t - b.t);
+    const newest = held[held.length - 1];
+    return {
+      nowMs: at,
+      mark: deps.mark(plan.symbol) ?? (newest === undefined ? null : newest.c),
+      freshMs: seen === 0 ? Number.POSITIVE_INFINITY : at - seen,
+      bars,
+      lineAt,
+    };
+  }
+
+  function seed(plan: Plan): void {
+    if (deps.bars === undefined) return;
+    const tfs = new Set<Timeframe>();
+    for (const c of plan.when ?? []) if (c.type !== 'time') tfs.add(c.tf);
+    for (const tf of tfs) {
+      const key = `${plan.symbol}:${tf}`;
+      if (seeds.has(key)) continue;
+      deps
+        .bars(plan.symbol, tf, SEED_BARS)
+        .then((bars) => {
+          const tfSec = TIMEFRAME_SEC[tf];
+          const nowSec = Math.floor(now() / 1000);
+          // The newest bar is forming unless a whole timeframe has passed since it opened.
+          seeds.set(key, bars.filter((b) => b.t + tfSec <= nowSec).slice(-BARS_KEPT));
+          tick(plan.symbol);
+        })
+        .catch((err: unknown) => {
+          record({ type: 'error', id: plan.id, message: `could not read ${tf} bars for ${plan.symbol}: ${err instanceof Error ? err.message : String(err)}` });
+        });
+    }
+  }
+
+  // ---------- firing ----------
+
+  function tick(coin: string): void {
+    for (const row of liveRows()) {
+      if (row.status !== 'waiting' || row.symbol !== coin || row.locked === true || firing.has(row.id)) continue;
+      if (killed || !armedInChild.has(row.id)) continue;
+      const view = marketView(row);
+      const out = evaluate(row, view);
+      row.holds = out.per;
+      const wasBlind = row.blind === true;
+      row.blind = out.blind;
+      if (wasBlind !== out.blind) persist(row);
+      if (!out.holds || view.mark === null) continue;
+      if (now() >= Date.parse(row.expiresAt ?? '')) continue;
+      void fire(row, view.mark);
+    }
+  }
+
+  async function fire(row: PlanRow, mark: number): Promise<void> {
+    firing.add(row.id);
+    try {
+      if (deps.agentApproved !== undefined && agentOk === null) {
+        agentOk = await deps.agentApproved();
+      }
+      if (agentOk === false) {
+        finish(row, 'failed:the API wallet is no longer approved on the venue');
+        return;
+      }
+      record({ type: 'fired', id: row.id, symbol: row.symbol });
+      const reply = await request({ cmd: 'fire', id: row.id, mark });
+      if (reply.ev === 'placed') {
+        row.cloids = reply.cloids;
+        row.gen = reply.gen;
+        if (reply.avgPx !== null && Number.isFinite(reply.avgPx)) row.fillPx = reply.avgPx;
+        row.exitSz = reply.filledSz > 0 ? reply.filledSz : 0;
+        row.status = reply.filledSz > 0 ? 'open' : 'placed';
+        delete row.holds;
+        delete row.blind;
+        persist(row);
+        record({ type: 'placed', id: row.id, symbol: row.symbol, filledSz: reply.filledSz });
+        return;
+      }
+      if (reply.ev === 'refused') {
+        finish(row, `failed:${reply.reason}`);
+        return;
+      }
+      if (reply.ev === 'error' && /did not answer|exited/.test(reply.message)) {
+        // Ambiguous: the venue may hold the entry. Treated as placed under the id the child
+        // would have used, so the venue's own answer (a fill, a resting order, or nothing) is
+        // what settles it rather than a second fire.
+        row.gen += 1;
+        row.cloids = { ...row.cloids, entry: cloidFor({ plan: row.id, leg: 'entry', gen: row.gen }) };
+        row.status = 'placed';
+        persist(row);
+        record({ type: 'error', id: row.id, message: `${reply.message}; ${row.id} is treated as placed until the venue says otherwise` });
+        return;
+      }
+      finish(row, `failed:${reply.ev === 'error' ? reply.message : 'the runner answered with something else'}`);
+    } catch (err) {
+      finish(row, `failed:${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      firing.delete(row.id);
+    }
+  }
+
+  // ---------- the account ----------
+
+  function positionOn(coin: string): { szi: number; entryPx: number } | null {
+    if (account === null) return null;
+    return account.positions.find((p) => p.coin === coin && p.szi !== 0) ?? null;
+  }
+
+  function endReasonFor(row: PlanRow): EndReason {
+    if (account === null) return 'closed';
+    const since = Date.parse(row.updatedAt);
+    const reducing = account.fills
+      .filter((f) => f.coin === row.symbol && f.closedPnlUsd !== null && f.atMs >= since - 1000)
+      .sort((a, b) => b.atMs - a.atMs)[0];
+    if (reducing === undefined) return 'closed';
+    const toStop = Math.abs(reducing.px - row.stop);
+    const toTarget = row.target === undefined ? Number.POSITIVE_INFINITY : Math.abs(reducing.px - row.target);
+    return toStop <= toTarget ? 'stopped' : 'targeted';
+  }
+
+  async function protect(row: PlanRow): Promise<void> {
+    if (protecting.has(row.id)) return;
+    protecting.add(row.id);
+    try {
+      const armed = await ensureArmed(row);
+      if (!armed.ok) {
+        record({ type: 'error', id: row.id, message: `${row.symbol} has a position and the runner could not take ${row.id} to protect it: ${armed.reason}` });
+        return;
+      }
+      const reply = await request({ cmd: 'protect', id: row.id });
+      if (reply.ev === 'protected') {
+        row.cloids = reply.cloids;
+        row.gen = reply.gen;
+        row.exitSz = reply.sz;
+        if (row.status === 'placed') {
+          row.status = 'open';
+          const pos = positionOn(row.symbol);
+          if (pos !== null && row.fillPx === undefined) row.fillPx = pos.entryPx;
+        }
+        persist(row);
+        record({ type: 'protected', id: row.id, symbol: row.symbol, sz: reply.sz });
+        return;
+      }
+      record({ type: 'error', id: row.id, message: reply.ev === 'error' ? reply.message : reply.ev === 'refused' ? reply.reason : `unexpected ${reply.ev}` });
+    } finally {
+      protecting.delete(row.id);
+    }
+  }
+
+  function onAccount(view: AccountView): void {
+    account = view;
+    accountAt = Math.max(accountAt, view.atMs);
+    const waiters = accountWaiters;
+    accountWaiters = [];
+    for (const w of waiters) w();
+    for (const row of liveRows()) {
+      const pos = positionOn(row.symbol);
+      if (row.status === 'placed') {
+        // The first fill of a resting entry: the exits go on now, sized to the position, before
+        // anything else happens. A resting entry is never a naked position.
+        if (pos !== null && !firing.has(row.id)) void protect(row);
+        continue;
+      }
+      if (row.status === 'open') {
+        if (pos === null) {
+          finish(row, endReasonFor(row));
+          continue;
+        }
+        // The position grew past the exits (a partial entry kept filling): resize them.
+        if (row.exitSz !== undefined && row.exitSz > 0 && Math.abs(pos.szi) > row.exitSz + 1e-12 && !firing.has(row.id)) {
+          void protect(row);
+        }
+      }
+    }
+    for (const coin of new Set(liveRows().map((r) => r.symbol))) tick(coin);
+  }
+
+  function onMarket(coin: string, frame: Bar): void {
+    const held = minutesOf(coin);
+    held.set(frame.t, { t: frame.t, o: frame.o, h: frame.h, l: frame.l, c: frame.c, v: frame.v });
+    if (held.size > MINUTES_KEPT) {
+      const oldest = [...held.keys()].sort((a, b) => a - b).slice(0, held.size - MINUTES_KEPT);
+      for (const t of oldest) held.delete(t);
+    }
+    lastFrameAt.set(coin, now());
+    tick(coin);
+  }
+
+  // ---------- timers ----------
+
+  function sweep(): void {
+    const at = now();
+    for (const row of liveRows()) {
+      const expiry = Date.parse(row.expiresAt ?? '');
+      if (!Number.isFinite(expiry) || at < expiry) continue;
+      if (row.status === 'waiting') {
+        finish(row, 'expired');
+        if (child !== null && child.connected) void request({ cmd: 'disarm', id: row.id }).catch(() => undefined);
+      } else if (row.status === 'placed' && !firing.has(row.id) && !protecting.has(row.id)) {
+        // A resting entry past its expiry comes off the book. Anything that filled first is a
+        // position, and the child protects it before it answers.
+        protecting.add(row.id);
+        void request({ cmd: 'cancel', id: row.id })
+          .then((reply) => {
+            protecting.delete(row.id);
+            if (reply.ev === 'cancelled' && reply.filledSz > 0) {
+              row.status = 'open';
+              row.exitSz = reply.filledSz;
+              persist(row);
+              return;
+            }
+            if (reply.ev === 'cancelled') {
+              finish(row, 'expired');
+              return;
+            }
+            record({ type: 'error', id: row.id, message: reply.ev === 'error' ? reply.message : reply.ev === 'refused' ? reply.reason : `unexpected ${reply.ev}` });
+          })
+          .catch(() => protecting.delete(row.id));
+      }
+    }
+    for (const coin of new Set(liveRows().map((r) => r.symbol))) tick(coin);
+    if (liveRows().length === 0) stopTimers();
+  }
+
+  function startTimers(): void {
+    if (sweepTimer === null) {
+      sweepTimer = setInterval(() => {
+        try {
+          api.sweepSigningSessions();
+          sweep();
+        } catch (err) {
+          record({ type: 'error', id: null, message: `runner sweep: ${err instanceof Error ? err.message : String(err)}` });
+        }
+      }, SWEEP_MS);
+      sweepTimer.unref();
+    }
+    if (followTimer === null && deps.follow !== undefined) {
+      followTimer = setInterval(() => {
+        for (const coin of new Set(liveRows().map((r) => r.symbol))) deps.follow?.(coin);
+      }, FOLLOW_MS);
+      followTimer.unref();
+    }
+  }
+
+  function stopTimers(): void {
+    if (sweepTimer !== null) clearInterval(sweepTimer);
+    if (followTimer !== null) clearInterval(followTimer);
+    sweepTimer = null;
+    followTimer = null;
+  }
+
+  // ---------- arming ----------
+
+  function metaFor(coin: string): AssetMeta | null {
+    return deps.meta(coin);
+  }
+
+  async function armRow(row: PlanRow): Promise<{ ok: true } | { ok: false; reason: string }> {
+    if (deps.killSwitch()) return { ok: false, reason: 'kill switch is on; nothing can arm' };
+    const meta = metaFor(row.symbol);
+    if (meta === null) return { ok: false, reason: `no venue metadata for ${row.symbol} yet: the trading account has not answered` };
+    try {
+      await ensureChild();
+      const reply = await request({ cmd: 'arm', plan: planOf(row), cloids: row.cloids, gen: row.gen, meta });
+      if (reply.ev !== 'armed') {
+        return { ok: false, reason: reply.ev === 'error' ? reply.message : reply.ev === 'refused' ? reply.reason : `unexpected ${reply.ev}` };
+      }
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+    }
+    /* The signing session's length is the plan's own expiry, clamped: a day at most, whatever
+       the plan says. The human already chose how long this plan should live when they wrote it. */
+    const wanted = Date.parse(row.expiresAt ?? '') - now();
+    const signing = deps.session?.arm(row.id, Number.isFinite(wanted) && wanted > 0 ? wanted : SIGNING_SESSION_DEFAULT_MS);
+    const signingExpiresAt = nowIso(signing?.expiresAt ?? now() + SIGNING_SESSION_DEFAULT_MS);
+    if (row.status === 'waiting') delete row.locked;
+    armedInChild.add(row.id);
+    persist(row);
+    record({ type: 'armed', id: row.id, symbol: row.symbol, signingExpiresAt });
+    seed(row);
+    deps.follow?.(row.symbol);
+    startTimers();
+    tick(row.symbol);
+    return { ok: true };
+  }
+
+  function planOf(row: PlanRow): Plan {
+    return {
+      id: row.id,
+      symbol: row.symbol,
+      side: row.side,
+      sizeUsd: row.sizeUsd,
+      leverage: row.leverage,
+      entry: row.entry,
+      stop: row.stop,
+      ...(row.target !== undefined ? { target: row.target } : {}),
+      ...(row.when !== undefined ? { when: row.when } : {}),
+      expiresAt: row.expiresAt,
+      ...(row.note !== undefined ? { note: row.note } : {}),
+    };
+  }
+
+  function liveInputs(row: PlanRow) {
+    const meta = metaFor(row.symbol);
+    const same = liveRows().find((r) => r.id !== row.id && r.symbol === row.symbol && r.status !== 'waiting');
+    return {
+      mark: deps.mark(row.symbol) ?? Number.NaN,
+      szDecimals: meta?.szDecimals ?? 0,
+      maxLeverage: meta?.maxLeverage ?? 0,
+      freeCollateralUsd: deps.free(),
+      takerFeeBps: DEFAULT_TAKER_FEE_BPS,
+      sameCoinLeverage: same === undefined ? null : same.leverage,
+      ...(row.fillPx !== undefined ? { entryPx: row.fillPx } : {}),
+    };
+  }
+
+  // A placed or open row the child does not hold (it died, or the app restarted) is re-armed
+  // before any command about it goes through, so the command lands on a child that knows it.
+  async function ensureArmed(row: PlanRow): Promise<{ ok: true } | { ok: false; reason: string }> {
+    if (armedInChild.has(row.id) && child !== null && child.connected) return { ok: true };
+    return armRow(row);
+  }
+
+  function nextId(): string {
+    const at = now();
+    let n = 0;
+    let id = `pl_${at.toString(36)}`;
+    while (rows.has(id)) {
+      n += 1;
+      id = `pl_${at.toString(36)}${n.toString(36)}`;
+    }
+    return id;
+  }
+
+  const api = {
+    // ---------- ideas: drawn, no authority ----------
+
+    draw(input: PlanInput, by: string | null): PlanRow {
+      const at = nowIso(now());
+      const plan: Plan = { id: nextId(), ...input };
+      const row: PlanRow = { ...plan, status: 'idea', hash: planHash(plan), cloids: {}, gen: 0, by, createdAt: at, updatedAt: at };
+      persist(row);
+      return row;
+    },
+
+    redraw(id: string, changes: Record<string, unknown>): { ok: true; row: PlanRow } | { ok: false; reason: string } {
+      const row = rows.get(id);
+      if (row === undefined) return { ok: false, reason: `no plan ${id}` };
+      if (row.status !== 'idea') return { ok: false, reason: `${id} is ${row.status}: an armed plan changes through propose_trade_change` };
+      const merged: Record<string, unknown> = { ...planOf(row) };
+      delete merged.id;
+      for (const [k, v] of Object.entries(changes)) {
+        if (v === null) delete merged[k];
+        else merged[k] = v;
+      }
+      const parsed = validatePlanInput(merged, now());
+      if (!parsed.ok) return { ok: false, reason: parsed.errors.join('; ') };
+      const plan: Plan = { id, ...parsed.plan };
+      const next: PlanRow = { ...row, ...plan, hash: planHash(plan) };
+      persist(next);
+      return { ok: true, row: next };
+    },
+
+    erase(id: string): { ok: boolean; reason: string } {
+      const row = rows.get(id);
+      if (row === undefined) return { ok: false, reason: `no plan ${id}` };
+      if (row.status !== 'idea') return { ok: false, reason: `${id} is ${row.status} and stays on the record` };
+      rows.delete(id);
+      deps.store.remove(id);
+      return { ok: true, reason: `removed ${id}` };
+    },
+
+    get: (id: string): PlanRow | null => rows.get(id) ?? null,
+
+    // Ideas, waiting, placed, open, and the last twenty done, newest done last.
+    plans(): PlanRow[] {
+      const all = [...rows.values()];
+      const done = all.filter((r) => r.status === 'done').sort((a, b) => a.updatedAt.localeCompare(b.updatedAt)).slice(-DONE_KEPT);
+      return [...all.filter((r) => r.status !== 'done'), ...done];
+    },
+
+    // ---------- authority: arrives through the rail after the policy ----------
+
+    async arm(row: PlanRow): Promise<{ ok: true } | { ok: false; reason: string }> {
+      const known = rows.get(row.id);
+      const next: PlanRow = { ...(known ?? {}), ...row, status: 'waiting' };
+      delete next.endReason;
+      const out = await armRow(next);
+      if (!out.ok) {
+        // The plan was approved and the runner could not take it: a row that says so beats a
+        // proposal that says executed and a plan that is nowhere.
+        next.status = 'done';
+        next.endReason = `failed:${out.reason}`;
+        persist(next);
+        record({ type: 'done', id: next.id, symbol: next.symbol, reason: next.endReason });
+      }
+      return out;
+    },
+
+    async change(id: string, c: { stop?: number; target?: number }): Promise<{ ok: boolean; detail: string }> {
+      const row = rows.get(id);
+      if (row === undefined || !live(row)) return { ok: false, detail: `no live plan ${id}` };
+      if (row.status === 'waiting' && row.locked === true) return { ok: false, detail: `${id} is locked until the next unlock` };
+      const mark = deps.mark(row.symbol);
+      if (mark === null) return { ok: false, detail: `no mark price for ${row.symbol}` };
+      const armed = await ensureArmed(row);
+      if (!armed.ok) return { ok: false, detail: armed.reason };
+      const reply = await request({ cmd: 'modify', id, stop: c.stop, target: c.target, cloids: row.cloids, gen: row.gen, mark });
+      if (reply.ev !== 'modified') {
+        return { ok: false, detail: reply.ev === 'error' ? reply.message : reply.ev === 'refused' ? reply.reason : `unexpected ${reply.ev}` };
+      }
+      row.stop = reply.stop;
+      if (reply.target === null) delete row.target;
+      else row.target = reply.target;
+      row.cloids = reply.cloids;
+      row.gen = reply.gen;
+      row.hash = planHash(planOf(row));
+      const risk = planRisk(planOf(row), liveInputs(row));
+      if (risk.ok) row.risk = risk.risk;
+      persist(row);
+      const detail = `${id}: stop ${String(row.stop)}${row.target === undefined ? ', no target' : `, target ${String(row.target)}`}`;
+      record({ type: 'changed', id, detail });
+      return { ok: true, detail };
+    },
+
+    async cancel(id: string): Promise<{ ok: boolean; detail: string }> {
+      const row = rows.get(id);
+      if (row === undefined || !live(row)) return { ok: false, detail: `no live plan ${id}` };
+      if (row.status === 'open') return { ok: false, detail: `${id} is open: its exits are its protection. Close it, or change the stop` };
+      if (row.status === 'waiting') {
+        if (child !== null && child.connected) void request({ cmd: 'disarm', id }).catch(() => undefined);
+        finish(row, 'cancelled');
+        return { ok: true, detail: `${id} cancelled before it fired` };
+      }
+      const armed = await ensureArmed(row);
+      if (!armed.ok) return { ok: false, detail: armed.reason };
+      const reply = await request({ cmd: 'cancel', id });
+      if (reply.ev !== 'cancelled') {
+        return { ok: false, detail: reply.ev === 'error' ? reply.message : reply.ev === 'refused' ? reply.reason : `unexpected ${reply.ev}` };
+      }
+      if (reply.filledSz > 0) {
+        row.status = 'open';
+        row.exitSz = reply.filledSz;
+        persist(row);
+        return { ok: true, detail: `${id}: the entry is cancelled, and ${String(reply.filledSz)} had already filled, so the plan is open and protected` };
+      }
+      finish(row, 'cancelled');
+      return { ok: true, detail: `${id} cancelled` };
+    },
+
+    async close(id: string, maxSlippageBps: number): Promise<{ ok: boolean; detail: string }> {
+      const row = rows.get(id);
+      if (row === undefined || !live(row)) return { ok: false, detail: `no live plan ${id}` };
+      if (row.status !== 'open') return { ok: false, detail: `${id} is ${row.status}, so there is nothing to close; cancel it instead` };
+      const mark = deps.mark(row.symbol);
+      if (mark === null) return { ok: false, detail: `no mark price for ${row.symbol}` };
+      const armed = await ensureArmed(row);
+      if (!armed.ok) return { ok: false, detail: armed.reason };
+      const reply = await request({ cmd: 'close', id, maxSlippageBps, mark });
+      if (reply.ev !== 'closed') {
+        return { ok: false, detail: reply.ev === 'error' ? reply.message : reply.ev === 'refused' ? reply.reason : `unexpected ${reply.ev}` };
+      }
+      finish(row, 'closed');
+      return { ok: true, detail: `${id} closed` };
+    },
+
+    // The big red one: every position closed at a hundred basis points, every resting entry and
+    // exit cancelled, every plan finished. Consults no kill switch: it only reduces.
+    async flatten(): Promise<{ ok: boolean; detail: string }> {
+      const coins = new Map<string, { coin: string; meta: AssetMeta; mark: number }>();
+      const consider = (coin: string): void => {
+        if (coins.has(coin)) return;
+        const meta = metaFor(coin);
+        const mark = deps.mark(coin);
+        if (meta !== null && mark !== null) coins.set(coin, { coin, meta, mark });
+      };
+      for (const row of liveRows()) consider(row.symbol);
+      for (const p of account?.positions ?? []) if (p.szi !== 0) consider(p.coin);
+      const cancels: { assetId: number; cloid: string }[] = [];
+      for (const row of liveRows()) {
+        const meta = metaFor(row.symbol);
+        if (meta === null) continue;
+        for (const cloid of Object.values(row.cloids)) if (typeof cloid === 'string') cancels.push({ assetId: meta.assetId, cloid });
+      }
+      try {
+        await ensureChild();
       } catch (err) {
         return { ok: false, detail: err instanceof Error ? err.message : String(err) };
       }
-      // Feed the child a book for every market it is about to be asked to close, including the
-      // ones no mandate is armed on. Without this, a flatten with nothing armed reaches a child
-      // whose book is empty, finds no position, and reports success having closed nothing.
-      if (action.verb === 'close' || action.verb === 'flatten') {
-        const wanted = action.verb === 'close' && action.coin !== undefined ? [action.coin] : (action.coins ?? []);
-        await pumpOnce(wanted);
+      const reply = await request({ cmd: 'flatten', coins: [...coins.values()], cancels });
+      if (reply.ev !== 'flat') {
+        return { ok: false, detail: reply.ev === 'error' ? reply.message : `unexpected ${reply.ev}` };
       }
-
-      manualSeq += 1;
-      const requestId = `mn_${manualSeq}`;
-      return await new Promise((resolve) => {
-        // A child that dies mid-action would otherwise leave the browser's button disabled
-        // forever waiting on a reply that is never coming.
-        const timer = setTimeout(() => {
-          if (pending.delete(requestId)) {
-            resolve({ ok: false, detail: 'the runner did not answer within 15s' });
-          }
-        }, 15_000);
-        if (typeof timer.unref === 'function') timer.unref();
-        pending.set(requestId, (r) => {
-          clearTimeout(timer);
-          resolve(r);
-        });
-        c.send({ cmd: 'manual', action: { ...action, requestId } });
-      });
+      for (const row of liveRows()) {
+        if (row.status === 'open') finish(row, reply.stillOpen.includes(row.symbol) ? 'failed:the venue did not close it' : 'closed');
+        else finish(row, 'cancelled');
+      }
+      if (reply.stillOpen.length > 0) {
+        return {
+          ok: false,
+          detail: `${reply.stillOpen.join(', ')} did NOT close and ${reply.stillOpen.length === 1 ? 'is' : 'are'} STILL OPEN. Close by hand. ${reply.detail}`,
+        };
+      }
+      return { ok: true, detail: reply.detail === '' ? 'nothing open, every plan finished' : reply.detail };
     },
 
-    status: () => ({
-      armed: [...armed.entries()].map(([id, v]) => ({
-        id,
-        symbol: v.mandate.symbol,
-        since: v.since,
-        // Shown on the armed row: how long this bot may keep signing, which is a different
-        // number from the mandate's own expiry and the one a person locking the app wants.
-        signingExpiresAt: v.signingExpiresAt,
-      })),
-      running: child !== null && child.connected,
-    }),
+    status(): { plans: PlanRow[]; child: 'off' | 'on'; watching: string[] } {
+      return {
+        plans: api.plans(),
+        child: child !== null && child.connected ? 'on' : 'off',
+        watching: [...new Set(liveRows().map((r) => r.symbol))],
+      };
+    },
 
-    // The same set as status(), with the bounds and the program itself. The trading window
-    // needs both: the envelope to draw how much of it has been spent, and the program to show
-    // the human the sentences they approved.
-    armedDetail: () =>
-      [...armed.values()].map((v) => ({ mandate: v.mandate, program: v.program, since: v.since, signingExpiresAt: v.signingExpiresAt })),
+    onMarket,
+    onAccount,
+    onLines(fn: (id: string, t: number) => number | null): void {
+      lineAt = fn;
+    },
 
-    /* Sessions whose expiry has passed. Called on the pump, which runs only while something is
-       armed, which is exactly when a session can exist. Disarming each one kills the child
-       once the last mandate goes, and a dead process is the only reliable way to be rid of a
-       key that lives in an immutable string. */
+    // ---------- boot ----------
+
+    /* Everything on disk, checked against what the venue and the proposal store say now. A
+       waiting plan re-arms only if its proposal executed with the same hash and it still passes
+       the propose refusals; placed and open rows are read against the venue's orders and
+       positions by cloid. Waits for the first account snapshot, bounded, so it is not deciding
+       against an empty feed. */
+    async reconcile(waitMs = 20_000): Promise<void> {
+      if (account === null) {
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, waitMs);
+          timer.unref?.();
+          accountWaiters.push(() => {
+            clearTimeout(timer);
+            resolve();
+          });
+        });
+      }
+      // Every waiting row is judged before any is armed, because arming one ticks the coin
+      // and a row not yet judged must not fire on it.
+      const rearm: PlanRow[] = [];
+      for (const row of liveRows()) {
+        if (row.status !== 'waiting') continue;
+        if (deps.approval !== undefined) {
+          const approval = row.proposalId === undefined ? null : deps.approval(row.proposalId);
+          if (approval === null || approval.status !== 'executed' || approval.hash !== row.hash) {
+            finish(row, 'failed:plan on disk does not match its approval');
+            continue;
+          }
+        }
+        const risk = planRisk(planOf(row), liveInputs(row));
+        if (!risk.ok) {
+          finish(row, `failed:${risk.refusal}`);
+          continue;
+        }
+        row.risk = risk.risk;
+        rearm.push(row);
+      }
+      for (const row of rearm) {
+        const out = await armRow(row);
+        if (!out.ok) {
+          row.locked = true;
+          persist(row);
+          record({ type: 'locked', id: row.id });
+        }
+      }
+      for (const row of liveRows()) {
+        if (row.status === 'waiting') continue;
+        if (account === null) continue;
+        const pos = positionOn(row.symbol);
+        const resting = new Set(account.orders.map((o) => o.cloid).filter((c): c is string => c !== null));
+        if (row.status === 'placed') {
+          if (row.cloids.entry !== undefined && resting.has(row.cloids.entry)) {
+            const out = await armRow(row);
+            if (!out.ok) record({ type: 'error', id: row.id, message: `could not re-take ${row.id}: ${out.reason}` });
+            if (pos !== null) void protect(row);
+            continue;
+          }
+          if (pos !== null) {
+            const out = await armRow(row);
+            if (out.ok) void protect(row);
+            continue;
+          }
+          finish(row, now() >= Date.parse(row.expiresAt ?? '') ? 'expired' : 'cancelled');
+          continue;
+        }
+        if (row.status === 'open') {
+          if (pos === null) {
+            finish(row, endReasonFor(row));
+            continue;
+          }
+          const stopResting = row.cloids.stop !== undefined && resting.has(row.cloids.stop);
+          if (!stopResting) {
+            // The position is there and its stop is not. Re-take the plan and protect it.
+            const out = await armRow(row);
+            if (out.ok) {
+              row.exitSz = 0;
+              void protect(row);
+            } else {
+              record({ type: 'error', id: row.id, message: `${row.symbol} is open with no stop resting and the runner could not start: ${out.reason}` });
+            }
+          }
+        }
+      }
+      maybeStopChild();
+    },
+
+    setKilled(on: boolean): void {
+      killed = on;
+    },
+
+    /* The kill switch. Every resting order cancelled, every position closed, every plan
+       finished, the child taken out whether or not it answered. */
+    async stopAll(reason: string): Promise<void> {
+      killed = true;
+      generation += 1;
+      starting = null;
+      const doomed = child;
+      if (doomed !== null && doomed.connected && liveRows().length > 0) {
+        const out = await api.flatten();
+        if (!out.ok) record({ type: 'error', id: null, message: `${reason}: ${out.detail}` });
+      }
+      for (const row of liveRows()) finish(row, `failed:${reason}`);
+      for (const session of deps.session?.armed() ?? []) deps.session?.disarm(session.id);
+      stopTimers();
+      if (child !== null) {
+        const c = child;
+        child = null;
+        killChild(c, reason);
+      } else if (doomed !== null) {
+        killChild(doomed, reason);
+      }
+      killed = deps.killSwitch();
+    },
+
+    /* The app is going down. Rows stay as they are: the venue holds every placed and open plan,
+       and the boot reconcile re-arms what waits. Only the process holding the key goes. */
+    async shutdown(): Promise<void> {
+      generation += 1;
+      starting = null;
+      stopTimers();
+      if (child !== null) {
+        const c = child;
+        child = null;
+        killChild(c, 'phosphor is shutting down');
+      }
+    },
+
+    /* Sessions whose expiry has passed. A waiting plan locks and re-arms on the next unlock. A
+       placed plan renews: its entry rests on the venue and a fill needs the key to be protected,
+       which is strictly safer than dropping the key. An open plan needs no key: the venue holds
+       its exits. Returns the plan ids whose key was taken back. */
     sweepSigningSessions(): string[] {
       const done = deps.session?.expired() ?? [];
+      const taken: string[] = [];
       for (const session of done) {
-        // `.catch`, not `void`. disarm() sends over IPC and records an event, both of which can
-        // throw, and this runs on a timer with nothing above it to catch a rejection.
-        api.disarm(session.id, 'the signing session expired, so the trading key was taken back').catch((err: unknown) => {
-          record({ type: 'error', id: session.id, message: `taking the trading key back failed: ${err instanceof Error ? err.message : String(err)}` });
-        });
+        const row = rows.get(session.id);
+        if (row === undefined || !live(row)) continue;
+        if (row.status === 'placed') {
+          deps.session?.arm(row.id, SIGNING_SESSION_DEFAULT_MS);
+          continue;
+        }
+        taken.push(row.id);
+        if (row.status === 'waiting') {
+          row.locked = true;
+          persist(row);
+          record({ type: 'locked', id: row.id });
+          if (child !== null && child.connected) void request({ cmd: 'disarm', id: row.id }).catch(() => undefined);
+        }
       }
-      return done.map((s) => s.id);
+      if (taken.length > 0) maybeStopChild();
+      return taken;
     },
 
-    // Whether the venue is answering the app's own reads, and how slowly. The trading window
-    // shows this: a screen that is behind the market must say so rather than looking current.
-    feedHealth: () => feed.health(),
-
+    sweep,
     events: () => [...recent],
+    stop(): void {
+      stopTimers();
+    },
   };
 
   return api;

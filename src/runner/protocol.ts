@@ -43,6 +43,10 @@ export type FromChild =
   | { ev: 'refused'; seq: number; id: string | null; reason: string }
   | { ev: 'error'; seq: number; id: string | null; message: string };
 
+// A command as the host writes it, before the sequence number is stamped on. Distributed over
+// the union by hand: Omit on a union keeps only the keys every member shares.
+export type Command = { [K in ToChild['cmd']]: Omit<Extract<ToChild, { cmd: K }>, 'seq'> }[ToChild['cmd']];
+
 export function isFromChild(m: unknown): m is FromChild {
   return m !== null && typeof m === 'object' && typeof (m as { ev?: unknown }).ev === 'string';
 }
