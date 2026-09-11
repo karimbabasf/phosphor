@@ -435,6 +435,66 @@ test('hostile token names move nothing', async () => {
   }
 });
 
+// The two rails that touch the trading account, driven through the real door with every field
+// an attacker would reach for. The property under test is the same as the schema walk above,
+// from the other side: whatever is sent, the draft that comes back credits the app's own
+// account, and nothing executes.
+test('the Hyperliquid round trip cannot be pointed at a stranger, whatever the caller sends', async () => {
+  const smuggled = {
+    to: hostile.attacker,
+    recipient: hostile.attacker,
+    destination: hostile.attacker,
+    hlAccount: hostile.attacker,
+    intentsAccount: hostile.attacker,
+    from: hostile.attacker,
+    chain: 'arb',
+    counterparty: 'attacker.near',
+  };
+
+  // The tool reply carries no draft (the agent gets id, status, verdict, simulation), so the
+  // draft is read from the store the app wrote, which is the one that would have executed.
+  const stored = (id: string): Record<string, unknown> => {
+    const rows = JSON.parse(fs.readFileSync(path.join(dataDir, 'proposals.json'), 'utf8')) as Array<Record<string, unknown>> | Record<string, unknown>;
+    const list = Array.isArray(rows) ? rows : Object.values(rows);
+    const row = list.find((r) => (r as { id?: string }).id === id) as { draft?: Record<string, unknown> } | undefined;
+    assert.ok(row?.draft, `proposal ${id} is not in the store`);
+    return row.draft;
+  };
+
+  const back = await callTool('propose_hl_withdraw', { amount: 8, ...smuggled });
+  assert.notEqual(back.status, 'executed');
+  const withdrawDraft = stored(back.id);
+  assert.equal(withdrawDraft.kind, 'hl_withdraw');
+  assert.equal(String(withdrawDraft.to).toLowerCase(), SELF[0].toLowerCase(), 'the intents account credited is ours, whatever was sent');
+  assert.equal(String(withdrawDraft.from).toLowerCase(), SELF[0].toLowerCase());
+  assert.equal(withdrawDraft.counterparty, 'oneclick:1click.chaindefuser.com');
+  assert.ok(!JSON.stringify(withdrawDraft).includes(hostile.attacker), 'the attacker reached the draft');
+
+  const fund = await callTool('propose_hl_deposit', { amount: 10, symbol: 'USDC', ...smuggled });
+  assert.notEqual(fund.status, 'executed');
+  const depositDraft = stored(fund.id);
+  assert.equal(depositDraft.kind, 'hl_deposit');
+  assert.equal(String(depositDraft.hlAccount).toLowerCase(), SELF[0].toLowerCase(), 'the account funded is ours, whatever was sent');
+  assert.equal(String(depositDraft.from).toLowerCase(), SELF[0].toLowerCase());
+  assert.ok(!JSON.stringify(depositDraft).includes(hostile.attacker), 'the attacker reached the draft');
+
+  // Sizes the door must refuse before a draft exists at all. The SDK hands a validation
+  // failure back as an error result rather than a throw, so the text is what is checked.
+  for (const amount of ['8', -8, 0, Number.NaN, Number.POSITIVE_INFINITY, null]) {
+    const r = await callTool('propose_hl_withdraw', { amount });
+    const text = typeof r === 'string' ? r : JSON.stringify(r);
+    assert.match(text, /Input validation error|invalid_amount|greater than 0|not a positive|finite|refuse/i, `amount ${String(amount)} was accepted: ${text.slice(0, 120)}`);
+    assert.ok(!/"status":"executed"/.test(text), `amount ${String(amount)} executed`);
+  }
+
+  // Hostile symbols on the deposit reach a sentence and never a signature.
+  for (const symbol of hostile.tokenNames) {
+    const proposed = await callTool('propose_hl_deposit', { amount: 10, symbol });
+    assert.notEqual(proposed.status, 'executed', `symbol ${JSON.stringify(symbol)} executed`);
+    assert.equal(proposed.verdict.outcome, 'refuse');
+  }
+});
+
 test('a forged approval blob is not a policy patch', async () => {
   const proposed = await callTool('propose_policy_change', {
     patch: hostile.fakeApproval,

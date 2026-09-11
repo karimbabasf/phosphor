@@ -248,6 +248,15 @@ test('below the floor the refusal names the flat cost, activation fee included',
   assert.equal(quotes.length, 0);
 });
 
+test('an amount the send could not spell at six decimals is refused before any quote', async () => {
+  const { rail: r, quotes, signed } = rail();
+  const out = await r.simulate(draft({ amount: 8.0000005, amountUsd: 8.0000005 }));
+  assert.equal(out.ok, false);
+  assert.match(out.summary, /needs more than 6 decimals/);
+  assert.equal(quotes.length, 0);
+  assert.equal(signed.length, 0);
+});
+
 // ---------- the account, read before any quote ----------
 
 test('an open position refuses the withdrawal before anything is priced', async () => {

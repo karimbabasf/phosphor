@@ -45,8 +45,9 @@ import { ONECLICK_TERMINAL, baseUnits, oneClickClient, oneLine, quoteEchoProblem
 import type { OneClickClient, OneClickQuote, OneClickStatus, OneClickToken, QuoteEcho } from '../intents.ts';
 import { fetchIntentsAssetBalance } from '../ledger/intents.ts';
 import { nearChainSpec } from '../chain/near.ts';
+import { readTimeout } from '../net.ts';
 import { ONECLICK_COUNTERPARTY } from './oneclick.ts';
-import { HL_ACTIVATION_FEE_USDC, accountSummary, liveSignPort, spotSend, usdClassTransfer } from './hl-user-signed.ts';
+import { HL_ACTIVATION_FEE_USDC, accountSummary, liveSignPort, spotSend, toAmountString, usdClassTransfer } from './hl-user-signed.ts';
 import type { HlAccountSummary, HlUserSignedDeps } from './hl-user-signed.ts';
 import { HYPERCORE_USDC_ASSET_ID, HYPERCORE_USDC_DECIMALS } from './hypercore-deposit.ts';
 
@@ -214,6 +215,13 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     }
     if (!Number.isFinite(draft.minReceived) || draft.minReceived <= 0) {
       return { reasons: [`the draft floors at ${draft.minReceived} USDC, which is no floor at all`] };
+    }
+    // The send takes a decimal string, and a number it cannot spell exactly is refused by
+    // spotSend after the live quote has been minted. Refuse it here instead, before any quote.
+    try {
+      toAmountString(draft.amount);
+    } catch (err) {
+      return { reasons: [errText(err)] };
     }
 
     let account: HlAccountSummary;
@@ -415,6 +423,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ type: 'userNonFundingLedgerUpdates', user: owner, startTime: nonce - 60_000 }),
+        signal: readTimeout(),
       });
       const rows = (await res.json()) as Array<{ hash?: string; delta?: Record<string, unknown> }>;
       const hit = rows.find(
