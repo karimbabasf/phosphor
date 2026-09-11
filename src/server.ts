@@ -294,5 +294,5 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   };
   base.listen = localOnlyListen as unknown as typeof base.listen;
 
-  return Object.assign(base, { broadcastState, broadcastCandles, broadcastCandle, broadcastTrade });
+  return Object.assign(base, { broadcastState, broadcastCandles, broadcastCandle, broadcastTrade, charts });
 }

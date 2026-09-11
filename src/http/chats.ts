@@ -9,6 +9,7 @@ import type { AgentPresence } from '../agents.ts';
 import type { Driver, DriverEvent } from '../driver.ts';
 import { createDriver } from '../driver.ts';
 import { buildRole } from '../role.ts';
+import { loadProfile } from '../profile/index.ts';
 import type { ViewMode } from '../types.ts';
 import { PROJECT_DIR } from './context.ts';
 import type { Chat, ChatRegistry, SseHub } from './context.ts';
@@ -110,7 +111,8 @@ export function createChatRegistry(deps: {
                all three. A `driver.systemPrompt` in config still wins outright, because somebody
                running their own Phosphor should be able to change how their own agent talks. */
             systemPrompt:
-              cfg.driver?.systemPrompt ?? buildRole({ root: PROJECT_DIR, view: getView() }),
+              cfg.driver?.systemPrompt ??
+              buildRole({ root: PROJECT_DIR, view: getView(), profile: loadProfile(cfg.dataDir) }),
             onEvent: (event) => driverEvent(chat, event),
           });
     chats.set(id, chat);

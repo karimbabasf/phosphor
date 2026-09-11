@@ -18,6 +18,32 @@ import { pollPrice } from './chart.ts';
 import { PROJECT_DIR } from './context.ts';
 import type { Ctx } from './context.ts';
 
+/* The line the app appends to every message the human sends: which screen the window is on,
+   which market is focused, and how many plans are waiting. Three facts the app already holds
+   and the agent otherwise spends a call on `start` or `trade_read` to learn.
+   The plan count is read off the trade payload, which carries every plan with its status. A
+   service whose payload has no plans (the fixtures that stub it) cannot say, and the tag leaves
+   the clause out rather than asserting zero. */
+type TagSource = {
+  view: { state(): { symbol: string } };
+  payload?: () => { plans?: { status?: string }[] } | undefined;
+};
+
+export function screenTag(view: string, trade: TagSource): string {
+  const parts = [`the window is on the ${view} screen`, `${trade.view.state().symbol} focused`];
+  let plans: { status?: string }[] | undefined;
+  try {
+    plans = trade.payload?.()?.plans;
+  } catch {
+    plans = undefined;
+  }
+  if (Array.isArray(plans)) {
+    const waiting = plans.filter((p) => p.status === 'waiting').length;
+    parts.push(waiting === 0 ? 'no plans waiting' : waiting === 1 ? '1 plan waiting' : `${waiting} plans waiting`);
+  }
+  return `[phosphor: ${parts.join(', ')}]`;
+}
+
 export async function handleMutation(
   ctx: Ctx,
   route: string,
@@ -148,9 +174,10 @@ export async function handleMutation(
          One line, written by this app rather than by anybody's text, appended to what the
          human said. It costs a tool call nobody has to make and it is right on every turn.
          It is fenced and named so the model can tell it apart from the person talking, and it
-         is not put in the transcript: the window already draws what was typed. */
+         is not put in the transcript: the window already draws what was typed. The focused
+         market and the waiting plans ride on the same line, for the same reason. */
       try {
-        instance.send(`${text}\n\n[phosphor: the window is on the ${ctx.getView()} screen]`);
+        instance.send(`${text}\n\n${screenTag(ctx.getView(), ctx.trade)}`);
       } catch (err) {
         return fail(res, 409, errText(err));
       }

@@ -28,6 +28,7 @@ import { createRails, venueAllowlist } from './rails/index.ts';
 import { createLedger } from './ledger/index.ts';
 import { oneClickQuoter, syntheticQuoter, stubSigner, type TokensFile } from './intents.ts';
 import { createMarketData } from './market/index.ts';
+import { lineAt } from './analysis/trendline.ts';
 import { createProposalService } from './proposals.ts';
 import { MAX_AGENTS, RESERVED_SEATS, createAgents } from './agents.ts';
 import { createRunnerHost } from './runner/host.ts';
@@ -640,6 +641,15 @@ const server = createServer({
 announceLock = () => {
   server.broadcastState();
 };
+
+/* A plan may wait on a drawn line ("1h close above tl_3"). The lines live in the primary chart's
+   drawing store, which the server owns, so the runner is handed a reader here rather than the
+   store: it asks for a price at a time and gets one, or null for an id that no longer exists,
+   which the watcher reads as "does not hold" and never as "fire". */
+runner.onLines((id, t) => {
+  const drawn = server.charts.primary.drawings.get(id);
+  return drawn?.line ? lineAt(drawn.line, t) : null;
+});
 session.start();
 
 setInterval(() => {

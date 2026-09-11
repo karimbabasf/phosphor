@@ -107,7 +107,7 @@ test('a prompt reaches the chat it names and is written into that chat alone', a
     // moment the human clicked a tab. The human's own words are still the whole of the front.
     assert.equal(b.calls.sends.length, 1);
     assert.ok(b.calls.sends[0].startsWith('read the four hour'));
-    assert.ok(/\[phosphor: the window is on the (basic|pro|trade) screen\]$/.test(b.calls.sends[0]));
+    assert.ok(/\[phosphor: the window is on the (basic|pro|trade) screen, [A-Z0-9]+ focused(, [^\]]+)?\]$/.test(b.calls.sends[0]));
 
     const list = (await chats(b.url)).chats as Array<Record<string, unknown>>;
     const target = list.find((c) => c.id === id);

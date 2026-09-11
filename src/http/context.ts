@@ -130,6 +130,9 @@ export const VIEW_TOOLS: readonly string[] = [
   'trade_clear',
   // A plan drawn as an idea. It has no authority and no policy: arming it is propose_trade.
   'trade_plan',
+  // The knowledge profile's one write: a concept the agent just taught, appended to the file
+  // the next role text is built from. No money, no approval, audited, ten per session.
+  'profile_learned',
 ];
 // Human-only controls on the trading window. Each one only ever reduces exposure, which is why
 // none of them waits on an approval and none is reachable from the agent's door.
@@ -196,6 +199,9 @@ export type PhosphorServer = http.Server & {
   // the browser stopped refetching a hundred kilobytes of JSON to move one close.
   broadcastCandle(product: string, baseSec: number, candle: Candle, provider: string): void;
   broadcastTrade(): void;
+  // The chart slots, so the entrypoint can hand the runner a reader for drawn lines without
+  // the server importing the runner or the runner importing the server.
+  charts: ChartSlots;
 };
 
 export type ChartStore = ReturnType<typeof createChartStore>;

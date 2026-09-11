@@ -52,6 +52,8 @@
     trade_plan: 'drawing a plan',
     trade_batch: 'redrawing the account',
     trade_clear: 'clearing the chart',
+    /* the human's own profile */
+    profile_learned: 'noting what you learned',
     /* asking. None of these moves anything: each puts a request in the gate. */
     propose_consolidate: 'asking to consolidate',
     propose_swap: 'asking to swap',

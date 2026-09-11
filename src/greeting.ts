@@ -13,6 +13,8 @@
 // it and the one sentence that decides between near-duplicates.
 
 import type { ViewMode } from './types.ts';
+import { defaultProfile, profileBlock } from './profile/index.ts';
+import type { Profile } from './profile/index.ts';
 
 // Five rows, one column of blocks per letter, 5 wide with a single space between. The sixth
 // row is the phosphor decay: on a real CRT the beam leaves a dimmer trailing glow under the
@@ -184,7 +186,7 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
     items: [
       {
         tool: 'chart_draw',
-        does: 'the whole markup in ONE call: view, indicators, levels, marks, sloped lines and zones, applied in that order. Answers with a digest and a `refused` list, one line per entry that did not land. Reach for this rather than one call per object.',
+        does: 'the whole markup in ONE call: view, indicators, levels, marks, sloped lines and zones, in that order. Answers with a digest and a `refused` list. Never one call per object.',
       },
       { tool: 'chart_draw levels:', does: 'HORIZONTAL price lines. marks: are moments on the time axis.' },
       { tool: 'chart_draw lines:', does: 'a SLOPED line through two time and price anchors, extended onwards. zones: a price band.' },
@@ -198,11 +200,11 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
       { tool: 'chart_draw view:', does: 'product, timeframe (1m to 1w, including 7m), bars on screen, venue.' },
       {
         tool: 'chart_draw view: provider',
-        does: "which venue serves the candles: auto (prefers Hyperliquid, where this app executes), hyperliquid, or coinbase for that venue's spot market. A venue that does not list the product is refused with that reason, never quietly served from the other one.",
+        does: 'auto (prefers Hyperliquid, where this app executes), hyperliquid, or coinbase. A venue that does not list the product is refused by name, never served from the other one.',
       },
       {
         tool: 'chart_draw indicators:',
-        does: '{ preset } for a whole package (wave, trend, momentum, volatility, ichimoku, volume, scalp, clean), which clears YOUR studies first so it never fails on the pane cap; { set } replaces yours; { add }; { remove }. Own pane: rsi, macd, atr, stoch, obv, volume, wave, moneyflow, squeeze, adx, stochrsi, mfi, cci, relvolume. Overlay: sma, ema, wma, vwap, bbands, donchian, supertrend, keltner, ichimoku, vwapbands, hma, ribbon. custom:<slug> for one from the indicators folder.',
+        does: '{ preset } (wave, trend, momentum, volatility, ichimoku, volume, scalp, clean) or { set } replace your studies; { add }, { remove }. chart_batch op:indicator_list names every type, custom:<slug> included.',
       },
       {
         tool: 'chart_layout',
@@ -234,6 +236,15 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
       { tool: 'trade_highlight', does: 'point at one row or chart object (position, order, fill, plan, level, line, indicator) and say why, so you and the human mean the same thing. When you explain something, point at it.' },
       { tool: 'trade_overlay', does: 'toggle entry, liquidation, stops, targets, orders, fills, plan wall.' },
       { tool: 'trade_clear', does: 'remove what you put on the surface.' },
+    ],
+  },
+  {
+    group: 'teach the human',
+    items: [
+      {
+        tool: 'profile_learned',
+        does: 'record ONE concept you just explained, as a noun phrase, so the next session does not explain it again. Their profile in your role text says what they already know; explain only what sits above it.',
+      },
     ],
   },
   {
@@ -292,9 +303,13 @@ export type Greeting = {
   capabilities: readonly CapabilityGroup[];
   rules: readonly string[];
   printing: string;
+  // Who the human is and what they already understand, rendered by src/profile/index.ts. The
+  // in-app agent has it in its role text; a terminal-attached agent never gets that text and
+  // reads it here instead.
+  profile: string;
 };
 
-export function buildGreeting(f: GreetingFacts, version: string): Greeting {
+export function buildGreeting(f: GreetingFacts, version: string, profile: Profile = defaultProfile()): Greeting {
   const lines: string[] = [];
   lines.push('');
   for (const row of WORDMARK) lines.push('  ' + row);
@@ -338,6 +353,7 @@ export function buildGreeting(f: GreetingFacts, version: string): Greeting {
     modes: MODES,
     capabilities: CAPABILITIES,
     rules: OPERATING_RULES,
+    profile: profileBlock(profile),
     printing:
       'The banner is drawn for a terminal. Print it only when your human is watching one, verbatim inside a code block and never redrawn or summarised, and use bannerAnsi only if they have said their terminal renders ANSI colour. In an app window, print nothing: the window has already introduced you and a second boot screen inside a conversation is noise. The facts are yours to use either way.',
   };
