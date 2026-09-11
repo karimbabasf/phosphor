@@ -510,6 +510,5 @@ with no price move is only visible with the tape), anything derived from the ord
 CME gap, which needs a CME futures series phosphor does not carry.
 
 Derivatives data is **not** impossible: funding, open interest, premium and the mark-oracle gap
-all come back from `trade_batch` on the Hyperliquid venue. See `context.md` for what else is
-reachable without a key.
+all come back from `trade_batch` on the Hyperliquid venue.
 
