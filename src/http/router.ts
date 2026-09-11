@@ -51,7 +51,14 @@ const GET: Record<string, Route> = {
     sendJson(res, page.status, page.body);
   },
   '/api/candles': (ctx, _req, res, url) => sendCandles(ctx, url, res),
-  '/api/chart': (ctx, _req, res) => sendJson(res, 200, chartPayload(ctx)),
+  // ?slot=n picks one of the charts a layout put up; no slot is the primary. A slot no layout
+  // filled is a 404, never the primary under another chart's name.
+  '/api/chart': (ctx, _req, res, url) => {
+    const slot = intParam(url.searchParams.get('slot'), 0, 3);
+    const payload = chartPayload(ctx, slot);
+    if (payload === null) return fail(res, 404, `no chart in slot ${slot}; chart_layout puts one there`);
+    sendJson(res, 200, payload);
+  },
   '/api/log': (ctx, _req, res, url) =>
     sendJson(res, 200, ctx.audit.tail(intParam(url.searchParams.get('limit'), 200, LOG_LIMIT_MAX))),
   '/api/transactions': (ctx, _req, res) => {

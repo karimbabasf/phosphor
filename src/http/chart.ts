@@ -181,11 +181,18 @@ function computeIndicators(
 // Everything the renderer needs in one round trip: the view, the candles, and every
 // indicator series already computed. The browser draws plots generically and never has to
 // know what an RSI is, which is what keeps the two sides from disagreeing.
-export function chartPayload(ctx: Ctx): unknown {
-  const state = ctx.chart.state();
+//
+// `slot` picks which of the charts: 0 is the primary and the default, 1 to 3 are the
+// comparison charts a layout put up. A slot no layout has filled answers null, and the route
+// turns that into a 404 rather than drawing the primary under another chart's name.
+export function chartPayload(ctx: Ctx, slot = 0): unknown | null {
+  const held = ctx.charts.slot(slot);
+  if (held === null) return null;
+  const chart = held.store;
+  const state = chart.state();
   // Memory only, and it cannot throw: an outage shows the last good candles marked stale
   // rather than an empty chart. This is the render path, so nothing here may await.
-  const load = readCandles(ctx, state.view.product, state.view.granularitySec, ctx.chart.historyNeeded(), state.view.provider);
+  const load = readCandles(ctx, state.view.product, state.view.granularitySec, chart.historyNeeded(), state.view.provider);
   /* This was `const error: string | null = null` and had been since the render path stopped
      awaiting: a field whose only possible value was "nothing is wrong". It now carries the one
      failure this synchronous path CAN see, which is nothing on screen and nothing on the way.
@@ -197,6 +204,7 @@ export function chartPayload(ctx: Ctx): unknown {
       : null;
   const computed = computeIndicators(state, load.candles);
   return {
+    slot,
     rev: state.rev,
     lastDriver: state.lastDriver,
     view: state.view,
@@ -227,8 +235,8 @@ export function chartPayload(ctx: Ctx): unknown {
     // Trend lines and zones live in their own store beside the chart's levels and marks.
     // They reach the browser on the same payload so the human sees exactly the objects
     // the agent is measuring against, which is the whole point of drawing them there.
-    drawings: ctx.drawings.list(),
-    agentObjects: ctx.chart.agentObjects() + ctx.drawings.list().filter((d) => d.source === 'agent').length,
+    drawings: held.drawings.list(),
+    agentObjects: chart.agentObjects() + held.drawings.list().filter((d) => d.source === 'agent').length,
     products: ctx.cfg.candleProducts,
     timeframes: TIMEFRAMES,
     limits: CHART_LIMITS,

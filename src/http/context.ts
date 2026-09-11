@@ -28,6 +28,7 @@ import type { Driver, DriverEvent } from '../driver.ts';
 import type { AgentPresence } from '../agents.ts';
 import type { GasCache } from '../transactions.ts';
 import type { createChartStore } from '../chart.ts';
+import type { ChartSlots } from '../charts.ts';
 import type { Theme } from '../view/theme.ts';
 import type { DrawingStore } from '../drawings.ts';
 import type { Board } from '../board.ts';
@@ -224,7 +225,8 @@ export type SseHub = {
   clientCount(): number;
   broadcastState(): void;
   broadcastTransactions(): void;
-  broadcastChart(): void;
+  // Which chart moved. The window redraws one slot rather than all four; 0 is the primary.
+  broadcastChart(slot?: number): void;
   broadcastTrade(): void;
   broadcastActivity(): void;
   broadcastCandles(): void;
@@ -273,8 +275,11 @@ export type Ctx = Omit<ServerDeps, 'getTheme' | 'setTheme' | 'keystore' | 'sessi
   theme: ThemeSlot;
   sse: SseHub;
   chats: ChatRegistry;
+  // Slot 0 of `charts`, kept under its old names so every call site that predates slots still
+  // reaches the primary. See src/charts.ts.
   chart: ChartStore;
   drawings: DrawingStore;
+  charts: ChartSlots;
   board: Board;
   crew: () => Crew;
   // The bounded audit tail the basic screen's activity list reads. Seeded once at

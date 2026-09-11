@@ -17,9 +17,8 @@ import type { LogEvent } from './types.ts';
 import { readCoins } from './view/coins.ts';
 import { createGasCache } from './transactions.ts';
 import { buildWorkerRole } from './role.ts';
-import { createChartStore } from './chart.ts';
+import { createChartSlots } from './charts.ts';
 import { DEFAULT_THEME, type Theme } from './view/theme.ts';
-import { createDrawingStore } from './drawings.ts';
 import { createBoard } from './board.ts';
 import { createDuplicateGuard } from './duplicates.ts';
 import { createCrew } from './crew.ts';
@@ -59,13 +58,12 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   const recentEvents: LogEvent[] = audit.tail(BASIC_EVENT_SCAN);
 
   // Chart state is server-side on purpose: see the header of src/chart.ts. The browser
-  // renders it and writes its own pan and zoom back.
-  const chart = createChartStore(cfg.candleProducts[0] ?? 'BTC-USD');
-
-  // Trend lines and zones the agent drew. Levels and marks stay in the chart store above;
-  // these are the object kinds it does not carry, kept in their own store so the two files
-  // never contend for the same state.
-  const drawings = createDrawingStore();
+  // renders it and writes its own pan and zoom back. Up to four charts, each a chart store
+  // (view, indicators, levels, marks) beside a drawing store (lines and zones); slot 0 is the
+  // primary and keeps its old names below so nothing that predates slots had to change.
+  const charts = createChartSlots(cfg.candleProducts[0] ?? 'BTC-USD');
+  const chart = charts.primary.store;
+  const drawings = charts.primary.drawings;
 
   // The team board. One line each, read by every agent and by the human's log, and the reason a
   // roster of agents is a team rather than a crowd. See src/board.ts for what it is not.
@@ -84,7 +82,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   const sse = createSseHub({
     store,
     audit,
-    chart,
+    charts,
     trade,
     recent: recentEvents,
     recentMax: BASIC_EVENT_SCAN,
@@ -236,6 +234,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     chats,
     chart,
     drawings,
+    charts,
     board,
     crew: getCrew,
     crewIfAny: () => crew,
