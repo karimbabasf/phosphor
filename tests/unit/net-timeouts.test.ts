@@ -101,7 +101,8 @@ test('every fetch site in src passes a signal', () => {
   const missing = sites.filter((s) => !s.hasSignal).map((s) => `${s.file}:${s.line}`);
   assert.deepEqual(missing, [], 'these network calls have no deadline');
   // Was 30 while this app read five chains and two third-party EVM venues. Both went with the
-  // cut to two venues, and so did their fetch sites. The floor is here to catch a scanner that
-  // silently stops matching, not to pin an exact count.
-  assert.ok(sites.length >= 25, `expected the scanner to still be finding the call sites, found ${sites.length}`);
+  // cut to two venues, and so did their fetch sites; the second candle cache (src/candles.ts
+  // and src/hyperliquid.ts, four sites) went with the chart rebuild. The floor is here to
+  // catch a scanner that silently stops matching, not to pin an exact count.
+  assert.ok(sites.length >= 20, `expected the scanner to still be finding the call sites, found ${sites.length}`);
 });

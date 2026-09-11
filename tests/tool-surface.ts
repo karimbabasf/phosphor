@@ -19,7 +19,6 @@ export const EXPECTED_TOOLS: readonly string[] = [
   // place to put a lie, which is why it is asserted like everything else.
   'start',
   'balances',
-  'candles',
   'composition',
   'wallet',
   'log_tail',
@@ -73,30 +72,22 @@ export const EXPECTED_TOOLS: readonly string[] = [
   'propose_trade_change',
   // The chart. These read and drive a view, never funds.
   'chart_read',
-  'chart_measure',
   'chart_scan',
+  // A picture of one chart, rendered by the window. A read, and the lead's: it asks the window
+  // the human is looking at to render, so a worker does not hold it.
+  'chart_snapshot',
   // The measurement instrument. Many operations in one call, so its arguments are enumerated
   // rather than left as a free-form bag: the property walk cannot see inside an open record.
   'chart_batch',
-  'indicator_catalog',
   'market_search',
   'research',
-  'chart_set_view',
-  'chart_add_indicator',
-  'chart_remove_indicator',
-  'chart_level',
-  'chart_mark',
-  // The sloped line. A level is horizontal and a mark is vertical, so neither could express one.
-  'chart_trendline',
-  // Tidying up, and the reason it grew targets: with a team on one chart, "clear what the agent
-  // drew" stopped being one thing. `mine` is this session's own work and is the default,
-  // because a tidy that reached a colleague's by default would be the commonest way one agent
-  // silently undoes another.
-  'chart_clear',
-  // A whole study package in one call, and the tidy that makes it always fit. It clears the
-  // calling agent's own studies before it draws, so it can never be refused by the pane cap and
-  // the chart cannot silently accumulate. See src/presets.ts.
-  'chart_preset',
+  // The chart's one write. View, indicators, presets, levels, marks, lines and zones in one
+  // call, with `clear` scoped to the caller's own work: ten tools used to do this one call
+  // each, and every one of those was a model turn. Withheld from a worker, as is the layout:
+  // a worker measures and reports, it does not redraw the chart the human is looking at.
+  'chart_draw',
+  // Up to four charts side by side. The first is the primary the human interacts with.
+  'chart_layout',
   // Moves the window between the three surfaces. Named `switch` rather than set_view_mode
   // because the requirement is that switching costs one word.
   'switch',
@@ -151,8 +142,12 @@ export const WORKER_WITHHELD: readonly string[] = [
   'switch',
   'watch',
   'set_theme',
-  // A worker measures. It does not put an idea on the chart the human might take for a plan.
+  // A worker measures. It does not put an idea on the chart the human might take for a plan,
+  // and it does not draw on, arrange or photograph the chart the human is reading.
   'trade_plan',
+  'chart_draw',
+  'chart_layout',
+  'chart_snapshot',
   ...EXPECTED_TOOLS.filter((t) => t.startsWith('propose_')),
 ];
 

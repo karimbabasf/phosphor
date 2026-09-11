@@ -17,13 +17,12 @@ import type { LogEvent } from './types.ts';
 import { readCoins } from './view/coins.ts';
 import { createGasCache } from './transactions.ts';
 import { buildWorkerRole } from './role.ts';
-import { createChartStore } from './chart.ts';
+import { createChartSlots } from './charts.ts';
+import { createSnapshotBroker } from './snapshot.ts';
 import { DEFAULT_THEME, type Theme } from './view/theme.ts';
-import { createDrawingStore } from './drawings.ts';
 import { createBoard } from './board.ts';
 import { createDuplicateGuard } from './duplicates.ts';
 import { createCrew } from './crew.ts';
-import { createHistory } from './history.ts';
 import { BASIC_EVENT_SCAN, PROJECT_DIR } from './http/context.ts';
 import type { Ctx, GasFill, PriceCache, ServerDeps, PhosphorServer, SseHub } from './http/context.ts';
 import { HOST, windowToken } from './http/auth.ts';
@@ -32,7 +31,7 @@ import { createSession } from './keystore/session.ts';
 import { createSseHub } from './http/sse.ts';
 import { createCandlePush } from './market/push.ts';
 import { createChatRegistry } from './http/chats.ts';
-import { loadCandles, startPricePolling } from './http/chart.ts';
+import { startPricePolling } from './http/chart.ts';
 import { handle } from './http/router.ts';
 
 export function createServer(deps: ServerDeps): PhosphorServer {
@@ -59,13 +58,12 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   const recentEvents: LogEvent[] = audit.tail(BASIC_EVENT_SCAN);
 
   // Chart state is server-side on purpose: see the header of src/chart.ts. The browser
-  // renders it and writes its own pan and zoom back.
-  const chart = createChartStore(cfg.candleProducts[0] ?? 'BTC-USD');
-
-  // Trend lines and zones the agent drew. Levels and marks stay in the chart store above;
-  // these are the object kinds it does not carry, kept in their own store so the two files
-  // never contend for the same state.
-  const drawings = createDrawingStore();
+  // renders it and writes its own pan and zoom back. Up to four charts, each a chart store
+  // (view, indicators, levels, marks) beside a drawing store (lines and zones); slot 0 is the
+  // primary and keeps its old names below so nothing that predates slots had to change.
+  const charts = createChartSlots(cfg.candleProducts[0] ?? 'BTC-USD');
+  const chart = charts.primary.store;
+  const drawings = charts.primary.drawings;
 
   // The team board. One line each, read by every agent and by the human's log, and the reason a
   // roster of agents is a team rather than a crowd. See src/board.ts for what it is not.
@@ -84,7 +82,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   const sse = createSseHub({
     store,
     audit,
-    chart,
+    charts,
     trade,
     recent: recentEvents,
     recentMax: BASIC_EVENT_SCAN,
@@ -96,6 +94,10 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     broadcastTrade,
     broadcastCandles,
   } = sse;
+
+  // The snapshot broker asks the window over the hub and holds the one call waiting for each
+  // chart's picture. Nothing it receives is kept. See src/snapshot.ts.
+  const snapshots = createSnapshotBroker({ broadcast: (frame) => sse.broadcastSnapshot(frame.slot, frame.reqId) });
 
   const broadcastCandle: PhosphorServer['broadcastCandle'] = (product, baseSec, candle, provider) => {
     // Nobody watching is nobody to tell. The rail keeps filling the cache either way, so a
@@ -133,18 +135,6 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     }
     return crew;
   }
-
-  // History paging shares loadCandles, so a bar the agent walks back to is the same bar the
-  // chart would have drawn had the human panned there.
-  const history = createHistory(async (product, granularitySec, endSec, limit) => {
-    // Same rule as chart_batch: paging back on the instrument on screen follows that
-    // chart's pinned venue, and paging back on any other product does not inherit a
-    // choice that was never made about it.
-    const view = chart.state().view;
-    const provider = product === view.product ? view.provider : 'auto';
-    const load = await loadCandles(ctx, product, granularitySec, limit, provider);
-    return load.candles.filter((c) => c.t < endSec);
-  });
 
   const chats = createChatRegistry({ cfg, audit, agents, getView, sse, makeDriver: deps.makeDriver });
 
@@ -223,8 +213,8 @@ export function createServer(deps: ServerDeps): PhosphorServer {
 
   /* Everything the handlers read, in one object. It is assembled here rather than passed around
      as a dozen arguments because src/server.ts used to be one closure over these bindings, and
-     the split turned each read into a field. `history` and `crew` close over `ctx` itself and
-     are only ever called from a request, which is why the cycle is safe. */
+     the split turned each read into a field. `crew` closes over `ctx` itself and is only ever
+     called from a request, which is why the cycle is safe. */
   const ctx: Ctx = {
     ...deps,
     token,
@@ -236,11 +226,12 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     chats,
     chart,
     drawings,
+    charts,
+    snapshots,
     board,
     crew: getCrew,
     crewIfAny: () => crew,
     recent: recentEvents,
-    history,
     prices,
     gas,
     duplicates,

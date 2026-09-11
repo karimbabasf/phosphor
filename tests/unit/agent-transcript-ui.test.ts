@@ -283,13 +283,14 @@ test('two identical prompts each get their own row and their own receipt', () =>
 });
 
 test('a step row says what the call was about, not just what kind it was', () => {
-  /* "reading prices" is a category of work. "reading prices, SOL-USD" is evidence the app is
-     working on the thing that was asked for, and the tool event already carried it. */
+  /* "scanning the timeframes" is a category of work. "scanning the timeframes, SOL-USD" is
+     evidence the app is working on the thing that was asked for, and the tool event already
+     carried it. */
   const world = build();
   world.type('what is sol doing');
-  world.emit({ kind: 'tool', name: 'mcp__phosphor__candles', input: { product: 'SOL-USD', granularity: 3600 } });
+  world.emit({ kind: 'tool', name: 'mcp__phosphor__chart_scan', input: { product: 'SOL-USD', timeframes: ['1h'] } });
   const text = world.stepRows()[0].textContent;
-  assert.ok(text.includes('reading prices'), text);
+  assert.ok(text.includes('scanning the timeframes'), text);
   assert.ok(text.includes('SOL-USD'), text);
 });
 

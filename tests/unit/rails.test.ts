@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 
 import { oneClickQuoter, syntheticQuoter, stubSigner, assetIdFor } from '../../src/intents.ts';
 import type { TokensFile, OneClickToken } from '../../src/intents.ts';
-import { coinbaseSource, krakenSource, cachedCandles } from '../../src/candles.ts';
 import type { TransferLeg } from '../../src/types.ts';
 
 function jsonResponse(body: unknown, ok = true, status = 200): Response {
@@ -150,74 +149,4 @@ test('stubSigner is not ready and send resolves with its describe message', asyn
   const result = await signer.send(leg, '0xdeposit');
   assert.equal(result.ok, false);
   assert.equal(result.error, signer.describe());
-});
-
-// ---------- candles.ts ----------
-
-test('coinbaseSource maps rows to oldest-first candles with correct field order', async () => {
-  const rows = [
-    [300, 10, 20, 15, 18, 100],
-    [200, 9, 19, 14, 17, 90],
-    [100, 8, 18, 13, 16, 80],
-  ];
-  const fetchImpl: typeof fetch = async (url) => {
-    assert.ok(String(url).includes('/products/BTC-USD/candles'));
-    assert.ok(String(url).includes('granularity=60'));
-    return jsonResponse(rows);
-  };
-
-  const source = coinbaseSource({ fetchImpl });
-  const candles = await source.candles('BTC-USD', 60, 3);
-  assert.deepEqual(candles.map((c) => c.t), [100, 200, 300]);
-  assert.deepEqual(candles[0], { t: 100, o: 13, h: 18, l: 8, c: 16, v: 80 });
-});
-
-test('krakenSource maps BTC-USD to the XBTUSD pair and reads oldest-first rows', async () => {
-  const rows = [
-    [100, '13', '18', '8', '16', '15', '80', 5],
-    [200, '14', '19', '9', '17', '16', '90', 6],
-  ];
-  const fetchImpl: typeof fetch = async (url) => {
-    assert.ok(String(url).includes('pair=XBTUSD'));
-    return jsonResponse({ error: [], result: { XBTUSD: rows, last: 200 } });
-  };
-
-  const source = krakenSource({ fetchImpl });
-  const candles = await source.candles('BTC-USD', 60, 2);
-  assert.deepEqual(candles.map((c) => c.t), [100, 200]);
-  assert.deepEqual(candles[0], { t: 100, o: 13, h: 18, l: 8, c: 16, v: 80 });
-});
-
-test('cachedCandles returns stale:true with prior data when primary and fallback both fail', async () => {
-  let primaryCalls = 0;
-  const rows = [[100, 8, 18, 13, 16, 80]];
-  const primaryFetch: typeof fetch = async () => {
-    primaryCalls += 1;
-    if (primaryCalls === 1) return jsonResponse(rows);
-    return jsonResponse({}, false, 500);
-  };
-  const fallbackFetch: typeof fetch = async () => jsonResponse({}, false, 500);
-
-  const primary = coinbaseSource({ fetchImpl: primaryFetch });
-  const fallback = krakenSource({ fetchImpl: fallbackFetch });
-  const service = cachedCandles(primary, fallback);
-
-  const first = await service.get('BTC-USD', 60, 1);
-  assert.equal(first.stale, false);
-  assert.equal(first.source, 'coinbase');
-  assert.equal(first.candles.length, 1);
-
-  const second = await service.get('BTC-USD', 60, 1);
-  assert.equal(second.stale, true);
-  assert.equal(second.source, 'coinbase');
-  assert.deepEqual(second.candles, first.candles);
-});
-
-test('cachedCandles throws when both sources fail and nothing is cached', async () => {
-  const alwaysFail: typeof fetch = async () => jsonResponse({}, false, 500);
-  const primary = coinbaseSource({ fetchImpl: alwaysFail });
-  const fallback = krakenSource({ fetchImpl: alwaysFail });
-  const service = cachedCandles(primary, fallback);
-
-  await assert.rejects(() => service.get('BTC-USD', 60, 1));
 });

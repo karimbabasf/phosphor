@@ -8,8 +8,8 @@
 // Ctx is ServerDeps plus the things the server itself owns: the per-boot approval token, the
 // SSE hub, the chat registry, the chart and drawing stores, the team board, the lazy worker
 // crew, the bounded audit tail the basic screen reads, and the small mutable holders (theme,
-// prices, gas fill, history paging, the duplicate guard, the seat-refusal log) that used to be
-// `let` bindings inside the closure.
+// prices, gas fill, the duplicate guard, the seat-refusal log) that used to be `let` bindings
+// inside the closure.
 
 import type http from 'node:http';
 import path from 'node:path';
@@ -21,13 +21,14 @@ import type { Audit } from '../audit.ts';
 import type { Store } from '../store.ts';
 import type { Ledger } from '../ledger/index.ts';
 import type { Candle } from '../types.ts';
-import type { CandleService } from '../candles.ts';
 import type { MarketData } from '../market/index.ts';
 import type { TradeService } from '../trade/service.ts';
 import type { Driver, DriverEvent } from '../driver.ts';
 import type { AgentPresence } from '../agents.ts';
 import type { GasCache } from '../transactions.ts';
 import type { createChartStore } from '../chart.ts';
+import type { ChartSlots } from '../charts.ts';
+import type { SnapshotBroker } from '../snapshot.ts';
 import type { Theme } from '../view/theme.ts';
 import type { DrawingStore } from '../drawings.ts';
 import type { Board } from '../board.ts';
@@ -35,7 +36,6 @@ import type { Crew } from '../crew.ts';
 import type { DuplicateGuard } from '../duplicates.ts';
 import type { Keystore, LockState } from '../keystore/index.ts';
 import type { Session } from '../keystore/session.ts';
-import type { createHistory } from '../history.ts';
 import type { JsonBody } from './respond.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -80,13 +80,13 @@ export const READ_TOOLS: readonly string[] = [
   'intents_receive',
   'policy_show',
   'log_tail',
-  'candles',
   'proposal_status',
   'chart_read',
-  'chart_measure',
   'chart_scan',
+  // A picture of one chart, rendered by the window and handed to the one call waiting for it.
+  // A read: it moves nothing and draws nothing.
+  'chart_snapshot',
   'chart_batch',
-  'indicator_catalog',
   'market_search',
   // The one tool that leaves this machine. It is a read like the others because that is all it
   // is: the APP fetches from a fixed allowlist and hands back text. The agent never gets a URL
@@ -110,15 +110,11 @@ export const VIEW_TOOLS: readonly string[] = [
   // Colour. A write like the rest of this list: it changes what the human sees and moves no
   // money. The one thing it cannot reach is the approval gate's red, which is not a slot.
   'set_theme',
-  'chart_set_view',
-  'chart_add_indicator',
-  'chart_remove_indicator',
-  'chart_level',
-  'chart_mark',
-  'chart_trendline',
-  'chart_clear',
-  // A whole study package, with the tidy that makes it fit. See src/presets.ts.
-  'chart_preset',
+  // The chart's one write: view, indicators (presets included), levels, marks, lines and zones
+  // in one call, answered with a digest. Ten tools used to do this one call each.
+  'chart_draw',
+  // Up to four charts side by side. See src/charts.ts.
+  'chart_layout',
   // The team's two writes. A post is one line on a board every agent and the human read; a
   // spawn starts a worker. Neither moves money, both are audited, and both are here rather
   // than on the propose path for exactly that reason.
@@ -149,7 +145,6 @@ export type ServerDeps = {
   store: Store;
   ledger: Ledger;
   riskRows: RiskRow[];
-  candles: CandleService;
   market: MarketData;
   proposals: ProposalService;
   getPolicy: () => Policy | null;
@@ -203,7 +198,6 @@ export type PhosphorServer = http.Server & {
 };
 
 export type ChartStore = ReturnType<typeof createChartStore>;
-export type History = ReturnType<typeof createHistory>;
 
 // One open conversation with the window's own agent: a Claude Code child, its label on the
 // roster, and the transcript a reloading window comes back to. See the seats note in chats.ts.
@@ -223,7 +217,11 @@ export type SseHub = {
   clientCount(): number;
   broadcastState(): void;
   broadcastTransactions(): void;
-  broadcastChart(): void;
+  // Which chart moved. The window redraws one slot rather than all four; 0 is the primary.
+  broadcastChart(slot?: number): void;
+  // Ask the window for a picture of one chart. It answers on POST /api/chart/snapshot with the
+  // request id, and the broker hands the image to the tool call waiting on that id.
+  broadcastSnapshot(slot: number, reqId: string): void;
   broadcastTrade(): void;
   broadcastActivity(): void;
   broadcastCandles(): void;
@@ -272,8 +270,13 @@ export type Ctx = Omit<ServerDeps, 'getTheme' | 'setTheme' | 'keystore' | 'sessi
   theme: ThemeSlot;
   sse: SseHub;
   chats: ChatRegistry;
+  // Slot 0 of `charts`, kept under its old names so every call site that predates slots still
+  // reaches the primary. See src/charts.ts.
   chart: ChartStore;
   drawings: DrawingStore;
+  charts: ChartSlots;
+  // The snapshot broker: one outstanding picture per chart, a TTL, nothing stored.
+  snapshots: SnapshotBroker;
   board: Board;
   crew: () => Crew;
   // The bounded audit tail the basic screen's activity list reads. Seeded once at
@@ -283,7 +286,6 @@ export type Ctx = Omit<ServerDeps, 'getTheme' | 'setTheme' | 'keystore' | 'sessi
   // The lazily built crew, when one exists. `crew()` above makes one; this reads what is
   // already there without resolving the claude binary on an install that never spawned one.
   crewIfAny: () => Crew | null;
-  history: History;
   prices: PriceCache;
   gas: GasFill;
   duplicates: DuplicateGuard;

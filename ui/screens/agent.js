@@ -27,7 +27,6 @@
     balances: 'reading your balances',
     wallet: 'reading your wallet',
     composition: 'checking what you hold',
-    candles: 'reading prices',
     policy_show: 'reading the policy',
     proposal_status: 'checking the approval',
     market_search: 'looking up a market',
@@ -37,22 +36,15 @@
        words beside the phrase. A person watching their wallet app reach the
        internet is entitled to see that happen. */
     research: 'reading the news',
-    indicator_catalog: 'checking the indicators',
     skill: 'reading its instructions',
     trade_read: 'reading the account',
     /* the chart */
     chart_read: 'reading the chart',
-    chart_measure: 'measuring the chart',
     chart_scan: 'scanning the timeframes',
-    chart_set_view: 'changing the chart',
-    chart_add_indicator: 'adding an indicator',
-    chart_remove_indicator: 'removing an indicator',
-    chart_level: 'drawing a level',
-    chart_mark: 'marking the chart',
-    chart_trendline: 'drawing a trendline',
+    chart_snapshot: 'taking a picture of the chart',
+    chart_draw: 'drawing on the chart',
+    chart_layout: 'arranging the charts',
     chart_batch: 'redrawing the chart',
-    chart_preset: 'applying a chart preset',
-    chart_clear: 'clearing the chart',
     /* the trading window */
     trade_focus: 'focusing a market',
     trade_highlight: 'highlighting the chart',

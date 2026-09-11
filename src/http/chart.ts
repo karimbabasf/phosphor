@@ -6,16 +6,18 @@ import type http from 'node:http';
 
 import type { Candle } from '../types.ts';
 import type { PriceReading } from '../view/basic.ts';
-import { buildRead, LIMITS as CHART_LIMITS, TIMEFRAMES, timeframeLabel } from '../chart.ts';
+import { buildCompactRead, buildRead, LIMITS as CHART_LIMITS, TIMEFRAMES, timeframeLabel } from '../chart.ts';
 import type { ChartGeometry, ChartIndicator, ChartState, ProviderChoice } from '../chart.ts';
 import { PROVIDER_CHOICES } from '../chart.ts';
+import type { ChartSlot, ChartStore } from '../charts.ts';
 import { indicatorSpec } from '../indicators.ts';
-import type { IndicatorResult } from '../indicators.ts';
+import type { IndicatorResult, IndicatorSpec } from '../indicators.ts';
 import { sameOrigin, tokenMatches } from './auth.ts';
 import { errText, fail, intParam, readBody, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
 import { CANDLE_LIMIT_MAX } from './context.ts';
 import { feedFor, type FeedState } from '../market/push.ts';
+import { SNAPSHOT_MAX_BYTES } from '../snapshot.ts';
 import type { Ctx } from './context.ts';
 
 // The basic screen's price tracker. Hourly bars over a day: "today" for someone reading
@@ -165,27 +167,137 @@ export async function sendCandles(ctx: Ctx, url: URL, res: http.ServerResponse):
 
 // ---------- chart ----------
 
+/* The custom indicator loader, when the app has one. It is the custom indicators unit's and
+   sits on the context under this name; a server built without it (every chart test, and any
+   install with an empty indicators folder) has none, and every `custom:<slug>` is then refused
+   by name. Read structurally so this file does not have to know the loader's whole shape. */
+type CustomIndicators = { get(slug: string): IndicatorSpec | null; refresh?(): unknown };
+
+export function customIndicatorsOf(ctx: Ctx): CustomIndicators | null {
+  const held = (ctx as { customIndicators?: unknown }).customIndicators;
+  if (held === null || typeof held !== 'object') return null;
+  const c = held as Partial<CustomIndicators>;
+  return typeof c.get === 'function' ? (c as CustomIndicators) : null;
+}
+
+const CUSTOM_SLUG = /^[a-z0-9-]{1,32}$/;
+
+// One resolver for every indicator type the chart can carry: the catalogue's own, then a
+// `custom:<slug>` through the loader's map and nothing else. The slug never joins a path;
+// an unknown one is undefined, which every caller turns into "unknown indicator" by name.
+export function resolveIndicator(ctx: Ctx, type: string): IndicatorSpec | undefined {
+  const key = type.toLowerCase().trim();
+  const builtIn = indicatorSpec(key);
+  if (builtIn !== undefined) return builtIn;
+  if (!key.startsWith('custom:')) return undefined;
+  const slug = key.slice('custom:'.length);
+  if (!CUSTOM_SLUG.test(slug)) return undefined;
+  return customIndicatorsOf(ctx)?.get(slug) ?? undefined;
+}
+
 function computeIndicators(
+  ctx: Ctx,
   state: ChartState,
   series: Candle[],
 ): { indicator: ChartIndicator; result: IndicatorResult }[] {
   const out: { indicator: ChartIndicator; result: IndicatorResult }[] = [];
   for (const indicator of state.indicators) {
-    const spec = indicatorSpec(indicator.type);
+    const spec = resolveIndicator(ctx, indicator.type);
     if (spec === undefined) continue;
     out.push({ indicator, result: spec.compute(series, indicator.params) });
   }
   return out;
 }
 
+function lastOf(values: (number | null)[]): number | null {
+  for (let i = values.length - 1; i >= 0; i--) {
+    const v = values[i];
+    if (v !== null && Number.isFinite(v)) return v;
+  }
+  return null;
+}
+
+export type ChartDigest = {
+  chart: number;
+  product: string;
+  timeframe: string;
+  bars: number;
+  last: number | null;
+  indicators: { id: string; type: string; last: Record<string, number | null>; state: string }[];
+  counts: { levels: number; marks: number; lines: number; zones: number; plans: number };
+  refused: string[];
+};
+
+// What a write answers with: the chart in a few hundred bytes. Every write used to answer with
+// the whole read, and the read grew to four kilobytes with a preset on the chart, so an agent
+// laying out a markup paid for the same chart again on every call. The digest is the part a
+// writer actually reads back: what is on the chart now and what was refused.
+export async function chartDigest(ctx: Ctx, slot: ChartSlot): Promise<ChartDigest> {
+  const chart = slot.store;
+  const state = chart.state();
+  const view = state.view;
+  let candles: Candle[] = [];
+  try {
+    candles = (await loadCandles(ctx, view.product, view.granularitySec, chart.historyNeeded(), view.provider)).candles;
+  } catch {
+    // A venue that will not answer leaves the digest without a last price. The counts and the
+    // refusals are still the answer to the write that was made.
+  }
+  const newest = candles.length > 0 ? (candles[candles.length - 1] as Candle) : null;
+  const drawings = slot.drawings.list();
+  return {
+    chart: slot.index,
+    product: view.product,
+    timeframe: timeframeLabel(view.granularitySec),
+    bars: candles.length,
+    last: newest === null ? null : newest.c,
+    indicators: computeIndicators(ctx, state, candles).map(({ indicator, result }) => ({
+      id: indicator.id,
+      type: indicator.type,
+      last: Object.fromEntries(result.plots.map((plot) => [plot.key, lastOf(plot.values)])),
+      state: result.state,
+    })),
+    counts: {
+      levels: state.levels.length,
+      marks: state.marks.length,
+      lines: drawings.filter((d) => d.kind === 'trendline').length,
+      zones: drawings.filter((d) => d.kind === 'zone').length,
+      plans: plansOnChart(ctx, view.product),
+    },
+    refused: [],
+  };
+}
+
+// How many plans are drawn on this chart, read off the trading payload. Guarded: the plan store
+// is the execution unit's and a server built without one has no plans at all.
+function plansOnChart(ctx: Ctx, product: string): number {
+  const coin = product.split('-')[0]?.toUpperCase() ?? '';
+  let payload: unknown;
+  try {
+    payload = ctx.trade.payload();
+  } catch {
+    return 0;
+  }
+  const plans = (payload as { plans?: unknown } | null)?.plans;
+  if (!Array.isArray(plans)) return 0;
+  return plans.filter((p) => p !== null && typeof p === 'object' && String((p as { symbol?: unknown }).symbol ?? '').toUpperCase() === coin).length;
+}
+
 // Everything the renderer needs in one round trip: the view, the candles, and every
 // indicator series already computed. The browser draws plots generically and never has to
 // know what an RSI is, which is what keeps the two sides from disagreeing.
-export function chartPayload(ctx: Ctx): unknown {
-  const state = ctx.chart.state();
+//
+// `slot` picks which of the charts: 0 is the primary and the default, 1 to 3 are the
+// comparison charts a layout put up. A slot no layout has filled answers null, and the route
+// turns that into a 404 rather than drawing the primary under another chart's name.
+export function chartPayload(ctx: Ctx, slot = 0): unknown | null {
+  const held = ctx.charts.slot(slot);
+  if (held === null) return null;
+  const chart = held.store;
+  const state = chart.state();
   // Memory only, and it cannot throw: an outage shows the last good candles marked stale
   // rather than an empty chart. This is the render path, so nothing here may await.
-  const load = readCandles(ctx, state.view.product, state.view.granularitySec, ctx.chart.historyNeeded(), state.view.provider);
+  const load = readCandles(ctx, state.view.product, state.view.granularitySec, chart.historyNeeded(), state.view.provider);
   /* This was `const error: string | null = null` and had been since the render path stopped
      awaiting: a field whose only possible value was "nothing is wrong". It now carries the one
      failure this synchronous path CAN see, which is nothing on screen and nothing on the way.
@@ -195,8 +307,9 @@ export function chartPayload(ctx: Ctx): unknown {
     load.candles.length === 0 && !load.filling
       ? `no candles for ${state.view.product} at ${String(state.view.granularitySec)}s, and none are being fetched`
       : null;
-  const computed = computeIndicators(state, load.candles);
+  const computed = computeIndicators(ctx, state, load.candles);
   return {
+    slot,
     rev: state.rev,
     lastDriver: state.lastDriver,
     view: state.view,
@@ -227,8 +340,8 @@ export function chartPayload(ctx: Ctx): unknown {
     // Trend lines and zones live in their own store beside the chart's levels and marks.
     // They reach the browser on the same payload so the human sees exactly the objects
     // the agent is measuring against, which is the whole point of drawing them there.
-    drawings: ctx.drawings.list(),
-    agentObjects: ctx.chart.agentObjects() + ctx.drawings.list().filter((d) => d.source === 'agent').length,
+    drawings: held.drawings.list(),
+    agentObjects: chart.agentObjects() + held.drawings.list().filter((d) => d.source === 'agent').length,
     products: ctx.cfg.candleProducts,
     timeframes: TIMEFRAMES,
     limits: CHART_LIMITS,
@@ -238,23 +351,31 @@ export function chartPayload(ctx: Ctx): unknown {
 // The agent's view of the same thing: no arrays of pixels, every number in context.
 /* `by` is the session asking, and it is what makes the housekeeping block answer the question
    an agent actually has. "Nine agent objects are on this chart" is not actionable; "three are
-   yours, six are somebody else's, clear yours with chart_clear what:'mine'" is. The browser
-   reads this too and passes nothing, which is correct: a human's chart read has no `mine`. */
-export async function chartRead(ctx: Ctx, by?: string | null): Promise<unknown> {
-  const state = ctx.chart.state();
+   yours, six are somebody else's, clear yours with chart_draw clear:'mine'" is. The browser
+   reads this too and passes nothing, which is correct: a human's chart read has no `mine`.
+
+   Compact by default and `full` on request: the compact shape is what a reader acts on, and it
+   is a quarter of the size. `slot` picks one of the charts; absent is the primary. */
+export async function chartRead(ctx: Ctx, by?: string | null, opts: { slot?: ChartSlot; full?: boolean } = {}): Promise<unknown> {
+  const slot = opts.slot ?? ctx.charts.primary;
+  const chart = slot.store;
+  const state = chart.state();
   try {
-    const load = await loadCandles(ctx, state.view.product, state.view.granularitySec, ctx.chart.historyNeeded(), state.view.provider);
-    return buildRead({
+    const load = await loadCandles(ctx, state.view.product, state.view.granularitySec, chart.historyNeeded(), state.view.provider);
+    const args = {
       state,
       candles: load.candles,
       meta: { source: load.source, stale: load.stale, built: load.built },
-      computed: computeIndicators(state, load.candles),
+      computed: computeIndicators(ctx, state, load.candles),
       nowSec: Math.floor(Date.now() / 1000),
-      housekeeping: ctx.chart.housekeeping(by),
-    });
+      housekeeping: chart.housekeeping(by, slot.drawings.list()),
+      drawings: slot.drawings.list(),
+    };
+    return opts.full === true ? buildRead(args) : buildCompactRead({ ...args, chart: slot.index });
   } catch (err) {
     return {
       error: errText(err),
+      chart: slot.index,
       product: state.view.product,
       timeframe: timeframeLabel(state.view.granularitySec),
       rev: state.rev,
@@ -287,7 +408,8 @@ export async function handleChartWrite(ctx: Ctx, req: http.IncomingMessage, res:
   // The window's own command line. The human gets the same vocabulary as the agent, so
   // the chart is not a surface only an agent can change.
   if (body.addIndicator !== null && typeof body.addIndicator === 'object') {
-    const outcome = ctx.chart.addIndicator(body.addIndicator as Record<string, unknown>, 'human');
+    const asked = body.addIndicator as Record<string, unknown>;
+    const outcome = ctx.chart.addIndicator(asked, 'human', null, resolveIndicator(ctx, String(asked.type ?? '')));
     if (!outcome.ok) return fail(res, 400, outcome.error, { notes: outcome.notes });
     notes = notes.concat(outcome.notes);
   }
@@ -306,8 +428,37 @@ export async function handleChartWrite(ctx: Ctx, req: http.IncomingMessage, res:
   sendJson(res, 200, { ok: true, rev: ctx.chart.rev(), view: ctx.chart.state().view, notes });
 }
 
-export function numOrUndefined(raw: unknown): number | undefined {
-  return typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
+/* The window's answer to a snapshot frame: { token, reqId, jpeg }, the image as base64.
+
+   The same three gates as every window write (loopback host at the router, same origin, the
+   window token), and a cap of its own well under the server's general megabyte, checked on the
+   announced length before a byte is read and again on what arrived, because a chunked post
+   announces nothing. The bytes go to the broker, which hands them to the one tool call waiting
+   on that id and keeps nothing: an answer for a request nobody is waiting on is a 409, not a
+   picture kept for the next caller. */
+export async function handleSnapshotDelivery(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  const announced = Number(req.headers['content-length'] ?? 0);
+  if (Number.isFinite(announced) && announced > SNAPSHOT_MAX_BYTES + 4096) {
+    req.resume();
+    return fail(res, 413, `a snapshot is at most ${SNAPSHOT_MAX_BYTES} bytes`);
+  }
+  const parsed = await readBody(req);
+  if (!parsed.ok) return fail(res, parsed.status, parsed.error);
+  const body = parsed.value;
+  if (!sameOrigin(req)) return fail(res, 403, 'cross-origin snapshot refused');
+  if (!tokenMatches(body.token, ctx.token)) return fail(res, 403, 'invalid approval token');
+
+  const reqId = typeof body.reqId === 'string' ? body.reqId : '';
+  const jpeg = typeof body.jpeg === 'string' ? body.jpeg : '';
+  if (jpeg.length > SNAPSHOT_MAX_BYTES) return fail(res, 413, `a snapshot is at most ${SNAPSHOT_MAX_BYTES} bytes`);
+  // A JPEG and nothing else: the bytes go straight to a model as an image block, so the route
+  // says no to anything that is not the one format the window encodes.
+  const head = Buffer.from(jpeg.slice(0, 8), 'base64');
+  if (!/^[A-Za-z0-9+/=]+$/.test(jpeg) || head.length < 3 || head[0] !== 0xff || head[1] !== 0xd8 || head[2] !== 0xff) {
+    return fail(res, 400, 'the snapshot must be a base64 JPEG');
+  }
+  if (!ctx.snapshots.deliver(reqId, jpeg)) return fail(res, 409, 'no snapshot is waiting for that request id');
+  sendJson(res, 200, { ok: true });
 }
 
 /* Resolve the product a view patch names against the venue that patch lands on, in place.
@@ -320,10 +471,10 @@ export function numOrUndefined(raw: unknown): number | undefined {
    The venue moves first because the product is resolved against it: "put SOL on coinbase"
    has to either work or say why, rather than resolving SOL the way the catalogue prefers
    and then charting Hyperliquid's perp under Coinbase's name. */
-export function resolveViewPatch(ctx: Ctx, patch: JsonBody, requireListed: boolean): string | null {
+export function resolveViewPatch(ctx: Ctx, patch: JsonBody, requireListed: boolean, chart: ChartStore = ctx.chart): string | null {
   const asked = typeof patch.product === 'string' ? patch.product.trim() : '';
   const wantRaw =
-    patch.provider === undefined ? ctx.chart.state().view.provider : String(patch.provider).trim().toLowerCase();
+    patch.provider === undefined ? chart.state().view.provider : String(patch.provider).trim().toLowerCase();
   const want: ProviderChoice = PROVIDER_CHOICES.includes(wantRaw as ProviderChoice)
     ? (wantRaw as ProviderChoice)
     : 'auto';
@@ -354,7 +505,7 @@ export function resolveViewPatch(ctx: Ctx, patch: JsonBody, requireListed: boole
   // on screen, and the same refusal applies: pin it anyway and the chart goes blank with
   // nothing saying why.
   if (want !== 'auto') {
-    const current = ctx.chart.state().view.product;
+    const current = chart.state().view.product;
     if (ctx.market.resolveOn(current, want) === null) {
       return `${want} does not list ${current}. name a product it does list, or set the venue back to auto`;
     }

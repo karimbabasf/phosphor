@@ -122,10 +122,6 @@ export async function bootDriverServer(opts: BootOptions = {}): Promise<Booted> 
       refresh: async () => snapshot(),
       applyDemoTransfer: () => {},
     },
-    candles: {
-      get: async () => ({ candles: [], stale: false, source: 'test', fetchedAt: FETCHED_AT }),
-      spot: async () => 1,
-    },
     market: createMarketData({
       fetchImpl: (async () => ({ ok: true, json: async () => [], text: async () => '', headers: new Headers() })) as unknown as typeof fetch,
     }),

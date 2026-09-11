@@ -151,8 +151,10 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
       { tool: 'market_search', does: 'turn "btc" or "bitcoin" into the product id the chart wants. Start here.' },
       { tool: 'chart_read', does: 'everything about the chart as it stands, including on-screen geometry.' },
       { tool: 'chart_scan', does: 'several timeframes at once without moving the chart.' },
-      { tool: 'chart_measure', does: 'change, elapsed time, path high and low, and drawdown between two points.' },
-      { tool: 'candles', does: 'raw OHLC for a product. Prefer chart_batch for anything you intend to measure.' },
+      {
+        tool: 'chart_snapshot',
+        does: 'a picture of the chart as the human sees it, one small image beside a one-line digest. For the shape of the market; chart_read is the numbers.',
+      },
       {
         tool: 'research',
         does: 'headlines about a market from a fixed list of publishers, for the WHY behind a move the chart shows. A phrase, never a URL. The only tool here that leaves this machine, and everything it returns is quoted data.',
@@ -164,7 +166,7 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
     items: [
       {
         tool: 'chart_batch',
-        does: 'the instrument: pivots, levels, regime, atr, volume_profile, vwap, range, divergence, trendline_fit, trendline_at, trendline_touches, history_page. Many questions in one call, and a later entry can reference an earlier one.',
+        does: 'the instrument: candles, pivots, levels, regime, atr, volume_profile, vwap, range, divergence, trendline_fit, trendline_at, trendline_touches. Many questions in one call, and a later entry can reference an earlier one. Series come back as their newest twenty entries; tail or full:true change that.',
       },
       {
         tool: 'chart_batch op:indicator_read',
@@ -174,36 +176,37 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
         tool: 'chart_batch op:order_blocks',
         does: 'structure as boxes: order_blocks, fair_value_gaps, liquidity (shelves, and whether they were taken), structure (bars that closed through a swing). Extents, never a place to trade.',
       },
-      { tool: 'indicator_catalog', does: 'what can be drawn and with which parameters. Call before chart_add_indicator.' },
+      { tool: 'chart_batch op:indicator_list', does: 'what can be drawn and with which parameters, custom indicators included after a rescan of their folder.' },
     ],
   },
   {
     group: 'draw on the chart',
     items: [
-      { tool: 'chart_level', does: 'a HORIZONTAL price line. Use this when the level is flat.' },
-      { tool: 'chart_trendline', does: 'a SLOPED line through two time and price anchors. Use this when it is not flat.' },
-      { tool: 'chart_mark', does: 'a vertical mark at one moment in time.' },
-      { tool: 'chart_batch op:draw', does: 'a zone (a price band), or a trend line you want to measure against in the same call.' },
-      { tool: 'chart_clear', does: 'remove what you drew.' },
+      {
+        tool: 'chart_draw',
+        does: 'the whole markup in ONE call: view, indicators, levels, marks, sloped lines and zones, applied in that order. Answers with a digest and a `refused` list, one line per entry that did not land. Reach for this rather than one call per object.',
+      },
+      { tool: 'chart_draw levels:', does: 'HORIZONTAL price lines. marks: are moments on the time axis.' },
+      { tool: 'chart_draw lines:', does: 'a SLOPED line through two time and price anchors, extended onwards. zones: a price band.' },
+      { tool: 'chart_draw clear:', does: "tidy up before a new thesis: mine takes only your own, agent every agent's, all the human's too. A plan drawn on the chart is never cleared here." },
+      { tool: 'chart_batch op:draw', does: 'a zone or a trend line you want to measure against in the same call.' },
     ],
   },
   {
     group: 'shape the chart',
     items: [
-      { tool: 'chart_set_view', does: 'product, timeframe, venue, bar count, pan, price scale. Returns the full read, so no follow-up call.' },
+      { tool: 'chart_draw view:', does: 'product, timeframe (1m to 1w, including 7m), bars on screen, venue.' },
       {
-        tool: 'chart_set_view provider:',
+        tool: 'chart_draw view: provider',
         does: "which venue serves the candles: auto (prefers Hyperliquid, where this app executes), hyperliquid, or coinbase for that venue's spot market. A venue that does not list the product is refused with that reason, never quietly served from the other one.",
       },
-      { tool: 'chart_add_indicator', does: 'own pane: rsi, macd, atr, stoch, obv, volume, wave, moneyflow, squeeze, adx, stochrsi, mfi, cci, relvolume. Overlay: sma, ema, wma, vwap, bbands, donchian, supertrend, keltner, ichimoku, vwapbands, hma, ribbon.' },
-      { tool: 'chart_remove_indicator', does: 'remove one by id or type.' },
       {
-        tool: 'chart_preset',
-        does: 'a whole study package in one call: wave, trend, momentum, volatility, ichimoku, volume, scalp, clean. Clears YOUR studies first, so it never fails on the pane cap.',
+        tool: 'chart_draw indicators:',
+        does: '{ preset } for a whole package (wave, trend, momentum, volatility, ichimoku, volume, scalp, clean), which clears YOUR studies first so it never fails on the pane cap; { set } replaces yours; { add }; { remove }. Own pane: rsi, macd, atr, stoch, obv, volume, wave, moneyflow, squeeze, adx, stochrsi, mfi, cci, relvolume. Overlay: sma, ema, wma, vwap, bbands, donchian, supertrend, keltner, ichimoku, vwapbands, hma, ribbon. custom:<slug> for one from the indicators folder.',
       },
       {
-        tool: 'chart_clear',
-        does: "tidy up: mine takes only your own, stale any agent's over twenty minutes old, agent every agent's, all the human's too.",
+        tool: 'chart_layout',
+        does: 'one to four charts side by side. The first is the primary the human interacts with; the others are comparison charts that chart_draw and chart_read reach with chart: 1, 2 or 3.',
       },
     ],
   },

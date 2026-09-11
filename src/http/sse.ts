@@ -11,7 +11,8 @@ import type { LogEvent } from '../types.ts';
 import type { Audit } from '../audit.ts';
 import type { Store } from '../store.ts';
 import type { TradeService } from '../trade/service.ts';
-import type { ChartStore, SseHub } from './context.ts';
+import type { ChartSlots } from '../charts.ts';
+import type { SseHub } from './context.ts';
 
 const STATE_DEBOUNCE_MS = 120;
 const HEARTBEAT_MS = 15000; // SSE keepalive; doubles as a floor on state freshness
@@ -23,7 +24,7 @@ const SSE_BACKLOG_CAP = 1 << 20;
 export function createSseHub(deps: {
   store: Store;
   audit: Audit;
-  chart: ChartStore;
+  charts: ChartSlots;
   trade: TradeService;
   // The bounded audit tail the basic screen reads. Seeded by the caller and appended here,
   // because the audit subscription that feeds the pro log is the same one that feeds it.
@@ -33,7 +34,7 @@ export function createSseHub(deps: {
   // rail existed. See the tick below for why the nudge timer has to ask.
   candlesQuiet?: () => boolean;
 }): SseHub {
-  const { store, audit, chart, trade, recent, recentMax } = deps;
+  const { store, audit, charts, trade, recent, recentMax } = deps;
   const candlesQuiet = deps.candlesQuiet ?? (() => true);
 
   const sseClients = new Set<http.ServerResponse>();
@@ -96,9 +97,18 @@ export function createSseHub(deps: {
 
   // The revision rides along so the browser can tell an agent's change from the echo of its
   // own. It ignores anything at or below the rev its last write returned, which is what keeps
-  // a server round trip from fighting the hand that is dragging the chart.
-  function broadcastChart(): void {
-    for (const client of sseClients) sseSend(client, { type: 'chart', rev: chart.rev() });
+  // a server round trip from fighting the hand that is dragging the chart. The slot says which
+  // of the charts moved, so a comparison chart redraws without the primary refetching.
+  function broadcastChart(slot = 0): void {
+    const rev = charts.slot(slot)?.store.rev() ?? 0;
+    for (const client of sseClients) sseSend(client, { type: 'chart', rev, slot });
+  }
+
+  // The one frame that asks the window for something rather than telling it something moved.
+  // It carries the request id the window posts back with, so an answer can be matched to the
+  // call that asked and a late one can be dropped. See src/snapshot.ts.
+  function broadcastSnapshot(slot: number, reqId: string): void {
+    for (const client of sseClients) sseSend(client, { type: 'snapshot', slot, reqId });
   }
 
   // The trading surface's own channel. It carries the revision and nothing else, exactly like
@@ -211,6 +221,7 @@ export function createSseHub(deps: {
     broadcastState,
     broadcastTransactions,
     broadcastChart,
+    broadcastSnapshot,
     broadcastTrade,
     broadcastActivity,
     broadcastCandles,

@@ -27,8 +27,6 @@ import { missingVenues, proposeVenueGap } from './policy/venues.ts';
 import { createRails, venueAllowlist } from './rails/index.ts';
 import { createLedger } from './ledger/index.ts';
 import { oneClickQuoter, syntheticQuoter, stubSigner, type TokensFile } from './intents.ts';
-import { coinbaseSource, cachedCandles } from './candles.ts';
-import { hyperliquidSource } from './hyperliquid.ts';
 import { createMarketData } from './market/index.ts';
 import { createProposalService } from './proposals.ts';
 import { MAX_AGENTS, RESERVED_SEATS, createAgents } from './agents.ts';
@@ -39,7 +37,6 @@ import type { TradeService } from './trade/service.ts';
 import { createPlanStore } from './trade/plans.ts';
 import type { TradeDeps } from './trade/rail.ts';
 import { createInfoClient } from './hl/info.ts';
-import { atr } from './analysis/regime.ts';
 import { createServer } from './server.ts';
 import { mintToken, readWindowToken } from './http/auth.ts';
 import { useIdentityValue } from './http/respond.ts';
@@ -240,11 +237,6 @@ const riskRows = (JSON.parse(fs.readFileSync(path.join(root, 'data', 'risk-table
 const tokens = JSON.parse(fs.readFileSync(path.join(root, 'data', 'tokens.json'), 'utf8')) as TokensFile;
 
 const ledger = createLedger(cfg);
-// Hyperliquid is primary because that is the venue the high-frequency execution
-// targets, and a chart that disagrees with the venue is worse than no chart.
-// Coinbase stays as the fallback for the minute-and-above rail; Kraken behind it
-// is dropped here because cachedCandles takes one fallback and two is enough.
-const candles = cachedCandles(hyperliquidSource(), coinbaseSource());
 
 // The market data layer: the venue catalogue, the candle cache, and the folding that lets
 // any timeframe be asked for. It owns the render path now, which is what took the exchange
@@ -552,17 +544,15 @@ function setKill(on: boolean): void {
 // Volatility on an hourly bar is also not a number that changes meaningfully inside a minute,
 // so a cache costs nothing real and a synchronous read is what the caller actually needs.
 // Fourteen periods of hourly bars is the standard Wilder window, which is what the chart draws.
+// It comes off the market store, the same cache the chart draws from: there used to be a
+// second candle cache and a second venue client behind this one number.
 const atrCache = new Map<string, number>();
 
 async function refreshAtr(): Promise<void> {
   for (const product of cfg.candleProducts) {
     try {
-      const load = await candles.get(product, 3600, 120);
-      const series = atr(load.candles, 14);
-      const last = series[series.length - 1];
-      if (last !== null && last !== undefined && Number.isFinite(last)) {
-        atrCache.set(product.split('-')[0].toUpperCase(), last);
-      }
+      const last = await market.atr(product, 3600, 120, 14);
+      if (last !== null) atrCache.set(product.split('-')[0].toUpperCase(), last);
     } catch {
       // A market whose candles will not load keeps whatever it had, and the surface reports
       // the distance in the two units that do not need it. Missing is better than stale-wrong.
@@ -620,7 +610,6 @@ const server = createServer({
   store,
   ledger,
   riskRows,
-  candles,
   market,
   proposals,
   getPolicy,

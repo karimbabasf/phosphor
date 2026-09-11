@@ -81,9 +81,7 @@ brief was written by another model, and nothing in that chain is a human.
 | `src/rails/intents-deposit.ts` | Moves wallet funds INTO `intents.near` so the `intents-native` venue has something to swap. The only rail that sends a chain's own gas asset, so the only one that has to reserve gas before it spends. |
 | `src/chain/evm.ts` | The one place an EVM transaction is signed and broadcast. Rails hand it calldata; they never broadcast. |
 | `src/chain/near.ts` | The one place a NEAR transaction is signed and broadcast: borsh, ed25519, nonce and block hash, receipt-level failure detection. Also NEP-413 message signing. Separate from `evm.ts` because it is a different curve, serialization and transaction shape, not because of taste. |
-| `src/hyperliquid.ts` | Hyperliquid candles: native `candleSnapshot`, one minute and above. |
-| `src/market/` | The market data layer: the venue catalogue and symbol resolver, the candle cache the render path reads from, the folding that turns a venue-served interval into any timeframe, and the backward paging for deep history. |
-| `src/candles.ts` | The candle service: caching, staleness marking, one interface over the source. |
+| `src/market/` | The market data layer: the venue catalogue and symbol resolver, the candle cache the render path reads from, the folding that turns a venue-served interval into any timeframe, and the one ATR the trade payload reads. |
 | `src/audit.ts` | Append-only JSONL. One line per event, never rewritten by the app. |
 | `src/store.ts` | Proposal persistence with subscribe/notify, re-created from disk on boot. |
 | `src/view/mode.ts` | Reads and writes the persisted view mode (`state/view.json`). Every failure path returns `pro`, because pro shows more and a corrupt file must never be why a human sees less. |
@@ -107,8 +105,9 @@ brief was written by another model, and nothing in that chain is a human.
 | `src/analysis/` | The measurements behind `chart_batch`: pivots, levels, regime, ATR, volume profile, VWAP, range, divergence, trend-line fitting. `index.ts` is a table of one line per op and must stay one. |
 | `src/batch.ts` | Many operations, one round trip. The agent's latency is turns, not milliseconds, so a later entry can reference an earlier one by name. |
 | `src/drawings.ts` | The objects that make the chart a shared coordinate system: the agent draws one, the human sees it, and a strategy program refers to it by id. |
-| `src/history.ts` | Backward paging through candle history. The cursor is a timestamp rather than an offset, because the venue's endpoint is keyed that way. |
-| `src/chart.ts` | Chart view state, the agent read model, and the ruler. Server-side, so the number the agent reads and the pixel the human sees come from one implementation. |
+| `src/chart.ts` | Chart view state and the agent read model, compact and full. Server-side, so the number the agent reads and the pixel the human sees come from one implementation. |
+| `src/charts.ts` | Up to four charts side by side, each a chart store beside a drawing store. Slot 0 is the primary and keeps its old names on the context. |
+| `src/snapshot.ts` | The picture broker behind `chart_snapshot`: one outstanding ask per chart, a TTL, and nothing stored. |
 | `src/indicators.ts` | Indicator maths. Pure, index-aligned with the candles. |
 | `ui/` | Three windows (`index.html` for pro and basic, `trade.html` for the trading surface), no framework, no build step. `approvals.js` renders the approval block identically on all three. |
 
