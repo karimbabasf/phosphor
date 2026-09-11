@@ -12,6 +12,9 @@
 
 import type { Candle } from './types.ts';
 import type { Provider } from './market/catalog.ts';
+import type { Drawing } from './drawings.ts';
+import { DRAWINGS_MAX } from './drawings.ts';
+import { lineAt } from './analysis/trendline.ts';
 import { indicatorSpec, normaliseParams, warmupBars, pctChange, trueRange } from './indicators.ts';
 import type { IndicatorResult } from './indicators.ts';
 import { MAX_TIMEFRAME_SEC, MIN_TIMEFRAME_SEC, parseTimeframe, formatTimeframe } from './market/aggregate.ts';
@@ -75,20 +78,10 @@ export type ChartIndicator = Provenance & {
 export type ChartLevel = Provenance & { id: string; price: number; label: string };
 export type ChartMark = Provenance & { id: string; t: number; label: string };
 
-// A sloped line between two points in time. The third drawing primitive, and the one that
-// took an actual request to notice was missing: a level is a horizontal line and a mark is a
-// vertical one, so between them they could describe a support price or a moment but never a
-// trend, which is the commonest thing anyone draws on a chart. Anchored to (time, price)
-// pairs rather than to bar indices, so panning and changing timeframe move it with the data
-// instead of leaving it stuck to the screen.
-export type ChartTrendline = Provenance & {
-  id: string;
-  t1: number;
-  p1: number;
-  t2: number;
-  p2: number;
-  label: string;
-};
+// Sloped objects (trend lines and zones) are deliberately NOT here. They live in
+// src/drawings.ts, the one store the browser renders. This file used to keep a second list of
+// trend lines with its own id scheme, and nothing ever drew it: the agent read back a line the
+// human could not see. One store, one id an armed plan can point at.
 
 // What the browser reports back about its own size, so the agent can tell whether what it
 // asked for is actually readable rather than assuming it is.
@@ -108,7 +101,6 @@ export type ChartState = {
   indicators: ChartIndicator[];
   levels: ChartLevel[];
   marks: ChartMark[];
-  trendlines: ChartTrendline[];
   geometry: ChartGeometry | null;
   rev: number;
   lastDriver: Source;
@@ -145,7 +137,7 @@ export type Housekeeping = {
   // zero in ordinary use: setView tidies the price-anchored ones on a product switch.
   foreign: number;
   // How full the four caps are, so an agent knows it is about to be refused before it is.
-  capacity: { overlays: string; panes: string; levels: string; marks: string; trendlines: string };
+  capacity: { overlays: string; panes: string; levels: string; marks: string; drawings: string };
   hint: string;
 };
 
@@ -185,7 +177,6 @@ export const LIMITS = {
   maxPanes: 3,
   maxLevels: 24,
   maxMarks: 24,
-  maxTrendlines: 12,
 };
 
 export function timeframeLabel(sec: number): string {
@@ -283,11 +274,13 @@ export function createChartStore(initialProduct: string, now: () => number = Dat
   removeIndicator(ref: string): Outcome;
   setLevel(args: Record<string, unknown>, source: Source, by?: string | null): Outcome;
   setMark(args: Record<string, unknown>, source: Source, by?: string | null): Outcome;
-  setTrendline(args: Record<string, unknown>, source: Source, by?: string | null): Outcome;
   clear(what: string, by?: string | null): Outcome;
   setGeometry(geometry: ChartGeometry): void;
   agentObjects(): number;
-  housekeeping(by?: string | null): Housekeeping;
+  // `drawings` is the drawing store's list, handed in because the sloped objects live there
+  // and a tidy count that could not see them reported "nothing to clear" over a chart full
+  // of zones.
+  housekeeping(by?: string | null, drawings?: readonly Drawing[]): Housekeeping;
 } {
   let seq = 0;
   const state: ChartState = {
@@ -302,7 +295,6 @@ export function createChartStore(initialProduct: string, now: () => number = Dat
     indicators: [],
     levels: [],
     marks: [],
-    trendlines: [],
     geometry: null,
     rev: 1,
     lastDriver: 'human',
@@ -460,11 +452,11 @@ export function createChartStore(initialProduct: string, now: () => number = Dat
       else view.priceScale = { mode: 'manual', low, high };
     }
 
-    // THE TIDY. A level, a mark or a trend line is anchored to a price and a time on ONE
-    // instrument. Carried onto another it is not stale, it is WRONG: 63,000 drawn on Bitcoin
-    // lands off the bottom of a Solana chart, and a trend line anchored to last Tuesday's swing
-    // is a diagonal through a market that never had that swing. Before this, every one of them
-    // stayed until somebody noticed, and the somebody was the human.
+    // THE TIDY. A level or a mark is anchored to a price and a time on ONE instrument.
+    // Carried onto another it is not stale, it is WRONG: 63,000 drawn on Bitcoin lands off
+    // the bottom of a Solana chart. Before this, every one of them stayed until somebody
+    // noticed, and the somebody was the human. The drawing store sweeps its own lines and
+    // zones on the same switch (see chart_draw in src/http/view.ts).
     //
     // Indicators are deliberately NOT swept. An EMA 21 is a recipe rather than a place: it
     // recomputes on the new series and means exactly what it meant before. Clearing it would
@@ -475,19 +467,15 @@ export function createChartStore(initialProduct: string, now: () => number = Dat
     // counted in the note instead, so the agent can offer to clear them rather than doing it.
     if (switchedProduct) {
       const staleAgent = (o: Provenance): boolean => o.source === 'agent' && o.product !== view.product;
-      const swept =
-        state.levels.filter(staleAgent).length +
-        state.marks.filter(staleAgent).length +
-        state.trendlines.filter(staleAgent).length;
+      const swept = state.levels.filter(staleAgent).length + state.marks.filter(staleAgent).length;
       if (swept > 0) {
         state.levels = state.levels.filter((l) => !staleAgent(l));
         state.marks = state.marks.filter((m) => !staleAgent(m));
-        state.trendlines = state.trendlines.filter((t) => !staleAgent(t));
         notes.push(
           `cleared ${swept} agent ${swept === 1 ? 'drawing' : 'drawings'} anchored to the previous instrument; indicators were kept because they recompute`,
         );
       }
-      const humanLeft = [...state.levels, ...state.marks, ...state.trendlines].filter(
+      const humanLeft = [...state.levels, ...state.marks].filter(
         (o) => o.source === 'human' && o.product !== view.product,
       ).length;
       if (humanLeft > 0) {
@@ -505,7 +493,7 @@ export function createChartStore(initialProduct: string, now: () => number = Dat
     const type = String(args.type ?? '').toLowerCase().trim();
     const spec = indicatorSpec(type);
     if (spec === undefined) {
-      return { ok: false, notes: [], error: `unknown indicator: ${type || '(none given)'}. Call indicator_catalog for the list.` };
+      return { ok: false, notes: [], error: `unknown indicator: ${type || '(none given)'}. chart_batch op indicator_list has the list.` };
     }
     const given = args.params !== null && typeof args.params === 'object' ? (args.params as Record<string, unknown>) : args;
     const { params, notes } = normaliseParams(spec, given);
@@ -527,7 +515,7 @@ export function createChartStore(initialProduct: string, now: () => number = Dat
           error:
             `the chart already has ${panes.length} sub-panes (${panes.map((p) => p.label).join(', ')}) and ` +
             `${LIMITS.maxPanes} is the maximum that leaves the price pane readable. ` +
-            `Remove one with chart_remove_indicator first.`,
+            `Remove one with chart_draw indicators.remove first.`,
         };
       }
     } else {
@@ -567,7 +555,7 @@ export function createChartStore(initialProduct: string, now: () => number = Dat
     const price = Number(args.price);
     if (!Number.isFinite(price)) return { ok: false, notes: [], error: 'price must be a finite number' };
     if (state.levels.length >= LIMITS.maxLevels) {
-      return { ok: false, notes: [], error: `${LIMITS.maxLevels} price levels is the maximum. Clear some with chart_clear.` };
+      return { ok: false, notes: [], error: `${LIMITS.maxLevels} price levels is the maximum. Clear some with chart_draw clear.` };
     }
     const id = nextId('level');
     state.levels.push({ id, price, label: tag(String(args.label ?? '') || `level ${price}`, source), ...stamp(source, by) });
@@ -579,7 +567,7 @@ export function createChartStore(initialProduct: string, now: () => number = Dat
     const t = Number(args.t ?? args.time);
     if (!Number.isFinite(t)) return { ok: false, notes: [], error: 't must be a unix timestamp in seconds' };
     if (state.marks.length >= LIMITS.maxMarks) {
-      return { ok: false, notes: [], error: `${LIMITS.maxMarks} marks is the maximum. Clear some with chart_clear.` };
+      return { ok: false, notes: [], error: `${LIMITS.maxMarks} marks is the maximum. Clear some with chart_draw clear.` };
     }
     const id = nextId('mark');
     state.marks.push({ id, t: Math.round(t), label: tag(String(args.label ?? '') || 'mark', source), ...stamp(source, by) });
@@ -587,43 +575,7 @@ export function createChartStore(initialProduct: string, now: () => number = Dat
     return { ok: true, notes: [], id };
   }
 
-  function setTrendline(args: Record<string, unknown>, source: Source, by?: string | null): Outcome {
-    const t1 = Number(args.t1);
-    const p1 = Number(args.p1);
-    const t2 = Number(args.t2);
-    const p2 = Number(args.p2);
-    for (const [name, value] of [['t1', t1], ['p1', p1], ['t2', t2], ['p2', p2]] as const) {
-      if (!Number.isFinite(value)) {
-        return { ok: false, notes: [], error: `${name} must be a finite number; a trendline needs both endpoints as (time, price)` };
-      }
-    }
-    // Two anchors at the same instant describe a vertical line, which is a mark, and the
-    // renderer would divide by zero working out the slope. Refusing names the tool that does
-    // want that rather than drawing something misleading.
-    if (t1 === t2) {
-      return { ok: false, notes: [], error: 'a trendline needs two different times; for a vertical line at one moment use chart_mark' };
-    }
-    if (state.trendlines.length >= LIMITS.maxTrendlines) {
-      return { ok: false, notes: [], error: `${LIMITS.maxTrendlines} trendlines is the maximum. Clear some with chart_clear.` };
-    }
-    // Stored oldest endpoint first, so the renderer and the read never have to care which
-    // order the two anchors arrived in.
-    const flip = t2 < t1;
-    const id = nextId('trend');
-    state.trendlines.push({
-      id,
-      t1: Math.round(flip ? t2 : t1),
-      p1: flip ? p2 : p1,
-      t2: Math.round(flip ? t1 : t2),
-      p2: flip ? p1 : p2,
-      label: tag(String(args.label ?? '') || 'trendline', source),
-      ...stamp(source, by),
-    });
-    bump(source, by);
-    return { ok: true, notes: [], id };
-  }
-
-  const CLEAR_TARGETS = ['indicators', 'levels', 'marks', 'trendlines', 'agent', 'mine', 'stale', 'all'] as const;
+  const CLEAR_TARGETS = ['indicators', 'levels', 'marks', 'agent', 'mine', 'stale', 'all'] as const;
 
   /* What may be removed, and by whom.
      `agent` and `all` are the human's controls, and an agent holds them too because the human
@@ -634,19 +586,17 @@ export function createChartStore(initialProduct: string, now: () => number = Dat
      would ever find out why. */
   function clear(what: string, by?: string | null): Outcome {
     const key = String(what ?? 'all').toLowerCase().trim();
-    const before = state.indicators.length + state.levels.length + state.marks.length + state.trendlines.length;
+    const before = state.indicators.length + state.levels.length + state.marks.length;
 
     const keep = (predicate: (o: Provenance) => boolean): void => {
       state.indicators = state.indicators.filter(predicate);
       state.levels = state.levels.filter(predicate);
       state.marks = state.marks.filter(predicate);
-      state.trendlines = state.trendlines.filter(predicate);
     };
 
     if (key === 'indicators') state.indicators = [];
     else if (key === 'levels') state.levels = [];
     else if (key === 'marks') state.marks = [];
-    else if (key === 'trendlines') state.trendlines = [];
     else if (key === 'agent') {
       // The human's one-click way out of anything ANY agent put on the surface.
       keep((o) => o.source !== 'agent');
@@ -670,17 +620,25 @@ export function createChartStore(initialProduct: string, now: () => number = Dat
       state.indicators = [];
       state.levels = [];
       state.marks = [];
-      state.trendlines = [];
     } else {
       return { ok: false, notes: [], error: `unknown target: ${key}. known: ${CLEAR_TARGETS.join(', ')}` };
     }
-    const removed = before - (state.indicators.length + state.levels.length + state.marks.length + state.trendlines.length);
+    const removed = before - (state.indicators.length + state.levels.length + state.marks.length);
     bump('human');
     return { ok: true, notes: [`cleared ${key}: ${removed} ${removed === 1 ? 'object' : 'objects'} removed`] };
   }
 
-  function housekeeping(by?: string | null): Housekeeping {
-    const all: Provenance[] = [...state.indicators, ...state.levels, ...state.marks, ...state.trendlines];
+  function housekeeping(by?: string | null, drawings: readonly Drawing[] = []): Housekeeping {
+    // A drawing with no product recorded predates that field; it was made on whatever was on
+    // screen, which for the tidy's purposes is this chart.
+    const drawn: Provenance[] = drawings.map((d) => ({
+      source: d.source,
+      by: d.by ?? null,
+      createdAt: d.createdAt,
+      product: d.product ?? state.view.product,
+      granularitySec: d.granularitySec ?? state.view.granularitySec,
+    }));
+    const all: Provenance[] = [...state.indicators, ...state.levels, ...state.marks, ...drawn];
     const cutoff = now() - STALE_MS;
     const agentObjs = all.filter((o) => o.source === 'agent');
     const mine = by ? agentObjs.filter((o) => o.by === by).length : 0;
@@ -691,8 +649,8 @@ export function createChartStore(initialProduct: string, now: () => number = Dat
     const overlays = state.indicators.filter((i) => i.pane === 'price').length;
     const panes = state.indicators.filter((i) => i.pane === 'own').length;
     const hints: string[] = [];
-    if (stale > 0) hints.push(`${stale} agent ${stale === 1 ? 'object is' : 'objects are'} over 20 minutes old: chart_clear what:'stale'`);
-    if (mine > 0) hints.push(`chart_clear what:'mine' removes only your own ${mine}`);
+    if (stale > 0) hints.push(`${stale} agent ${stale === 1 ? 'object is' : 'objects are'} over 20 minutes old`);
+    if (mine > 0) hints.push(`chart_draw clear:'mine' removes only your own ${mine}`);
     if (panes >= LIMITS.maxPanes) hints.push('the sub-panes are full; the next one is refused. indicator_read measures without drawing');
     if (overlays >= LIMITS.maxOverlays) hints.push('the price pane is full; remove an overlay before adding one');
     return {
@@ -706,7 +664,7 @@ export function createChartStore(initialProduct: string, now: () => number = Dat
         panes: `${panes}/${LIMITS.maxPanes}`,
         levels: `${state.levels.length}/${LIMITS.maxLevels}`,
         marks: `${state.marks.length}/${LIMITS.maxMarks}`,
-        trendlines: `${state.trendlines.length}/${LIMITS.maxTrendlines}`,
+        drawings: `${drawings.length}/${DRAWINGS_MAX}`,
       },
       hint: hints.length === 0 ? 'nothing needs clearing' : hints.join('; '),
     };
@@ -735,7 +693,6 @@ export function createChartStore(initialProduct: string, now: () => number = Dat
     removeIndicator,
     setLevel,
     setMark,
-    setTrendline,
     clear,
     housekeeping,
     setGeometry(geometry: ChartGeometry): void {
@@ -747,8 +704,7 @@ export function createChartStore(initialProduct: string, now: () => number = Dat
       return (
         state.indicators.filter((i) => i.source === 'agent').length +
         state.levels.filter((l) => l.source === 'agent').length +
-        state.marks.filter((m) => m.source === 'agent').length +
-        state.trendlines.filter((t) => t.source === 'agent').length
+        state.marks.filter((m) => m.source === 'agent').length
       );
     },
   };
@@ -869,6 +825,8 @@ export type ReadArgs = {
   // What the tidy would find, computed for the agent that is doing the reading. Optional so a
   // caller with no roster (a test, the browser's own read) still gets a chart read.
   housekeeping?: Housekeeping;
+  // The sloped objects, from the one store that holds them (src/drawings.ts).
+  drawings?: readonly Drawing[];
 };
 
 // Everything the agent can ask about what is on the chart, in one object. Written to be
@@ -988,29 +946,12 @@ export function buildRead(args: ReadArgs): unknown {
       iso: isoOf(m.t),
     })),
 
-    // priceNow and distanceFromLastPct are the whole reason to read a trendline back: a
-    // sloped line's useful value is where it sits at this instant, and recomputing that from
-    // two anchors is exactly the arithmetic the reader should not have to repeat. Extended
-    // past its second anchor, which is what makes it a trend line rather than a segment.
-    trendlines: state.trendlines.map((tl) => {
-      const slopePerSec = (tl.p2 - tl.p1) / (tl.t2 - tl.t1);
-      const priceNow = newest === null ? null : tl.p1 + slopePerSec * (newest.t - tl.t1);
-      return {
-        id: tl.id,
-        label: tl.label,
-        source: tl.source,
-        by: tl.by,
-        ageSec: Math.max(0, Math.round((Date.now() - tl.createdAt) / 1000)),
-        drawnOn: `${tl.product} ${timeframeLabel(tl.granularitySec)}`,
-        from: { epochSec: tl.t1, iso: isoOf(tl.t1), price: tl.p1 },
-        to: { epochSec: tl.t2, iso: isoOf(tl.t2), price: tl.p2 },
-        slopePerHour: slopePerSec * 3600,
-        direction: tl.p2 > tl.p1 ? 'rising' : tl.p2 < tl.p1 ? 'falling' : 'flat',
-        priceNow,
-        distanceFromLastPct: newest === null || priceNow === null ? null : pctChange(newest.c, priceNow),
-        side: newest === null || priceNow === null ? null : priceNow > newest.c ? 'above price' : 'below price',
-      };
-    }),
+    // The sloped objects, from the drawing store. priceNow and distanceFromLastPct are the
+    // whole reason to read a line back: its useful value is where it sits at this instant,
+    // and recomputing that from two anchors is exactly the arithmetic the reader should not
+    // have to repeat. Extended past its second anchor, which is what makes it a trend line
+    // rather than a segment.
+    drawings: (args.drawings ?? []).map((d) => readDrawing(d, newest)),
 
     geometry: state.geometry,
     rev: state.rev,
@@ -1031,6 +972,44 @@ function lastDefined(values: (number | null)[]): number | null {
     if (v !== null && Number.isFinite(v)) return v;
   }
   return null;
+}
+
+// One drawn object as the agent reads it. Exported because the compact read builds its own
+// smaller row from the same arithmetic.
+export function readDrawing(d: Drawing, newest: Candle | null): Record<string, unknown> {
+  const base = {
+    id: d.id,
+    label: d.label,
+    source: d.source,
+    by: d.by ?? null,
+    ageSec: Math.max(0, Math.round((Date.now() - d.createdAt) / 1000)),
+    drawnOn: d.product === undefined ? null : `${d.product} ${timeframeLabel(d.granularitySec ?? 60)}`,
+  };
+  if (d.kind === 'zone' && d.zone !== undefined) {
+    const { low, high } = d.zone;
+    return {
+      ...base,
+      kind: 'zone',
+      low,
+      high,
+      side: newest === null ? null : low > newest.c ? 'above price' : high < newest.c ? 'below price' : 'around price',
+    };
+  }
+  if (d.line === undefined) return { ...base, kind: d.kind };
+  const { a, b } = d.line;
+  const slopePerSec = b.t === a.t ? 0 : (b.price - a.price) / (b.t - a.t);
+  const priceNow = newest === null ? null : lineAt(d.line, newest.t);
+  return {
+    ...base,
+    kind: 'line',
+    from: { epochSec: a.t, iso: isoOf(a.t), price: a.price },
+    to: { epochSec: b.t, iso: isoOf(b.t), price: b.price },
+    slopePerHour: slopePerSec * 3600,
+    direction: b.price > a.price ? 'rising' : b.price < a.price ? 'falling' : 'flat',
+    priceNow,
+    distanceFromLastPct: newest === null || priceNow === null ? null : pctChange(newest.c, priceNow),
+    side: newest === null || priceNow === null ? null : priceNow > newest.c ? 'above price' : 'below price',
+  };
 }
 
 export type MeasureArgs = {

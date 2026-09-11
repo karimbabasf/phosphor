@@ -49,10 +49,11 @@ export type DrawingStore = {
 };
 
 const PREFIX: Record<Drawing['kind'], string> = { trendline: 'tl', zone: 'zn' };
-const DEFAULT_MAX = 200;
+// Exported so the chart's housekeeping block can say how full this store is beside its own caps.
+export const DRAWINGS_MAX = 200;
 
 export function createDrawingStore(opts?: { max?: number; now?: () => number }): DrawingStore {
-  const max = opts?.max ?? DEFAULT_MAX;
+  const max = opts?.max ?? DRAWINGS_MAX;
   const now = opts?.now ?? (() => Date.now());
   const items = new Map<string, Drawing>();
   const counters: Record<string, number> = {};

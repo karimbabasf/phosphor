@@ -250,7 +250,8 @@ export async function chartRead(ctx: Ctx, by?: string | null): Promise<unknown> 
       meta: { source: load.source, stale: load.stale, built: load.built },
       computed: computeIndicators(state, load.candles),
       nowSec: Math.floor(Date.now() / 1000),
-      housekeeping: ctx.chart.housekeeping(by),
+      housekeeping: ctx.chart.housekeeping(by, ctx.drawings.list()),
+      drawings: ctx.drawings.list(),
     });
   } catch (err) {
     return {

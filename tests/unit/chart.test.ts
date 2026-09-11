@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import type { Candle } from '../../src/types.ts';
+import { createDrawingStore } from '../../src/drawings.ts';
 import {
   buildRead,
   clampPan,
@@ -81,7 +82,7 @@ test('a fourth sub-pane is refused, and the refusal names what to remove', () =>
   assert.equal(fourth.ok, false);
   assert.match(String(fourth.error), /sub-panes/);
   assert.match(String(fourth.error), /RSI 14/);
-  assert.match(String(fourth.error), /chart_remove_indicator/);
+  assert.match(String(fourth.error), /chart_draw/);
   // The refusal has to leave the chart exactly as it was.
   assert.equal(chart.state().indicators.length, 3);
 });
@@ -241,24 +242,26 @@ test('a digest of nothing says so instead of inventing a trend', () => {
   assert.equal(digest.last, null);
 });
 
-// The third drawing primitive. A level is horizontal and a mark is vertical, so before this
-// the chart could name a price or a moment but not a trend, which is the commonest thing
-// anyone draws. These tests pin the parts that are easy to get wrong once and never notice:
-// the endpoints are stored oldest first, a zero-width line is refused instead of dividing by
-// zero in the renderer, and the read reports where the line sits NOW rather than making the
-// caller redo the arithmetic from two anchors.
-test('a trendline keeps both endpoints and reports its slope and where it sits now', () => {
+// Sloped objects live in ONE store, src/drawings.ts, and the read reports them from there.
+// The chart store used to hold its own `trendlines` list beside it, written by a tool the
+// browser never rendered: the agent read back a line the human could not see. These pin the
+// read path over the drawing store, and the parts that are easy to get wrong once: the read
+// reports where a line sits NOW rather than making the caller redo the arithmetic from two
+// anchors, and a zone says which side of the price it is on.
+test('the read reports a drawn line from the drawing store, extended to now', () => {
   const chart = createChartStore('SOL-USD');
+  const drawings = createDrawingStore();
   const t0 = 1_700_000_000;
-
-  const out = chart.setTrendline({ t1: t0, p1: 100, t2: t0 + 3600, p2: 101, label: 'support' }, 'agent');
-  assert.equal(out.ok, true);
-
-  const tl = chart.state().trendlines[0];
-  assert.equal(tl?.p1, 100);
-  assert.equal(tl?.p2, 101);
-  assert.equal(tl?.label, '[agent] support');
-  assert.equal(chart.agentObjects(), 1, 'the human is told the agent drew something');
+  drawings.add({
+    kind: 'trendline',
+    label: '[agent] support',
+    source: 'agent',
+    by: 'a',
+    product: 'SOL-USD',
+    granularitySec: 3600,
+    line: { a: { t: t0, price: 100 }, b: { t: t0 + 3600, price: 101 } },
+  });
+  drawings.add({ kind: 'zone', label: 'supply', source: 'human', zone: { low: 110, high: 120 } });
 
   // Three hourly bars, so the newest sits an hour past the second anchor and the line should
   // read 102 there: extended forward, not stopped at the last touch.
@@ -269,50 +272,43 @@ test('a trendline keeps both endpoints and reports its slope and where it sits n
     meta: { source: 'test', stale: false, built: 'test' },
     computed: [],
     nowSec: t0 + 2 * 3600,
-  }) as { trendlines: { direction: string; slopePerHour: number; priceNow: number | null }[] };
-  const read = view.trendlines[0];
-  assert.equal(read?.direction, 'rising');
-  assert.ok(Math.abs((read?.slopePerHour ?? 0) - 1) < 1e-9);
-  assert.ok(Math.abs((read?.priceNow ?? 0) - 102) < 1e-9, 'the line is extended past its second anchor');
+    drawings: drawings.list(),
+  }) as { drawings: Record<string, unknown>[]; trendlines?: unknown };
+  assert.equal(view.trendlines, undefined, 'the second store is gone from the read');
+  assert.equal(view.drawings.length, 2);
+  const line = view.drawings[0] as { id: string; kind: string; direction: string; slopePerHour: number; priceNow: number | null };
+  assert.equal(line.id, 'tl_1');
+  assert.equal(line.kind, 'line');
+  assert.equal(line.direction, 'rising');
+  assert.ok(Math.abs(line.slopePerHour - 1) < 1e-9);
+  assert.ok(Math.abs((line.priceNow ?? 0) - 102) < 1e-9, 'the line is extended past its second anchor');
+  const zone = view.drawings[1] as { id: string; kind: string; low: number; high: number; side: string };
+  assert.equal(zone.id, 'zn_1');
+  assert.equal(zone.kind, 'zone');
+  assert.equal(zone.low, 110);
+  assert.equal(zone.side, 'above price');
 });
 
-test('a trendline given its endpoints backwards stores them oldest first', () => {
+test('the chart store carries no trendline list and no trendline clear target', () => {
   const chart = createChartStore('SOL-USD');
-  const t0 = 1_700_000_000;
-
-  chart.setTrendline({ t1: t0 + 3600, p1: 101, t2: t0, p2: 100 }, 'agent');
-
-  const tl = chart.state().trendlines[0];
-  assert.equal(tl?.t1, t0, 'the older anchor is first whichever order it arrived in');
-  assert.equal(tl?.p1, 100);
-  assert.equal(tl?.t2, t0 + 3600);
-  assert.equal(tl?.p2, 101);
+  assert.equal('trendlines' in chart.state(), false);
+  assert.equal('setTrendline' in chart, false);
+  const out = chart.clear('trendlines');
+  assert.equal(out.ok, false, 'a target that no longer exists is refused by name');
 });
 
-test('a trendline with one time for both endpoints is refused, not drawn vertical', () => {
+test('housekeeping counts the drawing store beside the chart store', () => {
   const chart = createChartStore('SOL-USD');
-  const t0 = 1_700_000_000;
-
-  const out = chart.setTrendline({ t1: t0, p1: 100, t2: t0, p2: 110 }, 'agent');
-
-  assert.equal(out.ok, false);
-  assert.match(String(out.error), /chart_mark/, 'the refusal names the tool that does want one moment');
-  assert.equal(chart.state().trendlines.length, 0);
-});
-
-test('trendlines obey the clear targets, including the human way out of agent drawings', () => {
-  const chart = createChartStore('SOL-USD');
-  const t0 = 1_700_000_000;
-
-  chart.setTrendline({ t1: t0, p1: 100, t2: t0 + 3600, p2: 101 }, 'agent');
-  chart.setTrendline({ t1: t0, p1: 90, t2: t0 + 3600, p2: 91 }, 'human');
-
-  chart.clear('agent');
-  assert.equal(chart.state().trendlines.length, 1, 'clearing agent drawings leaves the human theirs');
-  assert.equal(chart.state().trendlines[0]?.source, 'human');
-
-  chart.clear('trendlines');
-  assert.equal(chart.state().trendlines.length, 0);
+  const drawings = createDrawingStore();
+  chart.setLevel({ price: 1 }, 'agent', 'a');
+  drawings.add({ kind: 'trendline', label: 'x', source: 'agent', by: 'a', product: 'SOL-USD', line: { a: { t: 0, price: 1 }, b: { t: 1, price: 2 } } });
+  drawings.add({ kind: 'zone', label: 'y', source: 'agent', by: 'b', product: 'SOL-USD', zone: { low: 1, high: 2 } });
+  drawings.add({ kind: 'zone', label: 'z', source: 'human', zone: { low: 1, high: 2 } });
+  const keep = chart.housekeeping('a', drawings.list());
+  assert.equal(keep.mine, 2, 'a level and a line');
+  assert.equal(keep.others, 1);
+  assert.equal(keep.human, 1);
+  assert.match(keep.capacity.drawings, /^3\//);
 });
 
 // The symbol switch, with the patch the BROWSER actually sends.

@@ -135,7 +135,33 @@ const HANDLERS: Record<string, ViewHandler> = {
   }),
   chart_level: ({ ctx, args, by }) => ({ done: false, outcome: ctx.chart.setLevel(args, 'agent', by) }),
   chart_mark: ({ ctx, args, by }) => ({ done: false, outcome: ctx.chart.setMark(args, 'agent', by) }),
-  chart_trendline: ({ ctx, args, by }) => ({ done: false, outcome: ctx.chart.setTrendline(args, 'agent', by) }),
+  // Into the drawing store, the one the browser renders. The chart store's own trendline list
+  // was never drawn and is gone.
+  chart_trendline: ({ ctx, args, by }): Handled => {
+    const t1 = Number(args.t1);
+    const p1 = Number(args.p1);
+    const t2 = Number(args.t2);
+    const p2 = Number(args.p2);
+    if (![t1, p1, t2, p2].every(Number.isFinite)) {
+      return { done: false, outcome: { ok: false, notes: [], error: 'a trendline needs both endpoints as (time, price)' } };
+    }
+    if (t1 === t2) {
+      return { done: false, outcome: { ok: false, notes: [], error: 'a trendline needs two different times; for a vertical line at one moment use chart_mark' } };
+    }
+    const view = ctx.chart.state().view;
+    const label = `[agent] ${String(args.label ?? '').trim().slice(0, 48) || 'trendline'}`;
+    const flip = t2 < t1;
+    const drawn = ctx.drawings.add({
+      kind: 'trendline',
+      label,
+      source: 'agent',
+      by,
+      product: view.product,
+      granularitySec: view.granularitySec,
+      line: { a: { t: flip ? t2 : t1, price: flip ? p2 : p1 }, b: { t: flip ? t1 : t2, price: flip ? p1 : p2 } },
+    });
+    return { done: false, outcome: { ok: true, notes: [], id: drawn.id, label } };
+  },
 
   chart_clear: ({ ctx, args, by }): Handled => {
     const what = String(args.what ?? 'agent');

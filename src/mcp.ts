@@ -693,7 +693,7 @@ registerView(
     '  stale       anything any agent drew over twenty minutes ago, or anchored to another instrument.',
     '  agent       everything every agent drew. For when the human asks for a clean chart.',
     '  all         that, plus the human\'s own drawings. Only when they ask for it in those words.',
-    '  indicators | levels | marks | trendlines   one kind, whoever drew it.',
+    '  indicators | levels | marks   one kind, whoever drew it.',
     'It clears drawn zones and lines as well as levels, marks and indicators.',
     'Every chart_read carries a `housekeeping` block saying which of these you need and how much of it',
     'there is. Clear before you start a different piece of analysis, not after somebody complains.',
@@ -701,7 +701,7 @@ registerView(
   ].join(' '),
   {
     what: z
-      .enum(['mine', 'stale', 'agent', 'all', 'indicators', 'levels', 'marks', 'trendlines'])
+      .enum(['mine', 'stale', 'agent', 'all', 'indicators', 'levels', 'marks'])
       .optional()
       .default('mine'),
   },

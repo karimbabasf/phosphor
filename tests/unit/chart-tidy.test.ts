@@ -29,14 +29,12 @@ test('switching instrument clears the agent drawings anchored to the old one', (
   const { chart } = storeAt(1_000_000);
   chart.setLevel({ price: 63000, label: 'range high' }, 'agent', 'a');
   chart.setMark({ t: 1700000000, label: 'entry' }, 'agent', 'a');
-  chart.setTrendline({ t1: 1, p1: 62000, t2: 2, p2: 63000 }, 'agent', 'a');
 
   const out = chart.setView({ product: 'SOL-USD' }, 'agent', 'a');
   assert.equal(out.ok, true);
   assert.equal(chart.state().levels.length, 0);
   assert.equal(chart.state().marks.length, 0);
-  assert.equal(chart.state().trendlines.length, 0);
-  assert.match(out.notes.join(' '), /cleared 3 agent drawings/);
+  assert.match(out.notes.join(' '), /cleared 2 agent drawings/);
 });
 
 test('indicators survive the switch, because they recompute on the new series', () => {
@@ -128,8 +126,8 @@ test('housekeeping separates your work from theirs, and names the call that fixe
   assert.equal(keep.others, 1);
   assert.equal(keep.human, 1);
   assert.equal(keep.stale, 2, 'both agent levels aged past the cutoff');
-  assert.match(keep.hint, /chart_clear what:'stale'/);
-  assert.match(keep.hint, /chart_clear what:'mine'/);
+  assert.match(keep.hint, /over 20 minutes old/);
+  assert.match(keep.hint, /chart_draw clear:'mine'/);
 });
 
 test('housekeeping says nothing needs clearing when nothing does', () => {
