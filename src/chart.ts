@@ -16,7 +16,7 @@ import type { Drawing } from './drawings.ts';
 import { DRAWINGS_MAX } from './drawings.ts';
 import { lineAt } from './analysis/trendline.ts';
 import { indicatorSpec, normaliseParams, warmupBars, pctChange, trueRange } from './indicators.ts';
-import type { IndicatorResult } from './indicators.ts';
+import type { IndicatorResult, IndicatorSpec } from './indicators.ts';
 import { MAX_TIMEFRAME_SEC, MIN_TIMEFRAME_SEC, parseTimeframe, formatTimeframe } from './market/aggregate.ts';
 
 export type PriceScale = { mode: 'auto' } | { mode: 'manual'; low: number; high: number };
@@ -270,7 +270,9 @@ export function createChartStore(initialProduct: string, now: () => number = Dat
   rev(): number;
   historyNeeded(): number;
   setView(patch: Record<string, unknown>, source: Source, by?: string | null): Outcome;
-  addIndicator(args: Record<string, unknown>, source: Source, by?: string | null): Outcome;
+  // `spec` is the resolved indicator when the caller already has one (a custom indicator the
+  // loader compiled); absent, the type is looked up in the built-in catalogue.
+  addIndicator(args: Record<string, unknown>, source: Source, by?: string | null, spec?: IndicatorSpec): Outcome;
   removeIndicator(ref: string): Outcome;
   setLevel(args: Record<string, unknown>, source: Source, by?: string | null): Outcome;
   setMark(args: Record<string, unknown>, source: Source, by?: string | null): Outcome;
@@ -489,9 +491,9 @@ export function createChartStore(initialProduct: string, now: () => number = Dat
     return { ok: true, notes };
   }
 
-  function addIndicator(args: Record<string, unknown>, source: Source, by?: string | null): Outcome {
+  function addIndicator(args: Record<string, unknown>, source: Source, by?: string | null, resolved?: IndicatorSpec): Outcome {
     const type = String(args.type ?? '').toLowerCase().trim();
-    const spec = indicatorSpec(type);
+    const spec = resolved ?? indicatorSpec(type);
     if (spec === undefined) {
       return { ok: false, notes: [], error: `unknown indicator: ${type || '(none given)'}. chart_batch op indicator_list has the list.` };
     }

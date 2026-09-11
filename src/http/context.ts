@@ -113,15 +113,11 @@ export const VIEW_TOOLS: readonly string[] = [
   // Colour. A write like the rest of this list: it changes what the human sees and moves no
   // money. The one thing it cannot reach is the approval gate's red, which is not a slot.
   'set_theme',
-  'chart_set_view',
-  'chart_add_indicator',
-  'chart_remove_indicator',
-  'chart_level',
-  'chart_mark',
-  'chart_trendline',
-  'chart_clear',
-  // A whole study package, with the tidy that makes it fit. See src/presets.ts.
-  'chart_preset',
+  // The chart's one write: view, indicators (presets included), levels, marks, lines and zones
+  // in one call, answered with a digest. Ten tools used to do this one call each.
+  'chart_draw',
+  // Up to four charts side by side. See src/charts.ts.
+  'chart_layout',
   // The team's two writes. A post is one line on a board every agent and the human read; a
   // spawn starts a worker. Neither moves money, both are audited, and both are here rather
   // than on the propose path for exactly that reason.

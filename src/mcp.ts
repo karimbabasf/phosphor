@@ -603,8 +603,6 @@ function registerLeadView(name: string, description: string, shape: Record<strin
   registerView(name, description, shape);
 }
 
-const CHART_ANSWER = 'Returns the full chart read after the change, so no follow-up call is needed.';
-
 registerLeadView(
   'set_theme',
   [
@@ -624,109 +622,110 @@ registerLeadView(
   },
 );
 
-registerView(
-  'chart_set_view',
-  `Changes what the chart shows: product, timeframe, which venue the candles come from, how many bars are on screen, how far back the window sits, and the price scale. Pass live:true to jump back to the newest bar. Omit a field to leave it alone. ${CHART_ANSWER}`,
-  {
-    product: z.string().optional(),
-    provider: z
-      .enum(['auto', 'hyperliquid', 'coinbase'])
-      .optional()
-      .describe(
-        'which venue serves the candles. auto is the default and prefers Hyperliquid, which is where this app executes, so a chart and a fill agree. coinbase draws that venue\'s spot market instead, which is a different price from a perp and is the point of asking for it. A venue that does not list the product is refused with that reason rather than quietly served from the other one.',
-      ),
-    timeframe: z.string().optional().describe('one of 1s 5s 15s 30s 1m 5m 15m 30m 1h 4h 8h 1d'),
-    barCount: z.number().optional().describe('bars across the plot, 20 to 500'),
-    panOffset: z.number().optional().describe('bars back from the newest; 0 is live'),
-    live: z.boolean().optional(),
-    priceScale: z.enum(['auto']).optional(),
-    priceLow: z.number().optional(),
-    priceHigh: z.number().optional(),
-  },
-);
-registerView(
-  'chart_add_indicator',
-  `Adds an indicator. Overlays draw on the price pane; RSI, MACD, ATR, Stochastic, OBV and volume take their own pane under it. Three sub-panes and eight overlays are the maximum, and a request past that is refused with the reason rather than squeezed in. ${CHART_ANSWER}`,
-  {
-    type: z
-      .string()
-      .describe(
-        'Overlays the price: sma, ema, wma, vwap, bbands, donchian, supertrend, keltner, ichimoku, vwapbands, hma, ribbon. ' +
-          'Takes its own pane: volume, rsi, macd, atr, stoch, obv, wave, moneyflow, squeeze, adx, stochrsi, mfi, cci, relvolume. ' +
-          'wave is the WaveTrend oscillator that the "market cipher" style dashboards are built on; squeeze is Bollinger inside Keltner. ' +
-          'indicator_catalog has the parameters and ranges for all of them.',
-      ),
-    params: z.object({}).passthrough().optional().describe('for example {"period": 50}; defaults apply when omitted'),
-  },
-);
-registerView('chart_remove_indicator', `Removes an indicator by its id or its type. ${CHART_ANSWER}`, {
-  id: z.string().optional(),
-  type: z.string().optional(),
+/* THE CHART'S ONE WRITE.
+   Ten tools used to do this one call each (chart_set_view, chart_add_indicator, chart_level,
+   chart_mark, chart_trendline, chart_clear, chart_preset and their partners), and every call is
+   a model turn of ten to twenty seconds, answered with a four kilobyte echo of the chart. A
+   markup of six levels, a line and a preset was eight turns. It is one now, applied in a fixed
+   order, and the answer is a digest of what is on the chart rather than the whole read.
+   Withheld from a worker, like the layout and the snapshot: a worker measures and reports; it
+   does not redraw the chart the human is looking at. */
+const INDICATOR = z.object({
+  type: z
+    .string()
+    .describe(
+      'Overlays the price: sma, ema, wma, vwap, bbands, donchian, supertrend, keltner, ichimoku, vwapbands, hma, ribbon. ' +
+        'Takes its own pane: volume, rsi, macd, atr, stoch, obv, wave, moneyflow, squeeze, adx, stochrsi, mfi, cci, relvolume. ' +
+        'A custom indicator from the indicators folder is custom:<slug>. chart_batch op indicator_list has the parameters and ranges of all of them.',
+    ),
+  params: z.record(z.number()).optional().describe('for example {"period": 50}; defaults apply when omitted'),
 });
-registerView(
-  'chart_level',
-  `Draws a horizontal price line with a label, for a level worth watching. The label is shown to the human tagged [agent]. ${CHART_ANSWER}`,
-  { price: z.number(), label: z.string().optional() },
-);
-registerView(
-  'chart_mark',
-  `Marks a moment in time on the chart with a label, for example when something was executed. The label is shown to the human tagged [agent]. ${CHART_ANSWER}`,
-  { t: z.number().describe('unix timestamp in seconds'), label: z.string().optional() },
-);
-registerView(
-  'chart_trendline',
-  `Draws a sloped line through two points in time, for a trend, a channel edge or any support that is not flat. Each endpoint is a time and a price, so anchor them to the swing highs or lows the line is meant to touch; the line is drawn between them and extended onwards. Use chart_level instead when the line is horizontal. The label is shown to the human tagged [agent]. ${CHART_ANSWER}`,
-  {
-    t1: z.number().describe('unix timestamp in seconds of the first anchor'),
-    p1: z.number().describe('price of the first anchor'),
-    t2: z.number().describe('unix timestamp in seconds of the second anchor'),
-    p2: z.number().describe('price of the second anchor'),
-    label: z.string().optional(),
-  },
-);
-registerView(
-  'chart_clear',
+
+registerLeadView(
+  'chart_draw',
   [
-    'Tidies the chart. Several agents may be drawing on it at once, so WHICH work you are clearing',
-    'matters:',
-    '  mine        only what YOU drew. The one to reach for; it can never touch a colleague or a human.',
-    '  stale       anything any agent drew over twenty minutes ago, or anchored to another instrument.',
-    '  agent       everything every agent drew. For when the human asks for a clean chart.',
-    '  all         that, plus the human\'s own drawings. Only when they ask for it in those words.',
-    '  indicators | levels | marks   one kind, whoever drew it.',
-    'It clears drawn zones and lines as well as levels, marks and indicators.',
-    'Every chart_read carries a `housekeeping` block saying which of these you need and how much of it',
-    'there is. Clear before you start a different piece of analysis, not after somebody complains.',
-    CHART_ANSWER,
+    'Draws on the chart: the whole markup in ONE call. Applied in this order: clear, view, indicators,',
+    'levels, marks, lines, zones. Omit anything you are not changing. Returns a digest of the chart as it',
+    'now stands (product, timeframe, last price, each indicator with its last values and state line, the',
+    'counts of what is drawn) plus `refused`, one line per entry that could not be applied. One bad entry',
+    'never stops the rest, so read `refused` rather than assuming everything landed.',
+    '',
+    'clear: mine (only what YOU drew; the one to reach for), agent (everything every agent drew), all (the',
+    'human\'s too, only when they ask in those words). A plan drawn on the chart is never cleared here.',
+    'view: product (anything market_search resolves), timeframe (1m to 1w, including ones no venue serves',
+    'natively like 7m), bars across the plot, provider (auto, hyperliquid or coinbase; a venue that does not',
+    'list the product is refused rather than served from the other one).',
+    'indicators: { preset } applies a whole package (wave, trend, momentum, volatility, ichimoku, volume,',
+    'scalp, clean) and clears YOUR OWN studies first so it can never be refused by the three-pane cap;',
+    '{ set: [...] } replaces your studies with these; { add: [...] } adds; { remove: [ids or types] }.',
+    'Three sub-panes and eight overlays are the maximum, and a request past that is refused with the reason.',
+    'levels: horizontal price lines. marks: moments on the time axis. lines: sloped lines through two',
+    '(time, price) anchors, extended onwards. zones: a price band, optionally bounded in time.',
+    'Every label is shown to the human tagged [agent] and every object keeps a stable id.',
+    'chart: which of the charts, 0 to 3; omit for the primary. chart_layout puts the others up.',
   ].join(' '),
   {
-    what: z
-      .enum(['mine', 'stale', 'agent', 'all', 'indicators', 'levels', 'marks'])
-      .optional()
-      .default('mine'),
+    chart: z.number().int().min(0).max(3).optional(),
+    clear: z.enum(['mine', 'agent', 'all']).optional(),
+    view: z
+      .object({
+        product: z.string().optional(),
+        timeframe: z.string().optional().describe('a count and a unit: 1m 5m 15m 1h 4h 1d 1w, or 7m, 90m'),
+        bars: z.number().optional().describe('bars across the plot, 10 to 2000'),
+        provider: z.enum(['auto', 'hyperliquid', 'coinbase']).optional(),
+      })
+      .optional(),
+    indicators: z
+      .object({
+        preset: z.string().optional(),
+        set: z.array(INDICATOR).optional(),
+        add: z.array(INDICATOR).optional(),
+        remove: z.array(z.string()).optional(),
+      })
+      .optional(),
+    levels: z.array(z.object({ px: z.number(), label: z.string().optional() })).optional(),
+    marks: z.array(z.object({ t: z.number().describe('unix timestamp in seconds'), label: z.string().optional() })).optional(),
+    lines: z
+      .array(
+        z.object({
+          t1: z.number().describe('unix timestamp in seconds of the first anchor'),
+          p1: z.number().describe('price of the first anchor'),
+          t2: z.number(),
+          p2: z.number(),
+          label: z.string().optional(),
+        }),
+      )
+      .optional(),
+    zones: z
+      .array(
+        z.object({
+          p1: z.number(),
+          p2: z.number(),
+          t1: z.number().optional(),
+          t2: z.number().optional(),
+          label: z.string().optional(),
+        }),
+      )
+      .optional(),
   },
 );
 
-registerView(
-  'chart_preset',
+registerLeadView(
+  'chart_layout',
   [
-    'Applies a whole study package in one call, and clears YOUR OWN studies first so it can never be',
-    'refused by the three-pane cap and never accumulates.',
-    '',
-    'wave: the WaveTrend oscillator, the candle-body money flow, VWAP bands and an EMA. The maths the',
-    '"market cipher" style dashboards are built from, drawn from the published formulas.',
-    'trend: two EMAs, the SuperTrend stop and directional movement.',
-    'momentum: RSI, MACD and the stochastic RSI.',
-    'volatility: Bollinger inside Keltner, with the squeeze pane that says how long they have been there.',
-    'ichimoku: the cloud, with ADX under it.',
-    'volume: VWAP bands, the volume pane and the money flow index.',
-    'scalp: a fast EMA, VWAP bands, a short wave and relative volume.',
-    'clean: nothing. Clears your studies and leaves the price bare.',
-    '',
-    'Call it with no name to get the list. It never touches a human\'s indicators or another agent\'s.',
-    CHART_ANSWER,
+    'Puts one to four charts side by side. The first is the primary: the full chart the human interacts',
+    'with, and the one every chart tool means when it names no chart. The rest are comparison charts,',
+    'read-only for the human, that chart_draw, chart_read and chart_snapshot reach with chart: 1, 2 or 3.',
+    'One chart fills the window, two sit side by side, three and four are two by two. A product no venue',
+    'lists refuses the whole layout. Calling it with one chart takes the comparison charts down.',
   ].join(' '),
-  { name: z.string().optional().describe('wave, trend, momentum, volatility, ichimoku, volume, scalp, clean. Omit to list them.') },
+  {
+    charts: z
+      .array(z.object({ product: z.string(), timeframe: z.string() }))
+      .min(1)
+      .max(4)
+      .describe('for example [{product:"BTC-USD", timeframe:"4h"}, {product:"ETH-USD", timeframe:"4h"}]'),
+  },
 );
 
 // ---------- the trading surface ----------

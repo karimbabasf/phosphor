@@ -9,8 +9,9 @@ import type { PriceReading } from '../view/basic.ts';
 import { buildRead, LIMITS as CHART_LIMITS, TIMEFRAMES, timeframeLabel } from '../chart.ts';
 import type { ChartGeometry, ChartIndicator, ChartState, ProviderChoice } from '../chart.ts';
 import { PROVIDER_CHOICES } from '../chart.ts';
+import type { ChartSlot, ChartStore } from '../charts.ts';
 import { indicatorSpec } from '../indicators.ts';
-import type { IndicatorResult } from '../indicators.ts';
+import type { IndicatorResult, IndicatorSpec } from '../indicators.ts';
 import { sameOrigin, tokenMatches } from './auth.ts';
 import { errText, fail, intParam, readBody, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
@@ -165,17 +166,120 @@ export async function sendCandles(ctx: Ctx, url: URL, res: http.ServerResponse):
 
 // ---------- chart ----------
 
+/* The custom indicator loader, when the app has one. It is the custom indicators unit's and
+   sits on the context under this name; a server built without it (every chart test, and any
+   install with an empty indicators folder) has none, and every `custom:<slug>` is then refused
+   by name. Read structurally so this file does not have to know the loader's whole shape. */
+type CustomIndicators = { get(slug: string): IndicatorSpec | null; refresh?(): unknown };
+
+export function customIndicatorsOf(ctx: Ctx): CustomIndicators | null {
+  const held = (ctx as { customIndicators?: unknown }).customIndicators;
+  if (held === null || typeof held !== 'object') return null;
+  const c = held as Partial<CustomIndicators>;
+  return typeof c.get === 'function' ? (c as CustomIndicators) : null;
+}
+
+const CUSTOM_SLUG = /^[a-z0-9-]{1,32}$/;
+
+// One resolver for every indicator type the chart can carry: the catalogue's own, then a
+// `custom:<slug>` through the loader's map and nothing else. The slug never joins a path;
+// an unknown one is undefined, which every caller turns into "unknown indicator" by name.
+export function resolveIndicator(ctx: Ctx, type: string): IndicatorSpec | undefined {
+  const key = type.toLowerCase().trim();
+  const builtIn = indicatorSpec(key);
+  if (builtIn !== undefined) return builtIn;
+  if (!key.startsWith('custom:')) return undefined;
+  const slug = key.slice('custom:'.length);
+  if (!CUSTOM_SLUG.test(slug)) return undefined;
+  return customIndicatorsOf(ctx)?.get(slug) ?? undefined;
+}
+
 function computeIndicators(
+  ctx: Ctx,
   state: ChartState,
   series: Candle[],
 ): { indicator: ChartIndicator; result: IndicatorResult }[] {
   const out: { indicator: ChartIndicator; result: IndicatorResult }[] = [];
   for (const indicator of state.indicators) {
-    const spec = indicatorSpec(indicator.type);
+    const spec = resolveIndicator(ctx, indicator.type);
     if (spec === undefined) continue;
     out.push({ indicator, result: spec.compute(series, indicator.params) });
   }
   return out;
+}
+
+function lastOf(values: (number | null)[]): number | null {
+  for (let i = values.length - 1; i >= 0; i--) {
+    const v = values[i];
+    if (v !== null && Number.isFinite(v)) return v;
+  }
+  return null;
+}
+
+export type ChartDigest = {
+  chart: number;
+  product: string;
+  timeframe: string;
+  bars: number;
+  last: number | null;
+  indicators: { id: string; type: string; last: Record<string, number | null>; state: string }[];
+  counts: { levels: number; marks: number; lines: number; zones: number; plans: number };
+  refused: string[];
+};
+
+// What a write answers with: the chart in a few hundred bytes. Every write used to answer with
+// the whole read, and the read grew to four kilobytes with a preset on the chart, so an agent
+// laying out a markup paid for the same chart again on every call. The digest is the part a
+// writer actually reads back: what is on the chart now and what was refused.
+export async function chartDigest(ctx: Ctx, slot: ChartSlot): Promise<ChartDigest> {
+  const chart = slot.store;
+  const state = chart.state();
+  const view = state.view;
+  let candles: Candle[] = [];
+  try {
+    candles = (await loadCandles(ctx, view.product, view.granularitySec, chart.historyNeeded(), view.provider)).candles;
+  } catch {
+    // A venue that will not answer leaves the digest without a last price. The counts and the
+    // refusals are still the answer to the write that was made.
+  }
+  const newest = candles.length > 0 ? (candles[candles.length - 1] as Candle) : null;
+  const drawings = slot.drawings.list();
+  return {
+    chart: slot.index,
+    product: view.product,
+    timeframe: timeframeLabel(view.granularitySec),
+    bars: candles.length,
+    last: newest === null ? null : newest.c,
+    indicators: computeIndicators(ctx, state, candles).map(({ indicator, result }) => ({
+      id: indicator.id,
+      type: indicator.type,
+      last: Object.fromEntries(result.plots.map((plot) => [plot.key, lastOf(plot.values)])),
+      state: result.state,
+    })),
+    counts: {
+      levels: state.levels.length,
+      marks: state.marks.length,
+      lines: drawings.filter((d) => d.kind === 'trendline').length,
+      zones: drawings.filter((d) => d.kind === 'zone').length,
+      plans: plansOnChart(ctx, view.product),
+    },
+    refused: [],
+  };
+}
+
+// How many plans are drawn on this chart, read off the trading payload. Guarded: the plan store
+// is the execution unit's and a server built without one has no plans at all.
+function plansOnChart(ctx: Ctx, product: string): number {
+  const coin = product.split('-')[0]?.toUpperCase() ?? '';
+  let payload: unknown;
+  try {
+    payload = ctx.trade.payload();
+  } catch {
+    return 0;
+  }
+  const plans = (payload as { plans?: unknown } | null)?.plans;
+  if (!Array.isArray(plans)) return 0;
+  return plans.filter((p) => p !== null && typeof p === 'object' && String((p as { symbol?: unknown }).symbol ?? '').toUpperCase() === coin).length;
 }
 
 // Everything the renderer needs in one round trip: the view, the candles, and every
@@ -202,7 +306,7 @@ export function chartPayload(ctx: Ctx, slot = 0): unknown | null {
     load.candles.length === 0 && !load.filling
       ? `no candles for ${state.view.product} at ${String(state.view.granularitySec)}s, and none are being fetched`
       : null;
-  const computed = computeIndicators(state, load.candles);
+  const computed = computeIndicators(ctx, state, load.candles);
   return {
     slot,
     rev: state.rev,
@@ -256,7 +360,7 @@ export async function chartRead(ctx: Ctx, by?: string | null): Promise<unknown> 
       state,
       candles: load.candles,
       meta: { source: load.source, stale: load.stale, built: load.built },
-      computed: computeIndicators(state, load.candles),
+      computed: computeIndicators(ctx, state, load.candles),
       nowSec: Math.floor(Date.now() / 1000),
       housekeeping: ctx.chart.housekeeping(by, ctx.drawings.list()),
       drawings: ctx.drawings.list(),
@@ -296,7 +400,8 @@ export async function handleChartWrite(ctx: Ctx, req: http.IncomingMessage, res:
   // The window's own command line. The human gets the same vocabulary as the agent, so
   // the chart is not a surface only an agent can change.
   if (body.addIndicator !== null && typeof body.addIndicator === 'object') {
-    const outcome = ctx.chart.addIndicator(body.addIndicator as Record<string, unknown>, 'human');
+    const asked = body.addIndicator as Record<string, unknown>;
+    const outcome = ctx.chart.addIndicator(asked, 'human', null, resolveIndicator(ctx, String(asked.type ?? '')));
     if (!outcome.ok) return fail(res, 400, outcome.error, { notes: outcome.notes });
     notes = notes.concat(outcome.notes);
   }
@@ -329,10 +434,10 @@ export function numOrUndefined(raw: unknown): number | undefined {
    The venue moves first because the product is resolved against it: "put SOL on coinbase"
    has to either work or say why, rather than resolving SOL the way the catalogue prefers
    and then charting Hyperliquid's perp under Coinbase's name. */
-export function resolveViewPatch(ctx: Ctx, patch: JsonBody, requireListed: boolean): string | null {
+export function resolveViewPatch(ctx: Ctx, patch: JsonBody, requireListed: boolean, chart: ChartStore = ctx.chart): string | null {
   const asked = typeof patch.product === 'string' ? patch.product.trim() : '';
   const wantRaw =
-    patch.provider === undefined ? ctx.chart.state().view.provider : String(patch.provider).trim().toLowerCase();
+    patch.provider === undefined ? chart.state().view.provider : String(patch.provider).trim().toLowerCase();
   const want: ProviderChoice = PROVIDER_CHOICES.includes(wantRaw as ProviderChoice)
     ? (wantRaw as ProviderChoice)
     : 'auto';
@@ -363,7 +468,7 @@ export function resolveViewPatch(ctx: Ctx, patch: JsonBody, requireListed: boole
   // on screen, and the same refusal applies: pin it anyway and the chart goes blank with
   // nothing saying why.
   if (want !== 'auto') {
-    const current = ctx.chart.state().view.product;
+    const current = chart.state().view.product;
     if (ctx.market.resolveOn(current, want) === null) {
       return `${want} does not list ${current}. name a product it does list, or set the venue back to auto`;
     }

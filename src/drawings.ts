@@ -30,7 +30,9 @@ export type Drawing = {
   granularitySec?: number;
   createdAt: number;
   line?: Line;
-  zone?: { low: number; high: number };
+  // A price band, and optionally the span of time it covers. Without t1 and t2 it runs the
+  // width of the chart, which is what a supply zone usually means.
+  zone?: { low: number; high: number; t1?: number; t2?: number };
 };
 
 export type DrawingStore = {
