@@ -10,12 +10,12 @@
 // surface and quietly retire the claim. A separate kind keeps the swap rail's promise literally
 // true and puts this rail's weaker promise where it can be read.
 //
-// THE SEQUENCE, four steps, one signature, nothing sent on any chain by us:
-//   1. POST /v0/quote, depositType INTENTS, recipientType DESTINATION_CHAIN -> a deposit handle
-//   2. POST /v0/generate-intent -> an erc191 payload transferring our balance to that handle
-//   3. check the payload, sign it with the EVM key, POST /v0/submit-intent
-//   4. GET /v0/status until SUCCESS, REFUNDED or FAILED
-// The solver takes the balance inside the verifier and pays out on the destination chain.
+// THE SEQUENCE, four steps, one signature, nothing sent on any chain by us, lives in
+// src/rails/intents-spend.ts since 2026-09-11 because the HyperCore deposit rail runs the same
+// four steps: quote with depositType INTENTS, generate-intent, check and sign the payload,
+// submit and watch. The solver takes the balance inside the verifier and pays out on the
+// destination chain. What stays here is what is specific to a withdrawal: the destination,
+// the floor, the echo it expects, and the sentences.
 //
 // WHAT IS DIFFERENT ABOUT THIS RAIL, AND IT IS THE WHOLE REASON TO READ THIS HEADER:
 //
@@ -53,16 +53,10 @@ import type {
   RailResult,
   SimulationResult,
 } from '../types.ts';
-import { ONECLICK_TERMINAL, baseUnits, oneLine, quoteEchoProblems, resolveAsset, toBaseUnits } from '../intents.ts';
-import type { OneClickClient, OneClickQuote, OneClickStatus, TokensFile } from '../intents.ts';
-import {
-  INTENTS_SIGNING_STANDARD,
-  INTENTS_VERIFIER,
-  base58Decode,
-  checkIntentPayload,
-  intentsApi,
-  liveIntentsSigner,
-} from './intents-native.ts';
+import { baseUnits, oneLine, quoteEchoProblems, resolveAsset, toBaseUnits } from '../intents.ts';
+import type { OneClickClient, OneClickQuote, QuoteEcho, TokensFile } from '../intents.ts';
+import { spendFromIntents } from './intents-spend.ts';
+import { INTENTS_VERIFIER, base58Decode, intentsApi, liveIntentsSigner } from './intents-native.ts';
 import type { IntentsApiPort, IntentsSignerPort } from './intents-native.ts';
 
 // Same fixed account as the swap rail, and for the same reason: the funds are spent inside the
@@ -294,8 +288,8 @@ export function intentsWithdrawRail(deps: IntentsWithdrawRailDeps): IntentsWithd
   // The comparison itself is in src/intents.ts now, shared with every other rail that quotes.
   // What stays here is what this rail asked for, spelled out, so reading this function tells you
   // where the money goes without reading the transport.
-  function checkQuoteEcho(draft: IntentsWithdrawDraft, p: Plan, raw: unknown): string[] {
-    return quoteEchoProblems(raw, {
+  function echoWant(draft: IntentsWithdrawDraft, p: Plan): QuoteEcho {
+    return {
       recipient: p.to,
       recipientVerb: 'pay',
       recipientNoun: 'wallet',
@@ -313,7 +307,11 @@ export function intentsWithdrawRail(deps: IntentsWithdrawRailDeps): IntentsWithd
         'there is nothing tying it to the destination the draft names. The signed intent hands our balance to a ' +
         `solver handle and does not name ${oneLine(p.to, 60)} anywhere, so without the echo this withdrawal ` +
         'cannot be checked and is refused.',
-    });
+    };
+  }
+
+  function checkQuoteEcho(draft: IntentsWithdrawDraft, p: Plan, raw: unknown): string[] {
+    return quoteEchoProblems(raw, echoWant(draft, p));
   }
 
   function priceLines(draft: IntentsWithdrawDraft, p: Plan, quote: OneClickQuote): string[] {
@@ -405,65 +403,24 @@ export function intentsWithdrawRail(deps: IntentsWithdrawRailDeps): IntentsWithd
     const owner = requireOwner(draft);
     requireEvmDestinationIsOurs(draft, p, owner);
 
-    const response = await api.quote({
-      dry: false,
-      originAsset: p.asset,
-      destinationAsset: p.asset,
-      amount: p.amountBase.toString(),
-      account: owner,
-      recipient: p.to,
-      recipientType: 'DESTINATION_CHAIN',
-    });
-    const quote = response.quote;
-
-    const problems = [...checkQuote(draft, p, quote), ...checkQuoteEcho(draft, p, response.raw)];
-    if (problems.length > 0) throw new Error(`live quote does not match the approved draft: ${problems.join('; ')}`);
-
-    // For an INTENTS deposit type this is a handle inside the verifier rather than a chain
-    // address, and nothing is ever sent to it. It ties the signed intent back to this quote,
-    // which is what binds the signature to the destination checked above.
-    const depositAddress = quote.depositAddress;
-    if (typeof depositAddress !== 'string' || depositAddress.trim() === '') {
-      throw new Error(`the quote carries no deposit handle to attach an intent to (got ${oneLine(depositAddress, 60)})`);
-    }
-
-    const generated = await api.generateIntent({ signerId: owner, depositAddress });
-
-    if (generated.standard !== INTENTS_SIGNING_STANDARD) {
-      throw new Error(
-        `generate-intent returned a ${oneLine(generated.standard, 40)} payload, but this rail signs ` +
-          `${INTENTS_SIGNING_STANDARD} only`,
-      );
-    }
-
-    // The same reader the swap rail uses. A withdrawal comes back as a 'transfer' to the deposit
-    // handle, which that reader binds to our own quote. originAsset and destinationAsset are the
-    // same id here because nothing is swapped; the token_diff branch cannot be satisfied by one
-    // entry that must be both negative and above a floor, so a payload of that shape is refused
-    // rather than misread.
-    const payloadProblems = checkIntentPayload(generated.payload, {
-      signerId: owner,
-      originAsset: p.asset,
-      destinationAsset: p.asset,
-      amountBase: p.amountBase,
-      minOutBase: p.minReceivedBase,
-      now: now(),
-      maxDeadlineMs,
-      depositAddress,
-    });
-    if (payloadProblems.length > 0) {
-      throw new Error(`refusing to sign the intent 1click generated: ${payloadProblems.join('; ')}`);
-    }
-
-    // Signed exactly as returned: the signature has to cover the same bytes the verifier will
-    // parse, so the payload string is never re-serialised.
-    const payload = generated.payload as string;
-    const signature = await signer.signErc191(keysPath, payload);
-
-    const submitted = await api.submitIntent({ payload, signature });
-    const evidence = `intent ${submitted.intentHash}, quote handle ${oneLine(depositAddress, 80)}`;
-
-    const watch = await watchStatus(depositAddress);
+    // The four shared steps: live quote, echo check, generated intent checked and signed,
+    // submitted and watched. Every refusal before the signature throws out of here.
+    const spent = await spendFromIntents(
+      { api, signer, keysPath, now, sleep, pollIntervalMs, pollTimeoutMs, maxDeadlineMs },
+      {
+        owner,
+        originAsset: p.asset,
+        destinationAsset: p.asset, // a withdrawal does not change the asset
+        amountBase: p.amountBase,
+        minOutBase: p.minReceivedBase,
+        recipient: p.to,
+        recipientType: 'DESTINATION_CHAIN',
+        echo: echoWant(draft, p),
+        checkQuote: (quote) => checkQuote(draft, p, quote),
+      },
+    );
+    const { quote, depositAddress, watch } = spent;
+    const evidence = `intent ${spent.intentHash}, quote handle ${oneLine(depositAddress, 80)}`;
 
     if (watch.status === 'SUCCESS') {
       return {
@@ -472,7 +429,7 @@ export function intentsWithdrawRail(deps: IntentsWithdrawRailDeps): IntentsWithd
           `withdrew ${draft.amount} ${draft.symbol} from ${INTENTS_VERIFIER}; ` +
           `${oneLine(quote.amountOutFormatted, 40)} ${draft.symbol} paid out to our ${draft.chain} wallet ${p.to}; ` +
           `${evidence}. The balance inside the verifier is now smaller by that amount.`,
-        txids: [submitted.intentHash, ...watch.destinationTxHashes],
+        txids: [spent.intentHash, ...watch.destinationTxHashes],
       };
     }
 
@@ -482,7 +439,7 @@ export function intentsWithdrawRail(deps: IntentsWithdrawRailDeps): IntentsWithd
         detail:
           `1click reported ${watch.reported} after the intent was submitted; ${evidence}. ` +
           `A refund is credited back to ${owner} inside ${INTENTS_VERIFIER}, which is where the balance started.`,
-        txids: [submitted.intentHash, ...watch.originTxHashes, ...watch.destinationTxHashes],
+        txids: [spent.intentHash, ...watch.originTxHashes, ...watch.destinationTxHashes],
       };
     }
 
@@ -496,36 +453,8 @@ export function intentsWithdrawRail(deps: IntentsWithdrawRailDeps): IntentsWithd
         `${Math.round(pollTimeoutMs / 1000)}s (last status ${watch.reported}); ${evidence}. ` +
         `THE INTENT IS SIGNED AND SUBMITTED and the payout may still land: check the ${draft.chain} wallet ` +
         `${p.to} and the balance inside ${INTENTS_VERIFIER} before signing another.`,
-      txids: [submitted.intentHash],
+      txids: [spent.intentHash],
     };
-  }
-
-  // Polls until terminal, out of attempts, or out of time. Never throws once the intent has
-  // been submitted: a status endpoint that goes down after the money has moved must not become
-  // an unhandled rejection.
-  async function watchStatus(depositAddress: string): Promise<OneClickStatus> {
-    const deadline = now() + pollTimeoutMs;
-    const maxPolls = Math.max(1, Math.ceil(pollTimeoutMs / pollIntervalMs));
-    let last: OneClickStatus = {
-      found: false,
-      status: 'PENDING_DEPOSIT',
-      reported: 'not polled',
-      originTxHashes: [],
-      destinationTxHashes: [],
-    };
-
-    for (let attempt = 0; attempt < maxPolls; attempt += 1) {
-      try {
-        last = await api.status(depositAddress);
-        if ((ONECLICK_TERMINAL as readonly string[]).includes(last.status)) return last;
-      } catch (err) {
-        last = { ...last, reported: `status check failed: ${oneLine(errText(err), 80)}` };
-      }
-      if (now() >= deadline) break;
-      await sleep(pollIntervalMs);
-    }
-
-    return last;
   }
 
   return { kind: 'intents_withdraw', valueUsd, simulate, execute };
