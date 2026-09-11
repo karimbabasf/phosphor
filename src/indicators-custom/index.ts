@@ -7,3 +7,5 @@ export type { CustomIndicator, CustomInput, CustomPlot, Expr, Tone } from './sch
 export { compile, WORK_BUDGET } from './evaluate.ts';
 export { translatePine } from './pine.ts';
 export type { PineResult } from './pine.ts';
+export { createCustomIndicators, FILE_CAP_BYTES, SLUG_RE } from './loader.ts';
+export type { CustomIndicators, LoaderProblem } from './loader.ts';
