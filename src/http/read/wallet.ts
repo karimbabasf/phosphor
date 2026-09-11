@@ -4,7 +4,6 @@
 import { classify } from '../../composition.ts';
 import { buildWallet } from '../../wallet.ts';
 import { buildGreeting } from '../../greeting.ts';
-import { buildMandateCatalog } from '../../strategy/catalog.ts';
 import { VERSION } from '../../version.ts';
 import { fail, intParam, round2, sendJson } from '../respond.ts';
 import { LOG_LIMIT_MAX } from '../context.ts';
@@ -43,9 +42,6 @@ export const walletReads: ReadTable = {
       pending: pending.map((p) => p.id),
       stale: wallet.stale,
     });
-  },
-  mandate_catalog: (_ctx, _body, _args, res) => {
-    sendJson(res, 200, buildMandateCatalog());
   },
   balances: (ctx, _body, _args, res) => {
     const snapshot = ctx.ledger.snapshot();

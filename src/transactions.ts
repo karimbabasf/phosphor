@@ -160,9 +160,10 @@ const ACTIONS: Record<string, TxEntry['action'] | null | undefined> = {
   yield_withdraw: 'withdraw',
   // Not a transaction. It moves no money and it is already a line in the log.
   policy_change: null,
-  // Arming grants standing authority; it moves nothing itself. What the armed bot then does
-  // arrives here as its own entries, which is the only honest way to show it: the mandate is
-  // the permission, not the spend.
+  // A trade moves nothing off the venue: margin, position and profit stay inside the trading
+  // account, and the fills are on the trade page. Not a transaction here. The retired mandate
+  // kind is kept for the rows already on disk, for the same reason as the pool kinds.
+  trade: null,
   mandate_arm: null,
 };
 

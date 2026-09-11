@@ -12,7 +12,7 @@
 // This file is the door. The work is in src/proposals/, split by job: lifecycle.ts is what a
 // proposal is and what a click does to it, execute.ts is what actually runs, draft.ts is how a
 // fund move is planned and priced, rails.ts holds the four drafts that move money somewhere
-// else, positions.ts the one that opens a position, and reconcile.ts what becomes of a
+// else, trade.ts the two that touch a position, and reconcile.ts what becomes of a
 // proposal the process died in the middle of. Everything anything outside this directory imports
 // is re-exported here, so no caller changed.
 
@@ -33,7 +33,7 @@ import { executeApproved, land } from './proposals/execute.ts';
 import { chainTxLookup, reconcileOnBoot, reconcileProposal } from './proposals/reconcile.ts';
 import { proposeConsolidate, proposePolicyChange } from './proposals/draft.ts';
 import { proposeHlDeposit, proposeIntentsDeposit, proposeIntentsWithdraw, proposeSwap } from './proposals/rails.ts';
-import { proposeMandate } from './proposals/positions.ts';
+import { proposeTrade, proposeTradeChange } from './proposals/trade.ts';
 
 export type { ProposalDeps };
 
@@ -60,7 +60,8 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     proposeHlDeposit: (p) => serialise(() => proposeHlDeposit(ctx, p)),
     proposeIntentsDeposit: (p) => serialise(() => proposeIntentsDeposit(ctx, p)),
     proposeIntentsWithdraw: (p) => serialise(() => proposeIntentsWithdraw(ctx, p)),
-    proposeMandate: (p) => serialise(() => proposeMandate(ctx, p)),
+    proposeTrade: (p) => serialise(() => proposeTrade(ctx, p)),
+    proposeTradeChange: (p) => serialise(() => proposeTradeChange(ctx, p)),
     // approve() executes, so it shares the queue: a human click landing next to an
     // auto-approval must not be able to double-spend the cap either.
     approve: (id: string) => serialise(() => approve(ctx, id)),

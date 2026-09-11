@@ -83,8 +83,11 @@ test('a tool that only asks never reads as a tool that did it', () => {
   assert.equal(agent.toolLabel('swap'), 'swapping');
   assert.equal(agent.toolLabel('propose_intents_withdraw'), 'asking to withdraw');
   assert.equal(agent.toolLabel('intents_withdraw'), 'withdrawing');
-  assert.equal(agent.toolLabel('propose_mandate'), 'asking to arm a mandate');
-  assert.equal(agent.toolLabel('mandate_arm'), 'arming a mandate');
+  assert.equal(agent.toolLabel('propose_trade'), 'proposing a trade');
+  assert.equal(agent.toolLabel('trade'), 'opening a trade');
+  assert.equal(agent.toolLabel('propose_trade_change'), 'proposing a change');
+  assert.equal(agent.toolLabel('trade_change'), 'changing a trade');
+  assert.equal(agent.toolLabel('trade_plan'), 'drawing a plan');
   assert.equal(agent.toolLabel('propose_hl_deposit'), 'asking to fund trading');
   assert.equal(agent.toolLabel('propose_policy_change'), 'asking to change a rule');
 });

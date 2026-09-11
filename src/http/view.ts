@@ -1,6 +1,6 @@
-// The sixteen view tools: everything an agent can write that changes what the human sees and
-// moves no money. Chart geometry, studies, levels, marks, trend lines, presets, the window's
-// colours, the board, a spawned worker, and the trading surface's own overlays.
+// The view tools: everything an agent can write that changes what the human sees and moves no
+// money. Chart geometry, studies, levels, marks, trend lines, presets, the window's colours, the
+// board, a spawned worker, the trading surface's own overlays, and a plan drawn as an idea.
 //
 // They never reach the proposal path and never wait on an approval. They are still audited like
 // every other op: an agent that can change what the human sees while that human approves a
@@ -80,8 +80,22 @@ const HANDLERS: Record<string, ViewHandler> = {
   }),
   trade_highlight: tradeWrite(({ ctx, args }) => ctx.trade.view.highlight(args, 'agent')),
   trade_overlay: tradeWrite(({ ctx, args }) => ctx.trade.view.setOverlay(args, 'agent')),
-  trade_note: tradeWrite(({ ctx, args }) => ctx.trade.view.setNote(args, 'agent')),
   trade_clear: tradeWrite(({ ctx, args }) => ctx.trade.view.clear(String(args.what ?? 'agent'))),
+  // A plan as an idea: drawn on the chart and listed under Waiting with no authority. It answers
+  // with the row it drew, so the agent has the id "go" will arm without a second read.
+  trade_plan: ({ ctx, args, body, res }): Handled => {
+    const by = String(body.session ?? '') || null;
+    const out = ctx.trade.plan(args, by);
+    if (!out.ok) {
+      fail(res, 400, out.error);
+      return DONE;
+    }
+    ctx.audit.append('tool_call', `plan: ${out.notes.join('; ')}`, { plan: out.row });
+    ctx.sse.broadcastTrade();
+    ctx.sse.broadcastChart();
+    sendJson(res, 200, { ok: true, notes: out.notes, plan: out.row, trade: ctx.trade.read() });
+    return DONE;
+  },
 
   // ---------- colour ----------
   // It does not change the chart, so answering with the chart would be noise. It answers with the

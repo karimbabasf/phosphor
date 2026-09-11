@@ -4,7 +4,7 @@
 // now been paid for twice from opposite directions.
 //
 // The registry (./index.ts) constructs rails, so it imports oneclick, the intents rails and
-// the mandate rail, and through them config, RPC hosts and the 1Click token list. The policy
+// the trade rail, and through them config, RPC hosts and the 1Click token list. The policy
 // engine must not pull any of that in: it is the part that decides whether money is allowed
 // to move, and it stays loadable and testable on its own.
 //
@@ -20,8 +20,8 @@ import type {
   HlDepositDraft,
   IntentsDepositDraft,
   IntentsWithdrawDraft,
-  MandateDraft,
   SwapDraft,
+  TradeDraft,
   WriteDraft,
 } from '../types.ts';
 
@@ -30,21 +30,21 @@ export type RailKind =
   | 'hl_deposit'
   | 'intents_deposit'
   | 'intents_withdraw'
-  | 'mandate_arm';
+  | 'trade';
 
 export type RailDraft =
   | SwapDraft
   | HlDepositDraft
   | IntentsDepositDraft
   | IntentsWithdrawDraft
-  | MandateDraft;
+  | TradeDraft;
 
 export const RAIL_KINDS: readonly RailKind[] = [
   'swap',
   'hl_deposit',
   'intents_deposit',
   'intents_withdraw',
-  'mandate_arm',
+  'trade',
 ];
 
 export function isRailKind(kind: WriteDraft['kind']): kind is RailKind {

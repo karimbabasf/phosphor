@@ -22,11 +22,15 @@ import {
   SCHEDULE_CANCEL_MAX_PER_DAY,
   SCHEDULE_CANCEL_MIN_LEAD_MS,
   SCHEDULE_CANCEL_VOLUME_REQUIRED_USD,
+  STOP_SLIP_FRACTION,
   isScheduleCancelLocked,
   buildBatchModifyAction,
   buildBracketAction,
+  buildExitsAction,
   buildModifyAction,
   buildScheduleCancelAction,
+  buildTriggerAction,
+  stopLimitPx,
 } from '../../src/hl/exchange.ts';
 import type { OrderRequest, TriggerRequest } from '../../src/hl/exchange.ts';
 
@@ -92,6 +96,54 @@ test('a trigger carries the trigger price in p, not a zero that would read as fr
   assert.equal((a.orders[1].t as { trigger: { triggerPx: string } }).trigger.triggerPx, '90');
 });
 
+// ---------- the stop leg's own bound ----------
+
+test('a stop leg carries its limit price in p when it has one, ten percent past the trigger', () => {
+  // The venue's own tolerance on a triggered stop market order is 10%. The trigger price alone
+  // as the limit would rest through a gap, which is the one thing a stop must not do.
+  const sellStop = stopLimitPx(90, false, SZ);
+  assert.ok(Math.abs(sellStop - 81) < 1e-9, `${sellStop}`);
+  const buyStop = stopLimitPx(110, true, SZ);
+  assert.ok(Math.abs(buyStop - 121) < 1e-9, `${buyStop}`);
+  assert.equal(STOP_SLIP_FRACTION, 0.1);
+
+  const a = buildBracketAction(order(), [exit({ triggerPx: 90, limitPx: sellStop })]) as { orders: Record<string, unknown>[] };
+  assert.equal(a.orders[1].p, '81');
+  assert.equal((a.orders[1].t as { trigger: { triggerPx: string } }).trigger.triggerPx, '90');
+});
+
+test('a target leg is a limit at the target, not a market order', () => {
+  const a = buildBracketAction(order(), [exit({ tpsl: 'tp', triggerPx: 120, limitPx: 120, isMarket: false })]) as {
+    orders: Record<string, unknown>[];
+  };
+  const t = a.orders[1].t as { trigger: { isMarket: boolean; triggerPx: string } };
+  assert.equal(t.trigger.isMarket, false);
+  assert.equal(a.orders[1].p, '120');
+});
+
+test('exits placed after the fact are grouped positionTpsl and always reduce', () => {
+  const a = buildExitsAction([exit({ triggerPx: 90, limitPx: 81 }), exit({ tpsl: 'tp', triggerPx: 120, limitPx: 120, isMarket: false })]) as {
+    grouping: string;
+    orders: Record<string, unknown>[];
+  };
+  assert.equal(a.grouping, 'positionTpsl');
+  assert.equal(a.orders.length, 2);
+  for (const o of a.orders) {
+    assert.equal(o.r, true);
+    assert.deepEqual(Object.keys(o), ['a', 'b', 'p', 's', 'r', 't']);
+  }
+});
+
+test('a stop ENTRY is a trigger that does not reduce, grouped na, with its slippage bound in p', () => {
+  const a = buildTriggerAction([exit({ isBuy: true, triggerPx: 110, limitPx: 110.33, reduceOnly: false })], 'na') as {
+    grouping: string;
+    orders: Record<string, unknown>[];
+  };
+  assert.equal(a.grouping, 'na');
+  assert.equal(a.orders[0].r, false, 'an entry opens');
+  assert.equal(a.orders[0].p, '110.33');
+});
+
 // ---------- modify ----------
 
 test('modify carries oid and the replacement order, and omits always_place when false', () => {
@@ -118,6 +170,16 @@ test('modify accepts a cloid as the oid, since the venue takes either', () => {
 test('the default is not to place: an order that filled mid-flight must not be silently replaced', () => {
   const a = buildModifyAction(1, order()) as Record<string, unknown>;
   assert.equal('a' in a, false);
+});
+
+test('a modify may carry a trigger, and a trigger modify is always_place by the venue rule', () => {
+  const a = buildModifyAction('0xabc', exit({ triggerPx: 88, limitPx: 79.2 }), true) as Record<string, unknown>;
+  assert.deepEqual(Object.keys(a), ['type', 'oid', 'order', 'a']);
+  const o = a.order as Record<string, unknown>;
+  assert.deepEqual(Object.keys(o), ['a', 'b', 'p', 's', 'r', 't']);
+  assert.equal(o.r, true);
+  assert.equal(o.p, '79.2');
+  assert.deepEqual(o.t, { trigger: { isMarket: true, triggerPx: '88', tpsl: 'sl' } });
 });
 
 // ---------- batchModify ----------

@@ -6,7 +6,8 @@
 //   The cloid. newCloid() promises "after an ambiguous network failure the same cloid cannot
 //   produce a second fill". Every one of the six call sites in the runner generated a FRESH
 //   one, so the id the venue dedupes on was new on every attempt and the documented safety did
-//   not exist at all.
+//   not exist at all. The id is now a pure function of the plan, the leg and its generation,
+//   with no time window at all: a plan leg is one order for the life of the plan.
 //
 //   The withdrawal nonce. `nonce = action.time` is the only identity a withdraw3 has. The post
 //   was not wrapped, so a lost response after the venue accepted surfaced as a thrown error, and
@@ -17,7 +18,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Address } from 'viem';
 
-import { cloidFor, newCloid, CLOID_WINDOW_MS } from '../../src/hl/exchange.ts';
+import { cloidFor, newCloid } from '../../src/hl/exchange.ts';
 import { withdraw3, usdClassTransfer } from '../../src/rails/hyperliquid-withdraw.ts';
 import type { HlWithdrawDeps } from '../../src/rails/hyperliquid-withdraw.ts';
 
@@ -25,31 +26,23 @@ const OWNER = '0x1111111111111111111111111111111111111111' as Address;
 
 // ---------- the client order id ----------
 
-test('the same order in the same window produces the same id', () => {
-  const now = 1_800_000_000_000;
-  const a = cloidFor({ mandate: 'm1', leg: 'open-ETH-long', now });
-  const b = cloidFor({ mandate: 'm1', leg: 'open-ETH-long', now: now + 5_000 });
-  assert.equal(a, b, 'a retry five seconds later is the same order');
+test('the same plan, leg and generation produce the same id, whenever they are asked', () => {
+  const a = cloidFor({ plan: 'pl_1', leg: 'entry', gen: 1 });
+  const b = cloidFor({ plan: 'pl_1', leg: 'entry', gen: 1 });
+  assert.equal(a, b, 'a retry after a lost reply is the same order to the venue, however late it comes');
 });
 
-test('a different leg, mandate or window produces a different id', () => {
-  const now = 1_800_000_000_000;
-  const base = cloidFor({ mandate: 'm1', leg: 'open-ETH-long', now });
-  assert.notEqual(base, cloidFor({ mandate: 'm2', leg: 'open-ETH-long', now }));
-  assert.notEqual(base, cloidFor({ mandate: 'm1', leg: 'reduce-ETH-0.5000', now }));
-  assert.notEqual(base, cloidFor({ mandate: 'm1', leg: 'open-ETH-long', now: now + CLOID_WINDOW_MS * 2 }));
+test('a different leg, plan or generation produces a different id', () => {
+  const base = cloidFor({ plan: 'pl_1', leg: 'stop', gen: 1 });
+  assert.notEqual(base, cloidFor({ plan: 'pl_2', leg: 'stop', gen: 1 }));
+  assert.notEqual(base, cloidFor({ plan: 'pl_1', leg: 'target', gen: 1 }));
+  assert.notEqual(base, cloidFor({ plan: 'pl_1', leg: 'stop', gen: 2 }), 'a modified exit is a new order with an id of its own');
 });
 
 test('the id is a 128 bit hex string, the shape the venue takes', () => {
-  const id = cloidFor({ mandate: 'm1', leg: 'open-ETH-long' });
+  const id = cloidFor({ plan: 'pl_1', leg: 'entry', gen: 0 });
   assert.match(id, /^0x[0-9a-f]{32}$/);
   assert.match(newCloid(), /^0x[0-9a-f]{32}$/);
-});
-
-test('the retry window is wider than a venue write timeout', () => {
-  // A withdrawal or an order gets 30 s before its own deadline fires. A retry window shorter
-  // than that would hand the retry a different id, which is the bug this closes.
-  assert.ok(CLOID_WINDOW_MS >= 30_000, 'a window under the write budget cannot cover a timed-out attempt');
 });
 
 test('random ids, the old behaviour, collide with nothing and therefore dedupe nothing', () => {

@@ -33,9 +33,12 @@ export type Outcome =
   | { ok: true; notes: string[]; error?: undefined }
   | { ok: false; notes: string[]; error: string };
 
-// The row kinds that can be pointed at. Each one is something the trading page renders as a
-// list with stable ids, which is the whole requirement for being addressable.
-const HIGHLIGHT_KINDS = ['position', 'order', 'fill', 'mandate', 'rule'] as const;
+// The kinds that can be pointed at. Each one is something the window renders with a stable id,
+// which is the whole requirement for being addressable: a row on the rail, or an object on the
+// chart (a plan, a level, a line, an indicator). The note rides on the highlight: there is no
+// separate note surface, because a sentence with nothing pointed at is a sentence nobody can
+// check.
+const HIGHLIGHT_KINDS = ['position', 'order', 'fill', 'plan', 'level', 'line', 'indicator'] as const;
 export type HighlightKind = (typeof HIGHLIGHT_KINDS)[number];
 
 // What the chart may draw on top of price. Every one of these is a fact about the account
@@ -47,7 +50,7 @@ export const OVERLAYS = [
   'targets', // working take-profit triggers
   'orders', // resting limit orders
   'fills', // where this account actually traded
-  'mandateWall', // the price at which the approved max loss is reached
+  'mandateWall', // the plan's stop, the price at which the approved max loss is reached
 ] as const;
 export type OverlayName = (typeof OVERLAYS)[number];
 
@@ -67,9 +70,6 @@ export type TradeViewState = {
   symbol: string;
   overlays: Overlays;
   highlights: Highlight[];
-  note: string | null;
-  noteSource: Source | null;
-  noteAt: string | null;
   rev: number;
   lastDriver: Source;
   lastChangeAt: string;
@@ -113,7 +113,6 @@ export function createTradeView(
   setFocus(patch: Record<string, unknown>, source: Source): Outcome;
   highlight(args: Record<string, unknown>, source: Source): Outcome;
   setOverlay(args: Record<string, unknown>, source: Source): Outcome;
-  setNote(args: Record<string, unknown>, source: Source): Outcome;
   clear(what: string): Outcome;
   agentObjects(): number;
 } {
@@ -121,9 +120,6 @@ export function createTradeView(
     symbol: initialSymbol.toUpperCase(),
     overlays: defaultOverlays(),
     highlights: [],
-    note: null,
-    noteSource: null,
-    noteAt: null,
     rev: 0,
     lastDriver: 'human',
     lastChangeAt: new Date(now()).toISOString(),
@@ -230,39 +226,15 @@ export function createTradeView(
       return { ok: true, notes: [] };
     },
 
-    setNote(args, source) {
-      const text = str(args.text);
-      if (text === null) return { ok: false, notes: [], error: 'note needs text' };
-      if (text.length > NOTE_MAX_CHARS) {
-        // Refused rather than truncated. A sentence cut in half can mean the opposite of the
-        // whole, and an agent that gets told to be brief writes a better line than one whose
-        // reasoning was silently edited.
-        return { ok: false, notes: [], error: `note too long: ${text.length} chars, max ${NOTE_MAX_CHARS}` };
-      }
-      const trimmed = text.trim();
-      // Stored verbatim. Escaping belongs at the one place that renders it, and doing it here
-      // as well is how one of the two ends up wrong.
-      state.note = trimmed === '' ? null : trimmed;
-      state.noteSource = state.note === null ? null : source;
-      state.noteAt = state.note === null ? null : new Date(now()).toISOString();
-      touch(source);
-      return { ok: true, notes: [] };
-    },
-
     clear(what) {
       const target = what === '' ? 'agent' : what;
-      if (target !== 'agent' && target !== 'all' && target !== 'highlights' && target !== 'note') {
-        return { ok: false, notes: [], error: `unknown clear target: ${what}. known: agent, all, highlights, note` };
+      if (target !== 'agent' && target !== 'all' && target !== 'highlights') {
+        return { ok: false, notes: [], error: `unknown clear target: ${what}. known: agent, all, highlights` };
       }
       const notes: string[] = [];
       if (target === 'agent' || target === 'all' || target === 'highlights') {
         notes.push(`cleared ${live().length} highlight(s)`);
         state.highlights = [];
-      }
-      if (target === 'agent' || target === 'all' || target === 'note') {
-        state.note = null;
-        state.noteSource = null;
-        state.noteAt = null;
       }
       // 'agent' deliberately leaves the symbol and the overlays alone: those are the human's
       // view of their own account, not objects the agent put there to be tidied away.
@@ -274,6 +246,6 @@ export function createTradeView(
       return { ok: true, notes };
     },
 
-    agentObjects: () => live().filter((h) => h.source === 'agent').length + (state.noteSource === 'agent' ? 1 : 0),
+    agentObjects: () => live().filter((h) => h.source === 'agent').length,
   };
 }

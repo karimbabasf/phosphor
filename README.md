@@ -241,9 +241,12 @@ Anything that opens says so the same way everywhere: the pointer changes, the bo
 chevron travels, it scales on press and it takes a focus ring. Anything that is only a readout
 never moves.
 
-**Trade** is the chart with one rail beside it, in three zones: the account and its margin, then
-whatever is running, then the fills taking the rest of the height. Nothing armed and nothing open
-are one line each, because an empty panel should not cost as much room as a full one.
+**Trade** is the chart with one rail beside it: status, then what is open, then what is waiting,
+then what is done. A trade is one plan (entry, stop, target, optional conditions) that the agent
+draws as an idea and proposes whole; the venue holds the entry and both exits as one bracket, the
+policy reads the collateral at stake, and the rail's Cancel and Close are the human's own buttons.
+Nothing waiting and nothing open are one line each, because an empty zone should not cost as much
+room as a full one.
 
 Geist for the words and Geist Mono with tabular figures for anything that can change, so a value
 never moves its neighbours when it ticks. Phosphor green is one colour used three ways: the action,

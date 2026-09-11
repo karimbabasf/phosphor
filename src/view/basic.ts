@@ -162,7 +162,7 @@ function newestExecutionAt(proposals: Proposal[]): number {
    the comparison unreachable and refuses it. Reading the same field as a string is the honest
    way to say "this value is wider at rest than the live type is". `retired` is the matching
    read for the fields those drafts carried. */
-const RETIRED_KINDS = ['lp_add', 'lp_remove', 'yield_deposit', 'yield_withdraw'];
+const RETIRED_KINDS = ['lp_add', 'lp_remove', 'yield_deposit', 'yield_withdraw', 'mandate_arm'];
 
 type RetiredDraft = {
   chain?: ChainId;
@@ -171,6 +171,8 @@ type RetiredDraft = {
   token0?: { symbol: string };
   token1?: { symbol: string };
   counterparty?: string;
+  maxNotionalUsd?: number;
+  maxLossUsd?: number;
 };
 
 function kindOf(draft: WriteDraft): string {
@@ -302,11 +304,20 @@ function askHeadline(draft: WriteDraft, amountUsd: number): string {
   if (draft.kind === 'transfer') {
     return `It wants to send ${amountClause(amountUsd)}your ${plainSymbol(draft.leg.symbol)} to another address.`;
   }
-  // The one ask that is permission rather than a payment, so the sentence has to say what it
-  // is allowed to do later, not what it moves now. The two numbers are the whole envelope:
-  // the most it can be holding, and the loss that ends it.
-  if (draft.kind === 'mandate_arm') {
-    return `It wants standing permission to trade ${plainSymbol(draft.symbol)} on its own, holding at most ${money(draft.maxNotionalUsd)} at a time and stopping for good once it has lost ${money(draft.maxLossUsd)}.`;
+  // A trade puts collateral at stake and names the loss that ends it. Those two numbers are
+  // the whole ask, so they are the sentence.
+  if (draft.kind === 'trade') {
+    if (draft.op === 'open') {
+      const side = draft.plan.side === 'long' ? 'buy' : 'sell';
+      return `It wants to ${side} ${plainSymbol(draft.plan.symbol)} with ${money(draft.risk.marginUsd)} of your trading account at stake, and to stop out once it has lost ${money(draft.risk.maxLossUsd)}.`;
+    }
+    if (draft.cancel === true) return `It wants to cancel trade ${draft.id} before it opens. Nothing is at risk after that.`;
+    if (draft.close === true) return `It wants to close trade ${draft.id} now, at the market, with ${money(draft.before.marginUsd)} at stake.`;
+    return `It wants to move the stop on trade ${draft.id}, so the most it can lose goes from ${money(draft.before.maxLossUsd)} to ${money(draft.after.maxLossUsd)}.`;
+  }
+  // The retired mandate rows still on disk read as what they were: standing permission.
+  if (kindOf(draft) === 'mandate_arm') {
+    return `It wanted standing permission to trade ${plainSymbol(retired(draft).symbol ?? '')} on its own, holding at most ${money(retired(draft).maxNotionalUsd ?? 0)} at a time and stopping for good once it had lost ${money(retired(draft).maxLossUsd ?? 0)}.`;
   }
   // No percentage in either sentence, on purpose. This screen exists for someone who owns
   // the money and is not technical, and a rate is the part of a yield product most likely to
@@ -342,6 +353,8 @@ function askAfterLine(draft: WriteDraft, totalUsd: number | null, amountUsd: num
     return `${money(amountUsd)} moves into a lending pool and starts earning. It is still yours and there is no lock: you can take it back whenever you want.`;
   if (kindOf(draft) === 'yield_withdraw') return 'The money comes back into your own wallet, with whatever it earned.';
   if (draft.kind === 'consolidate') return 'The money stays yours. It moves onto one chain.';
+  if (draft.kind === 'trade') return 'The money stays in your trading account. Only the amount at stake can be lost, and the stop is on the exchange itself.';
+  if (kindOf(draft) === 'mandate_arm') return 'This was standing permission from an older build. Nothing moves now.';
   // A transfer is the only kind that genuinely leaves, so it is the only one allowed to
   // state a balance afterwards, and only when the balance is known.
   if (totalUsd === null) return 'This money leaves your wallet. Your balance is still being checked.';
@@ -633,7 +646,6 @@ function readLine(tool: string): string {
   if (tool === 'policy_show') return 'Read your safety rules.';
   if (tool === 'log_tail' || tool === 'proposal_status') return 'Looked at what has happened here.';
   if (tool === 'trade_read' || tool === 'trade_batch') return 'Looked at its trading account.';
-  if (tool === 'mandate_catalog') return 'Looked up what it is allowed to trade.';
   if (tool.startsWith('chart_') || tool === 'candles' || tool === 'market_search' || tool === 'indicator_catalog') {
     return 'Looked at prices.';
   }

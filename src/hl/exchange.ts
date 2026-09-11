@@ -16,7 +16,7 @@
 // The transport is injected so this is testable without touching the venue. Nothing in this
 // repo's tests ever posts to a real exchange.
 
-import { formatPrice, formatSize, wireNumber } from './format.ts';
+import { formatPrice, formatSize, roundToValidPrice, wireNumber } from './format.ts';
 import { signL1Action } from './sign.ts';
 import { venueWriteTimeout } from '../net.ts';
 import { createHash } from 'node:crypto';
@@ -45,11 +45,29 @@ export type TriggerRequest = {
   isBuy: boolean;
   size: number;
   triggerPx: number;
+  // The limit the venue works the order at once it triggers. On a market stop it is the bound
+  // the fill may not cross; on a limit target it is the target itself. Absent, the trigger
+  // price stands in, which is what a stop must NOT do through a gap: see stopLimitPx.
+  limitPx?: number;
   isMarket: boolean;
   tpsl: 'tp' | 'sl';
   szDecimals: number;
   cloid?: string;
+  // Default true: a stop or target only ever reduces. False is for a stop ENTRY, which is a
+  // trigger that opens, and the grouping for that is 'na'.
+  reduceOnly?: boolean;
 };
+
+// The venue's own slippage tolerance on a triggered stop market order is 10%. A stop leg carries
+// a limit that far past its trigger, so it fills through a gap instead of resting at the trigger
+// with the position still open. Rounded toward the bound: a buy stop's limit rounds down, a sell
+// stop's up, so the fill can never sit past ten percent.
+export const STOP_SLIP_FRACTION = 0.1;
+
+export function stopLimitPx(triggerPx: number, isBuy: boolean, szDecimals: number): number {
+  const raw = triggerPx * (isBuy ? 1 + STOP_SLIP_FRACTION : 1 - STOP_SLIP_FRACTION);
+  return roundToValidPrice(raw, szDecimals, true, isBuy);
+}
 
 const defaultTransport: Transport = async (url, body) => {
   // Venue write: this places, cancels and modifies real orders. A timeout here says the venue
@@ -86,24 +104,17 @@ export function newCloid(): string {
   return `0x${[...bytes].map((b) => b.toString(16).padStart(2, '0')).join('')}`;
 }
 
-// How wide a retry window is. Long enough to cover a venue-write timeout (30 s) and the pause
-// before somebody tries again; short enough that two orders a person deliberately places a
-// minute apart are two orders. Anything inside one window with the same (mandate, leg) is a
-// RETRY of the same intent by definition, and the venue will refuse the duplicate.
-export const CLOID_WINDOW_MS = 60_000;
-
-/* A cloid derived from what the order IS rather than from randomness: the mandate that
-   authorised it, which leg of that mandate it is, and which retry window it falls in. Two
-   attempts at the same order inside a window produce the same id, so the second is refused as a
-   duplicate instead of opening a second position. Two different legs, two different mandates, or
-   two windows produce different ids.
+/* A cloid derived from what the order IS rather than from randomness: the plan that authorised
+   it, which leg of that plan it is, and which generation of that leg (a modified stop is
+   generation two of the stop leg). Two attempts at the same order produce the same id, however
+   far apart, so the second is refused as a duplicate instead of opening a second position. Two
+   legs, two plans or two generations produce different ids, and cancel and reconcile go by
+   these ids alone: no oid ever needs re-reading.
 
    SHA-256 truncated to 16 bytes. Not a security boundary: the property needed is that different
    inputs give different ids, and the venue only ever compares them for equality. */
-export function cloidFor(parts: { mandate: string; leg: string; now?: number; windowMs?: number }): string {
-  const windowMs = parts.windowMs ?? CLOID_WINDOW_MS;
-  const window = Math.floor((parts.now ?? Date.now()) / windowMs);
-  const material = `${parts.mandate}|${parts.leg}|${String(window)}`;
+export function cloidFor(parts: { plan: string; leg: string; gen: number }): string {
+  const material = `${parts.plan}|${parts.leg}|${String(parts.gen)}`;
   const digest = createHash('sha256').update(material).digest('hex').slice(0, 32);
   return `0x${digest}`;
 }
@@ -144,24 +155,39 @@ export function buildOrderAction(orders: OrderRequest[], builder?: { b: string; 
   return action;
 }
 
-export function buildTriggerAction(triggers: TriggerRequest[]): unknown {
-  const wire = triggers.map((t) => {
-    const entry: Record<string, unknown> = {
-      a: t.assetId,
-      b: t.isBuy,
-      // A trigger order's limit price is unused when isMarket is true, but the field is still
-      // required, so it carries the trigger price rather than a zero that would read as free.
-      p: formatPrice(t.triggerPx, t.szDecimals, true),
-      s: formatSize(t.size, t.szDecimals),
-      r: true, // a stop or target only ever reduces
-      t: { trigger: { isMarket: t.isMarket, triggerPx: formatPrice(t.triggerPx, t.szDecimals, true), tpsl: t.tpsl } },
-    };
-    if (t.cloid !== undefined) entry.c = t.cloid;
-    return entry;
-  });
+function triggerWire(t: TriggerRequest): Record<string, unknown> {
+  const entry: Record<string, unknown> = {
+    a: t.assetId,
+    b: t.isBuy,
+    // The limit the order works at once it triggers. A market stop carries its slippage bound
+    // here; a limit target carries the target. With no limit given the trigger price stands in,
+    // because the field is required and a zero would read as free.
+    p: formatPrice(t.limitPx ?? t.triggerPx, t.szDecimals, true),
+    s: formatSize(t.size, t.szDecimals),
+    r: t.reduceOnly ?? true,
+    t: { trigger: { isMarket: t.isMarket, triggerPx: formatPrice(t.triggerPx, t.szDecimals, true), tpsl: t.tpsl } },
+  };
+  if (t.cloid !== undefined) entry.c = t.cloid;
+  return entry;
+}
+
+export function buildTriggerAction(triggers: TriggerRequest[], grouping: 'positionTpsl' | 'na' = 'positionTpsl'): unknown {
   // positionTpsl sizes the trigger to whatever the position is when it fires, which is what a
-  // stop should do after a partial exit has already reduced it.
-  return { type: 'order', orders: wire, grouping: 'positionTpsl' };
+  // stop should do after a partial exit has already reduced it. 'na' is for a trigger that
+  // opens: a stop entry is an ordinary order that happens to wait for a price.
+  return { type: 'order', orders: triggers.map(triggerWire), grouping };
+}
+
+// The exits of a position that already exists, placed after the entry filled on its own: a
+// resting limit that filled, a partial fill the venue dropped the bracket's children for, or a
+// resize after the position grew. Every leg reduces, whatever the caller passed.
+export function buildExitsAction(exits: TriggerRequest[]): unknown {
+  if (exits.length === 0) throw new Error('no exits to place');
+  if (exits.length > 2) throw new Error(`a position takes at most a target and a stop (got ${exits.length} exits)`);
+  return buildTriggerAction(
+    exits.map((e) => ({ ...e, reduceOnly: true })),
+    'positionTpsl',
+  );
 }
 
 // An entry and its two exits, placed as ONE action.
@@ -206,18 +232,7 @@ export function buildBracketAction(entry: OrderRequest, exits: TriggerRequest[])
   if (entry.cloid !== undefined) first.c = entry.cloid;
   wire.push(first);
 
-  for (const exit of exits) {
-    const e: Record<string, unknown> = {
-      a: exit.assetId,
-      b: exit.isBuy,
-      p: formatPrice(exit.triggerPx, exit.szDecimals, true),
-      s: formatSize(exit.size, exit.szDecimals),
-      r: true,
-      t: { trigger: { isMarket: exit.isMarket, triggerPx: formatPrice(exit.triggerPx, exit.szDecimals, true), tpsl: exit.tpsl } },
-    };
-    if (exit.cloid !== undefined) e.c = exit.cloid;
-    wire.push(e);
-  }
+  for (const exit of exits) wire.push(triggerWire({ ...exit, reduceOnly: true }));
 
   return { type: 'order', orders: wire, grouping: 'normalTpsl' };
 }
@@ -232,16 +247,26 @@ export function buildBracketAction(entry: OrderRequest, exits: TriggerRequest[])
 // false, never sent as false. It says whether to place the new order even if the old one is
 // already gone. Defaulting it to false is the safe direction: an order that filled while the
 // modify was in flight must not be silently replaced with a fresh one.
-export function buildModifyAction(oid: number | string, order: OrderRequest, alwaysPlace = false): unknown {
-  const wire: Record<string, unknown> = {
-    a: order.assetId,
-    b: order.isBuy,
-    p: formatPrice(order.price, order.szDecimals, true),
-    s: formatSize(order.size, order.szDecimals),
-    r: order.reduceOnly,
-    t: { limit: { tif: order.tif } },
-  };
-  if (order.cloid !== undefined) wire.c = order.cloid;
+//
+// A trigger can be modified too, and the venue's rule for it is that always_place must be true
+// (the replacement is a trigger, which the false form does not allow). The runner does not use
+// this for its exits: it cancels by cloid and places generation n+1, which is the same thing
+// with an id this app owns. The builder takes a trigger so the wire shape is pinned either way.
+export function buildModifyAction(oid: number | string, order: OrderRequest | TriggerRequest, alwaysPlace = false): unknown {
+  let wire: Record<string, unknown>;
+  if ('triggerPx' in order) {
+    wire = triggerWire(order);
+  } else {
+    wire = {
+      a: order.assetId,
+      b: order.isBuy,
+      p: formatPrice(order.price, order.szDecimals, true),
+      s: formatSize(order.size, order.szDecimals),
+      r: order.reduceOnly,
+      t: { limit: { tif: order.tif } },
+    };
+    if (order.cloid !== undefined) wire.c = order.cloid;
+  }
 
   const action: Record<string, unknown> = { type: 'modify', oid, order: wire };
   if (alwaysPlace) action.a = true;
@@ -393,9 +418,12 @@ export function createExchange(cfg: ExchangeConfig) {
   return {
     post,
     order: (orders: OrderRequest[]) => post(buildOrderAction(orders)),
-    trigger: (triggers: TriggerRequest[]) => post(buildTriggerAction(triggers)),
+    trigger: (triggers: TriggerRequest[], grouping: 'positionTpsl' | 'na' = 'positionTpsl') =>
+      post(buildTriggerAction(triggers, grouping)),
     // Entry plus its exits in one signature, so a position is never briefly naked.
     bracket: (entry: OrderRequest, exits: TriggerRequest[]) => post(buildBracketAction(entry, exits)),
+    // The exits of a position that already exists, sized to it.
+    exits: (exits: TriggerRequest[]) => post(buildExitsAction(exits)),
     // Re-peg without leaving the book.
     modify: (oid: number | string, order: OrderRequest, alwaysPlace = false) =>
       post(buildModifyAction(oid, order, alwaysPlace)),

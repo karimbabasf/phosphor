@@ -32,9 +32,12 @@ import { hyperliquidSource } from './hyperliquid.ts';
 import { createMarketData } from './market/index.ts';
 import { createProposalService } from './proposals.ts';
 import { MAX_AGENTS, RESERVED_SEATS, createAgents } from './agents.ts';
-import { TRADING_LIMITS, createRunnerHost } from './runner/host.ts';
-import { readApiWalletKey } from './runner/keys.ts';
+import { createRunnerHost } from './runner/host.ts';
+import { readApiWallet, readApiWalletKey } from './runner/keys.ts';
 import { createTradeService } from './trade/service.ts';
+import type { TradeService } from './trade/service.ts';
+import { createPlanStore } from './trade/plans.ts';
+import type { TradeDeps } from './trade/rail.ts';
 import { createInfoClient } from './hl/info.ts';
 import { atr } from './analysis/regime.ts';
 import { createServer } from './server.ts';
@@ -270,8 +273,8 @@ void market.refreshCatalog().catch((err: unknown) => {
 const quoter = cfg.mode === 'demo' ? syntheticQuoter() : oneClickQuoter(tokens);
 const signer = stubSigner();
 
-// Owns the armed bots and the child process that runs them. Constructed before the rails
-// because the mandate rail only starts and stops it and holds no state of its own.
+// Owns the plans and the child process that places them. Constructed before the rails
+// because the trade rail only arms, changes and closes through it and holds no state of its own.
 //
 // The key it hands the child is the API wallet, never the master. Reading it lazily, at arm
 // time rather than at boot, means an install with no agent approved yet starts fine and fails
@@ -279,36 +282,78 @@ const signer = stubSigner();
 const HL_BASE_URL = 'https://api.hyperliquid.xyz';
 const HL_WS_URL = 'wss://api.hyperliquid.xyz/ws';
 
+/* The venue facts a plan is priced against live on the trade service, which is built after the
+   rails because it needs the runner. These closures read through to it once it exists; until
+   then a plan cannot be priced, which is the honest answer before the venue has spoken. */
+let tradeService: TradeService | null = null;
+const tradeInfo = createInfoClient({ baseUrl: HL_BASE_URL });
+const hlUser = cfg.addresses.evm[0] ?? '';
+
+function productFor(coin: string): string {
+  return cfg.candleProducts.find((p) => p.split('-')[0].toUpperCase() === coin.toUpperCase()) ?? `${coin.toUpperCase()}-USD`;
+}
+
 const runner = createRunnerHost({
   apiWalletKey: async () => await readApiWalletKey(cfg.keysPath),
-  // The one signing session in this process. An armed rule keeps the trading key across a
-  // lock, and only until the expiry the human set when they armed it.
+  // The one signing session in this process. A waiting plan keeps the trading key across a
+  // lock, and only until the expiry the human set when they approved it, a day at most.
   session,
   baseUrl: HL_BASE_URL,
-  // The ceiling on everything armed at once. It is what replaced the runner's blanket refusal
-  // to trade real money rather than that refusal simply being deleted.
-  limits: TRADING_LIMITS,
+  user: hlUser,
   // Fail closed: a policy file that will not load reads as the kill switch being ON, so an
-  // unreadable policy can never be the reason a bot was allowed to arm.
-  user: cfg.addresses.evm[0] ?? '',
+  // unreadable policy can never be the reason a plan was allowed to arm.
   killSwitch: () => loadPolicy(cfg.dataDir)?.killSwitch ?? true,
+  store: createPlanStore(cfg.dataDir),
+  meta: (coin) => tradeService?.meta(coin) ?? null,
+  mark: (coin) => tradeService?.mark(coin) ?? null,
+  free: () => tradeService?.free() ?? null,
+  // Closed bars for the watcher, from the same store the chart draws from.
+  bars: async (coin, tf, count) => (await market.warm(productFor(coin), tf, count)).candles,
+  // A read is what keeps the live rail subscribed to a coin, so the watcher's minute frames
+  // keep arriving while a plan waits.
+  follow: (coin) => {
+    market.read(productFor(coin), '1m', 30);
+  },
+  approval: (proposalId) => {
+    const p = store.get(proposalId);
+    if (p === undefined || p.draft.kind !== 'trade' || p.draft.op !== 'open') return null;
+    return { hash: p.draft.hash, status: p.status };
+  },
+  /* Whether the runner's API wallet is still approved on the venue, asked once per child before
+     the first fire. An address this app cannot read is not a refusal: it is a check that cannot
+     be made, and the venue's own refusal of the order is what follows. */
+  agentApproved: async () => {
+    const address = readApiWallet(cfg.keysPath).address;
+    if (address === null || hlUser === '') return true;
+    const agents = await tradeInfo.post<{ address?: string }[]>({ type: 'extraAgents', user: hlUser });
+    return Array.isArray(agents) && agents.some((a) => String(a.address ?? '').toLowerCase() === address.toLowerCase());
+  },
   onEvent: (e) => {
+    const failed = e.type === 'error' || (e.type === 'done' && e.reason.startsWith('failed:'));
     audit.append(
-      e.type === 'halted' || e.type === 'error' ? 'error' : 'executed',
+      failed ? 'error' : 'executed',
       `runner: ${e.type}${'id' in e && e.id !== null ? ` ${e.id}` : ''}` +
-        ('reason' in e ? `: ${e.reason}` : 'message' in e ? `: ${e.message}` : '') +
+        ('reason' in e ? `: ${e.reason}` : 'message' in e ? `: ${e.message}` : 'detail' in e ? `: ${e.detail}` : '') +
         // Written into the sentence rather than left in the data, because "how long does this
-        // bot hold a key that can trade" is the question somebody reads this line to answer.
+        // plan hold a key that can trade" is the question somebody reads this line to answer.
         (e.type === 'armed' ? `: it holds the trading key until ${e.signingExpiresAt}` : ''),
       e,
     );
   },
 });
 
+// What the trade rail and the proposal service price a plan against.
+const tradeDeps: TradeDeps = {
+  runner,
+  meta: (coin) => tradeService?.meta(coin) ?? null,
+  mark: (coin) => tradeService?.mark(coin) ?? null,
+  free: () => tradeService?.free() ?? null,
+};
+
 // The dispatch table for swap, hyperliquid deposit and LP add/remove. Empty in demo
 // mode, where there is a fixture and no chain, so a rail proposal refuses rather than
 // reaching for an RPC and a private key.
-const rails = createRails({ cfg, tokens, runner });
+const rails = createRails({ cfg, tokens, trade: tradeDeps });
 
 const proposals = createProposalService({
   cfg,
@@ -319,6 +364,7 @@ const proposals = createProposalService({
   quoter,
   signer,
   rails,
+  trade: tradeDeps,
   dataDir: cfg.dataDir,
 });
 
@@ -492,11 +538,10 @@ function setKill(on: boolean): void {
 
   // Stop what is already running, not just what tries to start next.
   //
-  // The switch used to be consulted only when a mandate armed, so flipping it while a bot held
-  // a position refused future proposals and left the bot trading: the one situation a kill
-  // switch exists for. Both paths run, because they fail differently. setKilled asks the child
-  // to flatten and stop, which is the clean exit and needs the child to be healthy. stopAll
-  // does not care whether it is healthy and takes the process out regardless.
+  // The switch used to be consulted only when a plan armed, so flipping it while a plan held a
+  // position refused future proposals and left the plan running: the one situation a kill
+  // switch exists for. setKilled stops any fire from now on; stopAll cancels every resting
+  // order, closes every position and takes the child out whether or not it answered.
   runner.setKilled(on);
   if (on) void runner.stopAll('kill switch');
 }
@@ -540,16 +585,29 @@ setInterval(() => void refreshAtr(), 300_000).unref?.();
 // chart draws with, on purpose. Two implementations of volatility would mean the risk panel and
 // the candles could disagree about how much a market moves, and the person would have no way to
 // tell which one was lying.
-const tradeInfo = createInfoClient({ baseUrl: HL_BASE_URL });
-
 const trade = createTradeService({
   wsUrl: HL_WS_URL,
-  user: cfg.addresses.evm[0] ?? '',
+  user: hlUser,
   info: tradeInfo,
   runner,
   products: cfg.candleProducts,
   atrFor: (coin) => atrForCoin(coin),
   initialSymbol: (cfg.candleProducts[0] ?? 'BTC-USD').split('-')[0],
+});
+tradeService = trade;
+
+/* Everything on disk, checked against the venue and the proposal store, once the feed has
+   answered. A waiting plan re-arms only if its proposal executed with the same hash; placed and
+   open rows are read against the venue by cloid. The same path runs on every unlock, because
+   a plan whose signing session ended stays waiting, locked, until the key is readable again. */
+void runner.reconcile().catch((err: unknown) => {
+  audit.append('error', `plan reconcile failed: ${err instanceof Error ? err.message : String(err)}`);
+});
+keystore.onChange((state) => {
+  if (state !== 'unlocked') return;
+  void runner.reconcile(1_000).catch((err: unknown) => {
+    audit.append('error', `plan reconcile after unlock failed: ${err instanceof Error ? err.message : String(err)}`);
+  });
 });
 
 /* The window token is read off the shell's pipe far above, beside the boot nonce and the seat
@@ -618,7 +676,12 @@ marketUpdated = () => server.broadcastCandles();
 
 // A bar off a venue socket. It goes down the same stream carrying the bar itself, coalesced at
 // 120 ms in src/market/push.ts, which is what deleted the browser's hundred-kilobyte refetch.
-marketLive = (product, baseSec, candle, provider) => server.broadcastCandle(product, baseSec, candle, provider);
+// The same minute bar feeds the watcher: the runner folds it into the timeframes a plan waits
+// on, so a bar close reaches the plan from the socket the chart already holds, not from a poll.
+marketLive = (product, baseSec, candle, provider) => {
+  server.broadcastCandle(product, baseSec, candle, provider);
+  if (baseSec === 60 && provider === 'hyperliquid') runner.onMarket(product.split('-')[0].toUpperCase(), candle);
+};
 
 // The feed moving is the only thing that makes the trading surface change without anyone
 // touching it, so it is what drives the push. Coalesced by the feed already.
@@ -644,9 +707,9 @@ installShutdownHandlers({
   drain: () => beginDraining(),
   settle: (capMs) => proposals.settle(capMs),
   close: async () => {
-    // The runner child holds a key that can place orders. It goes first, and stopAll does not
-    // depend on the child being healthy.
-    await runner.stopAll('phosphor is shutting down');
+    // The runner child holds a key that can place orders. It goes first. The plans stay as they
+    // are: the venue holds every placed and open one, and the boot reconcile re-arms the rest.
+    await runner.shutdown();
     await new Promise<void>((resolve) => {
       server.close(() => resolve());
     });

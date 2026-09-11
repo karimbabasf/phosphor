@@ -269,9 +269,72 @@ test('a rule change lists every line it adds and every line it takes away', () =
   assert.equal(all.includes('What the venue reports'), false);
 });
 
-// B17. The engine writes a draft called mandate_arm. Nothing has ever authored
-// one called mandate, so the card headlined an armed trading rule with the enum.
-test('arming a trading rule reads as a sentence, not as an enum', () => {
+// The trade card: the verb in the headline, the risk facts under it, the plan in
+// full below, and never a fee line that says nothing was quoted.
+test('a trade reads as a sentence with its risk facts, and a change shows old and new', () => {
+  const decision = load();
+  const open = {
+    kind: 'trade',
+    op: 'open',
+    plan: { id: 'pl_1', symbol: 'BTC', side: 'long', sizeUsd: 4000, leverage: 20, entry: { type: 'market', maxSlippageBps: 30 }, stop: 63000, target: 66000, expiresAt: '2026-09-12T10:00:00.000Z' },
+    hash: 'abc',
+    risk: { marginUsd: 200, maxLossUsd: 66.1, stopSlipUsd: 400, entryRef: 64000, liquidationPx: 61570.12, notionalUsd: 3999, amountUsd: 200 },
+    amountUsd: 200,
+    counterparty: 'hyperliquid-perps',
+  };
+  assert.equal(decision.headlineOf({ kind: 'trade', draft: open }), 'Open a long on BTC');
+  assert.equal(decision.headlineOf({ kind: 'trade', draft: { kind: 'trade', op: 'change', id: 'pl_1', stop: 1, before: {}, after: {} } }), 'Change the stop on pl_1');
+  assert.equal(decision.headlineOf({ kind: 'trade', draft: { kind: 'trade', op: 'change', id: 'pl_1', target: 1, before: {}, after: {} } }), 'Change the target on pl_1');
+  assert.equal(decision.headlineOf({ kind: 'trade', draft: { kind: 'trade', op: 'change', id: 'pl_1', cancel: true, before: {}, after: {} } }), 'Cancel pl_1');
+  assert.equal(decision.headlineOf({ kind: 'trade', draft: { kind: 'trade', op: 'change', id: 'pl_1', close: true, before: {}, after: {} } }), 'Close pl_1');
+
+  const card = cardFor({
+    id: 'p4',
+    kind: 'trade',
+    status: 'pending',
+    createdAt: '2026-09-11T10:00:00.000Z',
+    draft: open,
+    simulation: { ok: true, summary: 'Long BTC: $4,000.00 notional at 20x, $200.00 of collateral at stake, isolated.\nWhen: now.' },
+    verdict: { outcome: 'needs_approval', reasons: ['$200.00 is above the $100.00 click threshold.'] },
+  });
+  const text = textOf(card);
+  assert.ok(text.includes('Open a long on BTC'));
+  assert.ok(text.includes('Collateral at stake'));
+  assert.ok(text.includes('Max loss at the stop'));
+  assert.ok(text.some((t) => t.includes('$66.10')), 'the max loss is on the card');
+  assert.ok(text.some((t) => t.includes('$400.00')), 'the stop slippage bound is on the card');
+  assert.ok(text.includes('63000'), 'the stop');
+  assert.ok(text.includes('66000'), 'the target');
+  assert.ok(text.some((t) => t.includes('61570.12')), 'the liquidation');
+  assert.equal(text.some((t) => t.includes('No fee was quoted')), false, 'a trade card carries no empty fee line');
+  assert.ok(text.includes('The plan, in full'));
+
+  const change = cardFor({
+    id: 'p5',
+    kind: 'trade',
+    status: 'pending',
+    createdAt: '2026-09-11T10:00:00.000Z',
+    draft: {
+      kind: 'trade',
+      op: 'change',
+      id: 'pl_1',
+      stop: 62000,
+      before: { marginUsd: 200, maxLossUsd: 66.1, stopSlipUsd: 400, entryRef: 64000, liquidationPx: 61570.12, notionalUsd: 3999, amountUsd: 200 },
+      after: { marginUsd: 200, maxLossUsd: 128.6, stopSlipUsd: 400, entryRef: 64000, liquidationPx: 61570.12, notionalUsd: 3999, amountUsd: 200 },
+      amountUsd: 200,
+      counterparty: 'hyperliquid-perps',
+    },
+    simulation: { ok: true, summary: 'Stop 63000 becomes 62000.' },
+    verdict: { outcome: 'needs_approval', reasons: ['wider'] },
+  });
+  const ctext = textOf(change);
+  assert.ok(ctext.includes('Change the stop on pl_1'));
+  assert.ok(ctext.some((t) => t.includes('$66.10') && t.includes('$128.60')), 'old and new max loss, side by side');
+});
+
+// B17. The engine used to write a draft called mandate_arm. Rows with that kind
+// are still on disk in older installs, so the card still reads them as a sentence.
+test('a mandate row from an older build still reads as a sentence, not as an enum', () => {
   const decision = load();
   assert.equal(decision.headlineOf({ kind: 'mandate_arm', draft: { kind: 'mandate_arm', symbol: 'BTC' } }),
     'Arm a trading rule on BTC');
