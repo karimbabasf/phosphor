@@ -26,7 +26,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { loadConfig } from '../src/config.ts';
-import { liveSignPort, SIGNATURE_CHAIN_ID, SIGNATURE_CHAIN_ID_HEX } from '../src/rails/hyperliquid-withdraw.ts';
+import { liveSignPort, SIGNATURE_CHAIN_ID, SIGNATURE_CHAIN_ID_HEX } from '../src/rails/hl-user-signed.ts';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const cfg = loadConfig(root);

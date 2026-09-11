@@ -17,7 +17,7 @@ import path from 'node:path';
 import { evmAddress } from '../../src/chain/evm.ts';
 import { nearAccountId, readNearSigner } from '../../src/chain/near.ts';
 import { liveIntentsSigner } from '../../src/rails/intents-native.ts';
-import { liveSignPort } from '../../src/rails/hyperliquid-withdraw.ts';
+import { liveSignPort } from '../../src/rails/hl-user-signed.ts';
 import { readApiWallet } from '../../src/runner/keys.ts';
 import { createKeystore, useKeystore } from '../../src/keystore/index.ts';
 import { defaultParams } from '../../src/keystore/kdf.ts';

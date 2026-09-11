@@ -77,7 +77,7 @@ import {
 } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickStatus, TokensFile } from '../intents.ts';
 import { ONECLICK_COUNTERPARTY } from './oneclick.ts';
-import { usdClassTransfer } from './hyperliquid-withdraw.ts';
+import { usdClassTransfer } from './hl-user-signed.ts';
 import { readTimeout } from '../net.ts';
 
 // NEP-141 transfer costs, same numbers the swap rail uses: 30 TGas is the documented ceiling
@@ -226,7 +226,7 @@ type ClearinghouseState = {
 type SpotClearinghouseState = {
   balances?: Array<{ coin?: string; token?: number; total?: string; hold?: string }>;
   // Present on a unified account: what is actually free once maintenance margin is held back,
-  // per token id. 0 is USDC. Same field src/rails/hyperliquid-withdraw.ts reads.
+  // per token id. 0 is USDC. Same field src/rails/hl-user-signed.ts reads.
   tokenToAvailableAfterMaintenance?: Array<[number | string, string]>;
 };
 

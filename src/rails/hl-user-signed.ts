@@ -1,21 +1,25 @@
-// The Hyperliquid withdrawal path: move USDC off a Hyperliquid account and back onto Arbitrum.
+// The Hyperliquid user-signed actions this app makes with its master key.
 //
-// This is the mirror of hyperliquid-deposit.ts and it works nothing like it. A deposit is a
-// plain ERC-20 transfer on Arbitrum. A withdrawal is a SIGNED API ACTION: no transaction, no
-// gas, no contract call from us. We sign an EIP-712 payload, POST it to /exchange, and the
-// validators push USDC out to the destination on Arbitrum in three to five minutes.
+// Named for what it signs rather than for a direction, because it used to be called
+// hyperliquid-withdraw.ts and that name misled twice: the module's live caller was a deposit
+// (the settle step moves collateral between books), and the withdraw3 it was built around had
+// no caller at all after the terminal script went on 2026-09-01. withdraw3 is gone with it.
+// Money now leaves the venue through src/rails/hypercore-withdraw.ts, which signs the
+// spotSend below to an address NEAR Intents mints, and that is the only exit.
 //
-// Two actions live here because on this account you need both. withdraw3 pays out of the PERP
-// balance, and a bridge deposit also lands on the perp side, but spot and perp are separate
-// books on the same account. Money sitting in spot is invisible to withdraw3. usdClassTransfer
-// is the move between them.
+// Everything here is a SIGNED API ACTION: no transaction, no gas, no contract call from us.
+// We sign an EIP-712 payload, POST it to /exchange, and the validators do the rest.
 //
-// These are exported as plain functions rather than a Rail on purpose. A Rail is reachable by
-// the agent through MCP, and "withdraw everything to an address" is the one operation in this
-// repo that must stay in a human's hands. There is deliberately no MCP tool for this module.
+// Two actions, and they are the two an account needs:
+//   spotSend          USDC from this account's spot book to another HyperCore address.
+//   usdClassTransfer  USDC between this account's own spot and perp books. Not a transfer to
+//                     anyone; needed on a standard account, rejected on a unified one.
+//
+// They are exported as plain functions rather than a Rail on purpose. A Rail is reachable by
+// the agent through MCP; these are the primitives a rail composes, behind its own refusals.
 //
 // The signing scheme is the whole job, so it is stated once here and asserted against the
-// official SDK's own fixtures in the tests:
+// official SDK's own vectors in the tests:
 //   - EIP-712 typed data, NOT personal_sign, and NOT the msgpack phantom-agent scheme that L1
 //     order actions use. The two schemes share an endpoint and nothing else.
 //   - domain name is 'HyperliquidSignTransaction'. L1 actions use 'Exchange'. Different domain.
@@ -23,11 +27,17 @@
 //     wallet thinks it is signing on, and the docs accept 42161 there too. The field that
 //     names the venue is hyperliquidChain, inside the signed message. That is the field to
 //     get right: a payload signed with 'Mainnet' is a valid instruction against real money.
-//   - the top-level nonce must equal the action's time (withdraw3) or nonce (usdClassTransfer),
-//     in MILLISECONDS. A mismatch is rejected.
+//   - the top-level nonce must equal the action's time (spotSend) or nonce (usdClassTransfer),
+//     in MILLISECONDS. A mismatch is rejected, and the venue keeps the highest hundred nonces
+//     per signer, so a nonce is the identity of an action and a repeat is refused.
+//   - the destination is hashed as a STRING, so its case is inside the digest. It is lowercased
+//     once, before signing, and the same string is what gets posted.
 //
-// The fee is 1.0 USDC and it comes OUT OF the amount: the destination receives amount - 1.
-// See MIN_WITHDRAW_USDC below for how that figure was established.
+// One fee to know about, because it is paid by us and not by the destination: the first
+// transfer into an account HyperCore has never seen costs the SENDER 1 USDC on top of the
+// amount (docs, activation-gas-fee; read back off live ledgers 2026-09-11). Every address
+// 1Click mints for a withdrawal is such an account. spotSend checks the destination's role
+// first and prices the fee in, so a caller reads the true cost before anything is signed.
 
 import { isAddress, parseSignature } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
@@ -39,25 +49,33 @@ import { readTimeout, venueWriteTimeout } from '../net.ts';
 
 // ---------- the venue table ----------
 
-export type HlWithdrawSpec = {
+export type HlVenueSpec = {
   exchangeUrl: string;
   infoUrl: string;
   // Inside the signed message, so it is a signing input rather than a label. A payload
   // carrying anything else is a signature the venue rejects.
   hyperliquidChain: 'Mainnet';
-  label: string; // where the money lands, for humans reading a refusal
 };
 
-const HL_WITHDRAW: HlWithdrawSpec = {
+const HL_MAINNET: HlVenueSpec = {
   exchangeUrl: 'https://api.hyperliquid.xyz/exchange',
   infoUrl: 'https://api.hyperliquid.xyz/info',
   hyperliquidChain: 'Mainnet',
-  label: 'Arbitrum One',
 };
 
-function hlWithdrawSpec(): HlWithdrawSpec {
-  return HL_WITHDRAW;
+function hlVenue(): HlVenueSpec {
+  return HL_MAINNET;
 }
+
+// The spot USDC token, as the SpotSend message names it: `name:tokenId`. Read from the venue's
+// spotMeta on mainnet (token index 0, 8 wei decimals) and pinned, because it is inside the
+// signature and a lookup at signing time would let a poisoned list redirect the token.
+// Testnet's USDC has a different id and must never be pasted here.
+export const HL_USDC_TOKEN = 'USDC:0x6d1e7cde53ba9467b783cb7c530ce054';
+
+// Paid by the sender, on top of the amount, for the first transfer into an account the venue
+// has never seen. The destination is credited in full.
+export const HL_ACTIVATION_FEE_USDC = 1;
 
 // ---------- the EIP-712 constants ----------
 
@@ -77,10 +95,11 @@ export const HL_DOMAIN = {
 // Reordering them produces a different digest and a signature that recovers to a stranger.
 // destination is typed `string`, not `address`: that is what the SDK does, and `address` would
 // hash the 20 bytes instead of the 42-character text and never verify.
-export const WITHDRAW_TYPES = {
-  'HyperliquidTransaction:Withdraw': [
+export const SPOT_SEND_TYPES = {
+  'HyperliquidTransaction:SpotSend': [
     { name: 'hyperliquidChain', type: 'string' },
     { name: 'destination', type: 'string' },
+    { name: 'token', type: 'string' },
     { name: 'amount', type: 'string' },
     { name: 'time', type: 'uint64' },
   ],
@@ -96,22 +115,6 @@ export const USD_CLASS_TRANSFER_TYPES = {
 } as const;
 
 const USDC_DECIMALS = 6;
-
-// Measured, not assumed. The docs quote $1, and that figure was read back off nine real
-// withdrawals in userNonFundingLedgerUpdates: every one carries "fee":"1.0". The measurement
-// was taken before this app moved real money, so it agrees with the docs rather than
-// confirming them independently at size.
-export const WITHDRAW_FEE_USDC = 1;
-
-// The fee comes out of the amount, so the destination receives amount - 1. Established three
-// ways that agree: the nktkas SDK's integration test funds a perp account with exactly "2" and
-// then withdraws "2" successfully, which is only possible if the fee is inside the amount; a
-// zero-fill account's 76 withdrawals reconcile to its live balance to the cent only under
-// that model; and the bridge's outbound Transfer amounts equal the ledger's net figure.
-//
-// So anything at or below 1.0 delivers nothing while still emptying that much from the account.
-// 2 is the floor: the smallest amount that actually lands at least 1 USDC2 on the far side.
-export const MIN_WITHDRAW_USDC = 2;
 
 // ---------- amounts ----------
 
@@ -135,10 +138,6 @@ function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function sameAddress(a: string, b: string): boolean {
-  return a.trim().toLowerCase() === b.trim().toLowerCase();
-}
-
 // ---------- the payloads ----------
 
 export type HlTypedData = {
@@ -148,11 +147,12 @@ export type HlTypedData = {
   message: Record<string, unknown>;
 };
 
-export type HlWithdrawAction = {
-  type: 'withdraw3';
+export type HlSpotSendAction = {
+  type: 'spotSend';
   signatureChainId: string;
-  hyperliquidChain: 'Mainnet';
+  hyperliquidChain: 'Mainnet' | 'Testnet';
   destination: string;
+  token: string;
   amount: string;
   time: number;
 };
@@ -172,17 +172,19 @@ export type HlUsdClassTransferAction = {
 // The destination is lowercased. It is hashed as a string, so its case is inside the digest,
 // and the server rebuilds the digest from the string we send. Lowercase is what the SDK's own
 // fixture uses, and normalising here means the signed text and the sent text cannot disagree.
-export function buildWithdrawPayload(args: {
+export function buildSpotSendPayload(args: {
   destination: string;
   amount: string;
   time: number;
-}): { action: HlWithdrawAction; typedData: HlTypedData; nonce: number } {
-  const spec = hlWithdrawSpec();
-  const action: HlWithdrawAction = {
-    type: 'withdraw3',
+  // Testnet exists here for the signing vectors only: nothing in this app posts to testnet.
+  chain?: 'Mainnet' | 'Testnet';
+}): { action: HlSpotSendAction; typedData: HlTypedData; nonce: number } {
+  const action: HlSpotSendAction = {
+    type: 'spotSend',
     signatureChainId: SIGNATURE_CHAIN_ID_HEX,
-    hyperliquidChain: spec.hyperliquidChain,
+    hyperliquidChain: args.chain ?? hlVenue().hyperliquidChain,
     destination: args.destination.trim().toLowerCase(),
+    token: HL_USDC_TOKEN,
     amount: args.amount,
     time: args.time,
   };
@@ -191,11 +193,12 @@ export function buildWithdrawPayload(args: {
     nonce: args.time, // the API rejects a nonce that does not equal action.time
     typedData: {
       domain: HL_DOMAIN,
-      types: WITHDRAW_TYPES as unknown as HlTypedData['types'],
-      primaryType: 'HyperliquidTransaction:Withdraw',
+      types: SPOT_SEND_TYPES as unknown as HlTypedData['types'],
+      primaryType: 'HyperliquidTransaction:SpotSend',
       message: {
         hyperliquidChain: action.hyperliquidChain,
         destination: action.destination,
+        token: action.token,
         amount: action.amount,
         time: BigInt(action.time),
       },
@@ -208,7 +211,7 @@ export function buildUsdClassTransferPayload(args: {
   toPerp: boolean;
   nonce: number;
 }): { action: HlUsdClassTransferAction; typedData: HlTypedData; nonce: number } {
-  const spec = hlWithdrawSpec();
+  const spec = hlVenue();
   const action: HlUsdClassTransferAction = {
     type: 'usdClassTransfer',
     signatureChainId: SIGNATURE_CHAIN_ID_HEX,
@@ -265,7 +268,7 @@ export type HlAccountSummary = {
   spotUsdc: number; // where a faucet drip and any spot trading proceeds sit
   perpAccountValueUsd: number;
   perpWithdrawableUsd: number; // 0 on a unified account even when funds are present
-  availableUsdc: number; // what withdraw3 may actually draw on, either shape of account
+  availableUsdc: number; // what a send may actually draw on, either shape of account
   unified: boolean; // spot and perp merged, so usdClassTransfer is rejected outright
   marginUsedUsd: number;
   openPositions: number;
@@ -293,15 +296,15 @@ function num(value: string | undefined): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-export type HlWithdrawDeps = {
+export type HlUserSignedDeps = {
   keysPath: string;
   sign?: HlSignPort;
   fetchImpl?: typeof fetch;
   now?: () => number;
 };
 
-async function info<T>(deps: HlWithdrawDeps, body: Record<string, unknown>): Promise<T> {
-  const spec = hlWithdrawSpec();
+async function info<T>(deps: HlUserSignedDeps, body: Record<string, unknown>): Promise<T> {
+  const spec = hlVenue();
   const res = await (deps.fetchImpl ?? fetch)(spec.infoUrl, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -313,14 +316,17 @@ async function info<T>(deps: HlWithdrawDeps, body: Record<string, unknown>): Pro
 }
 
 // Both books, because the difference between them is the whole reason usdClassTransfer exists.
-export async function accountSummary(deps: HlWithdrawDeps, address?: string): Promise<HlAccountSummary> {
+export async function accountSummary(deps: HlUserSignedDeps, address?: string): Promise<HlAccountSummary> {
   const sign = deps.sign ?? liveSignPort;
   const user = (address ?? sign.address(deps.keysPath)).trim();
   if (!isAddress(user)) throw new Error(`hyperliquid accountSummary: ${user} is not an address`);
 
-  const [perp, spot] = await Promise.all([
+  const [perp, spot, abstraction] = await Promise.all([
     info<ClearinghouseState>(deps, { type: 'clearinghouseState', user, dex: '' }),
     info<SpotClearinghouseState>(deps, { type: 'spotClearinghouseState', user }),
+    // The venue's own word on the account mode. An empty unified account reads 0 on both
+    // balance figures, and the heuristic below would then call it standard.
+    info<unknown>(deps, { type: 'userAbstraction', user }).catch(() => null),
   ]);
 
   // A UNIFIED account merges the two books, and then clearinghouseState.withdrawable reads
@@ -346,11 +352,23 @@ export async function accountSummary(deps: HlWithdrawDeps, address?: string): Pr
     // What a withdrawal may actually draw on, whichever shape the account is in. The perp
     // book on a classic account, the unified figure on a unified one.
     availableUsdc: Math.max(num(perp.withdrawable), unifiedUsdc),
-    unified: unifiedUsdc > 0 && num(perp.withdrawable) === 0,
+    unified:
+      typeof abstraction === 'string' && abstraction !== ''
+        ? abstraction === 'unifiedAccount'
+        : unifiedUsdc > 0 && num(perp.withdrawable) === 0,
     marginUsedUsd: num(perp.marginSummary?.totalMarginUsed),
     openPositions: Array.isArray(perp.assetPositions) ? perp.assetPositions.length : 0,
     fetchedAt: new Date().toISOString(),
   };
+}
+
+// Whether the venue has ever seen an address. `missing` means the first transfer into it pays
+// the activation fee. Weight 60 on the rate limiter, so it is asked once per destination.
+export async function userRole(deps: HlUserSignedDeps, address: string): Promise<string> {
+  const user = address.trim().toLowerCase();
+  if (!isAddress(user)) throw new Error(`hyperliquid userRole: ${address} is not an address`);
+  const body = await info<{ role?: unknown }>(deps, { type: 'userRole', user });
+  return typeof body?.role === 'string' ? body.role : 'unknown';
 }
 
 // ---------- the write path ----------
@@ -358,7 +376,9 @@ export async function accountSummary(deps: HlWithdrawDeps, address?: string): Pr
 export type HlActionResult = {
   ok: boolean;
   detail: string;
-  action?: HlWithdrawAction | HlUsdClassTransferAction;
+  action?: HlSpotSendAction | HlUsdClassTransferAction;
+  /* spotSend only: what the venue charged us on top of the amount, 1 for a fresh destination. */
+  activationFeeUsdc?: number;
   response?: unknown;
   /* The nonce this attempt signed with. On Hyperliquid the nonce IS the identity of the action:
      the venue keeps the highest hundred per signer and refuses a repeat, which is the whole of
@@ -378,15 +398,15 @@ type ExchangeResponse = { status?: string; response?: unknown };
 // rejected action. Reading res.ok alone reports a refused withdrawal as a success, so the
 // status field is checked as well and is what decides ok here.
 async function postAction(
-  deps: HlWithdrawDeps,
-  action: HlWithdrawAction | HlUsdClassTransferAction,
+  deps: HlUserSignedDeps,
+  action: HlSpotSendAction | HlUsdClassTransferAction,
   nonce: number,
   signature: HlSignature,
 ): Promise<{ ok: boolean; detail: string; body: unknown; ambiguous?: boolean }> {
-  const spec = hlWithdrawSpec();
+  const spec = hlVenue();
   /* The one call in this file that moves money off the venue. Thirty seconds, and the caller
      treats a timeout as UNKNOWN: the withdrawal may have been accepted. Retrying it with a
-     fresh nonce would be a second real withdrawal, which is what task 9 closes. */
+     fresh nonce would be a second real transfer. */
   let res: Response;
   try {
     res = await (deps.fetchImpl ?? fetch)(spec.exchangeUrl, {
@@ -435,10 +455,10 @@ async function postAction(
 // ---------- usdClassTransfer: spot <-> perp ----------
 
 // Moves USDC between the two books on one account. Not a transfer to anyone: same account,
-// different side. Needed before any withdrawal, because withdraw3 pays out of perp and a
-// faucet drip lands in spot.
+// different side. A standard account needs it in both directions: a HyperCore delivery can
+// land on spot, and spotSend pays out of spot.
 export async function usdClassTransfer(
-  deps: HlWithdrawDeps,
+  deps: HlUserSignedDeps,
   // `nonce` retries a previous ambiguous attempt. See the note on HlActionResult.nonce.
   params: { amount: number; toPerp: boolean; nonce?: number },
 ): Promise<HlActionResult> {
@@ -480,28 +500,23 @@ export async function usdClassTransfer(
   };
 }
 
-// ---------- withdraw3: off Hyperliquid, onto Arbitrum ----------
+// ---------- spotSend: USDC to another HyperCore address ----------
 
-// The highest-risk operation in this repo, so it refuses more than it does.
-//
-// destination defaults to the app's own signing address and a different one is refused unless
-// the caller passes allowExternalDestination. That flag exists so the refusal is a deliberate
-// decision at the call site rather than a typo in an address argument. There is no MCP tool
-// wired to any of this, so an agent cannot reach the flag at all.
-export async function withdraw3(
-  deps: HlWithdrawDeps,
+// The one action here that pays someone else, so it refuses more than it does. It has no
+// default destination on purpose: the caller must name one, and the only caller is the
+// withdraw rail, which names the address 1Click minted for the quote it just checked.
+export async function spotSend(
+  deps: HlUserSignedDeps,
   params: {
+    destination: string;
     amount: number;
-    destination?: string;
-    allowExternalDestination?: boolean;
     /* Pass the nonce from a previous ambiguous attempt to RETRY it. Omitted, the clock is used
-       and this is a new withdrawal. The venue refuses a nonce it has already seen, so a genuine
+       and this is a new transfer. The venue refuses a nonce it has already seen, so a genuine
        retry is refused as a duplicate rather than paying out twice. */
     nonce?: number;
   },
 ): Promise<HlActionResult> {
   const sign = deps.sign ?? liveSignPort;
-  const spec = hlWithdrawSpec();
 
   let own: Address;
   try {
@@ -510,17 +525,9 @@ export async function withdraw3(
     return { ok: false, detail: `REFUSED: cannot resolve the signing wallet: ${errText(err)}` };
   }
 
-  const destination = (params.destination ?? own).trim();
+  const destination = params.destination.trim();
   if (!isAddress(destination)) {
     return { ok: false, detail: `REFUSED: destination ${params.destination} is not an address` };
-  }
-  if (!sameAddress(destination, own) && params.allowExternalDestination !== true) {
-    return {
-      ok: false,
-      detail:
-        `REFUSED: destination ${destination} is not this app's own address (${own}). ` +
-        `A withdrawal to an outside address is irreversible; pass allowExternalDestination to mean it.`,
-    };
   }
 
   let amount: string;
@@ -530,40 +537,39 @@ export async function withdraw3(
     return { ok: false, detail: `REFUSED: ${errText(err)}` };
   }
 
-  // The fee is taken out of the amount, so anything at or below it delivers nothing while
-  // still leaving the account.
-  if (params.amount < MIN_WITHDRAW_USDC) {
-    return {
-      ok: false,
-      detail:
-        `REFUSED: amount ${amount} is below the ${MIN_WITHDRAW_USDC} USDC minimum. ` +
-        `Hyperliquid takes a ${WITHDRAW_FEE_USDC} USDC fee out of the amount, so ${amount} would deliver ` +
-        `${(params.amount - WITHDRAW_FEE_USDC).toFixed(6)} to ${spec.label} while still leaving the account.`,
-    };
+  // What the fee really is, from the venue, before the balance check that depends on it.
+  let activationFeeUsdc = 0;
+  try {
+    if ((await userRole(deps, destination)) === 'missing') activationFeeUsdc = HL_ACTIVATION_FEE_USDC;
+  } catch (err) {
+    return { ok: false, detail: `REFUSED: could not read whether ${destination} exists on Hyperliquid: ${errText(err)}` };
   }
+  const needed = params.amount + activationFeeUsdc;
 
-  // What the account can actually pay out. On a classic account that is the perp book; on a
-  // unified one the two books are merged and the perp figure reads 0 while the money is all
-  // in spot. Guarding on the perp number alone refused a withdrawal this account could
-  // certainly afford, and advised a usdClassTransfer that a unified account rejects outright.
+  // spotSend pays out of the spot book. On a unified account that is the single balance, and
+  // the perp figure reads 0 while the money is present; on a standard account it is the spot
+  // total, and money on the perp side has to be moved first.
   const summary = await accountSummary(deps, own);
-  if (params.amount > summary.availableUsdc) {
+  const sendable = summary.unified ? summary.availableUsdc : summary.spotUsdc;
+  if (needed > sendable) {
+    const why =
+      activationFeeUsdc > 0 ? ` (${amount} plus the ${activationFeeUsdc} USDC activation fee for a destination the venue has never seen)` : '';
     const hint =
-      !summary.unified && summary.spotUsdc > 0
-        ? ` Spot holds ${summary.spotUsdc} USDC; move it with usdClassTransfer({ amount, toPerp: true }) first.`
+      !summary.unified && summary.perpWithdrawableUsd > 0
+        ? ` The perp side holds ${summary.perpWithdrawableUsd} USDC; move it with usdClassTransfer({ amount, toPerp: false }) first.`
         : '';
     return {
       ok: false,
       detail:
-        `REFUSED: ${summary.unified ? 'available' : 'perp withdrawable'} is ${summary.availableUsdc} USDC ` +
-        `and the withdrawal needs ${amount}.${hint}`,
+        `REFUSED: ${summary.unified ? 'available' : 'spot holds'} ${summary.unified ? 'is ' : ''}${sendable} USDC ` +
+        `and the transfer needs ${toAmountString(needed)}${why}.${hint}`,
     };
   }
 
-  const { action, typedData, nonce } = buildWithdrawPayload({
+  const { action, typedData, nonce } = buildSpotSendPayload({
     destination,
     amount,
-    // The caller's nonce when retrying, the clock when this is a new withdrawal.
+    // The caller's nonce when retrying, the clock when this is a new transfer.
     time: params.nonce ?? (deps.now ?? Date.now)(),
   });
 
@@ -571,14 +577,13 @@ export async function withdraw3(
   const out = await postAction(deps, action, nonce, signature);
   if (!out.ok) return { ok: false, detail: out.detail, action, response: out.body, nonce, ambiguous: out.ambiguous };
 
-  const net = (params.amount - WITHDRAW_FEE_USDC).toFixed(6);
+  const fee = activationFeeUsdc > 0 ? `, plus the ${activationFeeUsdc} USDC activation fee the venue charges us for a fresh destination` : '';
   return {
     ok: true,
-    detail:
-      `withdrawal of ${amount} USDC accepted on Hyperliquid. ` +
-      `${destination} receives ${net} USDC2 on ${spec.label} in three to five minutes ` +
-      `(${WITHDRAW_FEE_USDC} USDC fee). No Arbitrum transaction from us: the validators push it.`,
+    detail: `sent ${amount} USDC to ${action.destination} on HyperCore (nonce ${String(nonce)}${fee})`,
     action,
     response: out.body,
+    nonce,
+    activationFeeUsdc,
   };
 }
