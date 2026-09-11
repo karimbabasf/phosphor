@@ -33,16 +33,11 @@ export async function handleTradeAction(ctx: Ctx, req: http.IncomingMessage, res
   }
 
   const id = typeof body.id === 'string' ? body.id : undefined;
-  const coin = typeof body.coin === 'string' ? body.coin : undefined;
-  ctx.audit.append('tool_call', `human: ${action}${id ? ` ${id}` : ''}${coin ? ` ${coin}` : ''}`, {
-    action,
-    id,
-    coin,
-  });
+  ctx.audit.append('tool_call', `human: ${action}${id ? ` ${id}` : ''}`, { action, id });
 
   try {
-    const result = await ctx.trade.action({ action, id, coin });
-    ctx.audit.append(result.ok ? 'executed' : 'error', `${action}: ${result.detail}`, { action, id, coin });
+    const result = await ctx.trade.action({ action, id });
+    ctx.audit.append(result.ok ? 'executed' : 'error', `${action}: ${result.detail}`, { action, id });
     ctx.sse.broadcastTrade();
     ctx.sse.broadcastState();
     // `error` alongside `detail` on a failure, because the window builds the sentence it
@@ -73,7 +68,6 @@ export async function handleTradeWrite(ctx: Ctx, req: http.IncomingMessage, res:
   for (const [key, apply] of [
     ['focus', (a: Record<string, unknown>) => ctx.trade.view.setFocus(a, 'human')],
     ['overlay', (a: Record<string, unknown>) => ctx.trade.view.setOverlay(a, 'human')],
-    ['note', (a: Record<string, unknown>) => ctx.trade.view.setNote(a, 'human')],
   ] as const) {
     const arg = body[key];
     if (arg === undefined || arg === null || typeof arg !== 'object') continue;

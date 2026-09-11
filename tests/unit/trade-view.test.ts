@@ -68,6 +68,19 @@ test('an unknown highlight kind is refused with the list of known kinds', () => 
   assert.match(String(out.error), /position/);
 });
 
+test('a plan, a level, a line and an indicator can be pointed at, and the note rides on the pointer', () => {
+  // The spotlight: the note lives on the highlight, because a sentence with nothing pointed at
+  // is a sentence nobody can check. There is no separate note surface.
+  const v = createTradeView('BTC');
+  for (const [kind, id] of [['plan', 'pl_1'], ['level', 'lv_2'], ['line', 'tl_3'], ['indicator', 'rsi_1']] as const) {
+    const out = v.highlight({ kind, id, note: `look at ${id}` }, 'agent');
+    assert.equal(out.ok, true, kind);
+  }
+  assert.equal(v.state().highlights.length, 4);
+  assert.equal(v.state().highlights[0].note, 'look at pl_1');
+  assert.equal('note' in v.state(), false, 'no note surface beside the highlights');
+});
+
 test('highlights expire, so a stale pointer never sits on screen claiming to be current', () => {
   let clock = 1_000_000;
   const v = createTradeView('BTC', () => clock);
@@ -99,41 +112,14 @@ test('overlays toggle by name and an unknown name is refused', () => {
   for (const name of OVERLAYS) assert.match(String(bad.error), new RegExp(name));
 });
 
-test('the agent can pin one line of its own reasoning to the surface', () => {
-  const v = createTradeView('BTC');
-  v.setNote({ text: 'holding for the 4h trendline break, no entry until it closes above' }, 'agent');
-  assert.match(String(v.state().note), /4h trendline/);
-  assert.equal(v.state().noteSource, 'agent');
-});
-
-test('a pinned note is stored as text and never as markup', () => {
-  // Agent-authored text reaches the DOM through textContent, and the state keeps it verbatim
-  // rather than escaping it here: escaping in two places is how one of them gets it wrong.
-  const v = createTradeView('BTC');
-  const nasty = '<img src=x onerror=alert(1)>';
-  v.setNote({ text: nasty }, 'agent');
-  assert.equal(v.state().note, nasty, 'stored verbatim; the renderer is what must not parse it');
-});
-
-test('a note longer than the cap is refused rather than truncated', () => {
-  // Truncation would let an agent write a sentence whose visible half means the opposite of
-  // the whole. Refusing tells it to be brief instead of silently editing it.
-  const v = createTradeView('BTC');
-  const out = v.setNote({ text: 'x'.repeat(1000) }, 'agent');
-  assert.equal(out.ok, false);
-  assert.match(String(out.error), /too long/);
-});
-
 test('clearing drops the agent objects and leaves the human view alone', () => {
   const v = createTradeView('BTC');
   v.setFocus({ symbol: 'SOL' }, 'human');
   v.setOverlay({ name: 'fills', on: true }, 'human');
   v.highlight({ kind: 'position', id: 'SOL', note: 'a' }, 'agent');
-  v.setNote({ text: 'thesis' }, 'agent');
 
   v.clear('agent');
   assert.equal(v.state().highlights.length, 0);
-  assert.equal(v.state().note, null);
   assert.equal(v.state().symbol, 'SOL', 'the human focus is not the agent to clear');
   assert.equal(v.state().overlays.fills, true);
 });

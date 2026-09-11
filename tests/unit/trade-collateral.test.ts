@@ -62,7 +62,7 @@ function payload(snap: AccountSnapshot | null = null) {
   return buildTradePayload({
     view: createTradeView('BTC', () => NOW).state(),
     feed: feed(snap),
-    mandates: [],
+    plans: [],
     meta: new Map<string, AssetMeta>(),
     atrFor: () => null,
     products: ['BTC'],

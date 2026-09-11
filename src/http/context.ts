@@ -63,7 +63,9 @@ export const PROPOSE_KINDS: readonly string[] = [
   'hl_deposit',
   'intents_deposit',
   'intents_withdraw',
-  'mandate_arm',
+  // Two door kinds for one rail kind: a plan, and a change to one that is armed.
+  'trade',
+  'trade_change',
 ];
 export const READ_TOOLS: readonly string[] = [
   // The handshake presentation: the banner a connecting agent prints, the live facts it
@@ -92,10 +94,6 @@ export const READ_TOOLS: readonly string[] = [
   'research',
   'trade_read',
   'trade_batch',
-  // How to write a mandate. Opening a position is the one action that cannot be reached by
-  // reading a tool signature, because it takes a program rather than arguments, so the
-  // grammar has to be readable from the surface or an agent asks a human how.
-  'mandate_catalog',
   // The team. Reading who else is here, what they have said, and what the workers found.
   // Reads like every other: audited, and they move nothing.
   'agent_roster',
@@ -132,12 +130,13 @@ export const VIEW_TOOLS: readonly string[] = [
   'trade_focus',
   'trade_highlight',
   'trade_overlay',
-  'trade_note',
   'trade_clear',
+  // A plan drawn as an idea. It has no authority and no policy: arming it is propose_trade.
+  'trade_plan',
 ];
 // Human-only controls on the trading window. Each one only ever reduces exposure, which is why
 // none of them waits on an approval and none is reachable from the agent's door.
-export const TRADE_ACTIONS: readonly string[] = ['disarm', 'cancel', 'cancel_all', 'close', 'flatten'];
+export const TRADE_ACTIONS: readonly string[] = ['cancel', 'close', 'flatten'];
 
 export type ServerDeps = {
   cfg: AppConfig;

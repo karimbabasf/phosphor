@@ -1,50 +1,56 @@
 // The trading surface as one object the server can call.
 //
 // Three things are joined here and nowhere else: the view state the agent and the human both
-// write, the venue feed, and the runner that holds the armed mandates. The server does not know
-// about any of them individually, which keeps the HTTP layer a router rather than a second
-// place where trading logic lives.
+// write, the venue feed, and the runner that holds the plans. The server does not know about
+// any of them individually, which keeps the HTTP layer a router rather than a second place
+// where trading logic lives.
 //
-// The split that matters is in `action`. Disarm goes to the runner host, because stopping a bot
-// is bookkeeping the app owns. Cancel, close and flatten go through the runner CHILD, because
-// the child is the only process in the tree holding a key that can place an order. Signing a
-// human's close in this process would put a second copy of that key in a second process to save
-// one IPC hop, which is a bad trade.
+// The feed is pushed INTO the runner from here on every update: positions, resting orders and
+// fills, which is what moves a plan from placed to open to done. The runner never reads the
+// venue for that on its own, so there is one view of the account across the process tree and
+// the screen and the thing that acts cannot disagree about what is open.
+//
+// The human's buttons (cancel, close, flatten) go through the runner too, because the runner
+// child is the only process in the tree holding a key that can place an order.
 
 import { createTradeView, type TradeViewState } from './view.ts';
 import { buildTradePayload, buildTradeRead, type TradePayload } from './state.ts';
 import { createTradeFeed } from './feed-ws.ts';
 import type { InfoClient } from '../hl/info.ts';
-import type { ManualAction, RunnerEvent } from '../runner/host.ts';
-import { realisedSince, type RealisedByMandate } from '../runner/realised.ts';
-import type { Mandate } from '../strategy/envelope.ts';
-import type { Program } from '../strategy/grammar.ts';
+import type { AccountView, PlanRunner } from '../runner/host.ts';
+import type { AssetMeta as RunnerMeta } from '../runner/protocol.ts';
+import { validatePlanInput } from './plan.ts';
+import type { PlanRow } from './plans.ts';
+import { planRisk } from './risk.ts';
+import { riskInputsFor } from './rail.ts';
+import type { PricingDeps } from './rail.ts';
 
 export type AssetMeta = { name: string; szDecimals: number; maxLeverage: number; assetId: number };
 
 // What the service needs from the runner. Deliberately narrower than the host's full surface:
-// this module can stop a bot and reduce a position, and there is no way to ask it to arm one.
-// Arming goes through the proposal path and a human click, and the type says so.
-export type TradeRunner = {
-  status(): { armed: { id: string; symbol: string; since: string }[]; running: boolean };
-  disarm(id: string, reason: string): Promise<{ ok: boolean; detail: string }>;
-  manual(action: ManualAction): Promise<{ ok: boolean; detail: string }>;
-  events(): RunnerEvent[];
-  armedDetail(): { mandate: Mandate; program: Program | null; since: string; signingExpiresAt: string }[];
-  /* Where the number this service computes off the venue's fills has to end up. The child
-     enforces a mandate's loss ceiling as `-(realised + unrealised)` and had no way to learn the
-     realised half, so a bot that stopped out and re-entered lost its whole allowance per cycle
-     against a ceiling of one. This service is the only thing in the process holding the fills,
-     so pushing is the honest direction. */
-  setRealised(byMandate: RealisedByMandate): void;
-};
+// this module can draw an idea, and reduce or cancel a plan, and there is no way to ask it to
+// arm one. Arming goes through the proposal path and the policy, and the type says so.
+export type TradeRunner = Pick<
+  PlanRunner,
+  'status' | 'plans' | 'get' | 'draw' | 'redraw' | 'erase' | 'cancel' | 'close' | 'flatten' | 'onAccount' | 'events'
+>;
+
+// The human door's close bound. Wide on purpose: a person pressing close means out, not out at
+// a good price, and a fill that does not happen because the bound was tight is the worse outcome.
+export const HUMAN_CLOSE_BPS = 100;
 
 export type TradeService = {
   view: ReturnType<typeof createTradeView>;
   payload(): TradePayload;
   read(symbol?: string): unknown;
   batch(ops: unknown[]): unknown;
-  action(a: { action: string; id?: string; coin?: string }): Promise<{ ok: boolean; detail: string }>;
+  // The agent's idea: draw, change or remove a plan that has no authority.
+  plan(args: Record<string, unknown>, by: string | null): { ok: true; notes: string[]; row: PlanRow | null } | { ok: false; error: string };
+  action(a: { action: string; id?: string }): Promise<{ ok: boolean; detail: string }>;
+  // The venue facts a plan is priced against, for the rail and the proposal service.
+  meta(coin: string): RunnerMeta | null;
+  mark(coin: string): number | null;
+  free(): number | null;
   onUpdate(fn: () => void): void;
   stop(): void;
 };
@@ -60,15 +66,17 @@ export type TradeServiceDeps = {
   // consumers, which is the same rule the indicators already follow.
   atrFor: (coin: string) => number | null;
   initialSymbol: string;
+  now?: () => number;
 };
 
-const BATCH_OPS = ['account', 'positions', 'orders', 'fills', 'mandates', 'market', 'venue_health'] as const;
+const BATCH_OPS = ['account', 'positions', 'orders', 'fills', 'plans', 'market', 'venue_health'] as const;
 
 function coinOf(product: string): string {
   return product.split('-')[0].toUpperCase();
 }
 
 export function createTradeService(deps: TradeServiceDeps): TradeService {
+  const now = deps.now ?? Date.now;
   const view = createTradeView(deps.initialSymbol);
   const feed = createTradeFeed({ wsUrl: deps.wsUrl, user: deps.user, info: deps.info });
   const meta = new Map<string, AssetMeta>();
@@ -88,92 +96,56 @@ export function createTradeService(deps: TradeServiceDeps): TradeService {
     })
     .catch(() => undefined);
 
-  /* THE SAME NUMBER THE SCREEN SHOWS, HANDED TO THE THING THAT ENFORCES IT.
-     Recomputed on every feed update rather than inside payload(), which only runs when the
-     window renders: a loss ceiling that refreshes while somebody is watching and freezes when
-     they look away is not a ceiling. It is cheap (a filter over the fills already in memory)
-     and it runs at the rate the socket delivers. */
-  function pushRealised(): void {
-    const fills = feed.fills();
-    const byMandate: RealisedByMandate = {};
-    for (const a of deps.runner.armedDetail()) {
-      byMandate[a.mandate.id] = realisedSince(fills, a.mandate.symbol, Date.parse(a.since));
-    }
-    deps.runner.setRealised(byMandate);
+  /* THE ACCOUNT, HANDED TO THE THING THAT ACTS ON IT.
+     Pushed on every feed update rather than read inside a render, because a plan whose entry
+     filled while nobody was looking at the trading screen still has to be protected. This is
+     the one input the runner has for positions, resting orders and fills. */
+  function pushAccount(): void {
+    const snapshot = feed.account();
+    if (snapshot === null) return;
+    const account: AccountView = {
+      atMs: snapshot.atMs,
+      freeUsd: snapshot.freeUsd,
+      positions: snapshot.positions.map((p) => ({ coin: p.coin, szi: p.szi, entryPx: p.entryPx })),
+      orders: feed.orders().map((o) => ({ coin: o.coin, cloid: o.cloid })),
+      fills: feed.fills().map((f) => ({ coin: f.coin, px: f.px, sizeCoin: f.sizeCoin, atMs: f.atMs, closedPnlUsd: f.closedPnlUsd })),
+    };
+    deps.runner.onAccount(account);
   }
 
   function notify(): void {
-    pushRealised();
+    pushAccount();
     for (const fn of listeners) fn();
   }
 
   feed.onUpdate(notify);
 
-  // Subscribed at construction rather than on the first render.
-  //
-  // watch() used to be called only from payload(), so the per-coin subscriptions did not exist
-  // until something asked for a payload, and the first thing to ask got a snapshot with no
-  // market and no collateral in it. That is the browser's very first paint. Subscribing here
-  // means the socket has been asking since boot and the first render has real numbers.
+  // Subscribed at construction rather than on the first render, so the socket has been asking
+  // since boot and the first paint has real numbers.
   feed.watch([view.state().symbol]);
 
-  // Every armed symbol, plus whatever the human is looking at. Watching only the armed ones
+  // Every live plan's coin, plus whatever the human is looking at. Watching only the plan coins
   // would leave the screen blank on a market the person is deciding about, which is exactly
   // when they want the numbers.
   function watched(): string[] {
     const set = new Set<string>([view.state().symbol]);
-    for (const a of deps.runner.status().armed) set.add(a.symbol.toUpperCase());
+    for (const coin of deps.runner.status().watching) set.add(coin.toUpperCase());
     return [...set].filter((s) => s !== '');
   }
 
-  // What each armed mandate has actually done since it armed.
-  //
-  // Realised profit is summed from the venue's own fills rather than tracked in the app, and
-  // that is the point: the number the loss bar fills against is the number the exchange booked,
-  // not our arithmetic about what we think we did. The window is the mandate's arm time, so a
-  // position carried in from before it armed does not count against its allowance.
-  //
-  // The last rule fired and the reason a bot halted come off the runner's event ring, which is
-  // the only place either exists: the child reports them and nothing else stores them.
-  function mandateStatuses() {
-    const running = deps.runner.status().running;
-    const events = deps.runner.events();
-    const fills = feed.fills();
+  function markOf(coin: string): number | null {
+    const ctx = feed.market(coin.toUpperCase());
+    return ctx === null || !Number.isFinite(ctx.markPx) ? null : ctx.markPx;
+  }
 
-    return deps.runner.armedDetail().map((a) => {
-      const sinceMs = Date.parse(a.since);
-      const realisedUsd = realisedSince(fills, a.mandate.symbol, sinceMs);
+  function metaOf(coin: string): RunnerMeta | null {
+    const m = meta.get(coin.toUpperCase());
+    return m === undefined ? null : { assetId: m.assetId, szDecimals: m.szDecimals, maxLeverage: m.maxLeverage };
+  }
 
-      let lastRule: { id: string; at: string; action: string } | null = null;
-      let haltedReason: string | null = null;
-      // Walked newest first so the first match is the most recent, which is what both fields
-      // mean. The ring is 200 entries, so this is cheap enough to do on every render.
-      for (let i = events.length - 1; i >= 0; i--) {
-        const e = events[i];
-        if (lastRule === null && e.type === 'rule' && e.id === a.mandate.id) {
-          lastRule = { id: e.ruleId, at: e.at, action: 'fired' };
-        }
-        if (haltedReason === null && e.type === 'halted' && e.id === a.mandate.id) {
-          haltedReason = e.reason;
-        }
-        if (lastRule !== null && haltedReason !== null) break;
-      }
-
-      return {
-        mandate: a.mandate,
-        program: a.program,
-        armed: true,
-        running,
-        since: a.since,
-        // When this bot loses the trading key, which is not the same as when the mandate
-        // expires: the app clamps the key's life to a day whatever the mandate says. A row
-        // that showed only the mandate's expiry would promise more than the app allows.
-        signingExpiresAt: a.signingExpiresAt,
-        realisedUsd,
-        lastRule,
-        haltedReason,
-      };
-    });
+  function freeUsd(): number | null {
+    const snapshot = feed.account();
+    return snapshot === null ? null : snapshot.freeUsd;
   }
 
   function payload(): TradePayload {
@@ -181,27 +153,16 @@ export function createTradeService(deps: TradeServiceDeps): TradeService {
     return buildTradePayload({
       view: view.state() as TradeViewState,
       feed,
-      mandates: mandateStatuses(),
+      plans: deps.runner.plans(),
       meta,
       atrFor: deps.atrFor,
       products: deps.products,
-      nowMs: Date.now(),
+      nowMs: now(),
       address: deps.user,
     });
   }
 
-  // Resolving a human's click into something the child can sign. The order list comes from the
-  // feed rather than from the browser, so a stale page cannot cancel an order that is no longer
-  // the one it was looking at: the oid is checked against what is actually resting now.
-  function cancelsFor(p: TradePayload, opts: { oid?: number; coin?: string }): { assetId: number; oid: number }[] {
-    return p.orders
-      .filter((o) => (opts.oid !== undefined ? o.oid === opts.oid : coinOf(o.coin) === opts.coin))
-      .map((o) => {
-        const m = meta.get(coinOf(o.coin));
-        return m === undefined ? null : { assetId: m.assetId, oid: o.oid };
-      })
-      .filter((c): c is { assetId: number; oid: number } => c !== null);
-  }
+  const pricing: PricingDeps = { runner: deps.runner, meta: metaOf, mark: markOf, free: freeUsd };
 
   return {
     view,
@@ -217,7 +178,7 @@ export function createTradeService(deps: TradeServiceDeps): TradeService {
         positions: p.positions.filter((x) => coinOf(x.coin) === coin),
         orders: p.orders.filter((x) => coinOf(x.coin) === coin),
         fills: p.fills.filter((x) => coinOf(x.coin) === coin),
-        mandates: p.mandates.filter((x) => coinOf(x.symbol) === coin),
+        plans: p.plans.filter((x) => coinOf(x.symbol) === coin),
       });
     },
 
@@ -246,8 +207,9 @@ export function createTradeService(deps: TradeServiceDeps): TradeService {
             const limit = typeof args.limit === 'number' ? Math.max(1, Math.floor(args.limit)) : 50;
             return { as, op, fills: only(p.fills).slice(0, limit) };
           }
-          if (op === 'mandates') {
-            return { as, op, mandates: coin === null ? p.mandates : p.mandates.filter((m) => coinOf(m.symbol) === coin) };
+          if (op === 'plans') {
+            const read = buildTradeRead(p).plans;
+            return { as, op, plans: coin === null ? read : read.filter((r) => coinOf(r.symbol) === coin) };
           }
           if (op === 'market') return { as, op, markets: coin === null ? p.markets : p.markets.filter((m) => coinOf(m.coin) === coin) };
           return { as, op, venue: p.venue };
@@ -255,41 +217,48 @@ export function createTradeService(deps: TradeServiceDeps): TradeService {
       };
     },
 
-    async action({ action, id, coin }) {
-      if (action === 'disarm') {
-        if (id === undefined) return { ok: false, detail: 'disarm needs a mandate id' };
-        return await deps.runner.disarm(id, 'stopped by the human');
+    /* An idea: a plan drawn on the chart with no authority. `plan` draws a new one, `planId`
+       plus `changes` edits a drawn one, `planId` plus `remove` takes it off. Only an idea can
+       be edited or removed here: once armed, every change goes through propose_trade_change.
+       The risk figure is priced where a mark is known, so the idea shows what it would cost
+       before anyone proposes it. */
+    plan(args, by) {
+      const planId = typeof args.planId === 'string' ? args.planId : null;
+      if (planId !== null) {
+        if (args.remove === true) {
+          const out = deps.runner.erase(planId);
+          return out.ok ? { ok: true, notes: [out.reason], row: null } : { ok: false, error: out.reason };
+        }
+        const changes = args.changes !== null && typeof args.changes === 'object' ? (args.changes as Record<string, unknown>) : null;
+        if (changes === null) return { ok: false, error: 'planId needs changes to apply, or remove: true' };
+        const out = deps.runner.redraw(planId, changes);
+        if (!out.ok) return { ok: false, error: out.reason };
+        priceIdea(out.row);
+        return { ok: true, notes: [`${planId} redrawn`], row: out.row };
       }
-
-      if (action === 'flatten') {
-        // Name every market currently holding a position. The runner child can only close a
-        // coin it has a book for, and its book pump follows ARMED mandates, so a flatten with
-        // nothing armed would otherwise reach an empty book and report success having closed
-        // nothing. Observed live, which is the worst way to learn that a brake reports itself.
-        const coins = [...new Set(payload().positions.map((p) => coinOf(p.coin)))];
-        return await deps.runner.manual({ verb: 'flatten', coins });
-      }
-
-      if (action === 'close') {
-        if (coin === undefined) return { ok: false, detail: 'close needs a market' };
-        return await deps.runner.manual({ verb: 'close', coin: coinOf(coin) });
-      }
-
-      const p = payload();
-      if (action === 'cancel') {
-        const oid = Number(id);
-        if (!Number.isFinite(oid)) return { ok: false, detail: 'cancel needs an order id' };
-        const cancels = cancelsFor(p, { oid });
-        if (cancels.length === 0) return { ok: false, detail: `order ${id} is not resting: it filled or was already cancelled` };
-        return await deps.runner.manual({ verb: 'cancel', cancels });
-      }
-
-      // cancel_all
-      if (coin === undefined) return { ok: false, detail: 'cancel all needs a market' };
-      const cancels = cancelsFor(p, { coin: coinOf(coin) });
-      if (cancels.length === 0) return { ok: true, detail: `nothing working on ${coinOf(coin)}` };
-      return await deps.runner.manual({ verb: 'cancel_all', cancels });
+      const parsed = validatePlanInput(args.plan, now());
+      if (!parsed.ok) return { ok: false, error: parsed.errors.join('; ') };
+      const row = deps.runner.draw(parsed.plan, by);
+      const notes = [`${row.id} drawn on ${row.symbol}`];
+      const priced = priceIdea(row);
+      if (priced !== null) notes.push(priced);
+      return { ok: true, notes, row };
     },
+
+    // The human's buttons. Every verb only reduces, which is why none of them consults the
+    // policy and none waits on an approval. Close is at a hundred basis points, the human's
+    // own bound; the agent's close goes through a proposal at the plan's bound.
+    async action({ action, id }) {
+      if (action === 'flatten') return deps.runner.flatten();
+      if (id === undefined) return { ok: false, detail: `${action} needs a plan id` };
+      if (action === 'cancel') return deps.runner.cancel(id);
+      if (action === 'close') return deps.runner.close(id, HUMAN_CLOSE_BPS);
+      return { ok: false, detail: `unknown action ${action}` };
+    },
+
+    meta: metaOf,
+    mark: markOf,
+    free: freeUsd,
 
     onUpdate(fn) {
       listeners.push(fn);
@@ -299,4 +268,18 @@ export function createTradeService(deps: TradeServiceDeps): TradeService {
       feed.stop();
     },
   };
+
+  // An idea carries the risk figure the card would show, when the market is known; a refusal
+  // is a note on the idea rather than a reason not to draw it, because a plan can be drawn
+  // before its coin has answered.
+  function priceIdea(row: PlanRow): string | null {
+    const plan = { id: row.id, symbol: row.symbol, side: row.side, sizeUsd: row.sizeUsd, leverage: row.leverage, entry: row.entry, stop: row.stop, target: row.target, when: row.when, expiresAt: row.expiresAt, note: row.note };
+    const out = planRisk(plan, riskInputsFor(pricing, plan, row.id));
+    if (out.ok) {
+      row.risk = out.risk;
+      return null;
+    }
+    delete row.risk;
+    return `not yet placeable: ${out.refusal}`;
+  }
 }

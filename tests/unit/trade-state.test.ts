@@ -7,12 +7,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  buildTradePayload,
-  buildTradeRead,
-  mandateWallPrice,
-} from '../../src/trade/state.ts';
-import type { AssetMeta, MandateStatus } from '../../src/trade/state.ts';
+import { buildTradePayload, buildTradeRead } from '../../src/trade/state.ts';
+import type { AssetMeta } from '../../src/trade/state.ts';
+import type { PlanRow } from '../../src/trade/plans.ts';
 import type {
   AccountSnapshot,
   MarketCtx,
@@ -22,9 +19,6 @@ import type {
   TradeFeed,
 } from '../../src/trade/feed-ws.ts';
 import { createTradeView } from '../../src/trade/view.ts';
-import type { Mandate } from '../../src/strategy/envelope.ts';
-import type { Program } from '../../src/strategy/grammar.ts';
-import { programHash } from '../../src/strategy/grammar.ts';
 
 const NOW = 1_786_492_800_000;
 const MINUTE = 60_000;
@@ -119,44 +113,24 @@ function fill(over: Partial<RawFill> = {}): RawFill {
   };
 }
 
-const PROGRAM: Program = {
-  symbol: 'BTC',
-  rules: [
-    {
-      id: 'r1',
-      when: { op: 'price_below', ref: { kind: 'price', value: 95 } },
-      then: [
-        { do: 'open', side: 'long', sizeUsd: 1000, leverage: 3, entry: { type: 'market', maxSlippageBps: 20 } },
-      ],
-    },
-  ],
-};
-
-function mandate(over: Partial<Mandate> = {}): Mandate {
+function plan(over: Partial<PlanRow> = {}): PlanRow {
   return {
-    id: 'md_1',
-    programHash: programHash(PROGRAM),
+    id: 'pl_1',
     symbol: 'BTC',
-    maxNotionalUsd: 5000,
-    maxLeverage: 5,
-    maxOrdersPerMin: 4,
-    maxLossUsd: 250,
+    side: 'long',
+    sizeUsd: 1000,
+    leverage: 5,
+    entry: { type: 'market', maxSlippageBps: 30 },
+    stop: 90,
+    target: 130,
     expiresAt: new Date(NOW + 60 * MINUTE).toISOString(),
-    allowedActions: ['open', 'close', 'set_stop', 'cancel'],
-    ...over,
-  };
-}
-
-function armed(over: Partial<MandateStatus> = {}): MandateStatus {
-  return {
-    mandate: mandate(),
-    program: PROGRAM,
-    armed: true,
-    running: true,
-    since: new Date(NOW - 10 * MINUTE).toISOString(),
-    realisedUsd: 0,
-    lastRule: null,
-    haltedReason: null,
+    status: 'open',
+    hash: 'h',
+    cloids: { entry: '0xentry', stop: '0xstop', target: '0xtarget' },
+    gen: 1,
+    risk: { marginUsd: 200, maxLossUsd: 100.9, stopSlipUsd: 100, entryRef: 100, liquidationPx: 82, notionalUsd: 1000, amountUsd: 200 },
+    createdAt: new Date(NOW - 10 * MINUTE).toISOString(),
+    updatedAt: new Date(NOW - 10 * MINUTE).toISOString(),
     ...over,
   };
 }
@@ -200,7 +174,7 @@ function build(p: {
   markets?: Record<string, MarketCtx>;
   connected?: boolean;
   lastMessageMs?: number | null;
-  mandates?: MandateStatus[];
+  plans?: PlanRow[];
   atr?: number | null;
   symbol?: string;
   meta?: Map<string, AssetMeta>;
@@ -209,7 +183,7 @@ function build(p: {
   return buildTradePayload({
     view,
     feed: feed(p),
-    mandates: p.mandates === undefined ? [] : p.mandates,
+    plans: p.plans === undefined ? [] : p.plans,
     meta: p.meta === undefined ? meta() : p.meta,
     atrFor: () => (p.atr === undefined ? 15 : p.atr),
     products: ['BTC', 'ETH', 'SOL'],
@@ -217,87 +191,6 @@ function build(p: {
     address: '0x1111111111111111111111111111111111111111',
   });
 }
-
-// ---------- the mandate wall ----------
-
-test('the wall sits below entry for a long and above it for a short', () => {
-  // $50 of allowance spread over 2 coins is a $25 move, so a long stands down at 75 and a short
-  // at 125. This is the line no other trading interface can draw, because in no other interface
-  // does an approved maximum loss exist.
-  close(
-    mandateWallPrice({ side: 'long', entryPx: 100, sizeCoin: 2, maxLossUsd: 50, realisedLossUsd: 0 }),
-    75,
-    'long wall',
-  );
-  close(
-    mandateWallPrice({ side: 'short', entryPx: 100, sizeCoin: 2, maxLossUsd: 50, realisedLossUsd: 0 }),
-    125,
-    'short wall',
-  );
-});
-
-test('a loss already taken pulls the wall in and a gain already taken pushes it out', () => {
-  // checkEnvelope halts on -(realised + unrealised) >= maxLoss, so it nets a realised gain
-  // against the cap. The wall has to move the same way or it is a line that stops nothing.
-  close(
-    mandateWallPrice({ side: 'long', entryPx: 100, sizeCoin: 2, maxLossUsd: 50, realisedLossUsd: 20 }),
-    85,
-    'wall after a $20 realised loss',
-  );
-  close(
-    mandateWallPrice({ side: 'long', entryPx: 100, sizeCoin: 2, maxLossUsd: 50, realisedLossUsd: -50 }),
-    50,
-    'wall after a $50 realised gain',
-  );
-});
-
-test('there is no wall while flat, because there is no position for a price to hurt', () => {
-  assert.equal(
-    mandateWallPrice({ side: 'long', entryPx: 100, sizeCoin: 0, maxLossUsd: 50, realisedLossUsd: 0 }),
-    null,
-  );
-});
-
-test('there is no wall once the allowance is spent, at any price', () => {
-  // Exactly spent counts as spent: the mandate is at its stop-out now, and a line drawn anywhere
-  // would say there is room left.
-  assert.equal(
-    mandateWallPrice({ side: 'long', entryPx: 100, sizeCoin: 2, maxLossUsd: 50, realisedLossUsd: 50 }),
-    null,
-  );
-  assert.equal(
-    mandateWallPrice({ side: 'short', entryPx: 100, sizeCoin: 2, maxLossUsd: 50, realisedLossUsd: 60 }),
-    null,
-  );
-});
-
-test('a non-finite input produces no wall rather than a NaN on the chart', () => {
-  for (const bad of [Number.NaN, Number.POSITIVE_INFINITY]) {
-    assert.equal(
-      mandateWallPrice({ side: 'long', entryPx: bad, sizeCoin: 2, maxLossUsd: 50, realisedLossUsd: 0 }),
-      null,
-    );
-    assert.equal(
-      mandateWallPrice({ side: 'long', entryPx: 100, sizeCoin: bad, maxLossUsd: 50, realisedLossUsd: 0 }),
-      null,
-    );
-    assert.equal(
-      mandateWallPrice({ side: 'long', entryPx: 100, sizeCoin: 2, maxLossUsd: bad, realisedLossUsd: 0 }),
-      null,
-    );
-    assert.equal(
-      mandateWallPrice({ side: 'long', entryPx: 100, sizeCoin: 2, maxLossUsd: 50, realisedLossUsd: bad }),
-      null,
-    );
-  }
-});
-
-test('a long wall at or below zero is not a stop-out, it is the asset going to nothing', () => {
-  assert.equal(
-    mandateWallPrice({ side: 'long', entryPx: 10, sizeCoin: 1, maxLossUsd: 50, realisedLossUsd: 0 }),
-    null,
-  );
-});
 
 // ---------- the unified account ----------
 
@@ -346,6 +239,9 @@ test('no snapshot means every account number is unknown, not empty', () => {
     netNotionalUsd: null,
     grossNotionalUsd: null,
     equityAtFivePctAdverse: null,
+    // Zero, not null: no plan is placed, which is an answer.
+    atRiskUsd: 0,
+    maxLossUsd: 0,
   });
   assert.deepEqual(p.positions, []);
 });
@@ -562,167 +458,57 @@ test('an order notional uses the price that decides it, and is unknown when ther
   assert.equal(p.orders[1].notionalUsd, null);
 });
 
-// ---------- mandate rows ----------
+// ---------- plans ----------
 
-test('the order rate counts the fills of the last sixty seconds and nothing older', () => {
+test('plans pass through whole, and the account sums what the placed and open ones put at stake', () => {
   const p = build({
-    mandates: [armed()],
-    fills: [
-      fill({ tid: 'a', atMs: NOW - 1_000 }),
-      fill({ tid: 'b', atMs: NOW - 59_000 }),
-      fill({ tid: 'c', atMs: NOW - 60_000 }),
-      fill({ tid: 'd', atMs: NOW - 90_000 }),
+    plans: [
+      plan({ id: 'pl_open', status: 'open' }),
+      plan({ id: 'pl_placed', status: 'placed', risk: { marginUsd: 50, maxLossUsd: 20, stopSlipUsd: 25, entryRef: 100, liquidationPx: 82, notionalUsd: 250, amountUsd: 50 } }),
+      plan({ id: 'pl_wait', status: 'waiting', holds: [{ condition: 'a 15m bar closes above 120', holds: false }] }),
+      plan({ id: 'pl_idea', status: 'idea' }),
+      plan({ id: 'pl_done', status: 'done', endReason: 'stopped' }),
     ],
   });
-  assert.equal(p.mandates[0].used.ordersLastMin, 2, 'the window is exclusive at exactly sixty seconds');
+  assert.equal(p.plans.length, 5);
+  close(p.account.atRiskUsd, 250, 'margin of the placed and open plans');
+  close(p.account.maxLossUsd, 120.9, 'max loss of the placed and open plans');
+  const read = buildTradeRead(p);
+  const wait = read.plans.find((r) => r.id === 'pl_wait');
+  assert.deepEqual(wait?.holds, [{ condition: 'a 15m bar closes above 120', holds: false }]);
+  assert.equal(read.plans.find((r) => r.id === 'pl_open')?.holds, null, 'holds is a waiting plan fact');
+  assert.equal(read.plans.find((r) => r.id === 'pl_done')?.endReason, 'stopped');
+  assert.match(read.account.summary, /plans have \$250\.00 at risk/);
 });
 
-test('the order rate ignores other coins and anything that happened before the mandate armed', () => {
+test('with nothing placed the at-risk figures are zero, which is an answer and not an unknown', () => {
+  const p = build({ plans: [plan({ status: 'waiting' })] });
+  assert.equal(p.account.atRiskUsd, 0);
+  assert.equal(p.account.maxLossUsd, 0);
+  const none = build({ account: null });
+  assert.equal(none.account.atRiskUsd, 0);
+});
+
+test('an order is attributed to a plan by the cloid the runner minted for it', () => {
   const p = build({
-    mandates: [armed()],
-    markets: { BTC: ctx(), ETH: ctx({ coin: 'ETH', markPx: 3900 }) },
-    fills: [
-      fill({ tid: 'a', atMs: NOW - 1_000 }),
-      fill({ tid: 'b', coin: 'ETH', atMs: NOW - 1_000 }),
-      fill({ tid: 'c', atMs: NOW - 20 * MINUTE }),
-    ],
+    plans: [plan()],
+    orders: [order({ oid: 1, cloid: '0xstop', reduceOnly: true, isTrigger: true, triggerPx: 90 }), order({ oid: 2, cloid: '0xsomeone' }), order({ oid: 3, cloid: null })],
   });
-  assert.equal(p.mandates[0].used.ordersLastMin, 1);
-  assert.equal(p.mandates[0].id, 'md_1');
+  assert.equal(p.orders[0].planId, 'pl_1');
+  assert.equal(p.orders[1].planId, null);
+  assert.equal(p.orders[2].planId, null);
 });
 
-test('only a loss spends the loss allowance', () => {
-  const winning = build({ mandates: [armed({ realisedUsd: 50 })] });
-  assert.equal(winning.mandates[0].used.lossUsd, 0, 'a winning bot has spent none of it');
-
-  const losing = build({ mandates: [armed({ realisedUsd: -100 })] });
-  // Realised -100 against the position's +20 unrealised nets to -80.
-  close(losing.mandates[0].used.lossUsd, 80, 'lossUsd');
-});
-
-test('a mandate row carries the program in English and the wall it would stand down at', () => {
-  const p = build({ mandates: [armed({ realisedUsd: -100 })] });
-  const row = p.mandates[0];
-  assert.ok(row.english.length > 0);
-  assert.match(row.english[0], /open long/, 'the same renderer the approval screen used');
-  // Entry 100, size 2, $250 allowance with $100 already lost: $150 over 2 coins is a 75 move.
-  close(row.wallPx, 25, 'wallPx');
-  close(row.used.msToExpiry, 60 * MINUTE, 'msToExpiry');
-  close(row.used.notionalUsd, 220, 'notional in use');
-});
-
-test('an expired mandate has no time left rather than negative time', () => {
-  const p = build({ mandates: [armed({ mandate: mandate({ expiresAt: new Date(NOW - MINUTE).toISOString() }) })] });
-  assert.equal(p.mandates[0].used.msToExpiry, 0);
-});
-
-test('an expiry that will not parse is unknown, not immediate', () => {
-  const p = build({ mandates: [armed({ mandate: mandate({ expiresAt: 'whenever' }) })] });
-  assert.equal(p.mandates[0].used.msToExpiry, null);
-});
-
-test('a flat mandate has no wall yet', () => {
-  const p = build({ account: snapshot({ positions: [] }), mandates: [armed()] });
-  assert.equal(p.mandates[0].wallPx, null);
-  assert.equal(p.mandates[0].used.notionalUsd, 0);
-});
-
-// ---------- the arm receipt ----------
-
-test('the receipt previews the position, the margin, the free collateral and the liquidation', () => {
-  const p = build({ account: snapshot({ positions: [], freeUsd: 2000 }), mandates: [armed()] });
-  const projected = p.mandates[0].projected;
-  assert.ok(projected !== null);
-  // The envelope allows $5000 and $2000 free at 5x carries $10000, so the envelope is the wall.
-  close(projected.maxPositionUsd, 5000, 'maxPositionUsd');
-  close(projected.marginRequiredUsd, 1000, 'marginRequiredUsd');
-  close(projected.freeAfterUsd, 1000, 'freeAfterUsd');
-  // BTC's maximum leverage is 40, so maintenance is notional / 80. $5000 at a mark of 110 is
-  // 45.4545 coins, and in cross the whole $2000 stands behind them, so the margin available the
-  // moment it opens is 2000 - 5000/80 = 1937.50. Hyperliquid's formula then puts the wall at
-  //   110 - 1937.50 / 45.4545 / (1 - 1/80) = 110 - 42.625 / 0.9875 = 66.8354
-  // The $1000 this envelope does NOT post is doing work here: it is cross collateral, and a
-  // receipt that ignores it draws the wall closer than the account would actually let it come.
-  close(projected.liqPxAtMax, 66.83544303797468, 'liqPxAtMax on a long, from a mark of 110');
-});
-
-test('the receipt takes maintenance from the ASSET maximum leverage, not the mandate leverage', () => {
-  // The two are different numbers and only coincide when a mandate is written at the asset's own
-  // cap. The move to liquidation is 1/L - 1/(2M): L is the leverage the position opens at, M is
-  // the maximum leverage the asset allows. Here L is 5 and M is 40, so the move is
-  // 0.2 - 0.0125 = 18.75 percent, not the 1/(2L) = 10 percent that reading L for M produces.
-  //
-  // $200 free at 5x buys $1000, below the $5000 envelope, so the whole account is posted and the
-  // adverse move is the account's own. size 9.0909 coins, margin available 200 - 1000/80 = 187.50,
-  //   110 - 187.50 / 9.0909 / 0.9875 = 89.1139
-  // which is a 18.99 percent move. The extra quarter point over 18.75 is maintenance being
-  // charged on the smaller notional the position has left at the wall, which the closed form
-  // drops and the venue does not.
-  const p = build({ account: snapshot({ positions: [], freeUsd: 200 }), mandates: [armed()] });
-  const projected = p.mandates[0].projected;
-  assert.ok(projected !== null);
-  close(projected.liqPxAtMax, 89.11392405063291, 'liqPxAtMax with the whole account posted');
-});
-
-test('the receipt has no wall when the venue never said what the asset allows', () => {
-  // maxLeverage comes from the venue's meta. Without it there is no maintenance requirement to
-  // reason from, and a guessed wall on an approval screen is worse than a blank one.
+test('a fill is attributed to the one live plan that covers its coin and time, or to nobody', () => {
   const p = build({
-    account: snapshot({ positions: [], freeUsd: 2000 }),
-    mandates: [armed()],
-    meta: new Map(),
+    plans: [plan()],
+    fills: [fill({ tid: 'a', atMs: NOW - 1000 }), fill({ tid: 'b', atMs: NOW - 20 * MINUTE }), fill({ tid: 'c', coin: 'ETH' })],
   });
-  const projected = p.mandates[0].projected;
-  assert.ok(projected !== null);
-  assert.equal(projected.liqPxAtMax, null);
-  close(projected.maxPositionUsd, 5000, 'the size is still knowable without it');
-});
-
-test('the receipt is capped by the collateral, not only by the envelope', () => {
-  // An envelope allowing $5000 on an account with $200 free is not a $5000 position, and a
-  // receipt that says it is would be the wrong number on an approval screen.
-  const p = build({ account: snapshot({ positions: [], freeUsd: 200 }), mandates: [armed()] });
-  const projected = p.mandates[0].projected;
-  assert.ok(projected !== null);
-  close(projected.maxPositionUsd, 1000, 'capped at free times max leverage');
-  close(projected.freeAfterUsd, 0, 'all of it posted');
-});
-
-test('the whole receipt is null when an input is unknown, never a zero', () => {
-  // A unified account has no knowable free collateral here, which is exactly the case where a
-  // confident projection would be worst.
-  const noFree = build({
-    account: snapshot({ positions: [], freeUsd: null }),
-    mandates: [armed()],
-  });
-  assert.equal(noFree.mandates[0].projected, null);
-
-  // No market context means no mark to open against.
-  const noMark = build({ account: snapshot({ positions: [] }), markets: {}, mandates: [armed()] });
-  assert.equal(noMark.mandates[0].projected, null);
-});
-
-test('a program that can go either way projects no liquidation, and still projects the rest', () => {
-  const both: Program = {
-    symbol: 'BTC',
-    rules: [
-      {
-        id: 'r1',
-        when: { op: 'price_below', ref: { kind: 'price', value: 95 } },
-        then: [{ do: 'open', side: 'long', sizeUsd: 100, leverage: 3, entry: { type: 'market', maxSlippageBps: 20 } }],
-      },
-      {
-        id: 'r2',
-        when: { op: 'price_above', ref: { kind: 'price', value: 130 } },
-        then: [{ do: 'open', side: 'short', sizeUsd: 100, leverage: 3, entry: { type: 'market', maxSlippageBps: 20 } }],
-      },
-    ],
-  };
-  const p = build({ account: snapshot({ positions: [], freeUsd: 2000 }), mandates: [armed({ program: both })] });
-  const projected = p.mandates[0].projected;
-  assert.ok(projected !== null);
-  assert.equal(projected.liqPxAtMax, null);
-  close(projected.maxPositionUsd, 5000, 'the size is still knowable');
+  assert.equal(p.fills.find((f) => f.tid === 'a')?.planId, 'pl_1');
+  assert.equal(p.fills.find((f) => f.tid === 'b')?.planId, null, 'before the plan was placed');
+  assert.equal(p.fills.find((f) => f.tid === 'c')?.planId, null, 'another coin');
+  const two = build({ plans: [plan(), plan({ id: 'pl_2' })], fills: [fill({ tid: 'a', atMs: NOW - 1000 })] });
+  assert.equal(two.fills[0].planId, null, 'two live plans on one coin is ambiguous, and ambiguous is null');
 });
 
 // ---------- fills and the venue ----------
@@ -769,7 +555,7 @@ test('an unknown last message is an unknown age, not a fresh feed', () => {
 
 test('the read answers what my situation is in one call', () => {
   const payload = build({
-    mandates: [armed({ realisedUsd: -200 })],
+    plans: [plan()],
     fills: [fill({ tid: 'a', atMs: NOW - 1000 })],
   });
   const read = buildTradeRead(payload);
@@ -781,71 +567,4 @@ test('the read answers what my situation is in one call', () => {
   assert.match(read.account.summary, /a 5% move against the book leaves/);
   assert.equal(read.fills.count, 1);
   assert.equal(read.fills.inLastMin, 1);
-});
-
-test('the read names the bound that stops the bot first', () => {
-  const payload = build({
-    mandates: [armed({ realisedUsd: -200 })],
-    fills: [fill({ tid: 'a', atMs: NOW - 1000 })],
-  });
-  const read = buildTradeRead(payload);
-  const m = read.mandates[0];
-  // Loss is 180 of 250 against notional 220 of 5000, one order of four, and ten minutes of
-  // seventy elapsed.
-  assert.equal(m.tightest, 'loss');
-  assert.equal(m.bounds[0].bound, 'loss');
-  close(m.bounds[0].spent, 180 / 250, 'loss spent');
-  assert.equal(m.bounds.length, 4);
-});
-
-test('the read never prints an unknown as a number', () => {
-  const payload = build({ account: snapshot({ unified: true, equityUsd: 0, withdrawableUsd: 0, freeUsd: null }) });
-  const read = buildTradeRead(payload);
-  assert.match(read.account.summary, /equity unknown/);
-  assert.match(read.account.summary, /health unknown/);
-  assert.match(read.account.summary, /cross unknown/);
-  assert.doesNotMatch(read.account.summary, /\$0\.00/);
-  assert.match(read.account.summary, /unified account/, 'and it says why');
-  assert.equal(read.account.equityUsd, null);
-});
-
-test('the read carries a handful of fills rather than the tape', () => {
-  const many: RawFill[] = [];
-  for (let i = 0; i < 40; i++) many.push(fill({ tid: `t${i}`, atMs: NOW - i * 1000 }));
-  const read = buildTradeRead(build({ fills: many }));
-  assert.equal(read.fills.count, 40);
-  assert.equal(read.fills.recent.length, 5);
-  assert.equal(read.fills.recent[0].tid, 't0', 'newest first');
-});
-
-test('the read carries the feed health, so a stale number is never read as current', () => {
-  const read = buildTradeRead(build({ connected: false }));
-  assert.equal(read.venue.degraded, true);
-  assert.match(read.account.summary, /feed degraded/);
-});
-
-// The bug this caught on the first live boot, kept as the case it was.
-//
-// clearinghouseState and activeAssetData arrive on separate websocket messages. In the window
-// between them the account looked like a plain perp account worth exactly nothing, and the
-// payload said so: equityUsd 0, unified false. The account held 889 USDC. That is the precise
-// failure this surface exists to avoid, because an obviously wrong number gets questioned and a
-// plausible one gets acted on, and a flat account worth zero is entirely plausible.
-test('an account the feed has not settled yet reports nothing, not zero', () => {
-  const p = build({
-    account: snapshot({
-      accountKnown: false,
-      equityUsd: null,
-      freeUsd: null,
-      withdrawableUsd: null,
-      positions: [],
-    }),
-  });
-
-  assert.equal(p.account.accountKnown, false, 'the window has to be able to say it is waiting');
-  assert.equal(p.account.equityUsd, null, 'never 0: that is the claim that there is nothing there');
-  assert.equal(p.account.freeUsd, null);
-  assert.equal(p.account.healthPct, null);
-  assert.equal(p.account.crossLeverage, null);
-  assert.equal(p.account.equityAtFivePctAdverse, null);
 });

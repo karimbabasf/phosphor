@@ -5,7 +5,7 @@
 // cannot be looking at two different accounts, which is the same argument the chart settled for
 // price, held here for risk.
 //
-// The module is pure. No fetch, no timer, no clock of its own: the feed, the mandates, the asset
+// The module is pure. No fetch, no timer, no clock of its own: the feed, the plans, the asset
 // meta, the ATR lookup and the current time all arrive in deps. That is what makes a bad
 // afternoon testable, and a risk panel nobody has tested against a bad afternoon is decoration.
 //
@@ -21,11 +21,8 @@
 //   looks authoritative on a risk panel. The human acts on these numbers.
 
 import type { Highlight, OverlayName, TradeViewState } from './view.ts';
-import type { Mandate } from '../strategy/envelope.ts';
-import type { Program } from '../strategy/grammar.ts';
-import { renderProgram } from '../strategy/render.ts';
+import type { PlanRow } from './plans.ts';
 import { DUST_USD, fundingBlock, type FundingBlock } from './funding.ts';
-import { liquidationPrice } from '../hl/liquidation.ts';
 import type {
   AccountSnapshot,
   MarketCtx,
@@ -41,21 +38,6 @@ import type {
 // rounded to, maxLeverage is the cap the venue itself enforces, assetId is how an order names
 // the market.
 export type AssetMeta = { assetId: number; szDecimals: number; maxLeverage: number };
-
-// One armed (or recently halted) mandate as the runner host knows it. The envelope is the
-// human's approved shape; everything else here is what has happened inside it since arming.
-export type MandateStatus = {
-  mandate: Mandate;
-  // The validated program, for rendering to English. Null when a mandate outlived the program
-  // object, which shows as a row with its bounds and no prose rather than no row at all.
-  program: Program | null;
-  armed: boolean;
-  running: boolean;
-  since: string;
-  realisedUsd: number; // since arming, negative is a loss
-  lastRule: { id: string; at: string; action: string } | null;
-  haltedReason: string | null;
-};
 
 // ---------- what this module produces ----------
 
@@ -119,7 +101,8 @@ export type Order = {
   reduceOnly: boolean;
   tif: string | null;
   atMs: number;
-  mandateId: string | null;
+  // The plan whose leg this order is, by the cloid the runner minted for it.
+  planId: string | null;
 };
 
 export type Fill = {
@@ -134,44 +117,7 @@ export type Fill = {
   atMs: number;
   tSec: number;
   liquidation: boolean;
-  mandateId: string | null;
-};
-
-export type MandateRow = {
-  id: string;
-  symbol: string;
-  armed: boolean;
-  running: boolean;
-  since: string;
-  expiresAt: string;
-  programHash: string;
-  english: string[];
-  envelope: {
-    maxNotionalUsd: number;
-    maxLeverage: number;
-    maxOrdersPerMin: number;
-    maxLossUsd: number;
-    allowedActions: string[];
-  };
-  used: {
-    notionalUsd: number;
-    lossUsd: number;
-    ordersLastMin: number;
-    msToExpiry: number | null;
-  };
-  // The arm receipt: the account's next state if this program runs to the edge of what it was
-  // granted. Every professional tool previews this before you commit, and it normally lives on
-  // the order ticket. This surface has no order ticket by design, so it lands here, which is the
-  // right place anyway: the mandate is the thing being approved.
-  projected: {
-    maxPositionUsd: number | null;
-    liqPxAtMax: number | null;
-    freeAfterUsd: number | null;
-    marginRequiredUsd: number | null;
-  } | null;
-  wallPx: number | null;
-  lastRule: { id: string; at: string; action: string } | null;
-  haltedReason: string | null;
+  planId: string | null;
 };
 
 export type TradePayload = {
@@ -180,8 +126,6 @@ export type TradePayload = {
   symbol: string;
   overlays: Record<OverlayName, boolean>;
   highlights: Highlight[];
-  note: string | null;
-  noteSource: 'agent' | 'human' | null;
   venue: {
     connected: boolean;
     source: 'ws' | 'rest' | 'none';
@@ -207,6 +151,11 @@ export type TradePayload = {
     netNotionalUsd: number | null;
     grossNotionalUsd: number | null;
     equityAtFivePctAdverse: number | null;
+    // What the plans have posted and what they can lose: the sum of margin over every placed
+    // and open plan, and the sum of their max loss at the stop. Zero when nothing is placed,
+    // because that is an answer and not an unknown.
+    atRiskUsd: number;
+    maxLossUsd: number;
   };
   // Where the money that backs this account actually is, and how more of it arrives.
   //
@@ -214,14 +163,14 @@ export type TradePayload = {
   // and are read from there; what is down here is the set of facts the account block cannot
   // carry, because they are about the venue and the rail rather than about the book: which
   // Hyperliquid this is, whose account, how much of the collateral is sitting on the spot
-  // side where a mandate cannot reach it, and what it costs to send more.
+  // side where a plan cannot reach it, and what it costs to send more.
   collateral: {
     address: string | null;
     // The perp book's own equity, straight from clearinghouseState and unreinterpreted.
     perpUsd: number | null;
     // The spot book's USDC, straight from spotClearinghouseState. What it MEANS depends on
     // the kind of account and the page says which: on a classic account these are two books
-    // and this one backs nothing a mandate can spend, while on a unified account they are
+    // and this one backs nothing a plan can spend, while on a unified account they are
     // merged and this money is collateral the moment it lands. Both readings need the two
     // figures side by side, which is why they are published separately rather than summed.
     spotUsdcUsd: number | null;
@@ -239,11 +188,13 @@ export type TradePayload = {
   positions: Position[];
   orders: Order[];
   fills: Fill[];
-  mandates: MandateRow[];
+  // Ideas, waiting, placed, open, and the last twenty done, so the rail can say why a plan
+  // stopped. A waiting plan carries which of its conditions hold right now.
+  plans: PlanRow[];
   products: string[];
 };
 
-// The mandate's order rate is per minute, so the fill window that estimates it is one minute.
+// The window the agent's read counts recent fills over.
 const ORDER_RATE_WINDOW_MS = 60_000;
 
 // Past this, the screen is no longer claiming to be current. The client pings on a timer and a
@@ -259,11 +210,6 @@ const READ_FILL_LIMIT = 5;
 // on a major and an ordinary one on anything smaller, which is what makes it a useful sentence
 // rather than a tail scenario nobody plans around.
 const ADVERSE_MOVE = 0.05;
-
-// Maintenance margin on this venue is half the initial margin at the asset's maximum leverage:
-// positionValue / (2 * maxLeverage). There is no per-position maintenance field to read, so any
-// projection of where liquidation would sit goes through this number.
-const MAINTENANCE_DIVISOR = 2;
 
 // ---------- small arithmetic that all of it goes through ----------
 
@@ -285,55 +231,6 @@ function minus(a: number | null, b: number | null): number | null {
 
 function clamp01(v: number | null): number | null {
   return v === null ? null : Math.min(1, Math.max(0, v));
-}
-
-// ---------- the mandate wall ----------
-
-// The price at which the approved loss is reached and the bot stands down.
-//
-// This is the second of the two walls the page is built around. The venue draws the liquidation;
-// the human draws this one, and it exists nowhere but in the mandate, which is why it is derived
-// here rather than fetched.
-//
-//   long:  wall = entry - (maxLoss - realisedLoss) / size
-//   short: wall = entry + (maxLoss - realisedLoss) / size
-//
-// realisedLossUsd is signed: positive for a loss already taken, negative for a gain. That is not
-// a convenience, it is what makes the line true. checkEnvelope halts on
-// -(realised + unrealised) >= maxLoss, so it nets a realised gain against the cap, and a wall
-// drawn on any other convention is a line that does not stop anything.
-export function mandateWallPrice(p: {
-  side: 'long' | 'short';
-  entryPx: number;
-  sizeCoin: number;
-  maxLossUsd: number;
-  realisedLossUsd: number;
-}): number | null {
-  const entryPx = finite(p.entryPx);
-  const sizeCoin = finite(p.sizeCoin);
-  const maxLossUsd = finite(p.maxLossUsd);
-  const realisedLossUsd = finite(p.realisedLossUsd);
-  if (entryPx === null || sizeCoin === null || maxLossUsd === null || realisedLossUsd === null) {
-    return null;
-  }
-
-  // Flat. There is no wall yet because there is no position for a price to hurt, and the panel
-  // says so rather than drawing a line at a price that means nothing. Size carries no sign here:
-  // direction is the `side` field.
-  if (sizeCoin <= 0) return null;
-
-  const remainingUsd = maxLossUsd - realisedLossUsd;
-  // The allowance is already gone. The wall is behind us rather than ahead: this mandate is at
-  // or past its stop-out at any price at all, and a line would suggest there is room left.
-  if (remainingUsd <= 0) return null;
-
-  const move = remainingUsd / sizeCoin;
-  const wall = p.side === 'long' ? entryPx - move : entryPx + move;
-  if (!Number.isFinite(wall)) return null;
-  // A long wall at or below zero is not a stop-out. It says the asset goes to nothing before the
-  // approved loss is reached, so there is no price to draw.
-  if (p.side === 'long' && wall <= 0) return null;
-  return wall;
 }
 
 // Whether a liquidation price is one anything could reach, which is a different question from
@@ -478,16 +375,15 @@ function roleFor(o: RawOrder, pos: Position | undefined): Order['role'] {
   return losing ? 'stop' : 'target';
 }
 
-// An order carries a client order id, so attribution here is by name rather than by inference:
-// the runner stamps the mandate id into the cloid it sends. Two mandates matching one cloid is
-// ambiguous, and an ambiguous answer is null.
-function orderMandateId(cloid: string | null, mandates: MandateStatus[]): string | null {
+// An order carries a client order id, and the runner mints one per plan leg, so attribution is
+// by name rather than by inference. An id no plan owns is null.
+function orderPlanId(cloid: string | null, plans: PlanRow[]): string | null {
   if (cloid === null || cloid === '') return null;
-  const hits = mandates.filter((m) => cloid.includes(m.mandate.id));
-  return hits.length === 1 ? hits[0].mandate.id : null;
+  const owner = plans.find((p) => p.cloids.entry === cloid || p.cloids.stop === cloid || p.cloids.target === cloid);
+  return owner === undefined ? null : owner.id;
 }
 
-function orderFrom(o: RawOrder, pos: Position | undefined, mandates: MandateStatus[]): Order {
+function orderFrom(o: RawOrder, pos: Position | undefined, plans: PlanRow[]): Order {
   const limitPx = finite(o.limitPx);
   const triggerPx = finite(o.triggerPx);
   // Notional against the price that decides the order: the trigger line for a trigger, the limit
@@ -507,32 +403,30 @@ function orderFrom(o: RawOrder, pos: Position | undefined, mandates: MandateStat
     reduceOnly: o.reduceOnly === true,
     tif: o.tif,
     atMs: o.atMs,
-    mandateId: orderMandateId(o.cloid, mandates),
+    planId: orderPlanId(o.cloid, plans),
   };
 }
 
 // ---------- fills ----------
 
-// Which armed mandate a fill belongs to, or null.
+// Which plan a fill belongs to, or null.
 //
 // Attribution is by coverage and time, not by client order id: the fills feed carries no cloid,
-// so nothing on the fill itself names the program that caused it. A mandate claims a fill when it
-// is armed, covers that coin, and the fill landed inside its armed window.
-//
-// One consequence is worth stating plainly. A fill the human caused with close or flatten, while
-// a mandate covered that coin, is attributed to the mandate. Nothing in this app reads mandateId
-// to decide anything, so that is a labelling defect and not a safety one. Two armed mandates on
-// one coin makes the answer ambiguous, and ambiguous is null.
-function fillMandateId(f: RawFill, mandates: MandateStatus[]): string | null {
-  const hits = mandates.filter((m) => {
-    if (!m.armed || m.mandate.symbol !== f.coin) return false;
-    const armedAt = Date.parse(m.since);
-    return Number.isFinite(armedAt) && f.atMs >= armedAt;
+// so nothing on the fill itself names the plan that caused it. A placed or open plan claims a
+// fill on its coin that landed after it was placed. Nothing in this app reads planId to decide
+// anything, so a fill the human caused with close while a plan covered that coin is a labelling
+// defect and not a safety one. Two live plans on one coin make the answer ambiguous, and
+// ambiguous is null.
+function fillPlanId(f: RawFill, plans: PlanRow[]): string | null {
+  const hits = plans.filter((p) => {
+    if (p.symbol !== f.coin || (p.status !== 'placed' && p.status !== 'open')) return false;
+    const since = Date.parse(p.updatedAt);
+    return Number.isFinite(since) && f.atMs >= since - 1000;
   });
-  return hits.length === 1 ? hits[0].mandate.id : null;
+  return hits.length === 1 ? hits[0].id : null;
 }
 
-function fillFrom(f: RawFill, mandates: MandateStatus[]): Fill {
+function fillFrom(f: RawFill, plans: PlanRow[]): Fill {
   return {
     tid: f.tid,
     coin: f.coin,
@@ -546,7 +440,7 @@ function fillFrom(f: RawFill, mandates: MandateStatus[]): Fill {
     // Seconds, because that is the chart's time axis and a fill marker has to land on a bar.
     tSec: Math.floor(f.atMs / 1000),
     liquidation: f.liquidation === true,
-    mandateId: fillMandateId(f, mandates),
+    planId: fillPlanId(f, plans),
   };
 }
 
@@ -585,7 +479,10 @@ function collateralFrom(
 
 // ---------- account ----------
 
-function accountFrom(s: AccountSnapshot | null, positions: Position[]): TradePayload['account'] {
+function accountFrom(s: AccountSnapshot | null, positions: Position[], plans: PlanRow[]): TradePayload['account'] {
+  const live = plans.filter((p) => p.status === 'placed' || p.status === 'open');
+  const atRiskUsd = live.reduce((sum, p) => sum + (p.risk?.marginUsd ?? 0), 0);
+  const maxLossUsd = live.reduce((sum, p) => sum + (p.risk?.maxLossUsd ?? 0), 0);
   if (s === null) {
     // No snapshot is not an empty account. Every figure is unknown, including whether the account
     // is unified, and the flag has no third state to say so.
@@ -602,6 +499,8 @@ function accountFrom(s: AccountSnapshot | null, positions: Position[]): TradePay
       netNotionalUsd: null,
       grossNotionalUsd: null,
       equityAtFivePctAdverse: null,
+      atRiskUsd,
+      maxLossUsd,
     };
   }
 
@@ -666,6 +565,8 @@ function accountFrom(s: AccountSnapshot | null, positions: Position[]): TradePay
     netNotionalUsd,
     grossNotionalUsd: notionalUsd,
     equityAtFivePctAdverse,
+    atRiskUsd,
+    maxLossUsd,
   };
 }
 
@@ -701,177 +602,6 @@ function venueFrom(
   };
 }
 
-// ---------- mandates ----------
-
-// Which way this program trades, or null when it could go either way.
-//
-// The direction is read off the program's own open actions rather than guessed from the live
-// position, because the receipt is most useful before anything has been opened. A program that
-// can open both ways has no single liquidation to project, and saying so is the only honest
-// answer available.
-function programSide(p: Program | null): 'long' | 'short' | null {
-  if (p === null) return null;
-  const sides = new Set<'long' | 'short'>();
-  for (const rule of p.rules) for (const a of rule.then) if (a.do === 'open') sides.add(a.side);
-  return sides.size === 1 ? [...sides][0] : null;
-}
-
-// Where the projected position would die, in the venue's terms. Maintenance is charged against
-// the asset's maximum leverage, so a projection cannot be drawn without it: an approval screen
-// showing a guessed wall is worse than one showing none. Below 1x is not a leverage any venue
-// publishes, and it is also where the formula stops leaving a long any margin band at all, so it
-// is refused rather than passed through.
-function liqPxAtMaxFor(
-  side: 'long' | 'short' | null,
-  mark: number,
-  positionUsd: number,
-  accountValueUsd: number,
-  assetMaxLeverage: number | null,
-): number | null {
-  if (side === null || assetMaxLeverage === null || assetMaxLeverage < 1) return null;
-  if (positionUsd <= 0 || mark <= 0) return null;
-
-  const maintenanceLeverage = MAINTENANCE_DIVISOR * assetMaxLeverage;
-  const liq = liquidationPrice({
-    entryPx: mark,
-    side,
-    positionSize: positionUsd / mark,
-    marginAvailable: accountValueUsd - positionUsd / maintenanceLeverage,
-    maintenanceLeverage,
-  });
-  // The same rule an open position's wall answers to. A projected wall further than a whole mark
-  // away says the envelope cannot spend enough of this account to be liquidated, and there is no
-  // line to draw for that.
-  return wallIsReachable(liq, mark) ? liq : null;
-}
-
-// The account's next state if this program runs to the edge of its envelope.
-//
-// Sized against both walls: what the human granted, and what the collateral can actually carry.
-// An envelope allowing fifty thousand of notional on an account with two hundred dollars free is
-// not a fifty thousand dollar position, and a receipt that says it is would be the wrong number
-// on an approval screen.
-//
-// Liquidation at that size goes through the venue's own formula in src/hl/liquidation.ts rather
-// than a second copy of it here. It opens at the current mark, because that is when the receipt
-// was written.
-//
-// What used to be here was mark * (1 -/+ 1 / (2 * maxLeverage)) reading the MANDATE's leverage
-// where the formula wants the ASSET's. The two are different numbers and agree only when a mandate
-// happens to be written at the asset's own cap. The move to the wall is 1/L - 1/(2*M): L is the
-// leverage the position opens at, M is the maximum the asset allows. At 5x on an asset allowing 40
-// that is 18.75 percent, and reading L for M answered 10 percent. It also spent nothing on the
-// collateral the envelope leaves unposted, which in cross is standing behind the position too.
-//
-// The whole object is null when any input is unknown, rather than zeros: a projection built on a
-// missing free balance would read as a real plan.
-function projectedFor(
-  s: MandateStatus,
-  pos: Position | undefined,
-  markPx: number | null,
-  freeUsd: number | null,
-  assetMaxLeverage: number | null,
-): MandateRow['projected'] {
-  const maxNotionalUsd = finite(s.mandate.maxNotionalUsd);
-  const maxLeverage = finite(s.mandate.maxLeverage);
-  const mark = finite(markPx);
-  const free = finite(freeUsd);
-  if (maxNotionalUsd === null || maxLeverage === null || mark === null || free === null) return null;
-  if (maxLeverage <= 0) return null;
-
-  // Margin already posted counts toward the buying power, since growing an open position to the
-  // envelope's cap does not re-post the margin it already holds.
-  const postedUsd = pos === undefined ? 0 : pos.marginUsedUsd;
-  const buyingPowerUsd = (free + postedUsd) * maxLeverage;
-  const maxPositionUsd = Math.min(maxNotionalUsd, buyingPowerUsd);
-  const marginRequiredUsd = maxPositionUsd / maxLeverage;
-  const freeAfterUsd = free + postedUsd - marginRequiredUsd;
-
-  const side = programSide(s.program) ?? (pos === undefined ? null : pos.side);
-  // Everything the account has stands behind a cross position, not only the slice this envelope
-  // posts as initial margin, so the collateral base is the free balance plus what is already down.
-  const liqPxAtMax = liqPxAtMaxFor(side, mark, maxPositionUsd, free + postedUsd, assetMaxLeverage);
-
-  return { maxPositionUsd, liqPxAtMax, freeAfterUsd, marginRequiredUsd };
-}
-
-function mandateRowFrom(
-  s: MandateStatus,
-  pos: Position | undefined,
-  fills: Fill[],
-  orders: Order[],
-  nowMs: number,
-  markPx: number | null,
-  freeUsd: number | null,
-  assetMaxLeverage: number | null,
-): MandateRow {
-  const m = s.mandate;
-  const notionalUsd = pos === undefined ? 0 : pos.notionalUsd;
-  const unrealisedUsd = pos === undefined ? 0 : pos.unrealisedUsd;
-
-  // Only a loss spends the allowance. A bot that is up has spent none of it, and a negative
-  // "used" would draw a bar running backwards out of its own frame.
-  const net = s.realisedUsd + unrealisedUsd;
-  const lossUsd = net < 0 ? -net : 0;
-
-  // Orders PLACED in the window, which is what the envelope actually limits.
-  //
-  // This counted fills alone, and the two are not the same number. A trigger order never fills
-  // until its price is reached, so a rule placing a stop every tick put a hundred orders on the
-  // venue while this meter truthfully read "0 of 4 orders this minute". A bound whose own gauge
-  // measures something else is not a bound anyone can watch.
-  //
-  // Working orders are added to the fills, and it is still an estimate rather than a ledger:
-  // an order placed and cancelled inside the window leaves no trace in either list. It errs low,
-  // which is worth saying out loud, and the envelope's own counter in the runner is the one that
-  // actually refuses. This is the human's view of it, not the enforcement.
-  const recent = (atMs: number) => nowMs - atMs < ORDER_RATE_WINDOW_MS;
-  const ordersLastMin =
-    fills.filter((f) => f.mandateId === m.id && recent(f.atMs)).length +
-    orders.filter((o) => o.coin.toUpperCase() === m.symbol.toUpperCase() && recent(o.atMs)).length;
-
-  const expiryMs = Date.parse(m.expiresAt);
-  // Clamped at zero: an expired mandate has no time left rather than negative time. An expiry
-  // that will not parse is unknown, not immediate.
-  const msToExpiry = Number.isFinite(expiryMs) ? Math.max(0, expiryMs - nowMs) : null;
-
-  const wallPx =
-    pos === undefined
-      ? null
-      : mandateWallPrice({
-          side: pos.side,
-          entryPx: pos.entryPx,
-          sizeCoin: pos.sizeCoin,
-          maxLossUsd: m.maxLossUsd,
-          realisedLossUsd: -s.realisedUsd,
-        });
-
-  return {
-    id: m.id,
-    symbol: m.symbol,
-    armed: s.armed,
-    running: s.running,
-    since: s.since,
-    expiresAt: m.expiresAt,
-    programHash: m.programHash,
-    // The same renderer the approval screen used. A second one would eventually describe the
-    // program differently from the text the human actually approved.
-    english: s.program === null ? [] : renderProgram(s.program),
-    envelope: {
-      maxNotionalUsd: m.maxNotionalUsd,
-      maxLeverage: m.maxLeverage,
-      maxOrdersPerMin: m.maxOrdersPerMin,
-      maxLossUsd: m.maxLossUsd,
-      allowedActions: [...m.allowedActions],
-    },
-    used: { notionalUsd, lossUsd, ordersLastMin, msToExpiry },
-    projected: projectedFor(s, pos, markPx, freeUsd, assetMaxLeverage),
-    wallPx,
-    lastRule: s.lastRule,
-    haltedReason: s.haltedReason,
-  };
-}
-
 // ---------- markets ----------
 
 function marketFrom(ctx: MarketCtx, meta: AssetMeta | undefined, atr: number | null): Market {
@@ -896,7 +626,7 @@ function marketFrom(ctx: MarketCtx, meta: AssetMeta | undefined, atr: number | n
 export function buildTradePayload(deps: {
   view: TradeViewState;
   feed: TradeFeed;
-  mandates: MandateStatus[];
+  plans: PlanRow[];
   meta: Map<string, AssetMeta>;
   atrFor: (coin: string) => number | null;
   products: string[];
@@ -916,17 +646,17 @@ export function buildTradePayload(deps: {
   // under.
   const byCoin = new Map(positions.map((p) => [p.coin, p]));
 
-  const orders = deps.feed.orders().map((o) => orderFrom(o, byCoin.get(o.coin), deps.mandates));
+  const orders = deps.feed.orders().map((o) => orderFrom(o, byCoin.get(o.coin), deps.plans));
 
   // Keyed by tid, because that is the fill's identity on this venue: hash is often all zeroes,
   // and a reconnect snapshot that arrived on top of live fills would otherwise count the same
-  // trade twice against a mandate's order rate.
+  // trade twice.
   const seen = new Set<string>();
   const fills: Fill[] = [];
   for (const raw of deps.feed.fills()) {
     if (seen.has(raw.tid)) continue;
     seen.add(raw.tid);
-    fills.push(fillFrom(raw, deps.mandates));
+    fills.push(fillFrom(raw, deps.plans));
   }
   // Newest first: the panel reads down from the top and the agent's read takes from the front.
   fills.sort((a, b) => b.atMs - a.atMs);
@@ -943,23 +673,7 @@ export function buildTradePayload(deps: {
     markets.push(marketFrom(ctx, deps.meta.get(coin), deps.atrFor(coin)));
   }
 
-  // The account block is built before the mandate rows because the arm receipt spends free
-  // collateral, and there is one answer to how much of that there is.
-  const account = accountFrom(snapshot, positions);
-
-  const mandates = deps.mandates.map((m) => {
-    const ctx = deps.feed.market(m.mandate.symbol);
-    return mandateRowFrom(
-      m,
-      byCoin.get(m.mandate.symbol),
-      fills,
-      orders,
-      deps.nowMs,
-      ctx === null ? null : finite(ctx.markPx),
-      account.freeUsd,
-      finite(deps.meta.get(m.mandate.symbol)?.maxLeverage),
-    );
-  });
+  const account = accountFrom(snapshot, positions, deps.plans);
 
   return {
     rev: deps.view.rev,
@@ -967,8 +681,6 @@ export function buildTradePayload(deps: {
     symbol: deps.view.symbol,
     overlays: { ...deps.view.overlays },
     highlights: [...deps.view.highlights],
-    note: deps.view.note,
-    noteSource: deps.view.noteSource,
     venue: venueFrom(status, snapshot, deps.nowMs),
     account,
     collateral: collateralFrom(snapshot, deps.address),
@@ -976,21 +688,12 @@ export function buildTradePayload(deps: {
     positions,
     orders,
     fills,
-    mandates,
+    plans: deps.plans.map((p) => ({ ...p })),
     products: [...deps.products],
   };
 }
 
 // ---------- the agent's read ----------
-
-export type TradeBound = {
-  bound: 'notional' | 'loss' | 'orders' | 'time';
-  used: number;
-  cap: number;
-  // Fraction of the bound already spent, 0..1. Null when the cap is zero or the window cannot be
-  // worked out, since a fraction of nothing is not full, it is undefined.
-  spent: number | null;
-};
 
 export type TradeRead = {
   symbol: string;
@@ -1008,6 +711,8 @@ export type TradeRead = {
     netNotionalUsd: number | null;
     grossNotionalUsd: number | null;
     equityAtFivePctAdverse: number | null;
+    atRiskUsd: number;
+    maxLossUsd: number;
   };
   venue: TradePayload['venue'];
   positions: {
@@ -1035,72 +740,41 @@ export type TradeRead = {
     triggerPx: number | null;
     sizeCoin: number;
     reduceOnly: boolean;
-    mandateId: string | null;
+    planId: string | null;
   }[];
   fills: {
     count: number;
     inLastMin: number;
     recent: { tid: string; coin: string; side: 'buy' | 'sell'; px: number; sizeCoin: number; closedPnlUsd: number | null; atMs: number; liquidation: boolean }[];
   };
-  mandates: {
+  plans: {
     id: string;
     symbol: string;
-    armed: boolean;
-    running: boolean;
-    english: string[];
-    bounds: TradeBound[];
-    tightest: TradeBound['bound'] | null;
-    wallPx: number | null;
-    projected: MandateRow['projected'];
-    haltedReason: string | null;
+    side: 'long' | 'short';
+    sizeUsd: number;
+    leverage: number;
+    entry: PlanRow['entry'];
+    stop: number;
+    target: number | null;
+    when: PlanRow['when'];
+    expiresAt: string | null;
+    note: string | null;
+    status: PlanRow['status'];
+    endReason: PlanRow['endReason'] | null;
+    blind: boolean;
+    locked: boolean;
+    // Which conditions hold right now, waiting plans only.
+    holds: PlanRow['holds'] | null;
+    risk: PlanRow['risk'] | null;
+    fillPx: number | null;
   }[];
   markets: { coin: string; markPx: number; fundingRateHourly: number | null; premiumPct: number | null; openInterestUsd: number | null; atr: number | null; maxLeverage: number | null }[];
   highlights: { kind: string; id: string; note: string }[];
-  note: string | null;
   products: string[];
 };
 
 function money(v: number | null): string {
   return v === null ? 'unknown' : `$${v.toFixed(2)}`;
-}
-
-// Every bound the mandate has, sorted by how much of it is gone. The first one is the answer to
-// "what stops this bot first", which is the question the row exists to answer.
-function boundsFor(row: MandateRow): TradeBound[] {
-  const windowMs = Date.parse(row.expiresAt) - Date.parse(row.since);
-  const timeCap = Number.isFinite(windowMs) && windowMs > 0 ? windowMs : null;
-  const timeUsed = timeCap === null || row.used.msToExpiry === null ? null : timeCap - row.used.msToExpiry;
-
-  const bounds: TradeBound[] = [
-    {
-      bound: 'notional',
-      used: row.used.notionalUsd,
-      cap: row.envelope.maxNotionalUsd,
-      spent: clamp01(ratio(row.used.notionalUsd, row.envelope.maxNotionalUsd)),
-    },
-    {
-      bound: 'loss',
-      used: row.used.lossUsd,
-      cap: row.envelope.maxLossUsd,
-      spent: clamp01(ratio(row.used.lossUsd, row.envelope.maxLossUsd)),
-    },
-    {
-      bound: 'orders',
-      used: row.used.ordersLastMin,
-      cap: row.envelope.maxOrdersPerMin,
-      spent: clamp01(ratio(row.used.ordersLastMin, row.envelope.maxOrdersPerMin)),
-    },
-    {
-      bound: 'time',
-      used: timeUsed === null ? 0 : timeUsed,
-      cap: timeCap === null ? 0 : timeCap,
-      spent: clamp01(ratio(timeUsed, timeCap)),
-    },
-  ];
-
-  // An unknown fraction sorts last. It is not the tightest bound, it is the one nobody can say
-  // anything about, and putting it first would name it as the thing about to stop the bot.
-  return bounds.sort((a, b) => (b.spent === null ? -1 : b.spent) - (a.spent === null ? -1 : a.spent));
 }
 
 // The same surface, shaped for something that reads rather than looks.
@@ -1123,6 +797,7 @@ export function buildTradeRead(payload: TradePayload): TradeRead {
   if (a.equityAtFivePctAdverse !== null) {
     bits.push(`a 5% move against the book leaves ${money(a.equityAtFivePctAdverse)}`);
   }
+  if (a.atRiskUsd > 0) bits.push(`plans have ${money(a.atRiskUsd)} at risk and ${money(a.maxLossUsd)} of max loss at their stops`);
   if (a.unified) {
     // Said in the sentence rather than left to a null, because an agent that sees "unknown"
     // without a reason will go looking for the number somewhere else and find the wrong one.
@@ -1156,6 +831,8 @@ export function buildTradeRead(payload: TradePayload): TradeRead {
       netNotionalUsd: a.netNotionalUsd,
       grossNotionalUsd: a.grossNotionalUsd,
       equityAtFivePctAdverse: a.equityAtFivePctAdverse,
+      atRiskUsd: a.atRiskUsd,
+      maxLossUsd: a.maxLossUsd,
     },
     venue: payload.venue,
     positions: payload.positions.map((p) => ({
@@ -1190,7 +867,7 @@ export function buildTradeRead(payload: TradePayload): TradeRead {
       triggerPx: o.triggerPx,
       sizeCoin: o.sizeCoin,
       reduceOnly: o.reduceOnly,
-      mandateId: o.mandateId,
+      planId: o.planId,
     })),
     fills: {
       count: payload.fills.length,
@@ -1206,22 +883,26 @@ export function buildTradeRead(payload: TradePayload): TradeRead {
         liquidation: f.liquidation,
       })),
     },
-    mandates: payload.mandates.map((m) => {
-      const bounds = boundsFor(m);
-      const top = bounds[0];
-      return {
-        id: m.id,
-        symbol: m.symbol,
-        armed: m.armed,
-        running: m.running,
-        english: m.english,
-        bounds,
-        tightest: top === undefined || top.spent === null ? null : top.bound,
-        wallPx: m.wallPx,
-        projected: m.projected,
-        haltedReason: m.haltedReason,
-      };
-    }),
+    plans: payload.plans.map((p) => ({
+      id: p.id,
+      symbol: p.symbol,
+      side: p.side,
+      sizeUsd: p.sizeUsd,
+      leverage: p.leverage,
+      entry: p.entry,
+      stop: p.stop,
+      target: p.target ?? null,
+      when: p.when,
+      expiresAt: p.expiresAt ?? null,
+      note: p.note ?? null,
+      status: p.status,
+      endReason: p.endReason ?? null,
+      blind: p.blind === true,
+      locked: p.locked === true,
+      holds: p.status === 'waiting' ? (p.holds ?? []) : null,
+      risk: p.risk ?? null,
+      fillPx: p.fillPx ?? null,
+    })),
     markets: payload.markets.map((m) => ({
       coin: m.coin,
       markPx: m.markPx,
@@ -1232,7 +913,6 @@ export function buildTradeRead(payload: TradePayload): TradeRead {
       maxLeverage: m.maxLeverage,
     })),
     highlights: payload.highlights.map((h) => ({ kind: h.kind, id: h.id, note: h.note })),
-    note: payload.note,
     products: payload.products,
   };
 }

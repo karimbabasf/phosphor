@@ -45,7 +45,7 @@ function payloadFrom(feed: TradeFeed): TradePayload {
   return buildTradePayload({
     view: createTradeView('SOL', () => NOW).state(),
     feed,
-    mandates: [],
+    plans: [],
     meta: meta(),
     atrFor: () => 2.4,
     products: ['SOL'],

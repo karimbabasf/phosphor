@@ -4,12 +4,14 @@
 // it, and the boot reconcile decides what to re-arm by reading it against the proposal store.
 // Only an idea can be removed, because an idea has never had authority.
 //
-// Written whole, through a temp file and a rename, so a crash mid-write leaves the last good
-// file rather than half of a new one. Owner-only, like every other file under the data dir
-// that says what this app is allowed to do.
+// Written whole through the app's one durable writer (src/fsatomic.ts), so a crash mid-write
+// leaves the last good file rather than half of a new one. Owner-only, like every other file
+// under the data dir that says what this app is allowed to do.
 
 import fs from 'node:fs';
 import path from 'node:path';
+
+import { atomicWriteJson } from '../fsatomic.ts';
 
 import type { Plan } from './plan.ts';
 import type { PlanRisk } from './risk.ts';
@@ -68,13 +70,14 @@ export function createPlanStore(dir: string): PlanStore {
     try {
       parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
     } catch {
-      // A file this app cannot read is moved aside rather than overwritten: the evidence stays,
-      // and the app comes up with no plans rather than not at all.
+      // A file this app cannot read is copied aside rather than lost: the evidence stays, the
+      // next write replaces the original, and the app comes up with no plans rather than not
+      // at all.
       const aside = `${file}.${Date.now().toString(36)}.unreadable`;
       try {
-        fs.renameSync(file, aside);
+        fs.copyFileSync(file, aside);
       } catch {
-        // Nothing more to do: the next write replaces it.
+        // Nothing more to do.
       }
       return;
     }
@@ -83,12 +86,7 @@ export function createPlanStore(dir: string): PlanStore {
   }
 
   function save(): void {
-    fs.mkdirSync(dir, { recursive: true });
-    const tmp = `${file}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify([...rows.values()], null, 2), { mode: 0o600 });
-    fs.renameSync(tmp, file);
-    // The rename keeps the temp file's mode; stated again so a pre-existing wider file tightens.
-    fs.chmodSync(file, 0o600);
+    atomicWriteJson(file, [...rows.values()]);
   }
 
   load();

@@ -49,7 +49,7 @@ test('put, get, list and a boot load from the same file', () => {
   );
 });
 
-test('the file is written whole through a temp file and is owner-only', () => {
+test('the file is written whole through the one durable writer and is owner-only', () => {
   const d = dir();
   const store = createPlanStore(d);
   store.put(row());
