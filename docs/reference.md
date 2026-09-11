@@ -60,7 +60,8 @@ clears each.
 | `propose_intents_withdraw` | Brings a balance back out of `intents.near` into one of this app's own wallets on `eth`, `base`, `arb` or `sol`. The way out of the `intents-native` venue. Withdraws the chain's gas asset unless a symbol is given. Which wallet is ours comes from `config.local.json`, never from the call |
 | `propose_consolidate` | Gathers a token's scattered balances onto one chain. Unproven: this path has never run on a live chain, and the tool description says so, so a clean simulation is not evidence it works |
 | `propose_policy_change` | Proposes a patch to the policy rules. Always waits for a human click |
-| `propose_mandate` | Arms a rule-driven bot on Hyperliquid perpetuals: a rule program plus the envelope it may never leave. The only tool that grants standing authority, so it always waits for a human click |
+| `propose_trade` | Arms a plan on Hyperliquid perpetuals, whole or by the id of one drawn with `trade_plan`. Priced at the collateral it puts at stake: the click threshold is the only wall |
+| `propose_trade_change` | Changes an armed plan: a new stop or target, cancel, or close. A change that only takes risk off lands without the wall; one that widens is priced like a new plan |
 | `propose_hl_deposit` | Funds the Hyperliquid perpetuals account. Routes through NEAR Intents into HyperCore; there is no tool that takes money back out, and the paragraph below says why |
 
 This door now names exactly the set the app can execute. `propose_lp_add`, `propose_lp_remove`,
@@ -96,18 +97,28 @@ terminal, and that is deliberately not a tool.
 
 | Trading tool | Does |
 |---|---|
-| `trade_read` | The book as it stands: account health, positions with liquidation distance, working orders, recent fills, armed mandates |
-| `trade_batch` | Account, positions, orders, fills, mandates, market and venue health in one round trip |
+| `trade_read` | The book as it stands: account health, positions with liquidation distance, working orders, recent fills, every plan with its state, and for a waiting plan which conditions hold |
+| `trade_batch` | Account, positions, orders, fills, plans, market and venue health in one round trip |
 | `trade_focus` | Points the trading surface at one market. The chart follows |
-| `trade_highlight` | Highlights one row and says why, so the agent and the human are looking at the same object |
-| `trade_overlay` | Toggles entry, liquidation, stops, targets, orders, fills and the mandate wall |
-| `trade_note` | Pins one line of the agent's reasoning where the human can see it |
+| `trade_highlight` | Points at one row or chart object (position, order, fill, plan, level, line, indicator) and says why, so the agent and the human mean the same thing |
+| `trade_overlay` | Toggles entry, liquidation, stops, targets, orders, fills and the plan wall |
+| `trade_plan` | Draws a plan on the chart as an idea and lists it under Waiting. No authority. Redraw or remove it while it is an idea |
 | `trade_clear` | Removes what the agent put on the surface |
-| `mandate_catalog` | The whole mandate grammar with worked, validated examples: conditions, actions, how to reference a trend line already drawn, what each envelope field caps, and the traps. There is no discretionary order in this app, so this is how a position gets opened at all |
 
-There is no tool that closes a position and no tool that places a discretionary order. A position
-is opened and exited by a mandate a human armed, which is the same argument the write surface
-makes: the way to stop an agent doing something with real money is to never hand it the verb.
+**A trade is one plan.** Symbol, side, size in dollars, leverage, an entry (market, limit or stop),
+a stop, an optional target, optional conditions the venue cannot hold (a bar close, a reclaim
+wick, volume, a time window), an expiry and a note. Drawn with `trade_plan` it is an idea; armed
+with `propose_trade` it is the same object with authority. Every position opens isolated, so the
+margin posted is the most the venue can take for it, and the policy reads max(margin, max loss
+at the stop): under the click threshold the plan runs at once, above it the human clicks. The
+entry, the stop and the target go to the venue as one bracket, with the stop leg's limit ten
+percent past its trigger, so the venue holds the exits and the app can die with the position
+still protected. A limit or stop entry rests on the venue and its exits are placed the moment
+anything fills. A plan with conditions waits with nothing at risk until they hold. The runner
+child holds plans by id and refuses any command for one it does not hold; the host decides when.
+Plans persist in `plans.json` beside the policy, and on boot a waiting plan re-arms only if its
+proposal executed with the same hash. The human's own buttons (cancel, close at 100 bps, flatten)
+live on `/api/trade/action`, which the agent's door does not open onto.
 
 | Team tool | Does |
 |---|---|
@@ -463,8 +474,10 @@ Still open, unrelated to keys:
     src/keystore/      the encrypted key file, the lock, the session, the derivation
     src/policy/        engine (pure) + policy file + sentence renderer + the venue gap
     src/proposals.ts   a 92-line door onto src/proposals/
-    src/proposals/     the work: lifecycle, execute, draft, rails, positions, reconcile
-    src/rails/         the rail registry: oneclick, intents, hyperliquid, mandate
+    src/proposals/     the work: lifecycle, execute, draft, rails, trade, reconcile
+    src/rails/         the rail registry: oneclick, intents, hyperliquid
+    src/trade/         plan, risk, plans on disk, the watcher, the rail, the surface
+    src/runner/        the host (registry, watcher, fills watch) and the child that signs
     src/gas/           what a movement cost, grouped by action, chain, rail and venue
     src/chain/         the only places phosphor signs: evm.ts and near.ts
     src/ledger/        the NEAR Intents verifier read + demo fixtures
