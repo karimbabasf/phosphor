@@ -558,13 +558,6 @@ export type LogEvent = {
 
 export type Candle = { t: number; o: number; h: number; l: number; c: number; v: number };
 
-export type CandleSource = {
-  name: string;
-  // product like 'BTC-USD', granularity in seconds, newest-last ordering
-  candles(product: string, granularitySec: number, limit: number): Promise<Candle[]>;
-  spot(product: string): Promise<number>;
-};
-
 export type Quoter = {
   name: string;
   quoteLeg(leg: TransferLeg): Promise<LegQuote>; // throws on failure; caller treats throw as refusal

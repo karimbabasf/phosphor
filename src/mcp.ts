@@ -418,11 +418,6 @@ registerRead('log_tail', 'Returns the most recent audit log lines, newest first.
   limit: z.number().int().optional().default(50),
 });
 registerRead(
-  'candles',
-  'Returns recent OHLC candles for a product, with a staleness marker. Read-only, changes nothing.',
-  { product: z.string(), granularity: z.number().int().optional().default(60) },
-);
-registerRead(
   'proposal_status',
   'Returns the status, verdict, and simulation result for a proposal id. Read-only, changes nothing.',
   { id: z.string() },
@@ -476,16 +471,6 @@ registerRead(
   { chart: z.number().int().min(0).max(3).optional(), full: z.boolean().optional() },
 );
 registerRead(
-  'chart_measure',
-  'Measures between two points on the chart: absolute and percent change, bars and elapsed time between them, the high and low the path actually took, and the worst drawdown along the way. Give two times, two prices, or one of each; anything left out defaults to the oldest loaded bar and the newest. Read-only, changes nothing.',
-  {
-    fromTime: z.number().optional(),
-    toTime: z.number().optional(),
-    fromPrice: z.number().optional(),
-    toPrice: z.number().optional(),
-  },
-);
-registerRead(
   'chart_scan',
   'Reads several timeframes at once without moving the chart: last price, change, high and low, range, ATR in price and percent, trend, and seconds until each bar closes. Use this to hold a multi-timeframe picture instead of switching the view back and forth. Read-only, changes nothing.',
   {
@@ -493,11 +478,6 @@ registerRead(
     timeframes: z.array(z.string()).optional(),
     bars: z.number().int().optional(),
   },
-);
-registerRead(
-  'indicator_catalog',
-  'Lists every indicator this chart can draw, with its parameters, defaults, allowed ranges, and whether it overlays the price or takes its own pane. Call this before chart_add_indicator. Read-only, changes nothing.',
-  {},
 );
 registerLeadRead(
   'chart_snapshot',
@@ -609,8 +589,6 @@ registerRead(
             // how much of a series comes back
             tail: z.number().int().optional(),
             full: z.boolean().optional(),
-            // history paging
-            cursor: z.number().optional(),
             limit: z.number().int().optional(),
             // drawings_clear: 'mine' is this session's own work and is the default, 'agent' is every
             // agent's, 'all' includes the human's.

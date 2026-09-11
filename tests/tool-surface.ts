@@ -19,7 +19,6 @@ export const EXPECTED_TOOLS: readonly string[] = [
   // place to put a lie, which is why it is asserted like everything else.
   'start',
   'balances',
-  'candles',
   'composition',
   'wallet',
   'log_tail',
@@ -73,7 +72,6 @@ export const EXPECTED_TOOLS: readonly string[] = [
   'mandate_catalog',
   // The chart. These read and drive a view, never funds.
   'chart_read',
-  'chart_measure',
   'chart_scan',
   // A picture of one chart, rendered by the window. A read, and the lead's: it asks the window
   // the human is looking at to render, so a worker does not hold it.
@@ -81,7 +79,6 @@ export const EXPECTED_TOOLS: readonly string[] = [
   // The measurement instrument. Many operations in one call, so its arguments are enumerated
   // rather than left as a free-form bag: the property walk cannot see inside an open record.
   'chart_batch',
-  'indicator_catalog',
   'market_search',
   'research',
   // The chart's one write. View, indicators, presets, levels, marks, lines and zones in one

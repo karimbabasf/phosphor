@@ -132,10 +132,6 @@ export async function bootChartServer(opts: { view?: ViewMode; fetchDelayMs?: nu
     store,
     riskRows: [],
     ledger: { snapshot, intents: () => undefined, refresh: async () => snapshot(), applyDemoTransfer: () => {} },
-    candles: {
-      get: async () => ({ candles: [], stale: false, source: 'test', fetchedAt: new Date().toISOString() }),
-      spot: async () => 1,
-    },
     market,
     proposals: {
       proposeConsolidate: async () => { throw new Error('unused'); },

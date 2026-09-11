@@ -13,7 +13,6 @@
 import type { Candle } from '../types.ts';
 import type { Handler } from '../batch.ts';
 import type { DrawingStore } from '../drawings.ts';
-import type { createHistory } from '../history.ts';
 import { pivots } from './pivots.ts';
 import { lineAt, touches, fitThroughPivots } from './trendline.ts';
 import type { Line } from './trendline.ts';
@@ -30,7 +29,6 @@ import type { IndicatorSpec } from '../indicators.ts';
 export type AnalysisDeps = {
   // Mirrors the server's own loader, so the agent measures the same bars the human sees.
   candles(product: string, granularitySec: number, limit: number): Promise<Candle[]>;
-  history: ReturnType<typeof createHistory>;
   drawings: DrawingStore;
   // Who is drawing and what they are looking at, stamped onto anything this batch creates.
   // Optional, because a test and the browser both build these handlers with no agent behind
@@ -137,14 +135,6 @@ export function analysisHandlers(deps: AnalysisDeps): Record<string, Handler> {
   return {
     // ---------- seeing ----------
     candles: async (a) => tailed(a, await load(a)),
-
-    history_page: async (a) =>
-      await deps.history.page(
-        str(a.product, '').toUpperCase(),
-        num(a.granularitySec, 3600),
-        typeof a.cursor === 'number' ? a.cursor : null,
-        num(a.limit, 500),
-      ),
 
     // ---------- measuring ----------
     pivots: async (a) => tailed(a, await pivotsFor(a)),

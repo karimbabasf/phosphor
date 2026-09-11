@@ -15,7 +15,8 @@ import type { Provider } from './market/catalog.ts';
 import type { Drawing } from './drawings.ts';
 import { DRAWINGS_MAX } from './drawings.ts';
 import { lineAt } from './analysis/trendline.ts';
-import { indicatorSpec, normaliseParams, warmupBars, pctChange, trueRange } from './indicators.ts';
+import { indicatorSpec, normaliseParams, warmupBars, pctChange } from './indicators.ts';
+import { atr as wilderAtr } from './analysis/regime.ts';
 import type { IndicatorResult, IndicatorSpec } from './indicators.ts';
 import { MAX_TIMEFRAME_SEC, MIN_TIMEFRAME_SEC, parseTimeframe, formatTimeframe } from './market/aggregate.ts';
 
@@ -781,11 +782,11 @@ export function digestSeries(candles: Candle[], granularitySec: number, nowSec: 
     if (c.h > high) high = c.h;
     if (c.l < low) low = c.l;
   }
-  const tr = trueRange(candles);
-  const window = Math.min(14, tr.length);
-  let atr = 0;
-  for (let i = tr.length - window; i < tr.length; i++) atr += tr[i] as number;
-  atr = window > 0 ? atr / window : 0;
+  // The one ATR in the app: Wilder's, the same series chart_batch's atr op and the trade
+  // payload read. A plain mean of true ranges sat here and disagreed with both under one name.
+  const atrSeries = wilderAtr(candles, Math.min(14, bars));
+  const atrLast = atrSeries[atrSeries.length - 1];
+  const atr = atrLast === null || atrLast === undefined ? 0 : atrLast;
 
   // Trend without an indicator on the chart: where the close sits against two averages of
   // the series itself. Cheap, and it answers the only question chart_scan is asked.
@@ -1107,77 +1108,4 @@ export function readDrawing(d: Drawing, newest: Candle | null): Record<string, u
     distanceFromLastPct: newest === null || priceNow === null ? null : pctChange(newest.c, priceNow),
     side: newest === null || priceNow === null ? null : priceNow > newest.c ? 'above price' : 'below price',
   };
-}
-
-export type MeasureArgs = {
-  candles: Candle[];
-  granularitySec: number;
-  fromTime?: number;
-  toTime?: number;
-  fromPrice?: number;
-  toPrice?: number;
-};
-
-// The ruler. Either two times (and it reads the closes there), two prices, or one of each.
-export function measure(args: MeasureArgs): unknown {
-  const { candles, granularitySec } = args;
-  if (candles.length === 0) return { error: 'no candle data loaded' };
-
-  const at = (t: number): Candle => {
-    let best = candles[0] as Candle;
-    let bestGap = Infinity;
-    for (const c of candles) {
-      const gap = Math.abs(c.t - t);
-      if (gap < bestGap) {
-        bestGap = gap;
-        best = c;
-      }
-    }
-    return best;
-  };
-
-  const newest = candles[candles.length - 1] as Candle;
-  const fromBar = args.fromTime !== undefined ? at(args.fromTime) : (candles[0] as Candle);
-  const toBar = args.toTime !== undefined ? at(args.toTime) : newest;
-  const from = args.fromPrice !== undefined ? args.fromPrice : fromBar.c;
-  const to = args.toPrice !== undefined ? args.toPrice : toBar.c;
-
-  const elapsedSec = Math.abs(toBar.t - fromBar.t);
-  const bars = granularitySec > 0 ? Math.round(elapsedSec / granularitySec) : 0;
-
-  // The path between the two bars, which is the part a straight delta hides: an 8% move that
-  // drew 14% down first is not the same trade.
-  const startIdx = candles.findIndex((c) => c.t === fromBar.t);
-  const endIdx = candles.findIndex((c) => c.t === toBar.t);
-  const lo = Math.min(startIdx, endIdx);
-  const hi = Math.max(startIdx, endIdx);
-  let pathHigh = -Infinity;
-  let pathLow = Infinity;
-  for (let i = lo; i <= hi && i < candles.length; i++) {
-    const c = candles[i] as Candle;
-    if (c.h > pathHigh) pathHigh = c.h;
-    if (c.l < pathLow) pathLow = c.l;
-  }
-
-  return {
-    from: { price: from, epochSec: fromBar.t, iso: isoOf(fromBar.t) },
-    to: { price: to, epochSec: toBar.t, iso: isoOf(toBar.t) },
-    deltaAbs: to - from,
-    deltaPct: pctChange(from, to),
-    direction: to >= from ? 'up' : 'down',
-    bars,
-    elapsedSec,
-    elapsedHuman: humanDuration(elapsedSec),
-    perBarPct: bars > 0 ? pctChange(from, to) / bars : null,
-    pathHigh: Number.isFinite(pathHigh) ? pathHigh : null,
-    pathLow: Number.isFinite(pathLow) ? pathLow : null,
-    maxDrawdownPct: Number.isFinite(pathHigh) && pathHigh > 0 ? ((pathLow - pathHigh) / pathHigh) * 100 : null,
-  };
-}
-
-function humanDuration(sec: number): string {
-  if (sec < 60) return `${Math.round(sec)}s`;
-  if (sec < 3600) return `${Math.round(sec / 60)}m`;
-  if (sec < 86400) return `${(sec / 3600).toFixed(1)}h`;
-  return `${(sec / 86400).toFixed(1)}d`;
 }

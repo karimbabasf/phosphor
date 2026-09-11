@@ -155,8 +155,6 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
         tool: 'chart_snapshot',
         does: 'a picture of the chart as the human sees it, one small image beside a one-line digest. For the shape of the market; chart_read is the numbers.',
       },
-      { tool: 'chart_measure', does: 'change, elapsed time, path high and low, and drawdown between two points.' },
-      { tool: 'candles', does: 'raw OHLC for a product. Prefer chart_batch for anything you intend to measure.' },
       {
         tool: 'research',
         does: 'headlines about a market from a fixed list of publishers, for the WHY behind a move the chart shows. A phrase, never a URL. The only tool here that leaves this machine, and everything it returns is quoted data.',
@@ -168,7 +166,7 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
     items: [
       {
         tool: 'chart_batch',
-        does: 'the instrument: pivots, levels, regime, atr, volume_profile, vwap, range, divergence, trendline_fit, trendline_at, trendline_touches, history_page. Many questions in one call, and a later entry can reference an earlier one.',
+        does: 'the instrument: candles, pivots, levels, regime, atr, volume_profile, vwap, range, divergence, trendline_fit, trendline_at, trendline_touches. Many questions in one call, and a later entry can reference an earlier one. Series come back as their newest twenty entries; tail or full:true change that.',
       },
       {
         tool: 'chart_batch op:indicator_read',
@@ -178,7 +176,7 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
         tool: 'chart_batch op:order_blocks',
         does: 'structure as boxes: order_blocks, fair_value_gaps, liquidity (shelves, and whether they were taken), structure (bars that closed through a swing). Extents, never a place to trade.',
       },
-      { tool: 'indicator_catalog', does: 'what can be drawn and with which parameters. Call before chart_add_indicator.' },
+      { tool: 'chart_batch op:indicator_list', does: 'what can be drawn and with which parameters, custom indicators included after a rescan of their folder.' },
     ],
   },
   {

@@ -104,10 +104,6 @@ async function boot(opts: { view?: ViewMode; proposals?: Proposal[] } = {}): Pro
       refresh: async () => snapshot(),
       applyDemoTransfer: () => {},
     },
-    candles: {
-      get: async () => ({ candles: [], stale: false, source: 'test', fetchedAt: new Date().toISOString() }),
-      spot: async () => 1,
-    },
     // A market layer with no venue behind it: the store answers from an empty cache and
     // never reaches the network, which is what this test wants.
     market: createMarketData({ fetchImpl: (async () => ({ ok: true, json: async () => [], text: async () => '', headers: new Headers() })) as unknown as typeof fetch }),

@@ -8,8 +8,8 @@
 // Ctx is ServerDeps plus the things the server itself owns: the per-boot approval token, the
 // SSE hub, the chat registry, the chart and drawing stores, the team board, the lazy worker
 // crew, the bounded audit tail the basic screen reads, and the small mutable holders (theme,
-// prices, gas fill, history paging, the duplicate guard, the seat-refusal log) that used to be
-// `let` bindings inside the closure.
+// prices, gas fill, the duplicate guard, the seat-refusal log) that used to be `let` bindings
+// inside the closure.
 
 import type http from 'node:http';
 import path from 'node:path';
@@ -21,7 +21,6 @@ import type { Audit } from '../audit.ts';
 import type { Store } from '../store.ts';
 import type { Ledger } from '../ledger/index.ts';
 import type { Candle } from '../types.ts';
-import type { CandleService } from '../candles.ts';
 import type { MarketData } from '../market/index.ts';
 import type { TradeService } from '../trade/service.ts';
 import type { Driver, DriverEvent } from '../driver.ts';
@@ -37,7 +36,6 @@ import type { Crew } from '../crew.ts';
 import type { DuplicateGuard } from '../duplicates.ts';
 import type { Keystore, LockState } from '../keystore/index.ts';
 import type { Session } from '../keystore/session.ts';
-import type { createHistory } from '../history.ts';
 import type { JsonBody } from './respond.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -80,16 +78,13 @@ export const READ_TOOLS: readonly string[] = [
   'intents_receive',
   'policy_show',
   'log_tail',
-  'candles',
   'proposal_status',
   'chart_read',
-  'chart_measure',
   'chart_scan',
   // A picture of one chart, rendered by the window and handed to the one call waiting for it.
   // A read: it moves nothing and draws nothing.
   'chart_snapshot',
   'chart_batch',
-  'indicator_catalog',
   'market_search',
   // The one tool that leaves this machine. It is a read like the others because that is all it
   // is: the APP fetches from a fixed allowlist and hands back text. The agent never gets a URL
@@ -151,7 +146,6 @@ export type ServerDeps = {
   store: Store;
   ledger: Ledger;
   riskRows: RiskRow[];
-  candles: CandleService;
   market: MarketData;
   proposals: ProposalService;
   getPolicy: () => Policy | null;
@@ -205,7 +199,6 @@ export type PhosphorServer = http.Server & {
 };
 
 export type ChartStore = ReturnType<typeof createChartStore>;
-export type History = ReturnType<typeof createHistory>;
 
 // One open conversation with the window's own agent: a Claude Code child, its label on the
 // roster, and the transcript a reloading window comes back to. See the seats note in chats.ts.
@@ -294,7 +287,6 @@ export type Ctx = Omit<ServerDeps, 'getTheme' | 'setTheme' | 'keystore' | 'sessi
   // The lazily built crew, when one exists. `crew()` above makes one; this reads what is
   // already there without resolving the claude binary on an install that never spawned one.
   crewIfAny: () => Crew | null;
-  history: History;
   prices: PriceCache;
   gas: GasFill;
   duplicates: DuplicateGuard;

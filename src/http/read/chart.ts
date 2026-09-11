@@ -1,19 +1,11 @@
 // The chart reads: the agent's view of what the human is looking at, a batch of analysis ops
-// over it, the indicator grammar, one measurement, and a scan across timeframes.
+// over it, a picture of it, and a scan across timeframes.
 
-import {
-  digestSeries,
-  LIMITS as CHART_LIMITS,
-  measure as measureChart,
-  resolveScanTimeframe,
-  TIMEFRAMES,
-  timeframeLabel,
-} from '../../chart.ts';
-import { indicatorCatalog } from '../../indicators.ts';
+import { digestSeries, resolveScanTimeframe, timeframeLabel } from '../../chart.ts';
 import { runBatch } from '../../batch.ts';
 import { analysisHandlers } from '../../analysis/index.ts';
 import { errText, fail, intParam, sendJson } from '../respond.ts';
-import { chartDigest, chartRead, customIndicatorsOf, loadCandles, numOrUndefined, resolveIndicator } from '../chart.ts';
+import { chartDigest, chartRead, customIndicatorsOf, loadCandles, resolveIndicator } from '../chart.ts';
 import type { ChartDigest } from '../chart.ts';
 import { slotOf } from '../view.ts';
 import { SNAPSHOT_TTL_MS } from '../../snapshot.ts';
@@ -49,7 +41,6 @@ export const chartReads: ReadTable = {
               product === '' || product === view.product ? view.provider : 'auto',
             )
           ).candles,
-        history: ctx.history,
         drawings: ctx.drawings,
         // The same resolver the chart draws with, so a custom indicator reads here the way it
         // draws there, and indicator_list can rescan the folder it came from.
@@ -73,37 +64,6 @@ export const chartReads: ReadTable = {
       timeframe: timeframeLabel(view.granularitySec),
       results,
     });
-  },
-  indicator_catalog: (_ctx, _body, _args, res) => {
-    sendJson(res, 200, {
-      indicators: indicatorCatalog(),
-      limits: {
-        overlaysOnPrice: CHART_LIMITS.maxOverlays,
-        subPanes: CHART_LIMITS.maxPanes,
-        note: 'A sub-pane request past the maximum is refused with the reason, never squeezed in.',
-      },
-      timeframes: TIMEFRAMES.map((tf) => tf.label),
-    });
-  },
-  chart_measure: async (ctx, _body, args, res) => {
-    const view = ctx.chart.state().view;
-    try {
-      const load = await loadCandles(ctx, view.product, view.granularitySec, ctx.chart.historyNeeded(), view.provider);
-      sendJson(res, 200, {
-        product: view.product,
-        timeframe: timeframeLabel(view.granularitySec),
-        ...(measureChart({
-          candles: load.candles,
-          granularitySec: view.granularitySec,
-          fromTime: numOrUndefined(args.fromTime),
-          toTime: numOrUndefined(args.toTime),
-          fromPrice: numOrUndefined(args.fromPrice),
-          toPrice: numOrUndefined(args.toPrice),
-        }) as Record<string, unknown>),
-      });
-    } catch (err) {
-      fail(res, 502, errText(err));
-    }
   },
   /* A picture of one chart, as the human sees it, in one small image. The window renders scene
      and hud to a JPEG at most 1024 px wide and posts it back; the broker hands it to this call.

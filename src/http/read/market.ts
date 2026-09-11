@@ -1,22 +1,12 @@
-// The market reads: bars for any product, what can be charted at all, and the one tool in
-// this app whose answer comes from off the machine.
+// The market reads: what can be charted at all, and the one tool in this app whose answer
+// comes from off the machine. Bars are chart_batch's op candles, off the same cache the chart
+// draws from; the separate `candles` tool that served them from a second cache is gone.
 
-import { errText, fail, intParam, sendJson } from '../respond.ts';
+import { fail, intParam, sendJson } from '../respond.ts';
 import { research } from '../../research.ts';
-import { CANDLE_LIMIT_MAX } from '../context.ts';
 import type { ReadTable } from '../context.ts';
 
 export const marketReads: ReadTable = {
-  candles: async (ctx, _body, args, res) => {
-    const product = typeof args.product === 'string' ? args.product : (ctx.cfg.candleProducts[0] ?? 'BTC-USD');
-    const granularity = intParam(args.granularity, 60, 86400);
-    const limit = intParam(args.limit, 120, CANDLE_LIMIT_MAX);
-    try {
-      sendJson(res, 200, await ctx.candles.get(product, granularity, limit));
-    } catch (err) {
-      fail(res, 502, errText(err));
-    }
-  },
   // What can be charted, so an agent can find a market before trying to open it rather
   // than guessing at a product id and reading an error.
   market_search: (ctx, _body, args, res) => {

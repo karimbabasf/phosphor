@@ -13,6 +13,7 @@ import { createProviders, planBase } from './providers.ts';
 import { createMarketStore, staleAfterSec, type MarketStore } from './store.ts';
 import { formatTimeframe, parseTimeframe, MIN_TIMEFRAME_SEC } from './aggregate.ts';
 import { createMarketLive, LIVE_BASE_SEC, type LiveProvider, type LiveRef, type LiveSocket, type VenueStatus } from './live.ts';
+import { atr as wilderAtr } from '../analysis/regime.ts';
 
 // A market read this long ago is not being watched any more, and its socket subscription goes
 // back. Five minutes outlives a person flipping timeframes and does not outlive a window that
@@ -201,9 +202,22 @@ export function createMarketData(deps: MarketDeps = {}) {
     return read(query, timeframe, bars, want);
   }
 
+  /* The one ATR the trade payload reads, over the same cache the chart draws from and with the
+     Wilder smoothing every other ATR in this app uses. It used to be fetched through a second
+     candle cache and a second venue client, and the number it produced could disagree with
+     the chart's over the same market. Null when there are no bars, never zero: a missing
+     volatility figure is reported in the units that do not need it. */
+  async function atr(query: string, timeframe: string | number, bars: number, period: number): Promise<number | null> {
+    const held = await warm(query, timeframe, bars);
+    const series = wilderAtr(held.candles, period);
+    const last = series[series.length - 1];
+    return last === null || last === undefined || !Number.isFinite(last) ? null : last;
+  }
+
   return {
     read,
     warm,
+    atr,
     resolve: (query: string) => catalog.resolve(query),
     resolveOn: (query: string, provider: Provider) => catalog.resolveOn(query, provider),
     search: (query: string, limit?: number) => catalog.search(query, limit),

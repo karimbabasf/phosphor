@@ -23,7 +23,6 @@ import { DEFAULT_THEME, type Theme } from './view/theme.ts';
 import { createBoard } from './board.ts';
 import { createDuplicateGuard } from './duplicates.ts';
 import { createCrew } from './crew.ts';
-import { createHistory } from './history.ts';
 import { BASIC_EVENT_SCAN, PROJECT_DIR } from './http/context.ts';
 import type { Ctx, GasFill, PriceCache, ServerDeps, PhosphorServer, SseHub } from './http/context.ts';
 import { HOST, windowToken } from './http/auth.ts';
@@ -32,7 +31,7 @@ import { createSession } from './keystore/session.ts';
 import { createSseHub } from './http/sse.ts';
 import { createCandlePush } from './market/push.ts';
 import { createChatRegistry } from './http/chats.ts';
-import { loadCandles, startPricePolling } from './http/chart.ts';
+import { startPricePolling } from './http/chart.ts';
 import { handle } from './http/router.ts';
 
 export function createServer(deps: ServerDeps): PhosphorServer {
@@ -137,18 +136,6 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     return crew;
   }
 
-  // History paging shares loadCandles, so a bar the agent walks back to is the same bar the
-  // chart would have drawn had the human panned there.
-  const history = createHistory(async (product, granularitySec, endSec, limit) => {
-    // Same rule as chart_batch: paging back on the instrument on screen follows that
-    // chart's pinned venue, and paging back on any other product does not inherit a
-    // choice that was never made about it.
-    const view = chart.state().view;
-    const provider = product === view.product ? view.provider : 'auto';
-    const load = await loadCandles(ctx, product, granularitySec, limit, provider);
-    return load.candles.filter((c) => c.t < endSec);
-  });
-
   const chats = createChatRegistry({ cfg, audit, agents, getView, sse, makeDriver: deps.makeDriver });
 
   // Two agents cannot double the same proposal by accident. See src/duplicates.ts for what this
@@ -226,8 +213,8 @@ export function createServer(deps: ServerDeps): PhosphorServer {
 
   /* Everything the handlers read, in one object. It is assembled here rather than passed around
      as a dozen arguments because src/server.ts used to be one closure over these bindings, and
-     the split turned each read into a field. `history` and `crew` close over `ctx` itself and
-     are only ever called from a request, which is why the cycle is safe. */
+     the split turned each read into a field. `crew` closes over `ctx` itself and is only ever
+     called from a request, which is why the cycle is safe. */
   const ctx: Ctx = {
     ...deps,
     token,
@@ -245,7 +232,6 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     crew: getCrew,
     crewIfAny: () => crew,
     recent: recentEvents,
-    history,
     prices,
     gas,
     duplicates,

@@ -15,7 +15,6 @@ import {
   createChartStore,
   digestSeries,
   LIMITS,
-  measure,
   priceDecimals,
   snapTimeframe,
   timeframeLabel,
@@ -204,26 +203,6 @@ test('a timeframe that is not a timeframe is still refused, with a usable messag
 
   const tooBig = chart.setView({ granularitySec: 60 * 60 * 24 * 400 }, 'agent');
   assert.equal(tooBig.ok, false, 'a year per bar is past anything the rails hold');
-});
-
-test('the ruler reports the path, not only the endpoints', () => {
-  // Up to 110, down to 80, back to 100: a straight delta would call this a 0% move.
-  const candles = series([100, 110, 80, 100]);
-  const out = measure({ candles, granularitySec: 60 }) as Record<string, number>;
-  assert.equal(out.deltaAbs, 0);
-  assert.equal(out.deltaPct, 0);
-  assert.equal(out.bars, 3);
-  assert.equal(out.pathHigh, 111);
-  assert.equal(out.pathLow, 79);
-  assert.ok((out.maxDrawdownPct as number) < -28);
-});
-
-test('the ruler accepts prices the chart never printed', () => {
-  const candles = series([100, 110, 120]);
-  const out = measure({ candles, granularitySec: 60, fromPrice: 100, toPrice: 150 }) as Record<string, unknown>;
-  assert.equal(out.deltaAbs, 50);
-  assert.equal(out.deltaPct, 50);
-  assert.equal(out.direction, 'up');
 });
 
 test('a timeframe digest answers without moving the chart', () => {

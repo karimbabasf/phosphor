@@ -2,7 +2,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { analysisHandlers } from '../../src/analysis/index.ts';
 import { createDrawingStore } from '../../src/drawings.ts';
-import { createHistory } from '../../src/history.ts';
 import { runBatch } from '../../src/batch.ts';
 import { indicatorSpec } from '../../src/indicators.ts';
 import type { IndicatorSpec } from '../../src/indicators.ts';
@@ -18,7 +17,6 @@ function deps() {
   const candles = fixture();
   return {
     candles: async () => candles,
-    history: createHistory(async () => candles),
     drawings: createDrawingStore(),
   };
 }
@@ -27,7 +25,6 @@ test('exposes every primitive as a named op', () => {
   const h = analysisHandlers(deps());
   for (const name of [
     'candles',
-    'history_page',
     'pivots',
     'levels',
     'regime',
@@ -186,11 +183,4 @@ test('indicator_list refreshes the custom loader and lists its specs beside the 
   assert.ok(rows.some((r) => r.type === 'rsi'));
   const mine = rows.find((r) => r.type === 'custom:mine');
   assert.equal(mine?.summary, 'a copy of rsi');
-});
-
-test('history pages through the op table', async () => {
-  const h = analysisHandlers(deps());
-  const page = (await h.history_page({ limit: 20 }, {})) as { candles: unknown[]; complete: boolean };
-  assert.ok(Array.isArray(page.candles));
-  assert.equal(typeof page.complete, 'boolean');
 });

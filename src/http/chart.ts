@@ -461,10 +461,6 @@ export async function handleSnapshotDelivery(ctx: Ctx, req: http.IncomingMessage
   sendJson(res, 200, { ok: true });
 }
 
-export function numOrUndefined(raw: unknown): number | undefined {
-  return typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
-}
-
 /* Resolve the product a view patch names against the venue that patch lands on, in place.
    Returns null when the patch is servable and the reason when it is not.
 
