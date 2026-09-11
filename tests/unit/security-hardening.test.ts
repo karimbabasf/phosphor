@@ -87,6 +87,7 @@ async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
     ledger: {
       snapshot,
       intents: () => undefined,
+      hyperliquid: () => undefined,
       refresh: async () => snapshot(),
       applyDemoTransfer: () => {},
     },

@@ -8,6 +8,7 @@
 
 import type { ChainId, LedgerSnapshot, WalletPlace, WalletRow, WalletView } from './types.ts';
 import type { IntentsRead } from './ledger/intents.ts';
+import type { HlRead } from './ledger/hyperliquid.ts';
 
 // Price per unit, derived from what the ledger already priced rather than re-fetched.
 // Stables land on ~1.0, natives on spot, and a zero balance cannot divide.
@@ -15,7 +16,7 @@ function unitPrice(amount: number, usd: number): number {
   return amount > 0 ? usd / amount : 0;
 }
 
-export function buildWallet(snapshot: LedgerSnapshot, intents?: IntentsRead): WalletView {
+export function buildWallet(snapshot: LedgerSnapshot, intents?: IntentsRead, hyperliquid?: HlRead): WalletView {
   // Symbol -> unit price, learned from the holdings themselves and topped up from the
   // snapshot's native price table for symbols held only inside a pool.
   //
@@ -102,8 +103,34 @@ export function buildWallet(snapshot: LedgerSnapshot, intents?: IntentsRead): Wa
   //
   // The test is quantity, not value: a token we hold but have no price for is still held,
   // and dropping it would be the app deciding you own less than you do.
-  const held = [...tokenRows, ...intentsRows].filter(r => r.quantity > 0 || r.valueUsd > 0);
-  const emptyCount = tokenRows.length + intentsRows.length - held.length;
+  // The trading account. USDC is the only collateral HyperCore holds, and it is a dollar, so
+  // the row prices itself: a venue read never has to wait for the price table.
+  const hlRows: WalletRow[] =
+    hyperliquid !== undefined && hyperliquid.ok
+      ? [
+          {
+            kind: 'hyperliquid',
+            chain: 'hyperliquid',
+            symbol: 'USDC',
+            tokenId: 'hyperliquid:perps',
+            quantity: hyperliquid.collateralUsdc,
+            priceUsd: 1,
+            valueUsd: hyperliquid.collateralUsdc,
+            share: 0,
+            native: false,
+            hyperliquid: {
+              account: hyperliquid.account,
+              availableUsdc: hyperliquid.availableUsdc,
+              marginUsedUsd: hyperliquid.marginUsedUsd,
+              openPositions: hyperliquid.openPositions,
+              unified: hyperliquid.unified,
+            },
+          },
+        ]
+      : [];
+
+  const held = [...tokenRows, ...intentsRows, ...hlRows].filter(r => r.quantity > 0 || r.valueUsd > 0);
+  const emptyCount = tokenRows.length + intentsRows.length + hlRows.length - held.length;
 
   const rows = held.sort((a, b) => b.valueUsd - a.valueUsd);
   const totalUsd = rows.reduce((sum, r) => sum + r.valueUsd, 0);
@@ -119,6 +146,7 @@ export function buildWallet(snapshot: LedgerSnapshot, intents?: IntentsRead): Wa
   // showing no intents row would claim the deposit is gone. Only ever added when a read was
   // actually attempted, so demo mode does not sprout a permanent STALE badge.
   if (intents !== undefined && !intents.ok) stale.push('intents');
+  if (hyperliquid !== undefined && !hyperliquid.ok) stale.push('hyperliquid');
 
   return { rows, totalUsd, byChain, stale, emptyCount };
 }

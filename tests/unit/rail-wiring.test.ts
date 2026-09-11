@@ -161,6 +161,7 @@ function setup(over: { policy?: Policy; rails?: Spy; intents?: IntentsRead | nul
             ],
           }
         : over.intents ?? undefined,
+    hyperliquid: () => undefined,
     refresh: async () => snapshot,
     applyDemoTransfer: () => {
       throw new Error('applyDemoTransfer must never be called in live mode');
@@ -656,6 +657,7 @@ test('demo mode owns no rails, and a rail proposal there refuses instead of reac
     ledger: {
       snapshot: () => snapshot,
       intents: () => undefined,
+      hyperliquid: () => undefined,
       refresh: async () => snapshot,
       applyDemoTransfer: () => {},
     },

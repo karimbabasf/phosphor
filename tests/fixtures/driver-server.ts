@@ -119,6 +119,7 @@ export async function bootDriverServer(opts: BootOptions = {}): Promise<Booted> 
     ledger: {
       snapshot,
       intents: () => undefined,
+      hyperliquid: () => undefined,
       refresh: async () => snapshot(),
       applyDemoTransfer: () => {},
     },

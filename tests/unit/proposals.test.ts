@@ -104,6 +104,7 @@ function fakeLiveLedger(): Ledger {
   return {
     snapshot: () => snap,
     intents: () => undefined,
+    hyperliquid: () => undefined,
     refresh: async () => snap,
     applyDemoTransfer: () => {
       throw new Error('applyDemoTransfer must never be called in live mode');
@@ -456,7 +457,7 @@ test('no address of ours on the destination chain refuses before anything is quo
     const base = loadDemoLedger();
     return { ...base, holdings: base.holdings.filter(hh => hh.chain === 'sol') };
   })();
-  const ledger: Ledger = { snapshot: () => solOnly, intents: () => undefined, refresh: async () => solOnly, applyDemoTransfer: () => {} };
+  const ledger: Ledger = { snapshot: () => solOnly, intents: () => undefined, hyperliquid: () => undefined, refresh: async () => solOnly, applyDemoTransfer: () => {} };
   const h = setup({ ledger });
 
   const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
@@ -696,6 +697,7 @@ function stuckLedger(): Ledger {
   return {
     snapshot: () => snap,
     intents: () => undefined,
+    hyperliquid: () => undefined,
     refresh: () => new Promise<LedgerSnapshot>(() => {}),
     applyDemoTransfer: () => {
       throw new Error('applyDemoTransfer must never be called in live mode');

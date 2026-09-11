@@ -94,10 +94,10 @@ export type CompositionView = {
 // Deliberately a DISPLAY axis only. LedgerSnapshot.chainStatus and everything the policy
 // engine reads stay strictly ChainId, so adding this cannot reach the per-chain gas floors
 // or the outbound rules. See the header of src/ledger/index.ts on adding an axis.
-export type WalletPlace = ChainId | 'intents';
+export type WalletPlace = ChainId | 'intents' | 'hyperliquid';
 
 export type WalletRow = {
-  kind: 'token' | 'intents';
+  kind: 'token' | 'intents' | 'hyperliquid';
   chain: WalletPlace;
   symbol: string; // 'USDC' or 'ETH'
   tokenId: string;
@@ -114,6 +114,9 @@ export type WalletRow = {
   // Set on an intents row: the verifier's asset id and the account it credits, so a row
   // can be reconciled against `npm run intents-balance` without guessing.
   intents?: { accountId: string; assetId: string };
+  // Set on the hyperliquid row: what the venue said about the account, so a reader can tell
+  // free collateral from margin under a position without a second tool.
+  hyperliquid?: { account: string; availableUsdc: number; marginUsedUsd: number; openPositions: number; unified: boolean };
 };
 
 export type WalletView = {

@@ -101,6 +101,7 @@ async function boot(opts: { view?: ViewMode; proposals?: Proposal[] } = {}): Pro
     ledger: {
       snapshot,
       intents: () => undefined,
+      hyperliquid: () => undefined,
       refresh: async () => snapshot(),
       applyDemoTransfer: () => {},
     },

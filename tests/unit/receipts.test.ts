@@ -92,6 +92,7 @@ async function boot(proposals: Proposal[]): Promise<{ url: string; close: () => 
     ledger: {
       snapshot,
       intents: () => undefined,
+      hyperliquid: () => undefined,
       refresh: async () => snapshot(),
       applyDemoTransfer: () => {},
     },

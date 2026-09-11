@@ -126,7 +126,7 @@ export function buildState(ctx: Ctx): unknown {
   const snapshot = ctx.ledger.snapshot();
   const composition = classify(snapshot, ctx.riskRows);
   const policy = ctx.getPolicy();
-  const wallet = buildWallet(snapshot, ctx.ledger.intents());
+  const wallet = buildWallet(snapshot, ctx.ledger.intents(), ctx.ledger.hyperliquid());
   const list = ctx.proposals.list();
   const lockAddresses = ctx.keystore.addressReport();
   return {

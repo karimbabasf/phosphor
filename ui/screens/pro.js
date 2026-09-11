@@ -40,7 +40,7 @@
      a person has to act on. */
   var CHAIN_NAMES = {
     eth: 'Ethereum', base: 'Base', arb: 'Arbitrum', sol: 'Solana', near: 'NEAR',
-    intents: 'NEAR Intents'
+    intents: 'NEAR Intents', hyperliquid: 'Hyperliquid'
   };
 
   /* Allowlist entries that are venues rather than addresses. The policy stores
@@ -309,6 +309,7 @@
      Ethereum or Arbitrum, so one row in five was speaking a different language. */
   function placeName(row) {
     if (row.kind === 'intents') return 'NEAR Intents';
+    if (row.kind === 'hyperliquid') return 'Hyperliquid';
     if (row.kind === 'lp') return 'Pool' + (row.chain ? ', ' + chainName(row.chain) : '');
     return chainName(row.chain);
   }

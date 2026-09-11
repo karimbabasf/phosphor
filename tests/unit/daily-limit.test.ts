@@ -74,6 +74,7 @@ function liveLedgerOn(_dir: string): Ledger {
   return {
     snapshot: () => snap,
     intents: () => undefined,
+    hyperliquid: () => undefined,
     refresh: async () => snap,
     applyDemoTransfer: () => {
       throw new Error('applyDemoTransfer must never be called in live mode');

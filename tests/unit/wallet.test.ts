@@ -226,3 +226,43 @@ test('an asset this app cannot price is a hole, and says so rather than printing
   assert.equal(row?.valueUsd, 0);
   assert.equal(row?.priced, false, 'the window cannot tell this apart from a worthless balance');
 });
+
+// ---------- the trading account, the third pocket ----------
+//
+// Since 2026-09-11 money moves wallet <-> intents <-> HyperCore, and one read has to show all
+// three or the agent cannot verify a deposit or a withdrawal without a second tool.
+
+const HL_READ = {
+  ok: true,
+  fetchedAt: 'now',
+  account: '0xabc',
+  collateralUsdc: 9.6594,
+  availableUsdc: 9.6594,
+  marginUsedUsd: 0,
+  openPositions: 0,
+  unified: true,
+};
+
+test('the Hyperliquid collateral is a wallet row, placed at hyperliquid rather than on a chain', () => {
+  const wallet = buildWallet(loadDemoLedger(), undefined, HL_READ);
+  const rows = wallet.rows.filter(r => r.kind === 'hyperliquid');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].symbol, 'USDC');
+  assert.equal(rows[0].chain, 'hyperliquid');
+  assert.equal(rows[0].quantity, 9.6594);
+  assert.equal(rows[0].priceUsd, 1);
+  closeTo(rows[0].valueUsd, 9.6594, 0.0001);
+  assert.deepEqual(rows[0].hyperliquid, { account: '0xabc', availableUsdc: 9.6594, marginUsedUsd: 0, openPositions: 0, unified: true });
+  assert.ok(wallet.byChain.hyperliquid > 0, 'and it gets its own place in the breakdown');
+});
+
+test('an empty trading account is not a row, and a failed venue read is stale rather than absent', () => {
+  const empty = buildWallet(loadDemoLedger(), undefined, { ...HL_READ, collateralUsdc: 0, availableUsdc: 0 });
+  assert.equal(empty.rows.some(r => r.kind === 'hyperliquid'), false);
+  assert.equal(empty.stale.includes('hyperliquid'), false);
+
+  const failed = buildWallet(loadDemoLedger(), undefined, { ...HL_READ, ok: false, error: 'info down' });
+  assert.ok(failed.stale.includes('hyperliquid'), 'showing no row would claim the collateral is gone');
+
+  assert.equal(buildWallet(loadDemoLedger()).stale.includes('hyperliquid'), false, 'a venue never asked did not go stale');
+});
