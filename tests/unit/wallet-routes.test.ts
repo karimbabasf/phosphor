@@ -100,6 +100,7 @@ async function boot(mode: AppConfig['mode'] = 'demo', opts: { releaseDelayMs?: n
     ledger: {
       snapshot,
       intents: () => undefined,
+      hyperliquid: () => undefined,
       refresh: async () => snapshot(),
       applyDemoTransfer: () => {},
     },
@@ -111,6 +112,7 @@ async function boot(mode: AppConfig['mode'] = 'demo', opts: { releaseDelayMs?: n
       proposePolicyChange: async () => { throw new Error('unused'); },
       proposeSwap: async () => { throw new Error('unused'); },
       proposeHlDeposit: async () => { throw new Error('unused'); },
+      proposeHlWithdraw: async () => { throw new Error('unused'); },
       proposeIntentsDeposit: async () => { throw new Error('unused'); },
       proposeIntentsWithdraw: async () => { throw new Error('unused'); },
       proposeTrade: async () => { throw new Error('unused'); },

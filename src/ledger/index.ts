@@ -12,6 +12,7 @@
 import type { AppConfig, ChainId, ChainStatus, Holding, LedgerSnapshot, TransferLeg } from '../types.ts';
 import { loadDemoLedger } from './demo.ts';
 import { fetchIntentsHoldings, type IntentsRead } from './intents.ts';
+import { fetchHyperliquidRead, type HlRead } from './hyperliquid.ts';
 import { oneClickClient } from '../intents.ts';
 import { evmAddress } from '../chain/evm.ts';
 import { nearChainSpec } from '../chain/near.ts';
@@ -33,6 +34,8 @@ export type Ledger = {
   // rather than empty when no read was attempted (demo mode, or no key), because "not asked"
   // and "holds nothing" are different facts.
   intents(): IntentsRead | undefined;
+  // What the Hyperliquid account holds. Same contract as intents(): undefined when never asked.
+  hyperliquid(): HlRead | undefined;
   refresh(): Promise<LedgerSnapshot>;
   applyDemoTransfer(leg: TransferLeg): void;
 };
@@ -92,6 +95,7 @@ function createDemoLedger(): Ledger {
   return {
     snapshot: () => current,
     intents: () => undefined, // demo mode signs nothing and deposits nothing
+    hyperliquid: () => undefined,
     refresh: async () => current, // fixture is static; nothing to re-fetch
     applyDemoTransfer,
   };
@@ -176,6 +180,7 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch): Ledger {
   const oneClick = oneClickClient({ fetchImpl });
   const intentsAccount = intentsAccountId(cfg);
   let liveIntents: IntentsRead | undefined;
+  let liveHl: HlRead | undefined;
   let current: LedgerSnapshot = {
     holdings: [],
     chainStatus: emptyChainStatus(),
@@ -202,18 +207,28 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch): Ledger {
     return read;
   }
 
+  // The trading account is the same address the verifier credits, checksummed by the venue's
+  // reader. A failed read keeps the last good figures under ok:false, as the verifier read does.
+  async function refreshHyperliquid(): Promise<HlRead | undefined> {
+    if (intentsAccount === null) return undefined;
+    const read = await fetchHyperliquidRead({ keysPath: cfg.keysPath, fetchImpl }, intentsAccount);
+    if (!read.ok && liveHl !== undefined) return { ...liveHl, ok: false, fetchedAt: read.fetchedAt, error: read.error };
+    return read;
+  }
+
   async function refresh(): Promise<LedgerSnapshot> {
     // Started, not awaited: the verifier read does not depend on a price to happen, only to
     // be valued, so the two run together and meet at the end.
     const livePrices = resolveLivePrices(fetchImpl, current.prices, current.priceAsOf ?? {});
 
-    const [intentsRead, priced] = await Promise.all([refreshIntents(), livePrices]);
+    const [intentsRead, hlRead, priced] = await Promise.all([refreshIntents(), refreshHyperliquid(), livePrices]);
     liveIntents = intentsRead;
+    liveHl = hlRead;
 
     /* holdings stays EMPTY on a live snapshot, and that is the fact rather than a gap. What
        this app owns sits inside the Intents verifier and inside the Hyperliquid account, and
-       both are read elsewhere: the verifier through intents() just above, the trading account
-       through src/hl/. A chain balance would be money parked in transit, which is a state this
+       both are read here: the verifier through intents(), the trading account through
+       hyperliquid(). A chain balance would be money parked in transit, which is a state this
        app moves through and does not hold.
        The prices are still fetched, because the wallet panel prices the verifier's rows off
        this same table and a stablecoin held only inside the verifier is priced off nothing
@@ -232,6 +247,7 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch): Ledger {
   return {
     snapshot: () => current,
     intents: () => liveIntents,
+    hyperliquid: () => liveHl,
     refresh,
     applyDemoTransfer: () => {
       throw new Error('applyDemoTransfer is demo-mode only');

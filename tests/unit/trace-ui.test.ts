@@ -90,14 +90,14 @@ const READS: Array<[string, string]> = [
   ['composition', 'holdings'],
   ['gas_report', 'holdings'],
   ['policy_show', 'rules'],
-  ['mandate_catalog', 'rules'],
+  ['trade_plan', 'chart'],
   ['proposal_status', 'activity'],
   ['log_tail', 'activity'],
-  ['candles', 'chart'],
+  ['chart_snapshot', 'chart'],
   ['market_search', 'chart'],
-  ['indicator_catalog', 'chart'],
+  ['chart_layout', 'chart'],
   ['watch', 'chart'],
-  ['chart_mark', 'chart'],
+  ['chart_draw', 'chart'],
   ['chart_read', 'chart'],
   ['chart_batch', 'chart'],
   ['trade_overlay', 'chart'],
@@ -123,7 +123,8 @@ const ASKS: Array<[string, string]> = [
   ['propose_consolidate', 'holdings'],
   ['propose_intents_withdraw', 'holdings'],
   ['propose_policy_change', 'rules'],
-  ['propose_mandate', 'rules'],
+  ['propose_trade', 'position'],
+  ['propose_trade_change', 'position'],
   ['propose_intents_deposit', 'moneyin'],
   ['propose_hl_deposit', 'account'],
 ];
@@ -141,7 +142,7 @@ test('the tools that move money land where the money moved, in the assistant col
   // is waiting on them and amber would be asking a second time.
   assert.deepEqual(plain(world.trace.surfaceOf('swap')), { id: 'holdings', tone: 'glow', leaves: false });
   assert.deepEqual(plain(world.trace.surfaceOf('intents_deposit')), { id: 'moneyin', tone: 'glow', leaves: false });
-  assert.deepEqual(plain(world.trace.surfaceOf('mandate_arm')), { id: 'rules', tone: 'glow', leaves: false });
+  assert.deepEqual(plain(world.trace.surfaceOf('trade')), { id: 'position', tone: 'glow', leaves: false });
 });
 
 test('the one tool that leaves this machine is marked', () => {
@@ -177,7 +178,8 @@ test('a proposal card lands on the panel its kind belongs to', () => {
   assert.equal(world.trace.surfaceForProposal('intents_deposit'), 'moneyin');
   assert.equal(world.trace.surfaceForProposal('hl_deposit'), 'account');
   assert.equal(world.trace.surfaceForProposal('policy_change'), 'rules');
-  assert.equal(world.trace.surfaceForProposal('mandate'), 'rules');
+  assert.equal(world.trace.surfaceForProposal('trade'), 'position');
+  assert.equal(world.trace.surfaceForProposal('mandate_arm'), 'rules');
   // A kind this app can no longer propose but can still be asked to DRAW. Earning and the
   // pools went with their venues, and state/proposals.json keeps the rows that already
   // executed, so one of these can still reach a card. Each moved money into or out of the

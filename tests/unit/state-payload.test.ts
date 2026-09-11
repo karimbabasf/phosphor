@@ -120,6 +120,7 @@ async function boot(proposals: Proposal[]): Promise<{ url: string; store: Return
     ledger: {
       snapshot,
       intents: () => undefined,
+      hyperliquid: () => undefined,
       refresh: async () => SNAPSHOT,
       applyDemoTransfer: () => {},
     },
@@ -131,6 +132,7 @@ async function boot(proposals: Proposal[]): Promise<{ url: string; store: Return
       proposePolicyChange: async () => settled,
       proposeSwap: async () => settled,
       proposeHlDeposit: async () => settled,
+      proposeHlWithdraw: async () => settled,
       proposeIntentsDeposit: async () => settled,
       proposeIntentsWithdraw: async () => settled,
       proposeTrade: async () => settled,

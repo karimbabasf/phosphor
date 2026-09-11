@@ -62,6 +62,7 @@
     propose_trade: 'proposing a trade',
     propose_trade_change: 'proposing a change',
     propose_hl_deposit: 'asking to fund trading',
+    propose_hl_withdraw: 'asking to bring collateral back',
     propose_policy_change: 'asking to change a rule',
     /* doing, once a human has said yes */
     consolidate: 'consolidating',
@@ -70,6 +71,8 @@
     intents_withdraw: 'withdrawing',
     trade: 'opening a trade',
     trade_change: 'changing a trade',
+    hl_deposit: 'funding trading',
+    hl_withdraw: 'bringing collateral back',
     /* the helpers */
     agent_spawn: 'starting a helper',
     agent_roster: 'checking the helpers',

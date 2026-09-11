@@ -200,7 +200,7 @@ function symbolsOf(draft: WriteDraft): string[] {
   if (draft.kind === 'swap') out.push(draft.fromSymbol, draft.toSymbol);
   // Both intents kinds carry one symbol. The deposit was missing here, so its "What is
   // involved" line came out blank on the one screen a human approves money from.
-  else if (draft.kind === 'hl_deposit' || draft.kind === 'intents_deposit' || draft.kind === 'intents_withdraw')
+  else if (draft.kind === 'hl_deposit' || draft.kind === 'hl_withdraw' || draft.kind === 'intents_deposit' || draft.kind === 'intents_withdraw')
     out.push(draft.symbol);
   else if (kindOf(draft) === 'lp_add')
     out.push(retired(draft).token0?.symbol ?? '', retired(draft).token1?.symbol ?? '');
@@ -214,8 +214,9 @@ function symbolsOf(draft: WriteDraft): string[] {
 function chainsOf(draft: WriteDraft): string[] {
   const out: string[] = [];
   if (draft.kind === 'swap') out.push(draft.chain, draft.toChain);
-  else if (draft.kind === 'hl_deposit' || draft.kind === 'intents_deposit' || draft.kind === 'intents_withdraw')
-    out.push(draft.chain);
+  else if (draft.kind === 'intents_deposit' || draft.kind === 'intents_withdraw') out.push(draft.chain);
+  // A Hyperliquid deposit starts inside the verifier and lands on the venue; neither is a
+  // chain the wallet reads, and both are named in the headline, so the chain line stays empty.
   else if (isRetired(draft)) out.push(retired(draft).chain ?? '');
   else if (draft.kind === 'consolidate') out.push(draft.toChain, ...draft.legs.map((l) => l.fromChain));
   else if (draft.kind === 'transfer') out.push(draft.leg.fromChain, draft.leg.toChain);
@@ -241,8 +242,12 @@ function destinationsOf(proposal: Proposal, selfAddresses: string[]): BasicDesti
     push(draft.counterparty, 'the exchange contract this app keeps on its approved list', 'app');
     push(draft.to, isSelf(draft.to, selfAddresses) ? 'your own wallet' : NOT_YOURS, 'app');
   } else if (draft.kind === 'hl_deposit') {
-    push(draft.counterparty, 'the NEAR Intents router this app keeps on its approved list', 'app');
+    push(draft.counterparty, 'the NEAR Intents contract this app keeps on its approved list', 'app');
     push(draft.hlAccount, isSelf(draft.hlAccount, selfAddresses) ? 'your own trading account' : NOT_YOURS, 'app');
+  } else if (draft.kind === 'hl_withdraw') {
+    // The send goes to an address the quoter mints, which is why it is not listed as yours;
+    // what matters to this reader is where the money ends up, and that is their own balance.
+    push(draft.to, isSelf(draft.to, selfAddresses) ? 'your own NEAR Intents balance' : NOT_YOURS, 'app');
   } else if (isRetired(draft)) {
     push(retired(draft).counterparty ?? '', 'the contract this app kept on its approved list', 'app');
   } else if (draft.kind === 'intents_withdraw') {
@@ -282,6 +287,9 @@ function askHeadline(draft: WriteDraft, amountUsd: number): string {
   }
   if (draft.kind === 'hl_deposit') {
     return `It wants to move ${amountClause(amountUsd)}your ${plainSymbol(draft.symbol)} to your Hyperliquid trading account.`;
+  }
+  if (draft.kind === 'hl_withdraw') {
+    return `It wants to bring ${amountClause(amountUsd)}your ${plainSymbol(draft.symbol)} back out of your Hyperliquid trading account into the NEAR trading service.`;
   }
   if (draft.kind === 'intents_deposit') {
     return `It wants to move ${amountClause(amountUsd)}your ${plainSymbol(draft.symbol)} into a NEAR account this app holds for you, ready to trade.`;
@@ -338,6 +346,10 @@ function askAfterLine(draft: WriteDraft, totalUsd: number | null, amountUsd: num
   if (draft.kind === 'policy_change') return 'This does not move any money. It changes a rule.';
   if (draft.kind === 'swap') return 'Your total stays about the same. This changes what you are holding, not how much.';
   if (draft.kind === 'hl_deposit') return 'The money stays yours. It moves to your trading account.';
+  // Collateral coming back. The venue takes 1 USDC on top for the fresh address it is sent
+  // to, so the sentence names that rather than letting the reader find it on the receipt.
+  if (draft.kind === 'hl_withdraw')
+    return 'The money comes back out of your trading account and is held for you by the NEAR trading service. Hyperliquid charges 1 USDC extra for this.';
   // Deliberately not "it stays in your wallet". It does not: it leaves the wallet and is
   // held for this app by the NEAR Intents contract, and getting it back on chain is a
   // separate action. Saying so is the difference between an informed click and a surprise.
@@ -548,6 +560,7 @@ export function didHeadline(draft: WriteDraft, amountUsd: number): string {
     return `Changed ${amt}your ${plainSymbol(draft.fromSymbol)} into ${plainSymbol(draft.toSymbol)}.`;
   }
   if (draft.kind === 'hl_deposit') return `Moved ${amt}your ${plainSymbol(draft.symbol)} to your Hyperliquid trading account.`;
+  if (draft.kind === 'hl_withdraw') return `Brought ${amt}your ${plainSymbol(draft.symbol)} back out of your Hyperliquid trading account.`;
   /* The two rails that now carry nearly all of it, and neither had a sentence: both fell
      through to the safety-rules line at the bottom, so a NEAR Intents deposit read as
      "Changed one of your safety rules." on this screen and on every receipt. */
@@ -573,6 +586,7 @@ function wantedPhrase(draft: WriteDraft, amountUsd: number): string {
     return `changing ${amt}your ${plainSymbol(draft.fromSymbol)} into ${plainSymbol(draft.toSymbol)}`;
   }
   if (draft.kind === 'hl_deposit') return `moving ${amt}your ${plainSymbol(draft.symbol)} to your Hyperliquid trading account`;
+  if (draft.kind === 'hl_withdraw') return `bringing ${amt}your ${plainSymbol(draft.symbol)} back out of your Hyperliquid trading account`;
   if (draft.kind === 'intents_deposit') {
     return `moving ${amt}your ${plainSymbol(draft.symbol)} from ${plainChain(draft.chain)} into NEAR Intents`;
   }

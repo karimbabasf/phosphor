@@ -1,579 +1,447 @@
-// The Hyperliquid funding rail, which is almost entirely refusal.
-//
-// The rail it replaces was tested the same way and for the same reason: its failure mode was
-// never an exception, it was silent permanent loss. That specific danger is gone with Bridge2
-// (there is no address to get wrong any more), and three new ones arrived with 1Click:
-//
-//   - the fee is close to flat, so a small deposit pays most of itself away while every
-//     percentage-shaped check in the app reads normal;
-//   - the deposit address is minted by a remote API per quote, so it is never on an allowlist
-//     and has to be shape-checked at the moment it comes back;
-//   - the collateral may land on the spot book instead of the perp one, where it is real,
-//     visible, and not usable as margin.
-//
-// Every test below is one of those three, or the plumbing that makes them checkable.
-
-import test from 'node:test';
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Address } from 'viem';
 
+import type { HlDepositDraft } from '../../src/types.ts';
+import type { OneClickQuote, OneClickStatus, OneClickToken } from '../../src/intents.ts';
+import type { IntentsApiPort, IntentsQuoteParams, IntentsSignerPort } from '../../src/rails/intents-native.ts';
+import { INTENTS_VERIFIER } from '../../src/rails/intents-native.ts';
+import { INTENTS_WITHDRAW_COUNTERPARTY } from '../../src/rails/intents-withdraw.ts';
+import type { HlSignPort, HlUserSignedDeps } from '../../src/rails/hl-user-signed.ts';
 import {
   HYPERCORE_COUNTERPARTY,
+  HYPERCORE_FEE_BPS,
+  HYPERCORE_FLAT_FEE_USDC,
+  HYPERCORE_SLIPPAGE_BPS,
   HYPERCORE_USDC_ASSET_ID,
+  HYPERCORE_USDC_DECIMALS,
   MAX_FEE_PCT,
   MIN_DEPOSIT_USDC,
   hypercoreDepositRail,
   minCreditedFor,
-  HYPERCORE_SLIPPAGE_BPS,
 } from '../../src/rails/hypercore-deposit.ts';
-import type { HypercoreDepositDeps, HypercoreEvmPort, HypercoreNearPort } from '../../src/rails/hypercore-deposit.ts';
-import type { HlDepositDraft } from '../../src/types.ts';
-import type { OneClickClient, OneClickQuoteParams, TokensFile } from '../../src/intents.ts';
+import type { HypercoreDepositDeps } from '../../src/rails/hypercore-deposit.ts';
+
+// The rail that funds the trading account from the intents balance. What it signs is one
+// erc191 transfer of our balance to the deposit handle of the quote it just checked; what it
+// never does is touch a chain. The tests pin the refusals (every one before the key), the
+// echo binding, the floor against the measured fee, and the settle step on both account shapes.
 
 const SELF = '0x2222222222222222222222222222222222222222' as Address;
+const ACCOUNT = SELF.toLowerCase();
 const STRANGER = '0x3333333333333333333333333333333333333333';
-const DEPOSIT_ADDR = '0x4444444444444444444444444444444444444444';
+const HANDLE = '81aee1ec126b2b0f041fe080b2195d4ff63c88c13f23da1859b4b6f203cb885a';
 const KEYS = '/nowhere/keys.json';
 
-const ARB_USDC = '0xaf88d065e77c8cC2239327C5EDb3A432268e5831';
-const NEAR_USDC = '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1';
-
-// Only what resolveAsset reads. Deliberately minimal: a fixture that mirrored data/tokens.json
-// would drift from it silently.
-const TOKENS = {
-  eth: { USDC: { tokenId: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', decimals: 6 } },
-  base: { USDC: { tokenId: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', decimals: 6 } },
-  arb: { USDC: { tokenId: ARB_USDC, decimals: 6 } },
-  sol: {},
-  near: { USDC: { tokenId: '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1', decimals: 6 } },
-} as unknown as TokensFile;
+const ETH_USDC = 'nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near';
+const AMOUNT = 10;
+const AMOUNT_BASE = 10_000_000n;
+const NOW = Date.parse('2026-09-11T22:00:00.000Z');
+const DEADLINE = '2026-09-14T22:00:00.000Z';
 
 function draft(over: Partial<HlDepositDraft> = {}): HlDepositDraft {
   return {
     kind: 'hl_deposit',
-    chain: 'arb',
     symbol: 'USDC',
-    tokenId: ARB_USDC,
-    amount: 50,
-    amountUsd: 50,
-    minCredited: 49,
-    from: SELF,
+    originAsset: ETH_USDC,
+    amount: AMOUNT,
+    amountUsd: AMOUNT,
+    minCredited: minCreditedFor(AMOUNT),
+    from: ACCOUNT,
     hlAccount: SELF,
     counterparty: HYPERCORE_COUNTERPARTY,
     ...over,
   };
 }
 
-type ClientOverrides = {
-  // The live shape, from a real dry quote on 2026-08-20: 50 in, 49.6347 out.
-  amountOut?: string;
-  amountIn?: string;
-  // The GUARANTEED floor, in base units. Left out it is derived from amountOut and the
-  // tolerance the rail asks for, which is what a real quote returns; null omits the field
-  // entirely, which is a quote that guarantees nothing.
-  minOut?: string | null;
-  depositAddress?: unknown;
-  depositMemo?: string;
-  statuses?: string[];
-  quoteThrows?: string;
+// The live numbers from 2026-09-11 for 10 USDC of the eth flavor into HyperCore: 9.6594 out.
+function quoteOf(over: Partial<OneClickQuote> = {}): OneClickQuote {
+  return {
+    depositAddress: HANDLE,
+    amountIn: AMOUNT_BASE.toString(),
+    amountInFormatted: '10.0',
+    amountInUsd: '10.0',
+    minAmountIn: AMOUNT_BASE.toString(),
+    amountOut: '965940000',
+    amountOutFormatted: '9.6594',
+    amountOutUsd: '9.6594',
+    minAmountOut: '964974060',
+    timeEstimate: 20,
+    refundFee: '0',
+    withdrawFee: '31530000',
+    ...over,
+  };
+}
+
+function echoOf(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    dry: true,
+    swapType: 'EXACT_INPUT',
+    slippageTolerance: HYPERCORE_SLIPPAGE_BPS,
+    originAsset: ETH_USDC,
+    destinationAsset: HYPERCORE_USDC_ASSET_ID,
+    amount: AMOUNT_BASE.toString(),
+    depositType: 'INTENTS',
+    refundTo: ACCOUNT,
+    refundType: 'INTENTS',
+    recipient: SELF,
+    recipientType: 'DESTINATION_CHAIN',
+    ...over,
+  };
+}
+
+function payloadOf(): string {
+  return JSON.stringify({
+    verifying_contract: 'intents.near',
+    signer_id: ACCOUNT,
+    deadline: DEADLINE,
+    nonce: 'Vij2xgAlKBKzwEtQGN8wzBgg5wAN1h+JO1SSpSw/VVo=',
+    intents: [{ intent: 'transfer', receiver_id: HANDLE, tokens: { [ETH_USDC]: AMOUNT_BASE.toString() } }],
+  });
+}
+
+type ApiOverrides = {
+  quote?: Partial<OneClickQuote>;
+  echo?: Record<string, unknown> | null;
+  status?: OneClickStatus['status'];
+  statusThrows?: boolean;
   assetMissing?: boolean;
   assetDecimals?: number;
-  // What the API echoes back in quoteRequest. Left out it is the request itself, which is what
-  // the live API returns; a patch simulates a server pricing something else, and null a server
-  // that echoes nothing.
-  echo?: Record<string, unknown> | null;
+  originMissing?: boolean;
 };
 
-function fakeClient(over: ClientOverrides = {}): { client: OneClickClient; quotes: OneClickQuoteParams[]; submitted: string[] } {
-  const quotes: OneClickQuoteParams[] = [];
-  const submitted: string[] = [];
-  let poll = 0;
-  const statuses = over.statuses ?? ['SUCCESS'];
+type ApiCalls = { quotes: IntentsQuoteParams[]; generated: unknown[]; signed: string[]; submitted: unknown[] };
 
-  const client: OneClickClient = {
-    async tokens() {
-      if (over.assetMissing) return [];
-      return [
-        {
-          assetId: HYPERCORE_USDC_ASSET_ID,
-          decimals: over.assetDecimals ?? 6,
-          blockchain: 'hypercore',
-          symbol: 'USDC',
-          contractAddress: '0xb88339CB7199b77E23DB6E890353E22632Ba630f',
-        },
-        // The origin side resolves against this list too, the same way the swap rail does.
-        { assetId: 'nep141:arb-usdc.omft.near', decimals: 6, blockchain: 'arb', symbol: 'USDC', contractAddress: ARB_USDC },
-        { assetId: 'nep141:near-usdc.omft.near', decimals: 6, blockchain: 'near', symbol: 'USDC', contractAddress: NEAR_USDC },
-      ] as never;
-    },
+function fakeApi(over: ApiOverrides = {}): { api: IntentsApiPort; signer: IntentsSignerPort; calls: ApiCalls } {
+  const calls: ApiCalls = { quotes: [], generated: [], signed: [], submitted: [] };
+  const list: OneClickToken[] = [
+    ...(over.originMissing ? [] : [{ assetId: ETH_USDC, decimals: 6, blockchain: 'eth', symbol: 'USDC' }]),
+    ...(over.assetMissing
+      ? [{ assetId: '1cs_v1:hypercore:erc20:0xdead', decimals: 6, blockchain: 'hypercore', symbol: 'USDC' }]
+      : [{ assetId: HYPERCORE_USDC_ASSET_ID, decimals: over.assetDecimals ?? HYPERCORE_USDC_DECIMALS, blockchain: 'hypercore', symbol: 'USDC' }]),
+  ];
+  const api: IntentsApiPort = {
+    tokens: async () => list,
     async quote(params) {
-      quotes.push(params);
-      if (over.quoteThrows) throw new Error(over.quoteThrows);
-      return {
-        quote: {
-          amountInFormatted: over.amountIn ?? '50',
-          amountOutFormatted: over.amountOut ?? '49.6347',
-          ...(over.minOut === null
-            ? {}
-            : {
-                minAmountOut:
-                  over.minOut ??
-                  String(Math.floor(Number(over.amountOut ?? '49.6347') * (1 - HYPERCORE_SLIPPAGE_BPS / 10_000) * 1e6)),
-              }),
-          timeEstimate: 35,
-          depositAddress: params.dry ? undefined : (over.depositAddress ?? DEPOSIT_ADDR),
-          ...(over.depositMemo !== undefined ? { depositMemo: over.depositMemo } : {}),
-        },
-        raw:
-          over.echo === null
-            ? {}
-            : {
-                quoteRequest: {
-                  originAsset: params.originAsset,
-                  destinationAsset: params.destinationAsset,
-                  amount: params.amount,
-                  refundTo: params.refundTo,
-                  refundType: params.refundType,
-                  recipient: params.recipient,
-                  recipientType: params.recipientType,
-                  depositType: params.depositType,
-                  ...(over.echo ?? {}),
-                },
-              },
-      } as never;
+      calls.quotes.push(params);
+      const raw: Record<string, unknown> = { quote: quoteOf(over.quote) };
+      if (over.echo !== null) raw['quoteRequest'] = echoOf({ dry: params.dry, ...(over.echo ?? {}) });
+      return { quote: quoteOf(over.quote), raw };
     },
-    async submitDeposit(address, hash) {
-      submitted.push(`${address}:${hash}`);
-      return { ok: true, detail: 'submitted' };
+    async generateIntent(params) {
+      calls.generated.push(params);
+      return { standard: 'erc191', payload: payloadOf() };
+    },
+    async submitIntent(signed) {
+      calls.submitted.push(signed);
+      return { intentHash: 'HASH1', correlationId: 'c1' };
     },
     async status() {
-      const name = statuses[Math.min(poll, statuses.length - 1)] ?? 'SUCCESS';
-      poll += 1;
-      return { found: true, status: name, reported: name, originTxHashes: [], destinationTxHashes: ['0xdest'] } as never;
+      if (over.statusThrows) throw new Error('status endpoint down');
+      const status = over.status ?? 'SUCCESS';
+      return { found: true, status, reported: status, originTxHashes: [], destinationTxHashes: ['0xdest'] } as OneClickStatus;
     },
   };
-  return { client, quotes, submitted };
-}
-
-type PortOverrides = {
-  signer?: string;
-  sendOk?: boolean;
-  sendError?: string;
-  storageRegistered?: boolean;
-  heldUsdc?: number; // origin wallet balance, UI units
-  gasWei?: bigint;
-  // A send that reports an error but DID broadcast. The live 2026-08-20 shape.
-  sendHashOnFailure?: string;
-};
-
-function fakeEvm(over: PortOverrides = {}): { port: HypercoreEvmPort; sends: Array<{ to: string; chain: string }> } {
-  const sends: Array<{ to: string; chain: string }> = [];
-  return {
-    sends,
-    port: {
-      signerAddress: () => (over.signer ?? SELF) as Address,
-      erc20Balance: async () => BigInt(Math.round((over.heldUsdc ?? 1000) * 1e6)),
-      nativeBalance: async () => over.gasWei ?? 10n ** 16n,
-      async send(params) {
-        sends.push({ to: String(params.to), chain: String(params.chain) });
-        if (over.sendOk === false) {
-          return over.sendHashOnFailure !== undefined
-            ? { ok: false, error: over.sendError ?? 'reverted', hash: over.sendHashOnFailure }
-            : { ok: false, error: over.sendError ?? 'reverted' };
-        }
-        return { ok: true, hash: '0xorigin', explorer: 'https://arbiscan.io/tx/0xorigin' };
-      },
+  const signer: IntentsSignerPort = {
+    address: () => SELF,
+    async signErc191(_keysPath, payload) {
+      calls.signed.push(payload);
+      return 'SIG';
     },
   };
+  return { api, signer, calls };
 }
 
-function fakeNear(over: PortOverrides = {}): HypercoreNearPort {
-  return {
-    accountId: () => 'phosphor.near',
-    storageRegistered: async () => over.storageRegistered ?? true,
-    send: async () => ({ ok: true, hash: 'nearhash' }) as never,
-  };
-}
-
-// Hyperliquid /info, driven by what each test wants the account to look like before and after.
+// Hyperliquid /info and /exchange, driven by what each test wants the account to look like
+// before and after. Each accountSummary makes three reads; the shape advances after the spot one.
 type AccountShape = { perp: number; spot: number; unifiedAvailable?: number };
 
-function fakeInfo(shapes: AccountShape[]): { fetchImpl: typeof fetch; calls: string[] } {
+function fakeHl(shapes: AccountShape[]): { hl: HlUserSignedDeps; calls: string[]; exchange: any[] } {
   const calls: string[] = [];
-  let readPair = 0;
-  const fetchImpl: typeof fetch = async (_url, init) => {
-    const body = JSON.parse(String(init?.body)) as { type: string };
-    calls.push(body.type);
-    // Each accountState() makes exactly two reads; advance the shape after the spot one.
-    const shape = shapes[Math.min(readPair, shapes.length - 1)] ?? { perp: 0, spot: 0 };
+  const exchange: any[] = [];
+  let reads = 0;
+  const fetchImpl: typeof fetch = async (url, init) => {
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    if (String(url).endsWith('/exchange')) {
+      exchange.push(body);
+      return new Response(JSON.stringify({ status: 'ok', response: { type: 'default' } }), { headers: { 'content-type': 'application/json' } });
+    }
+    calls.push(String(body.type));
+    const shape = shapes[Math.min(reads, shapes.length - 1)] ?? { perp: 0, spot: 0 };
     if (body.type === 'clearinghouseState') {
       return new Response(
         JSON.stringify({ marginSummary: { accountValue: String(shape.perp), totalMarginUsed: '0' }, withdrawable: String(shape.perp), assetPositions: [] }),
         { headers: { 'content-type': 'application/json' } },
       );
     }
-    readPair += 1;
+    if (body.type === 'userAbstraction') {
+      return new Response(JSON.stringify(shape.unifiedAvailable !== undefined ? 'unifiedAccount' : 'standard'), { headers: { 'content-type': 'application/json' } });
+    }
+    reads += 1;
     return new Response(
       JSON.stringify({
         balances: [{ coin: 'USDC', token: 0, total: String(shape.spot), hold: '0' }],
-        // A unified account reports this and leaves perp withdrawable at 0.
-        ...(shape.unifiedAvailable !== undefined
-          ? { tokenToAvailableAfterMaintenance: [[0, String(shape.unifiedAvailable)]] }
-          : {}),
+        ...(shape.unifiedAvailable !== undefined ? { tokenToAvailableAfterMaintenance: [[0, String(shape.unifiedAvailable)]] } : {}),
       }),
       { headers: { 'content-type': 'application/json' } },
     );
   };
-  return { fetchImpl, calls };
+  const sign: HlSignPort = {
+    address: () => SELF,
+    signTypedData: async () => ({ r: `0x${'1'.repeat(64)}`, s: `0x${'2'.repeat(64)}`, v: 27 }),
+  };
+  return { hl: { keysPath: KEYS, fetchImpl, sign, now: () => NOW }, calls, exchange };
 }
 
-function rail(
-  ports: PortOverrides = {},
-  clientOver: ClientOverrides = {},
-  shapes: AccountShape[] = [{ perp: 0, spot: 0 }],
-  over: Partial<HypercoreDepositDeps> = {},
-) {
-  const { client, quotes, submitted } = fakeClient(clientOver);
-  const evm = fakeEvm(ports);
-  const info = fakeInfo(shapes);
+function rail(apiOver: ApiOverrides = {}, shapes: AccountShape[] = [{ perp: 0, spot: 0, unifiedAvailable: 0 }], over: Partial<HypercoreDepositDeps> = {}) {
+  const { api, signer, calls } = fakeApi(apiOver);
+  const hl = fakeHl(shapes);
   const r = hypercoreDepositRail({
     keysPath: KEYS,
-    tokens: TOKENS,
-    client,
-    evm: evm.port,
-    near: fakeNear(),
-    fetchImpl: info.fetchImpl,
-    pollIntervalMs: 1,
-    pollTimeoutMs: 10,
+    api,
+    signer,
+    hl: hl.hl,
+    now: () => NOW,
     sleep: async () => {},
+    pollIntervalMs: 1,
+    pollTimeoutMs: 3,
     ...over,
   });
-  return { rail: r, quotes, submitted, sends: evm.sends, infoCalls: info.calls };
+  return { rail: r, calls, hlCalls: hl.calls, exchange: hl.exchange };
 }
 
-// ---------- the shape refusals ----------
+// ---------- the shape refusals, before any quote ----------
 
-test('an origin chain this app cannot sign on is refused before any quote', async () => {
-  const h = rail();
-  const out = await h.rail.simulate(draft({ chain: 'sol' }));
+test('a counterparty that is not the verifier is refused', async () => {
+  const { rail: r, calls } = rail();
+  const out = await r.simulate(draft({ counterparty: 'oneclick:1click.chaindefuser.com' }));
   assert.equal(out.ok, false);
-  assert.match(out.error ?? '', /cannot sign on sol/);
-  assert.match(out.error ?? '', /1Click reaches more chains than that/);
-  assert.equal(h.quotes.length, 0, 'nothing was priced');
-});
-
-test('a counterparty that is not the routing venue is refused', async () => {
-  const h = rail();
-  const out = await h.rail.simulate(draft({ counterparty: 'oneclick:evil.example' }));
-  assert.equal(out.ok, false);
-  assert.match(out.error ?? '', /is not oneclick:1click\.chaindefuser\.com/);
-  assert.equal(h.quotes.length, 0);
+  assert.match(out.summary, /counterparty/);
+  assert.equal(calls.quotes.length, 0);
 });
 
 test('a trading account that is not an EVM address is refused, because HyperCore credits one', async () => {
-  const h = rail();
-  const out = await h.rail.simulate(draft({ hlAccount: 'phosphor.near' }));
+  const { rail: r, calls } = rail();
+  const out = await r.simulate(draft({ hlAccount: 'phosphor.near' }));
   assert.equal(out.ok, false);
-  assert.match(out.error ?? '', /not an EVM address/);
-  assert.equal(h.quotes.length, 0);
+  assert.match(out.summary, /not an EVM address/);
+  assert.equal(calls.quotes.length, 0);
 });
 
 test('below the floor the refusal names the flat fee, not a venue minimum', async () => {
-  const h = rail();
-  const out = await h.rail.simulate(draft({ amount: MIN_DEPOSIT_USDC - 1 }));
+  const { rail: r, calls } = rail();
+  const out = await r.simulate(draft({ amount: 3, amountUsd: 3, minCredited: minCreditedFor(3) }));
   assert.equal(out.ok, false);
-  // The old rail refused here because the venue would not credit it. This one refuses because
-  // the routing cost is nearly fixed, and the two reasons lead a reader somewhere different.
-  assert.match(out.error ?? '', /close to flat/);
-  assert.match(out.error ?? '', /pays most of itself away/);
-  assert.equal(h.quotes.length, 0);
+  assert.match(out.summary, new RegExp(`below the ${MIN_DEPOSIT_USDC} USDC floor`));
+  assert.match(out.summary, /flat/);
+  assert.equal(calls.quotes.length, 0);
 });
 
-test('funding from a wallet this app does not hold the key for is refused', async () => {
-  const h = rail({ signer: STRANGER });
-  const out = await h.rail.simulate(draft());
+test('a draft spending an intents account that is not ours is refused', async () => {
+  const { rail: r, calls } = rail();
+  const out = await r.simulate(draft({ from: STRANGER }));
   assert.equal(out.ok, false);
-  assert.match(out.error ?? '', /this app signs with/);
-  assert.equal(h.quotes.length, 0);
+  assert.match(out.summary, /configured key/);
+  assert.equal(calls.quotes.length, 0);
 });
 
-test('a NEAR account id 1Click cannot settle to is refused here, not by a 500 from the API', async () => {
-  // Without this check the quote is well formed, leaves, and comes back as a bare "Internal
-  // server error", which tells a reader nothing about the actual cause. Checked as an
-  // allowlist of the two real account-id shapes rather than as a blocklist of wrong suffixes.
-  const h = rail();
-  // A generic name, not the one in config.local.json: scripts/sweep.ts treats any configured
-  // address in tracked content as a leak, and it is right to.
-  const out = await h.rail.simulate(draft({ chain: 'near', symbol: 'USDC', from: 'example.invalid' }));
+test('a draft crediting a Hyperliquid account that is not the signer is refused', async () => {
+  const { rail: r, calls } = rail();
+  const out = await r.simulate(draft({ hlAccount: STRANGER }));
   assert.equal(out.ok, false);
-  assert.match(out.error ?? '', /not a NEAR account id 1Click can settle to/);
-  assert.match(out.error ?? '', /must end in \.near, or be a 64-character implicit account id/);
-  assert.equal(h.quotes.length, 0, 'nothing was priced');
-  assert.equal(h.quotes.length, 0, 'the API was never asked');
-});
-
-test('a wallet too short for the deposit is refused before anything is priced', async () => {
-  // The rail this replaced checked this and refused up front. Dropping it meant a short wallet
-  // got a live quote, a minted deposit address and a reverted transfer, and the reason came from
-  // the chain instead of from a sentence.
-  const h = rail({ heldUsdc: 1.99 });
-  const out = await h.rail.simulate(draft({ amount: 50 }));
-  assert.equal(out.ok, false);
-  assert.match(out.error ?? '', /wallet holds 1\.99 USDC on arb and the deposit needs 50/);
-  assert.equal(h.quotes.length, 0, 'nothing was priced');
-});
-
-test('a wallet with the tokens and no gas is refused too, and says which is missing', async () => {
-  const h = rail({ heldUsdc: 1000, gasWei: 0n });
-  const out = await h.rail.simulate(draft({ amount: 50 }));
-  assert.equal(out.ok, false);
-  assert.match(out.error ?? '', /no native gas on arb/);
-  // Both messages open with "wallet holds", so the discriminator is the shortfall clause: the
-  // token balance is fine here and must not be blamed for a gas problem.
-  assert.doesNotMatch(out.error ?? '', /and the deposit needs/, 'the token balance is fine');
-});
-
-test('a chain that cannot be read is not a chain we send on', async () => {
-  const h = rail({}, {}, [{ perp: 0, spot: 0 }], {
-    evm: {
-      signerAddress: () => SELF,
-      send: async () => ({ ok: true, hash: '0x' }) as never,
-      erc20Balance: async () => { throw new Error('rpc down'); },
-      nativeBalance: async () => 0n,
-    },
-  });
-  const out = await h.rail.simulate(draft());
-  assert.equal(out.ok, false);
-  assert.match(out.error ?? '', /could not read the arb wallet: rpc down/);
-});
-
-// ---------- the quote checks ----------
-
-test('simulate prices with dry:true and never asks for a deposit address', async () => {
-  const h = rail();
-  const out = await h.rail.simulate(draft());
-  assert.equal(out.ok, true, out.error ?? '');
-  assert.equal(h.quotes.length, 1);
-  assert.equal(h.quotes[0].dry, true, 'a simulation must never mint a deposit address');
-  assert.equal(h.quotes[0].destinationAsset, HYPERCORE_USDC_ASSET_ID);
-  assert.equal(h.quotes[0].recipient, SELF, 'the recipient is the trading account');
-  assert.equal(h.quotes[0].recipientType, 'DESTINATION_CHAIN');
-  assert.equal(h.sends.length, 0, 'nothing was signed');
-});
-
-test('the summary states the effective rate, because the flat fee is invisible as a rate', async () => {
-  const h = rail();
-  const out = await h.rail.simulate(draft());
-  assert.equal(out.ok, true, out.error ?? '');
-  // 50 in, 49.6347 out: 0.3653 of cost, 0.73 percent.
-  assert.match(out.summary, /0\.3653 USDC, 0\.73 percent of the deposit/);
-  assert.match(out.summary, /about 35s/);
-  assert.match(out.summary, /one way/i, 'the summary says the money cannot come back down this rail');
-});
-
-test('a quote whose cost exceeds the ceiling is refused, and the refusal says to deposit more', async () => {
-  // 10 in, 9.3 out is 7 percent: the shape of a small deposit against a nearly fixed fee.
-  const h = rail({}, { amountIn: '10', amountOut: '9.3' });
-  const out = await h.rail.simulate(draft({ amount: 10, minCredited: 9 }));
-  assert.equal(out.ok, false);
-  assert.match(out.error ?? '', new RegExp(`above the ${MAX_FEE_PCT} percent ceiling`));
-  assert.match(out.error ?? '', /depositing more at once costs the same in dollars/);
-  // The pricing is still shown: a refusal a human cannot check is a worse refusal.
-  assert.match(out.summary, /7\.00 percent/);
-});
-
-test('a quote that credits less than the approved floor is refused', async () => {
-  const h = rail({}, { amountOut: '48.0' });
-  const out = await h.rail.simulate(draft({ minCredited: 49 }));
-  assert.equal(out.ok, false);
-  assert.match(out.error ?? '', /credits 48 USDC and the approved draft required at least 49/);
-});
-
-test('a quote priced against a different amount than the draft is refused', async () => {
-  const h = rail({}, { amountIn: '25' });
-  const out = await h.rail.simulate(draft({ amount: 50 }));
-  assert.equal(out.ok, false);
-  assert.match(out.error ?? '', /prices 25 in, but the draft says 50/);
-});
-
-// ---------- execute ----------
-
-test('execute sends to the address the quote minted, submits it, and reports the credit', async () => {
-  const h = rail({}, {}, [{ perp: 0, spot: 0 }, { perp: 49.6347, spot: 0 }]);
-  const out = await h.rail.execute(draft());
-
-  assert.equal(out.ok, true, out.detail ?? '');
-  assert.equal(h.sends.length, 1, 'exactly one transfer');
-  assert.equal(h.sends[0].to, ARB_USDC, 'the transfer calls the token, not the deposit address');
-  assert.equal(h.submitted.length, 1);
-  assert.match(out.detail, /funded Hyperliquid with 49\.6347 USDC/);
-  assert.match(out.detail, /Credited to the perp side directly/);
-  assert.ok(out.txids?.includes('0xorigin'));
-
-  // Two quotes: the re-simulation, then the live one. The re-simulation is dry.
-  assert.equal(h.quotes.length, 2);
-  assert.equal(h.quotes[0].dry, true);
-  assert.equal(h.quotes[1].dry, false);
-});
-
-test('a quote demanding a memo is refused without sending, because a transfer cannot carry one', async () => {
-  const h = rail({}, { depositMemo: 'must-include' });
-  const out = await h.rail.execute(draft());
-  assert.equal(out.ok, false);
-  assert.match(out.detail, /deposit memo/);
-  assert.match(out.detail, /Nothing was sent/);
-  assert.equal(h.sends.length, 0);
-});
-
-test('a deposit address that is not an address stops execution before the transfer', async () => {
-  const h = rail({}, { depositAddress: 'not-an-address' });
-  await assert.rejects(() => h.rail.execute(draft()), /not an EVM address/);
-  assert.equal(h.sends.length, 0);
-});
-
-test('a send that never broadcast says the money never left', async () => {
-  const h = rail({ sendOk: false, sendError: 'insufficient funds' });
-  const out = await h.rail.execute(draft());
-  assert.equal(out.ok, false);
-  assert.match(out.detail, /failed before broadcast/);
-  assert.match(out.detail, /No funds left the wallet/);
-  assert.deepEqual(out.txids, [], 'nothing to look up, because nothing was sent');
-});
-
-test('a send that broadcast and could not be confirmed NEVER says the money stayed', async () => {
-  // The live incident, 2026-08-20. The transfer confirmed on Arbitrum with status 0x1 and moved
-  // all 9.23 USDC, and sendTx still errored because the RPC refused the receipt call as needing
-  // an archive node. The rail printed "No funds left the wallet" over a completed transfer,
-  // which is the double-send trap this repo warns about in three other files.
-  const h = rail(
-    { sendOk: false, sendError: 'Archive node required for eth_getTransactionReceipt', sendHashOnFailure: '0xbroadcast' },
-    { statuses: ['PENDING_DEPOSIT'] },
-  );
-  const out = await h.rail.execute(draft());
-  assert.equal(out.ok, false);
-  assert.match(out.detail, /THE FUNDS MAY ALREADY HAVE LEFT THE WALLET/);
-  assert.match(out.detail, /0xbroadcast/);
-  assert.match(out.detail, /before sending again/);
-  assert.doesNotMatch(out.detail, /No funds left the wallet/, 'the one sentence that would cause a double send');
-  assert.deepEqual(out.txids, ['0xbroadcast'], 'the hash is handed back so it can be looked up');
-});
-
-test('a broadcast the app could not read still reports success when the routing completed', async () => {
-  // Same failure, happier ending, and it is what actually happened live once the deposit was
-  // submitted by hand: the money was already at the solver and the swap finished.
-  const h = rail(
-    { sendOk: false, sendError: 'Archive node required', sendHashOnFailure: '0xbroadcast' },
-    { statuses: ['SUCCESS'] },
-    [{ perp: 0, spot: 0, unifiedAvailable: 0.000002 }, { perp: 0, spot: 0, unifiedAvailable: 8.905472 }],
-  );
-  const out = await h.rail.execute(draft());
-  assert.equal(out.ok, true, out.detail ?? '');
-  assert.match(out.detail, /could not read its receipt/);
-  assert.match(out.detail, /routing completed anyway/);
-  assert.match(out.detail, /unified/);
-});
-
-test('a poll that never reaches terminal says the funds WERE sent, in capitals', async () => {
-  const h = rail({}, { statuses: ['PENDING_DEPOSIT'] });
-  const out = await h.rail.execute(draft());
-  assert.equal(out.ok, false);
-  // The transfer confirmed, so this is not a failed deposit and must not read like one.
-  assert.match(out.detail, /THE FUNDS WERE SENT/);
-  assert.match(out.detail, /check the deposit address before retrying/);
-  assert.equal(h.sends.length, 1);
-});
-
-test('a refund is reported against the refund address rather than as a success', async () => {
-  const h = rail({}, { statuses: ['REFUNDED'] });
-  const out = await h.rail.execute(draft());
-  assert.equal(out.ok, false);
-  assert.match(out.detail, /REFUNDED/);
-  assert.match(out.detail, new RegExp(`Check the refund address ${SELF}`));
-});
-
-// ---------- the settle step, which is what makes the rail's promise true ----------
-
-test('collateral that lands on the spot book is moved to perp, and the detail says so', async () => {
-  // Before: empty. After: 49.6347 sat down on the SPOT side, where it is not margin.
-  const h = rail({}, {}, [{ perp: 0, spot: 0 }, { perp: 0, spot: 49.6347 }]);
-  const out = await h.rail.execute(draft());
-
-  assert.equal(out.ok, true, out.detail ?? '');
-  // usdClassTransfer is real and will refuse against these fakes; what is asserted here is
-  // that the rail NOTICED and said which side the money is on, which is the part a human acts
-  // on. Either sentence names the spot side.
-  assert.match(out.detail, /spot side/i);
-  assert.doesNotMatch(out.detail, /Credited to the perp side directly/);
-});
-
-test('a credit the venue has not shown yet is not reported as a loss', async () => {
-  // 1Click said SUCCESS and neither book has moved: overwhelmingly a timing gap.
-  const h = rail({}, {}, [{ perp: 0, spot: 0 }, { perp: 0, spot: 0 }]);
-  const out = await h.rail.execute(draft());
-  assert.equal(out.ok, true, out.detail ?? '');
-  assert.match(out.detail, /has not shown the credit yet/);
-  assert.match(out.detail, /rather than sending again/);
+  assert.match(out.summary, /not the account this app signs for/);
+  assert.equal(calls.quotes.length, 0);
 });
 
 // ---------- the pin ----------
 
-test('a quote refuses when the pin is gone, so the check cannot be forgotten', async () => {
-  // The pin used to be verified only by a method nothing called. It is now checked on the path
-  // that fetches the token list anyway, so a quote is impossible without it having run.
-  const h = rail({}, { assetMissing: true });
-  const out = await h.rail.simulate(draft());
+test('a quote refuses when the pin is gone, and the rail never takes a replacement id', async () => {
+  const { rail: r, calls } = rail({ assetMissing: true });
+  const out = await r.simulate(draft());
   assert.equal(out.ok, false);
-  assert.match(out.error ?? '', /no longer in the 1Click token list/);
-  assert.equal(h.quotes.length, 0, 'nothing was priced against an unverified destination');
+  assert.match(out.summary, /no longer in the 1Click token list/);
+  assert.match(out.summary, /0xdead/); // the live ids are named so a human can update the pin
+  assert.equal(calls.quotes.length, 0);
 });
 
-test('a hostile token list can stop this rail and cannot redirect it', async () => {
-  // The failure mode that matters: an attacker who could edit the remote list would want the
-  // money to go somewhere else. Refusing is the only thing they can cause.
-  const h = rail({}, { assetMissing: true });
-  const out = await h.rail.execute(draft());
+test('a pin whose decimals changed refuses, because every amount would be wrong by a power of ten', async () => {
+  const { rail: r } = rail({ assetDecimals: 6 });
+  const out = await r.simulate(draft());
   assert.equal(out.ok, false);
-  assert.equal(h.sends.length, 0);
+  assert.match(out.summary, /decimals changed/);
 });
 
-test('the pinned asset id is checked against the live list and never replaced from it', async () => {
-  const gone = rail({}, { assetMissing: true });
-  await assert.rejects(() => gone.rail.assertAssetLive(), /no longer in the 1Click token list/);
-  await assert.rejects(() => gone.rail.assertAssetLive(), /will not take a replacement id from the API/);
-
-  const shifted = rail({}, { assetDecimals: 8 });
-  await assert.rejects(() => shifted.rail.assertAssetLive(), /decimals changed/);
-
-  const fine = rail();
-  await fine.rail.assertAssetLive();
+test('an origin asset 1Click no longer lists is refused before any quote', async () => {
+  const { rail: r, calls } = rail({ originMissing: true });
+  const out = await r.simulate(draft());
+  assert.equal(out.ok, false);
+  assert.match(out.summary, /does not list/);
+  assert.equal(calls.quotes.length, 0);
 });
 
-// ---------- budgets ----------
-
-test('a draft that cannot price itself fails every budget instead of passing them all', () => {
-  const h = rail();
-  assert.equal(h.rail.valueUsd(draft({ amount: 50, amountUsd: 50 })), 50);
-  // The pessimistic read: the larger of the two, so an under-reported value cannot slip under
-  // a cap.
-  assert.equal(h.rail.valueUsd(draft({ amount: 90, amountUsd: 50 })), 90);
-  assert.equal(h.rail.valueUsd(draft({ amount: Number.NaN, amountUsd: Number.NaN })), Infinity);
+test('the pinned asset is the documented two-way HyperCore USDC id at 8 decimals', () => {
+  assert.equal(HYPERCORE_USDC_ASSET_ID, '1cs_v1:hypercore:hip1:0x6d1e7cde53ba9467b783cb7c530ce054');
+  assert.equal(HYPERCORE_USDC_DECIMALS, 8);
 });
 
-test('the funding venue and the swap venue are one allowlist entry', () => {
-  assert.equal(HYPERCORE_COUNTERPARTY, 'oneclick:1click.chaindefuser.com');
+// ---------- simulate ----------
+
+test('simulate prices with dry:true from the intents balance to the pinned asset, crediting our account', async () => {
+  const { rail: r, calls } = rail();
+  const out = await r.simulate(draft());
+  assert.equal(out.ok, true, out.summary);
+  assert.equal(calls.quotes.length, 1);
+  const q = calls.quotes[0];
+  assert.equal(q.dry, true);
+  assert.equal(q.originAsset, ETH_USDC);
+  assert.equal(q.destinationAsset, HYPERCORE_USDC_ASSET_ID);
+  assert.equal(q.amount, AMOUNT_BASE.toString());
+  assert.equal(q.account, ACCOUNT);
+  assert.equal(q.recipient, SELF);
+  assert.equal(q.recipientType, 'DESTINATION_CHAIN');
+  assert.equal(q.slippageToleranceBps, HYPERCORE_SLIPPAGE_BPS);
+  assert.equal(calls.generated.length, 0, 'a simulation never asks for an intent');
 });
 
-// ---------- the loss floor, which has to be shaped like the fee ----------
+test('the summary states the effective rate and says the intents balance is the source', async () => {
+  const { rail: r } = rail();
+  const out = await r.simulate(draft());
+  assert.equal(out.ok, true, out.summary);
+  assert.match(out.summary, /3\.41 percent/);
+  assert.match(out.summary, /0\.3406 USDC/);
+  assert.match(out.summary, /intents balance/);
+  assert.match(out.summary, /9\.6594 USDC/);
+  assert.doesNotMatch(out.summary, /withdraw3/);
+});
+
+test('a quote whose cost exceeds the ceiling is refused, and the refusal says to deposit more', async () => {
+  const { rail: r } = rail({ quote: { amountOutFormatted: '9.0', amountOut: '900000000', minAmountOut: '899000000' } });
+  const out = await r.simulate(draft());
+  assert.equal(out.ok, false);
+  assert.match(out.summary, new RegExp(`above the ${MAX_FEE_PCT} percent ceiling`));
+  assert.match(out.summary, /depositing more at once/);
+});
+
+test('a quote that credits less than the approved floor is refused', async () => {
+  const { rail: r } = rail({ quote: { amountOutFormatted: '9.5', amountOut: '950000000', minAmountOut: '949000000' } });
+  const out = await r.simulate(draft({ minCredited: 9.6 }));
+  assert.equal(out.ok, false);
+  assert.match(out.summary, /required at least 9\.6/);
+});
+
+test('a quote whose guaranteed floor is below minCredited is refused even when its expected output clears it', async () => {
+  const { rail: r } = rail({ quote: { minAmountOut: '900000000' } });
+  const out = await r.simulate(draft());
+  assert.equal(out.ok, false);
+  assert.match(out.summary, /guarantees only 9 USDC/);
+});
+
+test('a quote priced against a different amount than the draft is refused', async () => {
+  const { rail: r } = rail({ quote: { amountInFormatted: '11.0' } });
+  const out = await r.simulate(draft());
+  assert.equal(out.ok, false);
+  assert.match(out.summary, /prices 11\.0 in, but the draft says 10/);
+});
+
+test('a quote that echoes a different Hyperliquid account is refused', async () => {
+  const { rail: r } = rail({ echo: { recipient: STRANGER } });
+  const out = await r.simulate(draft());
+  assert.equal(out.ok, false);
+  assert.match(out.summary, /credit/);
+  assert.match(out.summary, /0x3333/);
+});
+
+test('a quote with no echo at all is refused rather than trusted', async () => {
+  const { rail: r } = rail({ echo: null });
+  const out = await r.simulate(draft());
+  assert.equal(out.ok, false);
+  assert.match(out.summary, /nothing tying/);
+});
+
+// ---------- execute ----------
+
+test('execute signs one intent to the quote handle, submits it, and reports the credit with evidence', async () => {
+  const { rail: r, calls } = rail({}, [{ perp: 0, spot: 0, unifiedAvailable: 0.001 }, { perp: 0, spot: 9.6604, unifiedAvailable: 9.6604 }]);
+  const out = await r.execute(draft());
+  assert.equal(out.ok, true, out.detail);
+
+  const live = calls.quotes.filter((q) => !q.dry);
+  assert.equal(live.length, 1);
+  assert.equal(live[0].recipient, SELF);
+  assert.deepEqual(calls.generated, [{ signerId: ACCOUNT, depositAddress: HANDLE }]);
+  assert.equal(calls.signed.length, 1);
+  assert.deepEqual(calls.submitted, [{ payload: payloadOf(), signature: 'SIG' }]);
+
+  assert.match(out.detail, /9\.6594 USDC/);
+  assert.match(out.detail, /intent HASH1/);
+  assert.match(out.detail, /unified/);
+  assert.match(out.detail, /rose by 9\.6594/);
+  assert.deepEqual(out.txids, ['HASH1', '0xdest']);
+});
+
+test('the echo is checked again at execute, before anything is signed', async () => {
+  const { rail: r, calls } = rail({ echo: { recipient: STRANGER } });
+  const out = await r.execute(draft());
+  assert.equal(out.ok, false);
+  assert.match(out.detail, /Nothing was signed/);
+  assert.equal(calls.signed.length, 0);
+});
+
+test('a refund is reported back into the verifier rather than as a success', async () => {
+  const { rail: r } = rail({ status: 'REFUNDED' });
+  const out = await r.execute(draft());
+  assert.equal(out.ok, false);
+  assert.match(out.detail, /REFUNDED/);
+  assert.match(out.detail, new RegExp(`back to ${ACCOUNT} inside ${INTENTS_VERIFIER}`));
+  assert.deepEqual(out.txids, ['HASH1', '0xdest']);
+});
+
+test('a poll that never reaches terminal says the intent IS SIGNED AND SUBMITTED, in capitals', async () => {
+  const { rail: r } = rail({ statusThrows: true });
+  const out = await r.execute(draft());
+  assert.equal(out.ok, false);
+  assert.match(out.detail, /THE INTENT IS SIGNED AND SUBMITTED/);
+  assert.match(out.detail, /HASH1/);
+});
+
+test('collateral that lands on the spot book of a standard account is moved to perp, and the detail says so', async () => {
+  const { rail: r, exchange } = rail({}, [{ perp: 0, spot: 0 }, { perp: 0, spot: 9.6594 }]);
+  const out = await r.execute(draft());
+  assert.equal(out.ok, true, out.detail);
+  assert.match(out.detail, /moved to perp/);
+  assert.equal(exchange.length, 1);
+  assert.equal(exchange[0].action.type, 'usdClassTransfer');
+  assert.equal(exchange[0].action.toPerp, true);
+  assert.equal(exchange[0].action.amount, '9.6594');
+});
+
+test('a unified account is not asked to move money between books that do not exist', async () => {
+  const { rail: r, exchange } = rail({}, [{ perp: 0, spot: 0, unifiedAvailable: 0 }, { perp: 0, spot: 9.6594, unifiedAvailable: 9.6594 }]);
+  const out = await r.execute(draft());
+  assert.equal(out.ok, true, out.detail);
+  assert.match(out.detail, /margin already/);
+  assert.equal(exchange.length, 0);
+});
+
+test('a credit the venue has not shown yet is not reported as a loss', async () => {
+  const { rail: r } = rail({}, [{ perp: 0, spot: 0 }, { perp: 0, spot: 0 }]);
+  const out = await r.execute(draft());
+  assert.equal(out.ok, true, out.detail);
+  assert.match(out.detail, /has not shown the credit yet/);
+  assert.doesNotMatch(out.detail, /fail/i);
+});
+
+// ---------- the floor, against the measured fee ----------
 
 test('the floor clears the real fee at every size the rail accepts', () => {
-  // The measured curve: fee is about 0.315 flat plus 10 bp. These are the live numbers from
-  // 2026-08-20, and the floor has to sit UNDER each delivered amount or it refuses an honest
-  // quote and blames the wrong thing.
+  // Live dry quotes from the intents balance on 2026-09-11, no partner key, so the 25 bp app
+  // fee is inside these numbers. The floor has to sit UNDER each delivered amount or it refuses
+  // an honest quote and blames the wrong thing.
   const live: Array<[number, number]> = [
-    [5, 4.6797],
-    [10, 9.6747],
-    [50, 49.6347],
-    [100, 99.5847],
+    [5, 4.672108],
+    [10, 9.6594],
+    [50, 49.55863],
+    [1000, 997.115655],
   ];
   for (const [sent, delivered] of live) {
     assert.ok(
@@ -583,23 +451,12 @@ test('the floor clears the real fee at every size the rail accepts', () => {
   }
 });
 
-test('the old proportional floor is what this replaced, and it would have refused these', () => {
-  // 200 bps of the amount, the Intents rule. Kept here as the regression: on 10 USDC it demands
-  // 9.80 credited and the venue delivers 9.67, so every deposit under about 17 was refused with
-  // a message about the floor rather than about the flat fee.
-  const proportional = (amount: number): number => amount * 0.98;
-  assert.ok(proportional(10) > 9.6747, 'the old rule refused a 10 USDC deposit');
-  assert.ok(minCreditedFor(10) <= 9.6747, 'the new one does not');
-});
-
 test('the floor still caps the loss rather than waving everything through', () => {
-  // It must not be so loose that a genuinely bad quote passes. At 50 the venue delivers 49.63
-  // and the floor is 49.55, so anything more than about 9 cents worse than measured is refused.
   assert.ok(minCreditedFor(50) > 49, 'a floor of 49 would allow a full percent of unexplained loss');
-  // At 1000 the floor is 997.65, so the most unexplained loss it will accept is 2.35, or
-  // 23.5 bp. The flat term stops mattering at size and the 20 bp term is what binds.
-  assert.ok(minCreditedFor(1000) > 997, 'the bp term must not dominate at size');
-  assert.ok(1000 - minCreditedFor(1000) < 3, 'and the cap in dollars stays small');
+  assert.ok(minCreditedFor(1000) > 995, 'the bp term must not dominate at size');
+  assert.ok(1000 - minCreditedFor(1000) < 5, 'and the cap in dollars stays small');
+  assert.equal(HYPERCORE_FLAT_FEE_USDC, 0.45);
+  assert.equal(HYPERCORE_FEE_BPS, 40);
 });
 
 test('a nonsense amount floors at zero rather than at NaN', () => {
@@ -607,128 +464,13 @@ test('a nonsense amount floors at zero rather than at NaN', () => {
   assert.equal(minCreditedFor(-5), 0);
 });
 
-// ---------- unified accounts, which is what Karim actually has ----------
-
-test('a unified account is not asked to move money between books that do not exist', async () => {
-  // usdClassTransfer is rejected outright on a unified account. Attempting it would turn a
-  // completed deposit into a sentence about the money being stuck on the spot side, which would
-  // be both wrong and alarming. Checked live on 2026-08-20: the marker is present on both
-  // networks for this account, so this is the normal path here.
-  const h = rail({}, {}, [
-    { perp: 0, spot: 0, unifiedAvailable: 0.000002 },
-    { perp: 0, spot: 0, unifiedAvailable: 49.6347 },
-  ]);
-  const out = await h.rail.execute(draft());
-
-  assert.equal(out.ok, true, out.detail ?? '');
-  assert.match(out.detail, /account is unified, so it is margin already/);
-  assert.match(out.detail, /free collateral rose by 49\.63/);
-  assert.doesNotMatch(out.detail, /spot side/i, 'a unified account has no spot side to be stuck on');
+test('the funding venue and the intents withdraw venue are one allowlist entry', () => {
+  assert.equal(HYPERCORE_COUNTERPARTY, INTENTS_WITHDRAW_COUNTERPARTY);
+  assert.equal(HYPERCORE_COUNTERPARTY, INTENTS_VERIFIER);
 });
 
-test('accountState reports the unified figure as available collateral', async () => {
-  const h = rail({}, {}, [{ perp: 0, spot: 0, unifiedAvailable: 120.5 }]);
-  const state = await h.rail.accountState(SELF);
-  assert.equal(state.unified, true, 'money free under the unified figure with perp at zero');
-  assert.equal(state.availableUsdc, 120.5);
-  assert.equal(state.funded, true, 'a unified balance is funded even with accountValue at zero');
-});
-
-test('a classic account is still read the classic way', async () => {
-  const h = rail({}, {}, [{ perp: 80, spot: 20 }]);
-  const state = await h.rail.accountState(SELF);
-  assert.equal(state.unified, false);
-  assert.equal(state.availableUsdc, 80, 'the perp withdrawable figure');
-  assert.equal(state.spot.find((b) => b.coin === 'USDC')?.total, 20);
-});
-
-// ---------- the guaranteed floor, not the expected one ----------
-//
-// checkQuote gated on amountOutFormatted, which is the solver's EXPECTED output. The
-// GUARANTEED floor is minAmountOut, and it is the field every sibling rail checks. The gap
-// between the two is the slippage tolerance, and this rail never set one, so it inherited the
-// API default of one percent: on a 100 USDC deposit the quote promised 99.68, the draft
-// claimed a floor of 99.45, and the number actually guaranteed was about 98.68. The receipt
-// then quoted the promise. Same shape as the bug the floor comment above describes, one field
-// over: the value checked was not the value used.
-
-test('a quote whose guaranteed floor is below minCredited is refused even when its expected output is above it', async () => {
-  // 49.6347 expected clears a floor of 49.45, and 49.00 guaranteed does not.
-  const h = rail({}, { minOut: '49000000' });
-  const out = await h.rail.simulate(draft({ amount: 50, minCredited: 49.45 }));
-
-  assert.equal(out.ok, false);
-  assert.match(out.error ?? '', /guarantees/);
-  assert.match(out.error ?? '', /49\.45/);
-});
-
-test('and the same quote is refused at execute, before anything is signed', async () => {
-  const h = rail({}, { minOut: '49000000' });
-  const out = await h.rail.execute(draft({ amount: 50, minCredited: 49.45 }));
-  assert.equal(out.ok, false);
-  assert.match(out.detail, /guarantees/);
-  assert.equal(h.sends.length, 0, 'nothing was signed');
-});
-
-test('a quote carrying no guaranteed floor at all is refused rather than measured on the expected output', async () => {
-  const h = rail({}, { minOut: null });
-  const out = await h.rail.simulate(draft({ amount: 50, minCredited: 49.45 }));
-  assert.equal(out.ok, false);
-  assert.match(out.error ?? '', /minAmountOut/);
-});
-
-test('the rail names the slippage tolerance it wants rather than inheriting the venue default', async () => {
-  const h = rail();
-  await h.rail.simulate(draft());
-  assert.equal(h.quotes[0]?.slippageToleranceBps, HYPERCORE_SLIPPAGE_BPS);
-});
-
-test('the floor the draft promises is one the venue can guarantee at every measured size', () => {
-  // The same live table as the fee test above, now read the other way: at the tolerance this
-  // rail asks for, the guarantee the venue returns has to clear the floor the draft promises.
-  // Otherwise the promise is one the rail refuses to honour and every honest deposit fails.
-  const live: Array<[number, number]> = [
-    [5, 4.6797],
-    [10, 9.6747],
-    [50, 49.6347],
-    [100, 99.5847],
-    [1000, 998.685],
-  ];
-  for (const [sent, delivered] of live) {
-    const guaranteed = delivered * (1 - HYPERCORE_SLIPPAGE_BPS / 10_000);
-    assert.ok(
-      minCreditedFor(sent) <= guaranteed,
-      `floor ${minCreditedFor(sent).toFixed(4)} for ${sent} is above the ${guaranteed.toFixed(4)} the venue guarantees`,
-    );
-  }
-});
-
-// ---------- the quoteRequest echo ----------
-//
-// checkQuote read the amounts and nothing else, so a quote priced to credit a different
-// Hyperliquid account passed. The account this rail credits is derived from the app's own key,
-// and collateral in any other book is money this app cannot trade.
-
-test('a quote that echoes a different Hyperliquid account is refused', async () => {
-  const h = rail({}, { echo: { recipient: STRANGER } });
-  const out = await h.rail.simulate(draft());
-
-  assert.equal(out.ok, false);
-  assert.match(out.error ?? '', /priced to credit/);
-  assert.match(out.error ?? '', new RegExp(STRANGER));
-});
-
-test('a quote with no echo at all is refused rather than trusted', async () => {
-  const h = rail({}, { echo: null });
-  const out = await h.rail.simulate(draft());
-  assert.equal(out.ok, false);
-  assert.match(out.error ?? '', /no quoteRequest echo/);
-});
-
-test('the echo is checked again at execute, before anything is signed', async () => {
-  const h = rail({}, { echo: { refundTo: STRANGER } });
-  const out = await h.rail.execute(draft());
-  assert.equal(out.ok, false);
-  assert.match(out.detail, /refund on this quote goes to/);
-  assert.equal(h.sends.length, 0, 'nothing was signed');
+test('a draft that cannot price itself fails every budget instead of passing them all', () => {
+  const { rail: r } = rail();
+  assert.equal(r.valueUsd(draft({ amountUsd: Number.NaN })), Infinity);
+  assert.equal(r.valueUsd(draft({ amountUsd: 10, amount: 12 })), 12);
 });

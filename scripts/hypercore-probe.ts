@@ -1,141 +1,130 @@
 // Drive the real funding rail against the live 1Click API, without moving anything.
 //
-// Every quote here is dry:true, so this mints no deposit address and commits to nothing. What
-// it proves is the part unit tests cannot: that the pinned asset id is still live, that the
-// origin chains this rail claims actually route to HyperCore today, and that the numbers the
-// approval screen would show a human are the numbers the venue is really quoting.
+// Every quote here is dry:true, so this mints no deposit handle and commits to nothing. What
+// it proves is the part unit tests cannot: that the pinned asset id is still live, what the
+// verifier holds for this app right now, and that the numbers the approval screen would show
+// a human are the numbers the venue is really quoting today, in both directions.
 //
-// Run: node scripts/hypercore-probe.ts [--amount 50]
-
+// Run: node scripts/hypercore-probe.ts [--amount 10]
 import path from 'node:path';
-import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { getAddress } from 'viem';
+import type { Address } from 'viem';
 import { loadConfig } from '../src/config.ts';
-import { HYPERCORE_USDC_ASSET_ID, hypercoreDepositRail, MIN_DEPOSIT_USDC } from '../src/rails/hypercore-deposit.ts';
-import type { HlDepositDraft } from '../src/types.ts';
-import { assetIdFor, oneClickClient } from '../src/intents.ts';
-import type { TokensFile } from '../src/intents.ts';
-import { HYPERCORE_COUNTERPARTY } from '../src/rails/hypercore-deposit.ts';
-import type { ChainId } from '../src/types.ts';
+import {
+  HYPERCORE_COUNTERPARTY,
+  MIN_DEPOSIT_USDC,
+  hypercoreDepositRail,
+  minCreditedFor,
+} from '../src/rails/hypercore-deposit.ts';
+import { HL_WITHDRAW_COUNTERPARTY, hypercoreWithdrawRail, minReceivedForHlWithdraw } from '../src/rails/hypercore-withdraw.ts';
+import { fetchIntentsHoldings } from '../src/ledger/intents.ts';
+import { nearChainSpec } from '../src/chain/near.ts';
+import { oneClickClient } from '../src/intents.ts';
+import type { HlDepositDraft, HlWithdrawDraft } from '../src/types.ts';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const cfg = loadConfig(root);
-const tokens = JSON.parse(fs.readFileSync(path.join(root, 'data', 'tokens.json'), 'utf8')) as TokensFile;
 
 const amountArg = process.argv.indexOf('--amount');
-const amount = amountArg > -1 ? Number(process.argv[amountArg + 1]) : 50;
+const amount = amountArg > -1 ? Number(process.argv[amountArg + 1]) : 10;
 
-const account = cfg.addresses.evm[0];
-if (account === undefined) {
+const configured = cfg.addresses.evm[0];
+if (configured === undefined) {
   console.error('no EVM address configured, so there is no trading account to quote against');
   process.exit(1);
 }
+const account = getAddress(configured);
+const intentsAccount = account.toLowerCase();
 
+// The rails derive the signer from the key, which this probe never opens: a signer port that
+// answers with the configured address is enough for a dry quote and signs nothing.
+const signer = { address: () => account as Address, signErc191: async () => { throw new Error('the probe never signs'); } };
+const sign = { address: () => account as Address, signTypedData: async () => { throw new Error('the probe never signs'); } };
 const client = oneClickClient();
-const rail = hypercoreDepositRail({
-  keysPath: cfg.keysPath,
-  tokens,
-});
+
+const deposit = hypercoreDepositRail({ keysPath: cfg.keysPath, client, signer });
+const withdraw = hypercoreWithdrawRail({ keysPath: cfg.keysPath, client, hl: { keysPath: cfg.keysPath, sign } });
 
 console.log(`trading account : ${account}`);
+console.log(`intents account : ${intentsAccount}`);
 console.log(`amount          : ${amount} USDC\n`);
 
 // 1. The pin still names something the API lists.
 try {
-  await rail.assertAssetLive();
-  console.log('PIN            ok, the HyperCore USDC asset id is live and still 6 decimals');
+  await deposit.assertAssetLive();
+  console.log('PIN            ok, the HyperCore USDC asset id is live at the pinned decimals');
 } catch (err) {
   console.log(`PIN            FAILED: ${err instanceof Error ? err.message : String(err)}`);
 }
 
 // 2. What the account holds right now, read off the venue.
 try {
-  const state = await rail.accountState(account);
-  const spot = state.spot.filter((b) => b.total > 0).map((b) => `${b.coin} ${b.total}`);
+  const state = await deposit.accountState(account);
   console.log(
-    `ACCOUNT        perp $${state.accountValueUsd}, withdrawable $${state.withdrawableUsd}, ` +
-      `${state.openPositions} positions, spot [${spot.join(', ') || 'empty'}]`,
+    `ACCOUNT        ${state.unified ? 'unified' : 'standard'}, available $${state.availableUsdc}, perp $${state.perpAccountValueUsd}, ` +
+      `spot USDC ${state.spotUsdc}, ${state.openPositions} positions, margin used $${state.marginUsedUsd}`,
   );
 } catch (err) {
   console.log(`ACCOUNT        FAILED: ${err instanceof Error ? err.message : String(err)}`);
 }
 
+// 3. What the verifier holds for us, which decides the flavor a deposit spends.
+const read = await fetchIntentsHoldings({ rpcUrl: nearChainSpec().rpcUrl, accountId: intentsAccount, tokenList: () => client.tokens(), fetchImpl: fetch });
+const usdc = read.holdings.filter((h) => h.symbol === 'USDC' && h.amount > 0).sort((a, b) => b.amount - a.amount);
+console.log(
+  `INTENTS        ${read.ok ? '' : 'read FAILED: ' + (read.error ?? '')}` +
+    (usdc.length > 0 ? usdc.map((h) => `${h.amount} USDC from ${h.originChain} (${h.assetId})`).join('; ') : 'no USDC held'),
+);
 console.log('');
 
-// 3. Every origin chain the rail claims, priced for real. `sol` is in the list on purpose: the
-//    rail must refuse it with a sentence about signing rather than time out against the API.
-const ORIGINS: ChainId[] = ['arb', 'eth', 'base', 'near', 'sol'];
-
-function draftFor(chain: ChainId, value: number): HlDepositDraft {
-  return {
+// 4. The deposit direction, priced for real.
+const held = usdc[0];
+if (held !== undefined) {
+  const draft: HlDepositDraft = {
     kind: 'hl_deposit',
-    chain,
     symbol: 'USDC',
-    tokenId: tokens[chain]?.USDC?.tokenId ?? '',
-    amount: value,
-    amountUsd: value,
-    // Deliberately loose here: this probe is measuring what the venue offers, and a floor set
-    // for a real proposal would refuse the quote before it printed the number being measured.
-    minCredited: 0,
-    // The wallet the money LEAVES, which is chain-shaped: a NEAR origin sends from a NEAR
-    // account id, not from the EVM address. proposeHlDeposit() resolves this per chain and an
-    // earlier version of this probe did not, which produced a refusal that looked like a rail
-    // bug and was really the probe naming the wrong wallet.
-    from: chain === 'near' ? (cfg.addresses.near[0] ?? '') : account,
-    // The account CREDITED is always the EVM one: Hyperliquid has no other kind.
+    originAsset: held.assetId,
+    amount,
+    amountUsd: amount,
+    minCredited: minCreditedFor(amount),
+    from: intentsAccount,
     hlAccount: account,
     counterparty: HYPERCORE_COUNTERPARTY,
   };
+  const out = await deposit.simulate(draft);
+  console.log(out.ok ? `DEPOSIT  OK\n${out.summary}` : `DEPOSIT  REFUSED ${(out.error ?? '').slice(0, 160)}`);
+} else {
+  console.log('DEPOSIT  skipped: nothing held inside the verifier to price a deposit from');
 }
-
-// A refusal for want of balance is a fact about the wallet, not about the venue, and this
-// script exists to answer both questions. So when the rail refuses on funds, the venue price is
-// still fetched directly and printed beside it: otherwise an empty wallet makes the routing look
-// broken when it is fine.
-async function venuePrice(chain: ChainId): Promise<string> {
-  const entry = tokens[chain]?.USDC;
-  if (entry === undefined) return '';
-  try {
-    const list = await client.tokens();
-    const origin = assetIdFor(chain, entry.tokenId, list);
-    if (origin === null) return '';
-    const res = await client.quote({
-      dry: true,
-      originAsset: origin,
-      destinationAsset: HYPERCORE_USDC_ASSET_ID,
-      amount: String(Math.round(amount * 10 ** entry.decimals)),
-      refundTo: account,
-      recipient: account,
-      recipientType: 'DESTINATION_CHAIN',
-      refundType: 'ORIGIN_CHAIN',
-      depositType: 'ORIGIN_CHAIN',
-    });
-    const out = Number(res.quote.amountOutFormatted);
-    const pct = ((amount - out) / amount) * 100;
-    return `  [venue would price it: ${out} out, ${pct.toFixed(2)} percent, ~${res.quote.timeEstimate ?? '?'}s]`;
-  } catch {
-    return '';
-  }
-}
-
-for (const chain of ORIGINS) {
-  const out = await rail.simulate(draftFor(chain, amount));
-  if (out.ok) {
-    const credited = out.summary.match(/credited\s+(\S+)/)?.[1] ?? '?';
-    const cost = out.summary.match(/cost\s+(.+)/)?.[1] ?? '?';
-    const eta = out.summary.match(/arrives\s+(.+)/)?.[1] ?? '?';
-    console.log(`${chain.padEnd(6)} OK      ${credited} USDC credited, cost ${cost}, ${eta}`);
-  } else {
-    const reason = out.error ?? '';
-    const priced = /wallet holds/.test(reason) ? await venuePrice(chain) : '';
-    console.log(`${chain.padEnd(6)} REFUSED ${reason.slice(0, 110)}${priced}`);
-  }
-}
-
-// 4. The floor and the ceiling, which are this rail's two size-shaped refusals.
 console.log('');
-const small = await rail.simulate(draftFor('arb', MIN_DEPOSIT_USDC - 1));
-console.log(`floor  ${small.ok ? 'NOT ENFORCED (bug)' : 'enforced: ' + (small.error ?? '').slice(0, 110)}`);
 
-const feeTrap = await rail.simulate(draftFor('arb', 6));
-console.log(`6 USDC ${feeTrap.ok ? 'allowed: ' + (feeTrap.summary.match(/cost\s+(.+)/)?.[1] ?? '') : 'refused: ' + (feeTrap.error ?? '').slice(0, 110)}`);
+// 5. The withdraw direction, priced for real. Refused on an empty account, and the venue price
+//    is still worth seeing beside the refusal.
+const back: HlWithdrawDraft = {
+  kind: 'hl_withdraw',
+  symbol: 'USDC',
+  amount,
+  amountUsd: amount,
+  minReceived: minReceivedForHlWithdraw(amount),
+  from: account,
+  to: intentsAccount,
+  counterparty: HL_WITHDRAW_COUNTERPARTY,
+};
+const outBack = await withdraw.simulate(back);
+console.log(outBack.ok ? `WITHDRAW OK\n${outBack.summary}` : `WITHDRAW REFUSED ${(outBack.error ?? '').slice(0, 200)}`);
+console.log('');
+
+// 6. The floor, which is the size-shaped refusal both rails share.
+const small = await deposit.simulate({
+  kind: 'hl_deposit',
+  symbol: 'USDC',
+  originAsset: held?.assetId ?? '',
+  amount: MIN_DEPOSIT_USDC - 1,
+  amountUsd: MIN_DEPOSIT_USDC - 1,
+  minCredited: minCreditedFor(MIN_DEPOSIT_USDC - 1),
+  from: intentsAccount,
+  hlAccount: account,
+  counterparty: HYPERCORE_COUNTERPARTY,
+});
+console.log(`floor  ${small.ok ? 'NOT ENFORCED (bug)' : 'enforced: ' + (small.error ?? '').slice(0, 110)}`);

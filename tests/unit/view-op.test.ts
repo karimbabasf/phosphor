@@ -101,6 +101,7 @@ async function boot(opts: { view?: ViewMode; proposals?: Proposal[] } = {}): Pro
     ledger: {
       snapshot,
       intents: () => undefined,
+      hyperliquid: () => undefined,
       refresh: async () => snapshot(),
       applyDemoTransfer: () => {},
     },
@@ -112,6 +113,7 @@ async function boot(opts: { view?: ViewMode; proposals?: Proposal[] } = {}): Pro
       proposePolicyChange: async () => pendingProposal(),
       proposeSwap: async () => pendingProposal(),
       proposeHlDeposit: async () => pendingProposal(),
+      proposeHlWithdraw: async () => pendingProposal(),
       proposeIntentsDeposit: async () => pendingProposal(),
       proposeIntentsWithdraw: async () => pendingProposal(),
       proposeTrade: async () => pendingProposal(),

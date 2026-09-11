@@ -32,7 +32,7 @@ import type { PCtx, ProposalDeps } from './proposals/lifecycle.ts';
 import { executeApproved, land } from './proposals/execute.ts';
 import { chainTxLookup, reconcileOnBoot, reconcileProposal } from './proposals/reconcile.ts';
 import { proposeConsolidate, proposePolicyChange } from './proposals/draft.ts';
-import { proposeHlDeposit, proposeIntentsDeposit, proposeIntentsWithdraw, proposeSwap } from './proposals/rails.ts';
+import { proposeHlDeposit, proposeHlWithdraw, proposeIntentsDeposit, proposeIntentsWithdraw, proposeSwap } from './proposals/rails.ts';
 import { proposeTrade, proposeTradeChange } from './proposals/trade.ts';
 
 export type { ProposalDeps };
@@ -58,6 +58,7 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     proposePolicyChange: (p) => serialise(() => proposePolicyChange(ctx, p)),
     proposeSwap: (p) => serialise(() => proposeSwap(ctx, p)),
     proposeHlDeposit: (p) => serialise(() => proposeHlDeposit(ctx, p)),
+    proposeHlWithdraw: (p) => serialise(() => proposeHlWithdraw(ctx, p)),
     proposeIntentsDeposit: (p) => serialise(() => proposeIntentsDeposit(ctx, p)),
     proposeIntentsWithdraw: (p) => serialise(() => proposeIntentsWithdraw(ctx, p)),
     proposeTrade: (p) => serialise(() => proposeTrade(ctx, p)),

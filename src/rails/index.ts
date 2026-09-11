@@ -23,6 +23,7 @@ import type { AppConfig, ChainId, Rail, SwapDraft, WriteDraft } from '../types.t
 import type { OneClickClient, TokensFile } from '../intents.ts';
 import { oneClickClient } from '../intents.ts';
 import { hypercoreDepositRail } from './hypercore-deposit.ts';
+import { hypercoreWithdrawRail } from './hypercore-withdraw.ts';
 import { ONECLICK_COUNTERPARTY, oneClickRail } from './oneclick.ts';
 import { INTENTS_NATIVE_COUNTERPARTY, intentsNativeRail } from './intents-native.ts';
 import { intentsDepositRail } from './intents-deposit.ts';
@@ -115,7 +116,10 @@ export function createRails(deps: RailDeps): RailRegistry {
     swap: swapRail(deps, client) as Rail,
     hl_deposit: hypercoreDepositRail({
       keysPath: deps.cfg.keysPath,
-      tokens: deps.tokens,
+      client,
+    }) as Rail,
+    hl_withdraw: hypercoreWithdrawRail({
+      keysPath: deps.cfg.keysPath,
       client,
     }) as Rail,
     intents_deposit: intentsDepositRail({
@@ -168,9 +172,8 @@ export function verifiedVenueContracts(): Array<{ address: string; venue: string
 export function venueAllowlist(): string[] {
   const out = new Set<string>(verifiedVenueContracts().map((v) => v.address));
 
-  // Hyperliquid funding used to add Bridge2's address here. It routes through 1Click now, so
-  // it has no address of its own to list either, and its counterparty string IS ONECLICK_COUNTERPARTY:
-  // one host, one allowlist entry, added just below.
+  // Hyperliquid funding used to add Bridge2's address here. It spends the intents balance now,
+  // so its counterparty is the verifier, the entry added a few lines down.
 
   // 1Click mints a fresh deposit address per quote, so no address of its own can ever sit
   // on a static list; the venue string is the allowlist entry (see the comment on

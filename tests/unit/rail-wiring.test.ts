@@ -24,6 +24,7 @@ import { fileURLToPath } from 'node:url';
 import type {
   AppConfig,
   HlDepositDraft,
+  HlWithdrawDraft,
   IntentsWithdrawDraft,
   LedgerSnapshot,
   Policy,
@@ -35,6 +36,7 @@ import type {
   WriteDraft,
 } from '../../src/types.ts';
 import type { Ledger } from '../../src/ledger/index.ts';
+import type { IntentsRead } from '../../src/ledger/intents.ts';
 import type { RailRegistry } from '../../src/rails/index.ts';
 import { createAudit } from '../../src/audit.ts';
 import { createStore } from '../../src/store.ts';
@@ -56,6 +58,7 @@ const ROOT = path.dirname(path.dirname(__dirname));
 const riskRows = (JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'risk-table.json'), 'utf8')) as { rows: RiskRow[] }).rows;
 
 const SELF_EVM = '0x1111111111111111111111111111111111111111';
+const ETH_USDC_FLAVOR = 'nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near';
 
 // ---------- harness ----------
 
@@ -90,6 +93,7 @@ function spyRails(over: { simulation?: SimulationResult; result?: RailResult } =
   const table: Record<string, Rail> = {
     swap: rail('swap'),
     hl_deposit: rail('hl_deposit'),
+    hl_withdraw: rail('hl_withdraw'),
     intents_deposit: rail('intents_deposit'),
     intents_withdraw: rail('intents_withdraw'),
   };
@@ -99,7 +103,7 @@ function spyRails(over: { simulation?: SimulationResult; result?: RailResult } =
     executed,
     registry: {
       for: (draft) => table[draft.kind] ?? null,
-      kinds: () => ['swap', 'hl_deposit', 'intents_deposit', 'intents_withdraw'],
+      kinds: () => ['swap', 'hl_deposit', 'hl_withdraw', 'intents_deposit', 'intents_withdraw'],
     },
   };
 }
@@ -121,7 +125,8 @@ type Harness = {
   eventTypes(): string[];
 };
 
-function setup(over: { policy?: Policy; rails?: Spy } = {}): Harness {
+// intents: null means the ledger has no read at all; omitted means the default holdings.
+function setup(over: { policy?: Policy; rails?: Spy; intents?: IntentsRead | null } = {}): Harness {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-rail-wiring-'));
   const cfg: AppConfig = {
     mode: 'live', // demo mode owns no rails at all; that is its own test below
@@ -137,7 +142,26 @@ function setup(over: { policy?: Policy; rails?: Spy } = {}): Harness {
   const snapshot: LedgerSnapshot = { ...loadDemoLedger(), mode: 'live' };
   const ledger: Ledger = {
     snapshot: () => snapshot,
-    intents: () => undefined,
+    // What the verifier holds for us: enough USDC of one flavor for the deposits below, so the
+    // hl_deposit builder can pick the flavor it spends. Overridable per test.
+    intents: () =>
+      over.intents === undefined
+        ? {
+            ok: true,
+            fetchedAt: new Date().toISOString(),
+            holdings: [
+              {
+                accountId: SELF_EVM.toLowerCase(),
+                assetId: ETH_USDC_FLAVOR,
+                symbol: 'USDC',
+                originChain: 'eth',
+                amount: 100,
+                decimals: 6,
+              },
+            ],
+          }
+        : over.intents ?? undefined,
+    hyperliquid: () => undefined,
     refresh: async () => snapshot,
     applyDemoTransfer: () => {
       throw new Error('applyDemoTransfer must never be called in live mode');
@@ -187,14 +211,13 @@ test('venueAllowlist names every contract the rails can hand funds to', () => {
 
   // Hyperliquid funding used to put Bridge2's address here, and the worst mistake this app
   // could make was holding a bridge address no contract lives at: a transfer landed in a dead
-  // EOA and was gone. That whole class of error left with the mechanism, because funding
-  // routes through 1Click now, which mints a fresh
-  // deposit address per quote, so there is no bridge address on any list to get wrong, and
-  // the entry it does need is the venue string it shares with the swap rail.
+  // EOA and was gone. That whole class of error left with the mechanism. Funding spends the
+  // intents balance now, so its counterparty is the verifier, the entry the intents rails
+  // already share: a human who allowed the verifier for swaps has allowed it for funding.
   assert.equal(
     HYPERCORE_COUNTERPARTY,
-    ONECLICK_COUNTERPARTY,
-    'one host means one allowlist entry: a human allowing 1Click for swaps has allowed it for funding',
+    INTENTS_NATIVE_COUNTERPARTY,
+    'one verifier means one allowlist entry',
   );
   assert.ok(!allowed.some((a: string) => /^0x2df1c51e09aecf9cacb7bc98cb1742757f163df7$/.test(a)), 'the Bridge2 address is gone from the allowlist');
 });
@@ -207,13 +230,34 @@ test('every rail draft the service builds names a counterparty the seeded allowl
   const deposit = await h.svc.proposeHlDeposit({ amount: 50 });
   const intentsIn = await h.svc.proposeIntentsDeposit({ chain: 'arb', symbol: 'USDC', amount: 20 });
   const intentsOut = await h.svc.proposeIntentsWithdraw({ chain: 'arb', symbol: 'USDC', amount: 10 });
+  const back = await h.svc.proposeHlWithdraw({ amount: 10 });
 
-  for (const p of [swap, deposit, intentsIn, intentsOut]) {
+  for (const p of [swap, deposit, intentsIn, intentsOut, back]) {
     const draft = p.draft as { counterparty?: string };
     const counterparty = (draft.counterparty ?? '').toLowerCase();
     assert.ok(allowed.has(counterparty), `${p.kind} points at ${counterparty}, which the seeded policy does not allow`);
     assert.notEqual(p.status, 'policy_refused', `${p.kind} was refused: ${JSON.stringify(p.verdict)}`);
   }
+});
+
+// Karim's call, 2026-09-11: collateral leaves the venue only by hand, whatever the size.
+test('a Hyperliquid withdrawal under the click threshold still parks pending for a human', async () => {
+  const h = setup();
+  const p = await h.svc.proposeHlWithdraw({ amount: 10 });
+  assert.equal(p.verdict.outcome, 'needs_approval');
+  assert.equal(p.status, 'pending');
+  assert.match(p.verdict.reasons.join(' '), /always needs a human click/);
+  assert.equal(h.rails.executed.length, 0, 'nothing runs while a proposal is pending');
+
+  const draft = p.draft as HlWithdrawDraft;
+  assert.equal(draft.from, SELF_EVM, 'the venue account is ours, resolved by the app');
+  assert.equal(draft.to, SELF_EVM.toLowerCase(), 'the intents account credited is ours, derived not passed');
+  assert.equal(draft.counterparty, ONECLICK_COUNTERPARTY);
+
+  const done = await h.svc.approve(p.id);
+  assert.equal(done.status, 'executed');
+  assert.equal(done.decidedBy, 'human');
+  assert.deepEqual(h.rails.executed.map((d) => d.kind), ['hl_withdraw']);
 });
 
 // ---------- the loop ----------
@@ -280,15 +324,54 @@ test('the app resolves every address in a rail draft, so the agent names none of
   assert.equal(swap.amountUsd, 500, 'the app prices the draft; the agent cannot declare a smaller number');
 
   const deposit = (await h.svc.proposeHlDeposit({ amount: 40 })).draft as HlDepositDraft;
-  assert.equal(deposit.counterparty, HYPERCORE_COUNTERPARTY, 'funding routes through 1Click, not a bridge contract');
-  assert.equal(deposit.chain, 'arb', 'arb is the default origin, not the only one');
-  assert.equal(deposit.from, SELF_EVM);
+  assert.equal(deposit.counterparty, HYPERCORE_COUNTERPARTY, 'the funds are spent inside the verifier');
+  assert.equal(deposit.originAsset, ETH_USDC_FLAVOR, 'the flavor spent is the one the ledger says we hold');
+  assert.equal(deposit.symbol, 'USDC');
+  assert.equal(deposit.from, SELF_EVM.toLowerCase(), 'the verifier account is our EVM address lowercased, derived not passed');
   assert.equal(deposit.hlAccount, SELF_EVM, 'the trading account is ours, resolved by the app');
 
   const out = (await h.svc.proposeIntentsWithdraw({ chain: 'arb', symbol: 'USDC', amount: 10 })).draft as IntentsWithdrawDraft;
   assert.equal(out.counterparty, INTENTS_WITHDRAW_COUNTERPARTY);
   assert.equal(out.from, SELF_EVM.toLowerCase(), 'the verifier account is our EVM address lowercased, derived not passed');
   assert.equal(out.to, SELF_EVM, 'a withdrawal lands in our own wallet');
+});
+
+// The deposit builder picks the flavor to spend from what the verifier holds, and it refuses
+// only where it is certain: no read at all, no matching asset, or a balance it can name.
+test('a Hyperliquid deposit is refused when the intents balance cannot be read', async () => {
+  const h = setup({ intents: null });
+  const p = await h.svc.proposeHlDeposit({ amount: 40 });
+  assert.equal(p.verdict.outcome, 'refuse');
+  assert.match(p.verdict.reasons.join(' '), /could not be read/);
+});
+
+test('a Hyperliquid deposit is refused when the verifier holds none of the asset', async () => {
+  const h = setup({ intents: { ok: true, fetchedAt: new Date().toISOString(), holdings: [] } });
+  const p = await h.svc.proposeHlDeposit({ amount: 40 });
+  assert.equal(p.verdict.outcome, 'refuse');
+  assert.match(p.verdict.reasons.join(' '), /holds no USDC/);
+});
+
+test('a Hyperliquid deposit larger than the held flavor is refused and names the balance', async () => {
+  const h = setup();
+  const p = await h.svc.proposeHlDeposit({ amount: 400 });
+  assert.equal(p.verdict.outcome, 'refuse');
+  assert.match(p.verdict.reasons.join(' '), /holds 100 USDC/);
+});
+
+test('a Hyperliquid deposit spends the largest flavor when several are held', async () => {
+  const h = setup({
+    intents: {
+      ok: true,
+      fetchedAt: new Date().toISOString(),
+      holdings: [
+        { accountId: SELF_EVM.toLowerCase(), assetId: 'nep141:arb-usdc.omft.near', symbol: 'USDC', originChain: 'arb', amount: 30, decimals: 6 },
+        { accountId: SELF_EVM.toLowerCase(), assetId: ETH_USDC_FLAVOR, symbol: 'USDC', originChain: 'eth', amount: 70, decimals: 6 },
+      ],
+    },
+  });
+  const deposit = (await h.svc.proposeHlDeposit({ amount: 40 })).draft as HlDepositDraft;
+  assert.equal(deposit.originAsset, ETH_USDC_FLAVOR);
 });
 
 // toChain carries two different meanings and only one of them is a recipient. On an on-chain
@@ -546,6 +629,7 @@ test('the live registry holds every rail kind and nothing else', () => {
 
   assert.deepEqual(registry.kinds().sort(), [
     'hl_deposit',
+    'hl_withdraw',
     'intents_deposit',
     'intents_withdraw',
     'swap',
@@ -584,6 +668,7 @@ test('demo mode owns no rails, and a rail proposal there refuses instead of reac
     ledger: {
       snapshot: () => snapshot,
       intents: () => undefined,
+      hyperliquid: () => undefined,
       refresh: async () => snapshot,
       applyDemoTransfer: () => {},
     },

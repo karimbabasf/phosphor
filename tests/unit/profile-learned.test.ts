@@ -66,7 +66,7 @@ async function boot(): Promise<Harness> {
     audit,
     store: createStore(dataDir),
     riskRows: [],
-    ledger: { snapshot, intents: () => undefined, refresh: async () => snapshot(), applyDemoTransfer: () => {} },
+    ledger: { snapshot, intents: () => undefined, refresh: async () => snapshot(), applyDemoTransfer: () => {}, hyperliquid: () => undefined },
     market: createMarketData({
       fetchImpl: (async () => ({ ok: true, json: async () => [], text: async () => '', headers: new Headers() })) as unknown as typeof fetch,
     }),
@@ -75,6 +75,7 @@ async function boot(): Promise<Harness> {
       proposePolicyChange: async () => { throw new Error('unused'); },
       proposeSwap: async () => { throw new Error('unused'); },
       proposeHlDeposit: async () => { throw new Error('unused'); },
+      proposeHlWithdraw: async () => { throw new Error('unused'); },
       proposeIntentsDeposit: async () => { throw new Error('unused'); },
       proposeIntentsWithdraw: async () => { throw new Error('unused'); },
       proposeTrade: async () => { throw new Error('unused'); },

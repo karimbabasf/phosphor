@@ -40,9 +40,9 @@ What has actually run against a live chain with real money, both on 2026-08-20: 
 Hyperliquid perps account through NEAR Intents, and one armed mandate that opened and closed a real
 SOL position.
 
-What has NOT: Uniswap v3 liquidity, the Hyperliquid bridge deposit, the Aave yield rails, and
-`propose_consolidate`. Those are implemented and tested, and a clean simulation of one is not
-evidence that it works. The first real run of any of them is the first real run.
+What has NOT: `propose_consolidate`. It is implemented and tested, and a clean simulation is not
+evidence that it works. The first real run is the first real run. The Uniswap liquidity rails,
+the Aave yield rails and the direct Hyperliquid bridge deposit were removed rather than proven.
 
 ## Not financial advice
 
@@ -75,7 +75,7 @@ somewhere the activity is prohibited.
 
 ## Third parties are not the author's
 
-phosphor routes through infrastructure the author does not run: NEAR Intents, Uniswap, Hyperliquid,
+phosphor routes through infrastructure the author does not run: NEAR Intents, Hyperliquid,
 the underlying chains and bridges, RPC providers and price feeds. The author does not operate,
 monitor or continuously vet any of them, and is not responsible for their code, outages, fees,
 slippage, censorship, insolvency or exploits.

@@ -145,6 +145,7 @@ export type TxEntry = {
 const ACTIONS: Record<string, TxEntry['action'] | null | undefined> = {
   swap: 'swap',
   hl_deposit: 'deposit',
+  hl_withdraw: 'withdraw',
   intents_deposit: 'deposit',
   intents_withdraw: 'withdraw',
   transfer: 'transfer',
@@ -188,7 +189,7 @@ function classifyHash(
   place: TxPlace,
   toPlace: TxPlace,
 ): { place: TxPlace; kind: TxHash['kind'] } {
-  if (index === 0 && (kind === 'intents_withdraw' || venue === 'intents-native')) {
+  if (index === 0 && (kind === 'intents_withdraw' || kind === 'hl_deposit' || venue === 'intents-native')) {
     return { place: 'intents', kind: 'intent' };
   }
   if (EVM_HASH.test(hash)) {
@@ -321,10 +322,10 @@ function sidesOf(draft: WriteDraft): Sides {
       };
     case 'hl_deposit':
       return {
-        place: draft.chain,
-        // The money crosses: it leaves an ordinary chain and lands on the venue. Saying
-        // `draft.chain` on both sides was true of the Bridge2 mechanism, where the transfer
-        // never left Arbitrum, and it is not true of this one.
+        // The money leaves the intents balance and lands on the venue. Earlier mechanisms
+        // started on a chain (Arbitrum for Bridge2, any chain for the 2026-08-20 route); rows
+        // executed then still render from their own recorded place.
+        place: 'intents',
         toPlace: 'hyperliquid',
         venue: 'hyperliquid',
         sent: { symbol: draft.symbol, amount: draft.amount },
@@ -340,6 +341,18 @@ function sidesOf(draft: WriteDraft): Sides {
         sent: { symbol: draft.symbol, amount: draft.amount },
         from: draft.from,
         to: draft.intentsAccount,
+        counterparty: draft.counterparty,
+      };
+    case 'hl_withdraw':
+      return {
+        // Collateral leaves the venue and lands inside the verifier. The first hash is the
+        // venue's own ledger hash of the send, which no chain explorer resolves.
+        place: 'hyperliquid',
+        toPlace: 'intents',
+        venue: 'hyperliquid',
+        sent: { symbol: draft.symbol, amount: draft.amount },
+        from: draft.from,
+        to: draft.to,
         counterparty: draft.counterparty,
       };
     case 'intents_withdraw':

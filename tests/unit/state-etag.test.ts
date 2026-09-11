@@ -67,6 +67,7 @@ async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
     ledger: {
       snapshot,
       intents: () => undefined,
+      hyperliquid: () => undefined,
       refresh: async () => snapshot(),
       applyDemoTransfer: () => {},
     },
@@ -78,6 +79,7 @@ async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
       proposePolicyChange: async () => { throw new Error('unused'); },
       proposeSwap: async () => { throw new Error('unused'); },
       proposeHlDeposit: async () => { throw new Error('unused'); },
+      proposeHlWithdraw: async () => { throw new Error('unused'); },
       proposeIntentsDeposit: async () => { throw new Error('unused'); },
       proposeIntentsWithdraw: async () => { throw new Error('unused'); },
       proposeTrade: async () => { throw new Error('unused'); },

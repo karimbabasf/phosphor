@@ -18,6 +18,7 @@
 // One list, in a file that imports no runtime code, so both sides can have it.
 import type {
   HlDepositDraft,
+  HlWithdrawDraft,
   IntentsDepositDraft,
   IntentsWithdrawDraft,
   SwapDraft,
@@ -28,6 +29,7 @@ import type {
 export type RailKind =
   | 'swap'
   | 'hl_deposit'
+  | 'hl_withdraw'
   | 'intents_deposit'
   | 'intents_withdraw'
   | 'trade';
@@ -35,6 +37,7 @@ export type RailKind =
 export type RailDraft =
   | SwapDraft
   | HlDepositDraft
+  | HlWithdrawDraft
   | IntentsDepositDraft
   | IntentsWithdrawDraft
   | TradeDraft;
@@ -42,6 +45,7 @@ export type RailDraft =
 export const RAIL_KINDS: readonly RailKind[] = [
   'swap',
   'hl_deposit',
+  'hl_withdraw',
   'intents_deposit',
   'intents_withdraw',
   'trade',

@@ -87,6 +87,7 @@ async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
     ledger: {
       snapshot,
       intents: () => undefined,
+      hyperliquid: () => undefined,
       refresh: async () => snapshot(),
       applyDemoTransfer: () => {},
     },
@@ -99,6 +100,7 @@ async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
       // Only reached when the swap guards pass. A bad venue or amount is refused before here.
       proposeSwap: async () => builtSwap(),
       proposeHlDeposit: async () => builtSwap(),
+      proposeHlWithdraw: async () => builtSwap(),
       proposeIntentsDeposit: async () => builtSwap(),
       proposeIntentsWithdraw: async () => builtSwap(),
       proposeTrade: async () => builtSwap(),

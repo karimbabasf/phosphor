@@ -4,7 +4,7 @@ The long form of what the README says in short: the tool surface, gas, how a pro
 
 ## The tool surface
 
-Forty tools, in six families. Read tools execute directly and cannot move anything. Write
+Forty-two tools, in six families. Read tools execute directly and cannot move anything. Write
 tools never execute: they return a proposal id and a simulation result, and nothing else. Chart
 and trading tools move a view or a marker, never funds. Team tools coordinate several agents.
 Display tools move the window. The tables below are the whole surface, and
@@ -74,12 +74,13 @@ custom SMA, EMA, RSI or ATR equals the built-in to the last digit.
 |---|---|
 | `propose_swap` | Swaps one token for another. Venue `oneclick` across chains from the wallet, or `intents-native` inside `intents.near` over an already-deposited balance. Omitting the venue means `oneclick` |
 | `propose_intents_deposit` | Moves funds from this wallet into NEAR Intents, where they become a balance `intents.near` holds under this app's own account. Funds the `intents-native` swap venue. Deposits the chain's gas asset (native ETH) unless a symbol is given |
-| `propose_intents_withdraw` | Brings a balance back out of `intents.near` into one of this app's own wallets on `eth`, `base`, `arb` or `sol`. The way out of the `intents-native` venue. Withdraws the chain's gas asset unless a symbol is given. Which wallet is ours comes from `config.local.json`, never from the call |
+| `propose_intents_withdraw` | Brings a balance back out of `intents.near` into one of this app's own wallets on `eth`, `base` or `arb`. The way out of the `intents-native` venue. Withdraws the chain's gas asset unless a symbol is given. Which wallet is ours comes from `config.local.json`, never from the call |
 | `propose_consolidate` | Gathers a token's scattered balances onto one chain. Unproven: this path has never run on a live chain, and the tool description says so, so a clean simulation is not evidence it works |
 | `propose_policy_change` | Proposes a patch to the policy rules. Always waits for a human click |
 | `propose_trade` | Arms a plan on Hyperliquid perpetuals, whole or by the id of one drawn with `trade_plan`. Priced at the collateral it puts at stake: the click threshold is the only wall |
 | `propose_trade_change` | Changes an armed plan: a new stop or target, cancel, or close. A change that only takes risk off lands without the wall; one that widens is priced like a new plan |
-| `propose_hl_deposit` | Funds the Hyperliquid perpetuals account. Routes through NEAR Intents into HyperCore; there is no tool that takes money back out, and the paragraph below says why |
+| `propose_hl_deposit` | Funds the Hyperliquid perpetuals account from the intents balance: one signed intent, nothing sent on any chain. The account credited is derived from the app's own key |
+| `propose_hl_withdraw` | Brings collateral back from Hyperliquid into the intents balance. One field, the amount; the intents account credited is the app's own. Always waits for a human click and is refused while any position is open |
 
 This door now names exactly the set the app can execute. `propose_lp_add`, `propose_lp_remove`,
 `propose_yield_deposit`, `propose_yield_withdraw`, `yield_read` and `yield_auto` were on it or
@@ -87,13 +88,14 @@ behind it at various points; the rails under all six were removed when the app c
 so there is nothing left to register. What went with them: an on-chain DEX swap venue, both
 liquidity-pool moves and the whole lending loop.
 
-`propose_hl_deposit` was on that list until 2026-08-20 and is back, because the rail underneath it
+`propose_hl_deposit` was on that list until 2026-08-20 and is back because the rail underneath it
 changed shape rather than because it was tested more. It used to transfer USDC to Hyperliquid's
-Bridge2 contract on Arbitrum; it now routes through NEAR Intents into HyperCore, and 1Click
-refuses `hypercore` as an origin, so the direction is a property of the venue rather than a check
-of ours. An agent holding it can add collateral to the trading account and has no path on its
-surface to remove any. Getting money off the venue is a signed `withdraw3` a human runs at a
-terminal, and that is deliberately not a tool.
+Bridge2 contract on Arbitrum; since 2026-09-11 it spends the balance already held inside
+`intents.near` through one signed intent. `propose_hl_withdraw` is the way back: 1Click mints a
+fresh HyperCore address for the quote, the app signs one `spotSend` to it with its master key, and
+the money lands in the app's own intents balance. That tool has no destination field, always waits
+for a click whatever the size, and is refused while any position is open. Money moves wallet to
+intents to Hyperliquid and back along that one line, and nothing crosses a bridge.
 
 | Chart tool | Does |
 |---|---|

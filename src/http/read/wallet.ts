@@ -18,7 +18,7 @@ export const walletReads: ReadTable = {
   // the wrong world is the failure this whole app exists to make impossible.
   start: (ctx, _body, _args, res) => {
     const snapshot = ctx.ledger.snapshot();
-    const wallet = buildWallet(snapshot, ctx.ledger.intents());
+    const wallet = buildWallet(snapshot, ctx.ledger.intents(), ctx.ledger.hyperliquid());
     const policy = ctx.getPolicy();
     const pending = ctx.proposals.list().filter((p) => p.status === 'pending');
     const holder = ctx.agents.holder();
@@ -62,7 +62,7 @@ export const walletReads: ReadTable = {
     sendJson(res, 200, classify(ctx.ledger.snapshot(), ctx.riskRows));
   },
   wallet: (ctx, _body, _args, res) => {
-    sendJson(res, 200, buildWallet(ctx.ledger.snapshot(), ctx.ledger.intents()));
+    sendJson(res, 200, buildWallet(ctx.ledger.snapshot(), ctx.ledger.intents(), ctx.ledger.hyperliquid()));
   },
   /* Where somebody sends money so that NEAR Intents holds it: one stable address per network,
      from the POA bridge, plus what each network will actually credit. The agent gets this so it

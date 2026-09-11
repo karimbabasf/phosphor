@@ -37,9 +37,8 @@
     /* the rules */
     policy_show: 'rules',
     policy_change: 'rules',
-    mandate_catalog: 'rules',
-    mandate: 'rules',
-    mandate_arm: 'rules',
+    trade: 'position',
+    trade_change: 'position',
     /* what happened */
     proposal_status: 'activity',
     log_tail: 'activity',
@@ -47,11 +46,16 @@
     intents_deposit: 'moneyin',
     /* the trading account */
     hl_deposit: 'account',
+    hl_withdraw: 'account',
     trade_read: 'position',
+    trade_plan: 'chart',
+    propose_trade: 'position',
+    propose_trade_change: 'position',
     /* the chart */
-    candles: 'chart',
     market_search: 'chart',
-    indicator_catalog: 'chart',
+    chart_draw: 'chart',
+    chart_snapshot: 'chart',
+    chart_layout: 'chart',
     watch: 'chart',
     /* the window itself */
     switch: 'tabs',
@@ -59,6 +63,7 @@
     /* the assistant's own head */
     start: 'assistant',
     skill: 'assistant',
+    profile_learned: 'assistant',
     research: 'assistant'
   };
 
@@ -115,7 +120,9 @@
     yield_deposit: 'holdings',
     yield_withdraw: 'holdings',
     lp_add: 'holdings',
-    lp_remove: 'holdings'
+    lp_remove: 'holdings',
+    mandate_arm: 'rules',
+    mandate: 'rules'
   };
 
   function surfaceForProposal(kind) {

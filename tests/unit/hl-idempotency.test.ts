@@ -9,9 +9,10 @@
 //   not exist at all. The id is now a pure function of the plan, the leg and its generation,
 //   with no time window at all: a plan leg is one order for the life of the plan.
 //
-//   The withdrawal nonce. `nonce = action.time` is the only identity a withdraw3 has. The post
+//   The user-signed nonce. `nonce = action.time` is the only identity a spotSend has (it was
+//   withdraw3 when this was found; the rule is the same). The post
 //   was not wrapped, so a lost response after the venue accepted surfaced as a thrown error, and
-//   a retry above it called buildWithdrawPayload({ time: Date.now() }): a new nonce, a new
+//   a retry above it rebuilt the payload with time: Date.now(): a new nonce, a new
 //   signature, and a venue perfectly happy to pay out a second time.
 
 import { test } from 'node:test';
@@ -19,10 +20,11 @@ import assert from 'node:assert/strict';
 import type { Address } from 'viem';
 
 import { cloidFor, newCloid } from '../../src/hl/exchange.ts';
-import { withdraw3, usdClassTransfer } from '../../src/rails/hyperliquid-withdraw.ts';
-import type { HlWithdrawDeps } from '../../src/rails/hyperliquid-withdraw.ts';
+import { spotSend, usdClassTransfer } from '../../src/rails/hl-user-signed.ts';
+import type { HlUserSignedDeps } from '../../src/rails/hl-user-signed.ts';
 
 const OWNER = '0x1111111111111111111111111111111111111111' as Address;
+const DEST = '0x3333333333333333333333333333333333333333';
 
 // ---------- the client order id ----------
 
@@ -54,7 +56,7 @@ test('random ids, the old behaviour, collide with nothing and therefore dedupe n
 // A venue that behaves like Hyperliquid: it remembers the nonces it has seen and refuses a
 // repeat, which is the whole of its deduplication.
 function fakeVenue(options: { dropReplyOnAttempt?: number } = {}): {
-  deps: HlWithdrawDeps;
+  deps: HlUserSignedDeps;
   seen: number[];
   paid: number[];
   attempts: number;
@@ -73,6 +75,8 @@ function fakeVenue(options: { dropReplyOnAttempt?: number } = {}): {
         return json({ withdrawable: '5000.0', marginSummary: { accountValue: '5000.0' } });
       }
       if (type === 'spotClearinghouseState') return json({ balances: [{ coin: 'USDC', total: '5000.0' }] });
+      if (type === 'userRole') return json({ role: 'user' });
+      if (type === 'userAbstraction') return json('standard');
       return json({});
     }
 
@@ -121,9 +125,9 @@ function json(body: unknown): Response {
   } as unknown as Response;
 }
 
-test('a withdrawal whose reply is lost is ambiguous, never failed', async () => {
+test('a send whose reply is lost is ambiguous, never failed', async () => {
   const venue = fakeVenue({ dropReplyOnAttempt: 1 });
-  const out = await withdraw3(venue.deps, { amount: 100 });
+  const out = await spotSend(venue.deps, { destination: DEST, amount: 100 });
 
   assert.equal(out.ok, false);
   assert.equal(out.ambiguous, true, 'the venue may have accepted it');
@@ -134,34 +138,35 @@ test('a withdrawal whose reply is lost is ambiguous, never failed', async () => 
 
 test('a retry with the returned nonce is refused as a duplicate', async () => {
   const venue = fakeVenue({ dropReplyOnAttempt: 1 });
-  const first = await withdraw3(venue.deps, { amount: 100 });
+  const first = await spotSend(venue.deps, { destination: DEST, amount: 100 });
   assert.equal(first.ambiguous, true);
 
-  const retry = await withdraw3(venue.deps, { amount: 100, nonce: first.nonce });
+  const retry = await spotSend(venue.deps, { destination: DEST, amount: 100, nonce: first.nonce });
 
   assert.equal(retry.ok, false);
   assert.match(retry.detail, /Nonce already used/);
-  assert.equal(venue.paid.length, 1, 'ONE withdrawal reached the venue, not two');
+  assert.equal(venue.paid.length, 1, 'ONE transfer reached the venue, not two');
 });
 
 test('a retry that mints a fresh nonce would pay out twice, which is why the nonce is returned', async () => {
   const venue = fakeVenue({ dropReplyOnAttempt: 1 });
-  const first = await withdraw3(venue.deps, { amount: 100 });
+  const first = await spotSend(venue.deps, { destination: DEST, amount: 100 });
   assert.equal(first.ambiguous, true);
 
   // The old behaviour: retry without carrying the nonce forward. `now` is fixed in this
   // harness, so make the clock move the way a real retry a second later would.
-  const later: HlWithdrawDeps = { ...venue.deps, now: () => 1_800_000_001_000 };
-  const wrong = await withdraw3(later, { amount: 100 });
+  const later: HlUserSignedDeps = { ...venue.deps, now: () => 1_800_000_001_000 };
+  const wrong = await spotSend(later, { destination: DEST, amount: 100 });
 
   assert.equal(wrong.ok, true, 'the venue is perfectly happy to do it again');
-  assert.equal(venue.paid.length, 2, 'this is the second real withdrawal the nonce reuse prevents');
+  assert.equal(venue.paid.length, 2, 'this is the second real transfer the nonce reuse prevents');
 });
 
-test('an ordinary withdrawal still works and reports its nonce', async () => {
+test('an ordinary send still works and reports its nonce', async () => {
   const venue = fakeVenue();
-  const out = await withdraw3(venue.deps, { amount: 100 });
+  const out = await spotSend(venue.deps, { destination: DEST, amount: 100 });
   assert.equal(out.ok, true, out.detail);
+  assert.equal(out.nonce, 1_800_000_000_000);
   assert.equal(venue.paid.length, 1);
 });
 

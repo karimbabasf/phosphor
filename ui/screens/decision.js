@@ -143,6 +143,7 @@
     if (draft.kind === 'mandate') return 'Arm a rule';
     if (draft.kind === 'policy_change') return 'Change your limits';
     if (draft.kind === 'hl_deposit') return 'Fund the trading account';
+    if (draft.kind === 'hl_withdraw') return 'Bring collateral back from trading';
     return kindWords(proposal.kind);
   }
 

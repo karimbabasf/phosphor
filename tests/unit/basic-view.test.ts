@@ -254,7 +254,7 @@ const retired = (draft: Record<string, unknown>): WriteDraft => draft as unknown
 test('every draft kind produces a headline that names its amount', () => {
   const drafts: WriteDraft[] = [
     swapDraft(),
-    { kind: 'hl_deposit', chain: 'arb', symbol: 'USDC', tokenId: 'USDC', amount: 20, amountUsd: 20, minCredited: 19.8, from: SELF, hlAccount: SELF, counterparty: ROUTER },
+    { kind: 'hl_deposit', symbol: 'USDC', originAsset: 'nep141:eth-usdc.omft.near', amount: 20, amountUsd: 20, minCredited: 19.8, from: SELF.toLowerCase(), hlAccount: SELF, counterparty: ROUTER },
     retired({
       kind: 'lp_add',
       chain: 'arb',

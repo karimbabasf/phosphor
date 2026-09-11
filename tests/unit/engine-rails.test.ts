@@ -10,6 +10,7 @@ import path from 'node:path';
 
 import type {
   HlDepositDraft,
+  HlWithdrawDraft,
   IntentsDepositDraft,
   IntentsWithdrawDraft,
   Policy,
@@ -76,9 +77,8 @@ function swap(over: Partial<SwapDraft> = {}): SwapDraft {
 function hlDeposit(over: Partial<HlDepositDraft> = {}): HlDepositDraft {
   return {
     kind: 'hl_deposit',
-    chain: 'arb',
     symbol: 'USDC',
-    tokenId: 'USDC',
+    originAsset: 'nep141:eth-usdc.omft.near',
     amount: 25,
     amountUsd: 25,
     minCredited: 24.7,
@@ -120,9 +120,24 @@ function intentsWithdraw(over: Partial<IntentsWithdrawDraft> = {}): IntentsWithd
   };
 }
 
+function hlWithdraw(over: Partial<HlWithdrawDraft> = {}): HlWithdrawDraft {
+  return {
+    kind: 'hl_withdraw',
+    symbol: 'USDC',
+    amount: 25,
+    amountUsd: 25,
+    minReceived: 24.6,
+    from: SELF_EVM,
+    to: SELF_EVM.toLowerCase(),
+    counterparty: VENUE,
+    ...over,
+  };
+}
+
 const ALL = [
   ['swap', swap()],
   ['hl_deposit', hlDeposit()],
+  ['hl_withdraw', hlWithdraw()],
   ['intents_deposit', intentsDeposit()],
   ['intents_withdraw', intentsWithdraw()],
 ] as const;
@@ -142,6 +157,7 @@ test('a rail pointed at an unlisted venue is refused', () => {
   const cases = [
     swap({ counterparty: UNKNOWN_VENUE }),
     hlDeposit({ counterparty: UNKNOWN_VENUE }),
+    hlWithdraw({ counterparty: UNKNOWN_VENUE }),
     intentsDeposit({ counterparty: UNKNOWN_VENUE }),
     intentsWithdraw({ counterparty: UNKNOWN_VENUE }),
   ];
@@ -159,6 +175,23 @@ test('a swap that would deliver its proceeds to an unlisted address is refused',
   const v = evaluate(swap({ to: '0x9999999999999999999999999999999999999999' }), ctxWith());
   assert.equal(v.outcome, 'refuse');
   assert.equal(v.outcome === 'refuse' ? v.rule : '', 'destination_not_allowed');
+});
+
+// The withdraw tool has no destination field, and that is a property of the caller's shape,
+// not a governance rule. This is the rule: a draft crediting an intents account that is not
+// ours is refused here whatever built it.
+test('a Hyperliquid withdrawal crediting an intents account that is not ours is refused', () => {
+  const v = evaluate(hlWithdraw({ to: '0x9999999999999999999999999999999999999999' }), ctxWith());
+  assert.equal(v.outcome, 'refuse');
+  assert.equal(v.outcome === 'refuse' ? v.rule : '', 'destination_not_allowed');
+  assert.match(v.outcome === 'refuse' ? v.reasons.join(' ') : '', /proceeds/);
+});
+
+test('a Hyperliquid withdrawal into our own intents account passes the engine on the threshold alone', () => {
+  const small = evaluate(hlWithdraw({ amountUsd: 25, amount: 25 }), ctxWith());
+  assert.equal(small.outcome, 'allow', 'the engine stays pure; the always-click downgrade lives in the executor');
+  const big = evaluate(hlWithdraw({ amountUsd: 5000, amount: 5000 }), ctxWith());
+  assert.equal(big.outcome, 'needs_approval');
 });
 
 test('a swap delivering to one of our own addresses is still fine', () => {

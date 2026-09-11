@@ -104,6 +104,7 @@ function setup(over: { clickUsd?: number; kill?: boolean } = {}) {
     applyDemoTransfer: () => {
       throw new Error('never');
     },
+    hyperliquid: () => undefined,
   };
   const policy = seededPolicy(over.clickUsd);
   if (over.kill === true) policy.killSwitch = true;
@@ -276,7 +277,7 @@ test('without a trading surface every trade proposal refuses by name', async () 
     cfg: { mode: 'demo', port: 4177, addresses: { evm: [], solana: [], near: [] }, economicTransferUsd: 10, candleProducts: [], dataDir, keysPath: '/tmp/none' },
     audit: createAudit(dataDir),
     store: createStore(dataDir),
-    ledger: { snapshot: () => loadDemoLedger(), intents: () => undefined, refresh: async () => loadDemoLedger(), applyDemoTransfer: () => {} },
+    ledger: { snapshot: () => loadDemoLedger(), intents: () => undefined, refresh: async () => loadDemoLedger(), applyDemoTransfer: () => {}, hyperliquid: () => undefined },
     riskRows,
     quoter: syntheticQuoter(),
     signer: stubSigner(),
