@@ -4,7 +4,7 @@ The long form of what the README says in short: the tool surface, gas, how a pro
 
 ## The tool surface
 
-Fifty-two tools, in six families. Read tools execute directly and cannot move anything. Write
+Forty tools, in six families. Read tools execute directly and cannot move anything. Write
 tools never execute: they return a proposal id and a simulation result, and nothing else. Chart
 and trading tools move a view or a marker, never funds. Team tools coordinate several agents.
 Display tools move the window. The tables below are the whole surface, and
@@ -33,12 +33,12 @@ second agent inside ninety seconds is refused with the id of the one already in 
 proposals below the click threshold would both execute and each would be individually correct,
 so only the pair is wrong and nothing else in the stack would have caught it.
 
-**The chart cleans itself up.** Levels, marks and trend lines are anchored to one instrument, so
+**The chart cleans itself up.** Levels, marks, lines and zones are anchored to one instrument, so
 switching product clears the agent-drawn ones automatically and says how many it took. Indicators
 are kept, because an EMA means the same thing on any market. A human's own drawings are never
 swept by anything an agent does. Every `chart_read` carries a `housekeeping` block counting what
-is the reading agent's, what is another agent's and what is stale, beside the exact call that
-clears each.
+is the reading agent's, what is another agent's and what is stale, and `chart_draw clear: 'mine'`
+takes only the reading agent's own.
 
 | Read tool | Returns |
 |---|---|
@@ -48,7 +48,6 @@ clears each.
 | `composition` | Shares by issuer and chain, freezable share, unclassified holdings |
 | `policy_show` | Current policy as plain-English sentences, or a notice that the file is unreadable |
 | `log_tail` | Most recent audit lines, newest first |
-| `candles` | Recent OHLC candles for a product, with a staleness marker |
 | `proposal_status` | Status, verdict and simulation result for a proposal id |
 | `research` | The one read that leaves this machine. The APP fetches from a fixed allowlist of documentation hosts and hands back text; the agent never gets a URL it can point anywhere, which is the whole reason this is a Phosphor tool and not a general web fetch |
 | `gas_report` | What the app has spent on gas over a window, split by action, chain, rail kind and venue, plus gas as basis points of the value moved. An aggregation of receipts the history surface already read, so it makes no chain call. The four remainders (pending, unknown, unpriced, intent-settled) and the reverted line are counted separately and named in the tool description, because a total that drops what it could not count is a wrong number said confidently |
@@ -79,20 +78,18 @@ terminal, and that is deliberately not a tool.
 
 | Chart tool | Does |
 |---|---|
-| `chart_read` | The whole chart in one object: visible time range in epoch and ISO, seconds until this bar closes, current bar OHLCV, change and range over the window, the price scale and decimal precision in use, every indicator with its last values and a plain sentence, the levels and marks, and the pixel geometry |
-| `chart_batch` | The instrument, and the one to reach for when the question is analytical: pivots, levels, regime, ATR, volume profile, VWAP, range, divergence, trend-line fit, trend-line value at a time, trend-line touches, history paging. Many questions in one call, and a later entry can reference an earlier one by name, so a fitted trend line can be measured against without a round trip |
-| `chart_measure` | Between two times, two prices, or one of each: change, bars, elapsed, the high and low the path took, worst drawdown |
-| `chart_scan` | Several timeframes at once without moving the chart: last, change, range, ATR, trend, time to close |
-| `indicator_catalog` | Every indicator it can draw, with parameters, defaults and ranges |
+| `chart_read` | The chart as it stands, compact by default: last price and the change over the window, seconds until this bar closes, every indicator's last values and state line, the levels, marks, lines and zones with where each sits against the price, the geometry and the housekeeping block. About a kilobyte. `full: true` is the long form; `chart: n` reads a comparison chart |
+| `chart_scan` | Several timeframes at once, fetched together, without moving the chart: last, change, range, ATR, trend, time to close |
+| `chart_batch` | The instrument: candles, pivots, levels, regime, ATR, volume profile, VWAP, range, divergence, indicator_read, indicator_list (custom indicators included, after a rescan of their folder), the structure ops, trend-line fit, value at a time and touches, and draw. Many questions in one call, and a later entry can reference an earlier one by name. Ops that return a series answer with their newest twenty entries; `tail` or `full: true` change that |
+| `chart_draw` | The one write: the whole markup in one call, applied in order. `clear` (mine, agent, all), `view` (product, timeframe, bars, venue), `indicators` (a preset, or set, add and remove, `custom:<slug>` included), `levels`, `marks`, `lines` (sloped, through two anchors), `zones`. Answers with a digest of the chart and a `refused` list, one line per entry that did not land; one bad entry never fails the rest. Never touches a plan drawn on the chart |
+| `chart_snapshot` | A picture of one chart as the human sees it. The window renders scene and hud to a JPEG at most 1024 px wide and posts it back under the same guard as every window write; the image goes to the one call waiting for it and is never stored. If no window is open, it is not on the trade screen, or it does not answer within 3 s, the digest alone comes back and says which |
+| `chart_layout` | One to four charts side by side. The first is the primary, the full chart the human interacts with; the rest are comparison charts on their own stores, which `chart_draw`, `chart_read` and `chart_snapshot` reach with `chart: 1`, `2` or `3` |
 | `market_search` | Finds a market by name. Takes "btc", "bitcoin", "wif" or "PEPE-USD" and returns the product id to open, plus near matches when the query is ambiguous |
-| `chart_set_view` | Product, timeframe, bars on screen, how far back, price scale. The product is anything either venue lists, and the timeframe is anything from `1m` to `1w`, including ones no venue serves natively like `7m`. A minute is the floor: no venue serves a candle under one, and building them here meant assembling a line out of two different markets |
-| `chart_add_indicator` | SMA, EMA, WMA, VWAP, Bollinger, Donchian on the price; volume, RSI, MACD, ATR, Stochastic, OBV in their own pane |
-| `chart_remove_indicator` | Takes one off |
-| `chart_level` | A horizontal price line with a label, for when the level is flat |
-| `chart_trendline` | A sloped line through two time-and-price anchors, for when it is not. Zones are drawn through `chart_batch` |
-| `chart_mark` | A labelled moment on the time axis |
-| `chart_clear` | Clears indicators, levels, marks, everything the agent drew, or all of it |
-| `chart_preset` | Applies a named study package in one call, with the tidy that runs before one is applied, so a chart does not accumulate two answers to the same question |
+
+`chart_draw`, `chart_layout` and `chart_snapshot` are the lead's and are not registered for a
+worker: a worker measures and reports, it does not redraw the chart the human is looking at.
+Sloped objects live in one store, `src/drawings.ts`, and the window draws them; the chart store
+holds the view, the indicators, the levels and the marks.
 
 | Trading tool | Does |
 |---|---|
@@ -122,7 +119,7 @@ makes: the way to stop an agent doing something with real money is to never hand
 |---|---|
 | `watch` | Points the app at a market and leaves it there, so the window keeps showing what the conversation is about after the conversation has moved on |
 | `set_theme` | Changes the window's colours. Moves no money, and it is on this surface because a person asking their assistant to darken the screen should not have to leave the conversation |
-| `switch` | Moves the window between the plain-English view (`basic`), the operator view (`pro`) and the trading surface (`trade`). Moves no money, and every switch is audited. Named `switch` rather than `set_view_mode` because the whole requirement is that changing window costs one word: an agent hunting for how to "switch to trading" finds it immediately, and did not reliably find `set_view_mode`. Aliases (trading, hft, perps, simple) resolve in the app, so both doors agree. Not to be confused with `chart_set_view`, which drives the chart's render state inside pro |
+| `switch` | Moves the window between the plain-English view (`basic`), the operator view (`pro`) and the trading surface (`trade`). Moves no money, and every switch is audited. Named `switch` rather than `set_view_mode` because the whole requirement is that changing window costs one word: an agent hunting for how to "switch to trading" finds it immediately, and did not reliably find `set_view_mode`. Aliases (trading, hft, perps, simple) resolve in the app, so both doors agree. Not to be confused with `chart_draw view:`, which drives the chart's render state on the trade screen |
 
 A switch used to be refused outright while a proposal was pending, so an agent could not move a
 human away from a decision they were in the middle of. The approval block now renders on all three
@@ -468,12 +465,13 @@ Still open, unrelated to keys:
     src/gas/           what a movement cost, grouped by action, chain, rail and venue
     src/chain/         the only places phosphor signs: evm.ts and near.ts
     src/ledger/        the NEAR Intents verifier read + demo fixtures
-    src/history.ts     the transaction list the window pages through
     src/transactions.ts  receipts and the gas cache both doors read
     src/role.ts        what the app tells an agent it is, in the MCP handshake
     src/composition.ts risk classification against data/risk-table.json
     src/intents.ts     1Click quotes, synthetic quoter, stub signer
-    src/chart.ts       chart view state, the agent read model, the ruler
+    src/chart.ts       chart view state, the agent read model, compact and full
+    src/charts.ts      up to four charts, each a chart store beside a drawing store
+    src/snapshot.ts    the picture broker: one outstanding ask per chart, never stored
     src/indicators.ts  indicator maths, pure, index aligned with the candles
     src/indicators-kit.ts      the series maths both catalogues are built from
     src/indicators-library.ts  the wave family, supertrend, keltner, squeeze, ichimoku, adx
