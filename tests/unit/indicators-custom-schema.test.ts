@@ -177,7 +177,7 @@ test('input bounds must be finite and must contain the default', () => {
 test('titles are bounded and carry no control or format characters', () => {
   assert.match(refusal(indicator({ title: '' })), /title/);
   assert.match(refusal(indicator({ title: 'x'.repeat(LIMITS.title + 1) })), /title/);
-  assert.match(refusal(indicator({ title: 'ok ' })), /title/);
+  assert.match(refusal(indicator({ title: 'ok\u0000' })), /title/);
   assert.match(refusal(indicator({ title: 'ok‮' })), /title/);
   assert.match(refusal(indicator({ plots: [{ title: 'a\nb', expr: 'close' }] })), /title/);
 });
