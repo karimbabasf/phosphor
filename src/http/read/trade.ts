@@ -1,5 +1,5 @@
 // The trading surface's reads. They sit here rather than under market because what they read
-// is a position and a mandate, not a price.
+// is a position and a plan, not a price.
 
 import { sendJson } from '../respond.ts';
 import type { ReadTable } from '../context.ts';

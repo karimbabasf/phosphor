@@ -38,7 +38,6 @@
        internet is entitled to see that happen. */
     research: 'reading the news',
     indicator_catalog: 'checking the indicators',
-    mandate_catalog: 'checking the mandates',
     skill: 'reading its instructions',
     trade_read: 'reading the account',
     /* the chart */
@@ -58,7 +57,7 @@
     trade_focus: 'focusing a market',
     trade_highlight: 'highlighting the chart',
     trade_overlay: 'drawing on the chart',
-    trade_note: 'leaving a note',
+    trade_plan: 'drawing a plan',
     trade_batch: 'redrawing the account',
     trade_clear: 'clearing the chart',
     /* asking. None of these moves anything: each puts a request in the gate. */
@@ -66,7 +65,8 @@
     propose_swap: 'asking to swap',
     propose_intents_deposit: 'asking to deposit',
     propose_intents_withdraw: 'asking to withdraw',
-    propose_mandate: 'asking to arm a mandate',
+    propose_trade: 'proposing a trade',
+    propose_trade_change: 'proposing a change',
     propose_hl_deposit: 'asking to fund trading',
     propose_policy_change: 'asking to change a rule',
     /* doing, once a human has said yes */
@@ -74,7 +74,8 @@
     swap: 'swapping',
     intents_deposit: 'depositing',
     intents_withdraw: 'withdrawing',
-    mandate_arm: 'arming a mandate',
+    trade: 'opening a trade',
+    trade_change: 'changing a trade',
     /* the helpers */
     agent_spawn: 'starting a helper',
     agent_roster: 'checking the helpers',

@@ -4,7 +4,7 @@
 // now been paid for twice from opposite directions.
 //
 // The registry (./index.ts) constructs rails, so it imports oneclick, the intents rails and
-// the mandate rail, and through them config, RPC hosts and the 1Click token list. The policy
+// the trade rail, and through them config, RPC hosts and the 1Click token list. The policy
 // engine must not pull any of that in: it is the part that decides whether money is allowed
 // to move, and it stays loadable and testable on its own.
 //

@@ -317,7 +317,8 @@ type ProposeKind =
   | 'intents_deposit'
   | 'intents_withdraw'
   | 'hl_deposit'
-  | 'mandate_arm';
+  | 'trade'
+  | 'trade_change';
 
 /* NOT REGISTERED FOR AN ANALYST, and that early return is the whole of what makes a spawned
    worker safe to hand out freely.
@@ -743,8 +744,9 @@ registerRead(
   'trade_read',
   [
     'The whole trading situation in one call: account health, every open position with how far it',
-    'sits from liquidation, working orders including stops and targets, recent fills, and every armed',
-    'mandate with how much of its approved bounds it has already spent.',
+    'sits from liquidation, working orders including stops and targets, recent fills, and every plan',
+    'with its state (idea, waiting, placed, open, done and why), and for a waiting plan which of its',
+    'conditions hold right now.',
     '',
     'Liquidation distance comes in three units because only the third one answers the question.',
     'Twelve percent sounds far and is not, on something that moves eight percent a day. The ATR',
@@ -759,30 +761,13 @@ registerRead(
 );
 
 registerRead(
-  'mandate_catalog',
-  [
-    'READ THIS BEFORE propose_mandate. It is how you open a position without asking anyone how.',
-    '',
-    'This app has no discretionary order: nothing opens except when an armed mandate rule fires. So',
-    'opening a trade means writing a program in a closed grammar, and this returns that whole grammar',
-    'with worked examples you can adapt: every condition, every action, how to reference a price, a',
-    'trend line you drew or an indicator, what each envelope field caps, and the traps.',
-    '',
-    'The examples are real programs, checked against the validator by the test suite, so one can be',
-    'copied and edited rather than composed from scratch. One of them turns a line you drew into the',
-    'trigger, which is what makes drawing and trading one system rather than two.',
-    'Read-only, changes nothing.',
-  ].join(' '),
-  {},
-);
-registerRead(
   'trade_batch',
   [
     'Several trading reads in one round trip, the same shape as chart_batch.',
     'Each entry is { op, args, as }, and a later entry can use an earlier one with "$ref:<as>.<field>".',
     'One failing entry does not stop the rest.',
     '',
-    'Ops: account, positions, orders, fills, mandates, market, venue_health.',
+    'Ops: account, positions, orders, fills, plans, market, venue_health.',
     'Read-only, changes nothing.',
   ].join(' '),
   {
@@ -817,41 +802,95 @@ registerView(
 registerView(
   'trade_highlight',
   [
-    'Points at one row on the human\'s screen and says why, in a note they read.',
+    'Points at one thing on the human\'s screen and says why, in a note they read beside it.',
     '',
-    'This is the trend line generalised. A line you draw makes a PRICE addressable between you, the',
-    'human and the bot; a highlight makes a ROW addressable. Saying "the ETH position is the one at',
-    'risk" leaves a person hunting; highlighting it puts you both demonstrably on the same object.',
+    'This is the spotlight. A line you draw makes a PRICE addressable between you and the human; a',
+    'highlight makes a ROW or a chart object addressable: a position, an order, a fill, a plan, a level,',
+    'a line, an indicator. Saying "the ETH position is the one at risk" leaves a person hunting;',
+    'highlighting it puts you both demonstrably on the same object. When you explain something, point',
+    'at the thing you are explaining.',
     '',
     'Highlights expire, because a pointer that outlives its reason still looks current.',
     TRADE_ANSWER,
   ].join(' '),
   {
-    kind: z.enum(['position', 'order', 'fill', 'mandate', 'rule']),
-    id: z.string().describe('the row id: a coin for a position, an oid for an order, a mandate id'),
-    note: z.string().optional().describe('why this row, in one line the human reads'),
+    kind: z.enum(['position', 'order', 'fill', 'plan', 'level', 'line', 'indicator']),
+    id: z.string().describe('the id: a coin for a position, an oid for an order, a plan id like pl_x, a level, line or indicator id'),
+    note: z.string().optional().describe('why this one, in one line the human reads'),
     ttlSec: z.number().optional().describe('how long it stays, default 300, maximum 3600'),
   },
 );
 
 registerView(
   'trade_overlay',
-  `Turns one chart overlay on or off: the entry line, the liquidation, the mandate stop-out wall, working stops, targets, resting orders, or your own fills. ${TRADE_ANSWER}`,
+  `Turns one chart overlay on or off: the entry line, the liquidation, the plan stop wall, working stops, targets, resting orders, or your own fills. ${TRADE_ANSWER}`,
   {
     name: z.enum(['position', 'liquidation', 'stops', 'targets', 'orders', 'fills', 'mandateWall']),
     on: z.boolean(),
   },
 );
 
-registerView(
-  'trade_note',
-  `Pins one line of your own reasoning to the trading surface, tagged [agent], where the human sees it beside their position. For the thesis, not for status. ${TRADE_ANSWER}`,
-  { text: z.string().describe('one line, 240 characters at most') },
-);
-
 registerView('trade_clear', `Removes what you put on the trading surface. ${TRADE_ANSWER}`, {
-  what: z.enum(['agent', 'highlights', 'note', 'all']).optional().default('agent'),
+  what: z.enum(['agent', 'highlights', 'all']).optional().default('agent'),
 });
+
+// The plan, as the agent sends it. The app's own validator (src/trade/plan.ts) is the single
+// source of truth for what a legal plan is; this is the same shape stated for the wire so a
+// client has a type to serialise against, and every key is named so the address walk in
+// tests/injection.test.ts can see inside it.
+const PLAN_REF = z.object({ px: z.number().optional(), line: z.string().optional().describe('a drawn line id like tl_3') });
+const PLAN_CONDITION = z.object({
+  type: z.enum(['close', 'volume', 'time']),
+  tf: z.enum(['1m', '5m', '15m', '1h', '4h', '1d']).optional(),
+  is: z.enum(['above', 'below']).optional(),
+  at: PLAN_REF.optional(),
+  wick: z.literal('through').optional().describe('close: the bar must first wick through the level and close back on the right side (a reclaim)'),
+  atLeast: z.number().optional().describe('volume: multiple of the 20-bar average'),
+  after: z.string().optional().describe('time: ISO'),
+  before: z.string().optional().describe('time: ISO'),
+});
+const PLAN = z.object({
+  symbol: z.string().describe('a Hyperliquid coin: BTC, ETH, SOL'),
+  side: z.enum(['long', 'short']),
+  sizeUsd: z.number().describe('notional in dollars, at least 11'),
+  leverage: z.number().int().describe('1 up to the coin maximum; the position opens isolated'),
+  entry: z.object({
+    type: z.enum(['market', 'limit', 'stop']),
+    px: z.number().optional().describe('limit or stop: the price the venue holds'),
+    maxSlippageBps: z.number().int().optional().describe('market or stop: the bound past the mark, default 30'),
+  }),
+  stop: z.number().describe('required, on the losing side of the entry and the mark'),
+  target: z.number().optional(),
+  when: z.array(PLAN_CONDITION).optional().describe('all must hold; absent means now. Up to six.'),
+  expiresAt: z.string().optional().describe('ISO, default 24h, at most 7 days'),
+  note: z.string().optional().describe('one line, 120 characters, no semicolons'),
+});
+
+registerLeadView(
+  'trade_plan',
+  [
+    'Draws a plan on the chart as an IDEA and lists it under Waiting. No authority, no policy: nothing',
+    'is placed until propose_trade arms it, and "go" arms exactly what is on screen by its id.',
+    '',
+    'One object, one shape: symbol, side, sizeUsd, leverage, entry (market, limit or stop), stop, an',
+    'optional target, optional conditions the venue cannot hold (a bar close, a reclaim wick, volume,',
+    'a time window), an expiry and a note. "Buy when it comes down to X" is a limit entry and "buy',
+    'when it breaks X" is a stop entry: both are held by the venue with zero latency, so there is no',
+    'price condition here on purpose.',
+    '',
+    'Pass `plan` to draw a new one, `planId` plus `changes` to redraw one, or `planId` plus',
+    '`remove: true` to take it off. Only an idea can be redrawn or removed; an armed plan changes',
+    'through propose_trade_change. Returns the plan with its id and, where the market is known, what',
+    'it would put at stake.',
+    TRADE_ANSWER,
+  ].join(' '),
+  {
+    plan: PLAN.optional(),
+    planId: z.string().optional(),
+    changes: PLAN.partial().optional(),
+    remove: z.boolean().optional(),
+  },
+);
 
 registerPropose(
   'propose_consolidate',
@@ -928,53 +967,61 @@ chain says where the money LANDS, so it is EVM only: eth, base or arb. This app 
 );
 
 registerPropose(
-  'propose_mandate',
-  'mandate_arm',
+  'propose_trade',
+  'trade',
   [
-    'Proposes ARMING A BOT on Hyperliquid perpetuals: a strategy program plus the envelope it must stay inside.',
-    'This is the one proposal that grants standing authority rather than spending once, so it ALWAYS waits for a',
-    'human click, on every network, even when the approval gate is disabled.',
+    'Proposes a TRADE on Hyperliquid perpetuals: one plan, whole. Pass `plan` (the same shape',
+    'trade_plan takes), or `planId` to arm a plan you drew exactly as it is on screen.',
     '',
-    'The program is a closed grammar, not code. Conditions: price_above, price_below, price_cross_up,',
-    'price_cross_down, bar_close, position, pnl_pct, elapsed, and, or, not. Actions: open, add, reduce, close,',
-    'set_stop, set_target, cancel, stand_down, notify. A price reference can be a literal, or the id of something',
-    'you drew with chart_batch ({kind:"drawing", id:"tl_1"}), which is what lets a trend line become a trigger.',
+    'What the policy sees is the collateral at stake: the margin the isolated position posts, or',
+    'the max loss at the stop if that is larger. Under the click threshold the plan executes at',
+    'once; above it the human sees side, size, leverage, margin, max loss, the 10 percent stop',
+    'slippage bound in dollars, entry, stop, target, the conditions in English, the expiry and the',
+    'totals across every live plan, then Yes or No.',
     '',
-    'The approval screen shows the program in plain English and the worst case in dollars, so write rules a person',
-    'can check against what you told them. There is no verb here that moves value off the venue.',
+    'The entry, the stop and the target go to the venue as one bracket, so the venue holds the stop',
+    'and the app can die with the position still protected. A limit or stop entry rests on the venue',
+    'and its exits are placed the moment anything fills. A plan with conditions waits with nothing',
+    'at risk until they hold. Refused by name: a stop on the wrong side of the entry or the mark, a',
+    'stop past liquidation, under $10 after lot rounding, more margin than is free, leverage above',
+    'the coin maximum or different from another plan on the same coin.',
     CANNOT_APPROVE,
   ].join(' '),
   {
-    symbol: z.string(),
-    // The grammar stays open here, because the app's own validator is the single source of
-    // truth for what a legal program is and mirroring it in zod would be a second copy that
-    // drifts. What is NOT open any more is the type. This was z.unknown(), which reaches a
-    // client as `{}` in the JSON Schema, and a client with no type to serialise against sends
-    // the object as a JSON STRING: the program arrived here quoted and the validator answered
-    // "(root): Expected object, received string", which reads as the agent having written the
-    // wrong thing when it was the schema that was wrong. Every other argument on this surface
-    // was already typed, which is why this was the only tool that could not be called at all.
-    //
-    // Naming the two fields is all the wire needs. Everything inside `rules` is still unknown
-    // here and still checked by validateProgram (src/strategy/grammar.ts), so there is no
-    // second copy of the grammar, only a second statement of its shape.
-    program: z
-      .object({ symbol: z.string(), rules: z.array(z.unknown()) })
-      .passthrough()
-      .describe('{ symbol, rules: [...] }. Call mandate_catalog for the grammar and worked examples.'),
-    maxNotionalUsd: z.number(),
-    maxLeverage: z.number(),
-    maxOrdersPerMin: z.number().int(),
-    maxLossUsd: z.number(),
-    expiresAt: z.string(),
-    allowedActions: z.array(z.string()),
+    plan: PLAN.optional(),
+    planId: z.string().optional().describe('the id of a drawn plan, like pl_x'),
+  },
+);
+
+registerPropose(
+  'propose_trade_change',
+  'trade_change',
+  [
+    'Proposes a change to a plan that is armed: a new stop and/or target, cancel, or close. One',
+    'change per call.',
+    '',
+    'stop or target: a change that tightens (new max loss at or under the approved one) is free of',
+    'the wall; one that widens is priced like a new plan and, once landed, is the approved figure.',
+    'cancel: only a waiting or placed plan. On an open plan it is refused, because the exits are its',
+    'protection: close it, or change the stop. On a placed plan the entry comes off the book and',
+    'anything that already filled is protected before the runner answers.',
+    'close: reduce-only at the plan own slippage bound, then the exits are cancelled once flat.',
+    'Priced at the plan margin.',
+    CANNOT_APPROVE,
+  ].join(' '),
+  {
+    id: z.string().describe('the plan id, like pl_x'),
+    stop: z.number().optional(),
+    target: z.number().optional(),
+    cancel: z.boolean().optional(),
+    close: z.boolean().optional(),
   },
 );
 
 registerPropose(
   'propose_hl_deposit',
   'hl_deposit',
-  `Proposes funding the Hyperliquid perps account, so a mandate has collateral to trade. This is the step BEFORE propose_mandate: arming a bot against an account holding nothing gets a mandate that can never fire.
+  `Proposes funding the Hyperliquid perps account, so a plan has collateral to trade. This is the step BEFORE propose_trade: a plan against an account holding nothing is refused for lack of free collateral.
 
 The route is NEAR Intents into HyperCore, so the money can start on any chain this app signs for and does not have to be USDC on Arbitrum first. chain says where the funds LEAVE FROM and defaults to arb. Which Hyperliquid account gets credited is resolved by the app from its own key and cannot be named here.
 
@@ -1021,7 +1068,7 @@ if (ROLE !== 'analyst')
         '',
         'basic: plain English, one decision at a time, written for a non-technical person.',
         'pro: the operator deck, with wallet, composition, policy, audit log and transactions.',
-        'trade: the Hyperliquid perpetuals surface, with the chart, positions, orders and mandates.',
+        'trade: the Hyperliquid perpetuals surface, with the chart, positions, orders and plans.',
         'This is the mode for high-frequency work, and it is a different page, so the window navigates.',
         '',
         'Aliases are accepted: trading, hft, perps and hyperliquid all mean trade; simple and plain mean',
@@ -1160,7 +1207,7 @@ if (ROLE !== 'analyst') {
       '`chart_batch` would answer. A worker costs a whole model session, and three at once is the cap.',
       '',
       'WHAT A WORKER CAN DO. It reads, measures, draws on the chart and posts to the board. It CANNOT',
-      'propose a swap, a transfer, a deposit, a policy change or a mandate: those tools are not',
+      'propose a swap, a transfer, a deposit, a policy change or a trade: those tools are not',
       'registered for it, so there is nothing to talk it into. It gets one turn, answers once and stops.',
       '',
       'WRITE THE BRIEF PROPERLY. It is the whole session: the worker cannot ask you anything. Say which',

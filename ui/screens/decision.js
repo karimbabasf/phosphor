@@ -134,9 +134,9 @@
         : draft.chain + ' to ' + draft.toChain;
       return 'Swap ' + draft.fromSymbol + ' for ' + draft.toSymbol + ' ' + where;
     }
-    /* The draft the engine writes is `mandate_arm`; nothing has ever authored a
-       draft called `mandate`, so this fell through and headlined the card with
-       the raw enum. The symbol is the only plain name a mandate carries. */
+    if (draft.kind === 'trade') return tradeHeadline(draft);
+    /* Rows an older build wrote. Nothing proposes these any more; they still
+       have to read as a sentence when the store hands one back. */
     if (draft.kind === 'mandate_arm') {
       return draft.symbol ? 'Arm a trading rule on ' + draft.symbol : 'Arm a trading rule';
     }
@@ -144,6 +144,72 @@
     if (draft.kind === 'policy_change') return 'Change your limits';
     if (draft.kind === 'hl_deposit') return 'Fund the trading account';
     return kindWords(proposal.kind);
+  }
+
+  /* ---------- the trade card ---------- */
+
+  /* The plan's own words: what opens, or what changes on a plan by its id. The
+     numbers a person decides on are in tradeFacts below; the headline is the verb. */
+  function tradeHeadline(draft) {
+    if (draft.op === 'open') {
+      var plan = draft.plan || {};
+      var side = plan.side === 'short' ? 'short' : 'long';
+      return plan.symbol ? 'Open a ' + side + ' on ' + plan.symbol : 'Open a ' + side;
+    }
+    var id = draft.id || 'the plan';
+    if (draft.cancel === true) return 'Cancel ' + id;
+    if (draft.close === true) return 'Close ' + id;
+    var stop = typeof draft.stop === 'number';
+    var target = typeof draft.target === 'number';
+    if (stop && target) return 'Change the exits on ' + id;
+    if (target) return 'Change the target on ' + id;
+    return 'Change the stop on ' + id;
+  }
+
+  function px(value) {
+    if (typeof value !== 'number' || !isFinite(value)) return '';
+    return String(value);
+  }
+
+  function entryText(entry) {
+    if (!entry || typeof entry !== 'object') return '';
+    if (entry.type === 'limit') return 'limit at ' + px(entry.px) + ', held by the exchange';
+    if (entry.type === 'stop') return 'stop entry at ' + px(entry.px) + ', then up to ' + (entry.maxSlippageBps || 30) + ' bps';
+    return 'market, up to ' + (entry.maxSlippageBps || 30) + ' bps slippage';
+  }
+
+  /* The risk facts, on every trade card. An open shows what the plan puts at
+     stake and where it dies; a change shows the old figure and the new one side
+     by side, because the difference is the whole decision. */
+  function tradeFacts(host, draft) {
+    if (draft.op === 'open') {
+      var plan = draft.plan || {};
+      var risk = draft.risk || {};
+      addFact(host, 'Collateral at stake', dom.usd(risk.marginUsd) + ' isolated, at ' + (plan.leverage || '?') + 'x');
+      addFact(host, 'Max loss at the stop', dom.usd(risk.maxLossUsd) + ' with fees');
+      addFact(host, 'If the stop slips 10%', 'up to ' + dom.usd(risk.stopSlipUsd) + ' more');
+      addFact(host, 'Entry', entryText(plan.entry));
+      addFact(host, 'Stop', px(plan.stop));
+      addFact(host, 'Target', typeof plan.target === 'number' ? px(plan.target) : 'none');
+      addFact(host, 'Liquidation near', px(typeof risk.liquidationPx === 'number' ? Math.round(risk.liquidationPx * 100) / 100 : NaN));
+      addFact(host, 'Expires', plan.expiresAt || '');
+      return;
+    }
+    var before = draft.before || {};
+    var after = draft.after || {};
+    if (draft.cancel === true) {
+      addFact(host, 'After this', 'Nothing is at risk.');
+      return;
+    }
+    if (draft.close === true) {
+      addFact(host, 'Collateral at stake', dom.usd(before.marginUsd));
+      addFact(host, 'How', 'reduce only, at the market, within the plan bound');
+      return;
+    }
+    if (typeof draft.stop === 'number') addFact(host, 'Stop', 'new ' + px(draft.stop));
+    if (typeof draft.target === 'number') addFact(host, 'Target', 'new ' + px(draft.target));
+    addFact(host, 'Max loss at the stop', 'from ' + dom.usd(before.maxLossUsd) + ' to ' + dom.usd(after.maxLossUsd));
+    addFact(host, 'Liquidation near', px(typeof after.liquidationPx === 'number' ? Math.round(after.liquidationPx * 100) / 100 : NaN));
   }
 
   /* A kind nobody wrote a sentence for still has to read as a sentence. This is
@@ -303,12 +369,13 @@
 
     var facts = dom.el('div', 'facts');
     var sim = proposal.simulation || {};
-    /* A rule change and an armed mandate move nothing, so they have no cost, and
-       "No fee was quoted." on a card about limits reads as a missing number
-       rather than as an absent one. */
-    if (draft.kind !== 'policy_change' && draft.kind !== 'mandate') {
+    /* A rule change moves nothing, and a trade's cost is its risk facts, so
+       neither gets "No fee was quoted.", which on those cards reads as a missing
+       number rather than as an absent one. */
+    if (draft.kind !== 'policy_change' && draft.kind !== 'trade' && draft.kind !== 'mandate_arm') {
       addFact(facts, 'What it costs', costLine(proposal));
     }
+    if (draft.kind === 'trade') tradeFacts(facts, draft);
     if (draft.venue) addFact(facts, 'Through', String(draft.venue));
     if (sim && typeof sim.amountOut === 'number') {
       addFact(facts, 'You get about', dom.qty(sim.amountOut) + ' ' + (draft.toSymbol || ''));
@@ -329,7 +396,7 @@
     var summary = typeof sim.summary === 'string' ? sim.summary.trim() : '';
     if (summary && draft.kind !== 'policy_change') {
       var swrap = dom.el('div', 'stack-2');
-      swrap.appendChild(dom.el('p', 'label', 'What the venue reports'));
+      swrap.appendChild(dom.el('p', 'label', draft.kind === 'trade' ? 'The plan, in full' : 'What the venue reports'));
       swrap.appendChild(dom.el('p', 'body dock-summary', summary));
       refs.card.appendChild(swrap);
     }

@@ -65,12 +65,12 @@ export const EXPECTED_TOOLS: readonly string[] = [
   // only, because this app derives its EVM address from a key it holds and can therefore prove
   // the destination is its own; it holds no Solana key.
   'propose_intents_withdraw',
-  // Arming a bot. The one proposal that grants STANDING authority rather than spending once,
-  // so it never auto-approves on any network.
-  'propose_mandate',
-  // How to write a mandate, as data. Opening a position is the one action that cannot be
-  // reached by reading a tool signature, because it takes a program rather than arguments.
-  'mandate_catalog',
+  // A trade: one plan, whole, priced at the collateral it puts at stake. The venue holds the
+  // entry, the stop and the target, so the click threshold is the only wall.
+  'propose_trade',
+  // A change to an armed plan: exits, cancel or close. A change that only takes risk off lands
+  // without the wall; one that widens is priced like a new plan.
+  'propose_trade_change',
   // The chart. These read and drive a view, never funds.
   'chart_read',
   'chart_measure',
@@ -116,8 +116,9 @@ export const EXPECTED_TOOLS: readonly string[] = [
   'trade_focus',
   'trade_highlight',
   'trade_overlay',
-  'trade_note',
   'trade_clear',
+  // A plan drawn as an idea. It has no authority and moves nothing; "go" arms it by id.
+  'trade_plan',
   // The team. Phosphor allowed one agent at a time until 2026-08-21 and now seats several, so
   // these five exist to keep a roster from being a crowd: who is here, a board they write one
   // line each to, and workers one of them can put on a piece of work.
@@ -150,6 +151,8 @@ export const WORKER_WITHHELD: readonly string[] = [
   'switch',
   'watch',
   'set_theme',
+  // A worker measures. It does not put an idea on the chart the human might take for a plan.
+  'trade_plan',
   ...EXPECTED_TOOLS.filter((t) => t.startsWith('propose_')),
 ];
 
