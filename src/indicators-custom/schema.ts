@@ -97,6 +97,12 @@ export const OPS: Record<string, { kind: OpKind; min: number; max: number }> = {
   '?': { kind: 'element', min: 3, max: 3 },
 };
 
+// Own-property lookup, because OPS is a plain object and 'constructor' is a key on every
+// plain object: a tree whose op is 'constructor' must read as unknown, not as a function.
+export function opDef(op: string): { kind: OpKind; min: number; max: number } | undefined {
+  return Object.prototype.hasOwnProperty.call(OPS, op) ? OPS[op] : undefined;
+}
+
 const NAME_RE = /^[A-Za-z][A-Za-z0-9_]{0,23}$/;
 
 // Names an input may not take. The series names would shadow the candles, 'prev' is the recur
@@ -199,7 +205,7 @@ function walk(node: unknown, path: (string | number)[], depth: number, inRecur: 
     return;
   }
   const op = node[0];
-  const def = Object.prototype.hasOwnProperty.call(OPS, op) ? OPS[op] : undefined;
+  const def = opDef(op);
   if (def === undefined) {
     st.issues.push({ path, message: `unknown op '${op}'` });
     return;

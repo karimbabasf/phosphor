@@ -15,7 +15,7 @@
 import type { Candle } from '../types.ts';
 import type { IndicatorResult, IndicatorSpec, ParamSpec, Plot } from '../indicators.ts';
 import { drift, lastValue, num, versusPrice } from '../indicators-kit.ts';
-import { LIMITS, OPS, SERIES } from './schema.ts';
+import { LIMITS, opDef, SERIES } from './schema.ts';
 import type { CustomIndicator, CustomInput, CustomPlot, Expr } from './schema.ts';
 
 export const WORK_BUDGET = 2_000_000;
@@ -436,7 +436,7 @@ function recurVec(env: Env, init: Expr, step: Expr): Float64Array {
     if (node === 'prev') return prev;
     if (!Array.isArray(node) || !deps.has(node)) return evalVec(env, node)[i] as number;
     const op = node[0];
-    if ((OPS[op]?.kind ?? 'element') !== 'element') throw new Error(`'${op}' cannot read prev`);
+    if (opDef(op)?.kind !== 'element') throw new Error(`'${op}' cannot read prev`);
     const args: number[] = [];
     for (let k = 1; k < node.length; k++) args.push(at(node[k] as Expr, i, prev));
     return scalar(op, args);
@@ -452,7 +452,7 @@ function recurVec(env: Env, init: Expr, step: Expr): Float64Array {
 
 function evalNode(env: Env, node: [string, ...Expr[]]): Float64Array {
   const op = node[0];
-  const def = OPS[op];
+  const def = opDef(op);
   if (def === undefined) throw new Error(`unknown op '${op}'`);
   const args = node.slice(1) as Expr[];
   switch (def.kind) {
@@ -520,7 +520,7 @@ function evalVec(env: Env, node: Expr): Float64Array {
 function lookback(node: Expr, params: Record<string, number>): number {
   if (!Array.isArray(node)) return 1;
   const op = node[0];
-  const def = OPS[op];
+  const def = opDef(op);
   const args = node.slice(1) as Expr[];
   if (def === undefined) return 1;
   switch (def.kind) {

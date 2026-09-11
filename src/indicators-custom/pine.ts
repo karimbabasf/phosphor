@@ -122,7 +122,9 @@ function tokenize(line: Line, budget: { tokens: number }): Tok[] {
   let i = 0;
   while (i < s.length) {
     const ch = s[i] as string;
-    if (ch === ' ' || ch === '\t') {
+    // A no-break space is whitespace: scripts pasted from a web page carry them between
+    // tokens. It is not a confusable, since it can never be part of a name.
+    if (ch === ' ' || ch === '\t' || ch === ' ') {
       i += 1;
       continue;
     }
@@ -249,6 +251,12 @@ const NAMED_TONES: Record<string, Tone> = {
   navy: 'agent',
   purple: 'agent',
 };
+
+// The name tables are plain objects, so a script naming 'constructor' would otherwise read a
+// function out of them. Own properties only.
+function lookup<T>(table: Record<string, T>, key: string): T | undefined {
+  return Object.prototype.hasOwnProperty.call(table, key) ? table[key] : undefined;
+}
 
 // A colour the app has no token for lands on the agent tint, which is the one colour that
 // always reads as "something an agent put here". Warm reds and greens keep their meaning.
@@ -529,7 +537,7 @@ function reference(c: Ctx, name: string, b: Binding): Val {
 function parseColor(c: Ctx, name: string, call: boolean): Val {
   if (!call) {
     const key = name.slice('color.'.length);
-    return { kind: 'color', tone: NAMED_TONES[key] ?? 'agent', conditional: false };
+    return { kind: 'color', tone: lookup(NAMED_TONES, key) ?? 'agent', conditional: false };
   }
   const args = parseArgs(c);
   if (name === 'color.new') {
@@ -582,7 +590,7 @@ function parseCall(c: Ctx, name: string): Val {
     if (a === undefined || b === undefined) refuse(c.line.no, `${name} takes two series`);
     return { kind: 'expr', expr: [name.slice(3), asExpr(c, a, name), asExpr(c, b, name)] };
   }
-  const window = TA_WINDOW[name];
+  const window = lookup(TA_WINDOW, name);
   if (window !== undefined) {
     const args = parseArgs(c);
     let source = args.positional[0];
@@ -595,7 +603,7 @@ function parseCall(c: Ctx, name: string): Val {
     if (source === undefined || length === undefined) refuse(c.line.no, `${name} takes a source and a length`);
     return { kind: 'expr', expr: [window, asExpr(c, source, name), periodArg(c, length, name, 1, LIMITS.period)] };
   }
-  const math = MATH[name];
+  const math = lookup(MATH, name);
   if (math !== undefined) {
     const args = parseArgs(c);
     const want = math === 'max' || math === 'min' ? 2 : 1;
