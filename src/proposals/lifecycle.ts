@@ -29,6 +29,7 @@ import type { EngineCtx } from '../policy/engine.ts';
 import { loadPolicy } from '../policy/file.ts';
 import { isLocked } from '../keystore/index.ts';
 import type { RailRegistry } from '../rails/index.ts';
+import type { TradeDeps } from '../trade/rail.ts';
 import type { TxLookup } from './reconcile.ts';
 import { withReservation } from './reservation.ts';
 
@@ -50,6 +51,9 @@ export type ProposalDeps = {
   signer: Signer;
   dataDir: string;
   rails?: RailRegistry; // src/rails/index.ts; absent means no rail can execute
+  // The plan runner and the venue facts a plan is priced against. Absent means no trade can
+  // be proposed, which is demo mode and every test that builds a service without one.
+  trade?: TradeDeps;
   onChange?: () => void;
   // How a recorded transaction hash is checked against the chain, for reconcile. Defaulted to
   // the viem readers the rails already use; a test hands in a fake so the four outcomes can be
@@ -149,6 +153,7 @@ export type PCtx = {
   signer: Signer;
   dataDir: string;
   rails: RailRegistry;
+  trade?: TradeDeps;
   stables: Set<string>;
   notify: () => void;
   execute: (p: Proposal) => Promise<Proposal>;

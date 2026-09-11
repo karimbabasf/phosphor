@@ -105,7 +105,8 @@ async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
       proposeHlDeposit: async () => builtSwap(),
       proposeIntentsDeposit: async () => builtSwap(),
       proposeIntentsWithdraw: async () => builtSwap(),
-      proposeMandate: async () => builtSwap(),
+      proposeTrade: async () => builtSwap(),
+      proposeTradeChange: async () => builtSwap(),
       approve: async () => builtSwap(),
       refuse: async () => builtSwap(),
       get: () => undefined,
@@ -128,6 +129,10 @@ async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
       read: () => ({}),
       batch: () => [],
       action: async () => ({ ok: false, detail: 'no venue in this test' }),
+      plan: () => ({ ok: false as const, error: 'no venue in this test' }),
+      meta: () => null,
+      mark: () => null,
+      free: () => null,
       onUpdate: () => {},
       stop: () => {},
     },
@@ -360,10 +365,10 @@ test('no route serves the window token (P0-1)', async () => {
 // ---------- amount bounds at the edge ----------
 //
 // numField accepted any finite number, so a negative or a 1e308 amount reached
-// proposeHlDeposit, proposeIntentsDeposit, proposeIntentsWithdraw and all four mandate ceilings.
-// Only swap and yield_deposit had a `> 0` check. The mandate numbers never pass through
-// TransferLeg, so nothing downstream re-checked them: a negative maxLossUsd is a bot with no
-// loss limit, and a negative amount is a NEGATIVE spend that makes the day's cap look emptier.
+// proposeHlDeposit, proposeIntentsDeposit, proposeIntentsWithdraw and every number on a plan.
+// Only swap and yield_deposit had a `> 0` check. The plan's numbers are checked again by the
+// plan schema, and the door still answers them by name: a negative stop is not a price, and a
+// negative amount is a NEGATIVE spend that makes the day's cap look emptier.
 
 const BAD_AMOUNTS: Array<[string, number]> = [
   ['zero', 0],
@@ -405,22 +410,18 @@ for (const [label, amount] of BAD_AMOUNTS) {
 }
 
 for (const [label, value] of BAD_AMOUNTS) {
-  test(`a ${label} value is refused on every mandate ceiling`, async () => {
+  test(`a ${label} value is refused on every number a plan carries`, async () => {
     const h = await boot();
     try {
-      const good = {
-        symbol: 'ETH',
-        maxNotionalUsd: 50,
-        maxLeverage: 2,
-        maxOrdersPerMin: 4,
-        maxLossUsd: 10,
-        expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
-        allowedActions: ['open'],
-        program: { symbol: 'ETH', rules: [] },
-      };
-      for (const field of ['maxNotionalUsd', 'maxLeverage', 'maxOrdersPerMin', 'maxLossUsd']) {
-        const out = await proposeWith(h.url, 'mandate_arm', { ...good, [field]: value });
-        assert.equal(out.status, 400, `mandate_arm accepted a ${label} ${field}: ${out.body.slice(0, 200)}`);
+      const good = { symbol: 'ETH', side: 'long', sizeUsd: 50, leverage: 2, entry: { type: 'market' }, stop: 90, target: 120 };
+      for (const field of ['sizeUsd', 'leverage', 'stop', 'target']) {
+        const out = await proposeWith(h.url, 'trade', { plan: { ...good, [field]: value } });
+        assert.equal(out.status, 400, `trade accepted a ${label} ${field}: ${out.body.slice(0, 200)}`);
+        assert.match(out.body, new RegExp(`${field} (must be|is larger than)`), out.body.slice(0, 200));
+      }
+      for (const field of ['stop', 'target']) {
+        const out = await proposeWith(h.url, 'trade_change', { id: 'pl_1', [field]: value });
+        assert.equal(out.status, 400, `trade_change accepted a ${label} ${field}: ${out.body.slice(0, 200)}`);
         assert.match(out.body, new RegExp(`${field} (must be|is larger than)`), out.body.slice(0, 200));
       }
     } finally {

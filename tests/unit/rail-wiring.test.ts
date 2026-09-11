@@ -483,12 +483,23 @@ function cfgFor(mode: AppConfig['mode']): AppConfig {
   };
 }
 
-// The mandate rail only starts and stops the runner, so a stub is enough here: this file is
-// about which rails the registry holds and what they refuse, not about arming anything.
-const stubRunner = {
-  arm: async () => ({ ok: true, detail: 'stub' }),
-  disarm: async () => ({ ok: true, detail: 'stub' }),
-  status: () => ({ armed: [], running: false }),
+// The trade rail only arms, changes and closes through the runner, so a stub is enough here:
+// this file is about which rails the registry holds and what they refuse, not about a plan.
+const stubTrade = {
+  runner: {
+    get: () => null,
+    plans: () => [],
+    draw: () => {
+      throw new Error('unused');
+    },
+    arm: async () => ({ ok: false as const, reason: 'stub' }),
+    change: async () => ({ ok: true, detail: 'stub' }),
+    cancel: async () => ({ ok: true, detail: 'stub' }),
+    close: async () => ({ ok: true, detail: 'stub' }),
+  },
+  meta: () => null,
+  mark: () => null,
+  free: () => null,
 };
 
 test('the policy engine recognises every kind the registry can dispatch', () => {
@@ -499,7 +510,7 @@ test('the policy engine recognises every kind the registry can dispatch', () => 
   // fail-closed and also completely dead. This test is what makes that a red build rather
   // than a rail that silently never works.
   const tokens = JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'tokens.json'), 'utf8'));
-  const registry = createRails({ cfg: cfgFor('live'), tokens, runner: stubRunner });
+  const registry = createRails({ cfg: cfgFor('live'), tokens, trade: stubTrade });
 
   for (const kind of registry.kinds()) {
     // amountUsd 0 rather than a bare {kind}: every rail kind then refuses at 'invalid_amount'
@@ -531,14 +542,14 @@ test('the policy engine recognises every kind the registry can dispatch', () => 
 
 test('the live registry holds every rail kind and nothing else', () => {
   const tokens = JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'tokens.json'), 'utf8'));
-  const registry = createRails({ cfg: cfgFor('live'), tokens, runner: stubRunner });
+  const registry = createRails({ cfg: cfgFor('live'), tokens, trade: stubTrade });
 
   assert.deepEqual(registry.kinds().sort(), [
     'hl_deposit',
     'intents_deposit',
     'intents_withdraw',
-    'mandate_arm',
     'swap',
+    'trade',
   ]);
   for (const kind of registry.kinds()) {
     const rail = registry.for({ kind } as WriteDraft);
@@ -558,7 +569,7 @@ test('the live registry holds every rail kind and nothing else', () => {
 
 test('demo mode owns no rails, and a rail proposal there refuses instead of reaching for a key', async () => {
   const tokens = JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'tokens.json'), 'utf8'));
-  const registry = createRails({ cfg: cfgFor('demo'), tokens, runner: stubRunner });
+  const registry = createRails({ cfg: cfgFor('demo'), tokens, trade: stubTrade });
   assert.deepEqual(registry.kinds(), []);
   assert.equal(registry.for({ kind: 'swap' } as WriteDraft), null);
 

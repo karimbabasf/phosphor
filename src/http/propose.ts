@@ -1,5 +1,5 @@
 // The propose door: what an agent gets back, the four boundary checks every kind shares, and
-// the eleven kinds themselves.
+// the kinds themselves.
 //
 // The checks here are boundaries only. A wrong type or an unknown chain is answered here, and
 // every question about the VALUE of a number (too big, zero, negative) is left to the policy
@@ -175,39 +175,40 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
       );
       return;
     }
-    if (kind === 'mandate_arm') {
-      const symbol = strField(params, 'symbol', problems);
-      /* Four ceilings, and every one of them has to be a positive quantity.
-         None of these passes through TransferLeg, so nothing downstream re-checks them: a
-         negative maxLossUsd is a bot with no loss limit, a maxOrdersPerMin of 0 or below is a
-         rate limit that can never be satisfied, and 1e308 on either is the same as no limit at
-         all. numField rejects Infinity; this rejects the rest. */
-      const maxNotionalUsd = positiveField(params, 'maxNotionalUsd', problems);
-      const maxLeverage = positiveField(params, 'maxLeverage', problems);
-      const maxOrdersPerMin = positiveField(params, 'maxOrdersPerMin', problems);
-      const maxLossUsd = positiveField(params, 'maxLossUsd', problems);
-      const expiresAt = strField(params, 'expiresAt', problems);
-      const allowedActions = Array.isArray(params.allowedActions)
-        ? params.allowedActions.map((v) => String(v))
-        : [];
-      if (allowedActions.length === 0) problems.push('allowedActions must list at least one verb');
-      if (params.program === undefined) problems.push('program is required');
+    if (kind === 'trade') {
+      /* A plan, or the id of one already drawn. The shape is checked by the plan schema inside
+         the proposal service; what is checked HERE is the edge every kind shares, so a zero or
+         a 1e308 on the plan's numbers is answered with the field's name like everywhere else. */
+      const planId = params.planId === undefined ? undefined : strField(params, 'planId', problems);
+      const plan = params.plan;
+      if (planId === undefined) {
+        if (plan === null || typeof plan !== 'object') problems.push('plan is required, or planId of a drawn plan');
+        else {
+          const fields = plan as JsonBody;
+          positiveField(fields, 'sizeUsd', problems);
+          positiveField(fields, 'leverage', problems);
+          positiveField(fields, 'stop', problems);
+          if (fields.target !== undefined) positiveField(fields, 'target', problems);
+        }
+      }
       if (problems.length > 0) {
         fail(res, 400, problems.join('; '));
         return;
       }
-      respond(
-        await ctx.proposals.proposeMandate({
-          symbol,
-          program: params.program,
-          maxNotionalUsd,
-          maxLeverage,
-          maxOrdersPerMin,
-          maxLossUsd,
-          expiresAt,
-          allowedActions,
-        }),
-      );
+      respond(await ctx.proposals.proposeTrade({ plan, planId, by: session }));
+      return;
+    }
+    if (kind === 'trade_change') {
+      const id = strField(params, 'id', problems);
+      const stop = params.stop === undefined ? undefined : positiveField(params, 'stop', problems);
+      const target = params.target === undefined ? undefined : positiveField(params, 'target', problems);
+      const cancel = params.cancel === true;
+      const close = params.close === true;
+      if (problems.length > 0) {
+        fail(res, 400, problems.join('; '));
+        return;
+      }
+      respond(await ctx.proposals.proposeTradeChange({ id, stop, target, cancel, close }));
       return;
     }
     if (kind === 'hl_deposit') {

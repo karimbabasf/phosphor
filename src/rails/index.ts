@@ -27,8 +27,8 @@ import { ONECLICK_COUNTERPARTY, oneClickRail } from './oneclick.ts';
 import { INTENTS_NATIVE_COUNTERPARTY, intentsNativeRail } from './intents-native.ts';
 import { intentsDepositRail } from './intents-deposit.ts';
 import { intentsWithdrawRail } from './intents-withdraw.ts';
-import { HYPERLIQUID_PERPS_COUNTERPARTY, mandateRail } from './mandate.ts';
-import type { MandateRunner } from './mandate.ts';
+import { HYPERLIQUID_PERPS_COUNTERPARTY, tradeRail } from '../trade/rail.ts';
+import type { TradeDeps } from '../trade/rail.ts';
 import { isRailDraft, isRailKind, RAIL_KINDS } from './kinds.ts';
 import type { RailDraft, RailKind } from './kinds.ts';
 
@@ -48,7 +48,7 @@ export type RailRegistry = {
 export type RailDeps = {
   cfg: AppConfig;
   tokens: TokensFile; // data/tokens.json, for the 1Click asset id lookup
-  runner: MandateRunner; // owns the armed bots; the mandate rail only starts and stops them
+  trade: TradeDeps; // the plan runner and the venue facts a plan is priced against
 };
 
 // Refuses by name rather than by silence. There is no fallback venue any more: a swap for a
@@ -132,7 +132,7 @@ export function createRails(deps: RailDeps): RailRegistry {
       addresses: deps.cfg.addresses,
       client,
     }) as Rail,
-    mandate_arm: mandateRail({ runner: deps.runner }) as Rail,
+    trade: tradeRail(deps.trade) as Rail,
   };
 
   return {

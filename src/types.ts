@@ -2,6 +2,9 @@
 // Erasable TypeScript only: this repo runs on Node 24 type stripping with no build step.
 // No enums, no namespaces, no parameter properties. Relative imports use explicit .ts extensions.
 
+import type { Plan } from './trade/plan.ts';
+import type { PlanRisk } from './trade/risk.ts';
+
 export type ChainId = 'eth' | 'base' | 'arb' | 'sol' | 'near';
 export type Mode = 'demo' | 'live';
 
@@ -264,32 +267,38 @@ export type HlDepositDraft = {
   counterparty: string; // must be on the policy allowlist
 };
 
-// Arming a strategy. The odd one out among the drafts, and deliberately so: it moves no money
-// at the moment it is approved. What it does is grant STANDING authority to a program that will
-// move money later, at machine speed, with no human in the loop for each order.
+// A trade. One plan, whole, plus its sha256: what the human clicks is what runs. It rides the
+// draft path like every other write, which buys the audit log, the policy engine and the
+// approval card for free. amountUsd is what the plan actually puts at stake, max(margin, max
+// loss), because every position opens isolated and the margin posted is the most the venue can
+// take for it. A change that only takes risk off (a cancel, a tighter stop) is amountUsd 0 and
+// lands without the engine; one that widens is priced like a new plan.
 //
-// It rides the draft path anyway rather than opening a second trust path, which buys the gate,
-// the audit log, the policy engine and the approval panel for free. amountUsd is the maximum
-// notional the mandate can put at risk, so the existing budget rules govern how big a bot can
-// be without a new rule being written.
-//
-// Note what is absent, matching every other rail: no address, no recipient, no contract. The
-// program the agent wrote cannot name a destination because the grammar has no verb that moves
-// value off the venue.
-export type MandateDraft = {
-  kind: 'mandate_arm';
-  symbol: string;
-  program: unknown; // validated by src/strategy/grammar.ts at propose time, never trusted raw
-  programHash: string;
-  maxNotionalUsd: number;
-  maxLeverage: number;
-  maxOrdersPerMin: number;
-  maxLossUsd: number;
-  expiresAt: string;
-  allowedActions: string[];
-  amountUsd: number; // equals maxNotionalUsd; the field name the policy engine reads
-  counterparty: string; // the venue itself: a perp order moves nothing to a new address
-};
+// Note what is absent, matching every other rail: no address, no recipient, no contract. A plan
+// has no field that moves value off the venue.
+export type TradeDraft =
+  | {
+      kind: 'trade';
+      op: 'open';
+      plan: Plan;
+      hash: string;
+      risk: PlanRisk;
+      amountUsd: number;
+      counterparty: string; // the venue itself: a perp order moves nothing to a new address
+    }
+  | {
+      kind: 'trade';
+      op: 'change';
+      id: string;
+      stop?: number;
+      target?: number;
+      cancel?: true;
+      close?: true;
+      before: PlanRisk;
+      after: PlanRisk;
+      amountUsd: number;
+      counterparty: string;
+    };
 
 export type WriteDraft =
   | { kind: 'consolidate'; legs: TransferLeg[]; totalUsd: number; toChain: ChainId; symbol: string }
@@ -299,7 +308,7 @@ export type WriteDraft =
   | HlDepositDraft
   | IntentsDepositDraft
   | IntentsWithdrawDraft
-  | MandateDraft;
+  | TradeDraft;
 
 // One rail per feature, each owning exactly one module under src/rails/. The dispatch
 // table in proposals.ts is the only place that knows they all exist, which is what lets
@@ -321,8 +330,10 @@ export type Rail<D extends WriteDraft = WriteDraft> = {
   valueUsd(draft: D): number;
   // Dry run. Must not sign or broadcast anything.
   simulate(draft: D): Promise<SimulationResult>;
-  // Runs only after the proposal is approved, or auto-approved with the gate off.
-  execute(draft: D): Promise<RailResult>;
+  // Runs only after the proposal is approved, or auto-approved with the gate off. The proposal
+  // id rides along so a rail that keeps its own registry (the trade rail) can record which
+  // approval a row came from.
+  execute(draft: D, proposalId?: string): Promise<RailResult>;
 };
 
 export type SimulationResult = {
@@ -628,18 +639,10 @@ export type IntentsDepositParams = { chain: ChainId; symbol?: string; amount: nu
 // key, never from this call.
 export type IntentsWithdrawParams = { chain: ChainId; symbol?: string; amount: number };
 
-// No address, no recipient, no contract. The agent names a symbol, a size and a shape, and
+// No address, no recipient, no contract. The agent sends a plan or names one it drew, and
 // everything about WHERE the money is resolves from the app's own config and the venue table.
-export type MandateParams = {
-  symbol: string;
-  program: unknown; // validated against the grammar before a draft exists
-  maxNotionalUsd: number;
-  maxLeverage: number;
-  maxOrdersPerMin: number;
-  maxLossUsd: number;
-  expiresAt: string;
-  allowedActions: string[];
-};
+export type TradeParams = { plan?: unknown; planId?: string; by?: string | null };
+export type TradeChangeParams = { id: string; stop?: number; target?: number; cancel?: boolean; close?: boolean };
 
 export type ProposalService = {
   proposeConsolidate(params: {
@@ -653,7 +656,8 @@ export type ProposalService = {
   proposeHlDeposit(params: HlDepositParams): Promise<Proposal>;
   proposeIntentsDeposit(params: IntentsDepositParams): Promise<Proposal>;
   proposeIntentsWithdraw(params: IntentsWithdrawParams): Promise<Proposal>;
-  proposeMandate(params: MandateParams): Promise<Proposal>;
+  proposeTrade(params: TradeParams): Promise<Proposal>;
+  proposeTradeChange(params: TradeChangeParams): Promise<Proposal>;
   approve(id: string): Promise<Proposal>; // human path only; executes on approval
   refuse(id: string): Promise<Proposal>;
   /* Re-decide everything queued while the wallet was locked, against the policy and balances
