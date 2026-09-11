@@ -240,7 +240,11 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
       { tool: 'propose_intents_deposit', does: 'fund the NEAR Intents balance from this app wallet. The funding step before a swap.' },
       {
         tool: 'propose_hl_deposit',
-        does: 'fund the Hyperliquid perps account from any chain this app signs for. The funding step before a mandate: a bot armed against an empty account can never fire. One way in by construction, so nothing on your surface takes it back out.',
+        does: 'fund the Hyperliquid perps account from the NEAR Intents balance, one signed intent. The funding step before a mandate: a bot armed against an empty account can never fire.',
+      },
+      {
+        tool: 'propose_hl_withdraw',
+        does: 'bring collateral back from Hyperliquid into the NEAR Intents balance. Always a human click, refused while a position is open, and it costs a flat 1.2 USDC on top of 25 bp, so say the percentage first.',
       },
       { tool: 'propose_swap', does: 'swap inside NEAR Intents by signing an intent. Nothing moves on chain.' },
       { tool: 'propose_intents_withdraw', does: 'take a balance back out of Intents to this app wallet on eth, base or arb.' },

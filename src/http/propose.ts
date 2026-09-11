@@ -211,19 +211,15 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
       return;
     }
     if (kind === 'hl_deposit') {
-      // chain and symbol are optional and both default inside proposeHlDeposit: the money
-      // used to have to be USDC on Arbitrum, and now the origin is a choice, so omitting it
-      // keeps the old call shape working and naming it is the new capability.
-      const chain = params.chain === undefined ? undefined : chainField(params, 'chain', problems);
+      // No chain: the money leaves the intents balance and nowhere else. symbol is optional
+      // and defaults to USDC inside proposeHlDeposit, which also picks the flavor held.
       const symbol = params.symbol === undefined ? undefined : strField(params, 'symbol', problems);
       const amount = positiveField(params, 'amount', problems);
       if (problems.length > 0) {
         fail(res, 400, problems.join('; '));
         return;
       }
-      // null here only happens when a chain was named and rejected, which is already a problem
-      // above, so this is the omitted case: let proposeHlDeposit pick the origin.
-      respond(await ctx.proposals.proposeHlDeposit({ chain: chain ?? undefined, symbol, amount }));
+      respond(await ctx.proposals.proposeHlDeposit({ symbol, amount }));
       return;
     }
     if (kind === 'intents_deposit') {

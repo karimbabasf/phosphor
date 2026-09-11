@@ -974,15 +974,14 @@ registerPropose(
 registerPropose(
   'propose_hl_deposit',
   'hl_deposit',
-  `Proposes funding the Hyperliquid perps account, so a mandate has collateral to trade. This is the step BEFORE propose_mandate: arming a bot against an account holding nothing gets a mandate that can never fire.
+  `Proposes funding the Hyperliquid perps account from the NEAR Intents balance, so a mandate has collateral to trade. This is the step BEFORE propose_mandate: arming a bot against an account holding nothing gets a mandate that can never fire.
 
-The route is NEAR Intents into HyperCore, so the money can start on any chain this app signs for and does not have to be USDC on Arbitrum first. chain says where the funds LEAVE FROM and defaults to arb. Which Hyperliquid account gets credited is resolved by the app from its own key and cannot be named here.
+The money leaves the intents balance and nowhere else: one signed intent, nothing sent on any chain. If the balance is in a wallet, propose_intents_deposit first. amount is in symbol, which defaults to USDC; the app picks which held flavor it spends. Which Hyperliquid account gets credited is resolved by the app from its own key and cannot be named here.
 
-Two numbers decide whether this is worth doing, and both are in the approval summary rather than here, because they are live: the routing fee is close to FLAT, about \$0.32 plus 10 bp, so it is about 0.7 percent on \$50 and about 0.13 percent on \$1000. Below \$5 it is refused, and above 5 percent of the deposit it is refused. If a human asks to fund a small amount, say what the percentage would be before you propose it.
+Two numbers decide whether this is worth doing, and both are in the approval summary rather than here, because they are live: the routing fee is close to FLAT, about \$0.32 plus 25 bp, so it is about 3.4 percent on \$10 and about 0.3 percent on \$1000. Below \$5 it is refused, and above 5 percent of the deposit it is refused. If a human asks to fund a small amount, say what the percentage would be before you propose it.
 
-THE DIRECTION IS ONE WAY AND THAT IS THE POINT: 1Click cannot quote out of HyperCore, so this rail puts collateral in and no tool on your surface takes it out. Getting money off the venue is a signed withdraw3 a human runs at a terminal. ${CANNOT_APPROVE}`,
+The way back is propose_hl_withdraw, which returns collateral to the same intents balance and is always a human click. After this executes, read proposal_status for the intent hash and the collateral before and after; do not report the deposit as done from the tool reply alone. ${CANNOT_APPROVE}`,
   {
-    chain: SELF_CUSTODY_CHAIN.optional(),
     symbol: z.string().optional(),
     amount: z.number(),
   },
@@ -995,8 +994,9 @@ THE DIRECTION IS ONE WAY AND THAT IS THE POINT: 1Click cannot quote out of Hyper
 //
 // propose_hl_deposit was off this list until 2026-08-20 and is now registered just above. It
 // earned its way back not by being tested more but by changing shape: the bespoke Arbitrum
-// bridge became a NEAR Intents route, and that route is structurally one-way. See the note on
-// ProposeKind.
+// bridge became a NEAR Intents route. Since 2026-09-11 that route runs from the intents balance
+// and has a way back, propose_hl_withdraw, which is registered beside it and is the one
+// propose tool that never auto-executes. See the note on ProposeKind.
 
 // Neither a read nor a propose: it mutates, but it moves no money and gets no policy
 // verdict. What it does change is what a HUMAN sees before they decide, which is why

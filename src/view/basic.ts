@@ -212,8 +212,9 @@ function symbolsOf(draft: WriteDraft): string[] {
 function chainsOf(draft: WriteDraft): string[] {
   const out: string[] = [];
   if (draft.kind === 'swap') out.push(draft.chain, draft.toChain);
-  else if (draft.kind === 'hl_deposit' || draft.kind === 'intents_deposit' || draft.kind === 'intents_withdraw')
-    out.push(draft.chain);
+  else if (draft.kind === 'intents_deposit' || draft.kind === 'intents_withdraw') out.push(draft.chain);
+  // A Hyperliquid deposit starts inside the verifier and lands on the venue; neither is a
+  // chain the wallet reads, and both are named in the headline, so the chain line stays empty.
   else if (isRetired(draft)) out.push(retired(draft).chain ?? '');
   else if (draft.kind === 'consolidate') out.push(draft.toChain, ...draft.legs.map((l) => l.fromChain));
   else if (draft.kind === 'transfer') out.push(draft.leg.fromChain, draft.leg.toChain);

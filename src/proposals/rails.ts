@@ -99,20 +99,18 @@ export async function proposeSwap(ctx: PCtx, params: SwapParams): Promise<Propos
   return problems.length > 0 ? refuseDraft(ctx, 'swap', draft, problems) : proposeRail(ctx, 'swap', draft);
 }
 
-// "Put $200 into the trading account, from base." The origin chain is now the caller's
-// choice rather than a fact about the bridge, because 1Click reaches all of them. What is
-// still not the caller's choice: the wallet it leaves, the Hyperliquid account it credits,
-// the loss floor and the counterparty. Those are resolved here from the app's own state,
-// exactly as the Intents deposit does it.
+// "Put $40 into the trading account." The money leaves the intents balance and nowhere else,
+// so the caller names an amount and, at most, which asset to spend. Everything else is resolved
+// here from the app's own state: the account spent, the flavor of that asset actually held, the
+// Hyperliquid account credited, the loss floor and the counterparty.
 export async function proposeHlDeposit(ctx: PCtx, params: HlDepositParams): Promise<Proposal> {
   const snapshot = ctx.ledger.snapshot();
   const problems: string[] = [];
-  const chain = params.chain ?? 'arb';
-  const from = ourAddress(ctx, chain, snapshot, problems);
+  const symbol = (params.symbol ?? 'USDC').trim();
 
-  const native = NATIVE_ASSET[chain];
-  const symbol = params.symbol ?? 'USDC';
-  const tokenId = native !== undefined && symbol === native.symbol ? NATIVE_TOKEN_ID : symbol;
+  // The account whose balance is spent inside the verifier: our own EVM address lowercased,
+  // the same way the deposit rail credits it and the withdraw rail spends it.
+  const from = ourIntentsAddress(ctx, snapshot, problems).toLowerCase();
 
   // The trading account is the app's own EVM address. Hyperliquid identifies an account by
   // the address that signs for it, so crediting anything else funds a book this app cannot
@@ -120,16 +118,44 @@ export async function proposeHlDeposit(ctx: PCtx, params: HlDepositParams): Prom
   // is that an agent cannot name where money goes.
   const hlAccount = ourAddress(ctx, 'eth', snapshot, problems);
 
+  // Which flavor of the asset to spend. A balance inside intents.near is keyed by the bridged
+  // asset it arrived as (USDC from eth and USDC from arb are two ids), so the builder reads
+  // what is held and spends the largest matching one. It refuses only where it is certain:
+  // no read at all, nothing matching, or a balance it can name as too small. Anything else is
+  // left for the contract to answer, for the reason the withdraw builder gives below.
+  const read = ctx.ledger.intents();
+  let originAsset = '';
+  if (read === undefined || !read.ok) {
+    problems.push(
+      `The balance inside intents.near could not be read${read?.error ? ` (${read.error})` : ''}, so this cannot tell ` +
+        `which ${symbol} it would spend. Read the wallet again and propose once it shows.`,
+    );
+  } else {
+    const held = read.holdings
+      .filter((h) => h.symbol.toUpperCase() === symbol.toUpperCase() && h.amount > 0)
+      .sort((a, b) => b.amount - a.amount);
+    if (held.length === 0) {
+      problems.push(`intents.near holds no ${symbol} for ${from}, so there is nothing to fund the trading account with.`);
+    } else {
+      originAsset = held[0].assetId;
+      if (held[0].amount < params.amount) {
+        problems.push(
+          `intents.near holds ${held[0].amount} ${symbol} (from ${held[0].originChain}) for ${from}, which is less ` +
+            `than the ${params.amount} this would deposit.`,
+        );
+      }
+    }
+  }
+
   const draft: HlDepositDraft = {
     kind: 'hl_deposit',
-    chain,
     symbol,
-    tokenId,
+    originAsset,
     amount: params.amount,
     amountUsd: usdOf(ctx, symbol, params.amount, snapshot),
     // The hypercore floor, NOT the Intents one. That fee is proportional and this one is
     // nearly flat, so the 200 bps rule refuses honest quotes under about $17.
-    minCredited: minCreditedForHypercore(params.amount),
+    minCredited: minCreditedForHypercore(usdOf(ctx, symbol, params.amount, snapshot)),
     from,
     hlAccount,
     counterparty: HYPERCORE_COUNTERPARTY,

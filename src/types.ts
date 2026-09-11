@@ -242,24 +242,23 @@ export type IntentsWithdrawDraft = {
 };
 
 // Collateral entering a Hyperliquid perps account. The kind is older than the mechanism: it
-// used to mean an ERC-20 transfer to Hyperliquid's Bridge2 contract on Arbitrum, and now it
-// means a NEAR Intents route into HyperCore from any chain this app can sign on. The kind
-// stayed because what it MEANS to the policy engine, the ledger and the approval screen did
-// not change: money is entering the trading account.
+// meant an ERC-20 transfer to Hyperliquid's Bridge2 contract, then a NEAR Intents route from a
+// wallet on any chain, and since 2026-09-11 it means the intents balance itself, spent through
+// one signed intent. The kind stayed each time because what it MEANS to the policy engine, the
+// ledger and the approval screen did not change: money is entering the trading account.
 //
-// `bridge` is gone with the mechanism. It named a contract that credited whoever sent to it,
-// which is why this draft used to have no destination at all. The 1Click route has a real one,
-// so `hlAccount` exists and the policy engine can now check that funding lands on an account
-// we hold the key for, which it could never do before.
+// There is no chain on this draft any more. The money starts inside the verifier, so the only
+// origin fact is which bridged flavor of the asset is spent (`originAsset`), and the proposal
+// service picks that from what the ledger says is held. `hlAccount` is the account credited,
+// which the policy engine checks is one we hold the key for.
 export type HlDepositDraft = {
   kind: 'hl_deposit';
-  chain: ChainId; // the ORIGIN chain the money leaves from, not a Hyperliquid one
-  symbol: string;
-  tokenId: string; // 'native' for the gas asset, otherwise the ERC-20 contract
-  amount: number;
+  symbol: string; // the asset spent from the intents balance; USDC unless the caller says otherwise
+  originAsset: string; // its 1Click id, the flavor actually held inside the verifier
+  amount: number; // in `symbol`
   amountUsd: number;
   minCredited: number; // the least the trading account may be credited, in USDC
-  from: string; // our wallet on the origin chain
+  from: string; // our account id inside intents.near: the EVM address, lowercased
   hlAccount: string; // the Hyperliquid account credited: an EVM address we hold the key for
   counterparty: string; // must be on the policy allowlist
 };
@@ -614,10 +613,10 @@ export type SwapParams = {
   minAmountOut: number; // slippage floor, in toSymbol units
 };
 
-// The origin chain is a choice now, because 1Click reaches all of them; it defaults to arb,
-// which is where the bespoke bridge used to require the money to already be. The credited
-// account, the loss floor and the counterparty stay resolved by the app.
-export type HlDepositParams = { amount: number; chain?: ChainId; symbol?: string };
+// The money leaves the intents balance and nowhere else, so there is no chain to name. symbol
+// is the asset spent from that balance and defaults to USDC. The flavor spent, the credited
+// account, the loss floor and the counterparty are all resolved by the app.
+export type HlDepositParams = { amount: number; symbol?: string };
 
 // The credited account, the loss floor and the counterparty are all resolved by the app.
 // symbol defaults to the origin chain's gas asset, which is what "deposit $10 of ETH" means.

@@ -76,9 +76,8 @@ function swap(over: Partial<SwapDraft> = {}): SwapDraft {
 function hlDeposit(over: Partial<HlDepositDraft> = {}): HlDepositDraft {
   return {
     kind: 'hl_deposit',
-    chain: 'arb',
     symbol: 'USDC',
-    tokenId: 'USDC',
+    originAsset: 'nep141:eth-usdc.omft.near',
     amount: 25,
     amountUsd: 25,
     minCredited: 24.7,

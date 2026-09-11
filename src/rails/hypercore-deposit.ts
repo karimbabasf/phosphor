@@ -1,153 +1,97 @@
-// The Hyperliquid funding rail: put collateral into a perps account from any chain NEAR
-// Intents can reach.
+// The Hyperliquid funding rail: collateral into the perps account from the intents balance.
 //
-// This replaces a bespoke bridge. The old rail held USDC on Arbitrum and made a plain ERC-20
-// transfer to Hyperliquid's Bridge2 contract, which credits whoever sent the tokens. That
-// worked and it cost the user a precondition: the money had to already be USDC, already on
-// Arbitrum. Everything else was their problem.
+// Third mechanism under the same kind. The first held USDC on Arbitrum and made a plain ERC-20
+// transfer to Hyperliquid's Bridge2 contract. The second (2026-08-20) quoted 1Click from a
+// wallet on any chain and sent the input on that chain. This one (2026-09-11) starts from the
+// balance already held inside intents.near: one erc191 intent handing that balance to the
+// solver's handle, and the solver credits the perps account. Nothing is sent on any chain by
+// us, which is why the EVM and NEAR ports the second mechanism carried are gone.
 //
-// 1Click now lists `hypercore` as a destination, so the precondition is gone. One quote, one
-// signature on whatever chain the money already sits on, and the collateral lands. Checked
-// live on 2026-08-20: arb USDC in, 50.0 -> 49.6347 out, about 35 seconds. NEAR USDC the same.
+// The four shared steps live in src/rails/intents-spend.ts. What is here is what makes this a
+// deposit rather than a withdrawal: the destination is pinned to HyperCore USDC, the recipient
+// is our own Hyperliquid account, the fee floor has the shape of THIS route's fee, and the
+// rail finishes by looking at the account rather than at the 1Click status.
 //
-// Three things about this rail are different from every other one here, and each is a refusal
-// rather than a feature:
+// Three things about this rail are refusals rather than features:
 //
-//   1. THE RAIL IS ONE WAY. 1Click refuses `hypercore` as an ORIGIN: a quote out of it returns
-//      400 "Hypercore deposits not supported yet". Money leaves a Hyperliquid account through
-//      the venue's own signed withdraw3 and nothing else. That is a property worth stating
-//      plainly rather than hiding, because it is also a SAFETY property: this rail can fund
-//      the trading account and structurally cannot drain it, which is the same argument the
-//      API wallet's signing split makes, arriving from the other side.
+//   1. THE FEE IS ALMOST FLAT, so the percentage depends entirely on size. Measured live
+//      2026-09-11 from the intents balance, without a partner key (so a 25 bp app fee sits
+//      inside the numbers):
 //
-//   2. THE FEE IS ALMOST FLAT, so the percentage depends entirely on size. Measured across
-//      five live dry quotes on 2026-08-20:
+//        in     out          fee
+//        5      4.672108     0.3279
+//        10     9.6594       0.3406
+//        50     49.55863     0.4414
+//        1000   997.115655   2.8843
 //
-//        in     out        fee
-//        2      1.6827     0.3173
-//        5      4.6797     0.3203
-//        10     9.6747     0.3253
-//        50     49.6347    0.3653
-//        100    99.5847    0.4153
+//      That is about 0.3153 flat plus about 26 bp. On $1000 it is 29 bp, which is fine. On $5
+//      it is 6.6 percent, which is a trap no percentage-shaped slippage check would catch,
+//      because the venue is not slipping: it is charging a fixed cost against a tiny amount.
+//      So this rail states the EFFECTIVE rate in the approval summary and refuses below a
+//      floor and above a ceiling, and all three exist because of that table.
 //
-//      That fits fee = about $0.315 flat plus 10 bp. On $1000 it is 13 bp, which is good. On
-//      $2 it is 16 percent, which is a trap that no percentage-shaped slippage check would
-//      ever catch, because the venue is not slipping: it is charging a fixed cost against a
-//      tiny amount. So this rail states the EFFECTIVE rate in the approval summary and refuses
-//      below a floor, and both exist because of that table.
+//   2. THE DESTINATION IS PINNED. The HyperCore asset id is a `1cs_v1:...` string the token
+//      registry does not hold, so it is a constant here, verified against the live list on
+//      every quote and never replaced from it. A hostile list can stop this rail; it cannot
+//      redirect it.
 //
 //   3. THE COLLATERAL MAY LAND ON THE WRONG SIDE OF THE ACCOUNT. Hyperliquid keeps spot and
-//      perp as separate books, and a deposit is not useful as margin until it is on the perp
-//      side. Rather than assume which one 1Click credits, this rail finishes by LOOKING, and
-//      moves the balance itself if it has to. See settleToPerp() at the bottom: the rail is
-//      not done when the money arrives, it is done when the money is spendable as margin.
+//      perp as separate books on a standard account, and a delivery is not margin until it is
+//      on the perp side. The rail finishes by LOOKING, and moves the balance itself if it has
+//      to (settleToPerp). On a unified account, which is what Karim's is, there is one balance
+//      and the step is a no-op that says so.
 //
-// One consequence of point 3 worth stating plainly, because it is easy to miss: this rail
-// signs under TWO different schemes. The deposit is an ordinary ERC-20 transfer or NEP-141
-// ft_transfer, and the settle step is an EIP-712 usdClassTransfer, which is the same
-// user-signed family as withdraw3. Both use the key at keysPath, so this is not new authority,
-// but a reader should know that a module called "deposit" produces a user-signed action. The
-// parameters are the narrow part: toPerp is always true and the amount comes from a balance
-// this rail just observed, so the worst it can do is move our own money between our own books.
+// The signature this rail releases is an intents `transfer` with the EVM key. The settle step
+// on a standard account signs a second, different thing: an EIP-712 usdClassTransfer with the
+// same key. Both are the app's own authority over its own money; a reader should know that a
+// module called "deposit" can produce a user-signed venue action.
 
-import { formatUnits, getAddress, isAddress } from 'viem';
-import type { Address } from 'viem';
-import { erc20Balance, erc20TransferData, evmAddress, reader, sendTx } from '../chain/evm.ts';
-import type { SendOutcome, SendParams } from '../chain/evm.ts';
-import {
-  TGAS,
-  functionCall,
-  ftStorageRegistered,
-  isNearAccountId,
-  isSettlableNearAccount,
-  looksLikeEvmAddress,
-  nearAccountId,
-  sendTx as nearSendTx,
-} from '../chain/near.ts';
-import type { NearSendOutcome, NearSendParams } from '../chain/near.ts';
-import type { ChainId, HlDepositDraft, Rail, RailResult, SimulationResult } from '../types.ts';
-import {
-  ONECLICK_TERMINAL,
-  assetIdFor,
-  baseUnits,
-  oneClickClient,
-  oneLine,
-  quoteEchoProblems,
-  toBaseUnits,
-} from '../intents.ts';
-import type { OneClickClient, OneClickQuote, OneClickStatus, TokensFile } from '../intents.ts';
-import { ONECLICK_COUNTERPARTY } from './oneclick.ts';
-import { usdClassTransfer } from './hl-user-signed.ts';
-import { readTimeout } from '../net.ts';
-
-// NEP-141 transfer costs, same numbers the swap rail uses: 30 TGas is the documented ceiling
-// for ft_transfer, and the one yoctoNEAR is the full-access-key assertion the standard requires.
-const FT_TRANSFER_GAS = 30n * TGAS;
-const ONE_YOCTO = 1n;
+import { formatUnits, isAddress } from 'viem';
+import type { HlDepositDraft, Rail, RailResult, SimulationResult } from '../types.ts';
+import { baseUnits, oneLine, quoteEchoProblems, toBaseUnits } from '../intents.ts';
+import type { OneClickClient, OneClickQuote, OneClickToken, QuoteEcho } from '../intents.ts';
+import { INTENTS_VERIFIER, intentsApi, liveIntentsSigner } from './intents-native.ts';
+import type { IntentsApiPort, IntentsSignerPort } from './intents-native.ts';
+import { spendFromIntents } from './intents-spend.ts';
+import { accountSummary, usdClassTransfer } from './hl-user-signed.ts';
+import type { HlAccountSummary, HlUserSignedDeps } from './hl-user-signed.ts';
 
 // ---------- the destination ----------
 
-// PINNED, not looked up. Every other asset in this app resolves through data/tokens.json and
-// the 1Click list, and this one cannot: its id is `1cs_v1:...` rather than the `nep141:...`
-// shape the omni-bridge registry holds, so assetIdFor() will never find it.
-//
-// Same rule the Polygon decision settled on 2026-08-20: a table in this repo decides where
-// money goes and remote text never does. plan() verifies this id is still in the live list on
-// every quote, off the fetch it already makes, and assertAssetLive() below is the same check
-// on its own for scripts/hypercore-probe.ts. Neither one ever takes a replacement from the API:
-// a hostile token list can stop this rail, and it cannot redirect it.
-export const HYPERCORE_USDC_ASSET_ID = '1cs_v1:hypercore:erc20:0xb88339CB7199b77E23DB6E890353E22632Ba630f';
-export const HYPERCORE_USDC_DECIMALS = 6;
+// PINNED, not looked up. The `hip1` id is the documented HyperCore spot USDC (token index 0,
+// tokenId 0x6d1e..., 8 decimals) and the only hypercore asset 1Click accepts in both
+// directions; the `erc20:0xb883...` id the rail pinned before 2026-09-11 is destination-only
+// and undocumented. A deposit to this asset lands as perps collateral (docs: "credited to
+// their Hyperliquid perps balance"), which the settle step confirms rather than assumes.
+export const HYPERCORE_USDC_ASSET_ID = '1cs_v1:hypercore:hip1:0x6d1e7cde53ba9467b783cb7c530ce054';
+export const HYPERCORE_USDC_DECIMALS = 8;
 
-// The remote service is the same one the swap rail uses, so it is the same allowlist entry.
-// A second string for the same host would mean a human could allow one and refuse the other
-// while believing they had made one decision.
-export const HYPERCORE_COUNTERPARTY = ONECLICK_COUNTERPARTY;
+// The funds are spent inside the verifier, so the counterparty is the verifier: the same
+// allowlist entry the swap and withdraw rails use. A human who allowed one allowed them all,
+// which is one decision rather than three that look like one.
+export const HYPERCORE_COUNTERPARTY = INTENTS_VERIFIER;
 
 // Below this the flat fee stops being a fee and starts being most of the deposit. 1Click's own
-// floor is lower (1 USDC is refused, 2 quotes), and the old Bridge2 rail used 5 for a different
-// reason: below 5 the venue did not credit at all and the docs said the funds were lost. The
-// number is kept at 5 so the two eras agree, but the reason has changed and the refusal says
-// the new one, because a user reading "the venue will eat it" and a user reading "you will pay
-// 6 percent" make different decisions.
+// floor is lower; 5 is where the refusal can say "you would pay 7 percent" and be right.
 export const MIN_DEPOSIT_USDC = 5;
 
-// What a deposit is allowed to cost before this rail stops calling it a deposit. 5 percent on
-// the floor amount is about right: it lets a $10 test through with a loud number attached and
-// refuses the sizes where the user would be paying mostly for the privilege.
+// What a deposit is allowed to cost before this rail stops calling it a deposit. 5 percent lets
+// a $10 test through with a loud number attached and refuses the sizes where the user would be
+// paying mostly for the privilege.
 export const MAX_FEE_PCT = 5;
 
-// The loss floor a draft carries, and it has to be shaped like the fee or it refuses honest
-// quotes.
-//
-// The Intents deposit rail uses a flat 200 bps of the amount, which is right for a fee that is
-// proportional. This one is not: it is about $0.315 plus 10 bp, so the percentage runs away as
-// the amount shrinks. Reusing the 200 bps rule here quietly refused every deposit between about
-// $6.50 and $17, because on $10 it demanded 9.80 credited and the venue delivers 9.67, and the
-// refusal blamed the floor instead of naming the flat fee. That is the same bug this repo keeps
-// paying for: the value checked was not the value used.
-//
-// So the floor is the measured fee with headroom on both terms, roughly doubled on the bp side
-// and rounded up on the flat side. It still caps the loss, and it caps it against the shape the
-// fee actually has.
-export const HYPERCORE_FLAT_FEE_USDC = 0.45; // measured 0.315
-export const HYPERCORE_FEE_BPS = 20; // measured about 10
+// The loss floor a draft carries, shaped like the fee or it refuses honest quotes: a flat term
+// with headroom over the measured 0.3153, and a bp term with headroom over the measured 26
+// (10 from the route, about 25 from the app fee an unkeyed quote carries, minus rounding).
+// The bp term was 20 until 2026-09-11 and refused every honest deposit above about $300 once
+// the app fee appeared, which is the "value checked was not the value used" bug again.
+export const HYPERCORE_FLAT_FEE_USDC = 0.45; // measured 0.3153
+export const HYPERCORE_FEE_BPS = 40; // measured about 26
 
-/* The slippage tolerance this rail ASKS FOR, and the reason the flat term above went from 0.35
-   to 0.45 when the floor check moved onto the guaranteed number.
-
-   1Click returns two outputs: amountOutFormatted, which it expects to deliver, and
-   minAmountOut, which it guarantees. The gap between them is this tolerance. The rail never set
-   one, so it inherited the API default of 100 bps, and the guarantee then sat about a percent
-   under the promise: on 100 USDC the quote promised 99.58 and guaranteed about 98.59, against a
-   floor claiming 99.65. Checking the guarantee against that floor would have refused every
-   honest deposit, so the tolerance and the floor have to be set together or neither is real.
-
-   10 bps because the route is stable to stable across a bridge with a nearly flat fee, not a
-   volatile swap: there is no real price to slip against. Against the measured table the floor
-   then clears the guarantee by about 13 cents at every size, which is headroom for fee drift
-   rather than headroom for loss. If the venue cannot honour it the quote is refused and the
-   refusal names this number, which is the visible failure a silent one percent was not. */
+// The slippage tolerance this rail ASKS FOR. checkQuote gates on the guarantee this produces
+// (minAmountOut), so the number asked for and the number checked have to be the same number.
+// 10 bps because the route is stable to stable with a nearly flat fee: there is no real price
+// to slip against.
 export const HYPERCORE_SLIPPAGE_BPS = 10;
 
 export function minCreditedFor(amount: number): number {
@@ -157,156 +101,74 @@ export function minCreditedFor(amount: number): number {
 
 // ---------- the seams ----------
 
-// Same shape as the swap rail's ports, and for the same reason: the refusal tests present a
-// short wallet or an unregistered deposit address without an RPC anywhere near them.
-export type HypercoreEvmPort = {
-  signerAddress(keysPath: string): Address;
-  send(params: SendParams): Promise<SendOutcome>;
-  // Read before we quote. The rail this replaced checked both and refused up front, and
-  // dropping that check was a regression: without it a short wallet gets a live quote, a minted
-  // deposit address and a reverted transfer, and the reason arrives from the chain instead of
-  // from a sentence. No money is lost either way; what is lost is the explanation.
-  erc20Balance(chain: ChainId, token: Address, owner: Address): Promise<bigint>;
-  nativeBalance(chain: ChainId, owner: Address): Promise<bigint>;
+export type HypercoreDepositDeps = {
+  keysPath: string;
+  apiKey?: string;
+  signer?: IntentsSignerPort;
+  api?: IntentsApiPort;
+  client?: OneClickClient; // the registry's shared 1Click client, so the token list is fetched once
+  hl?: HlUserSignedDeps; // the Hyperliquid reads and the settle step; defaults to the live key
+  fetchImpl?: typeof fetch;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+  pollIntervalMs?: number;
+  pollTimeoutMs?: number;
+  maxDeadlineMs?: number;
 };
 
-export type HypercoreNearPort = {
-  accountId(keysPath: string): string;
-  storageRegistered(token: string, account: string): Promise<boolean>;
-  send(params: NearSendParams): Promise<NearSendOutcome>;
+export type HypercoreDepositRail = Rail<HlDepositDraft> & {
+  accountState(address: string): Promise<HlAccountSummary>;
+  assertAssetLive(): Promise<void>;
 };
 
-export const liveEvmPort: HypercoreEvmPort = {
-  signerAddress: evmAddress,
-  send: sendTx,
-  erc20Balance,
-  nativeBalance: (chain, owner) => reader(chain).getBalance({ address: owner }),
+type Plan = {
+  originAsset: string;
+  decimals: number; // of the origin asset, for the base amount
+  amountBase: bigint;
+  minCreditedBase: bigint;
 };
-export const liveNearPort: HypercoreNearPort = {
-  accountId: nearAccountId,
-  storageRegistered: ftStorageRegistered,
-  send: nearSendTx,
-};
-
-// Which signer authors the origin transfer. Solana is absent because the signer is, which is
-// the same honest gap the swap rail carries.
-function originFamily(chain: ChainId): 'evm' | 'near' | null {
-  if (chain === 'eth' || chain === 'base' || chain === 'arb') return 'evm';
-  if (chain === 'near') return 'near';
-  return null;
-}
-
-// ---------- account state ----------
-
-export type HlSpotBalance = { coin: string; token: number; total: number; hold: number };
-
-export type HlAccountState = {
-  address: string;
-  accountValueUsd: number; // the perp side: this is what margin is drawn from
-  withdrawableUsd: number;
-  marginUsedUsd: number;
-  openPositions: number;
-  spot: HlSpotBalance[]; // a SEPARATE book from the perp balance above, on a CLASSIC account
-  // Whether this account has the two books merged. On a unified account there is nothing to
-  // move between, `withdrawable` reads 0 while the money is present, and usdClassTransfer is
-  // rejected outright. Karim's account is unified, checked live 2026-08-20, so this is the
-  // normal case here rather than an exotic one.
-  unified: boolean;
-  availableUsdc: number; // free collateral: the perp figure classically, the unified figure otherwise
-  funded: boolean;
-  fetchedAt: string;
-};
-
-type ClearinghouseState = {
-  marginSummary?: { accountValue?: string; totalMarginUsed?: string };
-  withdrawable?: string;
-  assetPositions?: unknown[];
-};
-
-type SpotClearinghouseState = {
-  balances?: Array<{ coin?: string; token?: number; total?: string; hold?: string }>;
-  // Present on a unified account: what is actually free once maintenance margin is held back,
-  // per token id. 0 is USDC. Same field src/rails/hl-user-signed.ts reads.
-  tokenToAvailableAfterMaintenance?: Array<[number | string, string]>;
-};
-
-// Every number in these responses is a string, and a malformed one must read as zero rather
-// than NaN: NaN silently poisons every comparison downstream.
-function num(value: string | undefined): number {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : 0;
-}
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function sameAddress(a: string, b: string): boolean {
-  return a.trim().toLowerCase() === b.trim().toLowerCase();
-}
-
-const INFO_URL = 'https://api.hyperliquid.xyz/info';
-
-// ---------- the rail ----------
-
-export type HypercoreDepositDeps = {
-  keysPath: string;
-  tokens: TokensFile;
-  client?: OneClickClient;
-  evm?: HypercoreEvmPort;
-  near?: HypercoreNearPort;
-  fetchImpl?: typeof fetch;
-  pollIntervalMs?: number;
-  pollTimeoutMs?: number;
-  now?: () => number;
-  sleep?: (ms: number) => Promise<void>;
-};
-
-export type HypercoreDepositRail = Rail<HlDepositDraft> & {
-  accountState(address: string): Promise<HlAccountState>;
-  assertAssetLive(): Promise<void>;
-};
-
-type Plan = {
-  family: 'evm' | 'near';
-  originAsset: string;
-  originToken: string;
-  decimals: number;
-  native: boolean;
-  amountBase: bigint;
-};
-
 export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepositRail {
-  const { keysPath, tokens } = deps;
-  const client = deps.client ?? oneClickClient({ fetchImpl: deps.fetchImpl });
-  const evm = deps.evm ?? liveEvmPort;
-  const near = deps.near ?? liveNearPort;
-  const fetchImpl = deps.fetchImpl ?? fetch;
-  const pollIntervalMs = deps.pollIntervalMs ?? 3000;
-  const pollTimeoutMs = deps.pollTimeoutMs ?? 180_000;
+  const { keysPath } = deps;
+  const signer = deps.signer ?? liveIntentsSigner;
+  const api = deps.api ?? intentsApi({ apiKey: deps.apiKey ?? '', fetchImpl: deps.fetchImpl, client: deps.client });
+  const hl: HlUserSignedDeps = deps.hl ?? { keysPath, fetchImpl: deps.fetchImpl, now: deps.now };
   const now = deps.now ?? (() => Date.now());
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const pollIntervalMs = deps.pollIntervalMs ?? 3000;
+  const pollTimeoutMs = deps.pollTimeoutMs ?? 180_000;
+  // Four days, matching the swap rail. See MAX_DEADLINE_MS there for why the deadline is not
+  // what prevents replay and the nonce is.
+  const maxDeadlineMs = deps.maxDeadlineMs ?? 4 * 24 * 60 * 60 * 1000;
 
-  // Confirms the pinned asset id is still in the live list. Called at boot. It reports and it
-  // never repairs: taking a replacement id from the API is exactly the thing the pin exists to
-  // prevent, because an attacker who can change that list could then choose where money goes.
-  async function assertAssetLive(): Promise<void> {
-    const list = await client.tokens();
-    const hit = list.find((t) => t.assetId === HYPERCORE_USDC_ASSET_ID);
-    if (hit === undefined) {
+  function pinProblem(list: OneClickToken[]): string | null {
+    const pinned = list.find((t) => t.assetId === HYPERCORE_USDC_ASSET_ID);
+    if (pinned === undefined) {
       const hypercore = list.filter((t) => t.blockchain.toLowerCase() === 'hypercore').map((t) => t.assetId);
-      throw new Error(
-        `the pinned HyperCore USDC asset id is no longer in the 1Click token list. ` +
-          `Pinned: ${HYPERCORE_USDC_ASSET_ID}. Live hypercore assets: ${hypercore.length > 0 ? hypercore.join(', ') : 'none'}. ` +
-          `This rail will not take a replacement id from the API; update the constant deliberately.`,
+      return (
+        `the pinned HyperCore USDC asset id is no longer in the 1Click token list. Pinned: ` +
+        `${HYPERCORE_USDC_ASSET_ID}. Live hypercore assets: ${hypercore.length > 0 ? hypercore.join(', ') : 'none'}. ` +
+        `This rail will not take a replacement id from the API; update the constant deliberately`
       );
     }
-    if (hit.decimals !== HYPERCORE_USDC_DECIMALS) {
-      throw new Error(
-        `HyperCore USDC decimals changed: pinned ${HYPERCORE_USDC_DECIMALS}, live ${hit.decimals}. ` +
-          `Every amount this rail sends would be wrong by a factor of ten.`,
+    if (pinned.decimals !== HYPERCORE_USDC_DECIMALS) {
+      return (
+        `HyperCore USDC decimals changed: pinned ${HYPERCORE_USDC_DECIMALS}, live ${pinned.decimals}. ` +
+        `Every amount this rail sends would be wrong by a factor of ten`
       );
     }
+    return null;
+  }
+
+  // Confirms the pinned asset id is still in the live list. It reports and never repairs:
+  // taking a replacement id from the API is exactly the thing the pin exists to prevent.
+  async function assertAssetLive(): Promise<void> {
+    const problem = pinProblem(await api.tokens());
+    if (problem !== null) throw new Error(problem);
   }
 
   function refusal(draft: HlDepositDraft, reasons: string[], lines: string[] = []): SimulationResult {
@@ -318,124 +180,78 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     };
   }
 
-  // Everything decidable BEFORE a quote. The order matters: the checks that need no network at
-  // all run first, so a bad account or an unsigned chain never becomes a question asked of a
-  // remote API about the wrong asset.
-  async function plan(draft: HlDepositDraft): Promise<{ plan?: Plan; reasons: string[] }> {
-    const reasons: string[] = [];
+  // The account id we spend inside the verifier, which is the EVM address lowercased. Read
+  // from the key, never from the draft, and compared against the draft: a draft authored for
+  // another account would sign an intent that spends nothing and release a signature for no
+  // reason. The Hyperliquid account credited is the same address, checksummed, because the
+  // venue identifies an account by the key that signs for it.
+  function requireOwner(draft: HlDepositDraft): string {
+    const owner = signer.address(keysPath).toLowerCase();
+    if (draft.from.toLowerCase() !== owner) {
+      throw new Error(`draft spends the balance of ${draft.from} but the configured key is ${owner}`);
+    }
+    if (draft.hlAccount.toLowerCase() !== owner) {
+      throw new Error(
+        `draft credits ${draft.hlAccount}, which is not the account this app signs for (${owner}); ` +
+          'collateral credited anywhere else is not margin this app can trade',
+      );
+    }
+    return owner;
+  }
 
-    const family = originFamily(draft.chain);
-    if (family === null) {
+  // Everything decidable BEFORE a quote. The checks that need no network run first, so a bad
+  // draft never becomes a question asked of a remote API.
+  async function plan(draft: HlDepositDraft): Promise<{ plan?: Plan; reasons: string[] }> {
+    if (draft.counterparty !== HYPERCORE_COUNTERPARTY) {
+      return { reasons: [`counterparty ${oneLine(draft.counterparty, 60)} is not ${HYPERCORE_COUNTERPARTY}; the funds are spent inside the verifier`] };
+    }
+    if (!isAddress(draft.hlAccount.trim())) {
+      return { reasons: [`the trading account ${oneLine(draft.hlAccount, 60)} is not an EVM address, and HyperCore credits one`] };
+    }
+    if (!Number.isFinite(draft.amount) || draft.amount <= 0) {
+      return { reasons: [`amount ${draft.amount} is not a positive number`] };
+    }
+    if (draft.amountUsd < MIN_DEPOSIT_USDC) {
       return {
         reasons: [
-          `this app cannot sign on ${draft.chain}. Funding can start from eth, base, arb or near; ` +
-            `1Click reaches more chains than that, but a chain with no signer here is a chain we cannot send from`,
+          `${draft.amount} ${draft.symbol} is below the ${MIN_DEPOSIT_USDC} USDC floor. The routing fee is nearly flat ` +
+            `(about ${HYPERCORE_FLAT_FEE_USDC} USDC), so at this size it would be most of the deposit; deposit more at once`,
         ],
       };
     }
-
-    if (draft.counterparty !== HYPERCORE_COUNTERPARTY) {
-      reasons.push(`draft counterparty ${oneLine(draft.counterparty, 60)} is not ${HYPERCORE_COUNTERPARTY}`);
+    if (!Number.isFinite(draft.minCredited) || draft.minCredited <= 0) {
+      return { reasons: [`the draft floors at ${draft.minCredited} USDC, which is no floor at all`] };
     }
 
-    // The account being credited must be one we hold the key for, or the deposit funds a
-    // stranger's trading account and nothing about it is recoverable.
-    if (!isAddress(draft.hlAccount.trim())) {
-      reasons.push(`hlAccount ${oneLine(draft.hlAccount, 60)} is not an EVM address, and HyperCore credits an EVM account`);
-    }
-
-    if (draft.amount < MIN_DEPOSIT_USDC) {
-      reasons.push(
-        `${draft.amount} is below the ${MIN_DEPOSIT_USDC} minimum. The routing fee is close to flat, about ` +
-          `$0.32 plus 10 bp, so a deposit this small pays most of itself away rather than landing`,
-      );
-    }
-
-    // A NEAR origin must be an account that exists on the chain 1Click settles against.
-    // Checked as an allowlist of the two shapes a real NEAR account id can take rather than
-    // as a blocklist of wrong suffixes: an id of any other shape leaves here as a
-    // well-formed quote request and comes back as a bare "Internal server error" from the
-    // API, a refusal whose stated reason has nothing to do with the real cause, which is
-    // the shape of the bug this repo has paid for more than once.
-    if (family === 'near' && !isSettlableNearAccount(draft.from)) {
-      reasons.push(
-        `${draft.from} is not a NEAR account id 1Click can settle to. It must end in .near, or be a ` +
-          `64-character implicit account id. Configure a NEAR account, or fund from an EVM chain`,
-      );
-    }
-
-    const registry = tokens[draft.chain]?.[draft.symbol];
-    if (registry === undefined) {
-      reasons.push(`no token registry entry for ${draft.symbol} on ${draft.chain}`);
-    } else {
-      // Each family validates the token id its own way. Letting a NEAR account id through an
-      // EVM address check, or the reverse, builds a transfer against a contract that does not
-      // exist on the chain being signed for.
-      if (family === 'evm' && !isAddress(registry.tokenId, { strict: false })) {
-        reasons.push(`token registry entry for ${draft.symbol} on ${draft.chain} is not an EVM address`);
-      }
-      if (family === 'near' && !isNearAccountId(registry.tokenId)) {
-        reasons.push(`token registry entry for ${draft.symbol} on ${draft.chain} is not a NEAR account id`);
-      }
-    }
-
-    if (reasons.length > 0 || registry === undefined) return { reasons };
-
-    let amountBase = 0n;
+    let list: OneClickToken[];
     try {
-      amountBase = toBaseUnits(draft.amount, registry.decimals);
-    } catch (err) {
-      return { reasons: [errText(err)] };
-    }
-
-    // The ORIGIN asset id comes from the live list, exactly as the swap rail resolves it. Only
-    // the DESTINATION is pinned, because only the destination is the thing an attacker who
-    // could edit that list would want to move.
-    let originAsset: string | null = null;
-    try {
-      const list = await client.tokens();
-
-      // The pin is verified HERE, against the list this call already had to fetch, rather than
-      // at boot. It was written as a boot check and nothing called it, which made the comment
-      // above a claim about a check that never ran: the exact defect shape this repo keeps
-      // paying for. Doing it on the path that fetches the list anyway costs no round trip and
-      // cannot be forgotten, because a quote is impossible without it.
-      const pinned = list.find((t) => t.assetId === HYPERCORE_USDC_ASSET_ID);
-      if (pinned === undefined) {
-        const hypercore = list.filter((t) => t.blockchain.toLowerCase() === 'hypercore').map((t) => t.assetId);
-        return {
-          reasons: [
-            `the pinned HyperCore USDC asset id is no longer in the 1Click token list. Pinned: ` +
-              `${HYPERCORE_USDC_ASSET_ID}. Live hypercore assets: ${hypercore.length > 0 ? hypercore.join(', ') : 'none'}. ` +
-              `This rail will not take a replacement id from the API; update the constant deliberately`,
-          ],
-        };
-      }
-      if (pinned.decimals !== HYPERCORE_USDC_DECIMALS) {
-        return {
-          reasons: [
-            `HyperCore USDC decimals changed: pinned ${HYPERCORE_USDC_DECIMALS}, live ${pinned.decimals}. ` +
-              `Every amount this rail sends would be wrong by a factor of ten`,
-          ],
-        };
-      }
-
-      originAsset = assetIdFor(draft.chain, registry.tokenId, list, registry.decimals);
+      list = await api.tokens();
     } catch (err) {
       return { reasons: [`could not read the 1Click token list: ${errText(err)}`] };
     }
-    if (originAsset === null) {
-      return { reasons: [`1click does not list ${draft.symbol} on ${draft.chain}`] };
+    // The pin is verified HERE, against the list this call already had to fetch: a check on
+    // the path that cannot be forgotten, because a quote is impossible without it.
+    const pin = pinProblem(list);
+    if (pin !== null) return { reasons: [pin] };
+
+    const origin = list.find((t) => t.assetId === draft.originAsset);
+    if (origin === undefined) {
+      return { reasons: [`1click does not list ${oneLine(draft.originAsset, 60)}, the ${draft.symbol} flavor the draft spends`] };
+    }
+
+    let amountBase: bigint;
+    try {
+      amountBase = toBaseUnits(draft.amount, origin.decimals);
+    } catch (err) {
+      return { reasons: [`amount ${draft.amount} ${draft.symbol} cannot be expressed at ${origin.decimals} decimals: ${errText(err)}`] };
     }
 
     return {
       plan: {
-        family,
-        originAsset,
-        originToken: family === 'evm' ? getAddress(registry.tokenId) : registry.tokenId,
-        decimals: registry.decimals,
-        native: false,
+        originAsset: draft.originAsset,
+        decimals: origin.decimals,
         amountBase,
+        minCreditedBase: toBaseUnits(draft.minCredited, HYPERCORE_USDC_DECIMALS),
       },
       reasons: [],
     };
@@ -445,22 +261,24 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
   // because the number that matters is not the fee, it is the fee against THIS amount.
   function priceLines(draft: HlDepositDraft, quote: OneClickQuote): { lines: string[]; feePct: number } {
     const out = Number(quote.amountOutFormatted);
-    const feeUsd = Number.isFinite(out) ? draft.amount - out : NaN;
-    const feePct = Number.isFinite(feeUsd) ? (feeUsd / draft.amount) * 100 : NaN;
+    const inUsd = Number(quote.amountInUsd);
+    const spent = Number.isFinite(inUsd) && inUsd > 0 ? inUsd : draft.amountUsd;
+    const feeUsd = Number.isFinite(out) ? spent - out : NaN;
+    const feePct = Number.isFinite(feeUsd) && spent > 0 ? (feeUsd / spent) * 100 : NaN;
     return {
       feePct,
       lines: [
-        `Fund Hyperliquid perps from ${draft.chain}.`,
-        `  send      ${draft.amount} ${draft.symbol} on ${draft.chain}`,
+        `Fund Hyperliquid perps from the intents balance.`,
+        `  spend     ${draft.amount} ${draft.symbol} held inside ${INTENTS_VERIFIER}`,
         `  credited  ${oneLine(quote.amountOutFormatted, 40)} USDC to ${draft.hlAccount}`,
         `  cost      ${Number.isFinite(feeUsd) ? `${feeUsd.toFixed(4)} USDC, ${feePct.toFixed(2)} percent of the deposit` : 'unknown'}`,
         `  arrives   about ${quote.timeEstimate ?? '?'}s`,
-        `  one way   money leaves a Hyperliquid account only through a signed withdraw3, never back down this rail`,
+        `  way back  propose_hl_withdraw brings collateral back into the same balance, always by a click`,
       ],
     };
   }
 
-  function checkQuote(draft: HlDepositDraft, quote: OneClickQuote, feePct: number): string[] {
+  function checkQuote(draft: HlDepositDraft, p: Plan, quote: OneClickQuote, feePct: number): string[] {
     const problems: string[] = [];
 
     const out = Number(quote.amountOutFormatted);
@@ -473,16 +291,12 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
       problems.push(`the quote credits ${out} USDC and the approved draft required at least ${draft.minCredited}`);
     }
 
-    /* And the GUARANTEED floor, which is the gate. The comparison above reads
-       amountOutFormatted, the solver's EXPECTED output; minAmountOut is what it commits to, and
-       it is the field every sibling rail checks. In base units, as they do, because comparing
-       two decimal strings through a double is how a floor stops being exact.
-
-       A missing minAmountOut throws rather than reading as zero: a quote that guarantees
-       nothing is not a quote this rail can measure against a floor. */
+    // And the GUARANTEED floor, which is the gate. amountOutFormatted is the solver's EXPECTED
+    // output; minAmountOut is what it commits to. In base units, because comparing two decimal
+    // strings through a double is how a floor stops being exact. A missing minAmountOut throws
+    // rather than reading as zero: a quote that guarantees nothing cannot be measured.
     const guaranteed = baseUnits(quote.minAmountOut, 'minAmountOut');
-    const floor = toBaseUnits(draft.minCredited, HYPERCORE_USDC_DECIMALS);
-    if (guaranteed < floor) {
+    if (guaranteed < p.minCreditedBase) {
       problems.push(
         `the quote guarantees only ${formatUnits(guaranteed, HYPERCORE_USDC_DECIMALS)} USDC against the ` +
           `${draft.minCredited} the approved draft floors at, whatever the ${out} it expects to deliver. ` +
@@ -507,145 +321,86 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     return problems;
   }
 
-  /* The quote's echo of what we asked for. checkQuote above reads the amounts and nothing else,
-     so a quote priced to credit a DIFFERENT Hyperliquid account, or to refund somewhere that is
-     not this wallet, passed every check. The account credited here is the one this app signs
-     for, derived from its own key, and a deposit credited to any other account is collateral in
-     a book this app cannot trade. */
-  function checkQuoteEcho(draft: HlDepositDraft, originAsset: string, amountBase: bigint, raw: unknown): string[] {
-    return quoteEchoProblems(raw, {
+  // The quote's echo of what we asked for. checkQuote reads the amounts and nothing else, so a
+  // quote priced to credit a DIFFERENT Hyperliquid account, or to refund somewhere that is not
+  // our balance, would pass every check there. The account credited is the one this app signs
+  // for, derived from its own key, and a deposit credited to any other account is collateral
+  // in a book this app cannot trade.
+  function echoWant(draft: HlDepositDraft, p: Plan): QuoteEcho {
+    return {
       recipient: draft.hlAccount,
       recipientVerb: 'credit',
       recipientNoun: 'Hyperliquid account',
       recipientType: 'DESTINATION_CHAIN',
-      recipientTypeWhy: 'collateral credited anywhere else is not margin this app can trade',
-      depositType: 'ORIGIN_CHAIN',
-      refundType: 'ORIGIN_CHAIN',
-      refundTypeWhy: 'back to the wallet the deposit left',
+      recipientTypeWhy: 'collateral credited to an intents balance instead of the venue is not margin this app can trade',
+      depositType: 'INTENTS',
+      refundType: 'INTENTS',
+      refundTypeWhy: 'back to our balance inside the verifier',
       refundTo: draft.from,
-      originAsset,
+      originAsset: p.originAsset,
       destinationAsset: HYPERCORE_USDC_ASSET_ID,
-      amount: amountBase.toString(),
+      amount: p.amountBase.toString(),
       noEcho:
-        'there is nothing tying it to the Hyperliquid account the draft credits. The deposit is an ordinary ' +
-        `transfer to an address the solver picked and names ${oneLine(draft.hlAccount, 60)} nowhere, so without ` +
-        'the echo this funding cannot be checked and is refused.',
-    });
-  }
-
-  function checkDepositAddress(family: 'evm' | 'near', value: string): string {
-    if (family === 'evm') {
-      if (!isAddress(value, { strict: false })) {
-        throw new Error(`1click returned a deposit address that is not an EVM address: ${oneLine(value, 60)}`);
-      }
-      return getAddress(value);
-    }
-    if (!isNearAccountId(value)) {
-      throw new Error(`1click returned a deposit address that is not a NEAR account id: ${oneLine(value, 60)}`);
-    }
-    if (looksLikeEvmAddress(value)) {
-      throw new Error(`1click returned an EVM address where a NEAR account id belongs: ${oneLine(value, 60)}`);
-    }
-    return value;
-  }
-
-  type Deposited = { ok: boolean; hash?: string; error?: string };
-
-  async function depositTransfer(draft: HlDepositDraft, p: Plan, depositAddress: string): Promise<Deposited> {
-    if (p.family === 'evm') {
-      return evm.send({
-        chain: draft.chain,
-        keysPath,
-        to: p.originToken as Address,
-        data: erc20TransferData(depositAddress as Address, p.amountBase),
-      });
-    }
-
-    // A NEP-141 transfer to an account with no storage deposit on that token contract panics,
-    // the tokens bounce, and the transaction is still paid for. The deposit address is freshly
-    // minted, so this is a live question rather than a formality.
-    const registered = await near.storageRegistered(p.originToken, depositAddress);
-    if (!registered) {
-      return {
-        ok: false,
-        error:
-          `the deposit address ${depositAddress} has no storage deposit registered on ${p.originToken}, ` +
-          'so an ft_transfer to it would panic and bounce. Nothing was signed.',
-      };
-    }
-
-    return near.send({
-      keysPath,
-      receiverId: p.originToken,
-      actions: [
-        functionCall('ft_transfer', { receiver_id: depositAddress, amount: p.amountBase.toString() }, FT_TRANSFER_GAS, ONE_YOCTO),
-      ],
-    });
-  }
-
-  async function info<T>(body: Record<string, unknown>): Promise<T> {
-    const res = await fetchImpl(INFO_URL, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: readTimeout(),
-    });
-    if (!res.ok) throw new Error(`hyperliquid ${String(body.type)} failed: ${res.status} ${await res.text()}`);
-    return (await res.json()) as T;
-  }
-
-  async function accountState(address: string): Promise<HlAccountState> {
-    if (!isAddress(address.trim())) throw new Error(`hyperliquid accountState: ${address} is not an address`);
-    const user = address.trim();
-
-    const [perp, spotState] = await Promise.all([
-      info<ClearinghouseState>({ type: 'clearinghouseState', user, dex: '' }),
-      info<SpotClearinghouseState>({ type: 'spotClearinghouseState', user }),
-    ]);
-
-    const spot: HlSpotBalance[] = (spotState.balances ?? []).map((b) => ({
-      coin: b.coin ?? '',
-      token: b.token ?? -1,
-      total: num(b.total),
-      hold: num(b.hold),
-    }));
-
-    const accountValueUsd = num(perp.marginSummary?.accountValue);
-    const withdrawableUsd = num(perp.withdrawable);
-
-    const pairs = spotState.tokenToAvailableAfterMaintenance;
-    const unifiedUsdc = Array.isArray(pairs)
-      ? num(pairs.find(([id]) => Number(id) === 0)?.[1])
-      : 0;
-    // Same test the withdraw rail uses: money free under the unified figure while the perp
-    // figure reads zero is what a merged account looks like.
-    const unified = unifiedUsdc > 0 && withdrawableUsd === 0;
-
-    return {
-      address: user,
-      accountValueUsd,
-      withdrawableUsd,
-      marginUsedUsd: num(perp.marginSummary?.totalMarginUsed),
-      openPositions: Array.isArray(perp.assetPositions) ? perp.assetPositions.length : 0,
-      spot,
-      unified,
-      availableUsdc: Math.max(withdrawableUsd, unifiedUsdc),
-      funded: accountValueUsd > 0 || unifiedUsdc > 0 || spot.some((b) => b.total > 0),
-      fetchedAt: new Date().toISOString(),
+        'there is nothing tying it to the Hyperliquid account the draft credits. The signed intent hands our ' +
+        `balance to a solver handle and names ${oneLine(draft.hlAccount, 60)} nowhere, so without the echo this ` +
+        'funding cannot be checked and is refused.',
     };
+  }
+
+  async function accountState(address: string): Promise<HlAccountSummary> {
+    return accountSummary(hl, address);
+  }
+
+  async function simulate(draft: HlDepositDraft): Promise<SimulationResult> {
+    const planned = await plan(draft);
+    if (planned.plan === undefined) return refusal(draft, planned.reasons);
+    const p = planned.plan;
+
+    let owner: string;
+    try {
+      owner = requireOwner(draft);
+    } catch (err) {
+      return refusal(draft, [errText(err)]);
+    }
+
+    try {
+      // dry:true, always. A simulation must never mint a deposit handle.
+      const response = await api.quote({
+        dry: true,
+        originAsset: p.originAsset,
+        destinationAsset: HYPERCORE_USDC_ASSET_ID,
+        amount: p.amountBase.toString(),
+        account: owner,
+        recipient: draft.hlAccount,
+        recipientType: 'DESTINATION_CHAIN',
+        // Named, not inherited. checkQuote gates on the guarantee this tolerance produces.
+        slippageToleranceBps: HYPERCORE_SLIPPAGE_BPS,
+      });
+
+      const priced = priceLines(draft, response.quote);
+      const problems = [
+        ...checkQuote(draft, p, response.quote, priced.feePct),
+        ...quoteEchoProblems(response.raw, echoWant(draft, p)),
+      ];
+      if (problems.length > 0) return refusal(draft, problems, priced.lines);
+
+      priced.lines.push('execution signs one intent with the EVM key and sends nothing on any chain; the solver credits the venue');
+      return { ok: true, summary: priced.lines.join('\n') };
+    } catch (err) {
+      const message = errText(err);
+      return { ok: false, summary: `hypercore funding simulation failed: ${message}`, error: message };
+    }
   }
 
   // The last step, and the one that makes this rail's promise true.
   //
-  // "The money arrived" and "the money is usable as margin" are different claims on
-  // Hyperliquid, because spot and perp are separate books. Rather than assume which side a
-  // HyperCore delivery credits, this looks, and moves it if it has to. On an account where the
-  // delivery already lands on the perp side this does nothing at all and says so.
-  //
-  // A failure here is NOT a failed deposit. The money is on the account either way, so the
-  // sentence has to separate the two or someone reads "failed" and sends again.
-  async function settleToPerp(draft: HlDepositDraft, before: HlAccountState): Promise<string> {
-    let after: HlAccountState;
+  // "The money arrived" and "the money is usable as margin" are different claims on a standard
+  // Hyperliquid account, because spot and perp are separate books. Rather than assume which
+  // side a delivery credits, this looks, and moves it if it has to. A failure here is NOT a
+  // failed deposit: the money is on the account either way, so the sentence has to separate
+  // the two or someone reads "failed" and sends again.
+  async function settleToPerp(draft: HlDepositDraft, before: HlAccountSummary): Promise<string> {
+    let after: HlAccountSummary;
     try {
       after = await accountState(draft.hlAccount);
     } catch (err) {
@@ -653,9 +408,7 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     }
 
     // A UNIFIED account has no two sides. The money is collateral the moment it lands, and
-    // usdClassTransfer against one is rejected outright, so attempting the move here would turn
-    // a completed deposit into a frightening sentence about the spot side. Karim's account is
-    // unified, so this is the normal path rather than the exotic one.
+    // usdClassTransfer against one is rejected outright.
     if (after.unified || before.unified) {
       const gain = after.availableUsdc - before.availableUsdc;
       return gain > 0.01
@@ -663,9 +416,8 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
         : ' The account is unified, so anything credited is margin already. The venue has not shown the rise yet.';
     }
 
-    const perpGain = after.accountValueUsd - before.accountValueUsd;
-    const spotOf = (s: HlAccountState): number => s.spot.find((b) => b.coin === 'USDC')?.total ?? 0;
-    const spotGain = spotOf(after) - spotOf(before);
+    const perpGain = after.perpAccountValueUsd - before.perpAccountValueUsd;
+    const spotGain = after.spotUsdc - before.spotUsdc;
 
     if (perpGain > 0.01) {
       return ` Credited to the perp side directly; ${perpGain.toFixed(4)} USDC is margin now.`;
@@ -678,11 +430,11 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     }
 
     try {
-      const moved = await usdClassTransfer({ keysPath }, { amount: spotGain, toPerp: true });
+      const moved = await usdClassTransfer(hl, { amount: spotGain, toPerp: true });
       return moved.ok
         ? ` Landed on the spot side and was moved to perp: ${spotGain.toFixed(4)} USDC is margin now.`
         : ` Landed on the SPOT side and the move to perp failed: ${oneLine(moved.detail, 120)}. ` +
-            `The money is on the account and is not margin yet; run npm run hl-withdraw -- --to-perp ${spotGain}.`;
+            'The money is on the account and is not margin yet; propose the deposit again for nothing and the settle step will retry the move.';
     } catch (err) {
       return (
         ` Landed on the SPOT side and the move to perp threw: ${oneLine(errText(err), 120)}. ` +
@@ -699,248 +451,83 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     return Math.max(a, b);
   }
 
-  async function simulate(draft: HlDepositDraft): Promise<SimulationResult> {
-    const planned = await plan(draft);
-    if (planned.plan === undefined) return refusal(draft, planned.reasons);
-    const p = planned.plan;
-
-    // The wallet a human approved must be the wallet this app signs with, or the refund
-    // address on the quote belongs to somebody else.
-    try {
-      const owner = p.family === 'evm' ? evm.signerAddress(keysPath) : near.accountId(keysPath);
-      if (!sameAddress(draft.from, owner)) {
-        return refusal(draft, [`draft funds from ${draft.from} but this app signs with ${owner}`]);
-      }
-    } catch (err) {
-      return refusal(draft, [`cannot resolve the signing wallet: ${errText(err)}`]);
-    }
-
-    // Can this wallet actually send it. Checked BEFORE the quote, because a quote that prices a
-    // transfer the wallet cannot make is a number that reads as a plan.
-    if (p.family === 'evm') {
-      try {
-        const [held, gas] = await Promise.all([
-          evm.erc20Balance(draft.chain, p.originToken as Address, draft.from as Address),
-          evm.nativeBalance(draft.chain, draft.from as Address),
-        ]);
-        const shortfall: string[] = [];
-        if (held < p.amountBase) {
-          const have = Number(held) / 10 ** p.decimals;
-          shortfall.push(`wallet holds ${have} ${draft.symbol} on ${draft.chain} and the deposit needs ${draft.amount}`);
-        }
-        if (gas === 0n) {
-          shortfall.push(`wallet holds no native gas on ${draft.chain} and cannot pay for the transfer`);
-        }
-        if (shortfall.length > 0) return refusal(draft, shortfall);
-      } catch (err) {
-        // A chain we cannot read is a chain we may not send on.
-        return refusal(draft, [`could not read the ${draft.chain} wallet: ${errText(err)}`]);
-      }
-    }
-
-    try {
-      // dry:true, always. A simulation must never mint a deposit address.
-      const response = await client.quote({
-        dry: true,
-        originAsset: p.originAsset,
-        destinationAsset: HYPERCORE_USDC_ASSET_ID,
-        amount: p.amountBase.toString(),
-        refundTo: draft.from,
-        recipient: draft.hlAccount,
-        // Named, not inherited. checkQuote gates on the guarantee this tolerance produces, so
-        // the number asked for and the number checked have to be the same number.
-        slippageToleranceBps: HYPERCORE_SLIPPAGE_BPS,
-        recipientType: 'DESTINATION_CHAIN',
-        refundType: 'ORIGIN_CHAIN',
-        depositType: 'ORIGIN_CHAIN',
-      });
-
-      const priced = priceLines(draft, response.quote);
-      const problems = [
-        ...checkQuote(draft, response.quote, priced.feePct),
-        ...checkQuoteEcho(draft, p.originAsset, p.amountBase, response.raw),
-      ];
-      if (problems.length > 0) return refusal(draft, problems, priced.lines);
-
-      priced.lines.push('execution sends the input to a deposit address the solver picks; only the amounts above are guaranteed');
-      return { ok: true, summary: priced.lines.join('\n') };
-    } catch (err) {
-      const message = errText(err);
-      return { ok: false, summary: `hypercore funding simulation failed: ${message}`, error: message };
-    }
-  }
-
-  async function watchStatus(depositAddress: string): Promise<OneClickStatus> {
-    const deadline = now() + pollTimeoutMs;
-    const maxPolls = Math.max(1, Math.ceil(pollTimeoutMs / pollIntervalMs));
-    let last: OneClickStatus = {
-      found: false,
-      status: 'PENDING_DEPOSIT',
-      reported: 'not polled',
-      originTxHashes: [],
-      destinationTxHashes: [],
-    };
-
-    for (let attempt = 0; attempt < maxPolls; attempt += 1) {
-      try {
-        last = await client.status(depositAddress);
-        if ((ONECLICK_TERMINAL as readonly string[]).includes(last.status)) return last;
-      } catch (err) {
-        last = { ...last, reported: `status check failed: ${oneLine(errText(err), 80)}` };
-      }
-      if (now() >= deadline) break;
-      await sleep(pollIntervalMs);
-    }
-
-    return last;
-  }
-
   async function execute(draft: HlDepositDraft): Promise<RailResult> {
     // Re-plan and re-price rather than trust the approval. An approval can be minutes old and
     // a quote is a live price, so the checks that refused a bad draft have to run again here.
     const check = await simulate(draft);
-    if (!check.ok) return { ok: false, detail: check.error ?? check.summary };
+    if (!check.ok) return { ok: false, detail: `${check.error ?? check.summary}. Nothing was signed.` };
 
     const planned = await plan(draft);
-    if (planned.plan === undefined) return { ok: false, detail: planned.reasons.join('; ') };
+    if (planned.plan === undefined) return { ok: false, detail: `${planned.reasons.join('; ')}. Nothing was signed.` };
     const p = planned.plan;
+    const owner = requireOwner(draft);
 
     // Read the account BEFORE anything moves, so the settle step afterwards is a comparison
     // rather than a guess about which balance was already there.
-    let before: HlAccountState;
+    let before: HlAccountSummary;
     try {
       before = await accountState(draft.hlAccount);
     } catch (err) {
-      return { ok: false, detail: `could not read the Hyperliquid account before funding it: ${errText(err)}. Nothing was sent.` };
+      return { ok: false, detail: `could not read the Hyperliquid account before funding it: ${errText(err)}. Nothing was signed.` };
     }
 
-    const response = await client.quote({
-      dry: false,
-      originAsset: p.originAsset,
-      destinationAsset: HYPERCORE_USDC_ASSET_ID,
-      amount: p.amountBase.toString(),
-      refundTo: draft.from,
-      recipient: draft.hlAccount,
-      slippageToleranceBps: HYPERCORE_SLIPPAGE_BPS,
-      recipientType: 'DESTINATION_CHAIN',
-      refundType: 'ORIGIN_CHAIN',
-      depositType: 'ORIGIN_CHAIN',
-    });
-    const quote = response.quote;
-
-    const priced = priceLines(draft, quote);
-    const problems = [
-      ...checkQuote(draft, quote, priced.feePct),
-      ...checkQuoteEcho(draft, p.originAsset, p.amountBase, response.raw),
-    ];
-    if (problems.length > 0) {
-      return { ok: false, detail: `live quote does not match the approved draft: ${problems.join('; ')}. Nothing was sent.` };
+    // The four shared steps. Every refusal before the signature throws out of spendFromIntents
+    // and is reported here as exactly that; after the signature nothing throws.
+    let spent;
+    try {
+      spent = await spendFromIntents(
+        { api, signer, keysPath, now, sleep, pollIntervalMs, pollTimeoutMs, maxDeadlineMs },
+        {
+          owner,
+          originAsset: p.originAsset,
+          destinationAsset: HYPERCORE_USDC_ASSET_ID,
+          amountBase: p.amountBase,
+          minOutBase: p.minCreditedBase,
+          recipient: draft.hlAccount,
+          recipientType: 'DESTINATION_CHAIN',
+          slippageToleranceBps: HYPERCORE_SLIPPAGE_BPS,
+          echo: echoWant(draft, p),
+          checkQuote: (quote) => checkQuote(draft, p, quote, priceLines(draft, quote).feePct),
+        },
+      );
+    } catch (err) {
+      return { ok: false, detail: `${errText(err)}. Nothing was signed.` };
     }
-
-    if (typeof quote.depositMemo === 'string' && quote.depositMemo !== '') {
-      return {
-        ok: false,
-        detail:
-          'the quote requires a deposit memo, which neither an ERC-20 transfer nor an ft_transfer can carry; ' +
-          'funds sent without it are lost. Nothing was sent.',
-      };
-    }
-    if (typeof quote.depositAddress !== 'string') {
-      return { ok: false, detail: `1click returned no deposit address (got ${oneLine(quote.depositAddress, 60)}). Nothing was sent.` };
-    }
-
-    const depositAddress = checkDepositAddress(p.family, quote.depositAddress);
-    const sent = await depositTransfer(draft, p, depositAddress);
-
-    // A FAILED SEND AND A FAILED LOOK ARE NOT THE SAME THING, and this rail said they were.
-    //
-    // Live, funding 9.23 USDC on 2026-08-20: the transfer broadcast and confirmed on Arbitrum
-    // (0x82005d38..., status 0x1, 9.23 to the solver's address), and sendTx still reported an
-    // error, because the RPC it polled for the receipt refused the call as needing an archive
-    // node. The rail then printed "No funds left the wallet" over a transfer that had already
-    // moved every dollar. That sentence is the double-send trap this repo warns about in three
-    // other files, written by the one module positioned to cause it.
-    //
-    // A hash means it was broadcast. Once a hash exists, the honest report is that the money is
-    // probably gone and the app could not confirm where it got to, and the next action is to
-    // LOOK rather than to retry. Only a send with no hash at all can claim nothing happened.
-    if (!sent.ok) {
-      if (sent.hash !== undefined) {
-        // Best effort, and it is what rescued the live run: the solver finds the deposit from
-        // the hash even though we never reached the normal submit below.
-        await client.submitDeposit(depositAddress, sent.hash).catch(() => undefined);
-        const watch = await watchStatus(depositAddress);
-        if (watch.status === 'SUCCESS') {
-          const settled = await settleToPerp(draft, before);
-          return {
-            ok: true,
-            detail:
-              `the transfer broadcast as ${sent.hash} and this app could not read its receipt ` +
-              `(${oneLine(sent.error ?? 'unknown error', 90)}), but the routing completed anyway: ` +
-              `${oneLine(quote.amountOutFormatted, 40)} USDC credited.${settled}`,
-            txids: [sent.hash, ...watch.destinationTxHashes],
-          };
-        }
-        return {
-          ok: false,
-          detail:
-            `funding transfer broadcast as ${sent.hash} and this app could not confirm it: ` +
-            `${oneLine(sent.error ?? 'unknown error', 120)}. THE FUNDS MAY ALREADY HAVE LEFT THE WALLET. ` +
-            `1click last reported ${watch.reported} for deposit ${depositAddress}. Check the wallet and that ` +
-            `address before sending again.`,
-          txids: [sent.hash],
-        };
-      }
-      return {
-        ok: false,
-        detail: `funding transfer failed before broadcast: ${oneLine(sent.error ?? 'unknown error')}. No funds left the wallet.`,
-        txids: [],
-      };
-    }
-
-    const txHash = sent.hash ?? '(no hash)';
-    const evidence = `deposit ${depositAddress}, origin tx ${txHash}`;
-
-    // Best effort, and it MUST NOT throw: the transfer above already confirmed, so the money is
-    // gone by the time this runs. An unguarded throw here escapes to the proposal service, which
-    // reports `hl_deposit rail threw` with an EMPTY txids list and marks the proposal failed. A
-    // 1Click blip between a confirmed transfer and the solver notification would then tell a
-    // human no money moved, hand them no origin hash to look it up with, and invite them to send
-    // it again. That is the exact trap this file warns about thirty lines above, and the recovery
-    // branch already guards the identical call. Same guard here.
-    await client.submitDeposit(depositAddress, txHash).catch(() => undefined);
-
-    const watch = await watchStatus(depositAddress);
+    const { quote, depositAddress, watch } = spent;
+    const evidence = `intent ${spent.intentHash}, quote handle ${oneLine(depositAddress, 80)}`;
 
     if (watch.status === 'SUCCESS') {
       const settled = await settleToPerp(draft, before);
       return {
         ok: true,
         detail:
-          `funded Hyperliquid with ${oneLine(quote.amountOutFormatted, 40)} USDC ` +
-          `from ${draft.amount} ${draft.symbol} on ${draft.chain}; ${evidence}.${settled}`,
-        txids: [txHash, ...watch.destinationTxHashes],
+          `funded Hyperliquid with ${oneLine(quote.amountOutFormatted, 40)} USDC from ${draft.amount} ${draft.symbol} ` +
+          `held inside ${INTENTS_VERIFIER}; ${evidence}.${settled}`,
+        txids: [spent.intentHash, ...watch.destinationTxHashes],
       };
     }
 
     if (watch.status === 'REFUNDED' || watch.status === 'FAILED') {
       return {
         ok: false,
-        detail: `1click reported ${watch.reported} after the deposit landed; ${evidence}. Check the refund address ${draft.from}.`,
-        txids: [txHash, ...watch.originTxHashes, ...watch.destinationTxHashes],
+        detail:
+          `1click reported ${watch.reported} after the intent was submitted; ${evidence}. ` +
+          `A refund is credited back to ${owner} inside ${INTENTS_VERIFIER}, which is where the balance started.`,
+        txids: [spent.intentHash, ...watch.originTxHashes, ...watch.destinationTxHashes],
       };
     }
 
-    // Timed out. The transfer confirmed, so the money has already left the wallet and the
-    // routing is very likely still running. Saying "failed" without that sentence is how
-    // someone sends the same amount twice.
+    // Timed out. The signature is released and the intent submitted, so the balance may well
+    // move after this returns. Saying "failed" without that sentence is how someone signs a
+    // second deposit for money that is already on its way.
     return {
       ok: false,
       detail:
-        `transfer confirmed but 1click did not reach a terminal status within ${Math.round(pollTimeoutMs / 1000)}s ` +
-        `(last status ${watch.reported}); ${evidence}. THE FUNDS WERE SENT and the routing may still complete: ` +
-        'check the deposit address before retrying.',
-      txids: [txHash, ...watch.originTxHashes],
+        `the intent was submitted but 1click did not reach a terminal status within ` +
+        `${Math.round(pollTimeoutMs / 1000)}s (last status ${watch.reported}); ${evidence}. ` +
+        `THE INTENT IS SIGNED AND SUBMITTED and the collateral may still land: read the Hyperliquid account ` +
+        `${draft.hlAccount} and the balance inside ${INTENTS_VERIFIER} before signing another.`,
+      txids: [spent.intentHash],
     };
   }
 
