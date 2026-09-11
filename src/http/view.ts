@@ -19,6 +19,7 @@ import type http from 'node:http';
 
 import { applyPatch as applyThemePatch } from '../view/theme.ts';
 import { findPreset, presetCatalog } from '../presets.ts';
+import { CONCEPT_RULE, loadProfile, recordLearned } from '../profile/index.ts';
 import type { Outcome } from '../chart.ts';
 import { asRecord, fail, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
@@ -64,7 +65,47 @@ function tradeWrite(apply: (a: ViewArgs) => Outcome): ViewHandler {
   };
 }
 
+/* How many concepts each session has recorded, per server. Ten is the session's allowance: the
+   profile is a file the next role text is built from, and an agent that could fill it in one
+   sitting could fill it with sixty things nobody taught. Keyed by the Ctx rather than held in a
+   module binding, because every test in this repo builds its own server in one process and the
+   sessions they seat share a name. */
+const LEARNED_PER_SESSION = 10;
+const learnedCounts = new WeakMap<Ctx, Map<string, number>>();
+
 const HANDLERS: Record<string, ViewHandler> = {
+  // ---------- the human's knowledge ----------
+  profile_learned: ({ ctx, args, body, res }): Handled => {
+    const session = String(body.session ?? '');
+    const counts = learnedCounts.get(ctx) ?? new Map<string, number>();
+    learnedCounts.set(ctx, counts);
+    const sofar = counts.get(session) ?? 0;
+    const concept = typeof args.concept === 'string' ? args.concept.trim() : '';
+    // Only a concept that would be added counts against the allowance: a repeat writes nothing,
+    // and an invalid one is refused below with the rule it broke rather than with the count.
+    const known = loadProfile(ctx.cfg.dataDir).knows.some((k) => k.concept.toLowerCase() === concept.toLowerCase());
+    if (sofar >= LEARNED_PER_SESSION && CONCEPT_RULE.test(concept) && !known) {
+      fail(res, 400, `ten concepts is the most one session records; the next session can record more`);
+      return DONE;
+    }
+    const out = recordLearned(ctx.cfg.dataDir, concept, new Date().toISOString().slice(0, 10));
+    if (!out.ok) {
+      fail(res, 400, out.reason);
+      return DONE;
+    }
+    if (out.added) {
+      counts.set(session, sofar + 1);
+      ctx.audit.append('tool_call', `profile: the agent recorded that the human knows ${concept}`, { concept });
+    }
+    sendJson(res, 200, {
+      ok: true,
+      added: out.added,
+      count: out.count,
+      note: out.added ? `recorded; ${out.count} in the Knows list` : 'already recorded, nothing written',
+    });
+    return DONE;
+  },
+
   // ---------- the trading surface ----------
   trade_focus: tradeWrite(({ ctx, args }) => {
     const out = ctx.trade.view.setFocus(args, 'agent');

@@ -4,6 +4,7 @@
 import { classify } from '../../composition.ts';
 import { buildWallet } from '../../wallet.ts';
 import { buildGreeting } from '../../greeting.ts';
+import { loadProfile } from '../../profile/index.ts';
 import { buildMandateCatalog } from '../../strategy/catalog.ts';
 import { VERSION } from '../../version.ts';
 import { fail, intParam, round2, sendJson } from '../respond.ts';
@@ -37,6 +38,7 @@ export const walletReads: ReadTable = {
         emptyCount: wallet.emptyCount,
       },
       VERSION,
+      loadProfile(ctx.cfg.dataDir),
     );
     sendJson(res, 200, {
       ...greeting,

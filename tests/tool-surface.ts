@@ -139,6 +139,10 @@ export const EXPECTED_TOOLS: readonly string[] = [
   // why it still works while the roster is full. It moves nothing and, like every other read
   // here, cannot reach a rail.
   'skill',
+  // The knowledge profile's one write: a concept the agent just taught, appended to the file the
+  // next role text is built from. It takes a noun phrase in a closed alphabet, ten per session,
+  // and nothing it writes can reach the role as an instruction (tests/unit/profile.test.ts).
+  'profile_learned',
 ];
 
 /* What a spawned worker holds, which is this surface minus everything that acts.
@@ -150,6 +154,8 @@ export const WORKER_WITHHELD: readonly string[] = [
   'switch',
   'watch',
   'set_theme',
+  // A worker has no human in its session to have taught anything to.
+  'profile_learned',
   ...EXPECTED_TOOLS.filter((t) => t.startsWith('propose_')),
 ];
 

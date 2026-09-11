@@ -134,6 +134,9 @@ export const VIEW_TOOLS: readonly string[] = [
   'trade_overlay',
   'trade_note',
   'trade_clear',
+  // The knowledge profile's one write: a concept the agent just taught, appended to the file
+  // the next role text is built from. No money, no approval, audited, ten per session.
+  'profile_learned',
 ];
 // Human-only controls on the trading window. Each one only ever reduces exposure, which is why
 // none of them waits on an approval and none is reachable from the agent's door.

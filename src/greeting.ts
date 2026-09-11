@@ -13,6 +13,8 @@
 // it and the one sentence that decides between near-duplicates.
 
 import type { ViewMode } from './types.ts';
+import { defaultProfile, profileBlock } from './profile/index.ts';
+import type { Profile } from './profile/index.ts';
 
 // Five rows, one column of blocks per letter, 5 wide with a single space between. The sixth
 // row is the phosphor decay: on a real CRT the beam leaves a dimmer trailing glow under the
@@ -235,6 +237,15 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
     ],
   },
   {
+    group: 'teach the human',
+    items: [
+      {
+        tool: 'profile_learned',
+        does: 'record ONE concept you just explained, as a noun phrase, so the next session does not explain it again. Their profile in your role text says what they already know; explain only what sits above it.',
+      },
+    ],
+  },
+  {
     group: 'move money (proposes only, never executes)',
     items: [
       { tool: 'propose_intents_deposit', does: 'fund the NEAR Intents balance from this app wallet. The funding step before a swap.' },
@@ -286,9 +297,13 @@ export type Greeting = {
   capabilities: readonly CapabilityGroup[];
   rules: readonly string[];
   printing: string;
+  // Who the human is and what they already understand, rendered by src/profile/index.ts. The
+  // in-app agent has it in its role text; a terminal-attached agent never gets that text and
+  // reads it here instead.
+  profile: string;
 };
 
-export function buildGreeting(f: GreetingFacts, version: string): Greeting {
+export function buildGreeting(f: GreetingFacts, version: string, profile: Profile = defaultProfile()): Greeting {
   const lines: string[] = [];
   lines.push('');
   for (const row of WORDMARK) lines.push('  ' + row);
@@ -332,6 +347,7 @@ export function buildGreeting(f: GreetingFacts, version: string): Greeting {
     modes: MODES,
     capabilities: CAPABILITIES,
     rules: OPERATING_RULES,
+    profile: profileBlock(profile),
     printing:
       'The banner is drawn for a terminal. Print it only when your human is watching one, verbatim inside a code block and never redrawn or summarised, and use bannerAnsi only if they have said their terminal renders ANSI colour. In an app window, print nothing: the window has already introduced you and a second boot screen inside a conversation is noise. The facts are yours to use either way.',
   };
