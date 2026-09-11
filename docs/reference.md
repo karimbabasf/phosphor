@@ -40,6 +40,24 @@ swept by anything an agent does. Every `chart_read` carries a `housekeeping` blo
 is the reading agent's, what is another agent's and what is stale, and `chart_draw clear: 'mine'`
 takes only the reading agent's own.
 
+**Custom indicators.** Drop a file in `<dataDir>/indicators/` and the chart can draw it as
+`custom:<name>`, where the name is the filename without its extension (lower-case letters,
+digits and dashes, up to 32). Two formats. A JSON file is `{ title, overlay, inputs, plots,
+hlines }`, each plot an expression tree of `[op, ...args]` over `open high low close volume
+hl2 hlc3 ohlc4 bar_index`, with the ops `sma ema rma wma rsi atr stdev highest lowest change
+tr crossover crossunder hist recur abs max min sqrt log nz na` and the arithmetic, comparison
+and logic operators; `["recur", init, step]` is a running value whose step may read `prev`.
+A Pine v5 script is translated onto the same tree: `indicator`, `input.*`, assignments, `var`
+and `:=`, `if` blocks that assign, the ternary, `[n]` history, the `ta.*` and `math.*`
+functions above, `plot` and `hline`. `plotshape`, `fill`, `bgcolor`, `barcolor` and the alerts
+are dropped with a note; a loop, `request.*`, `array`, `label`, `line`, `table`, a function
+definition or any other call is refused with its line number. The folder is read at boot and
+again whenever the agent lists indicators, re-parsing only the files that changed. Every file
+is bounded: 256 KB, 400 nodes, 16 levels deep, 6 plots, 500 bars of history or period, and two
+million evaluations per compute, past which the indicator draws nothing and says so in its
+state line. Nothing in a file runs as code: the tree is data walked by one evaluator, and a
+custom SMA, EMA, RSI or ATR equals the built-in to the last digit.
+
 | Read tool | Returns |
 |---|---|
 | `start` | The greeting, the live state and the index of everything this door opens onto, grouped by intent. Call it again after a long gap: the network, the wallet and the pending decisions all move |

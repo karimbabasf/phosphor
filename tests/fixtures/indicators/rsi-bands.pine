@@ -1,0 +1,9 @@
+//@version=5
+indicator(title="RSI Bands", overlay=false)
+len = input.int(14, "Length", minval=2, maxval=400)
+src = input.source(close, "Source")
+r = ta.rsi(src, len)
+plot(r, "RSI", color=color.purple)
+hline(70, "Overbought", color=color.red)
+hline(30, "Oversold", color=color.green)
+hline(50, "Mid", linestyle=hline.style_dotted)

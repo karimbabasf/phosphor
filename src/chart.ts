@@ -266,7 +266,14 @@ export function displayDecimals(span: number, candles: Candle[]): number {
 // timer, because a level vanishing while a human is looking at it is worse than a stale one.
 export const STALE_MS = 20 * 60 * 1000;
 
-export function createChartStore(initialProduct: string, now: () => number = Date.now): {
+// `resolve` is how 'custom:<slug>' types reach this store. They live in the loader's map in
+// src/indicators-custom rather than in the catalogue, and the store takes a function rather
+// than the loader so it never imports it. Built-ins are tried first: a file cannot shadow one.
+export function createChartStore(
+  initialProduct: string,
+  now: () => number = Date.now,
+  resolve?: (type: string) => IndicatorSpec | null | undefined,
+): {
   state(): ChartState;
   rev(): number;
   historyNeeded(): number;
@@ -492,9 +499,13 @@ export function createChartStore(initialProduct: string, now: () => number = Dat
     return { ok: true, notes };
   }
 
+  function lookup(type: string): IndicatorSpec | undefined {
+    return indicatorSpec(type) ?? resolve?.(type) ?? undefined;
+  }
+
   function addIndicator(args: Record<string, unknown>, source: Source, by?: string | null, resolved?: IndicatorSpec): Outcome {
     const type = String(args.type ?? '').toLowerCase().trim();
-    const spec = resolved ?? indicatorSpec(type);
+    const spec = resolved ?? lookup(type);
     if (spec === undefined) {
       return { ok: false, notes: [], error: `unknown indicator: ${type || '(none given)'}. chart_batch op indicator_list has the list.` };
     }
@@ -678,7 +689,7 @@ export function createChartStore(initialProduct: string, now: () => number = Dat
   function historyNeeded(): number {
     let warmup = 0;
     for (const ind of state.indicators) {
-      const spec = indicatorSpec(ind.type);
+      const spec = lookup(ind.type);
       if (spec === undefined) continue;
       const need = warmupBars(spec, ind.params);
       if (need > warmup) warmup = need;

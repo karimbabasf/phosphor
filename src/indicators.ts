@@ -45,6 +45,10 @@ export type Plot = {
   signs?: number[];
   // Band only: the key of the plot this one fills down to.
   fillTo?: string;
+  // A custom indicator may name one of the app's colour tokens for a plot. Absent on every
+  // built-in, whose plots separate by emphasis alone; the renderer treats absent as "the
+  // indicator hue", so a built-in is drawn exactly as before.
+  tone?: 'up' | 'down' | 'warn' | 'agent' | 'text';
   values: (number | null)[];
 };
 
@@ -489,12 +493,19 @@ const ALL_SPECS: IndicatorSpec[] = [...SPECS, ...LIBRARY_SPECS];
 
 const BY_TYPE = new Map<string, IndicatorSpec>(ALL_SPECS.map((s) => [s.type, s]));
 
-export function indicatorSpec(type: string): IndicatorSpec | undefined {
-  return BY_TYPE.get(type.toLowerCase().trim());
+// `extra` is the human's own indicators, compiled by src/indicators-custom and handed in by
+// whoever holds the loader. They are tried after the built-ins, so a file can never shadow a
+// catalogue type; the loader also prefixes every custom type with 'custom:', which is what
+// keeps the two namespaces apart in a chart_read.
+export function indicatorSpec(type: string, extra?: readonly IndicatorSpec[]): IndicatorSpec | undefined {
+  const key = type.toLowerCase().trim();
+  const builtin = BY_TYPE.get(key);
+  if (builtin !== undefined || extra === undefined) return builtin;
+  return extra.find((s) => s.type === key);
 }
 
-export function indicatorCatalog(): unknown[] {
-  return ALL_SPECS.map((s) => ({
+export function indicatorCatalog(extra?: readonly IndicatorSpec[]): unknown[] {
+  return [...ALL_SPECS, ...(extra ?? [])].map((s) => ({
     type: s.type,
     pane: s.pane === 'price' ? 'overlays the price' : 'takes its own pane',
     summary: s.summary,

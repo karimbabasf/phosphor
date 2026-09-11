@@ -1,0 +1,6 @@
+{
+  "title": "Custom EMA",
+  "overlay": true,
+  "inputs": { "length": { "default": 21, "min": 2, "max": 400, "int": true } },
+  "plots": [{ "title": "EMA", "expr": ["ema", "close", "length"] }]
+}

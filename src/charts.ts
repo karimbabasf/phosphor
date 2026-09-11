@@ -14,6 +14,7 @@
 import { createChartStore, parseTimeframe, timeframeLabel, MIN_TIMEFRAME_SEC } from './chart.ts';
 import { createDrawingStore } from './drawings.ts';
 import type { DrawingStore } from './drawings.ts';
+import type { IndicatorSpec } from './indicators.ts';
 
 export type ChartStore = ReturnType<typeof createChartStore>;
 
@@ -30,9 +31,13 @@ export type ChartSlots = {
   list(): { index: number; product: string; timeframe: string }[];
 };
 
-export function createChartSlots(defaultProduct: string, now: () => number = Date.now): ChartSlots {
+export function createChartSlots(
+  defaultProduct: string,
+  now: () => number = Date.now,
+  resolve?: (type: string) => IndicatorSpec | null | undefined,
+): ChartSlots {
   const primary: ChartSlot = {
-    store: createChartStore(defaultProduct, now),
+    store: createChartStore(defaultProduct, now, resolve),
     drawings: createDrawingStore({ now }),
     index: 0,
   };
@@ -64,7 +69,7 @@ export function createChartSlots(defaultProduct: string, now: () => number = Dat
       const want = resolved[i] as { product: string; granularitySec: number };
       let held = slots[i];
       if (held === undefined) {
-        held = { store: createChartStore(want.product, now), drawings: createDrawingStore({ now }), index: i };
+        held = { store: createChartStore(want.product, now, resolve), drawings: createDrawingStore({ now }), index: i };
         slots[i] = held;
       }
       const before = held.store.state().view.product;

@@ -29,6 +29,7 @@ import type { GasCache } from '../transactions.ts';
 import type { createChartStore } from '../chart.ts';
 import type { ChartSlots } from '../charts.ts';
 import type { SnapshotBroker } from '../snapshot.ts';
+import type { CustomIndicators } from '../indicators-custom/loader.ts';
 import type { Theme } from '../view/theme.ts';
 import type { DrawingStore } from '../drawings.ts';
 import type { Board } from '../board.ts';
@@ -277,6 +278,9 @@ export type Ctx = Omit<ServerDeps, 'getTheme' | 'setTheme' | 'keystore' | 'sessi
   charts: ChartSlots;
   // The snapshot broker: one outstanding picture per chart, a TTL, nothing stored.
   snapshots: SnapshotBroker;
+  // The human's own indicators, compiled from <dataDir>/indicators. Optional because the
+  // tests that build a Ctx by hand predate it; see src/indicators-custom/loader.ts.
+  customIndicators?: CustomIndicators;
   board: Board;
   crew: () => Crew;
   // The bounded audit tail the basic screen's activity list reads. Seeded once at

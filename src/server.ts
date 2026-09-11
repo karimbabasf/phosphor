@@ -12,6 +12,7 @@
 // The window token, the Host check and the origin check live in src/http/auth.ts.
 
 import http from 'node:http';
+import path from 'node:path';
 
 import type { LogEvent } from './types.ts';
 import { readCoins } from './view/coins.ts';
@@ -19,6 +20,7 @@ import { createGasCache } from './transactions.ts';
 import { buildWorkerRole } from './role.ts';
 import { createChartSlots } from './charts.ts';
 import { createSnapshotBroker } from './snapshot.ts';
+import { createCustomIndicators } from './indicators-custom/loader.ts';
 import { DEFAULT_THEME, type Theme } from './view/theme.ts';
 import { createBoard } from './board.ts';
 import { createDuplicateGuard } from './duplicates.ts';
@@ -57,11 +59,17 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   // appended by the SSE hub's own audit subscription. See the note beside it in sse.ts.
   const recentEvents: LogEvent[] = audit.tail(BASIC_EVENT_SCAN);
 
+  // The human's own indicators, read from <dataDir>/indicators here and again whenever the
+  // agent lists indicators. The chart resolves 'custom:<slug>' through the loader's map and
+  // never through a path; see src/indicators-custom/loader.ts.
+  const customIndicators = createCustomIndicators(path.join(cfg.dataDir, 'indicators'));
+
   // Chart state is server-side on purpose: see the header of src/chart.ts. The browser
   // renders it and writes its own pan and zoom back. Up to four charts, each a chart store
   // (view, indicators, levels, marks) beside a drawing store (lines and zones); slot 0 is the
-  // primary and keeps its old names below so nothing that predates slots had to change.
-  const charts = createChartSlots(cfg.candleProducts[0] ?? 'BTC-USD');
+  // primary and keeps its old names below so nothing that predates slots had to change. Every
+  // slot resolves 'custom:<slug>' through the same loader map.
+  const charts = createChartSlots(cfg.candleProducts[0] ?? 'BTC-USD', Date.now, (type) => customIndicators.get(type));
   const chart = charts.primary.store;
   const drawings = charts.primary.drawings;
 
@@ -228,6 +236,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     drawings,
     charts,
     snapshots,
+    customIndicators,
     board,
     crew: getCrew,
     crewIfAny: () => crew,
