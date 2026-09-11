@@ -42,20 +42,21 @@ export const EXPECTED_TOOLS: readonly string[] = [
   //
   // propose_hl_deposit reappeared on 2026-08-20, and the question above was asked. The answer
   // is not "it has been tested more". It is that the rail changed shape: it was a bespoke
-  // transfer to Hyperliquid's Bridge2 contract and is now a NEAR Intents route into HyperCore,
-  // and 1Click cannot quote OUT of hypercore. The direction is a property of the venue rather
-  // than a check of ours, so an agent holding this can add collateral and has no path on this
-  // surface to remove any.
+  // transfer to Hyperliquid's Bridge2 contract and became a NEAR Intents route into HyperCore.
+  // Since 2026-09-11 it spends the intents balance, and propose_hl_withdraw brings collateral
+  // back into that same balance: the one propose tool that never auto-executes, refused under
+  // any open position, with no destination field at all.
   //
   // propose_lp_add, propose_lp_remove and the four yield tools are gone for good rather than
   // held back: this app now runs two venues, NEAR Intents and Hyperliquid, and the rails behind
   // those six were removed from it. This list and the rail table finally name the same set.
   'propose_swap',
-  // Funds the Hyperliquid perps account, from any chain this app signs for. One way in by
-  // construction; getting money off the venue is a signed withdraw3 a human runs at a terminal
-  // and is deliberately not a tool. Its chain argument is EVM only for the same reason
-  // propose_intents_withdraw's is.
+  // Funds the Hyperliquid perps account from the intents balance: one signed intent, no chain
+  // argument, and the account credited is derived from our own key.
   'propose_hl_deposit',
+  // Brings collateral back into the intents balance. One argument, the amount; the intents
+  // account credited is our own, derived from the key, and every withdrawal is a click.
+  'propose_hl_withdraw',
   // Funds this app's own balance inside intents.near. Its far side is an account id rather
   // than a chain address, and the credited account is derived from our own key, so there is no
   // argument here that can name it.

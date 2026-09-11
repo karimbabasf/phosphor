@@ -68,12 +68,15 @@
     propose_intents_withdraw: 'asking to withdraw',
     propose_mandate: 'asking to arm a mandate',
     propose_hl_deposit: 'asking to fund trading',
+    propose_hl_withdraw: 'asking to bring collateral back',
     propose_policy_change: 'asking to change a rule',
     /* doing, once a human has said yes */
     consolidate: 'consolidating',
     swap: 'swapping',
     intents_deposit: 'depositing',
     intents_withdraw: 'withdrawing',
+    hl_deposit: 'funding trading',
+    hl_withdraw: 'bringing collateral back',
     mandate_arm: 'arming a mandate',
     /* the helpers */
     agent_spawn: 'starting a helper',

@@ -321,6 +321,10 @@ function destinationOf(draft: RailDraft): string | null {
   // tokens, so there was nothing here to check; the 1Click route names the account it credits,
   // so funding a Hyperliquid account that is not ours is now a thing this can refuse.
   if (draft.kind === 'hl_deposit') return draft.hlAccount;
+  // hl_withdraw lands inside the verifier, in the account the app's own key owns. The rail
+  // refuses any other `to`; this is the same rule in the layer that does not depend on which
+  // rail ran, and the reason a withdraw tool with no destination field is still governed.
+  if (draft.kind === 'hl_withdraw') return draft.to;
   return null;
 }
 

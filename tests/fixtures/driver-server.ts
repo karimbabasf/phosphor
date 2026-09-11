@@ -134,6 +134,7 @@ export async function bootDriverServer(opts: BootOptions = {}): Promise<Booted> 
       proposePolicyChange: async () => { throw new Error('unused'); },
       proposeSwap: async () => { throw new Error('unused'); },
       proposeHlDeposit: async () => { throw new Error('unused'); },
+      proposeHlWithdraw: async () => { throw new Error('unused'); },
       proposeIntentsDeposit: async () => { throw new Error('unused'); },
       proposeIntentsWithdraw: async () => { throw new Error('unused'); },
       proposeMandate: async () => { throw new Error('unused'); },

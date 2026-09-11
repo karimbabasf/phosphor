@@ -39,6 +39,21 @@ export async function land(ctx: PCtx, p: Proposal): Promise<Proposal> {
     };
   }
 
+  // The same downgrade for collateral leaving the venue. A withdrawal under the threshold is
+  // small money, but it is the one direction in which an autonomous agent could hurt a
+  // trading account (Karim's call, 2026-09-11: always a click, whatever the size), and the
+  // rail already refuses it under any open position. Recorded here for the same reason as
+  // the mandate rule: the engine stays a pure function of policy and draft.
+  if (p.kind === 'hl_withdraw' && p.verdict.outcome === 'allow') {
+    p = {
+      ...p,
+      verdict: {
+        outcome: 'needs_approval',
+        reasons: [...p.verdict.reasons, 'Collateral leaving the venue always needs a human click, whatever the size.'],
+      },
+    };
+  }
+
   if (p.verdict.outcome === 'refuse') {
     const refused: Proposal = { ...p, status: 'policy_refused', decidedBy: 'policy', decidedAt: nowIso() };
     ctx.audit.append('proposal_created', `${p.kind} proposal ${p.id} refused by policy: ${p.verdict.rule}`, {

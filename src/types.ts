@@ -263,6 +263,22 @@ export type HlDepositDraft = {
   counterparty: string; // must be on the policy allowlist
 };
 
+// Collateral leaving a Hyperliquid perps account and landing back in the intents balance. The
+// mirror of HlDepositDraft, and the only draft whose signature is a Hyperliquid user-signed
+// action rather than a chain transaction or an intent: one spotSend from the venue account to
+// an address 1Click mints for the quote. `to` is our own account inside intents.near and is
+// never a caller's; a draft naming anything else is refused by the rail and by the engine.
+export type HlWithdrawDraft = {
+  kind: 'hl_withdraw';
+  symbol: 'USDC'; // the only asset HyperCore holds as collateral
+  amount: number; // USDC leaving the venue account
+  amountUsd: number;
+  minReceived: number; // the least that may land inside the verifier, in USDC
+  from: string; // the Hyperliquid account: our EVM address, the one that signs
+  to: string; // our account id inside intents.near: the same address, lowercased
+  counterparty: string; // must be on the policy allowlist
+};
+
 // Arming a strategy. The odd one out among the drafts, and deliberately so: it moves no money
 // at the moment it is approved. What it does is grant STANDING authority to a program that will
 // move money later, at machine speed, with no human in the loop for each order.
@@ -296,6 +312,7 @@ export type WriteDraft =
   | { kind: 'policy_change'; patch: PolicyPatch; sentence: string }
   | SwapDraft
   | HlDepositDraft
+  | HlWithdrawDraft
   | IntentsDepositDraft
   | IntentsWithdrawDraft
   | MandateDraft;
@@ -618,6 +635,10 @@ export type SwapParams = {
 // account, the loss floor and the counterparty are all resolved by the app.
 export type HlDepositParams = { amount: number; symbol?: string };
 
+// One number. The venue account, the intents account credited, the floor and the counterparty
+// are all the app's; there is no field for a destination, which is the whole point.
+export type HlWithdrawParams = { amount: number };
+
 // The credited account, the loss floor and the counterparty are all resolved by the app.
 // symbol defaults to the origin chain's gas asset, which is what "deposit $10 of ETH" means.
 export type IntentsDepositParams = { chain: ChainId; symbol?: string; amount: number };
@@ -650,6 +671,7 @@ export type ProposalService = {
   proposePolicyChange(params: { patch: PolicyPatch; sentence: string }): Promise<Proposal>;
   proposeSwap(params: SwapParams): Promise<Proposal>;
   proposeHlDeposit(params: HlDepositParams): Promise<Proposal>;
+  proposeHlWithdraw(params: HlWithdrawParams): Promise<Proposal>;
   proposeIntentsDeposit(params: IntentsDepositParams): Promise<Proposal>;
   proposeIntentsWithdraw(params: IntentsWithdrawParams): Promise<Proposal>;
   proposeMandate(params: MandateParams): Promise<Proposal>;

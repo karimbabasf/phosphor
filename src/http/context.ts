@@ -61,6 +61,7 @@ export const PROPOSE_KINDS: readonly string[] = [
   'policy_change',
   'swap',
   'hl_deposit',
+  'hl_withdraw',
   'intents_deposit',
   'intents_withdraw',
   'mandate_arm',

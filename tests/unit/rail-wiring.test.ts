@@ -24,6 +24,7 @@ import { fileURLToPath } from 'node:url';
 import type {
   AppConfig,
   HlDepositDraft,
+  HlWithdrawDraft,
   IntentsWithdrawDraft,
   LedgerSnapshot,
   Policy,
@@ -92,6 +93,7 @@ function spyRails(over: { simulation?: SimulationResult; result?: RailResult } =
   const table: Record<string, Rail> = {
     swap: rail('swap'),
     hl_deposit: rail('hl_deposit'),
+    hl_withdraw: rail('hl_withdraw'),
     intents_deposit: rail('intents_deposit'),
     intents_withdraw: rail('intents_withdraw'),
   };
@@ -101,7 +103,7 @@ function spyRails(over: { simulation?: SimulationResult; result?: RailResult } =
     executed,
     registry: {
       for: (draft) => table[draft.kind] ?? null,
-      kinds: () => ['swap', 'hl_deposit', 'intents_deposit', 'intents_withdraw'],
+      kinds: () => ['swap', 'hl_deposit', 'hl_withdraw', 'intents_deposit', 'intents_withdraw'],
     },
   };
 }
@@ -227,13 +229,34 @@ test('every rail draft the service builds names a counterparty the seeded allowl
   const deposit = await h.svc.proposeHlDeposit({ amount: 50 });
   const intentsIn = await h.svc.proposeIntentsDeposit({ chain: 'arb', symbol: 'USDC', amount: 20 });
   const intentsOut = await h.svc.proposeIntentsWithdraw({ chain: 'arb', symbol: 'USDC', amount: 10 });
+  const back = await h.svc.proposeHlWithdraw({ amount: 10 });
 
-  for (const p of [swap, deposit, intentsIn, intentsOut]) {
+  for (const p of [swap, deposit, intentsIn, intentsOut, back]) {
     const draft = p.draft as { counterparty?: string };
     const counterparty = (draft.counterparty ?? '').toLowerCase();
     assert.ok(allowed.has(counterparty), `${p.kind} points at ${counterparty}, which the seeded policy does not allow`);
     assert.notEqual(p.status, 'policy_refused', `${p.kind} was refused: ${JSON.stringify(p.verdict)}`);
   }
+});
+
+// Karim's call, 2026-09-11: collateral leaves the venue only by hand, whatever the size.
+test('a Hyperliquid withdrawal under the click threshold still parks pending for a human', async () => {
+  const h = setup();
+  const p = await h.svc.proposeHlWithdraw({ amount: 10 });
+  assert.equal(p.verdict.outcome, 'needs_approval');
+  assert.equal(p.status, 'pending');
+  assert.match(p.verdict.reasons.join(' '), /always needs a human click/);
+  assert.equal(h.rails.executed.length, 0, 'nothing runs while a proposal is pending');
+
+  const draft = p.draft as HlWithdrawDraft;
+  assert.equal(draft.from, SELF_EVM, 'the venue account is ours, resolved by the app');
+  assert.equal(draft.to, SELF_EVM.toLowerCase(), 'the intents account credited is ours, derived not passed');
+  assert.equal(draft.counterparty, ONECLICK_COUNTERPARTY);
+
+  const done = await h.svc.approve(p.id);
+  assert.equal(done.status, 'executed');
+  assert.equal(done.decidedBy, 'human');
+  assert.deepEqual(h.rails.executed.map((d) => d.kind), ['hl_withdraw']);
 });
 
 // ---------- the loop ----------
@@ -594,6 +617,7 @@ test('the live registry holds every rail kind and nothing else', () => {
 
   assert.deepEqual(registry.kinds().sort(), [
     'hl_deposit',
+    'hl_withdraw',
     'intents_deposit',
     'intents_withdraw',
     'mandate_arm',

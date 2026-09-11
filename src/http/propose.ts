@@ -222,6 +222,17 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
       respond(await ctx.proposals.proposeHlDeposit({ symbol, amount }));
       return;
     }
+    if (kind === 'hl_withdraw') {
+      // One number. No destination, no chain, no symbol: the venue account, the intents account
+      // credited and the floor are all the app's. tests/injection.test.ts holds this schema to that.
+      const amount = positiveField(params, 'amount', problems);
+      if (problems.length > 0) {
+        fail(res, 400, problems.join('; '));
+        return;
+      }
+      respond(await ctx.proposals.proposeHlWithdraw({ amount }));
+      return;
+    }
     if (kind === 'intents_deposit') {
       const chain = chainField(params, 'chain', problems);
       // symbol is optional: absent means the chain's gas asset, which is the common case

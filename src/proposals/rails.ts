@@ -7,6 +7,8 @@
 import type {
   HlDepositDraft,
   HlDepositParams,
+  HlWithdrawDraft,
+  HlWithdrawParams,
   IntentsDepositDraft,
   IntentsDepositParams,
   IntentsWithdrawDraft,
@@ -20,6 +22,7 @@ import {
   minCreditedFor as minCreditedForHypercore,
 } from '../rails/hypercore-deposit.ts';
 import { ONECLICK_COUNTERPARTY } from '../rails/oneclick.ts';
+import { HL_WITHDRAW_COUNTERPARTY, minReceivedForHlWithdraw } from '../rails/hypercore-withdraw.ts';
 import { INTENTS_DEPOSIT_COUNTERPARTY, minCreditedFor } from '../rails/intents-deposit.ts';
 import { INTENTS_NATIVE_COUNTERPARTY } from '../rails/intents-native.ts';
 import {
@@ -162,6 +165,34 @@ export async function proposeHlDeposit(ctx: PCtx, params: HlDepositParams): Prom
   };
 
   return problems.length > 0 ? refuseDraft(ctx, 'hl_deposit', draft, problems) : proposeRail(ctx, 'hl_deposit', draft);
+}
+
+// "Bring $40 back from the trading account." One number. The venue account is the app's own
+// EVM address, the intents account credited is that address lowercased, and neither can be
+// named by a caller: there is no field for either, and the rail and the engine both refuse a
+// draft that carries anything else. The position check is the rail's, because it needs the
+// venue; what is decided here is only what the draft says.
+export async function proposeHlWithdraw(ctx: PCtx, params: HlWithdrawParams): Promise<Proposal> {
+  const snapshot = ctx.ledger.snapshot();
+  const problems: string[] = [];
+
+  const from = ourAddress(ctx, 'eth', snapshot, problems);
+  const to = from.toLowerCase();
+
+  const draft: HlWithdrawDraft = {
+    kind: 'hl_withdraw',
+    symbol: 'USDC',
+    amount: params.amount,
+    amountUsd: usdOf(ctx, 'USDC', params.amount, snapshot),
+    // What must land inside the verifier. The venue's 1 USDC activation fee is on top of the
+    // amount and outside this floor; the rail's summary states it.
+    minReceived: minReceivedForHlWithdraw(params.amount),
+    from,
+    to,
+    counterparty: HL_WITHDRAW_COUNTERPARTY,
+  };
+
+  return problems.length > 0 ? refuseDraft(ctx, 'hl_withdraw', draft, problems) : proposeRail(ctx, 'hl_withdraw', draft);
 }
 
 // "Deposit $10 onto NEAR Intents." The agent names a chain, optionally a symbol, and an

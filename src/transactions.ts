@@ -145,6 +145,7 @@ export type TxEntry = {
 const ACTIONS: Record<string, TxEntry['action'] | null | undefined> = {
   swap: 'swap',
   hl_deposit: 'deposit',
+  hl_withdraw: 'withdraw',
   intents_deposit: 'deposit',
   intents_withdraw: 'withdraw',
   transfer: 'transfer',
@@ -339,6 +340,18 @@ function sidesOf(draft: WriteDraft): Sides {
         sent: { symbol: draft.symbol, amount: draft.amount },
         from: draft.from,
         to: draft.intentsAccount,
+        counterparty: draft.counterparty,
+      };
+    case 'hl_withdraw':
+      return {
+        // Collateral leaves the venue and lands inside the verifier. The first hash is the
+        // venue's own ledger hash of the send, which no chain explorer resolves.
+        place: 'hyperliquid',
+        toPlace: 'intents',
+        venue: 'hyperliquid',
+        sent: { symbol: draft.symbol, amount: draft.amount },
+        from: draft.from,
+        to: draft.to,
         counterparty: draft.counterparty,
       };
     case 'intents_withdraw':

@@ -47,6 +47,7 @@
     intents_deposit: 'moneyin',
     /* the trading account */
     hl_deposit: 'account',
+    hl_withdraw: 'account',
     trade_read: 'position',
     /* the chart */
     candles: 'chart',

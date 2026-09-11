@@ -23,6 +23,7 @@ import type { AppConfig, ChainId, Rail, SwapDraft, WriteDraft } from '../types.t
 import type { OneClickClient, TokensFile } from '../intents.ts';
 import { oneClickClient } from '../intents.ts';
 import { hypercoreDepositRail } from './hypercore-deposit.ts';
+import { hypercoreWithdrawRail } from './hypercore-withdraw.ts';
 import { ONECLICK_COUNTERPARTY, oneClickRail } from './oneclick.ts';
 import { INTENTS_NATIVE_COUNTERPARTY, intentsNativeRail } from './intents-native.ts';
 import { intentsDepositRail } from './intents-deposit.ts';
@@ -114,6 +115,10 @@ export function createRails(deps: RailDeps): RailRegistry {
   const table: Record<RailKind, Rail> = {
     swap: swapRail(deps, client) as Rail,
     hl_deposit: hypercoreDepositRail({
+      keysPath: deps.cfg.keysPath,
+      client,
+    }) as Rail,
+    hl_withdraw: hypercoreWithdrawRail({
       keysPath: deps.cfg.keysPath,
       client,
     }) as Rail,

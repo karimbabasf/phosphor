@@ -317,6 +317,7 @@ type ProposeKind =
   | 'intents_deposit'
   | 'intents_withdraw'
   | 'hl_deposit'
+  | 'hl_withdraw'
   | 'mandate_arm';
 
 /* NOT REGISTERED FOR AN ANALYST, and that early return is the whole of what makes a spawned
@@ -983,6 +984,21 @@ Two numbers decide whether this is worth doing, and both are in the approval sum
 The way back is propose_hl_withdraw, which returns collateral to the same intents balance and is always a human click. After this executes, read proposal_status for the intent hash and the collateral before and after; do not report the deposit as done from the tool reply alone. ${CANNOT_APPROVE}`,
   {
     symbol: z.string().optional(),
+    amount: z.number(),
+  },
+);
+
+registerPropose(
+  'propose_hl_withdraw',
+  'hl_withdraw',
+  `Proposes bringing collateral back from the Hyperliquid perps account into the NEAR Intents balance. The mirror of propose_hl_deposit and the only way money leaves the venue.
+
+Where it lands cannot be named: the intents account credited is the app's own, derived from its key. It is ALWAYS a human click, whatever the size, and it is refused while any position is open or any margin is in use: close positions first (trade_read shows them).
+
+The cost has two parts and both are in the approval summary: 1Click's routing fee (about \$0.20 plus 25 bp) and a 1 USDC activation fee Hyperliquid charges the sender because the deposit address is new to the venue. So 8 USDC back costs about 15 percent and 100 USDC about 1.5 percent. Below \$5 it is refused. Say the percentage before you propose a small one.
+
+After it executes, read proposal_status: the detail carries the send nonce, the venue ledger hash, and the balance change on both sides. Do not report a withdrawal as done from the tool reply alone. ${CANNOT_APPROVE}`,
+  {
     amount: z.number(),
   },
 );
