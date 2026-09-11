@@ -25,6 +25,7 @@ import { detectRange } from './range.ts';
 import { divergences } from './divergence.ts';
 import { orderBlocks, fairValueGaps, liquiditySwings, structureBreaks } from './structure.ts';
 import { indicatorSpec, normaliseParams, indicatorCatalog } from '../indicators.ts';
+import type { IndicatorSpec } from '../indicators.ts';
 
 export type AnalysisDeps = {
   // Mirrors the server's own loader, so the agent measures the same bars the human sees.
@@ -35,7 +36,24 @@ export type AnalysisDeps = {
   // Optional, because a test and the browser both build these handlers with no agent behind
   // them; absent, a drawing is anonymous exactly as it was before the roster existed.
   author?: { by: string | null; product: string; granularitySec: number };
+  // How an indicator type becomes a spec. Defaults to the built-in catalogue; the server hands
+  // in a resolver that also knows the custom indicators, so `custom:<slug>` reads here too.
+  indicator?: (type: string) => IndicatorSpec | undefined;
+  // The custom indicator loader, when the app has one. indicator_list rescans its folder and
+  // lists what it compiled beside the catalogue.
+  customIndicators?: { refresh(): unknown; specs(): IndicatorSpec[] };
 };
+
+// How many values a series op answers with unless asked otherwise. An ATR over 400 bars was
+// seven kilobytes of numbers where the model wanted one, and every turn after that paid for
+// them again. Twenty shows the last few bars turning; `full: true` is the whole series.
+const TAIL_DEFAULT = 20;
+
+function tailed<T>(a: Record<string, unknown>, values: T[]): T[] {
+  if (a.full === true) return values;
+  const n = typeof a.tail === 'number' && Number.isFinite(a.tail) && a.tail > 0 ? Math.floor(a.tail) : TAIL_DEFAULT;
+  return values.slice(-n);
+}
 
 // The newest defined value of a plot, and the one before it. A last value with nothing to
 // compare it against cannot answer "is it turning", which is most of what an oscillator is for.
@@ -78,18 +96,19 @@ function lineOf(drawings: DrawingStore, id: string): Line {
 // The oscillator series behind a divergence question. Reusing the shared catalogue rather
 // than recomputing means the agent's divergence and the human's pane come from one array.
 function oscillatorSeries(
+  resolve: (type: string) => IndicatorSpec | undefined,
   candles: Candle[],
   type: string,
   plotKey: string | undefined,
   params: Record<string, unknown>,
 ): (number | null)[] {
-  const spec = indicatorSpec(type);
+  const spec = resolve(type);
   if (!spec) throw new Error(`unknown indicator '${type}'`);
   const numeric: Record<string, number> = {};
   for (const [k, v] of Object.entries(params)) if (typeof v === 'number') numeric[k] = v;
   // normaliseParams clamps to the spec's ranges and reports what it changed. The notes are
   // dropped here on purpose: this path answers "give me the series", and a caller wanting
-  // the clamping story asks indicator_catalog for the allowed ranges instead.
+  // the clamping story asks indicator_list for the allowed ranges instead.
   const result = spec.compute(candles, normaliseParams(spec, numeric).params);
   const plot = plotKey ? result.plots.find((p) => p.key === plotKey) : result.plots[0];
   if (!plot) {
@@ -100,6 +119,8 @@ function oscillatorSeries(
 }
 
 export function analysisHandlers(deps: AnalysisDeps): Record<string, Handler> {
+  const resolve = deps.indicator ?? indicatorSpec;
+
   // An empty product is passed through deliberately rather than defaulted here: the caller
   // knows which chart the human is looking at, and an op that names no product should
   // measure that one instead of a constant this file invented.
@@ -115,7 +136,7 @@ export function analysisHandlers(deps: AnalysisDeps): Record<string, Handler> {
 
   return {
     // ---------- seeing ----------
-    candles: async (a) => await load(a),
+    candles: async (a) => tailed(a, await load(a)),
 
     history_page: async (a) =>
       await deps.history.page(
@@ -126,14 +147,14 @@ export function analysisHandlers(deps: AnalysisDeps): Record<string, Handler> {
       ),
 
     // ---------- measuring ----------
-    pivots: async (a) => await pivotsFor(a),
+    pivots: async (a) => tailed(a, await pivotsFor(a)),
 
     levels: async (a) => clusterLevels(await pivotsFor(a), num(a.tolerance, 0)),
 
     regime: async (a) =>
       regime(await load(a), { period: num(a.period, 14), lookback: num(a.lookback, 252) }),
 
-    atr: async (a) => atr(await load(a), num(a.period, 14)),
+    atr: async (a) => tailed(a, atr(await load(a), num(a.period, 14))),
 
     volume_profile: async (a) =>
       volumeProfile(await load(a), {
@@ -152,6 +173,7 @@ export function analysisHandlers(deps: AnalysisDeps): Record<string, Handler> {
     divergence: async (a) => {
       const candles = await load(a);
       const series = oscillatorSeries(
+        resolve,
         candles,
         str(a.indicator, 'rsi'),
         typeof a.plot === 'string' ? a.plot : undefined,
@@ -164,11 +186,15 @@ export function analysisHandlers(deps: AnalysisDeps): Record<string, Handler> {
     },
 
     indicator_series: async (a) =>
-      oscillatorSeries(
-        await load(a),
-        str(a.indicator, 'rsi'),
-        typeof a.plot === 'string' ? a.plot : undefined,
-        (a.params as Record<string, unknown>) ?? {},
+      tailed(
+        a,
+        oscillatorSeries(
+          resolve,
+          await load(a),
+          str(a.indicator, 'rsi'),
+          typeof a.plot === 'string' ? a.plot : undefined,
+          (a.params as Record<string, unknown>) ?? {},
+        ),
       ),
 
     // Read an indicator WITHOUT putting it on the human's chart. Three sub-panes is the cap and
@@ -178,8 +204,8 @@ export function analysisHandlers(deps: AnalysisDeps): Record<string, Handler> {
     // returns the last value of every plot plus the state line, and draws nothing.
     indicator_read: async (a) => {
       const type = str(a.indicator, 'rsi');
-      const spec = indicatorSpec(type);
-      if (!spec) throw new Error(`unknown indicator '${type}'. Call indicator_catalog for the list.`);
+      const spec = resolve(type);
+      if (!spec) throw new Error(`unknown indicator '${type}'. indicator_list has the list.`);
       const numeric: Record<string, number> = {};
       for (const [k, v] of Object.entries((a.params as Record<string, unknown>) ?? {})) {
         if (typeof v === 'number') numeric[k] = v;
@@ -204,7 +230,22 @@ export function analysisHandlers(deps: AnalysisDeps): Record<string, Handler> {
     },
 
     // The whole catalogue, so a batch can ask what exists and then read one in the same call.
-    indicator_list: () => indicatorCatalog(),
+    // The custom indicators are listed beside it, after a rescan of their folder, so a file the
+    // human just dropped in shows up on the next list without a restart.
+    indicator_list: () => {
+      const custom = deps.customIndicators;
+      if (custom === undefined) return indicatorCatalog();
+      custom.refresh();
+      return [
+        ...indicatorCatalog(),
+        ...custom.specs().map((s) => ({
+          type: s.type,
+          pane: s.pane === 'price' ? 'overlays the price' : 'takes its own pane',
+          summary: s.summary,
+          params: s.params.map((p) => ({ name: p.name, default: p.def, min: p.min, max: p.max, integer: p.int })),
+        })),
+      ];
+    },
 
     // ---------- structure ----------
     //
@@ -244,7 +285,7 @@ export function analysisHandlers(deps: AnalysisDeps): Record<string, Handler> {
       lineAt(lineOf(deps.drawings, str(a.id, '')), num(a.t, Math.floor(Date.now() / 1000))),
 
     trendline_touches: async (a) =>
-      touches(lineOf(deps.drawings, str(a.id, '')), await load(a), num(a.tolerance, 0)),
+      tailed(a, touches(lineOf(deps.drawings, str(a.id, '')), await load(a), num(a.tolerance, 0))),
 
     // ---------- drawing ----------
     draw: (a) => {

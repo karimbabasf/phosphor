@@ -6,7 +6,7 @@ import type http from 'node:http';
 
 import type { Candle } from '../types.ts';
 import type { PriceReading } from '../view/basic.ts';
-import { buildRead, LIMITS as CHART_LIMITS, TIMEFRAMES, timeframeLabel } from '../chart.ts';
+import { buildCompactRead, buildRead, LIMITS as CHART_LIMITS, TIMEFRAMES, timeframeLabel } from '../chart.ts';
 import type { ChartGeometry, ChartIndicator, ChartState, ProviderChoice } from '../chart.ts';
 import { PROVIDER_CHOICES } from '../chart.ts';
 import type { ChartSlot, ChartStore } from '../charts.ts';
@@ -350,24 +350,31 @@ export function chartPayload(ctx: Ctx, slot = 0): unknown | null {
 // The agent's view of the same thing: no arrays of pixels, every number in context.
 /* `by` is the session asking, and it is what makes the housekeeping block answer the question
    an agent actually has. "Nine agent objects are on this chart" is not actionable; "three are
-   yours, six are somebody else's, clear yours with chart_clear what:'mine'" is. The browser
-   reads this too and passes nothing, which is correct: a human's chart read has no `mine`. */
-export async function chartRead(ctx: Ctx, by?: string | null): Promise<unknown> {
-  const state = ctx.chart.state();
+   yours, six are somebody else's, clear yours with chart_draw clear:'mine'" is. The browser
+   reads this too and passes nothing, which is correct: a human's chart read has no `mine`.
+
+   Compact by default and `full` on request: the compact shape is what a reader acts on, and it
+   is a quarter of the size. `slot` picks one of the charts; absent is the primary. */
+export async function chartRead(ctx: Ctx, by?: string | null, opts: { slot?: ChartSlot; full?: boolean } = {}): Promise<unknown> {
+  const slot = opts.slot ?? ctx.charts.primary;
+  const chart = slot.store;
+  const state = chart.state();
   try {
-    const load = await loadCandles(ctx, state.view.product, state.view.granularitySec, ctx.chart.historyNeeded(), state.view.provider);
-    return buildRead({
+    const load = await loadCandles(ctx, state.view.product, state.view.granularitySec, chart.historyNeeded(), state.view.provider);
+    const args = {
       state,
       candles: load.candles,
       meta: { source: load.source, stale: load.stale, built: load.built },
       computed: computeIndicators(ctx, state, load.candles),
       nowSec: Math.floor(Date.now() / 1000),
-      housekeeping: ctx.chart.housekeeping(by, ctx.drawings.list()),
-      drawings: ctx.drawings.list(),
-    });
+      housekeeping: chart.housekeeping(by, slot.drawings.list()),
+      drawings: slot.drawings.list(),
+    };
+    return opts.full === true ? buildRead(args) : buildCompactRead({ ...args, chart: slot.index });
   } catch (err) {
     return {
       error: errText(err),
+      chart: slot.index,
       product: state.view.product,
       timeframe: timeframeLabel(state.view.granularitySec),
       rev: state.rev,

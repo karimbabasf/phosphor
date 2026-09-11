@@ -976,6 +976,101 @@ function lastDefined(values: (number | null)[]): number | null {
   return null;
 }
 
+// Seven significant digits: enough for any price this app charts and any oscillator, and it
+// keeps a compact read from carrying fifteen digits of float noise per value.
+function short(v: number | null): number | null {
+  return v === null || !Number.isFinite(v) ? null : Number(v.toPrecision(7));
+}
+
+// The read as the agent gets it by default: the chart in about a kilobyte. The full read
+// above grew to four and a half kilobytes with a preset on the chart, and it was echoed after
+// every write, so a session paid for the same chart on every turn. This carries what a reader
+// acts on: the last values and state line of each study, where the drawn objects sit against
+// the price, the counts, and the tidy block. `chart_read full:true` is the old shape.
+export function buildCompactRead(args: ReadArgs & { chart: number }): unknown {
+  const { state, candles, nowSec } = args;
+  const view = state.view;
+  const range = visibleRange(candles.length, view);
+  const window = candles.slice(range.start, range.end);
+  const newest = candles.length > 0 ? (candles[candles.length - 1] as Candle) : null;
+  const firstBar = window.length > 0 ? (window[0] as Candle) : null;
+  let high = -Infinity;
+  let low = Infinity;
+  for (const c of window) {
+    if (c.h > high) high = c.h;
+    if (c.l < low) low = c.l;
+  }
+  const hasWindow = window.length > 0;
+  const shownLow = view.priceScale.mode === 'manual' ? view.priceScale.low : hasWindow ? low : 0;
+  const shownHigh = view.priceScale.mode === 'manual' ? view.priceScale.high : hasWindow ? high : 0;
+  const decimals = displayDecimals(shownHigh - shownLow, window);
+  const keep = args.housekeeping;
+
+  return {
+    chart: args.chart,
+    product: view.product,
+    timeframe: timeframeLabel(view.granularitySec),
+    rev: state.rev,
+    data: { source: args.meta.source, stale: args.meta.stale, bars: candles.length },
+    window: {
+      from: firstBar === null ? null : isoOf(firstBar.t),
+      barsShown: range.count,
+      live: view.panOffset <= 0,
+    },
+    price: {
+      last: newest === null ? null : short(newest.c),
+      changePct: firstBar !== null && newest !== null ? short(pctChange(firstBar.o, newest.c)) : null,
+      high: hasWindow ? short(high) : null,
+      low: hasWindow ? short(low) : null,
+      decimals,
+    },
+    bar:
+      newest === null
+        ? null
+        : {
+            o: short(newest.o),
+            h: short(newest.h),
+            l: short(newest.l),
+            c: short(newest.c),
+            v: short(newest.v),
+            closesInSec: Math.max(0, newest.t + view.granularitySec - nowSec),
+          },
+    indicators: args.computed.map(({ indicator, result }) => ({
+      id: indicator.id,
+      label: indicator.label,
+      last: Object.fromEntries(result.plots.map((plot) => [plot.key, short(lastDefined(plot.values))])),
+      state: result.state,
+    })),
+    // Who drew each object is in the full read; here the housekeeping block answers "how much
+    // of this is mine" in one number, which is the question the compact read is for.
+    levels: state.levels.map((l) => ({
+      id: l.id,
+      px: l.price,
+      label: l.label,
+      distPct: newest === null ? null : short(pctChange(newest.c, l.price)),
+    })),
+    marks: state.marks.map((m) => ({ id: m.id, t: m.t, label: m.label })),
+    drawings: (args.drawings ?? []).map((d) => {
+      const full = readDrawing(d, newest);
+      return d.kind === 'zone'
+        ? { id: d.id, kind: 'zone', label: d.label, low: full.low, high: full.high, side: full.side }
+        : { id: d.id, kind: 'line', label: d.label, priceNow: short(full.priceNow as number | null), direction: full.direction, side: full.side };
+    }),
+    geometry:
+      state.geometry === null
+        ? null
+        : {
+            width: state.geometry.width,
+            height: state.geometry.height,
+            pxPerBar: short(state.geometry.pxPerBar),
+            panes: state.geometry.panes.length,
+            dropped: state.geometry.dropped,
+          },
+    housekeeping:
+      keep === undefined ? null : { mine: keep.mine, others: keep.others, human: keep.human, stale: keep.stale, hint: keep.hint },
+  };
+}
+
 // One drawn object as the agent reads it. Exported because the compact read builds its own
 // smaller row from the same arithmetic.
 export function readDrawing(d: Drawing, newest: Candle | null): Record<string, unknown> {

@@ -13,13 +13,18 @@ import { indicatorCatalog } from '../../indicators.ts';
 import { runBatch } from '../../batch.ts';
 import { analysisHandlers } from '../../analysis/index.ts';
 import { errText, fail, intParam, sendJson } from '../respond.ts';
-import { chartRead, loadCandles, numOrUndefined } from '../chart.ts';
+import { chartRead, customIndicatorsOf, loadCandles, numOrUndefined, resolveIndicator } from '../chart.ts';
+import { slotOf } from '../view.ts';
 import { CANDLE_LIMIT_MAX, SCAN_TIMEFRAMES_MAX } from '../context.ts';
 import type { ReadTable } from '../context.ts';
 
 export const chartReads: ReadTable = {
-  chart_read: async (ctx, body, _args, res) => {
-    sendJson(res, 200, await chartRead(ctx, String(body.session ?? '') || null));
+  // Compact by default; `full: true` is the old shape. `chart` picks one of the charts a layout
+  // put up, and a slot nothing filled is refused by name rather than answered with the primary.
+  chart_read: async (ctx, body, args, res) => {
+    const found = slotOf(ctx, args.chart);
+    if (!found.ok) return fail(res, 400, found.error);
+    sendJson(res, 200, await chartRead(ctx, String(body.session ?? '') || null, { slot: found.slot, full: args.full === true }));
   },
   chart_batch: async (ctx, body, args, res) => {
     const ops = Array.isArray(args.ops) ? args.ops : [];
@@ -44,6 +49,10 @@ export const chartReads: ReadTable = {
           ).candles,
         history: ctx.history,
         drawings: ctx.drawings,
+        // The same resolver the chart draws with, so a custom indicator reads here the way it
+        // draws there, and indicator_list can rescan the folder it came from.
+        indicator: (type) => resolveIndicator(ctx, type),
+        customIndicators: customLoader(ctx),
         // Who is asking, and what they are looking at. Anything this batch draws is stamped
         // with it, which is what lets `chart_clear what:'mine'` and the product sweep reach
         // a zone the same way they reach a level.
@@ -113,23 +122,26 @@ export const chartReads: ReadTable = {
     }
     const bars = intParam(args.bars, 120, CANDLE_LIMIT_MAX);
     const nowSec = Math.floor(Date.now() / 1000);
-    const rows: unknown[] = [];
-    for (const step of plan) {
-      if ('bad' in step) {
-        rows.push({
-          timeframe: step.bad,
-          error: `${step.bad} is not a timeframe. Use <count><unit> with unit m, h, d or w, from 1m up to 1w.`,
-        });
-        continue;
-      }
-      const sec = step.sec;
-      try {
-        const load = await loadCandles(ctx, product, sec, bars);
-        rows.push({ ...digestSeries(load.candles, sec, nowSec), source: load.source, stale: load.stale });
-      } catch (err) {
-        rows.push({ timeframe: timeframeLabel(sec), granularitySec: sec, error: errText(err) });
-      }
-    }
+    // Every timeframe at once. They used to load one after another, so a cold scan of five
+    // timeframes was five venue round trips in series; the fills are independent and the cache
+    // already collapses two asks for one series into one call.
+    const rows: unknown[] = await Promise.all(
+      plan.map(async (step) => {
+        if ('bad' in step) {
+          return {
+            timeframe: step.bad,
+            error: `${step.bad} is not a timeframe. Use <count><unit> with unit m, h, d or w, from 1m up to 1w.`,
+          };
+        }
+        const sec = step.sec;
+        try {
+          const load = await loadCandles(ctx, product, sec, bars);
+          return { ...digestSeries(load.candles, sec, nowSec), source: load.source, stale: load.stale };
+        } catch (err) {
+          return { timeframe: timeframeLabel(sec), granularitySec: sec, error: errText(err) };
+        }
+      }),
+    );
     sendJson(res, 200, {
       product,
       scannedAt: new Date(nowSec * 1000).toISOString(),
@@ -141,3 +153,12 @@ export const chartReads: ReadTable = {
     });
   },
 };
+
+// The custom indicator loader as the op table wants it: refresh and specs, or nothing. The
+// loader is optional on the context (see customIndicatorsOf) and the op table is built without
+// it when either half is missing, so a partial loader never reaches indicator_list.
+function customLoader(ctx: Parameters<typeof customIndicatorsOf>[0]): { refresh(): unknown; specs(): import('../../indicators.ts').IndicatorSpec[] } | undefined {
+  const held = customIndicatorsOf(ctx) as { refresh?: () => unknown; specs?: () => import('../../indicators.ts').IndicatorSpec[] } | null;
+  if (held === null || typeof held.refresh !== 'function' || typeof held.specs !== 'function') return undefined;
+  return { refresh: () => held.refresh?.(), specs: () => held.specs?.() ?? [] };
+}

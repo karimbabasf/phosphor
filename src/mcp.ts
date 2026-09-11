@@ -454,8 +454,16 @@ registerRead(
 
 registerRead(
   'chart_read',
-  'Returns everything about the chart as it currently stands: product, timeframe, the visible time range in epoch seconds and ISO, seconds until the current bar closes, the current bar OHLCV, the change and range across the window, the price scale and the decimal precision in use, every indicator with its last values and a one-line state, the price levels and marks, and the on-screen geometry so you can tell whether what you asked for is readable. Read-only, changes nothing.',
-  {},
+  [
+    'The chart as it stands, compact: product, timeframe, last price and the change over the window,',
+    'seconds until this bar closes, every indicator with its last values and a one-line state, the',
+    'levels, marks, lines and zones with where each sits against the price, the on-screen geometry,',
+    'and a housekeeping block saying what is yours and what is stale. About a kilobyte.',
+    'full: true returns the long form (the visible range in epoch and ISO, the current bar OHLCV,',
+    'the price scale, every field of every object). chart: 0 to 3 reads one of the charts a',
+    'chart_layout put up; omit it for the primary. Read-only, changes nothing.',
+  ].join(' '),
+  { chart: z.number().int().min(0).max(3).optional(), full: z.boolean().optional() },
 );
 registerRead(
   'chart_measure',
@@ -510,7 +518,7 @@ registerRead(
     'Each entry is { op, args, as }. A later entry can use an earlier one with "$ref:<as>.<field>",',
     'so drawing a line and measuring against it is a single call. One failing entry does not stop the rest.',
     '',
-    'Seeing: candles, history_page (walks back through history on a cursor, no limit on how far).',
+    'Seeing: candles.',
     'Measuring: pivots (swing points by prominence), levels (where price reacted before),',
     'regime (volatility percentile), atr, volume_profile (point of control and value area),',
     'vwap (anchored to a bar you choose), range (Kaufman efficiency), divergence, indicator_series,',
@@ -530,6 +538,8 @@ registerRead(
     'Every result is a MEASUREMENT with the parameters that produced it. This tool returns no',
     'signals, scores or trade suggestions: you do the reading, it does the measuring.',
     'Omit product or granularitySec to measure whatever the chart is currently showing.',
+    'Ops that return a series (candles, atr, indicator_series, pivots, trendline_touches) answer with',
+    'the newest 20 entries; tail: n changes how many and full: true returns the whole series.',
   ].join(' '),
   {
     ops: z.array(
@@ -574,6 +584,9 @@ registerRead(
             // referring to something already drawn
             id: z.string().optional(),
             t: z.number().optional(),
+            // how much of a series comes back
+            tail: z.number().int().optional(),
+            full: z.boolean().optional(),
             // history paging
             cursor: z.number().optional(),
             limit: z.number().int().optional(),
