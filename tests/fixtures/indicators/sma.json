@@ -1,0 +1,6 @@
+{
+  "title": "Custom SMA",
+  "overlay": true,
+  "inputs": { "length": { "default": 20, "min": 2, "max": 400, "int": true } },
+  "plots": [{ "title": "SMA", "expr": ["sma", "close", "length"] }]
+}

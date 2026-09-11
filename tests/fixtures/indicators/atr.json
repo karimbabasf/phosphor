@@ -1,0 +1,6 @@
+{
+  "title": "Custom ATR",
+  "overlay": false,
+  "inputs": { "length": { "default": 14, "min": 2, "max": 400, "int": true } },
+  "plots": [{ "title": "ATR", "expr": ["atr", "length"] }]
+}

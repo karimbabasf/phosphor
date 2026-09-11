@@ -45,6 +45,10 @@ export type Plot = {
   signs?: number[];
   // Band only: the key of the plot this one fills down to.
   fillTo?: string;
+  // A custom indicator may name one of the app's colour tokens for a plot. Absent on every
+  // built-in, whose plots separate by emphasis alone; the renderer treats absent as "the
+  // indicator hue", so a built-in is drawn exactly as before.
+  tone?: 'up' | 'down' | 'warn' | 'agent' | 'text';
   values: (number | null)[];
 };
 
