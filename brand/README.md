@@ -7,6 +7,11 @@ The official Phosphor wordmark, and the script that draws it.
   laid out on A4 landscape at 300 dpi. Prints at 297 x 210 mm with a 24 mm side margin.
 - `phosphor-wordmark-white-outline.png` (3949 x 1088), white `#fff` letters with a black `#000`
   outline and no background, for laying the mark over a photo or a colour.
+- `phosphor-twitter-banner.png` (1500 x 500), the X header. White `#fff` on black `#000`, the mark
+  at 56 percent of the width and "agents that know blockchain" under it in Menlo, tracked at 0.2em
+  and sized so its ink is exactly as wide as the mark's. The block sits high so the profile picture,
+  which X lays over the bottom left corner, never touches it. `banner.html?guides=1` draws that
+  corner and the safe area, for checking.
 
 The first two are black `#000` on white `#fff`. The app runs green on near-black; these are the
 inverted mark, for light and print contexts.
@@ -38,6 +43,7 @@ Needs a local Brave and `playwright-core`. Both come from the machine, not from 
     node build.mjs mark.html ../phosphor-wordmark.png
     node build.mjs hq.html ../phosphor-headquarters.png
     node build.mjs mark-outline.html ../phosphor-wordmark-white-outline.png
+    node build.mjs banner.html ../phosphor-twitter-banner.png
 
 `build.mjs` writes the PNG and prints the geometry it measured.
 
@@ -48,6 +54,7 @@ There is no test suite. Check it by eye against these numbers, which `build.mjs`
     wordmark      W 3949  H 1088  stroke 91  gap 31  cuts 7  slashAngle 56
     headquarters  page 3508x2480  markSize 614  cap 437  subPx 166  marginSide 281
     outline       same as wordmark, plus outlineW 12
+    banner        page 1500x500  markSize 175  cap 124  subPx 39  lineW 837  blockTop 116
 
 A changed `stroke` or `slashAngle` means the font failed to load and a fallback face was used.
 
