@@ -5,3 +5,5 @@
 export { customIndicatorSchema, LIMITS, OPS, SERIES, TONES, validateExprs } from './schema.ts';
 export type { CustomIndicator, CustomInput, CustomPlot, Expr, Tone } from './schema.ts';
 export { compile, WORK_BUDGET } from './evaluate.ts';
+export { translatePine } from './pine.ts';
+export type { PineResult } from './pine.ts';

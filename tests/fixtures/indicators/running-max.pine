@@ -1,0 +1,8 @@
+//@version=5
+indicator("Running Max")
+var float peak = na
+peak := math.max(nz(peak[1]), high)
+var int bars = 0
+bars := bars + 1
+plot(peak, "Peak")
+plot(bars, "Bars", style=plot.style_histogram)

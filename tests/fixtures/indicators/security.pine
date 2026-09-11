@@ -1,0 +1,4 @@
+//@version=5
+indicator("HTF Close", overlay=true)
+htf = request.security(syminfo.tickerid, "D", close)
+plot(htf)

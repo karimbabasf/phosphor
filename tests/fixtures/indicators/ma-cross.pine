@@ -1,0 +1,9 @@
+//@version=5
+indicator("MA Cross", overlay=true)
+fastLen = input.int(9, "Fast", minval=1)
+slowLen = input.int(21, title="Slow", minval=1, maxval=400)
+fast = ta.sma(close, fastLen)
+slow = ta.ema(close, slowLen)
+plot(fast, "Fast", color=color.green)
+plot(slow, "Slow", color=color.red)
+plotshape(ta.crossover(fast, slow), style=shape.triangleup, location=location.belowbar)
