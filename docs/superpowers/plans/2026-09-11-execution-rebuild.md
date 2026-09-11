@@ -322,3 +322,112 @@ V1. Full suite, typecheck, e2e (`npm run e2e`).
 V2. Pen test workflow: attackers per surface (Pine, profile, plan schema, snapshot route, child protocol, policy math), each returning reproduction commands; fixes land as tests.
 V3. Latency: (a) `scripts/latency-venue.ts`: signed order round trip on mainnet at minimum size when collateral exists, else a signed order the venue rejects for margin (same path); (b) `tests/unit/runner-latency.test.ts`: frame in -> post out under 50 ms with a fake venue; (c) headless Chromium: SSE frame -> DOM update, `chart_draw` -> repaint.
 V4. Live check in the app: `npm run bundle`, `npm run tauri dev`, one real plan at minimum size with the agent, cancel, close.
+
+---
+
+## Unit D direction (design plan, fixed before build)
+
+The identity is decided and locked by the owner: green phosphor on near-black,
+Geist for words, Geist Mono for numbers. Nothing here adds a colour, a face or
+a radius. The work is subtraction: one fact in one place, one control grammar,
+one label budget, sentence case everywhere.
+
+**Tokens (existing, `ui/design/tokens.css`):** ground `#0B0D10`, surfaces
+`#111418` and `#181C22`, lines `#232830` and `#313843`, text `#ECEEF1`
+`#9BA1AB` `#5E656F`, ink `#33FF66` (up, agent-drawn structure), down `#FF5A6E`
+(loss, liquidation only), warn `#F5B942` (waiting on a person, spotlight),
+agent `#B79CFF`. Radius 10 on every control, 14 on the one popover, 999 only
+on the feed dot. No gradients, no new shadows.
+
+**Type:** Geist 12/13/14/15 for words, Geist Mono for every number including
+the canvas (11 px on the canvas, replacing the system monospace). Labels are
+sentence case, never tracked caps: the coin mark, the overlay labels and the
+zone headings all lose their uppercase. Tabular figures everywhere.
+
+**Bar (one row at 1280, wraps under 560):**
+
+```
+[BTC v][1m 5m 15m 1h 4h 1d]  [Indicators        ]  [Layers v]          live 12 ms
+```
+
+One segmented control holds the symbol and the timeframes (`.seg`, 26 px,
+radius 10). The indicator command keeps its input. `Layers` is a popover
+(origin top-left, scale from 0.97 plus opacity, 150 ms ease-out) with the
+seven overlays and volume as check rows. The status cluster becomes one line:
+a 6 px dot and `live 12 ms`, `delayed`, or `offline`; the venue word moves into
+the Layers popover foot. The floating word `Draw` and the venue cycling button
+are gone. The topbar's SSE chip stays (it is a different fact) but is hidden on
+the trade screen.
+
+**Rail (right, 320 floor, unchanged placement):**
+
+```
+BTC
+64,231.5                      <- 28 mono
+Free            21.07
+At risk          0.00
+Max loss         0.00         <- only when > 0
+
+Open                          <- 12 text-3 heading, sentence case
+Long BTC                +4.20 <- 15/500 title, PnL mono toned, right
+Size 0.012   Entry 64,100
+Stop -1.4%   Target +2.9%                       [Close]
+
+Waiting
+Long ETH $200 at 3x, market, stop 3,180, target 3,420
+  o 1h close above 3,300
+  o volume at least 1.5x
+  waiting, needs unlock        <- warn tone when locked or blind
+                                                [Cancel]
+Done
+14:02  Bought BTC 0.012   64,101.0
+13:40  Stopped pl_x        -4.20
+```
+
+Zones size to content. An empty zone is one 12 px text-3 line: `Nothing
+open.`, `Nothing waiting.`, `Nothing yet.` The space left under the last zone
+is plain rail ground, no box. `Close` and `Cancel` are 26 px ghost buttons in
+the one control grammar (`transform: scale(0.97)` on `:active`, 160 ms), they
+POST `/api/trade/action`, and they confirm inline (the button becomes `Sure?`
+for 4 s) rather than with a dialog. Condition rows use a 6 px dot: filled ink
+when it holds, hollow text-3 when it does not.
+
+**Canvas:** one label column manager (`ui/chart/labels.js`) that the legend,
+level labels and trade overlays all feed: items `{y, text, tone}`, placed at
+x 5 from y 16 with a 13 px pitch, pushed apart, at most 8 then `+N more`.
+Overlay colours come from the tokens (liquidation = down, wall = warn, entry
+= text, agent objects = agent). Plans draw as: entry line dashed in agent tint
+labelled `Plan long 64,100`, stop dashed in down tint, target dashed in ink,
+the band entry to stop filled down at 0.05 alpha and entry to target filled
+ink at 0.05 alpha. That band is how a strategy is shown without words.
+
+**Spotlight:** a highlight sets `data-spot` on its row or object: an amber
+ring (`box-shadow: 0 0 0 2px var(--warn)`) that pulses twice over 1.2 s via
+WAAPI, sibling rows at opacity 0.55 for the same 1.2 s (transition 200 ms
+ease-out both ways), and the note as a 12 px callout under the row built
+with `textContent`. On the canvas the object's label gets a warn ring for
+1.2 s. Highlights arrive on the trade payload; the window renders every one.
+
+**Transcript:** `ui/core/markdown.js` renders paragraphs, bold, inline and
+fenced code, headings as `.chat-h` (13 px, weight 500, text-2, never larger
+than body), lists, and GFM tables as real `<table>` elements: 13 px, header
+row 12 px text-3, hairline row rules, numbers in Geist Mono tabular, signed
+percentages and dollar deltas toned up or down, `overflow-x: auto` on the
+wrapper. Links print as text. Consecutive text blocks of one turn merge into
+one reply row.
+
+**Comparison charts (`ui/chart/mini.js`):** a canvas per slot 1 to 3 drawing
+candles, server plot lines, levels and drawn lines, with a header `ETH 4h`
+(coin in text-1, timeframe in text-3) and a last price tag. Grid in the chart
+column: 1 fills, 2 side by side, 3 and 4 as two by two. The primary engine is
+slot 0 and keeps every element id it binds today.
+
+**Motion:** the scan band fires on write tools only (`chart_draw`,
+`trade_plan`, `trade_highlight`, `chart_layout`), never on reads. Rows that
+appear (a new fill, a new plan) enter with opacity and a 4 px rise over 220 ms
+ease-out. Reduced motion keeps opacity changes and drops movement.
+
+**Generic-default check:** near-black plus green is the owner's locked brand,
+not a default. Tracked caps labels, middle-dot separators, one radius for all
+hierarchy and a mono face for word labels were present and are removed. The
+one memorable thing is the plan band on the chart; everything else is quiet.
