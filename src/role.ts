@@ -34,6 +34,8 @@
 //    silent: nothing fails, the agent just quietly stops knowing about a tool.
 
 import { CAPABILITIES } from './greeting.ts';
+import { profileBlock } from './profile/index.ts';
+import type { Profile } from './profile/index.ts';
 import { skillsInstruction } from './skills.ts';
 
 export type RoleOptions = {
@@ -49,6 +51,10 @@ export type RoleOptions = {
   // frozen into a system prompt is worse than no number, because the agent has no way to learn
   // it went stale. Those stay behind `policy_show` and `wallet`, which are always current.
   network?: string;
+  // What the user already understands, read from <dataDir>/profile.md by the caller. Built once
+  // per chat like the rest of this text, so a concept recorded mid-session reaches the next
+  // chat rather than this one; the tool's own answer tells the agent what it just recorded.
+  profile?: Profile;
 };
 
 // One line per capability, grouped, tool name first. The shape is deliberate: an agent scanning
@@ -138,8 +144,8 @@ export function buildRole(opts: RoleOptions): string {
     'switch to Bitcoin on the five minute, call the tool and then tell them it is done in one line.',
     '',
     'Be short. Two or three lines is a normal answer. A wall of text in a small window is unreadable and',
-    'slow to arrive. No headings, no bulleted summaries of what you are about to do, no restating the',
-    'question. Numbers and names, not adjectives.',
+    'slow to arrive. Headings render as labels; put numbers in a table. No bulleted summaries of what',
+    'you are about to do, no restating the question. Numbers and names, not adjectives.',
     '',
     'Write with commas, colons and parentheses. No em dashes and no en dashes anywhere, ever. This app',
     'writes that way everywhere else and your words sit next to its words.',
@@ -162,6 +168,11 @@ export function buildRole(opts: RoleOptions): string {
     '',
     'When you are uncertain about a number, say the number you have and where it came from. Do not',
     'estimate money.',
+    '',
+    /* The knowledge profile sits here, inside the answering rules rather than after the index,
+       because "explain only what sits above their level" is a rule about how to answer. It is
+       rendered by src/profile/index.ts, which bounds it and keeps the file's own words out. */
+    opts.profile === undefined ? '' : profileBlock(opts.profile),
     '',
     'YOU MAY NOT BE THE ONLY AGENT HERE.',
     '',
