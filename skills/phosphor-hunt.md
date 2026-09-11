@@ -20,15 +20,15 @@ This holds for the whole session, from the first message to the last, without be
 the human. It is the reason this skill exists.
 
 What is in scope, and is the point:
-- Every read tool. `chart_*`, `trade_read`, `trade_batch`, `candles`, `market_search`,
-  `research`, `balances`, `composition`, `policy_show`, `agent_*`.
-- Drawing on the chart. Levels, trendlines, marks, overlays, notes. Drawing is how the human and
-  you end up looking at the same object.
+- Every read tool. `chart_*`, `trade_read`, `trade_batch`, `market_search`, `research`,
+  `balances`, `composition`, `policy_show`, `agent_*`.
+- Drawing on the chart. Levels, lines, marks, zones, overlays, highlights, and a plan drawn as an
+  idea with `trade_plan`. Drawing is how the human and you end up looking at the same object.
 - Naming a trigger, an entry price, an invalidation, a stop distance, targets and a size in R.
   **A priced plan is the deliverable, not a step toward execution.**
 
 What is out of scope, permanently, unless the human says the word in that moment:
-- Any `propose_*` tool. Swap, deposit, withdraw, consolidate, mandate, policy change. All of them.
+- Any `propose_*` tool. Swap, deposit, withdraw, consolidate, trade, policy change. All of them.
 - Asking whether to place it. "Want me to size this up", "shall I propose the swap", "ready when
   you are" and every polite variant. **The offer is the interruption he asked to stop.**
 - Writing code. No bot, no strategy file, no backtest script, no automation of the plan. A plan
@@ -94,7 +94,7 @@ one thing it was for.**
 
 Order matters and each stage exists to kill candidates. A stage that kills nothing was run wrong.
 
-**1. Account first, chart second.** One `trade_batch`: account, positions, orders, mandates,
+**1. Account first, chart second.** One `trade_batch`: account, positions, orders, plans,
 market, venue_health. An open position changes what an opportunity even is. A new idea correlated
 with something already on is the same bet twice and does not get armed; say so by name. Heat
 already at its limit means the board is `WATCH` only, every row, and the board says why on line
@@ -173,8 +173,8 @@ and wait, and do not spawn a fourth.
 ## Marking the chart
 
 Draw only the winner, on its trigger timeframe. One marked chart is a tool; four half-marked
-charts are a mess nobody reads. `chart_clear` before a new thesis. Then one line saying what you
-drew. The batching rules, the 32-op ceiling and `$ref` are in phosphor-analysis.
+charts are a mess nobody reads. One `chart_draw` with `clear: "mine"` before a new thesis. Then
+one line saying what you drew. The batching rules and `$ref` are in phosphor-analysis.
 
 ## The board
 
