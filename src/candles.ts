@@ -1,7 +1,7 @@
 // Candle data sources: Coinbase Exchange (primary) and Kraken (fallback), unified
 // behind CandleSource, plus cachedCandles which adds staleness fallback caching.
-// Endpoint shapes verified 2026-08-11; see docs/superpowers/plans/2026-08-11-acc-v1-plan.md,
-// Global Constraints and Task C. Binance is geo-blocked from this machine, never used.
+// Endpoint shapes verified 2026-08-11 against the live APIs. Binance is geo-blocked from this
+// machine, never used.
 
 import type { Candle, CandleSource } from './types.ts';
 import { readTimeout } from './net.ts';

@@ -93,19 +93,16 @@ rather than assuming it.
 ## The agent can change what the human sees (v0.3)
 
 `switch` moves the app window between the detailed operator view (`pro`), a plain English view
-written for a non-technical reader (`basic`), and the trading surface (`trade`). Only the
-connected agent can call it. Within the main page there is no keyboard shortcut and no button
-that lets the human move between `pro` and `basic`; that is a deliberate product decision, not an
-oversight. The trading window is a separate page at `/trade`, so a human who opens that URL by
-hand gets it, and both pages navigate on a transition rather than on a first sighting, so opening
-it by hand is not immediately undone.
+written for a non-technical reader (`basic`), and the trading surface (`trade`). The human moves
+between them with the tabs in the window; the agent moves them with this tool. All three are
+screens inside the one window, and a switch is written to the audit log either way.
 
 State it plainly, because it is a capability pointed at the human rather than at the money:
 **the agent chooses which surface an approval decision happens on.**
 
 What limits it:
 
-- **The approval block renders on all three windows** (`ui/approvals.js`), so a switch moves the
+- **The approval block renders on all three screens** (`ui/screens/decision.js`), so a switch moves the
   decision with the human instead of leaving it behind on the screen they came from.
 - **The pending ids ride back on the response**, and the tool description tells the agent to say
   the count out loud. This matters most on `basic`, which shows one ask at a time: switching there

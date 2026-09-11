@@ -33,9 +33,9 @@ back out, funding the Hyperliquid perps account from any chain this app signs fo
 stablecoin onto one chain, a change to the policy itself, and arming a rule-driven bot on
 Hyperliquid perpetuals.
 
-Two venues, and only two: NEAR Intents and Hyperliquid. The five chains are still signed for and
-money still crosses them, but nothing is held on one: a balance lives inside the Intents verifier
-or inside the Hyperliquid account.
+Two venues, and only two: NEAR Intents and Hyperliquid. Money still crosses the chains on its way in
+and out, but nothing is held on one: a balance lives inside the Intents verifier or inside the
+Hyperliquid account, and it moves between the two in one signature each way.
 
 Money gets in the way it does in any wallet. Ask for a deposit address and you get one per network,
 the same address every time, no quote and no expiry, and you send to it from an exchange or another
@@ -175,7 +175,7 @@ file. To run both at once, give the installed app its own port in its `config.lo
 
 ## Test it
 
-    npm test            # the unit suite: policy engine, proposals, ledger, composition, cost, rails, signers, injection
+    npm test            # the unit suite: policy engine, proposals, ledger, composition, rails, signers, injection
     npm run e2e         # boots the app + a real MCP client, drives 34 checks, exits 0/1
     npm run typecheck   # tsc --noEmit over src, tests and scripts
 
@@ -192,7 +192,7 @@ The e2e run is the proof rather than a smoke test: it boots the real app, connec
 client over stdio, and checks that reads work, that a write lands as pending, that approving it
 executes, that the kill switch refuses, and that a forged approval token gets a 403.
 
-The injection suite (18 of the 1991, in `tests/injection.test.ts`) feeds hostile strings from
+The injection suite (11 of the 2033, in `tests/injection.test.ts`) feeds hostile strings from
 `tests/fixtures/hostile.json`
 through the real MCP surface: sentences that claim to be the account owner, that declare policy
 checks disabled, that carry a forged approval blob. Every one lands as a refusal or a pending

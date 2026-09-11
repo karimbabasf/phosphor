@@ -11,7 +11,7 @@ never be able to approve its own actions.
                  v
     +---------------------------+
     | src/mcp.ts                |   no state, no keys, no files, no approval path
-    | stdio MCP server          |   36 tools, every call becomes one POST
+    | stdio MCP server          |   49 tools, every call becomes one POST
     +---------------------------+
                  |
                  | HTTP POST /api/mcp  ->  127.0.0.1:4177
@@ -71,7 +71,7 @@ brief was written by another model, and nothing in that chain is a human.
 | `src/server.ts` | HTTP surface: the UI, the read APIs, `/api/mcp`, and the token-gated decision routes. |
 | `src/mcp.ts` | The stdio MCP server. A proxy, nothing else. |
 | `src/ledger/` | `intents.ts` reads the NEAR Intents verifier, `near.ts` reads NEAR chain balances, `demo.ts` holds the fixtures, and `index.ts` is the one interface over them. Read-only by construction. Live mode reads ONE place: the verifier. Nothing is held on a chain, so `snapshot().holdings` is empty on a live snapshot and `intents()` carries what this app owns, with its own ok flag. |
-| `src/wallet.ts` | The wallet view: one row per token and per LP position, with chain, quantity, unit price, USD value and share. Natives included. |
+| `src/wallet.ts` | The wallet view: one row per token on a chain, one per balance inside NEAR Intents, one for the Hyperliquid account, with quantity, unit price, USD value and share. Natives included. |
 | `src/composition.ts` | Classifies holdings against `data/risk-table.json`: issuer, freeze power, shares. Natives excluded, because composition rules are about stablecoin issuer concentration. |
 | `src/policy/engine.ts` | Pure. Takes a draft and a context, returns one of three verdicts. No IO, no clock, no network. |
 | `src/policy/file.ts` | Load, validate and save `state/policy.json`. Returns null on anything it cannot trust. |
@@ -97,23 +97,22 @@ brief was written by another model, and nothing in that chain is a human.
 | `src/indicators-kit.ts` | The series maths both indicator catalogues are built from. One EMA in the app, so the number the agent reads and the pixel the human sees cannot disagree. |
 | `src/indicators-library.ts` | The second catalogue: the wave family, SuperTrend, Keltner, the squeeze, Ichimoku, ADX and the rest. Written from published formulas; no vendored code and no third-party dependency. |
 | `src/analysis/structure.ts` | Structure as boxes and events rather than series: order blocks, fair value gaps, liquidity shelves, and the bar that closed through a swing. Measurements, never a place to trade. |
-| `src/summon.ts` | Starts a fresh agent in a terminal window, wired to this app. The window could already stop an agent; this is how it starts one. |
 | `src/rails/` | The rail registry: the one table that knows every rail exists. `swap` maps to one rail that dispatches on venue, so two venues can share a kind without pushing the pair into every call site. |
 | `src/rails/mandate.ts` | The perps rail. Arming a mandate is the only way a position is opened, and it always waits for a human click because it grants standing authority rather than doing one thing. |
 | `src/strategy/` | The grammar an agent may write and the runner will execute (`grammar.ts`), what the envelope caps (`envelope.ts`), the evaluator (`evaluate.ts`), the worked examples handed to the agent (`catalog.ts`) and the plain-English renderer. Anything not in the grammar cannot happen. |
 | `src/runner/` | The only code in phosphor that places an order. No model runs in this process: it holds an agent-authored program and a human-approved envelope, and does what they say. |
 | `src/hl/` | Hyperliquid: action signing, msgpack, the order format the venue accepts rather than rejects, info reads and liquidation maths. |
-| `src/trade/` | The trading surface: raw venue state in, one payload out. Everything the browser draws on `/trade` is a view of that function's output. |
+| `src/trade/` | The trading surface: raw venue state in, one payload out. Everything the trade screen draws is a view of that function's output. |
 | `src/analysis/` | The measurements behind `chart_batch`: pivots, levels, regime, ATR, volume profile, VWAP, range, divergence, trend-line fitting. `index.ts` is a table of one line per op and must stay one. |
 | `src/batch.ts` | Many operations, one round trip. The agent's latency is turns, not milliseconds, so a later entry can reference an earlier one by name. |
 | `src/drawings.ts` | The objects that make the chart a shared coordinate system: the agent draws one, the human sees it, and a strategy program refers to it by id. |
 | `src/history.ts` | Backward paging through candle history. The cursor is a timestamp rather than an offset, because the venue's endpoint is keyed that way. |
 | `src/chart.ts` | Chart view state, the agent read model, and the ruler. Server-side, so the number the agent reads and the pixel the human sees come from one implementation. |
 | `src/indicators.ts` | Indicator maths. Pure, index-aligned with the candles. |
-| `ui/` | Three windows (`index.html` for pro and basic, `trade.html` for the trading surface), no framework, no build step. `approvals.js` renders the approval block identically on all three. |
+| `ui/` | One window (`index.html`) with the basic, pro and trade screens inside it, no framework, no build step. `screens/decision.js` renders the approval block on every screen. |
 
 `wallet.ts` and `composition.ts` look like duplicates and are not. The wallet answers "what do I
-hold", so it includes natives and LP positions. Composition answers "what is my money made of, and
+hold", so it includes natives, the intents balance and the trading account. Composition answers "what is my money made of, and
 does that break a rule", so it counts only the assets the policy engine reasons about. Merging them
 would mean one of the two answers is wrong.
 
