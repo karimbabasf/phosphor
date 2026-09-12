@@ -29,8 +29,16 @@ type TagSource = {
   payload?: () => { plans?: { status?: string }[] } | undefined;
 };
 
+/* The coin alphabet, the rule a plan holds its symbol to. The focused symbol is whatever string
+   trade_focus was last handed, and this line is the app's own voice, fenced in brackets so the
+   model can tell it from the person talking: a symbol that is not a coin is left out of it
+   rather than quoted, because quoted it could close the brackets and open a line of its own. */
+const COIN = /^[A-Z0-9]{1,12}$/;
+
 export function screenTag(view: string, trade: TagSource): string {
-  const parts = [`the window is on the ${view} screen`, `${trade.view.state().symbol} focused`];
+  const parts = [`the window is on the ${view} screen`];
+  const symbol = trade.view.state().symbol;
+  if (COIN.test(symbol)) parts.push(`${symbol} focused`);
   let plans: { status?: string }[] | undefined;
   try {
     plans = trade.payload?.()?.plans;
