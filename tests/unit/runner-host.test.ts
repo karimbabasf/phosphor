@@ -60,7 +60,7 @@ class FakeChild extends EventEmitter {
       case 'modify':
         return { ev: 'modified', seq: m.seq, id: m.id, stop: m.stop ?? 90, target: m.target ?? null, cloids: { stop: '0xstop2' }, gen: m.gen + 1 };
       case 'cancel':
-        return { ev: 'cancelled', seq: m.seq, id: m.id, filledSz: 0 };
+        return { ev: 'cancelled', seq: m.seq, id: m.id, filledSz: 0, cloids: {}, gen: 1 };
       case 'close':
         return { ev: 'closed', seq: m.seq, id: m.id, stillOpenSz: 0 };
       case 'flatten':

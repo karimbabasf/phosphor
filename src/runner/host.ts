@@ -568,6 +568,8 @@ export function createRunnerHost(deps: HostDeps) {
             if (reply.ev === 'cancelled' && reply.filledSz > 0) {
               row.status = 'open';
               row.exitSz = reply.filledSz;
+              row.cloids = reply.cloids;
+              row.gen = reply.gen;
               persist(row);
               return;
             }
@@ -745,6 +747,11 @@ export function createRunnerHost(deps: HostDeps) {
 
     async arm(row: PlanRow): Promise<{ ok: true } | { ok: false; reason: string }> {
       const known = rows.get(row.id);
+      /* Two cards can be filed for one drawn plan while it is an idea, and a person can click
+         both. The first arm made it live; a second would reset the row to waiting on top of a
+         placed entry or an open position, fire again, and on the child's refusal finish the
+         plan and release the exits that protect it. A live plan is armed once. */
+      if (known !== undefined && live(known)) return { ok: false, reason: `${row.id} is already ${known.status}` };
       const next: PlanRow = { ...(known ?? {}), ...row, status: 'waiting' };
       delete next.endReason;
       const out = await armRow(next);
@@ -803,6 +810,8 @@ export function createRunnerHost(deps: HostDeps) {
       if (reply.filledSz > 0) {
         row.status = 'open';
         row.exitSz = reply.filledSz;
+        row.cloids = reply.cloids;
+        row.gen = reply.gen;
         persist(row);
         return { ok: true, detail: `${id}: the entry is cancelled, and ${String(reply.filledSz)} had already filled, so the plan is open and protected` };
       }
@@ -904,8 +913,10 @@ export function createRunnerHost(deps: HostDeps) {
       for (const row of liveRows()) {
         if (row.status !== 'waiting') continue;
         if (deps.approval !== undefined) {
+          // Hashed again from the row's own fields rather than read off the row: a file edited
+          // by hand keeps whatever hash it was given, and the question is what the plan says.
           const approval = row.proposalId === undefined ? null : deps.approval(row.proposalId);
-          if (approval === null || approval.status !== 'executed' || approval.hash !== row.hash) {
+          if (approval === null || approval.status !== 'executed' || approval.hash !== planHash(planOf(row))) {
             finish(row, 'failed:plan on disk does not match its approval');
             continue;
           }

@@ -385,10 +385,10 @@ async function cancel(m: Extract<ToChild, { cmd: 'cancel' }>): Promise<FromChild
   if (pos !== null && h.fired) {
     const out = await protect(h);
     if (!out.ok) return { ev: 'error', seq: m.seq, id: m.id, message: out.reason };
-    return { ev: 'cancelled', seq: m.seq, id: m.id, filledSz: Math.abs(pos.szi) };
+    return { ev: 'cancelled', seq: m.seq, id: m.id, filledSz: Math.abs(pos.szi), cloids: h.cloids, gen: h.gen };
   }
   held.delete(m.id);
-  return { ev: 'cancelled', seq: m.seq, id: m.id, filledSz: 0 };
+  return { ev: 'cancelled', seq: m.seq, id: m.id, filledSz: 0, cloids: h.cloids, gen: h.gen };
 }
 
 async function closeCoin(coin: string, meta: AssetMeta, mark: number, maxSlippageBps: number): Promise<{ closed: boolean; detail: string; stillOpenSz: number }> {
