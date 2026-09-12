@@ -1,0 +1,89 @@
+/* The chart's one label column.
+
+   Three things used to write text down the left edge of the plot with three
+   different ideas of where the next line goes: the legend from the top, the
+   level labels beside their lines, and the trade overlays through a stacking
+   pass of their own. Two of them printing at the same y is a number nobody can
+   read on the one surface where a misread number costs money.
+
+   So there is one column. Everything that wants a line on the left feeds an
+   item {y, text, tone} in here, and one pass places them: from y 16, on a
+   13 px pitch, pushed down and never up past a neighbour, lifted back on
+   screen if the stack runs off the bottom, and cut at eight with a line that
+   says how many more there were. Order is kept, so the label above still
+   belongs to the line above.
+
+   Plain browser script like the engine beside it: no imports, no framework.
+   Nothing here touches the DOM or the tokens; the engine passes the ink. */
+
+'use strict';
+
+var LABEL_X = 5;
+var LABEL_TOP = 16;
+var LABEL_PITCH = 13;
+var LABEL_MAX = 8;
+
+/* Place a list of wanted items. Each item carries the y it would like, and
+   either `text` or `parts` ([{text, tone}] for a line in more than one ink).
+   Returns the placed items in draw order, each with labelY, plus the count
+   that did not fit. Pure: the same input places the same way every frame. */
+function labelLayout(items, top, bottom) {
+  var wanted = items.slice().sort(function (a, b) {
+    return a.y - b.y;
+  });
+  var more = 0;
+  if (wanted.length > LABEL_MAX) {
+    more = wanted.length - LABEL_MAX;
+    wanted = wanted.slice(0, LABEL_MAX);
+    wanted.push({ y: Infinity, text: '+' + more + ' more', tone: 'text2', overflow: true });
+  }
+  var lastY = -Infinity;
+  var floor = top + LABEL_TOP;
+  for (var i = 0; i < wanted.length; i += 1) {
+    var y = Math.max(wanted[i].y, floor);
+    if (y - lastY < LABEL_PITCH) y = lastY + LABEL_PITCH;
+    wanted[i].labelY = y;
+    lastY = y;
+  }
+  var overflow = lastY - (bottom - 4);
+  if (overflow > 0) {
+    for (var j = 0; j < wanted.length; j += 1) wanted[j].labelY -= overflow;
+  }
+  return { placed: wanted, more: more };
+}
+
+/* Draw one placed column. `inkOf(tone, alpha)` is the engine's own palette, so
+   the column has no colour of its own; `pad` is the ground behind a label that
+   sits over candles. Returns the boxes it drew, one per item, so a caller can
+   turn a label into a hit target without measuring twice. */
+function labelDraw(ctx, placed, inkOf, pad) {
+  var boxes = [];
+  for (var i = 0; i < placed.length; i += 1) {
+    var item = placed[i];
+    var parts = item.parts || [{ text: item.text, tone: item.tone || 'text' }];
+    var x = LABEL_X;
+    var width = 0;
+    for (var m = 0; m < parts.length; m += 1) {
+      width += ctx.measureText(parts[m].text).width + (m < parts.length - 1 ? 6 : 0);
+    }
+    if (pad) {
+      ctx.fillStyle = pad;
+      ctx.fillRect(x - 3, item.labelY - 8, width + 6, 15);
+    }
+    for (var p = 0; p < parts.length; p += 1) {
+      ctx.fillStyle = inkOf(parts[p].tone || 'text', parts[p].alpha === undefined ? 0.9 : parts[p].alpha);
+      ctx.fillText(parts[p].text, x, item.labelY);
+      x += ctx.measureText(parts[p].text).width + 6;
+    }
+    /* The spotlight: an amber ring around the label the agent is pointing at,
+       the same ring a rail row gets, so the eye reads one gesture in two places. */
+    if (item.ring) {
+      ctx.strokeStyle = inkOf('warn', 0.95);
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(LABEL_X - 4.5, item.labelY - 9.5, width + 9, 18);
+      ctx.lineWidth = 1;
+    }
+    boxes.push({ x: LABEL_X - 3, y: item.labelY - 8, w: width + 6, h: 15, item: item });
+  }
+  return boxes;
+}

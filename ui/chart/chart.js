@@ -141,8 +141,11 @@ function chartTheme(theme) {
 }
 window.chartTheme = chartTheme;
 
-var CHART_FONT = '11px ui-monospace, SFMono-Regular, Menlo, monospace';
-var CHART_FONT_SMALL = '9px ui-monospace, SFMono-Regular, Menlo, monospace';
+/* Geist Mono, the face every number in the window is set in, at 11 px on the canvas. The
+   system monospace it replaces was the one place the window fell back to whatever the OS
+   had, so the axis and the rail could disagree about the shape of a digit. */
+var CHART_FONT = '11px "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace';
+var CHART_FONT_SMALL = '9px "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace';
 var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /* Geometry, in CSS pixels. PRICE_MIN is the promise that nothing gets squeezed: a pane that
@@ -275,6 +278,42 @@ function readTokens() {
    the chart looks exactly as it did and the dash pattern is still what tells the two apart. */
 function agentInk(alpha) {
   return 'rgba(' + RGB_AGENT + ', ' + alpha + ')';
+}
+function warnInk(alpha) {
+  return 'rgba(' + (rgbTriple(CHART_TOKENS.warn) || '245, 185, 66') + ', ' + alpha + ')';
+}
+
+/* One palette for every label on the canvas, named by meaning. The label column and the trade
+   overlays ask for a tone and get the token behind it, so nothing drawn over the candles carries
+   a colour of its own: liquidation is --down, a wall is --warn, the agent's objects are --agent. */
+function chartInk(tone, alpha) {
+  var a = alpha === undefined ? 0.9 : alpha;
+  if (tone === 'up' || tone === 'ink') return accent(a);
+  if (tone === 'down') return danger(a);
+  if (tone === 'agent') return agentInk(a);
+  if (tone === 'warn') return warnInk(a);
+  if (tone === 'text2') return text2(a);
+  if (tone === 'hi') return C_HI;
+  return textInk(a);
+}
+
+/* The ground behind a label that sits over candles, mixed from the panel's own colour. */
+function chartLabelPad() {
+  return 'rgba(' + (rgbTriple(CHART_TOKENS.bg1) || '17, 20, 24') + ', 0.72)';
+}
+
+/* Everything the scene wants written down the left edge, collected while it draws and placed
+   by the hud in one pass with the legend (see ui/chart/labels.js). Reset per scene draw; a hud
+   redraw between two scenes reuses the last set, which is the set the lines on screen have. */
+var CHART_SCENE_LABELS = [];
+function chartLabel(item) {
+  CHART_SCENE_LABELS.push(item);
+}
+
+/* Whether the agent is pointing at this object right now. ui/screens/trade.js owns the
+   spotlight and answers through this hook; a page without it has nothing pointed at. */
+function chartSpotOn(kind, id) {
+  return typeof window.chartSpotActive === 'function' && window.chartSpotActive(kind, id) === true;
 }
 
 function clampNum(value, low, high) {
@@ -638,6 +677,17 @@ function toggleVolume() {
   chartInvalidate(true);
 }
 
+/* The Layers popover's own switch for the pane, and the answer it draws its check from. */
+function chartSetVolume(on) {
+  if (VOLUME_ON === !!on) return;
+  toggleVolume();
+}
+function chartVolumeOn() {
+  return VOLUME_ON;
+}
+window.chartSetVolume = chartSetVolume;
+window.chartVolumeOn = chartVolumeOn;
+
 function readVolumePreference() {
   try {
     if (window.localStorage.getItem('phosphor.chart.volume') === '0') VOLUME_ON = false;
@@ -902,6 +952,7 @@ function drawScene() {
 
   var L = buildLayout(width, height, ctx);
   CHART_LAYOUT = L;
+  CHART_SCENE_LABELS = [];
 
   drawPriceGrid(ctx, L);
   drawTimeGrid(ctx, L);
@@ -958,19 +1009,19 @@ function reducedMotion() {
 /* What the panel is waiting for, said in the words the rest of the bar uses. An error is a
    state, not a wait: it says so and stops moving. */
 function waitingState() {
-  var product = CHART.view.product || 'MARKET';
+  var product = CHART.view.product || 'the market';
   var tf = timeframeOf(CHART.view.granularitySec);
   if (CHART.meta.error) {
-    return { head: 'CHART UNREACHABLE', sub: CHART.meta.error + '  retrying', live: CHART_FETCH.inflight };
+    return { head: 'Chart unreachable', sub: CHART.meta.error + '  retrying', live: CHART_FETCH.inflight };
   }
   if (!CHART_READY) {
     // Before the first payload there is no product and no timeframe to name, and naming the
     // defaults would put a market on screen that nobody has confirmed is the one being read.
-    if (!CHART.view.product) return { head: 'CONNECTING', sub: 'waiting for the first chart payload', live: true };
-    return { head: 'ACQUIRING ' + product + ' ' + tf, sub: 'waiting for the first candles', live: true };
+    if (!CHART.view.product) return { head: 'Connecting', sub: 'waiting for the first chart payload', live: true };
+    return { head: 'Acquiring ' + product + ' ' + tf, sub: 'waiting for the first candles', live: true };
   }
   return {
-    head: 'NO CANDLES ' + product + ' ' + tf,
+    head: 'No candles for ' + product + ' ' + tf,
     sub: (CHART.meta.source || 'the source') + ' returned nothing for this window',
     live: CHART_FETCH.inflight
   };
@@ -1353,12 +1404,19 @@ function drawLevels(ctx, L) {
     var level = CHART.levels[i];
     var y = L.yOf(level.price);
     var fromAgent = level.source === 'agent';
+    var tone = fromAgent ? 'agent' : 'ink';
+    var ring = chartSpotOn('level', level.id);
     if (y < top || y > bottom) {
       // Off the top or the bottom of what is on screen. The line cannot be drawn where it
-      // belongs, so it is pinned to the edge it went off, with an arrow saying which way.
-      var edge = y < top ? top + 6 : bottom - 6;
-      ctx.fillStyle = fromAgent ? agentInk(0.4) : accent(0.5);
-      ctx.fillText((y < top ? '↑ ' : '↓ ') + level.label + ' ' + priceText(level.price, L.decimals), 4, edge);
+      // belongs, so its label is pinned to the edge it went off, with an arrow saying which
+      // way, and it joins the column like every other label.
+      chartLabel({
+        y: y < top ? top + 6 : bottom - 6,
+        text: (y < top ? '↑ ' : '↓ ') + level.label + ' ' + priceText(level.price, L.decimals),
+        tone: tone,
+        alpha: 0.6,
+        ring: ring
+      });
       continue;
     }
     ctx.strokeStyle = fromAgent ? agentInk(0.5) : accent(0.7);
@@ -1370,8 +1428,7 @@ function drawLevels(ctx, L) {
     ctx.lineTo(L.plotWidth, hair(y));
     ctx.stroke();
     ctx.setLineDash([]);
-    ctx.fillStyle = accent(fromAgent ? 0.6 : 0.85);
-    ctx.fillText(level.label, 4, y - 7);
+    chartLabel({ y: y - 7, text: level.label + ' ' + priceText(level.price, L.decimals), tone: tone, ring: ring });
   }
 }
 
@@ -1424,6 +1481,7 @@ function drawDrawings(ctx, L) {
       ctx.textAlign = 'right';
       ctx.fillText(label, L.plotWidth - 4, boxTop + 11);
       ctx.textAlign = 'left';
+      drawSpotRing(ctx, L.plotWidth - 4 - ctx.measureText(label).width, boxTop + 11, ctx.measureText(label).width, chartSpotOn('line', d.id));
       continue;
     }
 
@@ -1456,7 +1514,17 @@ function drawDrawings(ctx, L) {
     ctx.textAlign = 'right';
     ctx.fillText(label, L.plotWidth - 4, labelY);
     ctx.textAlign = 'left';
+    drawSpotRing(ctx, L.plotWidth - 4 - ctx.measureText(label).width, labelY, ctx.measureText(label).width, chartSpotOn('line', d.id));
   }
+}
+
+/* The spotlight on a label drawn outside the column: the same amber ring the column draws. */
+function drawSpotRing(ctx, x, y, width, on) {
+  if (!on) return;
+  ctx.strokeStyle = warnInk(0.95);
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(x - 4.5, y - 9.5, width + 9, 18);
+  ctx.lineWidth = 1;
 }
 
 function drawMarks(ctx, L) {
@@ -1651,46 +1719,63 @@ function drawLegend(ctx, L) {
   // second of a switch, or a write the server never took: either way the price under this
   // name has to be the price this name means.
   var identity = CHART.dataView || CHART.view;
+  var dir = up ? 'up' : 'down';
 
-  var x = 3;
-  var y = PAD_TOP + 8;
-  ctx.fillStyle = C_HI;
-  ctx.fillText(identity.product, x, y);
-  x += ctx.measureText(identity.product).width + 6;
-  ctx.fillStyle = text2(0.85);
-  var tf = timeframeOf(identity.granularitySec);
-  ctx.fillText(tf, x, y);
-  x += ctx.measureText(tf).width + 10;
-
-  var parts = [
-    ['O', priceText(candle.o, L.decimals)],
-    ['H', priceText(candle.h, L.decimals)],
-    ['L', priceText(candle.l, L.decimals)],
-    ['C', priceText(candle.c, L.decimals)]
+  /* The legend is the head of the one label column: the market line first, then one line per
+     price overlay, then everything the scene collected (levels, the account's lines, plans),
+     placed together so no two of them can print on one y. Sub-pane lines stay in their panes. */
+  var items = [];
+  var head = [
+    { text: identity.product, tone: 'hi' },
+    { text: timeframeOf(identity.granularitySec), tone: 'text2', alpha: 0.85 },
+    { text: 'O', tone: 'text2', alpha: 0.7 },
+    { text: priceText(candle.o, L.decimals), tone: dir, alpha: 1 },
+    { text: 'H', tone: 'text2', alpha: 0.7 },
+    { text: priceText(candle.h, L.decimals), tone: dir, alpha: 1 },
+    { text: 'L', tone: 'text2', alpha: 0.7 },
+    { text: priceText(candle.l, L.decimals), tone: dir, alpha: 1 },
+    { text: 'C', tone: 'text2', alpha: 0.7 },
+    { text: priceText(candle.c, L.decimals), tone: dir, alpha: 1 }
   ];
-  for (var i = 0; i < parts.length; i++) {
-    ctx.fillStyle = text2(0.7);
-    ctx.fillText(parts[i][0], x, y);
-    x += ctx.measureText(parts[i][0]).width + 3;
-    ctx.fillStyle = up ? C_UP : C_DOWN;
-    ctx.fillText(parts[i][1], x, y);
-    x += ctx.measureText(parts[i][1]).width + 8;
-  }
-  ctx.fillStyle = up ? C_UP : C_DOWN;
   // Round before choosing the sign, or a bar that moved a hundredth of a percent down
   // prints "-0.00%", which reads as a rendering fault rather than as a flat bar.
   var rounded = Math.abs(change) < 0.005 ? 0 : change;
-  ctx.fillText((rounded > 0 ? '+' : rounded < 0 ? '' : ' ') + rounded.toFixed(2) + '%', x, y);
+  head.push({ text: (rounded > 0 ? '+' : rounded < 0 ? '' : ' ') + rounded.toFixed(2) + '%', tone: dir, alpha: 1 });
+  items.push({ y: LABEL_TOP, parts: head, legend: true });
 
-  var row = y + 13;
   for (var o = 0; o < L.overlays.length; o++) {
-    row = drawIndicatorLine(ctx, L, L.overlays[o], 3, row, index);
+    items.push(legendItem(L, L.overlays[o], index, LABEL_TOP + LABEL_PITCH * (o + 1)));
   }
+  for (var s = 0; s < CHART_SCENE_LABELS.length; s++) items.push(CHART_SCENE_LABELS[s]);
+
+  var laid = labelLayout(items, 0, L.priceTop + L.priceHeight);
+  var boxes = labelDraw(ctx, laid.placed, chartInk, chartLabelPad());
+  for (var b = 0; b < boxes.length; b++) {
+    var placed = boxes[b].item;
+    if (!placed.remove) continue;
+    // The cross is the last part of the line, so the hit is the tail of the box.
+    CHART_HITS.push({ x: boxes[b].x + boxes[b].w - 16, y: boxes[b].y, w: 18, h: boxes[b].h, remove: placed.remove });
+  }
+
   for (var p = 0; p < L.panes.length; p++) {
     drawIndicatorLine(ctx, L, L.panes[p].indicator, 3, L.panes[p].top + 9, index);
   }
 
   drawChartNotes(ctx, L);
+}
+
+/* One legend line for a price overlay: its label, its values at the hovered bar, and the cross
+   that removes it, as one item in the column. */
+function legendItem(L, indicator, index, y) {
+  var parts = [{ text: indicator.label, tone: indicator.source === 'agent' ? 'agent' : 'text', alpha: 0.85 }];
+  var plots = indicator.plots || [];
+  for (var i = 0; i < plots.length; i++) {
+    var value = plots[i].values[index];
+    if (value === null || value === undefined || !isFinite(value)) continue;
+    parts.push({ text: priceText(value, L.decimals), tone: 'text2', alpha: 0.9 });
+  }
+  parts.push({ text: '×', tone: 'text2', alpha: 0.7 });
+  return { y: y, parts: parts, remove: indicator.id, ring: chartSpotOn('indicator', indicator.id), legend: true };
 }
 
 /* The bottom rule of the plot, where the chart says what it could not do and offers back the
@@ -2616,6 +2701,12 @@ function chartBoot() {
   readVolumePreference();
   wireChart();
   chartInvalidate(true);
+  // A canvas draws with whatever face is loaded when it draws, and the first frame can land
+  // before the vendored mono is. One repaint once it is in, so the axis is not left in the
+  // fallback face until something else moves.
+  if (document.fonts && typeof document.fonts.load === 'function') {
+    document.fonts.load(CHART_FONT).then(function () { chartInvalidate(true); }, function () {});
+  }
   void refreshChart();
   // A floor under the push stream: a dead socket or an idle book still refreshes.
   setInterval(function () {

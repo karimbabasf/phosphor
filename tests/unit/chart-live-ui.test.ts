@@ -33,6 +33,8 @@ function loadChartUi(): Sandbox {
   };
   createContext(sandbox);
   runInContext(source, sandbox, { filename: 'ui/chart/chart.js' });
+  // The label column the engine draws its legend through lives in its own file.
+  runInContext(readFileSync(new URL('../../ui/chart/labels.js', import.meta.url), 'utf8'), sandbox, { filename: 'ui/chart/labels.js' });
   return sandbox;
 }
 

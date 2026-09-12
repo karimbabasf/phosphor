@@ -38,6 +38,8 @@ function loadChartUi(): Sandbox {
   };
   createContext(sandbox);
   runInContext(source, sandbox, { filename: 'ui/chart/chart.js' });
+  // The label column the engine draws its legend through lives in its own file.
+  runInContext(readFileSync(new URL('../../ui/chart/labels.js', import.meta.url), 'utf8'), sandbox, { filename: 'ui/chart/labels.js' });
   return sandbox;
 }
 
@@ -219,4 +221,24 @@ test('the right gutter is wide enough for the tag and the countdown to stop comp
   // The tag sits in this column and the draining rule sits under it. At the old floor of 48
   // they were fighting for the same pixels.
   assert.ok(s.CHART_AXIS_W >= 66, `expected a floor of 66, got ${s.CHART_AXIS_W}`);
+});
+
+// ---------- the face ----------
+
+test('every number on the canvas is set in Geist Mono at 11 px, the face the rail uses', () => {
+  // The system monospace it replaces was the one place the window fell back to whatever the OS
+  // had, so the axis and the rail could disagree about the shape of a digit.
+  const s = loadChartUi();
+  assert.ok(s.CHART_FONT.startsWith('11px "Geist Mono"'), s.CHART_FONT);
+  assert.ok(s.CHART_FONT_SMALL.startsWith('9px "Geist Mono"'), s.CHART_FONT_SMALL);
+});
+
+test('the waiting scene speaks in sentence case, not tracked caps', () => {
+  const s = loadChartUi();
+  s.CHART.meta = { source: '', stale: false, built: '', error: null };
+  assert.equal(s.waitingState().head, 'Connecting');
+  s.CHART.view.product = 'BTC-USD';
+  assert.ok(s.waitingState().head.startsWith('Acquiring BTC-USD'), s.waitingState().head);
+  s.CHART.meta.error = 'no route';
+  assert.equal(s.waitingState().head, 'Chart unreachable');
 });
