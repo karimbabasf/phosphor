@@ -13,9 +13,9 @@ import http from 'node:http';
 
 import { HOST, hostIsLocal } from './auth.ts';
 import { isDraining } from '../draining.ts';
-import { errText, fail, intParam, sendCachedJson, sendJson, serveStatic } from './respond.ts';
+import { capLabel, errText, fail, intParam, sendCachedJson, sendJson, serveStatic } from './respond.ts';
 import { buildStateCached, fillGas, gasReport, proposalPage, transactionsPayload } from './state.ts';
-import { chartPayload, handleChartWrite, handleSnapshotDelivery, sendCandles } from './chart.ts';
+import { chartPayload, handleChartWrite, handleSnapshotDelivery, sendCandles, slotParam } from './chart.ts';
 import { handleMutation } from './mutation.ts';
 import { handleTradeAction, handleTradeWrite } from './trade.ts';
 import { handleMcp } from './mcp.ts';
@@ -54,7 +54,8 @@ const GET: Record<string, Route> = {
   // ?slot=n picks one of the charts a layout put up; no slot is the primary. A slot no layout
   // filled is a 404, never the primary under another chart's name.
   '/api/chart': (ctx, _req, res, url) => {
-    const slot = intParam(url.searchParams.get('slot'), 0, 3);
+    const slot = slotParam(url.searchParams.get('slot'));
+    if (slot === null) return fail(res, 400, `slot must be 0 to 3, got ${capLabel(String(url.searchParams.get('slot')))}`);
     const payload = chartPayload(ctx, slot);
     if (payload === null) return fail(res, 404, `no chart in slot ${slot}; chart_layout puts one there`);
     sendJson(res, 200, payload);

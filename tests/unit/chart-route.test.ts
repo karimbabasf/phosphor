@@ -33,3 +33,19 @@ test('a slot no layout has filled is a 404 that names the tool', async () => {
     await h.close();
   }
 });
+
+test('slot=-1, abc, 7, 1.5, 0x1 and an empty slot are refused by name rather than answered with the primary', async () => {
+  const h = await bootChartServer();
+  try {
+    for (const bad of ['-1', 'abc', '7', '1.5', '0x1', '']) {
+      const out = await h.get(`/api/chart?slot=${bad}`);
+      assert.equal(out.status, 400, `slot=${bad} answered ${out.status}: ${JSON.stringify(out.json).slice(0, 80)}`);
+      assert.match(String(out.json.error), /0 to 3/);
+    }
+    assert.equal((await h.get('/api/chart?slot=0')).json.slot, 0);
+    const empty = await h.get('/api/chart?slot=3');
+    assert.equal(empty.status, 404, 'a slot inside the four that no layout filled stays a 404');
+  } finally {
+    await h.close();
+  }
+});
