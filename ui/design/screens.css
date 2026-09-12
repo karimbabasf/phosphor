@@ -391,6 +391,115 @@
   overflow-wrap: anywhere;
 }
 
+/* A rendered reply. The container stops preserving whitespace, because the
+   blocks inside it each carry their own; a paragraph keeps its line breaks. */
+.chat-text.md {
+  white-space: normal;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.chat-p {
+  white-space: pre-wrap;
+  margin: 0;
+}
+
+/* A heading is a label: 13 px, medium, the second text tone, never larger than
+   the body. The model's own sense of hierarchy stays, in a size that does not
+   shout in a column that is already dense with what happened. */
+.chat-h {
+  font-size: var(--fs-13);
+  font-weight: 500;
+  color: var(--text-2);
+  line-height: 1.4;
+  margin-top: var(--s-1);
+}
+
+.chat-list {
+  margin: 0;
+  padding-left: var(--s-5);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chat-text.md code {
+  font-size: 0.92em;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--bg-2);
+  color: var(--text);
+}
+
+.chat-code {
+  margin: 0;
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  font-size: var(--fs-13);
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.chat-code code {
+  padding: 0;
+  background: transparent;
+}
+
+/* Numbers in a table: 13 px, mono, tabular, right aligned. The header row is
+   the label size in the third text tone and every row is ruled with a hairline,
+   so a column of prices reads down its decimal point. */
+.chat-table {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.chat-table table {
+  border-collapse: collapse;
+  font-size: var(--fs-13);
+  line-height: 1.4;
+  min-width: 0;
+}
+
+.chat-table th {
+  font-size: var(--fs-12);
+  font-weight: 500;
+  color: var(--text-3);
+  text-align: left;
+  padding: 2px var(--s-3) var(--s-1) 0;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.chat-table td {
+  padding: var(--s-1) var(--s-3) var(--s-1) 0;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+.chat-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.chat-table th.num,
+.chat-table td.num {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum" 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* A signed figure carries its tone with its sign. In mono where it sits in a
+   cell, and in the running face where it sits in a sentence. */
+.md-n {
+  font-feature-settings: "tnum" 1;
+  font-variant-numeric: tabular-nums;
+}
+
 /* The bubble hugs what was said. A raised ground stretched across the column
    for four words reads as a panel rather than as a person talking. */
 .chat-said {

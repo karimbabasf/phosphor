@@ -16,6 +16,7 @@ import { createContext, runInContext } from 'node:vm';
 
 const DOM_SOURCE = readFileSync(new URL('../../ui/core/dom.js', import.meta.url), 'utf8');
 const AGENT_SOURCE = readFileSync(new URL('../../ui/screens/agent.js', import.meta.url), 'utf8');
+const MARKDOWN_SOURCE = readFileSync(new URL('../../ui/core/markdown.js', import.meta.url), 'utf8');
 
 type Node = {
   tag: string;
@@ -203,6 +204,7 @@ function build() {
   };
   createContext(sandbox);
   runInContext(DOM_SOURCE, sandbox, { filename: 'ui/core/dom.js' });
+  runInContext(MARKDOWN_SOURCE, sandbox, { filename: 'ui/core/markdown.js' });
   runInContext(AGENT_SOURCE, sandbox, { filename: 'ui/screens/agent.js' });
 
   const agent = win.PhosphorAgent as { mount: (h: unknown, o: unknown) => void; start: () => void };
@@ -228,6 +230,7 @@ function build() {
       fire(composer, 'submit');
     },
     saidRows: () => all(host, 'chat-said'),
+    replyRows: () => all(host, 'chat-reply'),
     stepRows: () => all(host, 'step'),
     turnBar: () => all(composerHost, 'turn-bar')[0],
     seat: () => all(host, 'agent-seat')[0].getAttribute('data-seat'),
@@ -330,6 +333,44 @@ test('the turn bar is up for the whole answer and gone after it', () => {
 
   world.emit({ kind: 'turn_end', error: false, turns: 1 });
   assert.equal(world.turnBar().hidden, true);
+});
+
+test('text that follows text in one turn is one reply row', () => {
+  /* A model answers in blocks: a heading, then a table, then a sentence. Each arrived as its own
+     event and drew its own row, so one answer read as three replies with air between them. */
+  const world = build();
+  world.type('what do you see');
+  world.emit({ kind: 'text', text: '## Levels' });
+  world.emit({ kind: 'text', text: '| Level | Price |\n|---|---:|\n| Support | 63,200 |' });
+  world.emit({ kind: 'text', text: 'Bias is up.' });
+  assert.equal(world.replyRows().length, 1, 'one answer drew three rows');
+  const row = world.replyRows()[0];
+  assert.ok(row.textContent.includes('Levels'));
+  assert.ok(row.textContent.includes('Bias is up.'));
+
+  // A tool call between two texts is a break: the second text is a new reply after work.
+  world.emit({ kind: 'tool', name: 'mcp__phosphor__chart_read', input: {} });
+  world.emit({ kind: 'tool_result', name: 'mcp__phosphor__chart_read', ok: true });
+  world.emit({ kind: 'text', text: 'And after reading it, still up.' });
+  assert.equal(world.replyRows().length, 2);
+});
+
+test('a reply renders as elements and never as markup', () => {
+  const world = build();
+  world.type('table please');
+  world.emit({ kind: 'text', text: '| Level | Price |\n|---|---:|\n| Support | 63,200 |\n\n<b onclick="x()">bold</b> **real**' });
+  const row = world.replyRows()[0];
+  const tables = all(row, 'chat-table');
+  assert.equal(tables.length, 1, 'a GFM table did not become a table');
+  assert.equal(tables[0].children[0].tag, 'table');
+  assert.ok(row.textContent.includes('<b onclick="x()">bold</b>'), 'markup in a reply was parsed rather than printed');
+  const walk = (n: Node, out: string[] = []): string[] => {
+    out.push(n.tag);
+    for (const c of n.children) walk(c, out);
+    return out;
+  };
+  assert.ok(!walk(row).includes('b'));
+  assert.ok(walk(row).includes('strong'));
 });
 
 test('an agent that stops mid answer takes the turn bar with it', () => {
