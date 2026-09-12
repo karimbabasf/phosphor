@@ -476,6 +476,22 @@ Still open, unrelated to keys:
 2. Optional: a JWT for NEAR Intents 1Click, which buys a lower fee tier.
 3. Optional: an indexer key (Etherscan or similar) for historical gas and spread.
 
+## Latency
+
+Measured in three places, none of them a guess. `tests/unit/runner-latency.test.ts` fires twenty
+plans through the real host and a real fork of the child against a loopback venue
+(`tests/fixtures/hl-venue.ts`) and prints two clocks: from the market frame that makes a waiting
+plan's conditions hold (`host.onMarket`) to the child's order reaching `/exchange`, and from the
+fire command leaving the host to that same POST. Both must be under 50 ms at p95; they run at
+about 1.5 ms p50, and the one slow sample is always the first fire after a fork, which pays for
+the cold signature path and the first socket. In the app, the child times every POST it makes,
+reads and writes alike, and every `placed`, `protected`, `modified`, `cancelled` and `closed`
+event carries `venueMs`, which the audit line writes as "the venue took N ms" so the record
+separates the venue's time from the app's. `npm run venue-latency` reads the venue itself from
+this machine, unsigned and with no key: `/info` meta, clearinghouseState, l2Book and extraAgents,
+an `/exchange` POST the venue rejects for its signature, and twenty seconds of the
+`activeAssetCtx` and 1m `candle` cadence for BTC, printed as p50, min and max per line.
+
 ## Layout
 
     src/main.ts        app process: state owner, wiring, HTTP + UI on 127.0.0.1:4177
