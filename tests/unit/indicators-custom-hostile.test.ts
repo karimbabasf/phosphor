@@ -11,12 +11,19 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import type { Candle } from '../../src/types.ts';
 import type { IndicatorSpec } from '../../src/indicators.ts';
+import { normaliseParams } from '../../src/indicators.ts';
+import { createChartStore } from '../../src/chart.ts';
+import { resolveIndicator } from '../../src/http/chart.ts';
+import type { Ctx } from '../../src/http/context.ts';
+import { compile } from '../../src/indicators-custom/evaluate.ts';
 import { createCustomIndicators } from '../../src/indicators-custom/loader.ts';
 import { translatePine } from '../../src/indicators-custom/pine.ts';
 import { customIndicatorSchema } from '../../src/indicators-custom/schema.ts';
 
 const HEAD = '//@version=5\nindicator("T")\n';
+const UI = path.join(import.meta.dirname, '..', '..', 'ui', 'chart');
 
 // Built from code points rather than typed, so an editor that strips or shows invisible
 // characters cannot change what these tests feed in.
@@ -27,6 +34,14 @@ const NBSP = String.fromCodePoint(0xa0);
 
 function scratch(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-hostile-'));
+}
+
+function candles(n: number): Candle[] {
+  let p = 100;
+  return Array.from({ length: n }, (_, i) => {
+    p += Math.sin(i / 7) + (i % 5) * 0.1;
+    return { t: i * 60, o: p, h: p + 1, l: p - 1, c: p + 0.3, v: 10 + (i % 9) };
+  });
 }
 
 function drop(name: string, body: string | Buffer): { spec: IndicatorSpec | null; problems: string[]; ms: number } {
@@ -155,4 +170,171 @@ test('a file that is not JSON is reported without quoting any of it', () => {
   }
   // The position survives when the parser gives one, because that is what the human needs.
   assert.match(drop('pos.json', '{"a":1,').problems[0] ?? '', /position 7/);
+});
+
+test('a 20 MB pine file and a 300 KB json file are refused on size before they are read', () => {
+  const pine = drop('big.pine', Buffer.alloc(20 * 1024 * 1024, 0x20));
+  assert.equal(pine.spec, null);
+  assert.match(pine.problems[0] ?? '', /20480 KB and the cap is 256 KB/);
+  assert.ok(pine.ms < 500, `${Math.round(pine.ms)} ms`);
+  const json = drop('big.json', `{"title":"T","overlay":true,"inputs":{},"plots":[{"title":"p","expr":"close"}],"pad":"${'x'.repeat(300 * 1024)}"}`);
+  assert.equal(json.spec, null);
+  assert.match(json.problems[0] ?? '', /300 KB and the cap is 256 KB/);
+});
+
+test('an expression 10000 deep and an op with a million arguments are refused without a walk', () => {
+  let deep: unknown = 'close';
+  for (let i = 0; i < 10_000; i++) deep = ['abs', deep];
+  let started = performance.now();
+  const deepOut = customIndicatorSchema.safeParse({ title: 'T', overlay: true, inputs: {}, plots: [{ title: 'p', expr: deep }] });
+  assert.equal(deepOut.success, false);
+  if (!deepOut.success) assert.match(deepOut.error.issues[0]?.message ?? '', /deeper than 16/);
+  assert.ok(performance.now() - started < 200);
+  started = performance.now();
+  const wideOut = customIndicatorSchema.safeParse({ title: 'T', overlay: true, inputs: {}, plots: [{ title: 'p', expr: ['max', ...new Array(1_000_000).fill(1)] }] });
+  assert.equal(wideOut.success, false);
+  if (!wideOut.success) assert.match(wideOut.error.issues[0]?.message ?? '', /max takes 2 to 8 arguments, got 1000000/);
+  assert.ok(performance.now() - started < 500);
+  // The same million, as a file, is over the cap and never parsed.
+  const file = drop('wide.json', `{"title":"T","overlay":true,"inputs":{},"plots":[{"title":"p","expr":["max",${new Array(1_000_000).fill('1').join(',')}]}]}`);
+  assert.match(file.problems[0] ?? '', /cap is 256 KB/);
+});
+
+test('a hist offset of 2^53 is refused as a literal and clamped as a parameter', () => {
+  for (const n of [2 ** 53, 2 ** 53 + 2, 1e21, 501, -1]) {
+    const out = customIndicatorSchema.safeParse({ title: 'T', overlay: true, inputs: {}, plots: [{ title: 'p', expr: ['hist', 'close', n] }] });
+    assert.equal(out.success, false, String(n));
+    if (!out.success) assert.match(out.error.issues[0]?.message ?? '', /between 0 and 500/);
+  }
+  const spec = compile({ title: 'T', overlay: true, inputs: { n: { default: 5 } }, plots: [{ title: 'p', expr: ['hist', 'close', 'n'] }, { title: 'q', expr: ['sma', 'close', 'n'] }] }, 'h');
+  const cs = candles(30);
+  for (const v of [2 ** 53, -(2 ** 53), 1e308, NaN, Infinity, -Infinity, '7', null, {}, [], -0]) {
+    const { params } = normaliseParams(spec, { n: v });
+    const n = params.n as number;
+    assert.ok(Number.isFinite(n) && Math.abs(n) <= 1_000_000, `${String(v)} became ${n}`);
+    const result = spec.compute(cs, params);
+    assert.equal(result.plots.length, 2);
+    assert.doesNotMatch(result.state, /refused/);
+    assert.equal(result.plots[0]?.values.length, 30);
+  }
+  // A param the agent could only reach by lying about the type falls back to the default.
+  assert.equal(normaliseParams(spec, { n: NaN }).params.n, 5);
+  assert.equal(normaliseParams(spec, { n: Infinity }).params.n, 5);
+  // The spec's own hooks take hostile params too.
+  assert.equal(spec.label({ n: NaN }), 'T 5');
+  assert.equal(spec.warmup?.({ n: Infinity }), 1);
+  assert.equal(spec.label(Object.create(null) as Record<string, number>), 'T 5');
+});
+
+test('markup and script tags in a title reach the label as text, and the legend never renders HTML', () => {
+  const pine = translatePine('//@version=5\nindicator("</script><b>x</b>", overlay=true)\nplot(close, title="<img src=x onerror=alert(1)>")\n');
+  assert.equal(pine.ok, true);
+  if (!pine.ok) return;
+  const spec = compile(pine.indicator, 'evil');
+  assert.equal(spec.label({}), '</script><b>x</b>');
+  const result = spec.compute(candles(10), {});
+  assert.equal(result.plots[0]?.label, '<img src=x onerror=alert(1)>');
+  assert.equal(result.plots[0]?.key, 'img-src-x-onerror-alert-1');
+  assert.match(result.state, /^<\/script><b>x<\/b> /);
+  // The legend is drawn on a canvas, and the chart code has no HTML sink at all.
+  for (const file of ['chart.js', 'trade-overlay.js']) {
+    const source = fs.readFileSync(path.join(UI, file), 'utf8');
+    assert.equal(/innerHTML|insertAdjacentHTML|outerHTML|document\.write/.test(source), false, `${file} has an HTML sink`);
+  }
+  const chart = fs.readFileSync(path.join(UI, 'chart.js'), 'utf8');
+  assert.match(chart, /ctx\.fillText\(indicator\.label/);
+});
+
+test('six plots over 2000 bars compute in under 50 ms, and so does a refusal', () => {
+  const scripts: [string, string][] = [
+    [
+      'bands, macd, rsi, atr',
+      `//@version=5\nindicator("T", overlay=false)\nlen = input.int(20, "Length", minval=1)\nmult = input.float(2.0, "Mult")\nbasis = ta.sma(close, len)\ndev = mult * ta.stdev(close, len)\nplot(basis, "Basis")\nplot(basis + dev, "Upper")\nplot(basis - dev, "Lower")\nplot(ta.ema(close, 12) - ta.ema(close, 26), "MACD")\nplot(ta.rsi(close, 14), "RSI")\nplot(ta.atr(14), "ATR")\n`,
+    ],
+    [
+      'six recurrences',
+      `//@version=5\nindicator("T", overlay=false)\nvar a = 0.0\na := nz(a[1]) * 0.9 + close\nvar b = 0.0\nb := nz(b[1]) * 0.8 + high\nvar c = 0.0\nc := nz(c[1]) * 0.7 + low\nvar d = 0.0\nd := math.max(nz(d[1]), close)\nvar e = 0.0\ne := math.min(nz(e[1], 1e9), close)\nvar f = 0.0\nf := nz(f[1]) + (close > open ? 1 : -1)\nplot(a, "a")\nplot(b, "b")\nplot(c, "c")\nplot(d, "d")\nplot(e, "e")\nplot(f, "f")\n`,
+    ],
+    [
+      'a recurrence over a wide subtree',
+      `//@version=5\nindicator("T", overlay=false)\na = ta.sma(close, 5) + ta.ema(close, 5) + ta.rsi(close, 5) + ta.atr(5) + math.abs(close - open) + hl2\nvar m = 0.0\nm := math.max(nz(m[1]), a)\nvar k = 0.0\nk := math.min(nz(k[1], 1e9), a)\nplot(m, "max")\nplot(k, "min")\nplot(a, "a")\nplot(m - k, "range")\nplot(close, "c")\nplot(hl2, "h")\n`,
+    ],
+    [
+      'six budget refusals',
+      `//@version=5\nindicator("T", overlay=false)\nplot(ta.wma(close, 500), "a")\nplot(ta.wma(high, 500), "b")\nplot(ta.wma(low, 500), "c")\nplot(ta.stdev(close, 500), "d")\nplot(ta.wma(hl2, 500), "e")\nplot(ta.stdev(hl2, 500), "f")\n`,
+    ],
+    [
+      'six wma of 160, the budget nearly spent',
+      `//@version=5\nindicator("T", overlay=false)\nplot(ta.wma(close, 160), "a")\nplot(ta.wma(high, 160), "b")\nplot(ta.wma(low, 160), "c")\nplot(ta.wma(open, 160), "d")\nplot(ta.wma(hl2, 160), "e")\nplot(ta.wma(hlc3, 160), "f")\n`,
+    ],
+  ];
+  const cs = candles(2000);
+  for (const [name, src] of scripts) {
+    const out = translatePine(src);
+    assert.equal(out.ok, true, `${name}: ${out.ok ? '' : out.message}`);
+    if (!out.ok) continue;
+    const spec = compile(out.indicator, 'bench');
+    const params = normaliseParams(spec, {}).params;
+    spec.compute(cs, params);
+    const runs = 5;
+    const started = performance.now();
+    let result = spec.compute(cs, params);
+    for (let i = 1; i < runs; i++) result = spec.compute(cs, params);
+    const ms = (performance.now() - started) / runs;
+    assert.equal(result.plots.length, 6, name);
+    assert.ok(ms < 50, `${name}: ${ms.toFixed(1)} ms per compute`);
+  }
+});
+
+test('a slug that is a path, a prototype name or a confusable never resolves, by route or by store', () => {
+  const dir = scratch();
+  fs.writeFileSync(path.join(dir, 'sma.json'), JSON.stringify({ title: 'S', overlay: true, inputs: { length: { default: 5, int: true } }, plots: [{ title: 'sma', expr: ['sma', 'close', 'length'] }] }));
+  const loader = createCustomIndicators(dir);
+  const ctx = { customIndicators: loader } as unknown as Ctx;
+  const store = createChartStore('BTC-USD', Date.now, (type) => loader.get(type));
+  const division = String.fromCodePoint(0x2215);
+  const fullwidth = String.fromCodePoint(0xff0f);
+  const cyrillic = String.fromCodePoint(0x0455);
+  for (const probe of ['custom:..%2Fsma', 'custom:../sma', `custom:sma${division}x`, `custom:sma${fullwidth}x`, `custom:${cyrillic}ma`, 'custom:sma ', 'custom:sma.json', 'custom:', 'custom:custom:sma', 'custom:constructor', 'custom:__proto__', 'custom:toString', 'custom:sma/../sma']) {
+    assert.equal(resolveIndicator(ctx, probe), undefined, JSON.stringify(probe));
+    const out = store.addIndicator({ type: probe }, 'agent', null);
+    assert.equal(out.ok, false, JSON.stringify(probe));
+    if (!out.ok) assert.match(out.error, /^unknown indicator/);
+  }
+  assert.equal(store.state().indicators.length, 0);
+  // Case and surrounding space normalise, which is the same rule the built-ins follow.
+  assert.equal(resolveIndicator(ctx, ' CUSTOM:SMA ')?.type, 'custom:sma');
+  assert.equal(store.addIndicator({ type: 'CUSTOM:SMA' }, 'agent', null).ok, true);
+  assert.equal(store.state().indicators[0]?.type, 'custom:sma');
+  // The directory listing is the only source of slugs: nothing was created or read outside it.
+  assert.deepEqual(fs.readdirSync(dir), ['sma.json']);
+});
+
+test('a var that assigns itself without history still terminates, and the loader survives the whole zoo', () => {
+  const self = translatePine(`${HEAD}var a = 0.0\na := a + 1\nplot(a)\n`);
+  assert.equal(self.ok, true);
+  if (self.ok) {
+    const result = compile(self.indicator, 'self').compute(candles(50), {});
+    assert.equal(result.plots[0]?.values[49], 50);
+  }
+  const dir = scratch();
+  fs.writeFileSync(path.join(dir, 'double.pine'), doubling(30, 'var x = 0.0\nx := LAST + nz(x[1])\nplot(x)\n'));
+  fs.writeFileSync(path.join(dir, 'chain.pine'), `${HEAD}x = ${new Array(10_000).fill('close').join(' + ')}\nplot(x[1])\n`);
+  fs.writeFileSync(path.join(dir, 'bidi.pine'), `${HEAD}plot(close${RLO})\n`);
+  fs.writeFileSync(path.join(dir, 'leak.json'), 'SECRET=1');
+  fs.writeFileSync(path.join(dir, 'ok.json'), JSON.stringify({ title: 'OK', overlay: true, inputs: {}, plots: [{ title: 'p', expr: 'close' }] }));
+  fs.symlinkSync('/etc/passwd', path.join(dir, 'passwd.json'));
+  fs.symlinkSync(path.join(dir, 'loop.pine'), path.join(dir, 'loop.pine'));
+  fs.mkdirSync(path.join(dir, 'folder.json'));
+  const started = performance.now();
+  const loader = createCustomIndicators(dir);
+  const { specs, problems } = loader.refresh();
+  assert.ok(performance.now() - started < 2000);
+  assert.deepEqual(
+    specs.map((s) => s.type),
+    ['custom:ok'],
+  );
+  assert.equal(problems.length, 6);
+  for (const name of ['double', 'chain', 'bidi', 'leak', 'passwd', 'loop', 'folder']) assert.equal(loader.get(name), null, name);
+  assert.equal(loader.get('ok')?.type, 'custom:ok');
 });
