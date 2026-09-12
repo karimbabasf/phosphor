@@ -76,7 +76,12 @@ export function venue() {
       await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
       return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     },
-    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    // Keep-alive sockets from a child that has not exited yet would hold close() open.
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.closeAllConnections();
+        server.close(() => resolve());
+      }),
     orders: () => state.actions.filter((a): a is OrderAction => a.type === 'order'),
   };
 }
