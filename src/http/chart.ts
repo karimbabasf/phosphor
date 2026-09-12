@@ -17,7 +17,7 @@ import { errText, fail, intParam, readBody, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
 import { CANDLE_LIMIT_MAX } from './context.ts';
 import { feedFor, type FeedState } from '../market/push.ts';
-import { SNAPSHOT_MAX_BYTES } from '../snapshot.ts';
+import { isBase64, SNAPSHOT_MAX_BYTES } from '../snapshot.ts';
 import type { Ctx } from './context.ts';
 
 // The basic screen's price tracker. Hourly bars over a day: "today" for someone reading
@@ -283,6 +283,15 @@ function plansOnChart(ctx: Ctx, product: string): number {
   return plans.filter((p) => p !== null && typeof p === 'object' && String((p as { symbol?: unknown }).symbol ?? '').toUpperCase() === coin).length;
 }
 
+// The ?slot= of GET /api/chart: absent is the primary, one of the four digits is that chart, and
+// anything else is null for the route to refuse by name. It used to go through intParam, which
+// turned -1, abc and 1.5 into the primary and 7 into "no chart in slot 3": a chart served under
+// a name nobody asked for, on a route whose contract is never to do that.
+export function slotParam(raw: string | null): number | null {
+  if (raw === null) return 0;
+  return /^[0-3]$/.test(raw) ? Number(raw) : null;
+}
+
 // Everything the renderer needs in one round trip: the view, the candles, and every
 // indicator series already computed. The browser draws plots generically and never has to
 // know what an RSI is, which is what keeps the two sides from disagreeing.
@@ -437,6 +446,12 @@ export async function handleChartWrite(ctx: Ctx, req: http.IncomingMessage, res:
    on that id and keeps nothing: an answer for a request nobody is waiting on is a 409, not a
    picture kept for the next caller. */
 export async function handleSnapshotDelivery(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  // The two header gates first, before a byte of body is buffered: a post from the wrong origin
+  // used to be read in full (up to the server's megabyte) and only then refused.
+  if (!sameOrigin(req)) {
+    req.resume();
+    return fail(res, 403, 'cross-origin snapshot refused');
+  }
   const announced = Number(req.headers['content-length'] ?? 0);
   if (Number.isFinite(announced) && announced > SNAPSHOT_MAX_BYTES + 4096) {
     req.resume();
@@ -445,16 +460,16 @@ export async function handleSnapshotDelivery(ctx: Ctx, req: http.IncomingMessage
   const parsed = await readBody(req);
   if (!parsed.ok) return fail(res, parsed.status, parsed.error);
   const body = parsed.value;
-  if (!sameOrigin(req)) return fail(res, 403, 'cross-origin snapshot refused');
   if (!tokenMatches(body.token, ctx.token)) return fail(res, 403, 'invalid approval token');
 
   const reqId = typeof body.reqId === 'string' ? body.reqId : '';
   const jpeg = typeof body.jpeg === 'string' ? body.jpeg : '';
   if (jpeg.length > SNAPSHOT_MAX_BYTES) return fail(res, 413, `a snapshot is at most ${SNAPSHOT_MAX_BYTES} bytes`);
   // A JPEG and nothing else: the bytes go straight to a model as an image block, so the route
-  // says no to anything that is not the one format the window encodes.
+  // says no to anything that is not the one format the window encodes, and to base64 the
+  // model's API would not decode.
   const head = Buffer.from(jpeg.slice(0, 8), 'base64');
-  if (!/^[A-Za-z0-9+/=]+$/.test(jpeg) || head.length < 3 || head[0] !== 0xff || head[1] !== 0xd8 || head[2] !== 0xff) {
+  if (!isBase64(jpeg) || head.length < 3 || head[0] !== 0xff || head[1] !== 0xd8 || head[2] !== 0xff) {
     return fail(res, 400, 'the snapshot must be a base64 JPEG');
   }
   if (!ctx.snapshots.deliver(reqId, jpeg)) return fail(res, 409, 'no snapshot is waiting for that request id');

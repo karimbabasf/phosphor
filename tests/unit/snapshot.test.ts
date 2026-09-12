@@ -64,10 +64,11 @@ test('the defaults are the ones the spec names', () => {
 });
 
 test('the proxy turns an image answer into an image block plus the digest, and leaves text alone', () => {
-  const image = contentFor({ image: 'abc', mimeType: 'image/jpeg', digest: 'BTC-USD 1h' });
+  // Four characters: the proxy checks the shape of base64 before it calls anything an image.
+  const image = contentFor({ image: 'abcd', mimeType: 'image/jpeg', digest: 'BTC-USD 1h' });
   assert.deepEqual(image, {
     content: [
-      { type: 'image', data: 'abc', mimeType: 'image/jpeg' },
+      { type: 'image', data: 'abcd', mimeType: 'image/jpeg' },
       { type: 'text', text: 'BTC-USD 1h' },
     ],
   });
