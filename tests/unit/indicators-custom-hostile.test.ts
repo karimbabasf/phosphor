@@ -110,3 +110,49 @@ test('a control or format character in a script is named by its code point, neve
     assert.match(message, /^unknown name 'x{40}\.\.\.'$/);
   }
 });
+
+test('a symbolic link in the folder is not followed, and nothing from its target reaches a problem', () => {
+  const root = scratch();
+  const dir = path.join(root, 'indicators');
+  fs.mkdirSync(dir);
+  fs.writeFileSync(path.join(root, 'keys.enc.json'), JSON.stringify({ v: 1, kdf: 'scrypt', salt: 'c2FsdA==', ct: 'U0VDUkVU' }));
+  fs.writeFileSync(path.join(root, 'secret.txt'), 'SECRET_PRIVATE_KEY=0xdeadbeef\n');
+  fs.writeFileSync(path.join(root, 'good.json'), JSON.stringify({ title: 'G', overlay: true, inputs: {}, plots: [{ title: 'p', expr: 'close' }] }));
+  fs.symlinkSync(path.join(root, 'keys.enc.json'), path.join(dir, 'keys.json'));
+  fs.symlinkSync('/etc/passwd', path.join(dir, 'passwd.json'));
+  fs.symlinkSync('/etc/passwd', path.join(dir, 'passwd2.pine'));
+  fs.symlinkSync(path.join(root, 'secret.txt'), path.join(dir, 'secret.json'));
+  fs.symlinkSync(path.join(root, 'secret.txt'), path.join(dir, 'secret2.pine'));
+  fs.symlinkSync(path.join(root, 'good.json'), path.join(dir, 'good.json'));
+  fs.symlinkSync(root, path.join(dir, 'dir.json'));
+  fs.symlinkSync(path.join(dir, 'loop.json'), path.join(dir, 'loop.json'));
+  fs.symlinkSync(path.join(dir, 'missing-target.json'), path.join(dir, 'dangling.json'));
+  fs.writeFileSync(path.join(dir, 'real.json'), JSON.stringify({ title: 'R', overlay: true, inputs: {}, plots: [{ title: 'p', expr: 'close' }] }));
+  const loader = createCustomIndicators(dir);
+  const { specs, problems } = loader.refresh();
+  assert.deepEqual(
+    specs.map((s) => s.type),
+    ['custom:real'],
+    'a link to a valid indicator outside the folder is still not an indicator',
+  );
+  const files = problems.map((p) => p.file).sort();
+  assert.deepEqual(files, ['dangling.json', 'dir.json', 'good.json', 'keys.json', 'loop.json', 'passwd.json', 'passwd2.pine', 'secret.json', 'secret2.pine']);
+  for (const p of problems) {
+    assert.match(p.message, /symbolic link/, p.file);
+    for (const leak of ['SECRET', 'root', 'kdf', 'salt', 'Required', 'title']) assert.ok(!p.message.includes(leak), `${p.file}: ${p.message}`);
+  }
+  assert.equal(loader.get('keys'), null);
+  assert.equal(loader.get('secret'), null);
+  assert.equal(loader.get('good'), null);
+});
+
+test('a file that is not JSON is reported without quoting any of it', () => {
+  for (const body of ['SECRET_PRIVATE_KEY=0xdeadbeef', 'root:*:0:0:System Administrator', '{"a": tru}', '{"title": "T", "cipher": "U0VDUkVU"', ' binary', '{"default":NaN}']) {
+    const out = drop('leak.json', body);
+    assert.equal(out.spec, null);
+    assert.match(out.problems[0] ?? '', /^not valid JSON/);
+    for (const word of ['SECRET', 'root', 'tru', 'cipher', 'U0VDUkVU', 'NaN', '"']) assert.ok(!(out.problems[0] ?? '').includes(word), `${JSON.stringify(body)} -> ${out.problems[0]}`);
+  }
+  // The position survives when the parser gives one, because that is what the human needs.
+  assert.match(drop('pos.json', '{"a":1,').problems[0] ?? '', /position 7/);
+});
