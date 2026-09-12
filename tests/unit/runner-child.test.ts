@@ -328,6 +328,34 @@ test('close is a reduce-only IOC at the plan bound, then the exits are cancelled
   assert.ok(cancel !== undefined && cancel.type === 'cancelByCloid' && cancel.cancels.length === 2, 'both exits are cancelled');
 });
 
+test('every event that reached the venue says how long the venue took, in whole milliseconds', async () => {
+  const { v, c } = await boot();
+  const venueMs = (e: FromChild): number => ('venueMs' in e ? e.venueMs : Number.NaN);
+  const took = (e: FromChild, what: string): void => {
+    assert.ok(Number.isInteger(venueMs(e)) && venueMs(e) >= 0, `${what} carries the venue round trip: ${JSON.stringify(e)}`);
+  };
+  await c.arm(plan());
+  const placed = await c.send({ cmd: 'fire', id: 'pl_1', mark: 100 });
+  assert.equal(placed.ev, 'placed');
+  took(placed, 'placed');
+  v.state.position = { szi: 10, entryPx: 100.3 };
+  took(await c.send({ cmd: 'protect', id: 'pl_1' }), 'protected');
+  took(await c.send({ cmd: 'modify', id: 'pl_1', stop: 95, cloids: {}, gen: 1, mark: 100 }), 'modified');
+  v.state.answer = (orders) => {
+    v.state.position = null;
+    return orders.map((o) => ({ filled: { totalSz: o.s, avgPx: o.p, oid: 9 } }));
+  };
+  took(await c.send({ cmd: 'close', id: 'pl_1', maxSlippageBps: 30, mark: 110 }), 'closed');
+  v.state.answer = null;
+  await c.arm(plan({ id: 'pl_2', entry: { type: 'limit', px: 95 } }));
+  await c.send({ cmd: 'fire', id: 'pl_2', mark: 100 });
+  took(await c.send({ cmd: 'cancel', id: 'pl_2' }), 'cancelled');
+  // A refusal that never reached the venue carries no round trip: there was none.
+  const refused = await c.send({ cmd: 'fire', id: 'pl_9', mark: 100 });
+  assert.equal(refused.ev, 'refused');
+  assert.ok(!('venueMs' in refused));
+});
+
 test('an unknown plan and an expired plan are refused by name, before anything is read or signed', async () => {
   const { v, c } = await boot();
   const unknown = await c.send({ cmd: 'fire', id: 'pl_9', mark: 100 });

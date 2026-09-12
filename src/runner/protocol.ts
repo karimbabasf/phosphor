@@ -33,11 +33,15 @@ export type FromChild =
   | { ev: 'armed'; seq: number; id: string }
   // The child mints every cloid from the plan id, the leg and its generation, so the host gets
   // them back on every event that placed something and persists them beside the plan.
-  | { ev: 'placed'; seq: number; id: string; oids: { entry?: number; stop?: number; target?: number }; filledSz: number; avgPx: number | null; cloids: Cloids; gen: number }
-  | { ev: 'protected'; seq: number; id: string; oids: { stop?: number; target?: number }; sz: number; cloids: Cloids; gen: number }
-  | { ev: 'modified'; seq: number; id: string; stop: number; target: number | null; cloids: Cloids; gen: number }
-  | { ev: 'cancelled'; seq: number; id: string; filledSz: number }
-  | { ev: 'closed'; seq: number; id: string; stillOpenSz: number }
+  //
+  // `venueMs` is how long the venue took to answer, summed over every POST the command made
+  // (the reads before a write count: a fire that waits on a leverage read waits), in whole
+  // milliseconds. It rides every event that reached the venue so the audit line can say so.
+  | { ev: 'placed'; seq: number; id: string; oids: { entry?: number; stop?: number; target?: number }; filledSz: number; avgPx: number | null; cloids: Cloids; gen: number; venueMs: number }
+  | { ev: 'protected'; seq: number; id: string; oids: { stop?: number; target?: number }; sz: number; cloids: Cloids; gen: number; venueMs: number }
+  | { ev: 'modified'; seq: number; id: string; stop: number; target: number | null; cloids: Cloids; gen: number; venueMs: number }
+  | { ev: 'cancelled'; seq: number; id: string; filledSz: number; venueMs: number }
+  | { ev: 'closed'; seq: number; id: string; stillOpenSz: number; venueMs: number }
   | { ev: 'flat'; seq: number; stillOpen: string[]; detail: string }
   | { ev: 'released'; seq: number; id: string }
   | { ev: 'refused'; seq: number; id: string | null; reason: string }

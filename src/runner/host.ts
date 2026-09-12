@@ -37,13 +37,16 @@ import type { AssetMeta, Command, FromChild, ToChild } from './protocol.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// `venueMs` is the child's word on how long the venue took to answer the command behind the
+// event, carried through so the audit line can say it. A done that never asked the venue (a
+// waiting plan cancelled, an expiry) has none.
 export type RunnerEvent =
   | { type: 'armed'; id: string; symbol: string; signingExpiresAt: string }
   | { type: 'fired'; id: string; symbol: string }
-  | { type: 'placed'; id: string; symbol: string; filledSz: number }
-  | { type: 'protected'; id: string; symbol: string; sz: number }
-  | { type: 'changed'; id: string; detail: string }
-  | { type: 'done'; id: string; symbol: string; reason: EndReason }
+  | { type: 'placed'; id: string; symbol: string; filledSz: number; venueMs: number }
+  | { type: 'protected'; id: string; symbol: string; sz: number; venueMs: number }
+  | { type: 'changed'; id: string; detail: string; venueMs: number }
+  | { type: 'done'; id: string; symbol: string; reason: EndReason; venueMs?: number }
   | { type: 'locked'; id: string }
   | { type: 'error'; id: string | null; message: string };
 
@@ -176,7 +179,7 @@ export function createRunnerHost(deps: HostDeps) {
     deps.store.put(row);
   }
 
-  function finish(row: PlanRow, reason: EndReason): void {
+  function finish(row: PlanRow, reason: EndReason, venueMs?: number): void {
     row.status = 'done';
     row.endReason = reason;
     delete row.blind;
@@ -184,7 +187,7 @@ export function createRunnerHost(deps: HostDeps) {
     delete row.holds;
     persist(row);
     armedInChild.delete(row.id);
-    record({ type: 'done', id: row.id, symbol: row.symbol, reason });
+    record({ type: 'done', id: row.id, symbol: row.symbol, reason, ...(venueMs !== undefined ? { venueMs } : {}) });
     deps.session?.disarm(row.id);
     if (child !== null && child.connected) {
       // Not awaited: a finished plan's leftover exit is the venue's own cancel most of the time,
@@ -435,7 +438,7 @@ export function createRunnerHost(deps: HostDeps) {
         delete row.holds;
         delete row.blind;
         persist(row);
-        record({ type: 'placed', id: row.id, symbol: row.symbol, filledSz: reply.filledSz });
+        record({ type: 'placed', id: row.id, symbol: row.symbol, filledSz: reply.filledSz, venueMs: reply.venueMs });
         return;
       }
       if (reply.ev === 'refused') {
@@ -500,7 +503,7 @@ export function createRunnerHost(deps: HostDeps) {
           if (pos !== null && row.fillPx === undefined) row.fillPx = pos.entryPx;
         }
         persist(row);
-        record({ type: 'protected', id: row.id, symbol: row.symbol, sz: reply.sz });
+        record({ type: 'protected', id: row.id, symbol: row.symbol, sz: reply.sz, venueMs: reply.venueMs });
         return;
       }
       record({ type: 'error', id: row.id, message: reply.ev === 'error' ? reply.message : reply.ev === 'refused' ? reply.reason : `unexpected ${reply.ev}` });
@@ -572,7 +575,7 @@ export function createRunnerHost(deps: HostDeps) {
               return;
             }
             if (reply.ev === 'cancelled') {
-              finish(row, 'expired');
+              finish(row, 'expired', reply.venueMs);
               return;
             }
             record({ type: 'error', id: row.id, message: reply.ev === 'error' ? reply.message : reply.ev === 'refused' ? reply.reason : `unexpected ${reply.ev}` });
@@ -781,7 +784,7 @@ export function createRunnerHost(deps: HostDeps) {
       if (risk.ok) row.risk = risk.risk;
       persist(row);
       const detail = `${id}: stop ${String(row.stop)}${row.target === undefined ? ', no target' : `, target ${String(row.target)}`}`;
-      record({ type: 'changed', id, detail });
+      record({ type: 'changed', id, detail, venueMs: reply.venueMs });
       return { ok: true, detail };
     },
 
@@ -806,7 +809,7 @@ export function createRunnerHost(deps: HostDeps) {
         persist(row);
         return { ok: true, detail: `${id}: the entry is cancelled, and ${String(reply.filledSz)} had already filled, so the plan is open and protected` };
       }
-      finish(row, 'cancelled');
+      finish(row, 'cancelled', reply.venueMs);
       return { ok: true, detail: `${id} cancelled` };
     },
 
@@ -822,7 +825,7 @@ export function createRunnerHost(deps: HostDeps) {
       if (reply.ev !== 'closed') {
         return { ok: false, detail: reply.ev === 'error' ? reply.message : reply.ev === 'refused' ? reply.reason : `unexpected ${reply.ev}` };
       }
-      finish(row, 'closed');
+      finish(row, 'closed', reply.venueMs);
       return { ok: true, detail: `${id} closed` };
     },
 

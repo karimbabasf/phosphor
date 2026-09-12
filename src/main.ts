@@ -329,7 +329,9 @@ const runner = createRunnerHost({
         ('reason' in e ? `: ${e.reason}` : 'message' in e ? `: ${e.message}` : 'detail' in e ? `: ${e.detail}` : '') +
         // Written into the sentence rather than left in the data, because "how long does this
         // plan hold a key that can trade" is the question somebody reads this line to answer.
-        (e.type === 'armed' ? `: it holds the trading key until ${e.signingExpiresAt}` : ''),
+        (e.type === 'armed' ? `: it holds the trading key until ${e.signingExpiresAt}` : '') +
+        // Same reason: "was it the venue or was it us" is answered by the line, not by the data.
+        ('venueMs' in e && e.venueMs !== undefined ? `: the venue took ${e.venueMs} ms` : ''),
       e,
     );
   },

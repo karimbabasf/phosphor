@@ -19,6 +19,7 @@ import {
   aggressiveLimitPrice,
   cloidFor,
   createExchange,
+  defaultTransport,
   orderErrors,
   stopLimitPx,
 } from '../hl/exchange.ts';
@@ -67,7 +68,25 @@ type Held = {
 };
 
 const held = new Map<string, Held>();
-const info = createInfoClient({ baseUrl: BASE_URL });
+
+// How long the venue took, summed over every POST the command in hand has made, reads and
+// writes alike. Reset per command by the queue below; read into the event that answers it.
+// Signing is outside the clock: this is the venue's time, not this process's.
+let venueClock = 0;
+async function atVenue<T>(work: () => Promise<T>): Promise<T> {
+  const started = performance.now();
+  try {
+    return await work();
+  } finally {
+    venueClock += performance.now() - started;
+  }
+}
+function venueMs(): number {
+  return Math.round(venueClock);
+}
+
+const rawInfo = createInfoClient({ baseUrl: BASE_URL });
+const info = { post: <T>(body: unknown): Promise<T> => atVenue(() => rawInfo.post<T>(body)) };
 let exchange: ReturnType<typeof createExchange> | null = null;
 
 function send(e: FromChild): void {
@@ -76,7 +95,9 @@ function send(e: FromChild): void {
 
 function requireExchange(): ReturnType<typeof createExchange> {
   if (KEY === undefined) throw new Error('no API wallet key: the app did not hand one to this runner');
-  if (exchange === null) exchange = createExchange({ privKey: KEY, baseUrl: BASE_URL });
+  if (exchange === null) {
+    exchange = createExchange({ privKey: KEY, baseUrl: BASE_URL, transport: (url, body) => atVenue(() => defaultTransport(url, body)) });
+  }
   return exchange;
 }
 
@@ -307,7 +328,7 @@ async function fire(m: Extract<ToChild, { cmd: 'fire' }>): Promise<FromChild> {
     } else {
       h.exitSz = sizeCoin;
     }
-    return { ev: 'placed', seq: m.seq, id: m.id, oids, filledSz, avgPx, cloids: h.cloids, gen: h.gen };
+    return { ev: 'placed', seq: m.seq, id: m.id, oids, filledSz, avgPx, cloids: h.cloids, gen: h.gen, venueMs: venueMs() };
   }
 
   // A limit or a stop entry rests alone. The venue holds it; the exits are placed on protect,
@@ -340,7 +361,7 @@ async function fire(m: Extract<ToChild, { cmd: 'fire' }>): Promise<FromChild> {
     }
     oids = { ...oids, ...placed.oids };
   }
-  return { ev: 'placed', seq: m.seq, id: m.id, oids, filledSz, avgPx, cloids: h.cloids, gen: h.gen };
+  return { ev: 'placed', seq: m.seq, id: m.id, oids, filledSz, avgPx, cloids: h.cloids, gen: h.gen, venueMs: venueMs() };
 }
 
 async function modify(m: Extract<ToChild, { cmd: 'modify' }>): Promise<FromChild> {
@@ -362,7 +383,7 @@ async function modify(m: Extract<ToChild, { cmd: 'modify' }>): Promise<FromChild
       return { ev: 'error', seq: m.seq, id: m.id, message: `the old exits are gone and the venue refused the new ones, so ${h.plan.symbol} is OPEN WITHOUT A STOP: ${placed.refused.join('; ')}` };
     }
   }
-  return { ev: 'modified', seq: m.seq, id: m.id, stop: h.plan.stop, target: h.plan.target ?? null, cloids: h.cloids, gen: h.gen };
+  return { ev: 'modified', seq: m.seq, id: m.id, stop: h.plan.stop, target: h.plan.target ?? null, cloids: h.cloids, gen: h.gen, venueMs: venueMs() };
 }
 
 async function cancel(m: Extract<ToChild, { cmd: 'cancel' }>): Promise<FromChild> {
@@ -381,10 +402,10 @@ async function cancel(m: Extract<ToChild, { cmd: 'cancel' }>): Promise<FromChild
   if (pos !== null && h.fired) {
     const out = await protect(h);
     if (!out.ok) return { ev: 'error', seq: m.seq, id: m.id, message: out.reason };
-    return { ev: 'cancelled', seq: m.seq, id: m.id, filledSz: Math.abs(pos.szi) };
+    return { ev: 'cancelled', seq: m.seq, id: m.id, filledSz: Math.abs(pos.szi), venueMs: venueMs() };
   }
   held.delete(m.id);
-  return { ev: 'cancelled', seq: m.seq, id: m.id, filledSz: 0 };
+  return { ev: 'cancelled', seq: m.seq, id: m.id, filledSz: 0, venueMs: venueMs() };
 }
 
 async function closeCoin(coin: string, meta: AssetMeta, mark: number, maxSlippageBps: number): Promise<{ closed: boolean; detail: string; stillOpenSz: number }> {
@@ -413,7 +434,7 @@ async function close(m: Extract<ToChild, { cmd: 'close' }>): Promise<FromChild> 
   const refused = await cancelCloids(h.meta.assetId, exits);
   if (refused.length > 0) return { ev: 'error', seq: m.seq, id: m.id, message: `closed, and the venue refused to cancel the exits: ${refused.join('; ')}` };
   held.delete(m.id);
-  return { ev: 'closed', seq: m.seq, id: m.id, stillOpenSz: 0 };
+  return { ev: 'closed', seq: m.seq, id: m.id, stillOpenSz: 0, venueMs: venueMs() };
 }
 
 async function flatten(m: Extract<ToChild, { cmd: 'flatten' }>): Promise<FromChild> {
@@ -465,7 +486,7 @@ async function handle(m: ToChild): Promise<FromChild | null> {
       if (h === undefined) return { ev: 'refused', seq: m.seq, id: m.id, reason: `this runner holds no plan ${m.id}` };
       const out = await protect(h);
       if (!out.ok) return { ev: 'error', seq: m.seq, id: m.id, message: out.reason };
-      return { ev: 'protected', seq: m.seq, id: m.id, oids: out.oids, sz: out.sz, cloids: h.cloids, gen: h.gen };
+      return { ev: 'protected', seq: m.seq, id: m.id, oids: out.oids, sz: out.sz, cloids: h.cloids, gen: h.gen, venueMs: venueMs() };
     }
     case 'modify':
       return modify(m);
@@ -492,6 +513,7 @@ let queue: Promise<void> = Promise.resolve();
 process.on('message', (raw: unknown) => {
   const m = raw as ToChild;
   queue = queue.then(async () => {
+    venueClock = 0;
     try {
       const out = await handle(m);
       if (out !== null) send(out);

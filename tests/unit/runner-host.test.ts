@@ -54,15 +54,15 @@ class FakeChild extends EventEmitter {
       case 'arm':
         return { ev: 'armed', seq: m.seq, id: m.plan.id };
       case 'fire':
-        return { ev: 'placed', seq: m.seq, id: m.id, oids: { entry: 1 }, filledSz: 0, avgPx: null, cloids: { entry: '0xentry' }, gen: 1 };
+        return { ev: 'placed', seq: m.seq, id: m.id, oids: { entry: 1 }, filledSz: 0, avgPx: null, cloids: { entry: '0xentry' }, gen: 1, venueMs: 7 };
       case 'protect':
-        return { ev: 'protected', seq: m.seq, id: m.id, oids: { stop: 2, target: 3 }, sz: 5, cloids: { entry: '0xentry', stop: '0xstop', target: '0xtarget' }, gen: 2 };
+        return { ev: 'protected', seq: m.seq, id: m.id, oids: { stop: 2, target: 3 }, sz: 5, cloids: { entry: '0xentry', stop: '0xstop', target: '0xtarget' }, gen: 2, venueMs: 8 };
       case 'modify':
-        return { ev: 'modified', seq: m.seq, id: m.id, stop: m.stop ?? 90, target: m.target ?? null, cloids: { stop: '0xstop2' }, gen: m.gen + 1 };
+        return { ev: 'modified', seq: m.seq, id: m.id, stop: m.stop ?? 90, target: m.target ?? null, cloids: { stop: '0xstop2' }, gen: m.gen + 1, venueMs: 9 };
       case 'cancel':
-        return { ev: 'cancelled', seq: m.seq, id: m.id, filledSz: 0 };
+        return { ev: 'cancelled', seq: m.seq, id: m.id, filledSz: 0, venueMs: 10 };
       case 'close':
-        return { ev: 'closed', seq: m.seq, id: m.id, stillOpenSz: 0 };
+        return { ev: 'closed', seq: m.seq, id: m.id, stillOpenSz: 0, venueMs: 11 };
       case 'flatten':
         return { ev: 'flat', seq: m.seq, stillOpen: [], detail: 'flat' };
       case 'release':
@@ -201,7 +201,7 @@ test('a market entry that filled whole is open at once, protected by its bracket
   fresh(h);
   await h.runner.arm(row());
   const child = h.forked[0];
-  child.answers.fire = (m) => (m.cmd === 'fire' ? { ev: 'placed', seq: m.seq, id: m.id, oids: { entry: 1, stop: 2, target: 3 }, filledSz: 9.9, avgPx: 100.2, cloids: { entry: 'a', stop: 'b', target: 'c' }, gen: 1 } : null);
+  child.answers.fire = (m) => (m.cmd === 'fire' ? { ev: 'placed', seq: m.seq, id: m.id, oids: { entry: 1, stop: 2, target: 3 }, filledSz: 9.9, avgPx: 100.2, cloids: { entry: 'a', stop: 'b', target: 'c' }, gen: 1, venueMs: 12 } : null);
   // The arm already fired with the default answer; arm a second plan for this one.
   await h.runner.arm(row({ id: 'pl_2' }));
   await settle();
@@ -290,7 +290,7 @@ test('an open plan whose position is gone is done, with the reason read off the 
   const h = harness();
   fresh(h);
   await h.runner.arm(row());
-  h.forked[0].answers.fire = (m) => (m.cmd === 'fire' ? { ev: 'placed', seq: m.seq, id: m.id, oids: {}, filledSz: 10, avgPx: 100, cloids: { entry: 'a', stop: 'b', target: 'c' }, gen: 1 } : null);
+  h.forked[0].answers.fire = (m) => (m.cmd === 'fire' ? { ev: 'placed', seq: m.seq, id: m.id, oids: {}, filledSz: 10, avgPx: 100, cloids: { entry: 'a', stop: 'b', target: 'c' }, gen: 1, venueMs: 12 } : null);
   await h.runner.arm(row({ id: 'pl_2' }));
   await settle();
   assert.equal(h.runner.get('pl_2')?.status, 'open');
@@ -307,7 +307,7 @@ test('cancel is refused on an open plan, cancels a placed one through the child,
   fresh(h);
   await h.runner.arm(row({ id: 'pl_w', when: [{ type: 'time', after: new Date(Date.now() + 86_400_000).toISOString() }] }));
   await h.runner.arm(row({ id: 'pl_p', entry: { type: 'limit', px: 95 } }));
-  h.forked[0].answers.fire = (m) => (m.cmd === 'fire' ? { ev: 'placed', seq: m.seq, id: m.id, oids: {}, filledSz: 10, avgPx: 100, cloids: { entry: 'a', stop: 'b' }, gen: 1 } : null);
+  h.forked[0].answers.fire = (m) => (m.cmd === 'fire' ? { ev: 'placed', seq: m.seq, id: m.id, oids: {}, filledSz: 10, avgPx: 100, cloids: { entry: 'a', stop: 'b' }, gen: 1, venueMs: 12 } : null);
   await h.runner.arm(row({ id: 'pl_o' }));
   await settle();
   assert.equal(h.runner.get('pl_w')?.status, 'waiting');
@@ -350,7 +350,7 @@ test('close goes through the child at the given bound and finishes the plan', as
   const h = harness();
   fresh(h);
   await h.runner.arm(row());
-  h.forked[0].answers.fire = (m) => (m.cmd === 'fire' ? { ev: 'placed', seq: m.seq, id: m.id, oids: {}, filledSz: 10, avgPx: 100, cloids: { entry: 'a' }, gen: 1 } : null);
+  h.forked[0].answers.fire = (m) => (m.cmd === 'fire' ? { ev: 'placed', seq: m.seq, id: m.id, oids: {}, filledSz: 10, avgPx: 100, cloids: { entry: 'a' }, gen: 1, venueMs: 12 } : null);
   await h.runner.arm(row({ id: 'pl_2' }));
   await settle();
   const out = await h.runner.close('pl_2', 30);
@@ -360,6 +360,32 @@ test('close goes through the child at the given bound and finishes the plan', as
   assert.equal(h.runner.get('pl_2')?.endReason, 'closed');
   const notOpen = await h.runner.close('pl_1', 30);
   assert.equal(notOpen.ok, false, 'a placed plan has nothing to close');
+});
+
+test('every host event that came from a child reply carries the venue round trip, and one that never asked the venue does not', async () => {
+  const h = harness();
+  fresh(h);
+  await h.runner.arm(row({ id: 'pl_p', entry: { type: 'limit', px: 95 } }));
+  h.forked[0].answers.fire = (m) => (m.cmd === 'fire' ? { ev: 'placed', seq: m.seq, id: m.id, oids: {}, filledSz: 10, avgPx: 100, cloids: { entry: 'a', stop: 'b' }, gen: 1, venueMs: 12 } : null);
+  await h.runner.arm(row({ id: 'pl_o' }));
+  await h.runner.arm(row({ id: 'pl_w', when: [{ type: 'time', after: new Date(Date.now() + 86_400_000).toISOString() }] }));
+  await settle();
+  const of = (type: RunnerEvent['type'], id: string): RunnerEvent | undefined => h.events.find((e) => e.type === type && 'id' in e && e.id === id);
+  assert.deepEqual(of('placed', 'pl_p'), { type: 'placed', id: 'pl_p', symbol: 'ETH', filledSz: 0, venueMs: 7 });
+  assert.equal((of('placed', 'pl_o') as { venueMs?: number } | undefined)?.venueMs, 12, 'the child answer is the source, not a constant');
+
+  h.runner.onAccount(account({ positions: [{ coin: 'ETH', szi: 5, entryPx: 95 }] }));
+  await settle();
+  assert.deepEqual(of('protected', 'pl_p'), { type: 'protected', id: 'pl_p', symbol: 'ETH', sz: 5, venueMs: 8 });
+
+  await h.runner.change('pl_p', { stop: 92 });
+  assert.equal((of('changed', 'pl_p') as { venueMs?: number } | undefined)?.venueMs, 9);
+
+  await h.runner.close('pl_o', 30);
+  assert.deepEqual(of('done', 'pl_o'), { type: 'done', id: 'pl_o', symbol: 'ETH', reason: 'closed', venueMs: 11 });
+
+  await h.runner.cancel('pl_w');
+  assert.deepEqual(of('done', 'pl_w'), { type: 'done', id: 'pl_w', symbol: 'ETH', reason: 'cancelled' }, 'a waiting plan is cancelled without the venue, so there is no round trip to report');
 });
 
 test('the API wallet is checked once per child before the first fire, and a revoked one fails the plan', async () => {

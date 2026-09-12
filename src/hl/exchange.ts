@@ -69,7 +69,9 @@ export function stopLimitPx(triggerPx: number, isBuy: boolean, szDecimals: numbe
   return roundToValidPrice(raw, szDecimals, true, isBuy);
 }
 
-const defaultTransport: Transport = async (url, body) => {
+// Exported so a caller can wrap it (the runner child times it) without redoing the error
+// stamping below.
+export const defaultTransport: Transport = async (url, body) => {
   // Venue write: this places, cancels and modifies real orders. A timeout here says the venue
   // did not answer, which is not the same as the order not existing.
   const res = await fetch(url, {

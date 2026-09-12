@@ -46,7 +46,7 @@ class FakeChild extends EventEmitter {
     this.sent.push(m);
     let reply: FromChild | null = null;
     if (m.cmd === 'arm') reply = { ev: 'armed', seq: m.seq, id: m.plan.id };
-    if (m.cmd === 'fire') reply = { ev: 'placed', seq: m.seq, id: m.id, oids: { entry: 1 }, filledSz: 0, avgPx: null, cloids: { entry: '0xentry' }, gen: 1 };
+    if (m.cmd === 'fire') reply = { ev: 'placed', seq: m.seq, id: m.id, oids: { entry: 1 }, filledSz: 0, avgPx: null, cloids: { entry: '0xentry' }, gen: 1, venueMs: 0 };
     if (m.cmd === 'release') reply = { ev: 'released', seq: m.seq, id: m.id };
     if (reply !== null) setImmediate(() => this.emit('message', reply));
     return true;
