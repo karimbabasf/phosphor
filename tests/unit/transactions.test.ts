@@ -112,6 +112,32 @@ test('a policy change is not a transaction: it moves no money', () => {
   assert.equal(build([policy]).length, 0);
 });
 
+test('a trade is not a transaction: margin, position and profit stay on the venue', () => {
+  const trade = {
+    id: 'p-trade',
+    kind: 'trade',
+    createdAt: '2026-09-11T10:00:00.000Z',
+    status: 'executed',
+    draft: {
+      kind: 'trade',
+      op: 'open',
+      plan: { id: 'pl_1', symbol: 'BTC', side: 'long', sizeUsd: 4000, leverage: 20, entry: { type: 'market', maxSlippageBps: 30 }, stop: 63000, expiresAt: '2026-09-12T10:00:00.000Z' },
+      hash: 'h',
+      risk: { marginUsd: 200, maxLossUsd: 66.1, stopSlipUsd: 400, entryRef: 64000, liquidationPx: 61570.12, notionalUsd: 3999, amountUsd: 200 },
+      amountUsd: 200,
+      counterparty: 'hyperliquid-perps',
+    },
+    simulation: null,
+    verdict: { outcome: 'allow', reasons: [] },
+    decidedBy: 'policy',
+    decidedAt: '2026-09-11T10:00:01.000Z',
+    result: { ok: true, detail: 'pl_1 armed on BTC', txids: [] },
+  } as unknown as Proposal;
+  assert.equal(build([trade]).length, 0);
+  const change = { ...trade, id: 'p-change', draft: { kind: 'trade', op: 'change', id: 'pl_1', close: true, before: {}, after: {}, amountUsd: 200, counterparty: 'hyperliquid-perps' } } as unknown as Proposal;
+  assert.equal(build([change]).length, 0);
+});
+
 test('a failed execution stays in the history: what did not happen is part of the record', () => {
   const failed = swap({ status: 'failed', result: { ok: false, detail: 'the rail refused', txids: [] } });
   const [entry] = build([failed]);

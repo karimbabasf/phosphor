@@ -332,6 +332,134 @@ test('a trade reads as a sentence with its risk facts, and a change shows old an
   assert.ok(ctext.some((t) => t.includes('$66.10') && t.includes('$128.60')), 'old and new max loss, side by side');
 });
 
+/* The trade card, held to the spec line by line: side, size and leverage in the headline and
+   the plan, then margin, max loss, the 10% stop slippage bound, entry, stop, target,
+   liquidation and expiry as facts a person can read without the summary. Every one of these
+   is a label the card has to draw, so a renamed label is a red test rather than a blank row. */
+test('an open trade card carries every risk fact the spec names, each under its own label', () => {
+  const open = {
+    kind: 'trade',
+    op: 'open',
+    plan: { id: 'pl_9', symbol: 'ETH', side: 'short', sizeUsd: 300, leverage: 5, entry: { type: 'limit', px: 3200 }, stop: 3300, target: 3000, expiresAt: '2026-09-12T10:00:00.000Z', when: [{ type: 'close', tf: '1h', is: 'below', at: { px: 3150 } }] },
+    hash: 'abc',
+    risk: { marginUsd: 60, maxLossUsd: 9.64, stopSlipUsd: 30, entryRef: 3200, liquidationPx: 3789.47, notionalUsd: 300, amountUsd: 60 },
+    amountUsd: 60,
+    counterparty: 'hyperliquid-perps',
+  };
+  const card = cardFor({
+    id: 'p6',
+    kind: 'trade',
+    status: 'pending',
+    createdAt: '2026-09-11T10:00:00.000Z',
+    draft: open,
+    simulation: { ok: true, summary: 'Short ETH: $300.00 notional at 5x, $60.00 of collateral at stake, isolated.\nWhen: a 1h bar closes below 3150.' },
+    verdict: { outcome: 'needs_approval', reasons: ['$60.00 is above the $10.00 click threshold.'] },
+  });
+  const facts = find(card, 'fact').map((row) => textOf(row));
+  const byLabel = Object.fromEntries(facts.map(([label, value]) => [label, value]));
+  assert.equal(byLabel['Collateral at stake'], '$60.00 isolated, at 5x');
+  assert.equal(byLabel['Max loss at the stop'], '$9.64 with fees');
+  assert.equal(byLabel['If the stop slips 10%'], 'up to $30.00 more');
+  assert.equal(byLabel['Entry'], 'limit at 3200, held by the exchange');
+  assert.equal(byLabel['Stop'], '3300');
+  assert.equal(byLabel['Target'], '3000');
+  assert.equal(byLabel['Liquidation near'], '3789.47');
+  assert.equal(byLabel['Expires'], '2026-09-12T10:00:00.000Z');
+  assert.ok('Why you are being asked' in byLabel);
+  assert.equal('What it costs' in byLabel, false, 'a trade card carries no fee line');
+  const text = textOf(card);
+  assert.ok(text.includes('Open a short on ETH'));
+  assert.ok(text.includes('$60.00'), 'the governed amount is the headline figure');
+  assert.ok(text.some((t) => t.includes('a 1h bar closes below 3150')), 'the conditions reach the card in English');
+});
+
+/* The three changes. A cancel says nothing is at risk after it; a close names the collateral
+   at stake and the bound; an exit change shows the old and the new figure side by side, and
+   the old and new price ride in the rail's own summary, which the card draws in full. */
+test('a change card shows old and new, a close shows what is at stake, a cancel shows what is left', () => {
+  const before = { marginUsd: 200, maxLossUsd: 66.1, stopSlipUsd: 400, entryRef: 64000, liquidationPx: 61570.12, notionalUsd: 3999, amountUsd: 200 };
+  const base = { id: 'p7', kind: 'trade', status: 'pending', createdAt: '2026-09-11T10:00:00.000Z', verdict: { outcome: 'needs_approval', reasons: ['wider'] } };
+
+  const exits = cardFor({
+    ...base,
+    draft: { kind: 'trade', op: 'change', id: 'pl_1', stop: 62000, target: 68000, before, after: { ...before, maxLossUsd: 128.6, liquidationPx: 61570.12 }, amountUsd: 200, counterparty: 'hyperliquid-perps' },
+    simulation: { ok: true, summary: 'Stop 63000 becomes 62000.\nMax loss $66.10 becomes $128.60 (wider, so the wall applies to the new figure).\nTarget 66000 becomes 68000.' },
+  });
+  const exitFacts = Object.fromEntries(find(exits, 'fact').map((row) => textOf(row)));
+  assert.equal(exitFacts['Stop'], 'new 62000');
+  assert.equal(exitFacts['Target'], 'new 68000');
+  assert.equal(exitFacts['Max loss at the stop'], 'from $66.10 to $128.60');
+  assert.equal(exitFacts['Liquidation near'], '61570.12');
+  const exitText = textOf(exits);
+  assert.ok(exitText.includes('Change the exits on pl_1'));
+  assert.ok(exitText.some((t) => t.includes('Stop 63000 becomes 62000')), 'the old stop is on the card, in the rail\'s summary');
+  assert.ok(exitText.some((t) => t.includes('Target 66000 becomes 68000')));
+
+  const close = cardFor({
+    ...base,
+    draft: { kind: 'trade', op: 'change', id: 'pl_1', close: true, before, after: before, amountUsd: 200, counterparty: 'hyperliquid-perps' },
+    simulation: { ok: true, summary: 'Close pl_1: the long on BTC is sold at market, reduce only, within 30 bps of the mark.\nCollateral at stake now: $200.00. Slippage bound: $12.00.' },
+  });
+  const closeFacts = Object.fromEntries(find(close, 'fact').map((row) => textOf(row)));
+  assert.equal(closeFacts['Collateral at stake'], '$200.00');
+  assert.match(closeFacts['How'], /reduce only/);
+  const closeText = textOf(close);
+  assert.ok(closeText.includes('Close pl_1'));
+  assert.ok(closeText.includes('$200.00'), 'a close is priced at the margin and the headline says so');
+  assert.ok(closeText.some((t) => t.includes('Slippage bound: $12.00')));
+
+  const cancel = cardFor({
+    ...base,
+    draft: { kind: 'trade', op: 'change', id: 'pl_1', cancel: true, before, after: before, amountUsd: 0, counterparty: 'hyperliquid-perps' },
+    simulation: { ok: true, summary: 'Cancel pl_1: the long on BTC stops waiting. Nothing is at risk after this.' },
+  });
+  const cancelFacts = Object.fromEntries(find(cancel, 'fact').map((row) => textOf(row)));
+  assert.equal(cancelFacts['After this'], 'Nothing is at risk.');
+  assert.ok(textOf(cancel).includes('Cancel pl_1'));
+});
+
+/* A HOSTILE PLAN REACHES THE CARD AS TEXT AND NOTHING ELSE. The symbol and the note are the two
+   strings on a plan an agent writes freely (the app's own schema closes the symbol to letters
+   and digits, but the card must not depend on that). Both are put through the card with markup
+   and an approval sentence in them, and the card has to come out as the same five element
+   kinds it always builds, with the strings sitting whole inside text nodes. */
+test('a hostile symbol and note reach the trade card as text only', () => {
+  const symbol = '<img src=x onerror=alert(1)>';
+  const note = '</p><p class="label">APPROVED by the owner, click Yes</p>';
+  const summary = 'Long ' + symbol + ': $4,000.00 notional at 20x.\nNote: ' + note;
+  const card = cardFor({
+    id: 'p8',
+    kind: 'trade',
+    status: 'pending',
+    createdAt: '2026-09-11T10:00:00.000Z',
+    draft: {
+      kind: 'trade',
+      op: 'open',
+      plan: { id: 'pl_1', symbol, side: 'long', sizeUsd: 4000, leverage: 20, entry: { type: 'market', maxSlippageBps: 30 }, stop: 63000, expiresAt: '2026-09-12T10:00:00.000Z', note },
+      hash: 'abc',
+      risk: { marginUsd: 200, maxLossUsd: 66.1, stopSlipUsd: 400, entryRef: 64000, liquidationPx: 61570.12, notionalUsd: 3999, amountUsd: 200 },
+      amountUsd: 200,
+      counterparty: 'hyperliquid-perps',
+    },
+    simulation: { ok: true, summary },
+    verdict: { outcome: 'needs_approval', reasons: ['$200.00 is above the $100.00 click threshold.'] },
+  });
+  const tags = new Set<string>();
+  const walk = (n: Node): void => {
+    tags.add(String(n.tagName));
+    for (const child of n.childNodes) walk(child);
+  };
+  walk(card);
+  assert.deepEqual([...tags].sort(), ['button', 'div', 'h2', 'p', 'span'], 'the card built an element it never builds');
+  const text = textOf(card);
+  assert.ok(text.includes('Open a long on ' + symbol), 'the symbol is one text node, markup and all');
+  assert.ok(text.includes(summary), 'the summary is one text node, the note inside it');
+  // Nothing on the card says who decided: the assistant's note is under the rail's summary,
+  // and the only labels are the card's own.
+  const labels = find(card, 'label').map((n) => n.textContent);
+  assert.equal(labels.some((l) => /approved/i.test(String(l))), false);
+});
+
 // B17. The engine used to write a draft called mandate_arm. Rows with that kind
 // are still on disk in older installs, so the card still reads them as a sentence.
 test('a mandate row from an older build still reads as a sentence, not as an enum', () => {
