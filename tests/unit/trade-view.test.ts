@@ -17,6 +17,12 @@ test('the view starts on a symbol and every overlay a trader needs is on', () =>
   // you find out about afterwards.
   assert.equal(v.state().overlays.liquidation, true);
   assert.equal(v.state().overlays.position, true);
+  // The plan's stop is the human's own wall and it starts on for the same reason. It carried
+  // the mandate's name after mandates were gone, so the window and the agent named one line
+  // two ways.
+  assert.equal(v.state().overlays.planStop, true);
+  assert.ok(!('mandateWall' in v.state().overlays), 'the overlay still carries the mandate name');
+  assert.ok((OVERLAYS as readonly string[]).includes('planStop'));
   assert.equal(v.state().rev, 0);
 });
 

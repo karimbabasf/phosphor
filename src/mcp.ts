@@ -838,7 +838,7 @@ registerView(
   'trade_overlay',
   `Turns one chart overlay on or off: the entry line, the liquidation, the plan stop wall, working stops, targets, resting orders, or your own fills. ${TRADE_ANSWER}`,
   {
-    name: z.enum(['position', 'liquidation', 'stops', 'targets', 'orders', 'fills', 'mandateWall']),
+    name: z.enum(['position', 'liquidation', 'stops', 'targets', 'orders', 'fills', 'planStop']),
     on: z.boolean(),
   },
 );

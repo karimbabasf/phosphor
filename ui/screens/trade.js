@@ -30,7 +30,7 @@
   var OVERLAYS = [
     { id: 'position', label: 'Position' },
     { id: 'liquidation', label: 'Forced close' },
-    { id: 'mandateWall', label: 'Rule wall' }
+    { id: 'planStop', label: 'Plan stop' }
   ];
 
   function boot() {

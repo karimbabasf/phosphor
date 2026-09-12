@@ -50,7 +50,7 @@ export const OVERLAYS = [
   'targets', // working take-profit triggers
   'orders', // resting limit orders
   'fills', // where this account actually traded
-  'mandateWall', // the plan's stop, the price at which the approved max loss is reached
+  'planStop', // the plan's stop, the price at which the approved max loss is reached
 ] as const;
 export type OverlayName = (typeof OVERLAYS)[number];
 
@@ -92,7 +92,7 @@ function defaultOverlays(): Overlays {
     targets: true,
     orders: true,
     fills: false,
-    mandateWall: true,
+    planStop: true,
   };
 }
 

@@ -159,7 +159,7 @@ function payload(sizeCoin: number, szDecimals: number | null) {
 function funded() {
   return {
     symbol: 'BTC',
-    overlays: { position: true, liquidation: false, mandateWall: true },
+    overlays: { position: true, liquidation: false, planStop: true },
     account: {
       equityUsd: 4200.5,
       freeUsd: 3100.25,
@@ -359,7 +359,7 @@ test('the overlay chips follow the payload, because the canvas reads the payload
   for (const chip of chips) state[chip.dataset.overlay] = chip.getAttribute('aria-pressed');
   assert.equal(state.position, 'true');
   assert.equal(state.liquidation, 'false');
-  assert.equal(state.mandateWall, 'true');
+  assert.equal(state.planStop, 'true');
 });
 
 test('the toggles no longer write a global nothing reads', async () => {

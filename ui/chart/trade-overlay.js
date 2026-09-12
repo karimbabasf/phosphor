@@ -259,7 +259,7 @@ function drawTradeOverlays(ctx, L) {
 
     /* The human's wall. Nearer than the liquidation whenever a mandate is armed, which is the
        point: the loss you approved is reached before the venue ever gets to act. */
-    if (show.mandateWall) {
+    if (show.planStop) {
       for (var m = 0; m < mandates.length; m++) {
         var wall = mandates[m].wallPx;
         if (!isFinite(wall) || wall <= 0) continue;
