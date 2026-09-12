@@ -12,6 +12,7 @@
     "sweep": "node scripts/sweep.ts",
     "intents-balance": "node scripts/intents-balance.ts",
     "hl-agent": "node scripts/hl-agent.ts",
+    "venue-latency": "node scripts/venue-latency.ts",
     "test": "node --test tests/unit/*.test.ts tests/injection.test.ts tests/lockdown.test.ts",
     "e2e": "node scripts/e2e.ts",
     "typecheck": "tsc --noEmit",
