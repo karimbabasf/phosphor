@@ -112,6 +112,14 @@ export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.S
   }
   const body = parsed.value;
   const op = String(body.op ?? '');
+  /* THE BODY THAT IS LOGGED IS THE BODY WITHOUT ITS CREDENTIALS. The proxy sends this boot's seat
+     secret on the hello and on every call (src/mcp.ts), because that is how a spawned agent proves
+     it may take a reserved seat. Logged verbatim, it sat on audit.jsonl, which log_tail hands to
+     every agent, a worker included, and GET /api/log hands to any local process: the six-seat
+     roster flood that RESERVED_SEATS closes was open to anyone who read the log. The arguments,
+     the session and the client name are the record; the secret was never part of it. A token is
+     stripped for the same reason, in case a caller ever sends one here. */
+  const { secret: _secret, token: _token, ...logged } = body;
 
   // The presence heartbeat is not a tool call, so it is answered before the
   // append below and never enters the transcript. mcp.ts pings for the whole life
@@ -127,7 +135,7 @@ export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.S
       rejectSeat(ctx, claim.error, body, res, claim.revoked === true);
       return;
     }
-    if (claim.edge) ctx.audit.append('agent_connected', 'an agent attached to phosphor', body);
+    if (claim.edge) ctx.audit.append('agent_connected', 'an agent attached to phosphor', logged);
     ctx.sse.broadcastState();
     sendJson(res, 200, {
       ok: true,
@@ -164,7 +172,7 @@ export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.S
     return;
   }
   if (seat.edge) {
-    ctx.audit.append('agent_connected', 'an agent attached to phosphor', body);
+    ctx.audit.append('agent_connected', 'an agent attached to phosphor', logged);
     // An agent that joined on its first op (no hello) is connected NOW. Push state so
     // the window's `agent` field and presence light say so at once rather than at the next
     // heartbeat up to a TTL later. The hello path already does this; this covers the rest.
@@ -189,8 +197,8 @@ export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.S
               ? `set_basic_coins ${(Array.isArray(body.coins) ? body.coins : []).join(' ')}`
               : `unknown op ${op}`;
   // Contract: every op that reads, proposes or moves the window is audit-logged
-  // before dispatch, arguments included verbatim.
-  ctx.audit.append('tool_call', `agent: ${capLabel(label)}`, body);
+  // before dispatch, arguments included verbatim. The credentials are not arguments.
+  ctx.audit.append('tool_call', `agent: ${capLabel(label)}`, logged);
 
   if (op === 'read') {
     await handleRead(ctx, body, res);
