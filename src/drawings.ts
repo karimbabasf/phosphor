@@ -10,6 +10,12 @@
 //      evicted to make room for an agent one, because the human did not consent to their
 //      own work being dropped by something the agent did.
 //
+// And a third, since plans wait on lines: a line a plan HOLDS is not removed by anything in
+// this file. The watcher reads a missing line as "does not hold", so a clear, a product sweep or
+// the cap taking `tl_3` from under a waiting plan would leave a plan the human approved that can
+// never fire, with nothing saying why. The caller names the held ids (src/http/view.ts reads
+// them off the plans) and every remover here steps around them.
+//
 // Levels and marks are deliberately absent: src/chart.ts already owns those, and this file
 // exists alongside it rather than replacing it.
 
@@ -47,6 +53,10 @@ export type DrawingStore = {
   // chart when the instrument changes: a zone carried onto another market is not stale, it is
   // wrong. The human's drawings are never swept, on the same rule the eviction above holds.
   sweepForeign(product: string): number;
+  // The ids a plan is waiting on. Replaces the previous set; none of them is removed by clear,
+  // the sweep, the cap or remove until a later call drops them from the set.
+  hold(ids: Iterable<string>): void;
+  held(id: string): boolean;
   count(): number;
 };
 
@@ -54,22 +64,37 @@ const PREFIX: Record<Drawing['kind'], string> = { trendline: 'tl', zone: 'zn' };
 // Exported so the chart's housekeeping block can say how full this store is beside its own caps.
 export const DRAWINGS_MAX = 200;
 
-export function createDrawingStore(opts?: { max?: number; now?: () => number }): DrawingStore {
+export type DrawingStoreOptions = {
+  max?: number;
+  now?: () => number;
+  /* The two that keep ids unique across several charts. `counters` is shared by reference between
+     the stores of one server, so a number is minted once app-wide; `prefix` marks every id a
+     comparison chart mints (`c1_tl_4`) so it can never be mistaken for the primary's `tl_4`, which
+     is the only shape a plan may name and the only store the watcher reads. Before this every
+     chart started at tl_1, and a plan waiting on a comparison chart's line would have fired on the
+     primary's line of the same name. */
+  counters?: Record<string, number>;
+  prefix?: string;
+};
+
+export function createDrawingStore(opts?: DrawingStoreOptions): DrawingStore {
   const max = opts?.max ?? DRAWINGS_MAX;
   const now = opts?.now ?? (() => Date.now());
+  const prefix = opts?.prefix ?? '';
   const items = new Map<string, Drawing>();
-  const counters: Record<string, number> = {};
+  const counters: Record<string, number> = opts?.counters ?? {};
+  let heldIds = new Set<string>();
 
   function nextId(kind: Drawing['kind']): string {
     const p = PREFIX[kind];
     counters[p] = (counters[p] ?? 0) + 1;
-    return `${p}_${counters[p]}`;
+    return `${prefix}${p}_${counters[p]}`;
   }
 
   function evictIfNeeded(): void {
     while (items.size > max) {
       const oldestAgent = [...items.values()]
-        .filter((d) => d.source === 'agent')
+        .filter((d) => d.source === 'agent' && !heldIds.has(d.id))
         .sort((a, b) => a.createdAt - b.createdAt)[0];
       // With nothing of the agent's left to drop, the cap yields rather than take the
       // human's work. A cap is a guard against agent runaway, not a reason to lose a drawing
@@ -88,10 +113,11 @@ export function createDrawingStore(opts?: { max?: number; now?: () => number }):
     },
     get: (id) => items.get(id),
     list: () => [...items.values()],
-    remove: (id) => items.delete(id),
+    remove: (id) => !heldIds.has(id) && items.delete(id),
     clear(source, by) {
       let n = 0;
       for (const [id, d] of [...items.entries()]) {
+        if (heldIds.has(id)) continue;
         if (source !== undefined && d.source !== source) continue;
         if (by !== undefined && by !== null && d.by !== by) continue;
         items.delete(id);
@@ -107,11 +133,16 @@ export function createDrawingStore(opts?: { max?: number; now?: () => number }):
         // being left.
         if (d.source !== 'agent') continue;
         if (d.product === product) continue;
+        if (heldIds.has(id)) continue;
         items.delete(id);
         n += 1;
       }
       return n;
     },
+    hold(ids) {
+      heldIds = new Set(ids);
+    },
+    held: (id) => heldIds.has(id),
     count: () => items.size,
   };
 }

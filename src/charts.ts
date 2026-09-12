@@ -36,9 +36,15 @@ export function createChartSlots(
   now: () => number = Date.now,
   resolve?: (type: string) => IndicatorSpec | null | undefined,
 ): ChartSlots {
+  // One set of counters for every chart, so `tl_4` is minted once and exists in one place, and a
+  // prefix on every comparison chart's ids so none of them is a shape a plan can name. The plan
+  // schema accepts `tl_N` only and the watcher reads the primary only (src/main.ts), so a
+  // comparison chart minting its own `tl_1` was a line that resolved to a different one.
+  const counters: Record<string, number> = {};
+  const drawingsFor = (index: number): DrawingStore => createDrawingStore({ now, counters, prefix: index === 0 ? '' : `c${index}_` });
   const primary: ChartSlot = {
     store: createChartStore(defaultProduct, now, resolve),
-    drawings: createDrawingStore({ now }),
+    drawings: drawingsFor(0),
     index: 0,
   };
   const slots: ChartSlot[] = [primary];
@@ -69,7 +75,7 @@ export function createChartSlots(
       const want = resolved[i] as { product: string; granularitySec: number };
       let held = slots[i];
       if (held === undefined) {
-        held = { store: createChartStore(want.product, now, resolve), drawings: createDrawingStore({ now }), index: i };
+        held = { store: createChartStore(want.product, now, resolve), drawings: drawingsFor(i), index: i };
         slots[i] = held;
       }
       const before = held.store.state().view.product;
