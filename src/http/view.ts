@@ -19,7 +19,7 @@ import type http from 'node:http';
 
 import { applyPatch as applyThemePatch } from '../view/theme.ts';
 import { findPreset, PRESETS } from '../presets.ts';
-import { CONCEPT_RULE, loadProfile, recordLearned } from '../profile/index.ts';
+import { isConcept, loadProfile, normalizeConcept, recordLearned } from '../profile/index.ts';
 import type { Outcome } from '../chart.ts';
 import type { ChartSlot } from '../charts.ts';
 import { asRecord, fail, sendJson } from './respond.ts';
@@ -315,15 +315,23 @@ const learnedCounts = new WeakMap<Ctx, Map<string, number>>();
 const HANDLERS: Record<string, ViewHandler> = {
   // ---------- the human's knowledge ----------
   profile_learned: ({ ctx, args, body, res }): void => {
+    /* A worker's MCP process never registers this tool, and this is the wall behind that one:
+       the app minted the worker's session id and seated it as an analyst, so the route can tell
+       a worker from a lead without reading anything off the wire. A worker has no human in its
+       session to have taught, so nothing it could record is a fact the human learned. */
+    if (ctx.agents.member(body.session)?.role === 'analyst') {
+      fail(res, 403, "profile_learned is the lead's tool: a worker has no human in its session to have taught");
+      return;
+    }
     const session = String(body.session ?? '');
     const counts = learnedCounts.get(ctx) ?? new Map<string, number>();
     learnedCounts.set(ctx, counts);
     const sofar = counts.get(session) ?? 0;
-    const concept = typeof args.concept === 'string' ? args.concept.trim() : '';
+    const concept = normalizeConcept(args.concept);
     // Only a concept that would be added counts against the allowance: a repeat writes nothing,
     // and an invalid one is refused below with the rule it broke rather than with the count.
     const known = loadProfile(ctx.cfg.dataDir).knows.some((k) => k.concept.toLowerCase() === concept.toLowerCase());
-    if (sofar >= LEARNED_PER_SESSION && CONCEPT_RULE.test(concept) && !known) {
+    if (sofar >= LEARNED_PER_SESSION && isConcept(concept) && !known) {
       fail(res, 400, `ten concepts is the most one session records; the next session can record more`);
       return;
     }
