@@ -171,10 +171,19 @@ function tokenize(line: Line, budget: { tokens: number }): Tok[] {
       i += 1;
       continue;
     }
-    refuse(line.no, `unexpected character '${ch}'`);
+    refuse(line.no, `unexpected character ${shown(s.codePointAt(i) ?? 0)}`);
   }
   out.push({ t: 'eof' });
   return out;
+}
+
+// A refusal travels to the agent and on to the human. A bidi override or a zero-width space
+// quoted inside it would do to that sentence what it did to the script, so an invisible
+// character is named by its code point and a visible one is quoted.
+function shown(code: number): string {
+  const ch = String.fromCodePoint(code);
+  if (/[\p{C}\p{Z}]/u.test(ch)) return `U+${code.toString(16).toUpperCase().padStart(4, '0')}`;
+  return `'${ch}'`;
 }
 
 // ---------- values and bindings ----------
@@ -1010,6 +1019,10 @@ export function translatePine(source: string): PineResult {
     return translate(source);
   } catch (err) {
     if (err instanceof Refusal) return { ok: false, line: err.line, message: err.message };
+    // A chain of ten thousand terms, or as many `else if`s, is a tree the resolver walks by
+    // recursion; the stack gives out before the depth cap sees it. That is a shape of script,
+    // not a fault in the translator, and the human gets told so in the same voice as any refusal.
+    if (err instanceof RangeError) return { ok: false, line: 0, message: 'the script nests too deeply to read; split the longest expression or if chain' };
     return { ok: false, line: 0, message: `translator error: ${err instanceof Error ? err.message : String(err)}` };
   }
 }

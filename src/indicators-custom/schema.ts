@@ -155,6 +155,14 @@ const inputsSchema = z
   )
   .refine((r) => Object.keys(r).length <= LIMITS.inputs, { message: `at most ${LIMITS.inputs} inputs` });
 
+// An unknown name is quoted back so the human can find it, but a name is whatever string the
+// file put there: a hundred kilobytes, or a bidi override that would turn the sentence around.
+// Forty visible characters is enough to find anything in a file.
+function quoted(name: string): string {
+  const clean = name.replace(/[\p{C}\p{Z}]/gu, (ch) => `U+${(ch.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, '0')}`);
+  return `'${clean.length > 40 ? `${clean.slice(0, 40)}...` : clean}'`;
+}
+
 // The tree is validated by a walk rather than a recursive zod schema, because the walk has to
 // stop the moment a limit is crossed. A recursive schema would parse a hundred thousand nodes
 // before saying they are too many.
@@ -193,7 +201,7 @@ function walk(node: unknown, path: (string | number)[], depth: number, inRecur: 
       else if (underWindow) st.issues.push({ path, message: "'prev' cannot be fed to an op that reads other bars; only elementwise ops may sit between recur and prev" });
       return;
     }
-    if (!SERIES.includes(node) && !st.inputs.has(node)) st.issues.push({ path, message: `unknown name '${node}'` });
+    if (!SERIES.includes(node) && !st.inputs.has(node)) st.issues.push({ path, message: `unknown name ${quoted(node)}` });
     return;
   }
   if (!Array.isArray(node) || node.length === 0 || typeof node[0] !== 'string') {
@@ -207,7 +215,7 @@ function walk(node: unknown, path: (string | number)[], depth: number, inRecur: 
   const op = node[0];
   const def = opDef(op);
   if (def === undefined) {
-    st.issues.push({ path, message: `unknown op '${op}'` });
+    st.issues.push({ path, message: `unknown op ${quoted(op)}` });
     return;
   }
   const args = node.slice(1);
