@@ -238,7 +238,10 @@ async function protect(h: Held): Promise<{ ok: true; oids: { stop?: number; targ
   return { ok: true, oids: placed.oids, sz };
 }
 
-function refusalBeforeSigning(h: Held, mark: number, change?: { stop?: number; target?: number }): string | null {
+// The position's own entry price stands in for the plan's once there is one: a change on an
+// open plan measures from where the venue actually filled it, and a stop entry that has fired
+// is not asked to sit past the mark again.
+function refusalBeforeSigning(h: Held, mark: number, change?: { stop?: number; target?: number }, entryPx?: number): string | null {
   if (Date.now() >= Date.parse(h.plan.expiresAt ?? '')) return `${h.plan.id} expired at ${h.plan.expiresAt ?? 'an unknown time'}`;
   const plan: Plan = { ...h.plan, ...(change?.stop !== undefined ? { stop: change.stop } : {}), ...(change?.target !== undefined ? { target: change.target } : {}) };
   const out = planRisk(plan, {
@@ -248,6 +251,7 @@ function refusalBeforeSigning(h: Held, mark: number, change?: { stop?: number; t
     freeCollateralUsd: null,
     takerFeeBps: DEFAULT_TAKER_FEE_BPS,
     sameCoinLeverage: null,
+    ...(entryPx !== undefined && Number.isFinite(entryPx) && entryPx > 0 ? { entryPx } : {}),
   });
   return out.ok ? null : out.refusal;
 }
@@ -347,7 +351,7 @@ async function modify(m: Extract<ToChild, { cmd: 'modify' }>): Promise<FromChild
   const h = held.get(m.id);
   if (h === undefined) return { ev: 'refused', seq: m.seq, id: m.id, reason: `this runner holds no plan ${m.id}` };
   const pos = await readPosition(h.plan.symbol);
-  const refusal = refusalBeforeSigning(h, m.mark, { stop: m.stop, target: m.target });
+  const refusal = refusalBeforeSigning(h, m.mark, { stop: m.stop, target: m.target }, pos !== null && h.fired ? pos.entryPx : undefined);
   if (refusal !== null) return { ev: 'refused', seq: m.seq, id: m.id, reason: refusal };
   if (m.stop !== undefined) h.plan = { ...h.plan, stop: m.stop };
   if (m.target !== undefined) h.plan = { ...h.plan, target: m.target };
