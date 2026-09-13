@@ -89,6 +89,9 @@
     if (typeof window.chartBoot !== 'function') return;
     charted = true;
     window.chartBoot();
+    /* The comparison charts boot beside the engine and probe their slots
+       themselves; they subscribe to the chart frames on their own. */
+    if (window.PhosphorMini) window.PhosphorMini.boot();
   }
 
   function build(host) {

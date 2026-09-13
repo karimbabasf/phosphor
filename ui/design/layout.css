@@ -607,6 +607,51 @@ body[data-view="trade"] .stage {
   height: 100%;
 }
 
+/* THE GRID. chart_layout puts up to four charts side by side; the stage carries
+   the count as data-n (ui/chart/mini.js writes it) and the primary keeps its
+   ids and its own engine whatever the count. One chart fills the column, two
+   sit side by side, three and four go two by two. In a grid the primary stops
+   being pinned to the stage's edges and takes its cell like the others. */
+.chart-stage[data-n="2"],
+.chart-stage[data-n="3"],
+.chart-stage[data-n="4"] {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: minmax(0, 1fr);
+  gap: 1px;
+  background: var(--line);
+}
+
+.chart-stage[data-n="3"],
+.chart-stage[data-n="4"] {
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+}
+
+.chart-stage[data-n="2"] > .chartwrap,
+.chart-stage[data-n="3"] > .chartwrap,
+.chart-stage[data-n="4"] > .chartwrap {
+  position: relative;
+  inset: auto;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-1);
+}
+
+.mini {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-1);
+}
+
+.mini-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 /* When the chart can no longer hold a usable plot beside a 320 px rail, the two
    stack and the world scrolls, which is the fallback the brief allows.
 

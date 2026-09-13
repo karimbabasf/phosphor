@@ -1153,6 +1153,35 @@
   inset: 0;
 }
 
+/* ---------- a comparison chart ----------
+
+   The header is the coin in the first tone, the timeframe in the third, and
+   the last close in the mono face on the right. Nothing on it is a control. */
+.mini-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  flex: 0 0 auto;
+  height: 26px;
+  padding: 0 var(--s-3);
+  font-size: var(--fs-12);
+  border-bottom: 1px solid var(--line);
+}
+
+.mini-coin {
+  font-weight: 500;
+  color: var(--text);
+}
+
+.mini-tf {
+  color: var(--text-3);
+}
+
+.mini-last {
+  margin-left: auto;
+  color: var(--text-2);
+}
+
 .chart-hud {
   position: absolute;
   top: var(--s-3);
