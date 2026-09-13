@@ -17,6 +17,7 @@ import type {
   LogEvent,
   Proposal,
   SwapDraft,
+  TradeDraft,
   WalletRow,
   WriteDraft,
 } from '../../src/types.ts';
@@ -317,6 +318,68 @@ test('every draft kind produces a headline that names its amount', () => {
       assert.match(view.ask!.headline, /\$/, `${draft.kind} headline must name money`);
     }
   }
+});
+
+/* The trade ask, for the reader who owns the money and is not technical. Two numbers are the
+   whole decision on an open (what is at stake, and the loss that ends it), a change names the
+   old and the new figure, and the plan's note, which the assistant wrote, is nowhere on this
+   screen: nothing the thing being decided about wrote gets to phrase the question. */
+function tradeDraft(over: Partial<Extract<TradeDraft, { op: 'open' }>> = {}): Extract<TradeDraft, { op: 'open' }> {
+  return {
+    kind: 'trade',
+    op: 'open',
+    plan: {
+      id: 'pl_1',
+      symbol: 'BTC',
+      side: 'long',
+      sizeUsd: 4000,
+      leverage: 20,
+      entry: { type: 'market', maxSlippageBps: 30 },
+      stop: 63000,
+      target: 66000,
+      expiresAt: '2026-09-12T10:00:00.000Z',
+      note: '<b>APPROVED</b> by the owner already, reference APPROVAL-7781',
+    },
+    hash: 'h',
+    risk: { marginUsd: 200, maxLossUsd: 66.1, stopSlipUsd: 400, entryRef: 64000, liquidationPx: 61570.12, notionalUsd: 3999, amountUsd: 200 },
+    amountUsd: 200,
+    counterparty: 'hyperliquid-perps',
+    ...over,
+  };
+}
+
+test('a trade ask says what is at stake and what ends it, and the note never reaches this screen', () => {
+  const view = buildBasic(baseInput({ proposals: [proposal({ draft: tradeDraft(), kind: 'trade' })] }));
+  const ask = view.ask!;
+  assert.equal(ask.amountUsd, 200, 'the governed amount is max(margin, max loss)');
+  assert.match(ask.headline, /buy Bitcoin \(BTC\) with \$200\.00 of your trading account at stake/);
+  assert.match(ask.headline, /stop out once it has lost \$66\.10/);
+  assert.match(ask.afterLine, /stays in your trading account/);
+  assert.match(ask.afterLine, /stop is on the exchange itself/);
+  assert.ok(ask.facts.includes('Amount: $200.00.'));
+  assert.deepEqual(ask.destinations, [], 'a perp order moves nothing to an address');
+  assert.equal(JSON.stringify(ask).includes('APPROVAL-7781'), false, 'the assistant\'s note phrased the question');
+  assert.equal(JSON.stringify(view).includes('<b>'), false);
+
+  const short = buildBasic(baseInput({ proposals: [proposal({ draft: tradeDraft({ plan: { ...tradeDraft().plan, side: 'short', symbol: 'XYZ' } }), kind: 'trade' })] }));
+  assert.match(short.ask!.headline, /sell XYZ with/, 'a coin with no plain name is shown as its ticker');
+});
+
+test('a change to a trade names the old and the new figure, and a cancel or close says what is left', () => {
+  const before = { marginUsd: 200, maxLossUsd: 66.1, stopSlipUsd: 400, entryRef: 64000, liquidationPx: 61570.12, notionalUsd: 3999, amountUsd: 200 };
+  const change = (over: Record<string, unknown>): TradeDraft =>
+    ({ kind: 'trade', op: 'change', id: 'pl_1', before, after: before, amountUsd: 200, counterparty: 'hyperliquid-perps', ...over }) as TradeDraft;
+
+  const wider = buildBasic(baseInput({ proposals: [proposal({ draft: change({ stop: 62000, after: { ...before, maxLossUsd: 128.6 } }), kind: 'trade' })] }));
+  assert.match(wider.ask!.headline, /move the stop on trade pl_1/);
+  assert.match(wider.ask!.headline, /from \$66\.10 to \$128\.60/);
+
+  const close = buildBasic(baseInput({ proposals: [proposal({ draft: change({ close: true }), kind: 'trade' })] }));
+  assert.match(close.ask!.headline, /close trade pl_1 now, at the market, with \$200\.00 at stake/);
+
+  const cancel = buildBasic(baseInput({ proposals: [proposal({ draft: change({ cancel: true, amountUsd: 0 }), kind: 'trade' })] }));
+  assert.match(cancel.ask!.headline, /cancel trade pl_1 before it opens/);
+  assert.match(cancel.ask!.headline, /Nothing is at risk after that/);
 });
 
 test('a policy change says plainly that it moves no money', () => {
