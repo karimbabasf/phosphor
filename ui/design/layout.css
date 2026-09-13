@@ -515,18 +515,24 @@ body[data-view="trade"] .stage {
 }
 
 .trade-status { flex: 0 0 auto; }
+.trade-open { flex: 0 0 auto; }
 
-/* What is running is bounded rather than free: a page of armed rules must not
-   take the tape's room. It takes what it needs up to the cap and no more, and
-   past the cap it scrolls inside itself with a fade at the cut. It must not
-   merely shrink: sharing the squeeze with the tape gave both of them a hidden
-   overflow and neither of them a fade. */
-.trade-running {
-  flex: 0 0 auto;
+/* EVERY ZONE IS AS TALL AS WHAT IS IN IT. Waiting is bounded rather than free:
+   a page of plans must not take the tape's room, so past the cap it scrolls
+   inside itself with a fade at the cut. Done takes what it needs and gives way
+   first when the rail is short, scrolling inside itself rather than pushing
+   anything off the bottom. Neither grows to fill: the room left under the last
+   zone is the rail's own ground, not a box. */
+.trade-waiting {
+  flex: 0 1 auto;
+  min-height: 0;
   max-height: 40%;
 }
 
-.trade-fills { flex: 1 1 auto; }
+.trade-done {
+  flex: 0 1 auto;
+  min-height: 0;
+}
 
 .trade-zone-head {
   display: flex;
@@ -545,12 +551,10 @@ body[data-view="trade"] .stage {
 }
 
 /* The tape is dense: the rows carry their own rhythm, so the column adds none.
-   It takes the whole zone rather than only the height of what is in it, so the
-   room under a short list belongs to the list and a long one scrolls in place
-   instead of leaving a dead strip at the bottom of the rail. */
-.trade-fills .trade-zone-body {
+   It shrinks with its zone, which is what lets a long tape scroll in place. */
+.trade-done .trade-zone-body {
   gap: 0;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
 }
 
 /* WHAT THE CHART IS OF, THEN WHAT IS DRAWN ON IT.
@@ -628,8 +632,8 @@ body[data-view="trade"] .stage {
   /* Stacked, the world scrolls again, so nothing in the rail holds a height of
      its own: every zone is as tall as what is in it. */
   .trade-rail { overflow: visible; max-height: none; }
-  .trade-running { max-height: none; }
-  .trade-fills { flex: 0 0 auto; }
+  .trade-waiting { max-height: none; }
+  .trade-done { flex: 0 0 auto; }
   .trade-zone .trade-zone-body { overflow: visible; }
   .trade-main { border-right: 0; border-bottom: 1px solid var(--line); }
   .split-h { display: none; }

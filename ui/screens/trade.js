@@ -1,20 +1,23 @@
 /* Trade: the chart fills the world, a rail on its right.
 
-   THREE ZONES IN THE RAIL, NOT FOUR CARDS. Karim, 2026-09-09, on a screenshot
-   of the old build: "this layout overall just looks shit". Three of the four
-   cards were empty in that shot, and each empty one spent a heading, a centred
-   title and a sentence saying so, so an empty panel cost as much height as a
-   full one and the single panel carrying real data was squeezed into the bottom.
+   FOUR ZONES IN THE RAIL, ONE HIERARCHY. Status is what the account is: the
+   coin, the mark, the free collateral and what the plans have put at risk. Open
+   is what is running: each position with its profit and the distance to its
+   exits. Waiting is what the app is holding for a condition: each plan as one
+   English line with its conditions as dots. Done is what happened: fills and
+   ended plans, one line each. Every zone is exactly as tall as what is in it, an
+   empty zone is one line, and the room left under the last zone is plain rail
+   ground. Karim, 2026-09-09, on the old four-card rail: "this layout overall
+   just looks shit". Three of the four cards were empty and each empty one cost
+   as much height as a full one.
 
-   What the account IS sits at the top, dense, with the mark price as the
-   biggest thing on the surface. What is RUNNING is under it: the open position
-   and the armed rules are one question, not two panels. What has HAPPENED takes
-   every pixel that is left and scrolls inside itself. A routine empty state is
-   one line; the sentence that explains the surface is kept for a person who has
-   never seen it.
+   The two controls on the rail, Close and Cancel, are the only way a person
+   reduces exposure from here. They confirm inline (the button becomes "Sure?"
+   for four seconds) rather than through a dialog, and they post to the human
+   door, /api/trade/action, which no agent tool opens onto.
 
    The chart engine is not rewritten here: its chrome takes the window's tokens
-   and its canvas takes the window's palette. Three overlay toggles, not seven. */
+   and its canvas takes the window's palette. */
 (function () {
   'use strict';
 
@@ -32,6 +35,13 @@
     { id: 'liquidation', label: 'Forced close' },
     { id: 'planStop', label: 'Plan stop' }
   ];
+
+  /* How long a pressed Close or Cancel waits for its second press. */
+  var CONFIRM_MS = 4000;
+  /* How long a row that just appeared is marked as entering: the enter
+     animation plus a beat, so a refresh landing mid-animation cannot cut it. */
+  var ENTER_MS = 260;
+  var DONE_ROWS = 20;
 
   function boot() {
     var host = document.getElementById('view-trade');
@@ -113,26 +123,29 @@
 
     var rail = dom.el('div', 'trade-rail');
     var status = zone('trade-status');
-    var running = zone('trade-running', 'Running');
-    var fills = zone('trade-fills', 'What happened');
-    running.body.className += ' scrolls';
-    fills.body.className += ' scrolls';
+    var open = zone('trade-open', 'Open');
+    var waiting = zone('trade-waiting', 'Waiting');
+    var done = zone('trade-done', 'Done');
+    waiting.body.className += ' scrolls';
+    done.body.className += ' scrolls';
 
     rail.appendChild(status.node);
-    rail.appendChild(running.node);
-    rail.appendChild(fills.node);
+    rail.appendChild(open.node);
+    rail.appendChild(waiting.node);
+    rail.appendChild(done.node);
 
     wrap.appendChild(main);
     wrap.appendChild(resizer);
     wrap.appendChild(rail);
     host.appendChild(wrap);
 
+    refs.rail = rail;
     refs.statusBody = status.body;
-    refs.runningBody = running.body;
-    refs.runningNote = running.note;
-    refs.fillsBody = fills.body;
+    refs.openBody = open.body;
+    refs.waitingBody = waiting.body;
+    refs.doneBody = done.body;
 
-    refs.paintCuts = [cuts(running.body), cuts(fills.body)];
+    refs.paintCuts = [cuts(waiting.body), cuts(done.body)];
 
     if (typeof window.splitBoot === 'function') window.splitBoot();
   }
@@ -142,23 +155,20 @@
      empty answers cost as much room as the one full one. */
   function zone(name, title) {
     var node = dom.el('section', 'trade-zone ' + name);
-    var note = null;
     if (title) {
       var head = dom.el('div', 'trade-zone-head');
       head.appendChild(dom.el('h2', '', title));
-      note = dom.el('span', 'trade-zone-note');
-      head.appendChild(note);
       node.appendChild(head);
     }
     var body = dom.el('div', 'trade-zone-body');
     node.appendChild(body);
-    return { node: node, body: body, note: note };
+    return { node: node, body: body };
   }
 
   /* A region that scrolls inside itself says where it was cut, so a fill sliced
      in half is drawn as a fill sliced in half rather than as the end of the
-     tape, and a second armed rule under the fold is visibly under the fold. The
-     same reading the dashboards use. */
+     tape, and a second plan under the fold is visibly under the fold. The same
+     reading the dashboards use. */
   function cuts(node) {
     function paint() {
       var top = node.scrollTop > 2;
@@ -455,7 +465,6 @@
     }
     if (typeof window.chartInvalidate === 'function') window.chartInvalidate();
   }
-
   /* ---------- data ---------- */
 
   function refresh() {
@@ -478,22 +487,22 @@
     renderOverlays();
     renderSymbol();
     renderStatus();
-    renderRunning();
-    renderFills();
+    renderOpen();
+    renderWaiting();
+    renderDone();
     for (var i = 0; refs.paintCuts && i < refs.paintCuts.length; i += 1) refs.paintCuts[i]();
   }
 
-  /* ---------- zone one: what the account is ----------
+  /* ---------- zone one: status ----------
 
-     Mark price and the account's health are what a person looks at first, so
-     the mark is the biggest type on the surface and everything under it is
-     quiet. The figures are a facts grid rather than a card: a 320 px rail has
-     no room to spend a border and two paddings on four numbers.
+     The coin, the mark, and three figures: what is free to put behind a plan,
+     what the placed and open plans have posted, and the most they can lose at
+     their stops. The mark is the biggest type on the surface and everything
+     under it is quiet. Max loss is a line only when there is one: a zero there
+     is not a fact anybody reads.
 
      Every name below is the payload's own: an Account is { accountKnown,
-     equityUsd, freeUsd, healthPct, unified }. This read equity, free and health,
-     so the funded check never passed and a funded account was told it had no
-     trading money in it. */
+     freeUsd, atRiskUsd, maxLossUsd, ... }. */
   function renderStatus() {
     var host = refs.statusBody;
     dom.clear(host);
@@ -527,190 +536,440 @@
       return;
     }
     if (!funded()) {
-      host.appendChild(dom.el('p', 'trade-line', firstRun()
-        ? 'No trading money yet. Ask your assistant to fund the trading account, and it will ask you first.'
-        : 'No trading money yet. Ask your assistant to fund it.'));
+      host.appendChild(dom.el('p', 'trade-line', 'No trading money yet. Ask your assistant to fund it.'));
       return;
     }
 
     host.appendChild(accountFacts(account, false));
-
-    if (typeof account.healthPct === 'number') {
-      var meter = dom.el('div', 'meter');
-      var fill = dom.el('div', 'meter-fill');
-      fill.style.width = Math.max(0, Math.min(1, account.healthPct)) * 100 + '%';
-      if (account.healthPct < 0.3) fill.dataset.tone = 'down';
-      else if (account.healthPct < 0.5) fill.dataset.tone = 'warn';
-      meter.appendChild(fill);
-      host.appendChild(meter);
-    } else if (account.unified) {
-      /* The venue publishes no whole-account health figure for a unified
-         account, and the formula for one needs per-token numbers this feed does
-         not carry. Approximating a margin number is the one thing not to do
-         here, so the rail says there is not one. */
-      host.appendChild(dom.el('p', 'trade-line',
-        'This is a unified account, so the venue publishes no single safety margin for it.'));
-    }
   }
 
-  /* ---------- zone two: what is running ----------
-
-     The position and the rules are one question: is anything of mine moving,
-     and under what. They were two panels, and with nothing open and nothing
-     armed that was two headings, two centred titles and two sentences, which is
-     six lines to say nothing twice. */
-  function renderRunning() {
-    var host = refs.runningBody;
-    dom.clear(host);
-    var positions = (data && Array.isArray(data.positions)) ? data.positions : [];
-    var mandates = (data && Array.isArray(data.mandates)) ? data.mandates : [];
-
-    dom.setText(refs.runningNote, mandates.length
-      ? mandates.length + (mandates.length === 1 ? ' rule armed' : ' rules armed')
-      : '');
-
-    if (!positions.length) {
-      host.appendChild(dom.el('p', 'trade-line', 'Nothing is open.'));
-    }
-    for (var i = 0; i < positions.length; i += 1) host.appendChild(positionBlock(positions[i]));
-
-    if (!mandates.length) {
-      /* The sentence that says what this surface is for is kept for the one
-         person who needs it: somebody who has never seen it. Everybody else has
-         read it already and is here to see a number. */
-      host.appendChild(dom.el('p', 'trade-line', firstRun()
-        ? 'No rules are armed. A rule your assistant armed is the only thing that opens or closes anything here.'
-        : 'No rules are armed.'));
-    }
-    for (var m = 0; m < mandates.length; m += 1) host.appendChild(mandateBlock(mandates[m]));
+  /* The three figures a person reads first. `unknown` draws the free row
+     whatever the payload holds, because a missing row and a row reading -- say
+     different things and only the second one is true when the venue has gone
+     quiet. At risk is the app's own sum over its own plans, so it stays a
+     number either way. */
+  function accountFacts(account, unknown) {
+    var facts = dom.el('div', 'facts');
+    var free = account && typeof account.freeUsd === 'number' ? dom.usd(account.freeUsd) : '';
+    fact(facts, 'Free', free || (unknown ? '--' : ''));
+    var atRisk = account && typeof account.atRiskUsd === 'number' ? account.atRiskUsd : 0;
+    fact(facts, 'At risk', dom.usd(atRisk));
+    var maxLoss = account && typeof account.maxLossUsd === 'number' ? account.maxLossUsd : 0;
+    if (maxLoss > 0) fact(facts, 'Max loss', dom.usd(maxLoss));
+    return facts;
   }
 
-  /* Position carries what the BOOK panel used to say. The forced close price and
-     the distance to it are one line, and the distance is the server's own figure
-     rather than a second one worked out here from two prices.
+  function fact(host, label, value) {
+    if (!value) return;
+    var row = dom.el('div', 'fact');
+    row.appendChild(dom.el('span', 'label', label));
+    row.appendChild(dom.el('span', 'body mono', value));
+    host.appendChild(row);
+  }
+
+  /* ---------- zone two: open ----------
+
+     One row per position: the side and the coin as the title, the profit
+     beside it, then size, entry and the distance to the stop and the target as
+     signed percentages of the mark. The exits come from the open plan on that
+     coin, or from the working triggers when no plan of this app's is behind
+     the position. Close posts the plan's id, so a position with no plan has no
+     button: there is no door for it.
 
      Every name below is the payload's: a Position is
      { coin, side, sizeCoin, notionalUsd, entryPx, markPx, liqPx, unrealisedUsd,
-       liqReachable, liqDistancePct, ... }. This read valueUsd, size,
-     unrealizedPnl, liquidationPx and product, none of which the payload has ever
-     carried, so an open position drew a heading, an entry and a mark and nothing
-     else: no value, no size, no profit and no forced-close line. */
-  function positionBlock(p) {
-    var block = dom.el('div', 'stack-2');
-    var top = dom.el('div', 'between');
-    top.appendChild(dom.el('span', 'trade-strong', (p.side === 'short' ? 'Short ' : 'Long ') + (p.coin || '')));
-    var value = dom.el('span', 'body mono');
-    dom.setText(value, typeof p.notionalUsd === 'number' ? dom.usd(p.notionalUsd) : '');
-    top.appendChild(value);
-    block.appendChild(top);
-
-    var facts = dom.el('div', 'facts');
-    fact(facts, 'Size', typeof p.sizeCoin === 'number' ? dom.qty(p.sizeCoin) : '');
-    fact(facts, 'Entry', typeof p.entryPx === 'number' ? dom.usd(p.entryPx) : '');
-    if (typeof p.unrealisedUsd === 'number') {
-      var pnl = dom.el('div', 'fact');
-      pnl.appendChild(dom.el('span', 'label', 'Up or down'));
-      var amount = dom.el('span', 'body mono ' + (p.unrealisedUsd >= 0 ? 'up' : 'down'));
-      dom.setText(amount, dom.usd(p.unrealisedUsd));
-      pnl.appendChild(amount);
-      facts.appendChild(pnl);
+       ... }. */
+  function renderOpen() {
+    var host = refs.openBody;
+    var positions = (data && Array.isArray(data.positions)) ? data.positions : [];
+    if (!positions.length) {
+      dom.clear(host);
+      host.appendChild(empty('Nothing open.'));
+      return;
     }
-    block.appendChild(facts);
-    block.appendChild(liquidationLine(p));
-    return block;
+    dom.reconcile(host, positions, function (p) {
+      return String(p.coin).toUpperCase();
+    }, function (p) {
+      var row = tradeRow('position', String(p.coin).toUpperCase());
+      var head = dom.el('div', 'trade-row-head');
+      head.appendChild(dom.el('span', 'trade-title'));
+      head.appendChild(dom.el('span', 'trade-pnl mono'));
+      row.appendChild(head);
+      row.appendChild(dom.el('div', 'facts'));
+      row.appendChild(dom.el('div', 'trade-row-foot'));
+      return row;
+    }, function (row, p) {
+      var coin = String(p.coin).toUpperCase();
+      var head = row.children[0];
+      dom.setText(head.children[0], (p.side === 'short' ? 'Short ' : 'Long ') + coin);
+      var pnl = head.children[1];
+      var up = typeof p.unrealisedUsd === 'number' && p.unrealisedUsd >= 0;
+      pnl.className = 'trade-pnl mono ' + (up ? 'up' : 'down');
+      dom.setText(pnl, typeof p.unrealisedUsd === 'number' ? signedUsd(p.unrealisedUsd) : '');
+
+      var facts = row.children[1];
+      dom.clear(facts);
+      fact(facts, 'Size', typeof p.sizeCoin === 'number' ? dom.qty(p.sizeCoin, precisionOf(coin)) : '');
+      fact(facts, 'Entry', typeof p.entryPx === 'number' ? priceText(p.entryPx) : '');
+      var exits = exitsOf(coin);
+      var mark = typeof p.markPx === 'number' ? p.markPx : markFor(coin);
+      fact(facts, 'Stop', distance(exits.stop, mark));
+      fact(facts, 'Target', distance(exits.target, mark));
+
+      var foot = row.children[2];
+      dom.clear(foot);
+      if (exits.plan) foot.appendChild(actButton('Close', 'close', exits.plan.id));
+    });
   }
 
-  /* liqReachable false means the collateral behind this position is bigger than
-     the position, so no price the venue can reach takes it and the server leaves
-     the three distances empty on purpose. Null means the venue has published no
-     liquidation price yet. Neither of those is "no risk", so neither prints a
-     number, and neither is left silent either. */
-  function liquidationLine(p) {
-    if (p.liqReachable === false) {
-      return dom.el('p', 'meta', 'Nothing can force this closed at the size it is.');
+  /* The stop and the target a position is protected by. The open plan on the
+     coin first, since its numbers are the ones the person approved; failing
+     that, the working triggers the venue holds. */
+  function exitsOf(coin) {
+    var plans = plansOf();
+    for (var i = 0; i < plans.length; i += 1) {
+      var plan = plans[i];
+      if (plan.status !== 'open' || String(plan.symbol).toUpperCase() !== coin) continue;
+      return {
+        plan: plan,
+        stop: typeof plan.stop === 'number' ? plan.stop : null,
+        target: typeof plan.target === 'number' ? plan.target : null
+      };
     }
-    if (typeof p.liqPx !== 'number') {
-      return dom.el('p', 'meta', 'The venue has not published a forced close price for this yet.');
+    var out = { plan: null, stop: null, target: null };
+    var orders = (data && Array.isArray(data.orders)) ? data.orders : [];
+    for (var o = 0; o < orders.length; o += 1) {
+      var order = orders[o];
+      if (String(order.coin).toUpperCase() !== coin || order.kind !== 'trigger') continue;
+      if (typeof order.triggerPx !== 'number') continue;
+      if (order.role === 'stop' && out.stop === null) out.stop = order.triggerPx;
+      if (order.role === 'target' && out.target === null) out.target = order.triggerPx;
     }
-    var line = dom.el('p', 'trade-line warn');
-    /* liqDistancePct is already a percentage: the server sends gap * 100 / mark.
-       dom.pct multiplies by a hundred, so it would report 12% as 1,200%. */
-    dom.setText(line, 'Forced close at ' + dom.usd(p.liqPx)
-      + (typeof p.liqDistancePct === 'number' ? ', ' + p.liqDistancePct.toFixed(1) + '% away' : ''));
-    return line;
+    return out;
   }
 
-  function mandateBlock(m) {
-    var block = dom.el('div', 'stack-2');
-    /* english is the rule in sentences, and it is the whole point of a
-       mandate: a person approved words, not a program hash. This read a
-       summary key the payload has never carried, so every armed rule rendered
-       as its bare id with no budget under it. */
-    var said = Array.isArray(m.english) ? m.english : [];
-    if (said.length) {
-      for (var s = 0; s < said.length; s += 1) block.appendChild(dom.el('p', 'trade-line strong', said[s]));
-    } else {
-      block.appendChild(dom.el('p', 'trade-line strong', m.id || 'A rule'));
-    }
-    var spent = m.used && typeof m.used.notionalUsd === 'number' ? m.used.notionalUsd : null;
-    var budget = m.envelope && typeof m.envelope.maxNotionalUsd === 'number'
-      ? m.envelope.maxNotionalUsd
-      : null;
-    if (spent !== null && budget !== null && budget > 0) {
-      var top = dom.el('div', 'between');
-      top.appendChild(dom.el('span', 'meta', 'Budget'));
-      var used = dom.el('span', 'meta mono');
-      dom.setText(used, dom.usd(spent) + ' of ' + dom.usd(budget, 0));
-      top.appendChild(used);
-      block.appendChild(top);
-      var meter = dom.el('div', 'meter');
-      var fill = dom.el('div', 'meter-fill');
-      fill.style.width = Math.min(1, spent / budget) * 100 + '%';
-      if (spent > 0) fill.dataset.spent = 'true';
-      meter.appendChild(fill);
-      block.appendChild(meter);
-    }
-    return block;
+  /* Where a price sits against the mark, signed: under it reads negative,
+     over it positive, whichever side the position is on. One decimal, and the
+     sign is always written so a stop and a target cannot be told apart by
+     magnitude alone. */
+  function distance(price, mark) {
+    if (typeof price !== 'number' || typeof mark !== 'number' || !isFinite(price) || !isFinite(mark) || mark <= 0) return '';
+    var pct = ((price - mark) / mark) * 100;
+    var rounded = Math.abs(pct) < 0.05 ? 0 : pct;
+    return (rounded > 0 ? '+' : rounded < 0 ? '-' : '') + Math.abs(rounded).toFixed(1) + '%';
   }
 
-  /* ---------- zone three: what happened ----------
+  function signedUsd(value) {
+    return (value > 0 ? '+' : '') + dom.usd(value);
+  }
 
-     The only zone that grows. Fills arrive constantly, so nothing here animates
-     in: the list is reconciled by key and a row that is already on screen keeps
-     its identity. The host belongs to the reconciler, so nothing is appended
-     under it that would have to be put back after every pass. */
-  function renderFills() {
-    var host = refs.fillsBody;
-    var rows = (data && Array.isArray(data.fills)) ? data.fills.slice(0, 40) : [];
+  /* ---------- zone three: waiting ----------
+
+     Every plan that is not open and not done: an idea the agent drew, a plan
+     waiting on its conditions, a plan whose entry rests on the venue. One
+     English line each, built from the plan's own fields, so the sentence on
+     the rail is the sentence on the chart. Under it the conditions as dots:
+     filled when the watcher says it holds, hollow when it does not or when
+     nothing is watching yet. Cancel is only offered where the host would take
+     it, which is a waiting or a placed plan. */
+  function renderWaiting() {
+    var host = refs.waitingBody;
+    var plans = plansOf().filter(function (p) {
+      return p.status === 'idea' || p.status === 'waiting' || p.status === 'placed';
+    });
+    if (!plans.length) {
+      dom.clear(host);
+      host.appendChild(empty('Nothing waiting.'));
+      return;
+    }
+    dom.reconcile(host, plans, function (p) {
+      return String(p.id);
+    }, function (p) {
+      var row = tradeRow('plan', String(p.id));
+      row.appendChild(dom.el('p', 'trade-row-line'));
+      row.appendChild(dom.el('ul', 'trade-conds'));
+      row.appendChild(dom.el('p', 'trade-row-state'));
+      row.appendChild(dom.el('div', 'trade-row-foot'));
+      return row;
+    }, function (row, p) {
+      dom.setText(row.children[0], planLine(p));
+
+      var conds = row.children[1];
+      dom.clear(conds);
+      var rows = conditionRows(p);
+      for (var i = 0; i < rows.length; i += 1) {
+        var item = dom.el('li', 'trade-cond');
+        item.dataset.holds = rows[i].holds ? 'true' : 'false';
+        item.appendChild(dom.el('i', 'trade-cond-dot'));
+        item.appendChild(dom.el('span', '', rows[i].condition));
+        conds.appendChild(item);
+      }
+      dom.setHidden(conds, rows.length === 0);
+
+      var state = row.children[2];
+      var said = planState(p);
+      state.className = 'trade-row-state' + (said.warn ? ' warn' : '');
+      dom.setText(state, said.text);
+      dom.setHidden(state, !said.text);
+
+      var foot = row.children[3];
+      dom.clear(foot);
+      if (p.status === 'waiting' || p.status === 'placed') foot.appendChild(actButton('Cancel', 'cancel', String(p.id)));
+    });
+  }
+
+  /* "Long ETH $200 at 3x, market, stop 3,180, target 3,420". The shape a
+     person can check against the chart in one look. */
+  function planLine(plan) {
+    var side = plan.side === 'short' ? 'Short' : 'Long';
+    var bits = [side + ' ' + String(plan.symbol || '').toUpperCase() + ' ' + dom.usd(plan.sizeUsd, 0) + ' at ' + plan.leverage + 'x'];
+    bits.push(entryWord(plan.entry));
+    if (typeof plan.stop === 'number') bits.push('stop ' + planPx(plan.stop));
+    if (typeof plan.target === 'number') bits.push('target ' + planPx(plan.target));
+    return bits.join(', ');
+  }
+
+  function entryWord(entry) {
+    if (!entry || typeof entry !== 'object') return 'market';
+    if (entry.type === 'limit') return 'limit ' + planPx(entry.px);
+    if (entry.type === 'stop') return 'stop entry ' + planPx(entry.px);
+    return 'market';
+  }
+
+  function planPx(value) {
+    if (typeof value !== 'number' || !isFinite(value)) return '';
+    return value.toLocaleString('en-US', { maximumFractionDigits: 8 });
+  }
+
+  /* The conditions with what the watcher says about each. A waiting plan
+     carries `holds` from the server, in the server's own words. An idea or a
+     placed plan carries nothing, because nothing is watching it, so its
+     conditions print from the plan itself in the same words and all hollow. */
+  function conditionRows(plan) {
+    if (Array.isArray(plan.holds)) {
+      return plan.holds.map(function (h) {
+        return { condition: String(h.condition || ''), holds: h.holds === true };
+      });
+    }
+    var when = Array.isArray(plan.when) ? plan.when : [];
+    return when.map(function (c) {
+      return { condition: conditionText(c), holds: false };
+    });
+  }
+
+  /* The same sentences src/trade/plan.ts renderCondition writes, so a plan
+     reads the same before and after it is armed. Prices here are the plan's
+     own digits, no separators, exactly as the server prints them. */
+  function conditionText(c) {
+    if (!c || typeof c !== 'object') return '';
+    if (c.type === 'close') {
+      var at = c.at && typeof c.at.px === 'number' ? String(c.at.px) : 'line ' + String(c.at && c.at.line || '');
+      if (c.wick === 'through') {
+        var other = c.is === 'above' ? 'below' : 'above';
+        return 'a ' + c.tf + ' bar wicks ' + other + ' ' + at + ' and closes back ' + c.is + ' it';
+      }
+      return 'a ' + c.tf + ' bar closes ' + c.is + ' ' + at;
+    }
+    if (c.type === 'volume') return 'volume on the ' + c.tf + ' is at least ' + String(c.atLeast) + 'x its 20-bar average';
+    var parts = [];
+    if (c.after !== undefined) parts.push('after ' + c.after);
+    if (c.before !== undefined) parts.push('before ' + c.before);
+    return parts.length ? parts.join(' and ') : 'any time';
+  }
+
+  /* The one line under a plan that says what it is waiting on besides its
+     conditions. Amber is this window's colour for waiting on a person, and a
+     locked plan is exactly that: it re-arms on the next unlock. A blind one is
+     waiting on the feed, which is the same kind of wait. */
+  function planState(plan) {
+    if (plan.status === 'idea') return { text: 'idea, not armed', warn: false };
+    if (plan.locked === true) return { text: 'waiting, needs unlock', warn: true };
+    if (plan.blind === true) return { text: 'waiting, feed stale', warn: true };
+    if (plan.status === 'placed') return { text: 'placed, the venue holds the entry', warn: false };
+    return { text: '', warn: false };
+  }
+
+  /* ---------- zone four: done ----------
+
+     The only zone that grows, so it scrolls inside itself. Fills and ended
+     plans in one tape, newest first, one line each, the last twenty. Nothing
+     here animates in: the list is reconciled by key and a row that is already
+     on screen keeps its identity. The host belongs to the reconciler, so
+     nothing is appended under it that would have to be put back after every
+     pass. */
+  function renderDone() {
+    var host = refs.doneBody;
+    var rows = doneRows();
     if (!rows.length) {
       dom.clear(host);
-      host.appendChild(dom.el('p', 'trade-line', firstRun()
-        ? 'Nothing yet. Fills and cancels land here as they happen.'
-        : 'Nothing yet.'));
+      host.appendChild(empty('Nothing yet.'));
       return;
     }
 
-    dom.reconcile(host, rows, function (fill, i) {
-      return (fill.tid || fill.atMs || '') + ':' + i;
+    dom.reconcile(host, rows, function (row) {
+      return row.key;
     }, function () {
-      var row = dom.el('div', 'between fill-row');
-      row.appendChild(dom.el('span', 'meta mono'));
-      row.appendChild(dom.el('span', 'body grow truncate'));
-      row.appendChild(dom.el('span', 'body mono'));
-      return row;
-    }, function (row, fill) {
+      var node = dom.el('div', 'done-row');
+      node.appendChild(dom.el('span', 'meta mono'));
+      node.appendChild(dom.el('span', 'body grow truncate'));
+      node.appendChild(dom.el('span', 'body mono'));
+      return node;
+    }, function (node, row) {
+      node.dataset.spotKey = row.spotKey;
+      dom.setText(node.children[0], dom.clock(row.at));
+      dom.setText(node.children[1], row.text);
+      dom.setAttr(node.children[1], 'title', row.title || null);
+      node.children[2].className = 'body mono' + (row.dim ? ' dimmer' : '');
+      dom.setText(node.children[2], row.tail);
+    });
+  }
+
+  function doneRows() {
+    var out = [];
+    var fills = (data && Array.isArray(data.fills)) ? data.fills : [];
+    for (var i = 0; i < fills.length; i += 1) {
+      var fill = fills[i];
       /* The field names are the payload's own: a Fill is
          { tid, coin, side, px, sizeCoin, atMs, ... }. This read fill.sz, fill.size
          and fill.time, none of which the payload has ever carried, so every row
          said "Bought BTC 0" with no time beside it whatever had traded. */
-      dom.setText(row.children[0], dom.clock(fill.atMs));
-      dom.setText(row.children[1], (fill.side === 'sell' || fill.side === 'A' ? 'Sold ' : 'Bought ')
-        + (fill.coin || '') + ' ' + dom.qty(fill.sizeCoin, precisionOf(fill.coin)));
-      dom.setText(row.children[2], typeof fill.px === 'number' ? dom.usd(fill.px) : '');
-    });
+      out.push({
+        key: 'fill:' + (fill.tid || fill.atMs || '') + ':' + i,
+        spotKey: 'fill:' + String(fill.tid || ''),
+        at: fill.atMs,
+        text: (fill.side === 'sell' || fill.side === 'A' ? 'Sold ' : 'Bought ')
+          + (fill.coin || '') + ' ' + dom.qty(fill.sizeCoin, precisionOf(fill.coin)),
+        tail: typeof fill.px === 'number' ? dom.usd(fill.px) : '',
+        dim: false
+      });
+    }
+    var plans = plansOf();
+    for (var p = 0; p < plans.length; p += 1) {
+      var plan = plans[p];
+      if (plan.status !== 'done') continue;
+      var ended = endedText(plan);
+      out.push({
+        key: 'plan:' + plan.id,
+        spotKey: 'plan:' + plan.id,
+        at: Date.parse(plan.updatedAt || plan.createdAt || '') || 0,
+        text: ended.text,
+        title: ended.title,
+        tail: String(plan.id),
+        dim: true
+      });
+    }
+    out.sort(function (a, b) { return timeOf(b.at) - timeOf(a.at); });
+    return out.slice(0, DONE_ROWS);
+  }
+
+  function timeOf(at) {
+    var n = typeof at === 'number' ? at : Date.parse(String(at || ''));
+    return isFinite(n) ? n : 0;
+  }
+
+  /* Why a plan ended, as the verb a person would use. A failure carries its
+     reason on the line, because "failed" alone is the one word here that
+     leaves a person with a question. */
+  function endedText(plan) {
+    var reason = String(plan.endReason || '');
+    var who = (plan.side === 'short' ? 'short ' : 'long ') + String(plan.symbol || '').toUpperCase();
+    var verbs = { stopped: 'Stopped', targeted: 'Hit target', closed: 'Closed', cancelled: 'Cancelled', expired: 'Expired' };
+    if (Object.prototype.hasOwnProperty.call(verbs, reason)) return { text: verbs[reason] + ' ' + who, title: '' };
+    if (reason.indexOf('failed:') === 0) {
+      var why = reason.slice('failed:'.length).trim();
+      return { text: 'Failed, ' + why, title: who + ': ' + why };
+    }
+    return { text: 'Ended ' + who, title: reason };
+  }
+
+  /* ---------- rows and the two controls ---------- */
+
+  /* A row the agent can point at. The key is what a highlight names: the kind
+     and the id, exactly as the payload carries them. A row that has just
+     appeared enters; the mark comes off after the animation so a later pass
+     can tell a new row from one that was already there. */
+  function tradeRow(kind, id) {
+    var row = dom.el('div', 'trade-row trade-enter');
+    row.dataset.spotKey = kind + ':' + id;
+    window.setTimeout(function () { row.classList.remove('trade-enter'); }, ENTER_MS);
+    return row;
+  }
+
+  function empty(text) {
+    return dom.el('p', 'trade-empty', text);
+  }
+
+  /* The inline confirm. One press arms the button, which says "Sure?" for
+     four seconds; a second press in that window posts. The armed key lives
+     here rather than on the node, because a trade frame can rebuild the row
+     between the two presses and the person's first press must survive it. */
+  var armed = null;
+  var acts = {};
+
+  function actButton(label, action, id) {
+    var button = dom.el('button', 'btn btn-ghost trade-act');
+    button.type = 'button';
+    button.dataset.action = action;
+    button.dataset.id = id;
+    button.dataset.label = label;
+    var key = action + ':' + id;
+    acts[key] = button;
+    paintAct(button);
+    dom.on(button, 'click', onAct);
+    return button;
+  }
+
+  function paintAct(button) {
+    var key = button.dataset.action + ':' + button.dataset.id;
+    var on = armed !== null && armed.key === key;
+    dom.setText(button, on ? 'Sure?' : button.dataset.label);
+    dom.setAttr(button, 'data-armed', on ? 'true' : null);
+  }
+
+  function disarm() {
+    if (armed === null) return;
+    window.clearTimeout(armed.timer);
+    var was = armed;
+    armed = null;
+    if (acts[was.key]) paintAct(acts[was.key]);
+  }
+
+  function onAct(event) {
+    var button = event.currentTarget;
+    var key = button.dataset.action + ':' + button.dataset.id;
+    if (armed !== null && armed.key === key) {
+      disarm();
+      send(button);
+      return;
+    }
+    disarm();
+    armed = { key: key, timer: window.setTimeout(disarm, CONFIRM_MS) };
+    paintAct(button);
+  }
+
+  /* The post itself. The button says what it is doing while the venue answers,
+     and a refusal arrives as the answer to this press, in the venue's words. */
+  function send(button) {
+    var action = button.dataset.action;
+    var id = button.dataset.id;
+    button.disabled = true;
+    dom.setText(button, action === 'close' ? 'Closing' : 'Cancelling');
+    api.tradeAction({ action: action, id: id })
+      .then(function () { return refresh(); })
+      .catch(function (err) {
+        if (window.PhosphorToast) window.PhosphorToast.show(net.readable(err), 'down');
+      })
+      .then(function () {
+        button.disabled = false;
+        paintAct(button);
+      });
   }
 
   /* ---------- what the rail reads ---------- */
+
+  function plansOf() {
+    return (data && Array.isArray(data.plans)) ? data.plans : [];
+  }
 
   /* The mark for the market the surface is focused on. markets[] is the venue's
      own list and carries it whether or not anything is open; a position on the
@@ -719,6 +978,10 @@
   function markOf() {
     var symbol = symbolOf();
     if (!symbol) return null;
+    return markFor(symbol);
+  }
+
+  function markFor(symbol) {
     var markets = (data && Array.isArray(data.markets)) ? data.markets : [];
     for (var i = 0; i < markets.length; i += 1) {
       if (String(markets[i].coin).toUpperCase() !== symbol) continue;
@@ -758,49 +1021,16 @@
       || typeof account.healthPct === 'number'));
   }
 
-  /* Somebody who has never seen this screen gets the sentence that says what it
-     is for. Nothing held, nothing armed, nothing traded and no money is the only
-     state that can mean that. */
-  function firstRun() {
-    if (!data) return true;
-    if (Array.isArray(data.positions) && data.positions.length) return false;
-    if (Array.isArray(data.mandates) && data.mandates.length) return false;
-    if (Array.isArray(data.fills) && data.fills.length) return false;
-    return !funded();
-  }
-
   /* How many places this asset actually trades in, off the venue's own metadata.
      Undefined when the market is not in the payload, which leaves dom.qty on its
      general rule; either way it never prints a real size as zero. */
   function precisionOf(coin) {
     var markets = (data && Array.isArray(data.markets)) ? data.markets : [];
     for (var i = 0; i < markets.length; i += 1) {
-      if (markets[i].coin !== coin) continue;
+      if (String(markets[i].coin).toUpperCase() !== String(coin).toUpperCase()) continue;
       return typeof markets[i].szDecimals === 'number' ? markets[i].szDecimals : undefined;
     }
     return undefined;
-  }
-
-  /* The three figures a person reads first. `unknown` draws the row whatever the
-     payload holds, because a missing row and a row reading -- say different
-     things and only the second one is true when the venue has gone quiet. */
-  function accountFacts(account, unknown) {
-    var facts = dom.el('div', 'facts');
-    var equity = account && typeof account.equityUsd === 'number' ? dom.usd(account.equityUsd) : '';
-    var free = account && typeof account.freeUsd === 'number' ? dom.usd(account.freeUsd) : '';
-    var health = account && typeof account.healthPct === 'number' ? dom.pct(account.healthPct) : '';
-    fact(facts, 'Trading money', equity || (unknown ? '--' : ''));
-    fact(facts, 'Spare', free || (unknown ? '--' : ''));
-    fact(facts, 'Safety margin', health || (unknown ? '--' : ''));
-    return facts;
-  }
-
-  function fact(host, label, value) {
-    if (!value) return;
-    var row = dom.el('div', 'fact');
-    row.appendChild(dom.el('span', 'label', label));
-    row.appendChild(dom.el('span', 'body mono', value));
-    host.appendChild(row);
   }
 
   window.PhosphorTrade = { boot: boot, refresh: refresh };
