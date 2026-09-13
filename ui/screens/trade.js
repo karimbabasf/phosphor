@@ -80,6 +80,12 @@
     events.on('chart', function (frame) {
       if (charted && typeof window.chartPushed === 'function') window.chartPushed(frame.rev);
     });
+    /* The server asking for a picture. A window that has never shown the
+       chart has nothing to picture, and the server's three second wait says so
+       in the digest. */
+    events.on('snapshot', function (frame) {
+      if (charted && frame && typeof window.chartSnapshot === 'function') window.chartSnapshot(frame.slot, frame.reqId);
+    });
   }
 
   var charted = false;
