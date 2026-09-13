@@ -229,3 +229,51 @@ test('the image pass-through refuses what is not base64 and what is not an image
   const fine = contentFor({ image: '/9j/4AAQ', mimeType: 'image/jpeg', digest: 'x' });
   assert.deepEqual(fine.content[0], { type: 'image', data: '/9j/4AAQ', mimeType: 'image/jpeg' });
 });
+
+test('snapshot: a 600 KB announced body is refused before it is read, and a delivered request id cannot be replayed', async () => {
+  const h = await bootChartServer();
+  const u = new URL(h.url);
+  const req = http.request({
+    hostname: u.hostname,
+    port: u.port,
+    path: '/api/chart/snapshot',
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin: h.url, 'content-length': String(600 * 1024) },
+  });
+  const stream = await nextSnapshotFrame(h.url);
+  try {
+    const answered = new Promise<number>((resolve, reject) => {
+      req.on('response', (res) => {
+        res.resume();
+        resolve(res.statusCode ?? 0);
+      });
+      req.on('error', reject);
+    });
+    // The right token at the front of a body that never ends: a server that reads the announced
+    // 600 KB before judging it waits here for ever.
+    req.write(`{"token":"${h.token}","reqId":"x","jpeg":"`);
+    const status = await Promise.race([
+      answered,
+      new Promise<number>((_, reject) => setTimeout(() => reject(new Error('the server read the body before refusing its length')), 1500).unref()),
+    ]);
+    assert.equal(status, 413);
+
+    // A request id is spent by the answer that lands on it. The same id again, a number, an
+    // object and an id of the right shape nobody asked for are all 409, and none of them reaches
+    // a tool call.
+    const asking = h.mcp({ op: 'read', tool: 'chart_snapshot', session: 'a', args: {} });
+    const frame = await stream.frame;
+    const first = await h.post('/api/chart/snapshot', { token: h.token, reqId: frame.reqId, jpeg: fakeJpeg() });
+    assert.equal(first.status, 200);
+    assert.equal((await asking).json.image, fakeJpeg());
+    for (const reqId of [frame.reqId, 42, { id: frame.reqId }, [frame.reqId], null, 'f'.repeat(16), '']) {
+      const again = await h.post('/api/chart/snapshot', { token: h.token, reqId, jpeg: fakeJpeg() });
+      assert.equal(again.status, 409, JSON.stringify(reqId));
+      assert.match(String(again.json.error), /no snapshot is waiting/);
+    }
+  } finally {
+    req.destroy();
+    stream.close();
+    await h.close();
+  }
+});

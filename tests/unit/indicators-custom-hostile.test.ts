@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { bootChartServer } from '../fixtures/chart-server.ts';
 import type { Candle } from '../../src/types.ts';
 import type { IndicatorSpec } from '../../src/indicators.ts';
 import { normaliseParams } from '../../src/indicators.ts';
@@ -337,4 +338,140 @@ test('a var that assigns itself without history still terminates, and the loader
   assert.equal(problems.length, 6);
   for (const name of ['double', 'chain', 'bidi', 'leak', 'passwd', 'loop', 'folder']) assert.equal(loader.get(name), null, name);
   assert.equal(loader.get('ok')?.type, 'custom:ok');
+});
+
+test('a filename that is a path in disguise never becomes a slug, and the folder listing is the only thing read', () => {
+  // A name off the disk cannot carry a slash, so a traversal has to hide in what is left: dots,
+  // a backslash, an encoded slash, a space, upper case, a second extension. None of them is a
+  // slug, every one is a problem that names the rule, and nothing outside the folder is opened.
+  const dir = scratch();
+  const body = JSON.stringify({ title: 'T', overlay: true, inputs: {}, plots: [{ title: 'p', expr: 'close' }] });
+  const names = ['..json', '.json', 'a..b.json', '..\\x.json', 'a%2Fb.json', 'A.json', 'x y.json', 'sma.JSON', '..pine', 'x.tar.json', 'x.json.pine', '~.json', 'a:b.json', `${'x'.repeat(33)}.pine`];
+  for (const name of names) fs.writeFileSync(path.join(dir, name), name.endsWith('.pine') ? `${HEAD}plot(close)\n` : body);
+  fs.writeFileSync(path.join(dir, 'fine-1.json'), body);
+  const loader = createCustomIndicators(dir);
+  const { specs, problems } = loader.refresh();
+  assert.deepEqual(specs.map((s) => s.type), ['custom:fine-1']);
+  // sma.JSON and .json are not indicator files at all (the extension is case-sensitive, and a
+  // dotfile has none), so they are skipped rather than reported; every other name is reported
+  // by the slug rule.
+  assert.deepEqual(problems.map((p) => p.file).sort(), names.filter((n) => n !== 'sma.JSON' && n !== '.json').sort());
+  for (const p of problems) assert.match(p.message, /1 to 32 lower-case letters, digits or dashes/, p.file);
+  for (const probe of ['..', '.', '../fine-1', 'a..b', '..\\x', 'a%2Fb', 'A', 'x y', 'x.tar', 'custom:..', 'custom:../fine-1', 'fine-1/../fine-1']) {
+    assert.equal(loader.get(probe), null, probe);
+  }
+  assert.equal(loader.get('fine-1')?.type, 'custom:fine-1');
+  assert.deepEqual(fs.readdirSync(dir).length, names.length + 1, 'nothing was created');
+});
+
+test('a 100 KB title is refused in a sentence that does not carry it, in both formats', () => {
+  const title = 'T'.repeat(100 * 1024);
+  const json = drop('title.json', JSON.stringify({ title, overlay: true, inputs: {}, plots: [{ title: 'p', expr: 'close' }] }));
+  assert.equal(json.spec, null);
+  assert.match(json.problems[0] ?? '', /title must be at most 64 characters/);
+  assert.ok((json.problems[0] ?? '').length < 120, `${(json.problems[0] ?? '').length} characters`);
+  const pine = drop('title.pine', `//@version=5\nindicator("${title}")\nplot(close)\n`);
+  assert.equal(pine.spec, null);
+  assert.ok((pine.problems[0] ?? '').length < 120, `${(pine.problems[0] ?? '').length} characters`);
+  assert.ok(!(pine.problems[0] ?? '').includes('TTTTTTTT'), pine.problems[0]);
+  // The same size on a plot title and an input title.
+  const plotTitle = drop('plot.json', JSON.stringify({ title: 'T', overlay: true, inputs: {}, plots: [{ title, expr: 'close' }] }));
+  assert.equal(plotTitle.spec, null);
+  assert.ok((plotTitle.problems[0] ?? '').length < 120);
+  const inputTitle = drop('input.json', JSON.stringify({ title: 'T', overlay: true, inputs: { n: { default: 5, title } }, plots: [{ title: 'p', expr: 'close' }] }));
+  assert.equal(inputTitle.spec, null);
+  assert.ok((inputTitle.problems[0] ?? '').length < 120);
+});
+
+test('a thousand plots are refused by count, quickly, in both formats', () => {
+  const plots = Array.from({ length: 1000 }, (_, i) => ({ title: `p${i}`, expr: ['sma', 'close', 5] }));
+  const started = performance.now();
+  const json = drop('plots.json', JSON.stringify({ title: 'T', overlay: true, inputs: {}, plots }));
+  assert.equal(json.spec, null);
+  assert.match(json.problems[0] ?? '', /plots: at most 6 plots/);
+  assert.ok(performance.now() - started < 500, `${Math.round(performance.now() - started)} ms`);
+  const again = performance.now();
+  const pine = translatePine(`${HEAD}${'plot(ta.sma(close, 5))\n'.repeat(1000)}`);
+  assert.equal(pine.ok, false);
+  if (!pine.ok) {
+    assert.equal(pine.line, 9);
+    assert.match(pine.message, /at most 6 plots/);
+  }
+  assert.ok(performance.now() - again < 500);
+});
+
+test('a log of a negative number and a root of one are na, in both formats, and NaN or Infinity in a literal never loads', () => {
+  const json = drop('neg.json', JSON.stringify({ title: 'T', overlay: true, inputs: {}, plots: [{ title: 'l', expr: ['log', ['-', 0, 'close']] }, { title: 's', expr: ['sqrt', ['-', 0, 'close']] }, { title: 'z', expr: ['log', 0] }, { title: 'm', expr: ['%', 'close', 0] }] }));
+  assert.ok(json.spec, json.problems.join('; '));
+  const result = json.spec.compute(candles(40), {});
+  for (const plot of result.plots) assert.ok(plot.values.every((v) => v === null), plot.key);
+  assert.doesNotMatch(result.state, /refused|NaN|Infinity/);
+  const pine = drop('neg.pine', `${HEAD}plot(math.log(-close))\nplot(math.sqrt(-close))\nplot(math.log(close - close))\n`);
+  assert.ok(pine.spec, pine.problems.join('; '));
+  const viaPine = pine.spec.compute(candles(40), {});
+  for (const plot of viaPine.plots) assert.ok(plot.values.every((v) => v === null), plot.key);
+  // A literal that is not a finite number is refused where it stands, not carried into a plot.
+  for (const literal of ['1e999', '-1e999', 'NaN', 'Infinity']) {
+    const out = drop('lit.json', `{"title":"T","overlay":true,"inputs":{},"plots":[{"title":"p","expr":["+","close",${literal}]}]}`);
+    assert.equal(out.spec, null, literal);
+  }
+  for (const line of ['plot(close + 1e999)', 'plot(close / 0.0)', 'plot(math.log(-1))']) {
+    const out = drop('lit.pine', `${HEAD}${line}\n`);
+    if (out.spec !== null) {
+      const r = out.spec.compute(candles(10), {});
+      assert.ok(r.plots[0]?.values.every((v) => v === null || Number.isFinite(v)), line);
+    }
+  }
+});
+
+test('the whole zoo behind the real server: every write and read over it answers, and no file byte reaches a reply', async () => {
+  const secret = 'SECRET_PRIVATE_KEY=0xdeadbeefcafe';
+  const h = await bootChartServer({
+    indicators: {
+      'evil.pine': '//@version=5\nindicator("</script><b>x</b>", overlay=true)\nplot(close, title="<img src=x onerror=alert(1)>")\n',
+      'heavy.pine': `${HEAD}plot(ta.wma(ta.wma(ta.wma(ta.wma(ta.wma(ta.wma(close, 500), 500), 500), 500), 500), 500))\n`,
+      'double.pine': doubling(30, 'var x = 0.0\nx := LAST + nz(x[1])\nplot(x)\n'),
+      'chain.pine': `${HEAD}x = ${new Array(10_000).fill('close').join(' + ')}\nplot(x[1])\n`,
+      'bidi.pine': `${HEAD}plot(close${RLO})\n`,
+      'leak.json': secret,
+      'big.json': Buffer.alloc(300 * 1024, 0x20),
+      'title.json': JSON.stringify({ title: 'T'.repeat(100_000), overlay: true, inputs: {}, plots: [{ title: 'p', expr: 'close' }] }),
+      'nan.json': '{"title":"T","overlay":true,"inputs":{},"plots":[{"title":"p","expr":NaN}]}',
+      'proto.json': '{"title":"T","overlay":true,"inputs":{"__proto__":{"default":1}},"plots":[{"title":"p","expr":"close"}]}',
+      'ok.json': JSON.stringify({ title: 'OK', overlay: false, inputs: { n: { default: 5, int: true } }, plots: [{ title: 'p', expr: ['sma', 'close', 'n'] }] }),
+    },
+  });
+  try {
+    const replies: string[] = [];
+    const keep = (r: { status: number; json: unknown }): { status: number; json: any } => {
+      replies.push(JSON.stringify(r.json));
+      return r as { status: number; json: any };
+    };
+    const list = keep(await h.mcp({ op: 'read', tool: 'chart_batch', session: 'a', args: { ops: [{ op: 'indicator_list' }] } }));
+    assert.equal(list.status, 200, JSON.stringify(list.json).slice(0, 200));
+    const types = JSON.stringify(list.json).match(/custom:[a-z0-9-]+/g) ?? [];
+    assert.deepEqual([...new Set(types)].sort(), ['custom:evil', 'custom:heavy', 'custom:ok'], 'only the three that load are listed');
+    const set = keep(await h.mcp({ op: 'view', tool: 'chart_draw', session: 'a', args: { indicators: { set: [{ type: 'custom:evil' }, { type: 'custom:heavy' }, { type: 'custom:ok', params: { n: Number.MAX_SAFE_INTEGER } }, { type: 'custom:leak' }, { type: 'custom:double' }, { type: 'custom:proto' }] } } }));
+    assert.equal(set.status, 200, JSON.stringify(set.json).slice(0, 200));
+    assert.equal(set.json.indicators.length, 3);
+    assert.equal(set.json.refused.length, 3);
+    for (const r of set.json.refused as string[]) assert.match(r, /^unknown indicator: custom:/);
+    const payload = keep(await h.get('/api/chart'));
+    assert.equal(payload.status, 200);
+    assert.equal(payload.json.indicators.length, 3);
+    const byType = new Map((payload.json.indicators as { type: string; state?: string; label?: string; plots?: { label: string }[] }[]).map((i) => [i.type, i]));
+    assert.match(String(byType.get('custom:heavy')?.state ?? ''), /refused, work budget/);
+    assert.equal(byType.get('custom:evil')?.plots?.[0]?.label, '<img src=x onerror=alert(1)>', 'the markup is a label, and the window draws labels as text');
+    const read = keep(await h.mcp({ op: 'read', tool: 'chart_read', session: 'a', args: { full: true } }));
+    assert.equal(read.status, 200);
+    const compact = keep(await h.mcp({ op: 'read', tool: 'chart_read', session: 'a', args: {} }));
+    assert.equal(compact.status, 200);
+    const scan = keep(await h.mcp({ op: 'read', tool: 'chart_scan', session: 'a', args: { timeframes: ['1h'] } }));
+    assert.equal(scan.status, 200);
+    for (const reply of replies) {
+      for (const leak of ['SECRET', 'deadbeefcafe', 'TTTTTTTTTT', '__proto__']) assert.ok(!reply.includes(leak), `${leak} reached a reply: ${reply.slice(0, 200)}`);
+    }
+  } finally {
+    await h.close();
+  }
 });

@@ -16,6 +16,7 @@
 import { createTradeView, type TradeViewState } from './view.ts';
 import { buildTradePayload, buildTradeRead, type TradePayload } from './state.ts';
 import { createTradeFeed } from './feed-ws.ts';
+import type { FeedSocket } from './feed-ws.ts';
 import type { InfoClient } from '../hl/info.ts';
 import type { AccountView, PlanRunner } from '../runner/host.ts';
 import type { AssetMeta as RunnerMeta } from '../runner/protocol.ts';
@@ -67,9 +68,12 @@ export type TradeServiceDeps = {
   atrFor: (coin: string) => number | null;
   initialSymbol: string;
   now?: () => number;
+  // Test seam, handed straight to the feed: the socket is the one thing in here a test cannot
+  // reason about offline.
+  wsImpl?: (url: string) => FeedSocket;
 };
 
-const IDEAS_PER_SESSION = 20;
+export const IDEAS_PER_SESSION = 20;
 
 const BATCH_OPS = ['account', 'positions', 'orders', 'fills', 'plans', 'market', 'venue_health'] as const;
 
@@ -80,7 +84,7 @@ function coinOf(product: string): string {
 export function createTradeService(deps: TradeServiceDeps): TradeService {
   const now = deps.now ?? Date.now;
   const view = createTradeView(deps.initialSymbol);
-  const feed = createTradeFeed({ wsUrl: deps.wsUrl, user: deps.user, info: deps.info });
+  const feed = createTradeFeed({ wsUrl: deps.wsUrl, user: deps.user, info: deps.info, ...(deps.wsImpl !== undefined ? { wsImpl: deps.wsImpl } : {}) });
   const meta = new Map<string, AssetMeta>();
   const listeners: Array<() => void> = [];
 
