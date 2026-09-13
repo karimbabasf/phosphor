@@ -22,6 +22,17 @@ export const SNAPSHOT_TTL_MS = 3000;
 // the cap that makes the route unusable as a way to push a large body at the server.
 export const SNAPSHOT_MAX_BYTES = 512 * 1024;
 
+// The shape of the string the model's API will decode: whole quads, padding only at the end.
+// Buffer.from() shrugs at padding in the middle or a stray trailing character; the API on the
+// far side of the proxy does not, and an image it cannot decode ends the agent's turn with an
+// upstream 400 instead of a digest. Checked where the bytes enter (the route) and where they
+// leave (the proxy), so neither side has to trust the other.
+const BASE64_SHAPE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+
+export function isBase64(text: string): boolean {
+  return text.length > 0 && BASE64_SHAPE.test(text);
+}
+
 export type SnapshotBroker = {
   // Ask for a picture of `slot` and wait up to `timeoutMs` for it. Throws when one is already
   // being taken for that slot; resolves null when the window did not answer in time.

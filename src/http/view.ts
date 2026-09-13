@@ -100,7 +100,7 @@ function num(v: unknown): number | null {
 // `refused` and the rest still lands, because a whole markup refused for one bad level is a
 // model turn wasted, and the answer is a digest rather than the read: the agent asked for what
 // it drew, not for a re-statement of the chart.
-async function chartDraw({ ctx, args, res, by }: ViewArgs): Promise<void> {
+async function chartDraw({ ctx, args, res, by: session }: ViewArgs): Promise<void> {
   const found = slotOf(ctx, args.chart);
   if (!found.ok) {
     fail(res, 400, found.error);
@@ -110,6 +110,15 @@ async function chartDraw({ ctx, args, res, by }: ViewArgs): Promise<void> {
   const chart = slot.store;
   const refused: string[] = [];
   const notes: string[] = [];
+  // The chart store keeps 64 characters of a session id on every stamp (src/chart.ts). The
+  // drawing store is stamped from here, so the same cut is made here, or a session past 64
+  // characters would own its zones and not its levels, and `clear: 'mine'` would take one and
+  // leave the other.
+  const by = session === null ? null : session.slice(0, 64);
+  // The lines a waiting plan is anchored to, read fresh off the plans on every write, so nothing
+  // below (clear, the product sweep, the cap) can take one from under a plan the human approved.
+  const held = linesHeld(ctx);
+  slot.drawings.hold(held.keys());
 
   // 1. Clear. Scoped like the old chart_clear: `mine` is this session's, `agent` every agent's,
   // `all` the human's too. A plan drawn on this chart is never touched here, whatever the
@@ -129,6 +138,11 @@ async function chartDraw({ ctx, args, res, by }: ViewArgs): Promise<void> {
       }
       for (const plan of plansOn(ctx, chart.state().view.product)) {
         if (plan.status !== 'idea') refused.push(`plan ${plan.id} is ${plan.status}, not an idea: clear leaves it; propose_trade_change is how it changes`);
+      }
+      for (const [id, plan] of held) {
+        if (slot.drawings.get(id) !== undefined) {
+          refused.push(`plan ${plan.id} is waiting on line ${id}: clear leaves the line; propose_trade_change is how the plan changes`);
+        }
       }
     }
   }
@@ -157,6 +171,10 @@ async function chartDraw({ ctx, args, res, by }: ViewArgs): Promise<void> {
         if (after !== before) {
           const swept = slot.drawings.sweepForeign(after);
           if (swept > 0) notes.push(`cleared ${swept} agent ${swept === 1 ? 'drawing' : 'drawings'} (zones and lines) anchored to ${before}`);
+          for (const [id, plan] of held) {
+            const line = slot.drawings.get(id);
+            if (line !== undefined && line.product !== after) notes.push(`line ${id} stays, anchored to ${line.product ?? before}: plan ${plan.id} is waiting on it`);
+          }
         }
       }
     }
@@ -265,7 +283,21 @@ async function chartDraw({ ctx, args, res, by }: ViewArgs): Promise<void> {
 
   ctx.sse.broadcastChart(slot.index);
   const digest = await chartDigest(ctx, slot);
-  sendJson(res, 200, { ...digest, refused, ...(notes.length > 0 ? { notes } : {}) });
+  sendJson(res, 200, { ...digest, refused: collapse(refused), ...(notes.length > 0 ? { notes: collapse(notes) } : {}) });
+}
+
+/* The digest is a few hundred bytes, and `refused` and `notes` were the one part of it with no
+   bound: ten thousand levels in one call answered with 9,976 copies of "24 price levels is the
+   maximum", 679 KB for a 119 KB request, handed to a model as its tool result. Identical lines
+   become one line with a count, and past this many distinct lines the rest is a count too. */
+const DIGEST_LINES_MAX = 24;
+
+function collapse(lines: string[]): string[] {
+  const counts = new Map<string, number>();
+  for (const line of lines) counts.set(line, (counts.get(line) ?? 0) + 1);
+  const out = [...counts].map(([line, n]) => (n > 1 ? `${line} (x${n})` : line));
+  if (out.length <= DIGEST_LINES_MAX) return out;
+  return [...out.slice(0, DIGEST_LINES_MAX), `and ${out.length - DIGEST_LINES_MAX} more`];
 }
 
 // Attribution the agent cannot write its way out of. The chart store tags its own objects; the
@@ -287,10 +319,9 @@ function addIndicator(ctx: Ctx, chart: ChartSlot['store'], want: IndicatorReq, b
   else notes.push(...out.notes);
 }
 
-// The plans drawn on a chart, read off the trading payload. Guarded, because the plan store is
-// the execution unit's and a server built without one (every chart test) has no plans at all.
-export function plansOn(ctx: Ctx, product: string): { id: string; status: string }[] {
-  const coin = product.split('-')[0]?.toUpperCase() ?? '';
+// Every plan row on the trading payload. Guarded, because the plan store is the execution unit's
+// and a server built without one (every chart test) has no plans at all.
+function planRows(ctx: Ctx): Record<string, unknown>[] {
   let payload: unknown;
   try {
     payload = ctx.trade.payload();
@@ -299,10 +330,34 @@ export function plansOn(ctx: Ctx, product: string): { id: string; status: string
   }
   const plans = (payload as { plans?: unknown } | null)?.plans;
   if (!Array.isArray(plans)) return [];
-  return plans
-    .filter((p): p is Record<string, unknown> => p !== null && typeof p === 'object')
+  return plans.filter((p): p is Record<string, unknown> => p !== null && typeof p === 'object');
+}
+
+// The plans drawn on a chart.
+export function plansOn(ctx: Ctx, product: string): { id: string; status: string }[] {
+  const coin = product.split('-')[0]?.toUpperCase() ?? '';
+  return planRows(ctx)
     .filter((p) => String(p.symbol ?? '').toUpperCase() === coin)
     .map((p) => ({ id: String(p.id ?? ''), status: String(p.status ?? '') }));
+}
+
+/* The lines waiting plans are anchored to, keyed by line id, whatever chart is showing: the
+   watcher resolves a plan's `{ line: 'tl_N' }` on the primary by id, so the line matters wherever
+   the human has panned to. Only a WAITING plan holds one. An idea has no authority and
+   trade_plan is how it changes; a placed or open plan has already fired and the venue holds its
+   orders; a done plan is history. */
+export function linesHeld(ctx: Ctx): Map<string, { id: string; status: string }> {
+  const out = new Map<string, { id: string; status: string }>();
+  for (const plan of planRows(ctx)) {
+    const status = String(plan.status ?? '');
+    if (status !== 'waiting') continue;
+    const when = Array.isArray(plan.when) ? plan.when : [];
+    for (const condition of when) {
+      const at = (condition as { at?: { line?: unknown } } | null)?.at;
+      if (typeof at?.line === 'string') out.set(at.line, { id: String(plan.id ?? ''), status });
+    }
+  }
+  return out;
 }
 /* How many concepts each session has recorded, per server. Ten is the session's allowance: the
    profile is a file the next role text is built from, and an agent that could fill it in one
@@ -422,6 +477,9 @@ const HANDLERS: Record<string, ViewHandler> = {
       }
       charts.push({ product: String(patch.product), timeframe: String(entry.timeframe ?? '') });
     }
+    // A layout that moves the primary onto another instrument sweeps its agent drawings, and a
+    // line a waiting plan is anchored to is not one of those.
+    ctx.charts.primary.drawings.hold(linesHeld(ctx).keys());
     const out = ctx.charts.layout(charts);
     if (!out.ok) {
       fail(res, 400, out.reason);
