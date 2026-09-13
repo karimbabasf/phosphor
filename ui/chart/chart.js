@@ -1464,7 +1464,10 @@ function drawDrawings(ctx, L) {
   for (var i = 0; i < list.length; i++) {
     var d = list[i];
     var fromAgent = d.source === 'agent';
-    var label = d.label + (fromAgent ? ' [agent]' : '');
+    // The server tags an agent's drawing "[agent] trend" as it lands (tagLabel in
+    // src/http/view.ts). Adding the word here as well printed it twice on one label.
+    var label = String(d.label || '');
+    if (fromAgent && label.indexOf('[agent]') < 0) label += ' [agent]';
 
     if (d.kind === 'zone' && d.zone) {
       var yHigh = L.yOf(d.zone.high);
@@ -2391,12 +2394,12 @@ function renderChartStatus() {
     cluster.appendChild(live);
   }
   if (CHART.agentObjects > 0) {
-    var count = chartSpan('meta', 'agent drew ' + CHART.agentObjects);
-    count.dataset.extra = '1';
-    cluster.appendChild(count);
-    var clear = chartSpan('timeframe', 'Clear');
+    // One control carrying the count, not a count and a control: the bar has one row and the
+    // status line shares it with the segment, the command and Layers.
+    var clear = chartSpan('timeframe', 'Clear ' + CHART.agentObjects);
     clear.id = 'chart-clear-agent';
     clear.dataset.extra = '1';
+    clear.title = 'the agent drew ' + CHART.agentObjects + (CHART.agentObjects === 1 ? ' object' : ' objects') + ' on this chart. Clear them';
     cluster.appendChild(clear);
   }
 }

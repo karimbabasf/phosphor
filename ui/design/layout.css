@@ -559,33 +559,37 @@ body[data-view="trade"] .stage {
 
 /* ONE ROW. The segment (market and timeframes), the indicator command, Layers,
    and the status line on the right, all at 26 px. The command gives way first
-   when the chart is narrow, down to a floor it is still readable at. Under 560
-   px the row wraps, and it wraps on purpose: the segment keeps the first row
-   and the rest take the second. */
+   when the chart is narrow, down to a floor it is still readable at; the
+   status line never squeezes, because a wrapped word in it reads as two
+   states. Past that the status steps down to a second row, right-aligned, and
+   under 560 px the segment takes the first row alone. */
 .chart-bar {
   flex: 0 0 auto;
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--s-3);
+  gap: var(--s-2);
   padding: var(--s-2) var(--s-3);
   border-bottom: 1px solid var(--line);
   min-height: 44px;
 }
 
+/* 80 px is the floor the word Indicators still fits in. At 1280 the chart
+   column beside the rail is 588 px, and the row fits it with a few pixels
+   to spare only at this floor. */
 .chart-bar .chart-cmd {
-  flex: 1 1 96px;
-  min-width: 96px;
+  flex: 1 1 80px;
+  min-width: 80px;
   max-width: 152px;
 }
 
 .chart-bar .chartstatus {
   margin-left: auto;
-  flex: 0 1 auto;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 @container trade (max-width: 559px) {
-  .chart-bar { flex-wrap: wrap; }
   .chart-bar .seg { flex: 0 0 100%; }
   .chart-bar .chart-cmd { max-width: none; }
 }

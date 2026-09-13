@@ -78,7 +78,8 @@ function tradeLine(ctx, L, spec) {
   ctx.stroke();
   ctx.setLineDash([]);
   ctx.lineWidth = 1;
-  chartLabel({ y: y, text: text, tone: spec.tone, ring: spec.ring === true });
+  // Above the line, as a level's label sits, so the dashes do not run through the words.
+  chartLabel({ y: y - 7, text: text, tone: spec.tone, ring: spec.ring === true });
 }
 
 /* The band beyond a wall: the region of price where the position no longer belongs to you.
@@ -196,10 +197,6 @@ function planEntryPx(plan) {
   return null;
 }
 
-function planPrice(v) {
-  return Number(v).toLocaleString('en-US', { maximumFractionDigits: 8 });
-}
-
 /* One plan as its shape. Bands first so they sit under the candles' own ink, then the three
    lines. The stop leg follows the planStop overlay, because it is the one line here a person
    might want off while they read the price action; the entry and target stay, since a plan
@@ -215,19 +212,22 @@ function drawPlan(ctx, L, plan, showStop) {
   if (stop !== null && showStop) tradeSpan(ctx, L, entry, stop, 'down', 0.05);
   if (target !== null) tradeSpan(ctx, L, entry, target, 'ink', 0.05);
 
+  // tradeLine writes the price after the label, so the label is the word alone: "Plan long"
+  // becomes "Plan long  64,100" on the glass. Carrying the price in the label as well printed
+  // every plan line's price twice.
   tradeLine(ctx, L, {
     price: entry,
     tone: 'agent',
-    label: 'Plan ' + side + ' ' + planPrice(entry),
+    label: 'Plan ' + side,
     dash: [6, 4],
     alpha: 0.85,
     ring: ring
   });
   if (stop !== null && showStop) {
-    tradeLine(ctx, L, { price: stop, tone: 'down', label: 'Stop ' + planPrice(stop), dash: [6, 4], alpha: 0.8 });
+    tradeLine(ctx, L, { price: stop, tone: 'down', label: 'Stop', dash: [6, 4], alpha: 0.8 });
   }
   if (target !== null) {
-    tradeLine(ctx, L, { price: target, tone: 'ink', label: 'Target ' + planPrice(target), dash: [6, 4], alpha: 0.8 });
+    tradeLine(ctx, L, { price: target, tone: 'ink', label: 'Target', dash: [6, 4], alpha: 0.8 });
   }
 }
 

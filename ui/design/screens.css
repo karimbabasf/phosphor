@@ -865,7 +865,7 @@
   flex: 0 0 auto;
   height: 26px;
   padding: 2px;
-  gap: 2px;
+  gap: 1px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--bg-1);
@@ -875,21 +875,24 @@
 .seg-cells {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 1px;
 }
 
 /* The market is the first cell, and the cells after it are the timeframes the
    engine writes. A hairline between the two says they are two facts. */
 .seg .trade-symbol-wrap {
-  padding-right: 4px;
-  margin-right: 2px;
+  padding-right: 3px;
+  margin-right: 1px;
   border-right: 1px solid var(--line);
 }
 
+/* Four pixels of side padding: eight timeframes and the market have to share
+   one segment that fits, with the command, Layers and the status, in the 564
+   px a 1280 window leaves the bar. */
 .seg .trade-symbol,
 .seg .timeframe {
   height: 20px;
-  padding: 0 var(--s-2);
+  padding: 0 4px;
   border-radius: 8px;
   border: 1px solid transparent;
   font-family: var(--font-mono);
@@ -1060,7 +1063,7 @@
   top: calc(100% + var(--s-1));
   left: 0;
   z-index: 20;
-  min-width: 168px;
+  min-width: 196px;
   padding: var(--s-1);
   background: var(--bg-1);
   border: 1px solid var(--line-strong);
@@ -1203,6 +1206,10 @@
   gap: var(--s-3);
   min-width: 0;
 }
+
+/* The engine's two situational notes, the agent's object count and the way
+   back to live, sit in the same line and never wrap inside it. */
+.chartstatus .meta { white-space: nowrap; }
 
 /* The venue's round trip, shown only while the feed reads live. A latency on
    a delayed feed is a number about the wrong thing. */

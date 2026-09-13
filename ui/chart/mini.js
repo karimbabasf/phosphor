@@ -10,10 +10,13 @@
    of its own beyond the last payload.
 
    Nothing tells the window the layout as a list. A slot no layout has filled
-   answers 404, so the window probes the three slots in order on boot and again
-   on any chart frame, stops at the first that is empty, and the grid follows:
-   one chart fills the column, two sit side by side, three and four go two by
-   two. The stage carries the count as data-n and the stylesheet draws the grid.
+   answers 404, so the window probes the three slots in order on boot and on a
+   timer while any are up, stops at the first that is empty, and the grid
+   follows: one chart fills the column, two sit side by side, three and four go
+   two by two. The stage carries the count as data-n and the stylesheet draws
+   the grid. A chart frame names its slot, so a frame for slot 1 to 3 fetches
+   that one chart and nothing else: a 404 is a console line in the browser, and
+   a probe on every frame of the primary would print one per frame.
 
    Plain browser script like the engine beside it: no imports, no framework,
    no hex of its own. The inks are the window's tokens, read once at boot. */
@@ -25,12 +28,15 @@
   var events = window.PhosphorEvents;
 
   var SLOT_MAX = 3;
-  /* A layout emits one frame per slot in a burst. One probe answers the burst. */
+  /* A write to one slot can arrive as a burst of frames. One fetch answers it. */
   var PROBE_MS = 50;
   /* Between frames a comparison chart still moves: the primary rides the live
-     rail, these ride a timer. Five seconds keeps them within a bar of true. */
+     rail, these ride a timer. Five seconds keeps them within a bar of true, and
+     the same pass is what notices a layout that shrank, since a slot that is
+     gone sends no frame to say so. */
   var REFRESH_MS = 5000;
-  var AXIS_W = 56;
+  /* The price axis is measured from its own labels each draw, with this floor. */
+  var AXIS_MIN_W = 48;
   var AXIS_H = 16;
   var PAD_TOP = 6;
   var PRICE_PAD = 0.06;
@@ -51,7 +57,7 @@
   var stage = null;
   var minis = {};
   var booted = false;
-  var probeTimer = 0;
+  var pending = {};
   var probing = false;
   var probeAgain = false;
 
@@ -61,9 +67,9 @@
     if (!stage) return;
     booted = true;
     readTokens();
-    if (events) events.on('chart', function () { queueProbe(); });
+    if (events) events.on('chart', onChart);
     window.setInterval(function () {
-      if (count() > 0) queueProbe();
+      if (count() > 0) void probe();
     }, REFRESH_MS);
     void probe();
   }
@@ -87,12 +93,28 @@
 
   /* ---------- the slots ---------- */
 
-  function queueProbe() {
-    if (probeTimer) return;
-    probeTimer = window.setTimeout(function () {
-      probeTimer = 0;
-      void probe();
+  /* A frame for one of the comparison slots. The primary's frames (slot 0, or
+     a frame from before slots existed) are the engine's business. */
+  function onChart(frame) {
+    var slot = frame && typeof frame.slot === 'number' ? frame.slot : 0;
+    if (slot < 1 || slot > SLOT_MAX) return;
+    if (pending[slot]) return;
+    pending[slot] = window.setTimeout(function () {
+      delete pending[slot];
+      void fetchSlot(slot);
     }, PROBE_MS);
+  }
+
+  function fetchSlot(slot) {
+    return net.getJson('/api/chart?slot=' + slot).then(function (result) {
+      if (result.fresh || !minis[slot]) apply(slot, result.data);
+      settle();
+    }, function (err) {
+      if (err && err.status === 404 && minis[slot]) {
+        remove(slot);
+        settle();
+      }
+    });
   }
 
   /* Slot by slot, in order, until one answers 404: the server truncates its
@@ -134,8 +156,12 @@
         if (found.indexOf(slot) < 0 && minis[slot]) remove(slot);
       }
     }
-    if (stage) stage.dataset.n = String(1 + count());
+    settle();
     return Promise.resolve();
+  }
+
+  function settle() {
+    if (stage) stage.dataset.n = String(1 + count());
   }
 
   function create(slot) {
@@ -222,12 +248,16 @@
     return n.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
   }
 
+  /* Bars of an hour or more span days, so their stamps carry the day: three
+     times of day across a week of 4h bars name nothing. */
   function stampOf(tSec, granularity) {
     var d = new Date(tSec * 1000);
-    if (granularity >= 86400) return d.getDate() + ' ' + MONTHS[d.getMonth()];
+    var day = d.getDate() + ' ' + MONTHS[d.getMonth()];
+    if (granularity >= 86400) return day;
     var hh = d.getHours();
     var mm = d.getMinutes();
-    return (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm;
+    var time = (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm;
+    return granularity >= 3600 ? day + ' ' + time : time;
   }
 
   function alpha(hex, a) {
@@ -274,9 +304,6 @@
     var want = Math.max(10, Math.min(candles.length, Number(view.barCount) || 120));
     var start = candles.length - want;
     var end = candles.length - 1;
-    var plotW = w - AXIS_W;
-    var plotH = h - AXIS_H - PAD_TOP;
-    var slot = plotW / want;
 
     var lo = Infinity;
     var hi = -Infinity;
@@ -291,6 +318,16 @@
     span = hi - lo;
 
     var decimals = decimalsOf(hi);
+    /* The axis is as wide as its widest label, so a four figure price with
+       cents is never clipped at the edge of a narrow cell. */
+    var axisW = AXIS_MIN_W;
+    for (var g0 = 0; g0 <= 3; g0 += 1) {
+      var labelW = ctx.measureText(priceText(lo + (span * g0) / 3, decimals)).width + 12;
+      if (labelW > axisW) axisW = labelW;
+    }
+    var plotW = w - axisW;
+    var plotH = h - AXIS_H - PAD_TOP;
+    var slot = plotW / want;
     function xOf(index) {
       return (index - start + 0.5) * slot;
     }

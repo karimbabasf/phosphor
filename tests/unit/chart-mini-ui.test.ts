@@ -2,8 +2,9 @@
 //
 // The server keeps every slot as its own store and serves it on GET /api/chart?slot=n, a 404
 // for a slot no layout has filled. Nothing tells the window the layout as a list, so the
-// window probes the three slots on boot and again on any chart frame, and the grid follows
-// what answered: one chart fills, two sit side by side, three and four go two by two.
+// window probes the three slots on boot and on a timer while any are up, fetches one slot when
+// a chart frame names it, and the grid follows what answered: one chart fills, two sit side by
+// side, three and four go two by two.
 //
 // Run against the REAL ui/chart/mini.js over a stand-in DOM whose canvas records what was
 // drawn, so what is asserted is the picture: candles, the server's plot lines, levels, drawn
@@ -148,6 +149,7 @@ type World = {
   answers: Record<number, Any | null>;
   tick: (ms: number) => void;
   fresh: Record<number, boolean>;
+  timer: () => void;
 };
 
 function build(answers: Record<number, Any | null>): World {
@@ -163,6 +165,7 @@ function build(answers: Record<number, Any | null>): World {
   let nextId = 1;
   const timers: Array<{ id: number; at: number; fn: () => void }> = [];
   const world: Any = { answers, fresh };
+  const intervals: Array<() => void> = [];
 
   const sandbox: Any = {
     console,
@@ -190,7 +193,10 @@ function build(answers: Record<number, Any | null>): World {
     },
     setTimeout: sandbox.setTimeout,
     clearTimeout: sandbox.clearTimeout,
-    setInterval: () => 0,
+    setInterval: (fn: () => void) => {
+      intervals.push(fn);
+      return 0;
+    },
     PhosphorDom: { el: (tag: string, className?: string, text?: string) => {
       const n = makeNode(tag);
       if (className) n.className = className;
@@ -233,6 +239,9 @@ function build(answers: Record<number, Any | null>): World {
       const due = timers.filter((t) => t.at <= now);
       for (const t of due) timers.splice(timers.indexOf(t), 1);
       for (const t of due) t.fn();
+    },
+    timer: () => {
+      for (const fn of intervals) fn();
     },
   };
 }
@@ -305,19 +314,44 @@ test('a chart frame for a slot refetches that slot and redraws it', async () => 
   assert.equal(withClass(world.stage, 'mini-tf')[0].textContent, '1m');
 });
 
-test('a layout that shrinks takes its charts down: the primary frame re-probes and a 404 removes the slot', async () => {
+test('a layout that shrinks takes its charts down: the timer re-probes and a 404 removes the slot', async () => {
+  // A slot that is gone sends no frame to say so, which is why the pass runs on a timer.
   const world = build({ 1: slotPayload(1), 2: slotPayload(2, { view: { product: 'BTC-USD', provider: 'auto', granularitySec: 60, barCount: 40, panOffset: 0, priceScale: { mode: 'auto' } } }), 3: null });
   world.mini.boot();
   await settle();
   assert.equal(world.stage.dataset.n, '3');
   assert.equal(withClass(world.stage, 'mini').length, 2);
   world.answers[1] = null;
-  world.frame({ type: 'chart', rev: 9, slot: 0 });
-  world.tick(60);
+  world.timer();
   await settle();
   assert.equal(world.stage.dataset.n, '1');
   assert.equal(withClass(world.stage, 'mini').length, 0);
   assert.equal(world.stage.childNodes[0].id, 'chartwrap', 'the primary is no longer the first thing on the stage');
+});
+
+test('a frame for the primary fetches nothing: a probe on every one would be a 404 in the console per frame', async () => {
+  const world = build({ 1: slotPayload(1), 2: null });
+  world.mini.boot();
+  await settle();
+  const before = world.fetches.length;
+  world.frame({ type: 'chart', rev: 5, slot: 0 });
+  world.frame({ type: 'chart', rev: 6 });
+  world.tick(60);
+  await settle();
+  assert.equal(world.fetches.length, before);
+});
+
+test('a frame for a slot that has just been emptied takes that chart down without touching the others', async () => {
+  const world = build({ 1: slotPayload(1), 2: slotPayload(2), 3: null });
+  world.mini.boot();
+  await settle();
+  assert.equal(withClass(world.stage, 'mini').length, 2);
+  world.answers[2] = null;
+  world.frame({ type: 'chart', rev: 7, slot: 2 });
+  world.tick(60);
+  await settle();
+  assert.deepEqual(withClass(world.stage, 'mini').map((m) => m.dataset.slot), ['1']);
+  assert.equal(world.stage.dataset.n, '2');
 });
 
 test('three comparison charts make four, laid out two by two', async () => {
@@ -328,17 +362,17 @@ test('three comparison charts make four, laid out two by two', async () => {
   assert.deepEqual(withClass(world.stage, 'mini').map((m) => m.dataset.slot), ['1', '2', '3']);
 });
 
-test('a burst of frames is one probe, and an unchanged answer is not redrawn', async () => {
+test('a burst of frames for one slot is one fetch, and an unchanged answer is not redrawn', async () => {
   const world = build({ 1: slotPayload(1), 2: null });
   world.mini.boot();
   await settle();
   const before = world.fetches.length;
-  world.frame({ type: 'chart', rev: 5, slot: 0 });
   world.frame({ type: 'chart', rev: 5, slot: 1 });
-  world.frame({ type: 'chart', rev: 5, slot: 2 });
+  world.frame({ type: 'chart', rev: 6, slot: 1 });
+  world.frame({ type: 'chart', rev: 7, slot: 1 });
   world.tick(60);
   await settle();
-  assert.equal(world.fetches.length - before, 2, 'three frames inside 50 ms cost more than one probe of the two slots');
+  assert.equal(world.fetches.length - before, 1, 'three frames inside 50 ms cost more than one fetch');
   const [canvas] = withClass(world.stage, 'mini-canvas');
   const drawn = canvas.ctx.calls.length;
   world.fresh[1] = false;
