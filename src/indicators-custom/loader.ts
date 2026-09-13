@@ -43,6 +43,14 @@ function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+// JSON.parse quotes the bytes around the fault in its message, and that message goes to the
+// agent as a problem. The position is what a human needs to fix the file; the bytes are the
+// file's own business, and on the day the file is something else entirely they are a secret.
+function jsonProblem(err: unknown): string {
+  const where = /at position \d+( \(line \d+ column \d+\))?/.exec(message(err));
+  return where === null ? 'not valid JSON' : `not valid JSON ${where[0]}`;
+}
+
 export function createCustomIndicators(dir: string, now: () => number = Date.now): CustomIndicators {
   const entries = new Map<string, Entry>();
   let bySlug = new Map<string, IndicatorSpec>();
@@ -77,7 +85,7 @@ export function createCustomIndicators(dir: string, now: () => number = Date.now
       try {
         raw = JSON.parse(text);
       } catch (err) {
-        return fail(undefined, `not valid JSON: ${message(err)}`);
+        return fail(undefined, jsonProblem(err));
       }
       const parsed = customIndicatorSchema.safeParse(raw);
       if (!parsed.success) {
@@ -110,10 +118,17 @@ export function createCustomIndicators(dir: string, now: () => number = Date.now
     for (const file of names) {
       const ext = path.extname(file);
       if (ext !== '.json' && ext !== '.pine') continue;
+      // lstat, not stat: a link in this folder is a file somewhere else, and "somewhere else"
+      // is the one thing a slug must never reach. It is reported rather than skipped so the
+      // human learns why the indicator they linked in is not on the list.
       let st: fs.Stats;
       try {
-        st = fs.statSync(path.join(dir, file));
+        st = fs.lstatSync(path.join(dir, file));
       } catch {
+        continue;
+      }
+      if (st.isSymbolicLink()) {
+        nextProblems.push({ file, message: 'a symbolic link is not read; copy the file into this folder instead' });
         continue;
       }
       if (!st.isFile()) continue;

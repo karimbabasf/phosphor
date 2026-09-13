@@ -171,10 +171,19 @@ function tokenize(line: Line, budget: { tokens: number }): Tok[] {
       i += 1;
       continue;
     }
-    refuse(line.no, `unexpected character '${ch}'`);
+    refuse(line.no, `unexpected character ${shown(s.codePointAt(i) ?? 0)}`);
   }
   out.push({ t: 'eof' });
   return out;
+}
+
+// A refusal travels to the agent and on to the human. A bidi override or a zero-width space
+// quoted inside it would do to that sentence what it did to the script, so an invisible
+// character is named by its code point and a visible one is quoted.
+function shown(code: number): string {
+  const ch = String.fromCodePoint(code);
+  if (/[\p{C}\p{Z}]/u.test(ch)) return `U+${code.toString(16).toUpperCase().padStart(4, '0')}`;
+  return `'${ch}'`;
 }
 
 // ---------- values and bindings ----------
@@ -886,11 +895,18 @@ function placeholderOf(e: Expr): [string, string] | null {
   return null;
 }
 
-function refersToSelf(e: Expr, name: string): boolean {
+// Inlining makes a variable's expression a graph: `b = a + a` holds `a` once and reads it
+// twice, and thirty such lines hold a tree of a billion leaves in thirty nodes. Anything that
+// walks the graph as a tree has to remember where it has been, or a kilobyte of script is
+// the heap gone. `seen` is that memory; the resolver below keeps one per `self` because the
+// same node resolves differently inside its own recurrence and outside it.
+function refersToSelf(e: Expr, name: string, seen: Set<Expr>): boolean {
   if (typeof e !== 'object') return false;
   const ph = placeholderOf(e);
   if (ph !== null) return ph[1] === name && ph[0] !== '@final';
-  for (let i = 1; i < e.length; i++) if (refersToSelf(e[i] as Expr, name)) return true;
+  if (seen.has(e)) return false;
+  seen.add(e);
+  for (let i = 1; i < e.length; i++) if (refersToSelf(e[i] as Expr, name, seen)) return true;
   return false;
 }
 
@@ -898,8 +914,17 @@ type Resolver = {
   vars: Env;
   done: Map<string, Expr>;
   stack: string[];
-  memo: Map<Expr, Expr>;
+  memo: Map<string | null, Map<Expr, Expr>>;
 };
+
+function memoFor(r: Resolver, self: string | null): Map<Expr, Expr> {
+  let m = r.memo.get(self);
+  if (m === undefined) {
+    m = new Map();
+    r.memo.set(self, m);
+  }
+  return m;
+}
 
 function resolveExpr(r: Resolver, e: Expr, self: string | null): Expr {
   if (typeof e !== 'object') return e;
@@ -918,11 +943,12 @@ function resolveExpr(r: Resolver, e: Expr, self: string | null): Expr {
     const init = b.isVar && b.init !== null ? resolveExpr(r, b.init, null) : 'na';
     return ['?', ['==', 'bar_index', 0], init, ['hist', resolveVar(r, name), 1]];
   }
-  const cached = self === null ? r.memo.get(e) : undefined;
+  const memo = memoFor(r, self);
+  const cached = memo.get(e);
   if (cached !== undefined) return cached;
   const out: ExprNode = [e[0]];
   for (let i = 1; i < e.length; i++) out.push(resolveExpr(r, e[i] as Expr, self));
-  if (self === null) r.memo.set(e, out);
+  memo.set(e, out);
   return out;
 }
 
@@ -934,7 +960,7 @@ function resolveVar(r: Resolver, name: string): Expr {
   if (r.stack.includes(name)) throw new Refusal(b.line, `${[...r.stack.slice(r.stack.indexOf(name)), name].join(' and ')} depend on each other through their history`);
   r.stack.push(name);
   let out: Expr;
-  if (refersToSelf(b.current, name)) {
+  if (refersToSelf(b.current, name, new Set())) {
     const init = b.isVar && b.init !== null ? resolveExpr(r, b.init, null) : 'na';
     out = ['recur', init, resolveExpr(r, b.current, name)];
   } else {
@@ -993,6 +1019,10 @@ export function translatePine(source: string): PineResult {
     return translate(source);
   } catch (err) {
     if (err instanceof Refusal) return { ok: false, line: err.line, message: err.message };
+    // A chain of ten thousand terms, or as many `else if`s, is a tree the resolver walks by
+    // recursion; the stack gives out before the depth cap sees it. That is a shape of script,
+    // not a fault in the translator, and the human gets told so in the same voice as any refusal.
+    if (err instanceof RangeError) return { ok: false, line: 0, message: 'the script nests too deeply to read; split the longest expression or if chain' };
     return { ok: false, line: 0, message: `translator error: ${err instanceof Error ? err.message : String(err)}` };
   }
 }
