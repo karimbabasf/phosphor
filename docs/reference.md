@@ -533,7 +533,6 @@ an `/exchange` POST the venue rejects for its signature, and twenty seconds of t
     src/hl/            hyperliquid: signing, msgpack, order format, liquidation maths
     src/trade/         the trading surface: raw venue state in, one payload out
     src/runner/        the only code that places an order. No model runs in this process
-    src/strategy/      the grammar an agent may write and the runner will execute
     src/view/          the basic screen as one pure function, and the mode itself
     scripts/keygen.ts  raw keypairs for developers, written outside the working copy
     scripts/sweep.ts   secret sweep over the tracked tree and the git history

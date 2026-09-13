@@ -108,6 +108,12 @@ export const READ_TOOLS: readonly string[] = [
 // Chart writes. They move no money, so they never reach the proposal path and never wait on
 // an approval. They are still audited like every other op: an agent that can change what the
 // human sees while that human approves a transfer is a surface, not a decoration.
+// View tools a worker never gets. The proxy withholds their registration (src/mcp.ts
+// registerLeadView) and src/http/view.ts refuses them by seat role, so a worker cannot draw on
+// the chart a human is reading, arrange it, put an idea on it, recolour the window, or write into
+// the operator's next role text.
+export const LEAD_ONLY_VIEW_TOOLS: readonly string[] = ['set_theme', 'chart_draw', 'chart_layout', 'trade_plan', 'profile_learned', 'agent_spawn'];
+
 export const VIEW_TOOLS: readonly string[] = [
   // Colour. A write like the rest of this list: it changes what the human sees and moves no
   // money. The one thing it cannot reach is the approval gate's red, which is not a slot.

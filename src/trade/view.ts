@@ -154,6 +154,9 @@ export function createTradeView(
       if (symbol === null) return { ok: true, notes: [] };
       const next = symbol.trim().toUpperCase();
       if (next === '') return { ok: false, notes: [], error: 'symbol cannot be empty' };
+      // A coin is letters and digits, twelve at most (kPEPE is five). Anything else is not a market
+      // and would ride into the window, the tag and the payload as whatever it was.
+      if (!/^[A-Z0-9]{1,12}$/.test(next)) return { ok: false, notes: [], error: `${symbol.slice(0, 24)} is not a coin name: letters and digits, twelve at most` };
       if (next === state.symbol) return { ok: true, notes: [] };
       state.symbol = next;
       touch(source);

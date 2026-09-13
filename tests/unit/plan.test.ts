@@ -68,6 +68,10 @@ test('every field is bounded and the refusal names it', () => {
   refused({ entry: { type: 'twap' } }, /entry/);
   refused({ note: 'x'.repeat(121) }, /note/);
   refused({ note: 'a; b' }, /note/);
+  // Direction and separator characters can add a line to the card or reverse one.
+  refused({ note: 'buy the dip\u202e pid eht lles' }, /note/);
+  refused({ note: 'line one\u2028line two' }, /note/);
+  refused({ note: 'zero\u200bwidth' }, /note/);
   refused({ note: 'ab' }, /note/);
   refused({ when: new Array(7).fill({ type: 'time' }) }, /when/);
   refused({ when: [{ type: 'close', tf: '2h', is: 'above', at: { px: 1 } }] }, /tf/);

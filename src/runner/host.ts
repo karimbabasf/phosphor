@@ -555,6 +555,16 @@ export function createRunnerHost(deps: HostDeps) {
 
   function sweep(): void {
     const at = now();
+    // An idea past its own expiry is not a plan anyone can arm (propose_trade refuses it by the
+    // same clock), so it leaves the chart rather than sitting there as a stale suggestion.
+    for (const row of rows.values()) {
+      if (row.status !== 'idea') continue;
+      const expiry = Date.parse(row.expiresAt ?? '');
+      if (Number.isFinite(expiry) && at >= expiry) {
+        rows.delete(row.id);
+        deps.store.remove(row.id);
+      }
+    }
     for (const row of liveRows()) {
       const expiry = Date.parse(row.expiresAt ?? '');
       if (!Number.isFinite(expiry) || at < expiry) continue;

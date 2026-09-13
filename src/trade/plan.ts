@@ -80,7 +80,10 @@ const noteSchema = z
   .string()
   .min(3)
   .max(MAX_NOTE_CHARS)
-  .regex(/^[^;\u0000-\u001f\u007f\u2028\u2029]+$/, 'note may not carry semicolons or control characters');
+  // Line and paragraph separators, the NEL, zero-width characters and the bidi controls are refused
+  // with the C0 set: each one can add a line to the card or make it read backwards, and a note is
+  // one line a person reads under the plan.
+  .regex(/^[^;\u0000-\u001f\u007f\u0085\u200b-\u200f\u2028-\u202e\u2066-\u2069]+$/, 'note may not carry semicolons, control or direction characters');
 
 export const planInputSchema = z
   .object({

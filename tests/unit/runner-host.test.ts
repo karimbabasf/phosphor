@@ -19,6 +19,7 @@ import { createSession } from '../../src/keystore/session.ts';
 import { createPlanStore } from '../../src/trade/plans.ts';
 import type { PlanRow } from '../../src/trade/plans.ts';
 import { planHash } from '../../src/trade/plan.ts';
+import type { PlanInput } from '../../src/trade/plan.ts';
 import type { Bar } from '../../src/trade/watch.ts';
 
 const META = { assetId: 3, szDecimals: 4, maxLeverage: 25 };
@@ -81,6 +82,12 @@ class FakeChild extends EventEmitter {
   of(cmd: ToChild['cmd']): ToChild[] {
     return this.sent.filter((m) => m.cmd === cmd);
   }
+}
+
+// The agent-facing half of a row: what trade_plan sends, before the host mints an id.
+function planInputOf(r: PlanRow): PlanInput {
+  const { symbol, side, sizeUsd, leverage, entry, stop, target, when, expiresAt, note } = r;
+  return { symbol, side, sizeUsd, leverage, entry, stop, ...(target !== undefined ? { target } : {}), ...(when !== undefined ? { when } : {}), ...(expiresAt !== undefined ? { expiresAt } : {}), ...(note !== undefined ? { note } : {}) };
 }
 
 function row(over: Partial<PlanRow> = {}): PlanRow {
@@ -523,4 +530,18 @@ test('the key goes over stdin and is nowhere in the environment', () => {
   assert.match(host, /fork\)?\(entry, \[\], \{/);
   assert.doesNotMatch(host, /fork\)?\(entry, \[[^\]]/, 'nothing was put into argv');
   assert.doesNotMatch(host, /TRADING_LIMITS|maxArmedMandates|maxAggregateNotionalUsd/, 'the policy is the only wall');
+});
+
+test('an idea past its own expiry leaves the chart on the next sweep, and a live idea stays', async () => {
+  /* propose_trade refuses to arm an expired idea by the same clock, so a row nobody can arm has
+     no reason to sit on the chart as a suggestion. */
+  const h = harness();
+  const stale = h.runner.draw({ ...planInputOf(row()), expiresAt: new Date(h.clock.now + 30_000).toISOString() }, 'agent-1');
+  const fresh = h.runner.draw({ ...planInputOf(row()), expiresAt: new Date(h.clock.now + 86_400_000).toISOString() }, 'agent-1');
+  assert.equal(h.runner.get(stale.id)?.status, 'idea');
+  h.clock.now += 31_000;
+  h.runner.sweep();
+  assert.equal(h.runner.get(stale.id), null, 'the expired idea is gone');
+  assert.equal(h.runner.get(fresh.id)?.status, 'idea', 'the live idea stays');
+  assert.equal(h.runner.plans().filter((p) => p.status === 'idea').length, 1);
 });

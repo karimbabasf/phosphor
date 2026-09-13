@@ -25,6 +25,7 @@ import {
 } from '../hl/exchange.ts';
 import type { OrderRequest, TriggerRequest } from '../hl/exchange.ts';
 import { formatSize, roundToValidPrice } from '../hl/format.ts';
+import { signL1Action } from '../hl/sign.ts';
 import { DEFAULT_TAKER_FEE_BPS, planRisk } from '../trade/risk.ts';
 import type { Plan } from '../trade/plan.ts';
 import type { AssetMeta, Cloids, FromChild, ToChild } from './protocol.ts';
@@ -99,6 +100,16 @@ function requireExchange(): ReturnType<typeof createExchange> {
     exchange = createExchange({ privKey: KEY, baseUrl: BASE_URL, transport: (url, body) => atVenue(() => defaultTransport(url, body)) });
   }
   return exchange;
+}
+
+/* The first signature in a fresh process costs 30 to 60 ms (the hashing and curve code paths
+   are cold), and the first fire is the one fire a session with one plan makes. So the child
+   signs one throwaway action at arm, never sent, and pays that once while nothing is waiting. */
+let warmed = false;
+function warm(): void {
+  if (warmed || KEY === undefined) return;
+  warmed = true;
+  void signL1Action(KEY, { type: 'cancel', cancels: [] }, 0).catch(() => undefined);
 }
 
 // The venue's own words for a cancel that found nothing to cancel. A stop the venue already
@@ -482,6 +493,7 @@ async function handle(m: ToChild): Promise<FromChild | null> {
   switch (m.cmd) {
     case 'arm':
       held.set(m.plan.id, { plan: m.plan, meta: m.meta, cloids: { ...m.cloids }, gen: m.gen, fired: m.cloids.entry !== undefined, exitSz: 0 });
+      warm();
       return { ev: 'armed', seq: m.seq, id: m.plan.id };
     case 'fire':
       return fire(m);

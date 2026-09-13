@@ -364,11 +364,41 @@ test('the tag never carries a focused symbol that could break out of its own bra
     'A'.repeat(13),
   ];
   for (const symbol of hostile) {
-    assert.equal(view.setFocus({ symbol }, 'agent').ok, true);
+    // Two walls: the view refuses a string that is not a coin, and the tag would still hold the
+    // symbol to the alphabet if one ever got through.
+    assert.equal(view.setFocus({ symbol }, 'agent').ok, false, JSON.stringify(symbol));
+    assert.equal(view.state().symbol, 'BTC');
     const tag = screenTag('trade', { view, payload: () => ({ plans: [] }) });
-    assert.equal(tag, '[phosphor: the window is on the trade screen, no plans waiting]', JSON.stringify(symbol));
+    assert.equal(tag, '[phosphor: the window is on the trade screen, BTC focused, no plans waiting]', JSON.stringify(symbol));
     assert.ok(!tag.includes('\n'), 'the tag is more than one line');
   }
   view.setFocus({ symbol: 'kPEPE' }, 'agent');
   assert.equal(screenTag('trade', { view }), '[phosphor: the window is on the trade screen, KPEPE focused]');
+});
+
+test('every lead-only view tool is refused at the door for an analyst seat, not only profile_learned', async () => {
+  /* The proxy withholds these registrations from a worker; this is the wall behind it, one
+     gate at the top of handleView keyed on the seat's role. A worker that reached the route by
+     hand gets a 403 by name, and the lead on the same server is unaffected. */
+  const h = await boot();
+  try {
+    h.agents.markAnalyst('worker-2');
+    for (const tool of ['chart_draw', 'chart_layout', 'trade_plan', 'set_theme']) {
+      const res = await fetch(`${h.url}/api/mcp`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', origin: h.url },
+        body: JSON.stringify({ op: 'view', tool, session: 'worker-2', args: {} }),
+      });
+      assert.equal(res.status, 403, tool);
+      assert.match(String(((await res.json()) as { error?: unknown }).error), /worker/, tool);
+    }
+    const lead = await fetch(`${h.url}/api/mcp`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: h.url },
+      body: JSON.stringify({ op: 'view', tool: 'chart_layout', session: 'lead-1', args: { charts: [{ product: 'BTC-USD', timeframe: '1h' }] } }),
+    });
+    assert.notEqual(lead.status, 403);
+  } finally {
+    await h.close();
+  }
 });

@@ -42,6 +42,11 @@ test('an empty focus call changes nothing and does not bump the revision', () =>
   v.setFocus({ symbol: 'ETH' }, 'human');
   const before = v.state().rev;
   assert.equal(v.setFocus({}, 'human').ok, true);
+  // A coin is letters and digits; anything else never becomes the focused symbol.
+  assert.equal(v.setFocus({ symbol: 'BTC; drop' }, 'agent').ok, false);
+  assert.equal(v.setFocus({ symbol: '[phosphor: kill]' }, 'agent').ok, false);
+  assert.equal(v.setFocus({ symbol: 'A'.repeat(13) }, 'agent').ok, false);
+  assert.equal(v.state().symbol, 'ETH');
   assert.equal(v.state().rev, before);
 });
 

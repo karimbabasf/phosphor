@@ -69,6 +69,8 @@ export type TradeServiceDeps = {
   now?: () => number;
 };
 
+const IDEAS_PER_SESSION = 20;
+
 const BATCH_OPS = ['account', 'positions', 'orders', 'fills', 'plans', 'market', 'venue_health'] as const;
 
 function coinOf(product: string): string {
@@ -238,6 +240,11 @@ export function createTradeService(deps: TradeServiceDeps): TradeService {
       }
       const parsed = validatePlanInput(args.plan, now());
       if (!parsed.ok) return { ok: false, error: parsed.errors.join('; ') };
+      // Ideas are the one row an agent can mint without a wall, so they are capped per session:
+      // every draw rewrites plans.json and rides in every payload, and twenty is more than a
+      // person can read on one chart.
+      const mine = deps.runner.plans().filter((r) => r.status === 'idea' && r.by === by).length;
+      if (mine >= IDEAS_PER_SESSION) return { ok: false, error: `${IDEAS_PER_SESSION} ideas are drawn already; remove one with trade_plan { planId, remove: true } first` };
       const row = deps.runner.draw(parsed.plan, by);
       const notes = [`${row.id} drawn on ${row.symbol}`];
       const priced = priceIdea(row);

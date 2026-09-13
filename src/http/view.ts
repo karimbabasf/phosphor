@@ -25,7 +25,7 @@ import type { ChartSlot } from '../charts.ts';
 import { asRecord, fail, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
 import { chartDigest, resolveIndicator, resolveViewPatch } from './chart.ts';
-import { VIEW_TOOLS } from './context.ts';
+import { LEAD_ONLY_VIEW_TOOLS, VIEW_TOOLS } from './context.ts';
 import type { Ctx } from './context.ts';
 
 type ViewArgs = {
@@ -547,6 +547,13 @@ export async function handleView(ctx: Ctx, body: JsonBody, res: http.ServerRespo
   const handler = HANDLERS[tool];
   if (handler === undefined) {
     fail(res, 400, `unknown view tool: ${tool}. known tools: ${VIEW_TOOLS.join(', ')}`);
+    return;
+  }
+  // The proxy never registers these for a worker, and this is the second wall behind it: a
+  // raw POST from an analyst seat is refused by the seat's role, decided by the roster and never
+  // by anything the body claims.
+  if ((LEAD_ONLY_VIEW_TOOLS as readonly string[]).includes(tool) && ctx.agents.member(body.session)?.role === 'analyst') {
+    fail(res, 403, `${tool} is not on a worker's surface`);
     return;
   }
   await handler({ ctx, args, body, res, by });
