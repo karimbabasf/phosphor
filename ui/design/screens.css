@@ -1209,7 +1209,7 @@ button.trade-toggle {
   flex-direction: column;
   gap: var(--s-2);
   border-radius: var(--radius-sm);
-  transition: opacity var(--dur-press) var(--ease-out);
+  transition: opacity 200ms var(--ease-out);
 }
 
 .trade-enter {
@@ -1309,14 +1309,45 @@ button.trade-toggle {
   --btn-edge: color-mix(in srgb, var(--warn) 40%, transparent);
 }
 
-/* The tape: one line per fill or ended plan, dense. */
+/* The tape: one line per fill or ended plan, dense. It wraps only for the
+   callout a highlight puts under it. */
 .done-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: var(--s-3);
+  gap: var(--s-1) var(--s-3);
   padding: var(--s-1) 0;
   font-size: var(--fs-13);
+  border-radius: var(--radius-sm);
+  transition: opacity 200ms var(--ease-out);
+}
+
+.done-row .trade-callout { flex-basis: 100%; }
+
+/* ---------- the spotlight ----------
+
+   The agent pointing at one row. The ring is the pulse ui/screens/trade.js
+   runs through WAAPI; under reduced motion it is this still ring instead. The
+   rest of the rail steps back to 0.55 for the same 1.2 s, both ways on the one
+   200 ms ease-out, and the note sits under the row in the agent's own words.
+   Amber, because a pointer is the agent asking a person to look. */
+.trade-rail [data-dim="true"] { opacity: 0.55; }
+
+.trade-callout {
+  margin: 0;
+  padding: 2px 0 2px var(--s-2);
+  border-left: 2px solid var(--warn);
+  font-size: var(--fs-12);
+  line-height: 1.45;
+  color: var(--text-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trade-rail [data-spot="true"] { box-shadow: 0 0 0 2px var(--warn); }
+  /* The dim keeps its short fade: it is a change of state, not motion. */
+  .trade-row,
+  .done-row { transition-duration: 200ms !important; }
 }
 
 .timeframe {

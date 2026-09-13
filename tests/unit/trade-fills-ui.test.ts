@@ -314,9 +314,9 @@ function flat() {
   return data;
 }
 
-type World = { host: Node; lines: string[]; posts: Array<{ path: string; body: Record<string, unknown> }>; refresh: () => Promise<void>; set: (d: unknown) => void; tick: (ms: number) => void };
+type World = { host: Node; lines: string[]; posts: Array<{ path: string; body: Record<string, unknown> }>; refresh: () => Promise<void>; set: (d: unknown) => void; tick: (ms: number) => void; window: Record<string, any> };
 
-async function renderPayload(data: unknown, opts: { reduced?: boolean } = {}): Promise<World> {
+async function renderPayload(data: unknown, opts: { reduced?: boolean; onInvalidate?: (scene: boolean) => void } = {}): Promise<World> {
   const host = makeNode('div');
   const posts: Array<{ path: string; body: Record<string, unknown> }> = [];
   let current = data;
@@ -375,6 +375,10 @@ async function renderPayload(data: unknown, opts: { reduced?: boolean } = {}): P
     },
     PhosphorShell: { view: () => 'basic', setPending: () => {} },
     PhosphorAgent: { mount: () => {} },
+    // The chart engine's repaint hook, recorded so a test can see the spotlight ask for it.
+    chartInvalidate: (scene: boolean) => {
+      if (opts.onInvalidate) opts.onInvalidate(scene);
+    },
   };
   sandbox.globalThis = sandbox;
   createContext(sandbox);
@@ -395,6 +399,7 @@ async function renderPayload(data: unknown, opts: { reduced?: boolean } = {}): P
       current = d;
     },
     tick,
+    window: sandbox.window,
   };
 }
 
@@ -778,4 +783,118 @@ test('the toggles no longer write a global nothing reads', async () => {
 test('nothing the payload carries reaches the DOM as markup', () => {
   const source = readFileSync(new URL('../../ui/screens/trade.js', import.meta.url), 'utf8');
   assert.equal(/\.innerHTML\s*=|insertAdjacentHTML|outerHTML|document\.write/.test(source), false);
+});
+
+// ---------- the spotlight ----------
+
+function highlight(over: Record<string, unknown> = {}) {
+  return { kind: 'plan', id: 'pl_a1', note: 'This one waits on the hourly close.', source: 'agent', at: '2026-09-11T14:00:00.000Z', atMs: 1, ttlSec: 300, ...over };
+}
+
+test('a highlight rings its row twice, dims the rows beside it, and writes the note under it', async () => {
+  const data = funded();
+  data.highlights = [highlight()];
+  const world = await renderPayload(data);
+  const rows = withClass(world.host, 'trade-row');
+  const [spot] = rows.filter((r) => r.dataset.spotKey === 'plan:pl_a1');
+  assert.ok(spot !== undefined);
+  assert.equal(spot.dataset.spot, 'true');
+  // The pulse is one WAAPI animation: two rings over 1.2 s, ease-out.
+  assert.equal(spot.animations.length, 1);
+  const pulse = plain(spot.animations[0]) as { frames: Array<{ boxShadow: string }>; opts: { duration: number; easing: string } };
+  assert.equal(pulse.opts.duration, 1200);
+  assert.equal(pulse.opts.easing, 'ease-out');
+  const rings = pulse.frames.filter((f) => /0 0 0 2px/.test(f.boxShadow)).length;
+  assert.equal(rings, 2, `the ring pulses ${rings} times, not twice`);
+  for (const other of rows.filter((r) => r !== spot)) assert.equal(other.dataset.dim, 'true', 'a sibling row was not dimmed');
+  const [callout] = withClass(spot, 'trade-callout');
+  assert.ok(callout !== undefined, 'no callout under the row');
+  assert.equal(callout.textContent, 'This one waits on the hourly close.');
+  assert.equal(callout.hidden, false);
+});
+
+test('the ring and the dim last 1.2 s; the note stays while the highlight is live', async () => {
+  const data = funded();
+  data.highlights = [highlight()];
+  const world = await renderPayload(data);
+  world.tick(1201);
+  const rows = withClass(world.host, 'trade-row');
+  for (const row of rows) {
+    assert.notEqual(row.dataset.spot, 'true', 'the ring outlived its 1.2 s');
+    assert.notEqual(row.dataset.dim, 'true', 'the dim outlived its 1.2 s');
+  }
+  const [spot] = rows.filter((r) => r.dataset.spotKey === 'plan:pl_a1');
+  assert.equal(withClass(spot, 'trade-callout')[0].hidden, false);
+  // Expired on the server: the payload no longer carries it, and the note goes with it.
+  const later = funded();
+  later.highlights = [];
+  world.set(later);
+  await world.refresh();
+  const [after] = withClass(world.host, 'trade-row').filter((r) => r.dataset.spotKey === 'plan:pl_a1');
+  assert.equal(withClass(after, 'trade-callout')[0].hidden, true);
+});
+
+test('a highlight pulses once when it arrives, not on every frame that carries it', async () => {
+  const data = funded();
+  data.highlights = [highlight()];
+  const world = await renderPayload(data);
+  await world.refresh();
+  await world.refresh();
+  const [spot] = withClass(world.host, 'trade-row').filter((r) => r.dataset.spotKey === 'plan:pl_a1');
+  assert.equal(spot.animations.length, 1);
+  // The same row pointed at again is a new highlight, and it pulses again.
+  const again = funded();
+  again.highlights = [highlight({ atMs: 2, at: '2026-09-11T14:05:00.000Z' })];
+  world.set(again);
+  await world.refresh();
+  assert.equal(spot.animations.length, 2);
+});
+
+test('reduced motion keeps the dim and drops the pulse', async () => {
+  const data = funded();
+  data.highlights = [highlight()];
+  const world = await renderPayload(data, { reduced: true });
+  const rows = withClass(world.host, 'trade-row');
+  const [spot] = rows.filter((r) => r.dataset.spotKey === 'plan:pl_a1');
+  assert.equal(spot.animations.length, 0, 'the pulse ran under reduced motion');
+  assert.equal(spot.dataset.spot, 'true');
+  for (const other of rows.filter((r) => r !== spot)) assert.equal(other.dataset.dim, 'true');
+});
+
+test('a highlight on a fill lands on the tape, and one on a position lands on the open row', async () => {
+  const data = funded();
+  data.fills = [fill({ tid: 'tid9' })];
+  data.highlights = [highlight({ kind: 'fill', id: 'tid9', note: 'Your entry.' }), highlight({ kind: 'position', id: 'BTC', note: 'Up since the open.' })];
+  const world = await renderPayload(data);
+  const [tape] = withClass(world.host, 'done-row').filter((r) => r.dataset.spotKey === 'fill:tid9');
+  assert.equal(tape.dataset.spot, 'true');
+  assert.equal(withClass(tape, 'trade-callout')[0].textContent, 'Your entry.');
+  const [open] = withClass(world.host, 'trade-row').filter((r) => r.dataset.spotKey === 'position:BTC');
+  assert.equal(open.dataset.spot, 'true');
+  assert.equal(withClass(open, 'trade-callout')[0].textContent, 'Up since the open.');
+});
+
+test('the canvas is told which objects are lit, for 1.2 s, and repainted at both ends', async () => {
+  const data = funded();
+  data.highlights = [highlight({ kind: 'level', id: 'lv_3', note: '' }), highlight({ kind: 'plan', id: 'pl_a1' })];
+  const paints: boolean[] = [];
+  const world = await renderPayload(data, { onInvalidate: (scene: boolean) => paints.push(scene) });
+  const active = world.window.chartSpotActive as (kind: string, id: string) => boolean;
+  assert.equal(typeof active, 'function');
+  assert.equal(active('level', 'lv_3'), true);
+  assert.equal(active('plan', 'pl_a1'), true);
+  assert.equal(active('line', 'tl_1'), false);
+  assert.ok(paints.length >= 1, 'the chart was not asked to repaint when the spotlight came on');
+  const before = paints.length;
+  world.tick(1201);
+  assert.equal(active('level', 'lv_3'), false);
+  assert.ok(paints.length > before, 'the chart was not asked to repaint when the spotlight went off');
+});
+
+test('the note reaches the DOM as text, never as markup', async () => {
+  const data = funded();
+  data.highlights = [highlight({ note: '<b onclick="x()">bold</b>' })];
+  const world = await renderPayload(data);
+  const [spot] = withClass(world.host, 'trade-row').filter((r) => r.dataset.spotKey === 'plan:pl_a1');
+  assert.equal(withClass(spot, 'trade-callout')[0].textContent, '<b onclick="x()">bold</b>');
 });

@@ -490,6 +490,7 @@
     renderOpen();
     renderWaiting();
     renderDone();
+    renderSpotlight();
     for (var i = 0; refs.paintCuts && i < refs.paintCuts.length; i += 1) refs.paintCuts[i]();
   }
 
@@ -964,6 +965,172 @@
         paintAct(button);
       });
   }
+
+  /* ---------- the spotlight ----------
+
+     A highlight arrives on the trade payload: a kind, an id and a note. The
+     window renders every one. The row it names gets an amber ring that pulses
+     twice over 1.2 s, the rows beside it drop to 0.55 for the same 1.2 s, and
+     the note sits under the row for as long as the server carries the
+     highlight. An object on the canvas is lit through chartSpotActive, which
+     the engine asks as it draws each label.
+
+     A highlight pulses ONCE, when it arrives. The payload carries it on every
+     frame until it expires, and a ring that fired on every frame would be a
+     strobe on the one surface where the agent is trying to point at one thing.
+     Reduced motion keeps the ring and the dim as plain changes of state and
+     drops the pulse. */
+  var SPOT_MS = 1200;
+  var spotSeen = {};
+  var spotActive = {};
+  var spotTimer = 0;
+
+  function spotKeyOf(h) {
+    var id = String(h.id || '').trim();
+    /* A position is named by its coin, and the row is keyed by the coin as the
+       venue writes it. */
+    if (h.kind === 'position') id = id.toUpperCase();
+    return h.kind + ':' + id;
+  }
+
+  function renderSpotlight() {
+    var list = (data && Array.isArray(data.highlights)) ? data.highlights : [];
+    var live = {};
+    var fresh = [];
+    var keep = {};
+    for (var i = 0; i < list.length; i += 1) {
+      var h = list[i];
+      if (!h || typeof h.kind !== 'string' || typeof h.id !== 'string') continue;
+      var key = spotKeyOf(h);
+      live[key] = h;
+      /* The same row pointed at again is a new highlight (the server replaces
+         the old one and stamps it), so the stamp is what has been seen. */
+      var stamp = key + '@' + String(h.atMs !== undefined ? h.atMs : h.at || '');
+      keep[stamp] = true;
+      if (spotSeen[stamp]) continue;
+      fresh.push(key);
+    }
+    /* Stamps that have expired are let go, so a window that stays open all
+       day does not keep every pointer it ever saw. */
+    spotSeen = keep;
+    paintCallouts(live);
+    if (fresh.length) spot(fresh);
+  }
+
+  function spotRows() {
+    var out = [];
+    var bodies = [refs.openBody, refs.waitingBody, refs.doneBody];
+    for (var b = 0; b < bodies.length; b += 1) {
+      var kids = bodies[b] ? bodies[b].children : [];
+      for (var k = 0; k < kids.length; k += 1) {
+        if (kids[k].dataset && kids[k].dataset.spotKey) out.push(kids[k]);
+      }
+    }
+    return out;
+  }
+
+  /* The note under the row, built with textContent: it is the agent's own
+     sentence and it is data. Present while the highlight is live, gone with it. */
+  function paintCallouts(live) {
+    var rows = spotRows();
+    for (var i = 0; i < rows.length; i += 1) {
+      var row = rows[i];
+      var h = live[row.dataset.spotKey];
+      var note = h && typeof h.note === 'string' ? h.note.trim() : '';
+      var callout = calloutOf(row);
+      if (!note) {
+        if (callout) dom.setHidden(callout, true);
+        continue;
+      }
+      if (!callout) {
+        callout = dom.el('p', 'trade-callout');
+        row.appendChild(callout);
+      }
+      dom.setText(callout, note);
+      dom.setHidden(callout, false);
+    }
+  }
+
+  function calloutOf(row) {
+    var kids = row.children;
+    for (var i = kids.length - 1; i >= 0; i -= 1) {
+      if (kids[i].className === 'trade-callout') return kids[i];
+    }
+    return null;
+  }
+
+  function spot(keys) {
+    var hit = {};
+    for (var k = 0; k < keys.length; k += 1) {
+      hit[keys[k]] = true;
+      spotActive[keys[k]] = true;
+    }
+    var reduced = !!(window.PhosphorMotion && window.PhosphorMotion.reduced());
+    var rows = spotRows();
+    var lit = 0;
+    for (var i = 0; i < rows.length; i += 1) {
+      if (spotActive[rows[i].dataset.spotKey] === true) lit += 1;
+    }
+    for (var r = 0; r < rows.length; r += 1) {
+      var row = rows[r];
+      var on = spotActive[row.dataset.spotKey] === true;
+      flag(row, 'spot', on);
+      /* The rest of the rail steps back only when the pointer landed on the
+         rail. A highlight on a chart level dims nothing here. */
+      flag(row, 'dim', !on && lit > 0);
+      if (hit[row.dataset.spotKey] && !reduced && typeof row.animate === 'function') pulse(row);
+    }
+    window.clearTimeout(spotTimer);
+    spotTimer = window.setTimeout(unspot, SPOT_MS);
+    if (typeof window.chartInvalidate === 'function') window.chartInvalidate(true);
+  }
+
+  function unspot() {
+    spotActive = {};
+    var rows = spotRows();
+    for (var i = 0; i < rows.length; i += 1) {
+      flag(rows[i], 'spot', false);
+      flag(rows[i], 'dim', false);
+    }
+    if (typeof window.chartInvalidate === 'function') window.chartInvalidate(true);
+  }
+
+  function flag(row, name, on) {
+    if (on) row.dataset[name] = 'true';
+    else if (row.dataset[name] !== undefined) delete row.dataset[name];
+  }
+
+  /* Two rings over 1.2 s: on, off, on, off. Box shadow rather than outline,
+     because it follows the row's radius, and WAAPI rather than a class so the
+     pulse cannot be restarted by a repaint half way through. */
+  function pulse(row) {
+    var ring = '0 0 0 2px ' + warnColour();
+    var none = '0 0 0 0 rgba(0, 0, 0, 0)';
+    row.animate([
+      { boxShadow: none, offset: 0 },
+      { boxShadow: ring, offset: 0.2 },
+      { boxShadow: none, offset: 0.5 },
+      { boxShadow: ring, offset: 0.7 },
+      { boxShadow: none, offset: 1 }
+    ], { duration: SPOT_MS, easing: 'ease-out' });
+  }
+
+  /* The token, read off the document so a recoloured window rings in its own
+     amber. The literal is the token's shipped value, for a document that
+     cannot be asked. */
+  function warnColour() {
+    if (typeof window.getComputedStyle === 'function' && document.documentElement) {
+      var value = window.getComputedStyle(document.documentElement).getPropertyValue('--warn');
+      if (value && value.trim()) return value.trim();
+    }
+    return '#F5B942';
+  }
+
+  /* The canvas asks this as it draws each label. ui/chart/chart.js reads it
+     through chartSpotOn and draws the same amber ring around the label. */
+  window.chartSpotActive = function (kind, id) {
+    return spotActive[spotKeyOf({ kind: kind, id: id })] === true;
+  };
 
   /* ---------- what the rail reads ---------- */
 
