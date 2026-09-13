@@ -35,7 +35,15 @@ export async function proposeTrade(ctx: PCtx, params: TradeParams): Promise<Prop
     const row = deps?.runner.get(params.planId) ?? null;
     if (row === null) problems.push(`no plan ${params.planId}`);
     else if (row.status !== 'idea') problems.push(`${params.planId} is already ${row.status}`);
-    else plan = planOfRow(row);
+    else {
+      // The idea was validated when it was drawn, against the clock of that moment. Arming it
+      // is a new moment: an expiry that has since passed is refused here, by the same rule, and
+      // the idea stays drawn so the agent can redraw it with a new one.
+      const drawn = planOfRow(row);
+      const at = Date.parse(drawn.expiresAt ?? '');
+      if (Number.isFinite(at) && at <= now()) problems.push(`${params.planId} expired at ${drawn.expiresAt ?? ''}; redraw it with a new expiry`);
+      else plan = drawn;
+    }
   } else {
     const parsed = validatePlanInput(params.plan, now());
     if (!parsed.ok) problems.push(...parsed.errors);

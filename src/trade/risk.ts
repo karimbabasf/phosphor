@@ -97,7 +97,9 @@ export function planRisk(plan: Plan, i: RiskInputs): Outcome {
 
   // A stop entry is a trigger the venue fires when the mark crosses it in the direction of the
   // trade. A buy stop below the mark would fire at once, which is a market order dressed up.
-  if (plan.entry.type === 'stop') {
+  // Once the entry has a fill the trigger has already fired, and the mark sitting past it is
+  // exactly what fired it, so the rule is for a plan that has not entered yet.
+  if (plan.entry.type === 'stop' && i.entryPx === undefined) {
     const past = long ? plan.entry.px > i.mark : plan.entry.px < i.mark;
     if (!past) {
       return refuse(

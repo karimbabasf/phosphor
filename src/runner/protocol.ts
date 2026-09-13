@@ -40,7 +40,9 @@ export type FromChild =
   | { ev: 'placed'; seq: number; id: string; oids: { entry?: number; stop?: number; target?: number }; filledSz: number; avgPx: number | null; cloids: Cloids; gen: number; venueMs: number }
   | { ev: 'protected'; seq: number; id: string; oids: { stop?: number; target?: number }; sz: number; cloids: Cloids; gen: number; venueMs: number }
   | { ev: 'modified'; seq: number; id: string; stop: number; target: number | null; cloids: Cloids; gen: number; venueMs: number }
-  | { ev: 'cancelled'; seq: number; id: string; filledSz: number; venueMs: number }
+  // A cancel that found a fill protects it before answering, so the exits it placed come back
+  // here the same way protect's do: the host persists them, and a reboot finds them resting.
+  | { ev: 'cancelled'; seq: number; id: string; filledSz: number; cloids: Cloids; gen: number; venueMs: number }
   | { ev: 'closed'; seq: number; id: string; stillOpenSz: number; venueMs: number }
   | { ev: 'flat'; seq: number; stillOpen: string[]; detail: string }
   | { ev: 'released'; seq: number; id: string }
