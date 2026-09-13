@@ -226,7 +226,11 @@
       tab.tabIndex = selected ? 0 : -1;
     }
     dom.setAttr(document.body, 'data-view', name);
-    dom.setHidden(refs.feedChip, name !== 'trade');
+    /* The stream chip is a different fact from the chart's feed line, and the
+       trade screen already carries the feed line in its bar. Two live words in
+       one eyeline read as one fact said twice, so the chip stays for the other
+       screens and steps off this one. */
+    dom.setHidden(refs.feedChip, name === 'trade');
     placeIndicator();
 
     /* Nothing animates on a keyboard-initiated action, and a swap the server

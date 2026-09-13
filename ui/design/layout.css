@@ -557,17 +557,15 @@ body[data-view="trade"] .stage {
   flex: 0 1 auto;
 }
 
-/* WHAT THE CHART IS OF, THEN WHAT IS DRAWN ON IT.
-
-   A grid rather than a wrapping row: the old bar wrapped wherever it ran out of
-   room, so the same five controls landed differently at every width and the
-   line between the two halves fell in the middle of one of them. Everything on
-   one row while the chart is wide enough for it, and a deliberate second row
-   when it is not. */
+/* ONE ROW. The segment (market and timeframes), the indicator command, Layers,
+   and the status line on the right, all at 26 px. The command gives way first
+   when the chart is narrow, down to a floor it is still readable at. Under 560
+   px the row wraps, and it wraps on purpose: the segment keeps the first row
+   and the rest take the second. */
 .chart-bar {
   flex: 0 0 auto;
-  display: grid;
-  grid-template-columns: auto auto auto minmax(0, 1fr);
+  display: flex;
+  flex-wrap: nowrap;
   align-items: center;
   gap: var(--s-3);
   padding: var(--s-2) var(--s-3);
@@ -575,24 +573,21 @@ body[data-view="trade"] .stage {
   min-height: 44px;
 }
 
-/* Under about 1140 px the two halves cannot share a row. The market and its
-   feed take the first, what is drawn takes the second, and the rule between
-   them gives way to the row break, which says the same thing louder. */
-@container trade (max-width: 1139px) {
-  .chart-bar {
-    grid-template-columns: auto minmax(0, 1fr);
-    row-gap: var(--s-2);
-  }
-  .trade-bar-div { display: none; }
-  .chart-bar > .trade-bar-group:nth-child(3) { grid-area: 2 / 1 / 3 / -1; }
+.chart-bar .chart-cmd {
+  flex: 1 1 96px;
+  min-width: 96px;
+  max-width: 152px;
 }
 
-/* Stacked over the chart there is no room to pair anything: one control group
-   to a row, and the feed under them. */
+.chart-bar .chartstatus {
+  margin-left: auto;
+  flex: 0 1 auto;
+}
+
 @container trade (max-width: 559px) {
-  .chart-bar { grid-template-columns: minmax(0, 1fr); }
-  .chart-bar > .trade-bar-group:nth-child(3) { grid-area: auto; }
-  .chartstatus { justify-content: flex-start; }
+  .chart-bar { flex-wrap: wrap; }
+  .chart-bar .seg { flex: 0 0 100%; }
+  .chart-bar .chart-cmd { max-width: none; }
 }
 
 /* The canvases inside are pinned to its edges, so clipping hides no bar. What it

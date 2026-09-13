@@ -55,6 +55,10 @@ type Node = {
 // with: it needs insertBefore, removeChild, firstChild, nextSibling and parentNode to be real.
 // Listeners are kept so a test can press a button, and animate() records what the spotlight
 // asked for so a test can read the pulse without a compositor.
+function camel(name: string): string {
+  return name.slice('data-'.length).replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
+}
+
 function makeNode(tagName: string): Node {
   const attrs: Record<string, string> = {};
   const listeners: Record<string, Array<(ev: unknown) => void>> = {};
@@ -113,13 +117,17 @@ function makeNode(tagName: string): Node {
     },
     querySelector: () => null,
     getBoundingClientRect: () => ({ width: 0, height: 0 }),
+    // data-* attributes reflect into dataset, as they do on a real element, because the
+    // screen writes them one way (dom.setAttr) and reads them the other (node.dataset).
     setAttribute: (name: string, value: string) => {
       attrs[name] = value;
+      if (name.startsWith('data-')) node.dataset[camel(name)] = value;
     },
-    getAttribute: (name: string) => attrs[name] ?? null,
-    hasAttribute: (name: string) => name in attrs,
+    getAttribute: (name: string) => (name.startsWith('data-') ? node.dataset[camel(name)] ?? null : attrs[name] ?? null),
+    hasAttribute: (name: string) => (name.startsWith('data-') ? camel(name) in node.dataset : name in attrs),
     removeAttribute: (name: string) => {
       delete attrs[name];
+      if (name.startsWith('data-')) delete node.dataset[camel(name)];
     },
     addEventListener: (type: string, fn: (ev: unknown) => void) => {
       (listeners[type] = listeners[type] ?? []).push(fn);
@@ -295,11 +303,12 @@ function funded() {
         liqDistanceUsd: 3600,
       },
     ],
-    orders: [],
+    orders: [] as Record<string, unknown>[],
     plans: [openPlan(), waitingPlan()],
-    highlights: [],
+    highlights: [] as Record<string, unknown>[],
     products: ['BTC-USD'],
-    fills: [],
+    fills: [] as ReturnType<typeof fill>[],
+    venue: undefined as Record<string, unknown> | undefined,
   };
 }
 
@@ -314,7 +323,7 @@ function flat() {
   return data;
 }
 
-type World = { host: Node; lines: string[]; posts: Array<{ path: string; body: Record<string, unknown> }>; refresh: () => Promise<void>; set: (d: unknown) => void; tick: (ms: number) => void; window: Record<string, any> };
+type World = { host: Node; lines: string[]; posts: Array<{ path: string; body: Record<string, unknown> }>; refresh: () => Promise<void>; set: (d: unknown) => void; tick: (ms: number) => void; window: Record<string, any>; fire: (type: string, event: Record<string, unknown>) => void };
 
 async function renderPayload(data: unknown, opts: { reduced?: boolean; onInvalidate?: (scene: boolean) => void } = {}): Promise<World> {
   const host = makeNode('div');
@@ -340,6 +349,8 @@ async function renderPayload(data: unknown, opts: { reduced?: boolean; onInvalid
     for (const t of due) timers.splice(timers.indexOf(t), 1);
     for (const t of due) t.fn();
   };
+  // Listeners on the document itself, so a test can press Escape or click outside a popover.
+  const docListeners: Record<string, Array<(ev: unknown) => void>> = {};
   const sandbox: Record<string, any> = {
     console,
     setTimeout: setTimer,
@@ -347,7 +358,9 @@ async function renderPayload(data: unknown, opts: { reduced?: boolean; onInvalid
     document: {
       createElement: (tag: string) => makeNode(tag),
       getElementById: (id: string) => (id === 'view-trade' ? host : null),
-      addEventListener: () => {},
+      addEventListener: (type: string, fn: (ev: unknown) => void) => {
+        (docListeners[type] = docListeners[type] ?? []).push(fn);
+      },
       documentElement: makeNode('html'),
       body: makeNode('body'),
     },
@@ -400,6 +413,9 @@ async function renderPayload(data: unknown, opts: { reduced?: boolean; onInvalid
     },
     tick,
     window: sandbox.window,
+    fire: (type: string, event: Record<string, unknown>) => {
+      for (const fn of docListeners[type] ?? []) fn({ preventDefault: () => {}, ...event });
+    },
   };
 }
 
@@ -761,17 +777,126 @@ test('the market control is a listbox this window drew, not a native select', as
   assert.equal(options[0].getAttribute('aria-selected'), 'true');
 });
 
-test('the overlay chips follow the payload, because the canvas reads the payload', async () => {
-  // ui/chart/trade-overlay.js reads data.overlays. These used to write a window global
-  // nothing has ever read, so a chip could sit pressed while the overlay under it was off.
+// ---------- the bar ----------
+
+function byId(node: Node, id: string): Node | null {
+  if (node.id === id) return node;
+  for (const child of node.childNodes) {
+    const hit = byId(child, id);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+test('the bar is one segmented control, the command, Layers and one status line', async () => {
   const { host } = await renderPayload(funded());
-  const chips = allWithDataset(host, 'overlay');
-  assert.equal(chips.length, 3);
+  const [seg] = withClass(host, 'seg');
+  assert.ok(seg !== undefined, 'no segmented control');
+  // The symbol and the timeframes share the one control: the market is the first segment,
+  // the six timeframes (filled by the chart engine into #timeframes) sit beside it.
+  assert.ok(withClass(seg, 'trade-symbol').length === 1, 'the symbol is not in the segment');
+  assert.ok(byId(seg, 'timeframes') !== null, 'the timeframes are not in the segment');
+  assert.ok(byId(host, 'chart-cmd') !== null, 'the indicator command is gone');
+  const [layers] = withClass(host, 'layers');
+  assert.ok(layers !== undefined, 'no Layers control');
+  assert.equal(layers.tagName, 'button');
+  assert.ok(textOf(layers).includes('Layers'));
+  // The floating word and the venue cycling button are gone.
+  assert.ok(!textOf(host).includes('Draw'), 'the word Draw is still on the bar');
+  const provider = byId(host, 'chart-provider');
+  assert.ok(provider !== null, 'the engine writes the venue into #chart-provider');
+  assert.notEqual(provider.tagName, 'button', 'the venue is a word now, not a cycling button');
+  // Every id the engine binds by name is still there.
+  for (const id of ['chart', 'chart-hud', 'chartwrap', 'panel-chart', 'timeframes', 'chart-cmd', 'chart-status', 'chart-feed']) {
+    assert.ok(byId(host, id) !== null, `#${id} is missing`);
+  }
+});
+
+test('the status line is a dot, the state the engine writes, and the venue latency in ms', async () => {
+  const data = funded();
+  data.venue = { connected: true, source: 'ws', ageMs: 40, latencyMs: 12, error: null, degraded: false };
+  const { host } = await renderPayload(data);
+  const feed = byId(host, 'chart-feed');
+  assert.ok(feed !== null);
+  assert.equal(feed.dataset.feed, 'offline', 'the engine owns the state word; it starts offline');
+  assert.equal(feed.childNodes[0].tagName, 'i', 'no dot');
+  assert.equal(feed.childNodes[1].tagName, 'b', 'no state word for the engine to write');
+  const ms = byId(host, 'chart-latency');
+  assert.ok(ms !== null, 'no latency');
+  assert.equal(ms.textContent, '12 ms');
+});
+
+test('an unknown latency prints nothing rather than a zero', async () => {
+  const data = funded();
+  data.venue = { connected: true, source: 'rest', ageMs: null, latencyMs: null, error: null, degraded: true };
+  const { host } = await renderPayload(data);
+  assert.equal(byId(host, 'chart-latency')?.textContent, '');
+});
+
+test('Layers holds the seven overlays and volume as check rows, following the payload', async () => {
+  const { host } = await renderPayload(funded());
+  const rows = allWithDataset(host, 'overlay');
+  assert.equal(rows.length, 7);
   const state: Record<string, string | null> = {};
-  for (const chip of chips) state[chip.dataset.overlay] = chip.getAttribute('aria-pressed');
+  for (const row of rows) {
+    assert.equal(row.getAttribute('role'), 'menuitemcheckbox');
+    state[row.dataset.overlay] = row.getAttribute('aria-checked');
+  }
   assert.equal(state.position, 'true');
   assert.equal(state.liquidation, 'false');
   assert.equal(state.planStop, 'true');
+  // An overlay the payload does not name is on, which is the server's default.
+  assert.equal(state.stops, 'true');
+  const [volume] = allWithDataset(host, 'layer');
+  assert.ok(volume !== undefined, 'no volume row');
+  assert.equal(volume.dataset.layer, 'volume');
+  // The labels are sentence case words, not ids.
+  const labels = withClass(host, 'layers-row').map((r) => textOf(r).join(''));
+  assert.ok(labels.includes('Position'), JSON.stringify(labels));
+  assert.ok(labels.includes('Plan stop'), JSON.stringify(labels));
+  assert.ok(labels.includes('Volume'), JSON.stringify(labels));
+  assert.ok(!labels.some((l) => /[A-Z]{2,}/.test(l)), `a tracked caps label: ${JSON.stringify(labels)}`);
+});
+
+test('the popover opens from its button, closes on Escape and on a click outside', async () => {
+  const world = await renderPayload(funded());
+  const [layers] = withClass(world.host, 'layers');
+  const [pop] = withClass(world.host, 'layers-pop');
+  assert.notEqual(pop.dataset.open, 'true');
+  layers.click();
+  assert.equal(pop.dataset.open, 'true');
+  assert.equal(layers.getAttribute('aria-expanded'), 'true');
+  world.fire('keydown', { key: 'Escape' });
+  assert.notEqual(pop.dataset.open, 'true');
+  assert.equal(layers.getAttribute('aria-expanded'), 'false');
+  layers.click();
+  assert.equal(pop.dataset.open, 'true');
+  // A click on the rail is outside; a click on a row inside is not.
+  const [row] = withClass(world.host, 'layers-row');
+  world.fire('click', { target: row });
+  assert.equal(pop.dataset.open, 'true');
+  world.fire('click', { target: world.host });
+  assert.notEqual(pop.dataset.open, 'true');
+});
+
+test('a check row writes the overlay to the server and flips at once', async () => {
+  const world = await renderPayload(funded());
+  const [row] = allWithDataset(world.host, 'overlay').filter((r) => r.dataset.overlay === 'liquidation');
+  row.click();
+  assert.equal(row.getAttribute('aria-checked'), 'true');
+  assert.deepEqual(plain(world.posts), [{ path: '/api/trade', body: { overlay: { name: 'liquidation', on: true } } }]);
+});
+
+test('the volume row is the window\'s own pane and never reaches the server', async () => {
+  const set: boolean[] = [];
+  const world = await renderPayload(funded());
+  world.window.chartSetVolume = (on: boolean) => set.push(on);
+  world.window.chartVolumeOn = () => set.length === 0 ? true : set[set.length - 1];
+  const [volume] = allWithDataset(world.host, 'layer');
+  volume.click();
+  assert.deepEqual(set, [false]);
+  assert.equal(volume.getAttribute('aria-checked'), 'false');
+  assert.deepEqual(world.posts, []);
 });
 
 test('the toggles no longer write a global nothing reads', async () => {

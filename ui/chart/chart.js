@@ -2292,18 +2292,16 @@ function renderChartStatus() {
     feed.title = CHART.meta.error || FEED_TITLE[state];
   }
 
-  /* The venue, and the control that changes it. The same vocabulary the agent has over
-     chart_set_view, one click: auto, then each venue, then back. It prints what is actually
-     SERVING the candles, and says "pinned" only when the choice was made rather than
-     inherited, so a pin can never be mistaken for the default. */
+  /* The venue word, in the Layers popover's foot. It prints what is actually SERVING the
+     candles, and says "pinned" only when the choice was made rather than inherited, so a pin
+     can never be mistaken for the default. It used to be a button that cycled the venue on
+     click; the agent's chart_draw view is the one way to pin one now. */
   var venue = document.getElementById('chart-provider');
   if (venue) {
     var pinned = CHART.view.provider !== 'auto';
     venue.textContent = (CHART.meta.source || '--') + (pinned ? ' pinned' : '');
     venue.dataset.pinned = pinned ? '1' : '0';
-    venue.title = pinned
-      ? 'venue pinned to ' + CHART.view.provider + '. click to change'
-      : 'venue chosen automatically. click to pin one';
+    venue.title = pinned ? 'venue pinned to ' + CHART.view.provider : 'venue chosen automatically';
   }
 
   // Two controls that only exist when there is something to act on. Neither is a note about
@@ -2606,16 +2604,6 @@ function wireChart() {
         setPan(0);
         chartInvalidate(true);
         queueChartPush();
-      } else if (id === 'chart-provider') {
-        /* auto, then each venue, then back. Three states on one click rather than three
-           controls: the line has room for a name, not a toolbar.
-           Pushed on its own and not through the view above, because the server refuses a
-           venue that does not list the product on screen, and the refusal has to arrive as
-           the answer to THIS click. chartNote prints it under the bar. */
-        var order = ['auto', 'hyperliquid', 'coinbase'];
-        var at = order.indexOf(CHART.view.provider || 'auto');
-        var next = order[(at + 1) % order.length];
-        void pushChart({ view: { product: CHART.view.product, provider: next } });
       } else if (id === 'chart-clear-agent') {
         void pushChart({ clear: 'agent' });
       }

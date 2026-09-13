@@ -30,10 +30,16 @@
   var mounted = false;
   var data = null;
 
+  /* The seven overlays the server knows (src/trade/view.ts OVERLAYS), in the
+     order the Layers popover lists them, each as a sentence case word. */
   var OVERLAYS = [
     { id: 'position', label: 'Position' },
-    { id: 'liquidation', label: 'Forced close' },
-    { id: 'planStop', label: 'Plan stop' }
+    { id: 'liquidation', label: 'Liquidation' },
+    { id: 'planStop', label: 'Plan stop' },
+    { id: 'stops', label: 'Stops' },
+    { id: 'targets', label: 'Targets' },
+    { id: 'orders', label: 'Orders' },
+    { id: 'fills', label: 'Fills' }
   ];
 
   /* How long a pressed Close or Cancel waits for its second press. */
@@ -181,56 +187,43 @@
     return paint;
   }
 
-  /* ---------- the bar above the chart ---------- */
+  /* ---------- the bar above the chart ----------
 
-  /* Two halves with a rule between them: what the chart is OF on the left, what
-     is drawn ON it on the right. They used to be one undifferentiated row, so
-     three buttons named after rail panels read as navigation to those panels. */
+     One row: a segmented control holding the market and the six timeframes,
+     the indicator command, Layers, and one status line on the right. What used
+     to be a floating word, three chips and a venue cycling button is one
+     control grammar at 26 px. Under 560 px the row wraps, on purpose. */
   function buildBar() {
     var bar = dom.el('div', 'chart-bar');
 
-    var left = dom.el('div', 'trade-bar-group');
-    left.appendChild(symbolControl());
-    var timeframes = dom.el('div', 'hstack-2');
+    /* The segment. The market is its first cell and the timeframes fill the
+       rest: ui/chart/chart.js writes button.timeframe[data-sec] into
+       #timeframes and marks the current one .on, which is the contract the
+       segment styles against. */
+    var seg = dom.el('div', 'seg');
+    seg.setAttribute('role', 'group');
+    seg.setAttribute('aria-label', 'Market and timeframe');
+    seg.appendChild(symbolControl());
+    var timeframes = dom.el('div', 'seg-cells');
     timeframes.id = 'timeframes';
-    left.appendChild(timeframes);
-    bar.appendChild(left);
+    seg.appendChild(timeframes);
+    bar.appendChild(seg);
 
-    bar.appendChild(dom.el('div', 'trade-bar-div'));
-
-    var right = dom.el('div', 'trade-bar-group');
     var cmd = dom.el('input', 'input chart-cmd');
     cmd.id = 'chart-cmd';
     cmd.type = 'text';
     cmd.placeholder = 'Indicators';
     cmd.setAttribute('aria-label', 'What should the chart show');
-    right.appendChild(cmd);
+    bar.appendChild(cmd);
 
-    /* The word says what the row is for. Without it three pressed pills read as
-       three places to go rather than as three things the chart is drawing, so it
-       travels with them: on a narrow window the group wraps whole rather than
-       leaving the word stranded beside the field above. */
-    var draw = dom.el('div', 'trade-draw');
-    draw.appendChild(dom.el('span', 'trade-bar-label', 'Draw'));
-    var toggles = dom.el('div', 'hstack-2');
-    for (var i = 0; i < OVERLAYS.length; i += 1) {
-      var toggle = dom.el('button', 'chip trade-toggle');
-      toggle.type = 'button';
-      toggle.dataset.overlay = OVERLAYS[i].id;
-      setToggle(toggle, true);
-      toggle.appendChild(dom.el('span', 'dot'));
-      toggle.appendChild(dom.el('span', '', OVERLAYS[i].label));
-      toggles.appendChild(toggle);
-      dom.on(toggle, 'click', onToggle);
-    }
-    draw.appendChild(toggles);
-    right.appendChild(draw);
-    bar.appendChild(right);
+    bar.appendChild(layersControl());
 
-    /* The status cluster the chart engine drives: one dot that answers "is this
-       price current", and the venue it came from. It replaced three loading
-       blocks and a meta line that each said part of the same thing. */
-    var status = dom.el('span', 'chartstatus grow');
+    /* The status cluster the chart engine drives: one dot that answers "is
+       this price current", the state word the engine writes, and the venue's
+       latency beside it when the feed is live. The engine also appends its
+       two situational controls here (back to live, clear the agent's
+       drawings). */
+    var status = dom.el('span', 'chartstatus');
     status.id = 'chart-status';
     var feed = dom.el('span', 'feed');
     feed.id = 'chart-feed';
@@ -238,16 +231,115 @@
     feed.setAttribute('role', 'status');
     feed.appendChild(dom.el('i'));
     feed.appendChild(dom.el('b', '', 'offline'));
+    var latency = dom.el('span', 'feed-ms');
+    latency.id = 'chart-latency';
+    feed.appendChild(latency);
     status.appendChild(feed);
-    var venue = dom.el('button', 'venue');
-    venue.id = 'chart-provider';
-    venue.type = 'button';
-    venue.textContent = '--';
-    status.appendChild(venue);
     bar.appendChild(status);
 
-    refs.toggles = toggles;
+    refs.latency = latency;
     return bar;
+  }
+
+  /* ---------- Layers ----------
+
+     The seven overlays and the volume pane as check rows in one popover, with
+     the venue that is serving the candles as its foot. A popover rather than
+     a row of chips, because eight chips is a toolbar and the bar has room for
+     one word. It scales in from its own corner over 150 ms and closes on
+     Escape or a click anywhere else. */
+  function layersControl() {
+    var wrap = dom.el('div', 'layers-wrap');
+
+    var button = dom.el('button', 'layers opens');
+    button.type = 'button';
+    button.setAttribute('aria-haspopup', 'menu');
+    button.setAttribute('aria-expanded', 'false');
+    button.setAttribute('aria-controls', 'chart-layers');
+    button.appendChild(dom.el('span', '', 'Layers'));
+    button.appendChild(dom.el('span', 'chev'));
+
+    var pop = dom.el('div', 'layers-pop');
+    pop.id = 'chart-layers';
+    pop.setAttribute('role', 'menu');
+    pop.setAttribute('aria-label', 'What the chart draws');
+    pop.tabIndex = -1;
+
+    var rows = dom.el('div', 'layers-rows');
+    for (var i = 0; i < OVERLAYS.length; i += 1) {
+      var row = layerRow(OVERLAYS[i].label);
+      row.dataset.overlay = OVERLAYS[i].id;
+      dom.on(row, 'click', onOverlayRow);
+      rows.appendChild(row);
+    }
+    var volume = layerRow('Volume');
+    volume.dataset.layer = 'volume';
+    dom.on(volume, 'click', onVolumeRow);
+    rows.appendChild(volume);
+    pop.appendChild(rows);
+
+    /* The venue word. The engine writes what is actually serving the candles
+       into #chart-provider, the same id the old cycling button had. */
+    var foot = dom.el('div', 'layers-foot');
+    foot.appendChild(dom.el('span', 'layers-foot-label', 'Venue'));
+    var venue = dom.el('span', 'venue');
+    venue.id = 'chart-provider';
+    venue.textContent = '--';
+    foot.appendChild(venue);
+    pop.appendChild(foot);
+
+    wrap.appendChild(button);
+    wrap.appendChild(pop);
+
+    dom.on(button, 'click', function () {
+      if (pop.dataset.open === 'true') closeLayers();
+      else openLayers();
+    });
+    dom.on(document, 'keydown', function (event) {
+      if (event.key !== 'Escape' || pop.dataset.open !== 'true') return;
+      event.preventDefault();
+      closeLayers();
+    });
+    /* A click anywhere else shuts it. Written as a walk rather than through
+       contains(), because the unit harness's stand-in nodes have neither. */
+    dom.on(document, 'click', function (event) {
+      if (pop.dataset.open !== 'true') return;
+      if (within(event.target, wrap)) return;
+      closeLayers();
+    });
+
+    refs.layersButton = button;
+    refs.layersPop = pop;
+    refs.layerRows = rows;
+    refs.volumeRow = volume;
+    return wrap;
+  }
+
+  /* One check row: a drawn box and a word. aria-checked is the whole state. */
+  function layerRow(label) {
+    var row = dom.el('button', 'layers-row');
+    row.type = 'button';
+    row.setAttribute('role', 'menuitemcheckbox');
+    row.setAttribute('aria-checked', 'true');
+    row.appendChild(dom.el('i', 'layers-check'));
+    row.appendChild(dom.el('span', '', label));
+    return row;
+  }
+
+  function openLayers() {
+    if (!refs.layersPop) return;
+    renderOverlays();
+    dom.setAttr(refs.layersPop, 'data-open', 'true');
+    dom.setAttr(refs.layersButton, 'aria-expanded', 'true');
+    var first = refs.layerRows && refs.layerRows.children[0];
+    if (first && first.focus) first.focus();
+  }
+
+  function closeLayers() {
+    if (!refs.layersPop) return;
+    dom.setAttr(refs.layersPop, 'data-open', null);
+    dom.setAttr(refs.layersButton, 'aria-expanded', 'false');
+    if (refs.layersButton && refs.layersButton.focus) refs.layersButton.focus();
   }
 
   /* ---------- the market ----------
@@ -431,40 +523,63 @@
 
   /* The overlay set lives on the server and reaches the canvas through the
      /api/trade payload, which ui/chart/trade-overlay.js reads as data.overlays.
-     These three used to write a window global instead, and nothing has ever read
-     it, so pressing one moved nothing on the chart. The toggle flips at once and
-     rolls back if the write is refused, so the control is never in a state the
-     payload disagrees with. */
-  function onToggle(event) {
-    var button = event.currentTarget;
-    var on = button.getAttribute('aria-pressed') !== 'true';
-    setToggle(button, on);
-    net.postJson('/api/trade', { overlay: { name: button.dataset.overlay, on: on } })
+     The row flips at once and rolls back if the write is refused, so the
+     control is never in a state the payload disagrees with. */
+  function onOverlayRow(event) {
+    var row = event.currentTarget;
+    var on = row.getAttribute('aria-checked') !== 'true';
+    setChecked(row, on);
+    net.postJson('/api/trade', { overlay: { name: row.dataset.overlay, on: on } })
       .then(function () { return refresh(); })
       .catch(function (err) {
-        setToggle(button, !on);
+        setChecked(row, !on);
         if (window.PhosphorToast) window.PhosphorToast.show(net.readable(err), 'down');
       });
   }
 
-  /* aria-pressed is the whole state. It used to also carry a tone attribute that
-     painted the pressed one like a chip carrying a status, which is what made a
-     toggle read as a label. */
-  function setToggle(button, on) {
-    dom.setAttr(button, 'aria-pressed', on ? 'true' : 'false');
+  /* The volume pane is built in this window and the server has never heard of
+     it, so its row talks to the engine and nothing leaves the machine. */
+  function onVolumeRow(event) {
+    var row = event.currentTarget;
+    var on = row.getAttribute('aria-checked') !== 'true';
+    if (typeof window.chartSetVolume === 'function') window.chartSetVolume(on);
+    setChecked(row, volumeOn(on));
+  }
+
+  function volumeOn(fallback) {
+    if (typeof window.chartVolumeOn === 'function') return window.chartVolumeOn() !== false;
+    return fallback !== false;
+  }
+
+  function setChecked(row, on) {
+    dom.setAttr(row, 'aria-checked', on ? 'true' : 'false');
   }
 
   /* What the payload says is on, not what this window last pressed: an agent can
-     move an overlay too, and the toggles follow it. */
+     move an overlay too, and the rows follow it. */
   function renderOverlays() {
     var overlays = data && data.overlays;
-    if (!overlays || !refs.toggles) return;
-    for (var i = 0; i < OVERLAYS.length; i += 1) {
-      var button = refs.toggles.children[i];
-      if (button) setToggle(button, overlays[OVERLAYS[i].id] !== false);
+    if (refs.layerRows && overlays) {
+      for (var i = 0; i < OVERLAYS.length; i += 1) {
+        var row = refs.layerRows.children[i];
+        if (row) setChecked(row, overlays[OVERLAYS[i].id] !== false);
+      }
     }
+    if (refs.volumeRow) setChecked(refs.volumeRow, volumeOn(true));
+    renderLatency();
     if (typeof window.chartInvalidate === 'function') window.chartInvalidate();
   }
+
+  /* The venue's own round trip, written beside the state word the engine
+     owns. The stylesheet shows it only while the feed reads live: a latency
+     on a delayed feed is a number about the wrong thing. */
+  function renderLatency() {
+    if (!refs.latency) return;
+    var venue = data && data.venue;
+    var ms = venue && typeof venue.latencyMs === 'number' && isFinite(venue.latencyMs) ? Math.round(venue.latencyMs) : null;
+    dom.setText(refs.latency, ms === null ? '' : ms + ' ms');
+  }
+
   /* ---------- data ---------- */
 
   function refresh() {
