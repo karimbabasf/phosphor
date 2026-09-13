@@ -515,18 +515,24 @@ body[data-view="trade"] .stage {
 }
 
 .trade-status { flex: 0 0 auto; }
+.trade-open { flex: 0 0 auto; }
 
-/* What is running is bounded rather than free: a page of armed rules must not
-   take the tape's room. It takes what it needs up to the cap and no more, and
-   past the cap it scrolls inside itself with a fade at the cut. It must not
-   merely shrink: sharing the squeeze with the tape gave both of them a hidden
-   overflow and neither of them a fade. */
-.trade-running {
-  flex: 0 0 auto;
+/* EVERY ZONE IS AS TALL AS WHAT IS IN IT. Waiting is bounded rather than free:
+   a page of plans must not take the tape's room, so past the cap it scrolls
+   inside itself with a fade at the cut. Done takes what it needs and gives way
+   first when the rail is short, scrolling inside itself rather than pushing
+   anything off the bottom. Neither grows to fill: the room left under the last
+   zone is the rail's own ground, not a box. */
+.trade-waiting {
+  flex: 0 1 auto;
+  min-height: 0;
   max-height: 40%;
 }
 
-.trade-fills { flex: 1 1 auto; }
+.trade-done {
+  flex: 0 1 auto;
+  min-height: 0;
+}
 
 .trade-zone-head {
   display: flex;
@@ -545,50 +551,47 @@ body[data-view="trade"] .stage {
 }
 
 /* The tape is dense: the rows carry their own rhythm, so the column adds none.
-   It takes the whole zone rather than only the height of what is in it, so the
-   room under a short list belongs to the list and a long one scrolls in place
-   instead of leaving a dead strip at the bottom of the rail. */
-.trade-fills .trade-zone-body {
+   It shrinks with its zone, which is what lets a long tape scroll in place. */
+.trade-done .trade-zone-body {
   gap: 0;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
 }
 
-/* WHAT THE CHART IS OF, THEN WHAT IS DRAWN ON IT.
-
-   A grid rather than a wrapping row: the old bar wrapped wherever it ran out of
-   room, so the same five controls landed differently at every width and the
-   line between the two halves fell in the middle of one of them. Everything on
-   one row while the chart is wide enough for it, and a deliberate second row
-   when it is not. */
+/* ONE ROW. The segment (market and timeframes), the indicator command, Layers,
+   and the status line on the right, all at 26 px. The command gives way first
+   when the chart is narrow, down to a floor it is still readable at; the
+   status line never squeezes, because a wrapped word in it reads as two
+   states. Past that the status steps down to a second row, right-aligned, and
+   under 560 px the segment takes the first row alone. */
 .chart-bar {
   flex: 0 0 auto;
-  display: grid;
-  grid-template-columns: auto auto auto minmax(0, 1fr);
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--s-3);
+  gap: var(--s-2);
   padding: var(--s-2) var(--s-3);
   border-bottom: 1px solid var(--line);
   min-height: 44px;
 }
 
-/* Under about 1140 px the two halves cannot share a row. The market and its
-   feed take the first, what is drawn takes the second, and the rule between
-   them gives way to the row break, which says the same thing louder. */
-@container trade (max-width: 1139px) {
-  .chart-bar {
-    grid-template-columns: auto minmax(0, 1fr);
-    row-gap: var(--s-2);
-  }
-  .trade-bar-div { display: none; }
-  .chart-bar > .trade-bar-group:nth-child(3) { grid-area: 2 / 1 / 3 / -1; }
+/* 80 px is the floor the word Indicators still fits in. At 1280 the chart
+   column beside the rail is 588 px, and the row fits it with a few pixels
+   to spare only at this floor. */
+.chart-bar .chart-cmd {
+  flex: 1 1 80px;
+  min-width: 80px;
+  max-width: 152px;
 }
 
-/* Stacked over the chart there is no room to pair anything: one control group
-   to a row, and the feed under them. */
+.chart-bar .chartstatus {
+  margin-left: auto;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 @container trade (max-width: 559px) {
-  .chart-bar { grid-template-columns: minmax(0, 1fr); }
-  .chart-bar > .trade-bar-group:nth-child(3) { grid-area: auto; }
-  .chartstatus { justify-content: flex-start; }
+  .chart-bar .seg { flex: 0 0 100%; }
+  .chart-bar .chart-cmd { max-width: none; }
 }
 
 /* The canvases inside are pinned to its edges, so clipping hides no bar. What it
@@ -606,6 +609,51 @@ body[data-view="trade"] .stage {
   inset: 0;
   width: 100%;
   height: 100%;
+}
+
+/* THE GRID. chart_layout puts up to four charts side by side; the stage carries
+   the count as data-n (ui/chart/mini.js writes it) and the primary keeps its
+   ids and its own engine whatever the count. One chart fills the column, two
+   sit side by side, three and four go two by two. In a grid the primary stops
+   being pinned to the stage's edges and takes its cell like the others. */
+.chart-stage[data-n="2"],
+.chart-stage[data-n="3"],
+.chart-stage[data-n="4"] {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: minmax(0, 1fr);
+  gap: 1px;
+  background: var(--line);
+}
+
+.chart-stage[data-n="3"],
+.chart-stage[data-n="4"] {
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+}
+
+.chart-stage[data-n="2"] > .chartwrap,
+.chart-stage[data-n="3"] > .chartwrap,
+.chart-stage[data-n="4"] > .chartwrap {
+  position: relative;
+  inset: auto;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-1);
+}
+
+.mini {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-1);
+}
+
+.mini-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 /* When the chart can no longer hold a usable plot beside a 320 px rail, the two
@@ -628,8 +676,8 @@ body[data-view="trade"] .stage {
   /* Stacked, the world scrolls again, so nothing in the rail holds a height of
      its own: every zone is as tall as what is in it. */
   .trade-rail { overflow: visible; max-height: none; }
-  .trade-running { max-height: none; }
-  .trade-fills { flex: 0 0 auto; }
+  .trade-waiting { max-height: none; }
+  .trade-done { flex: 0 0 auto; }
   .trade-zone .trade-zone-body { overflow: visible; }
   .trade-main { border-right: 0; border-bottom: 1px solid var(--line); }
   .split-h { display: none; }

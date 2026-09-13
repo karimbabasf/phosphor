@@ -1464,7 +1464,10 @@ function drawDrawings(ctx, L) {
   for (var i = 0; i < list.length; i++) {
     var d = list[i];
     var fromAgent = d.source === 'agent';
-    var label = d.label + (fromAgent ? ' [agent]' : '');
+    // The server tags an agent's drawing "[agent] trend" as it lands (tagLabel in
+    // src/http/view.ts). Adding the word here as well printed it twice on one label.
+    var label = String(d.label || '');
+    if (fromAgent && label.indexOf('[agent]') < 0) label += ' [agent]';
 
     if (d.kind === 'zone' && d.zone) {
       var yHigh = L.yOf(d.zone.high);
@@ -2083,6 +2086,80 @@ function chartPushed(rev) {
   void refreshChart();
 }
 
+/* ---------- the snapshot ----------
+
+   chart_snapshot asks the window for what the human sees, over SSE, with a request id, and
+   waits three seconds. The answer is the scene and the hud of slot 0 (or a comparison chart's
+   own canvas) composed into an offscreen canvas at most 1024 px wide, encoded as a JPEG at a
+   fixed quality, and posted back through the one fetch path every window write uses, which
+   is what adds the window token. The server keeps nothing and hands the bytes to the one
+   tool call waiting on that id.
+
+   Nothing here blocks the paint. The compose runs on the next frame, so it reads a scene that
+   has been drawn rather than one the SSE message interrupted, and the encode is toBlob, which
+   is asynchronous by design. A chart with no size, or a slot with no chart, posts nothing and
+   lets the server's timeout say so. */
+var SNAPSHOT_MAX_W = 1024;
+var SNAPSHOT_QUALITY = 0.7;
+
+function chartSnapshot(slot, reqId) {
+  var id = String(reqId || '');
+  if (!id) return;
+  var n = Number(slot) || 0;
+  window.requestAnimationFrame(function () {
+    var sources = snapshotSources(n);
+    if (!sources) return;
+    var out = document.createElement('canvas');
+    out.width = Math.round(sources.w);
+    out.height = Math.round(sources.h);
+    var ctx = out.getContext('2d');
+    if (!ctx) return;
+    ctx.fillStyle = C_BG;
+    ctx.fillRect(0, 0, out.width, out.height);
+    for (var i = 0; i < sources.canvases.length; i++) {
+      ctx.drawImage(sources.canvases[i], 0, 0, out.width, out.height);
+    }
+    if (typeof out.toBlob !== 'function') return;
+    out.toBlob(function (blob) {
+      if (!blob) return;
+      blob.arrayBuffer()
+        .then(function (buffer) {
+          return window.PhosphorNet.postJson('/api/chart/snapshot', { reqId: id, jpeg: base64Of(new Uint8Array(buffer)) });
+        })
+        .catch(function (err) {
+          console.error('[chart] snapshot', err);
+        });
+    }, 'image/jpeg', SNAPSHOT_QUALITY);
+  });
+}
+
+/* What to draw and how big. Slot 0 is the engine's two canvases at the size the human sees
+   them; a comparison chart is its one canvas at its own pixel size. Never scaled up: a small
+   chart is a small picture. */
+function snapshotSources(slot) {
+  if (slot === 0) {
+    var scene = chartCanvas();
+    var hud = chartHud();
+    if (!scene || !hud || !CHART_SIZE.w || !CHART_SIZE.h) return null;
+    var scale = Math.min(1, SNAPSHOT_MAX_W / CHART_SIZE.w);
+    return { canvases: [scene, hud], w: CHART_SIZE.w * scale, h: CHART_SIZE.h * scale };
+  }
+  var mini = window.PhosphorMini && typeof window.PhosphorMini.canvasOf === 'function' ? window.PhosphorMini.canvasOf(slot) : null;
+  if (!mini || !mini.width || !mini.height) return null;
+  var fit = Math.min(1, SNAPSHOT_MAX_W / mini.width);
+  return { canvases: [mini], w: mini.width * fit, h: mini.height * fit };
+}
+
+function base64Of(bytes) {
+  var binary = '';
+  var CHUNK = 0x8000;
+  for (var i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+window.chartSnapshot = chartSnapshot;
+
 /* ---------- the live rail ----------
 
    A candle frame off the SSE stream, carrying one 1m bar rather than asking this window to
@@ -2292,18 +2369,16 @@ function renderChartStatus() {
     feed.title = CHART.meta.error || FEED_TITLE[state];
   }
 
-  /* The venue, and the control that changes it. The same vocabulary the agent has over
-     chart_set_view, one click: auto, then each venue, then back. It prints what is actually
-     SERVING the candles, and says "pinned" only when the choice was made rather than
-     inherited, so a pin can never be mistaken for the default. */
+  /* The venue word, in the Layers popover's foot. It prints what is actually SERVING the
+     candles, and says "pinned" only when the choice was made rather than inherited, so a pin
+     can never be mistaken for the default. It used to be a button that cycled the venue on
+     click; the agent's chart_draw view is the one way to pin one now. */
   var venue = document.getElementById('chart-provider');
   if (venue) {
     var pinned = CHART.view.provider !== 'auto';
     venue.textContent = (CHART.meta.source || '--') + (pinned ? ' pinned' : '');
     venue.dataset.pinned = pinned ? '1' : '0';
-    venue.title = pinned
-      ? 'venue pinned to ' + CHART.view.provider + '. click to change'
-      : 'venue chosen automatically. click to pin one';
+    venue.title = pinned ? 'venue pinned to ' + CHART.view.provider : 'venue chosen automatically';
   }
 
   // Two controls that only exist when there is something to act on. Neither is a note about
@@ -2319,12 +2394,12 @@ function renderChartStatus() {
     cluster.appendChild(live);
   }
   if (CHART.agentObjects > 0) {
-    var count = chartSpan('meta', 'agent drew ' + CHART.agentObjects);
-    count.dataset.extra = '1';
-    cluster.appendChild(count);
-    var clear = chartSpan('timeframe', 'Clear');
+    // One control carrying the count, not a count and a control: the bar has one row and the
+    // status line shares it with the segment, the command and Layers.
+    var clear = chartSpan('timeframe', 'Clear ' + CHART.agentObjects);
     clear.id = 'chart-clear-agent';
     clear.dataset.extra = '1';
+    clear.title = 'the agent drew ' + CHART.agentObjects + (CHART.agentObjects === 1 ? ' object' : ' objects') + ' on this chart. Clear them';
     cluster.appendChild(clear);
   }
 }
@@ -2606,16 +2681,6 @@ function wireChart() {
         setPan(0);
         chartInvalidate(true);
         queueChartPush();
-      } else if (id === 'chart-provider') {
-        /* auto, then each venue, then back. Three states on one click rather than three
-           controls: the line has room for a name, not a toolbar.
-           Pushed on its own and not through the view above, because the server refuses a
-           venue that does not list the product on screen, and the refusal has to arrive as
-           the answer to THIS click. chartNote prints it under the bar. */
-        var order = ['auto', 'hyperliquid', 'coinbase'];
-        var at = order.indexOf(CHART.view.provider || 'auto');
-        var next = order[(at + 1) % order.length];
-        void pushChart({ view: { product: CHART.view.product, provider: next } });
       } else if (id === 'chart-clear-agent') {
         void pushChart({ clear: 'agent' });
       }

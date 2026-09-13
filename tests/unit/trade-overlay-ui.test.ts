@@ -115,9 +115,9 @@ test('a plan is drawn as its band: entry in the agent ink, stop in down, target 
 
   const labels = s.CHART_SCENE_LABELS.map((l: Any) => [l.text, l.tone]);
   assert.deepEqual(labels, [
-    ['Plan long 100  100.0', 'agent'],
-    ['Stop 97  97.0', 'down'],
-    ['Target 103  103.0', 'ink'],
+    ['Plan long  100.0', 'agent'],
+    ['Stop  97.0', 'down'],
+    ['Target  103.0', 'ink'],
   ]);
   // Two washes, one each side of the entry, both at a twentieth of full strength.
   const washes = fills.filter((f) => f.style.endsWith('0.05)'));
@@ -134,7 +134,7 @@ test('the plan stop overlay hides the stop leg and nothing else', () => {
   const { ctx, fills } = fakeCtx();
   s.drawTradeOverlays(ctx, L);
   const labels = s.CHART_SCENE_LABELS.map((l: Any) => l.text);
-  assert.deepEqual(labels, ['Plan long 100  100.0', 'Target 103  103.0']);
+  assert.deepEqual(labels, ['Plan long  100.0', 'Target  103.0']);
   assert.equal(fills.filter((f) => f.style.endsWith('0.05)')).length, 1);
 });
 
@@ -158,7 +158,7 @@ test('an open plan draws from the fill it got, not the price it asked for', () =
   const L = ready(s, { symbol: 'BTC', overlays: {}, positions: [], orders: [], fills: [], plans: [plan({ status: 'open', fillPx: 101 })] });
   const { ctx } = fakeCtx();
   s.drawTradeOverlays(ctx, L);
-  assert.equal(s.CHART_SCENE_LABELS[0].text, 'Plan long 101  101.0');
+  assert.equal(s.CHART_SCENE_LABELS[0].text, 'Plan long  101.0');
 });
 
 test('a position prints in sentence case with its entry in the text ink and its liquidation in down', () => {
@@ -188,7 +188,7 @@ test('the spotlight rings the object the agent is pointing at', () => {
   const { ctx } = fakeCtx();
   s.drawTradeOverlays(ctx, L);
   const rings = s.CHART_SCENE_LABELS.filter((l: Any) => l.ring === true).map((l: Any) => l.text);
-  assert.deepEqual(rings, ['Plan long 100  100.0']);
+  assert.deepEqual(rings, ['Plan long  100.0']);
 });
 
 test('the legend and the overlays share one column, so no two labels print on one y', () => {
