@@ -28,6 +28,7 @@ import { aggregate } from '../market/aggregate.ts';
 import { cloidFor } from '../hl/exchange.ts';
 import { planHash, TIMEFRAME_SEC, validatePlanInput } from '../trade/plan.ts';
 import type { Plan, PlanInput, Timeframe } from '../trade/plan.ts';
+import { bookkeepingOf } from '../trade/plans.ts';
 import type { EndReason, PlanRow, PlanStore } from '../trade/plans.ts';
 import { DEFAULT_TAKER_FEE_BPS, planRisk } from '../trade/risk.ts';
 import { evaluate } from '../trade/watch.ts';
@@ -733,7 +734,7 @@ export function createRunnerHost(deps: HostDeps) {
       const parsed = validatePlanInput(merged, now());
       if (!parsed.ok) return { ok: false, reason: parsed.errors.join('; ') };
       const plan: Plan = { id, ...parsed.plan };
-      const next: PlanRow = { ...row, ...plan, hash: planHash(plan) };
+      const next: PlanRow = { ...bookkeepingOf(row), ...plan, hash: planHash(plan) };
       persist(next);
       return { ok: true, row: next };
     },
@@ -765,7 +766,9 @@ export function createRunnerHost(deps: HostDeps) {
          placed entry or an open position, fire again, and on the child's refusal finish the
          plan and release the exits that protect it. A live plan is armed once. */
       if (known !== undefined && live(known)) return { ok: false, reason: `${row.id} is already ${known.status}` };
-      const next: PlanRow = { ...(known ?? {}), ...row, status: 'waiting' };
+      // The idea row keeps its bookkeeping and loses its plan: what the human clicked is what
+      // runs, and an idea the agent kept editing while the card waited is not that.
+      const next: PlanRow = { ...(known === undefined ? {} : bookkeepingOf(known)), ...row, status: 'waiting' };
       delete next.endReason;
       const out = await armRow(next);
       if (!out.ok) {

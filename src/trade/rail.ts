@@ -16,6 +16,7 @@ import type { PlanRunner } from '../runner/host.ts';
 import type { AssetMeta } from '../runner/protocol.ts';
 import { planHash, renderPlan } from './plan.ts';
 import type { Plan } from './plan.ts';
+import { bookkeepingOf } from './plans.ts';
 import type { PlanRow } from './plans.ts';
 import { changeRisk, DEFAULT_TAKER_FEE_BPS, planRisk } from './risk.ts';
 import type { PlanRisk, RiskInputs } from './risk.ts';
@@ -158,8 +159,10 @@ export function tradeRail(deps: TradeDeps): Rail<TradeDraft> {
       if (draft.op === 'open') {
         const known = deps.runner.get(draft.plan.id);
         const at = new Date((deps.now ?? Date.now)()).toISOString();
+        // The drawn row's bookkeeping and the card's plan, whole: a target or a condition the
+        // idea grew while the card waited is not what the human clicked.
         const row: PlanRow = {
-          ...(known ?? { cloids: {}, gen: 0, createdAt: at }),
+          ...(known === null ? { cloids: {}, gen: 0, createdAt: at } : bookkeepingOf(known)),
           ...draft.plan,
           status: 'waiting',
           hash: draft.hash,

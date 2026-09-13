@@ -44,6 +44,15 @@ export type PlanRow = Plan & {
   updatedAt: string;
 };
 
+// A row minus the optional plan fields. A row that takes a new plan loses these first: spread
+// over the old row, a plan without a target keeps the old target under the new plan's hash, so
+// the row and its hash disagree and a target the agent removed, or grew while a card waited,
+// rides into the arm.
+export function bookkeepingOf(row: PlanRow): Omit<PlanRow, 'target' | 'when' | 'note'> {
+  const { target: _target, when: _when, note: _note, ...rest } = row;
+  return rest;
+}
+
 export type PlanStore = {
   list(): PlanRow[];
   get(id: string): PlanRow | null;
