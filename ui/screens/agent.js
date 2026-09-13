@@ -872,7 +872,10 @@
       : (block.type === 'error' ? 'chat-error' : 'chat-reply');
     var chat = dom.el('div', 'chat-row ' + kind);
     chat.appendChild(dom.el('span', 'chat-who'));
-    chat.appendChild(dom.el('span', 'chat-text'));
+    /* A reply is rendered, the two others are set as text. The renderer is
+       the one place a reply's shape is decided, and it builds elements and
+       sets strings: nothing a model writes reaches the DOM as markup. */
+    chat.appendChild(dom.el('div', block.type === 'reply' ? 'chat-text md' : 'chat-text'));
     return chat;
   }
 
@@ -898,7 +901,21 @@
       return;
     }
     dom.setText(who, 'assistant');
-    dom.setText(text, block.text);
+    renderReply(text, block.text);
+  }
+
+  /* Rendered once per change of text, not once per pass: the reconciler calls
+     update on every render and a table rebuilt on each tick of the turn clock
+     would be the column doing work for nobody. */
+  function renderReply(node, value) {
+    var md = window.PhosphorMarkdown;
+    if (!md) {
+      dom.setText(node, value);
+      return;
+    }
+    if (node.__md === value) return;
+    node.__md = value;
+    md.renderInto(node, value);
   }
 
   function updateSteps(node, wrap, block, now, primary) {
@@ -1032,6 +1049,16 @@
       if (phase === 'connected') phase = 'working';
       if (turn) turn.state = 'writing';
       openSteps = null;
+      /* One turn's text arrives in pieces, one per model block, and each used
+         to be its own row: a heading, then its table, then the sentence under
+         it, three rows apart. Text that follows text with nothing between them
+         is the same reply, so it joins the row that is already there. */
+      var tail = blocks[blocks.length - 1];
+      if (tail && tail.type === 'reply') {
+        tail.text += '\n\n' + String(event.text);
+        if (!replay) renderAll();
+        return;
+      }
       pushBlock({ type: 'reply', text: event.text });
       return;
     }

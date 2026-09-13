@@ -15,6 +15,7 @@ import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
 
 const SOURCE = readFileSync(new URL('../../ui/screens/agent.js', import.meta.url), 'utf8');
+const MARKDOWN = readFileSync(new URL('../../ui/core/markdown.js', import.meta.url), 'utf8');
 
 type Sandbox = Record<string, any>;
 
@@ -40,8 +41,30 @@ function load(): Sandbox {
 }
 
 test('no string reaches the DOM as markup', () => {
-  assert.equal(/\.innerHTML\s*=/.test(SOURCE), false, 'agent.js assigns innerHTML');
-  assert.equal(/insertAdjacentHTML|outerHTML|document\.write/.test(SOURCE), false);
+  // The renderer the column hands a reply to is held to the same line: it is the one place a
+  // model's text is shaped, so it is the one place markup could get in.
+  for (const [name, source] of [['agent.js', SOURCE], ['markdown.js', MARKDOWN]] as const) {
+    assert.equal(/\.innerHTML\s*=/.test(source), false, `${name} assigns innerHTML`);
+    assert.equal(/insertAdjacentHTML|outerHTML|document\.write|createContextualFragment/.test(source), false, name);
+  }
+});
+
+test('the renderer builds nothing that decides anything', () => {
+  // The renderer is the only code that turns model text into elements. The tags it may build
+  // are inert: a table, a list, a label, a span. Not a button, not a link, not a form.
+  const tags = MARKDOWN.match(/el\('([a-z]+)'/g)?.map((m) => m.replace(/^el\('/, '').replace(/'$/, '')) ?? [];
+  assert.ok(tags.length > 0, 'the renderer builds no elements, so this test is not looking at it');
+  const inert = ['div', 'p', 'ul', 'ol', 'li', 'strong', 'em', 'code', 'pre', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'span'];
+  for (const tag of tags) assert.ok(inert.includes(tag), `the renderer builds a <${tag}>`);
+  // Every element is named by a literal in this file, so no tag name can come from the text.
+  const sites = MARKDOWN.match(/(?<![A-Za-z_])el\(([^,)]*)/g)?.map((m) => m.replace(/^el\(/, '').trim()) ?? [];
+  const named = sites.filter((arg) => arg !== 'tag');
+  assert.ok(named.length > 0);
+  for (const arg of named) {
+    assert.ok(/^'[a-z]+'$/.test(arg) || /^[a-z]+ \? '[a-z]+' : '[a-z]+'$/.test(arg), `a tag from a variable: el(${arg})`);
+  }
+  assert.equal((MARKDOWN.match(/document\.createElement\(/g) ?? []).length, 1, 'one door for elements, the el() helper');
+  assert.equal(/\bsetAttribute\b|\bhref\b|\bonclick\b/.test(MARKDOWN), false, 'the renderer writes no attribute');
 });
 
 test('the panel builds no control that decides anything', () => {
