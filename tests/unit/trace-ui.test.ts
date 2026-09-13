@@ -6,10 +6,13 @@
 // are asserted one at a time rather than as a blob, because a wrong row is the
 // failure and the test should name it.
 //
-// Two rules carry weight beyond the table. A tool that only asks lands amber,
-// because amber in this window means a person has to click. And the one tool
-// that leaves this machine is marked, so the trace can send its light out of
-// the window and back rather than across it.
+// Three rules carry weight beyond the table. A tool that only asks lands amber,
+// because amber in this window means a person has to click. The one tool that
+// leaves this machine is marked, so the trace can send its light out of the
+// window and back rather than across it. And the beam flies for WRITES only:
+// a tool that changes what the window shows, or asks a person to click. A
+// read lights nothing, because a panel that scanned on every balance read was
+// a window flashing for an agent thinking, and the agent thinks constantly.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -192,16 +195,70 @@ test('a proposal card lands on the panel its kind belongs to', () => {
   assert.equal(world.trace.surfaceForProposal('something_new'), 'assistant');
 });
 
-test('a live step sends the beam and holds; the result releases it', () => {
+test('a live write sends the beam and holds; the result releases it', () => {
   const world = build();
   const node = { dot: true };
-  world.step({ id: 's1', name: 'balances', state: 'live', node });
+  world.step({ id: 's1', name: 'chart_draw', state: 'live', node });
   assert.deepEqual(world.calls, [
-    { call: 'fire', from: node, to: 'holdings', tone: 'glow', then: 'hold' },
+    { call: 'fire', from: node, to: 'chart', tone: 'glow', then: 'hold' },
   ]);
   world.calls.length = 0;
-  world.step({ id: 's1', name: 'balances', state: 'done', node });
-  assert.deepEqual(world.calls, [{ call: 'release', id: 'holdings', ok: true }]);
+  world.step({ id: 's1', name: 'chart_draw', state: 'done', node });
+  assert.deepEqual(world.calls, [{ call: 'release', id: 'chart', ok: true }]);
+});
+
+const WRITES: Array<[string, string, string]> = [
+  ['chart_draw', 'chart', 'glow'],
+  ['chart_layout', 'chart', 'glow'],
+  ['trade_plan', 'chart', 'glow'],
+  ['trade_highlight', 'chart', 'glow'],
+  ['trade_overlay', 'chart', 'glow'],
+  ['trade_focus', 'chart', 'glow'],
+  ['trade_clear', 'chart', 'glow'],
+  ['set_theme', 'window', 'glow'],
+  ['switch', 'tabs', 'glow'],
+  ['propose_trade', 'position', 'wait'],
+  ['propose_swap', 'holdings', 'wait'],
+  ['propose_hl_deposit', 'account', 'wait'],
+];
+
+for (const [tool, id, tone] of WRITES) {
+  test(`${tool} is a write: the scan holds on ${id} while it runs and the glow lands after`, () => {
+    const world = build();
+    const node = { dot: true };
+    world.step({ id: 'w', name: tool, state: 'live', node });
+    assert.deepEqual(world.calls, [{ call: 'fire', from: node, to: id, tone, then: 'hold' }]);
+    world.calls.length = 0;
+    world.step({ id: 'w', name: tool, state: 'done', node });
+    assert.deepEqual(world.calls, [{ call: 'release', id, ok: true }]);
+  });
+}
+
+const QUIET: string[] = [
+  'balances', 'wallet', 'composition', 'gas_report', 'policy_show', 'proposal_status', 'log_tail',
+  'chart_read', 'chart_scan', 'chart_batch', 'chart_snapshot', 'market_search', 'trade_read', 'trade_batch',
+  'start', 'skill', 'agent_roster', 'agent_board', 'agent_jobs', 'watch', 'some_new_tool', 'constructor',
+];
+
+for (const tool of QUIET) {
+  test(`${tool} is a read: no flight, no scan, no glow, and nothing to release`, () => {
+    const world = build();
+    const node = { dot: true };
+    world.step({ id: 'r', name: tool, state: 'live', node });
+    assert.deepEqual(world.calls, [], `${tool} lit the window`);
+    world.step({ id: 'r', name: tool, state: 'done', node });
+    assert.deepEqual(world.calls, []);
+    world.step({ id: 'r2', name: tool, state: 'live', node });
+    world.step({ id: 'r2', name: tool, state: 'error', node });
+    assert.deepEqual(world.calls, [], `${tool} failing lit the window`);
+  });
+}
+
+test('the server prefix does not turn a write into a read', () => {
+  const world = build();
+  world.step({ id: 'p', name: 'mcp__phosphor__trade_highlight', state: 'live', node: null });
+  assert.equal(world.calls.length, 1);
+  assert.equal(world.calls[0].to, 'chart');
 });
 
 test('an errored step releases rose on the surface the tool was aimed at', () => {
@@ -219,6 +276,9 @@ test('a result for a step nobody opened releases nothing', () => {
 });
 
 test('the tool that leaves the machine flies out of the window before it comes back', () => {
+  // research is a read, and the one read that still flies: its light is about WHERE the
+  // call went, not that a call happened. A person watching their wallet app reach the
+  // internet is entitled to see it, every time.
   const world = build();
   const node = { dot: true };
   world.step({ id: 's3', name: 'research', state: 'live', node });

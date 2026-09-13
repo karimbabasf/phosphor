@@ -12,6 +12,10 @@
      surfaceOf(tool)             -> { id, tone, leaves }
      surfaceForProposal(kind)    -> a data-surface id
 
+   The beam flies for writes only. A read lands on a surface in the table
+   below, so a card or a later write knows where it belongs, but a read in
+   flight lights nothing: see WRITES.
+
    ONE TABLE ANSWERS BOTH. A proposal card and the tool that asked for it read
    the same row, because `propose_swap` is `swap` with a person in front of it.
    That is what keeps the card in the dock and the light on the panel pointing
@@ -71,6 +75,32 @@
      of the window and comes back, rather than crossing to a panel, because
      nothing in this window is where it went. */
   var LEAVES = { research: true };
+
+  /* THE BEAM FLIES FOR WRITES ONLY. A write is a tool that changes what the
+     window shows (the chart's one write, a layout, a plan drawn as an idea, a
+     highlight, an overlay, the focus, a clear, the theme, the view) or asks a
+     person to click (every propose verb). A read lights nothing: the agent
+     reads balances and the chart constantly, and a panel that scanned on every
+     one of those was a window flashing for an agent thinking. The one read
+     that still flies is research, because its light is about where the call
+     went rather than that a call happened. */
+  var WRITES = {
+    chart_draw: true,
+    chart_layout: true,
+    trade_plan: true,
+    trade_highlight: true,
+    trade_overlay: true,
+    trade_focus: true,
+    trade_clear: true,
+    set_theme: true,
+    switch: true
+  };
+
+  function writes(id) {
+    if (WRITES[id] === true) return true;
+    if (LEAVES[id] === true) return true;
+    return id.indexOf('propose_') === 0;
+  }
 
   var SKY_Y = -20;
 
@@ -173,6 +203,8 @@
     var key = String(detail.id);
 
     if (detail.state === 'live') {
+      /* A read opens nothing, so its result has nothing to release either. */
+      if (!writes(String(detail.name || '').replace(/^mcp__phosphor__/, ''))) return;
       var where = surfaceOf(detail.name);
       open[key] = where;
       if (where.leaves) {
