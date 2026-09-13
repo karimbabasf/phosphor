@@ -78,6 +78,7 @@ export type ChartHarness = {
   get: (route: string) => Promise<{ status: number; json: any }>;
   token: string;
   audit: ReturnType<typeof createAudit>;
+  agents: ReturnType<typeof createAgents>;
 };
 
 function snapshot(): LedgerSnapshot {
@@ -92,8 +93,14 @@ function snapshot(): LedgerSnapshot {
   };
 }
 
-export async function bootChartServer(opts: { view?: ViewMode; fetchDelayMs?: number } = {}): Promise<ChartHarness> {
+export async function bootChartServer(opts: { view?: ViewMode; fetchDelayMs?: number; indicators?: Record<string, string | Buffer> } = {}): Promise<ChartHarness> {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-chart-'));
+  // Files a test drops into the indicators folder before the server reads it at boot, the way
+  // a human would: name to body, read by the real loader through the real resolver.
+  if (opts.indicators !== undefined) {
+    fs.mkdirSync(path.join(dataDir, 'indicators'));
+    for (const [name, body] of Object.entries(opts.indicators)) fs.writeFileSync(path.join(dataDir, 'indicators', name), body);
+  }
   const audit = createAudit(dataDir);
   const store = createStore(dataDir);
   let view: ViewMode = opts.view ?? 'trade';
@@ -193,6 +200,7 @@ export async function bootChartServer(opts: { view?: ViewMode; fetchDelayMs?: nu
     url,
     token,
     audit,
+    agents,
     close: () => new Promise<void>((resolve) => server.close(() => resolve())),
     view: (mode) => {
       view = mode;

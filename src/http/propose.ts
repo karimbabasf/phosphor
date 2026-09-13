@@ -93,6 +93,14 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
   const kind = String(body.kind ?? '');
   const params = asRecord(body.params);
   const session = String(body.session ?? 'unnamed-session');
+  /* A worker's MCP process never registers a propose tool, and this is the wall behind that one:
+     the app minted the worker's session id and seated it as an analyst, so a raw post from that
+     seat is refused by its role before the duplicate guard remembers it or a draft is priced.
+     Nothing in the chain that spawned a worker is a human, so nothing in it may reach the money. */
+  if (ctx.agents.member(body.session)?.role === 'analyst') {
+    fail(res, 403, `propose_${kind} is not on a worker's surface`);
+    return;
+  }
   const clash = ctx.duplicates.find(kind, params, session);
   if (clash !== null) {
     ctx.audit.append('agent_rejected', 'a duplicate proposal from a second agent was refused', {

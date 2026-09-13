@@ -21,7 +21,7 @@ import { walletReads } from './read/wallet.ts';
 import { handlePropose } from './propose.ts';
 import { handleView } from './view.ts';
 import { handleSetBasicCoins, handleSetViewMode } from './mutation.ts';
-import { READ_TOOLS } from './context.ts';
+import { LEAD_ONLY_READ_TOOLS, READ_TOOLS } from './context.ts';
 import type { Ctx, ReadTable } from './context.ts';
 
 /* Every read tool, in one table assembled from the seven domain files under http/read. A table
@@ -49,6 +49,12 @@ export async function handleRead(ctx: Ctx, body: JsonBody, res: http.ServerRespo
   const handler = READS[tool];
   if (handler === undefined) {
     fail(res, 400, `unknown read tool: ${tool}. known tools: ${READ_TOOLS.join(', ')}`);
+    return;
+  }
+  // The proxy never registers this for a worker, and this is the wall behind it, the same one
+  // handleView holds: the seat's role, decided by the roster and never by anything the body claims.
+  if ((LEAD_ONLY_READ_TOOLS as readonly string[]).includes(tool) && ctx.agents.member(body.session)?.role === 'analyst') {
+    fail(res, 403, `${tool} is not on a worker's surface`);
     return;
   }
   await handler(ctx, body, asRecord(body.args), res);

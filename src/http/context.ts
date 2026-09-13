@@ -113,6 +113,9 @@ export const READ_TOOLS: readonly string[] = [
 // the chart a human is reading, arrange it, put an idea on it, recolour the window, or write into
 // the operator's next role text.
 export const LEAD_ONLY_VIEW_TOOLS: readonly string[] = ['set_theme', 'chart_draw', 'chart_layout', 'trade_plan', 'profile_learned', 'agent_spawn'];
+// The one read a worker never gets: a picture is the window the human is reading, and the proxy
+// withholds it the same way (src/mcp.ts registerLeadView). src/http/mcp.ts refuses it by seat role.
+export const LEAD_ONLY_READ_TOOLS: readonly string[] = ['chart_snapshot'];
 
 export const VIEW_TOOLS: readonly string[] = [
   // Colour. A write like the rest of this list: it changes what the human sees and moves no
