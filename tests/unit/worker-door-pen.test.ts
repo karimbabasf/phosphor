@@ -49,7 +49,7 @@ test('a worker seat cannot propose: every kind is refused at the propose door by
     assert.notEqual(lead.status, 403, JSON.stringify(lead.json));
     // Nothing the worker sent reached the audit as a proposal.
     const lines = h.audit.tail(200).map((e) => e.type);
-    assert.ok(!lines.some((t) => t === 'proposal' || t === 'policy_refused' || t === 'executed'), lines.join(','));
+    assert.ok(!lines.some((t) => t === 'proposal_created' || t === 'policy_refused' || t === 'executed'), lines.join(','));
   } finally {
     await h.close();
   }

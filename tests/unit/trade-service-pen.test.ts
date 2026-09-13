@@ -24,7 +24,8 @@ function fakeSocket(): FeedSocket {
 
 const info: InfoClient = {
   post: <T>(): Promise<T> => Promise.resolve({ universe: [{ name: 'ETH', szDecimals: 4, maxLeverage: 25 }] } as T),
-} as InfoClient;
+  health: () => ({ ok: true, failures: 0, lastError: null, retryAt: null }) as unknown as ReturnType<InfoClient['health']>,
+};
 
 function fakeRunner(): TradeRunner & { rows: Map<string, PlanRow> } {
   const rows = new Map<string, PlanRow>();
