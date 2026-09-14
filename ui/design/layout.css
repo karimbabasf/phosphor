@@ -84,43 +84,157 @@ html, body {
   100% { opacity: 0; transform: translateX(460%); }
 }
 
+/* The wordmark is the mark and the word, and it is the one control in the bar
+   that is about the window itself: it opens the colourway menu. It sits in a
+   wrap so the menu can hang off its corner. */
+.wordmark-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
 .wordmark {
   display: flex;
   align-items: center;
   gap: var(--s-2);
+  height: 28px;
+  margin-left: calc(-1 * var(--s-2));
+  padding: 0 var(--s-2);
+  border-radius: var(--radius-sm);
   font-size: var(--fs-14);
   font-weight: 500;
   letter-spacing: -0.01em;
   color: var(--text);
+  transition: background-color var(--dur-press) var(--ease-out),
+              transform var(--dur-press) var(--ease-out);
 }
 
-/* The glyph carries the assistant's state: dim when off, lit when ready,
-   breathing while working. It is the smallest phosphor in the window. */
+@media (hover: hover) and (pointer: fine) {
+  .wordmark:hover { background: var(--bg-2); }
+}
+
+.wordmark:active { transform: scale(0.97); }
+
+.wordmark[aria-expanded="true"] { background: var(--bg-2); }
+
+.wordmark:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: -2px;
+}
+
+/* The glyph is the mark, and it carries the assistant's state: dim when off,
+   lit when ready, breathing while working. It is the smallest phosphor in the
+   window. The glow is a drop shadow rather than a box shadow so it follows the
+   mark's own edge; the light colourways turn it off, because a dark halo
+   under a dark mark is a shadow, not a light. */
 .wordmark-glyph {
-  width: 12px;
-  height: 12px;
-  border-radius: 3px;
-  background: var(--beam);
+  width: 14px;
+  height: 16px;
+  color: var(--beam);
   opacity: 0.35;
-  box-shadow: 0 0 0 0 transparent;
   transition: opacity var(--dur-enter) var(--ease-out);
 }
 
 .wordmark-glyph[data-state="ready"] {
   opacity: 1;
-  box-shadow: 0 0 10px -2px var(--beam);
+  filter: drop-shadow(var(--beam-glow));
 }
 
 .wordmark-glyph[data-state="working"] {
   opacity: 1;
-  box-shadow: 0 0 10px -2px var(--beam);
+  filter: drop-shadow(var(--beam-glow));
   animation: breathe 1600ms var(--ease-in-out) infinite;
 }
 
 .wordmark-glyph[data-state="error"] {
   opacity: 1;
-  background: var(--down);
+  color: var(--down);
+  filter: none;
 }
+
+/* ---------- the colourway menu ----------
+
+   Three rows, one per colourway of the mark, each showing the mark in that
+   colourway: the menu is the brand sheet. It scales in from the wordmark's
+   corner over 150 ms and out the same way, like the chart's Layers menu. */
+.colourways {
+  position: absolute;
+  top: calc(100% + var(--s-1));
+  left: calc(-1 * var(--s-2));
+  z-index: 30;
+  min-width: 184px;
+  padding: var(--s-1);
+  background: var(--bg-1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--lift);
+  opacity: 0;
+  visibility: hidden;
+  transform: scale(0.97);
+  transform-origin: top left;
+  transition: opacity 150ms var(--ease-out),
+              transform 150ms var(--ease-out),
+              visibility 0s linear 150ms;
+}
+
+.colourways[data-open="true"] {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition-delay: 0s;
+}
+
+.colourways:focus { outline: none; }
+
+.colourway {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  width: 100%;
+  height: 32px;
+  padding: 0 var(--s-2);
+  border-radius: var(--radius-sm);
+  text-align: left;
+  font-size: var(--fs-13);
+  color: var(--text-2);
+  transition: background-color var(--dur-press) var(--ease-out),
+              color var(--dur-press) var(--ease-out),
+              transform var(--dur-press) var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .colourway:hover { background: var(--bg-2); color: var(--text); }
+}
+
+.colourway[aria-checked="true"] { color: var(--text); }
+
+.colourway:active { transform: scale(0.97); }
+
+.colourway:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: -2px;
+}
+
+/* The tile is the mark on its own ground, at 20 px: the three colourways as
+   the brand sheet shows them, not as swatches. The chosen one wears a ring in
+   the window's action colour. */
+.colourway-tile {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  padding: 4px;
+  border-radius: 5px;
+  box-sizing: border-box;
+  box-shadow: 0 0 0 1px var(--line-strong);
+  transition: box-shadow var(--dur-press) var(--ease-out);
+}
+
+.colourway[aria-checked="true"] .colourway-tile {
+  box-shadow: 0 0 0 1px var(--bg-1), 0 0 0 2px var(--ink);
+}
+
+.colourway[data-profile="green-on-black"] .colourway-tile { background: #0E0F13; color: #3FFF6C; }
+.colourway[data-profile="black-on-green"] .colourway-tile { background: #3FFF6C; color: #0E0F13; }
+.colourway[data-profile="black-on-white"] .colourway-tile { background: #FFFFFF; color: #111111; }
 
 @keyframes breathe {
   0%, 100% { opacity: 1; }

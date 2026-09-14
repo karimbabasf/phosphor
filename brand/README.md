@@ -1,6 +1,36 @@
 # Phosphor brand
 
-The official Phosphor wordmark, and the script that draws it.
+The official Phosphor mark, its three colourways, the banners, the app icon, the wordmark, and
+the script that draws the wordmark.
+
+## The mark
+
+An isometric P built from four slabs, drawn once as a vector and shipped in three colourways.
+The colours are the whole identity, and the app follows them (`ui/design/tokens.css`):
+
+| Colourway | Ground | Ink | File |
+|---|---|---|---|
+| Green on black | `#0E0F13` | `#3FFF6C` | `phosphor-logo-green-on-black.png` (2000 x 2000) |
+| Black on green | `#3FFF6C` | `#0E0F13` | `phosphor-logo-black-on-green.png` (2000 x 2000) |
+| Black on white | `#FFFFFF` | `#111111` | `phosphor-logo-black-on-white.png` (2000 x 2000) |
+
+- `phosphor-mark.svg`, the vector, one path in `currentColor` in a box the size of its own ink
+  (58.05 x 64.75 units). Traced from the black on white PNG with potrace; 0.6 percent of edge
+  pixels differ from the source at 2000 px. This is the copy the app draws: `ui/index.html`
+  holds it as a `<symbol>`, the splash (`src-tauri/frontend/index.html`) holds it inline.
+- `phosphor-app-icon.png` (1024 x 1024), the macOS app icon source: the green on black logo on
+  an 824 px rounded square (radius 185) centred on a transparent canvas. `npx tauri icon
+  brand/phosphor-app-icon.png -o src-tauri/icons` regenerates the icon set from it; delete the
+  `android` and `ios` folders it also writes.
+- `phosphor-banner-twitter.png` (3000 x 1000) and `phosphor-banner-linkedin.png` (3168 x 792),
+  the mark and the name on black. The `-wordmark` pair is the name alone.
+
+The app switches between the three colourways from the menu under the mark in its top left,
+and an agent can do the same with `set_theme { profile }`. Each colourway is a whole palette
+(text, warning amber and the gate's red change with the ground), and every one is checked
+against the contrast floors in `tests/unit/theme-slots.test.ts`.
+
+## The wordmark
 
 - `phosphor-wordmark.png` (3949 x 1088), the logo.
 - `phosphor-headquarters.png` (3508 x 2480), the same mark with a "headquarters" line under it,

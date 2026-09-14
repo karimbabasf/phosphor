@@ -99,6 +99,13 @@
 
   /* 1 */
   function screenWhat() {
+    /* The mark above the name, in the window's own light: the one screen that
+       introduces the product opens on the thing it is recognised by. Built by
+       innerHTML for the reason marks.js gives: createElement cannot make an svg. */
+    var mark = dom.el('div', 'firstrun-mark');
+    mark.setAttribute('aria-hidden', 'true');
+    mark.innerHTML = '<svg viewBox="0 0 58.05 64.75" focusable="false"><use href="#phosphor-mark"/></svg>';
+    card.appendChild(mark);
     card.appendChild(dom.el('h1', 'headline', 'Phosphor'));
     card.appendChild(dom.el('p', 'body', 'Phosphor lets your AI assistant use your money, without ever letting it spend your money. You decide. Every time.'));
     actions('Get started', function () { go(1); }, { back: false });

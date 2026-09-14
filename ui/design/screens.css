@@ -254,6 +254,21 @@
   color: var(--text);
 }
 
+/* The mark on the first screen: 40 px of the window's own light, and nothing
+   else on the card is coloured, so it is what the eye lands on. */
+.firstrun-mark {
+  width: 36px;
+  height: 40px;
+  margin-bottom: var(--s-4);
+  color: var(--ink);
+}
+
+.firstrun-mark svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
 /* THE SEAT. One ring above the headline, and it is the only thing on this card
    that a person can read from across the room. Empty and grey when nobody is
    there, filling while one comes up, lit and holding once one is. The card said
