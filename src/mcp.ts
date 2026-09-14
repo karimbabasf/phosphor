@@ -622,7 +622,7 @@ registerLeadView(
   'set_theme',
   [
     'Recolours the window. A colourway, then five named slots on top of it.',
-    `profile — one of ${COLOURWAYS.join(', ')}: the three official colourways of the mark (${COLOURWAYS.map((c) => COLOURWAY_LABEL[c].toLowerCase()).join('; ')}). Picking one repaints everything, text included, and puts the five slots back to that colourway's own colours.`,
+    `profile — one of ${COLOURWAYS.join(', ')}: the window's two colourways of the mark (${COLOURWAYS.map((c) => COLOURWAY_LABEL[c].toLowerCase()).join('; ')}). Picking one repaints everything, text included, and puts the five slots back to that colourway's own colours.`,
     'The five slots, each a hex colour like #3fff6c or #3f6:',
     ...THEME_SLOTS.map((slot) => `  ${slot} — ${SLOT_MEANING[slot]}`),
     "Pass reset:true to put every slot back to the current colourway's own colours. Omit a slot to leave it alone.",

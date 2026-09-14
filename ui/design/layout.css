@@ -153,7 +153,7 @@ html, body {
 
 /* ---------- the colourway menu ----------
 
-   Three rows, one per colourway of the mark, each showing the mark in that
+   One row per colourway of the window, each showing the mark in that
    colourway: the menu is the brand sheet. It scales in from the wordmark's
    corner over 150 ms and out the same way, like the chart's Layers menu. */
 .colourways {
@@ -214,9 +214,9 @@ html, body {
   outline-offset: -2px;
 }
 
-/* The tile is the mark on its own ground, at 20 px: the three colourways as
-   the brand sheet shows them, not as swatches. The chosen one wears a ring in
-   the window's action colour. */
+/* The tile is the mark on its own ground, at 20 px: the colourways as the
+   brand sheet shows them, not as swatches. The chosen one wears a ring in the
+   window's action colour. */
 .colourway-tile {
   flex: 0 0 auto;
   width: 20px;
@@ -233,7 +233,6 @@ html, body {
 }
 
 .colourway[data-profile="green-on-black"] .colourway-tile { background: #0E0F13; color: #3FFF6C; }
-.colourway[data-profile="black-on-green"] .colourway-tile { background: #3FFF6C; color: #0E0F13; }
 .colourway[data-profile="black-on-white"] .colourway-tile { background: #FFFFFF; color: #111111; }
 
 @keyframes breathe {

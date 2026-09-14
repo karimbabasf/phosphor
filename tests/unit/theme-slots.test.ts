@@ -113,8 +113,10 @@ test('shorthand hex is expanded rather than rejected', () => {
 
 /* ---------- the colourways ---------- */
 
-test('there are three colourways and they are the three the mark ships in', () => {
-  assert.deepEqual([...COLOURWAYS], ['green-on-black', 'black-on-green', 'black-on-white']);
+test('there are two colourways: the original and black on white', () => {
+  // Black on green was the mark's third and was cut from the window on 2026-09-14 ("remove the
+  // neon green"). It is not to come back as a default.
+  assert.deepEqual([...COLOURWAYS], ['green-on-black', 'black-on-white']);
 });
 
 test('every colourway passes every floor on its own ground, the gate red included', () => {
@@ -139,13 +141,13 @@ test('every colourway passes every floor on its own ground, the gate red include
   }
 });
 
-test('no one red clears the text floor on both the black and the green ground', () => {
+test('no one red clears the text floor on both the black and the white ground', () => {
   // The reason the gate red is per colourway rather than one constant. If this ever passes,
   // the palette can go back to one red and the comment in theme.ts is wrong.
   const black = COLOURWAY_PALETTE['green-on-black'];
-  const green = COLOURWAY_PALETTE['black-on-green'];
-  assert.ok(contrastRatio(black.gate, green.slots.background) < MIN_TEXT_CONTRAST);
-  assert.ok(contrastRatio(green.gate, black.slots.background) < MIN_TEXT_CONTRAST);
+  const white = COLOURWAY_PALETTE['black-on-white'];
+  assert.ok(contrastRatio(black.gate, white.slots.background) < MIN_TEXT_CONTRAST);
+  assert.ok(contrastRatio(white.gate, black.slots.background) < MIN_TEXT_CONTRAST);
 });
 
 /* The stylesheet is what the window paints and the table above is what the server checks.
@@ -161,7 +163,7 @@ function cssBlock(source: string, selector: string): Record<string, string> {
 
 const TOKENS_CSS = readFileSync(new URL('../../ui/design/tokens.css', import.meta.url), 'utf8');
 
-test('tokens.css carries the same values as the colourway table, for all three', () => {
+test('tokens.css carries the same values as the colourway table, for both', () => {
   for (const name of COLOURWAYS) {
     const palette = COLOURWAY_PALETTE[name];
     const block = cssBlock(TOKENS_CSS, name === 'green-on-black' ? ':root' : `:root[data-profile="${name}"]`);
@@ -182,7 +184,7 @@ test('tokens.css carries the same values as the colourway table, for all three',
   }
 });
 
-test('the splash paints the same ground, text and ink as the window, for all three', () => {
+test('the splash paints the same ground, text and ink as the window, for both', () => {
   const splash = readFileSync(new URL('../../src-tauri/frontend/index.html', import.meta.url), 'utf8');
   for (const name of COLOURWAYS) {
     const palette = COLOURWAY_PALETTE[name];
@@ -233,10 +235,15 @@ test('a theme file from before the colourways comes back as green on black, and 
   assert.equal(old.profile, 'green-on-black');
   assert.equal(old.accent, '#5b8def');
 
-  writeFileSync(path.join(dir, 'theme.json'), JSON.stringify({ ...colourwayTheme('black-on-green'), agent: '#4b1fa6' }));
-  const green = readTheme(dir);
-  assert.equal(green.profile, 'black-on-green');
-  assert.equal(green.background, '#3fff6c');
+  writeFileSync(path.join(dir, 'theme.json'), JSON.stringify({ ...colourwayTheme('black-on-white'), agent: '#6b3fd6' }));
+  const white = readTheme(dir);
+  assert.equal(white.profile, 'black-on-white');
+  assert.equal(white.background, '#ffffff');
+
+  // The colourway that was cut reads as the default too, so a theme.json written by the build
+  // that had it does not come back as a half-painted window.
+  writeFileSync(path.join(dir, 'theme.json'), JSON.stringify({ accent: '#0e0f13', background: '#3fff6c', up: '#0e0f13', down: '#b3001b', agent: '#4b1fa6', profile: 'black-on-green' }));
+  assert.equal(readTheme(dir).profile, 'green-on-black');
 
   // A colourway nobody has heard of is the default, not a crash and not a half-painted window.
   writeFileSync(path.join(dir, 'theme.json'), JSON.stringify({ ...colourwayTheme('black-on-white'), profile: 'sepia' }));

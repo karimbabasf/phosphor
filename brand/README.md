@@ -6,7 +6,9 @@ the script that draws the wordmark.
 ## The mark
 
 An isometric P built from four slabs, drawn once as a vector and shipped in three colourways.
-The colours are the whole identity, and the app follows them (`ui/design/tokens.css`):
+The colours are the whole identity. The app carries two of them (`ui/design/tokens.css`): green
+on black and black on white. Black on green is for banners and social only, never the window
+(cut from it on 2026-09-14).
 
 | Colourway | Ground | Ink | File |
 |---|---|---|---|
@@ -25,7 +27,7 @@ The colours are the whole identity, and the app follows them (`ui/design/tokens.
 - `phosphor-banner-twitter.png` (3000 x 1000) and `phosphor-banner-linkedin.png` (3168 x 792),
   the mark and the name on black. The `-wordmark` pair is the name alone.
 
-The app switches between the three colourways from the menu under the mark in its top left,
+The app switches between its two colourways from the menu under the mark in its top left,
 and an agent can do the same with `set_theme { profile }`. Each colourway is a whole palette
 (text, warning amber and the gate's red change with the ground), and every one is checked
 against the contrast floors in `tests/unit/theme-slots.test.ts`.

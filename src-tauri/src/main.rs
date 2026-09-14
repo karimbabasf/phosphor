@@ -105,12 +105,12 @@ fn data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 
 /// The colourway the window was left in, read off state/theme.json so the splash can paint it
 /// before the backend is up. Best effort in every direction: no file, a file that is not JSON,
-/// or a name that is not one of the three all mean green on black, which is what the splash
-/// paints with no script at all. The three names are the whole grammar, and only a name that
+/// or a name that is not one of the two all mean green on black, which is what the splash
+/// paints with no script at all. The two names are the whole grammar, and only a name that
 /// matches one of them verbatim is ever handed to the page, so nothing read off the disk can
 /// reach the initialization script as anything but one of these literals.
 fn saved_colourway(data: &Path) -> Option<&'static str> {
-    const COLOURWAYS: [&str; 3] = ["green-on-black", "black-on-green", "black-on-white"];
+    const COLOURWAYS: [&str; 2] = ["green-on-black", "black-on-white"];
     let raw = std::fs::read_to_string(data.join("state").join("theme.json")).ok()?;
     let parsed: serde_json::Value = serde_json::from_str(&raw).ok()?;
     let name = parsed.get("profile")?.as_str()?;

@@ -1560,17 +1560,31 @@ dialog.confirm::backdrop {
   animation: cardin var(--dur-enter) var(--ease-out) both;
 }
 
-/* ---------- locked: the shell behind the card keeps reading ---------- */
+/* ---------- locked: nothing behind the card can be read ---------- */
 
-/* The stage keeps reading behind the lock: a person should see the shape of
-   their window without unlocking it. Dimmed, not blurred. A filter on a
-   container promotes it to its own layer and re-blurs on every repaint
-   underneath it, and locked is the state an unattended app sits in longest, so
-   that was a full-viewport compositor pass running all night. Opacity and the
-   screen's own scrim say the same thing for nothing. */
+/* Behind the lock the stage is frosted: the shape of the window survives, no
+   number does. Karim, 2026-09-14: nothing is visible until the password is in.
+   It used to be dimmed and readable, on the argument that a filter on a
+   container re-blurs on every repaint under it and locked is the state an
+   unattended app sits in longest. The cost is bounded now: the field, which
+   was the only thing painting every frame, stops the moment the body is
+   locked (pattern.js watches data-locked), so the blur is rasterised once and
+   again only when a price ticks. What is blurred is also taken out of reach:
+   no pointer, no selection, and lock.js marks the stage inert so neither the
+   keyboard nor a screen reader can walk into it. The stage is the only thing
+   filtered, and nothing fixed lives inside it, so the filter re-anchors
+   nothing. Unlocking releases it over one enter duration. */
+.stage {
+  transition: filter var(--dur-enter) var(--ease-out),
+              opacity var(--dur-enter) var(--ease-out);
+}
+
 body[data-locked="true"] .stage {
-  opacity: 0.55;
+  filter: blur(28px);
+  opacity: 0.5;
   pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 body[data-locked="true"] .topbar .tabs {
@@ -1578,13 +1592,13 @@ body[data-locked="true"] .topbar .tabs {
   pointer-events: none;
 }
 
-/* The screen's ground carries what the blur used to: enough of it to push the
-   stage back, little enough to leave it there. */
+/* The screen's ground finishes the job the blur starts: heavy enough that a
+   44 px balance under 28 px of blur is a tint and not a shape. */
 .screen {
   position: fixed;
   inset: var(--topbar-h) 0 0 0;
   z-index: 60;
-  background: color-mix(in srgb, var(--bg-0) 74%, transparent);
+  background: color-mix(in srgb, var(--bg-0) 86%, transparent);
 }
 
 .destinations {

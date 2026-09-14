@@ -22,10 +22,11 @@
 // `#rgb` and `#rrggbb` are the whole grammar. Named colours would be safe too and are still
 // refused: one shape is one thing to prove.
 //
-// THE COLOURWAYS. The mark ships in three: green on black, black on green, black on white
-// (brand/README.md). Each is a whole palette, not five slots: the text, the warning amber and
-// the gate's red all have to change with the ground, because the amber that reads on graphite
-// vanishes on phosphor green and no single red clears 4.5:1 on both. So a colourway carries its
+// THE COLOURWAYS. The window ships in two of the mark's colourways: green on black and black on
+// white (brand/README.md; the mark's third, black on green, was cut from the window on 2026-09-14,
+// Karim: "remove the neon green"). Each is a whole palette, not five slots: the text, the warning
+// amber and the gate's red all have to change with the ground, because the amber that reads on
+// graphite vanishes on white and no single red clears 4.5:1 on both. So a colourway carries its
 // own gate red, and the agent still cannot name it: it can pick a colourway, and every colourway
 // was checked against every floor before it was written down (tests/unit/theme-slots.test.ts).
 // The five slots then sit on top of whichever colourway is current, exactly as before.
@@ -38,13 +39,13 @@ const FILE = 'theme.json';
 
 export type ThemeSlot = 'accent' | 'background' | 'up' | 'down' | 'agent';
 
-export type Colourway = 'green-on-black' | 'black-on-green' | 'black-on-white';
+export type Colourway = 'green-on-black' | 'black-on-white';
 
 export type Theme = Record<ThemeSlot, string> & { profile: Colourway };
 
 export const THEME_SLOTS: readonly ThemeSlot[] = ['accent', 'background', 'up', 'down', 'agent'];
 
-export const COLOURWAYS: readonly Colourway[] = ['green-on-black', 'black-on-green', 'black-on-white'];
+export const COLOURWAYS: readonly Colourway[] = ['green-on-black', 'black-on-white'];
 
 // What every slot means, handed to the agent in the tool description so it never has to guess
 // which one moves which pixels.
@@ -78,14 +79,6 @@ export const COLOURWAY_PALETTE: Readonly<Record<Colourway, Palette>> = {
     warn: '#f5b942',
     gate: '#ff3b30',
   },
-  'black-on-green': {
-    slots: { accent: '#0e0f13', background: '#3fff6c', up: '#0e0f13', down: '#b3001b', agent: '#4b1fa6' },
-    text: '#0e0f13',
-    text2: '#153d21',
-    text3: '#1f6b35',
-    warn: '#8a4300',
-    gate: '#a8000f',
-  },
   'black-on-white': {
     slots: { accent: '#111111', background: '#ffffff', up: '#0f8f3a', down: '#d8213a', agent: '#6b3fd6' },
     text: '#111111',
@@ -99,7 +92,6 @@ export const COLOURWAY_PALETTE: Readonly<Record<Colourway, Palette>> = {
 // How a colourway is described to the agent and labelled for the human, one line each.
 export const COLOURWAY_LABEL: Readonly<Record<Colourway, string>> = {
   'green-on-black': 'Green on black',
-  'black-on-green': 'Black on green',
   'black-on-white': 'Black on white',
 };
 

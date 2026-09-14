@@ -7,12 +7,12 @@
    --ink (accent), --bg-0 (background), --up, --down, --agent. Everything else
    derives from them or stands on its own.
 
-   THE COLOURWAYS. The mark ships in three (brand/README.md), and the window
-   follows the mark: green on black is this block, the other two are the
-   [data-profile] blocks at the foot, which change only what no slot reaches
-   (the text, the warning amber, the lift, the OS colour scheme). theme.js sets
-   the attribute from the server's theme, and src/view/theme.ts carries the same
-   values so every colourway is checked against the contrast floors in a test. */
+   THE COLOURWAYS. The window ships in two of the mark's (brand/README.md):
+   green on black is this block, black on white is the [data-profile] block at
+   the foot, which changes only what no slot reaches (the text, the warning
+   amber, the lift, the OS colour scheme). theme.js sets the attribute from the
+   server's theme, and src/view/theme.ts carries the same values so every
+   colourway is checked against the contrast floors in a test. */
 
 :root {
   color-scheme: dark;
@@ -122,7 +122,7 @@
    window never paints text on a ground it cannot be read against. theme.js
    enforces the contrast floors server side before these are written. */
 
-/* ---------- the other two colourways ----------
+/* ---------- the other colourway ----------
 
    Only what the five slots cannot carry. The ground, the surfaces, the action
    fill and the two directions arrive through theme.js the same way they do for
@@ -130,40 +130,6 @@
    light ground under light text is the one state the floors exist to prevent.
    The surface steps are the same mixes theme.js derives (3.5, 7, 11, 17 percent
    toward the far pole), so the first paint and the themed paint agree. */
-
-:root[data-profile="black-on-green"] {
-  color-scheme: light;
-
-  --bg-0: #3FFF6C;
-  --bg-1: #3DF668;
-  --bg-2: #3BED64;
-  --line: #38E360;
-  --line-strong: #34D45A;
-
-  --text: #0E0F13;
-  --text-2: #153D21;
-  --text-3: #1F6B35;
-
-  --ink: #0E0F13;
-  --on-ink: #3FFF6C;
-  --up: #0E0F13;
-  --down: #B3001B;
-  --warn: #8A4300;
-  --agent: #4B1FA6;
-
-  --glow-ash: #33C356;
-
-  --ink-wash: rgba(14, 15, 19, 0.08);
-  --ink-edge: rgba(14, 15, 19, 0.16);
-  --up-wash: rgba(14, 15, 19, 0.14);
-  --down-wash: rgba(179, 0, 27, 0.14);
-  --warn-wash: rgba(138, 67, 0, 0.14);
-  --agent-wash: rgba(75, 31, 166, 0.13);
-  --agent-edge: rgba(75, 31, 166, 0.28);
-
-  --lift: 0 12px 40px rgba(0, 0, 0, 0.22), 0 1px 0 rgba(255, 255, 255, 0.25) inset;
-  --beam-glow: 0 0 0 transparent;
-}
 
 :root[data-profile="black-on-white"] {
   color-scheme: light;

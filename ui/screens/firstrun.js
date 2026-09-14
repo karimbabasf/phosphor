@@ -29,6 +29,7 @@
     if (!host || open_) return;
     open_ = true;
     dom.setAttr(document.body, 'data-locked', 'true');
+    setStageInert(true);
     dom.setHidden(host, false);
     dom.clear(host);
     /* The window's one field is already behind this, and the shell holds it at
@@ -45,7 +46,17 @@
     open_ = false;
     dom.setHidden(host, true);
     dom.setAttr(document.body, 'data-locked', null);
+    setStageInert(false);
     window.PhosphorShell.refresh({});
+  }
+
+  /* Same pair as lock.js: the stage behind this card is frosted by the
+     stylesheet and taken off the keyboard and the accessibility tree here. */
+  function setStageInert(on) {
+    var stage = document.getElementById('stage');
+    if (!stage) return;
+    if ('inert' in stage) stage.inert = on;
+    dom.setAttr(stage, 'aria-hidden', on ? 'true' : null);
   }
 
   function go(next) {

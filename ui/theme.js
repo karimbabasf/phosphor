@@ -26,7 +26,7 @@
    other half of the same rule.
 
    THE COLOURWAY is the one thing here that is not a colour. The theme names one
-   of the mark's three (green on black, black on green, black on white) and this
+   of the window's two (green on black, black on white) and this
    file writes it as data-profile on the root, where tokens.css keeps the tokens
    no slot reaches: the text, the amber, the lift. It is an attribute and not a
    set of properties so a colourway is one word in one place, and so the text
@@ -37,10 +37,10 @@
 (function () {
   var last = null;
 
-  /* The three colourways, by name. Anything else leaves the attribute alone: the
+  /* The two colourways, by name. Anything else leaves the attribute alone: the
      server only ever sends one of these, and the root falling back to green on
      black is the right answer to a name it has never heard. */
-  var COLOURWAYS = ['green-on-black', 'black-on-green', 'black-on-white'];
+  var COLOURWAYS = ['green-on-black', 'black-on-white'];
 
   /* Same grammar the server enforces: hex, or nothing. Returns null on anything
      else, and the caller leaves the page alone rather than painting half a

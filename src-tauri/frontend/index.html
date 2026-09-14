@@ -15,13 +15,13 @@
 
   THE COLOURWAY. The shell reads the profile line out of state/theme.json before it opens this
   window and hands it over as window.__PHOSPHOR_PROFILE__ in an initialization script, so a
-  person who chose black on white is not shown two seconds of black first. The three blocks
+  person who chose black on white is not shown two seconds of black first. The two blocks
   below are the same values as ui/design/tokens.css; only the tokens this page uses.
 -->
 <script>
   (function () {
     var wanted = window.__PHOSPHOR_PROFILE__;
-    if (wanted === 'black-on-green' || wanted === 'black-on-white') {
+    if (wanted === 'black-on-white') {
       document.documentElement.setAttribute('data-profile', wanted);
     }
   })();
@@ -36,14 +36,6 @@
     --text-2: #9BA1AB;
     --ink: #3FFF6C;
     --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
-  }
-
-  :root[data-profile="black-on-green"] {
-    color-scheme: light;
-    --bg-0: #3FFF6C;
-    --text: #0E0F13;
-    --text-2: #153D21;
-    --ink: #0E0F13;
   }
 
   :root[data-profile="black-on-white"] {

@@ -1,8 +1,9 @@
 /* Locked, and the migration that gets a plaintext key file out of the way.
 
-   Reads continue behind the lock in the dimmed shell, so the person still sees
-   their balance while the app is shut. Nothing is refused while locked: a write
-   the assistant asks for is authored, checked and queued, and it waits. */
+   Reads continue behind the lock, but the shell is frosted and inert while it
+   holds: nothing on it can be read, selected or reached until the password is
+   in. Nothing is refused while locked: a write the assistant asks for is
+   authored, checked and queued, and it waits. */
 (function () {
   'use strict';
 
@@ -26,6 +27,7 @@
     if (state === 'unlocked') {
       dom.setHidden(refs.host, true);
       dom.setAttr(document.body, 'data-locked', null);
+      setStageInert(false);
       mode = null;
       return;
     }
@@ -37,16 +39,27 @@
     if (mode === state) return;
     mode = state;
     dom.setAttr(document.body, 'data-locked', 'true');
+    setStageInert(true);
     dom.setHidden(refs.host, false);
     if (state === 'needs_migration') buildMigrate();
     else buildLock();
   }
 
+  /* The blurred stage is also an inert one: the stylesheet takes the pointer
+     and the selection, this takes the keyboard and the accessibility tree, so
+     a balance nobody can see is not a balance a Tab press or a screen reader
+     can still reach. Both halves are undone on unlock. */
+  function setStageInert(on) {
+    var stage = document.getElementById('stage');
+    if (!stage) return;
+    if ('inert' in stage) stage.inert = on;
+    dom.setAttr(stage, 'aria-hidden', on ? 'true' : null);
+  }
+
   /* No field of its own. The window has exactly one, it is already behind
      everything, and the shell drives it to `locked` the moment the lock state
-     arrives. A second field here would paint an opaque ground over the dimmed
-     shell, and the point of dimming rather than hiding is that a person can
-     still see their balance without unlocking. */
+     arrives. A second field here would paint an opaque ground over the
+     frosted shell. */
   function shell() {
     dom.clear(refs.host);
     var card = dom.el('div', 'screen-card');

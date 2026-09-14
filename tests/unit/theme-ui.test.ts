@@ -4,7 +4,7 @@
 // are written, so the stylesheet's [data-profile] block is what the chart reads its text colour
 // from. The label on the action fill is the ground whenever the ground reads on the accent, which
 // is what puts green letters on the black button of the green colourway. And a colourway that is
-// not one of the three leaves the attribute alone: the server never sends one, and the root falling
+// not one of the two leaves the attribute alone: the server never sends one, and the root falling
 // back to green on black is the right answer to a name it has never heard.
 
 import test from 'node:test';
@@ -68,12 +68,10 @@ test('a colourway is written as data-profile on the root, and the chart reads it
   assert.equal(ui.miniRethemes(), 1);
 });
 
-test('the label on the action fill is the ground, in all three colourways', () => {
+test('the label on the action fill is the ground, in both colourways', () => {
   const ui = load();
   ui.apply(colourwayTheme('green-on-black'));
   assert.equal(ui.props['--on-ink'], 'rgb(14, 15, 19)');
-  ui.apply(colourwayTheme('black-on-green'));
-  assert.equal(ui.props['--on-ink'], 'rgb(63, 255, 108)');
   ui.apply(colourwayTheme('black-on-white'));
   assert.equal(ui.props['--on-ink'], 'rgb(255, 255, 255)');
 });
@@ -86,7 +84,7 @@ test('a surface is lifted toward black on a light ground and toward white on a d
   assert.equal(ui.props['--bg-1'], 'rgb(22, 23, 27)');
 });
 
-test('a colourway that is not one of the three leaves the attribute alone', () => {
+test('a colourway that is not one of the two leaves the attribute alone', () => {
   const ui = load();
   ui.apply({ ...colourwayTheme('green-on-black'), profile: 'sepia' });
   assert.equal('data-profile' in ui.attrs, false);
@@ -95,7 +93,7 @@ test('a colourway that is not one of the three leaves the attribute alone', () =
 
 test('the same theme twice is applied once', () => {
   const ui = load();
-  ui.apply(colourwayTheme('black-on-green'));
-  ui.apply(colourwayTheme('black-on-green'));
+  ui.apply(colourwayTheme('black-on-white'));
+  ui.apply(colourwayTheme('black-on-white'));
   assert.equal(ui.chartCalls.length, 1);
 });
