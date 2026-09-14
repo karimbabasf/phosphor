@@ -38,11 +38,11 @@
       </button>
       <div class="colourways" id="colourways" role="menu" aria-label="Colourway" tabindex="-1">
         <button class="colourway" type="button" role="menuitemradio" data-profile="green-on-black" aria-checked="true">
-          <svg class="colourway-tile" aria-hidden="true"><use href="#phosphor-mark"/></svg>
+          <svg class="mark-tile colourway-tile" data-profile="green-on-black" aria-hidden="true"><use href="#phosphor-mark"/></svg>
           <span>Green on black</span>
         </button>
         <button class="colourway" type="button" role="menuitemradio" data-profile="black-on-white" aria-checked="false">
-          <svg class="colourway-tile" aria-hidden="true"><use href="#phosphor-mark"/></svg>
+          <svg class="mark-tile colourway-tile" data-profile="black-on-white" aria-hidden="true"><use href="#phosphor-mark"/></svg>
           <span>Black on white</span>
         </button>
       </div>
@@ -68,6 +68,9 @@
         <span class="dot" aria-hidden="true"></span>
         <span data-role="feed-text">Live</span>
       </span>
+      <button class="colourway-toggle" id="colourway-toggle" type="button" aria-label="Switch to black on white" title="Black on white">
+        <svg class="mark-tile colourway-toggle-tile" data-profile="black-on-white" aria-hidden="true"><use href="#phosphor-mark"/></svg>
+      </button>
       <button class="btn btn-danger" id="btn-freeze">
         <span class="btn-label">Freeze everything</span>
       </button>

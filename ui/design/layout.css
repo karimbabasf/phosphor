@@ -214,10 +214,11 @@ html, body {
   outline-offset: -2px;
 }
 
-/* The tile is the mark on its own ground, at 20 px: the colourways as the
-   brand sheet shows them, not as swatches. The chosen one wears a ring in the
-   window's action colour. */
-.colourway-tile {
+/* A tile is the mark on its own ground: a colourway as the brand sheet shows
+   it, not a swatch. The menu rows and the bar's toggle both draw one, and the
+   colours are the brand's, fixed, never the window's tokens: a tile shows
+   what a colourway IS, whichever one is up. */
+.mark-tile {
   flex: 0 0 auto;
   width: 20px;
   height: 20px;
@@ -228,12 +229,52 @@ html, body {
   transition: box-shadow var(--dur-press) var(--ease-out);
 }
 
+.mark-tile[data-profile="green-on-black"] { background: #0E0F13; color: #3FFF6C; }
+.mark-tile[data-profile="black-on-white"] { background: #FFFFFF; color: #111111; }
+
+/* In the menu, the chosen tile wears a ring in the window's action colour. */
 .colourway[aria-checked="true"] .colourway-tile {
   box-shadow: 0 0 0 1px var(--bg-1), 0 0 0 2px var(--ink);
 }
 
-.colourway[data-profile="green-on-black"] .colourway-tile { background: #0E0F13; color: #3FFF6C; }
-.colourway[data-profile="black-on-white"] .colourway-tile { background: #FFFFFF; color: #111111; }
+/* ---------- the colourway toggle ----------
+
+   One button in the bar, beside the chips: the tile of the colourway the
+   window is NOT in, so the button shows what a press does rather than what
+   already is. With two colourways that is the whole control; the menu under
+   the wordmark is the same choice with its names on. */
+.colourway-toggle {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  transition: background-color var(--dur-press) var(--ease-out),
+              transform var(--dur-press) var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .colourway-toggle:hover { background: var(--bg-2); }
+  .colourway-toggle:hover .colourway-toggle-tile { box-shadow: 0 0 0 1px var(--line-strong), 0 0 0 3px var(--ink-wash); }
+}
+
+.colourway-toggle:active { transform: scale(0.94); }
+
+.colourway-toggle:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: -2px;
+}
+
+.colourway-toggle-tile {
+  width: 18px;
+  height: 18px;
+  padding: 3px;
+  border-radius: 5px;
+  transition: box-shadow var(--dur-press) var(--ease-out),
+              background-color var(--dur-swap) var(--ease-out),
+              color var(--dur-swap) var(--ease-out);
+}
 
 @keyframes breathe {
   0%, 100% { opacity: 1; }

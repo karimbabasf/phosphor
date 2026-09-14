@@ -28,6 +28,7 @@
     refs.glyph = document.getElementById('wordmark-glyph');
     refs.wordmark = document.getElementById('wordmark');
     refs.colourways = document.getElementById('colourways');
+    refs.colourwayToggle = document.getElementById('colourway-toggle');
     refs.stage = document.getElementById('stage');
     refs.conversation = document.getElementById('conversation');
     refs.conversationBody = document.getElementById('conversation-body');
@@ -188,6 +189,18 @@
       closeColourways();
     });
 
+    /* The bar's toggle: one press, the other colourway. It reads the current
+       one off the same theme the menu does, so the two never disagree. */
+    if (refs.colourwayToggle) {
+      dom.on(refs.colourwayToggle, 'click', function () {
+        var next = refs.colourwayToggle.dataset.next;
+        if (!next) return;
+        api.colourway(next).catch(function (err) {
+          window.PhosphorToast.show(net.readable(err), 'down');
+        });
+      });
+    }
+
     store.select('theme', renderColourway);
   }
 
@@ -221,14 +234,25 @@
     });
   }
 
+  var COLOURWAY_LABEL = { 'green-on-black': 'Green on black', 'black-on-white': 'Black on white' };
+
   /* The checked row is whatever the server says the window is, never what was
-     last clicked here. */
+     last clicked here; the toggle shows the one it would go to. */
   function renderColourway(theme) {
-    if (!refs.colourways) return;
     var current = theme && typeof theme.profile === 'string' ? theme.profile : 'green-on-black';
-    var rows = refs.colourways.querySelectorAll('[data-profile]');
-    for (var i = 0; i < rows.length; i += 1) {
-      dom.setAttr(rows[i], 'aria-checked', rows[i].dataset.profile === current ? 'true' : 'false');
+    if (refs.colourways) {
+      var rows = refs.colourways.querySelectorAll('[data-profile]');
+      for (var i = 0; i < rows.length; i += 1) {
+        dom.setAttr(rows[i], 'aria-checked', rows[i].dataset.profile === current ? 'true' : 'false');
+      }
+    }
+    if (refs.colourwayToggle) {
+      var next = current === 'black-on-white' ? 'green-on-black' : 'black-on-white';
+      refs.colourwayToggle.dataset.next = next;
+      dom.setAttr(refs.colourwayToggle, 'aria-label', 'Switch to ' + COLOURWAY_LABEL[next].toLowerCase());
+      dom.setAttr(refs.colourwayToggle, 'title', COLOURWAY_LABEL[next]);
+      var tile = refs.colourwayToggle.querySelector('.colourway-toggle-tile');
+      if (tile) dom.setAttr(tile, 'data-profile', next);
     }
   }
 
