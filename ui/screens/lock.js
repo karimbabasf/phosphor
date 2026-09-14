@@ -27,7 +27,7 @@
     if (state === 'unlocked') {
       dom.setHidden(refs.host, true);
       dom.setAttr(document.body, 'data-locked', null);
-      setStageInert(false);
+      setPageInert(false);
       mode = null;
       return;
     }
@@ -39,21 +39,21 @@
     if (mode === state) return;
     mode = state;
     dom.setAttr(document.body, 'data-locked', 'true');
-    setStageInert(true);
+    setPageInert(true);
     dom.setHidden(refs.host, false);
     if (state === 'needs_migration') buildMigrate();
     else buildLock();
   }
 
-  /* The blurred stage is also an inert one: the stylesheet takes the pointer
+  /* The blurred page is also an inert one: the stylesheet takes the pointer
      and the selection, this takes the keyboard and the accessibility tree, so
      a balance nobody can see is not a balance a Tab press or a screen reader
      can still reach. Both halves are undone on unlock. */
-  function setStageInert(on) {
-    var stage = document.getElementById('stage');
-    if (!stage) return;
-    if ('inert' in stage) stage.inert = on;
-    dom.setAttr(stage, 'aria-hidden', on ? 'true' : null);
+  function setPageInert(on) {
+    var page = document.getElementById('page');
+    if (!page) return;
+    if ('inert' in page) page.inert = on;
+    dom.setAttr(page, 'aria-hidden', on ? 'true' : null);
   }
 
   /* No field of its own. The window has exactly one, it is already behind

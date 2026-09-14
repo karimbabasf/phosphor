@@ -269,79 +269,50 @@
   height: 100%;
 }
 
-/* THE SEAT. One ring above the headline, and it is the only thing on this card
-   that a person can read from across the room. Empty and grey when nobody is
-   there, filling while one comes up, lit and holding once one is. The card said
-   the same sentence in all three states before it existed, so pressing Start
-   changed the chip and nothing a person was looking at. */
+/* THE SEAT. The mark above the headline, and it is the only thing on this
+   card that a person can read from across the room. Grey when nobody is
+   there, waking while one comes up, lit and holding once one is. The card
+   said the same sentence in all three states before it existed, so pressing
+   Start changed the chip and nothing a person was looking at. It was a ring
+   with a dot until 2026-09-14; the mark carries the same three answers in
+   the same colours, and the topbar glyph is the same mark in the same states,
+   so the two agree from across the room too. */
 .agent-seat {
-  position: relative;
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--line);
-  transition: border-color var(--dur-enter) var(--ease-out),
-              box-shadow var(--dur-enter) var(--ease-out);
+  width: 32px;
+  height: 36px;
+  color: var(--text-3);
+  transition: color var(--dur-enter) var(--ease-out),
+              filter var(--dur-enter) var(--ease-out);
 }
 
-.agent-seat-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--text-3);
-  transition: background-color var(--dur-enter) var(--ease-out),
-              box-shadow var(--dur-enter) var(--ease-out),
-              transform var(--dur-enter) var(--ease-out);
+.agent-seat-mark {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
+/* Waking while the agent comes up: it breathes rather than spins, because a
+   sweep that is not measuring anything is the lie this deliberately does not
+   tell. */
 .agent-seat[data-seat="coming"] {
-  border-color: color-mix(in srgb, var(--beam) 45%, var(--line));
+  color: color-mix(in srgb, var(--beam) 60%, var(--text-3));
+  animation: waking 1800ms var(--ease-out) infinite;
 }
 
-/* The ring fills while the agent comes up. It is a real measure of nothing, so
-   it is a sweep rather than a percentage: a progress bar that is not measuring
-   anything is the lie this deliberately does not tell. */
-.agent-seat[data-seat="coming"]::after {
-  content: "";
-  position: absolute;
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  border: 1px solid transparent;
-  border-top-color: var(--beam);
-  animation: seatspin 900ms linear infinite;
+@keyframes waking {
+  0%, 100% { opacity: 0.45; }
+  50%      { opacity: 1; }
 }
 
-@keyframes seatspin {
-  to { transform: rotate(360deg); }
-}
-
-.agent-seat[data-seat="coming"] .agent-seat-dot {
-  background: color-mix(in srgb, var(--beam) 60%, var(--text-3));
-}
-
-/* Mixed against the line colour rather than against `transparent`. Mixing a
-   tone into transparency premultiplies it toward nothing and lands on a
-   near-neutral, which on this ground is the grey it was trying not to be. */
 .agent-seat[data-seat="live"] {
-  border-color: color-mix(in srgb, var(--beam) 65%, var(--line));
-  box-shadow: 0 0 24px -8px var(--beam);
-}
-
-.agent-seat[data-seat="live"] .agent-seat-dot {
-  background: var(--beam);
-  box-shadow: 0 0 10px -1px var(--beam);
-  animation: strike 1500ms linear infinite;
+  color: var(--beam);
+  filter: drop-shadow(var(--beam-glow));
 }
 
 .agent-seat[data-seat="error"] {
-  border-color: color-mix(in srgb, var(--down) 65%, var(--line));
-  box-shadow: 0 0 20px -10px var(--down);
+  color: var(--down);
+  filter: none;
 }
-
-.agent-seat[data-seat="error"] .agent-seat-dot { background: var(--down); }
 
 .agent-empty-inner:has(.agent-seat[data-seat="error"]) .title { color: var(--down); }
 
@@ -1292,12 +1263,11 @@
   .layers-pop { transition-duration: 1ms; }
   .step[data-state="live"] .step-dot,
   .turn-dot,
-  .agent-seat[data-seat="live"] .agent-seat-dot,
   .wordmark-glyph[data-state="working"] { animation: none; opacity: 0.8; }
   .turn-bar { animation: none; }
-  /* The ring stops turning and stays a ring: the state is carried by its
-     colour, which is the half of it that meant something. */
-  .agent-seat[data-seat="coming"]::after { animation: none; border-color: var(--beam); opacity: 0.4; }
+  /* The mark stops breathing and holds: the state is carried by its colour,
+     which is the half of it that meant something. */
+  .agent-seat[data-seat="coming"] { animation: none; opacity: 0.7; }
 }
 
 /* ---------- the rail ----------
@@ -1562,24 +1532,26 @@ dialog.confirm::backdrop {
 
 /* ---------- locked: nothing behind the card can be read ---------- */
 
-/* Behind the lock the stage is frosted: the shape of the window survives, no
-   number does. Karim, 2026-09-14: nothing is visible until the password is in.
-   It used to be dimmed and readable, on the argument that a filter on a
-   container re-blurs on every repaint under it and locked is the state an
-   unattended app sits in longest. The cost is bounded now: the field, which
-   was the only thing painting every frame, stops the moment the body is
-   locked (pattern.js watches data-locked), so the blur is rasterised once and
-   again only when a price ticks. What is blurred is also taken out of reach:
-   no pointer, no selection, and lock.js marks the stage inert so neither the
-   keyboard nor a screen reader can walk into it. The stage is the only thing
-   filtered, and nothing fixed lives inside it, so the filter re-anchors
-   nothing. Unlocking releases it over one enter duration. */
-.stage {
+/* Behind the lock the whole page is frosted, top bar included: the shape of
+   the window survives, no word does. Karim, 2026-09-14: nothing is visible
+   until the password is in, and the bar goes with it. It used to be dimmed
+   and readable, on the argument that a filter on a container re-blurs on
+   every repaint under it and locked is the state an unattended app sits in
+   longest. The cost is bounded now: the field, which was the only thing
+   painting every frame, stops the moment the body is locked (pattern.js
+   watches data-locked), so the blur is rasterised once and again only when a
+   price ticks. What is blurred is also taken out of reach: no pointer, no
+   selection, and lock.js marks the page inert so neither the keyboard nor a
+   screen reader can walk into it, which puts Freeze behind the password too.
+   #page is the only thing filtered, and nothing fixed lives inside it (the
+   beam canvas, the toasts and the screens are its siblings), so the filter
+   re-anchors nothing. Unlocking releases it over one enter duration. */
+#page {
   transition: filter var(--dur-enter) var(--ease-out),
               opacity var(--dur-enter) var(--ease-out);
 }
 
-body[data-locked="true"] .stage {
+body[data-locked="true"] #page {
   filter: blur(28px);
   opacity: 0.5;
   pointer-events: none;
@@ -1587,16 +1559,12 @@ body[data-locked="true"] .stage {
   user-select: none;
 }
 
-body[data-locked="true"] .topbar .tabs {
-  opacity: 0.4;
-  pointer-events: none;
-}
-
 /* The screen's ground finishes the job the blur starts: heavy enough that a
-   44 px balance under 28 px of blur is a tint and not a shape. */
+   44 px balance under 28 px of blur is a tint and not a shape. It covers the
+   bar as well, so the card is the only thing on screen. */
 .screen {
   position: fixed;
-  inset: var(--topbar-h) 0 0 0;
+  inset: 0;
   z-index: 60;
   background: color-mix(in srgb, var(--bg-0) 86%, transparent);
 }

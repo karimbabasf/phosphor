@@ -18,6 +18,30 @@
     if (node.textContent !== value) node.textContent = value;
   }
 
+  /* The app's own mark, as an svg that points at the one copy index.html holds
+     (<symbol id="phosphor-mark">), so every mark in the window is the colour of
+     the element that holds it. Built in the svg namespace rather than by
+     innerHTML: the screens that draw a mark are the screens that also render a
+     model's text, and they are held to never assigning markup at all. Returns
+     null where there is no svg namespace to build in, which is the test
+     harness's stand-in document, and every caller treats null as "no mark". */
+  var SVG_NS = 'http://www.w3.org/2000/svg';
+  var XLINK_NS = 'http://www.w3.org/1999/xlink';
+
+  function mark(className) {
+    if (typeof document.createElementNS !== 'function') return null;
+    var svg = document.createElementNS(SVG_NS, 'svg');
+    if (className) svg.setAttribute('class', className);
+    svg.setAttribute('viewBox', '0 0 58.05 64.75');
+    svg.setAttribute('focusable', 'false');
+    svg.setAttribute('aria-hidden', 'true');
+    var use = document.createElementNS(SVG_NS, 'use');
+    use.setAttribute('href', '#phosphor-mark');
+    use.setAttributeNS(XLINK_NS, 'xlink:href', '#phosphor-mark');
+    svg.appendChild(use);
+    return svg;
+  }
+
   function setAttr(node, name, value) {
     if (!node) return;
     if (value === null || value === false || value === undefined) {
@@ -196,6 +220,7 @@
 
   window.PhosphorDom = {
     el: el,
+    mark: mark,
     setText: setText,
     setAttr: setAttr,
     setHidden: setHidden,

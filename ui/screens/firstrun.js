@@ -29,7 +29,7 @@
     if (!host || open_) return;
     open_ = true;
     dom.setAttr(document.body, 'data-locked', 'true');
-    setStageInert(true);
+    setPageInert(true);
     dom.setHidden(host, false);
     dom.clear(host);
     /* The window's one field is already behind this, and the shell holds it at
@@ -46,17 +46,17 @@
     open_ = false;
     dom.setHidden(host, true);
     dom.setAttr(document.body, 'data-locked', null);
-    setStageInert(false);
+    setPageInert(false);
     window.PhosphorShell.refresh({});
   }
 
-  /* Same pair as lock.js: the stage behind this card is frosted by the
+  /* Same pair as lock.js: the page behind this card is frosted by the
      stylesheet and taken off the keyboard and the accessibility tree here. */
-  function setStageInert(on) {
-    var stage = document.getElementById('stage');
-    if (!stage) return;
-    if ('inert' in stage) stage.inert = on;
-    dom.setAttr(stage, 'aria-hidden', on ? 'true' : null);
+  function setPageInert(on) {
+    var page = document.getElementById('page');
+    if (!page) return;
+    if ('inert' in page) page.inert = on;
+    dom.setAttr(page, 'aria-hidden', on ? 'true' : null);
   }
 
   function go(next) {
@@ -111,11 +111,11 @@
   /* 1 */
   function screenWhat() {
     /* The mark above the name, in the window's own light: the one screen that
-       introduces the product opens on the thing it is recognised by. Built by
-       innerHTML for the reason marks.js gives: createElement cannot make an svg. */
+       introduces the product opens on the thing it is recognised by. */
     var mark = dom.el('div', 'firstrun-mark');
     mark.setAttribute('aria-hidden', 'true');
-    mark.innerHTML = '<svg viewBox="0 0 58.05 64.75" focusable="false"><use href="#phosphor-mark"/></svg>';
+    var markSvg = dom.mark();
+    if (markSvg) mark.appendChild(markSvg);
     card.appendChild(mark);
     card.appendChild(dom.el('h1', 'headline', 'Phosphor'));
     card.appendChild(dom.el('p', 'body', 'Phosphor lets your AI assistant use your money, without ever letting it spend your money. You decide. Every time.'));

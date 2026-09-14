@@ -286,8 +286,13 @@
        a thing that can be done. */
     var empty = dom.el('div', 'agent-empty');
     var emptyInner = dom.el('div', 'agent-empty-inner');
+    /* The seat is the mark (Karim, 2026-09-14: the ring and its dot gave way
+       to the logo). It keeps the seat's three answers by colour: grey when
+       nobody is there, waking while one comes up, lit once one is. */
     var emptySeat = dom.el('div', 'agent-seat');
-    emptySeat.appendChild(dom.el('span', 'agent-seat-dot'));
+    emptySeat.setAttribute('aria-hidden', 'true');
+    var seatMark = dom.mark('agent-seat-mark');
+    if (seatMark) emptySeat.appendChild(seatMark);
     emptyInner.appendChild(emptySeat);
     var emptyTitle = dom.el('p', 'title', 'Nobody is at the wheel.');
     var emptyNote = dom.el('p', 'meta', 'Start your assistant, or connect one you already use.');
