@@ -136,7 +136,12 @@
        no content and nothing where there is, which is the same result honestly. */
     '  float grey = dot(u_ink, vec3(0.2126, 0.7152, 0.0722));',
     '  vec3 ink = mix(vec3(grey), u_ink, u_sat);',
-    '  vec3 col = u_ground + ink * glow * u_amp * breath;',
+    /* Mixed toward the ink rather than added to the ground. On graphite the two
+       are the same picture to within a rounding; on the light colourways, where
+       the ink is black, adding it painted nothing and the field went flat. A mix
+       darkens the ground toward the ink by the same tenth the glow lightens it
+       on black, so the pulse reads on every ground. */
+    '  vec3 col = mix(u_ground, ink, clamp(glow * u_amp * breath, 0.0, 1.0));',
     '',
     /* A gradient this dark banks into visible bands on an 8-bit display. A
        sub-step of noise costs nothing and removes them. */

@@ -27,7 +27,7 @@
    below pulls the live values off the document at boot, so the stylesheet stays the source of
    truth and this table is only the floor.
 
-   Up is #33FF66, the phosphor green the app is named for and the accent slot for the whole
+   Up is #3FFF6C, the phosphor green the app is named for and the accent slot for the whole
    application; down is #FF5A6E. The chart is not the one surface with its own hue, because the
    green is the window's green.
 
@@ -42,12 +42,12 @@
    Down is still lighter than the approval gate's alarm red so the gate stays the only alarm on
    the page. Nothing here can repaint that gate: it is a CSS token this file never touches. */
 var CHART_TOKENS = {
-  bg0: '#0B0D10',
-  bg1: '#111418',
-  line: '#232830',
+  bg0: '#0E0F13',
+  bg1: '#151619',
+  line: '#262729',
   text: '#ECEEF1',
   text2: '#9BA1AB',
-  up: '#33FF66',
+  up: '#3FFF6C',
   down: '#FF5A6E',
   agent: '#B79CFF',
   warn: '#F2B544'
@@ -65,17 +65,28 @@ var C_HI = '#8FFFAB';
 var RGB_ACCENT = '91, 141, 239';
 var RGB_DOWN = '255, 90, 110';
 var RGB_AGENT = '183, 156, 255';
-var RGB_LINE = '35, 40, 48';
+var RGB_LINE = '38, 39, 41';
 var RGB_TEXT = '236, 238, 241';
 var RGB_TEXT2 = '155, 161, 171';
 
 /* "#5b8def" or "#5be" to "91, 141, 239". Returns null on anything else, and every caller
    treats null as "leave the colour alone": a bad value from the server must never be able to
    blank the chart. The server refuses non-hex before it ever gets here; this is the second
-   wall, because a colour is the one agent-supplied string that reaches a canvas. */
+   wall, because a colour is the one agent-supplied string that reaches a canvas.
+
+   "rgb(246, 246, 246)" is read too, because that is the shape theme.js writes every token in
+   once a theme has been applied. Until it was, a token read off the document after the first
+   theme frame was refused here and the dark fallback stood: invisible on graphite, and a dark
+   chart on a white window the moment a light colourway existed. */
 function rgbTriple(hex) {
   if (typeof hex !== 'string') return null;
   var value = hex.trim().toLowerCase();
+  var rgb = /^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*(?:,\s*[\d.]+\s*)?\)$/.exec(value);
+  if (rgb) {
+    var parts = [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])];
+    if (parts[0] > 255 || parts[1] > 255 || parts[2] > 255) return null;
+    return parts.join(', ');
+  }
   if (!/^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/.test(value)) return null;
   if (value.length === 4) {
     value = '#' + value[1] + value[1] + value[2] + value[2] + value[3] + value[3];
@@ -122,7 +133,12 @@ function chartTheme(theme) {
   var up = chosen(theme.up);
   var down = chosen(theme.down);
   var agent = chosen(theme.agent);
-  var before = [C_BG, C_UP, C_DOWN, C_HI, RGB_ACCENT, RGB_DOWN, RGB_AGENT].join('|');
+  var before = [C_BG, C_UP, C_DOWN, C_HI, RGB_ACCENT, RGB_DOWN, RGB_AGENT, RGB_LINE, RGB_TEXT, RGB_TEXT2].join('|');
+
+  /* The structure first. A colourway moves the grid, the axes and the labels, which no slot
+     carries, so they are read off the document again here rather than once at boot. The slots
+     below then land on top, as they always did. */
+  readTokens();
 
   if (accent !== null) C_HI = lighten(theme.accent, 0.45);
   if (ground !== null) C_BG = 'rgb(' + ground + ')';
@@ -136,7 +152,7 @@ function chartTheme(theme) {
   }
   if (agent !== null) RGB_AGENT = agent;
 
-  if ([C_BG, C_UP, C_DOWN, C_HI, RGB_ACCENT, RGB_DOWN, RGB_AGENT].join('|') === before) return;
+  if ([C_BG, C_UP, C_DOWN, C_HI, RGB_ACCENT, RGB_DOWN, RGB_AGENT, RGB_LINE, RGB_TEXT, RGB_TEXT2].join('|') === before) return;
   if (typeof chartInvalidate === 'function') chartInvalidate(true);
 }
 window.chartTheme = chartTheme;

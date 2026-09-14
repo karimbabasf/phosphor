@@ -68,11 +68,20 @@ test('the shell and the backend agree on the channel and the injected global', (
   assert.ok(shell.includes('window.__PHOSPHOR_TOKEN__'), 'the shell injects the token into the page');
   assert.ok(shell.includes('.initialization_script(&script)'), 'through an initialization script, so it runs before page script');
   // On the control window only. A splash that carried the token would put it on a second webview
-  // for no reason, and the splash is created by a different builder call.
+  // for no reason, and the splash is created by a different builder call. The splash does get a
+  // script of its own since the colourways: it carries one of three literal colourway names read
+  // off theme.json, and nothing else, so what is asserted is that the token is not in it.
   const controlBlock = shell.slice(shell.indexOf('fn open_control_window'), shell.indexOf('fn refuse_existing'));
   assert.ok(controlBlock.includes('initialization_script'), 'the injection sits in open_control_window');
-  const splashBlock = shell.slice(shell.indexOf('"splash"'));
-  assert.ok(!splashBlock.includes('initialization_script'), 'the splash window never receives it');
+  const splashStart = shell.indexOf('WebviewWindowBuilder::new(&handle, "splash"');
+  assert.ok(splashStart >= 0, 'the splash builder is where it was');
+  const splashBlock = shell.slice(splashStart, shell.indexOf('.build()?;', splashStart));
+  assert.ok(!splashBlock.includes('__PHOSPHOR_TOKEN__'), 'the splash window never receives the token');
+  assert.ok(!splashBlock.includes('token'), 'nothing named token reaches the splash builder');
+  assert.ok(!shell.slice(shell.indexOf('"splash"')).includes('initialization_script(&script)'), 'the token script is injected once, before the splash is ever named');
+  assert.ok(splashBlock.includes('window.__PHOSPHOR_PROFILE__ = \\"{colourway}\\"'), 'the splash receives the colourway, as one literal');
+  const readBlock = shell.slice(shell.indexOf('fn saved_colourway'), shell.indexOf('fn payload_dir'));
+  assert.ok(readBlock.includes('COLOURWAYS.iter().copied().find(|known| *known == name)'), 'and only a name matching one of the three verbatim is ever handed over');
 });
 
 test('the shell refuses to inject anything that is not hex', () => {

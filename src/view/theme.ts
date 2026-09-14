@@ -21,6 +21,14 @@
 // so anything that is not provably a colour is a string an agent chose landing in a stylesheet.
 // `#rgb` and `#rrggbb` are the whole grammar. Named colours would be safe too and are still
 // refused: one shape is one thing to prove.
+//
+// THE COLOURWAYS. The mark ships in three: green on black, black on green, black on white
+// (brand/README.md). Each is a whole palette, not five slots: the text, the warning amber and
+// the gate's red all have to change with the ground, because the amber that reads on graphite
+// vanishes on phosphor green and no single red clears 4.5:1 on both. So a colourway carries its
+// own gate red, and the agent still cannot name it: it can pick a colourway, and every colourway
+// was checked against every floor before it was written down (tests/unit/theme-slots.test.ts).
+// The five slots then sit on top of whichever colourway is current, exactly as before.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -30,9 +38,13 @@ const FILE = 'theme.json';
 
 export type ThemeSlot = 'accent' | 'background' | 'up' | 'down' | 'agent';
 
-export type Theme = Record<ThemeSlot, string>;
+export type Colourway = 'green-on-black' | 'black-on-green' | 'black-on-white';
+
+export type Theme = Record<ThemeSlot, string> & { profile: Colourway };
 
 export const THEME_SLOTS: readonly ThemeSlot[] = ['accent', 'background', 'up', 'down', 'agent'];
+
+export const COLOURWAYS: readonly Colourway[] = ['green-on-black', 'black-on-green', 'black-on-white'];
 
 // What every slot means, handed to the agent in the tool description so it never has to guess
 // which one moves which pixels.
@@ -44,17 +56,65 @@ export const SLOT_MEANING: Readonly<Record<ThemeSlot, string>> = {
   agent: 'the levels, marks and trend lines the agent itself drew, so its own work can be told from the human’s',
 };
 
-export const DEFAULT_THEME: Theme = {
-  accent: '#33ff66',
-  background: '#0b0d10',
-  up: '#33ff66',
-  down: '#ff5a6e',
-  agent: '#b79cff',
+export type Palette = {
+  // The five slots as the colourway ships them.
+  slots: Record<ThemeSlot, string>;
+  // The tokens no slot reaches. The window paints them from ui/design/tokens.css, which carries
+  // the same values under [data-profile]; the test that pins the two together reads both.
+  text: string;
+  text2: string;
+  text3: string;
+  warn: string;
+  // The gate's red for this ground. Checked like a slot, never settable like one.
+  gate: string;
 };
 
-// The gate's red. Not a slot, checked like one: whatever the background becomes, the colour the
-// app refuses and warns in has to stay readable on it.
-const GATE_RED = '#ff3b30';
+export const COLOURWAY_PALETTE: Readonly<Record<Colourway, Palette>> = {
+  'green-on-black': {
+    slots: { accent: '#3fff6c', background: '#0e0f13', up: '#3fff6c', down: '#ff5a6e', agent: '#b79cff' },
+    text: '#eceef1',
+    text2: '#9ba1ab',
+    text3: '#5e656f',
+    warn: '#f5b942',
+    gate: '#ff3b30',
+  },
+  'black-on-green': {
+    slots: { accent: '#0e0f13', background: '#3fff6c', up: '#0e0f13', down: '#b3001b', agent: '#4b1fa6' },
+    text: '#0e0f13',
+    text2: '#153d21',
+    text3: '#1f6b35',
+    warn: '#8a4300',
+    gate: '#a8000f',
+  },
+  'black-on-white': {
+    slots: { accent: '#111111', background: '#ffffff', up: '#0f8f3a', down: '#d8213a', agent: '#6b3fd6' },
+    text: '#111111',
+    text2: '#5c6169',
+    text3: '#8a9099',
+    warn: '#9a5f00',
+    gate: '#d0261a',
+  },
+};
+
+// How a colourway is described to the agent and labelled for the human, one line each.
+export const COLOURWAY_LABEL: Readonly<Record<Colourway, string>> = {
+  'green-on-black': 'Green on black',
+  'black-on-green': 'Black on green',
+  'black-on-white': 'Black on white',
+};
+
+export const DEFAULT_COLOURWAY: Colourway = 'green-on-black';
+
+/* The theme a colourway starts as: its own five slots and its name. */
+export function colourwayTheme(profile: Colourway): Theme {
+  return { ...COLOURWAY_PALETTE[profile].slots, profile };
+}
+
+export const DEFAULT_THEME: Theme = colourwayTheme(DEFAULT_COLOURWAY);
+
+export function isColourway(raw: unknown): raw is Colourway {
+  return typeof raw === 'string' && (COLOURWAYS as readonly string[]).includes(raw);
+}
 
 // Two floors, because two kinds of thing are being checked.
 //
@@ -65,8 +125,8 @@ const GATE_RED = '#ff3b30';
 // A MARK is 3:1, WCAG's floor for a non-text graphical object. A candle body is a shape whose
 // position carries the meaning, not a glyph. The split was found when a single 4.5 floor
 // refused a down-candle the window had shipped with for months.
-const MIN_TEXT_CONTRAST = 4.5;
-const MIN_MARK_CONTRAST = 3;
+export const MIN_TEXT_CONTRAST = 4.5;
+export const MIN_MARK_CONTRAST = 3;
 
 const HEX = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
@@ -116,18 +176,35 @@ type ThemeOutcome =
   | { ok: false; error: string };
 
 /* Take a patch of named slots and produce the theme that would result, or the reason it will
-   not be written. Pure: it reads and writes nothing, so the same check runs in a test. */
+   not be written. Pure: it reads and writes nothing, so the same check runs in a test.
+
+   Order inside one patch: the colourway first, then reset, then the slots. So
+   { profile: 'black-on-white', accent: '#5b8def' } is the white colourway with a blue action
+   colour, and reset:true puts the slots back to the colourway that is current, not to green on
+   black: a person who chose white and an agent that then resets should not be handed a
+   different ground. */
 export function applyPatch(current: Theme, patch: Record<string, unknown>): ThemeOutcome {
   const next: Theme = { ...current };
   const notes: string[] = [];
 
+  if (patch.profile !== undefined) {
+    if (!isColourway(patch.profile)) {
+      return {
+        ok: false,
+        error: `unknown colourway: ${JSON.stringify(patch.profile)}. the colourways are ${COLOURWAYS.join(', ')}`,
+      };
+    }
+    if (patch.profile !== next.profile) notes.push(`colourway ${next.profile} to ${patch.profile}`);
+    Object.assign(next, colourwayTheme(patch.profile));
+  }
+
   if (patch.reset === true) {
-    for (const slot of THEME_SLOTS) next[slot] = DEFAULT_THEME[slot];
-    notes.push('every colour back to the default phosphor green');
+    for (const slot of THEME_SLOTS) next[slot] = COLOURWAY_PALETTE[next.profile].slots[slot];
+    notes.push(`every colour back to ${COLOURWAY_LABEL[next.profile].toLowerCase()}`);
   }
 
   const unknown = Object.keys(patch).filter(
-    (key) => key !== 'reset' && !THEME_SLOTS.includes(key as ThemeSlot),
+    (key) => key !== 'reset' && key !== 'profile' && !THEME_SLOTS.includes(key as ThemeSlot),
   );
   if (unknown.length > 0) {
     return {
@@ -151,7 +228,7 @@ export function applyPatch(current: Theme, patch: Record<string, unknown>): Them
   const checks: { what: string; colour: string; floor: number }[] = [
     { what: 'accent', colour: next.accent, floor: MIN_TEXT_CONTRAST },
     { what: 'agent', colour: next.agent, floor: MIN_TEXT_CONTRAST },
-    { what: "the approval gate's red", colour: GATE_RED, floor: MIN_TEXT_CONTRAST },
+    { what: "the approval gate's red", colour: COLOURWAY_PALETTE[next.profile].gate, floor: MIN_TEXT_CONTRAST },
     { what: 'up', colour: next.up, floor: MIN_MARK_CONTRAST },
     { what: 'down', colour: next.down, floor: MIN_MARK_CONTRAST },
   ];
@@ -180,13 +257,16 @@ export function readTheme(dataDir: string): Theme {
     const raw = fs.readFileSync(filePathFor(dataDir), 'utf8');
     const parsed = JSON.parse(raw) as Record<string, unknown> | null;
     if (parsed === null || typeof parsed !== 'object') return { ...DEFAULT_THEME };
-    const out: Theme = { ...DEFAULT_THEME };
+    // A file from before the colourways has no profile line and means green on black, which
+    // is what every window painted then. An unknown name is treated the same way.
+    const profile = isColourway(parsed.profile) ? parsed.profile : DEFAULT_COLOURWAY;
+    const out: Theme = colourwayTheme(profile);
     for (const slot of THEME_SLOTS) {
       const colour = normaliseColour(parsed[slot]);
       if (colour !== null) out[slot] = colour;
     }
     // A file that was hand-edited past the floor is treated as absent rather than obeyed.
-    const check = applyPatch(DEFAULT_THEME, out as unknown as Record<string, unknown>);
+    const check = applyPatch(colourwayTheme(profile), out as unknown as Record<string, unknown>);
     return check.ok ? check.theme : { ...DEFAULT_THEME };
   } catch {
     return { ...DEFAULT_THEME };

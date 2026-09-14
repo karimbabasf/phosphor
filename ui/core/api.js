@@ -58,6 +58,12 @@
       return net.postJson('/api/refuse', { id: id }, { busy: 'decision', label: 'Refusing' });
     },
 
+    /* The colourway the person picked from the mark's menu. Not a busy state: the
+       window repaints itself the moment it is clicked and the frame confirms it. */
+    colourway: function (profile) {
+      return net.postJson('/api/theme', { profile: profile });
+    },
+
     kill: function (on) {
       return net.postJson('/api/kill', { on: on }, { busy: 'kill', label: on ? 'Freezing' : 'Unfreezing' });
     },

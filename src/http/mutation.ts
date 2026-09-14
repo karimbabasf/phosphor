@@ -1,6 +1,6 @@
-// The mutating routes: the browser's four token-checked writes (approve, refuse, kill, the
-// driver), and the two pieces of app state an agent may set directly (the basic screen's
-// coins, and which window is up).
+// The mutating routes: the browser's five token-checked writes (approve, refuse, kill, the
+// driver, the colourway), and the two pieces of app state an agent may set directly (the basic
+// screen's coins, and which window is up).
 //
 // Everything on this surface either changes money or changes what the human sees while they
 // decide about money, which is why every one of them is audited and every browser door carries
@@ -11,6 +11,7 @@ import type http from 'node:http';
 
 import type { ViewMode } from '../types.ts';
 import { writeCoins, MAX_COINS, MIN_COINS } from '../view/coins.ts';
+import { applyPatch as applyThemePatch, COLOURWAY_LABEL } from '../view/theme.ts';
 import { sameOrigin, tokenFingerprint, tokenMatches } from './auth.ts';
 import { errText, fail, readBody, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
@@ -224,6 +225,26 @@ export async function handleMutation(
     }
 
     return fail(res, 400, `unknown driver action: ${action}`);
+  }
+
+  /* The colourway the person picked from the mark's own menu. One field, because a person
+     picks a colourway and never types a hex: the five slots stay the agent's, through set_theme.
+     Same check the agent's patch goes through, so the window cannot pick a colourway that the
+     floors would refuse, and the same audit line, because it changes what a human sees while
+     they decide. */
+  if (route === '/api/theme') {
+    const result = applyThemePatch(ctx.theme.get(), { profile: body.profile });
+    if (!result.ok) {
+      fail(res, 400, result.error);
+      return;
+    }
+    ctx.theme.set(result.theme);
+    ctx.audit.append('theme_changed', `human picked ${COLOURWAY_LABEL[result.theme.profile].toLowerCase()}`, {
+      theme: result.theme,
+    });
+    ctx.sse.broadcastState();
+    sendJson(res, 200, { ok: true, theme: result.theme });
+    return;
   }
 
   if (route === '/api/kill') {

@@ -43,7 +43,8 @@ test("the approval gate's red is not reachable, so no patch can move it", () => 
   const out = applyPatch(DEFAULT_THEME, { accent: '#ffaa00' });
   assert.equal(out.ok, true);
   // Nothing named red came out the other side. The gate is a CSS token this file never writes.
-  assert.deepEqual(Object.keys(out.ok ? out.theme : {}).sort(), [...THEME_SLOTS].sort());
+  // The colourway rides along, and it is a name, not a colour.
+  assert.deepEqual(Object.keys(out.ok ? out.theme : {}).sort(), [...THEME_SLOTS, 'profile'].sort());
 });
 
 test('a background nothing is readable on is refused, and nothing is changed', () => {

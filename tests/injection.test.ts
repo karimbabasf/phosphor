@@ -396,7 +396,7 @@ test('the MCP process holds no path to an approval, and none to the human door',
   const source = fs.readFileSync(path.join(ROOT, 'src', 'mcp.ts'), 'utf8');
   // The decision routes, the human's trade controls (cancel, close, flatten) and custody. The
   // proxy speaks one route, /api/mcp, and that is the whole of what it may name.
-  for (const route of ['/api/approve', '/api/refuse', '/api/kill', '/api/trade', '/api/unlock', '/api/lock', '/api/wallet']) {
+  for (const route of ['/api/approve', '/api/refuse', '/api/kill', '/api/theme', '/api/trade', '/api/unlock', '/api/lock', '/api/wallet']) {
     assert.ok(!source.includes(route), `src/mcp.ts references ${route}`);
   }
   assert.equal(source.match(/\/api\/[a-z/-]+/g)?.every((route) => route === '/api/mcp'), true, 'src/mcp.ts names a route other than /api/mcp');

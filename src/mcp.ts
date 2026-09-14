@@ -13,7 +13,7 @@ import path from 'node:path';
 import { VERSION } from './version.ts';
 import { listSkills, readSkill } from './skills.ts';
 import { ALWAYS_CLICK_TOOLS, handshakeInstructions } from './persona.ts';
-import { THEME_SLOTS, SLOT_MEANING } from './view/theme.ts';
+import { THEME_SLOTS, SLOT_MEANING, COLOURWAYS, COLOURWAY_LABEL } from './view/theme.ts';
 import { readTimeout, venueWriteTimeout } from './net.ts';
 import { contentFor } from './mcp-content.ts';
 
@@ -621,13 +621,16 @@ function registerLeadView(name: string, description: string, shape: Record<strin
 registerLeadView(
   'set_theme',
   [
-    'Recolours the window. Five named slots, each a hex colour like #33ff66 or #3f6:',
+    'Recolours the window. A colourway, then five named slots on top of it.',
+    `profile — one of ${COLOURWAYS.join(', ')}: the three official colourways of the mark (${COLOURWAYS.map((c) => COLOURWAY_LABEL[c].toLowerCase()).join('; ')}). Picking one repaints everything, text included, and puts the five slots back to that colourway's own colours.`,
+    'The five slots, each a hex colour like #3fff6c or #3f6:',
     ...THEME_SLOTS.map((slot) => `  ${slot} — ${SLOT_MEANING[slot]}`),
-    'Pass reset:true to put every slot back to the default phosphor green. Omit a slot to leave it alone.',
+    "Pass reset:true to put every slot back to the current colourway's own colours. Omit a slot to leave it alone.",
     "The approval gate's red is NOT a slot and cannot be reached from here. It is the one alarm on the page and it stays the colour it is, so a pending decision can never be painted into the background.",
     'A colour that would leave anything unreadable on the ground is refused with the pair and the contrast ratio, and nothing is changed. Returns the theme as it now stands.',
   ].join('\n'),
   {
+    profile: z.enum(COLOURWAYS as unknown as [string, ...string[]]).optional(),
     accent: z.string().optional(),
     background: z.string().optional(),
     up: z.string().optional(),

@@ -44,12 +44,12 @@
   var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
   var tokens = {
-    bg1: '#111418',
-    line: '#232830',
+    bg1: '#151619',
+    line: '#262729',
     text: '#ECEEF1',
     text2: '#9BA1AB',
     text3: '#5E656F',
-    up: '#33FF66',
+    up: '#3FFF6C',
     down: '#FF5A6E',
     agent: '#B79CFF'
   };
@@ -515,5 +515,14 @@
     return m ? m.canvas : null;
   }
 
-  window.PhosphorMini = { boot: boot, probe: probe, canvasOf: canvasOf };
+  /* A colourway moved the tokens under every mounted mini. Read them again and repaint what
+     is up; a slot with no payload yet paints itself when its candles arrive. */
+  function retheme() {
+    readTokens();
+    for (var slot = 1; slot <= SLOT_MAX; slot += 1) {
+      if (minis[slot]) draw(minis[slot]);
+    }
+  }
+
+  window.PhosphorMini = { boot: boot, probe: probe, canvasOf: canvasOf, retheme: retheme };
 })();

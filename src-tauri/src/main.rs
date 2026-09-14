@@ -103,6 +103,20 @@ fn data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+/// The colourway the window was left in, read off state/theme.json so the splash can paint it
+/// before the backend is up. Best effort in every direction: no file, a file that is not JSON,
+/// or a name that is not one of the three all mean green on black, which is what the splash
+/// paints with no script at all. The three names are the whole grammar, and only a name that
+/// matches one of them verbatim is ever handed to the page, so nothing read off the disk can
+/// reach the initialization script as anything but one of these literals.
+fn saved_colourway(data: &Path) -> Option<&'static str> {
+    const COLOURWAYS: [&str; 3] = ["green-on-black", "black-on-green", "black-on-white"];
+    let raw = std::fs::read_to_string(data.join("state").join("theme.json")).ok()?;
+    let parsed: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let name = parsed.get("profile")?.as_str()?;
+    COLOURWAYS.iter().copied().find(|known| *known == name)
+}
+
 /// The payload directory: the old repo root, shipped verbatim.
 fn payload_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let dir = app
@@ -507,11 +521,18 @@ fn main() {
             app.set_menu(build_menu(&handle)?)?;
             app.on_menu_event(on_menu);
 
+            // The splash paints the colourway the window was last in. A data dir that cannot be
+            // resolved is reported by start() a moment later; here it only means the default.
+            let colourway = data_dir(&handle)
+                .ok()
+                .and_then(|data| saved_colourway(&data))
+                .unwrap_or("green-on-black");
             WebviewWindowBuilder::new(&handle, "splash", WebviewUrl::App("index.html".into()))
                 .title("PHOSPHOR")
                 .inner_size(420.0, 300.0)
                 .resizable(false)
                 .center()
+                .initialization_script(&format!("window.__PHOSPHOR_PROFILE__ = \"{colourway}\";"))
                 .build()?;
 
             if let Err(err) = start(&handle) {
