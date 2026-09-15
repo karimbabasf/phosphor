@@ -93,14 +93,101 @@ func probe() -> Never {
   ])
 }
 
+/* TWO HOMES FOR THE KEY, tried in order.
+
+   The keychain first: a permanent enclave key in the data-protection keychain, tagged, which
+   macOS hands only to code signed with the entitlement that made it. Another process cannot
+   even ask for it, so it cannot raise the Touch ID dialog in Phosphor's name. That needs a
+   Developer ID signature carrying keychain-access-groups; an ad-hoc bundle asking for it is
+   refused with errSecMissingEntitlement (-34018), measured before this was written.
+
+   Then the blob: CryptoKit's dataRepresentation, which needs no entitlement and is bound to this
+   Mac's enclave but not to this app. The keyBlob names which home it came from by prefix, so
+   the unwrap knows where to look and the window can say which binding is live. */
+let keychainPrefix = "keychain:"
+let keychainTagBase = "com.karimbabasf.phosphor.vault."
+
+func x963(_ key: SecKey) throws -> Data {
+  var err: Unmanaged<CFError>?
+  guard let pub = SecKeyCopyPublicKey(key), let data = SecKeyCopyExternalRepresentation(pub, &err) as Data? else {
+    throw Fail(code: "crypto_failed", message: "public key: \(err?.takeRetainedValue().localizedDescription ?? "unknown")")
+  }
+  return data
+}
+
+func createInKeychain() -> (String, Data)? {
+  guard let acl = try? accessControl() else { return nil }
+  let tag = keychainTagBase + UUID().uuidString
+  let attrs: [String: Any] = [
+    kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+    kSecAttrKeySizeInBits as String: 256,
+    kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
+    kSecUseDataProtectionKeychain as String: true,
+    kSecPrivateKeyAttrs as String: [
+      kSecAttrIsPermanent as String: true,
+      kSecAttrApplicationTag as String: Data(tag.utf8),
+      kSecAttrLabel as String: "Phosphor vault key",
+      kSecAttrAccessControl as String: acl,
+    ],
+  ]
+  var err: Unmanaged<CFError>?
+  guard let key = SecKeyCreateRandomKey(attrs as CFDictionary, &err), let pub = try? x963(key) else { return nil }
+  return (keychainPrefix + tag, pub)
+}
+
 func create() throws -> Never {
   guard SecureEnclave.isAvailable else { throw Fail(code: "se_unavailable", message: "no Secure Enclave on this Mac") }
+  if let (ref, pub) = createInKeychain() {
+    emit(["ok": true, "keyBlob": ref, "publicKey": pub.base64EncodedString(), "binding": "app"])
+  }
   let key = try SecureEnclave.P256.KeyAgreement.PrivateKey(accessControl: try accessControl())
   emit([
     "ok": true,
     "keyBlob": key.dataRepresentation.base64EncodedString(),
     "publicKey": key.publicKey.x963Representation.base64EncodedString(),
+    "binding": "device",
   ])
+}
+
+/* The keychain half of the unwrap: the enclave key is looked up by tag under an authentication
+   context that carries the reason, ECDH runs against the ephemeral public key inside the enclave
+   (SecKeyCopyKeyExchangeResult, which is the same x-coordinate CryptoKit's key agreement gives),
+   and the rest of the derivation is the same code path as the blob half. */
+func keychainSharedSecret(tag: String, ephRaw: Data, reason: String) throws -> (Data, Data) {
+  let ctx = LAContext()
+  ctx.localizedReason = reason
+  ctx.localizedCancelTitle = "Cancel"
+  let query: [String: Any] = [
+    kSecClass as String: kSecClassKey,
+    kSecAttrApplicationTag as String: Data(tag.utf8),
+    kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+    kSecUseDataProtectionKeychain as String: true,
+    kSecUseAuthenticationContext as String: ctx,
+    kSecReturnRef as String: true,
+  ]
+  var item: CFTypeRef?
+  let status = SecItemCopyMatching(query as CFDictionary, &item)
+  guard status == errSecSuccess, let found = item else {
+    throw Fail(code: status == errSecItemNotFound ? "crypto_failed" : "auth_failed", message: "keychain key \(status)")
+  }
+  let key = found as! SecKey
+  let pubAttrs: [String: Any] = [
+    kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+    kSecAttrKeyClass as String: kSecAttrKeyClassPublic,
+    kSecAttrKeySizeInBits as String: 256,
+  ]
+  var err: Unmanaged<CFError>?
+  guard let ephKey = SecKeyCreateWithData(ephRaw as CFData, pubAttrs as CFDictionary, &err) else {
+    throw Fail(code: "bad_input", message: "ephemeral public key")
+  }
+  guard let secret = SecKeyCopyKeyExchangeResult(key, .ecdhKeyExchangeStandard, ephKey, [:] as CFDictionary, &err) as Data? else {
+    let e = err?.takeRetainedValue() as Error?
+    if let ns = e as NSError?, ns.domain == LAError.errorDomain, LAError.Code(rawValue: ns.code) == .userCancel {
+      throw Fail(code: "user_cancel", message: "cancelled")
+    }
+    throw Fail(code: "auth_failed", message: e?.localizedDescription ?? "key exchange refused")
+  }
+  return (secret, try x963(key))
 }
 
 /* The mirror of sewrap.ts. Shared secret is the ECDH x-coordinate, the wrap key is
@@ -108,7 +195,8 @@ func create() throws -> Never {
    the caller's AAD, combined as nonce || ciphertext || tag. */
 func unwrap(_ req: [String: Any]) throws -> Never {
   guard SecureEnclave.isAvailable else { throw Fail(code: "se_unavailable", message: "no Secure Enclave on this Mac") }
-  let blob = try b64(req, "keyBlob")
+  let blobText = req["keyBlob"] as? String ?? ""
+  let blob = blobText.hasPrefix(keychainPrefix) ? Data() : try b64(req, "keyBlob")
   let ephRaw = try b64(req, "ephemeralPublicKey")
   let combined = try b64(req, "ciphertext")
   let aad = try b64(req, "aad")
@@ -116,25 +204,32 @@ func unwrap(_ req: [String: Any]) throws -> Never {
   guard transport.count == 32 else { throw Fail(code: "bad_input", message: "transportKey must be 32 bytes") }
   guard let id = req["id"] as? String, !id.isEmpty else { throw Fail(code: "bad_input", message: "id is required") }
   let reason = (req["reason"] as? String) ?? "Phosphor needs your approval"
-  let ctx = LAContext()
-  ctx.localizedReason = reason
-  ctx.localizedCancelTitle = "Cancel"
-  let key = try SecureEnclave.P256.KeyAgreement.PrivateKey(dataRepresentation: blob, authenticationContext: ctx)
-  let eph = try P256.KeyAgreement.PublicKey(x963Representation: ephRaw)
-  let secret: SharedSecret
-  do {
-    secret = try key.sharedSecretFromKeyAgreement(with: eph)
-  } catch let e as NSError where e.domain == LAError.errorDomain {
-    switch LAError.Code(rawValue: e.code) {
-    case .userCancel, .appCancel, .systemCancel: throw Fail(code: "user_cancel", message: "cancelled")
-    case .notInteractive: throw Fail(code: "interaction_required", message: "no user present")
-    default: throw Fail(code: "auth_failed", message: e.localizedDescription)
+  let secretBytes: Data
+  let enclavePub: Data
+  if let blobText = req["keyBlob"] as? String, blobText.hasPrefix(keychainPrefix) {
+    (secretBytes, enclavePub) = try keychainSharedSecret(tag: String(blobText.dropFirst(keychainPrefix.count)), ephRaw: ephRaw, reason: reason)
+  } else {
+    let ctx = LAContext()
+    ctx.localizedReason = reason
+    ctx.localizedCancelTitle = "Cancel"
+    let key = try SecureEnclave.P256.KeyAgreement.PrivateKey(dataRepresentation: blob, authenticationContext: ctx)
+    let eph = try P256.KeyAgreement.PublicKey(x963Representation: ephRaw)
+    do {
+      let secret = try key.sharedSecretFromKeyAgreement(with: eph)
+      secretBytes = secret.withUnsafeBytes { Data($0) }
+    } catch let e as NSError where e.domain == LAError.errorDomain {
+      switch LAError.Code(rawValue: e.code) {
+      case .userCancel, .appCancel, .systemCancel: throw Fail(code: "user_cancel", message: "cancelled")
+      case .notInteractive: throw Fail(code: "interaction_required", message: "no user present")
+      default: throw Fail(code: "auth_failed", message: e.localizedDescription)
+      }
     }
+    enclavePub = key.publicKey.x963Representation
   }
   var info = wrapInfo
   info.append(ephRaw)
-  info.append(key.publicKey.x963Representation)
-  let wrapKey = secret.hkdfDerivedSymmetricKey(using: SHA256.self, salt: wrapSalt, sharedInfo: info, outputByteCount: 32)
+  info.append(enclavePub)
+  let wrapKey = HKDF<SHA256>.deriveKey(inputKeyMaterial: SymmetricKey(data: secretBytes), salt: wrapSalt, info: info, outputByteCount: 32)
   let box = try AES.GCM.SealedBox(combined: combined)
   let dek = try AES.GCM.open(box, using: wrapKey, authenticating: aad)
   let sealed = try AES.GCM.seal(dek, using: SymmetricKey(data: transport), authenticating: Data(id.utf8))

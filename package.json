@@ -18,7 +18,9 @@
     "typecheck": "tsc --noEmit",
     "bundle": "node scripts/bundle-payload.ts",
     "app:build": "npm run bundle && tauri build",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "se:build": "sh scripts/build-se-helper.sh",
+    "se:selftest": "node scripts/vault-selftest.ts"
   },
   "engines": {
     "node": ">=24"
