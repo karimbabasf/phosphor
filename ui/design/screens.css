@@ -254,7 +254,9 @@ button.rule.opens[data-open="true"] .chev { transform: rotate(135deg); }
    itself, and the first row keeps the rule that separates it from the head. */
 .tx.receipt-row {
   width: 100%;
-  padding: var(--s-2) var(--s-4);
+  padding: var(--s-3) var(--s-4);
+  column-gap: var(--s-4);
+  row-gap: 3px;
 }
 
 .activity-list > .tx.receipt-row:first-child {
@@ -283,6 +285,14 @@ button.rule.opens[data-open="true"] .chev { transform: rotate(135deg); }
 /* A move that did not go through left nothing, so its amount is unsigned and
    quiet: the same weight as the time, not a number that means money. */
 .receipt-row > .tx-amount.dim { color: var(--text-3); }
+
+/* What arrived is the second leg of the line, a size up from the grammar's 12 px
+   footnote and in the up colour, so the two legs of a swap read as a pair: what
+   went out on top, what came in underneath. */
+.receipt-row > .tx-sub[data-dir="in"] {
+  font-size: var(--fs-13);
+  color: var(--up);
+}
 
 /* The rail's own words, on the opened receipt. Wrapped rather than clamped, because here the
    whole thing is the point, and broken anywhere because an intent hash is one 44 character

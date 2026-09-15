@@ -167,11 +167,16 @@
     host.appendChild(row);
   }
 
-  /* An Activity row, drawn as a transaction (the .tx grammar in components.css):
-     the mark of the coin that left, the sentence, the time under it, and on the
-     right the amount that left, signed, with the fee under it. Karim,
-     2026-09-14: "I want these to look like actual transactions." The coin comes
-     from the receipt's own fields, never parsed out of the sentence. */
+  /* An Activity row, drawn as a transaction (the .tx grammar in components.css),
+     the way a statement line reads: the mark of the coin that left, the sentence,
+     and under it when and what it cost; on the right what left, signed, and under
+     it what arrived, in green. Karim, 2026-09-14: "I want these to look like
+     actual transactions." The first cut put the arrival and the fee together on
+     one dim line under the amount, and he read the rows as squished and
+     unformatted: three facts in 12 px mono in the same grey. Now each side of
+     the row carries two facts of the same kind (words left, money right), and
+     the arrival is the one green thing on the line. The coin comes from the
+     receipt's own fields, never parsed out of the sentence. */
   function row(receipt) {
     var node = dom.el('button', 'tx receipt-row');
     node.type = 'button';
@@ -199,41 +204,41 @@
     /* The headline, not the rail's sentence. `summary` carries an intent hash and a quote
        handle: six lines of it as a row title buried the fee and the time underneath, and ran
        under the amount column on the right. It is still on the opened receipt, which is where
-       evidence belongs. The row clamps to one line, so the whole sentence rides on the title. */
+       evidence belongs. The row clamps to two lines, so the whole sentence rides on the title. */
     var headline = receipt.headline || receipt.summary || 'Something moved';
     dom.setText(title, headline);
     dom.setAttr(title, 'title', headline);
 
+    /* When, then what it cost, in the words the panel head already uses ("$0.44 in fees").
+       An outcome that is not "done" takes the time's place: the row says it did not go
+       through before it says when. */
+    var failed = receipt.status === 'failed';
     var note = dom.ago(receipt.at);
     if (receipt.status === 'needs_reconciliation') note = 'We cannot tell what happened';
-    else if (receipt.status === 'failed') note = 'Did not go through';
+    else if (failed) note = 'Did not go through';
+    if (typeof receipt.feesUsd === 'number' && receipt.feesUsd > 0) note += ', ' + dom.fee(receipt.feesUsd) + ' in fees';
     dom.setText(when, note);
     dom.setAttr(when, 'class', receipt.status === 'executed' ? 'tx-when' : 'tx-when warn');
 
-    /* Money that left is signed and red. A move that did not go through left
-       nothing, so its amount is unsigned and quiet rather than a minus that
-       was never taken. */
+    /* Money that left is signed. A move that did not go through left nothing, so its
+       amount is unsigned and quiet rather than a minus that was never taken. */
     var left = typeof receipt.amount === 'number';
-    var failed = receipt.status === 'failed';
     dom.setText(amount, left
       ? (failed ? '' : '-') + dom.qty(receipt.amount) + (symbol ? ' ' + symbol : '')
       : '');
-    /* A swap or a move between the person's own pockets changes what the
-       money is, not how much of it there is, so it reads in the text tone.
-       Red is for money that left the wallet altogether. */
+    /* A swap or a move between the person's own pockets changes what the money is, not
+       how much of it there is, so what left reads in the text tone. Red is for money that
+       left the wallet altogether. */
     var gone = receipt.kind === 'transfer' || receipt.kind === 'consolidate' || receipt.kind === 'send';
     dom.setAttr(amount, 'data-dir', left && !failed && gone ? 'out' : null);
     dom.setAttr(amount, 'class', left && failed ? 'tx-amount dim' : 'tx-amount');
 
-    /* What arrived, when the receipt carries it, then the fee. One summed fee is
-       one fee. */
-    var parts = [];
+    /* What arrived, when the rail recorded it: the second leg of the statement line,
+       signed plus and green. Nothing else shares this line. */
     var got = receipt.received;
-    if (got && typeof got.amount === 'number' && got.symbol) {
-      parts.push('+' + dom.qty(got.amount) + ' ' + String(got.symbol));
-    }
-    if (typeof receipt.feesUsd === 'number') parts.push(dom.fee(receipt.feesUsd) + ' fee');
-    dom.setText(sub, parts.join(', '));
+    var arrived = !failed && got && typeof got.amount === 'number' && got.symbol;
+    dom.setText(sub, arrived ? '+' + dom.qty(got.amount) + ' ' + String(got.symbol) : '');
+    dom.setAttr(sub, 'data-dir', arrived ? 'in' : null);
   }
 
   window.PhosphorReceipt = {
