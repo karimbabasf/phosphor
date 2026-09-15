@@ -45,7 +45,7 @@ Proposal statuses now include `awaiting_touch`: the person clicked approve and t
 | `POST /api/wallet/create` | `{ password }` | as before | First run, enclave NOT ready (software mode). Unchanged. |
 | `POST /api/vault/unlock` | `{ purpose?: 'address' }` | `{ ok, released }` or refusal (`user_cancel`, `foreign`) | Lock screen "Unlock with Touch ID"; the deposit card when `verified` is false ("Touch ID to show the address"). Waits for the dialog: up to 150 s. |
 | `POST /api/unlock` | `{ password }` | as before | Software mode only. |
-| `POST /api/vault/reveal` | `{}` | `{ ok, words: [24], paths: {evm, solana, near} }` | Vault tab > Reveal recovery phrase. Fresh Touch ID every time. Show once; Print button; NO copy button. |
+| `POST /api/vault/reveal` | `{}` | `{ ok, words: [12], paths: {evm, solana, near} }` | Vault tab > Reveal recovery phrase. Fresh Touch ID every time. Show once; Print button; NO copy button. |
 | `POST /api/vault/backup-proven` | `{ words: [{index, word}, x3] }` | `{ ok, backedUpAt }` or `{ ok:false, code:'wrong_words' }` | The Prove step: three random positions typed back. Only this clears "not backed up". |
 | `POST /api/vault/restore` | `{ mnemonic }` | `{ ok, addresses }` or refusal (`bad_phrase`, `not_backed_up`, `user_cancel`) | Vault tab > Restore, and the "made on another Mac" boot state. 12 or 24 words. |
 | `POST /api/vault/migrate` | `{ password }` | `{ ok }` or refusal (`wrong_password`, `enclave_unavailable`, `user_cancel`) | The "Move your keys behind the Secure Enclave" card, shown once at boot when `custody === 'software'` and `enclave.ready`; dismissable; also a button in the Vault tab. |

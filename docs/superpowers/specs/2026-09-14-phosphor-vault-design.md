@@ -125,7 +125,7 @@ First run, enclave available:
 
 1. One screen: the mark, one sentence, one button, **Create wallet**.
 2. Click. The backend asks the shell for an enclave key (no prompt: making a key needs no
-   presence), makes a 24-word BIP-39 mnemonic and a data key, derives EVM, Solana and NEAR,
+   presence), makes a 12-word BIP-39 mnemonic and a data key, derives EVM, Solana and NEAR,
    wraps the data key to the enclave, writes `keys.enc.json` v2 atomically.
 3. One Touch ID, "Confirm your new wallet": the round trip is proven before the screen says
    done. A wallet the enclave cannot open is never shown as created.
@@ -135,7 +135,7 @@ First run, enclave available:
 A quiet badge in the bar says "not backed up" until the phrase has been revealed once; the
 deposit card carries one line, "back up before you send more than a test amount"; and the first
 deposit that lands opens a card with one button, **Back up now**. Reveal is Touch ID gated and
-shows the 24 words once, in the window, never in chat and never to the agent.
+shows the 12 words once, in the window, never in chat and never to the agent.
 
 Existing installs (Karim's mainnet wallet is one): boot shows one card, **Move your keys behind
 the Secure Enclave**, that takes the password once, re-wraps the data key to a fresh enclave key,
@@ -226,7 +226,7 @@ the code and the field. What changed:
    phrase's derivation paths match Phantom, the card's address comes from a Touch ID open, a test
    deposit lands) more than one they pasted into a hot app. Import stays as Restore only.
 2. **Backup is proven, not shown.** "Backed up" clears only after the person types three of the
-   24 words back (the existing first-run Prove step stays). The reveal has Print and no Copy. The
+   12 words back (the existing first-run Prove step stays). The reveal has Print and no Copy. The
    agent's `start` and `wallet` tools return `backedUp`, so it can say "you have money in and no
    backup" once there is a balance. The first deposit that lands opens the backup card.
 3. **Restore has to work on a Mac that cannot open the file.** A version 2 file made on another

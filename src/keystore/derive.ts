@@ -93,10 +93,12 @@ function checksumHolds(words: string[]): boolean {
 export function mnemonicProblem(raw: string): string | null {
   const phrase = normaliseMnemonic(raw);
   const words = phrase === '' ? [] : phrase.split(' ');
-  if (words.length !== 12) return `a recovery phrase is twelve words; this one has ${words.length}`;
+  // Twelve is what this app writes. Twenty-four is what most other wallets write, and a phrase
+  // carried in from one of them derives the same three paths, so restore takes both.
+  if (words.length !== 12 && words.length !== 24) return `a recovery phrase is twelve words (or twenty-four from another wallet); this one has ${words.length}`;
   const unknown = words.filter((w) => !english.includes(w));
   if (unknown.length > 0) return `these are not words from the recovery list: ${unknown.slice(0, 3).join(', ')}`;
-  if (!checksumHolds(words)) return 'that is not a valid recovery phrase: the twelve words do not check out';
+  if (!checksumHolds(words)) return `that is not a valid recovery phrase: the ${words.length === 12 ? 'twelve' : 'twenty-four'} words do not check out`;
   try {
     mnemonicToAccount(phrase, { path: EVM_PATH });
   } catch (err) {
