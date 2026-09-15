@@ -667,39 +667,45 @@ body[data-view="trade"] .stage {
   .pro-grid .scrolls { overflow-y: visible; }
 }
 
-/* ---------- Trade: chart left, 320 px rail ---------- */
+/* ---------- Trade: the chart across the top, the deck under it ---------- */
 
-/* The world has a definite height now, so the chart takes exactly the room
-   there is and the rail scrolls inside itself. */
+/* The world has a definite height, so the chart takes the room above the
+   handle and the deck holds its own height under it: 236 px by default, or
+   whatever the handle was dragged to (--deck, written on the wrap by
+   ui/split.js). Karim, 2026-09-14: "this trade panel on the side I want to
+   be below the chart, so the whole chart horizontally". */
 .trade-wrap {
   flex: 1 1 auto;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 6px var(--rail, var(--rail-w));
+  grid-template-rows: minmax(0, 1fr) 6px var(--deck, 236px);
   height: 100%;
   min-height: 0;
 }
 
 /* Its own container, because the bar above the chart lays out against the room
-   the CHART has rather than against the window: the conversation column and the
-   rail both take from it and neither is in a media query. */
+   the CHART has rather than against the window: the conversation column takes
+   from it and is not in a media query. */
 .trade-main {
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
   container-type: inline-size;
   container-name: trade;
 }
 
-/* ONE SURFACE DOWN THE SIDE, NOT A STACK OF CARDS. Three zones, hairline ruled,
-   and only the last of them grows. Four bordered panels made an empty answer
-   cost a heading, a centred title, a sentence and two paddings, so three empty
-   ones pushed the one zone carrying real data off the bottom of the rail. The
-   rail itself never scrolls: the zone that outgrows its box scrolls inside it. */
+/* THE DECK: ONE STRIP, THREE COLUMNS, READ LEFT TO RIGHT. Status at a fixed
+   240 px, then Open stacked over Waiting, then Done with a little more room
+   because the tape is the zone that fills. Hairline rules between the
+   columns and between Open and Waiting, no boxes. The deck itself never
+   scrolls: every zone body scrolls inside itself with the fade at the cut.
+   The class name is still trade-rail because the spotlight and the tests
+   read it; what it names is the deck. */
 .trade-rail {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr) minmax(0, 1.15fr);
+  grid-template-rows: minmax(0, auto) minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -711,39 +717,29 @@ body[data-view="trade"] .stage {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  padding: var(--s-3) var(--s-4);
-  border-top: 1px solid var(--line);
+  padding: var(--s-2) var(--s-4) var(--s-3);
 }
 
-.trade-zone:first-child {
-  border-top: 0;
-  padding-top: var(--s-4);
-}
+.trade-status { grid-column: 1; grid-row: 1 / span 2; padding-top: var(--s-3); }
+.trade-open { grid-column: 2; grid-row: 1; }
+.trade-waiting { grid-column: 2; grid-row: 2; border-top: 1px solid var(--line); }
+.trade-done { grid-column: 3; grid-row: 1 / span 2; }
 
-.trade-status { flex: 0 0 auto; }
-.trade-open { flex: 0 0 auto; }
+.trade-open,
+.trade-waiting,
+.trade-done { border-left: 1px solid var(--line); }
 
-/* EVERY ZONE IS AS TALL AS WHAT IS IN IT. Waiting is bounded rather than free:
-   a page of plans must not take the tape's room, so past the cap it scrolls
-   inside itself with a fade at the cut. Done takes what it needs and gives way
-   first when the rail is short, scrolling inside itself rather than pushing
-   anything off the bottom. Neither grows to fill: the room left under the last
-   zone is the rail's own ground, not a box. */
-.trade-waiting {
-  flex: 0 1 auto;
-  min-height: 0;
-  max-height: 40%;
-}
-
-.trade-done {
-  flex: 0 1 auto;
-  min-height: 0;
-}
+/* OPEN IS AS TALL AS ITS ROWS, WAITING TAKES THE REST. The first row of the
+   middle column sizes to Open's content and the second takes what is left,
+   so one position leaves most of the column to the plans under it. Open is
+   capped at six tenths of the deck so a second position cannot push Waiting
+   to a heading with nothing under it; past the cap Open scrolls inside
+   itself like every other zone. */
+.trade-open { max-height: calc(var(--deck, 236px) * 0.6); }
 
 .trade-zone-head {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
   gap: var(--s-2);
   flex: 0 0 auto;
   padding-bottom: var(--s-2);
@@ -753,6 +749,7 @@ body[data-view="trade"] .stage {
   display: flex;
   flex-direction: column;
   gap: var(--s-3);
+  flex: 0 1 auto;
   min-height: 0;
 }
 
@@ -760,7 +757,6 @@ body[data-view="trade"] .stage {
    It shrinks with its zone, which is what lets a long tape scroll in place. */
 .trade-done .trade-zone-body {
   gap: 0;
-  flex: 0 1 auto;
 }
 
 /* ONE ROW. The segment (market and timeframes), the indicator command, Layers,
@@ -862,48 +858,70 @@ body[data-view="trade"] .stage {
   min-height: 0;
 }
 
-/* When the chart can no longer hold a usable plot beside a 320 px rail, the two
-   stack and the world scrolls, which is the fallback the brief allows.
+/* Under 760 px the deck's three columns do not each hold a sentence, so they
+   stack into one column, Status, Open, Waiting, Done, ruled between, and the
+   deck reads top to bottom. This width is always inside the stacked world
+   below, so the world is already scrolling and the deck is as tall as what
+   is in it. */
+@container world (max-width: 759px) {
+  .trade-rail {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+  }
+  .trade-status,
+  .trade-open,
+  .trade-waiting,
+  .trade-done {
+    grid-column: 1;
+    grid-row: auto;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    max-height: none;
+  }
+  .trade-status { border-top: 0; }
+}
 
-   The threshold was 1000 px, which stacked a 1280 x 720 laptop: the world there
-   is 914 px, the chart would have had 588 of it, and the page scrolled for no
-   reason. It is the width at which the chart drops under about 530 px. */
+/* When the chart can no longer hold a usable plot at the world's width, the
+   world scrolls and the deck sits under the chart at its own height, which is
+   the fallback the brief allows. The threshold is the width at which the
+   chart drops under about 530 px beside the conversation column. */
 @container world (max-width: 859px) {
   /* flex: 0 0 auto, not the base row's 1 1: stacked, the wrap is taller than the
      world and must say so. Shrinking to fit put a 1,700 px column inside a
-     400 px box, so the rail's own ground stopped under the first zone and the
-     two below it painted on the world. */
+     400 px box, so the deck's own ground stopped under the first zone and the
+     rest painted on the world. The chart row takes the room the world has
+     to spare; the deck row is as tall as its zones. */
   .trade-wrap {
     flex: 0 0 auto;
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
     height: auto;
     min-height: 100%;
   }
-  /* Stacked, the world scrolls again, so nothing in the rail holds a height of
+  /* Stacked, the world scrolls again, so nothing in the deck holds a height of
      its own: every zone is as tall as what is in it. */
-  .trade-rail { overflow: visible; max-height: none; }
-  .trade-waiting { max-height: none; }
-  .trade-done { flex: 0 0 auto; }
+  .trade-rail { overflow: visible; }
+  .trade-open { max-height: none; }
   .trade-zone .trade-zone-body { overflow: visible; }
-  .trade-main { border-right: 0; border-bottom: 1px solid var(--line); }
   .split-h { display: none; }
 }
 
-/* ---------- The rail resizer inside trade ---------- */
+/* ---------- The deck handle inside trade ---------- */
 
+/* A horizontal bar between the chart and the deck, dragged up and down. */
 .split-h {
-  cursor: col-resize;
+  cursor: row-resize;
   background: transparent;
   border: 0;
-  border-left: 1px solid transparent;
+  border-top: 1px solid transparent;
   transition: background-color var(--dur-press) var(--ease-out);
+  touch-action: none;
 }
 
 @media (hover: hover) and (pointer: fine) {
   .split-h:hover { background: var(--line-strong); }
 }
 
-.split-h:focus-visible { background: var(--ink); }
+.split-h:focus-visible { background: var(--ink); outline: none; }
 
 /* ---------- Stacked: the world above, the conversation docked below ---------- */
 

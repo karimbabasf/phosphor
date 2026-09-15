@@ -62,21 +62,24 @@ var SPLIT_PAGES = {
     },
   },
   /* One handle in the whole window now, because pro is a grid and basic is a
-     column: neither needs dragging. Trade keeps its rail, and the floors are
-     raised so nothing can be squeezed below its own content.
+     column: neither needs dragging. Trade's deck sits under the chart since
+     2026-09-14 (Karim: "this trade panel on the side I want to be below the
+     chart, so the whole chart horizontally"), so the handle is a horizontal
+     bar and the axis is y. The pane is below the handle, so dragging down
+     shrinks it: the sign is -1.
 
-     360 is the rail's design width and 320 is its floor: a position line
-     ("Forced close at $x, y% away") stops fitting on one line below that, and
-     a rail that wraps that line is worse than a rail that stops shrinking.
-     620 for the chart is the give's floor: a candle chart narrower than that
-     shows fewer bars than the timeframe row offers, so the controls above it
-     start lying about what is on screen. The old table's 120 and 96 floors are
-     gone with the panels they sized. */
+     236 is the deck's design height and 168 is its floor: one zone heading
+     with a price tag and a row of figures under it, or one open position with
+     its Close button, and nothing under that fits. 364 for the chart column
+     is the give's floor: the stage's own 320 px min-height, under which
+     candles stop being read and start being estimated, plus the 44 px bar
+     above it. A floor of 320 alone would let the handle push the stage under
+     its own minimum and spill it over the deck. */
   trade: {
     'deck-rail': {
-      axis: 'x', sign: -1, min: 320,
-      pane: '.trade-rail', host: '.trade-wrap', prop: '--rail',
-      give: '.trade-main', giveMin: 620,
+      axis: 'y', sign: -1, min: 168,
+      pane: '.trade-rail', host: '.trade-wrap', prop: '--deck',
+      give: '.trade-main', giveMin: 364,
     },
   },
 };
