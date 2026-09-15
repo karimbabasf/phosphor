@@ -460,9 +460,11 @@ test('the seat light in the head names the open call in its own words and settle
   assert.equal(status.getAttribute('data-live'), null, 'the column wrote the attribute the beam owns');
 });
 
-test('the composer arms on text and says why it is quiet when it is', () => {
+test('the composer arms on text and leaves the screen when nobody of ours can take a message', () => {
   const world = build();
+  const composer = all(world.composerHost, 'agent-composer')[0];
   const field = all(world.composerHost, 'composer-field')[0];
+  assert.equal(composer.hidden, false, 'a Ready assistant has no box to talk into');
   assert.equal(world.input.placeholder, 'Tell your assistant what to do');
   assert.equal(field.getAttribute('data-armed'), null);
   world.input.value = 'hello';
@@ -471,10 +473,40 @@ test('the composer arms on text and says why it is quiet when it is', () => {
   world.type('hello');
   assert.equal(field.getAttribute('data-armed'), null, 'the arrow stayed lit after the message went');
 
+  /* Off: the card says what to do, so a dead box under it with a dead send button is gone. */
   world.emit({ kind: 'status', state: 'off' });
-  assert.equal(world.input.placeholder, 'Start your assistant to talk to it.');
+  assert.equal(composer.hidden, true, 'a box nobody can use stayed on screen');
   assert.equal(world.input.disabled, true);
   assert.equal(all(world.host, 'suggest').length, 3, 'the empty card offers three first moves');
+  world.emit({ kind: 'status', state: 'starting' });
+  assert.equal(composer.hidden, true, 'the box came back before the assistant did');
+  world.emit({ kind: 'status', state: 'ready' });
+  world.runTimers();
+  assert.equal(composer.hidden, false, 'the box did not come back with the assistant');
+});
+
+test('a client of the person\'s own at the wheel reads Connected in the head, with no composer', () => {
+  const world = build();
+  world.emit({ kind: 'status', state: 'off' });
+  const status = all(world.host, 'agent-status')[0];
+  const verb = all(world.host, 'status-verb')[0];
+  const composer = all(world.composerHost, 'agent-composer')[0];
+  assert.equal(verb.textContent, 'Off');
+  assert.equal(status.getAttribute('data-state'), 'off');
+
+  /* The roster names somebody: the seat is taken, though nothing of ours is at work. */
+  world.agents([{ client: 'claude-code', role: 'operator', ops: 2 }]);
+  assert.equal(verb.textContent, 'Connected', 'the head said Off over a card saying somebody was at the wheel');
+  assert.equal(status.getAttribute('data-state'), 'connected');
+  assert.equal(world.seat(), 'own');
+  assert.ok(world.card().includes('Your own agent is at the wheel.'), world.card());
+  assert.ok(world.card().includes('Talk to it from its own terminal.'), world.card());
+  assert.equal(composer.hidden, true, 'a box that cannot reach the attached client was offered');
+
+  world.agents([]);
+  assert.equal(verb.textContent, 'Off');
+  assert.equal(status.getAttribute('data-state'), 'off');
+  assert.equal(composer.hidden, true);
 });
 
 test('a first move on a live column asks its question at once', () => {
