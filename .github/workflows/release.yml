@@ -20,6 +20,11 @@
 #       key id, base64 .p8) for notarization. Set, Tauri submits the signed app to Apple and
 #       staples the ticket, so Gatekeeper opens it without a dialog.
 #
+#   BLOB_READ_WRITE_TOKEN
+#       Required. The Vercel Blob store behind https://phosphor.karimbabasf.com/download/mac.
+#       The DMG is copied there once the release is published, so the site serves it from its
+#       own domain instead of bouncing the browser to release-assets.githubusercontent.com.
+#
 # Every third-party action is pinned to a commit, not a tag: a tag can be moved.
 
 name: Release
@@ -182,3 +187,19 @@ jobs:
             "$RELEASE_DIR/Phosphor_${VERSION}_aarch64.app.tar.gz.sig" \
             "$RELEASE_DIR/latest.json" \
             "$RELEASE_DIR/SHA256SUMS"
+
+      - name: Put the DMG behind the site's own download link
+        env:
+          BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
+        run: |
+          # Same fixed name every release, overwritten in place, cached for 60 seconds so the
+          # site hands out the new version within a minute. This runs after the release exists,
+          # so a failure here leaves GitHub on the new version and the site on the old one:
+          # that is why the token is required and the step is loud.
+          : "${BLOB_READ_WRITE_TOKEN:?BLOB_READ_WRITE_TOKEN secret is not set, the site download still serves the previous version}"
+          npx --yes vercel@54.20.1 blob put "$RELEASE_DIR/Phosphor-macOS-arm64.dmg" \
+            --access public \
+            --pathname Phosphor-macOS-arm64.dmg \
+            --allow-overwrite \
+            --cache-control-max-age 60 \
+            --content-type application/x-apple-diskimage
