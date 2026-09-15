@@ -1184,41 +1184,21 @@ test('pressing a tab brings its panel up, and the arrow keys move between them',
   assert.deepEqual(tabs(world.host).map((t) => t.selected), [false, true, false]);
 });
 
-test('the Layout menu lists every pane with a checkbox, and a press hands the choice to the split script', async () => {
-  const set: Array<[string, boolean]> = [];
-  const panes = [
-    { name: 'conversation', label: 'Assistant', hidden: false },
-    { name: 'chart', label: 'Chart', hidden: false },
-    { name: 'deck', label: 'Positions and fills', hidden: true },
-  ];
+test('the strip carries no Layout menu of its own: the bar has the one menu, on every mode', async () => {
+  // It used to live here, which left the assistant column with no way back on Basic, Pro or
+  // Vault once its eye-off had been pressed (Karim, 2026-09-15). The menu is the shell's now
+  // (ui/screens/shell.js, tests/unit/topbar-ui.test.ts); the strip keeps the eye-off controls
+  // on the chart and the deck headers, drawn by ui/split.js.
+  const controls: string[] = [];
   const split = {
-    panes: () => panes,
-    setPane: (name: string, shown: boolean) => {
-      set.push([name, shown]);
-      const pane = panes.find((p) => p.name === name)!;
-      pane.hidden = !shown;
-      return !shown;
-    },
-    paneControl: () => null,
+    panes: () => [],
+    setPane: () => false,
+    paneControl: (name: string) => { controls.push(name); return null; },
   };
   const world = await renderPayload(funded(), { split });
-  const [button] = withClass(world.host, 'layout');
-  assert.ok(button !== undefined, 'no Layout button on the strip');
-  assert.equal(button.tagName, 'button');
-  const [pop] = withClass(world.host, 'layout-pop');
-  button.click();
-  assert.equal(pop.dataset.open, 'true');
-  const rows = allWithDataset(world.host, 'pane');
-  assert.deepEqual(rows.map((r) => textOf(r).join('')), ['Assistant', 'Chart', 'Positions and fills']);
-  assert.deepEqual(rows.map((r) => r.getAttribute('aria-checked')), ['true', 'true', 'false']);
-  assert.deepEqual(rows.map((r) => r.getAttribute('role')), ['menuitemcheckbox', 'menuitemcheckbox', 'menuitemcheckbox']);
-  rows[1].click();
-  assert.deepEqual(set, [['chart', false]]);
-  assert.equal(rows[1].getAttribute('aria-checked'), 'false');
-  rows[2].click();
-  assert.deepEqual(set, [['chart', false], ['deck', true]]);
-  world.fire('keydown', { key: 'Escape' });
-  assert.notEqual(pop.dataset.open, 'true');
+  assert.equal(withClass(world.host, 'layout').length, 0, 'the strip still draws a Layout button');
+  assert.equal(withClass(world.host, 'layout-pop').length, 0, 'the strip still draws a Layout sheet');
+  assert.deepEqual(controls.sort(), ['chart', 'deck'], 'the two headers do not ask for their eye-off control');
 });
 
 test('a row that appears enters, and a row that was already there does not', async () => {

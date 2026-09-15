@@ -55,9 +55,11 @@
       <button class="tab" role="tab" data-tab="vault" data-surface="tab-vault" aria-selected="false">Vault</button>
     </nav>
 
-    <!-- The bar's right side: one quiet line of state, and one real control. A pending ask and
-         the stream are status lines (a dot and a word), the lock is a lock glyph and a word, and
-         Freeze everything is the brake: the one button, and the last thing in the bar. -->
+    <!-- The bar's right side: one quiet line of state, then the two controls. A pending ask and
+         the stream are status lines (a dot and a word), the lock is a lock glyph and a word,
+         Layout is the menu of which panes are on screen (here because the bar is on every mode,
+         and a pane hidden on Basic has to come back from Basic), and Freeze everything is the
+         brake: the last thing in the bar. -->
     <div class="status-cluster">
       <span class="status-line bar-state" id="chip-waiting" data-tone="warn" hidden>
         <span class="status-dot" aria-hidden="true"></span>
@@ -75,6 +77,15 @@
         <span class="status-dot" aria-hidden="true"></span>
         <span data-role="feed-text">Live</span>
       </span>
+      <div class="layout-wrap">
+        <button class="layout opens" id="btn-layout" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="bar-layout">
+          <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-layout"/></svg>
+          <span>Layout</span>
+        </button>
+        <div class="layout-pop pop" id="bar-layout" role="menu" aria-label="Which panes are on screen" tabindex="-1">
+          <div class="layers-rows" id="bar-layout-rows"></div>
+        </div>
+      </div>
       <button class="btn freeze" id="btn-freeze">
         <span class="btn-label">Freeze everything</span>
       </button>

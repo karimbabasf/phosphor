@@ -4,7 +4,7 @@
    header reads it: the coin with its logo (which is also the market picker),
    the venue, the mark price at 28 px that ticks in colour, the 24 hour change
    as plain coloured text, the day's high and low, and on the right the two
-   figures a person checks before a plan (free, at risk) and the Layout menu.
+   figures a person checks before a plan (free, at risk).
    The chart takes the whole width under it. The deck under the chart is one
    panel with three tabs, Open, Waiting and Done, each with its count, instead
    of three columns of which two were usually empty. Karim, 2026-09-14: the
@@ -14,8 +14,9 @@
    deck: the spotlight and the tests read it.
 
    PANES CAN BE HIDDEN. The chart and the deck each carry an eye-off control in
-   their header, the Layout button on the strip lists every pane with a
-   checkbox, and ui/split.js holds the state and reflows the grid.
+   their header, the bar's Layout menu (ui/screens/shell.js) lists every pane
+   of the mode with a checkbox, and ui/split.js holds the state and reflows
+   the grid.
 
    THE TAPE IS THE LAST 24 HOURS. Fills and ended plans newer than a day are
    listed; Show more reveals the next twenty older ones. A fill row opens the
@@ -94,8 +95,6 @@
       refresh();
       loadRange();
     }
-    window.addEventListener('phosphor:pane', renderLayout);
-
     events.on('candles', function () {
       if (charted && typeof window.candlesPushed === 'function') window.candlesPushed();
     });
@@ -227,7 +226,7 @@
   /* ---------- the strip ----------
 
      One row, the way an exchange header reads: the market, the venue, the
-     price, the day, then the account, then the layout. Its height is its
+     price, the day, then the account. Its height is its
      content plus its padding, never a number, and on a narrow world the groups
      wrap onto a second line rather than being squeezed (Karim, 2026-09-15:
      "the top looks super squished and squeezed"). Built once and filled every
@@ -261,12 +260,10 @@
     day.appendChild(low.node);
     row.appendChild(day);
 
-    /* The right half: the two figures and the Layout menu, each a cell of the
-       row in its own right, so a narrow world can put the figures on the
-       second line and keep the menu on the first (trade.css). */
+    /* The right half: the two figures, a cell of the row in its own right, so
+       a narrow world can put them on the second line (trade.css). */
     var stats = dom.el('div', 'strip-stats');
     row.appendChild(stats);
-    row.appendChild(layoutControl());
 
     /* What the venue says when it has something to say: a notice on its own
        row under the strip, there only while there is something to say. The row
@@ -491,11 +488,12 @@
 
   /* ---------- popovers ----------
 
-     Layers on the bar and Layout on the strip are the same control: a button
-     that opens a small raised sheet under itself, closed by Escape, by a
-     click anywhere else, or by its own button. A click outside is found by a
-     walk rather than through contains(), because the unit harness's stand-in
-     nodes have neither. */
+     Layers on the chart bar and the market list are the same control: a
+     button that opens a small raised sheet under itself, closed by Escape, by
+     a click anywhere else, or by its own button. A click outside is found by
+     a walk rather than through contains(), because the unit harness's
+     stand-in nodes have neither. The bar's Layout menu (shell.js) opens the
+     same way. */
   function popover(wrap, button, pop, onOpen) {
     function open() {
       if (onOpen) onOpen();
@@ -603,65 +601,9 @@
     return wrap;
   }
 
-  /* ---------- Layout ----------
-
-     Every pane the window can hide, as a check row: on means on screen. The
-     state is ui/split.js's; this menu only mirrors it, and it re-reads it
-     each time it opens and each time a pane changes, so an eye-off press in a
-     header and a press here never disagree. */
-  function layoutControl() {
-    var wrap = dom.el('div', 'layout-wrap');
-
-    var button = dom.el('button', 'layout opens');
-    button.type = 'button';
-    button.setAttribute('aria-haspopup', 'menu');
-    button.setAttribute('aria-expanded', 'false');
-    button.setAttribute('aria-controls', 'trade-layout');
-    button.appendChild(icon('layout', 'icon-16'));
-    button.appendChild(dom.el('span', '', 'Layout'));
-
-    var pop = dom.el('div', 'layout-pop pop');
-    pop.id = 'trade-layout';
-    pop.setAttribute('role', 'menu');
-    pop.setAttribute('aria-label', 'Which panes are on screen');
-    pop.tabIndex = -1;
-    var rows = dom.el('div', 'layers-rows');
-    pop.appendChild(rows);
-
-    wrap.appendChild(button);
-    wrap.appendChild(pop);
-
-    refs.layoutButton = button;
-    refs.layoutPop = pop;
-    refs.layoutRows = rows;
-    refs.layout = popover(wrap, button, pop, renderLayout);
-    renderLayout();
-    return wrap;
-  }
-
-  function renderLayout() {
-    if (!refs.layoutRows) return;
-    dom.reconcile(refs.layoutRows, window.PhosphorSplit.panes(), function (pane) {
-      return pane.name;
-    }, function (pane) {
-      var row = checkRow(pane.label);
-      row.dataset.pane = pane.name;
-      dom.on(row, 'click', onPaneRow);
-      return row;
-    }, function (row, pane) {
-      setChecked(row, !pane.hidden);
-    });
-  }
-
-  function onPaneRow(event) {
-    var row = event.currentTarget;
-    var on = row.getAttribute('aria-checked') !== 'true';
-    setChecked(row, on);
-    window.PhosphorSplit.setPane(row.dataset.pane, on);
-  }
-
   /* The eye-off control for a pane header, from ui/split.js so every header
-     draws the same one. Null in a document with nothing to build it in. */
+     draws the same one. Null in a document with nothing to build it in. The
+     way back is the bar's Layout menu (ui/screens/shell.js). */
   function paneControl(name) {
     return window.PhosphorSplit.paneControl(name);
   }

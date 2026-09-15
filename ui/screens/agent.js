@@ -447,8 +447,8 @@
     controls.appendChild(start);
     controls.appendChild(stopAgent);
     /* The pane's own hide control (ui/split.js, drawn by trade.css), last in
-       the cluster. The Layout menu on the trade strip brings the pane back.
-       Guarded until the trade branch lands the pane API. */
+       the cluster. The Layout menu on the bar brings the pane back, on every
+       mode. Guarded until the trade branch lands the pane API. */
     var split = window.PhosphorSplit;
     if (split && typeof split.paneControl === 'function') {
       var hide = split.paneControl('conversation');
