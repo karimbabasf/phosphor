@@ -523,8 +523,14 @@ export function createRunnerHost(deps: HostDeps) {
     if (current === undefined || !live(current)) return;
     const hadFill = current.status === 'open' || (current.exitSz ?? 0) > 0;
     const state = (confirm.state === 'canceled' || confirm.state === 'rejected') && hadFill ? 'filled' : confirm.state;
+    /* Onto the row in memory, where the payload and the reads take it from, and NOT written to
+       disk here. The store's write is synchronous, and a write landing while the next fire's
+       order was on its way sat in front of that venue post: 30 ms at p50 under load, against
+       a path that is otherwise 2 ms. The audit line below is the durable record of what the
+       venue said; the row carries the annotation to disk on its next write (a fill, a
+       protect, a cancel, the expiry sweep), and a restart re-reads the venue anyway. The two
+       answers that end a row go through finish, which writes. */
     current.confirm = { ...confirm, state };
-    persist(current);
     if (state === 'unconfirmed') {
       record({
         type: 'unconfirmed',
