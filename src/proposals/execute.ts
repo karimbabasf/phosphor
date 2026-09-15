@@ -5,7 +5,7 @@
 // signing: proposals persist to disk as JSON in between, so the quote a leg carries at send
 // time is not necessarily the one the human saw.
 
-import type { Proposal, Rail, RailResult, TransferLeg } from '../types.ts';
+import type { Proposal, Rail, RailEvidence, RailHooks, RailResult, TransferLeg } from '../types.ts';
 import { loadPolicy, savePolicy } from '../policy/file.ts';
 import { renderSentences } from '../policy/render.ts';
 import { isRailKind } from '../rails/index.ts';
@@ -13,6 +13,7 @@ import { isLocked } from '../keystore/index.ts';
 import { errText, mergePatch, money, nowIso, persist, totalUsdOf, enclaveGated } from './lifecycle.ts';
 import { reservationMade } from './reservation.ts';
 import { within } from '../shutdown.ts';
+import { buildWallet } from '../wallet.ts';
 import type { PCtx } from './lifecycle.ts';
 
 // Single exit for a freshly evaluated proposal. This is the only place a proposal can become
@@ -112,26 +113,70 @@ export async function executeApproved(ctx: PCtx, p: Proposal): Promise<Proposal>
   return executeFundMove(ctx, p);
 }
 
-/* The wallet total the app currently believes, in USD. Synchronous: the snapshot is memory the
-   refresh loop fills, so this costs nothing and never waits. */
-function walletUsd(ctx: PCtx): number {
-  return ctx.ledger.snapshot().holdings.reduce((sum, h) => sum + h.usd, 0);
+/* The wallet total the app currently believes, in USD. Synchronous: the reads are memory the
+   refresh loop fills, so this costs nothing and never waits.
+   THE SAME VIEW THE WALLET CARD SHOWS. This summed snapshot.holdings, which a live refresh keeps
+   empty on purpose (the money sits in the verifier and on Hyperliquid, src/ledger/index.ts), so
+   from 2026-09-09 every receipt read "before $0.00, after $0.00" as a fact. A read that failed
+   is null, not zero: a total the app could not read is a different thing from nothing held. */
+function walletUsd(ctx: PCtx): number | null {
+  const intents = ctx.ledger.intents();
+  const hyperliquid = ctx.ledger.hyperliquid();
+  if ((intents !== undefined && !intents.ok) || (hyperliquid !== undefined && !hyperliquid.ok)) return null;
+  return buildWallet(ctx.ledger.snapshot(), intents, hyperliquid).totalUsd;
 }
 
-/* The balance after the move, once the chains have actually been re-read.
+// When the ledger's newest read started: the verifier and venue reads carry their own stamp,
+// and the chain status carries the pass's.
+function readStamp(ctx: PCtx): number {
+  const snapshot = ctx.ledger.snapshot();
+  const stamps = [
+    ...Object.values(snapshot.chainStatus).map((s) => Date.parse(s.fetchedAt)),
+    Date.parse(ctx.ledger.intents()?.fetchedAt ?? ''),
+    Date.parse(ctx.ledger.hyperliquid()?.fetchedAt ?? ''),
+  ].filter((n) => Number.isFinite(n));
+  return stamps.length === 0 ? 0 : Math.max(...stamps);
+}
+
+/* The balance after the move, once the pockets have actually been re-read.
    Taking a snapshot the instant the rail returns would report the numbers that were on screen
    BEFORE the move, because the ledger is a poll and the poll has not run yet. So the refresh is
    awaited, bounded, and a failure reports null rather than a number that would be wrong.
+   `settledAt` is the bar the read has to clear: a refresh that started before the rail returned
+   carries the balance from before the fill whatever the clock said when it answered, so a read
+   stamped earlier than the settlement is tried again until one is later or the cap runs out.
    This runs outside the one-at-a-time queue (the reservation was released when the row was
    written), so nobody waits behind it. */
-export async function balanceAfter(ctx: PCtx): Promise<number | null> {
-  const refreshed = await within(BALANCE_REFRESH_CAP_MS, ctx.ledger.refresh());
-  return refreshed ? walletUsd(ctx) : null;
+export async function balanceAfter(ctx: PCtx, settledAt?: string): Promise<number | null> {
+  const bar = settledAt === undefined ? 0 : Date.parse(settledAt);
+  const deadline = Date.now() + BALANCE_REFRESH_CAP_MS;
+  while (true) {
+    const refreshed = await within(Math.max(1, deadline - Date.now()), ctx.ledger.refresh());
+    if (!refreshed) return null;
+    if (readStamp(ctx) > bar) return walletUsd(ctx);
+    if (Date.now() + BALANCE_RETRY_MS >= deadline) return null;
+    await new Promise<void>((resolve) => setTimeout(resolve, BALANCE_RETRY_MS).unref());
+  }
 }
 
 // Long enough for five chains of RPC reads that each carry a 10 s deadline of their own, short
 // enough that a receipt is not held open on a provider having a bad day.
 const BALANCE_REFRESH_CAP_MS = 15_000;
+const BALANCE_RETRY_MS = 1_000;
+
+// What of a rail's evidence goes on the row: everything but the hashes, which have their own
+// field. Named so a rail cannot smuggle a stray key into the store through the hook.
+function pickEvidence(e: RailEvidence): RailEvidence {
+  const out: RailEvidence = {};
+  if (e.handle !== undefined) out.handle = e.handle;
+  if (e.nonce !== undefined) out.nonce = e.nonce;
+  if (e.deadline !== undefined) out.deadline = e.deadline;
+  if (e.refundedAmount !== undefined) out.refundedAmount = e.refundedAmount;
+  if (e.refundReason !== undefined) out.refundReason = e.refundReason;
+  if (e.settledAmountOut !== undefined) out.settledAmountOut = e.settledAmountOut;
+  if (e.explorerUrl !== undefined) out.explorerUrl = e.explorerUrl;
+  return out;
+}
 
 export async function executeRail(ctx: PCtx, p: Proposal, rail: Rail): Promise<Proposal> {
   const beforeUsd = walletUsd(ctx);
@@ -142,9 +187,26 @@ export async function executeRail(ctx: PCtx, p: Proposal, rail: Rail): Promise<P
      refuse in the app for up to five minutes. */
   reservationMade();
 
+  /* THE EVIDENCE IS WRITTEN THE MOMENT IT EXISTS. A rail hands back a handle once the quote is
+     taken, a hash once the intent is submitted, a nonce once the action is signed, and each one
+     lands on the row here, before the rail's watch loop, so a quit or a crash during the three
+     to five minutes of polling leaves a row that can be reconciled rather than one that "may or
+     may not have sent". Merged, because a rail reports in pieces; ignored once the row has left
+     `executing`, because a late hook must not reopen a decided row. */
+  const hooks: RailHooks = {
+    onEvidence: (e) => {
+      const current = ctx.store.get(p.id) ?? executing;
+      if (current.status !== 'executing') return;
+      const txids = [...new Set([...(current.result?.txids ?? []), ...(e.txids ?? [])])];
+      const evidence = { ...current.result?.evidence, ...pickEvidence(e) };
+      ctx.audit.append('submitted', `${p.id}: the venue holds the move; evidence recorded before the wait`, { id: p.id, txids, evidence });
+      persist(ctx, { ...current, result: { ok: false, detail: 'submitted, waiting for the venue', txids, evidence } });
+    },
+  };
+
   let result: RailResult;
   try {
-    result = await rail.execute(p.draft, p.id);
+    result = await rail.execute(p.draft, p.id, hooks);
   } catch (err) {
     // A rail that throws has said nothing about whether it sent anything, so its message
     // is passed through as-is rather than summarised into "failed".
@@ -168,14 +230,19 @@ export async function executeRail(ctx: PCtx, p: Proposal, rail: Rail): Promise<P
      money moved; the honest row for it is needs_reconciliation, the same state a partly sent
      fund move lands in (executeFundMove below), which counts against the cap and can be
      re-checked. `failed` is kept for the answer that carries no evidence at all. */
-  const txids = result.txids ?? [];
+  // Merged with what the hooks already wrote: a rail that handed over its handle early and
+  // answers with the hash alone has not withdrawn the handle.
+  const early = ctx.store.get(p.id)?.result;
+  const txids = [...new Set([...(early?.txids ?? []), ...(result.txids ?? [])])];
+  const evidence = { ...early?.evidence, ...result.evidence };
   const status = result.ok ? 'executed' : txids.length > 0 ? 'needs_reconciliation' : 'failed';
+  const settledAt = nowIso();
   ctx.audit.append(result.ok ? 'executed' : txids.length > 0 ? 'execution_unconfirmed' : 'execution_failed', `${p.id}: ${result.detail}`, { id: p.id, txids });
   const recorded = persist(ctx, {
     ...executing,
     status,
-    settledAt: nowIso(),
-    result: { ok: result.ok, detail: result.detail, txids, ...(result.evidence === undefined ? {} : { evidence: result.evidence }) },
+    settledAt,
+    result: { ok: result.ok, detail: result.detail, txids, ...(Object.keys(evidence).length === 0 ? {} : { evidence }) },
   });
 
   /* And the decoration is not on the caller's clock either. `balanceAfter` is up to fifteen
@@ -188,7 +255,7 @@ export async function executeRail(ctx: PCtx, p: Proposal, rail: Rail): Promise<P
      window already listens to, so the balance lands on screen when the chains answer. A
      refresh that fails, or a process that exits first, leaves `afterUsd` null, which is the
      same thing it has always meant: the move is recorded, the balance was not read. */
-  void balanceAfter(ctx)
+  void balanceAfter(ctx, settledAt)
     .then((afterUsd) => {
       if (afterUsd === null) return;
       const current = ctx.store.get(recorded.id) ?? recorded;
@@ -266,7 +333,7 @@ async function executeFundMove(ctx: PCtx, p: Proposal): Promise<Proposal> {
        returned without balances and kept { beforeUsd, afterUsd: null } off the executing row, so
        every demo receipt read "balance after: unknown" about a transfer that plainly happened. */
     const settledAt = nowIso();
-    const balances = { beforeUsd, afterUsd: await balanceAfter(ctx) };
+    const balances = { beforeUsd, afterUsd: await balanceAfter(ctx, settledAt) };
     return persist(ctx, { ...executing, status: 'executed', settledAt, balances, result: { ok: true, detail } });
   }
 
@@ -320,16 +387,17 @@ async function executeFundMove(ctx: PCtx, p: Proposal): Promise<Proposal> {
       ? `${txids.length} of ${legs.length} leg(s) sent (${txids.join(', ')}); the rest failed: ${failures.join('; ')}`
       : failures.join('; ');
   ctx.audit.append(ok ? 'executed' : 'execution_failed', `${p.id}: ${detail}`, { id: p.id, txids });
+  const settledAt = nowIso();
   const recorded = persist(ctx, {
     ...row,
     status: ok ? 'executed' : partial ? 'needs_reconciliation' : 'failed',
-    settledAt: nowIso(),
+    settledAt,
     result: { ok, detail, txids },
   });
 
   // The balance last, as a second update. It is a receipt decoration and it costs up to fifteen
   // seconds; the hashes above are the record and they are already durable.
-  return persist(ctx, { ...recorded, balances: { beforeUsd, afterUsd: await balanceAfter(ctx) } });
+  return persist(ctx, { ...recorded, balances: { beforeUsd, afterUsd: await balanceAfter(ctx, settledAt) } });
 }
 
 async function applyPolicyChange(ctx: PCtx, p: Proposal): Promise<Proposal> {

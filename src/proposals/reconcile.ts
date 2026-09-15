@@ -74,7 +74,10 @@ export function reconcileOnBoot(ctx: PCtx): Proposal[] {
   const stranded = ctx.store.list().filter(p => p.status === 'executing');
   const moved: Proposal[] = [];
   for (const p of stranded) {
+    // Whatever the rail handed over before the process died stays on the row: the hashes,
+    // and the handle or nonce a later reconcile asks the venue by.
     const txids = p.result?.txids ?? [];
+    const evidence = p.result?.evidence;
     const detail =
       txids.length > 0
         ? `Phosphor stopped while this was executing. ${txids.length} transaction hash(es) were recorded, so it may already have sent.`
@@ -83,7 +86,7 @@ export function reconcileOnBoot(ctx: PCtx): Proposal[] {
       persist(ctx, {
         ...p,
         status: 'needs_reconciliation',
-        result: { ok: false, detail, txids },
+        result: { ok: false, detail, txids, ...(evidence === undefined ? {} : { evidence }) },
       }),
     );
   }
