@@ -69,7 +69,9 @@ export type HostDeps = {
      wallet key. Optional so a test can build a host without one. */
   session?: Session;
   baseUrl: string;
-  user: string;
+  // The trading account. A function is asked when a child is forked and on every read the host
+  // makes itself, so a wallet created after boot is the account from then on.
+  user: string | (() => string);
   onEvent: (e: RunnerEvent) => void;
   killSwitch: () => boolean;
   store: PlanStore;
@@ -119,6 +121,7 @@ function nowIso(ms: number): string {
 export function createRunnerHost(deps: HostDeps) {
   const now = deps.now ?? (() => Date.now());
   const replyMs = deps.replyMs ?? DEFAULT_REPLY_MS;
+  const user = (): string => (typeof deps.user === 'function' ? deps.user() : deps.user);
 
   let child: ChildProcess | null = null;
   /* THE FORK IN FLIGHT, and there is exactly one of it.
@@ -237,7 +240,7 @@ export function createRunnerHost(deps: HostDeps) {
        of any process this user owns, which is the attacker this app is built against. A pipe
        has two ends and no third reader. */
     const spawned = (deps.forkImpl ?? fork)(entry, [], {
-      env: { ...process.env, PHOSPHOR_HL_URL: deps.baseUrl, PHOSPHOR_HL_USER: deps.user },
+      env: { ...process.env, PHOSPHOR_HL_URL: deps.baseUrl, PHOSPHOR_HL_USER: user() },
       stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
     });
     child = spawned;
