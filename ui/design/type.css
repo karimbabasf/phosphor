@@ -44,7 +44,7 @@ kbd {
 
 /* The balance. One number, the largest thing on the screen, and quiet. */
 .balance {
-  font-family: var(--font-ui);
+  font-family: var(--font-mono);
   font-size: var(--fs-44);
   font-weight: 500;
   letter-spacing: -0.02em;

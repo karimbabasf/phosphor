@@ -56,7 +56,8 @@ body[data-locked="true"] #page {
   text-align: center;
 }
 
-.lock-brand { color: var(--text); }
+.lock-brand { color: var(--ink); justify-content: center; }
+.lock-brand .brand-mark { width: 32px; height: 32px; }
 
 .lock-title {
   margin: 0;

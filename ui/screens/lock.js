@@ -188,8 +188,7 @@
     var card = dom.el('div', 'lock-card');
     var brand = dom.el('div', 'brand lock-brand');
     append(brand, dom.mark('brand-mark'));
-    brand.appendChild(dom.el('span', 'brand-word', 'Phosphor'));
-    card.appendChild(brand);
+        card.appendChild(brand);
     card.appendChild(dom.el('h1', 'lock-title', 'Phosphor is locked'));
     refs.host.appendChild(card);
     return card;
