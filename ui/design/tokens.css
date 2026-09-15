@@ -128,6 +128,42 @@
   --lift-sm: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
 
+/* A 27 inch screen (2000 px of window and up): type steps up about 12 percent
+   and space about 10 percent, through these tokens alone, so the whole window
+   steps together. 149 of the 154 font sizes in ui/design read --fs-*, and
+   four of every five paddings, margins and gaps read --s-*; the control
+   heights that are literals (26, 28, 32 px) still hold the bigger text. The
+   step is a media query on the window, never a zoom on the page: a zoom breaks
+   the chart canvas's device pixel maths and the split handles' measurements.
+   The chart draws its own labels on canvas and does not step with this. */
+@media (min-width: 2000px) {
+  :root {
+    --fs-11: 12.5px;
+    --fs-12: 13.5px;
+    --fs-13: 14.5px;
+    --fs-14: 16px;
+    --fs-15: 17px;
+    --fs-16: 18px;
+    --fs-18: 20px;
+    --fs-20: 22px;
+    --fs-24: 27px;
+    --fs-26: 29px;
+    --fs-28: 31px;
+    --fs-32: 36px;
+    --fs-40: 45px;
+    --fs-44: 49px;
+    --fs-56: 49px;
+
+    --s-2: 9px;
+    --s-3: 13px;
+    --s-4: 18px;
+    --s-5: 26px;
+    --s-6: 35px;
+    --s-7: 53px;
+    --s-8: 70px;
+  }
+}
+
 /* The five slots keep their meaning when an agent recolours the window, so the
    window never paints text on a ground it cannot be read against. The server
    enforces the contrast floors before these are written. */
