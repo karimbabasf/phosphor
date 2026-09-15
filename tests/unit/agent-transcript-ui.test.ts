@@ -147,6 +147,7 @@ function build() {
   let reject: ((err: Error) => void) | null = null;
   const driverHandlers: Array<(frame: unknown) => void> = [];
   const receiptHandlers: Array<(list: unknown[], state: string) => void> = [];
+  const actions: string[] = [];
 
   const host = make('div');
   const composerHost = make('div');
@@ -181,6 +182,7 @@ function build() {
     PhosphorToast: { show: () => {} },
     PhosphorApi: {
       driver: (body: { action: string; text?: string }) => {
+        actions.push(body.action);
         if (body.action === 'prompt') {
           sends.push(String(body.text));
           return new Promise<void>((_, rej) => {
@@ -235,6 +237,7 @@ function build() {
     composerHost,
     emit,
     sends,
+    actions,
     fail: (message: string) => reject?.(new Error(message)),
     type(text: string) {
       input.value = text;
@@ -423,11 +426,57 @@ test('the composer arms on text and says why it is quiet when it is', () => {
   world.emit({ kind: 'status', state: 'off' });
   assert.equal(world.input.placeholder, 'Start your assistant to talk to it.');
   assert.equal(world.input.disabled, true);
+  assert.equal(all(world.host, 'suggest').length, 3, 'the empty card offers three first moves');
+});
+
+test('a first move on a live column asks its question at once', () => {
+  const world = build();
   const rows = all(world.host, 'suggest');
-  assert.equal(rows.length, 3, 'the empty card offers three first moves');
   fire(rows[0], 'click');
-  assert.equal(world.input.value, rows[0].textContent, 'a first move did not land in the box');
-  assert.equal(world.sends.length, 1, 'a first move sent itself');
+  assert.deepEqual(world.sends, [rows[0].textContent]);
+  assert.equal(world.input.value, '', 'the words stayed in the box after they were sent');
+  assert.ok(!world.actions.includes('start'), 'a running assistant was started again');
+});
+
+test('a first move on a quiet column starts the assistant and asks once it is ready', () => {
+  /* It used to write the words into a box the column keeps disabled while nobody is at the
+     wheel, so "What do I hold?" sat grey over the placeholder that had just explained why the
+     box was quiet. The press is the question, so it takes the same door as Start. */
+  const world = build();
+  world.emit({ kind: 'status', state: 'off' });
+  const rows = all(world.host, 'suggest');
+  fire(rows[1], 'click');
+  assert.deepEqual(world.actions, ['start'], 'the press did not start the assistant');
+  assert.deepEqual(world.sends, [], 'the question went out before anybody was there to hear it');
+  assert.equal(world.input.value, rows[1].textContent, 'the words are not waiting in the box');
+  assert.equal(world.seat(), 'coming');
+
+  world.emit({ kind: 'status', state: 'ready' });
+  world.runTimers();
+  assert.deepEqual(world.sends, [rows[1].textContent], 'the seat came up and the question was not asked');
+  assert.equal(world.input.value, '');
+  assert.equal(world.saidRows().length, 1);
+});
+
+test('a first move whose start fails keeps its words in the box and sends nothing', () => {
+  const world = build();
+  world.emit({ kind: 'status', state: 'off' });
+  const rows = all(world.host, 'suggest');
+  fire(rows[2], 'click');
+  world.emit({ kind: 'status', state: 'failed', detail: 'claude was not found on PATH.' });
+  world.runTimers();
+  assert.deepEqual(world.sends, []);
+  assert.equal(world.input.value, rows[2].textContent, 'the words were lost with the start');
+  assert.equal(world.input.disabled, true);
+  assert.ok(world.card().includes('could not start'));
+
+  /* A later start that works does not fire the old question on its own: the failure ended the
+     press, and the words are in the box for the person to send. */
+  world.emit({ kind: 'status', state: 'starting' });
+  world.emit({ kind: 'status', state: 'ready' });
+  world.runTimers();
+  assert.deepEqual(world.sends, [], 'a question from a failed press sent itself on the next start');
+  assert.equal(world.input.value, rows[2].textContent);
 });
 
 /* ---------- The receipt card ----------

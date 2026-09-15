@@ -618,18 +618,43 @@
     dom.setAttr(node.refs.field, 'data-armed', text ? 'true' : null);
   }
 
-  /* A suggestion puts its words in the box and hands over the caret. It
-     never sends: the first message an assistant gets is still a thing the
-     person pressed Enter on. Nothing here starts an assistant either, so a
-     press on a quiet column changes the box and nothing else. */
+  /* A SUGGESTION IS A QUESTION, SO PRESSING ONE ASKS IT.
+
+     On a live column it goes straight out. On a column with nobody at the
+     wheel it used to land in a box the column keeps disabled, where it sat
+     as grey text over the placeholder that had just explained why the box
+     was quiet. So it starts the assistant instead, through the same door
+     the Start button uses, with the words waiting in the box, and sends them
+     the moment the seat reports ready. A start that fails leaves the words
+     where they are and lets the card say what went wrong; nothing sends,
+     and the next press is the person's. */
+  var queued = null;
+
   function suggestClick(node, text) {
     return function () {
       var input = node.refs.input;
       input.value = text;
       autogrow(input);
       arm(node);
-      if (!input.disabled && typeof input.focus === 'function') input.focus();
+      if (canTalk()) {
+        submit(node);
+        return;
+      }
+      queued = { node: node, text: text };
+      if (phase === 'starting') return;
+      doStart(node, node.refs.startBig);
     };
+  }
+
+  /* The seat came up with a question waiting. Sent only if the box still
+     holds the words that were queued: a box that says something else is a
+     person who changed their mind while it was starting. */
+  function sendQueued() {
+    var waiting = queued;
+    queued = null;
+    if (!waiting || !canTalk()) return;
+    if (String(waiting.node.refs.input.value || '').trim() !== waiting.text) return;
+    submit(waiting.node);
   }
 
   /* Height from content, capped at six lines, and measured from zero so
@@ -908,6 +933,8 @@
     detail = note || '';
     renderAll();
     if (arrived) focusComposer();
+    if (arrived) sendQueued();
+    else if (next === 'error' || next === 'idle') queued = null;
     if (settled) settleRing();
     window.PhosphorShell.updateField();
     /* The world reads the assistant's state to write its own hero sentence, and
