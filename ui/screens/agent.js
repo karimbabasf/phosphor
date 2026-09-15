@@ -316,7 +316,6 @@
   var blocks = [];
   var seq = 0;
   var phase = 'idle';
-  var serverWord = 'off';
   var connection = { command: '' };
   var roster = [];
   var openSteps = null;
@@ -1090,7 +1089,6 @@
     var arrived = phase === 'starting' && (next === 'connected' || next === 'working');
     var settled = phase === 'working' && next !== 'working';
     phase = next;
-    if (word) serverWord = word;
     /* The sheet belongs to nobody being at the wheel. Somebody arriving, or
        on the way, closes it. */
     if (!canStart()) view = 'card';
