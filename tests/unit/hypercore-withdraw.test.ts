@@ -145,7 +145,7 @@ function fakeClient(over: ClientOverrides = {}): { client: OneClickClient; quote
 // answers with the send the rail made, keyed on its nonce, once the exchange has seen it.
 type Shape = { available: number; spot: number; perp: number; positions?: number; marginUsed?: number; unified?: boolean };
 
-type HlOverrides = { role?: string; exchange?: unknown; exchangeThrows?: boolean; ledgerMissing?: boolean };
+type HlOverrides = { role?: string; exchange?: unknown; exchangeThrows?: boolean; ledgerMissing?: boolean; refuseSend?: boolean };
 
 function fakeHl(shapes: Shape[], over: HlOverrides = {}): { hl: HlUserSignedDeps; signed: HlTypedData[]; exchange: any[]; infoTypes: string[] } {
   const signed: HlTypedData[] = [];
@@ -162,6 +162,9 @@ function fakeHl(shapes: Shape[], over: HlOverrides = {}): { hl: HlUserSignedDeps
         throw err;
       }
       exchange.push(body);
+      if (over.refuseSend && (body.action as { type?: string }).type === 'spotSend') {
+        return json({ status: 'err', response: 'Insufficient balance for token transfer' });
+      }
       return json(over.exchange ?? { status: 'ok', response: { type: 'default' } });
     }
     infoTypes.push(body.type);
@@ -423,6 +426,8 @@ test('execute signs one spotSend to the minted address, watches 1Click, and prov
   assert.match(out.detail, /intents balance rose by 7\.780248/);
   assert.match(out.detail, /collateral fell by 9/);
   assert.deepEqual(out.txids, ['0xledgerhash', '0xdest']);
+  assert.equal(out.evidence?.nonce, '1786600000000');
+  assert.equal(out.evidence?.handle, DEPOSIT.toLowerCase());
 });
 
 test('a success reports the amount 1Click settled, not the quote, and keeps the NEAR settlement hash', async () => {
@@ -481,6 +486,39 @@ test('a send whose reply is lost is reported as ambiguous with its nonce, never 
   assert.match(out.detail, /1786600000000/);
   assert.match(out.detail, new RegExp(DEPOSIT.toLowerCase()));
   assert.doesNotMatch(out.detail, /Nothing was sent/);
+  assert.deepEqual(out.txids, []);
+  assert.equal(out.evidence?.nonce, '1786600000000', 'the nonce is the identity of the action and the only handle a retry has');
+  assert.equal(out.evidence?.handle, DEPOSIT.toLowerCase());
+});
+
+test('a send the ledger has not shown yet keeps its nonce as evidence and never a made up hash', async () => {
+  const { rail: r } = rail({}, [{ available: 20, spot: 20, perp: 0 }, { available: 11, spot: 11, perp: 0 }], { ledgerMissing: true });
+  const out = await r.execute(draft());
+  assert.equal(out.ok, true, out.detail);
+  assert.deepEqual(out.txids, ['0xdest']);
+  assert.ok(!(out.txids ?? []).some((h) => h.startsWith('hl-nonce-')), 'a synthetic id is not a hash');
+  assert.doesNotMatch(out.detail, /hl-nonce-/);
+  assert.match(out.detail, /nonce 1786600000000/);
+  assert.match(out.detail, /ledger not found yet/);
+  assert.equal(out.evidence?.nonce, '1786600000000');
+});
+
+test('a send the venue refused after the perp to spot move says where the collateral now sits', async () => {
+  const { rail: r, exchange } = rail(
+    {},
+    [
+      { available: 0, spot: 2, perp: 20, unified: false },
+      { available: 0, spot: 2, perp: 20, unified: false },
+      { available: 0, spot: 9, perp: 13, unified: false },
+    ],
+    { refuseSend: true },
+  );
+  const out = await r.execute(draft());
+  assert.equal(out.ok, false);
+  assert.equal(exchange.length, 2, 'the class transfer ran, then the send was refused');
+  assert.match(out.detail, /Insufficient balance/);
+  assert.match(out.detail, /The collateral was moved to the spot side and stays there; nothing was sent out\./);
+  assert.doesNotMatch(out.detail, /Nothing was sent\./);
 });
 
 test('a refund after the send names the amount and the venue account, with the send kept as evidence', async () => {

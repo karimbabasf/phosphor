@@ -472,34 +472,58 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     }
 
     // A standard account pays spotSend out of the spot book; move what is short from perp.
+    // Same account, different side: nothing leaves, but a refusal after this point has to say
+    // that the collateral now sits on spot, or the human reads "nothing was sent" as "nothing
+    // changed" and the next look at the perp book comes up short.
+    const handle = depositAddress.toLowerCase();
+    let movedToSpot = false;
     if (p.moveToSpot > 0) {
       const moved = await usdClassTransfer(hl, { amount: p.moveToSpot, toPerp: false });
       if (!moved.ok) {
         return {
           ok: false,
-          detail:
-            `moving ${p.moveToSpot} USDC from the perp side to spot failed before the send: ${oneLine(moved.detail, 160)}. ` +
-            'Nothing left the account.',
+          detail: moved.ambiguous
+            ? `moving ${p.moveToSpot} USDC from the perp side to spot got no answer from the venue before the send: ` +
+              `${oneLine(moved.detail, 160)}. Nothing was sent out, but the move between sides is unconfirmed: read both ` +
+              'sides of the account before proposing again.'
+            : `moving ${p.moveToSpot} USDC from the perp side to spot failed before the send: ${oneLine(moved.detail, 160)}. ` +
+              'Nothing left the account.',
+          txids: [],
+          ...(moved.ambiguous && moved.nonce !== undefined ? { evidence: { nonce: String(moved.nonce) } } : {}),
         };
       }
+      movedToSpot = true;
     }
 
     const sent = await spotSend(hl, { destination: depositAddress, amount: draft.amount });
     if (!sent.ok) {
       if (sent.ambiguous) {
+        // The nonce is the identity of the action on this venue and the only thing a retry can
+        // reuse, so it is the evidence; there is no hash to record and none is invented.
         return {
           ok: false,
           detail:
-            `${sent.detail} The send was to ${depositAddress.toLowerCase()} for 1Click quote of ${oneLine(quote.amountOutFormatted, 40)} USDC; ` +
+            `${sent.detail} The send was to ${handle} for 1Click quote of ${oneLine(quote.amountOutFormatted, 40)} USDC; ` +
             `read the Hyperliquid ledger for nonce ${String(sent.nonce)} and 1Click status for that address before proposing again.`,
           txids: [],
+          evidence: { handle, ...(sent.nonce !== undefined ? { nonce: String(sent.nonce) } : {}) },
         };
       }
-      return { ok: false, detail: `${sent.detail}. Nothing was sent.`, txids: [] };
+      return {
+        ok: false,
+        detail:
+          `${sent.detail}. ` +
+          (movedToSpot ? 'The collateral was moved to the spot side and stays there; nothing was sent out.' : 'Nothing was sent.'),
+        txids: [],
+      };
     }
     const nonce = sent.nonce ?? now();
-    const hash = (await ledgerHash(owner, nonce, depositAddress)) ?? `hl-nonce-${String(nonce)}`;
-    const evidence = `sent ${draft.amount} USDC to ${depositAddress.toLowerCase()} (nonce ${String(nonce)}, ledger ${hash})`;
+    // The venue's ledger hash when it has one. When it has not shown the send yet the row keeps
+    // the nonce and no hash: an invented id in txids reaches Activity as a transaction.
+    const ledger = await ledgerHash(owner, nonce, depositAddress);
+    const evidence = `sent ${draft.amount} USDC to ${handle} (nonce ${String(nonce)}, ledger ${ledger ?? 'not found yet'})`;
+    const railEvidence = (status: OneClickStatus) => ({ ...settledEvidence(status, handle), nonce: String(nonce) });
+    const hash = ledger ?? '';
 
     const watch = await watchStatus(depositAddress);
 
@@ -511,27 +535,29 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
           `withdrew ${draft.amount} USDC from Hyperliquid; ${deliveredAmount(watch, quote.amountOutFormatted)} USDC credited to our ` +
           `intents account ${draft.to} (${deliveredNote(watch)}); ${evidence}.${proof}`,
         txids: uniqueTxids(hash, watch),
-        evidence: settledEvidence(watch, depositAddress.toLowerCase()),
+        evidence: railEvidence(watch),
       };
     }
 
     if (watch.status === 'REFUNDED' || watch.status === 'FAILED') {
-      return describeRefund(watch, depositAddress.toLowerCase(), {
+      const refund = describeRefund(watch, handle, {
         symbol: 'USDC',
         refundTarget: `the venue account ${draft.from} (the spot side)`,
         evidence,
         primaryTxid: hash,
       });
+      return { ...refund, evidence: { ...refund.evidence, nonce: String(nonce) } };
     }
 
     if (watch.status === 'INCOMPLETE_DEPOSIT') {
-      return describeIncompleteDeposit(watch, depositAddress.toLowerCase(), {
+      const short = describeIncompleteDeposit(watch, handle, {
         symbol: 'USDC',
         quotedIn: oneLine(quote.amountInFormatted, 40),
         refundTarget: `the venue account ${draft.from} (the spot side)`,
         evidence,
         primaryTxid: hash,
       });
+      return { ...short, evidence: { ...short.evidence, nonce: String(nonce) } };
     }
 
     // The send happened and the watch ran out. The ledger hash and the address stay on the row
@@ -541,9 +567,9 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
       detail:
         `the send confirmed but 1click did not reach a terminal status within ${Math.round(pollTimeoutMs / 1000)}s ` +
         `(last status ${watch.reported}); ${evidence}. THE SEND HAPPENED and the routing may still complete, so it is ` +
-        `unconfirmed: read the intents balance and 1Click status for ${depositAddress.toLowerCase()} before proposing again.`,
+        `unconfirmed: read the intents balance and 1Click status for ${handle} before proposing again.`,
       txids: uniqueTxids(hash, watch),
-      evidence: { handle: depositAddress.toLowerCase() },
+      evidence: { handle, nonce: String(nonce) },
     };
   }
 
