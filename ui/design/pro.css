@@ -1,11 +1,12 @@
 /* Pro: the deck of four cards, and the Activity list that Basic's fold shares.
 
    Money and Activity down the left column, Trading and Policy down the right,
-   two equal columns with 12 px between cards. A card is as tall as what it
-   holds; Money stops at half the window and scrolls inside, and Activity takes
-   the rest of its column, because a list of receipts has no natural end. The
-   card head is the same everywhere: title at the left, one line of meta at the
-   right, a hairline under both. */
+   two equal columns with 12 px between cards. Every card is as tall as what it
+   holds and nothing scrolls inside a card: the world (#views) is the one
+   scroller, so a wallet of twenty coins and a day of receipts make a taller
+   page, never a list cut off at a card's edge. The card head is the same
+   everywhere: title at the left, one line of meta at the right, a hairline
+   under both. */
 
 /* ---------- the deck ---------- */
 
@@ -15,11 +16,9 @@
   padding: var(--s-5);
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr);
   gap: var(--s-3);
-  align-items: stretch;
-  flex: 1 1 auto;
-  min-height: 0;
+  align-items: start;
+  flex: 0 0 auto;
 }
 
 /* A column stacks its cards and lets nothing stretch that has not asked to. */
@@ -28,62 +27,16 @@
   flex-direction: column;
   gap: var(--s-3);
   min-width: 0;
-  min-height: 0;
 }
 
 .pro-col > .card {
   flex: 0 0 auto;
-  min-height: 0;
 }
 
-/* Money stops at half the window and scrolls its list inside the card, so a
-   wallet of twenty coins never pushes Activity off the deck. It never shrinks
-   below that for Activity's sake: the list card takes what is left. */
-.pro-col > .card-money {
-  flex: 0 0 auto;
-  max-height: 50vh;
-}
-
-.card-money > .card-body {
-  flex: 1 1 auto;
-}
-
-.card-money .holding-list {
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  min-height: 0;
-}
-
-/* The list card fills what the left column has left, whatever its rows would
-   add up to, and never less than a handful of rows: past that the world
-   scrolls. */
-.pro-col > .card-activity {
-  flex: 1 1 0%;
-  min-height: 320px;
-}
-
-/* Narrow enough and the four cards stack in one column, so the world goes back
-   to being a column that scrolls as a column. */
+/* Narrow enough and the four cards stack in one column. */
 @container world (max-width: 900px) {
   .pro-grid {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto;
-    flex: 0 0 auto;
-    padding-bottom: var(--s-8);
-  }
-
-  .pro-col > .card-money {
-    max-height: none;
-  }
-
-  .pro-col > .card-activity {
-    flex: 0 0 auto;
-    min-height: 0;
-  }
-
-  .activity-scroll,
-  .card-money .holding-list {
-    overflow-y: visible;
   }
 }
 
@@ -423,8 +376,8 @@
 
 /* ---------- Activity: the list, shared with Basic's fold ---------- */
 
-/* The chips sit on the card's own ground between the head and the list, so a
-   row scrolls under the hairline below them and never under the title. */
+/* The chips sit on the card's own ground between the head and the list, with
+   a hairline under them that the first row starts from. */
 .activity-head {
   flex: 0 0 auto;
   padding: var(--s-3) var(--card-x);
@@ -432,10 +385,6 @@
 }
 
 .activity-scroll {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
   padding-top: 0;
   gap: 0;
 }
