@@ -23,6 +23,9 @@ export function venue() {
     position: null as { szi: number; entryPx: number } | null,
     openOrders: [] as { coin: string; oid: number; cloid: string | null }[],
     actions: [] as Action[],
+    // Every /exchange body as it arrived, envelope included, so a test can read the nonce and
+    // the expiry beside the action.
+    bodies: [] as Record<string, unknown>[],
     // When each POST reached this server, on the performance clock, as the request line came
     // in and before the body was read. The latency harness reads the /exchange rows.
     arrivals: [] as { path: string; at: number }[],
@@ -33,6 +36,10 @@ export function venue() {
     // The HTTP status the next /exchange POST gets, then cleared. A test sets it to 502 or 429
     // to stand in for the venue failing after the request reached it.
     exchangeStatus: null as null | number,
+    // A top-level rejection the next /exchange POST gets, then cleared: HTTP 200 with
+    // status 'err' and this sentence, which is how the venue answers an action it will not
+    // take at all (a stale expiresAfter, a bad signature) rather than an order it refused.
+    exchangeError: null as null | string,
   };
   const server = http.createServer((req, res) => {
     state.arrivals.push({ path: req.url ?? '', at: performance.now() });
@@ -47,6 +54,12 @@ export function venue() {
       }
       const json = JSON.parse(body || '{}') as Record<string, unknown>;
       res.writeHead(200, { 'content-type': 'application/json' });
+      if (req.url === '/exchange') state.bodies.push(json);
+      if (req.url === '/exchange' && state.exchangeError !== null) {
+        const sentence = state.exchangeError;
+        state.exchangeError = null;
+        return res.end(JSON.stringify({ status: 'err', response: sentence }));
+      }
       if (req.url === '/info') {
         const type = String(json.type);
         if (type === 'activeAssetData') return res.end(JSON.stringify({ leverage: state.leverage, markPx: '100' }));

@@ -429,3 +429,40 @@ test('a venue 5xx on the bracket answers ambiguous, not refused: the venue may h
   const again = await c.send({ cmd: 'fire', id: 'pl_1', mark: 100 });
   assert.equal(again.ev, 'refused', JSON.stringify(again));
 });
+
+// ---------- every action expires ----------
+//
+// The child signs an expiresAfter of one minute into every L1 action it posts, so a bracket held
+// up on the way cannot land later against a market that moved. The venue reads it and rejects a
+// stale action outright, with HTTP 200 and status 'err', which is a definite answer: nothing
+// rests, so the plan is refused (never ambiguous) and may fire again.
+
+test('every action the child posts carries an expiry a minute ahead, inside the signed bytes', async () => {
+  const { v, c } = await boot();
+  const before = Date.now();
+  await c.arm(plan());
+  const e = await c.send({ cmd: 'fire', id: 'pl_1', mark: 100 });
+  assert.equal(e.ev, 'placed', JSON.stringify(e));
+  const posted = v.state.bodies;
+  assert.ok(posted.length >= 1, 'the bracket went to the venue');
+  assert.ok(posted.some((b) => (b.action as { type?: string }).type === 'order'));
+  for (const body of posted) {
+    const expires = body.expiresAfter;
+    assert.equal(typeof expires, 'number', `${String((body.action as { type?: string }).type)} carries expiresAfter`);
+    assert.ok((expires as number) >= before + 60_000 && (expires as number) <= Date.now() + 60_000, 'a minute ahead of when it was signed');
+    assert.ok((expires as number) > (body.nonce as number), 'and after the nonce it was signed with');
+  }
+});
+
+test('an action the venue rejected as expired is a definite refusal, and the plan can fire again', async () => {
+  const { v, c } = await boot();
+  await c.arm(plan());
+  v.state.exchangeError = 'Action expired: expiresAfter is before the current block time';
+  const e = await c.send({ cmd: 'fire', id: 'pl_1', mark: 100 });
+  assert.equal(e.ev, 'refused', JSON.stringify(e));
+  assert.match(e.ev === 'refused' ? e.reason : '', /expired/);
+  assert.ok(!('ambiguous' in e), 'a stale action does not exist at the venue, so nothing is held');
+
+  const ok = await c.send({ cmd: 'fire', id: 'pl_1', mark: 100 });
+  assert.equal(ok.ev, 'placed', 'the reservation was released with the refusal');
+});
