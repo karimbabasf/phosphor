@@ -21,7 +21,7 @@ export type Mode = 'demo' | 'live';
 // screen, while trade is a separate page (/trade) with its own feed. It lives in the same
 // union anyway, because from the outside all three answer one question, "where is the human
 // looking", and one union is what lets one tool move between them.
-export type ViewMode = 'basic' | 'pro' | 'trade';
+export type ViewMode = 'basic' | 'pro' | 'trade' | 'vault';
 
 // Who last put the window on its screen: the person clicking a tab, or an agent calling
 // `switch`. The two can disagree about where the window is only when one of them is not

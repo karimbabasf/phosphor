@@ -647,8 +647,8 @@ function registerLeadView(name: string, description: string, shape: Record<strin
 registerLeadView(
   'set_theme',
   [
-    'Recolours the window. A colourway, then five named slots on top of it.',
-    `profile: one of ${COLOURWAYS.join(', ')}, the window's two colourways of the mark (${COLOURWAYS.map((c) => COLOURWAY_LABEL[c].toLowerCase()).join('; ')}). Picking one repaints everything, text included, and puts the five slots back to that colourway's own colours.`,
+    'Recolours the window: five named slots on top of its one colourway.',
+    `profile: ${COLOURWAYS.join(', ')} (${COLOURWAYS.map((c) => COLOURWAY_LABEL[c].toLowerCase()).join('; ')}), the window's only colourway. The window is dark only; there is no light one to pick. Passing it puts the five slots back to the colourway's own colours.`,
     'The five slots, each a hex colour like #3fff6c or #3f6:',
     ...THEME_SLOTS.map((slot) => `  ${slot}: ${SLOT_MEANING[slot]}`),
     "Pass reset:true to put every slot back to the current colourway's own colours. Omit a slot to leave it alone.",
@@ -1126,7 +1126,8 @@ if (ROLE !== 'analyst')
         'basic: plain English, one decision at a time, written for a non-technical person.',
         'pro: the operator deck, with wallet, composition, policy, audit log and transactions.',
         'trade: the Hyperliquid perpetuals surface, with the chart, positions, orders and plans.',
-        'This is the mode for high-frequency work. All three are screens inside the one window.',
+        'This is the mode for high-frequency work.',
+        'vault: custody, the addresses, the recovery phrase and the kill switch. All four are screens inside the one window.',
         '',
         'Aliases are accepted: trading, hft, perps and hyperliquid all mean trade; simple and plain mean',
         'basic; operator and advanced mean pro.',
@@ -1139,7 +1140,7 @@ if (ROLE !== 'analyst')
       inputSchema: {
         mode: z
           .string()
-          .describe('basic, pro or trade. Aliases: trading, hft, perps, hyperliquid, simple, plain, operator, advanced'),
+          .describe('basic, pro, trade or vault. Aliases: trading, hft, perps, hyperliquid, simple, plain, operator, advanced, custody, keys'),
       },
     },
     async (args) => proxy({ op: 'set_view_mode', mode: args.mode }),

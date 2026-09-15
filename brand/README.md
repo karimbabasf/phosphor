@@ -35,10 +35,10 @@ on black and black on white. Black on green is for banners and social only, neve
   the mark and the name on black. The `-wordmark` pair is the name alone. The `-white-on-black`
   pair is the same banner in the site's light, `#ECEEF1` on `#0E0F13`.
 
-The app switches between its two colourways from the menu under the mark in its top left,
-and an agent can do the same with `set_theme { profile }`. Each colourway is a whole palette
-(text, warning amber and the gate's red change with the ground), and every one is checked
-against the contrast floors in `tests/unit/theme-slots.test.ts`.
+The app window ships in one colourway, green on black, and is dark only: there is no menu and
+no light mode. The colourway is a whole palette (text, warning amber and the gate's red belong
+to the ground), checked against the contrast floors in `tests/unit/theme-slots.test.ts`. An
+agent recolours the five slots on top of it with `set_theme`.
 
 ## The wordmark
 

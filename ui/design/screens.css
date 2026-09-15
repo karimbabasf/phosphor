@@ -40,11 +40,6 @@
 
 /* ---------- basic ---------- */
 
-.panel-bare {
-  background: transparent;
-  border-color: transparent;
-}
-
 .panel-total {
   padding-top: var(--s-3);
   margin-top: var(--s-3);
@@ -1590,8 +1585,7 @@ a.receipt-hash:focus-visible {
   .layers:hover .chev { transform: rotate(135deg); }
   .layers-pop { transition-duration: 1ms; }
   .step[data-state="live"] .step-dot,
-  .turn-dot,
-  .wordmark-glyph[data-state="working"] { animation: none; opacity: 0.8; }
+  .turn-dot { animation: none; opacity: 0.8; }
   .turn-bar { animation: none; }
   /* The mark stops breathing and holds: the state is carried by its colour,
      which is the half of it that meant something. */
@@ -1966,45 +1960,6 @@ dialog.confirm::backdrop {
   animation: cardin var(--dur-enter) var(--ease-out) both;
 }
 
-/* ---------- locked: nothing behind the card can be read ---------- */
-
-/* Behind the lock the whole page is frosted, top bar included: the shape of
-   the window survives, no word does. Karim, 2026-09-14: nothing is visible
-   until the password is in, and the bar goes with it. It used to be dimmed
-   and readable, on the argument that a filter on a container re-blurs on
-   every repaint under it and locked is the state an unattended app sits in
-   longest. The cost is bounded now: the field, which was the only thing
-   painting every frame, stops the moment the body is locked (pattern.js
-   watches data-locked), so the blur is rasterised once and again only when a
-   price ticks. What is blurred is also taken out of reach: no pointer, no
-   selection, and lock.js marks the page inert so neither the keyboard nor a
-   screen reader can walk into it, which puts Freeze behind the password too.
-   #page is the only thing filtered, and nothing fixed lives inside it (the
-   beam canvas, the toasts and the screens are its siblings), so the filter
-   re-anchors nothing. Unlocking releases it over one enter duration. */
-#page {
-  transition: filter var(--dur-enter) var(--ease-out),
-              opacity var(--dur-enter) var(--ease-out);
-}
-
-body[data-locked="true"] #page {
-  filter: blur(28px);
-  opacity: 0.5;
-  pointer-events: none;
-  -webkit-user-select: none;
-  user-select: none;
-}
-
-/* The screen's ground finishes the job the blur starts: heavy enough that a
-   44 px balance under 28 px of blur is a tint and not a shape. It covers the
-   bar as well, so the card is the only thing on screen. */
-.screen {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  background: color-mix(in srgb, var(--bg-0) 86%, transparent);
-}
-
 .destinations {
   padding: var(--s-3);
   border-radius: var(--radius-sm);
@@ -2072,8 +2027,8 @@ body[data-locked="true"] #page {
    (--coin, set by ui/design/marks.js) over a wash of that colour, with a ring
    at a quarter strength, so ETH, SOL and USDC are three different rows before
    a word is read. A coin with no colour draws in the text colour on the plain
-   surface, as before. The wash is mixed on top of the surface so it holds on
-   both colourways. */
+   surface, as before. The wash is mixed on top of the surface so it holds
+   whatever the surface is. */
 .coin-mark {
   flex: 0 0 auto;
   width: 28px;

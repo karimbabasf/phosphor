@@ -20,16 +20,8 @@
   never reaches the page: the app relaunches.
 
   Same tokens as the splash and ui/design/tokens.css, copied because this page has no origin
-  to import them from. The colourway is handed over as window.__PHOSPHOR_PROFILE__ like the
-  splash, so the window matches the one behind it.
+  to import them from. The window is dark only, so this page is too.
 -->
-<script>
-  (function () {
-    if (window.__PHOSPHOR_PROFILE__ === 'black-on-white') {
-      document.documentElement.setAttribute('data-profile', 'black-on-white');
-    }
-  })();
-</script>
 <style>
   :root {
     color-scheme: dark;
@@ -45,22 +37,10 @@
     --down: #FF5A6E;
     --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   }
-  :root[data-profile="black-on-white"] {
-    color-scheme: light;
-    --bg-0: #FFFFFF;
-    --bg-2: #EDEDED;
-    --line: #E3E3E3;
-    --line-strong: #D4D4D4;
-    --text: #111111;
-    --text-2: #5C6169;
-    --text-3: #8A9099;
-    --ink: #111111;
-    --on-ink: #FFFFFF;
-  }
   @font-face {
-    font-family: "Geist";
-    src: url("Geist-Variable.woff2") format("woff2-variations");
-    font-weight: 100 900;
+    font-family: "Sora";
+    src: url("Sora-Variable.woff2") format("woff2-variations");
+    font-weight: 100 800;
     font-display: swap;
   }
   html, body {
@@ -68,7 +48,8 @@
     margin: 0;
     background: var(--bg-0);
     color: var(--text);
-    font-family: "Geist", ui-sans-serif, system-ui, sans-serif;
+    font-family: "Sora", ui-sans-serif, system-ui, sans-serif;
+    font-optical-sizing: auto;
     font-size: 13px;
     -webkit-user-select: none;
     user-select: none;

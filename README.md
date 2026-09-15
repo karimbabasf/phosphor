@@ -362,7 +362,7 @@ policy reads the collateral at stake, and the rail's Cancel and Close are the hu
 Nothing waiting and nothing open are one line each, because an empty zone should not cost as much
 room as a full one.
 
-Geist for the words and Geist Mono with tabular figures for anything that can change, so a value
+Sora for the words and Geist Mono with tabular figures for anything that can change, so a value
 never moves its neighbours when it ticks. Phosphor green is one colour used three ways: the action,
 the direction up, and the assistant's light. Red is down and danger. Amber is only ever a person
 being waited on.

@@ -45,16 +45,6 @@
     window.PhosphorShell.boot();
     window.PhosphorAgent.start();
     if (window.PhosphorTrace) window.PhosphorTrace.start();
-
-    var fixtures = window.PhosphorFixtures;
-    if (fixtures.active) {
-      var card = fixtures.openCard();
-      if (card) {
-        window.setTimeout(function () {
-          window.PhosphorDecision.showReceipt(card);
-        }, 120);
-      }
-    }
   }
 
   if (document.readyState === 'loading') {

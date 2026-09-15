@@ -172,14 +172,7 @@ fn show(app: &AppHandle, payload: serde_json::Value) {
     if let Some(open) = app.get_webview_window(WINDOW) {
         let _ = open.close();
     }
-    let colourway = crate::data_dir(app)
-        .ok()
-        .and_then(|data| crate::saved_colourway(&data))
-        .unwrap_or("green-on-black");
-    let script = format!(
-        "window.__PHOSPHOR_PROFILE__ = \"{colourway}\"; window.__PHOSPHOR_UPDATE__ = {};",
-        init_literal(&payload)
-    );
+    let script = format!("window.__PHOSPHOR_UPDATE__ = {};", init_literal(&payload));
     // The notes box is the one thing that changes the height: an offer with notes gets room
     // for them, everything else is a title, a line and the buttons.
     let has_notes = payload.get("notes").and_then(|n| n.as_str()).map(|n| !n.is_empty()).unwrap_or(false);
