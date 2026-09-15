@@ -118,9 +118,7 @@
   var COMPOSER_MAX_LINES = 6;
   var COMPOSER_LINE_FALLBACK_PX = 21;
 
-  /* What the box says while it cannot be used, and what it says when it can. */
-  var PLACEHOLDER_OFF = 'Start your assistant to talk to it.';
-  var PLACEHOLDER_STARTING = 'Starting your assistant.';
+  /* What the box says. It is only on screen while it can be used. */
   var PLACEHOLDER_ON = 'Tell your assistant what to do';
 
   /* The three first moves on the empty card. Each is a question this window
@@ -291,7 +289,9 @@
   /* Five phases for the rest of the window, five words for the person. A
      stopped assistant is off: the word is the same whether the person turned
      it off or it left on its own, and the line under the status is what
-     tells those two apart. */
+     tells those two apart. Off with somebody else's agent attached over MCP
+     is a sixth word, Connected: nobody of ours is at the wheel, but the seat
+     is not empty. */
   var STATE_WORDS = {
     idle: 'Off',
     starting: 'Starting...',
@@ -310,7 +310,14 @@
   };
 
   function stateAttr() {
+    if (ownAttached()) return 'connected';
     return STATE_ATTR[phase] || 'off';
+  }
+
+  /* Somebody else's agent is at the wheel: the built-in one is off, not
+     failed, and the roster names a client. */
+  function ownAttached() {
+    return phase === 'idle' && ownAgents().length > 0;
   }
 
   /* The newest call still open, which is the one the status line names. Read
@@ -340,6 +347,7 @@
      "Working" only when the column knows it is busy and nothing more, which
      is a window that opened onto a turn already under way. */
   function statusVerb() {
+    if (ownAttached()) return COPY.connected;
     if (phase !== 'working') return STATE_WORDS[phase] || 'Off';
     var step = liveStep();
     if (step) return sentence(step.label);
@@ -569,7 +577,7 @@
     var field = dom.el('div', 'composer-field');
     var input = dom.el('textarea', 'input composer-input');
     input.rows = 1;
-    input.placeholder = PLACEHOLDER_OFF;
+    input.placeholder = PLACEHOLDER_ON;
     input.autocomplete = 'off';
     input.setAttribute('aria-label', 'Message to your assistant');
     var send = dom.el('button', 'composer-send');
@@ -1121,12 +1129,13 @@
     if (empty && !sheet) renderEmpty(node);
     if (sheet) renderSheet(node);
 
-    /* The composer is present in every phase and says why it cannot be used,
-       because a box that vanishes teaches nothing about how to get it back. */
+    /* The composer is on screen only while the built-in assistant can take a
+       message. Off, starting and failed all have the card saying what to do
+       instead, and an attached client of the person's own is talked to from
+       its own terminal, so a dead box under it was a question with no answer. */
+    dom.setHidden(refs.composer, !canTalk());
     refs.input.disabled = !canTalk();
     refs.send.disabled = !canTalk();
-    refs.input.placeholder = canTalk() ? PLACEHOLDER_ON
-      : (phase === 'starting' ? PLACEHOLDER_STARTING : PLACEHOLDER_OFF);
     var stopping = phase === 'working';
     dom.setAttr(refs.field, 'data-mode', stopping ? 'stop' : null);
     dom.setAttr(refs.send, 'aria-label', stopping ? 'Stop this answer' : 'Send');

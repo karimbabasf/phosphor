@@ -1332,47 +1332,57 @@
   function planLine(plan) {
     var side = plan.side === 'short' ? 'Short' : 'Long';
     var bits = [side + ' ' + String(plan.symbol || '').toUpperCase() + ' ' + dom.usd(plan.sizeUsd, 0) + ' at ' + plan.leverage + 'x'];
-    bits.push(entryWord(plan.entry));
-    if (typeof plan.stop === 'number') bits.push('stop ' + planPx(plan.stop));
-    if (typeof plan.target === 'number') bits.push('target ' + planPx(plan.target));
+    bits.push(entryWord(plan.entry, plan.symbol));
+    if (typeof plan.stop === 'number') bits.push('stop ' + planPx(plan.stop, plan.symbol));
+    if (typeof plan.target === 'number') bits.push('target ' + planPx(plan.target, plan.symbol));
     return bits.join(', ');
   }
 
-  function entryWord(entry) {
+  function entryWord(entry, coin) {
     if (!entry || typeof entry !== 'object') return 'market';
-    if (entry.type === 'limit') return 'limit ' + planPx(entry.px);
-    if (entry.type === 'stop') return 'stop entry ' + planPx(entry.px);
+    if (entry.type === 'limit') return 'limit ' + planPx(entry.px, coin);
+    if (entry.type === 'stop') return 'stop entry ' + planPx(entry.px, coin);
     return 'market';
   }
 
-  function planPx(value) {
+  /* Every price in a plan's sentences, the same way: grouped thousands and at
+     most the market's own places, which on Hyperliquid is six less the size
+     places (BTC trades in tenths, ETH in cents). A market the payload does not
+     list keeps the plan's own digits, grouped. */
+  function planPx(value, coin) {
     if (typeof value !== 'number' || !isFinite(value)) return '';
-    return value.toLocaleString('en-US', { maximumFractionDigits: 8 });
+    var sz = precisionOf(coin);
+    var places = typeof sz === 'number' ? Math.max(0, Math.min(8, 6 - sz)) : 8;
+    return value.toLocaleString('en-US', { maximumFractionDigits: places });
   }
 
   /* The conditions with what the watcher says about each. A waiting plan
-     carries `holds` from the server, in the server's own words. An idea or a
-     placed plan carries nothing, because nothing is watching it, so its
-     conditions print from the plan itself in the same words and all hollow. */
+     carries `holds` from the server, one per condition in the plan's own
+     order (src/trade/watch.ts), so the sentence is written here from the
+     condition and the server's answer sits beside it. An idea or a placed
+     plan carries nothing, because nothing is watching it, so its conditions
+     print the same way and all hollow. A payload with answers but no
+     conditions to write them from keeps the server's own words. */
   function conditionRows(plan) {
-    if (Array.isArray(plan.holds)) {
-      return plan.holds.map(function (h) {
+    var when = Array.isArray(plan.when) ? plan.when : [];
+    var holds = Array.isArray(plan.holds) ? plan.holds : null;
+    if (holds && holds.length !== when.length) {
+      return holds.map(function (h) {
         return { condition: String(h.condition || ''), holds: h.holds === true };
       });
     }
-    var when = Array.isArray(plan.when) ? plan.when : [];
-    return when.map(function (c) {
-      return { condition: conditionText(c), holds: false };
+    return when.map(function (c, i) {
+      return { condition: conditionText(c, plan.symbol), holds: !!(holds && holds[i] && holds[i].holds === true) };
     });
   }
 
   /* The same sentences src/trade/plan.ts renderCondition writes, so a plan
-     reads the same before and after it is armed. Prices here are the plan's
-     own digits, no separators, exactly as the server prints them. */
-  function conditionText(c) {
+     reads the same before and after it is armed, with its prices in the
+     format the rest of the line uses (planPx). */
+  function conditionText(c, coin) {
     if (!c || typeof c !== 'object') return '';
     if (c.type === 'close') {
-      var at = c.at && typeof c.at.px === 'number' ? String(c.at.px) : 'line ' + String(c.at && c.at.line || '');
+      var at = c.at && typeof c.at.px === 'number' ? planPx(c.at.px, coin) : 'line ' + String(c.at && c.at.line || '');
       if (c.wick === 'through') {
         var other = c.is === 'above' ? 'below' : 'above';
         return 'a ' + c.tf + ' bar wicks ' + other + ' ' + at + ' and closes back ' + c.is + ' it';
@@ -1402,20 +1412,22 @@
      The tape: fills and ended plans as dense rows, newest first, the last 24
      hours by default and twenty older ones per press of Show more. A fill row
      reads the way an exchange's own fills read: the clock, the side as a
-     pill, the coin with its logo, the size, the value coloured by side, and
-     the explorer link at the end when the fill carries one. A fill row opens
-     the shared receipt card. An ended plan keeps its sentence, takes a glyph
-     instead of a logo, and keeps its id where the value would be, dimmed, so
-     the row the agent names is the row the person sees. The list is
-     reconciled by key and a row that is already on screen keeps its identity;
-     the host belongs to the reconciler, so Show more sits under it, not in it. */
+     pill, the coin with its logo, the size, the value in the side's own colour
+     (a buy green, a sell red, the same as its pill), and the explorer link at
+     the end when the fill carries one. A fill row opens the shared receipt
+     card. An ended plan keeps its sentence, takes a glyph instead of a logo,
+     and shows what it closed for where the value would be, when the payload
+     says. The list is reconciled by key and a row that is already on screen
+     keeps its identity; the host belongs to the reconciler, so Show more sits
+     under it, not in it. The tab's count is the day's rows, whatever Show
+     more has revealed under them. */
   var doneExtra = 0;
 
   function renderDone() {
     var host = refs.doneBody;
     var rows = doneRows();
     var cut = doneWindow(rows);
-    setCount('done', cut.list.length);
+    setCount('done', cut.day);
     dom.setHidden(refs.doneHead, !cut.list.length);
     dom.setHidden(refs.doneFoot, cut.more <= 0);
     dom.setAttr(refs.more, 'title', cut.more > 0 ? cut.more + ' older' : null);
@@ -1437,13 +1449,14 @@
   }
 
   /* The window: everything newer than a day, plus what Show more has
-     revealed. Rows arrive newest first, so the day is a prefix. */
+     revealed. Rows arrive newest first, so the day is a prefix, and `day` is
+     how many rows it holds. */
   function doneWindow(rows) {
     var since = Date.now() - DONE_WINDOW_MS;
     var inDay = 0;
     while (inDay < rows.length && timeOf(rows[inDay].at) >= since) inDay += 1;
     var shown = Math.min(rows.length, inDay + doneExtra);
-    return { list: rows.slice(0, shown), more: rows.length - shown };
+    return { list: rows.slice(0, shown), more: rows.length - shown, day: inDay };
   }
 
   function onMore() {
@@ -1510,13 +1523,14 @@
   }
 
   /* An ended plan: the clock, the glyph, the sentence across the middle, and
-     the id where the value would be. */
+     what it closed for where the value would be, signed and in the sign's
+     colour, or nothing when the payload carries no figure. */
   function endedRow(row) {
     var node = dom.el('div', 'done-row ended-row');
     node.appendChild(dom.el('span', 'tx-when meta mono'));
     node.appendChild(endedMark(row.glyph));
     node.appendChild(dom.el('span', 'tx-title'));
-    node.appendChild(dom.el('span', 'tx-amount mono dimmer'));
+    node.appendChild(dom.el('span', 'tx-amount mono'));
     return node;
   }
 
@@ -1524,7 +1538,9 @@
     dom.setText(node.children[0], row.at ? dom.clock(row.at) : '');
     dom.setText(node.children[2], row.text);
     dom.setAttr(node.children[2], 'title', row.title || null);
-    dom.setText(node.children[3], row.amount);
+    var amount = node.children[3];
+    dom.setAttr(amount, 'data-dir', row.dir || null);
+    dom.setNumber(amount, row.amount);
   }
 
   /* A plan that ended: the done icon when it ended the way it was meant to,
@@ -1629,7 +1645,7 @@
         sold: sold,
         size: dom.qty(fill.sizeCoin, precisionOf(coin)),
         amount: notional !== null ? dom.usd(notional) : '',
-        dir: notional !== null ? (sold ? 'in' : 'out') : '',
+        dir: notional !== null ? (sold ? 'down' : 'up') : '',
         sub: px !== null ? 'at ' + priceText(px) + ', ' + dom.clock(fill.atMs) : '',
         url: fill.url || ''
       });
@@ -1639,6 +1655,9 @@
       var plan = plans[p];
       if (plan.status !== 'done') continue;
       var ended = endedText(plan);
+      /* What the plan closed for, when the payload says (closedPnlUsd, the
+         fill's own field name). Nothing is printed for a plan without one. */
+      var pnl = typeof plan.closedPnlUsd === 'number' && isFinite(plan.closedPnlUsd) ? plan.closedPnlUsd : null;
       out.push({
         key: 'plan:' + plan.id,
         spotKey: 'plan:' + plan.id,
@@ -1648,7 +1667,8 @@
         glyph: ended.clean ? 'check' : 'cross',
         text: ended.text,
         title: ended.title,
-        amount: String(plan.id)
+        amount: pnl !== null ? signedUsd(pnl) : '',
+        dir: pnl === null || pnl === 0 ? '' : (pnl > 0 ? 'up' : 'down')
       });
     }
     out.sort(function (a, b) { return timeOf(b.at) - timeOf(a.at); });

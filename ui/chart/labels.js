@@ -22,9 +22,12 @@ var LABEL_X = 5;
 var LABEL_TOP = 16;
 var LABEL_PITCH = 13;
 var LABEL_MAX = 8;
+/* The advance of a drawn part: a 7 px shape and a hair of air. */
+var LABEL_GLYPH_W = 8;
 
 /* Place a list of wanted items. Each item carries the y it would like, and
-   either `text` or `parts` ([{text, tone}] for a line in more than one ink).
+   either `text` or `parts` ([{text, tone}] for a line in more than one ink;
+   a part may carry `glyph` instead of `text`, see labelGlyph).
    Returns the placed items in draw order, each with labelY, plus the count
    that did not fit. Pure: the same input places the same way every frame. */
 function labelLayout(items, top, bottom) {
@@ -35,7 +38,11 @@ function labelLayout(items, top, bottom) {
   if (wanted.length > LABEL_MAX) {
     more = wanted.length - LABEL_MAX;
     wanted = wanted.slice(0, LABEL_MAX);
-    wanted.push({ y: Infinity, text: '+' + more + ' more', tone: 'text2', overflow: true });
+    /* The count line wants the last kept label's y, so the pitch below places
+       it one line under. Wanting Infinity, as it used to, made the overflow
+       correction below Infinity too, and the whole column left the canvas the
+       moment a ninth label was asked for. */
+    wanted.push({ y: wanted[wanted.length - 1].y, text: '+' + more + ' more', tone: 'text2', overflow: true });
   }
   var lastY = -Infinity;
   var floor = top + LABEL_TOP;
@@ -64,16 +71,21 @@ function labelDraw(ctx, placed, inkOf, pad) {
     var x = LABEL_X;
     var width = 0;
     for (var m = 0; m < parts.length; m += 1) {
-      width += ctx.measureText(parts[m].text).width + (m < parts.length - 1 ? 6 : 0);
+      width += labelPartWidth(ctx, parts[m]) + (m < parts.length - 1 ? 6 : 0);
     }
     if (pad) {
       ctx.fillStyle = pad;
       ctx.fillRect(x - 3, item.labelY - 8, width + 6, 15);
     }
     for (var p = 0; p < parts.length; p += 1) {
-      ctx.fillStyle = inkOf(parts[p].tone || 'text', parts[p].alpha === undefined ? 0.9 : parts[p].alpha);
-      ctx.fillText(parts[p].text, x, item.labelY);
-      x += ctx.measureText(parts[p].text).width + 6;
+      var ink = inkOf(parts[p].tone || 'text', parts[p].alpha === undefined ? 0.9 : parts[p].alpha);
+      if (parts[p].glyph) {
+        labelGlyph(ctx, parts[p].glyph, x, item.labelY, ink);
+      } else {
+        ctx.fillStyle = ink;
+        ctx.fillText(parts[p].text, x, item.labelY);
+      }
+      x += labelPartWidth(ctx, parts[p]) + 6;
     }
     /* The spotlight: an amber ring around the label the agent is pointing at,
        the same ring a rail row gets, so the eye reads one gesture in two places. */
@@ -86,4 +98,38 @@ function labelDraw(ctx, placed, inkOf, pad) {
     boxes.push({ x: LABEL_X - 3, y: item.labelY - 8, w: width + 6, h: 15, item: item });
   }
   return boxes;
+}
+
+function labelPartWidth(ctx, part) {
+  return part.glyph ? LABEL_GLYPH_W : ctx.measureText(part.text).width;
+}
+
+/* A part drawn rather than typed, so no font decides what a cross or an
+   arrow looks like: `close` is the cross that removes a line, a 1.5 px stroke;
+   `up` and `down` are filled triangles saying which edge a label went off.
+   Seven pixels wide, centred on the middle of the text beside it (four above
+   the baseline), in the ink the part asked for. */
+function labelGlyph(ctx, name, x, baseline, ink) {
+  var cx = x + LABEL_GLYPH_W / 2;
+  var cy = baseline - 4;
+  if (name === 'close') {
+    ctx.strokeStyle = ink;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(cx - 3, cy - 3);
+    ctx.lineTo(cx + 3, cy + 3);
+    ctx.moveTo(cx + 3, cy - 3);
+    ctx.lineTo(cx - 3, cy + 3);
+    ctx.stroke();
+    ctx.lineWidth = 1;
+    return;
+  }
+  var dir = name === 'up' ? -1 : 1;
+  ctx.fillStyle = ink;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy + dir * 3);
+  ctx.lineTo(cx - 3.5, cy - dir * 2);
+  ctx.lineTo(cx + 3.5, cy - dir * 2);
+  ctx.closePath();
+  ctx.fill();
 }

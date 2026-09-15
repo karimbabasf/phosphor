@@ -528,19 +528,19 @@ test('a fill is one line under headings: the clock, the side, the coin, the size
   assert.equal(row.coin, 'BTC');
   assert.equal(row.size, '0.001', 'the list never said what was bought');
   assert.equal(row.value, '$60.00');
-  assert.equal(row.node.childNodes[4].dataset.dir, 'out', 'a buy sends money out');
+  assert.equal(row.node.childNodes[4].dataset.dir, 'up', 'a buy takes its value in the side colour, green, the same as its pill');
   assert.ok(row.node.childNodes[3].className.includes('mono'), 'a size is set in the mono face');
   assert.ok(row.node.childNodes[4].className.includes('mono'), 'a value is set in the mono face');
 });
 
-test('a sell is toned down and brings money in', async () => {
+test('a sell is toned down, value included', async () => {
   const data = payload(0.001, 5);
   data.fills = [fill({ side: 'sell' })];
   const { host } = await renderPayload(data);
   const [row] = fillRows(host);
   assert.equal(row.side, 'Sell');
   assert.equal(row.node.childNodes[1].dataset.tone, 'down');
-  assert.equal(row.node.childNodes[4].dataset.dir, 'in');
+  assert.equal(row.node.childNodes[4].dataset.dir, 'down', 'a sell chip in red over a green value');
 });
 
 test('a fill carries the time it happened', async () => {
@@ -577,8 +577,8 @@ test('a done plan sits in the tape with the reason it ended, one line each, newe
   assert.ok(lines.includes('Stopped long BTC'), JSON.stringify(lines));
   assert.ok(lines.includes('Cancelled short ETH'), JSON.stringify(lines));
   assert.ok(lines.includes('Failed, plan on disk does not match its approval'), JSON.stringify(lines));
-  // The id rides beside the words, so the row the agent names is the row the person sees.
-  assert.ok(lines.includes('pl_s1'), JSON.stringify(lines));
+  // The id is the agent's handle, not a value: it stays off the tape.
+  assert.ok(!lines.includes('pl_s1'), JSON.stringify(lines));
   const rows = withClass(host, 'done-row');
   assert.equal(rows.length, 4, 'three done plans and one fill');
   // 20 minutes ago stopped, 30 the fill, 40 cancelled, 50 failed.
@@ -586,6 +586,25 @@ test('a done plan sits in the tape with the reason it ended, one line each, newe
     rows.map(doneText),
     ['Stopped long BTC', 'Buy BTC 0.001', 'Cancelled short ETH', 'Failed, plan on disk does not match its approval'],
   );
+  // The value cell of a plan without a closed figure is empty, not the id.
+  assert.equal(rows[0].childNodes[3].textContent, '');
+  assert.equal(rows[0].childNodes[3].dataset.dir, undefined);
+});
+
+test('a done plan whose payload carries what it closed for shows the figure, signed and by its sign', async () => {
+  const data = flat();
+  data.plans = [
+    openPlan({ id: 'pl_w', status: 'done', endReason: 'targeted', closedPnlUsd: 412.5, updatedAt: ago(20 * MINUTE) }),
+    openPlan({ id: 'pl_l', status: 'done', endReason: 'stopped', closedPnlUsd: -63.2, updatedAt: ago(40 * MINUTE) }),
+  ];
+  const { host } = await renderPayload(data);
+  const rows = withClass(host, 'done-row').filter((r) => r.className.includes('ended-row'));
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].childNodes[3].textContent, '+$412.50');
+  assert.equal(rows[0].childNodes[3].dataset.dir, 'up');
+  assert.ok(rows[0].childNodes[3].className.includes('mono'), 'a figure is set in the mono face');
+  assert.equal(rows[1].childNodes[3].textContent, '-$63.20');
+  assert.equal(rows[1].childNodes[3].dataset.dir, 'down');
 });
 
 test('the tape is the last 24 hours, and Show more reveals the next twenty older rows', async () => {
@@ -597,15 +616,18 @@ test('the tape is the last 24 hours, and Show more reveals the next twenty older
   ];
   const world = await renderPayload(data);
   assert.equal(withClass(world.host, 'done-row').length, 5);
-  const [done] = tabs(world.host).filter((t) => t.label === 'Done');
-  assert.equal(done.count, '5', 'the tab counts what the tape lists');
+  const doneCount = () => tabs(world.host).filter((t) => t.label === 'Done')[0].count;
+  assert.equal(doneCount(), '5', 'the tab counts the day');
   const [more] = withClass(world.host, 'trade-more');
   assert.ok(more !== undefined, 'no Show more under the tape');
   assert.equal(more.parentNode!.hidden, false, 'Show more is hidden with thirty older rows behind it');
   more.click();
   assert.equal(withClass(world.host, 'done-row').length, 25);
+  // The count is the day's, whatever Show more has revealed under it.
+  assert.equal(doneCount(), '5', 'Show more grew the count with the rows it loaded');
   more.click();
   assert.equal(withClass(world.host, 'done-row').length, 35);
+  assert.equal(doneCount(), '5');
   assert.equal(more.parentNode!.hidden, true, 'nothing older is left, so Show more goes');
   // What was revealed stays revealed across the frames that keep landing.
   await world.refresh();
@@ -959,7 +981,9 @@ test('a position the app holds no open plan for has no Close, because there is n
 test('a waiting plan is one English line, an Armed pill with the armed icon, its conditions as dots, and Cancel', async () => {
   const { host, lines } = await renderPayload(funded());
   assert.ok(lines.includes('Long ETH $200 at 3x, market, stop 3,180, target 3,420'), JSON.stringify(lines));
-  assert.ok(lines.includes('a 1h bar closes above 3300'), JSON.stringify(lines));
+  // The price in a condition is grouped like the prices on the line above it, and the
+  // watcher's answer sits beside the sentence written here from the plan's own condition.
+  assert.ok(lines.includes('a 1h bar closes above 3,300'), JSON.stringify(lines));
   assert.ok(lines.includes('volume on the 1h is at least 1.5x its 20-bar average'), JSON.stringify(lines));
   const conds = withClass(host, 'trade-cond');
   assert.deepEqual(conds.map((c) => c.dataset.holds), ['true', 'false']);
@@ -987,6 +1011,24 @@ test('a limit entry and a plan with no target read as they are', async () => {
   data.plans = [waitingPlan({ entry: { type: 'limit', px: 3100 }, target: undefined })];
   const { lines } = await renderPayload(data);
   assert.ok(lines.includes('Long ETH $200 at 3x, limit 3,100, stop 3,180'), JSON.stringify(lines));
+});
+
+test('every price on a waiting plan is one format: grouped thousands, the market\'s own places', async () => {
+  // The line read "limit 76,729.1" over a condition reading "closes above 77017.9". BTC trades
+  // in tenths on the venue (szDecimals 5, so one price place), and a price with more digits
+  // than the market has rounds to the tick rather than printing places the venue cannot fill.
+  const data = funded();
+  data.plans = [waitingPlan({
+    symbol: 'BTC',
+    entry: { type: 'limit', px: 76729.1 },
+    stop: 76500.123,
+    target: 78000,
+    when: [{ type: 'close', tf: '15m', is: 'above', at: { px: 77017.9 } }],
+    holds: [{ condition: 'a 15m bar closes above 77017.9', holds: false }],
+  })];
+  const { lines } = await renderPayload(data);
+  assert.ok(lines.includes('Long BTC $200 at 3x, limit 76,729.1, stop 76,500.1, target 78,000'), JSON.stringify(lines));
+  assert.ok(lines.includes('a 15m bar closes above 77,017.9'), JSON.stringify(lines));
 });
 
 test('a locked plan and a blind plan say so in the waiting tone', async () => {
