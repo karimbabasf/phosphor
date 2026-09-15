@@ -647,8 +647,8 @@ function registerLeadView(name: string, description: string, shape: Record<strin
 registerLeadView(
   'set_theme',
   [
-    'Recolours the window. A colourway, then five named slots on top of it.',
-    `profile: one of ${COLOURWAYS.join(', ')}, the window's two colourways of the mark (${COLOURWAYS.map((c) => COLOURWAY_LABEL[c].toLowerCase()).join('; ')}). Picking one repaints everything, text included, and puts the five slots back to that colourway's own colours.`,
+    'Recolours the window: five named slots on top of its one colourway.',
+    `profile: ${COLOURWAYS.join(', ')} (${COLOURWAYS.map((c) => COLOURWAY_LABEL[c].toLowerCase()).join('; ')}), the window's only colourway. The window is dark only; there is no light one to pick. Passing it puts the five slots back to the colourway's own colours.`,
     'The five slots, each a hex colour like #3fff6c or #3f6:',
     ...THEME_SLOTS.map((slot) => `  ${slot}: ${SLOT_MEANING[slot]}`),
     "Pass reset:true to put every slot back to the current colourway's own colours. Omit a slot to leave it alone.",

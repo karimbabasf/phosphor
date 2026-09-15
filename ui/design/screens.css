@@ -2143,8 +2143,8 @@ body[data-locked="true"] #page {
    (--coin, set by ui/design/marks.js) over a wash of that colour, with a ring
    at a quarter strength, so ETH, SOL and USDC are three different rows before
    a word is read. A coin with no colour draws in the text colour on the plain
-   surface, as before. The wash is mixed on top of the surface so it holds on
-   both colourways. */
+   surface, as before. The wash is mixed on top of the surface so it holds
+   whatever the surface is. */
 .coin-mark {
   flex: 0 0 auto;
   width: 28px;

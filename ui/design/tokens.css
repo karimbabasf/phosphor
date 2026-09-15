@@ -7,12 +7,9 @@
    --ink (accent), --bg-0 (background), --up, --down, --agent. Everything else
    derives from them or stands on its own.
 
-   THE COLOURWAYS. The window ships in two of the mark's (brand/README.md):
-   green on black is this block, black on white is the [data-profile] block at
-   the foot, which changes only what no slot reaches (the text, the warning
-   amber, the lift, the OS colour scheme). theme.js sets the attribute from the
-   server's theme, and src/view/theme.ts carries the same values so every
-   colourway is checked against the contrast floors in a test. */
+   THE COLOURWAY. The window ships in one of the mark's (brand/README.md):
+   green on black, this block, dark only. src/view/theme.ts carries the same
+   values so the palette is checked against the contrast floors in a test. */
 
 :root {
   color-scheme: dark;
@@ -126,48 +123,5 @@
 }
 
 /* The five slots keep their meaning when an agent recolours the window, so the
-   window never paints text on a ground it cannot be read against. theme.js
-   enforces the contrast floors server side before these are written. */
-
-/* ---------- the other colourway ----------
-
-   Only what the five slots cannot carry. The ground, the surfaces, the action
-   fill and the two directions arrive through theme.js the same way they do for
-   green on black; what has to change with them is written here, because a
-   light ground under light text is the one state the floors exist to prevent.
-   The surface steps are the same mixes theme.js derives (3.5, 7, 11, 17 percent
-   toward the far pole), so the first paint and the themed paint agree. */
-
-:root[data-profile="black-on-white"] {
-  color-scheme: light;
-
-  --bg-0: #FFFFFF;
-  --bg-1: #F6F6F6;
-  --bg-2: #EDEDED;
-  --line: #E3E3E3;
-  --line-strong: #D4D4D4;
-
-  --text: #111111;
-  --text-2: #5C6169;
-  --text-3: #8A9099;
-
-  --ink: #111111;
-  --on-ink: #FFFFFF;
-  --up: #0F8F3A;
-  --down: #D8213A;
-  --warn: #9A5F00;
-  --agent: #6B3FD6;
-
-  --glow-ash: #BFBFBF;
-
-  --ink-wash: rgba(17, 17, 17, 0.08);
-  --ink-edge: rgba(17, 17, 17, 0.16);
-  --up-wash: rgba(15, 143, 58, 0.14);
-  --down-wash: rgba(216, 33, 58, 0.14);
-  --warn-wash: rgba(154, 95, 0, 0.14);
-  --agent-wash: rgba(107, 63, 214, 0.13);
-  --agent-edge: rgba(107, 63, 214, 0.28);
-
-  --lift: 0 12px 40px rgba(0, 0, 0, 0.16), 0 1px 0 rgba(255, 255, 255, 0.8) inset;
-  --beam-glow: 0 0 0 transparent;
-}
+   window never paints text on a ground it cannot be read against. The server
+   enforces the contrast floors before these are written. */

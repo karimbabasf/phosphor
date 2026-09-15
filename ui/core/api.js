@@ -58,12 +58,6 @@
       return net.postJson('/api/refuse', { id: id }, { busy: 'decision', label: 'Refusing' });
     },
 
-    /* The colourway the person picked from the mark's menu. Not a busy state: the
-       window repaints itself the moment it is clicked and the frame confirms it. */
-    colourway: function (profile) {
-      return net.postJson('/api/theme', { profile: profile });
-    },
-
     /* The tab the person clicked. The window has already switched; this is the
        server learning it, so the assistant reads the screen the person is on
        rather than the one it last moved them to. Not a busy state either. */

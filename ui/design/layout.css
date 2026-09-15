@@ -84,128 +84,32 @@ html, body {
   100% { opacity: 0; transform: translateX(460%); }
 }
 
-/* The wordmark is the word alone, and it is the one control in the bar that is
-   about the window itself: it opens the colourway menu. It sits in a wrap so
-   the menu can hang off its corner. The mark itself lives on the first screen,
-   the splash and the dock icon, not in the bar. */
-.wordmark-wrap {
-  position: relative;
-  flex: 0 0 auto;
-}
-
-.wordmark {
+/* The brand row: the mark and the word, as the banner sets them. Not a
+   control. It says whose window this is and nothing else, so it has no hover,
+   no menu and no focus ring. */
+.brand {
   display: flex;
   align-items: center;
   gap: var(--s-2);
+  flex: 0 0 auto;
   height: 28px;
-  margin-left: calc(-1 * var(--s-2));
-  padding: 0 var(--s-2);
-  border-radius: var(--radius-sm);
-  font-size: var(--fs-14);
-  font-weight: 500;
-  letter-spacing: -0.01em;
-  color: var(--text);
-  transition: background-color var(--dur-press) var(--ease-out),
-              transform var(--dur-press) var(--ease-out);
+  user-select: none;
+  -webkit-user-select: none;
 }
 
-@media (hover: hover) and (pointer: fine) {
-  .wordmark:hover { background: var(--bg-2); }
-}
-
-.wordmark:active { transform: scale(0.97); }
-
-.wordmark[aria-expanded="true"] { background: var(--bg-2); }
-
-.wordmark:focus-visible {
-  outline: 2px solid var(--ink);
-  outline-offset: -2px;
-}
-
-/* ---------- the colourway menu ----------
-
-   One row per colourway of the window, each showing the mark in that
-   colourway: the menu is the brand sheet. It scales in from the wordmark's
-   corner over 150 ms and out the same way, like the chart's Layers menu. */
-.colourways {
-  position: absolute;
-  top: calc(100% + var(--s-1));
-  left: calc(-1 * var(--s-2));
-  z-index: 30;
-  min-width: 184px;
-  padding: var(--s-1);
-  background: var(--bg-1);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius);
-  box-shadow: var(--lift);
-  opacity: 0;
-  visibility: hidden;
-  transform: scale(0.97);
-  transform-origin: top left;
-  transition: opacity 150ms var(--ease-out),
-              transform 150ms var(--ease-out),
-              visibility 0s linear 150ms;
-}
-
-.colourways[data-open="true"] {
-  opacity: 1;
-  visibility: visible;
-  transform: none;
-  transition-delay: 0s;
-}
-
-.colourways:focus { outline: none; }
-
-.colourway {
-  display: flex;
-  align-items: center;
-  gap: var(--s-3);
-  width: 100%;
-  height: 32px;
-  padding: 0 var(--s-2);
-  border-radius: var(--radius-sm);
-  text-align: left;
-  font-size: var(--fs-13);
-  color: var(--text-2);
-  transition: background-color var(--dur-press) var(--ease-out),
-              color var(--dur-press) var(--ease-out),
-              transform var(--dur-press) var(--ease-out);
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .colourway:hover { background: var(--bg-2); color: var(--text); }
-}
-
-.colourway[aria-checked="true"] { color: var(--text); }
-
-.colourway:active { transform: scale(0.97); }
-
-.colourway:focus-visible {
-  outline: 2px solid var(--ink);
-  outline-offset: -2px;
-}
-
-/* A tile is the mark on its own ground: a colourway as the brand sheet shows
-   it, not a swatch. The menu rows draw one each, and the colours are the
-   brand's, fixed, never the window's tokens: a tile shows what a colourway
-   IS, whichever one is up. */
-.mark-tile {
+.brand-mark {
   flex: 0 0 auto;
   width: 20px;
   height: 20px;
-  padding: 4px;
-  border-radius: 5px;
-  box-sizing: border-box;
-  box-shadow: 0 0 0 1px var(--line-strong);
-  transition: box-shadow var(--dur-press) var(--ease-out);
+  color: var(--ink);
 }
 
-.mark-tile[data-profile="green-on-black"] { background: #0E0F13; color: #3FFF6C; }
-.mark-tile[data-profile="black-on-white"] { background: #FFFFFF; color: #111111; }
-
-/* In the menu, the chosen tile wears a ring in the window's action colour. */
-.colourway[aria-checked="true"] .colourway-tile {
-  box-shadow: 0 0 0 1px var(--bg-1), 0 0 0 2px var(--ink);
+.brand-word {
+  font-size: var(--fs-15);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1;
+  color: var(--text);
 }
 
 /* The breath the conversation column's seat takes while the assistant comes
