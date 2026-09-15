@@ -6,7 +6,8 @@
    window's own event stream; the change by a MutationObserver on the rail.
 
    __drawSample(i): posts one chart_draw through the agent door from inside the
-   page and resolves with the milliseconds from before the fetch to the
+   page (carrying the seat secret the proof put in window.__seat, since the door
+   takes one on every op) and resolves with the milliseconds from before the fetch to the
    animation frame after the engine applied a payload carrying a newer revision,
    which is the frame that puts the new object on the glass. applyChart is a
    global function of ui/chart/chart.js, so it is wrapped in place and put back.
@@ -76,6 +77,7 @@
           tool: 'chart_draw',
           session: 'window-proof-page',
           client: 'window-proof',
+          secret: window.__seat,
           args: { levels: [{ px: Number(price.toPrecision(6)), label: 'probe ' + i }] }
         })
       }).catch(reject);

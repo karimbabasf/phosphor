@@ -15,7 +15,7 @@ import type { AddressInfo } from 'node:net';
 
 import { createServer } from '../../src/server.ts';
 import { createTradeView } from '../../src/trade/view.ts';
-import { createAgents } from '../../src/agents.ts';
+import { MAX_AGENTS, createAgents } from '../../src/agents.ts';
 import { createAudit } from '../../src/audit.ts';
 import { createStore } from '../../src/store.ts';
 import { defaultPolicy } from '../../src/policy/file.ts';
@@ -27,6 +27,9 @@ import { VIEW_TOOLS } from '../../src/http/context.ts';
 import { EXPECTED_TOOLS, WORKER_WITHHELD } from '../tool-surface.ts';
 import { bootDriverServer } from '../fixtures/driver-server.ts';
 import type { AppConfig, ChainId, ChainStatus, LedgerSnapshot } from '../../src/types.ts';
+
+// The seat secret every op on /api/mcp carries (src/http/mcp.ts).
+const SEAT = 's'.repeat(64);
 
 const CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 
@@ -65,7 +68,7 @@ async function boot(): Promise<Harness> {
     dataDir,
     keysPath: path.join(dataDir, 'keys.json'),
   };
-  const agents = createAgents();
+  const agents = createAgents(Date.now, MAX_AGENTS, { secret: SEAT });
   agents.claim({ session: 'unnamed-session', client: 'test' });
   const server = createServer({
     cfg,
@@ -133,7 +136,7 @@ async function learned(h: Harness, concept: unknown, session = 'unnamed-session'
   const res = await fetch(`${h.url}/api/mcp`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', origin: h.url },
-    body: JSON.stringify({ op: 'view', tool: 'profile_learned', session, args: { concept } }),
+    body: JSON.stringify({ op: 'view', tool: 'profile_learned', session, secret: SEAT, args: { concept } }),
   });
   return { status: res.status, json: await res.json() };
 }
@@ -286,7 +289,7 @@ async function bye(h: Harness, session: string): Promise<void> {
   await fetch(`${h.url}/api/mcp`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', origin: h.url },
-    body: JSON.stringify({ op: 'bye', session }),
+    body: JSON.stringify({ op: 'bye', session, secret: SEAT }),
   });
 }
 
@@ -389,7 +392,7 @@ test('every lead-only view tool is refused at the door for an analyst seat, not 
       const res = await fetch(`${h.url}/api/mcp`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', origin: h.url },
-        body: JSON.stringify({ op: 'view', tool, session: 'worker-2', args: {} }),
+        body: JSON.stringify({ op: 'view', tool, session: 'worker-2', secret: SEAT, args: {} }),
       });
       assert.equal(res.status, 403, tool);
       assert.match(String(((await res.json()) as { error?: unknown }).error), /worker/, tool);
@@ -397,7 +400,7 @@ test('every lead-only view tool is refused at the door for an analyst seat, not 
     const lead = await fetch(`${h.url}/api/mcp`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', origin: h.url },
-      body: JSON.stringify({ op: 'view', tool: 'chart_layout', session: 'lead-1', args: { charts: [{ product: 'BTC-USD', timeframe: '1h' }] } }),
+      body: JSON.stringify({ op: 'view', tool: 'chart_layout', session: 'lead-1', secret: SEAT, args: { charts: [{ product: 'BTC-USD', timeframe: '1h' }] } }),
     });
     assert.notEqual(lead.status, 403);
   } finally {

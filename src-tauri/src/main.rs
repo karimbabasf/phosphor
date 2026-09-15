@@ -122,12 +122,18 @@ pub(crate) fn payload_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 ///
 /// src/mcp.ts resolves its port from the committed config.json beside it, which would miss a port
 /// changed in the installed config.local.json, so the port is pinned explicitly here instead.
-fn mcp_command(payload: &Path, port: u16) -> Result<String, String> {
+/// The data directory is pinned for the same reason: the proxy reads this boot's seat secret off
+/// <data>/state/agent.secret, which the backend writes at boot and which every /api/mcp op has to
+/// carry, and the payload's own state/ is inside a read-only bundle where no such file ever lands.
+fn mcp_command(payload: &Path, data: &Path, port: u16) -> Result<String, String> {
     let node = node_binary()?;
     let server = serde_json::json!({
         "command": node.to_string_lossy(),
         "args": [payload.join("src").join("mcp.ts").to_string_lossy()],
-        "env": { "PHOSPHOR_PORT": port.to_string() },
+        "env": {
+            "PHOSPHOR_PORT": port.to_string(),
+            "PHOSPHOR_DATA_DIR": data.join("state").to_string_lossy(),
+        },
     });
     Ok(format!(
         "claude mcp add-json phosphor '{}'",
@@ -177,7 +183,7 @@ fn on_menu(app: &tauri::AppHandle, event: MenuEvent) {
     let result = payload_dir(app).and_then(|payload| {
         let data = data_dir(app)?;
         let port = configured_port(&payload, &data);
-        let command = mcp_command(&payload, port)?;
+        let command = mcp_command(&payload, &data, port)?;
         app.clipboard()
             .write_text(command)
             .map_err(|e| format!("could not write to the clipboard: {e}"))

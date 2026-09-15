@@ -1,12 +1,12 @@
 // The seat secret never enters the audit log.
 //
-// Every agent the app spawns carries this boot's seat secret (PHOSPHOR_SEAT, src/driver.ts) and
-// the proxy sends it on the hello and on every tool call, because that is how a spawned agent
-// proves it may take a reserved seat. The agent's door logs the hello and every call with the
+// Every agent carries this boot's seat secret (PHOSPHOR_SEAT from src/driver.ts, or the file a
+// hand-started proxy reads) and the proxy sends it on the hello and on every tool call, because
+// the door refuses any op without it. The agent's door logs the hello and every call with the
 // body verbatim, which is the right thing for arguments and the wrong thing for a credential:
 // audit.jsonl is read back by log_tail, which every agent holds, worker included, and by
 // GET /api/log, which any local process reads. A secret on that file is a secret every reader
-// has, and with it the six-seat roster flood that RESERVED_SEATS exists to close is open again.
+// has, and with it the door is open to every reader.
 //
 // The window token has the same shape of protection on the decision routes (only a fingerprint
 // is ever logged, tests/unit/log-fingerprint.test.ts). This holds the seat secret to it.
@@ -16,11 +16,12 @@ import assert from 'node:assert/strict';
 
 import { bootChartServer } from '../fixtures/chart-server.ts';
 
-const SECRET = 'f'.repeat(64);
 const TOKEN = 'e'.repeat(48);
 
 test('the seat secret an agent presents is on no audit line, on the hello or on a call', async () => {
   const h = await bootChartServer();
+  // The fixture's boot secret: the one the door accepts, and the one that must not be logged.
+  const SECRET = h.seat;
   try {
     const hello = await h.mcp({ op: 'hello', session: 'spawned-agent', client: 'phosphor-mcp', intervalMs: 5000, secret: SECRET, label: 'worker' });
     assert.equal(hello.status, 200);

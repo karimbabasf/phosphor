@@ -19,6 +19,7 @@ import { createShutdown, installShutdownHandlers, within, SETTLE_CAP_MS } from '
 import { VENUE_WRITE_TIMEOUT_MS } from '../../src/net.ts';
 import { beginDraining, isDraining, resetDrainingForTests } from '../../src/draining.ts';
 import { createSerialiser } from '../../src/proposals/lifecycle.ts';
+import { seatSecretPath } from '../../src/agents.ts';
 import type { LogEvent } from '../../src/types.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
@@ -192,6 +193,8 @@ test('SIGTERM mid-propose leaves a valid state file and exits clean', async () =
 
   // A proposal in flight, then the signal, without waiting for the answer.
   const token = 'not-the-token'; // an MCP propose needs no token; this is only a body field
+  // The seat secret every /api/mcp op carries, read where the backend wrote it at boot.
+  const secret = fs.readFileSync(seatSecretPath(dir), 'utf8').trim();
   void fetch(`http://127.0.0.1:${port}/api/mcp`, {
     method: 'POST',
     // Origin and Content-Type both required on a write; see the note in failure-modes.test.ts.
@@ -202,6 +205,7 @@ test('SIGTERM mid-propose leaves a valid state file and exits clean', async () =
       params: { toChain: 'arb', symbol: 'USDC' },
       client: 'shutdown-test',
       session: token,
+      secret,
     }),
   }).catch(() => undefined);
 

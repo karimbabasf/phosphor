@@ -25,6 +25,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 
 import type { EngineCtx } from '../src/policy/engine.ts';
 import { CAPABILITIES } from '../src/greeting.ts';
+import { seatSecretPath } from '../src/agents.ts';
 import { EXPECTED_TOOLS_SORTED, EXPECTED_WORKER_TOOLS_SORTED, WORKER_WITHHELD } from './tool-surface.ts';
 import type { LogEvent, RiskRow, TransferLeg, WriteDraft } from '../src/types.ts';
 import { evaluate } from '../src/policy/engine.ts';
@@ -681,9 +682,56 @@ test('a token the app cannot price is refused, not assumed to be worth a dollar'
 // It says bye at the end so the seat it took is free for whatever runs after this file.
 const DIRECT = 'phosphor-injection-direct';
 
-async function direct(body: Record<string, unknown>): Promise<{ status: number; json: Json }> {
-  return postJson('/api/mcp', { ...body, session: DIRECT, client: 'phosphor-injection-direct' });
+// This boot's seat secret, read where the app wrote it. The proxy above found it the same way,
+// through ACC_DATA_DIR in its environment; a direct post has to bring it by hand.
+function seatSecret(): string {
+  return fs.readFileSync(seatSecretPath(dataDir), 'utf8').trim();
 }
+
+async function direct(body: Record<string, unknown>): Promise<{ status: number; json: Json }> {
+  return postJson('/api/mcp', { ...body, session: DIRECT, client: 'phosphor-injection-direct', secret: seatSecret() });
+}
+
+/* THE DOOR TAKES THE SECRET FROM EVERYONE. Origin is a header any local process sets, and this
+   is the route where a propose at or under the click threshold executes with no click. So a post
+   with the right Origin and no secret is refused on every op, hello included, before the roster
+   seats it, and the refusal says where a hand-started proxy finds the file. The file itself is
+   the app's, owner-readable only, one line, and the value in it is the one that opens the door. */
+test('a POST with the right Origin and no seat secret is refused on hello, read and propose', async () => {
+  const file = seatSecretPath(dataDir);
+  assert.ok(fs.existsSync(file), `the app wrote ${file} at boot`);
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600, 'the secret file is readable by its owner only');
+  const lines = fs.readFileSync(file, 'utf8').split('\n');
+  assert.equal(lines.length, 2, 'one line and a newline');
+  assert.ok((lines[0] ?? '').length >= 32);
+
+  const before = auditLines().length;
+  const ops: Array<Record<string, unknown>> = [
+    { op: 'hello', client: 'no-secret', intervalMs: 5000 },
+    { op: 'read', tool: 'balances' },
+    { op: 'propose', kind: 'consolidate', params: { toChain: 'arb', symbol: 'USDC' } },
+  ];
+  for (const secret of [undefined, 'not-the-secret', seatSecret().slice(0, -1)]) {
+    for (const op of ops) {
+      const res = await postJson('/api/mcp', { ...op, session: 'no-secret-session', client: 'no-secret', ...(secret === undefined ? {} : { secret }) });
+      assert.equal(res.status, 401, `${String(op.op)} with ${secret === undefined ? 'no' : 'a wrong'} secret answered ${res.status}: ${JSON.stringify(res.json)}`);
+      assert.match(String(res.json.error), /agent\.secret/, 'the refusal names the file');
+    }
+  }
+  const since = auditLines().slice(before);
+  assert.ok(since.some((e) => e.type === 'agent_rejected' && JSON.stringify(e).includes('no-secret-session')), 'the refusal is audited');
+  assert.equal(since.some((e) => e.type === 'agent_connected' && JSON.stringify(e).includes('no-secret-session')), false, 'a refused session was seated');
+  assert.equal(since.some((e) => JSON.stringify(e).includes(seatSecret())), false, 'the secret reached the log');
+  assert.equal(since.some((e) => JSON.stringify(e).includes('not-the-secret')), false, 'the guess reached the log');
+  assert.ok(!JSON.stringify((await fetch(`${base}/api/state`).then((r) => r.json())) as unknown).includes(seatSecret()), 'the secret is served by /api/state');
+
+  // The same three, with the secret: the door opens and the app's own refusals take over.
+  const hello = await postJson('/api/mcp', { ...ops[0], session: 'with-secret', secret: seatSecret() });
+  assert.equal(hello.status, 200, JSON.stringify(hello.json));
+  const read = await postJson('/api/mcp', { ...ops[1], session: 'with-secret', secret: seatSecret() });
+  assert.equal(read.status, 200, JSON.stringify(read.json).slice(0, 200));
+  await postJson('/api/mcp', { op: 'bye', session: 'with-secret', secret: seatSecret() });
+});
 
 // A plan the schema accepts as written. Whether it prices depends on a venue this suite does
 // not have, and nothing below depends on that: every assertion is about what is refused, what

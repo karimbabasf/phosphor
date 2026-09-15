@@ -22,6 +22,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { seatSecretPath } from '../src/agents.ts';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PLAYWRIGHT_CORE =
@@ -112,8 +113,11 @@ async function getJson(route: string): Promise<Json> {
   return await res.json();
 }
 
+// This boot's seat secret, which every op on /api/mcp carries; the backend wrote it at boot.
+const seat = (): string => fs.readFileSync(seatSecretPath(dataDir), 'utf8').trim();
+
 async function agent(op: string, tool: string, args: Record<string, unknown>): Promise<Json> {
-  const out = await post('/api/mcp', { op, tool, args, session: 'window-proof', client: 'window-proof' });
+  const out = await post('/api/mcp', { op, tool, args, session: 'window-proof', client: 'window-proof', secret: seat() });
   if (out.status !== 200) throw new Error(`${tool} refused: ${out.status} ${JSON.stringify(out.json)}`);
   return out.json;
 }
@@ -238,6 +242,9 @@ async function main(): Promise<void> {
     }
 
     // ---------- latency ----------
+    // The page's probe posts through the agent door, so it carries the seat secret the proof
+    // read off the data dir. A page this app serves holds none of its own, by design.
+    await page.evaluate(`window.__seat = ${JSON.stringify(seat())};`);
     await page.evaluate(fs.readFileSync(path.join(ROOT, 'scripts', 'window-proof.page.js'), 'utf8'));
 
     const railSamples: number[] = [];

@@ -9,6 +9,7 @@
 
 import type http from 'node:http';
 
+import { SEAT_SECRET_FILE, seatSecretPath } from '../agents.ts';
 import { sameOrigin } from './auth.ts';
 import { asRecord, capLabel, fail, readBody, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
@@ -111,18 +112,31 @@ function stampScreen(ctx: Ctx, res: http.ServerResponse): void {
   }) as typeof res.writeHead;
 }
 
+/* The sentence a caller without the secret is refused with. It names the file and the variable
+   because the caller it is written for is a proxy a human started by hand against an app that
+   has since rebooted, or one started with no data directory in its environment: what it needs is
+   where to look, not a lecture. The secret's value is the one thing it must not carry. */
+function seatSecretRefusal(ctx: Ctx): string {
+  return (
+    'this call carried no seat secret, or a wrong one, and every /api/mcp op needs this boot\'s. ' +
+    `The app writes it to ${seatSecretPath(ctx.cfg.dataDir)} at boot (one line, owner-readable only, new each boot); ` +
+    `src/mcp.ts reads ${SEAT_SECRET_FILE} from the data directory it resolves, or PHOSPHOR_SEAT when the app spawned it.`
+  );
+}
+
 export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   stampScreen(ctx, res);
   /* The money surface gets the same cross-origin guard the approval and trade routes already
      carry. handleMcp is where an agent proposes and, at or under the click threshold, executes, so
      a page that could POST here blind (classic CSRF: a cross-origin fetch still sends Origin) was
-     the one mutating route a browser could drive. The seat is not a credential, so this line is
-     what stands between a web page and a swap.
+     the one mutating route a browser could drive.
      AN ABSENT ORIGIN IS REFUSED, and so is the literal `null` a sandboxed iframe sends. This
      comment said the opposite for a while and src/http/auth.ts had already stopped meaning it: a
      present, matching Origin is required. Origin is a forbidden header name, so a page cannot set
-     one, and a local process can, which is exactly the split this door wants. The MCP proxy sends
-     it (POST_HEADERS in src/mcp.ts) and so must anything else calling this route by hand. */
+     one, and a local process can, which is exactly the split this line wants. The MCP proxy sends
+     it (POST_HEADERS in src/mcp.ts) and so must anything else calling this route by hand.
+     It is the first wall and not the only one: a local process can set Origin, and the seat
+     secret below is what holds that process out. */
   if (!sameOrigin(req)) {
     ctx.audit.append('agent_rejected', 'an /api/mcp call was refused as cross-origin', {
       origin: req.headers.origin ?? '(absent)',
@@ -139,13 +153,37 @@ export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.S
   const body = parsed.value;
   const op = String(body.op ?? '');
   /* THE BODY THAT IS LOGGED IS THE BODY WITHOUT ITS CREDENTIALS. The proxy sends this boot's seat
-     secret on the hello and on every call (src/mcp.ts), because that is how a spawned agent proves
-     it may take a reserved seat. Logged verbatim, it sat on audit.jsonl, which log_tail hands to
-     every agent, a worker included, and GET /api/log hands to any local process: the six-seat
-     roster flood that RESERVED_SEATS closes was open to anyone who read the log. The arguments,
-     the session and the client name are the record; the secret was never part of it. A token is
-     stripped for the same reason, in case a caller ever sends one here. */
+     secret on the hello and on every call (src/mcp.ts). Logged verbatim, it sat on audit.jsonl,
+     which log_tail hands to every agent, a worker included, and GET /api/log hands to any local
+     process, so the credential the door checks below was open to anyone who read the log. The
+     arguments, the session and the client name are the record; the secret was never part of it.
+     A token is stripped for the same reason, in case a caller ever sends one here. */
   const { secret: _secret, token: _token, ...logged } = body;
+
+  /* THE SEAT SECRET, ON EVERY OP, FROM EVERY SESSION. Origin above is a header any local process
+     sets, and this door is where a propose at or under the click threshold executes with no human
+     in the loop; the roster seated any session string and the policy engine answered `allow`. So
+     every op, hello and bye included, presents this boot's secret or stops here, before the roster
+     sees the session, before the audit sees the arguments and before any handler runs. The agents
+     this app spawns carry it in PHOSPHOR_SEAT; a hand-started proxy reads it off the file named in
+     the refusal. Compared hashed and constant-time in src/agents.ts.
+     One audit line per refused session, the way a full roster is logged: the proxy's heartbeat
+     alone is one attempt every five seconds, and the refusal is never silent, only the log is.
+     The line names the session and the op, and never the value, right or wrong. */
+  if (!ctx.agents.recognises(body.secret)) {
+    const session = String(body.session ?? 'unnamed-session');
+    if (!ctx.seats.has(session)) {
+      ctx.seats.add(session);
+      ctx.audit.append('agent_rejected', 'an /api/mcp call was refused: it carried no seat secret, or a wrong one', {
+        op,
+        session,
+        client: body.client,
+        secretPresent: typeof body.secret === 'string' && body.secret.length > 0,
+      });
+    }
+    fail(res, 401, seatSecretRefusal(ctx));
+    return;
+  }
 
   // The presence heartbeat is not a tool call, so it is answered before the
   // append below and never enters the transcript. mcp.ts pings for the whole life

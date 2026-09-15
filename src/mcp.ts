@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { VERSION } from './version.ts';
+import { seatSecretPath } from './agents.ts';
 import { listSkills, readSkill } from './skills.ts';
 import { ALWAYS_CLICK_TOOLS, handshakeInstructions } from './persona.ts';
 import { THEME_SLOTS, SLOT_MEANING, COLOURWAYS, COLOURWAY_LABEL } from './view/theme.ts';
@@ -37,13 +38,34 @@ function resolvePort(): number {
 
 const BASE_URL = `http://127.0.0.1:${resolvePort()}`;
 
+/* The app's data directory, resolved the way src/config.ts resolves it and without importing
+   src/config.ts, which pulls the keystore and the chains into a process that is meant to stay a
+   thin proxy. The environment wins (the app's own children and the test suites set it, and the
+   installed app's `claude mcp add-json` line carries it), then the dataDir key of the writable
+   config.local.json (PHOSPHOR_CONFIG_DIR for an installed app, the repo root otherwise), then
+   config.json, then the repo's own state/. Relative to the repo root, as the app resolves it
+   relative to its cwd, which is the repo root in both the checkout and the installed payload. */
+function resolveDataDir(): string {
+  const fromEnv = process.env.PHOSPHOR_DATA_DIR || process.env.ACC_DATA_DIR;
+  if (fromEnv) return path.resolve(ROOT, fromEnv);
+  const configDir = process.env.PHOSPHOR_CONFIG_DIR ? path.resolve(process.env.PHOSPHOR_CONFIG_DIR) : ROOT;
+  for (const file of [path.join(configDir, 'config.local.json'), path.join(ROOT, 'config.json')]) {
+    try {
+      const cfg = JSON.parse(readFileSync(file, 'utf8')) as { dataDir?: unknown };
+      if (typeof cfg.dataDir === 'string' && cfg.dataDir.length > 0) return path.resolve(ROOT, cfg.dataDir);
+    } catch {
+      // absent or unreadable: the next candidate
+    }
+  }
+  return path.join(ROOT, 'state');
+}
+
 // Every post to the app carries these two headers, and the app refuses a request without them.
 //
-// Origin is not a credential here and it is not pretending to be one: this process holds no
-// token and the agent's door deliberately has none. It is the header a BROWSER cannot forge,
-// because Origin is a forbidden header name, so requiring a present matching one is what makes
-// /api/mcp unreachable from a web page while leaving it open to a local agent, which is
-// exactly the split this door wants.
+// Origin is not a credential here and it is not pretending to be one; the seat secret below is.
+// It is the header a BROWSER cannot forge, because Origin is a forbidden header name, so
+// requiring a present matching one is what makes /api/mcp unreachable from a web page, which is
+// the half of the split the secret cannot do.
 const POST_HEADERS = { 'content-type': 'application/json', origin: BASE_URL };
 
 // One id per MCP process, which is one id per agent session. It is what makes the app able
@@ -72,15 +94,29 @@ const ROLE = process.env.PHOSPHOR_ROLE === 'analyst' ? 'analyst' : 'operator';
 const LABEL = process.env.PHOSPHOR_LABEL ?? '';
 const PARENT = process.env.PHOSPHOR_PARENT ?? '';
 
-/* THIS BOOT'S ROSTER SEAT SECRET, put here by the app that spawned this process (src/driver.ts).
-   It says one thing and nothing else: this session is an agent Phosphor started, so it may take one
-   of the seats src/agents.ts holds back. Six unauthenticated hellos used to fill the roster and
-   lock the human's own agent out, and that is the whole of what this closes.
+/* THIS BOOT'S SEAT SECRET, which every call to the app carries. The app refuses any /api/mcp op
+   without it (src/http/mcp.ts): it is what tells an agent, spawned or hand-started, apart from any
+   other local process that learned to send an Origin header.
+   Two sources. An agent the app spawned gets it in PHOSPHOR_SEAT (src/driver.ts, childEnv). A proxy
+   a human started by hand (`npm run mcp`, the `claude mcp` registration) reads it off the file the
+   app writes at boot, <dataDir>/agent.secret, and reads it on every call rather than once: the app
+   rewrites the file on every boot, so a proxy that outlives an app restart picks the new value up
+   on its next call instead of being refused until somebody restarts it too. One small read per
+   tool call, on a file this process may not be able to see at all, in which case the app's
+   refusal says where it should have been.
    It is not a role and it is not an authorisation. The role is decided by the seat, the tools this
-   process registers are decided by PHOSPHOR_ROLE below, and a proposal still needs a human click.
-   An MCP server a human started by hand has none of this, which is correct: it is one of the
-   unreserved seats, and there are enough of those for the humans the cap was sized for. */
-const SEAT = process.env.PHOSPHOR_SEAT ?? '';
+   process registers are decided by PHOSPHOR_ROLE below, and a proposal still needs a human click. */
+const SEAT_ENV = process.env.PHOSPHOR_SEAT ?? '';
+const SEAT_FILE = seatSecretPath(resolveDataDir());
+
+function seat(): string {
+  if (SEAT_ENV !== '') return SEAT_ENV;
+  try {
+    return (readFileSync(SEAT_FILE, 'utf8').split('\n')[0] ?? '').trim();
+  } catch {
+    return '';
+  }
+}
 
 // The app derives its expiry window from this number, so the two cannot drift apart. Five
 // seconds costs nothing on loopback and takes the worst-case "still shows connected" from
@@ -101,7 +137,7 @@ async function proxy(body: Record<string, unknown>) {
     res = await fetch(`${BASE_URL}/api/mcp`, {
       method: 'POST',
       headers: POST_HEADERS,
-      body: JSON.stringify({ ...body, session: SESSION, client: CLIENT, label: LABEL, parent: PARENT, secret: SEAT }),
+      body: JSON.stringify({ ...body, session: SESSION, client: CLIENT, label: LABEL, parent: PARENT, secret: seat() }),
       signal: venueWriteTimeout(),
     });
   } catch (err) {
@@ -172,7 +208,7 @@ async function announce(): Promise<void> {
         client: CLIENT,
         session: SESSION,
         intervalMs: HELLO_MS,
-        secret: SEAT,
+        secret: seat(),
         // No role. The app decides it from the seat, because a role this process announced
         // would be a claim made by the thing being restricted. ROLE below still governs which
         // tools this process REGISTERS, which is the restriction that actually binds.
