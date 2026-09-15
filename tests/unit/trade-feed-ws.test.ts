@@ -485,6 +485,35 @@ test('fills are capped, newest first, whichever channel they arrive on', async (
   assert.equal(fills[1].liquidation, false);
 });
 
+test('a fill keeps the venue hash and order id it came with, and drops the all-zero hash', async (t) => {
+  const socks = fakeSockets();
+  const feed = createTradeFeed({ wsUrl: WS, user: USER, info: fakeInfo(), wsImpl: socks.make });
+  t.after(() => feed.stop());
+  await flush();
+  socks.last().open();
+
+  const real = '0x' + 'ab'.repeat(32);
+  socks.last().deliver({
+    channel: 'userFills',
+    data: {
+      isSnapshot: true,
+      fills: [
+        fill(1, 1000, { hash: real, oid: 123456789 }),
+        // The venue writes this on a great many fills. It resolves to nothing, so it is not kept.
+        fill(2, 2000, { hash: '0x' + '0'.repeat(64), oid: 5 }),
+        fill(3, 3000, { hash: 'not a hash' }),
+      ],
+    },
+  });
+  const byTid = new Map(feed.fills().map((f) => [f.tid, f]));
+  assert.equal(byTid.get('1')?.hash, real);
+  assert.equal(byTid.get('1')?.oid, '123456789', 'an identifier, kept as a string');
+  assert.equal(byTid.get('2')?.hash, undefined);
+  assert.equal(byTid.get('2')?.oid, '5');
+  assert.equal(byTid.get('3')?.hash, undefined);
+  assert.equal('hash' in (byTid.get('3') ?? {}), false, 'absent, not null: nothing to print');
+});
+
 test('a trigger order keeps its trigger line separate from the slippage bound it fires with', async (t) => {
   const socks = fakeSockets();
   const feed = createTradeFeed({ wsUrl: WS, user: USER, info: fakeInfo(), wsImpl: socks.make });

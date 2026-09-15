@@ -951,26 +951,6 @@ textarea.input {
   white-space: nowrap;
 }
 
-/* A transaction that can be opened (a receipt) is a button, and only that
-   one takes the hover ground. Inset by its own padding so the ground does
-   not touch the rule above it. */
-button.tx {
-  cursor: pointer;
-  border-left: 0;
-  border-right: 0;
-  border-bottom: 0;
-  transition: background-color var(--dur-press) var(--ease-out);
-}
-
-@media (hover: hover) and (pointer: fine) {
-  button.tx:hover { background: color-mix(in srgb, var(--bg-2) 70%, transparent); }
-}
-
-button.tx:focus-visible {
-  outline: 2px solid var(--ink);
-  outline-offset: -2px;
-}
-
 /* A dense transaction: one line, for a tape that must hold twenty. The time
    leads at 12 px mono, the amount trails, the sentence takes the room
    between and truncates. */
