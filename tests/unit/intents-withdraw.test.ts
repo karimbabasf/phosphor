@@ -182,6 +182,8 @@ type Overrides = {
   destinationTxHashes?: string[];
   refundedAmount?: string;
   refundReason?: string;
+  settledAmountOut?: string;
+  nearTxHashes?: string[];
   submitThrows?: boolean;
 };
 
@@ -211,9 +213,10 @@ function apiOf(over: Overrides = {}): { api: IntentsApiPort; calls: ApiCalls } {
         reported: over.status ?? 'SUCCESS',
         originTxHashes: [],
         destinationTxHashes: over.destinationTxHashes ?? ['5xSolanaTxSig'],
-        nearTxHashes: [],
+        nearTxHashes: over.nearTxHashes ?? [],
         ...(over.refundedAmount !== undefined ? { refundedAmount: over.refundedAmount } : {}),
         ...(over.refundReason !== undefined ? { refundReason: over.refundReason } : {}),
+        ...(over.settledAmountOut !== undefined ? { settledAmountOut: over.settledAmountOut } : {}),
       };
     },
   };
@@ -354,6 +357,25 @@ test('execute signs one intent, submits it, and reports the destination tx', asy
   assert.equal(calls.submitted[0].payload, payloadOf());
   assert.deepEqual(result.txids, ['HASH123', '5xSolanaTxSig']);
   assert.match(result.detail, new RegExp(SOL_WALLET));
+});
+
+test('a success reports the amount 1Click settled, not the quote, and keeps the NEAR settlement hash', async () => {
+  const { rail } = railOf({ settledAmountOut: '0.0995', nearTxHashes: ['nearSettle'] });
+  const result = await rail.execute(draftOf());
+  assert.equal(result.ok, true, result.detail);
+  assert.match(result.detail, /0\.0995 SOL paid out to/);
+  assert.doesNotMatch(result.detail, /0\.099761184/);
+  assert.match(result.detail, /smaller by 0\.1 SOL/, 'the verifier fell by what went in, not by what came out');
+  assert.equal(result.evidence?.settledAmountOut, '0.0995');
+  assert.equal(result.evidence?.handle, HANDLE);
+  assert.deepEqual(result.txids, ['HASH123', '5xSolanaTxSig', 'nearSettle']);
+});
+
+test('a success without a settled amount says the figure is quoted', async () => {
+  const { rail } = railOf();
+  const result = await rail.execute(draftOf());
+  assert.equal(result.ok, true, result.detail);
+  assert.match(result.detail, /a quoted 0\.099761184 SOL paid out/);
 });
 
 test('nothing is sent on any chain: the rail has no chain port at all', async () => {

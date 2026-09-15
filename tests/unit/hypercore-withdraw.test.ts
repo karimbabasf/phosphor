@@ -93,6 +93,8 @@ type ClientOverrides = {
   status?: OneClickStatus['status'];
   refundedAmount?: string;
   refundReason?: string;
+  settledAmountOut?: string;
+  nearTxHashes?: string[];
   statusThrows?: boolean;
   originMissing?: boolean;
   originDecimals?: number;
@@ -129,9 +131,10 @@ function fakeClient(over: ClientOverrides = {}): { client: OneClickClient; quote
         reported: status,
         originTxHashes: [],
         destinationTxHashes: ['0xdest'],
-        nearTxHashes: [],
+        nearTxHashes: over.nearTxHashes ?? [],
         ...(over.refundedAmount !== undefined ? { refundedAmount: over.refundedAmount } : {}),
         ...(over.refundReason !== undefined ? { refundReason: over.refundReason } : {}),
+        ...(over.settledAmountOut !== undefined ? { settledAmountOut: over.settledAmountOut } : {}),
       } as OneClickStatus;
     },
   };
@@ -420,6 +423,24 @@ test('execute signs one spotSend to the minted address, watches 1Click, and prov
   assert.match(out.detail, /intents balance rose by 7\.780248/);
   assert.match(out.detail, /collateral fell by 9/);
   assert.deepEqual(out.txids, ['0xledgerhash', '0xdest']);
+});
+
+test('a success reports the amount 1Click settled, not the quote, and keeps the NEAR settlement hash', async () => {
+  const { rail: r } = rail({ settledAmountOut: '7.75', nearTxHashes: ['nearSettle'] }, [{ available: 20, spot: 20, perp: 0 }, { available: 11, spot: 11, perp: 0 }], {}, [0n, 7_750_000n]);
+  const out = await r.execute(draft());
+  assert.equal(out.ok, true, out.detail);
+  assert.match(out.detail, /7\.75 USDC credited to our intents account/);
+  assert.doesNotMatch(out.detail, /7\.780248/);
+  assert.match(out.detail, /intents balance rose by 7\.75/);
+  assert.equal(out.evidence?.settledAmountOut, '7.75');
+  assert.deepEqual(out.txids, ['0xledgerhash', '0xdest', 'nearSettle']);
+});
+
+test('a success without a settled amount says the figure is quoted', async () => {
+  const { rail: r } = rail({}, [{ available: 20, spot: 20, perp: 0 }, { available: 11, spot: 11, perp: 0 }]);
+  const out = await r.execute(draft());
+  assert.equal(out.ok, true, out.detail);
+  assert.match(out.detail, /a quoted 7\.780248 USDC/);
 });
 
 test('the echo is checked again at execute, before anything is signed', async () => {

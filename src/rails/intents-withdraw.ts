@@ -57,7 +57,7 @@ import type {
 import { baseUnits, oneLine, quoteEchoProblems, resolveAsset, toBaseUnits } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, QuoteEcho, TokensFile } from '../intents.ts';
 import { spendFromIntents } from './intents-spend.ts';
-import { describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, uniqueTxids } from './oneclick-words.ts';
+import { deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids } from './oneclick-words.ts';
 import { INTENTS_VERIFIER, base58Decode, intentsApi, liveIntentsSigner } from './intents-native.ts';
 import type { IntentsApiPort, IntentsSignerPort } from './intents-native.ts';
 
@@ -434,9 +434,10 @@ export function intentsWithdrawRail(deps: IntentsWithdrawRailDeps): IntentsWithd
         ok: true,
         detail:
           `withdrew ${draft.amount} ${draft.symbol} from ${INTENTS_VERIFIER}; ` +
-          `${oneLine(quote.amountOutFormatted, 40)} ${draft.symbol} paid out to our ${draft.chain} wallet ${p.to}; ` +
-          `${evidence}. The balance inside the verifier is now smaller by that amount.`,
-        txids: [spent.intentHash, ...watch.destinationTxHashes],
+          `${deliveredAmount(watch, quote.amountOutFormatted)} ${draft.symbol} paid out to our ${draft.chain} wallet ${p.to} ` +
+          `(${deliveredNote(watch)}); ${evidence}. The balance inside the verifier is now smaller by ${draft.amount} ${draft.symbol}.`,
+        txids: uniqueTxids(spent.intentHash, watch),
+        evidence: settledEvidence(watch, depositAddress),
       };
     }
 

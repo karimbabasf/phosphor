@@ -25,6 +25,27 @@ export function uniqueTxids(primary: string, status: OneClickStatus): string[] {
   return out;
 }
 
+// The figure a success sentence reports for what arrived. The API's settled amount when it
+// gave one; otherwise the quote, and then the word quoted goes in front, because a quote is
+// the solver's promise and every rail used to print it as the delivery.
+export function deliveredAmount(status: OneClickStatus, quotedOut: unknown): string {
+  return status.settledAmountOut !== undefined ? status.settledAmountOut : `a quoted ${oneLine(quotedOut, 40)}`;
+}
+
+// The half sentence that says which of the two the figure is.
+export function deliveredNote(status: OneClickStatus): string {
+  return status.settledAmountOut !== undefined
+    ? 'the amount 1click reported settled'
+    : '1click reported no settled amount, so that figure is the quote';
+}
+
+export function settledEvidence(status: OneClickStatus, handle: string): RailEvidence {
+  return {
+    handle: oneLine(handle, 80),
+    ...(status.settledAmountOut !== undefined ? { settledAmountOut: status.settledAmountOut } : {}),
+  };
+}
+
 // What a rail says about the same order in its own words: the asset that went in, where a
 // refund of it lands, and the evidence line it has already built.
 export type RefundWords = {

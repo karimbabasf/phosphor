@@ -387,6 +387,28 @@ test('execute quotes live, sends the input to the deposit address, and polls to 
   assert.deepEqual(result.txids, [TX_HASH, '0xdestination']);
 });
 
+test('a success reports the amount 1Click settled, not the quote, and keeps the NEAR settlement hash', async () => {
+  const h = harness({
+    statuses: [{ status: 'SUCCESS', swapDetails: { amountOutFormatted: '99.8', nearTxHashes: ['nearSettle'], destinationChainTxHashes: [txDetails('0xdestination')] } }],
+  });
+  const result = await railOf(h).execute(draftOf());
+  assert.equal(result.ok, true, result.detail);
+  assert.match(result.detail, /for 99\.8 USDT on arb/);
+  assert.doesNotMatch(result.detail, /99\.85/);
+  assert.doesNotMatch(result.detail, /quoted/);
+  assert.equal(result.evidence?.settledAmountOut, '99.8');
+  assert.equal(result.evidence?.handle, DEPOSIT);
+  assert.deepEqual(result.txids, [TX_HASH, '0xdestination', 'nearSettle']);
+});
+
+test('a success without a settled amount says the figure is quoted', async () => {
+  const h = harness();
+  const result = await railOf(h).execute(draftOf());
+  assert.equal(result.ok, true, result.detail);
+  assert.match(result.detail, /for a quoted 99\.85 USDT on arb/);
+  assert.equal(result.evidence?.settledAmountOut, undefined);
+});
+
 // ---------- execute, every way it refuses ----------
 
 test('execute refuses when the live quote is for a different amount than the draft', async () => {

@@ -49,7 +49,7 @@ import {
   toBaseUnits,
 } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickStatus, TokensFile } from '../intents.ts';
-import { describeIncompleteDeposit, describeRefund, uniqueTxids } from './oneclick-words.ts';
+import { deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, settledEvidence, uniqueTxids } from './oneclick-words.ts';
 
 // The chains this rail can deposit from, by signer family.
 //
@@ -536,9 +536,11 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
         ok: true,
         detail:
           `swapped ${draft.amountIn} ${draft.fromSymbol} on ${draft.chain} for ` +
-          `${oneLine(quote.amountOutFormatted, 40)} ${draft.toSymbol} on ${draft.toChain}; ${evidence}` +
+          `${deliveredAmount(watch, quote.amountOutFormatted)} ${draft.toSymbol} on ${draft.toChain} ` +
+          `(${deliveredNote(watch)}); ${evidence}` +
           (destination.length > 0 ? `, destination tx ${destination.join(', ')}` : ''),
-        txids: [txHash, ...destination],
+        txids: uniqueTxids(txHash, watch),
+        evidence: settledEvidence(watch, depositAddress),
       };
     }
 

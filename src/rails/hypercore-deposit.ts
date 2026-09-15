@@ -53,7 +53,7 @@ import type { OneClickClient, OneClickQuote, OneClickToken, QuoteEcho } from '..
 import { INTENTS_VERIFIER, intentsApi, liveIntentsSigner } from './intents-native.ts';
 import type { IntentsApiPort, IntentsSignerPort } from './intents-native.ts';
 import { spendFromIntents } from './intents-spend.ts';
-import { describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, uniqueTxids } from './oneclick-words.ts';
+import { deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids } from './oneclick-words.ts';
 import { accountSummary, usdClassTransfer } from './hl-user-signed.ts';
 import type { HlAccountSummary, HlUserSignedDeps } from './hl-user-signed.ts';
 
@@ -508,9 +508,10 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
       return {
         ok: true,
         detail:
-          `funded Hyperliquid with ${oneLine(quote.amountOutFormatted, 40)} USDC from ${draft.amount} ${draft.symbol} ` +
-          `held inside ${INTENTS_VERIFIER}; ${evidence}.${settled}`,
-        txids: [spent.intentHash, ...watch.destinationTxHashes],
+          `funded Hyperliquid with ${deliveredAmount(watch, quote.amountOutFormatted)} USDC from ${draft.amount} ${draft.symbol} ` +
+          `held inside ${INTENTS_VERIFIER} (${deliveredNote(watch)}); ${evidence}.${settled}`,
+        txids: uniqueTxids(spent.intentHash, watch),
+        evidence: settledEvidence(watch, depositAddress),
       };
     }
 

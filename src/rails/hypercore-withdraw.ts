@@ -43,7 +43,7 @@ import { isAddress } from 'viem';
 import type { HlWithdrawDraft, Rail, RailResult, SimulationResult } from '../types.ts';
 import { ONECLICK_TERMINAL, baseUnits, oneClickClient, oneLine, quoteEchoProblems, toBaseUnits } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickStatus, OneClickToken, QuoteEcho } from '../intents.ts';
-import { describeIncompleteDeposit, describeRefund, uniqueTxids } from './oneclick-words.ts';
+import { deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, settledEvidence, uniqueTxids } from './oneclick-words.ts';
 import { fetchIntentsAssetBalance } from '../ledger/intents.ts';
 import { nearChainSpec } from '../chain/near.ts';
 import { readTimeout } from '../net.ts';
@@ -504,11 +504,14 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     const watch = await watchStatus(depositAddress);
 
     if (watch.status === 'SUCCESS') {
-      const proof = await proveBothSides(draft, before, intentsBefore, quote);
+      const proof = await proveBothSides(draft, before, intentsBefore, deliveredAmount(watch, quote.amountOutFormatted));
       return {
         ok: true,
-        detail: `withdrew ${draft.amount} USDC from Hyperliquid; ${oneLine(quote.amountOutFormatted, 40)} USDC credited to our intents account ${draft.to}; ${evidence}.${proof}`,
-        txids: [hash, ...watch.destinationTxHashes],
+        detail:
+          `withdrew ${draft.amount} USDC from Hyperliquid; ${deliveredAmount(watch, quote.amountOutFormatted)} USDC credited to our ` +
+          `intents account ${draft.to} (${deliveredNote(watch)}); ${evidence}.${proof}`,
+        txids: uniqueTxids(hash, watch),
+        evidence: settledEvidence(watch, depositAddress.toLowerCase()),
       };
     }
 
@@ -546,7 +549,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
 
   // What changed on each side, read back rather than assumed. Never throws: the money has
   // moved by now and a read that fails changes the sentence, not the fact.
-  async function proveBothSides(draft: HlWithdrawDraft, before: HlAccountSummary, intentsBefore: bigint | null, quote: OneClickQuote): Promise<string> {
+  async function proveBothSides(draft: HlWithdrawDraft, before: HlAccountSummary, intentsBefore: bigint | null, delivered: string): Promise<string> {
     const parts: string[] = [];
     try {
       const after = await accountSummary(hl, draft.from);
@@ -561,7 +564,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
       parts.push(
         gain > 0n
           ? ` The intents balance rose by ${Number(gain) / 10 ** INTENTS_USDC_DECIMALS} USDC.`
-          : ` The verifier has not shown the credit yet; 1Click reported SUCCESS for ${oneLine(quote.amountOutFormatted, 40)} USDC, so read the wallet in a minute rather than sending again.`,
+          : ` The verifier has not shown the credit yet; 1Click reported SUCCESS for ${delivered} USDC, so read the wallet in a minute rather than sending again.`,
       );
     } else {
       parts.push(' The verifier would not answer a balance read, so the credit is unconfirmed here; read the wallet.');

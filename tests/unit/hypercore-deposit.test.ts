@@ -106,6 +106,8 @@ type ApiOverrides = {
   status?: OneClickStatus['status'];
   refundedAmount?: string;
   refundReason?: string;
+  settledAmountOut?: string;
+  nearTxHashes?: string[];
   statusThrows?: boolean;
   submitThrows?: boolean;
   assetMissing?: boolean;
@@ -149,9 +151,10 @@ function fakeApi(over: ApiOverrides = {}): { api: IntentsApiPort; signer: Intent
         reported: status,
         originTxHashes: [],
         destinationTxHashes: ['0xdest'],
-        nearTxHashes: [],
+        nearTxHashes: over.nearTxHashes ?? [],
         ...(over.refundedAmount !== undefined ? { refundedAmount: over.refundedAmount } : {}),
         ...(over.refundReason !== undefined ? { refundReason: over.refundReason } : {}),
+        ...(over.settledAmountOut !== undefined ? { settledAmountOut: over.settledAmountOut } : {}),
       } as OneClickStatus;
     },
   };
@@ -390,6 +393,26 @@ test('execute signs one intent to the quote handle, submits it, and reports the 
   assert.match(out.detail, /unified/);
   assert.match(out.detail, /rose by 9\.6594/);
   assert.deepEqual(out.txids, ['HASH1', '0xdest']);
+});
+
+test('a success reports the amount 1Click settled, not the quote, and keeps the NEAR settlement hash', async () => {
+  const { rail: r } = rail({ settledAmountOut: '9.6412', nearTxHashes: ['nearSettle'] }, [{ perp: 0, spot: 0, unifiedAvailable: 0 }, { perp: 0, spot: 9.6412, unifiedAvailable: 9.6412 }]);
+  const out = await r.execute(draft());
+  assert.equal(out.ok, true, out.detail);
+  assert.match(out.detail, /funded Hyperliquid with 9\.6412 USDC/);
+  assert.doesNotMatch(out.detail, /9\.6594/);
+  assert.doesNotMatch(out.detail, /quoted/);
+  assert.equal(out.evidence?.settledAmountOut, '9.6412');
+  assert.equal(out.evidence?.handle, HANDLE);
+  assert.deepEqual(out.txids, ['HASH1', '0xdest', 'nearSettle']);
+});
+
+test('a success without a settled amount says the figure is quoted', async () => {
+  const { rail: r } = rail({}, [{ perp: 0, spot: 0, unifiedAvailable: 0 }, { perp: 0, spot: 9.66, unifiedAvailable: 9.66 }]);
+  const out = await r.execute(draft());
+  assert.equal(out.ok, true, out.detail);
+  assert.match(out.detail, /a quoted 9\.6594 USDC/);
+  assert.equal(out.evidence?.settledAmountOut, undefined);
 });
 
 test('the echo is checked again at execute, before anything is signed', async () => {

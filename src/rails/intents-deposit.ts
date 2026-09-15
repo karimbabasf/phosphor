@@ -45,7 +45,7 @@ import {
   toBaseUnits,
 } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickStatus, TokensFile } from '../intents.ts';
-import { describeIncompleteDeposit, describeRefund, uniqueTxids } from './oneclick-words.ts';
+import { deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, settledEvidence, uniqueTxids } from './oneclick-words.ts';
 import { ONECLICK_COUNTERPARTY } from './oneclick.ts';
 
 // The chains src/chain/evm.ts can sign for. 1Click accepts Solana and NEAR origins too;
@@ -471,9 +471,10 @@ export function intentsDepositRail(deps: IntentsDepositRailDeps): IntentsDeposit
         ok: true,
         detail:
           `deposited ${draft.amount} ${draft.symbol} from ${draft.chain} into intents.near; ` +
-          `${oneLine(quote.amountOutFormatted, 40)} ${draft.symbol} now credited to ${draft.intentsAccount} ` +
-          `and spendable by the intents-native swap rail; ${evidence}`,
-        txids: [txHash, ...watch.destinationTxHashes],
+          `${deliveredAmount(watch, quote.amountOutFormatted)} ${draft.symbol} now credited to ${draft.intentsAccount} ` +
+          `(${deliveredNote(watch)}) and spendable by the intents-native swap rail; ${evidence}`,
+        txids: uniqueTxids(txHash, watch),
+        evidence: settledEvidence(watch, depositAddress),
       };
     }
 
