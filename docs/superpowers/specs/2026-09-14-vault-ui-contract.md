@@ -51,7 +51,7 @@ Proposal statuses now include `awaiting_touch`: the person clicked approve and t
 | `POST /api/vault/migrate` | `{ password }` | `{ ok }` or refusal (`wrong_password`, `enclave_unavailable`, `user_cancel`) | The "Move your keys behind the Secure Enclave" card, shown once at boot when `custody === 'software'` and `enclave.ready`; dismissable; also a button in the Vault tab. |
 | `POST /api/vault/forget` | `{ confirm: 'FORGET' }` | `{ ok }` or refusal (`not_backed_up`) | Vault tab > Danger. Typed confirmation, refused unless backed up, then Touch ID. |
 | `POST /api/vault/prefs` | `{ idleMinutes: 5\|15\|60 }` | `{ ok, ...prefs }` | Vault tab > Window. |
-| `POST /api/deposit/show` | `{ chain, symbol, address? }` | `{ ok, deposit }` | Vault tab address rows, Money-in. Starts the watcher and broadcasts. |
+| `POST /api/deposit/show` | `{ chain, symbol }` | `{ ok, deposit }` (409 when the asset is not credited on that chain, or the bridge has no address) | Vault tab address rows, Money-in. The address in `deposit` is resolved by the app from the bridge for this account; anything sent in the body is ignored. Starts the watcher and broadcasts. |
 | `POST /api/deposit/stop` | `{}` | `{ ok }` | Closing the card does NOT stop it (the watch outlives the card); only an explicit Stop does. |
 | `POST /api/approve` | `{ id }` | as before; the row comes back `awaiting_touch` on an enclave wallet | Decision card. |
 
