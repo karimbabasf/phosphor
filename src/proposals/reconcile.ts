@@ -226,6 +226,20 @@ function summarise(states: Array<{ hash: string; state: TxState }>): { status: P
   return { status: 'executed', detail: `confirmed on chain: ${confirmed.join(', ')}` };
 }
 
+// Where the venue's word starts inside a detail, behind the rail's own sentence. Written by
+// nothing else in this repo, so splitting on it finds the rail's sentence again.
+const RECHECK = ' Re-checked with 1Click: ';
+
+// One string for one value whatever the key order, so two results that say the same thing
+// compare equal. The evidence is merged from two sources and its keys arrive in either order.
+function stable(value: unknown): string {
+  return JSON.stringify(value, (_key, v: unknown) =>
+    v !== null && typeof v === 'object' && !Array.isArray(v)
+      ? Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)))
+      : v,
+  );
+}
+
 /* Re-check one 1Click order by its quote handle and map what the venue reports onto the row.
      SUCCESS   -> executed, with the settled amount in the detail when the API gave one. A
                   Hyperliquid deposit is the exception: it stays needs_reconciliation until the
@@ -250,14 +264,27 @@ async function reconcileByHandle(ctx: PCtx, p: Proposal, handle: string): Promis
     ...(status.refundedAmount === undefined ? {} : { refundedAmount: status.refundedAmount }),
     ...(status.refundReason === undefined ? {} : { refundReason: status.refundReason }),
   };
-  const write = (next: Proposal['status'], ok: boolean, detail: string): Proposal => {
-    ctx.audit.append(next === 'executed' ? 'executed' : 'error', `${p.id} reconciled by 1Click: ${next}. ${detail}`, { id: p.id, handle, status: status.status });
+  /* THE RAIL'S SENTENCE STAYS ON A ROW THAT STAYS OPEN. It is the observation ("signed and
+     submitted, do not sign another"); the venue's word is the status it is waiting on, and it
+     rides behind, anchored on RECHECK so a later re-check replaces the last word rather than
+     adding one. A settled row (executed, failed) takes the venue's word alone: the observation
+     has been answered. And NOTHING IS WRITTEN OR LOGGED WHEN NOTHING CHANGED: the sweep runs
+     every ten minutes for seven days, and an order 1Click keeps calling FAILED used to collect
+     up to a thousand audit lines and SSE frames saying so. */
+  const railSaid = (p.result?.detail ?? '').split(RECHECK)[0];
+  const write = (next: Proposal['status'], ok: boolean, said: string): Proposal => {
+    const settledNow = next === 'executed' || next === 'failed';
+    const detail = settledNow || railSaid === '' ? said : `${railSaid}${RECHECK}${said}`;
+    const result = { ok, detail, txids, evidence };
+    const current = { ok: p.result?.ok ?? false, detail: p.result?.detail ?? '', txids: p.result?.txids ?? [], evidence: p.result?.evidence ?? {} };
+    if (next === p.status && stable(result) === stable(current)) return p;
+    ctx.audit.append(next === 'executed' ? 'executed' : 'error', `${p.id} reconciled by 1Click: ${next}. ${said}`, { id: p.id, handle, status: status.status });
     return persist(ctx, {
       ...p,
       status: next,
       decidedAt: p.decidedAt ?? nowIso(),
       settledAt: next === p.status ? p.settledAt : nowIso(),
-      result: { ok, detail, txids, evidence },
+      result,
     });
   };
 

@@ -14,6 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { createAudit } from '../../src/audit.ts';
+import type { Audit } from '../../src/audit.ts';
 import { createStore } from '../../src/store.ts';
 import { createLedger } from '../../src/ledger/index.ts';
 import { defaultPolicy, savePolicy } from '../../src/policy/file.ts';
@@ -34,7 +35,7 @@ function statusOf(over: Partial<OneClickStatus>): OneClickStatus {
   return { found: true, status: 'PROCESSING', reported: '', originTxHashes: [], destinationTxHashes: [], nearTxHashes: [], ...over };
 }
 
-type Harness = { svc: ProposalService; dir: string; asked: string[] };
+type Harness = { svc: ProposalService; dir: string; asked: string[]; audit: Audit };
 
 // `venueCredited` is the Hyperliquid account read a deposit needs on top of 1Click's word;
 // absent means the app has none wired, which is every test not about a deposit.
@@ -57,9 +58,10 @@ function setup(
     candleProducts: ['BTC-USD'],
   } as unknown as AppConfig;
   const asked: string[] = [];
+  const audit = createAudit(dir);
   const svc = createProposalService({
     cfg,
-    audit: createAudit(dir),
+    audit,
     store: createStore(dir),
     ledger: createLedger(cfg),
     riskRows: RISK_ROWS,
@@ -76,7 +78,7 @@ function setup(
       : {}),
     ...(venueCredited === undefined ? {} : { venueCredited }),
   });
-  return { svc, dir, asked };
+  return { svc, dir, asked, audit };
 }
 
 const shown = async (): Promise<boolean> => true;
@@ -331,4 +333,44 @@ test('hlDepositCredited asks for every deposit promised since this row, so a sec
   });
   assert.equal(await offline(first), false, 'a ledger that will not answer is not shown');
   assert.equal(await vouches(1_000)({ ...first, ...SWAP } as Proposal), false, 'only a deposit has an account to read');
+});
+
+/* A row that stays open is written once per change, not once per sweep. The sweep runs every ten
+   minutes for seven days, so an order 1Click keeps calling FAILED used to collect up to a thousand
+   audit lines and SSE frames, and each pass replaced the rail's own sentence (the one that says
+   not to sign another) with "check again shortly". Now the venue's word rides behind the rail's
+   sentence, anchored so a re-check replaces the last word rather than adding one, and nothing is
+   persisted or logged when the status, the evidence and the sentence all stand. */
+test('two sweeps over an unchanged FAILED row write one audit line and keep the rail\'s sentence', async () => {
+  const h = setup(statusOf({ status: 'FAILED', refundedAmount: '0', refundReason: 'SLIPPAGE' }));
+  const railSaid = 'the intent was submitted but 1click did not reach a terminal status within 300s; intent h1, quote handle dep-1. THE INTENT IS SIGNED AND SUBMITTED, do not sign another.';
+  seed(h.dir, { result: { ok: false, detail: railSaid, txids: ['intent-h1'], evidence: { handle: 'dep-1', refundedAmount: '0', refundReason: 'SLIPPAGE' } } });
+  const reconciled = (): number => h.audit.tail(50).filter((e) => e.type === 'error' && /reconciled by 1Click/.test(e.msg)).length;
+
+  assert.equal(await h.svc.reconcileOpen(), 0, 'FAILED is not a status change');
+  const once = h.svc.get('oc-1');
+  assert.equal(once?.status, 'needs_reconciliation');
+  assert.match(once?.result?.detail ?? '', /do not sign another/, 'the rail\'s sentence is kept');
+  assert.match(once?.result?.detail ?? '', /reported FAILED/, 'and the venue\'s word is added behind it');
+  assert.equal(reconciled(), 1, 'the first pass wrote the venue\'s word, and that is one line');
+
+  await h.svc.reconcileOpen();
+  await h.svc.reconcile('oc-1');
+  const twice = h.svc.get('oc-1');
+  assert.equal(reconciled(), 1, 'a pass that changes nothing writes nothing');
+  assert.equal(twice?.result?.detail, once?.result?.detail, 'and the sentence does not grow');
+  assert.deepEqual(h.asked, ['dep-1', 'dep-1', 'dep-1'], 'the venue was asked every time all the same');
+});
+
+test('a re-check that changes what the venue says replaces its last word rather than stacking them', async () => {
+  let refunded = '0';
+  const h = setup(() => statusOf({ status: 'FAILED', refundedAmount: refunded, refundReason: 'SLIPPAGE' }));
+  seed(h.dir, { result: { ok: false, detail: 'rail: signed and submitted, do not sign another.', txids: ['intent-h1'], evidence: { handle: 'dep-1' } } });
+  await h.svc.reconcile('oc-1');
+  refunded = '9.5';
+  const out = await h.svc.reconcile('oc-1');
+  assert.match(out.result?.detail ?? '', /do not sign another/);
+  assert.match(out.result?.detail ?? '', /refunded 9\.5 so far/);
+  assert.doesNotMatch(out.result?.detail ?? '', /refunded 0 so far/, 'the earlier word is gone');
+  assert.equal(out.result?.evidence?.refundedAmount, '9.5');
 });
