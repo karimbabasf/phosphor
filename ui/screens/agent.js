@@ -952,7 +952,7 @@
     dom.setHidden(refs.turnBar, !turn);
     if (turn) {
       dom.setText(refs.turnWhat, turnLine());
-      dom.setText(refs.turnTime, secondsText(Date.now() - turn.startedAt));
+      dom.setText(refs.turnTime, secondsText(now - turn.startedAt));
       dom.setAttr(refs.turnBar, 'data-state', turn.state);
     }
 

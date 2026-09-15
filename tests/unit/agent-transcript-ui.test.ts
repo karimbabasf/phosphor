@@ -335,6 +335,58 @@ test('the turn bar is up for the whole answer and gone after it', () => {
   assert.equal(world.turnBar().hidden, true);
 });
 
+test('the seat light in the head names the open call in its own words and settles to Ready', () => {
+  /* The head carried a pill that said "Working" in a border. The status line says what the work
+     is, in the words the step row uses, and goes back to the state word when the turn is over. */
+  const world = build();
+  const status = all(world.host, 'agent-status')[0];
+  const verb = all(status, 'status-verb')[0];
+  const elapsed = all(status, 'status-elapsed')[0];
+  assert.equal(status.getAttribute('data-state'), 'ready');
+  assert.equal(verb.textContent, 'Ready');
+  assert.equal(elapsed.hidden, true, 'a clock with nothing to time');
+
+  world.type('what is btc doing');
+  world.emit({ kind: 'tool', name: 'mcp__phosphor__chart_read', input: { product: 'BTC-USD' } });
+  assert.equal(status.getAttribute('data-state'), 'working');
+  assert.equal(verb.textContent, 'Reading the chart');
+  assert.equal(elapsed.hidden, false);
+  assert.ok(/\d s$/.test(elapsed.textContent), elapsed.textContent);
+
+  world.emit({ kind: 'tool_result', name: 'mcp__phosphor__chart_read', ok: true });
+  assert.equal(verb.textContent, 'Thinking');
+  world.emit({ kind: 'text', text: 'Up on the 15m.' });
+  assert.equal(verb.textContent, 'Writing the answer');
+
+  world.emit({ kind: 'turn_end', error: false, turns: 1 });
+  world.emit({ kind: 'status', state: 'ready' });
+  assert.equal(status.getAttribute('data-state'), 'ready');
+  assert.equal(verb.textContent, 'Ready');
+  assert.equal(elapsed.hidden, true);
+  assert.equal(status.getAttribute('data-live'), null, 'the column wrote the attribute the beam owns');
+});
+
+test('the composer arms on text and says why it is quiet when it is', () => {
+  const world = build();
+  const field = all(world.composerHost, 'composer-field')[0];
+  assert.equal(world.input.placeholder, 'Tell your assistant what to do.');
+  assert.equal(field.getAttribute('data-armed'), null);
+  world.input.value = 'hello';
+  fire(world.input, 'input');
+  assert.equal(field.getAttribute('data-armed'), 'true');
+  world.type('hello');
+  assert.equal(field.getAttribute('data-armed'), null, 'the arrow stayed lit after the message went');
+
+  world.emit({ kind: 'status', state: 'off' });
+  assert.equal(world.input.placeholder, 'Start your assistant to talk to it.');
+  assert.equal(world.input.disabled, true);
+  const rows = all(world.host, 'suggest');
+  assert.equal(rows.length, 3, 'the empty card offers three first moves');
+  fire(rows[0], 'click');
+  assert.equal(world.input.value, rows[0].textContent, 'a first move did not land in the box');
+  assert.equal(world.sends.length, 1, 'a first move sent itself');
+});
+
 test('text that follows text in one turn is one reply row', () => {
   /* A model answers in blocks: a heading, then a table, then a sentence. Each arrived as its own
      event and drew its own row, so one answer read as three replies with air between them. */
