@@ -403,18 +403,31 @@ test('focus lands on the Touch ID button where there is no field', () => {
 
 /* ---------- the first run ---------- */
 
-test('with the enclave ready, the first run is Create wallet, the addresses, the assistant, then Home', async () => {
+test('with the enclave ready, the first run is the welcome, Create wallet, the addresses, the assistant, then Home', async () => {
   const world = build({ lock: { state: 'no_wallet', idleLocksInSec: null }, vault: vaultState({ custody: null, state: 'no_wallet' }) }, [FIRSTRUN]);
   world.sandbox.PhosphorFirstRun.boot();
   world.sandbox.PhosphorFirstRun.open();
   const screen = world.nodes['screen-firstrun'];
   assert.equal(screen.hidden, false);
-  assert.equal(find(screen, 'input').length, 0, 'the enclave first run asks for something typed');
+  assert.equal(world.sandbox.document.body.getAttribute('data-firstrun'), 'true', 'the page is not hidden behind the card');
+
+  // The welcome: the mark, the name, one button, and no count.
+  assert.equal(find(screen, 'input').length, 0, 'the welcome asks for something typed');
   assert.equal(find(screen, '.firstrun-mark').length, 1, 'no mark');
+  const welcome = find(screen, 'button');
+  assert.equal(welcome.length, 1, 'more than one button on the welcome');
+  assert.equal(welcome[0].textContent, 'Get started');
+  assert.ok(textOf(screen).includes('Welcome to Phosphor'));
+  assert.equal(find(screen, '.screen-progress').length, 0, 'a step count on the welcome');
+  welcome[0].click();
+
+  // Create wallet: one button, nothing typed, the first of three steps.
+  assert.equal(find(screen, 'input.input, textarea').length, 0, 'the enclave first run asks for something typed');
   const buttons = find(screen, 'button');
-  assert.equal(buttons.length, 1, 'more than one button on the first screen');
+  assert.equal(buttons.length, 1, 'more than one button on the create screen');
   assert.equal(buttons[0].textContent, 'Create wallet');
-  assert.equal(find(screen, '.screen-steps').length, 0, 'a step count on the first screen');
+  assert.ok(textOf(screen).includes('Step 1 of 3'));
+  assert.ok(textOf(screen).some((t) => t.startsWith('Locked by this Mac')), 'the enclave create screen does not say where the key is held');
 
   buttons[0].click();
   assert.equal(buttons[0].pendingLabel, 'Waiting for Touch ID');
@@ -442,17 +455,20 @@ test('a cancelled Touch ID on Create says so and stays on the screen', async () 
   world.sandbox.PhosphorFirstRun.boot();
   world.sandbox.PhosphorFirstRun.open();
   const screen = world.nodes['screen-firstrun'];
+  buttonNamed(screen, 'Get started').click();
   find(screen, 'button')[0].click();
   await flush();
   assert.ok(textOf(screen).includes('Touch ID was cancelled. Nothing was changed.'));
   assert.equal(find(screen, 'button')[0].textContent, 'Create wallet');
 });
 
-test('a file made on another Mac opens on Restore: one field, one button, 12 or 24 words', async () => {
+test('a file made on another Mac opens, after the welcome, on Restore: one field, one button, 12 or 24 words', async () => {
   const world = build({ lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState({ foreign: true }) }, [FIRSTRUN]);
   world.sandbox.PhosphorFirstRun.boot();
   world.sandbox.PhosphorFirstRun.open();
   const screen = world.nodes['screen-firstrun'];
+  assert.ok(textOf(screen).includes('Welcome to Phosphor'));
+  buttonNamed(screen, 'Get started').click();
   assert.ok(textOf(screen).includes('Made on another Mac'));
   const fields = find(screen, 'textarea');
   assert.equal(fields.length, 1, 'the restore screen does not have exactly one field');
@@ -477,15 +493,20 @@ test('a file made on another Mac opens on Restore: one field, one button, 12 or 
   assert.ok(textOf(screen).includes('Your addresses'), 'restore did not go on to the addresses');
 });
 
-test('without an enclave the software first run is unchanged: ten steps from Get started', () => {
+test('without an enclave the software first run keeps its screens after the welcome: nine steps from Get started', () => {
   const world = build({ lock: { state: 'no_wallet', idleLocksInSec: null }, vault: vaultState({ custody: null, state: 'no_wallet', enclave: { attached: true, ready: false, capability: null, keyMadeAt: null, binding: null } }) }, [FIRSTRUN]);
   world.sandbox.PhosphorFirstRun.boot();
   world.sandbox.PhosphorFirstRun.open();
   const screen = world.nodes['screen-firstrun'];
+  assert.ok(textOf(screen).includes('Welcome to Phosphor'));
   assert.equal(find(screen, 'button')[0].textContent, 'Get started');
   find(screen, 'button')[0].click();
-  assert.ok(textOf(screen).includes('Step 2 of 10'));
+  assert.ok(textOf(screen).includes('Step 1 of 9'));
   assert.ok(textOf(screen).includes('Create or bring a wallet'));
+  buttonNamed(screen, 'Continue').click();
+  assert.ok(textOf(screen).includes('Step 2 of 9'));
+  assert.ok(textOf(screen).includes('Set a password'));
+  assert.ok(textOf(screen).some((t) => t.startsWith('Locked by your password')), 'the password screen does not say where the key is held');
 });
 
 /* ---------- the shell ---------- */

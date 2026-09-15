@@ -25,6 +25,15 @@ body[data-locked="true"] #page {
   user-select: none;
 }
 
+/* The first run is not a lock over a page, it is the screen before there is
+   one. While its card is up the page is not painted at all: no frosted tabs
+   behind it, nothing for the blur to rasterise, and nothing the keyboard can
+   reach. Karim, 2026-09-15: "a completely black screen on the background".
+   firstrun.js sets the attribute beside data-locked and takes both off. */
+body[data-firstrun="true"] #page {
+  visibility: hidden;
+}
+
 /* The scrim finishes the job the blur starts: sixty percent black over the
    frosted page, so a 44 px balance is a tint and not a shape. It covers the
    bar as well, so the card is the only thing on screen. */
