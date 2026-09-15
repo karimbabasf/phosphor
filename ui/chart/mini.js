@@ -48,7 +48,7 @@
     line: '#262729',
     text: '#ECEEF1',
     text2: '#9BA1AB',
-    text3: '#5E656F',
+    text3: '#828890',
     up: '#3FFF6C',
     down: '#FF5A6E',
     agent: '#B79CFF'
