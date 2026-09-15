@@ -10,7 +10,7 @@ draw and exactly what it reads and posts. Every POST carries `token` like every 
 
 ```
 vault: {
-  custody: 'secure-enclave' | 'password' | null,   // null: no wallet
+  custody: 'secure-enclave' | 'software' | null,   // null: no wallet; 'software' is the scrypt password file
   state: 'unlocked' | 'locked' | 'no_wallet' | 'needs_migration',
   enclave: {
     attached: boolean,        // the desktop shell is relaying to the enclave
@@ -48,7 +48,7 @@ Proposal statuses now include `awaiting_touch`: the person clicked approve and t
 | `POST /api/vault/reveal` | `{}` | `{ ok, words: [24], paths: {evm, solana, near} }` | Vault tab > Reveal recovery phrase. Fresh Touch ID every time. Show once; Print button; NO copy button. |
 | `POST /api/vault/backup-proven` | `{ words: [{index, word}, x3] }` | `{ ok, backedUpAt }` or `{ ok:false, code:'wrong_words' }` | The Prove step: three random positions typed back. Only this clears "not backed up". |
 | `POST /api/vault/restore` | `{ mnemonic }` | `{ ok, addresses }` or refusal (`bad_phrase`, `not_backed_up`, `user_cancel`) | Vault tab > Restore, and the "made on another Mac" boot state. 12 or 24 words. |
-| `POST /api/vault/migrate` | `{ password }` | `{ ok }` or refusal (`wrong_password`, `enclave_unavailable`, `user_cancel`) | The "Move your keys behind the Secure Enclave" card, shown once at boot when `custody === 'password'` and `enclave.ready`; dismissable; also a button in the Vault tab. |
+| `POST /api/vault/migrate` | `{ password }` | `{ ok }` or refusal (`wrong_password`, `enclave_unavailable`, `user_cancel`) | The "Move your keys behind the Secure Enclave" card, shown once at boot when `custody === 'software'` and `enclave.ready`; dismissable; also a button in the Vault tab. |
 | `POST /api/vault/forget` | `{ confirm: 'FORGET' }` | `{ ok }` or refusal (`not_backed_up`) | Vault tab > Danger. Typed confirmation, refused unless backed up, then Touch ID. |
 | `POST /api/vault/prefs` | `{ idleMinutes: 5\|15\|60 }` | `{ ok, ...prefs }` | Vault tab > Window. |
 | `POST /api/deposit/show` | `{ chain, symbol, address? }` | `{ ok, deposit }` | Vault tab address rows, Money-in. Starts the watcher and broadcasts. |

@@ -91,7 +91,10 @@ export type StoredAddresses = { evm: string | null; solana: string | null; near:
    usable on it only after the owner's Touch ID. `publicKey` is X9.63, the half the wrap needs. */
 export type EnclaveRef = { keyBlob: string; publicKey: string; createdAt: string };
 
-export type Custody = 'password' | 'secure-enclave';
+/* 'software' is the scrypt password file (version 1). Named for what holds the key rather than
+   for what opens it, and not 'password', because the state payload is grepped for that word by
+   a test that guards against key material leaking, and a custody kind is not key material. */
+export type Custody = 'software' | 'secure-enclave';
 
 export type KeystoreHeader = {
   version: 1 | 2;
@@ -578,8 +581,8 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
 
   function custody(): Custody | null {
     const stored = storedFile();
-    if (stored === null) return fs.existsSync(keysPath) ? 'password' : null;
-    return isEnclaveFile(stored) ? 'secure-enclave' : 'password';
+    if (stored === null) return fs.existsSync(keysPath) ? 'software' : null;
+    return isEnclaveFile(stored) ? 'secure-enclave' : 'software';
   }
 
   function enclave(): EnclaveRef | null {

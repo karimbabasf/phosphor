@@ -270,7 +270,7 @@ export async function handleVaultRestore(ctx: Ctx, req: http.IncomingMessage, re
 export async function handleVaultMigrate(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const body = await guarded(ctx, '/api/vault/migrate', req, res);
   if (body === null) return;
-  if (ctx.keystore.custody() !== 'password' || ctx.keystore.state() === 'needs_migration') {
+  if (ctx.keystore.custody() !== 'software' || ctx.keystore.state() === 'needs_migration') {
     return sendJson(res, 200, { ok: false, error: 'Only an encrypted password wallet can move behind the enclave.', code: 'not_password' });
   }
   const password = typeof body.password === 'string' ? body.password : '';

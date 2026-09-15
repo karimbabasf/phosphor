@@ -154,7 +154,7 @@ test('a password wallet moves behind the enclave in one step and the password wr
   const store = createKeystore({ keysPath, kdf: FAST_KDF });
   const made = await store.create('a long enough password');
   store.lock();
-  assert.equal(store.custody(), 'password');
+  assert.equal(store.custody(), 'software');
   assert.equal(readHeader(keysPath)?.version, 1);
 
   const { ref, priv } = fakeEnclave();
