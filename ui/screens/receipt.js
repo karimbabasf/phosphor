@@ -109,27 +109,12 @@
     return STATUS[String(receipt.status || '')] || STATUS.done;
   }
 
-  /* ---------- the foundation, guarded until it lands ---------- */
-
   function icon(name, className) {
-    var icons = window.PhosphorIcons;
-    if (icons && typeof icons.svg === 'function') return icons.svg(name, className);
-    var stub = dom.el('span', 'icon' + (className ? ' ' + className : ''));
-    stub.setAttribute('aria-hidden', 'true');
-    stub.dataset.icon = name;
-    return stub;
+    return window.PhosphorIcons.svg(name, className);
   }
 
   function logo(symbol, size) {
-    if (marks && typeof marks.logo === 'function') return marks.logo(symbol, size);
-    var disc = marks.disc(symbol);
-    disc.style.setProperty('--logo', size + 'px');
-    return disc;
-  }
-
-  function reducedMotion() {
-    var motion = window.PhosphorMotion;
-    return !!(motion && typeof motion.reduced === 'function' && motion.reduced());
+    return marks.logo(symbol, size);
   }
 
   /* ---------- the card ---------- */
@@ -401,16 +386,14 @@
   var current = null;
 
   /* Moment 3: the card scales 0.96 to 1 with its opacity over 220 ms; the backdrop
-     fades in the stylesheet. Reduced motion keeps the fade and drops the scale. */
+     fades in the stylesheet. Reduced motion keeps the fade and drops the scale. The
+     guard is for the unit harness, which has no vendored file, the same as lock.js. */
   function enter(node) {
     var Motion = window.Motion;
     if (!Motion || typeof Motion.animate !== 'function') return;
-    var frames = reducedMotion() ? { opacity: [0, 1] } : { opacity: [0, 1], scale: [0.96, 1] };
-    try {
-      Motion.animate(node, frames, { duration: 0.22, ease: [0.22, 1, 0.36, 1] });
-    } catch (err) {
-      console.error('[receipt]', err);
-    }
+    var reduced = window.PhosphorMotion.reduced();
+    var frames = reduced ? { opacity: [0, 1] } : { opacity: [0, 1], scale: [0.96, 1] };
+    Motion.animate(node, frames, { duration: 0.22, ease: [0.22, 1, 0.36, 1] });
   }
 
   function open(receipt, opts) {

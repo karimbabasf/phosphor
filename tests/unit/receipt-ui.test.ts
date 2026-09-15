@@ -5,8 +5,8 @@
 // the move signed and coloured; the hash is short on screen and whole on hover and on Copy;
 // the link out is the server's https url and nothing else; and the popover closes on Esc, on
 // the backdrop and on its own control. Run against the REAL ui/screens/receipt.js, ui/core/dom.js
-// and ui/design/marks.js over a stand-in DOM, the way the other *-ui tests do. The foundation's
-// icon and logo helpers are absent here on purpose: the card has to build without them.
+// and ui/design/marks.js over a stand-in DOM, the way the other *-ui tests do. PhosphorIcons is a
+// stub that records the icon's name, so an assertion can say which icon a state chose.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -145,6 +145,14 @@ function boot(over: { reduced?: boolean; motion?: boolean } = {}): Rig {
     },
     clearTimeout: () => {},
     PhosphorMotion: { reduced: () => over.reduced === true },
+    PhosphorIcons: {
+      svg: (name: string, className?: string) => {
+        const node = makeNode('svg');
+        node.className = 'icon' + (className ? ' ' + className : '');
+        node.dataset.icon = name;
+        return node;
+      },
+    },
     PhosphorNet: { readable: (err: unknown) => String(err) },
     PhosphorApi: { reconcile: () => Promise.resolve({ status: 'executed' }) },
     PhosphorEvents: {
@@ -221,9 +229,11 @@ test('the inline card says the kind, the outcome, both legs and the four facts',
   assert.equal(card.dataset.inline, 'true');
   assert.equal(withClass(card, 'receipt-close').length, 0, 'no close control inline');
   assert.equal(text(withClass(card, 'receipt-kind')[0]), 'Swap');
+  assert.equal(withClass(card, 'receipt-kind')[0].childNodes[0].dataset.icon, 'swap');
   const chip = withClass(card, 'receipt-status')[0];
   assert.equal(text(chip), 'Done');
   assert.equal(chip.dataset.tone, 'up');
+  assert.equal(chip.childNodes[0].dataset.icon, 'done');
   assert.equal(text(withClass(card, 'receipt-time')[0]), '2 hours ago');
 
   const legs = withClass(card, 'receipt-leg');
@@ -232,7 +242,10 @@ test('the inline card says the kind, the outcome, both legs and the four facts',
   assert.equal(text(withClass(legs[0], 'receipt-amount')[0]), '-0.002 ETH');
   assert.equal(legs[1].dataset.dir, 'in');
   assert.equal(text(withClass(legs[1], 'receipt-amount')[0]), '+4.9811 USDC');
-  assert.equal(withClass(card, 'receipt-arrow').length, 1, 'the swap icon sits between the legs');
+  assert.equal(withClass(card, 'receipt-arrow')[0].dataset.icon, 'swap', 'the swap icon sits between the legs');
+  const logos = withClass(card, 'logo');
+  assert.deepEqual(logos.map((l: Any) => l.getAttribute('data-token')), ['ETH', 'USDC'], 'the real marks, at 32');
+  assert.equal(logos[0].style.getPropertyValue('--logo'), '32px');
 
   const cells = withClass(card, 'receipt-cell').map((c: Any) => [text(c.childNodes[0]), text(c.childNodes[1])]);
   assert.deepEqual(cells, [
@@ -294,6 +307,7 @@ test('a move that did not go through shows what would have left, unsigned and qu
   const chip = withClass(card, 'receipt-status')[0];
   assert.equal(text(chip), 'Failed');
   assert.equal(chip.dataset.tone, 'down');
+  assert.equal(chip.childNodes[0].dataset.icon, 'refused');
   const legs = withClass(card, 'receipt-leg');
   assert.equal(legs.length, 1);
   const amount = withClass(legs[0], 'receipt-amount')[0];
