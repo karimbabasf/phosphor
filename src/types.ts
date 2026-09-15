@@ -2,6 +2,7 @@
 // Erasable TypeScript only: this repo runs on Node 24 type stripping with no build step.
 // No enums, no namespaces, no parameter properties. Relative imports use explicit .ts extensions.
 
+import type { PocketRead } from './ledger/settle.ts';
 import type { Plan } from './trade/plan.ts';
 import type { PlanRisk } from './trade/risk.ts';
 
@@ -341,7 +342,17 @@ export type WriteDraft =
 // One rail per feature, each owning exactly one module under src/rails/. The dispatch
 // table in proposals.ts is the only place that knows they all exist, which is what lets
 // a rail be added without touching the engine.
-export type RailResult = { ok: boolean; detail: string; txids?: string[] };
+export type RailResult = {
+  ok: boolean;
+  detail: string;
+  txids?: string[];
+  // The venue confirmed the move and the balance has not shown it inside the rail's window.
+  // Neither executed nor failed: the proposal lands as needs_reconciliation and the next
+  // balance read that shows the rise settles it (src/proposals/execute.ts).
+  settling?: boolean;
+  // The balance the rail read either side of the move, for the receipt and for that re-check.
+  pocket?: PocketRead;
+};
 
 export type Rail<D extends WriteDraft = WriteDraft> = {
   kind: D['kind'];
@@ -429,6 +440,9 @@ export type Proposal = {
      These are what make a receipt answer "did my money change", which is the question a person
      actually has and which no amount of transaction hashes answers on its own. */
   balances?: { beforeUsd: number; afterUsd: number | null };
+  // The rail's own before and after in the pocket the asset moved through, when the rail
+  // read one. What `balances` is priced from, and what a settling row is re-judged against.
+  pocket?: PocketRead;
 };
 
 // ---------- Basic view ----------
