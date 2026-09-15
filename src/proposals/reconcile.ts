@@ -13,7 +13,7 @@
 // `reconcile` is the way out. It takes the hashes and asks the chain. It never guesses: a hash
 // that cannot be looked up leaves the proposal exactly where it was, with a sentence saying why.
 
-import type { ChainId, Proposal, WriteDraft } from '../types.ts';
+import type { ChainId, Proposal, RailEvidence, WriteDraft } from '../types.ts';
 import type { OneClickStatus } from '../intents.ts';
 import { errText, nowIso, persist } from './lifecycle.ts';
 import { balanceAfter } from './execute.ts';
@@ -193,7 +193,17 @@ function summarise(states: Array<{ hash: string; state: TxState }>): { status: P
      says which status it is waiting on. */
 async function reconcileByHandle(ctx: PCtx, p: Proposal, handle: string): Promise<Proposal> {
   const status = await ctx.oneClickStatus!(handle);
-  const txids = p.result?.txids ?? [];
+  // The settlement hashes the venue reports join the row's own, so an INTENTS-mode order that
+  // settled on NEAR carries its NEAR hash beside the intent hash.
+  const txids = [...new Set([...(p.result?.txids ?? []), ...(status.nearTxHashes ?? []), ...(status.destinationTxHashes ?? [])])];
+  // MERGED, NEVER REPLACED. The handle and the nonce are what a later question to the venue goes
+  // by; what 1Click reported is added beside them, so an executed row can still be re-checked.
+  const evidence: RailEvidence = {
+    ...p.result?.evidence,
+    ...(status.settledAmountOut === undefined ? {} : { settledAmountOut: status.settledAmountOut }),
+    ...(status.refundedAmount === undefined ? {} : { refundedAmount: status.refundedAmount }),
+    ...(status.refundReason === undefined ? {} : { refundReason: status.refundReason }),
+  };
   const write = (next: Proposal['status'], ok: boolean, detail: string): Proposal => {
     ctx.audit.append(next === 'executed' ? 'executed' : 'error', `${p.id} reconciled by 1Click: ${next}. ${detail}`, { id: p.id, handle, status: status.status });
     return persist(ctx, {
@@ -201,7 +211,7 @@ async function reconcileByHandle(ctx: PCtx, p: Proposal, handle: string): Promis
       status: next,
       decidedAt: p.decidedAt ?? nowIso(),
       settledAt: next === p.status ? p.settledAt : nowIso(),
-      result: { ok, detail, txids, ...(p.result?.evidence === undefined ? {} : { evidence: p.result.evidence }) },
+      result: { ok, detail, txids, evidence },
     });
   };
 
@@ -256,7 +266,7 @@ export async function reconcileProposal(ctx: PCtx, id: string): Promise<Proposal
       'No transaction hash was recorded, so there is nothing to look up on chain. ' +
       'Compare the balances before and after on the receipt, or search the wallet address in a block explorer.';
     ctx.audit.append('error', `${id}: reconcile found no hash to check`, { id });
-    return persist(ctx, { ...p, result: { ok: false, detail, txids } });
+    return persist(ctx, { ...p, result: { ok: false, detail, txids, ...(p.result?.evidence === undefined ? {} : { evidence: p.result.evidence }) } });
   }
 
   const chains = chainsOf(p.draft);
@@ -303,6 +313,8 @@ export async function reconcileProposal(ctx: PCtx, id: string): Promise<Proposal
     status: outcome.status,
     decidedAt: p.decidedAt ?? nowIso(),
     ...(balances !== undefined ? { balances } : {}),
-    result: { ok: outcome.status === 'executed', detail: outcome.detail, txids },
+    // The evidence the rail recorded stays: a settle by the chain adds a verdict, it does not
+    // forget the nonce or the handle a later question would go by.
+    result: { ok: outcome.status === 'executed', detail: outcome.detail, txids, ...(p.result?.evidence === undefined ? {} : { evidence: p.result.evidence }) },
   });
 }

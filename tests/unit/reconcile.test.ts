@@ -282,3 +282,16 @@ test('a row reconciled to something other than executed invents no balance', asy
   assert.notEqual(out.status, 'executed');
   assert.equal(out.balances?.afterUsd, null, 'a blank is better than a number nothing supports');
 });
+
+// A settle by the chain keeps the evidence the rail recorded. The nonce on an ambiguous
+// Hyperliquid send is the only thing a later ledger lookup can go by, and a reconcile that
+// confirmed the hash and dropped the nonce would leave nothing to check the send with.
+test('a chain reconcile keeps the evidence on the row', async () => {
+  const { svc, dir } = setup({ [`arb:${HASH_A}`]: 'confirmed' });
+  strand(dir, { result: { ok: false, detail: 'mid flight', txids: [HASH_A], evidence: { nonce: '99', handle: 'dep-z' } } });
+  svc.reconcileOnBoot();
+  const out = await svc.reconcile('stranded-1');
+  assert.equal(out.status, 'executed');
+  assert.equal(out.result?.evidence?.nonce, '99');
+  assert.equal(out.result?.evidence?.handle, 'dep-z');
+});

@@ -191,3 +191,26 @@ test('boot turns an approved row a dead process left into needs_reconciliation, 
   assert.equal(byId.get('was-approved'), 'needs_reconciliation');
   assert.equal(byId.get('was-touch'), 'pending');
 });
+
+// A settle merges what the venue reported INTO the evidence; it never replaces it. The handle
+// and the nonce are what a later question to the venue goes by, and a settle that dropped
+// them would leave an executed row nobody could re-check.
+test('settling by handle merges the venue facts into the evidence and keeps the handle and nonce', async () => {
+  const h = setup(statusOf({ status: 'SUCCESS', settledAmountOut: '9.97' }));
+  seed(h.dir, { result: { ok: false, detail: 'x', txids: ['intent-h1'], evidence: { handle: 'dep-1', nonce: '77', deadline: '2026-09-16T00:00:00.000Z' } } });
+  const out = await h.svc.reconcile('oc-1');
+  assert.equal(out.status, 'executed');
+  assert.equal(out.result?.evidence?.handle, 'dep-1');
+  assert.equal(out.result?.evidence?.nonce, '77');
+  assert.equal(out.result?.evidence?.deadline, '2026-09-16T00:00:00.000Z');
+  assert.equal(out.result?.evidence?.settledAmountOut, '9.97', 'what 1Click reported is merged in');
+});
+
+test('a FAILED re-check merges the refund facts into the evidence beside the handle', async () => {
+  const h = setup(statusOf({ status: 'FAILED', refundedAmount: '0', refundReason: 'SLIPPAGE' }));
+  seed(h.dir);
+  const out = await h.svc.reconcile('oc-1');
+  assert.equal(out.result?.evidence?.handle, 'dep-1');
+  assert.equal(out.result?.evidence?.refundedAmount, '0');
+  assert.equal(out.result?.evidence?.refundReason, 'SLIPPAGE');
+});

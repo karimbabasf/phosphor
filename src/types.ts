@@ -532,7 +532,9 @@ export type BasicPrice = {
 export type BasicRecent = {
   headline: string; // "Moved $36.54 of your dollars to your Hyperliquid trading account."
   timeLine: string; // "2:14 pm"
-  outcome: 'done' | 'refused' | 'blocked';
+  // 'unconfirmed' is a needs_reconciliation row that carries a hash or a handle: money may have
+  // moved and the app cannot yet say. Distinct from 'blocked' (nothing moved) on purpose.
+  outcome: 'done' | 'refused' | 'blocked' | 'unconfirmed';
 };
 
 // What the ASSISTANT did, which is a different list from what happened to the money.

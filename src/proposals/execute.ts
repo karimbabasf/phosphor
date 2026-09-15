@@ -260,9 +260,14 @@ async function runRail(ctx: PCtx, p: Proposal, rail: Rail, executing: Proposal, 
   const early = ctx.store.get(p.id)?.result;
   const txids = [...new Set([...(early?.txids ?? []), ...(result.txids ?? [])])];
   const evidence = { ...early?.evidence, ...result.evidence };
-  const status = result.ok ? 'executed' : txids.length > 0 ? 'needs_reconciliation' : 'failed';
+  /* A hash is not the only sign that money may have moved. An intent that was signed but whose
+     submission was never confirmed leaves a handle and a deadline; an ambiguous Hyperliquid send
+     leaves a handle and a nonce; an ambiguous class transfer leaves a nonce alone. None carries
+     a hash, every one may be live at the venue, so each is unconfirmed rather than failed. */
+  const moved = txids.length > 0 || evidence.handle !== undefined || evidence.nonce !== undefined;
+  const status = result.ok ? 'executed' : moved ? 'needs_reconciliation' : 'failed';
   const settledAt = nowIso();
-  ctx.audit.append(result.ok ? 'executed' : txids.length > 0 ? 'execution_unconfirmed' : 'execution_failed', `${p.id}: ${result.detail}`, { id: p.id, txids });
+  ctx.audit.append(result.ok ? 'executed' : moved ? 'execution_unconfirmed' : 'execution_failed', `${p.id}: ${result.detail}`, { id: p.id, txids });
   const recorded = persist(ctx, {
     ...executing,
     status,

@@ -479,7 +479,13 @@ type DailyLimit = { capUsd: number; spentUsd: number; resetsAt: string | null };
 function countsAgainstCap(p: Proposal): boolean {
   if (p.kind === 'policy_change') return false;
   if (p.status === 'executed' || p.status === 'executing') return true;
-  return p.status === 'needs_reconciliation' && (p.result?.txids?.length ?? 0) > 0;
+  if (p.status !== 'needs_reconciliation') return false;
+  // A hash, or the evidence a rail leaves when it never got one: a handle for a signed intent
+  // or an ambiguous venue send, a nonce for an ambiguous Hyperliquid action. Each is money that
+  // may be live at the venue, and a budget that forgot it is the under-count that let a retry
+  // spend twice. A row with none of them is the app not knowing, and holds nothing.
+  const evidence = p.result?.evidence;
+  return (p.result?.txids?.length ?? 0) > 0 || evidence?.handle !== undefined || evidence?.nonce !== undefined;
 }
 
 export function dailyLimit(ctx: PCtx, capUsd: number): DailyLimit {
