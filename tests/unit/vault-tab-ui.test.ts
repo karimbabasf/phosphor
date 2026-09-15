@@ -217,6 +217,16 @@ function build(options: { vault?: Any; lock?: Any; policy?: Any; receive?: Any }
   };
   sandbox.PhosphorToast = { show: (message: string) => { toasts.push(message); } };
   sandbox.PhosphorConfirm = { ask: (opts: Any) => { confirms.push(opts); return Promise.resolve(answer.confirm); } };
+  sandbox.PhosphorNetPick = {
+    NETWORKS: [
+      { id: 'eth', name: 'Ethereum', mark: 'ETH', colour: '#627EEA' },
+      { id: 'base', name: 'Base', mark: 'BASE', colour: '#0052FF' },
+      { id: 'arb', name: 'Arbitrum', mark: 'ARB', colour: '#12AAFF' },
+      { id: 'sol', name: 'Solana', mark: 'SOL', colour: '#9945FF' },
+      { id: 'near', name: 'NEAR', mark: 'NEAR', colour: '#00EC97' },
+    ],
+    render: (host: Any, opts: Any) => { calls.push(Object.assign({ route: 'netpick.render', host }, opts)); return { destroy() {} }; },
+  };
   sandbox.PhosphorDeposit = {
     open: (opts: Any) => { calls.push(Object.assign({ route: 'deposit.open' }, opts)); return Promise.resolve(null); },
     copyChecked: (address: string, say: (s: string) => void) => { calls.push({ route: 'copy', address }); say('Copied, ends in ...' + address.slice(-4)); return Promise.resolve(true); },
@@ -440,40 +450,91 @@ test('the Custody panel says which binding is live, and the software case offers
 
 /* ---------- addresses ---------- */
 
-test('three address rows with badges; only the EVM row copies, and every row shows the deposit card', async () => {
+test('the Addresses card is a network menu over the token list, and Show the address opens the deposit card', async () => {
   const world = build();
   await flush();
-  const rows = find(world.view, '.vault-row');
-  assert.deepEqual(rows.map((r: Any) => r.dataset.chain), ['eth', 'sol', 'near']);
-  assert.ok(rows.every((r: Any) => find(r, '.chip')[0].textContent === 'Verified'));
-  assert.equal(find(rows[0], '.sr-only')[0].textContent, EVM);
+  const card = find(world.view, '.panel').find((p: Any) => p.dataset.surface === 'addresses') as Any;
+  assert.ok(card, 'no Addresses card');
+  // The six cards, in the order the grid wants them: Custody and Recovery first, Addresses across.
+  assert.deepEqual(find(world.view, '.panel').map((p: Any) => p.dataset.surface), ['custody', 'recovery', 'addresses', 'agent', 'window', 'danger']);
 
-  // The EVM address is the account id money is keyed by, so it can be copied.
-  assert.ok(textOf(rows[0]).includes('your account id on NEAR Intents and Hyperliquid'));
-  buttonNamed(rows[0], 'Copy').click();
+  const button = find(card, '.netsel')[0];
+  assert.equal(button.getAttribute('aria-haspopup'), 'listbox');
+  assert.equal(find(button, '.netsel-name')[0].textContent, 'Ethereum');
+  const options = find(card, '.netsel-option');
+  assert.deepEqual(options.map((o: Any) => o.dataset.network), ['eth', 'base', 'arb', 'sol', 'near']);
+  assert.deepEqual(options.map((o: Any) => o.getAttribute('aria-selected')), ['true', 'false', 'false', 'false', 'false']);
+
+  // The token list is the component, at its token step, for the network in the menu, fed the report read here.
+  const first = world.calls.find((c) => c.route === 'netpick.render');
+  assert.ok(first, 'the token list was not rendered');
+  assert.equal(first.context, 'vault');
+  assert.equal(first.stage, 'tokens');
+  assert.equal(first.network, 'eth');
+  assert.equal(first.host, find(card, '.vault-tokens')[0]);
+  assert.deepEqual(first.report.networks.map((n: Any) => n.id), ['eth', 'sol']);
+  assert.equal(find(card, '.vault-flow').length, 0);
+
+  // Picking Solana redraws the list for Solana and the menu closes.
+  button.click();
+  const menu = find(card, '.netsel-menu')[0];
+  assert.equal(menu.dataset.open, 'true');
+  assert.equal(button.getAttribute('aria-expanded'), 'true');
+  // The shim does not bubble, so the click lands on the menu with the option as its target, as it does in the browser.
+  menu.dispatch('click', { target: find(card, '.netsel-option')[3] });
+  assert.equal(menu.dataset.open, undefined, 'the menu stayed open after a pick');
+  assert.equal(find(button, '.netsel-name')[0].textContent, 'Solana');
+  const renders = world.calls.filter((c) => c.route === 'netpick.render');
+  assert.equal(renders[renders.length - 1].network, 'sol');
+
+  // Show the address is the component's; it hands the network, the token and the bridge row here.
+  renders[renders.length - 1].onAddress('sol', 'SOL', { address: 'SOLADDR' });
+  assert.deepEqual(world.calls.find((c) => c.route === 'deposit.open'), { route: 'deposit.open', chain: 'sol', symbol: 'SOL', address: 'SOLADDR' });
+
+  // Keyboard: ArrowDown opens, the arrows walk, Enter picks.
+  button.dispatch('keydown', { key: 'ArrowDown' });
+  assert.equal(menu.dataset.open, 'true');
+  const active = (): string => (find(card, '.netsel-option').find((o: Any) => o.dataset.active === 'true') as Any).dataset.network;
+  assert.equal(active(), 'sol');
+  menu.dispatch('keydown', { key: 'ArrowUp' });
+  menu.dispatch('keydown', { key: 'ArrowUp' });
+  assert.equal(active(), 'base');
+  menu.dispatch('keydown', { key: 'Enter' });
+  assert.equal(menu.dataset.open, undefined);
+  assert.equal(find(button, '.netsel-name')[0].textContent, 'Base');
+  menu.dispatch('keydown', { key: 'Escape' });
+  assert.equal(menu.dataset.open, undefined);
+});
+
+test('the wallet\'s own key on the network in the menu sits behind the developer switch; only the EVM one copies', async () => {
+  const world = build();
+  await flush();
+  const card = find(world.view, '.panel').find((p: Any) => p.dataset.surface === 'addresses') as Any;
+  const key = find(card, '.vault-key')[0];
+  assert.ok(key.hasAttribute('data-dev-only'), 'the wallet key is on screen without the switch');
+  assert.ok(textOf(key).includes('Wallet key address on Ethereum'));
+  assert.equal(find(key, '.chip')[0].textContent, 'Verified');
+  assert.equal(find(key, '.sr-only')[0].textContent, EVM);
+  assert.ok(textOf(key).includes('Your account id on NEAR Intents and Hyperliquid.'));
+  buttonNamed(key, 'Copy').click();
   await flush();
   assert.deepEqual(world.calls.find((c) => c.route === 'copy'), { route: 'copy', address: EVM });
-  assert.ok(textOf(rows[0]).includes('Copied, ends in ...0e1d'));
+  assert.ok(textOf(key).includes('Copied, ends in ...0e1d'));
 
-  // The wallet's own Solana and NEAR addresses have no rail out of them, so
-  // handing one out as a deposit target strands the money: no Copy, and the
-  // row says so in the Money-in fold's own words.
-  for (const row of [rows[1], rows[2]]) {
-    assert.equal(buttonNamed(row, 'Copy'), undefined, 'a Copy button on the ' + row.dataset.chain + ' row');
-    assert.ok(textOf(row).includes('not a deposit address; use Show address'), row.dataset.chain + ' row does not say it is not a deposit address');
-    assert.ok(buttonNamed(row, 'Show address'), 'no Show address on the ' + row.dataset.chain + ' row');
-  }
-
-  buttonNamed(rows[1], 'Show address').click();
-  await flush();
-  await flush();
-  const opened = world.calls.find((c) => c.route === 'deposit.open');
-  assert.deepEqual(opened, { route: 'deposit.open', chain: 'sol', symbol: 'SOL', address: 'SOLADDR' });
+  // Solana and NEAR keys have no rail out of them: no Copy, and the row says so.
+  find(card, '.netsel')[0].click();
+  find(card, '.netsel-menu')[0].dispatch('click', { target: find(card, '.netsel-option')[3] });
+  const sol = find(card, '.vault-key')[0];
+  assert.ok(textOf(sol).includes('Wallet key address on Solana'));
+  assert.equal(buttonNamed(sol, 'Copy'), undefined, 'a Copy button on the Solana key');
+  assert.ok(textOf(sol).some((t) => t.startsWith('Not a deposit address')));
+  assert.equal(find(sol, '.sr-only')[0].textContent, '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin');
 
   const locked = build({ receive: { chains: [{ id: 'eth', name: 'Ethereum', address: EVM }], state: 'locked', verified: false, tampered: false } });
   await flush();
-  const row = find(locked.view, '.vault-row')[0];
+  const row = find(locked.view, '.vault-key')[0];
   assert.equal(find(row, '.chip')[0].textContent, 'Unverified');
+  assert.equal(buttonNamed(row, 'Copy'), undefined, 'an unverified key offered Copy');
 });
 
 /* ---------- agent, window, danger ---------- */
