@@ -247,6 +247,33 @@ export async function handleMutation(
     return;
   }
 
+  /* The tab the person clicked. The window used to switch itself and tell nobody, so the
+     server's idea of the screen, which is what the state frame, `start`, `switch` and the line
+     under every tool result carry, moved only when an agent moved it: a person who clicked from
+     pro to trade had an agent still describing pro (Karim, 2026-09-14). Same alias table as the
+     agent's door, same audit line, and the record says the human did it. A click on the tab
+     the window is already on is answered without a write, so a reload does not re-stamp it. */
+  if (route === '/api/view') {
+    const raw = String(body.view ?? '').trim().toLowerCase();
+    const mode = VIEW_ALIASES[raw];
+    if (mode === undefined) {
+      fail(res, 400, `view must be basic, pro or trade, got: ${raw || '(missing)'}`, { accepted: Object.keys(VIEW_ALIASES) });
+      return;
+    }
+    const previous = ctx.getView();
+    if (mode !== previous) {
+      ctx.setView(mode, 'human');
+      ctx.audit.append('view_changed', `human switched the app window from ${previous} to ${mode}`, {
+        from: previous,
+        to: mode,
+        by: 'human',
+      });
+      ctx.sse.broadcastState();
+    }
+    sendJson(res, 200, { ok: true, screen: ctx.getScreen(), unchanged: mode === previous });
+    return;
+  }
+
   if (route === '/api/kill') {
     const on = body.on === true;
     ctx.setKill(on);
@@ -414,19 +441,23 @@ export function handleSetViewMode(ctx: Ctx, body: JsonBody, res: http.ServerResp
   const pending = ctx.proposals.list().filter((p) => p.status === 'pending');
   const previous = ctx.getView();
   if (mode === previous) {
-    sendJson(res, 200, { ok: true, view: mode, unchanged: true, pending: pending.map((p) => p.id) });
+    sendJson(res, 200, { ok: true, view: mode, screen: ctx.getScreen(), unchanged: true, pending: pending.map((p) => p.id) });
     return;
   }
-  ctx.setView(mode);
+  ctx.setView(mode, 'agent');
   ctx.audit.append('view_changed', `agent switched the app window from ${previous} to ${mode}`, {
     from: previous,
     to: mode,
+    by: 'agent',
     pending: pending.map((p) => p.id),
   });
   ctx.sse.broadcastState();
   sendJson(res, 200, {
     ok: true,
     view: mode,
+    // The record the next `start` reports, so the agent that moved the window can read the
+    // moment and the author it will see later, and tell its own switch from the human's.
+    screen: ctx.getScreen(),
     from: previous,
     pending: pending.map((p) => p.id),
     // Named rather than implied: an agent reading `pending: []` has to know that an empty

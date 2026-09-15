@@ -92,7 +92,27 @@ function rejectSeat(ctx: Ctx, error: string, body: JsonBody, res: http.ServerRes
   fail(res, 409, error, { seat: 'busy' });
 }
 
+// The header every answer on this door carries: which screen the window is on. The proxy
+// (src/mcp.ts) turns it into the last line of every tool result. A header rather than a field,
+// because forty handlers build their own bodies and the tests hold those shapes.
+export const SCREEN_HEADER = 'x-phosphor-screen';
+
+/* THE SCREEN RIDES ON EVERY ANSWER, and it is read when the answer is written. An agent used to
+   learn the screen once, from `start`, and then from nothing: the human's tabs moved the window
+   and no tool result said so, so it went on describing the screen it remembered (Karim,
+   2026-09-14). Stamped as the head goes out rather than before dispatch, because a switch has
+   to answer with the screen it moved to, and the ops that move the window are the ones being
+   dispatched. */
+function stampScreen(ctx: Ctx, res: http.ServerResponse): void {
+  const writeHead = res.writeHead.bind(res);
+  res.writeHead = ((...args: Parameters<typeof writeHead>) => {
+    res.setHeader(SCREEN_HEADER, ctx.getView());
+    return writeHead(...args);
+  }) as typeof res.writeHead;
+}
+
 export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  stampScreen(ctx, res);
   /* The money surface gets the same cross-origin guard the approval and trade routes already
      carry. handleMcp is where an agent proposes and, at or under the click threshold, executes, so
      a page that could POST here blind (classic CSRF: a cross-origin fetch still sends Origin) was

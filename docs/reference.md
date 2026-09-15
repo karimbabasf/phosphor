@@ -15,6 +15,14 @@ state and an index of every tool grouped by what a person would actually ask for
 never has to ask a human how to operate the app. The role rides in the MCP handshake itself, in
 the server's `instructions`, so it arrives without anyone prompting for it.
 
+**Which screen the window is on rides on every answer.** The human moves the window with the tabs
+and the agent with `switch`, and both are written to the server (`POST /api/view` with the window
+token for the tab, the `set_view_mode` op for the tool), so `screen` in `start` and in `switch` is
+the record `{ view, since, by }` with `by` naming who moved it. Every other JSON answer carries
+`screen: { view }` as its last key, read as the answer is written, and the digest beside a chart
+picture carries a `screen: <view>` line, so an agent never has to spend a call to learn where the
+human is looking, and never describes a screen the human left.
+
 **A team, not a seat.** Up to six agents drive this app at once, and any of them can spawn
 workers of its own. Each is named on a roster, each thing it draws carries its id, and they
 coordinate on a shared board they all read. A session leaves by shutting down, or by going quiet
@@ -60,7 +68,7 @@ custom SMA, EMA, RSI or ATR equals the built-in to the last digit.
 
 | Read tool | Returns |
 |---|---|
-| `start` | The greeting, the live state and the index of everything this door opens onto, grouped by intent. Call it again after a long gap: the network, the wallet and the pending decisions all move |
+| `start` | The greeting, the live state and the index of everything this door opens onto, grouped by intent. `screen` is `{ view, since, by }`: which screen the window is on, since when, and whether a human tab or an agent `switch` put it there. Call it again after a long gap: the network, the wallet and the pending decisions all move |
 | `wallet` | Everything held, one row per balance: place, quantity, price, value, share. Only what is actually held; how many configured tokens came back empty is reported as a count |
 | `balances` | The raw snapshot behind the wallet, with staleness |
 | `composition` | Shares by issuer and chain, freezable share, unclassified holdings |
@@ -150,7 +158,7 @@ live on `/api/trade/action`, which the agent's door does not open onto.
 |---|---|
 | `watch` | Points the app at a market and leaves it there, so the window keeps showing what the conversation is about after the conversation has moved on |
 | `set_theme` | Changes the window's colours: one of the mark's two colourways (green on black, black on white), then five colour slots on top. Moves no money, and it is on this surface because a person asking their assistant to darken the screen should not have to leave the conversation. The person picks a colourway from the menu under the mark in the top left |
-| `switch` | Moves the window between the plain-English view (`basic`), the operator view (`pro`) and the trading surface (`trade`). Moves no money, and every switch is audited. Named `switch` rather than `set_view_mode` because the whole requirement is that changing window costs one word: an agent hunting for how to "switch to trading" finds it immediately, and did not reliably find `set_view_mode`. Aliases (trading, hft, perps, simple) resolve in the app, so both doors agree. Not to be confused with `chart_draw view:`, which drives the chart's render state on the trade screen |
+| `switch` | Moves the window between the plain-English view (`basic`), the operator view (`pro`) and the trading surface (`trade`). Moves no money, and every switch is audited. Named `switch` rather than `set_view_mode` because the whole requirement is that changing window costs one word: an agent hunting for how to "switch to trading" finds it immediately, and did not reliably find `set_view_mode`. Aliases (trading, hft, perps, simple) resolve in the app, so both doors agree. Answers with the screen record it moved to (`{ view, since, by: 'agent' }`). Not to be confused with `chart_draw view:`, which drives the chart's render state on the trade screen |
 
 A switch used to be refused outright while a proposal was pending, so an agent could not move a
 human away from a decision they were in the middle of. The approval block now renders on all three

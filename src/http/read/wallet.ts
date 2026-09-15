@@ -41,6 +41,10 @@ export const walletReads: ReadTable = {
     );
     sendJson(res, 200, {
       ...greeting,
+      // Which screen the window is on, who put it there and when. `facts.view` and the marker
+      // in the banner say the same view; this is the record an agent can hold against its own
+      // last switch, because the human's tabs move the window too.
+      screen: ctx.getScreen(),
       pending: pending.map((p) => p.id),
       stale: wallet.stale,
     });

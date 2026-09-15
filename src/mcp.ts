@@ -126,8 +126,11 @@ async function proxy(body: Record<string, unknown>) {
     if (res.status === 409 && payload.seat === 'busy' && typeof payload.error === 'string') {
       return textResult(payload.error);
     }
-    // Text, except for the one answer that is a picture: see src/mcp-content.ts.
-    return contentFor(json);
+    // Text, except for the one answer that is a picture, and every answer names the screen the
+    // window is on, read off the header the door stamps as it answers: see src/mcp-content.ts.
+    // The header and not the body, so a switch reports the screen it moved to and no handler
+    // had to learn to say it.
+    return contentFor(json, res.headers.get('x-phosphor-screen'));
   } catch {
     return textResult(NOT_RUNNING);
   }
@@ -386,7 +389,10 @@ registerRead(
     '',
     'Returns the live state and the complete index of what you can do. The state is which network,',
     'what the wallet is worth, whether a decision is waiting, what the approval threshold is, and',
-    'which window the human is looking at. The `banner` field is that state drawn as a terminal boot',
+    'which window the human is looking at: `screen` is { view, since, by }, where `by` is "human"',
+    'when they clicked a tab and "agent" when a switch moved it. The human moves the window too, so',
+    'trust `screen` over what you remember; every tool result also carries `screen.view`, the',
+    'screen the window was on as it answered. The `banner` field is that state drawn as a terminal boot',
     'screen: print it only if your human is watching a terminal, and never into an app window, which',
     'draws its own and does not want a second one.',
     '',
@@ -1105,7 +1111,8 @@ if (ROLE !== 'analyst')
         'Aliases are accepted: trading, hft, perps and hyperliquid all mean trade; simple and plain mean',
         'basic; operator and advanced mean pro.',
         '',
-        'Every switch is written to the audit log. The response carries any proposals still waiting for',
+        'Every switch is written to the audit log. The response carries the screen record it moved to',
+        '({ view, since, by: "agent" }, the same shape `start` reports) and any proposals still waiting for',
         'a human decision: if that list is not empty, say the count out loud, because the basic screen',
         'shows one ask at a time. This tool cannot approve, refuse or execute anything and moves no money.',
       ].join(' '),

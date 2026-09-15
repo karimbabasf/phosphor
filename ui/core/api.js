@@ -64,6 +64,13 @@
       return net.postJson('/api/theme', { profile: profile });
     },
 
+    /* The tab the person clicked. The window has already switched; this is the
+       server learning it, so the assistant reads the screen the person is on
+       rather than the one it last moved them to. Not a busy state either. */
+    view: function (name) {
+      return net.postJson('/api/view', { view: name });
+    },
+
     kill: function (on) {
       return net.postJson('/api/kill', { on: on }, { busy: 'kill', label: on ? 'Freezing' : 'Unfreezing' });
     },

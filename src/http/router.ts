@@ -105,6 +105,9 @@ const POST: Record<string, Route> = {
   '/api/refuse': (ctx, req, res) => handleMutation(ctx, '/api/refuse', req, res),
   '/api/kill': (ctx, req, res) => handleMutation(ctx, '/api/kill', req, res),
   '/api/theme': (ctx, req, res) => handleMutation(ctx, '/api/theme', req, res),
+  // The tab the person clicked, so the server knows which screen the window is on. Window
+  // token like every human write; the agent's own switch is the set_view_mode op on /api/mcp.
+  '/api/view': (ctx, req, res) => handleMutation(ctx, '/api/view', req, res),
   '/api/driver': (ctx, req, res) => handleMutation(ctx, '/api/driver', req, res),
   // Custody. Every one of these carries the window token, and no agent op reaches any of them:
   // there is no unlock op in /api/mcp and no unlock tool in src/mcp.ts.

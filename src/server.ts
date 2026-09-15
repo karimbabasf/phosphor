@@ -14,7 +14,7 @@
 import http from 'node:http';
 import path from 'node:path';
 
-import type { LogEvent } from './types.ts';
+import type { LogEvent, Screen, ScreenBy, ViewMode } from './types.ts';
 import { readCoins } from './view/coins.ts';
 import { createGasCache } from './transactions.ts';
 import { buildWorkerRole } from './role.ts';
@@ -47,6 +47,18 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     ((next: Theme): void => {
       localTheme = next;
     });
+
+  /* The screen record, same rule. A caller that brought only the view pair gets `since` and `by`
+     kept here, wrapped around its own setView so the two cannot drift. */
+  let localScreen: Screen = { view: getView(), since: new Date().toISOString(), by: 'human' };
+  const setView =
+    deps.getScreen !== undefined
+      ? deps.setView
+      : (mode: ViewMode, by: ScreenBy): void => {
+          deps.setView(mode, by);
+          localScreen = { view: mode, since: new Date().toISOString(), by };
+        };
+  const getScreen = deps.getScreen ?? ((): Screen => ({ ...localScreen, view: getView() }));
 
   /* The window token. src/main.ts reads it off the first line of stdin, where the shell wrote it,
      and hands it here; no route serves it, so the only other holder is the webview the shell
@@ -230,6 +242,8 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     session,
     releaseQueued: () => deps.proposals.releaseQueued(),
     theme: { get: getTheme, set: setTheme },
+    setView,
+    getScreen,
     sse,
     chats,
     chart,

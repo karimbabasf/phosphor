@@ -131,6 +131,8 @@ async function boot(agents: ReturnType<typeof createAgents>): Promise<Wire> {
     seats: new Set<string>(),
     audit: { append: (type: string) => audit.push(type) },
     sse: { broadcastState: () => {}, broadcastActivity: () => {} },
+    // Every answer on this door names the screen the window is on (src/http/mcp.ts stampScreen).
+    getView: () => 'basic',
   } as unknown as Ctx;
 
   const server = http.createServer((req, res) => {

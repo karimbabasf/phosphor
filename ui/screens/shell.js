@@ -315,6 +315,18 @@
          is told to re-measure once its view is on screen. */
       window.dispatchEvent(new CustomEvent('phosphor:view', { detail: { view: name } }));
     }
+
+    /* A person's switch is written to the server, so the state frame, the
+       assistant's `start` and the line under every tool result say the screen
+       they are on. A swap the server asked for is already its own record, so
+       only the tab (click or arrow) posts. The window does not wait for the
+       answer: it has switched, and a server that refuses learns it on the
+       next tab. */
+    if (changed && opts.fromClick && api && typeof api.view === 'function') {
+      api.view(name).catch(function (err) {
+        console.warn('[shell] the server did not take the view', err);
+      });
+    }
   }
 
   function view() {

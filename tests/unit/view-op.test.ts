@@ -35,6 +35,9 @@ function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-viewop-'));
 }
 
+// The window token the human's door is knocked on with. Sixteen hex digits, as the app mints.
+const TOKEN = 'deadbeefcafef00d';
+
 // These tests post ops with no session id, which is one occupant like any other: the first
 // op takes the free seat and the rest are the same session. Seating it up front keeps the
 // connect edge out of the audit assertions, which is what the old agentSeen stub did.
@@ -95,6 +98,7 @@ async function boot(opts: { view?: ViewMode; proposals?: Proposal[] } = {}): Pro
 
   const server = createServer({
     cfg,
+    token: TOKEN,
     audit,
     store,
     riskRows: [],
@@ -180,6 +184,26 @@ async function postMcp(h: Harness, body: unknown): Promise<{ status: number; jso
 
 async function state(h: Harness): Promise<any> {
   return (await fetch(`${h.url}/api/state`)).json();
+}
+
+// The human's door: a window write, so it carries the token and the origin the window sends.
+async function postView(h: Harness, body: Record<string, unknown>): Promise<{ status: number; json: any }> {
+  const res = await fetch(`${h.url}/api/view`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin: h.url },
+    body: JSON.stringify(body),
+  });
+  return { status: res.status, json: await res.json() };
+}
+
+async function screenHeader(h: Harness, body: unknown): Promise<string | null> {
+  const res = await fetch(`${h.url}/api/mcp`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin: h.url },
+    body: JSON.stringify(body),
+  });
+  await res.text();
+  return res.headers.get('x-phosphor-screen');
 }
 
 // ---------- the consequence, not the switch ----------
@@ -355,6 +379,94 @@ test('the mode the server hands out is the one main.ts would persist', async () 
   try {
     assert.equal((await state(h)).view, 'basic');
     assert.equal(readViewMode(h.dataDir), 'basic', 'an unwritten dataDir is a fresh install, which opens simple');
+  } finally {
+    await h.close();
+  }
+});
+
+// ---------- the human's own switch ----------
+
+// Karim, 2026-09-14: "when swapping by hand from pro to trade and stuff, it cant tell what
+// screen it is on right now". The tab used to switch the window and tell nobody, so the
+// server's view, and everything the agent reads it from, moved only when the agent moved it.
+
+test('a human POST switches the view, and the next start reports it with by: human', async () => {
+  const h = await boot({ view: 'pro' });
+  try {
+    const before = Date.now();
+    const res = await postView(h, { token: TOKEN, view: 'trade' });
+    assert.equal(res.status, 200, JSON.stringify(res.json));
+    assert.equal(res.json.ok, true);
+    assert.equal(res.json.unchanged, false);
+    assert.deepEqual({ view: res.json.screen.view, by: res.json.screen.by }, { view: 'trade', by: 'human' });
+    assert.ok(Date.parse(res.json.screen.since) >= before, 'since is the moment of the click');
+
+    assert.equal((await state(h)).view, 'trade', 'the state frame follows the human');
+    const start = await postMcp(h, { op: 'read', tool: 'start' });
+    assert.equal(start.status, 200);
+    assert.equal(start.json.facts.view, 'trade');
+    assert.equal(start.json.screen.view, 'trade');
+    assert.equal(start.json.screen.by, 'human');
+    assert.equal(start.json.screen.since, res.json.screen.since);
+    assert.ok(h.auditTypes().includes('view_changed'), 'a human switch is audited like an agent switch');
+  } finally {
+    await h.close();
+  }
+});
+
+test('the agent switch reports the same record with by: agent, and start agrees', async () => {
+  const h = await boot({ view: 'basic' });
+  try {
+    const res = await postMcp(h, { op: 'set_view_mode', mode: 'pro' });
+    assert.equal(res.status, 200);
+    assert.equal(res.json.screen.view, 'pro');
+    assert.equal(res.json.screen.by, 'agent');
+    const start = await postMcp(h, { op: 'read', tool: 'start' });
+    assert.deepEqual(start.json.screen, res.json.screen);
+    // A human click on the tab the window is already on is answered without a new stamp.
+    const same = await postView(h, { token: TOKEN, view: 'pro' });
+    assert.equal(same.json.unchanged, true);
+    assert.deepEqual(same.json.screen, res.json.screen, 'no write, so the agent still holds the record');
+  } finally {
+    await h.close();
+  }
+});
+
+test('the human door accepts the agent door aliases and refuses anything else', async () => {
+  const h = await boot({ view: 'basic' });
+  try {
+    assert.equal((await postView(h, { token: TOKEN, view: 'trading' })).json.screen.view, 'trade');
+    assert.equal((await postView(h, { token: TOKEN, view: 'Simple' })).json.screen.view, 'basic');
+    for (const view of ['expert', '', 'both']) {
+      assert.equal((await postView(h, { token: TOKEN, view })).status, 400, `view ${view} should be refused`);
+    }
+    assert.equal((await state(h)).view, 'basic');
+  } finally {
+    await h.close();
+  }
+});
+
+test('the human door is a window write: no token, no switch', async () => {
+  const h = await boot({ view: 'pro' });
+  try {
+    assert.equal((await postView(h, { view: 'trade' })).status, 403);
+    assert.equal((await postView(h, { token: 'wrong', view: 'trade' })).status, 403);
+    assert.equal((await state(h)).view, 'pro');
+    assert.ok(!h.auditTypes().includes('view_changed'));
+  } finally {
+    await h.close();
+  }
+});
+
+test('every agent door answer names the screen, and a switch names the one it moved to', async () => {
+  const h = await boot({ view: 'pro' });
+  try {
+    assert.equal(await screenHeader(h, { op: 'read', tool: 'start' }), 'pro');
+    assert.equal(await screenHeader(h, { op: 'set_view_mode', mode: 'trade' }), 'trade', 'stamped as the answer is written, after the switch');
+    assert.equal(await screenHeader(h, { op: 'read', tool: 'wallet' }), 'trade');
+    await postView(h, { token: TOKEN, view: 'basic' });
+    assert.equal(await screenHeader(h, { op: 'read', tool: 'wallet' }), 'basic', 'the human tab reaches the next answer');
+    assert.equal(await screenHeader(h, { op: 'read', tool: 'no_such_tool' }), 'basic', 'a refusal names it too');
   } finally {
     await h.close();
   }

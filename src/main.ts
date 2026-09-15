@@ -7,8 +7,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
-import type { Candle, Policy, RiskRow, ViewMode } from './types.ts';
-import { readViewMode, writeViewMode } from './view/mode.ts';
+import type { Candle, Policy, RiskRow, Screen, ScreenBy, ViewMode } from './types.ts';
+import { readScreen, writeScreen } from './view/mode.ts';
 import { readTheme, writeTheme, type Theme } from './view/theme.ts';
 import { loadConfig } from './config.ts';
 import { createAudit } from './audit.ts';
@@ -496,14 +496,18 @@ function getPolicy(): Policy | null {
 
 // Held in memory and mirrored to disk, so a restart does not silently change what the
 // human is looking at. Read once on boot rather than per request: the file is the
-// durable copy, this is the live one.
-let viewMode: ViewMode = readViewMode(cfg.dataDir);
+// durable copy, this is the live one. The record carries who put the window there and
+// when, because the agent reads it back: a tab the human clicked is a switch too.
+let screen: Screen = readScreen(cfg.dataDir);
 function getView(): ViewMode {
-  return viewMode;
+  return screen.view;
 }
-function setView(mode: ViewMode): void {
-  viewMode = mode;
-  writeViewMode(cfg.dataDir, mode);
+function getScreen(): Screen {
+  return screen;
+}
+function setView(mode: ViewMode, by: ScreenBy): void {
+  screen = { view: mode, since: new Date().toISOString(), by };
+  writeScreen(cfg.dataDir, screen);
 }
 
 // Same shape, same reason: the file is the durable copy and this is the live one, so a
@@ -619,6 +623,7 @@ const server = createServer({
   setKill,
   agents,
   getView,
+  getScreen,
   setView,
   getTheme,
   setTheme,

@@ -23,6 +23,15 @@ export type Mode = 'demo' | 'live';
 // looking", and one union is what lets one tool move between them.
 export type ViewMode = 'basic' | 'pro' | 'trade';
 
+// Who last put the window on its screen: the person clicking a tab, or an agent calling
+// `switch`. The two can disagree about where the window is only when one of them is not
+// recorded, and until 2026-09-14 the human's clicks were not.
+export type ScreenBy = 'human' | 'agent';
+
+// The screen the window is on, as the server knows it: what the state frame, `start`, `switch`
+// and the line under every tool result all report. `since` is when it was put there.
+export type Screen = { view: ViewMode; since: string; by: ScreenBy };
+
 // ---------- Ledger ----------
 
 export type Holding = {

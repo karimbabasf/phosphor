@@ -95,7 +95,11 @@ rather than assuming it.
 `switch` moves the app window between the detailed operator view (`pro`), a plain English view
 written for a non-technical reader (`basic`), and the trading surface (`trade`). The human moves
 between them with the tabs in the window; the agent moves them with this tool. All three are
-screens inside the one window, and a switch is written to the audit log either way.
+screens inside the one window, and a switch is written to the audit log either way: the tab posts
+`/api/view` with the window token (a human write like `/api/theme`), the tool posts the
+`set_view_mode` op, and the server's screen record (`{ view, since, by }` on `start` and on
+`switch`; the state frame carries `view`) names which of the two moved it last. Until 2026-09-14
+the tab told nobody, so an agent went on describing the screen the human had left.
 
 State it plainly, because it is a capability pointed at the human rather than at the money:
 **the agent chooses which surface an approval decision happens on.**
@@ -264,6 +268,7 @@ same build:
     POST /api/approve  no token, good Origin    -> 403 invalid approval token
     POST /api/approve  token, no Origin         -> 403 invalid approval token
     POST /api/kill     no token                 -> 403 invalid approval token
+    POST /api/view     no token                 -> 403 invalid approval token
     POST /api/unlock   no token                 -> 403 the window token is missing or wrong
     GET  /api/session                           -> 404 unknown route: /api/session
 

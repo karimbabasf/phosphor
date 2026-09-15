@@ -15,7 +15,7 @@ import type http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { AppConfig, ChainId, LogEvent, Policy, ProposalService, RiskRow, ViewMode } from '../types.ts';
+import type { AppConfig, ChainId, LogEvent, Policy, ProposalService, RiskRow, Screen, ScreenBy, ViewMode } from '../types.ts';
 import type { PriceReading } from '../view/basic.ts';
 import type { Audit } from '../audit.ts';
 import type { Store } from '../store.ts';
@@ -166,7 +166,12 @@ export type ServerDeps = {
   // Who is driving, and the one-at-a-time rule. See src/agents.ts.
   agents: AgentPresence;
   getView: () => ViewMode;
-  setView: (mode: ViewMode) => void;
+  setView: (mode: ViewMode, by: ScreenBy) => void;
+  /* The screen record behind getView: the same view, plus who put the window there and when.
+     Optional for the same reason the theme pair below is: a test that stands a server up with a
+     bare getView/setView pair gets a record kept in this process. src/main.ts always passes the
+     persisting one. */
+  getScreen?: () => Screen;
   // The window's colours. Same contract as the view mode above: held in memory by the
   // caller, mirrored to disk there, read live here.
   //
@@ -274,9 +279,11 @@ export type PriceCache = { coins: string[]; readings: PriceReading[] };
 export type GasFill = { cache: GasCache; filling: boolean };
 
 /* ServerDeps minus the optional theme pair, because `theme` below is the resolved one and a
-   handler reading ctx.getTheme() would crash on the install that did not pass it. */
-export type Ctx = Omit<ServerDeps, 'getTheme' | 'setTheme' | 'keystore' | 'session'> & {
+   handler reading ctx.getTheme() would crash on the install that did not pass it. The screen
+   record is resolved the same way. */
+export type Ctx = Omit<ServerDeps, 'getTheme' | 'setTheme' | 'getScreen' | 'keystore' | 'session'> & {
   token: string;
+  getScreen: () => Screen;
   keystore: Keystore;
   // The idle clock and the signing sessions. See src/keystore/session.ts.
   session: Session;
