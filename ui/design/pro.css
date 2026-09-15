@@ -1,10 +1,11 @@
 /* Pro: the deck of four cards, and the Activity list that Basic's fold shares.
 
    Money and Activity down the left column, Trading and Policy down the right,
-   12 px between cards. A card is as tall as what it holds; Activity alone takes
-   the rest of its column and scrolls inside itself, because a list of receipts
-   has no natural end. The card head is the same everywhere: title at the left,
-   one line of meta at the right, a hairline under both. */
+   two equal columns with 12 px between cards. A card is as tall as what it
+   holds; Money stops at half the window and scrolls inside, and Activity takes
+   the rest of its column, because a list of receipts has no natural end. The
+   card head is the same everywhere: title at the left, one line of meta at the
+   right, a hairline under both. */
 
 /* ---------- the deck ---------- */
 
@@ -13,7 +14,7 @@
   margin: 0 auto;
   padding: var(--s-5);
   display: grid;
-  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   gap: var(--s-3);
   align-items: stretch;
@@ -36,9 +37,10 @@
 }
 
 /* Money stops at half the window and scrolls its list inside the card, so a
-   wallet of twenty coins never pushes Activity off the deck. */
+   wallet of twenty coins never pushes Activity off the deck. It never shrinks
+   below that for Activity's sake: the list card takes what is left. */
 .pro-col > .card-money {
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   max-height: 50vh;
 }
 
@@ -52,10 +54,11 @@
   min-height: 0;
 }
 
-/* The list card fills what the left column has left, and never less than a
-   handful of rows: past that the world scrolls. */
+/* The list card fills what the left column has left, whatever its rows would
+   add up to, and never less than a handful of rows: past that the world
+   scrolls. */
 .pro-col > .card-activity {
-  flex: 1 1 auto;
+  flex: 1 1 0%;
   min-height: 320px;
 }
 
@@ -486,10 +489,11 @@
   flex-direction: column;
 }
 
-/* A row's grid and inner padding are the receipt's (receipt.css). Here it
-   reaches 8 px past the text on both sides, so the ground it lifts by one step
-   when pointed at frames the row rather than hugging it. */
-.activity-rows > .receipt-row {
+/* A row's grid and inner padding are the receipt's (receipt.css). In this
+   list it lines up with the chips above it and reaches 8 px past the text on
+   both sides, so the ground it lifts by one step when pointed at frames the
+   row rather than hugging it. */
+.activity-rows > .tx.receipt-row {
   width: auto;
   margin-inline: calc(-1 * var(--s-2));
   padding-inline: var(--s-2);
@@ -497,7 +501,7 @@
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .activity-rows > .receipt-row:hover { background: var(--bg-2); }
+  .activity-rows > .tx.receipt-row:hover { background: var(--bg-2); }
 }
 
 .activity-foot {
