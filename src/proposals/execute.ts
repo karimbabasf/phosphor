@@ -309,7 +309,9 @@ function pocketBalance(ctx: PCtx, pocket: PocketRead): bigint | null {
   }
   const read = ctx.ledger.hyperliquid();
   if (read === undefined || !read.ok || read.account.toLowerCase() !== pocket.account.toLowerCase()) return null;
-  return BigInt(Math.round(read.collateralUsdc * 10 ** pocket.decimals));
+  // The same measure the deposit rail records: free collateral on a unified account, both
+  // books on a standard one.
+  return BigInt(Math.round((read.unified ? read.availableUsdc : read.collateralUsdc) * 10 ** pocket.decimals));
 }
 
 function units(base: bigint, decimals: number): string {

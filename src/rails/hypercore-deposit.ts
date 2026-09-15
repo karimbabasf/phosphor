@@ -55,6 +55,8 @@ import type { IntentsApiPort, IntentsSignerPort } from './intents-native.ts';
 import { spendFromIntents } from './intents-spend.ts';
 import { accountSummary, usdClassTransfer } from './hl-user-signed.ts';
 import type { HlAccountSummary, HlUserSignedDeps } from './hl-user-signed.ts';
+import { HYPERLIQUID_SETTLE, SETTLING_SENTENCE, watchRise } from '../ledger/settle.ts';
+import type { PocketRead, RiseSchedule } from '../ledger/settle.ts';
 
 // ---------- the destination ----------
 
@@ -115,6 +117,9 @@ export type HypercoreDepositDeps = {
   pollIntervalMs?: number;
   pollTimeoutMs?: number;
   maxDeadlineMs?: number;
+  // How long, and how often, the account is re-read once 1Click says SUCCESS. Defaults to
+  // HYPERLIQUID_SETTLE (two minutes); the tests shorten it.
+  settleSchedule?: RiseSchedule;
 };
 
 export type HypercoreDepositRail = Rail<HlDepositDraft> & {
@@ -142,6 +147,7 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const pollIntervalMs = deps.pollIntervalMs ?? 3000;
   const pollTimeoutMs = deps.pollTimeoutMs ?? 180_000;
+  const settleSchedule = deps.settleSchedule ?? HYPERLIQUID_SETTLE;
   // Four days, matching the swap rail. See MAX_DEADLINE_MS there for why the deadline is not
   // what prevents replay and the nonce is.
   const maxDeadlineMs = deps.maxDeadlineMs ?? 4 * 24 * 60 * 60 * 1000;
@@ -400,47 +406,99 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
   // side a delivery credits, this looks, and moves it if it has to. A failure here is NOT a
   // failed deposit: the money is on the account either way, so the sentence has to separate
   // the two or someone reads "failed" and sends again.
-  async function settleToPerp(draft: HlDepositDraft, before: HlAccountSummary): Promise<string> {
-    let after: HlAccountSummary;
-    try {
-      after = await accountState(draft.hlAccount);
-    } catch (err) {
-      return ` Could not read the account afterwards (${oneLine(errText(err), 80)}); the deposit itself completed.`;
+  /* The account's USDC as one number, the same way the ledger reads it (src/ledger/hyperliquid.ts):
+     the free collateral on a unified account, both books on a standard one. What the pocket on
+     the receipt records, and what a settling row is re-judged against. */
+  function collateralOf(s: HlAccountSummary): number {
+    return s.unified ? s.availableUsdc : s.spotUsdc + s.perpAccountValueUsd;
+  }
+
+  function pocketOf(draft: HlDepositDraft, before: HlAccountSummary, after: HlAccountSummary | null): PocketRead {
+    const base = (usd: number): string => BigInt(Math.round(usd * 10 ** HYPERCORE_USDC_DECIMALS)).toString();
+    return {
+      venue: 'hyperliquid',
+      account: draft.hlAccount.toLowerCase(),
+      assetId: HYPERCORE_USDC_ASSET_ID,
+      symbol: 'USDC',
+      decimals: HYPERCORE_USDC_DECIMALS,
+      before: base(collateralOf(before)),
+      after: after === null ? null : base(collateralOf(after)),
+      floor: base(draft.minCredited),
+    };
+  }
+
+  type Settled =
+    | { kind: 'rose'; sentence: string; after: HlAccountSummary }
+    | { kind: 'short'; sentence: string; after: HlAccountSummary }
+    | { kind: 'unseen'; sentence: string; after: HlAccountSummary | null }
+    | { kind: 'unread'; sentence: string };
+
+  async function settleToPerp(draft: HlDepositDraft, before: HlAccountSummary): Promise<Settled> {
+    /* READ UNTIL IT SHOWS. A credit to HyperCore crosses a bridge after 1Click says SUCCESS, so
+       the one read this took saw the account from before the deposit and the sentence said
+       "the venue has not shown the credit yet" over money that landed a few seconds later.
+       The loop stops at the first read that shows the floor; only the window running out is
+       a decision, and that decision is "settling", never "failed". */
+    const watched = await watchRise({
+      read: () => accountState(draft.hlAccount).catch(() => null),
+      rose: (after) => collateralOf(after) - collateralOf(before) + 1e-9 >= draft.minCredited,
+      schedule: settleSchedule,
+      sleep,
+      now,
+    });
+    const after = watched.last;
+    if (after === null) {
+      return { kind: 'unread', sentence: ' Could not read the account afterwards; the deposit itself completed.' };
+    }
+    const gain = collateralOf(after) - collateralOf(before);
+    if (!watched.rose) {
+      if (gain > 0.01) {
+        return {
+          kind: 'short',
+          after,
+          sentence:
+            ` The account rose by ${gain.toFixed(4)} USDC, below the ${draft.minCredited} USDC floor this deposit was approved ` +
+            `with, after ${Math.round(watched.waitedMs / 1000)}s. Read the account before signing another.`,
+        };
+      }
+      return {
+        kind: 'unseen',
+        after,
+        sentence: ` Watched ${draft.hlAccount} for ${Math.round(watched.waitedMs / 1000)}s over ${watched.reads} reads.`,
+      };
     }
 
     // A UNIFIED account has no two sides. The money is collateral the moment it lands, and
     // usdClassTransfer against one is rejected outright.
     if (after.unified || before.unified) {
-      const gain = after.availableUsdc - before.availableUsdc;
-      return gain > 0.01
-        ? ` The account is unified, so it is margin already: free collateral rose by ${gain.toFixed(4)} USDC.`
-        : ' The account is unified, so anything credited is margin already. The venue has not shown the rise yet.';
+      return { kind: 'rose', after, sentence: ` The account is unified, so it is margin already: free collateral rose by ${gain.toFixed(4)} USDC.` };
     }
 
     const perpGain = after.perpAccountValueUsd - before.perpAccountValueUsd;
     const spotGain = after.spotUsdc - before.spotUsdc;
 
-    if (perpGain > 0.01) {
-      return ` Credited to the perp side directly; ${perpGain.toFixed(4)} USDC is margin now.`;
-    }
-
-    if (spotGain <= 0.01) {
-      // Neither book moved. The 1Click status said SUCCESS, so this is a timing gap far more
-      // often than a loss, and the sentence must not claim otherwise.
-      return ' The venue has not shown the credit yet. 1Click reported SUCCESS, so check the account in a minute rather than sending again.';
+    if (perpGain > 0.01 && spotGain <= 0.01) {
+      return { kind: 'rose', after, sentence: ` Credited to the perp side directly; ${perpGain.toFixed(4)} USDC is margin now.` };
     }
 
     try {
       const moved = await usdClassTransfer(hl, { amount: spotGain, toPerp: true });
-      return moved.ok
-        ? ` Landed on the spot side and was moved to perp: ${spotGain.toFixed(4)} USDC is margin now.`
-        : ` Landed on the SPOT side and the move to perp failed: ${oneLine(moved.detail, 120)}. ` +
-            'The money is on the account and is not margin yet; propose the deposit again for nothing and the settle step will retry the move.';
+      return {
+        kind: 'rose',
+        after,
+        sentence: moved.ok
+          ? ` Landed on the spot side and was moved to perp: ${spotGain.toFixed(4)} USDC is margin now.`
+          : ` Landed on the SPOT side and the move to perp failed: ${oneLine(moved.detail, 120)}. ` +
+            'The money is on the account and is not margin yet; propose the deposit again for nothing and the settle step will retry the move.',
+      };
     } catch (err) {
-      return (
-        ` Landed on the SPOT side and the move to perp threw: ${oneLine(errText(err), 120)}. ` +
-        `The money is on the account and is not margin yet.`
-      );
+      return {
+        kind: 'rose',
+        after,
+        sentence:
+          ` Landed on the SPOT side and the move to perp threw: ${oneLine(errText(err), 120)}. ` +
+          `The money is on the account and is not margin yet.`,
+      };
     }
   }
 
@@ -499,12 +557,29 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
 
     if (watch.status === 'SUCCESS') {
       const settled = await settleToPerp(draft, before);
+      const txids = [spent.intentHash, ...watch.destinationTxHashes];
+      const pocket = pocketOf(draft, before, settled.kind === 'unread' ? null : settled.after);
+      if (settled.kind === 'unseen') {
+        // The venue confirmed, the account has not shown it, and the one thing that must not
+        // happen now is a second signature. Settling: the executor lands it as
+        // needs_reconciliation and the next account read that shows the rise settles it.
+        return { ok: false, settling: true, detail: `${SETTLING_SENTENCE}${settled.sentence} ${evidence}.`, txids, pocket };
+      }
+      if (settled.kind === 'short') {
+        return {
+          ok: false,
+          detail: `1click reported SUCCESS for ${draft.amount} ${draft.symbol} into Hyperliquid; ${evidence}.${settled.sentence}`,
+          txids,
+          pocket,
+        };
+      }
       return {
         ok: true,
         detail:
           `funded Hyperliquid with ${oneLine(quote.amountOutFormatted, 40)} USDC from ${draft.amount} ${draft.symbol} ` +
-          `held inside ${INTENTS_VERIFIER}; ${evidence}.${settled}`,
-        txids: [spent.intentHash, ...watch.destinationTxHashes],
+          `held inside ${INTENTS_VERIFIER}; ${evidence}.${settled.sentence}`,
+        txids,
+        pocket,
       };
     }
 
