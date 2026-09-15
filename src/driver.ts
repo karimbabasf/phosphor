@@ -45,7 +45,10 @@ const TERM_GRACE_MS = 1500;
 const POLL_MS = 50;
 
 export type DriverEvent =
-  | { kind: 'status'; state: DriverState; detail?: string }
+  /* `detail` is the technical line for the log. `reason` is the sentence the window shows a
+     person when the state is failed or an unasked-for stopped: plain words, no "driver:" prefix,
+     no path. The window never prints `detail` on its own. */
+  | { kind: 'status'; state: DriverState; detail?: string; reason?: string }
   | { kind: 'said'; text: string }
   | { kind: 'text'; text: string }
   | { kind: 'tool'; name: string; input: unknown }
@@ -375,13 +378,21 @@ export function createDriver(opts: DriverOptions) {
      stopped and started again tells its child who it is again. Cleared once it has gone. */
   let pendingPrompt = '';
 
-  function set(next: DriverState, detail?: string): void {
+  /* Set by stop(), so the exit that follows a requested stop carries no reason: the person
+     asked for it, and a sentence explaining it would read as something having gone wrong. */
+  let stopping = false;
+
+  function set(next: DriverState, detail?: string, reason?: string): void {
     state = next;
-    opts.onEvent({ kind: 'status', state: next, detail });
+    const event: DriverEvent = { kind: 'status', state: next, detail };
+    if (reason !== undefined) event.reason = reason;
+    opts.onEvent(event);
   }
 
-  function fail(message: string): void {
-    set('failed', message);
+  /* Every failure names itself twice: `message` is the log line, exact and technical, and
+     `reason` is the one plain sentence the window shows beside its Retry. */
+  function fail(message: string, reason: string): void {
+    set('failed', message, reason);
     opts.onEvent({ kind: 'error', message });
     kill();
   }
@@ -401,6 +412,7 @@ export function createDriver(opts: DriverOptions) {
       if (unexpected.length > 0) {
         fail(
           `refusing to drive: the agent was given ${unexpected.length} tool(s) outside Phosphor's own surface (${unexpected.join(', ')}). This is a lockdown failure, not a configuration preference.`,
+          'The assistant stopped: it was given tools this app does not allow.',
         );
         return;
       }
@@ -413,6 +425,7 @@ export function createDriver(opts: DriverOptions) {
         fail(
           `refusing to drive: the agent loaded ${memories.length} memory file(s) this app did not write (${memories.join(', ')}). ` +
             `${DISABLE_AUTO_MEMORY} did not take, and auto-memory is a file anyone on this machine can write into a session that moves money.`,
+          'The assistant stopped: it loaded memory this app did not write.',
         );
         return;
       }
@@ -430,6 +443,7 @@ export function createDriver(opts: DriverOptions) {
       if (status === 'absent' || status === 'failed' || status === 'needs-auth' || status === 'disconnected') {
         fail(
           `driver: the agent started but cannot reach Phosphor's own tools (${status === 'absent' ? 'the server did not load' : status}). It could talk and read nothing, so the session is stopped.`,
+          "The assistant stopped: it could not reach Phosphor's tools.",
         );
         return;
       }
@@ -473,16 +487,23 @@ export function createDriver(opts: DriverOptions) {
 
   function start(): void {
     if (child) return;
+    stopping = false;
     set('starting');
     let bin: string;
     try {
       bin = resolveClaudeBin(opts.claudeBin);
     } catch (error) {
-      fail(error instanceof Error ? error.message : String(error));
+      fail(
+        error instanceof Error ? error.message : String(error),
+        opts.claudeBin ? 'Claude Code is not at the path set in config.json.' : 'Claude Code is not installed on this Mac.',
+      );
       return;
     }
     if (!fs.existsSync(settings)) {
-      fail(`driver: ${settings} is missing, and the app will not spawn an agent without its lockdown file.`);
+      fail(
+        `driver: ${settings} is missing, and the app will not spawn an agent without its lockdown file.`,
+        "The assistant's lockdown file is missing, so it will not start.",
+      );
       return;
     }
 
@@ -525,7 +546,10 @@ export function createDriver(opts: DriverOptions) {
       // memory, and the app dies holding the keys. Refusing the session is the smaller failure.
       if (buffer.length > MAX_LINE) {
         buffer = '';
-        fail(`driver: the agent emitted a single line over ${Math.round(MAX_LINE / 1024)}KB, which is not an event this app knows how to read.`);
+        fail(
+          `driver: the agent emitted a single line over ${Math.round(MAX_LINE / 1024)}KB, which is not an event this app knows how to read.`,
+          'The assistant stopped: it sent something this app could not read.',
+        );
         return;
       }
       for (const line of lines) if (line.trim()) onLine(line);
@@ -546,11 +570,22 @@ export function createDriver(opts: DriverOptions) {
     child.on('spawn', () => {
       if (state === 'starting') set('ready');
     });
-    child.on('error', (error) => fail(`driver: could not start ${bin}: ${error.message}`));
-    child.on('exit', (code) => {
+    child.on('error', (error) => fail(`driver: could not start ${bin}: ${error.message}`, 'Claude Code could not start.'));
+    child.on('exit', (code, signal) => {
       child = null;
       buffer = '';
-      if (state !== 'failed') set('stopped', code === 0 ? undefined : `the agent exited with code ${code}`);
+      const asked = stopping;
+      stopping = false;
+      if (state === 'failed' || state === 'stopped') return;
+      /* A clean exit, or one the person asked for, is the state word and nothing more. Any
+         other exit is the child leaving on its own, which is the one thing the window has to
+         say out loud. */
+      if (asked || code === 0) {
+        set('stopped');
+        return;
+      }
+      const how = code === null ? `it was killed by ${signal ?? 'a signal'}` : `it exited with code ${code}`;
+      set('stopped', `the agent exited with code ${code}`, `The assistant stopped: ${how}.`);
     });
   }
 
@@ -702,6 +737,7 @@ export function createDriver(opts: DriverOptions) {
   }
 
   function stop(): void {
+    stopping = child !== null;
     kill();
     if (state !== 'failed') set('stopped');
   }
