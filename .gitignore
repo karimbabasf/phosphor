@@ -26,3 +26,4 @@ src-tauri/target/
 src-tauri/gen/
 security-scan-*/
 src-tauri/binaries
+security-scan-*/
