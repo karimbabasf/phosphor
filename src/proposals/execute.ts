@@ -10,7 +10,7 @@ import { loadPolicy, savePolicy } from '../policy/file.ts';
 import { renderSentences } from '../policy/render.ts';
 import { isRailKind } from '../rails/index.ts';
 import { isLocked } from '../keystore/index.ts';
-import { errText, mergePatch, money, nowIso, persist, totalUsdOf } from './lifecycle.ts';
+import { errText, mergePatch, money, nowIso, persist, totalUsdOf, enclaveGated } from './lifecycle.ts';
 import { reservationMade } from './reservation.ts';
 import { within } from '../shutdown.ts';
 import type { PCtx } from './lifecycle.ts';
@@ -63,7 +63,12 @@ export async function land(ctx: PCtx, p: Proposal): Promise<Proposal> {
      pending list either, because a human clicking approve on a locked wallet would get a
      failure rather than a transaction. Both are re-decided at unlock, against the policy as it
      stands then. */
-  if (isLocked()) {
+  /* ONE EXCEPTION, for the enclave wallet: a needs_approval proposal sits in the pending list
+     even while locked, because on that wallet the click IS the unlock. Approve puts up a Touch
+     ID dialog that opens the wallet and approves this one proposal in the same motion, so a
+     person clicking on a locked enclave wallet gets a dialog, not a failure. An 'allow' still
+     parks, for the reason above: there is no key to sign with until somebody touches. */
+  if (isLocked() && !(p.verdict.outcome === 'needs_approval' && enclaveGated(ctx))) {
     ctx.audit.append('proposal_created', `${p.id} is waiting for the wallet to be unlocked`, { id: p.id });
     return persist(ctx, { ...p, status: 'pending_unlock' });
   }
