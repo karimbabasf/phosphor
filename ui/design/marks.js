@@ -3,12 +3,17 @@
    Karim, 2026-09-09: "I want to be able to tell the difference between each
    token ... just show the token symbol but colored please and not in a cheap
    way, find quality pictures, or just white. like literally white photos."
+   Karim, 2026-09-14, on the white marks: "I want to see some more color or
+   some differentiator between tokens so it is clear when something happens."
 
-   These are the official brand outlines as path data, drawn in currentColor on a
-   0 0 24 24 box, so they inherit the text colour and the app still loads no
-   images and reaches no CDN. Nothing here is coloured: in this window colour
-   means state, and a wallet full of brand colours would be a wallet where the
-   one red number does not stand out.
+   These are the official brand outlines as path data, drawn on a 0 0 24 24 box,
+   so the app still loads no images and reaches no CDN. Each coin also carries
+   its brand colour, and the disc paints the mark in it over a wash of the same
+   colour. That is the one place this window colours something that is not a
+   state: a coin's colour is its name, the way a flag is, and a wallet where
+   every mark is white is a wallet where the rows read as the same row. The
+   state colours keep their meaning because a brand colour never lands on a
+   number: it stays on the 20 px mark and the allocation bar, nothing else.
 
    Multi-tone logos keep the silhouette that carries the recognition and use
    evenodd cut-outs where the original used a second colour. Each mark is
@@ -35,6 +40,27 @@
     DEFAULT: "<path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm-7.2 9a7.2 7.2 0 1 1 14.4 0 7.2 7.2 0 0 1-14.4 0Z\" fill=\"currentColor\"/><path d=\"M12 8.7a3.3 3.3 0 1 0 0 6.6 3.3 3.3 0 0 0 0-6.6Z\" fill=\"currentColor\"/>",
   };
 
+  /* The brand colours, one per mark, from each project's own brand page. A
+     coin with no entry paints in the text colour, which is what DEFAULT does.
+     NEAR's brand is black on white, so it takes its ecosystem teal, which is
+     far enough from the phosphor green that it cannot be read as "up". */
+  var COLOURS = {
+    ETH: '#627EEA',
+    SOL: '#9945FF',
+    USDC: '#2775CA',
+    USDT: '#26A17B',
+    DAI: '#F5AC37',
+    USDS: '#FFC700',
+    PYUSD: '#0070E0',
+    USDE: '#8A9BB8',
+    NEAR: '#00C6A2',
+    WNEAR: '#00C6A2',
+    BTC: '#F7931A',
+    HYPE: '#4FD1C5',
+    ARB: '#12AAFF',
+    AVAX: '#E84142'
+  };
+
   /* Case and whitespace tolerant, because a symbol reaches this from a wallet
      row, from a server sentence and from a name like "Ether (ETH)". wNEAR is
      the same coin as NEAR wearing a wrapper, and nothing else here is. */
@@ -44,17 +70,32 @@
     return MARKS[key] || MARKS.DEFAULT;
   }
 
+  function colourFor(symbol) {
+    var key = String(symbol === null || symbol === undefined ? '' : symbol).trim().toUpperCase();
+    return COLOURS[key] || '';
+  }
+
   /* An svg built by innerHTML on a span: the HTML parser puts <svg> in its own
      namespace, which createElement does not, and the path data is this file's
-     own rather than anything that arrived over a wire. */
+     own rather than anything that arrived over a wire. The colour rides on the
+     node as --coin, which the stylesheet reads for the mark and its wash; a
+     coin without one leaves the property unset and the disc falls back to the
+     text colour. */
+  function paint(node, symbol) {
+    node.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" focusable="false">'
+      + markFor(symbol) + '</svg>';
+    var colour = colourFor(symbol);
+    if (colour) node.style.setProperty('--coin', colour);
+    else node.style.removeProperty('--coin');
+    return node;
+  }
+
   function disc(symbol) {
     var node = document.createElement('span');
     node.className = 'coin-mark';
     node.setAttribute('aria-hidden', 'true');
-    node.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" focusable="false">'
-      + markFor(symbol) + '</svg>';
-    return node;
+    return paint(node, symbol);
   }
 
-  window.PhosphorMarks = { markFor: markFor, disc: disc, MARKS: MARKS };
+  window.PhosphorMarks = { markFor: markFor, colourFor: colourFor, paint: paint, disc: disc, MARKS: MARKS, COLOURS: COLOURS };
 })();

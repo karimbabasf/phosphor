@@ -416,8 +416,7 @@
 
       if (mark.dataset.symbol !== coin.symbol) {
         mark.dataset.symbol = coin.symbol;
-        mark.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" focusable="false">'
-          + marks.markFor(coin.symbol) + '</svg>';
+        marks.paint(mark, coin.symbol);
       }
 
       dom.setText(name.children[0], coin.symbol);

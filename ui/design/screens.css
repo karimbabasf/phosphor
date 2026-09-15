@@ -1632,10 +1632,12 @@ body[data-locked="true"] #page {
 .holding[data-single="true"] .holding-head { cursor: default; }
 .holding[data-single="true"] .chev { visibility: hidden; }
 
-/* 20 px of mark inside a 28 px disc. The ground and the ring are the only paint
-   on it: the mark itself is currentColor and draws in the text colour, because
-   colour in this window means state, and a wallet of brand colours is a wallet
-   where the one red number no longer stands out. */
+/* 20 px of mark inside a 28 px disc. The mark draws in the coin's own colour
+   (--coin, set by ui/design/marks.js) over a wash of that colour, with a ring
+   at a quarter strength, so ETH, SOL and USDC are three different rows before
+   a word is read. A coin with no colour draws in the text colour on the plain
+   surface, as before. The wash is mixed on top of the surface so it holds on
+   both colourways. */
 .coin-mark {
   flex: 0 0 auto;
   width: 28px;
@@ -1645,7 +1647,12 @@ body[data-locked="true"] #page {
   border-radius: var(--radius-pill);
   background: var(--bg-2);
   border: 1px solid var(--line);
-  color: var(--text);
+  color: var(--coin, var(--text));
+}
+
+.coin-mark[style*="--coin"] {
+  background: color-mix(in srgb, var(--coin) 14%, var(--bg-1));
+  border-color: color-mix(in srgb, var(--coin) 28%, transparent);
 }
 
 .coin-mark svg { display: block; }

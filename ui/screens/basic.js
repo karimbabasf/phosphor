@@ -299,8 +299,7 @@
       var symbol = symbolOf(row.name);
       if (mark.dataset.symbol !== symbol) {
         mark.dataset.symbol = symbol;
-        mark.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" focusable="false">'
-          + marks.markFor(symbol) + '</svg>';
+        marks.paint(mark, symbol);
       }
       dom.setText(node.children[1].children[0], row.name);
       dom.setNumber(node.children[2].children[0], row.valueLine);
