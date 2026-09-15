@@ -139,13 +139,13 @@
      happen I dont want to see this, I want to see a nice card, simple, no
      unnecessary info, and the intent id should be a clickable link".
 
-     The id opens the explorer only where the receipt carries a url for it. An
-     intent hash carries none (transactions.ts: an intent is settled by a
-     solver and has no page of its own that this window could verify on the
-     NEAR Intents explorer, which links wallet addresses and nothing else), so
-     an intent id is copied rather than opened. Where money lands, in the
-     owner's words. */
-  var WHERE = { intents: 'in your NEAR Intents balance', hl: 'in your trading account' };
+     The id opens the explorer only where the receipt carries a url for it,
+     and the server decides that (src/transactions.ts): a chain hash opens its
+     chain's explorer, an intent hash opens the swap's page on the NEAR
+     Intents explorer, which is keyed by the deposit address the rail wrote
+     into its evidence sentence, and an id with no page is copied rather than
+     opened. Where money lands, in the owner's words. */
+  var WHERE = { intents: 'in your NEAR Intents balance', hyperliquid: 'in your trading account' };
 
   function whereText(place) {
     var key = String(place || '');
@@ -407,16 +407,23 @@
     title.appendChild(status);
     head.appendChild(title);
 
+    /* Two controls that used to read as one: "Stop the answer" and "Stop"
+       side by side were the same word twice. The one a person reaches for
+       while an answer is running is Stop, and it stops the answer; turning
+       the assistant off is the rarer, larger act, so it is a quiet text
+       button with the verb that says what it does. */
     var controls = dom.el('div', 'hstack-2');
     var start = dom.el('button', 'btn btn-primary btn-sm');
     start.appendChild(dom.el('span', 'btn-label', 'Start your assistant'));
     var stopAnswer = dom.el('button', 'btn btn-ghost btn-sm');
-    stopAnswer.appendChild(dom.el('span', 'btn-label', 'Stop the answer'));
-    var stopAgent = dom.el('button', 'btn btn-ghost btn-sm');
-    stopAgent.appendChild(dom.el('span', 'btn-label', 'Stop'));
+    stopAnswer.title = 'Stop this answer';
+    stopAnswer.appendChild(dom.el('span', 'btn-label', 'Stop'));
+    var stopAgent = dom.el('button', 'btn btn-quiet btn-sm');
+    stopAgent.title = 'Turn your assistant off';
+    stopAgent.appendChild(dom.el('span', 'btn-label', 'Turn off'));
     controls.appendChild(start);
-    controls.appendChild(stopAnswer);
     controls.appendChild(stopAgent);
+    controls.appendChild(stopAnswer);
     head.appendChild(controls);
     host.appendChild(head);
 
@@ -691,7 +698,7 @@
 
   function doStop(action, node) {
     var button = action === 'stop' ? node.refs.stopAgent : node.refs.stopAnswer;
-    window.PhosphorShell.setPending(button, true, 'Stopping');
+    window.PhosphorShell.setPending(button, true, action === 'stop' ? 'Turning off' : 'Stopping');
     api.driver({ action: action, chat: '' })
       .catch(function (err) {
         window.PhosphorToast.show(net.readable(err), 'down');
@@ -1251,8 +1258,12 @@
       dom.setHidden(text.children[1], !step.args);
       dom.setText(text.children[2], step.leaves ? 'leaves this computer' : '');
       dom.setHidden(text.children[2], !step.leaves);
-      dom.setText(time, secondsText(elapsedOf(step, now)));
-      if (step.state === 'live') node.live.push({ step: step, time: time });
+      /* The head carries the live clock; the row gets its duration once the
+         call has settled, so the same seconds do not count in two places one
+         screen apart. The row still books itself as live so the ticker runs
+         for the head, and the row's own time lands with the result. */
+      dom.setText(time, step.state === 'live' ? '' : secondsText(elapsedOf(step, now)));
+      if (step.state === 'live') node.live.push(step);
       if (primary && step.announce) {
         step.announce = false;
         announced.push({ step: step, dot: dot });
@@ -1282,10 +1293,6 @@
     var now = Date.now();
     var since = statusStartedAt();
     for (var i = 0; i < mounts.length; i += 1) {
-      var live = mounts[i].live;
-      for (var j = 0; j < live.length; j += 1) {
-        dom.setText(live[j].time, secondsText(elapsedOf(live[j].step, now)));
-      }
       if (turn) dom.setText(mounts[i].refs.turnTime, secondsText(now - turn.startedAt));
       if (since) dom.setText(mounts[i].refs.elapsed, secondsText(now - since));
     }

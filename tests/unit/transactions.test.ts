@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildTransactions, explorerAddressUrl, explorerTxUrl, txidsFromLog } from '../../src/transactions.ts';
+import { buildTransactions, depositHandleOf, explorerAddressUrl, explorerTxUrl, txidsFromLog } from '../../src/transactions.ts';
 import type { LogEvent, Proposal } from '../../src/types.ts';
 
 const SELF = '0x1111111111111111111111111111111111111111';
@@ -152,10 +152,36 @@ test('an EVM hash links to the chain it was mined on', () => {
   assert.equal(dep.hashes[0].url, 'https://etherscan.io/tx/' + EVM_HASH);
 });
 
-test('an intent hash is not a transaction and is offered no link, because none resolves it', () => {
+test('an intent hash with no quote handle in the record is offered no link, because none resolves it', () => {
   const [sw] = build([swap()]);
   assert.equal(sw.hashes[0].kind, 'intent');
   assert.equal(sw.hashes[0].url, null, 'a link that goes nowhere is worse than a value that does not pretend');
+});
+
+test("an intent hash links to the venue explorer's page for its swap, keyed by the quote handle", () => {
+  // The NEAR Intents explorer has no page for an intent hash; it has one per deposit address,
+  // the handle 1Click mints for the swap, which every intents rail writes into its evidence
+  // sentence as "quote handle <address>". Checked live on 2026-09-14 (transactions.ts).
+  const handle = '0xF121dEAE804852e25a92fe4eB64A0dA405a564c7';
+  const withHandle = swap({
+    result: {
+      ok: true,
+      detail: `swapped 0.0048869082 ETH for 0.121448554 SOL inside intents.near; intent G8tyevVXKS4RA, quote handle ${handle}`,
+      txids: ['G8tyevVXKS4RA'],
+    },
+  });
+  const [sw] = build([withHandle]);
+  assert.equal(sw.hashes[0].kind, 'intent');
+  assert.equal(sw.hashes[0].url, `https://explorer.near-intents.org/transactions/${handle}`);
+  assert.equal(depositHandleOf(sw.detail), handle);
+});
+
+test('the quote handle is read off the two sentences the rails write, and off nothing else', () => {
+  assert.equal(depositHandleOf('swapped 1 ETH for 3000 USDC; intent Abc123, quote handle 0xabc.near'), '0xabc.near');
+  assert.equal(depositHandleOf('swapped 1 ETH on base for 3000 USDC on arb; deposit 0xF121dEAE804852e25a92fe4eB64A0dA405a564c7, origin tx 0x1'), '0xF121dEAE804852e25a92fe4eB64A0dA405a564c7');
+  assert.equal(depositHandleOf('1.9927 USDC paid out to our arb wallet'), null, 'a sentence with no handle invented one');
+  assert.equal(depositHandleOf('deposit transfer failed: no funds left the wallet.'), null, 'the word deposit alone is not a handle');
+  assert.equal(depositHandleOf('the deposit address 0xF121dEAE804852e25a92fe4eB64A0dA405a564c7 has no storage'), null, 'an address after other words is not the handle');
 });
 
 test('a chain hash recorded after the intent hash keeps its explorer', () => {

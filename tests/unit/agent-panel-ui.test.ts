@@ -71,7 +71,7 @@ test('the panel builds no control that decides anything', () => {
   // The panel's own buttons, named. A button this list does not know about is a
   // button somebody added to a transcript, which is the thing being prevented.
   const labels = SOURCE.match(/'btn-label', '([^']+)'/g) ?? [];
-  const allowed = ['Start your assistant', 'Stop the answer', 'Stop', 'Connect your own', 'Copy', 'Send'];
+  const allowed = ['Start your assistant', 'Stop', 'Turn off', 'Connect your own', 'Copy', 'Send'];
   assert.ok(labels.length > 0, 'the panel builds no buttons at all, so this test is not looking at it');
   for (const raw of labels) {
     const label = raw.replace(/^.*, '/, '').replace(/'$/, '');

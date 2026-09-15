@@ -179,8 +179,41 @@ const EVM_PLACES: TxPlace[] = ['eth', 'base', 'arb'];
 //   everything else  txids = [chain tx, ...chain txs]
 //
 // An intent hash is not a transaction on any chain. It is the hash of something this app
-// signed and a solver settled, so no explorer resolves it and none is offered: a link that
-// goes nowhere is worse than a value that does not pretend to be one.
+// signed and a solver settled, so no chain explorer resolves it. The venue's own explorer
+// does have a page for the swap, keyed by the deposit address 1Click minted for it (the
+// "quote handle" every intents rail writes into its evidence sentence), and that page is
+// what an intent hash links to (see intentsSwapUrl). Without a handle there is no link: a
+// link that goes nowhere is worse than a value that does not pretend to be one.
+
+// The NEAR Intents explorer's swap page, checked live on 2026-09-14: every row on
+// https://explorer.near-intents.org links /transactions/<deposit address> and that page
+// renders the deposit, the settlement and the payout for the swap the address was minted
+// for. A path with the intent hash instead renders an empty shell, so the hash never goes
+// in the url; only the handle does.
+export const INTENTS_EXPLORER_TX = 'https://explorer.near-intents.org/transactions/';
+
+// The deposit address, out of the rail's own evidence sentence. Two shapes, both written by
+// this repo (src/rails/): "quote handle <address>" from the rails that sign an intent, and
+// "deposit <address>, origin tx" from the ones that transfer to the address. Anchored on
+// the words on both sides, so a hash, an amount or a failure sentence ("deposit transfer
+// failed") can never be read as an address, and bounded to the characters an EVM, NEAR,
+// Solana or Bitcoin address can carry.
+const HANDLE_SHAPES = [
+  /\bquote handle ([A-Za-z0-9._:-]{8,120})(?=[,;.\s]|$)/,
+  /\bdeposit ([A-Za-z0-9._:-]{8,120}), origin tx\b/,
+];
+
+export function depositHandleOf(detail: string): string | null {
+  for (const shape of HANDLE_SHAPES) {
+    const match = shape.exec(detail);
+    if (match !== null) return match[1];
+  }
+  return null;
+}
+
+export function intentsSwapUrl(handle: string | null): string | null {
+  return handle === null ? null : INTENTS_EXPLORER_TX + handle;
+}
 function classifyHash(
   hash: string,
   index: number,
@@ -481,6 +514,7 @@ export function buildTransactions(params: BuildParams): TxEntry[] {
 
     const sides = sidesOf(p.draft);
     const detail = p.result?.detail ?? '';
+    const swapPage = intentsSwapUrl(depositHandleOf(detail));
     const hashes = hashesFor(p, fromLog).map((hash, index): TxHash => {
       const seen = classifyHash(hash, index, p.draft.kind, sides.venue, sides.place, sides.toPlace);
       // A receipt outranks the guess: if this hash was read off arb, the row says arb and
@@ -491,7 +525,7 @@ export function buildTransactions(params: BuildParams): TxEntry[] {
         hash,
         place,
         kind: seen.kind,
-        url: seen.kind === 'intent' ? null : explorerTxUrl(place, hash),
+        url: seen.kind === 'intent' ? swapPage : explorerTxUrl(place, hash),
         gas: receipt,
         gasPending: seen.kind === 'chain' && receipt === null && !tried.has(gasKey(hash)),
       };

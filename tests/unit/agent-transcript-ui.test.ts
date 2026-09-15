@@ -389,8 +389,14 @@ test('the seat light in the head names the open call in its own words and settle
   assert.equal(verb.textContent, 'Reading the chart');
   assert.equal(elapsed.hidden, false);
   assert.ok(/\d s$/.test(elapsed.textContent), elapsed.textContent);
+  /* The head is the live clock; the row is the record. While the call runs the row carries no
+     seconds (the head is counting them, one screen up), and it gets its duration when the
+     call settles. */
+  const rowTime = () => all(world.stepRows()[0], 'step-time')[0].textContent;
+  assert.equal(rowTime(), '', 'the live row counted the same seconds as the head');
 
   world.emit({ kind: 'tool_result', name: 'mcp__phosphor__chart_read', ok: true });
+  assert.ok(/^\d+(\.\d)? s$/.test(rowTime()), `a settled row has no duration: "${rowTime()}"`);
   assert.equal(verb.textContent, 'Thinking');
   world.emit({ kind: 'text', text: 'Up on the 15m.' });
   assert.equal(verb.textContent, 'Writing the answer');
