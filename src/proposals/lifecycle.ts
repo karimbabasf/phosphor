@@ -9,6 +9,7 @@ import crypto from 'node:crypto';
 import type {
   AppConfig,
   ChainId,
+  ClientKey,
   LedgerSnapshot,
   Policy,
   PolicyPatch,
@@ -250,7 +251,7 @@ export function buildCtx(ctx: PCtx, snapshot: LedgerSnapshot, policy: Policy | n
   };
 }
 
-export function newProposal(kind: WriteDraft['kind'], draft: WriteDraft, simulation: SimulationResult | null, verdict: Verdict, clientKey?: string): Proposal {
+export function newProposal(kind: WriteDraft['kind'], draft: WriteDraft, simulation: SimulationResult | null, verdict: Verdict, clientKey?: ClientKey): Proposal {
   return {
     id: crypto.randomUUID(),
     kind,

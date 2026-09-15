@@ -7,7 +7,7 @@
 // which would otherwise refuse a zero amount as uncheckable. The kill switch and an unreadable
 // policy still refuse it, because those are not about the amount.
 
-import type { Proposal, TradeChangeParams, TradeDraft, TradeParams, Verdict } from '../types.ts';
+import type { ClientKey, Proposal, TradeChangeParams, TradeDraft, TradeParams, Verdict } from '../types.ts';
 import { loadPolicy } from '../policy/file.ts';
 import { HYPERLIQUID_PERPS_COUNTERPARTY, planOfRow, riskInputsFor } from '../trade/rail.ts';
 import type { TradeDeps } from '../trade/rail.ts';
@@ -20,7 +20,7 @@ import { land } from './execute.ts';
 import { newProposal } from './lifecycle.ts';
 import type { PCtx } from './lifecycle.ts';
 
-function noSurface(ctx: PCtx, draft: TradeDraft, clientKey?: string): Promise<Proposal> {
+function noSurface(ctx: PCtx, draft: TradeDraft, clientKey?: ClientKey): Promise<Proposal> {
   return refuseDraft(ctx, 'trade', draft, [`no trading surface is wired in ${ctx.cfg.mode} mode`], clientKey);
 }
 
@@ -187,7 +187,7 @@ export async function proposeTradeChange(ctx: PCtx, params: TradeChangeParams): 
 // A change that only takes risk off. The engine would refuse a zero amount as one it cannot
 // check against a limit, and there is nothing to check: no wall applies. The two rules that are
 // not about the amount still do.
-async function landFree(ctx: PCtx, draft: TradeDraft, clientKey?: string): Promise<Proposal> {
+async function landFree(ctx: PCtx, draft: TradeDraft, clientKey?: ClientKey): Promise<Proposal> {
   const policy = loadPolicy(ctx.dataDir);
   let verdict: Verdict;
   if (policy === null) {

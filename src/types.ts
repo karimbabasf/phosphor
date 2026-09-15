@@ -451,9 +451,9 @@ export type Proposal = {
   // When the rail returned, or when a reconcile settled the row. `decidedAt` is the decision
   // and can be a minute before the money moved, which is the wrong stamp to judge a balance by.
   settledAt?: string;
-  // An idempotency key the proposer chose. A repeat carrying the same key is answered with
-  // this row instead of a second one.
-  clientKey?: string;
+  // An idempotency key the proposer chose, with the session, kind and params it is scoped to.
+  // A repeat carrying the same key is answered with this row instead of a second one.
+  clientKey?: ClientKey;
   /* What the wallet was worth either side of this action, in USD, as the app knew it.
      `before` is the snapshot as execution began. `after` is taken once the ledger has re-read
      the chains, so it reflects the move rather than the stale numbers that were on screen a
@@ -695,7 +695,7 @@ export type SwapParams = {
   toSymbol: string;
   amountIn: number;
   minAmountOut: number; // slippage floor, in toSymbol units
-  clientKey?: string;
+  clientKey?: ClientKey;
 };
 
 /* The idempotency key a proposer may send with any propose: 1 to 64 characters of
@@ -704,28 +704,36 @@ export type SwapParams = {
 export const CLIENT_KEY_PATTERN = /^[A-Za-z0-9_.:-]{1,64}$/;
 export const CLIENT_KEY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
+/* That key as the door hands it to the service and as the row keeps it: the key itself, the
+   session and the propose kind it is scoped to, and the fingerprint of the params it was first
+   sent with. The namespace used to be global, so a second agent (or the first, an hour later, for
+   a different move) reusing a key it had seen was answered with a row that moved something else
+   and read "executed" about money that never went. Another session's key never matches, another
+   kind under the same key is a new move, and the same key with other params is refused. */
+export type ClientKey = { key: string; session: string; kind: string; fingerprint: string };
+
 // The money leaves the intents balance and nowhere else, so there is no chain to name. symbol
 // is the asset spent from that balance and defaults to USDC. The flavor spent, the credited
 // account, the loss floor and the counterparty are all resolved by the app.
-export type HlDepositParams = { amount: number; symbol?: string; clientKey?: string };
+export type HlDepositParams = { amount: number; symbol?: string; clientKey?: ClientKey };
 
 // One number. The venue account, the intents account credited, the floor and the counterparty
 // are all the app's; there is no field for a destination, which is the whole point.
-export type HlWithdrawParams = { amount: number; clientKey?: string };
+export type HlWithdrawParams = { amount: number; clientKey?: ClientKey };
 
 // The credited account, the loss floor and the counterparty are all resolved by the app.
 // symbol defaults to the origin chain's gas asset, which is what "deposit $10 of ETH" means.
-export type IntentsDepositParams = { chain: ChainId; symbol?: string; amount: number; clientKey?: string };
+export type IntentsDepositParams = { chain: ChainId; symbol?: string; amount: number; clientKey?: ClientKey };
 
 // Same shape, opposite direction, and the same silence about addresses. `chain` says where
 // the money lands; which wallet on that chain is our own is read from config and from the
 // key, never from this call.
-export type IntentsWithdrawParams = { chain: ChainId; symbol?: string; amount: number; clientKey?: string };
+export type IntentsWithdrawParams = { chain: ChainId; symbol?: string; amount: number; clientKey?: ClientKey };
 
 // No address, no recipient, no contract. The agent sends a plan or names one it drew, and
 // everything about WHERE the money is resolves from the app's own config and the venue table.
-export type TradeParams = { plan?: unknown; planId?: string; by?: string | null; clientKey?: string };
-export type TradeChangeParams = { id: string; stop?: number; target?: number; cancel?: boolean; close?: boolean; clientKey?: string };
+export type TradeParams = { plan?: unknown; planId?: string; by?: string | null; clientKey?: ClientKey };
+export type TradeChangeParams = { id: string; stop?: number; target?: number; cancel?: boolean; close?: boolean; clientKey?: ClientKey };
 
 export type ProposalService = {
   proposeConsolidate(params: {
@@ -733,9 +741,9 @@ export type ProposalService = {
     symbol: string;
     fromChains?: ChainId[];
     maxTotalUsd?: number;
-    clientKey?: string;
+    clientKey?: ClientKey;
   }): Promise<Proposal>;
-  proposePolicyChange(params: { patch: PolicyPatch; sentence: string; clientKey?: string }): Promise<Proposal>;
+  proposePolicyChange(params: { patch: PolicyPatch; sentence: string; clientKey?: ClientKey }): Promise<Proposal>;
   proposeSwap(params: SwapParams): Promise<Proposal>;
   proposeHlDeposit(params: HlDepositParams): Promise<Proposal>;
   proposeHlWithdraw(params: HlWithdrawParams): Promise<Proposal>;

@@ -7,8 +7,9 @@
 
 import type http from 'node:http';
 
-import type { ChainId, Proposal } from '../types.ts';
+import type { ChainId, ClientKey, Proposal } from '../types.ts';
 import { CLIENT_KEY_PATTERN, CLIENT_KEY_WINDOW_MS } from '../types.ts';
+import { fingerprint } from '../duplicates.ts';
 import { asRecord, errText, fail, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
 import { CHAINS, PROPOSE_KINDS } from './context.ts';
@@ -120,23 +121,50 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
      for a day: an agent whose reply was lost (the incident: a propose that outlived the proxy)
      repeats with the key and gets the same proposal back, never a second spend. It is kept out
      of the fingerprint below, so a key does not turn one agent's two different-keyed calls into
-     two proposals the duplicate guard would have caught, nor make a repeat look new. */
-  let clientKey: string | undefined;
+     two proposals the duplicate guard would have caught, nor make a repeat look new.
+     SCOPED TO THIS SESSION AND THIS KIND. The namespace was global once: agent B filing a
+     withdraw under a key agent A had used for a deposit was answered 200 with A's row, read
+     "executed", and its withdraw never ran. Another session's key never matches, another kind
+     under the same key is a new move, and the same key sent with other params is refused with
+     the row's id rather than answered with a row that moved something else. */
+  let clientKey: ClientKey | undefined;
   if (params.clientKey !== undefined) {
     if (typeof params.clientKey !== 'string' || !CLIENT_KEY_PATTERN.test(params.clientKey)) {
       fail(res, 400, 'clientKey must be 1 to 64 characters of letters, digits, and _ . : -');
       return;
     }
-    clientKey = params.clientKey;
+    const key = params.clientKey;
     delete params.clientKey;
+    clientKey = { key, session, kind, fingerprint: fingerprint(kind, params) };
     const existing = ctx.proposals
       .list()
-      .find((p) => p.clientKey === clientKey && Date.now() - Date.parse(p.createdAt) < CLIENT_KEY_WINDOW_MS);
+      .find(
+        (p) =>
+          p.clientKey?.key === key &&
+          p.clientKey.session === session &&
+          p.clientKey.kind === kind &&
+          Date.now() - Date.parse(p.createdAt) < CLIENT_KEY_WINDOW_MS,
+      );
+    if (existing !== undefined && existing.clientKey?.fingerprint !== clientKey.fingerprint) {
+      ctx.audit.append('agent_rejected', 'a propose reused a client key with different params and was refused', {
+        kind,
+        existing: existing.id,
+        clientKey: key,
+      });
+      fail(
+        res,
+        409,
+        `clientKey ${key} already names a ${kind} this session proposed with different params (proposal ${existing.id}). ` +
+          `A key is one move: read proposal_status ${existing.id}, and choose a new key for a new move.`,
+        { existing: existing.id, status: existing.status },
+      );
+      return;
+    }
     if (existing !== undefined) {
       ctx.audit.append('agent_rejected', 'a propose carrying a known client key was answered with the row it already made', {
         kind,
         existing: existing.id,
-        clientKey,
+        clientKey: key,
       });
       sendProposal(ctx, res, await ctx.proposals.settled(existing.id, PROPOSE_REPLY_CAP_MS));
       return;

@@ -7,6 +7,7 @@
 
 import type {
   ChainId,
+  ClientKey,
   Holding,
   LedgerSnapshot,
   PolicyPatch,
@@ -231,13 +232,13 @@ export function ourIntentsAddress(ctx: PCtx, snapshot: LedgerSnapshot, problems:
   return found;
 }
 
-export function refuseDraft(ctx: PCtx, kind: RailKind, draft: RailDraft, reasons: string[], clientKey?: string): Promise<Proposal> {
+export function refuseDraft(ctx: PCtx, kind: RailKind, draft: RailDraft, reasons: string[], clientKey?: ClientKey): Promise<Proposal> {
   return land(ctx, newProposal(kind, draft, null, { outcome: 'refuse', reasons, rule: 'invalid_draft' }, clientKey));
 }
 
 // Shared tail for all four rails: evaluate, simulate, persist, and execute only if the
 // policy said allow. Nothing here knows which rail it is holding.
-export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, clientKey?: string): Promise<Proposal> {
+export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, clientKey?: ClientKey): Promise<Proposal> {
   const snapshot = ctx.ledger.snapshot();
   const policy = loadPolicy(ctx.dataDir);
 
@@ -297,7 +298,7 @@ export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, c
 }
 
 // ---------- public surface ----------
-export async function proposeConsolidate(ctx: PCtx, params: { toChain: ChainId; symbol: string; fromChains?: ChainId[]; maxTotalUsd?: number; clientKey?: string }): Promise<Proposal> {
+export async function proposeConsolidate(ctx: PCtx, params: { toChain: ChainId; symbol: string; fromChains?: ChainId[]; maxTotalUsd?: number; clientKey?: ClientKey }): Promise<Proposal> {
   const snapshot = ctx.ledger.snapshot();
   const policy = loadPolicy(ctx.dataDir);
   const selfList = selfAddresses(ctx, snapshot);
@@ -356,7 +357,7 @@ export async function proposeConsolidate(ctx: PCtx, params: { toChain: ChainId; 
   return land(ctx, newProposal('consolidate', draft, simulation, verdict, params.clientKey));
 }
 
-export async function proposePolicyChange(ctx: PCtx, params: { patch: PolicyPatch; sentence: string; clientKey?: string }): Promise<Proposal> {
+export async function proposePolicyChange(ctx: PCtx, params: { patch: PolicyPatch; sentence: string; clientKey?: ClientKey }): Promise<Proposal> {
   const snapshot = ctx.ledger.snapshot();
   const policy = loadPolicy(ctx.dataDir);
   const draft: WriteDraft = { kind: 'policy_change', patch: params.patch, sentence: params.sentence };
