@@ -341,6 +341,10 @@
       dom.setHidden(refs.offline, !offline);
       if (offline) startHealthPoll(connection);
       else stopHealthPoll();
+      /* Three words for the stream, each with its own dot: live, delayed
+         (connecting, reconnecting, or a stream that has gone quiet and is
+         being replaced), and offline, which is the app not answering at all.
+         The bar under this one carries the sentence; this is the glance. */
       if (refs.feedChip) {
         var tone = connection === 'live' ? 'up' : (connection === 'offline' ? 'off' : 'warn');
         dom.setAttr(refs.feedChip, 'data-tone', tone);
@@ -354,10 +358,6 @@
     events.on('lock', function (frame) {
       var state = store.get() || {};
       if (frame && frame.state) {
-      /* Three words for the stream, each with its own dot: live, delayed
-         (connecting, reconnecting, or a stream that has gone quiet and is
-         being replaced), and offline, which is the app not answering at all.
-         The bar under this one carries the sentence; this is the glance. */
         store.put(Object.assign({}, state, { lock: { state: frame.state, idleLocksInSec: null } }));
       }
     });
