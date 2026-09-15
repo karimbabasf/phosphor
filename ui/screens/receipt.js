@@ -2,7 +2,21 @@
    one state a person cannot act on alone.
 
    Hex lives here and nowhere else. Every other surface in the window says what
-   moved in words; this is where a person goes when they want the hash. */
+   moved in words; this is where a person goes when they want the hash.
+
+   Three ways in. `open(receipt)` is the popover: a native dialog over the whole
+   window, closed by Esc, the backdrop or its own close control. `card(receipt)`
+   is the same card built to sit inline in the assistant thread at full width,
+   as a message from the app. And the `receipt:open` event on the window bus
+   opens the popover for whoever emits it (an Activity row, a Done fill), so
+   the surfaces that hold receipts never need to know how the card is drawn.
+
+   What the card reads off a receipt (src/http/receipts.ts): kind, status, at,
+   amount and symbol (what left), received (what arrived), feesUsd, valueUsd,
+   venue, fromChain and toChain, wallet, txids [{chain, hash, url, explorer}].
+   A fill mapped to this shape by the trade screen adds `side` ('buy'|'sell')
+   and `closed` (true when the fill closed a position) so the kind word can say
+   Bought, Sold or Trade closed. */
 (function () {
   'use strict';
 
@@ -16,12 +30,433 @@
     base: 'Base',
     arb: 'Arbitrum',
     sol: 'Solana',
-    near: 'NEAR'
+    near: 'NEAR',
+    intents: 'NEAR Intents',
+    hyperliquid: 'Hyperliquid'
   };
 
   function chainName(id) {
     return CHAIN_NAMES[id] || String(id || '');
   }
+
+  /* The venue as a person names it. The draft carries the rail's own identifier. */
+  var VENUE_NAMES = {
+    'intents.near': 'NEAR Intents',
+    'intents-native': 'NEAR Intents',
+    oneclick: 'NEAR Intents',
+    hyperliquid: 'Hyperliquid',
+    'uniswap-v3': 'Uniswap v3'
+  };
+
+  function venueName(id) {
+    if (!id) return '';
+    if (Object.prototype.hasOwnProperty.call(VENUE_NAMES, id)) return VENUE_NAMES[id];
+    var word = String(id);
+    return word.charAt(0).toUpperCase() + word.slice(1);
+  }
+
+  /* Every kind the record can hold (src/transactions.ts ACTIONS, plus the trade
+     shapes the Done list maps into this card) as one word and one icon. The retired
+     rails stay: the rows they wrote are still on disk and still open. */
+  var KINDS = {
+    swap: { word: 'Swap', icon: 'swap' },
+    consolidate: { word: 'Moved', icon: 'swap' },
+    intents_deposit: { word: 'Deposit', icon: 'deposit' },
+    hl_deposit: { word: 'Deposit', icon: 'deposit' },
+    yield_deposit: { word: 'Deposit', icon: 'deposit' },
+    lp_add: { word: 'Liquidity added', icon: 'deposit' },
+    intents_withdraw: { word: 'Withdrawal', icon: 'withdraw' },
+    hl_withdraw: { word: 'Withdrawal', icon: 'withdraw' },
+    yield_withdraw: { word: 'Withdrawal', icon: 'withdraw' },
+    lp_remove: { word: 'Liquidity removed', icon: 'withdraw' },
+    transfer: { word: 'Sent', icon: 'withdraw' },
+    policy_change: { word: 'Rule changed', icon: 'lock' },
+    mandate_arm: { word: 'Bot armed', icon: 'armed' },
+    bot: { word: 'Bot armed', icon: 'armed' }
+  };
+
+  function kindOf(receipt) {
+    var kind = String(receipt.kind || '');
+    if (kind === 'trade' || kind === 'fill') {
+      if (receipt.closed === true) return { word: 'Trade closed', icon: 'done' };
+      var side = String(receipt.side || '').toLowerCase();
+      return side === 'sell' || side === 'short'
+        ? { word: 'Sold', icon: 'short' }
+        : { word: 'Bought', icon: 'long' };
+    }
+    return KINDS[kind] || { word: 'Receipt', icon: 'done' };
+  }
+
+  function kindWord(receipt) {
+    return kindOf(receipt).word;
+  }
+
+  /* The outcome as a chip. Executed is done; failed is the venue saying no after the
+     fact, which is not the same as a refusal at the gate, so each keeps its own word. */
+  var STATUS = {
+    executed: { word: 'Done', tone: 'up', icon: 'done' },
+    done: { word: 'Done', tone: 'up', icon: 'done' },
+    failed: { word: 'Failed', tone: 'down', icon: 'refused' },
+    refused: { word: 'Refused', tone: 'down', icon: 'refused' },
+    needs_reconciliation: { word: 'Unknown', tone: 'warn', icon: 'waiting' },
+    pending: { word: 'Waiting', tone: 'warn', icon: 'waiting' },
+    pending_unlock: { word: 'Waiting', tone: 'warn', icon: 'waiting' },
+    awaiting_touch: { word: 'Waiting', tone: 'warn', icon: 'waiting' },
+    waiting: { word: 'Waiting', tone: 'warn', icon: 'waiting' }
+  };
+
+  function statusOf(receipt) {
+    return STATUS[String(receipt.status || '')] || STATUS.done;
+  }
+
+  /* ---------- the foundation, guarded until it lands ---------- */
+
+  function icon(name, className) {
+    var icons = window.PhosphorIcons;
+    if (icons && typeof icons.svg === 'function') return icons.svg(name, className);
+    var stub = dom.el('span', 'icon' + (className ? ' ' + className : ''));
+    stub.setAttribute('aria-hidden', 'true');
+    stub.dataset.icon = name;
+    return stub;
+  }
+
+  function logo(symbol, size) {
+    if (marks && typeof marks.logo === 'function') return marks.logo(symbol, size);
+    var disc = marks.disc(symbol);
+    disc.style.setProperty('--logo', size + 'px');
+    return disc;
+  }
+
+  function reducedMotion() {
+    var motion = window.PhosphorMotion;
+    return !!(motion && typeof motion.reduced === 'function' && motion.reduced());
+  }
+
+  /* ---------- the card ---------- */
+
+  /* The first six and the last four: enough to match against a wallet or an
+     explorer by eye, and the whole id is one hover or one Copy away. */
+  function shortHash(hash) {
+    var text = String(hash || '');
+    if (text.length <= 14) return text;
+    return text.slice(0, 6) + '...' + text.slice(-4);
+  }
+
+  function shortAddress(address) {
+    var text = String(address || '');
+    if (text.length <= 16) return text;
+    return text.slice(0, 6) + '...' + text.slice(-4);
+  }
+
+  function isHttps(url) {
+    return typeof url === 'string' && /^https:\/\//.test(url);
+  }
+
+  function whenText(iso) {
+    var when = new Date(iso);
+    if (isNaN(when.getTime())) return '';
+    return when.toLocaleString('en-US', {
+      month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false
+    });
+  }
+
+  function copyToClipboard(text, label) {
+    if (!(navigator.clipboard && navigator.clipboard.writeText)) return;
+    navigator.clipboard.writeText(text).then(function () {
+      dom.setText(label, 'Copied');
+      window.setTimeout(function () { dom.setText(label, 'Copy'); }, 1500);
+    }).catch(function () { /* the hash is on screen to read */ });
+  }
+
+  function leg(dir, amount, symbol, muted) {
+    var node = dom.el('span', 'receipt-leg');
+    node.dataset.dir = dir;
+    node.appendChild(logo(symbol, 32));
+    node.appendChild(dom.el('span', 'receipt-amount mono' + (muted ? ' dim' : ''), amount));
+    return node;
+  }
+
+  /* The from and to line. What left is signed minus, what arrived is signed plus and
+     green, and the swap icon between them is in the accent. A failed move left
+     nothing, so its amount is unsigned and quiet and nothing arrives. A move with no
+     recorded arrival names where the money went instead of inventing a number. */
+  function legs(receipt) {
+    var wrap = dom.el('div', 'receipt-legs');
+    var failed = receipt.status === 'failed';
+    var symbol = receipt.symbol ? String(receipt.symbol) : '';
+    var left = typeof receipt.amount === 'number';
+    if (left) {
+      wrap.appendChild(leg('out', (failed ? '' : '-') + dom.qty(receipt.amount) + (symbol ? ' ' + symbol : ''), symbol, failed));
+    }
+    var got = receipt.received;
+    var arrived = !failed && got && typeof got.amount === 'number' && got.symbol;
+    if (arrived) {
+      wrap.appendChild(icon('swap', 'receipt-arrow'));
+      wrap.appendChild(leg('in', '+' + dom.qty(got.amount) + ' ' + String(got.symbol), String(got.symbol), false));
+    } else if (!failed && left && receipt.toChain && receipt.toChain !== receipt.fromChain) {
+      wrap.appendChild(icon('swap', 'receipt-arrow'));
+      wrap.appendChild(dom.el('span', 'receipt-leg receipt-leg-place', 'to ' + chainName(receipt.toChain)));
+    }
+    return wrap;
+  }
+
+  function cell(host, label, value, mono, full) {
+    if (value === '' || value === null || value === undefined) return;
+    var item = dom.el('div', 'receipt-cell');
+    item.appendChild(dom.el('dt', 'label', label));
+    var dd = dom.el('dd', mono ? 'mono' : '', value);
+    if (full) dd.title = full;
+    item.appendChild(dd);
+    host.appendChild(item);
+  }
+
+  /* Four facts under the line. Fee says "none yet" rather than a zero while the gas
+     is still being read back, because a fee of zero is a different fact. The chain
+     cell names one place, or both when the money changed place. */
+  function grid(receipt) {
+    var list = dom.el('dl', 'receipt-grid');
+    cell(list, 'Value', typeof receipt.valueUsd === 'number' ? dom.usd(receipt.valueUsd) : '', true);
+    cell(list, 'Fee', typeof receipt.feesUsd === 'number' ? dom.fee(receipt.feesUsd) : 'none yet', typeof receipt.feesUsd === 'number');
+    var venue = venueName(receipt.venue);
+    var from = receipt.fromChain ? chainName(receipt.fromChain) : '';
+    var to = receipt.toChain ? chainName(receipt.toChain) : '';
+    var place = from && to && from !== to ? from + ' to ' + to : (from || to);
+    if (venue) cell(list, 'Venue', venue, false);
+    else if (place) cell(list, 'Chain', place, false);
+    var onVenue = receipt.fromChain === 'intents' || receipt.fromChain === 'hyperliquid';
+    if (receipt.wallet) cell(list, onVenue ? 'Account' : 'Wallet', shortAddress(receipt.wallet), true, String(receipt.wallet));
+    else if (receipt.account) cell(list, 'Account', shortAddress(receipt.account), true, String(receipt.account));
+    return list;
+  }
+
+  function hashRow(tx) {
+    var row = dom.el('div', 'receipt-tx');
+    var code = dom.el('code', 'receipt-tx-hash mono', shortHash(tx.hash));
+    code.title = String(tx.hash);
+    row.appendChild(code);
+    if (tx.chain) row.appendChild(dom.el('span', 'receipt-tx-place meta', chainName(tx.chain)));
+    var copy = dom.el('button', 'btn btn-quiet btn-sm receipt-copy');
+    copy.type = 'button';
+    copy.appendChild(icon('copy'));
+    var label = dom.el('span', 'btn-label', 'Copy');
+    copy.appendChild(label);
+    row.appendChild(copy);
+    dom.on(copy, 'click', function () { copyToClipboard(String(tx.hash), label); });
+    return row;
+  }
+
+  /* One link out, to the explorer of the first hash that has one. Only a url the
+     server built (src/transactions.ts) and only https: nothing in a receipt is typed
+     by a person, but this is the one place the window hands the system browser a
+     string, so it is checked here as well. target=_blank is what the desktop shell
+     routes to the browser; a plain navigation would replace the app. */
+  function viewButton(txids) {
+    for (var i = 0; i < txids.length; i += 1) {
+      var tx = txids[i];
+      if (!isHttps(tx.url)) continue;
+      var link = dom.el('a', 'btn btn-primary receipt-view');
+      link.href = tx.url;
+      link.target = '_blank';
+      link.rel = 'noreferrer noopener';
+      link.appendChild(dom.el('span', 'btn-label', 'View on ' + (tx.explorer || explorerNameOf(tx.url))));
+      link.appendChild(icon('external'));
+      return link;
+    }
+    return null;
+  }
+
+  /* The server names the explorer on every txid it serves (src/explorers.ts). A
+     fill mapped on the client carries the url alone, so the same table is here for
+     that one case. */
+  var EXPLORER_HOSTS = [
+    ['basescan.org', 'Basescan'],
+    ['arbiscan.io', 'Arbiscan'],
+    ['etherscan.io', 'Etherscan'],
+    ['solscan.io', 'Solscan'],
+    ['nearblocks.io', 'Nearblocks'],
+    ['explorer.near-intents.org', 'NEAR Intents explorer'],
+    ['app.hyperliquid.xyz', 'Hyperliquid explorer']
+  ];
+
+  function explorerNameOf(url) {
+    var host = '';
+    try { host = new URL(url).hostname.toLowerCase(); } catch (err) { return 'explorer'; }
+    for (var i = 0; i < EXPLORER_HOSTS.length; i += 1) {
+      var suffix = EXPLORER_HOSTS[i][0];
+      if (host === suffix || host.slice(-suffix.length - 1) === '.' + suffix) return EXPLORER_HOSTS[i][1];
+    }
+    return 'explorer';
+  }
+
+  /* The card. `opts.inline` drops the close control and marks the card for the
+     thread; `opts.onClose` is what the close control and a reconcile that settles
+     the row call. */
+  function build(receipt, opts) {
+    var options = opts || {};
+    var kind = kindOf(receipt);
+    var status = statusOf(receipt);
+    var unknown = receipt.status === 'needs_reconciliation';
+
+    var card = dom.el('article', 'receipt-card');
+    card.dataset.kind = String(receipt.kind || '');
+    card.dataset.status = String(receipt.status || '');
+    if (options.inline) card.dataset.inline = 'true';
+    card.setAttribute('aria-label', kind.word + ', ' + status.word);
+
+    var head = dom.el('header', 'receipt-head');
+    var title = dom.el('span', 'receipt-kind');
+    title.appendChild(icon(kind.icon, 'icon-20'));
+    title.appendChild(dom.el('span', '', kind.word));
+    head.appendChild(title);
+    var chip = dom.el('span', 'chip receipt-status');
+    chip.dataset.tone = status.tone;
+    chip.appendChild(icon(status.icon));
+    chip.appendChild(dom.el('span', '', status.word));
+    head.appendChild(chip);
+    if (receipt.at) {
+      var time = dom.el('time', 'receipt-time', dom.ago(receipt.at));
+      time.dateTime = String(receipt.at);
+      time.title = whenText(receipt.at);
+      head.appendChild(time);
+    }
+    if (!options.inline) {
+      var close = dom.el('button', 'receipt-close');
+      close.type = 'button';
+      close.setAttribute('aria-label', 'Close');
+      close.appendChild(icon('close'));
+      head.appendChild(close);
+      dom.on(close, 'click', function () { if (options.onClose) options.onClose(); });
+    }
+    card.appendChild(head);
+
+    if (unknown) {
+      var warn = dom.el('p', 'receipt-note');
+      warn.dataset.tone = 'warn';
+      dom.setText(warn, 'We sent this and cannot read what happened to it. Do not send it again. Check it again below, or open it in the explorer.');
+      card.appendChild(warn);
+    }
+
+    card.appendChild(legs(receipt));
+    card.appendChild(grid(receipt));
+
+    var txids = Array.isArray(receipt.txids) ? receipt.txids.filter(function (tx) { return tx && tx.hash; }) : [];
+    var view = viewButton(txids);
+    if (txids.length || unknown) {
+      var foot = dom.el('footer', 'receipt-foot');
+      for (var i = 0; i < txids.length; i += 1) foot.appendChild(hashRow(txids[i]));
+      var error = dom.el('p', 'receipt-error body down');
+      error.hidden = true;
+      var actions = dom.el('div', 'receipt-actions');
+      if (unknown) actions.appendChild(recheckButton(receipt, error, options.onClose));
+      if (view) actions.appendChild(view);
+      if (actions.children.length) {
+        foot.appendChild(error);
+        foot.appendChild(actions);
+      }
+      card.appendChild(foot);
+    }
+    return card;
+  }
+
+  /* Still unreadable is an answer, and the card stays open on it: closing would look
+     like it had been settled. */
+  function recheckButton(receipt, error, onClose) {
+    var recheck = dom.el('button', 'btn btn-ghost');
+    recheck.type = 'button';
+    recheck.appendChild(icon('retry'));
+    recheck.appendChild(dom.el('span', 'btn-label', 'Check it again'));
+    dom.on(recheck, 'click', function () {
+      window.PhosphorShell.setPending(recheck, true, 'Checking');
+      api.reconcile(receipt.id)
+        .then(function (answer) {
+          var status = answer && answer.status;
+          if (status === 'needs_reconciliation') {
+            dom.setText(error, 'Still no answer from the chain. Nothing has changed. Do not send it again.');
+            error.hidden = false;
+            return;
+          }
+          window.PhosphorToast.show('Checked. It is ' + readableStatus(status) + '.'
+            + (answer && answer.detail ? ' ' + answer.detail : ''));
+          if (onClose) onClose();
+        })
+        .catch(function (err) {
+          dom.setText(error, net.readable(err));
+          error.hidden = false;
+        })
+        .finally(function () {
+          window.PhosphorShell.setPending(recheck, false);
+        });
+    });
+    return recheck;
+  }
+
+  function card(receipt) {
+    return build(receipt, { inline: true });
+  }
+
+  /* ---------- the popover ---------- */
+
+  var current = null;
+
+  /* Moment 3: the card scales 0.96 to 1 with its opacity over 220 ms; the backdrop
+     fades in the stylesheet. Reduced motion keeps the fade and drops the scale. */
+  function enter(node) {
+    var Motion = window.Motion;
+    if (!Motion || typeof Motion.animate !== 'function') return;
+    var frames = reducedMotion() ? { opacity: [0, 1] } : { opacity: [0, 1], scale: [0.96, 1] };
+    try {
+      Motion.animate(node, frames, { duration: 0.22, ease: [0.22, 1, 0.36, 1] });
+    } catch (err) {
+      console.error('[receipt]', err);
+    }
+  }
+
+  function open(receipt, opts) {
+    if (!receipt) return null;
+    if (current) close();
+    var dialog = document.createElement('dialog');
+    dialog.className = 'receipt-dialog';
+    dialog.dataset.source = (opts && opts.source) || '';
+    var node = build(receipt, { onClose: close });
+    node.tabIndex = -1;
+    node.setAttribute('autofocus', '');
+    dialog.appendChild(node);
+    /* A click on the dialog box itself is a click on the backdrop: the card is the
+       box's only child and fills it, so anything outside the card lands here. */
+    dom.on(dialog, 'click', function (event) { if (event.target === dialog) close(); });
+    dom.on(dialog, 'cancel', function (event) { event.preventDefault(); close(); });
+    dom.on(dialog, 'close', function () {
+      if (current === dialog) current = null;
+      dialog.remove();
+    });
+    document.body.appendChild(dialog);
+    current = dialog;
+    if (typeof dialog.showModal === 'function') dialog.showModal();
+    else dialog.setAttribute('open', '');
+    enter(node);
+    return dialog;
+  }
+
+  function close() {
+    var dialog = current;
+    if (!dialog) return;
+    current = null;
+    if (dialog.open && typeof dialog.close === 'function') dialog.close();
+    else dialog.remove();
+  }
+
+  function isOpen() {
+    return current !== null;
+  }
+
+  var events = window.PhosphorEvents;
+  if (events && typeof events.on === 'function') {
+    events.on('receipt:open', function (payload) {
+      if (payload && payload.receipt) open(payload.receipt, { source: payload.source });
+    });
+  }
+
+  /* ---------- the dock card (the unknown-outcome path, until the dock retires) ---------- */
 
   function fill(host, receipt, onClose) {
     dom.clear(host);
@@ -147,14 +582,7 @@
       row.appendChild(link);
     }
     dom.on(copy, 'click', function () {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(tx.hash).then(function () {
-          dom.setText(copy.querySelector('.btn-label'), 'Copied');
-          window.setTimeout(function () {
-            dom.setText(copy.querySelector('.btn-label'), 'Copy');
-          }, 1600);
-        });
-      }
+      copyToClipboard(String(tx.hash), copy.querySelector('.btn-label'));
     });
     return row;
   }
@@ -166,6 +594,8 @@
     row.appendChild(dom.el('span', 'body mono', value));
     host.appendChild(row);
   }
+
+  /* ---------- the Activity row ---------- */
 
   /* An Activity row, drawn as a transaction (the .tx grammar in components.css),
      the way a statement line reads: the mark of the coin that left, the sentence,
@@ -245,6 +675,12 @@
     fill: fill,
     row: row,
     updateRow: updateRow,
-    chainName: chainName
+    chainName: chainName,
+    venueName: venueName,
+    kindWord: kindWord,
+    card: card,
+    open: open,
+    close: close,
+    isOpen: isOpen
   };
 })();

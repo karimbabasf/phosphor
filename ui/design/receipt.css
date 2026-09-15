@@ -1,0 +1,374 @@
+/* The receipt: the card a person opens when they want the hash, and the Activity
+   row that opens it (ui/screens/receipt.js). One card, two homes: a centred
+   dialog over the window, and the same card inline in the assistant thread at
+   full width with no backdrop. Everything numeric is mono and tabular; the one
+   accent is the arrow between what left and what arrived, the green on what
+   arrived, and the primary button out to the explorer. */
+
+/* ---------- the popover ---------- */
+
+dialog.receipt-dialog {
+  width: min(440px, calc(100vw - var(--s-6)));
+  max-width: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: visible;
+  color: var(--text);
+}
+
+/* A scrim, not a blur: a backdrop-filter over this document re-runs whenever the
+   chart behind it repaints. It fades in with the card (moment 3). */
+dialog.receipt-dialog::backdrop {
+  background: color-mix(in srgb, var(--bg-0) 72%, transparent);
+  animation: receipt-scrim var(--dur-enter) var(--ease-out) both;
+}
+
+@keyframes receipt-scrim {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* ---------- the card ---------- */
+
+.receipt-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  width: 100%;
+  max-width: none;
+  padding: var(--s-5);
+  border-radius: var(--radius-xl, 24px);
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--lift);
+  color: var(--text);
+  outline: none;
+}
+
+/* Inline in the thread: the panel around it is flat, the card is the raised
+   thing, and it stands on the ground rather than floating over it. */
+.receipt-card[data-inline] {
+  box-shadow: none;
+}
+
+.receipt-card .icon {
+  flex: none;
+  width: 1em;
+  height: 1em;
+}
+
+/* Head: the kind, the outcome, the time, the way out. */
+.receipt-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-height: 32px;
+}
+
+.receipt-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--fs-18, 18px);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  color: var(--text);
+}
+
+.receipt-kind > .icon {
+  width: 20px;
+  height: 20px;
+  color: var(--text-2);
+}
+
+.receipt-status {
+  height: 24px;
+  padding: 0 var(--s-2) 0 var(--s-2);
+  gap: var(--s-1);
+}
+
+.receipt-status > .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.receipt-time {
+  margin-left: auto;
+  font-size: var(--fs-12);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.receipt-close {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  margin-right: calc(var(--s-2) * -1);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-2);
+  transition: background-color var(--dur-press) var(--ease-out),
+              color var(--dur-press) var(--ease-out);
+}
+
+.receipt-close > .icon {
+  width: 16px;
+  height: 16px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .receipt-close:hover {
+    background: color-mix(in srgb, var(--text) 8%, transparent);
+    color: var(--text);
+  }
+}
+
+.receipt-close:focus-visible,
+.receipt-copy:focus-visible,
+.receipt-view:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+/* The one state a person cannot act on alone, said before the numbers. A wash,
+   no coloured edge. */
+.receipt-note {
+  margin: 0;
+  padding: var(--s-3);
+  border-radius: var(--radius-sm);
+  background: var(--warn-wash);
+  color: var(--warn);
+  font-size: var(--fs-13);
+  line-height: 1.45;
+}
+
+/* The from and to line. Wraps when both legs are long rather than shrinking the
+   figures: the amounts are the card. */
+.receipt-legs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-1) 0;
+}
+
+.receipt-leg {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-width: 0;
+}
+
+.receipt-leg > .logo,
+.receipt-leg > .coin-mark {
+  flex: none;
+  width: 32px;
+  height: 32px;
+}
+
+.receipt-leg > .coin-mark svg {
+  width: 22px;
+  height: 22px;
+}
+
+.receipt-amount {
+  font-size: var(--fs-20);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.receipt-leg[data-dir="in"] > .receipt-amount { color: var(--up); }
+.receipt-leg > .receipt-amount.dim { color: var(--text-3); }
+
+.receipt-leg-place {
+  font-size: var(--fs-14);
+  color: var(--text-2);
+}
+
+.receipt-arrow {
+  width: 20px;
+  height: 20px;
+  color: var(--ink);
+}
+
+/* Four facts in two columns: value, fee, venue or chain, wallet or account. */
+.receipt-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s-3) var(--s-4);
+  margin: 0;
+  padding-top: var(--s-4);
+  border-top: 1px solid var(--line);
+}
+
+.receipt-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.receipt-cell > dd {
+  margin: 0;
+  font-size: var(--fs-14);
+  line-height: 1.4;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* The evidence: each hash short, the whole of it on hover and one press away,
+   and one link out. */
+.receipt-foot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding-top: var(--s-4);
+  border-top: 1px solid var(--line);
+}
+
+.receipt-tx {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: 30px;
+}
+
+.receipt-tx-hash {
+  font-size: var(--fs-13);
+  color: var(--text);
+}
+
+.receipt-tx-place {
+  color: var(--text-3);
+}
+
+.receipt-copy {
+  margin-left: auto;
+  gap: var(--s-1);
+}
+
+.receipt-copy > .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.receipt-error {
+  margin: 0;
+}
+
+.receipt-actions {
+  display: flex;
+  gap: var(--s-2);
+  padding-top: var(--s-1);
+}
+
+.receipt-actions > .btn {
+  flex: 1;
+  min-width: 0;
+}
+
+.receipt-view > .icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* ---------- the dock card, until the dock retires ---------- */
+
+/* The rail's own words, on the opened receipt. Wrapped rather than clamped, because here the
+   whole thing is the point, and broken anywhere because an intent hash is one 44 character
+   word that would otherwise push the card sideways. */
+.said {
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-1);
+}
+
+.said-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.55;
+}
+
+.tx-row {
+  padding: var(--s-3);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+/* ---------- the Activity row ---------- */
+
+/* A transaction that can be opened (a receipt) is a button, and only that
+   one takes the hover ground. Inset by its own padding so the ground does
+   not touch the rule above it. */
+button.tx {
+  cursor: pointer;
+  border-left: 0;
+  border-right: 0;
+  border-bottom: 0;
+  transition: background-color var(--dur-press) var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  button.tx:hover { background: color-mix(in srgb, var(--bg-2) 70%, transparent); }
+}
+
+button.tx:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: -2px;
+}
+
+/* A receipt is a .tx (components.css, the money grammar) that opens. The list
+   it sits in is flush with the panel, so the row carries the side padding
+   itself, and the first row keeps the rule that separates it from the head. */
+.tx.receipt-row {
+  width: 100%;
+  padding: var(--s-3) var(--s-4);
+  column-gap: var(--s-4);
+  row-gap: 3px;
+}
+
+.activity-list > .tx.receipt-row:first-child {
+  border-top: 1px solid var(--line);
+}
+
+/* The title is the headline, clamped at two lines. It used to be the rail's verbatim
+   sentence, which wrapped to six lines, buried the time under itself and ran across the
+   amount on the right, so two receipts filled the whole panel; that sentence now lives on the
+   opened receipt. The headline is one sentence, and on Pro's half-width panel one line cut it
+   before the coin it changed into, which is the half of the sentence that says what happened.
+   Two lines hold the whole sentence at that width; anything longer ends in an ellipsis, and
+   the whole sentence rides on the title attribute. */
+.receipt-row > .tx-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+/* A time that is really an outcome ("Did not go through") reads in the warning
+   tone; the grammar's own 12 px stays. */
+.receipt-row > .tx-when.warn { color: var(--warn); }
+
+/* A move that did not go through left nothing, so its amount is unsigned and
+   quiet: the same weight as the time, not a number that means money. */
+.receipt-row > .tx-amount.dim { color: var(--text-3); }
+
+/* What arrived is the second leg of the line, a size up from the grammar's 12 px
+   footnote and in the up colour, so the two legs of a swap read as a pair: what
+   went out on top, what came in underneath. */
+.receipt-row > .tx-sub[data-dir="in"] {
+  font-size: var(--fs-13);
+  color: var(--up);
+}
