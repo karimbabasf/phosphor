@@ -1,0 +1,789 @@
+/* Pro: the deck of four cards, and the Activity list that Basic's fold shares.
+
+   Money and Activity down the left column, Trading and Policy down the right,
+   12 px between cards. A card is as tall as what it holds; Activity alone takes
+   the rest of its column and scrolls inside itself, because a list of receipts
+   has no natural end. The card head is the same everywhere: title at the left,
+   one line of meta at the right, a hairline under both. */
+
+/* ---------- the deck ---------- */
+
+.pro-grid {
+  width: min(var(--pro-max), 100%);
+  margin: 0 auto;
+  padding: var(--s-5);
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  grid-template-rows: minmax(0, 1fr);
+  gap: var(--s-3);
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* A column stacks its cards and lets nothing stretch that has not asked to. */
+.pro-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-width: 0;
+  min-height: 0;
+}
+
+.pro-col > .card {
+  flex: 0 0 auto;
+  min-height: 0;
+}
+
+/* Money stops at half the window and scrolls its list inside the card, so a
+   wallet of twenty coins never pushes Activity off the deck. */
+.pro-col > .card-money {
+  flex: 0 1 auto;
+  max-height: 50vh;
+}
+
+.card-money > .card-body {
+  flex: 1 1 auto;
+}
+
+.card-money .holding-list {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  min-height: 0;
+}
+
+/* The list card fills what the left column has left, and never less than a
+   handful of rows: past that the world scrolls. */
+.pro-col > .card-activity {
+  flex: 1 1 auto;
+  min-height: 320px;
+}
+
+/* Narrow enough and the four cards stack in one column, so the world goes back
+   to being a column that scrolls as a column. */
+@container world (max-width: 900px) {
+  .pro-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto;
+    flex: 0 0 auto;
+    padding-bottom: var(--s-8);
+  }
+
+  .pro-col > .card-money {
+    max-height: none;
+  }
+
+  .pro-col > .card-activity {
+    flex: 0 0 auto;
+    min-height: 0;
+  }
+
+  .activity-scroll,
+  .card-money .holding-list {
+    overflow-y: visible;
+  }
+}
+
+/* ---------- a card ---------- */
+
+.card {
+  --card-x: 20px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg, 20px);
+}
+
+.card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-4);
+  padding: var(--s-4) var(--card-x) var(--s-3);
+  border-bottom: 1px solid var(--line);
+}
+
+/* A head with a lead figure stacks the figure over the meta at the right, so
+   the two right-hand lines start level with the title. */
+.card-head[data-lead="true"] {
+  align-items: flex-start;
+}
+
+.card-title {
+  font-size: var(--fs-18, 18px);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+  color: var(--text);
+}
+
+.card-head-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  min-width: 0;
+  text-align: right;
+}
+
+.card-lead {
+  font-size: var(--fs-32, 32px);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 1.1;
+  color: var(--text);
+}
+
+.card-trading .card-lead {
+  font-size: var(--fs-24, 24px);
+}
+
+.card-meta {
+  font-size: var(--fs-12);
+  line-height: 1.45;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--card-x) var(--s-4);
+  min-height: 0;
+}
+
+/* An empty card is one sentence, and it does not need a panel's worth of air
+   around it to say so. */
+.card .empty {
+  padding: var(--s-4) var(--s-3);
+}
+
+/* Where a card that goes somewhere says so, in words, at the bottom edge. */
+.card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  margin-top: auto;
+  padding: var(--s-3) var(--card-x);
+  border-top: 1px solid var(--line);
+}
+
+/* The chevron inside a card is the set's icon, not the drawn caret the rest
+   of the window uses, so it can point down on a row that opens downward. */
+.card .chev {
+  width: 16px;
+  height: 16px;
+  border: 0;
+  transform: none;
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+  transition: transform var(--dur-press) var(--ease-out),
+              color var(--dur-press) var(--ease-out);
+}
+
+.card .chev .icon {
+  width: 16px;
+  height: 16px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .card .opens:hover .chev {
+    transform: none;
+    color: var(--text-2);
+  }
+}
+
+.card [data-open="true"] > .chev,
+.card [data-open="true"] > .holding-head > .chev,
+.card [data-open="true"] > .rule-group-title > .chev {
+  transform: rotate(180deg);
+}
+
+/* ---------- Money: what you own, one row per coin ---------- */
+
+/* The shape of the wallet, once: one 6 px pill under the head, one segment per
+   coin by share, each in the coin's own brand colour (the one its logo wears).
+   It is the one coloured thing on this deck that is not a state. Pointing at a
+   coin holds its segment and lets the others fall back, and pointing at a
+   segment lights the coin's row, because the bar and the list are the same
+   facts said twice. */
+.comp-bar {
+  display: flex;
+  gap: 2px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+
+.comp-seg {
+  flex: 1 1 0;
+  min-width: 4px;
+  background: var(--seg, var(--text-3));
+  transition: opacity var(--dur-press) var(--ease-out);
+}
+
+.comp-bar:has(> [data-lit="true"]) > .comp-seg:not([data-lit="true"]) { opacity: 0.4; }
+
+.holding-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.holding + .holding {
+  border-top: 1px solid var(--line);
+}
+
+/* THE ROW: the logo, the coin and where it sits, then the value with the
+   amount under it. One figure and its footnote, not three number columns. A
+   button sizes to its content unless told otherwise, and a row that shrinks
+   to fit puts the figures next to the name instead of down the right edge. */
+.holding-head {
+  position: relative;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  column-gap: var(--s-3);
+  align-items: center;
+  width: 100%;
+  min-height: 52px;
+  padding: var(--s-2) 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  cursor: default;
+}
+
+/* Only a row with places under it opens, and only that row carries the
+   chevron: a fourth column that the static rows never reserve. */
+.holding-head.opens {
+  grid-template-columns: 24px minmax(0, 1fr) auto 16px;
+  cursor: pointer;
+  --opens-line: transparent;
+  --opens-bg: transparent;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .holding-head.opens:hover {
+    background: var(--bg-2);
+    border-color: transparent;
+    box-shadow: 0 0 0 6px var(--bg-2);
+  }
+}
+
+.holding-mark,
+.holding-mark > * {
+  display: block;
+  width: 24px;
+  height: 24px;
+}
+
+.holding-name {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.holding-symbol {
+  font-size: var(--fs-15);
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--text);
+}
+
+.holding-where {
+  font-size: var(--fs-12);
+  line-height: 1.4;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The value is the figure. The amount is the footnote under it, in the mono
+   face, because the amount is the thing a person checks rather than reads.
+   The change, when there is one, sits to the left of the value on its line. */
+.holding-figures {
+  display: grid;
+  grid-template-columns: auto auto;
+  grid-template-rows: auto auto;
+  row-gap: 1px;
+  align-items: baseline;
+  justify-items: end;
+  text-align: right;
+}
+
+.holding-value {
+  grid-column: 2;
+  grid-row: 1;
+  font-size: var(--fs-15);
+  line-height: 1.3;
+  color: var(--text);
+}
+
+.holding-qty {
+  grid-column: 2;
+  grid-row: 2;
+  font-size: var(--fs-12);
+  line-height: 1.4;
+  color: var(--text-3);
+}
+
+/* WHEN A FIGURE MOVES. The digits roll (dom.setNumber), the change appears
+   beside the value in the direction's colour, and the row's ground tints in
+   the coin's own colour, in fast and out slow, for the 1.2 s the row is
+   marked. Both are opacity only, so reduced motion keeps the signal. */
+.holding-delta {
+  grid-column: 1;
+  grid-row: 1;
+  font-size: var(--fs-12);
+  line-height: 1.2;
+  color: var(--text-2);
+  opacity: 0;
+  transition: opacity 600ms var(--ease-out);
+}
+
+.holding-delta:not(:empty) { padding-right: var(--s-2); }
+.holding-delta[data-dir="up"] { color: var(--up); }
+.holding-delta[data-dir="down"] { color: var(--down); }
+
+.holding[data-changed="true"] .holding-delta {
+  opacity: 1;
+  transition-duration: 120ms;
+}
+
+.holding-head::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--coin, var(--text-3)) 8%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 900ms var(--ease-out);
+}
+
+.holding[data-changed="true"] > .holding-head::after {
+  opacity: 1;
+  transition-duration: 120ms;
+}
+
+/* A hole, not a figure. It has to look unlike money or it reads as money. */
+.holding-value[data-unpriced="true"],
+.holding-place [data-unpriced="true"] {
+  color: var(--warn);
+  font-size: var(--fs-12);
+}
+
+/* The places under a coin, indented to its name. */
+.holding-places {
+  display: none;
+  padding: 0 0 var(--s-3) var(--s-3);
+  margin-left: 11px;
+  border-left: 1px solid var(--line);
+}
+
+.holding[data-open="true"] .holding-places { display: block; }
+
+.holding-place {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-3);
+  padding: 3px 0;
+  font-size: var(--fs-13);
+  color: var(--text-2);
+}
+
+.holding-place-qty { min-width: 70px; text-align: right; font-size: var(--fs-12); color: var(--text-3); }
+.holding-place-value { min-width: 84px; text-align: right; }
+
+.holding[data-lit="true"] .holding-head { background: var(--bg-2); }
+
+/* ---------- Trading ---------- */
+
+/* One line per position: which way, how much, and what it is worth so far. The
+   rest is the trade screen, which the whole card is a way to. */
+.position-line {
+  gap: var(--s-3);
+  padding-top: var(--s-2);
+  border-top: 1px solid var(--line);
+}
+
+/* ---------- Activity: the list, shared with Basic's fold ---------- */
+
+/* The chips sit on the card's own ground between the head and the list, so a
+   row scrolls under the hairline below them and never under the title. */
+.activity-head {
+  flex: 0 0 auto;
+  padding: var(--s-3) var(--card-x);
+  border-bottom: 1px solid var(--line);
+}
+
+.activity-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-top: 0;
+  gap: 0;
+}
+
+.activity-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) var(--s-4);
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1);
+}
+
+/* A filter chip is a pill on the raised surface, and the pressed one sits in
+   the ink wash with the text at full strength. */
+.chip-filter {
+  height: 28px;
+  padding: 0 var(--s-3);
+  font-size: var(--fs-12);
+  font-weight: 500;
+  color: var(--text-2);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  cursor: pointer;
+}
+
+.chip-filter[aria-pressed="true"] {
+  background: var(--ink-wash);
+  border-color: var(--ink-edge);
+  color: var(--text);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .chip-filter:hover {
+    border-color: var(--line-strong);
+    color: var(--text);
+  }
+}
+
+.chip-filter:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.activity-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+/* A row's grid and inner padding are the receipt's (receipt.css). Here it
+   reaches 8 px past the text on both sides, so the ground it lifts by one step
+   when pointed at frames the row rather than hugging it. */
+.activity-rows > .receipt-row {
+  width: auto;
+  margin-inline: calc(-1 * var(--s-2));
+  padding-inline: var(--s-2);
+  border-radius: var(--radius-sm);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .activity-rows > .receipt-row:hover { background: var(--bg-2); }
+}
+
+.activity-foot {
+  flex: 0 0 auto;
+  padding: var(--s-3) 0 var(--s-1);
+}
+
+.activity-foot:empty {
+  display: none;
+}
+
+.activity-more {
+  width: 100%;
+  min-height: 40px;
+  border-radius: var(--radius-sm);
+}
+
+/* Nothing in the window is a sentence, not a blank card, with the one click
+   that widens the window in the ink colour. */
+.activity-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-5) var(--s-4) var(--s-4);
+  text-align: center;
+}
+
+.activity-empty-line {
+  font-size: var(--fs-14);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.activity-empty-note {
+  font-size: var(--fs-12);
+  line-height: 1.5;
+  color: var(--text-3);
+  max-width: 40ch;
+}
+
+.activity-link {
+  font-size: var(--fs-14);
+  font-weight: 500;
+  color: var(--ink);
+  padding: var(--s-1) var(--s-2);
+  border-radius: var(--radius-sm);
+  transition: background-color var(--dur-press) var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .activity-link:hover { background: var(--ink-wash); }
+}
+
+.activity-link:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+/* ---------- Policy ---------- */
+
+.rules {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.rules-foot {
+  padding-top: var(--s-2);
+}
+
+/* A group: its heading in the quiet weight, then its rows ruled between. */
+.rule-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.rule-group-title {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+  padding: 0 0 var(--s-1);
+  font-size: var(--fs-12);
+  font-weight: 500;
+  line-height: 1.45;
+  color: var(--text-3);
+  text-align: left;
+}
+
+/* Over five rows the heading is the control that opens the group, with the
+   count beside it. It stays a heading in size and weight: the chevron and the
+   count are what say it opens. */
+button.rule-group-title {
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  --opens-bg: transparent;
+  --opens-line: transparent;
+}
+
+button.rule-group-title .rule-group-count {
+  color: var(--text-2);
+}
+
+button.rule-group-title .chev {
+  margin-left: auto;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  button.rule-group-title:hover {
+    background: transparent;
+    border-color: transparent;
+    color: var(--text-2);
+  }
+}
+
+.rule-group-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.rule {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  column-gap: var(--s-3);
+  align-items: start;
+  padding: var(--s-2) 0;
+  border-top: 1px solid var(--line);
+}
+
+.rule:first-child { border-top: 0; }
+
+.rule > .rule-glyph {
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  color: var(--text-3);
+  display: grid;
+  place-items: center;
+}
+
+.rule > .rule-glyph .icon { width: 20px; height: 20px; }
+
+.rule > .rule-text {
+  font-size: var(--fs-14);
+  font-weight: 500;
+  line-height: 1.45;
+  color: var(--text);
+  min-width: 0;
+}
+
+.rule > .rule-figure {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  line-height: 1.45;
+  color: var(--text-3);
+  font-feature-settings: "tnum" 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  padding-top: 2px;
+}
+
+.rule > .rule-figure[data-tone="warn"] { color: var(--warn); }
+.rule > .rule-figure[data-tone="down"] { color: var(--down); }
+
+/* The one rule that opens is a button, drawn as the Money rows are drawn:
+   the hover ground sits on the row's own box. */
+button.rule {
+  width: 100%;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  border-left: 0;
+  border-right: 0;
+  border-bottom: 0;
+  --opens-bg: transparent;
+  --opens-line: transparent;
+}
+
+button.rule.opens {
+  grid-template-columns: 20px minmax(0, 1fr) 16px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  button.rule.opens:hover {
+    border-radius: var(--radius-sm);
+    border-top-color: transparent;
+    box-shadow: 0 0 0 6px var(--bg-2);
+  }
+}
+
+button.rule.opens:focus-visible {
+  border-radius: var(--radius-sm);
+}
+
+.rule > .chev {
+  align-self: center;
+}
+
+/* A rule that refuses everything is a state, and it is the one rule drawn in
+   a state colour. */
+.rule[data-tone="down"] > .rule-glyph,
+.rule[data-tone="down"] > .rule-text { color: var(--down); }
+
+/* The meter under the daily rule takes a line of its own with its figure at
+   the right end, so the sentence keeps the whole width and never wraps
+   around the figure: a thin pill that fills as the day's cap is used. Nothing
+   spent draws a pill with no fill, and something spent is drawn as something
+   spent: against a $25,000 cap a real $22.84 is a sub-pixel sliver otherwise,
+   which reads as a fault. */
+.rule[data-rule="daily"] { row-gap: var(--s-2); }
+
+.rule[data-rule="daily"] > .rule-text { grid-column: 2 / span 2; }
+
+.rule-meter {
+  grid-column: 2;
+  grid-row: 2;
+  align-self: center;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+
+.rule-meter > i {
+  display: block;
+  height: 100%;
+  width: 100%;
+  border-radius: var(--radius-pill);
+  transform: scaleX(var(--used-scale, 0));
+  transform-origin: left center;
+  background: var(--text-2);
+  transition: transform var(--dur-enter) var(--ease-out);
+}
+
+.rule-meter[data-spent="true"] > i { min-width: 4px; }
+.rule-meter[data-tone="warn"] > i { background: var(--warn); }
+
+.rule[data-rule="daily"] > .rule-figure {
+  grid-column: 3;
+  grid-row: 2;
+  align-self: center;
+  padding-top: 0;
+}
+
+/* Gas, one chip per chain under the sentence: the chain's mark, its name and
+   the floor, on the raised surface. */
+.gas-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1);
+  margin-top: var(--s-2);
+}
+
+.gas-chip {
+  height: 26px;
+  padding: 0 var(--s-3) 0 var(--s-2);
+  gap: 6px;
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+.gas-chip-mark,
+.gas-chip-mark > * {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+
+.gas-chip-text {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  font-feature-settings: "tnum" 1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The addresses behind the destinations rule, folded under it and indented
+   to its sentence. */
+.allowlist {
+  max-height: 168px;
+  overflow-y: auto;
+  margin: 0 0 var(--s-2) 32px;
+  padding: var(--s-3);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+}

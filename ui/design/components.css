@@ -174,16 +174,6 @@
   gap: 2px;
 }
 
-/* The line that stands in for the panel when it is shut. It is the fact you
-   would have opened it for, so it is never the panel's own name said again. */
-.panel-summary {
-  font-size: var(--fs-12);
-  color: var(--text-3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .panel-head-right {
   display: flex;
   align-items: center;
@@ -191,42 +181,9 @@
   flex: 0 0 auto;
 }
 
-.panel-lead {
-  font-size: var(--fs-20);
-  color: var(--text);
-  font-feature-settings: "tnum" 1;
-  letter-spacing: -0.01em;
-}
-
 .panel-body {
   padding: 0 var(--s-4) var(--s-4);
   min-height: 0;
-}
-
-.panel-body-flush {
-  padding: 0 0 var(--s-2);
-}
-
-/* A body that closes the panel. The grid gives the panel a height, so the body
-   takes what is left of it and the region inside the body that can outgrow the
-   box is the one that scrolls. */
-.panel-fill {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-2);
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-/* Where a panel that goes somewhere says so, in words, at the bottom edge. */
-.panel-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--s-3);
-  margin-top: auto;
-  padding: var(--s-3) var(--s-4);
-  border-top: 1px solid var(--line);
 }
 
 /* ---------- What a surface says about itself ----------
@@ -1001,76 +958,6 @@ button.tx:focus-visible {
 .tx[data-dense="true"] > .tx-when { display: none; }
 .tx[data-dense="true"] > .tx-amount { font-size: var(--fs-13); }
 .tx[data-dense="true"] > .tx-sub { display: none; }
-
-/* A RULE. What the app will do, as one sentence a person can check, with a
-   glyph that says which kind of rule it is (a hand for asks, a wall for
-   refusals, a coin for gas, a door for where money may go) and, on the right,
-   the one figure that rule has today, if it has one. */
-.rule {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) auto;
-  column-gap: var(--s-3);
-  align-items: start;
-  padding: var(--s-2) 0;
-  border-top: 1px solid var(--line);
-}
-
-.rule:first-child { border-top: 0; }
-
-.rule > .rule-glyph {
-  width: 16px;
-  height: 16px;
-  margin-top: 2px;
-  color: var(--text-3);
-}
-
-.rule > .rule-glyph svg { display: block; width: 16px; height: 16px; }
-
-.rule > .rule-text {
-  font-size: var(--fs-14);
-  line-height: 1.45;
-  color: var(--text);
-  min-width: 0;
-}
-
-.rule > .rule-text .meta { display: block; margin-top: 1px; }
-
-.rule > .rule-figure {
-  font-family: var(--font-mono);
-  font-size: var(--fs-12);
-  line-height: 1.45;
-  color: var(--text-3);
-  font-feature-settings: "tnum" 1;
-  white-space: nowrap;
-  padding-top: 2px;
-}
-
-.rule > .rule-figure[data-tone="warn"] { color: var(--warn); }
-.rule > .rule-figure[data-tone="down"] { color: var(--down); }
-
-/* The one meter a rule may carry, a 2 px line under its sentence that fills
-   as the day's cap is used. Drawn only while there is a cap, and nothing
-   spent draws a line with no fill. */
-.rule-meter {
-  grid-column: 2 / span 2;
-  height: 2px;
-  margin-top: var(--s-1);
-  border-radius: 1px;
-  background: var(--line);
-  overflow: hidden;
-}
-
-.rule-meter > i {
-  display: block;
-  height: 100%;
-  width: 100%;
-  transform: scaleX(var(--used-scale, 0));
-  transform-origin: left center;
-  background: var(--text-2);
-  transition: transform var(--dur-enter) var(--ease-out);
-}
-
-.rule-meter[data-tone="warn"] > i { background: var(--warn); }
 
 /* THE STATUS LINE. What the assistant is doing right now, as a line rather
    than a sweep: a 6 px phosphor dot that breathes while work is in flight,

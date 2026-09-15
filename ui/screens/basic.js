@@ -3,11 +3,13 @@
    The one job is to answer "is my money OK" and get one safe yes or no out of
    them. No prices, no donut, no chains, no hex, no percentages under an hour.
 
-   The hero is unboxed: the total, then one sentence that says what is happening
-   to the money right now. Under it the rules strip, which is the safety model in
-   one line and the surface policy_show lands on. Everything below the strip is a
-   surface, because a bordered box is the mark of something the assistant can
-   touch, and static text is not given one. */
+   The eye lands on the total first, the rules second, what is held third: the
+   hero is unboxed, the total is the largest quiet thing on the page and the one
+   sentence under it says what is happening to the money right now. Under it the
+   rules strip, which is the safety model in one line and the surface
+   policy_show lands on. Everything below the strip is a surface, because a
+   bordered box is the mark of something the assistant can touch, and static
+   text is not given one. */
 (function () {
   'use strict';
 
@@ -20,42 +22,33 @@
      three ticks in a row do not leave the list lit. */
   var CHANGED_MS = 1200;
 
-  /* The hand on the rules strip: an open palm on a 16 box, 1.5 stroke, the
-     same drawing Pro's Policy card gives the ask rule. */
-  var HAND = 'M4.75 9V4.75a1.25 1.25 0 0 1 2.5 0V8.5M7.25 8.5V3.25a1.25 1.25 0 0 1 2.5 0V8.5'
-    + 'M9.75 8.5V4.25a1.25 1.25 0 0 1 2.5 0V10.5'
-    + 'M4.75 9l-1.3-1.3a1.24 1.24 0 0 0-1.75 1.75L5 12.75A4.25 4.25 0 0 0 8 14h1.25a3 3 0 0 0 3-3v-.5';
-
-  var SVG_NS = 'http://www.w3.org/2000/svg';
+  /* How many receipts the Activity fold shows before "See all". */
+  var FOLD_ROWS = 5;
 
   var refs = {};
   var mounted = false;
-  var allActivity = false;
 
   /* The first total the window saw this session. The frame carries no day
      change, so the one honest comparison is against the moment the person
      opened the window. */
   var firstTotal = null;
 
-  /* One stroked path in the svg namespace, built rather than assigned as
-     markup. Null where there is no namespace to build in, which is the unit
-     harness, and every caller treats null as "no glyph". */
-  function glyph(className, path) {
-    if (typeof document.createElementNS !== 'function') return null;
-    var svg = document.createElementNS(SVG_NS, 'svg');
-    svg.setAttribute('class', className);
-    svg.setAttribute('viewBox', '0 0 16 16');
-    svg.setAttribute('focusable', 'false');
-    svg.setAttribute('aria-hidden', 'true');
-    var line = document.createElementNS(SVG_NS, 'path');
-    line.setAttribute('d', path);
-    line.setAttribute('fill', 'none');
-    line.setAttribute('stroke', 'currentColor');
-    line.setAttribute('stroke-width', '1.5');
-    line.setAttribute('stroke-linecap', 'round');
-    line.setAttribute('stroke-linejoin', 'round');
-    svg.appendChild(line);
-    return svg;
+  /* The icon set arrives with the foundation. Until it is on this branch the
+     call is guarded, and the strip and the folds draw without their icon. */
+  function icon(name, className) {
+    if (!window.PhosphorIcons || typeof window.PhosphorIcons.svg !== 'function') return null;
+    return window.PhosphorIcons.svg(name, className);
+  }
+
+  /* A token mark at a size: the foundation's logo, or the disc it replaces
+     until the merge lands. */
+  function logo(symbol, size) {
+    if (typeof marks.logo === 'function') return marks.logo(symbol, size);
+    return marks.disc(symbol);
+  }
+
+  function colourOf(symbol) {
+    return typeof marks.colour === 'function' ? marks.colour(symbol) : marks.colourFor(symbol);
   }
 
   function boot() {
@@ -67,9 +60,6 @@
     /* The hero sentence is the assistant's state as much as the money's, and the
        phase moves on driver frames the store never sees. */
     window.addEventListener('phosphor:agent-phase', renderState);
-    window.PhosphorReceipts.onChange(function () {
-      if (refs.activity.node.dataset.open === 'true') renderActivity();
-    });
   }
 
   function build(host) {
@@ -80,7 +70,7 @@
        would say the assistant can act on a number. The one page field runs
        behind the column and the total is the largest quiet thing on it. */
     var hero = dom.el('section', 'hero');
-    var total = dom.el('p', 'balance tick');
+    var total = dom.el('p', 'balance mono tick');
     total.dataset.role = 'total';
     /* The change since the window opened, in the direction's colour, and only
        while there is one: a zero is nothing to say, and a number the frame
@@ -113,21 +103,23 @@
     col.appendChild(warning);
 
     /* Your rules, one strip. It teaches the safety model in a sentence and it is
-       where policy_show lands, so it is a surface without being a box. The hand
-       at its left is the same glyph Pro's Policy card gives the ask rule, so
+       where policy_show lands, so it is a surface without being a box. The
+       icon at its left is the one Pro's Policy card gives the ask rule, so
        the sentence reads as a rule rather than a stray line of text. */
     var strip = dom.el('p', 'strip');
     strip.dataset.surface = 'rules';
-    var hand = glyph('strip-glyph', HAND);
-    if (hand) strip.appendChild(hand);
+    var glyph = dom.el('span', 'strip-glyph');
+    var waiting = icon('waiting');
+    if (waiting) glyph.appendChild(waiting);
+    strip.appendChild(glyph);
     var stripText = dom.el('span', 'strip-text');
     strip.appendChild(stripText);
     col.appendChild(strip);
 
-    var hold = panel('What you hold', 'holdings');
-    var holdBody = dom.el('div', 'panel-body-flush scrolls');
+    var hold = card('What you hold', 'holdings');
+    var holdBody = dom.el('div', 'hold-list');
     hold.node.appendChild(holdBody);
-    var smallNote = dom.el('p', 'meta panel-body');
+    var smallNote = dom.el('p', 'meta hold-note');
     smallNote.hidden = true;
     hold.node.appendChild(smallNote);
     col.appendChild(hold.node);
@@ -135,10 +127,23 @@
     var moneyIn = fold('Money in', 'Where to send money', 'moneyin');
     col.appendChild(moneyIn.node);
 
-    var activity = fold('Activity', 'What happened, newest first', 'activity');
+    var activity = fold('Activity', 'Last 24 hours', 'activity');
     col.appendChild(activity.node);
 
     host.appendChild(col);
+
+    /* The five newest receipts of the last day, and "See all" for the rest with
+       the same chips Pro has. The list reads only once the fold opens: a window
+       that never looks at Activity does not read receipts. */
+    var activityList = window.PhosphorReceipts.list(activity.body, {
+      compact: true,
+      chips: false,
+      limit: FOLD_ROWS,
+      window: '24h',
+      kind: 'all',
+      source: 'activity',
+      onMeta: function (meta) { dom.setText(activity.meta, activityWords(meta)); }
+    });
 
     refs = {
       total: total,
@@ -149,64 +154,59 @@
       warnText: warnText,
       strip: strip,
       stripText: stripText,
+      hold: hold,
       holdBody: holdBody,
       smallNote: smallNote,
       moneyIn: moneyIn,
       activity: activity,
-      activityBody: activity.body,
-      holdCut: cuts(holdBody)
+      activityList: activityList
     };
 
     moneyIn.onOpen(function () {
       window.PhosphorMoneyIn.render(moneyIn.body);
     });
+    var read = false;
     activity.onOpen(function () {
-      window.PhosphorReceipts.load();
-      renderActivity();
+      if (read) return;
+      read = true;
+      activityList.load();
     });
   }
 
-  /* The column takes the height of the window, so the list of what is held is
-     what gives when there is more of it than there is room. A list cut by an
-     edge says so: a coin sliced in half by the bottom of a box reads as the end
-     of the list, and this list is the answer to "is my money OK". */
-  function cuts(node) {
-    function paint() {
-      var top = node.scrollTop > 2;
-      var bottom = node.scrollTop + node.clientHeight < node.scrollHeight - 2;
-      dom.setAttr(node, 'data-cut', top && bottom ? 'both' : (top ? 'top' : (bottom ? 'bottom' : null)));
-    }
-    dom.on(node, 'scroll', paint, { passive: true });
-    if (window.ResizeObserver) new window.ResizeObserver(paint).observe(node);
-    paint();
-    return paint;
-  }
-
-  function panel(title, surface) {
-    var node = dom.el('section', 'panel');
+  /* A CARD IS A TITLE, ONE LINE OF META, A HAIRLINE, AND ITS CONTENT: the
+     same head Pro's cards wear, so the two screens are one window read at two
+     distances. */
+  function card(title, surface) {
+    var node = dom.el('section', 'panel card');
     node.dataset.surface = surface;
-    var head = dom.el('div', 'panel-head');
-    head.appendChild(dom.el('h2', 'title-sm', title));
+    var head = dom.el('div', 'card-head');
+    head.appendChild(dom.el('h2', 'card-title', title));
+    var meta = dom.el('p', 'card-meta');
+    meta.hidden = true;
+    head.appendChild(meta);
     node.appendChild(head);
-    return { node: node, head: head };
+    return { node: node, head: head, meta: meta };
   }
 
+  /* A fold is the same card shut: the head is the control, the meta says what
+     is behind it, and the chevron says it opens. */
   function fold(title, note, surface) {
-    var node = dom.el('section', 'fold');
+    var node = dom.el('section', 'fold card');
     node.dataset.surface = surface;
-    var head = dom.el('button', 'fold-head');
+    var head = dom.el('button', 'fold-head card-head');
     head.type = 'button';
     head.setAttribute('aria-expanded', 'false');
-    var left = dom.el('div', 'stack-2');
-    left.appendChild(dom.el('span', 'title-sm', title));
-    left.appendChild(dom.el('span', 'meta', note));
-    head.appendChild(left);
-    /* The caret is drawn, not typed. A glyph in a control reads as an arrow in
-       the label, and the window has none of those. */
+    head.appendChild(dom.el('span', 'card-title', title));
+    var right = dom.el('span', 'fold-head-right');
+    var meta = dom.el('span', 'card-meta', note);
+    right.appendChild(meta);
     var mark = dom.el('span', 'fold-mark');
     mark.setAttribute('aria-hidden', 'true');
-    head.appendChild(mark);
-    var body = dom.el('div', 'fold-body panel-body');
+    var chevron = icon('chevron-down');
+    if (chevron) mark.appendChild(chevron);
+    right.appendChild(mark);
+    head.appendChild(right);
+    var body = dom.el('div', 'fold-body');
     body.hidden = true;
     node.appendChild(head);
     node.appendChild(body);
@@ -229,6 +229,7 @@
     return {
       node: node,
       body: body,
+      meta: meta,
       onOpen: function (fn) { opened.push(fn); }
     };
   }
@@ -249,8 +250,6 @@
     dom.setHidden(refs.warning, !basic.warning);
 
     renderHoldings(basic, state);
-
-    if (refs.activity.node.dataset.open === 'true') renderActivity();
   }
 
   /* The change since the window opened. A total the frame could not settle
@@ -355,6 +354,7 @@
       dom.clear(refs.holdBody);
       delete refs.holdBody.dataset.skeleton;
       refs.holdBody.__keyed = null;
+      dom.setHidden(refs.hold.meta, true);
       refs.holdBody.appendChild(unread
         ? emptyBlock('Could not read what you hold',
           'This is not a wallet with nothing in it. The app will show what is there as soon as the read works.')
@@ -367,21 +367,24 @@
       delete refs.holdBody.dataset.skeleton;
     }
 
+    dom.setText(refs.hold.meta, holdings.length === 1 ? '1 coin' : holdings.length + ' coins');
+    dom.setHidden(refs.hold.meta, false);
+
     dom.reconcile(refs.holdBody, holdings, function (row) {
       return row.name;
     }, function () {
       var node = dom.el('div', 'row');
-      node.appendChild(marks.disc(''));
+      node.appendChild(dom.el('span', 'row-mark'));
       var main = dom.el('div', 'row-main');
-      main.appendChild(dom.el('span', 'body'));
-      var side = dom.el('div', 'row-side stack-2');
+      main.appendChild(dom.el('span', 'row-name'));
+      var side = dom.el('div', 'row-side');
       /* The value line holds the change beside the value, so a number that
          moved says by how much, in the direction's colour, for a moment. */
       var value = dom.el('div', 'row-value');
       value.appendChild(dom.el('span', 'row-delta mono'));
-      value.appendChild(dom.el('span', 'body mono tick'));
+      value.appendChild(dom.el('span', 'row-usd mono tick'));
       side.appendChild(value);
-      side.appendChild(dom.el('span', 'meta mono'));
+      side.appendChild(dom.el('span', 'row-qty mono'));
       node.appendChild(main);
       node.appendChild(side);
       return node;
@@ -390,9 +393,10 @@
       var symbol = symbolOf(row.name);
       if (mark.dataset.symbol !== symbol) {
         mark.dataset.symbol = symbol;
-        marks.paint(mark, symbol);
+        dom.clear(mark);
+        mark.appendChild(logo(symbol, 24));
         /* The row reads the coin's colour too, for the tint a change lands on. */
-        var colour = marks.colourFor(symbol);
+        var colour = colourOf(symbol);
         if (colour) node.style.setProperty('--coin', colour);
         else node.style.removeProperty('--coin');
       }
@@ -401,7 +405,6 @@
       dom.setText(node.children[2].children[1], row.quantityLine);
       markChanged(node, row);
     });
-    refs.holdCut();
   }
 
   /* The bar under the hero. Shares are of what is listed, and one coin makes
@@ -418,7 +421,7 @@
     }, function (seg, row) {
       var share = Math.max(0, Number(row.valueUsd) || 0) / total;
       seg.style.flexGrow = String(share);
-      var colour = marks.colourFor(symbolOf(row.name));
+      var colour = colourOf(symbolOf(row.name));
       if (colour) seg.style.setProperty('--coin', colour);
       else seg.style.removeProperty('--coin');
       seg.title = row.name + ', ' + dom.pct(share, 0);
@@ -482,23 +485,14 @@
     }
   }
 
-  /* Five rows, newest first, and a way to the rest that is a real action rather
-     than a word that goes nowhere. */
-  function renderActivity() {
-    var host = refs.activityBody;
-    var all = window.PhosphorReceipts.get();
-    if (refs.seeAll && refs.seeAll.parentNode) refs.seeAll.parentNode.removeChild(refs.seeAll);
-    window.PhosphorReceipts.render(host, allActivity ? {} : { limit: 5 });
-    if (allActivity || all.length <= 5) return;
-    var more = dom.el('button', 'btn btn-quiet see-all');
-    more.type = 'button';
-    more.appendChild(dom.el('span', 'btn-label', 'See all'));
-    dom.on(more, 'click', function () {
-      allActivity = true;
-      renderActivity();
-    });
-    refs.seeAll = more;
-    host.appendChild(more);
+  /* The fold's one line of meta: the window, then what it cost, the way the
+     Pro card says it. Before the fold has read anything it names the window. */
+  function activityWords(meta) {
+    var words = meta.words.charAt(0).toUpperCase() + meta.words.slice(1);
+    if (meta.state === 'error') return words + ', unread';
+    if (meta.state === 'loading' && !meta.count) return words;
+    if (!meta.total) return words + ', nothing yet';
+    return words + ', ' + (meta.feesUsd > 0 ? dom.fee(meta.feesUsd) + ' in fees' : 'no fees');
   }
 
   function emptyBlock(title, note) {

@@ -1,0 +1,341 @@
+/* Basic: one 640 px column, read top to bottom: the total, the rules, what is
+   held, then two folds. The column is a deck while the folds are shut (the
+   holdings list gives when there is more of it than room) and a page that
+   scrolls once a fold opens, because an open fold has no natural height.
+   The cards wear the same head as Pro's (pro.css .card); this file adds what
+   only this column has. */
+
+/* ---------- the column ---------- */
+
+#view-basic .basic-col {
+  gap: var(--s-3);
+  padding: var(--s-6) var(--s-5) var(--s-5);
+}
+
+/* The holdings card gives, and never takes. It may shrink, so a wallet of
+   twenty coins scrolls inside the card rather than pushing the two folds off
+   the screen; it may not grow, because a wallet of four coins stretched to
+   fill the window is a card with a hole in it. */
+#view-basic .basic-col > .card[data-surface="holdings"] {
+  flex: 0 1 auto;
+  min-height: 148px;
+}
+
+/* An open fold turns the deck into a page: the column takes its content
+   height, the holdings list stops scrolling inside itself, and the world
+   scrolls instead. */
+#view-basic .basic-col:has(.fold[data-open="true"]) {
+  flex: 0 0 auto;
+  padding-bottom: var(--s-8);
+}
+
+#view-basic .basic-col:has(.fold[data-open="true"]) > .card[data-surface="holdings"] {
+  flex: 0 0 auto;
+}
+
+#view-basic .basic-col:has(.fold[data-open="true"]) .hold-list {
+  overflow-y: visible;
+}
+
+/* ---------- the hero ---------- */
+
+/* The hero is unboxed: the total sits on the ground, and the one sentence under
+   it is the state of the money. A border here would say the assistant can act
+   on a number, which is the one thing this part of the column is not. */
+.hero {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-3) 0 var(--s-2);
+}
+
+/* The total: the largest quiet thing on the page, in the mono face so it lines
+   up with every other number the person will read under it. The slot keeps
+   its line while there is no number yet, so the hero does not jump when the
+   first total lands. */
+.hero .balance {
+  font-family: var(--font-mono);
+  font-size: var(--fs-40, 40px);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+  min-height: 1.05em;
+  color: var(--text);
+}
+
+/* The change since the window opened, between the total and the sentence:
+   mono at 13, in the direction's colour, and absent when there is none. */
+.hero-delta {
+  font-size: var(--fs-13);
+  line-height: 1.4;
+  color: var(--text-2);
+}
+
+.hero-delta[data-dir="up"] { color: var(--up); }
+.hero-delta[data-dir="down"] { color: var(--down); }
+
+/* One sentence under the total, and it is the state of the money rather than a
+   caption on it. */
+.hero-line {
+  font-size: var(--fs-14);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+/* What the money is made of: a 6 px pill the width of the column, one segment
+   per coin by share, each in the coin's own brand colour. It is the one
+   coloured thing on the page. */
+.alloc {
+  display: flex;
+  gap: 2px;
+  height: 6px;
+  flex: 0 0 auto;
+  margin-top: calc(-1 * var(--s-1));
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+
+.alloc-seg {
+  flex: 1 1 0;
+  min-width: 4px;
+  background: var(--coin, var(--text-3));
+}
+
+/* ---------- the rules strip ---------- */
+
+/* One sentence about the safety model. Hairlines rather than a box, because a
+   box in this window means the assistant can act on the thing inside it, and
+   these are the rules it acts under. It is still a surface: the glow marks it
+   when policy_show lands. The icon at its left is the ask rule's, from the
+   Policy card, so the line reads as a rule. */
+.strip {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+  padding: var(--s-3) 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-14);
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.strip-glyph {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  color: var(--text-3);
+  display: grid;
+  place-items: center;
+}
+
+.strip-glyph .icon { width: 20px; height: 20px; }
+
+.strip-text { min-width: 0; }
+
+/* ---------- what you hold ---------- */
+
+/* The list under the card head. It scrolls inside the card while the deck is a
+   deck; the hairline under the head is what a row scrolls under. */
+.hold-list {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  min-height: 0;
+  padding: 0 var(--card-x);
+}
+
+.hold-note {
+  padding: var(--s-2) var(--card-x) var(--s-3);
+  color: var(--text-3);
+}
+
+/* Basic's rows are 52 tall: the logo, the plain name, and at the right the
+   value over the amount, no slack in either, because the list is read as one
+   column of numbers rather than as ten cards. */
+.hold-list .row {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-height: 52px;
+  padding: var(--s-2) 0;
+  border-top: 1px solid var(--line);
+  min-width: 0;
+}
+
+.hold-list .row:first-child { border-top: 0; }
+
+.row-mark,
+.row-mark > * {
+  display: block;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+}
+
+.hold-list .row-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.row-name {
+  display: block;
+  font-size: var(--fs-14);
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hold-list .row-side {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  text-align: right;
+}
+
+/* The value line: the change sits to the left of the value, in the direction's
+   colour, and is only there while the row is marked changed. */
+.row-value {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: var(--s-2);
+}
+
+.row-usd {
+  font-size: var(--fs-15);
+  line-height: 1.3;
+  color: var(--text);
+}
+
+.row-qty {
+  font-size: var(--fs-12);
+  line-height: 1.4;
+  color: var(--text-3);
+}
+
+.row-delta {
+  font-size: var(--fs-12);
+  line-height: 1.2;
+  opacity: 0;
+  transition: opacity 600ms var(--ease-out);
+}
+
+.row-delta[data-dir="up"] { color: var(--up); }
+.row-delta[data-dir="down"] { color: var(--down); }
+
+/* The tint a change lands on is a layer under the row's content that fades on
+   opacity, never a background colour that repaints the row: in fast, out
+   slow, once. The row isolates so the layer can sit under its own text
+   without falling behind the card. The shared afterglow on
+   .row[data-changed] is overridden here. */
+.hold-list .row::before {
+  content: "";
+  position: absolute;
+  inset: 0 calc(-1 * var(--s-2));
+  z-index: -1;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--coin, var(--beam)) 8%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 600ms var(--ease-out);
+}
+
+.hold-list .row[data-changed="true"] {
+  background: transparent;
+  transition: none;
+}
+
+.hold-list .row[data-changed="true"]::before {
+  opacity: 1;
+  transition: opacity 120ms var(--ease-out);
+}
+
+.hold-list .row[data-changed="true"] .row-delta {
+  opacity: 1;
+  transition: opacity 120ms var(--ease-out);
+}
+
+/* An empty card in a 640 column is one sentence, and it does not need a
+   card's worth of air around it to say so. */
+.hold-list .empty {
+  padding: var(--s-5) var(--s-4);
+}
+
+/* ---------- the folds ---------- */
+
+/* A fold is a card shut: the head is the control, with the same title and meta
+   as an open card, and the chevron says it opens. */
+.fold {
+  overflow: hidden;
+}
+
+.fold-head {
+  width: 100%;
+  border-bottom: 0;
+  cursor: pointer;
+  transition: background-color var(--dur-press) var(--ease-out);
+}
+
+.fold-head-right {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-width: 0;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .fold-head:hover { background: var(--bg-2); }
+}
+
+.fold-head:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: -2px;
+}
+
+.fold-mark {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+  transition: transform var(--dur-enter) var(--ease-out);
+}
+
+.fold-mark .icon { width: 16px; height: 16px; }
+
+.fold[data-open="true"] .fold-mark {
+  transform: rotate(180deg);
+}
+
+.fold[data-open="true"] > .fold-head {
+  border-bottom: 1px solid var(--line);
+}
+
+.fold-body {
+  padding: var(--s-3) var(--card-x) var(--s-4);
+}
+
+/* The Activity fold: the rows sit flush under the head, the filters (once
+   "See all" opens them) above the rows on the card's ground. */
+.fold[data-surface="activity"] > .fold-body {
+  display: flex;
+  flex-direction: column;
+  padding-top: 0;
+}
+
+.fold[data-surface="activity"] .activity-filters {
+  padding: var(--s-3) 0;
+  border-bottom: 1px solid var(--line);
+}

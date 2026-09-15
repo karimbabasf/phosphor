@@ -100,6 +100,16 @@ function makeNode(tagName: string): Any {
   return node;
 }
 
+/* The card wearing a surface id, wherever the deck put it. */
+function bySurface(node: Any, surface: string): Any | undefined {
+  if (node.dataset?.surface === surface) return node;
+  for (const child of node.childNodes) {
+    const found = bySurface(child, surface);
+    if (found) return found;
+  }
+  return undefined;
+}
+
 function withClass(node: Any, name: string, out: Any[] = []): Any[] {
   if (String(node.className).split(' ').includes(name)) out.push(node);
   for (const child of node.childNodes) withClass(child, name, out);
@@ -139,13 +149,10 @@ function boot(): { host: Any; render: (state: Any) => void } {
       get: () => current,
       loaded: () => false,
     },
-    PhosphorReceipts: {
-      onChange: () => {},
-      load: () => {},
-      render: () => {},
-      get: () => [],
-      feeTotal: () => 0,
-    },
+    PhosphorReceipts: { list: () => ({ load: () => Promise.resolve([]), setWindow: () => {}, setKind: () => {}, expand: () => {}, get: () => [] }) },
+    // The icon set (ui/design/icons.js): one stand-in svg per name, so every rule can be
+    // checked for the icon it asked for.
+    PhosphorIcons: { svg: (name: string) => { const n = makeNode('svg'); n.className = 'icon'; n.dataset.icon = name; return n; } },
     PhosphorShell: { setView: () => {} },
   };
   window.window = window;
@@ -179,7 +186,7 @@ const POLICY = {
 };
 
 function panelOf(host: Any): Any {
-  const panel = host.childNodes[0].childNodes.find((n: Any) => n.dataset.surface === 'rules');
+  const panel = bySurface(host, 'rules');
   assert.ok(panel, 'the policy panel keeps the rules surface');
   return panel;
 }
@@ -188,7 +195,7 @@ test('the card is called Policy and keeps the surface the beam aims at', () => {
   const { host, render } = boot();
   render({ policy: POLICY, sentences: SENTENCES, dailyLimit: { capUsd: 25_000, spentUsd: 1150.2, resetsAt: null } });
   const panel = panelOf(host);
-  const title = withClass(panel, 'title-sm')[0];
+  const title = withClass(panel, 'card-title')[0];
   assert.equal(title.textContent, 'Policy');
   assert.equal(panel.dataset.surface, 'rules');
 });
@@ -211,12 +218,21 @@ test('five rules, in the app voice, in the order a person needs them', () => {
     'Keeps gas back on each chain.',
     'Pays only 2 wallets of yours, 1Click and NEAR Intents.',
   ]);
-  // The gas amounts, joined by commas under the sentence, in the chain names the window uses.
-  assert.equal(withClass(rules[3], 'meta')[0].textContent, 'Base $1, Arbitrum $1, Solana $0.50');
-  // Every rule carries its glyph.
-  for (const r of rules) assert.equal(withClass(r, 'rule-glyph')[0].childNodes.length, 1);
+  // The gas floors, one chip per chain under the sentence, each wearing the chain's mark.
+  assert.deepEqual(withClass(rules[3], 'gas-chip-text').map((n) => n.textContent), ['Base $1', 'Arbitrum $1', 'Solana $0.50']);
+  assert.equal(withClass(rules[3], 'gas-chip-mark').length, 3);
+  // Every rule carries its icon, from the set, by what the rule does.
+  assert.deepEqual(
+    rules.map((r) => withClass(r, 'rule-glyph')[0].childNodes[0].dataset.icon),
+    ['waiting', 'refused', 'refused', 'lock', 'send'],
+  );
+  // The rules sit in four groups with a heading each, in the order a person needs them.
+  const groups = withClass(panel, 'rule-group');
+  assert.deepEqual(groups.map((g) => g.dataset.group), ['ask', 'refuse', 'keep', 'pay']);
+  assert.deepEqual(groups.map((g) => textOf(withClass(g, 'rule-group-title')[0])), ['Asks first', 'Refuses', 'Keeps', 'Pays only']);
+  assert.deepEqual(groups.map((g) => withClass(g, 'rule').length), [1, 2, 1, 1]);
   // The sub line counts what is drawn and says what was spent.
-  assert.equal(withClass(panel, 'panel-summary')[0].textContent, '5 rules, $1,150.20 spent today');
+  assert.equal(withClass(panel, 'card-meta')[0].textContent, '5 rules, $1,150.20 spent today');
   // The foot is one line.
   const foot = withClass(panel, 'meta').find((n) => /Ask your assistant/.test(n.textContent))!;
   assert.equal(foot.textContent, 'Ask your assistant to change a rule. Every change waits for your click.');
@@ -241,7 +257,7 @@ test('nothing spent is said in words, and the meter draws no fill', () => {
   const { host, render } = boot();
   render({ policy: POLICY, sentences: SENTENCES, dailyLimit: { capUsd: 25_000, spentUsd: 0, resetsAt: null } });
   const panel = panelOf(host);
-  assert.equal(withClass(panel, 'panel-summary')[0].textContent, '5 rules, nothing spent today');
+  assert.equal(withClass(panel, 'card-meta')[0].textContent, '5 rules, nothing spent today');
   const meter = withClass(panel, 'rule-meter')[0];
   assert.equal(meter.style.getPropertyValue('--used'), '0.00%');
   assert.equal(meter.getAttribute('data-spent'), null);
@@ -258,7 +274,7 @@ test('a policy with no daily cap draws no daily rule, no meter and no zero of ze
   assert.deepEqual(rules.map((r) => r.dataset.rule), ['ask', 'refuse', 'gas', 'destinations']);
   assert.equal(withClass(panel, 'rule-meter').length, 0);
   assert.equal(withClass(panel, 'rule-figure').length, 0);
-  assert.equal(withClass(panel, 'panel-summary')[0].textContent, '4 rules');
+  assert.equal(withClass(panel, 'card-meta')[0].textContent, '4 rules');
   assert.ok(!/\$0 of \$0/.test(textOf(panel)));
 });
 
@@ -268,7 +284,7 @@ test('a daily sentence with no counter behind it is a rule without a gauge', () 
   const panel = panelOf(host);
   assert.equal(withClass(panel, 'rule').length, 5);
   assert.equal(withClass(panel, 'rule-meter').length, 0);
-  assert.equal(withClass(panel, 'panel-summary')[0].textContent, '5 rules');
+  assert.equal(withClass(panel, 'card-meta')[0].textContent, '5 rules');
 });
 
 test('rules that are not set are not drawn, and the count follows', () => {
@@ -281,7 +297,7 @@ test('rules that are not set are not drawn, and the count follows', () => {
   const panel = panelOf(host);
   const rules = withClass(panel, 'rule');
   assert.deepEqual(rules.map((r) => r.dataset.rule), ['ask', 'refuse']);
-  assert.equal(withClass(panel, 'panel-summary')[0].textContent, '2 rules');
+  assert.equal(withClass(panel, 'card-meta')[0].textContent, '2 rules');
   assert.equal(withClass(panel, 'allowlist').length, 0);
 });
 
@@ -322,7 +338,7 @@ test('an allowlist of venues alone is a static rule: nothing to open, no caret',
   assert.equal(withClass(panel, 'allowlist').length, 0);
 });
 
-test('a sentence the card does not know the shape of is kept whole, and the kill switch leads', () => {
+test('a sentence the card does not know the shape of is kept whole under Refuses, and the kill switch leads', () => {
   const { host, render } = boot();
   render({
     policy: POLICY,
@@ -333,12 +349,14 @@ test('a sentence the card does not know the shape of is kept whole, and the kill
   const rules = withClass(panel, 'rule');
   assert.deepEqual(
     rules.map((r) => r.dataset.rule),
-    ['kill', 'ask', 'refuse', 'daily', 'gas', 'other', 'destinations'],
+    ['kill', 'ask', 'refuse', 'daily', 'other', 'gas', 'destinations'],
   );
   assert.equal(withClass(rules[0], 'rule-line')[0].textContent, 'Refuses everything while the kill switch is on.');
   assert.equal(rules[0].dataset.tone, 'down');
-  assert.equal(withClass(rules[5], 'rule-line')[0].textContent, 'Never move funds into: Tether.');
-  assert.equal(withClass(panel, 'panel-summary')[0].textContent, '7 rules, nothing spent today');
+  assert.equal(rules[0].parentNode.className, 'rules', 'the kill switch sits above every group');
+  assert.equal(withClass(rules[4], 'rule-line')[0].textContent, 'Never move funds into: Tether.');
+  assert.equal(rules[4].parentNode.parentNode.dataset.group, 'refuse', 'a sentence of unknown shape is a refusal');
+  assert.equal(withClass(panel, 'card-meta')[0].textContent, '7 rules, nothing spent today');
 });
 
 test('no policy at all is said in words, not as an empty box', () => {
@@ -347,5 +365,34 @@ test('no policy at all is said in words, not as an empty box', () => {
   const panel = panelOf(host);
   assert.equal(withClass(panel, 'rule').length, 0);
   assert.equal(withClass(panel, 'empty-title')[0].textContent, 'No rules set');
-  assert.equal(withClass(panel, 'panel-summary')[0].textContent, '0 rules');
+  assert.equal(withClass(panel, 'card-meta')[0].textContent, '0 rules');
+});
+
+/* Twenty rules must still read. A group with more than five rows folds to its heading and a
+   count, opens on a click, and stays open across the next frame. */
+test('a group over five rows folds to its heading and a count, and opens on a click', () => {
+  const { host, render } = boot();
+  const extra = ['Never move funds into: Tether.', 'Never move funds into: Maker.', 'Never move funds into: Paxos.',
+    'Never move funds into: Ethena.', 'Never move funds into: Sky.'];
+  const frame = { policy: POLICY, sentences: SENTENCES.concat(extra), dailyLimit: null };
+  render(frame);
+  const panel = panelOf(host);
+  const refuses = withClass(panel, 'rule-group').find((g) => g.dataset.group === 'refuse')!;
+  const head = withClass(refuses, 'rule-group-title')[0];
+  assert.equal(head.tagName, 'button', 'over five rows the heading is the control');
+  assert.equal(withClass(head, 'rule-group-count')[0].textContent, '7');
+  assert.equal(head.getAttribute('aria-expanded'), 'false');
+  const rows = withClass(refuses, 'rule-group-rows')[0];
+  assert.equal(rows.hidden, true, 'the rows start folded');
+  assert.equal(withClass(refuses, 'rule').length, 7, 'folded rows are still drawn, for the count');
+  head.click();
+  assert.equal(rows.hidden, false);
+  assert.equal(head.getAttribute('aria-expanded'), 'true');
+  render(frame);
+  const again = withClass(panelOf(host), 'rule-group').find((g) => g.dataset.group === 'refuse')!;
+  assert.equal(withClass(again, 'rule-group-rows')[0].hidden, false, 'the choice survives a frame');
+  // Under five rows the heading is static.
+  const asks = withClass(panelOf(host), 'rule-group').find((g) => g.dataset.group === 'ask')!;
+  assert.equal(withClass(asks, 'rule-group-title')[0].tagName, 'h3');
+  assert.equal(withClass(panelOf(host), 'card-meta')[0].textContent, '10 rules');
 });
