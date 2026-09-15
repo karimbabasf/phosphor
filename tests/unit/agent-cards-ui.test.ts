@@ -28,7 +28,7 @@ function make(tag: string): Any {
     tag,
     className: '',
     children: [] as Any[],
-    parentNode: null as Any,
+    parentNode: null as unknown as Any,
     hidden: false,
     disabled: false,
     rows: 1,
