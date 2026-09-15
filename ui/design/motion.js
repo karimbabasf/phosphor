@@ -7,6 +7,9 @@
      onReducedChange(fn)         -> unsubscribe
      fitCanvas(canvas, dprCap)   -> { w, h, dpr, changed }
      once(fn)                    -> schedule one frame of non-canvas work
+     spring()                    -> a CSS easing string, cached: motion.dev's
+                                    spring as linear(), or the ease-out curve
+                                    when the vendored file is not there
 
    handle
      start()       run the draw loop (subject to visibility)
@@ -236,6 +239,65 @@
     };
   }
 
+  /* THE SPRING. motion.dev (ui/vendor/motion-13.3.0.js, window.Motion) turns
+     spring(visualDuration, bounce) into a CSS transition string such as
+     "750ms linear(0, 0.064, 0.1977, ...)": a real spring sampled into the
+     linear() easing that stylesheets and the Web Animations API both take.
+     It is sampled once, here, and split in two: the easing is what spring()
+     returns (dom.js setNumber hands it to animate()), and both halves land on
+     the root as --dur-spring and --ease-spring so plain CSS writes
+     `transition: transform var(--dur-spring) var(--ease-spring)` and gets the
+     physics with no script per element.
+
+     No bounce: the window's motion is crisp rather than playful, and 0.4 s of
+     visual duration settles a 20 px move in the time the eye gives it.
+
+     Without the vendored file (the unit harness has no window at all, and a
+     page that failed to load it still has to move) the easing is the strong
+     ease-out the rest of the window uses and the duration is its number
+     duration, so nothing that reads either has to know which it got. */
+  var SPRING_EASE_FALLBACK = 'cubic-bezier(0.23, 1, 0.32, 1)';
+  var SPRING_DUR_FALLBACK = '300ms';
+  var springEase = '';
+  var springDur = '';
+
+  function spring() {
+    if (springEase) return springEase;
+    var Motion = window.Motion;
+    if (Motion && typeof Motion.spring === 'function') {
+      try {
+        var text = String(Motion.spring(0.4, 0));
+        var parts = /^\s*([0-9.]+m?s)\s+(linear\(.*\))\s*$/.exec(text);
+        if (parts) {
+          springDur = parts[1];
+          springEase = parts[2];
+        }
+      } catch (err) {
+        report(err);
+      }
+    }
+    if (!springEase) {
+      springEase = SPRING_EASE_FALLBACK;
+      springDur = SPRING_DUR_FALLBACK;
+    }
+    return springEase;
+  }
+
+  function springDuration() {
+    spring();
+    return springDur;
+  }
+
+  /* Written at boot, once, on the root: the one place the stylesheet reads
+     the spring from. Guarded, because the file also runs where there is no
+     document to write to. */
+  (function seedSpringTokens() {
+    var root = typeof document !== 'undefined' && document.documentElement;
+    if (!root || !root.style || typeof root.style.setProperty !== 'function') return;
+    root.style.setProperty('--ease-spring', spring());
+    root.style.setProperty('--dur-spring', springDuration());
+  })();
+
   if (motionQuery.addEventListener) {
     motionQuery.addEventListener('change', function () {
       for (var i = 0; i < handles.length; i += 1) handles[i].due = true;
@@ -262,6 +324,8 @@
     reduced: reduced,
     onReducedChange: onReducedChange,
     fitCanvas: fitCanvas,
+    spring: spring,
+    springDuration: springDuration,
     handles: function () { return handles.slice(); }
   };
 })();
