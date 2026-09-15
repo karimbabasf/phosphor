@@ -113,11 +113,12 @@ asset, amount, venue), never from agent text, so the system dialog says what the
 
 **The shell asks, the page never can.** The control window is a remote loopback page with no
 Tauri IPC bridge, and that stays. The shell reaches the enclave for the backend by long-polling
-`GET /api/vault/pending` with the window token and answering on `POST /api/vault/answer`. Both
-routes require the token, both check the boot nonce in the response, and the data key rides
-inside the answer encrypted under a fourth per-boot secret handed down the backend's stdin (the
-transport key), so a loopback capture shows nothing. The page can only ever move a proposal
-into the state that makes the backend ask.
+`POST /api/vault/pending` and answering on `POST /api/vault/answer`. Both routes take a relay
+secret (line 5 of the backend's stdin handshake) that the page never receives, so a compromised
+page cannot stand where the shell stands; both check the boot nonce in the response; and the
+data key rides inside the answer encrypted under a fourth per-boot secret (the transport key),
+so a loopback capture shows nothing. The page can only ever move a proposal into the state that
+makes the backend ask.
 
 ## 4. Onboarding
 
