@@ -1424,13 +1424,14 @@ function drawLevels(ctx, L) {
     var ring = chartSpotOn('level', level.id);
     if (y < top || y > bottom) {
       // Off the top or the bottom of what is on screen. The line cannot be drawn where it
-      // belongs, so its label is pinned to the edge it went off, with an arrow saying which
-      // way, and it joins the column like every other label.
+      // belongs, so its label is pinned to the edge it went off, with a drawn arrow saying
+      // which way (labels.js labelGlyph), and it joins the column like every other label.
       chartLabel({
         y: y < top ? top + 6 : bottom - 6,
-        text: (y < top ? '↑ ' : '↓ ') + level.label + ' ' + priceText(level.price, L.decimals),
-        tone: tone,
-        alpha: 0.6,
+        parts: [
+          { glyph: y < top ? 'up' : 'down', tone: tone, alpha: 0.6 },
+          { text: level.label + ' ' + priceText(level.price, L.decimals), tone: tone, alpha: 0.6 }
+        ],
         ring: ring
       });
       continue;
@@ -1793,7 +1794,7 @@ function legendItem(L, indicator, index, y) {
     if (value === null || value === undefined || !isFinite(value)) continue;
     parts.push({ text: priceText(value, L.decimals), tone: 'text2', alpha: 0.9 });
   }
-  parts.push({ text: '×', tone: 'text2', alpha: 0.7 });
+  parts.push({ glyph: 'close', tone: 'text2', alpha: 0.7 });
   return { y: y, parts: parts, remove: indicator.id, ring: chartSpotOn('indicator', indicator.id), legend: true };
 }
 
@@ -1851,8 +1852,8 @@ function drawIndicatorLine(ctx, L, indicator, x, y, index) {
     ctx.fillText(text, cursor, y);
     cursor += ctx.measureText(text).width + 7;
   }
-  ctx.fillStyle = text2(0.7);
-  ctx.fillText('×', cursor, y);
+  // The cross is drawn, not typed (labels.js labelGlyph), inside the same hit box as before.
+  labelGlyph(ctx, 'close', cursor, y, text2(0.7));
   CHART_HITS.push({ x: cursor - 4, y: y - 7, w: 14, h: 14, remove: indicator.id });
   return y + 13;
 }

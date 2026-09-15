@@ -104,3 +104,38 @@ test('a line in more than one ink is one item with parts', () => {
   s.labelDraw(ctx, placed, (tone: string) => tone, null);
   assert.deepEqual(calls, ['hi:BTC-USD', 'text2:1h']);
 });
+
+test('a part can be a drawn shape: the cross is a 1.5 px stroke, an arrow a filled triangle, no glyph typed', () => {
+  const s = load();
+  const calls: string[] = [];
+  const ctx = {
+    fillStyle: '',
+    strokeStyle: '',
+    lineWidth: 1,
+    measureText: (t: string) => ({ width: t.length * 6 }),
+    fillRect: () => {},
+    fillText: (t: string, x: number) => calls.push(`text ${ctx.fillStyle} ${t} @${x}`),
+    strokeRect: () => {},
+    beginPath: () => calls.push('path'),
+    moveTo: () => {},
+    lineTo: () => {},
+    closePath: () => {},
+    stroke: () => calls.push(`stroke ${ctx.strokeStyle} w${ctx.lineWidth}`),
+    fill: () => calls.push(`fill ${ctx.fillStyle}`),
+  };
+  const inkOf = (tone: string, alpha: number) => `${tone}@${alpha}`;
+  const placed = s.labelLayout([
+    { y: 16, parts: [{ glyph: 'up', tone: 'ink', alpha: 0.6 }, { text: 'Entry 63,200', tone: 'ink', alpha: 0.6 }] },
+    { y: 40, parts: [{ text: 'EMA 20', tone: 'text' }, { glyph: 'close', tone: 'text2', alpha: 0.7 }], remove: 'ema' },
+  ], 0, 400).placed;
+  const boxes = s.labelDraw(ctx, placed, inkOf, null);
+  assert.deepEqual(calls, [
+    'path', 'fill ink@0.6', 'text ink@0.6 Entry 63,200 @19',
+    'text text@0.9 EMA 20 @5', 'path', 'stroke text2@0.7 w1.5',
+  ]);
+  assert.equal(ctx.lineWidth, 1, 'the cross left its stroke width on the context');
+  // A glyph advances eight pixels, so the box (and the hit at its tail) still covers it.
+  assert.equal(boxes[0].w, 8 + 6 + 'Entry 63,200'.length * 6 + 6);
+  assert.equal(boxes[1].w, 'EMA 20'.length * 6 + 6 + 8 + 6);
+  assert.ok(!calls.some((c) => /[×↑↓]/.test(c)), 'a glyph was typed rather than drawn');
+});

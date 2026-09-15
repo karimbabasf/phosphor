@@ -60,11 +60,13 @@ function tradeLine(ctx, L, spec) {
   var bottom = L.priceTop + L.priceHeight;
   var text = spec.label + '  ' + priceText(spec.price, L.decimals);
   if (y < top || y > bottom) {
+    // Pinned to the edge it went off, behind a drawn arrow (labels.js labelGlyph).
     chartLabel({
       y: y < top ? top + 6 : bottom - 6,
-      text: (y < top ? '↑ ' : '↓ ') + text,
-      tone: spec.tone,
-      alpha: 0.6,
+      parts: [
+        { glyph: y < top ? 'up' : 'down', tone: spec.tone, alpha: 0.6 },
+        { text: text, tone: spec.tone, alpha: 0.6 }
+      ],
       ring: spec.ring === true
     });
     return;
@@ -160,6 +162,22 @@ function drawTradeFills(ctx, L, fills) {
   }
 }
 
+/* The side mark on an order tag: a filled triangle five pixels tall, its point on the side
+   the order takes, centred on the middle of the text beside it, then a hair of air. */
+var ORDER_GLYPH_W = 9;
+
+function orderGlyph(ctx, buy, x, baseline, ink) {
+  var cy = baseline - 4;
+  var dir = buy ? 1 : -1;
+  ctx.fillStyle = ink;
+  ctx.beginPath();
+  ctx.moveTo(x + 3 + dir * 3, cy);
+  ctx.lineTo(x + 3 - dir * 2, cy - 2.5);
+  ctx.lineTo(x + 3 - dir * 2, cy + 2.5);
+  ctx.closePath();
+  ctx.fill();
+}
+
 /* Resting orders sit at the right edge as ticks rather than as full-width lines. A working
    order is a smaller fact than a position, and drawing nine of them across the pane buries the
    candles under a ladder. The tick is at the price, the size is beside it. */
@@ -180,11 +198,15 @@ function drawTradeOrders(ctx, L, orders) {
     ctx.lineTo(L.plotWidth, hair(y));
     ctx.stroke();
     ctx.setLineDash([]);
+    // The side as a drawn triangle ahead of the words: pointing right for a buy, left for a
+    // sell, the same ink as the words. Everything sits to the left of the dotted line's start.
+    var tag = tradeUsd(o.notionalUsd) + (o.reduceOnly ? ' reduce' : '');
+    var width = ORDER_GLYPH_W + ctx.measureText(tag).width;
+    var tagX = L.plotWidth * 0.72 - width - 4;
+    orderGlyph(ctx, buy, tagX, y + 3, chartInk(tone, 0.75));
     ctx.fillStyle = chartInk(tone, 0.75);
-    var tag = (buy ? '▸ ' : '◂ ') + tradeUsd(o.notionalUsd) + (o.reduceOnly ? ' reduce' : '');
-    var tagX = L.plotWidth * 0.72 - ctx.measureText(tag).width - 4;
-    ctx.fillText(tag, tagX, y + 3);
-    drawSpotRing(ctx, tagX, y + 3, ctx.measureText(tag).width, chartSpotOn('order', String(o.oid)));
+    ctx.fillText(tag, tagX + ORDER_GLYPH_W, y + 3);
+    drawSpotRing(ctx, tagX, y + 3, width, chartSpotOn('order', String(o.oid)));
   }
 }
 
