@@ -16,6 +16,7 @@ import { ALWAYS_CLICK_TOOLS, handshakeInstructions } from './persona.ts';
 import { THEME_SLOTS, SLOT_MEANING, COLOURWAYS, COLOURWAY_LABEL } from './view/theme.ts';
 import { readTimeout, venueWriteTimeout } from './net.ts';
 import { contentFor } from './mcp-content.ts';
+import { classifyProxyError, UNREADABLE_REPLY } from './mcp-errors.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -35,7 +36,6 @@ function resolvePort(): number {
 }
 
 const BASE_URL = `http://127.0.0.1:${resolvePort()}`;
-const NOT_RUNNING = 'The control app is not running. Start it with: npm run app';
 
 // Every post to the app carries these two headers, and the app refuses a request without them.
 //
@@ -104,8 +104,8 @@ async function proxy(body: Record<string, unknown>) {
       body: JSON.stringify({ ...body, session: SESSION, client: CLIENT, label: LABEL, parent: PARENT, secret: SEAT }),
       signal: venueWriteTimeout(),
     });
-  } catch {
-    return textResult(NOT_RUNNING);
+  } catch (err) {
+    return textResult(classifyProxyError(err));
   }
   try {
     const json: unknown = await res.json();
@@ -132,7 +132,9 @@ async function proxy(body: Record<string, unknown>) {
     // had to learn to say it.
     return contentFor(json, res.headers.get('x-phosphor-screen'));
   } catch {
-    return textResult(NOT_RUNNING);
+    // The app answered, so something happened; the body just would not parse. Never
+    // NOT_RUNNING, which would invite a retry of a call that may already have moved money.
+    return textResult(UNREADABLE_REPLY);
   }
 }
 
@@ -150,7 +152,16 @@ function quitReplaced(reason: string): never {
   process.exit(0);
 }
 
-async function sendHello(): Promise<void> {
+// The hello in flight, if any. The bye waits for it, because a bye that overtakes its own hello
+// frees nothing and the hello then seats a session that has already gone.
+let announcing: Promise<void> = Promise.resolve();
+
+function sendHello(): Promise<void> {
+  announcing = announce();
+  return announcing;
+}
+
+async function announce(): Promise<void> {
   try {
     const res = await fetch(`${BASE_URL}/api/mcp`, {
       method: 'POST',
@@ -186,13 +197,26 @@ async function sendHello(): Promise<void> {
 // The goodbye. A killed process cannot send one and the app's TTL covers that case, but
 // every ordinary exit CAN, and this is what makes the seat free itself and the light go out
 // the instant an agent is closed instead of one TTL later.
-let leaving = false;
+//
+// ONE PROMISE, SHARED BY EVERY TRIGGER. Closing the client fires stdin 'end', stdin 'close'
+// and later SIGTERM within milliseconds of each other, and each one exits once the bye is
+// done. A boolean guard here let the second trigger see "already leaving", count that as
+// done, and exit the process before the first trigger's request had left the socket. The seat
+// then stayed held for a TTL and the next session to arrive was refused a full roster. It only
+// showed while the hello was still in flight, because an answered hello leaves a pooled socket
+// the bye can write to in the same tick.
+let goodbye: Promise<void> | null = null;
 
-async function sendBye(): Promise<void> {
-  if (leaving) return;
-  leaving = true;
+function sendBye(): Promise<void> {
+  if (goodbye === null) goodbye = farewell();
+  return goodbye;
+}
+
+async function farewell(): Promise<void> {
+  // The hello first, so the bye lands after the seat it frees. Capped, because a shutdown must
+  // not hang on an app that is already gone: the SDK gives a closing server two seconds.
+  await Promise.race([announcing, new Promise<void>((resolve) => setTimeout(resolve, 1_000))]);
   try {
-    // Bounded: a shutdown must not hang on an app that is already gone.
     await fetch(`${BASE_URL}/api/mcp`, {
       method: 'POST',
       headers: POST_HEADERS,

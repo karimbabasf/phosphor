@@ -30,9 +30,22 @@
 
 export type Duplicate = { id: string; session: string };
 
+// Whether the proposal with this id is still in flight: no id yet (an empty string, the claim
+// before the row exists), or a stored row that has not reached a terminal status. Wired from the
+// store in src/server.ts; a guard built without it treats every id as settled, which is the old
+// behaviour and what the pure unit tests use.
+export type InFlight = (id: string) => boolean;
+
+export type GuardDeps = { inFlight?: InFlight };
+
 export type DuplicateGuard = {
-  // The proposal already in flight that this one would double, or null. `id` is empty when the
-  // other agent's proposal is still being drafted, which is the case this guard exists for.
+  /* The proposal this one would double, or null.
+     A DIFFERENT session is refused for any entry inside the window, as before: two agents must
+     not both spend. The SAME session is refused only while its own last proposal is still in
+     flight, which is the incident of 2026-09-15: a propose whose reply outlived the proxy, an
+     agent that read the timeout as "it never happened" and proposed again, and a guard that
+     waved the repeat through as a harmless retry. Once the first has settled, a repeat by the
+     same session is its own business again. `id` is empty when the row is still being drafted. */
   find(kind: string, params: Record<string, unknown>, session: string): Duplicate | null;
   /* Called TWICE per proposal, and the first call is the one that closes the race.
      It used to be called once, when the proposal had landed, and the whole pipeline was awaited
@@ -68,8 +81,11 @@ export function fingerprint(kind: string, params: Record<string, unknown>): stri
   return `${kind}:${JSON.stringify(entries)}`;
 }
 
-export function createDuplicateGuard(now: () => number = Date.now, windowMs = DUPLICATE_MS): DuplicateGuard {
+export function createDuplicateGuard(now: () => number = Date.now, windowMs = DUPLICATE_MS, deps: GuardDeps = {}): DuplicateGuard {
   const seen = new Map<string, { session: string; at: number; id: string }>();
+  // No dependency means the old behaviour: a same-session entry is a settled retry. With one, an
+  // empty id (still drafting) or a row the store says is not terminal is still in flight.
+  const inFlight: InFlight = deps.inFlight ?? (() => false);
 
   function sweep(): void {
     const at = now();
@@ -87,7 +103,10 @@ export function createDuplicateGuard(now: () => number = Date.now, windowMs = DU
     find(kind, params, session) {
       sweep();
       const entry = seen.get(fingerprint(kind, params));
-      if (entry === undefined || entry.session === session) return null;
+      if (entry === undefined) return null;
+      // The caller's own repeat is refused only while its last one is still in flight: an empty
+      // id (still drafting) or a row the store has not marked terminal. A settled one is a retry.
+      if (entry.session === session && !(entry.id === '' || inFlight(entry.id))) return null;
       return { id: entry.id, session: entry.session };
     },
     remember(kind, params, session, id) {

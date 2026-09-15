@@ -446,10 +446,12 @@ export function createRunnerHost(deps: HostDeps) {
         finish(row, `failed:${reply.reason}`);
         return;
       }
-      if (reply.ev === 'error' && /did not answer|exited/.test(reply.message)) {
-        // Ambiguous: the venue may hold the entry. Treated as placed under the id the child
-        // would have used, so the venue's own answer (a fill, a resting order, or nothing) is
-        // what settles it rather than a second fire.
+      if (reply.ev === 'error' && (reply.ambiguous === true || /did not answer|exited/.test(reply.message))) {
+        // Ambiguous: the venue may hold the entry. The child flags a transport throw, a 5xx or a
+        // 429 with `ambiguous`; the host itself generates the "did not answer" and "exited"
+        // messages, which carry no flag but are the same case. Treated as placed under the id the
+        // child would have used, so the venue's own answer (a fill, a resting order, or nothing)
+        // is what settles it rather than a second fire.
         row.gen += 1;
         row.cloids = { ...row.cloids, entry: cloidFor({ plan: row.id, leg: 'entry', gen: row.gen }) };
         row.status = 'placed';

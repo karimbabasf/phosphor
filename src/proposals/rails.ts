@@ -99,7 +99,7 @@ export async function proposeSwap(ctx: PCtx, params: SwapParams): Promise<Propos
     quote: null,
   };
 
-  return problems.length > 0 ? refuseDraft(ctx, 'swap', draft, problems) : proposeRail(ctx, 'swap', draft);
+  return problems.length > 0 ? refuseDraft(ctx, 'swap', draft, problems, params.clientKey) : proposeRail(ctx, 'swap', draft, params.clientKey);
 }
 
 // "Put $40 into the trading account." The money leaves the intents balance and nowhere else,
@@ -164,7 +164,7 @@ export async function proposeHlDeposit(ctx: PCtx, params: HlDepositParams): Prom
     counterparty: HYPERCORE_COUNTERPARTY,
   };
 
-  return problems.length > 0 ? refuseDraft(ctx, 'hl_deposit', draft, problems) : proposeRail(ctx, 'hl_deposit', draft);
+  return problems.length > 0 ? refuseDraft(ctx, 'hl_deposit', draft, problems, params.clientKey) : proposeRail(ctx, 'hl_deposit', draft, params.clientKey);
 }
 
 // "Bring $40 back from the trading account." One number. The venue account is the app's own
@@ -192,7 +192,7 @@ export async function proposeHlWithdraw(ctx: PCtx, params: HlWithdrawParams): Pr
     counterparty: HL_WITHDRAW_COUNTERPARTY,
   };
 
-  return problems.length > 0 ? refuseDraft(ctx, 'hl_withdraw', draft, problems) : proposeRail(ctx, 'hl_withdraw', draft);
+  return problems.length > 0 ? refuseDraft(ctx, 'hl_withdraw', draft, problems, params.clientKey) : proposeRail(ctx, 'hl_withdraw', draft, params.clientKey);
 }
 
 // "Deposit $10 onto NEAR Intents." The agent names a chain, optionally a symbol, and an
@@ -232,8 +232,8 @@ export async function proposeIntentsDeposit(ctx: PCtx, params: IntentsDepositPar
   };
 
   return problems.length > 0
-    ? refuseDraft(ctx, 'intents_deposit', draft, problems)
-    : proposeRail(ctx, 'intents_deposit', draft);
+    ? refuseDraft(ctx, 'intents_deposit', draft, problems, params.clientKey)
+    : proposeRail(ctx, 'intents_deposit', draft, params.clientKey);
 }
 
 export async function proposeIntentsWithdraw(ctx: PCtx, params: IntentsWithdrawParams): Promise<Proposal> {
@@ -304,6 +304,6 @@ export async function proposeIntentsWithdraw(ctx: PCtx, params: IntentsWithdrawP
   };
 
   return problems.length > 0
-    ? refuseDraft(ctx, 'intents_withdraw', draft, problems)
-    : proposeRail(ctx, 'intents_withdraw', draft);
+    ? refuseDraft(ctx, 'intents_withdraw', draft, problems, params.clientKey)
+    : proposeRail(ctx, 'intents_withdraw', draft, params.clientKey);
 }

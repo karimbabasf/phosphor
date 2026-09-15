@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { AppConfig, LedgerSnapshot, Policy, RiskRow, TradeDraft } from '../../src/types.ts';
+import type { AppConfig, LedgerSnapshot, Policy, Proposal, ProposalService, RiskRow, TradeDraft } from '../../src/types.ts';
 import type { Ledger } from '../../src/ledger/index.ts';
 import { createAudit } from '../../src/audit.ts';
 import { createStore } from '../../src/store.ts';
@@ -83,6 +83,13 @@ function seededPolicy(clickUsd = 100): Policy {
   p.outbound.humanClickAboveUsd = clickUsd;
   p.sentences = renderSentences(p);
   return p;
+}
+
+
+// A propose or an approve answers with the row as it stands, `executing` while the rail runs.
+// The tests here are about where the row lands, so they wait for it.
+async function landed(h: { svc: ProposalService }, reply: Promise<Proposal>): Promise<Proposal> {
+  return h.svc.settled((await reply).id, 5000);
 }
 
 function setup(over: { clickUsd?: number; kill?: boolean } = {}) {
@@ -159,7 +166,7 @@ function openRow(runner: ReturnType<typeof fakeRunner>, over: Partial<PlanRow> =
 
 test('a plan with $60 of margin under a $100 threshold executes with decidedBy policy', async () => {
   const h = setup();
-  const p = await h.svc.proposeTrade({ plan: plan(), by: 'agent-1' });
+  const p = await landed(h, h.svc.proposeTrade({ plan: plan(), by: 'agent-1' }));
   assert.equal(p.status, 'executed', JSON.stringify(p.verdict));
   assert.equal(p.decidedBy, 'policy');
   const draft = p.draft as TradeDraft;
@@ -190,7 +197,7 @@ test('a drawn plan arms by id, keeping the id, and a plan that is not an idea is
   const parsed = validatePlanInput(plan(), NOW);
   assert.ok(parsed.ok);
   const drawn = h.runner.draw(parsed.plan, 'agent-1');
-  const p = await h.svc.proposeTrade({ planId: drawn.id });
+  const p = await landed(h, h.svc.proposeTrade({ planId: drawn.id }));
   assert.equal(p.status, 'executed');
   assert.equal((p.draft as Extract<TradeDraft, { op: 'open' }>).plan.id, drawn.id);
   const again = await h.svc.proposeTrade({ planId: drawn.id });
@@ -213,7 +220,7 @@ test('a plan the risk rules refuse never reaches the engine', async () => {
 test('a change that tightens the stop is amountUsd 0 and lands executed without a click', async () => {
   const h = setup({ clickUsd: 0 });
   openRow(h.runner);
-  const p = await h.svc.proposeTradeChange({ id: 'pl_open', stop: 95 });
+  const p = await landed(h, h.svc.proposeTradeChange({ id: 'pl_open', stop: 95 }));
   assert.equal(p.status, 'executed', JSON.stringify(p.verdict));
   assert.equal(p.decidedBy, 'policy');
   assert.equal((p.draft as TradeDraft).amountUsd, 0);
@@ -242,7 +249,7 @@ test('a cancel on an open plan is refused at propose, and on a placed plan it la
   assert.deepEqual(h.runner.calls, []);
 
   openRow(h.runner, { id: 'pl_placed', status: 'placed' });
-  const ok = await h.svc.proposeTradeChange({ id: 'pl_placed', cancel: true });
+  const ok = await landed(h, h.svc.proposeTradeChange({ id: 'pl_placed', cancel: true }));
   assert.equal(ok.status, 'executed');
   assert.equal((ok.draft as TradeDraft).amountUsd, 0);
   assert.equal(h.runner.calls[0], 'cancel pl_placed');
@@ -251,7 +258,7 @@ test('a cancel on an open plan is refused at propose, and on a placed plan it la
 test('a close is priced at the plan margin and goes through the plan bound', async () => {
   const h = setup({ clickUsd: 1000 });
   openRow(h.runner);
-  const p = await h.svc.proposeTradeChange({ id: 'pl_open', close: true });
+  const p = await landed(h, h.svc.proposeTradeChange({ id: 'pl_open', close: true }));
   assert.equal(p.status, 'executed');
   assert.equal((p.draft as TradeDraft).amountUsd, 60);
   assert.equal(h.runner.calls[0], 'close pl_open 30');
@@ -287,4 +294,35 @@ test('without a trading surface every trade proposal refuses by name', async () 
   assert.equal(p.status, 'policy_refused');
   assert.match(p.verdict.reasons.join(' '), /no trading surface/);
   assert.deepEqual(h.runner.calls, []);
+});
+
+// ---------- a retried plan does not arm twice (A.F3) ----------
+//
+// A lost reply or a transient-looking error brings the same plan back. Without a guard each
+// call draws a fresh id and arms its own bracket: two positions, double margin, one coin. The
+// second identical propose is refused, and the refusal names the plan that is already live.
+test('two identical proposeTrade calls arm one plan; the second is refused and names the first', async () => {
+  const h = setup();
+  const first = await landed(h, h.svc.proposeTrade({ plan: plan(), by: 'agent-1' }));
+  assert.equal(first.status, 'executed', JSON.stringify(first.verdict));
+  const firstPlanId = h.runner.calls.find((c) => c.startsWith('arm '))?.split(' ')[1];
+  assert.ok(firstPlanId, 'the first plan armed');
+
+  const second = await landed(h, h.svc.proposeTrade({ plan: plan(), by: 'agent-1' }));
+  assert.equal(second.status, 'policy_refused', JSON.stringify(second.verdict));
+  assert.equal(second.verdict.outcome, 'refuse');
+  assert.match(second.verdict.reasons.join(' '), new RegExp(String(firstPlanId)));
+
+  const armed = [...h.runner.rows.values()].filter((r) => r.status === 'waiting' || r.status === 'placed' || r.status === 'open');
+  assert.equal(armed.length, 1, `one armed plan, not ${armed.length}`);
+  assert.equal(h.runner.calls.filter((c) => c.startsWith('arm ')).length, 1, 'arm ran once');
+});
+
+test('a different size on the same coin is not a twin and arms', async () => {
+  const h = setup();
+  await landed(h, h.svc.proposeTrade({ plan: plan(), by: 'agent-1' }));
+  const other = await landed(h, h.svc.proposeTrade({ plan: plan({ sizeUsd: 400 }), by: 'agent-1' }));
+  assert.equal(other.status, 'executed', JSON.stringify(other.verdict));
+  const armed = [...h.runner.rows.values()].filter((r) => r.status === 'waiting');
+  assert.equal(armed.length, 2);
 });

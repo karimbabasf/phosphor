@@ -195,10 +195,19 @@
   }
 
   /* A failure a person can act on. Never "request failed": name what happened,
-     and where the caller knows it, whether anything left the wallet. */
+     and where the caller knows it, whether anything left the wallet.
+
+     A TIMEOUT IS NOT A FAILURE, AND NEVER "nothing left". A write that timed out
+     means the app took the click and the rail may still be running: the money
+     may already be moving. So this branch never appends "Nothing left your
+     wallet" (that was a lie the approve card told on a stalled feed) and points
+     at Activity, which is where the move settles. The `nothingLeft` flag is
+     ignored here on purpose; it still governs the ordinary errors below. */
   function readable(err, nothingLeft) {
     var message = (err && err.message) || String(err);
-    if (err && err.name === 'TimeoutError') message = 'The app did not answer in time.';
+    if (err && err.name === 'TimeoutError') {
+      return 'The app took this and the move is still running. Watch Activity: it may still go through, so do not send it again.';
+    }
     if (/Failed to fetch|NetworkError|Load failed/i.test(message)) {
       message = 'The app is not answering. It may have stopped.';
     }

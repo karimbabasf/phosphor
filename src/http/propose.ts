@@ -8,14 +8,25 @@
 import type http from 'node:http';
 
 import type { ChainId, Proposal } from '../types.ts';
+import { CLIENT_KEY_PATTERN, CLIENT_KEY_WINDOW_MS } from '../types.ts';
 import { asRecord, errText, fail, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
 import { CHAINS, PROPOSE_KINDS } from './context.ts';
 import type { Ctx } from './context.ts';
 
-// What the agent gets back from any propose: the id to poll, what the policy decided,
-// and what the simulation said. Never the draft itself, so the app's resolved addresses
-// are not echoed to the caller that was deliberately not allowed to name them.
+/* How long a propose holds its reply open for the rail. Under the proxy's thirty second budget
+   with room for the reply to travel, and the whole of the fix for 2026-09-15: a rail that ran
+   43 s answered nothing, the proxy said the app was not running, the agent proposed again, and
+   "deposit $10" moved $20. Past this the reply carries the `executing` row and says where the
+   answer will appear. */
+export const PROPOSE_REPLY_CAP_MS = 20_000;
+
+// What the agent gets back from any propose: the id to poll, what the policy decided, what
+// the simulation said, and what the rail said if it has answered. Never the draft itself, so
+// the app's resolved addresses are not echoed to the caller that was deliberately not allowed
+// to name them. The rail's sentence rides along because it is the one that says "do not send
+// this again", and a reply that carried only the status word left the agent reading `failed`
+// as a cue to retry.
 function sendProposal(ctx: Ctx, res: http.ServerResponse, proposal: Proposal): void {
   ctx.sse.broadcastState();
   sendJson(res, 200, {
@@ -23,6 +34,8 @@ function sendProposal(ctx: Ctx, res: http.ServerResponse, proposal: Proposal): v
     status: proposal.status,
     verdict: proposal.verdict,
     simulation: proposal.simulation,
+    ...(proposal.result === undefined ? {} : { result: proposal.result }),
+    ...(proposal.status === 'executing' ? { next: 'executing: read proposal_status until it settles' } : {}),
   });
 }
 
@@ -101,23 +114,60 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
     fail(res, 403, `propose_${kind} is not on a worker's surface`);
     return;
   }
+
+  /* THE IDEMPOTENCY KEY, read and taken off the params before anything else looks at them.
+     A proposer that sends the same key twice is answered with the row that key already made,
+     for a day: an agent whose reply was lost (the incident: a propose that outlived the proxy)
+     repeats with the key and gets the same proposal back, never a second spend. It is kept out
+     of the fingerprint below, so a key does not turn one agent's two different-keyed calls into
+     two proposals the duplicate guard would have caught, nor make a repeat look new. */
+  let clientKey: string | undefined;
+  if (params.clientKey !== undefined) {
+    if (typeof params.clientKey !== 'string' || !CLIENT_KEY_PATTERN.test(params.clientKey)) {
+      fail(res, 400, 'clientKey must be 1 to 64 characters of letters, digits, and _ . : -');
+      return;
+    }
+    clientKey = params.clientKey;
+    delete params.clientKey;
+    const existing = ctx.proposals
+      .list()
+      .find((p) => p.clientKey === clientKey && Date.now() - Date.parse(p.createdAt) < CLIENT_KEY_WINDOW_MS);
+    if (existing !== undefined) {
+      ctx.audit.append('agent_rejected', 'a propose carrying a known client key was answered with the row it already made', {
+        kind,
+        existing: existing.id,
+        clientKey,
+      });
+      sendProposal(ctx, res, await ctx.proposals.settled(existing.id, PROPOSE_REPLY_CAP_MS));
+      return;
+    }
+  }
+
   const clash = ctx.duplicates.find(kind, params, session);
   if (clash !== null) {
-    ctx.audit.append('agent_rejected', 'a duplicate proposal from a second agent was refused', {
+    const own = clash.session === session;
+    ctx.audit.append('agent_rejected', own ? 'a caller repeating a proposal still in flight was refused' : 'a duplicate proposal from a second agent was refused', {
       kind,
       existing: clash.id,
       by: clash.session,
     });
-    // An empty id means the other agent's proposal is still being drafted, which is exactly the
-    // race this guard exists for. There is nothing to read yet, so the sentence does not offer.
+    // An empty id means the proposal is still being drafted, which is exactly the race this
+    // guard exists for. There is nothing to read yet, so the sentence does not offer. When the
+    // row exists, its status and result ride on the refusal so the caller sees what its repeat
+    // would have doubled without a second call.
+    const existing = clash.id === '' ? undefined : ctx.proposals.get(clash.id);
     const names = clash.id === '' ? '' : ` (proposal ${clash.id})`;
+    const lead = own
+      ? `this ${kind} is still in flight${names}, so a repeat of it is refused rather than sending it twice.`
+      : `another agent proposed exactly this ${kind} moments ago${names}. It has not been superseded, so this one is refused rather than doubling it.`;
     fail(
       res,
       409,
-      `another agent proposed exactly this ${kind} moments ago${names}. It has not been ` +
-        'superseded, so this one is refused rather than doubling it. Read it with proposal_status, and ' +
-        'use agent_board to say what you are taking on before you start.',
-      { duplicate: clash.id },
+      `${lead} Read it with proposal_status before repeating anything.`,
+      {
+        duplicate: clash.id,
+        ...(existing === undefined ? {} : { status: existing.status, ...(existing.result === undefined ? {} : { result: existing.result }) }),
+      },
     );
     return;
   }
@@ -133,10 +183,12 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
   let landed = false;
   const problems: string[] = [];
 
-  const respond = (proposal: Proposal): void => {
+  // The id is remembered before the wait, so a repeat arriving during it is told which row it
+  // is repeating; the reply is the row as it stands when the rail answers or the cap runs out.
+  const respond = async (proposal: Proposal): Promise<void> => {
     landed = true;
     ctx.duplicates.remember(kind, params, session, proposal.id);
-    sendProposal(ctx, res, proposal);
+    sendProposal(ctx, res, await ctx.proposals.settled(proposal.id, PROPOSE_REPLY_CAP_MS));
   };
 
   try {
@@ -170,7 +222,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         fail(res, 400, problems.join('; '));
         return;
       }
-      respond(
+      await respond(
         await ctx.proposals.proposeSwap({
           venue: venueRaw as 'oneclick' | 'intents-native',
           chain,
@@ -179,6 +231,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
           toSymbol,
           amountIn,
           minAmountOut,
+          clientKey,
         }),
       );
       return;
@@ -203,7 +256,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         fail(res, 400, problems.join('; '));
         return;
       }
-      respond(await ctx.proposals.proposeTrade({ plan, planId, by: session }));
+      await respond(await ctx.proposals.proposeTrade({ plan, planId, by: session, clientKey }));
       return;
     }
     if (kind === 'trade_change') {
@@ -216,7 +269,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         fail(res, 400, problems.join('; '));
         return;
       }
-      respond(await ctx.proposals.proposeTradeChange({ id, stop, target, cancel, close }));
+      await respond(await ctx.proposals.proposeTradeChange({ id, stop, target, cancel, close, clientKey }));
       return;
     }
     if (kind === 'hl_deposit') {
@@ -228,7 +281,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         fail(res, 400, problems.join('; '));
         return;
       }
-      respond(await ctx.proposals.proposeHlDeposit({ symbol, amount }));
+      await respond(await ctx.proposals.proposeHlDeposit({ symbol, amount, clientKey }));
       return;
     }
     if (kind === 'hl_withdraw') {
@@ -239,7 +292,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         fail(res, 400, problems.join('; '));
         return;
       }
-      respond(await ctx.proposals.proposeHlWithdraw({ amount }));
+      await respond(await ctx.proposals.proposeHlWithdraw({ amount, clientKey }));
       return;
     }
     if (kind === 'intents_deposit') {
@@ -252,7 +305,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         fail(res, 400, problems.join('; '));
         return;
       }
-      respond(await ctx.proposals.proposeIntentsDeposit({ chain, symbol, amount }));
+      await respond(await ctx.proposals.proposeIntentsDeposit({ chain, symbol, amount, clientKey }));
       return;
     }
     if (kind === 'intents_withdraw') {
@@ -267,7 +320,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         fail(res, 400, problems.join('; '));
         return;
       }
-      respond(await ctx.proposals.proposeIntentsWithdraw({ chain, symbol, amount }));
+      await respond(await ctx.proposals.proposeIntentsWithdraw({ chain, symbol, amount, clientKey }));
       return;
     }
     if (kind === 'consolidate') {
@@ -287,12 +340,13 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
       const maxTotalUsd = typeof params.maxTotalUsd === 'number' && Number.isFinite(params.maxTotalUsd)
         ? params.maxTotalUsd
         : undefined;
-      respond(
+      await respond(
         await ctx.proposals.proposeConsolidate({
           toChain: toChain as ChainId,
           symbol,
           ...(fromChains !== undefined && fromChains.length > 0 ? { fromChains } : {}),
           ...(maxTotalUsd !== undefined ? { maxTotalUsd } : {}),
+          clientKey,
         }),
       );
       return;
@@ -301,7 +355,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
       // patch and sentence are passed through as authored: the engine validates
       // the patch, and the sentence is stored as data, never read as instruction.
       const sentence = typeof params.sentence === 'string' ? params.sentence : '';
-      respond(await ctx.proposals.proposePolicyChange({ patch: asRecord(params.patch), sentence }));
+      await respond(await ctx.proposals.proposePolicyChange({ patch: asRecord(params.patch), sentence, clientKey }));
       return;
     }
     fail(res, 400, `unknown propose kind: ${kind}. known kinds: ${PROPOSE_KINDS.join(', ')}`);

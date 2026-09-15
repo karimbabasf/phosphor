@@ -274,3 +274,46 @@ test('an unreadable policy refuses every rail kind', () => {
     assert.equal(v.outcome === 'refuse' ? v.rule : '', 'policy_unreadable');
   }
 });
+
+// ---------- the auto-approved daily ceiling (A.F5) ----------
+//
+// Nothing above the click threshold aggregates, so an agent can file an unbounded stream of
+// sub-threshold moves and only the 24h cap stops it. This is a second wall, on the auto-approved
+// subtotal alone: past it the next auto move waits for a click, whatever its size.
+
+test('a sub-threshold move that would push auto-approved spend past the ceiling waits for a click', () => {
+  const policy = policyAllowing(VENUE, { humanClickAboveUsd: 100, autoApproveDailyUsd: 250 });
+  const v = evaluate(swap({ amountUsd: 60 }), ctxWith({ policy, autoApprovedSpentUsd: 200 }));
+  assert.equal(v.outcome, 'needs_approval');
+  assert.equal(
+    v.reasons[v.reasons.length - 1],
+    'Auto-approved moves in the last 24 hours already total $200.00; with $60.00 more that passes the $250.00 ceiling, so this one waits for a click.',
+  );
+});
+
+test('the same move under the ceiling is allowed', () => {
+  const policy = policyAllowing(VENUE, { humanClickAboveUsd: 100, autoApproveDailyUsd: 250 });
+  const v = evaluate(swap({ amountUsd: 60 }), ctxWith({ policy, autoApprovedSpentUsd: 100 }));
+  assert.equal(v.outcome, 'allow');
+});
+
+test('a move above the click threshold keeps the click reason, not the ceiling one', () => {
+  const policy = policyAllowing(VENUE, { humanClickAboveUsd: 100, autoApproveDailyUsd: 250 });
+  const v = evaluate(swap({ amountUsd: 150 }), ctxWith({ policy, autoApprovedSpentUsd: 200 }));
+  assert.equal(v.outcome, 'needs_approval');
+  assert.match(v.reasons.join(' '), /above the \$100\.00 click threshold/);
+});
+
+test('no ceiling set means the old behaviour: only the click threshold and the 24h cap bind', () => {
+  const policy = policyAllowing(VENUE, { humanClickAboveUsd: 100 });
+  delete (policy.outbound as { autoApproveDailyUsd?: number }).autoApproveDailyUsd;
+  const v = evaluate(swap({ amountUsd: 60 }), ctxWith({ policy, autoApprovedSpentUsd: 1_000_000 }));
+  assert.equal(v.outcome, 'allow');
+});
+
+test('the ceiling binds a hyperliquid deposit the same way it binds a swap', () => {
+  const policy = policyAllowing(VENUE, { humanClickAboveUsd: 100, autoApproveDailyUsd: 250 });
+  const v = evaluate(hlDeposit({ amountUsd: 60 }), ctxWith({ policy, autoApprovedSpentUsd: 200 }));
+  assert.equal(v.outcome, 'needs_approval');
+  assert.match(v.reasons.join(' '), /auto-approved moves/i);
+});

@@ -19,6 +19,7 @@ const policySchema = z.object({
     maxPerTransactionUsd: z.number(),
     maxPerSessionUsd: z.number(),
     humanClickAboveUsd: z.number(),
+    autoApproveDailyUsd: z.number().optional(),
     destinationAllowlist: z.array(z.string()),
     simulateBeforeSign: z.literal(true),
   }),
@@ -41,7 +42,14 @@ export function loadPolicy(dataDir: string): Policy | null {
     const parsed: unknown = JSON.parse(raw);
     const result = policySchema.safeParse(parsed);
     if (!result.success) return null;
-    return parsed as Policy;
+    const policy = parsed as Policy;
+    // A file predating the auto-approved ceiling loads with it filled in, at five times the
+    // click threshold, so an existing install gets the wall without a hand edit. Not persisted
+    // here: loadPolicy never writes, and the value lands on disk the next time any change saves.
+    if (policy.outbound.autoApproveDailyUsd === undefined) {
+      policy.outbound.autoApproveDailyUsd = 5 * policy.outbound.humanClickAboveUsd;
+    }
+    return policy;
   } catch {
     return null;
   }
@@ -60,6 +68,7 @@ export function defaultPolicy(): Policy {
       maxPerTransactionUsd: 10000,
       maxPerSessionUsd: 25000,
       humanClickAboveUsd: 100,
+      autoApproveDailyUsd: 500,
       destinationAllowlist: [],
       simulateBeforeSign: true,
     },

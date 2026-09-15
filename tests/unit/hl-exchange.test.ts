@@ -122,3 +122,44 @@ test('the posted envelope carries action, nonce, signature and a null vault', as
   assert.ok(sig.v === 27 || sig.v === 28);
   assert.ok(!('expiresAfter' in seen), 'omitted when unused, since an extra key changes the hash');
 });
+
+// ---------- a venue error the transport cannot read is ambiguous (A.F8) ----------
+//
+// A write that timed out or reset may have reached the venue, so it is not a clean failure. The
+// transport re-tags a fetch throw ambiguous and stamps a 5xx or 429 body the same way, and the
+// runner reads that flag to keep a plan placed rather than abandoning a bracket the venue holds.
+test('a fetch throw becomes an ambiguous error, not a plain one', async () => {
+  const { defaultTransport, isAmbiguousVenue } = await import('../../src/hl/exchange.ts');
+  const original = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET' } });
+  }) as typeof fetch;
+  try {
+    await assert.rejects(
+      () => defaultTransport('http://x/exchange', { a: 1 }),
+      (err: unknown) => {
+        assert.equal(isAmbiguousVenue(err), true, 'a transport throw is ambiguous');
+        return true;
+      },
+    );
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('a 5xx and a 429 are stamped ambiguous, a 400 is a clean rejection', async () => {
+  const { defaultTransport, isAmbiguousVenue } = await import('../../src/hl/exchange.ts');
+  const original = globalThis.fetch;
+  const respond = (status: number): typeof fetch =>
+    (async () => new Response(JSON.stringify({ error: 'nope' }), { status, headers: { 'content-type': 'application/json' } })) as typeof fetch;
+  try {
+    globalThis.fetch = respond(502);
+    assert.equal(isAmbiguousVenue(await defaultTransport('http://x/exchange', {})), true, '502 is ambiguous');
+    globalThis.fetch = respond(429);
+    assert.equal(isAmbiguousVenue(await defaultTransport('http://x/exchange', {})), true, '429 is ambiguous');
+    globalThis.fetch = respond(400);
+    assert.equal(isAmbiguousVenue(await defaultTransport('http://x/exchange', {})), false, '400 is a clean rejection');
+  } finally {
+    globalThis.fetch = original;
+  }
+});

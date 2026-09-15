@@ -128,6 +128,8 @@ async function boot(mode: AppConfig['mode'] = 'demo', opts: { releaseDelayMs?: n
         return 2;
       },
       reconcileOnBoot: () => [],
+      reconcileOpen: async () => 0,
+      settled: async () => { throw new Error('unused'); },
       reconcile: () => Promise.reject(new Error('not wired in this stub')),
       settle: () => Promise.resolve(true),
       dailyLimit: (capUsd: number) => ({ capUsd, spentUsd: 0, resetsAt: null }),

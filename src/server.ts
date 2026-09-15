@@ -162,9 +162,17 @@ export function createServer(deps: ServerDeps): PhosphorServer {
 
   const chats = createChatRegistry({ cfg, audit, agents, getView, sse, makeDriver: deps.makeDriver });
 
-  // Two agents cannot double the same proposal by accident. See src/duplicates.ts for what this
-  // replaces and what it deliberately does not do.
-  const duplicates = createDuplicateGuard();
+  // Two agents cannot double the same proposal by accident, and one agent cannot repeat its own
+  // proposal while it is still running. `inFlight` is how the guard tells a settled retry (its
+  // own business) from an in-flight repeat (the incident): a row the store does not yet hold, or
+  // holds in a non-terminal status, is still in flight. See src/duplicates.ts.
+  const TERMINAL: ReadonlySet<string> = new Set(['executed', 'failed', 'needs_reconciliation', 'refused', 'policy_refused']);
+  const duplicates = createDuplicateGuard(Date.now, undefined, {
+    inFlight: (id) => {
+      const row = store.get(id);
+      return row === undefined || !TERMINAL.has(row.status);
+    },
+  });
 
   // The receipt reader behind the history panel, and the one-at-a-time latch in front of it.
   const gas: GasFill = { cache: createGasCache({ dataDir: cfg.dataDir }), filling: false };

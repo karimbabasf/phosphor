@@ -33,7 +33,7 @@ import type { VaultRelay, VaultResult } from '../vault/relay.ts';
 import { reasonFor } from '../vault/reason.ts';
 import type { RailRegistry } from '../rails/index.ts';
 import type { TradeDeps } from '../trade/rail.ts';
-import type { TxLookup } from './reconcile.ts';
+import type { OneClickLookup, TxLookup } from './reconcile.ts';
 import { withReservation } from './reservation.ts';
 
 export const ALL_CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
@@ -62,6 +62,9 @@ export type ProposalDeps = {
   // the viem readers the rails already use; a test hands in a fake so the four outcomes can be
   // driven without a network.
   txLookup?: TxLookup;
+  // How a 1Click order is re-checked by its quote handle, for reconcile. Wired from the intents
+  // client in src/main.ts; absent means no venue lookup and reconcile falls back to the chain.
+  oneClickStatus?: OneClickLookup;
   /* The enclave relay and the keystore it opens, for the click-tier touch. Absent in tests and
      in a bare `npm run app`, where approve behaves exactly as it did before the enclave: the
      wallet is opened by password and a click is a click. */
@@ -132,6 +135,7 @@ export function mergePatch(base: Policy, patch: PolicyPatch): Policy {
     if (o.maxPerTransactionUsd !== undefined) next.outbound.maxPerTransactionUsd = o.maxPerTransactionUsd;
     if (o.maxPerSessionUsd !== undefined) next.outbound.maxPerSessionUsd = o.maxPerSessionUsd;
     if (o.humanClickAboveUsd !== undefined) next.outbound.humanClickAboveUsd = o.humanClickAboveUsd;
+    if (o.autoApproveDailyUsd !== undefined) next.outbound.autoApproveDailyUsd = o.autoApproveDailyUsd;
     if (o.destinationAllowlist !== undefined) next.outbound.destinationAllowlist = o.destinationAllowlist.map(a => a.toLowerCase());
   }
 
@@ -172,12 +176,39 @@ export type PCtx = {
   // indirection for a different reason: it is a seam, so a test can drive the four outcomes
   // without a network.
   txLookup: TxLookup;
+  // How a 1Click order is re-checked by its quote handle. Optional: absent falls back to the
+  // chain lookup, which is demo mode and every test that does not drive the venue path.
+  oneClickStatus?: OneClickLookup;
   vault?: VaultRelay;
   keystore?: Keystore;
   // finishTouch, serialised by the service like approve is, so the continuation of a click
   // never interleaves with another proposal's execution.
   afterTouch: (id: string, result: VaultResult) => Promise<Proposal | null>;
+  /* Every rail still running, by proposal id, each resolving with the row it recorded. A propose
+     returns the `executing` row and this is how a caller who wants the settled one waits for it
+     with a cap (settled, below), and how the shutdown drain knows a rail is still out. */
+  inflight: Map<string, Promise<Proposal>>;
 };
+
+/* The row once it is terminal, or the row as it stands when `capMs` runs out. The caller reads
+   `status` to tell the two apart: `executing` past the cap means the rail is still working and
+   proposal_status is where the answer will appear. Never throws for a slow rail; only for an id
+   the store does not hold. */
+export async function settled(ctx: PCtx, id: string, capMs: number): Promise<Proposal> {
+  const run = ctx.inflight.get(id);
+  if (run !== undefined) {
+    await Promise.race([
+      run.then(
+        () => undefined,
+        () => undefined,
+      ),
+      new Promise<void>((resolve) => setTimeout(resolve, capMs).unref()),
+    ]);
+  }
+  const p = ctx.store.get(id);
+  if (p === undefined) throw new Error(`unknown proposal ${id}`);
+  return p;
+}
 
 export function persist(ctx: PCtx, p: Proposal): Proposal {
   ctx.store.put(p);
@@ -214,11 +245,12 @@ export function buildCtx(ctx: PCtx, snapshot: LedgerSnapshot, policy: Policy | n
     composition: classify(snapshot, ctx.riskRows),
     ledger: snapshot,
     sessionSpentUsd: sessionSpentUsd(ctx),
+    autoApprovedSpentUsd: autoApprovedSpentUsd(ctx),
     selfAddresses: selfAddresses(ctx, snapshot),
   };
 }
 
-export function newProposal(kind: WriteDraft['kind'], draft: WriteDraft, simulation: SimulationResult | null, verdict: Verdict): Proposal {
+export function newProposal(kind: WriteDraft['kind'], draft: WriteDraft, simulation: SimulationResult | null, verdict: Verdict, clientKey?: string): Proposal {
   return {
     id: crypto.randomUUID(),
     kind,
@@ -227,6 +259,9 @@ export function newProposal(kind: WriteDraft['kind'], draft: WriteDraft, simulat
     draft,
     simulation,
     verdict,
+    // On the row from its first write, so a repeat carrying the key finds it whatever happened
+    // to the process in between.
+    ...(clientKey === undefined ? {} : { clientKey }),
   };
 }
 
@@ -444,7 +479,13 @@ type DailyLimit = { capUsd: number; spentUsd: number; resetsAt: string | null };
 function countsAgainstCap(p: Proposal): boolean {
   if (p.kind === 'policy_change') return false;
   if (p.status === 'executed' || p.status === 'executing') return true;
-  return p.status === 'needs_reconciliation' && (p.result?.txids?.length ?? 0) > 0;
+  if (p.status !== 'needs_reconciliation') return false;
+  // A hash, or the evidence a rail leaves when it never got one: a handle for a signed intent
+  // or an ambiguous venue send, a nonce for an ambiguous Hyperliquid action. Each is money that
+  // may be live at the venue, and a budget that forgot it is the under-count that let a retry
+  // spend twice. A row with none of them is the app not knowing, and holds nothing.
+  const evidence = p.result?.evidence;
+  return (p.result?.txids?.length ?? 0) > 0 || evidence?.handle !== undefined || evidence?.nonce !== undefined;
 }
 
 export function dailyLimit(ctx: PCtx, capUsd: number): DailyLimit {
@@ -471,6 +512,24 @@ export function sessionSpentUsd(ctx: PCtx): number {
     // separately, which is how the figure on screen and the figure a proposal is refused against
     // come to disagree.
     .filter(countsAgainstCap)
+    .filter(p => {
+      const at = Date.parse(p.decidedAt ?? p.createdAt);
+      return Number.isFinite(at) && at >= cutoff;
+    })
+    .reduce((sum, p) => sum + totalUsdOf(p.draft), 0);
+}
+
+/* The auto-approved slice of the same window: the same 24h and the same "money moved or is
+   moving" predicate as sessionSpentUsd, but only rows a policy 'allow' executed, never a human
+   click. It is what the engine's auto-approved daily ceiling budgets on, so a stream of
+   sub-threshold moves the human never saw is bounded by something smaller than the session cap.
+   A human-approved move does not count: the person already made that decision at the card. */
+export function autoApprovedSpentUsd(ctx: PCtx): number {
+  const cutoff = Date.now() - SESSION_WINDOW_MS;
+  return ctx.store
+    .list()
+    .filter(countsAgainstCap)
+    .filter(p => p.decidedBy === 'policy')
     .filter(p => {
       const at = Date.parse(p.decidedAt ?? p.createdAt);
       return Number.isFinite(at) && at >= cutoff;

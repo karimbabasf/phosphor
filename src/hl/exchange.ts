@@ -69,25 +69,51 @@ export function stopLimitPx(triggerPx: number, isBuy: boolean, szDecimals: numbe
   return roundToValidPrice(raw, szDecimals, true, isBuy);
 }
 
+/* An error the venue may already have acted on. A write that timed out, a socket that reset, a
+   5xx or a 429: the request left this process, so the order may exist. Tagged so the runner
+   child answers `ambiguous` and the host keeps the plan rather than abandoning a bracket the
+   venue is holding (F8). A definite rejection the venue answered is NOT this: it carries no tag. */
+export function ambiguousVenueError(err: unknown): Error {
+  const e = err instanceof Error ? err : new Error(String(err));
+  (e as { ambiguous?: boolean }).ambiguous = true;
+  return e;
+}
+
+export function isAmbiguousVenue(value: unknown): boolean {
+  return value !== null && typeof value === 'object' && (value as { ambiguous?: unknown }).ambiguous === true;
+}
+
 // Exported so a caller can wrap it (the runner child times it) without redoing the error
 // stamping below.
 export const defaultTransport: Transport = async (url, body) => {
   // Venue write: this places, cancels and modifies real orders. A timeout here says the venue
-  // did not answer, which is not the same as the order not existing.
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-    signal: venueWriteTimeout(),
-  });
+  // did not answer, which is not the same as the order not existing, so a throw is re-tagged
+  // ambiguous rather than left as a plain failure.
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: venueWriteTimeout(),
+    });
+  } catch (err) {
+    throw ambiguousVenueError(err);
+  }
   const parsed = await res.json().catch(() => null);
   // A non-2xx body is not a result. The venue answers 429 on a rate limit, and its body may
   // carry no `status` key at all, so returning it unmarked let orderErrors() find no statuses
   // array and report no errors: a rejected order booked as placed, with the in-flight
   // reservation never released. Stamping the HTTP failure into the shape orderErrors already
-  // understands is what makes that impossible.
+  // understands is what makes that impossible. A 5xx or a 429 is stamped `ambiguous` too: the
+  // venue took the request and may have acted on it, so it is not a clean rejection.
   if (!res.ok) {
-    return { status: 'err', response: `HTTP ${res.status}: ${typeof parsed === 'string' ? parsed : JSON.stringify(parsed ?? res.statusText)}` };
+    const ambiguous = res.status >= 500 || res.status === 429;
+    return {
+      status: 'err',
+      response: `HTTP ${res.status}: ${typeof parsed === 'string' ? parsed : JSON.stringify(parsed ?? res.statusText)}`,
+      ...(ambiguous ? { ambiguous: true } : {}),
+    };
   }
   return parsed;
 };

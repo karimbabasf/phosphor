@@ -26,12 +26,13 @@ import {
   refuse,
   releaseQueued,
   sessionSpentUsd,
+  settled,
   stableSymbols,
 } from './proposals/lifecycle.ts';
 import type { PCtx, ProposalDeps } from './proposals/lifecycle.ts';
 import { finishTouch } from './proposals/lifecycle.ts';
 import { executeApproved, land } from './proposals/execute.ts';
-import { chainTxLookup, reconcileOnBoot, reconcileProposal } from './proposals/reconcile.ts';
+import { chainTxLookup, reconcileOnBoot, reconcileOpen, reconcileProposal } from './proposals/reconcile.ts';
 import { proposeConsolidate, proposePolicyChange } from './proposals/draft.ts';
 import { proposeHlDeposit, proposeHlWithdraw, proposeIntentsDeposit, proposeIntentsWithdraw, proposeSwap } from './proposals/rails.ts';
 import { proposeTrade, proposeTradeChange } from './proposals/trade.ts';
@@ -51,6 +52,7 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     land: (p: Proposal) => land(ctx, p),
     txLookup: deps.txLookup ?? chainTxLookup(),
     afterTouch: (id, result) => serialise(() => finishTouch(ctx, id, result)),
+    inflight: new Map(),
   };
 
   const serialise = createSerialiser();
@@ -80,7 +82,13 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     // reserves budget, and holding the spend queue open for a network read is the thing task
     // 13 exists to stop.
     reconcile: (id: string) => reconcileProposal(ctx, id),
-    settle: (capMs: number) => within(capMs, serialise.idle()),
+    // Outside the serialiser, like reconcile: it reads the venue and writes rows, reserves no
+    // budget, and holding the spend queue open for a network sweep is the thing task 13 stopped.
+    reconcileOpen: () => reconcileOpen(ctx),
+    settled: (id: string, capMs: number) => settled(ctx, id, capMs),
+    // The queue AND every rail still out: the queue moves on at the reservation and a rail runs
+    // behind its reply now, so the queue alone would drain while a signature was in flight.
+    settle: (capMs: number) => within(capMs, Promise.all([serialise.idle(), ...ctx.inflight.values()])),
     dailyLimit: (capUsd: number) => dailyLimit(ctx, capUsd),
   };
 }

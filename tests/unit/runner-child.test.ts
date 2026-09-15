@@ -414,3 +414,18 @@ test('flatten closes every coin it is named and cancels every cloid it is named'
   assert.equal(closeOrder.p, '101', 'a hundred basis points for the human door');
   assert.ok(v.state.actions.some((a) => a.type === 'cancelByCloid'));
 });
+
+test('a venue 5xx on the bracket answers ambiguous, not refused: the venue may hold the order', async () => {
+  const { v, c } = await boot();
+  await c.arm(plan());
+  v.state.exchangeStatus = 502;
+  const e = await c.send({ cmd: 'fire', id: 'pl_1', mark: 100 });
+  assert.equal(e.ev, 'error', JSON.stringify(e));
+  if (e.ev !== 'error') return;
+  assert.equal(e.ambiguous, true, 'a 5xx is ambiguous, so the host keeps the plan rather than abandoning it');
+
+  // And a second fire of the same plan is refused, because it is still counted as fired: the
+  // one thing that must not happen after an ambiguous send is a second bracket on the venue.
+  const again = await c.send({ cmd: 'fire', id: 'pl_1', mark: 100 });
+  assert.equal(again.ev, 'refused', JSON.stringify(again));
+});

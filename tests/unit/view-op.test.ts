@@ -129,6 +129,8 @@ async function boot(opts: { view?: ViewMode; proposals?: Proposal[] } = {}): Pro
       sessionSpentUsd: () => 0,
       releaseQueued: async () => 0,
       reconcileOnBoot: () => [],
+      reconcileOpen: async () => 0,
+      settled: async (id: string) => list.find((p) => p.id === id) ?? pendingProposal(),
       settle: () => Promise.resolve(true),
       dailyLimit: (capUsd: number) => ({ capUsd, spentUsd: 0, resetsAt: null }),
       reconcile: () => Promise.reject(new Error('not wired in this stub')),

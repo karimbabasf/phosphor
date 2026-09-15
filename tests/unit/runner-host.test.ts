@@ -545,3 +545,38 @@ test('an idea past its own expiry leaves the chart on the next sweep, and a live
   assert.equal(h.runner.get(fresh.id)?.status, 'idea', 'the live idea stays');
   assert.equal(h.runner.plans().filter((p) => p.status === 'idea').length, 1);
 });
+
+// ---------- a venue error the child cannot read is ambiguous, not a failure (A.F8) ----------
+//
+// The bracket POST reset, or the venue answered 5xx: the child flags the reply `ambiguous`
+// because the venue may hold the entry. The host must keep the plan as placed under a fresh
+// entry cloid so the account feed settles it, never finish it failed and let a re-propose fire a
+// second bracket on top of a live position.
+test('a fire reply flagged ambiguous leaves the plan placed under a fresh cloid, not failed', async () => {
+  const h = harness();
+  fresh(h);
+  await h.runner.arm(row()); // creates the child, which default-fires pl_1 to placed
+  const child = h.forked[0];
+  child.answers.fire = (m) =>
+    m.cmd === 'fire' ? { ev: 'error', seq: m.seq, id: m.id, message: 'runner command fire failed: ECONNRESET', ambiguous: true } : null;
+  await h.runner.arm(row({ id: 'pl_2' }));
+  await settle();
+  const r = h.runner.get('pl_2');
+  assert.equal(r?.status, 'placed', 'the venue may hold it, so it is placed, not failed');
+  assert.ok(r?.cloids.entry, 'a deterministic entry cloid is set so a settle goes by an id we own');
+  assert.ok(!h.events.some((e) => e.type === 'done' && e.id === 'pl_2'), 'nothing finished the plan');
+});
+
+test('a fire error with no ambiguous flag and no timeout wording still finishes the plan failed', async () => {
+  const h = harness();
+  fresh(h);
+  await h.runner.arm(row());
+  const child = h.forked[0];
+  child.answers.fire = (m) =>
+    m.cmd === 'fire' ? { ev: 'error', seq: m.seq, id: m.id, message: 'a bug in the child' } : null;
+  await h.runner.arm(row({ id: 'pl_2' }));
+  await settle();
+  const r = h.runner.get('pl_2');
+  assert.equal(r?.status, 'done');
+  assert.equal(r?.endReason?.startsWith('failed'), true);
+});

@@ -658,6 +658,7 @@ test('concurrent proposals cannot exceed the session cap between them', async ()
   policy.outbound.maxPerTransactionUsd = 10000;
   policy.outbound.maxPerSessionUsd = 25000;
   policy.outbound.humanClickAboveUsd = 1_000_000; // take the click out of the picture
+  policy.outbound.autoApproveDailyUsd = 25000; // and the auto-approved ceiling too: this is the session cap's test
   const h = setup({ policy });
 
   const results = await Promise.all(
@@ -675,6 +676,7 @@ test('concurrent proposals cannot exceed the session cap between them', async ()
 test('an in-flight proposal counts against the cap while it is still executing', async () => {
   const policy = happyPolicy();
   policy.outbound.humanClickAboveUsd = 1_000_000; // take the click out of the picture
+  policy.outbound.autoApproveDailyUsd = 1_000_000; // and the auto-approved ceiling out of the picture too
   const h = setup({ policy });
   const before = h.svc.sessionSpentUsd();
   await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });

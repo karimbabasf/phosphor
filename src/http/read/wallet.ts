@@ -80,10 +80,16 @@ export const walletReads: ReadTable = {
   balances: (ctx, _body, _args, res) => {
     const snapshot = ctx.ledger.snapshot();
     const composition = classify(snapshot, ctx.riskRows);
+    /* The total is the wallet card's total, pockets and all. It summed snapshot.holdings, which
+       a live refresh keeps empty on purpose (src/ledger/index.ts: the money sits in the verifier
+       and on Hyperliquid), so this tool told the agent the wallet held $0 with every chain ok. */
+    const wallet = buildWallet(snapshot, ctx.ledger.intents(), ctx.ledger.hyperliquid());
     sendJson(res, 200, {
       mode: snapshot.mode,
       totalStableUsd: round2(composition.totalUsd),
-      totalUsd: round2(snapshot.holdings.reduce((sum, h) => sum + h.usd, 0)),
+      totalUsd: round2(wallet.totalUsd),
+      rows: wallet.rows,
+      stale: wallet.stale,
       holdings: snapshot.holdings,
       chainStatus: snapshot.chainStatus,
       prices: snapshot.prices,

@@ -151,6 +151,11 @@ export type Policy = {
     maxPerTransactionUsd: number;
     maxPerSessionUsd: number; // rolling 24h sum of executed fund-moving proposals
     humanClickAboveUsd: number; // above this, allow becomes needs_approval
+    // A rolling 24h ceiling on AUTO-APPROVED spend alone: past it the next sub-threshold move
+    // waits for a click, so a stream of small auto moves cannot run unattended up to the whole
+    // session cap. Optional so a policy file predating it still parses; loadPolicy fills it with
+    // five times the click threshold, which is also the fresh default.
+    autoApproveDailyUsd?: number;
     destinationAllowlist: string[]; // lowercased; self addresses are implicitly allowed
     simulateBeforeSign: true; // constant in v1, shown in UI
   };
@@ -449,10 +454,11 @@ export type Proposal = {
      `before` is the snapshot as execution began. `after` is taken once the ledger has re-read
      the chains, so it reflects the move rather than the stale numbers that were on screen a
      moment earlier; null means that re-read failed or timed out, which is a different fact from
-     a balance of zero and is rendered as "not re-read" rather than as a number.
+     a balance of zero and is rendered as "not re-read" rather than as a number. `before` is null
+     for the same reason when a pocket's read had failed as execution began.
      These are what make a receipt answer "did my money change", which is the question a person
      actually has and which no amount of transaction hashes answers on its own. */
-  balances?: { beforeUsd: number; afterUsd: number | null };
+  balances?: { beforeUsd: number | null; afterUsd: number | null };
 };
 
 // ---------- Basic view ----------
@@ -526,7 +532,9 @@ export type BasicPrice = {
 export type BasicRecent = {
   headline: string; // "Moved $36.54 of your dollars to your Hyperliquid trading account."
   timeLine: string; // "2:14 pm"
-  outcome: 'done' | 'refused' | 'blocked';
+  // 'unconfirmed' is a needs_reconciliation row that carries a hash or a handle: money may have
+  // moved and the app cannot yet say. Distinct from 'blocked' (nothing moved) on purpose.
+  outcome: 'done' | 'refused' | 'blocked' | 'unconfirmed';
 };
 
 // What the ASSISTANT did, which is a different list from what happened to the money.
@@ -596,6 +604,13 @@ export type LogEvent = {
     | 'refused'
     | 'executed'
     | 'execution_failed'
+    // A rail answered ok:false with a hash or a handle on it: money may have moved, and the row
+    // is needs_reconciliation rather than failed. Its own kind so a reader scanning for what
+    // left the wallet sees it beside 'executed', not filed under failures.
+    | 'execution_unconfirmed'
+    // A rail handed the executor its evidence (a hash, a handle, a nonce) before its watch loop,
+    // so the record exists while the venue is still working.
+    | 'submitted'
     | 'approve_attempt_rejected'
     | 'kill_switch'
     | 'policy_changed'
@@ -676,30 +691,37 @@ export type SwapParams = {
   toSymbol: string;
   amountIn: number;
   minAmountOut: number; // slippage floor, in toSymbol units
+  clientKey?: string;
 };
+
+/* The idempotency key a proposer may send with any propose: 1 to 64 characters of
+   [A-Za-z0-9_.:-]. A repeat carrying the same key inside CLIENT_KEY_WINDOW_MS is answered with
+   the row it already made, never a second one. Not part of the duplicate fingerprint. */
+export const CLIENT_KEY_PATTERN = /^[A-Za-z0-9_.:-]{1,64}$/;
+export const CLIENT_KEY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 // The money leaves the intents balance and nowhere else, so there is no chain to name. symbol
 // is the asset spent from that balance and defaults to USDC. The flavor spent, the credited
 // account, the loss floor and the counterparty are all resolved by the app.
-export type HlDepositParams = { amount: number; symbol?: string };
+export type HlDepositParams = { amount: number; symbol?: string; clientKey?: string };
 
 // One number. The venue account, the intents account credited, the floor and the counterparty
 // are all the app's; there is no field for a destination, which is the whole point.
-export type HlWithdrawParams = { amount: number };
+export type HlWithdrawParams = { amount: number; clientKey?: string };
 
 // The credited account, the loss floor and the counterparty are all resolved by the app.
 // symbol defaults to the origin chain's gas asset, which is what "deposit $10 of ETH" means.
-export type IntentsDepositParams = { chain: ChainId; symbol?: string; amount: number };
+export type IntentsDepositParams = { chain: ChainId; symbol?: string; amount: number; clientKey?: string };
 
 // Same shape, opposite direction, and the same silence about addresses. `chain` says where
 // the money lands; which wallet on that chain is our own is read from config and from the
 // key, never from this call.
-export type IntentsWithdrawParams = { chain: ChainId; symbol?: string; amount: number };
+export type IntentsWithdrawParams = { chain: ChainId; symbol?: string; amount: number; clientKey?: string };
 
 // No address, no recipient, no contract. The agent sends a plan or names one it drew, and
 // everything about WHERE the money is resolves from the app's own config and the venue table.
-export type TradeParams = { plan?: unknown; planId?: string; by?: string | null };
-export type TradeChangeParams = { id: string; stop?: number; target?: number; cancel?: boolean; close?: boolean };
+export type TradeParams = { plan?: unknown; planId?: string; by?: string | null; clientKey?: string };
+export type TradeChangeParams = { id: string; stop?: number; target?: number; cancel?: boolean; close?: boolean; clientKey?: string };
 
 export type ProposalService = {
   proposeConsolidate(params: {
@@ -707,8 +729,9 @@ export type ProposalService = {
     symbol: string;
     fromChains?: ChainId[];
     maxTotalUsd?: number;
+    clientKey?: string;
   }): Promise<Proposal>;
-  proposePolicyChange(params: { patch: PolicyPatch; sentence: string }): Promise<Proposal>;
+  proposePolicyChange(params: { patch: PolicyPatch; sentence: string; clientKey?: string }): Promise<Proposal>;
   proposeSwap(params: SwapParams): Promise<Proposal>;
   proposeHlDeposit(params: HlDepositParams): Promise<Proposal>;
   proposeHlWithdraw(params: HlWithdrawParams): Promise<Proposal>;
@@ -730,6 +753,13 @@ export type ProposalService = {
   // Re-check one such row against the chain. Never guesses: a hash it cannot look up leaves
   // the proposal where it is, with a sentence saying why.
   reconcile(id: string): Promise<Proposal>;
+  // Re-check every open row that carries a 1Click handle, young enough to still settle. What the
+  // scheduled sweep in src/main.ts calls at boot and every ten minutes. Returns how many changed.
+  reconcileOpen(): Promise<number>;
+  /* The row once its rail has answered, or the row as it stands when capMs runs out. A propose
+     returns the `executing` row the moment the rail starts; this is how a caller waits for the
+     settled one without holding a reply open for a five minute watch loop. */
+  settled(id: string, capMs: number): Promise<Proposal>;
   // Wait for whatever is already executing, up to capMs. True if it finished in time. What a
   // clean shutdown awaits before it closes the sockets.
   settle(capMs: number): Promise<boolean>;
