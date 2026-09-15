@@ -596,6 +596,13 @@ export type LogEvent = {
     | 'refused'
     | 'executed'
     | 'execution_failed'
+    // A rail answered ok:false with a hash or a handle on it: money may have moved, and the row
+    // is needs_reconciliation rather than failed. Its own kind so a reader scanning for what
+    // left the wallet sees it beside 'executed', not filed under failures.
+    | 'execution_unconfirmed'
+    // A rail handed the executor its evidence (a hash, a handle, a nonce) before its watch loop,
+    // so the record exists while the venue is still working.
+    | 'submitted'
     | 'approve_attempt_rejected'
     | 'kill_switch'
     | 'policy_changed'

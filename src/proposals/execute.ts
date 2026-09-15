@@ -162,10 +162,21 @@ export async function executeRail(ctx: PCtx, p: Proposal, rail: Rail): Promise<P
      a 15s refresh is 45s.
      So the durable write happens the instant the rail answers, and the balance is a second
      update afterwards. */
+  /* A FAILURE WITH A HASH IS NOT A FAILURE. On 2026-09-15 two $10 deposits came back ok:false
+     from 1Click with the intent hash on each, landed `failed`, charged nothing to the day, and
+     the receipt said nothing had left the wallet while about $40 had. A hash is evidence that
+     money moved; the honest row for it is needs_reconciliation, the same state a partly sent
+     fund move lands in (executeFundMove below), which counts against the cap and can be
+     re-checked. `failed` is kept for the answer that carries no evidence at all. */
   const txids = result.txids ?? [];
-  const status = result.ok ? 'executed' : 'failed';
-  ctx.audit.append(result.ok ? 'executed' : 'execution_failed', `${p.id}: ${result.detail}`, { id: p.id, txids });
-  const recorded = persist(ctx, { ...executing, status, result: { ok: result.ok, detail: result.detail, txids } });
+  const status = result.ok ? 'executed' : txids.length > 0 ? 'needs_reconciliation' : 'failed';
+  ctx.audit.append(result.ok ? 'executed' : txids.length > 0 ? 'execution_unconfirmed' : 'execution_failed', `${p.id}: ${result.detail}`, { id: p.id, txids });
+  const recorded = persist(ctx, {
+    ...executing,
+    status,
+    settledAt: nowIso(),
+    result: { ok: result.ok, detail: result.detail, txids, ...(result.evidence === undefined ? {} : { evidence: result.evidence }) },
+  });
 
   /* And the decoration is not on the caller's clock either. `balanceAfter` is up to fifteen
      seconds of RPC across every chain, and until now the agent's tool call and the HTTP
@@ -254,8 +265,9 @@ async function executeFundMove(ctx: PCtx, p: Proposal): Promise<Proposal> {
     /* The demo ledger has already moved, so the receipt can say what it moved to. This branch
        returned without balances and kept { beforeUsd, afterUsd: null } off the executing row, so
        every demo receipt read "balance after: unknown" about a transfer that plainly happened. */
+    const settledAt = nowIso();
     const balances = { beforeUsd, afterUsd: await balanceAfter(ctx) };
-    return persist(ctx, { ...executing, status: 'executed', balances, result: { ok: true, detail } });
+    return persist(ctx, { ...executing, status: 'executed', settledAt, balances, result: { ok: true, detail } });
   }
 
   if (!ctx.signer.ready) {
@@ -311,6 +323,7 @@ async function executeFundMove(ctx: PCtx, p: Proposal): Promise<Proposal> {
   const recorded = persist(ctx, {
     ...row,
     status: ok ? 'executed' : partial ? 'needs_reconciliation' : 'failed',
+    settledAt: nowIso(),
     result: { ok, detail, txids },
   });
 
