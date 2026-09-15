@@ -6,10 +6,11 @@
    the window survives, no word does. Karim, 2026-09-14: nothing is visible
    until the password is in, and the bar goes with it. A filter on a container
    re-blurs on every repaint under it and locked is the state an unattended app
-   sits in longest, so the cost is bounded: the field, which was the only thing
-   painting every frame, stops the moment the body is locked (pattern.js
-   watches data-locked), and the blur is rasterised once and again only when a
-   price ticks. What is blurred is also taken out of reach: no pointer, no
+   sits in longest, so the cost is bounded: nothing behind the lock paints
+   every frame (the afterglow field that used to went on 2026-09-15, and the
+   beam only runs while a flight is in the air), so the blur is rasterised
+   once and again only when a price ticks. What is blurred is also taken out
+   of reach: no pointer, no
    selection, and lock.js marks the page inert so neither the keyboard nor a
    screen reader can walk into it, which puts Freeze behind the password too.
    #page is the only thing filtered, and nothing fixed lives inside it (the
