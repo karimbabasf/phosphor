@@ -61,13 +61,14 @@ type SessionDeps = {
   // module has no opinion about what a lock is beyond when it happens.
   lock: (reason: LockReason) => void;
   isUnlocked: () => boolean;
-  idleMs?: number;
+  // A number, or a function read on every tick so the Vault tab can change it without a restart.
+  idleMs?: number | (() => number);
   now?: () => number;
 };
 
 export function createSession(deps: SessionDeps): Session {
   const now = deps.now ?? Date.now;
-  const idleMs = deps.idleMs ?? IDLE_LOCK_MS;
+  const idleOf = typeof deps.idleMs === 'function' ? deps.idleMs : () => (deps.idleMs as number | undefined) ?? IDLE_LOCK_MS;
   let lastHuman = now();
   let lastTick = now();
   let timer: NodeJS.Timeout | null = null;
@@ -79,7 +80,7 @@ export function createSession(deps: SessionDeps): Session {
 
   function idleLocksInSec(): number | null {
     if (!deps.isUnlocked()) return null;
-    return Math.max(0, Math.ceil((lastHuman + idleMs - now()) / 1000));
+    return Math.max(0, Math.ceil((lastHuman + idleOf() - now()) / 1000));
   }
 
   function tick(): LockReason | null {
@@ -101,7 +102,7 @@ export function createSession(deps: SessionDeps): Session {
       }
       return null;
     }
-    if (deps.isUnlocked() && at - lastHuman >= idleMs) {
+    if (deps.isUnlocked() && at - lastHuman >= idleOf()) {
       deps.lock('idle');
       return 'idle';
     }

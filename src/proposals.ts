@@ -29,6 +29,7 @@ import {
   stableSymbols,
 } from './proposals/lifecycle.ts';
 import type { PCtx, ProposalDeps } from './proposals/lifecycle.ts';
+import { finishTouch } from './proposals/lifecycle.ts';
 import { executeApproved, land } from './proposals/execute.ts';
 import { chainTxLookup, reconcileOnBoot, reconcileProposal } from './proposals/reconcile.ts';
 import { proposeConsolidate, proposePolicyChange } from './proposals/draft.ts';
@@ -49,6 +50,7 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     execute: (p: Proposal) => executeApproved(ctx, p),
     land: (p: Proposal) => land(ctx, p),
     txLookup: deps.txLookup ?? chainTxLookup(),
+    afterTouch: (id, result) => serialise(() => finishTouch(ctx, id, result)),
   };
 
   const serialise = createSerialiser();

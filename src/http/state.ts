@@ -46,7 +46,7 @@ export const PROPOSAL_PAGE_DEFAULT = 25;
 export const PROPOSAL_PAGE_MAX = 200;
 
 // Still waiting on someone: a person, an unlock, or a look at the chain. Never trimmed.
-const WAITING: ReadonlySet<string> = new Set(['pending', 'pending_unlock', 'needs_reconciliation']);
+const WAITING: ReadonlySet<string> = new Set(['pending', 'pending_unlock', 'awaiting_touch', 'needs_reconciliation']);
 
 /* The trim, in store order.
    The order is load-bearing rather than cosmetic: ui/screens/decision.js takes pending[0] out of

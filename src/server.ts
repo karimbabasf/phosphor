@@ -30,6 +30,9 @@ import type { Ctx, GasFill, PriceCache, ServerDeps, PhosphorServer, SseHub } fro
 import { HOST, windowToken } from './http/auth.ts';
 import { createKeystore } from './keystore/index.ts';
 import { createSession } from './keystore/session.ts';
+import { createVaultRelay } from './vault/relay.ts';
+import { createVaultPrefs } from './vault/prefs.ts';
+import { createDepositWatch } from './vault/watch.ts';
 import { createSseHub } from './http/sse.ts';
 import { createCandlePush } from './market/push.ts';
 import { createChatRegistry } from './http/chats.ts';
@@ -197,10 +200,21 @@ export function createServer(deps: ServerDeps): PhosphorServer {
      keystore, so the app has exactly one; a test that passes none gets one over its own temp
      keysPath, which reads that path and writes nothing until a wallet route is called. */
   const keystore = deps.keystore ?? createKeystore({ keysPath: cfg.keysPath, mode: cfg.mode });
+  /* The vault's three companions. The relay is the app's when main.ts built one from the
+     shell's handshake, and a relay with no transport key otherwise, which is what every test
+     and every bare `npm run app` gets: no enclave, the password path, no behaviour change. */
+  const vault = deps.vault ?? createVaultRelay({ transportKey: null });
+  const vaultPrefs = createVaultPrefs(cfg.dataDir);
+  const deposits = createDepositWatch({
+    ledger: deps.ledger,
+    sse,
+    account: () => keystore.addressReport().addresses.evm?.toLowerCase() ?? null,
+  });
   const session =
     deps.session ??
     createSession({
       isUnlocked: () => keystore.isUnlocked(),
+      idleMs: () => vaultPrefs.get().idleMinutes * 60_000,
       lock: (reason) => {
         keystore.lock();
         audit.append(
@@ -240,6 +254,9 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     token,
     keystore,
     session,
+    vault,
+    vaultPrefs,
+    deposits,
     releaseQueued: () => deps.proposals.releaseQueued(),
     theme: { get: getTheme, set: setTheme },
     setView,

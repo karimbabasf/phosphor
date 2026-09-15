@@ -385,6 +385,10 @@ export type ProposalStatus =
   // makes signing possible. Never refused: refusing throws away the agent's work and teaches
   // people to turn the lock off. See decision 6 in the v1 spec.
   | 'pending_unlock'
+  // A human clicked approve on an enclave wallet and the Touch ID dialog that names the move is
+  // up. Leaves for `approved` when the enclave answers, or back to `pending` when the person
+  // cancels or nobody answers. See src/proposals/lifecycle.ts, approve.
+  | 'awaiting_touch'
   | 'approved'
   | 'refused'
   | 'executing'

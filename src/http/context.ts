@@ -37,6 +37,9 @@ import type { Crew } from '../crew.ts';
 import type { DuplicateGuard } from '../duplicates.ts';
 import type { Keystore, LockState } from '../keystore/index.ts';
 import type { Session } from '../keystore/session.ts';
+import type { VaultRelay } from '../vault/relay.ts';
+import type { VaultPrefs } from '../vault/prefs.ts';
+import type { DepositWatch } from '../vault/watch.ts';
 import type { JsonBody } from './respond.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -155,6 +158,10 @@ export type ServerDeps = {
      windowToken(), which is the environment or a minted one. The app always passes it, which is
      what keeps the token out of an environment any process can print. */
   token?: string;
+  /* The enclave relay, built by src/main.ts from the shell's handshake. Optional for the same
+     reason the token is: a test server has no shell. Absent means a relay with no transport key,
+     which answers every ask with no_relay and leaves the wallet on the password path. */
+  vault?: VaultRelay;
   audit: Audit;
   store: Store;
   ledger: Ledger;
@@ -287,6 +294,11 @@ export type Ctx = Omit<ServerDeps, 'getTheme' | 'setTheme' | 'getScreen' | 'keys
   keystore: Keystore;
   // The idle clock and the signing sessions. See src/keystore/session.ts.
   session: Session;
+  vault: VaultRelay;
+  // What the window remembers about the vault that is not a key: backed up, idle minutes.
+  vaultPrefs: VaultPrefs;
+  // The deposit watcher: one address at a time, until landed or a day.
+  deposits: DepositWatch;
   /* Re-decide everything an agent proposed while the wallet was locked. Wired by the server
      rather than imported, because the proposal service is what knows how to land a proposal
      and the HTTP layer only knows when to ask. Returns how many were released. */

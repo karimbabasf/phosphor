@@ -28,6 +28,9 @@ import { evaluate } from '../policy/engine.ts';
 import type { EngineCtx } from '../policy/engine.ts';
 import { loadPolicy } from '../policy/file.ts';
 import { isLocked } from '../keystore/index.ts';
+import type { Keystore } from '../keystore/store.ts';
+import type { VaultRelay, VaultResult } from '../vault/relay.ts';
+import { reasonFor } from '../vault/reason.ts';
 import type { RailRegistry } from '../rails/index.ts';
 import type { TradeDeps } from '../trade/rail.ts';
 import type { TxLookup } from './reconcile.ts';
@@ -59,6 +62,11 @@ export type ProposalDeps = {
   // the viem readers the rails already use; a test hands in a fake so the four outcomes can be
   // driven without a network.
   txLookup?: TxLookup;
+  /* The enclave relay and the keystore it opens, for the click-tier touch. Absent in tests and
+     in a bare `npm run app`, where approve behaves exactly as it did before the enclave: the
+     wallet is opened by password and a click is a click. */
+  vault?: VaultRelay;
+  keystore?: Keystore;
 };
 
 export function nowIso(): string {
@@ -164,6 +172,11 @@ export type PCtx = {
   // indirection for a different reason: it is a seam, so a test can drive the four outcomes
   // without a network.
   txLookup: TxLookup;
+  vault?: VaultRelay;
+  keystore?: Keystore;
+  // finishTouch, serialised by the service like approve is, so the continuation of a click
+  // never interleaves with another proposal's execution.
+  afterTouch: (id: string, result: VaultResult) => Promise<Proposal | null>;
 };
 
 export function persist(ctx: PCtx, p: Proposal): Proposal {
@@ -244,6 +257,21 @@ export async function approve(ctx: PCtx, id: string): Promise<Proposal> {
     return persist(ctx, { ...p, verdict, status: 'policy_refused', decidedBy: 'policy', decidedAt: nowIso() });
   }
 
+  /* AN ENCLAVE WALLET ASKS FOR A FINGER, every time, open or shut. The click is recorded as
+     awaiting_touch and the enclave is asked to unwrap the data key with a dialog that names this
+     move; finishTouch (below) takes it from there when the shell answers. Not awaited: approve
+     runs inside the service's serialiser, and a person can take a minute to reach for the
+     sensor. What the dialog says is composed from the draft's fields, never from the agent. */
+  if (enclaveGated(ctx)) {
+    const waiting = persist(ctx, { ...p, verdict, status: 'awaiting_touch' });
+    ctx.audit.append('proposal_created', `${id} was approved by click and is waiting for Touch ID`, { id });
+    void ctx.vault!.ask({ op: 'unwrap', id: `approve:${id}`, reason: reasonFor(p), ...ctx.keystore!.enclaveRequest() }).then(
+      (result) => ctx.afterTouch(id, result),
+      () => ctx.afterTouch(id, { ok: false, error: 'relay', message: 'the relay failed' }),
+    );
+    return waiting;
+  }
+
   /* A LOCKED WALLET QUEUES A CLICK TOO. land() has checked this since the queue existed and the
      approve path had no equivalent, so a proposal a person approved after the wallet auto-locked
      was persisted `executing`, the signer threw "the wallet is locked", and the row landed
@@ -259,6 +287,39 @@ export async function approve(ctx: PCtx, id: string): Promise<Proposal> {
   ctx.audit.append('approved', `human approved ${p.kind} proposal ${id}`, { id, totalUsd: totalUsdOf(p.draft) });
   // Through the context rather than a direct import: execute.ts reads from this file, so calling
   // it by name here would make the two modules a cycle. createProposalService wires it.
+  return ctx.execute(approved);
+}
+
+/* True when this backend has an enclave wallet AND a shell relaying to the enclave. Either
+   half missing means the password path, which needs no relay and asks nothing. */
+export function enclaveGated(ctx: PCtx): boolean {
+  return ctx.vault !== undefined && ctx.keystore !== undefined && ctx.vault.attached() && ctx.keystore.custody() === 'secure-enclave';
+}
+
+/* The second half of an enclave-gated approval: the shell has answered. A data key opens the
+   wallet (which also lifts anything parked as pending_unlock, through releaseQueued's rules,
+   not through this one) and this proposal alone goes to approved and executes. Anything else
+   (a cancelled dialog, a relay that died, a key that did not open the file) puts the proposal
+   back to pending with the reason in the audit log: the click is not lost, and nothing has
+   been signed. */
+export async function finishTouch(ctx: PCtx, id: string, result: VaultResult): Promise<Proposal | null> {
+  const current = ctx.store.get(id);
+  if (current === undefined || current.status !== 'awaiting_touch') return null;
+  if (!result.ok) {
+    ctx.audit.append('proposal_created', `${id} goes back to pending: the Touch ID did not complete (${result.error})`, { id, error: result.error });
+    return persist(ctx, { ...current, status: 'pending' });
+  }
+  if (result.op !== 'unwrap' || ctx.keystore === undefined) {
+    ctx.audit.append('proposal_created', `${id} goes back to pending: the enclave answered the wrong thing`, { id });
+    return persist(ctx, { ...current, status: 'pending' });
+  }
+  const opened = ctx.keystore.unlockWithDataKey(result.dek);
+  if (!opened.ok) {
+    ctx.audit.append('proposal_created', `${id} goes back to pending: the data key did not open the wallet (${opened.error})`, { id, error: opened.error });
+    return persist(ctx, { ...current, status: 'pending' });
+  }
+  const approved = persist(ctx, { ...current, status: 'approved', decidedBy: 'human', decidedAt: nowIso() });
+  ctx.audit.append('approved', `human approved ${current.kind} proposal ${id} with Touch ID`, { id, totalUsd: totalUsdOf(current.draft), touch: true });
   return ctx.execute(approved);
 }
 

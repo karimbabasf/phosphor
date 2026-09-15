@@ -32,6 +32,22 @@ import {
   handleWalletMigrate,
   handleIntentsReceive,
 } from './wallet.ts';
+import {
+  handleDepositShow,
+  handleDepositStatus,
+  handleDepositStop,
+  handleVaultAnswer,
+  handleVaultBackupProven,
+  handleVaultCreate,
+  handleVaultForget,
+  handleVaultMigrate,
+  handleVaultPending,
+  handleVaultPrefs,
+  handleVaultRestore,
+  handleVaultReveal,
+  handleVaultStatus,
+  handleVaultUnlock,
+} from './vault.ts';
 import { sendHealth } from './health.ts';
 import { sendReceipts } from './receipts.ts';
 import { LOG_LIMIT_MAX } from './context.ts';
@@ -83,6 +99,10 @@ const GET: Record<string, Route> = {
   // is the one receive route that can be slow; it still answers while locked.
   '/api/intents-receive': (ctx, _req, res) => handleIntentsReceive(ctx, res),
   '/api/events': (ctx, req, res) => ctx.sse.open(req, res),
+  // The vault's own facts: custody kind, enclave reach, backed up, what the dialog is waiting
+  // on. No key and no address; the window draws the Vault tab off it.
+  '/api/vault': (ctx, _req, res) => handleVaultStatus(ctx, res),
+  '/api/deposit': (ctx, _req, res) => handleDepositStatus(ctx, res),
   // No token, no secret, and deliberately the only unauthenticated proof of life. See health.ts.
   '/api/health': (ctx, _req, res) => sendHealth(ctx, res),
   /* One card per action that actually happened. The same background gas fill the history uses,
@@ -120,6 +140,21 @@ const POST: Record<string, Route> = {
   '/api/wallet/reveal': (ctx, req, res) => handleRevealStart(ctx, req, res),
   '/api/wallet/export': (ctx, req, res) => handleWalletExport(ctx, req, res),
   '/api/reconcile': (ctx, req, res) => handleMutation(ctx, '/api/reconcile', req, res),
+  /* The enclave. The first two are the shell's relay (see src/vault/relay.ts); the rest are the
+     wallet verbs of an enclave wallet, each of which asks the relay and waits for a person. All
+     of them carry the window token, and none of them is reachable from /api/mcp. */
+  '/api/vault/pending': (ctx, req, res) => handleVaultPending(ctx, req, res),
+  '/api/vault/answer': (ctx, req, res) => handleVaultAnswer(ctx, req, res),
+  '/api/vault/create': (ctx, req, res) => handleVaultCreate(ctx, req, res),
+  '/api/vault/unlock': (ctx, req, res) => handleVaultUnlock(ctx, req, res),
+  '/api/vault/reveal': (ctx, req, res) => handleVaultReveal(ctx, req, res),
+  '/api/vault/backup-proven': (ctx, req, res) => handleVaultBackupProven(ctx, req, res),
+  '/api/vault/restore': (ctx, req, res) => handleVaultRestore(ctx, req, res),
+  '/api/vault/migrate': (ctx, req, res) => handleVaultMigrate(ctx, req, res),
+  '/api/vault/forget': (ctx, req, res) => handleVaultForget(ctx, req, res),
+  '/api/vault/prefs': (ctx, req, res) => handleVaultPrefs(ctx, req, res),
+  '/api/deposit/show': (ctx, req, res) => handleDepositShow(ctx, req, res),
+  '/api/deposit/stop': (ctx, req, res) => handleDepositStop(ctx, req, res),
 };
 
 // The one path with a variable in it. A table cannot hold it, and a second table of patterns

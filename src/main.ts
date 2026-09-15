@@ -39,6 +39,7 @@ import { createPlanStore } from './trade/plans.ts';
 import type { TradeDeps } from './trade/rail.ts';
 import { createInfoClient } from './hl/info.ts';
 import { createServer } from './server.ts';
+import { createVaultRelay } from './vault/relay.ts';
 import { mintToken, readWindowToken } from './http/auth.ts';
 import { useIdentityValue } from './http/respond.ts';
 import { sweepOrphans, useSeatSecret } from './driver.ts';
@@ -90,6 +91,107 @@ const store = createStore(cfg.dataDir);
    the window is where a person unlocks it. */
 const keystore = createKeystore({ keysPath: cfg.keysPath, mode: cfg.mode });
 useKeystore(keystore);
+
+/* THE SHELL'S HANDSHAKE, off the pipe and before the port opens.
+   Four lines, in this order, written by src-tauri/src/backend.rs and then the pipe is closed:
+
+     1. the window token, which every write from the control page carries
+     2. the boot nonce, which this process echoes in its x-phosphor header so the shell can tell
+        its OWN backend from anything else that took the port
+     3. the roster seat secret, which reaches the agents this app spawns and nothing else
+     4. the enclave transport key, under which the Secure Enclave sidecar seals the wallet's data
+        key on its way back here over loopback; see src/vault/relay.ts
+
+   Why a pipe and not the environment: `ps eww <pid>` prints the environment of any process this
+   user owns, which is the attacker this app is built against. A local process read the token back
+   that way and drove the kill switch, the idle beacon and approve on a real pending proposal,
+   which the audit then recorded as a human's click. Same channel and same argument as the runner's
+   Hyperliquid key. See src/http/auth.ts.
+
+   A bare `npm run app` has nobody above it to send any of this. It gets a terminal on stdin, reads
+   nothing, mints its own token and says so on stderr, and answers the identity header with the
+   fixed word. Nothing is weakened: a backend with no nonce is a backend no shell is waiting on. */
+const HANDSHAKE_WAIT_MS = 2_000;
+
+function readHandshake(
+  stdin: NodeJS.ReadableStream & { isTTY?: boolean } = process.stdin,
+  waitMs = HANDSHAKE_WAIT_MS,
+): Promise<string[]> {
+  // A terminal is nobody about to pipe a secret, so there is nothing to wait for.
+  if (stdin.isTTY === true) return Promise.resolve([]);
+  return new Promise((resolve) => {
+    let buffered = '';
+    let done = false;
+
+    const finish = (): void => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      stdin.off('data', onData);
+      stdin.off('end', finish);
+      stdin.off('error', finish);
+      // Read no further. The handshake is the only thing this process ever wants from stdin.
+      stdin.pause?.();
+      resolve(buffered.split('\n').map((line) => line.trim()));
+    };
+
+    const onData = (chunk: Buffer | string): void => {
+      buffered += String(chunk);
+      // Four values means four newlines, because the shell writes one after the last of them.
+      if (buffered.split('\n').length > 4) finish();
+    };
+
+    const timer = setTimeout(finish, waitMs);
+    timer.unref?.();
+    stdin.on('data', onData);
+    stdin.on('end', finish);
+    stdin.on('error', finish);
+    stdin.resume?.();
+  });
+}
+
+const handshake = await readHandshake();
+
+/* The token still goes through readWindowToken, which owns the rules around it: the length floor,
+   the refusal to mint one when the shell started this process, and the single stderr print for the
+   developer case. It is handed the first line as a stream of its own rather than the real stdin,
+   because the real stdin has already been read to the end of the handshake by then. */
+const windowTokenValue = await readWindowToken({
+  stdin: Readable.from([`${handshake[0] ?? ''}\n`]) as NodeJS.ReadableStream,
+});
+
+// The identity header answers with this boot's nonce from here on. Set before the port opens, so
+// there is no window in which this app answers with the fixed word the shell would refuse.
+useIdentityValue(handshake[1] ?? '');
+
+/* The roster seat secret, and a minted one when nobody sent it.
+   Minting here rather than doing without is what keeps a `npm run app` install working the same
+   way as an installed one: the app's own driver child is recognised because it carries this value,
+   and a developer running the app by hand has an in-app driver too. It is never served, never
+   logged and never printed. It goes to the agents this app spawns, through childEnv, and nowhere
+   else. See RESERVED_SEATS in src/agents.ts for what it decides and what it does not. */
+const seatSecret = (handshake[2] ?? '').length >= 32 ? (handshake[2] as string) : mintToken();
+useSeatSecret(seatSecret);
+
+/* The enclave transport key, line 4, and the relay built over it. Absent (a bare `npm run app`,
+   an older shell) means a relay with no key, which answers every ask with no_relay: the wallet
+   stays on the password path and nothing here changes. Present, the shell will start polling
+   the moment the port answers, and the first thing asked of it is a probe, so the window knows
+   whether this Mac has an enclave before anyone clicks Create. */
+const transportHex = handshake[3] ?? '';
+const transportKey = /^[0-9a-f]{64}$/i.test(transportHex) ? Buffer.from(transportHex, 'hex') : null;
+const vault = createVaultRelay({ transportKey });
+if (transportKey !== null) {
+  void vault.ask({ op: 'probe' }).then((probe) => {
+    if (probe.ok && probe.op === 'probe') {
+      audit.append('app_start', probe.capability.secureEnclave ? 'the Secure Enclave is reachable through the shell' : 'this Mac has no Secure Enclave the shell can reach', { ...probe.capability });
+    } else if (!probe.ok) {
+      audit.append('app_start', `the enclave probe failed: ${probe.error}`, { error: probe.error });
+    }
+  });
+}
+
+const agents = createAgents(Date.now, MAX_AGENTS, { reserved: RESERVED_SEATS, secret: seatSecret });
 
 /* The lock's clock, and the signing sessions armed rules hold, in one object because they are
    two halves of one question: how long may this process keep a key. It is built here rather
@@ -361,6 +463,8 @@ const proposals = createProposalService({
   rails,
   trade: tradeDeps,
   dataDir: cfg.dataDir,
+  vault,
+  keystore,
 });
 
 /* ASKING for the venues an existing policy.json does not list, rather than adding them.
@@ -401,88 +505,6 @@ if (stranded.length > 0) {
 // for it: one agent_connected when an agent attaches, one agent_disconnected when it goes.
 // Two lines per session instead of 240 an hour, and the transcript still answers "was an
 // agent attached at 19:52".
-/* THE SHELL'S HANDSHAKE, off the pipe and before the port opens.
-   Four lines, in this order, written by src-tauri/src/backend.rs and then the pipe is closed:
-
-     1. the window token, which every write from the control page carries
-     2. the boot nonce, which this process echoes in its x-phosphor header so the shell can tell
-        its OWN backend from anything else that took the port
-     3. the roster seat secret, which reaches the agents this app spawns and nothing else
-     4. the enclave transport key, under which the Secure Enclave sidecar seals the wallet's data
-        key on its way back here over loopback; see src/vault/relay.ts
-
-   Why a pipe and not the environment: `ps eww <pid>` prints the environment of any process this
-   user owns, which is the attacker this app is built against. A local process read the token back
-   that way and drove the kill switch, the idle beacon and approve on a real pending proposal,
-   which the audit then recorded as a human's click. Same channel and same argument as the runner's
-   Hyperliquid key. See src/http/auth.ts.
-
-   A bare `npm run app` has nobody above it to send any of this. It gets a terminal on stdin, reads
-   nothing, mints its own token and says so on stderr, and answers the identity header with the
-   fixed word. Nothing is weakened: a backend with no nonce is a backend no shell is waiting on. */
-const HANDSHAKE_WAIT_MS = 2_000;
-
-function readHandshake(
-  stdin: NodeJS.ReadableStream & { isTTY?: boolean } = process.stdin,
-  waitMs = HANDSHAKE_WAIT_MS,
-): Promise<string[]> {
-  // A terminal is nobody about to pipe a secret, so there is nothing to wait for.
-  if (stdin.isTTY === true) return Promise.resolve([]);
-  return new Promise((resolve) => {
-    let buffered = '';
-    let done = false;
-
-    const finish = (): void => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      stdin.off('data', onData);
-      stdin.off('end', finish);
-      stdin.off('error', finish);
-      // Read no further. The handshake is the only thing this process ever wants from stdin.
-      stdin.pause?.();
-      resolve(buffered.split('\n').map((line) => line.trim()));
-    };
-
-    const onData = (chunk: Buffer | string): void => {
-      buffered += String(chunk);
-      // Four values means four newlines, because the shell writes one after the last of them.
-      if (buffered.split('\n').length > 4) finish();
-    };
-
-    const timer = setTimeout(finish, waitMs);
-    timer.unref?.();
-    stdin.on('data', onData);
-    stdin.on('end', finish);
-    stdin.on('error', finish);
-    stdin.resume?.();
-  });
-}
-
-const handshake = await readHandshake();
-
-/* The token still goes through readWindowToken, which owns the rules around it: the length floor,
-   the refusal to mint one when the shell started this process, and the single stderr print for the
-   developer case. It is handed the first line as a stream of its own rather than the real stdin,
-   because the real stdin has already been read to the end of the handshake by then. */
-const windowTokenValue = await readWindowToken({
-  stdin: Readable.from([`${handshake[0] ?? ''}\n`]) as NodeJS.ReadableStream,
-});
-
-// The identity header answers with this boot's nonce from here on. Set before the port opens, so
-// there is no window in which this app answers with the fixed word the shell would refuse.
-useIdentityValue(handshake[1] ?? '');
-
-/* The roster seat secret, and a minted one when nobody sent it.
-   Minting here rather than doing without is what keeps a `npm run app` install working the same
-   way as an installed one: the app's own driver child is recognised because it carries this value,
-   and a developer running the app by hand has an in-app driver too. It is never served, never
-   logged and never printed. It goes to the agents this app spawns, through childEnv, and nowhere
-   else. See RESERVED_SEATS in src/agents.ts for what it decides and what it does not. */
-const seatSecret = (handshake[2] ?? '').length >= 32 ? (handshake[2] as string) : mintToken();
-useSeatSecret(seatSecret);
-
-const agents = createAgents(Date.now, MAX_AGENTS, { reserved: RESERVED_SEATS, secret: seatSecret });
 
 // The drop is swept for because a killed MCP process has no request to ride on. mcp.ts does
 // send a bye on a clean shutdown, so this is the backstop for a SIGKILL rather than the
@@ -615,6 +637,7 @@ keystore.onChange((state) => {
 const server = createServer({
   cfg,
   token: windowTokenValue,
+  vault,
   audit,
   store,
   ledger,

@@ -46,7 +46,7 @@ const pending = new Map<string, Pending>();
 /* Every route here carries the window token, the same way approve does, and answers the same
    403. It is written once because the failure mode of writing it five times is that the fifth
    one forgets. */
-async function guarded(
+export async function guarded(
   ctx: Ctx,
   route: string,
   req: http.IncomingMessage,
@@ -82,7 +82,7 @@ function passwordOf(body: JsonBody): string | null {
   return password.length >= MIN_PASSWORD ? password : null;
 }
 
-function announce(ctx: Ctx): void {
+export function announce(ctx: Ctx): void {
   ctx.sse.broadcastLock(ctx.keystore.state());
   ctx.sse.broadcastState();
 }
@@ -97,13 +97,18 @@ function announce(ctx: Ctx): void {
    sentence, `code` is for anything that wants to branch. */
 const REFUSALS: Record<string, string> = {
   wrong_password: 'That password is wrong.',
+  enclave_required: 'This wallet opens with Touch ID, not a password.',
+  enclave_unavailable: 'The Secure Enclave is not reachable from this build, so this needs a password.',
+  user_cancel: 'You cancelled the Touch ID prompt.',
+  foreign: 'This wallet file was made on another Mac. Restore it here from your recovery phrase.',
+  not_backed_up: 'Back up your recovery phrase first.',
   no_wallet: 'There is no wallet on this computer yet.',
   no_mnemonic: 'This wallet has no recovery phrase, because it was imported from private keys.',
   damaged: 'The key file on this computer cannot be read. Your recovery words will bring the wallet back.',
   locked_out: 'Too many tries. Wait a moment and try again.',
 };
 
-function refusal(code: string, retryInSec?: number): JsonBody {
+export function refusal(code: string, retryInSec?: number): JsonBody {
   const wait =
     code === 'locked_out' && typeof retryInSec === 'number' && retryInSec > 0
       ? `Too many tries. Wait ${retryInSec} ${retryInSec === 1 ? 'second' : 'seconds'} and try again.`
