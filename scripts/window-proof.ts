@@ -12,7 +12,8 @@
 //
 // Fixture data only: the demo wallet on a temp directory, never the live one. Run:
 //   node scripts/window-proof.ts
-// playwright-core is not a dependency of this repo; point PLAYWRIGHT_CORE at a copy.
+// playwright-core is not a dependency of this repo; point PLAYWRIGHT_CORE at a copy. Without
+// playwright's own Chromium installed, point PROOF_BROWSER at a Chromium binary (Brave's, say).
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -25,6 +26,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PLAYWRIGHT_CORE =
   process.env.PLAYWRIGHT_CORE ?? path.join(os.homedir(), '.npm/_npx/47c97c996798144b/node_modules/playwright-core');
+const BROWSER = process.env.PROOF_BROWSER;
 const SHOTS = path.join(ROOT, 'docs', 'screenshots');
 const SAMPLES = 10;
 
@@ -200,7 +202,7 @@ async function main(): Promise<void> {
   // Untyped on purpose: playwright-core is not a dependency of this repo, so its types are not
   // in the tree. The page-side probes live in window-proof.page.js as a plain script.
   const { chromium } = require(PLAYWRIGHT_CORE) as { chromium: Json };
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ headless: true, ...(BROWSER ? { executablePath: BROWSER } : {}) });
   const results: Record<string, unknown> = {};
   try {
     // bypassCSP: the page's CSP is script-src 'self', which is right for the app and blocks the
