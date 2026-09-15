@@ -232,10 +232,18 @@ async function main(): Promise<void> {
       await page.waitForSelector('#view-vault .token-row', { timeout: 20_000 });
       await sleep(400);
       await shoot('vault');
+      // The Addresses card at the top of the world for the next two, because at 1280 x 800
+      // the first row of cards fills the screen and the developer rows sit under it.
+      const showAddresses = async (): Promise<void> => {
+        await page.evaluate('document.querySelector(\'#view-vault .panel[data-surface="addresses"]\').scrollIntoView({ block: "start" })');
+        await sleep(150);
+      };
       await page.evaluate('window.PhosphorDev.set(true)');
+      await showAddresses();
       await sleep(300);
       await shoot('vault-dev');
       await page.evaluate('window.PhosphorDev.set(false)');
+      await showAddresses();
       await page.click('#view-vault .netsel');
       await page.waitForSelector('#view-vault .netsel-option[data-network="sol"]', { timeout: 5_000 });
       await sleep(250);
