@@ -158,7 +158,7 @@ live on `/api/trade/action`, which the agent's door does not open onto.
 |---|---|
 | `watch` | Points the app at a market and leaves it there, so the window keeps showing what the conversation is about after the conversation has moved on |
 | `set_theme` | Changes the window's colours: five colour slots on top of the window's one colourway (green on black; the window is dark only). Moves no money, and it is on this surface because a person asking their assistant to recolour the screen should not have to leave the conversation |
-| `switch` | Moves the window between the plain-English view (`basic`), the operator view (`pro`) and the trading surface (`trade`). Moves no money, and every switch is audited. Named `switch` rather than `set_view_mode` because the whole requirement is that changing window costs one word: an agent hunting for how to "switch to trading" finds it immediately, and did not reliably find `set_view_mode`. Aliases (trading, hft, perps, simple) resolve in the app, so both doors agree. Answers with the screen record it moved to (`{ view, since, by: 'agent' }`). Not to be confused with `chart_draw view:`, which drives the chart's render state on the trade screen |
+| `switch` | Moves the window between the plain-English view (`basic`), the operator view (`pro`), the trading surface (`trade`) and the vault (`vault`). Moves no money, and every switch is audited. Named `switch` rather than `set_view_mode` because the whole requirement is that changing window costs one word: an agent hunting for how to "switch to trading" finds it immediately, and did not reliably find `set_view_mode`. Aliases (trading, hft, perps, simple) resolve in the app, so both doors agree. Answers with the screen record it moved to (`{ view, since, by: 'agent' }`). Not to be confused with `chart_draw view:`, which drives the chart's render state on the trade screen |
 
 A switch used to be refused outright while a proposal was pending, so an agent could not move a
 human away from a decision they were in the middle of. The approval block now renders on all three
@@ -544,11 +544,13 @@ an `/exchange` POST the venue rejects for its signature, and twenty seconds of t
     src/view/          the basic screen as one pure function, and the mode itself
     scripts/keygen.ts  raw keypairs for developers, written outside the working copy
     scripts/sweep.ts   secret sweep over the tracked tree and the git history
-    ui/                three windows, no framework, no build
+    ui/                one window, four screens, no framework, no build
     ui/chart/          the chart engine: two canvases, one pointer surface
-    ui/screens/        one file per screen: basic, pro, trade, lock, first run, decision
+    ui/screens/        one file per screen: basic, pro, trade, vault, lock, first run, decision
     ui/core/           the DOM helpers, the keyed reconciler, the API client, the store
     ui/design/         the tokens, the type scale and the motion the screens are built from
+    ui/fonts/          Sora and Geist Mono, self-hosted, with their OFL beside them
+    ui/logos/          the token and venue logos as SVG files, with their notices in LICENSE.md
     operator/          the opt-in operator profile: an agent that drives but cannot develop
     state/             policy.json, proposals.json, audit.jsonl (append-only)
 

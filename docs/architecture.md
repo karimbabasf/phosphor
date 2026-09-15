@@ -108,7 +108,7 @@ brief was written by another model, and nothing in that chain is a human.
 | `src/charts.ts` | Up to four charts side by side, each a chart store beside a drawing store. Slot 0 is the primary and keeps its old names on the context. |
 | `src/snapshot.ts` | The picture broker behind `chart_snapshot`: one outstanding ask per chart, a TTL, and nothing stored. |
 | `src/indicators.ts` | Indicator maths. Pure, index-aligned with the candles. |
-| `ui/` | One window (`index.html`) with the basic, pro and trade screens inside it, no framework, no build step. `screens/decision.js` renders the approval block on every screen. |
+| `ui/` | One window (`index.html`) with the basic, pro, trade and vault screens inside it, no framework, no build step. `screens/decision.js` renders the approval block on every screen. |
 
 `wallet.ts` and `composition.ts` look like duplicates and are not. The wallet answers "what do I
 hold", so it includes natives, the intents balance and the trading account. Composition answers "what is my money made of, and

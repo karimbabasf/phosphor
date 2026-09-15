@@ -317,8 +317,8 @@ hand. Keep a copy of the key file and its password somewhere that is not this Ma
 ## The window
 
 One window, no framework and no build. The conversation with your assistant is on the left in
-every mode; everything it can touch is on the right, and an agent moves between the three modes
-with `switch`.
+every tab; everything it can touch is on the right, and an agent moves between the four tabs
+(Basic, Pro, Trade, Vault) with `switch`.
 
 **The conversation** is the product. Start the assistant that is built in, or connect one you
 already use, and talk to it. Under each answer sits the trace: every tool it called, in plain
@@ -343,11 +343,12 @@ text only and the card renders from the server's own pending list.
 **Basic** is the same app for a non-technical reader: the total, one sentence that is the state of
 your money, one sentence that is your rules, what you hold, where to send money, what happened.
 
-**Pro** is the operator's density, and nothing on it is folded. Four panels split the height of the
-window: Money, the Hyperliquid account, Activity and Limits. Each one carries its content, and a
-list that outgrows its panel scrolls inside itself rather than making the page scroll. Every coin
-carries its mark, drawn as inline SVG in one colour, so this page still loads no images. The share
-each coin holds is one stacked bar under the total instead of a third column of numbers. An asset
+**Pro** is the operator's density, and nothing on it is folded. Four cards in two columns: Money
+and Activity down the left, the Hyperliquid account and Policy down the right. Each one sizes to
+its content, and a list that outgrows its card scrolls inside itself rather than making the page
+scroll. Every coin carries its logo, the real one from `ui/logos/`. The share each coin holds is
+one stacked bar under the total instead of a third column of numbers, each segment in its coin's
+own colour. An asset
 this app cannot price says "not priced" rather than $0.00, because a zero beside a balance you own
 reads as nothing owned, and a wallet that could not be read says so instead of reporting zero.
 
@@ -355,33 +356,37 @@ Anything that opens says so the same way everywhere: the pointer changes, the bo
 chevron travels, it scales on press and it takes a focus ring. Anything that is only a readout
 never moves.
 
-**Trade** is the chart with one rail beside it: status, then what is open, then what is waiting,
-then what is done. A trade is one plan (entry, stop, target, optional conditions) that the agent
+**Trade** is a strip, the chart, and one deck under it. The strip is the market as an exchange
+header reads it: the coin (which is also the market picker), the venue, the price, the day's
+change, high and low, and what is free and at risk. The chart takes the whole width. The deck is
+one panel with three tabs, Open, Waiting and Done, each with its count, so an empty one costs
+nothing but its name. A trade is one plan (entry, stop, target, optional conditions) that the agent
 draws as an idea and proposes whole; the venue holds the entry and both exits as one bracket, the
-policy reads the collateral at stake, and the rail's Cancel and Close are the human's own buttons.
-Nothing waiting and nothing open are one line each, because an empty zone should not cost as much
-room as a full one.
+policy reads the collateral at stake, and the deck's Cancel and Close are the human's own buttons.
+The chart and the deck can each be hidden, from their own header or from the Layout menu on the
+strip, and the choice sticks.
 
 Sora for the words and Geist Mono with tabular figures for anything that can change, so a value
 never moves its neighbours when it ticks. Phosphor green is one colour used three ways: the action,
 the direction up, and the assistant's light. Red is down and danger. Amber is only ever a person
 being waited on.
 
-![Pro: four panels, nothing folded](docs/screenshots/window-pro.png)
+![Pro: four cards, nothing folded](docs/screenshots/window-pro.png)
 
-Pro. Money and the trading account across the top, Activity and Limits filling the rest. The bar
-under the total is what share each coin holds.
+Pro. Money and Activity down the left, the trading account and Policy down the right. The bar under
+the total is what share each coin holds.
 
 | ![Basic](docs/screenshots/window-basic.png) | ![A proposal waiting for a click](docs/screenshots/window-dock.png) |
 |---|---|
 | Basic: the same money, read at arm's length | A proposal waiting for you, inside the conversation |
-| ![The trade rail](docs/screenshots/trade-rail.png) | ![Picking a market](docs/screenshots/trade-toolbar.png) |
-| Trade, the rail: the account, what is running, the fills | Trade, the bar: the market, the timeframes, what to draw |
+| ![The trade deck](docs/screenshots/trade-rail.png) | ![Picking a market](docs/screenshots/trade-toolbar.png) |
+| Trade, the deck: what is open, what is waiting, what is done | Trade, the strip: the market, the price, the day, and the picker open |
 
 ![The coin marks](docs/screenshots/coin-marks.png)
 
-The marks are the real logos as path data on a 24 box, filled with `currentColor`, so they are one
-colour at any size and this page loads no image files to draw them.
+The marks are the real logos, shipped as SVG files in `ui/logos/` with their licences beside them
+in `ui/logos/LICENSE.md`, drawn at 24 in the rows and lending their colour to the bar. A coin with
+no file gets a plain disc with its first letter, never a broken image.
 
 The numbers in these are a fixture, not a wallet.
 
@@ -394,9 +399,10 @@ redraws only when the data or the view changes; the hud canvas draws the crossha
 last price tag and the countdown, and redraws on pointer move. Moving the mouse repaints an almost
 empty canvas instead of five hundred candles, which is most of why it keeps up with a drag.
 
-The control row above it carries the market, the timeframes from 1m to 1d, the Indicators field,
-three toggles for what the trading side draws over the candles (Position, Forced close, Rules), and
-a dot that says whether the price is live and which venue it came from.
+The control row above it carries the timeframes from 1m to 1d, the Indicators field, the Layers
+menu for what the trading side draws over the candles (position, liquidation, plan stop, stops,
+targets, orders, fills), and a dot that says whether the price is live and how far behind the
+socket is. The market itself sits on the strip above.
 
     drag the plot          pan, in fractional bars, so it tracks the pointer
     drag up or down        takes the price scale off auto and shifts it
@@ -443,7 +449,9 @@ transmitter, and not financial advice: see [DISCLAIMER.md](DISCLAIMER.md).
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE). The two faces the window ships are under the SIL Open Font License
+(`ui/fonts/OFL.txt`), and the token and venue logos carry their own notices in
+`ui/logos/LICENSE.md`.
 
 ---
 
