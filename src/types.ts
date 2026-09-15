@@ -341,7 +341,25 @@ export type WriteDraft =
 // One rail per feature, each owning exactly one module under src/rails/. The dispatch
 // table in proposals.ts is the only place that knows they all exist, which is what lets
 // a rail be added without touching the engine.
-export type RailResult = { ok: boolean; detail: string; txids?: string[] };
+// What a rail knows beyond the hash: the 1Click handle it spent through, the venue nonce it
+// used, the deadline it signed, and what the venue reported as settled or refunded. Every
+// field is a fact the rail read, never a figure taken from a quote.
+export type RailEvidence = {
+  handle?: string;
+  nonce?: string;
+  deadline?: string;
+  refundedAmount?: string;
+  refundReason?: string;
+  settledAmountOut?: string;
+  explorerUrl?: string;
+};
+
+export type RailResult = { ok: boolean; detail: string; txids?: string[]; evidence?: RailEvidence };
+
+// Called by a rail the moment something irreversible exists: a signature released, a
+// transaction broadcast, an intent submitted. The executor persists it before the rail's
+// watch loop, so a process that dies inside the wait still has the hash on the row.
+export type RailHooks = { onEvidence?: (evidence: { txids?: string[] } & RailEvidence) => void };
 
 export type Rail<D extends WriteDraft = WriteDraft> = {
   kind: D['kind'];
@@ -361,7 +379,7 @@ export type Rail<D extends WriteDraft = WriteDraft> = {
   // Runs only after the proposal is approved, or auto-approved with the gate off. The proposal
   // id rides along so a rail that keeps its own registry (the trade rail) can record which
   // approval a row came from.
-  execute(draft: D, proposalId?: string): Promise<RailResult>;
+  execute(draft: D, proposalId?: string, hooks?: RailHooks): Promise<RailResult>;
 };
 
 export type SimulationResult = {
@@ -420,7 +438,13 @@ export type Proposal = {
   // txids are the evidence: the hashes the rail broadcast or the intents it signed. They
   // are also written to the audit log, but the log is compactable and this record is not,
   // so the transaction history keeps its explorer links after a compaction.
-  result?: { ok: boolean; detail: string; txids?: string[] };
+  result?: { ok: boolean; detail: string; txids?: string[]; evidence?: RailEvidence };
+  // When the rail returned, or when a reconcile settled the row. `decidedAt` is the decision
+  // and can be a minute before the money moved, which is the wrong stamp to judge a balance by.
+  settledAt?: string;
+  // An idempotency key the proposer chose. A repeat carrying the same key is answered with
+  // this row instead of a second one.
+  clientKey?: string;
   /* What the wallet was worth either side of this action, in USD, as the app knew it.
      `before` is the snapshot as execution began. `after` is taken once the ledger has re-read
      the chains, so it reflects the move rather than the stale numbers that were on screen a
