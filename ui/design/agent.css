@@ -977,15 +977,18 @@ a.receipt-hash:focus-visible {
 [data-surface]::after {
   content: "";
   position: absolute;
-  inset: 0;
+  inset: -1px;
   border-radius: inherit;
   pointer-events: none;
   opacity: 0;
   /* The edge is held back to a little over half the tone and the bloom
-     carries the rest. At full strength the hairline reads as a selected
-     border, which is a different thing from a surface something just lit up. */
+     carries the rest, inside and out. At full strength the hairline reads as
+     a selected border, which is a different thing from a surface something
+     just lit up. The inset half is never clipped; the outer half is what a
+     fold's overflow used to eat, so a glowing fold lifts its overflow below. */
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--glow-c) 55%, transparent),
-              inset 0 0 34px -12px var(--glow-c);
+              inset 0 0 34px -12px var(--glow-c),
+              0 0 26px -6px var(--glow-c);
   transition: opacity var(--dur-glow-out) var(--ease-out);
   z-index: 3;
 }
@@ -995,7 +998,17 @@ a.receipt-hash:focus-visible {
   transition-duration: var(--dur-glow-in);
 }
 
-/* The rules strip and the tabs are inline surfaces: the edge only. */
+/* THE FOLD CLIP. A fold keeps overflow:hidden for its collapse, which ate the
+   outer bloom of a surface that landed on it (moneyin, activity on Basic).
+   A fold only ever glows while it is open and the agent is touching it, so
+   lifting its overflow for the life of the glow shows the bloom without
+   breaking the collapse, which runs from the closed state where nothing
+   glows. */
+.fold[data-surface][data-glow="on"] {
+  overflow: visible;
+}
+
+/* The rules strip and the tabs are inline surfaces: the edge only, no bloom. */
 .tab::after,
 .strip::after {
   box-shadow: inset 0 0 0 1px var(--glow-c);

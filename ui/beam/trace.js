@@ -127,10 +127,32 @@
     return 'assistant';
   }
 
-  function surfaceOf(name) {
+  /* The aliases the switch tool accepts (src/mcp.ts), mapped to the view id
+     the tab carries. So a beam for `switch` lands on the tab being gone TO,
+     read from the tool's own argument, rather than on 'tabs' which is the tab
+     being left. */
+  var VIEW_ALIAS = {
+    basic: 'basic', simple: 'basic', plain: 'basic',
+    pro: 'pro', operator: 'pro', advanced: 'pro',
+    trade: 'trade', trading: 'trade', hft: 'trade', perps: 'trade', hyperliquid: 'trade',
+    vault: 'vault'
+  };
+
+  function switchTarget(input) {
+    if (!input || typeof input !== 'object') return null;
+    var mode = typeof input.mode === 'string' ? input.mode.trim().toLowerCase() : '';
+    var view = VIEW_ALIAS[mode];
+    return view ? 'tab-' + view : null;
+  }
+
+  /* WHERE THE LIGHT GOES. `input` is the scalar arguments the model sent
+     (agent.js passes them on the step event), read only for `switch`, whose
+     destination is the whole point of the call. */
+  function surfaceOf(name, input) {
     var id = String(name || '').replace(/^mcp__phosphor__/, '');
+    var target = id === 'switch' ? switchTarget(input) : null;
     return {
-      id: idFor(id),
+      id: target || idFor(id),
       /* Amber means a person has to click, and every propose verb ends there. */
       tone: id.indexOf('propose_') === 0 ? 'wait' : 'glow',
       leaves: LEAVES[id] === true
@@ -205,7 +227,7 @@
     if (detail.state === 'live') {
       /* A read opens nothing, so its result has nothing to release either. */
       if (!writes(String(detail.name || '').replace(/^mcp__phosphor__/, ''))) return;
-      var where = surfaceOf(detail.name);
+      var where = surfaceOf(detail.name, detail.input);
       open[key] = where;
       if (where.leaves) {
         var sky = { x: (window.innerWidth || 0) / 2, y: SKY_Y };
