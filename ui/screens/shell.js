@@ -190,6 +190,9 @@
     }
 
     if (changed) {
+      /* The world is the one scroller and the views share it, so a screen
+         opens at its top rather than wherever the last one was scrolled to. */
+      if (refs.views) refs.views.scrollTop = 0;
       /* Canvases mounted in a hidden view have no size to fit to, so the chart
          is told to re-measure once its view is on screen. */
       window.dispatchEvent(new CustomEvent('phosphor:view', { detail: { view: name } }));
