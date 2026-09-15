@@ -133,6 +133,12 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 // A scripted 1Click. Records every request so a test can assert what was actually sent.
+// The shape the API documents for a chain hash (openapi.yaml TransactionDetails). The
+// fixtures used to be bare strings, which is the one shape the live API never sends.
+function txDetails(hash: string): { hash: string; explorerUrl: string } {
+  return { hash, explorerUrl: `https://explorer.example/tx/${hash}` };
+}
+
 type Harness = {
   fetchImpl: typeof fetch;
   quoteBodies: Record<string, unknown>[];
@@ -162,7 +168,7 @@ function harness(
   const depositSubmits: Record<string, unknown>[] = [];
   const statusCalls: string[] = [];
   const sends: SendParams[] = [];
-  const statuses = options.statuses ?? [{ status: 'SUCCESS', swapDetails: { destinationChainTxHashes: ['0xdestination'] } }];
+  const statuses = options.statuses ?? [{ status: 'SUCCESS', swapDetails: { destinationChainTxHashes: [txDetails('0xdestination')] } }];
 
   const fetchImpl: typeof fetch = async (url, init) => {
     const u = String(url);
@@ -349,7 +355,7 @@ test('execute quotes live, sends the input to the deposit address, and polls to 
     statuses: [
       null, // 404: the API has not seen the address yet
       { status: 'KNOWN_DEPOSIT_TX', swapDetails: {} },
-      { status: 'SUCCESS', swapDetails: { originChainTxHashes: [TX_HASH], destinationChainTxHashes: ['0xdestination'] } },
+      { status: 'SUCCESS', swapDetails: { originChainTxHashes: [txDetails(TX_HASH)], destinationChainTxHashes: [txDetails('0xdestination')] } },
     ],
   });
   const result = await railOf(h).execute(draftOf());
@@ -584,7 +590,7 @@ test('a failed transfer says plainly that no funds left the wallet', async () =>
 });
 
 test('a REFUNDED swap reports the refund address rather than claiming success', async () => {
-  const h = harness({ statuses: [{ status: 'REFUNDED', swapDetails: { originChainTxHashes: [TX_HASH] } }] });
+  const h = harness({ statuses: [{ status: 'REFUNDED', swapDetails: { originChainTxHashes: [txDetails(TX_HASH)] } }] });
   const result = await railOf(h).execute(draftOf());
 
   assert.equal(result.ok, false);

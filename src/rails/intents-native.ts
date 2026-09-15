@@ -1262,6 +1262,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
       reported: 'not polled',
       originTxHashes: [],
       destinationTxHashes: [],
+      nearTxHashes: [],
     };
 
     /* Bounded by the deadline AND by the waits it has already spent. A precomputed attempt

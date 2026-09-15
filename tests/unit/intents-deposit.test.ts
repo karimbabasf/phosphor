@@ -170,6 +170,7 @@ function harness(
           reported: name,
           originTxHashes: [],
           destinationTxHashes: [],
+          nearTxHashes: [],
         };
       },
     },

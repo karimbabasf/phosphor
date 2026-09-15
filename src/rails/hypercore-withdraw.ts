@@ -400,7 +400,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
   async function watchStatus(depositAddress: string): Promise<OneClickStatus> {
     const deadline = now() + pollTimeoutMs;
     const maxPolls = Math.max(1, Math.ceil(pollTimeoutMs / pollIntervalMs));
-    let last: OneClickStatus = { found: false, status: 'PENDING_DEPOSIT', reported: 'not polled', originTxHashes: [], destinationTxHashes: [] };
+    let last: OneClickStatus = { found: false, status: 'PENDING_DEPOSIT', reported: 'not polled', originTxHashes: [], destinationTxHashes: [], nearTxHashes: [] };
     for (let attempt = 0; attempt < maxPolls; attempt += 1) {
       try {
         last = await client.status(depositAddress);

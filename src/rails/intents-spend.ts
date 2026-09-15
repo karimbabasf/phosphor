@@ -141,6 +141,7 @@ export async function watchStatus(deps: IntentsSpendDeps, depositAddress: string
     reported: 'not polled',
     originTxHashes: [],
     destinationTxHashes: [],
+    nearTxHashes: [],
   };
 
   for (let attempt = 0; attempt < maxPolls; attempt += 1) {

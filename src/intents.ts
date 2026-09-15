@@ -257,7 +257,10 @@ const ONECLICK_STATUSES: readonly OneClickStatusName[] = [
   'FAILED',
 ];
 
-export const ONECLICK_TERMINAL: readonly OneClickStatusName[] = ['SUCCESS', 'REFUNDED', 'FAILED'];
+// The statuses a watch stops on. INCOMPLETE_DEPOSIT is here although the API can still move
+// past it: it means the deposit fell short of the quote, and this app sends exactly once, so
+// nothing it does afterwards changes that. Polling on would only delay the sentence.
+export const ONECLICK_TERMINAL: readonly OneClickStatusName[] = ['SUCCESS', 'REFUNDED', 'FAILED', 'INCOMPLETE_DEPOSIT'];
 
 export type OneClickStatus = {
   found: boolean; // false on 404: the address is not known to the API yet
@@ -265,6 +268,11 @@ export type OneClickStatus = {
   reported: string; // what the API actually said, one line, bounded
   originTxHashes: string[];
   destinationTxHashes: string[];
+  nearTxHashes: string[]; // the settlement on NEAR, which for an INTENTS order is the only hash there is
+  depositedAmount?: string; // formatted, what the API saw arrive at the deposit address
+  settledAmountOut?: string; // formatted, what the API says was delivered, not what was quoted
+  refundedAmount?: string; // formatted; "0" on a terminal status that carries no refund field
+  refundReason?: string; // the API's reason for a refund, when it gave one
 };
 
 // Remote text lands in one-line audit entries and in the approval gate a human reads.
@@ -281,9 +289,57 @@ export function oneLine(value: unknown, max = 300): string {
   return tidy.length > max ? tidy.slice(0, max) + '...' : tidy;
 }
 
-function stringsOf(value: unknown): string[] {
+// The spec types originChainTxHashes and destinationChainTxHashes as { hash, explorerUrl }
+// objects and nearTxHashes as plain strings. Both shapes are read: the reader that kept only
+// strings dropped every chain hash the live API returned, and nobody noticed because the
+// fixtures were written as strings too.
+export function hashesOf(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
-  return value.filter((v): v is string => typeof v === 'string').map((v) => oneLine(v, 120));
+  const out: string[] = [];
+  for (const v of value) {
+    if (typeof v === 'string') out.push(oneLine(v, 120));
+    else if (v !== null && typeof v === 'object' && typeof (v as Record<string, unknown>)['hash'] === 'string') {
+      out.push(oneLine((v as Record<string, unknown>)['hash'], 120));
+    }
+  }
+  return out;
+}
+
+function amountOf(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() !== '' ? oneLine(value, 40) : undefined;
+}
+
+// A status body as the API returns it, read as data. Exported so a test can feed it the real
+// bodies and so a stub can produce exactly what the client would.
+export function parseStatus(payload: unknown): OneClickStatus {
+  const body = (payload !== null && typeof payload === 'object' ? payload : {}) as Record<string, unknown>;
+  const reported = oneLine(body['status'] ?? 'missing status field', 60);
+  const known = (ONECLICK_STATUSES as readonly string[]).includes(reported);
+  const status: OneClickStatusName | 'UNKNOWN' = known ? (reported as OneClickStatusName) : 'UNKNOWN';
+  const terminal = known && (ONECLICK_TERMINAL as readonly string[]).includes(status);
+  const raw = body['swapDetails'];
+  const details = (raw !== null && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+
+  const depositedAmount = amountOf(details['depositedAmountFormatted']);
+  const settledAmountOut = amountOf(details['amountOutFormatted']);
+  // On a terminal status the refund is settled too, so a missing field means none was made.
+  // Before that the field is simply not known yet, and "0" would be a claim.
+  const refundedAmount = amountOf(details['refundedAmountFormatted']) ?? (terminal ? '0' : undefined);
+  const reason = details['refundReason'];
+  const refundReason = typeof reason === 'string' && reason.trim() !== '' ? oneLine(reason, 80) : undefined;
+
+  return {
+    found: true,
+    status,
+    reported,
+    originTxHashes: hashesOf(details['originChainTxHashes']),
+    destinationTxHashes: hashesOf(details['destinationChainTxHashes']),
+    nearTxHashes: hashesOf(details['nearTxHashes']),
+    ...(depositedAmount !== undefined ? { depositedAmount } : {}),
+    ...(settledAmountOut !== undefined ? { settledAmountOut } : {}),
+    ...(refundedAmount !== undefined ? { refundedAmount } : {}),
+    ...(refundReason !== undefined ? { refundReason } : {}),
+  };
 }
 
 // Where the output of a swap is delivered, and where a refund goes if it does not happen.
@@ -511,22 +567,12 @@ export function oneClickClient(deps: OneClickDeps = {}): OneClickClient {
         reported: 'not found yet',
         originTxHashes: [],
         destinationTxHashes: [],
+        nearTxHashes: [],
       };
     }
     if (!res.ok) throw new Error(`1click status failed: ${res.status}`);
 
-    const payload = (await res.json().catch(() => null)) as Record<string, unknown> | null;
-    const reported = oneLine(payload?.['status'] ?? 'missing status field', 60);
-    const known = (ONECLICK_STATUSES as readonly string[]).includes(reported);
-    const details = (payload?.['swapDetails'] ?? {}) as Record<string, unknown>;
-
-    return {
-      found: true,
-      status: known ? (reported as OneClickStatusName) : 'UNKNOWN',
-      reported,
-      originTxHashes: stringsOf(details['originChainTxHashes']),
-      destinationTxHashes: stringsOf(details['destinationChainTxHashes']),
-    };
+    return parseStatus(await res.json().catch(() => null));
   }
 
   return { tokens, quote, submitDeposit, status };

@@ -111,6 +111,7 @@ function harness(over: Overrides = {}): { api: IntentsApiPort; signer: IntentsSi
         reported: status,
         originTxHashes: [],
         destinationTxHashes: over.destinationTxHashes ?? ['0xdeadbeef'],
+        nearTxHashes: [],
       } as OneClickStatus;
     },
   };

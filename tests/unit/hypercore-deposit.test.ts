@@ -139,7 +139,7 @@ function fakeApi(over: ApiOverrides = {}): { api: IntentsApiPort; signer: Intent
     async status() {
       if (over.statusThrows) throw new Error('status endpoint down');
       const status = over.status ?? 'SUCCESS';
-      return { found: true, status, reported: status, originTxHashes: [], destinationTxHashes: ['0xdest'] } as OneClickStatus;
+      return { found: true, status, reported: status, originTxHashes: [], destinationTxHashes: ['0xdest'], nearTxHashes: [] } as OneClickStatus;
     },
   };
   const signer: IntentsSignerPort = {

@@ -573,6 +573,7 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
       reported: 'not polled',
       originTxHashes: [],
       destinationTxHashes: [],
+      nearTxHashes: [],
     };
 
     for (let attempt = 0; attempt < maxPolls; attempt += 1) {

@@ -508,6 +508,7 @@ export function intentsDepositRail(deps: IntentsDepositRailDeps): IntentsDeposit
       reported: 'not polled',
       originTxHashes: [],
       destinationTxHashes: [],
+      nearTxHashes: [],
     };
 
     for (let attempt = 0; attempt < maxPolls; attempt += 1) {

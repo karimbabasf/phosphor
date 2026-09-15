@@ -24,6 +24,7 @@ import { defaultPolicy } from '../../src/policy/file.ts';
 import { evaluate } from '../../src/policy/engine.ts';
 import type { EngineCtx } from '../../src/policy/engine.ts';
 import type { RiskRow, SwapDraft } from '../../src/types.ts';
+import { parseStatus } from '../../src/intents.ts';
 import type { OneClickQuote, OneClickToken, TokensFile } from '../../src/intents.ts';
 import { venueAllowlist } from '../../src/rails/index.ts';
 
@@ -218,16 +219,11 @@ function harness(
       statusCalls.push(depositAddress);
       const payload = statuses[index];
       if (payload === null) {
-        return { found: false, status: 'PENDING_DEPOSIT', reported: 'not found yet', originTxHashes: [], destinationTxHashes: [] };
+        return { found: false, status: 'PENDING_DEPOSIT', reported: 'not found yet', originTxHashes: [], destinationTxHashes: [], nearTxHashes: [] };
       }
-      const known = ['PENDING_DEPOSIT', 'KNOWN_DEPOSIT_TX', 'INCOMPLETE_DEPOSIT', 'PROCESSING', 'SUCCESS', 'REFUNDED', 'FAILED'];
-      return {
-        found: true,
-        status: (known.includes(payload.status) ? payload.status : 'UNKNOWN') as never,
-        reported: payload.status,
-        originTxHashes: [],
-        destinationTxHashes: (payload.swapDetails?.['destinationChainTxHashes'] as string[]) ?? [],
-      };
+      // The real reader over the fixture body, so the stub cannot drift from what the client
+      // hands the rail on the live API.
+      return parseStatus(payload);
     },
   };
 

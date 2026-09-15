@@ -207,6 +207,7 @@ function apiOf(over: Overrides = {}): { api: IntentsApiPort; calls: ApiCalls } {
         reported: over.status ?? 'SUCCESS',
         originTxHashes: [],
         destinationTxHashes: over.destinationTxHashes ?? ['5xSolanaTxSig'],
+        nearTxHashes: [],
       };
     },
   };
