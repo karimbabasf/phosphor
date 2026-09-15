@@ -3,15 +3,16 @@
 <title>Phosphor disk image background</title>
 <!--
   The picture behind the two icons in the disk image window. 660 x 400 points, the window size
-  in tauri.conf.json; the app icon sits centred on (165, 175) and the Applications alias on
-  (495, 175), both drawn by Finder on top of this at 128 px with a 16 px label underneath.
+  in tauri.conf.json, but that size includes the title bar, so only the top 372 points show:
+  everything is composed inside those. The app icon sits centred on (165, 165) and the
+  Applications alias on (495, 165), both drawn by Finder on top of this at 128 px with a 16 px
+  label underneath.
 
   Finder paints those two labels itself, black in the light appearance and white in the dark
-  one, and offers no way to choose. Ink under black text is invisible, so the band the labels
-  land on (roughly y 244 to 262) is lit to a neutral grey that reads against either: #74787A
-  is 4.5:1 against both black and white. The light is an ellipse, full strength under both
-  labels and gone by the window's edges, so it reads as light on a surface rather than a bar.
-  It is the one thing on the picture; the rest stays quiet.
+  one, and offers no way to choose. Ink under black text is invisible, so the icons sit on a
+  flat green slab that reads against either: #17883B is 4.6:1 against black and 4.5:1 against
+  white. One solid shape, no gradient, no shadow; the slab is the install zone and the only
+  thing on the picture besides the name and one line.
 
   Rendered by render.ts into background.tiff, a two-scale TIFF, so the picture is sharp on a
   Retina display. Edit this file, run the renderer, commit both.
@@ -31,7 +32,7 @@
   }
   .wordmark {
     position: absolute;
-    left: 0; right: 0; top: 46px;
+    left: 0; right: 0; top: 40px;
     margin: 0;
     text-align: center;
     font-family: "Sora", sans-serif;
@@ -43,39 +44,35 @@
     text-transform: uppercase;
     color: #ECEEF1;
   }
-  .beam {
+  .slab {
     position: absolute;
-    inset: 0;
-    background: radial-gradient(
-      ellipse 480px 44px at 330px 254px,
-      #74787A 0%,
-      #74787A 46%,
-      rgba(116, 120, 122, 0.45) 72%,
-      rgba(116, 120, 122, 0) 100%
-    );
+    left: 32px; right: 32px; top: 92px;
+    height: 172px;
+    background: #17883B;
+    border-radius: 18px;
   }
   .arrow {
     position: absolute;
-    top: 174px; left: 250px;
-    width: 160px; height: 2px;
-    background: #9BA1AB;
-    border-radius: 1px;
+    top: 163px; left: 262px;
+    width: 136px; height: 3px;
+    background: #0E0F13;
+    border-radius: 2px;
   }
   .arrow::after {
     content: "";
     position: absolute;
-    right: 0; top: -6px;
-    width: 12px; height: 12px;
-    border-top: 2px solid #9BA1AB;
-    border-right: 2px solid #9BA1AB;
-    border-radius: 0 1px 0 0;
+    right: 1px; top: -7px;
+    width: 14px; height: 14px;
+    border-top: 3px solid #0E0F13;
+    border-right: 3px solid #0E0F13;
+    border-radius: 0 2px 0 0;
     transform: rotate(45deg);
-    transform-origin: 6px 8px;
+    transform-origin: 7px 8.5px;
     box-sizing: border-box;
   }
   .line {
     position: absolute;
-    left: 0; right: 0; top: 322px;
+    left: 0; right: 0; top: 302px;
     margin: 0;
     text-align: center;
     font-size: 15px;
@@ -83,7 +80,7 @@
     color: #9BA1AB;
   }
 </style>
-<div class="beam"></div>
+<div class="slab"></div>
 <div class="arrow" role="presentation"></div>
 <h1 class="wordmark">Phosphor</h1>
 <p class="line">Drag Phosphor into Applications, then open it from there.</p>
