@@ -767,7 +767,7 @@ body[data-view="trade"] .stage {
    capped at six tenths of the deck so a second position cannot push Waiting
    to a heading with nothing under it; past the cap Open scrolls inside
    itself like every other zone. */
-.trade-open { max-height: calc(var(--deck, 236px) * 0.6); }
+.trade-open { max-height: calc(var(--deck, 236px) * 0.5); }
 
 .trade-zone-head {
   display: flex;
@@ -939,14 +939,34 @@ body[data-view="trade"] .stage {
 
 /* ---------- The deck handle inside trade ---------- */
 
-/* A horizontal bar between the chart and the deck, dragged up and down. */
+/* A horizontal bar between the chart and the deck, dragged up and down. A
+   short grip sits in its middle so the handle can be found before it is
+   hovered. On a window 900 px tall or more the deck opens at 300 px, which
+   holds a plan with its conditions and six fills without a scroll. */
+@media (min-height: 900px) {
+  .trade-wrap { --deck: 300px; }
+}
+
 .split-h {
+  position: relative;
   cursor: row-resize;
   background: transparent;
   border: 0;
   border-top: 1px solid transparent;
   transition: background-color var(--dur-press) var(--ease-out);
   touch-action: none;
+}
+
+.split-h::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 32px;
+  height: 3px;
+  margin: -1.5px 0 0 -16px;
+  border-radius: 2px;
+  background: var(--line-strong);
 }
 
 @media (hover: hover) and (pointer: fine) {

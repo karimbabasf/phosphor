@@ -149,7 +149,7 @@
        money at NEAR Intents is a row in the wallet above, and the money at the
        trading venue was on no screen but the trade screen. */
     var trading = linkPanel('Trading', 'span-5', 'account', 'Open the trade screen');
-    var tradingBody = dom.el('div', 'stack grow spread');
+    var tradingBody = dom.el('div', 'stack grow');
     trading.body.appendChild(tradingBody);
     grid.appendChild(trading.node);
 
@@ -735,8 +735,9 @@
       ? ', ' + (positions.length === 1 ? '1 position open' : positions.length + ' positions open')
       : ', nothing open'));
 
+    /* The lead already says what the trading money is, so the one fact
+       under it is what is still spare. */
     var box = dom.el('div', 'facts');
-    fact(box, 'Trading money', typeof account.equityUsd === 'number' ? dom.usd(account.equityUsd) : '--');
     fact(box, 'Spare', typeof account.freeUsd === 'number' ? dom.usd(account.freeUsd) : '--');
     host.appendChild(box);
 
@@ -754,7 +755,7 @@
       wrap.appendChild(top);
       var meter = dom.el('div', 'meter');
       var fill = dom.el('div', 'meter-fill');
-      fill.style.width = Math.max(0, Math.min(1, account.healthPct)) * 100 + '%';
+      fill.style.setProperty('--fill', String(Math.max(0, Math.min(1, account.healthPct))));
       if (account.healthPct < 0.3) fill.dataset.tone = 'down';
       else if (account.healthPct < 0.5) fill.dataset.tone = 'warn';
       meter.appendChild(fill);

@@ -218,7 +218,11 @@
     dom.setText(amount, left
       ? (failed ? '' : '-') + dom.qty(receipt.amount) + (symbol ? ' ' + symbol : '')
       : '');
-    dom.setAttr(amount, 'data-dir', left && !failed ? 'out' : null);
+    /* A swap or a move between the person's own pockets changes what the
+       money is, not how much of it there is, so it reads in the text tone.
+       Red is for money that left the wallet altogether. */
+    var gone = receipt.kind === 'transfer' || receipt.kind === 'consolidate' || receipt.kind === 'send';
+    dom.setAttr(amount, 'data-dir', left && !failed && gone ? 'out' : null);
     dom.setAttr(amount, 'class', left && failed ? 'tx-amount dim' : 'tx-amount');
 
     /* What arrived, when the receipt carries it, then the fee. One summed fee is

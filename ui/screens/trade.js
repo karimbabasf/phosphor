@@ -674,7 +674,12 @@
      freeUsd, atRiskUsd, maxLossUsd, ... }. */
   function buildStatus(host) {
     var mark = dom.el('div', 'trade-mark');
-    mark.appendChild(dom.el('span', 'trade-mark-coin', 'Market'));
+    /* The venue's mark, which is not the last close the chart's axis paints
+       off the exchange feed, so the cell says which price it is. */
+    var head = dom.el('div', 'trade-mark-head');
+    head.appendChild(dom.el('span', 'trade-mark-coin', 'Market'));
+    head.appendChild(dom.el('span', 'trade-mark-which', 'mark'));
+    mark.appendChild(head);
     var tag = dom.el('div', 'tag');
     tag.appendChild(dom.el('span', 'trade-mark-price'));
     var delta = dom.el('span', 'tag-delta');
@@ -695,7 +700,7 @@
     risk.hidden = true;
     host.appendChild(risk);
 
-    refs.markCoin = mark.children[0];
+    refs.markCoin = head.children[0];
     refs.tag = tag;
     refs.price = tag.children[0];
     refs.delta = delta;

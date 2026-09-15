@@ -359,7 +359,13 @@ button.rule.opens[data-open="true"] .chev { transform: rotate(135deg); }
               box-shadow var(--dur-enter) var(--ease-out);
 }
 
-.agent-status[data-state="off"] > .status-dot { background: var(--text-3); }
+/* Off is a hollow ring, not a filled point: a filled grey dot at the same
+   gap as the word read as a middle-dot separator between "Assistant" and
+   "Off". */
+.agent-status[data-state="off"] > .status-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--text-3);
+}
 .agent-status[data-state="starting"] > .status-dot { background: color-mix(in srgb, var(--beam) 60%, var(--text-3)); }
 .agent-status[data-state="error"] > .status-dot { background: var(--down); }
 .agent-status[data-state="stopped"] > .status-dot {
@@ -1680,6 +1686,18 @@ a.receipt-hash:focus-visible {
   flex-direction: column;
   align-items: flex-start;
   gap: var(--s-2);
+}
+
+.trade-mark-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-1);
+}
+
+.trade-mark-which {
+  font-family: var(--font-ui);
+  font-size: var(--fs-12);
+  color: var(--text-3);
 }
 
 .trade-mark-coin {

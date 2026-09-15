@@ -570,9 +570,12 @@ button.chip:active {
    draws nothing at all. */
 .meter-fill {
   height: 100%;
+  width: 100%;
   border-radius: inherit;
   background: var(--text-2);
-  transition: width var(--dur-enter) var(--ease-out);
+  transform: scaleX(var(--fill, 0));
+  transform-origin: left center;
+  transition: transform var(--dur-enter) var(--ease-out);
 }
 
 .meter-fill[data-spent="true"] {
@@ -800,7 +803,7 @@ textarea.input {
   gap: var(--s-2);
   padding: 2px var(--s-2) 2px var(--s-2);
   border-radius: 6px;
-  border: 1px solid var(--line-strong);
+  border: 1px solid transparent;
   background: var(--bg-2);
   font-family: var(--font-mono);
   font-size: var(--fs-20);
@@ -1071,10 +1074,9 @@ button.tx:focus-visible {
 
 /* THE STATUS LINE. What the assistant is doing right now, as a line rather
    than a sweep: a 6 px phosphor dot that breathes while work is in flight,
-   the verb beside it in the text colour with a light passing through it,
-   and the seconds elapsed in mono. The dot settles to a still point when the
-   turn ends. The breathing and the shimmer are the only two animations, both
-   on transform, opacity and background-position, and both stop under reduced
+   the verb beside it in the text colour, and the seconds elapsed in mono. The
+   dot settles to a still point when the turn ends. The breath is the one
+   animation, on transform and opacity only, and it stops under reduced
    motion (the block at the foot of this file). */
 .status-line {
   display: inline-flex;
@@ -1100,9 +1102,9 @@ button.tx:focus-visible {
 }
 
 @keyframes status-breathe {
-  0%   { transform: scale(1); box-shadow: 0 0 0 0 color-mix(in srgb, var(--beam) 45%, transparent); opacity: 1; }
-  50%  { transform: scale(1.25); box-shadow: 0 0 0 5px color-mix(in srgb, var(--beam) 0%, transparent); opacity: 0.85; }
-  100% { transform: scale(1); box-shadow: 0 0 0 0 color-mix(in srgb, var(--beam) 0%, transparent); opacity: 1; }
+  0%   { transform: scale(1); opacity: 1; }
+  50%  { transform: scale(1.3); opacity: 0.7; }
+  100% { transform: scale(1); opacity: 1; }
 }
 
 .status-line > .status-verb {
@@ -1111,20 +1113,6 @@ button.tx:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.status-line[data-live="true"] > .status-verb {
-  background: linear-gradient(90deg, var(--text) 0%, var(--text) 40%, var(--beam) 50%, var(--text) 60%, var(--text) 100%);
-  background-size: 220% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  animation: status-shimmer 1.6s linear infinite;
-}
-
-@keyframes status-shimmer {
-  from { background-position: 120% 0; }
-  to { background-position: -120% 0; }
 }
 
 .status-line > .status-elapsed {
@@ -1171,10 +1159,5 @@ button.tx:focus-visible {
   }
 
   .status-line[data-live="true"] > .status-dot { animation: none; opacity: 1; }
-  .status-line[data-live="true"] > .status-verb {
-    animation: none;
-    background: none;
-    color: var(--text);
-  }
   .rd, .rd-out { will-change: auto; }
 }
