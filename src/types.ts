@@ -151,6 +151,11 @@ export type Policy = {
     maxPerTransactionUsd: number;
     maxPerSessionUsd: number; // rolling 24h sum of executed fund-moving proposals
     humanClickAboveUsd: number; // above this, allow becomes needs_approval
+    // A rolling 24h ceiling on AUTO-APPROVED spend alone: past it the next sub-threshold move
+    // waits for a click, so a stream of small auto moves cannot run unattended up to the whole
+    // session cap. Optional so a policy file predating it still parses; loadPolicy fills it with
+    // five times the click threshold, which is also the fresh default.
+    autoApproveDailyUsd?: number;
     destinationAllowlist: string[]; // lowercased; self addresses are implicitly allowed
     simulateBeforeSign: true; // constant in v1, shown in UI
   };

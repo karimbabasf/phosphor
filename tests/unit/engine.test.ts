@@ -461,3 +461,25 @@ test('applyLegs clamps a leg larger than the balance instead of going negative',
   const arbUsdt = post.holdings.find(h => h.chain === 'arb' && h.symbol === 'USDT');
   assert.equal(arbUsdt?.amount, 0);
 });
+
+// ---------- the auto-approved daily ceiling on the leg branch (A.F5) ----------
+
+test('a sub-threshold consolidation past the auto-approved ceiling waits for a click', () => {
+  const policy = defaultPolicy();
+  policy.outbound.humanClickAboveUsd = 100;
+  policy.outbound.autoApproveDailyUsd = 250;
+  const v = evaluate(consolidate(60), ctxWith({ policy, autoApprovedSpentUsd: 200 }));
+  assert.equal(v.outcome, 'needs_approval');
+  assert.equal(
+    v.reasons[v.reasons.length - 1],
+    'Auto-approved moves in the last 24 hours already total $200.00; with $60.00 more that passes the $250.00 ceiling, so this one waits for a click.',
+  );
+});
+
+test('the same consolidation under the ceiling is allowed', () => {
+  const policy = defaultPolicy();
+  policy.outbound.humanClickAboveUsd = 100;
+  policy.outbound.autoApproveDailyUsd = 250;
+  const v = evaluate(consolidate(60), ctxWith({ policy, autoApprovedSpentUsd: 100 }));
+  assert.equal(v.outcome, 'allow');
+});

@@ -135,6 +135,7 @@ export function mergePatch(base: Policy, patch: PolicyPatch): Policy {
     if (o.maxPerTransactionUsd !== undefined) next.outbound.maxPerTransactionUsd = o.maxPerTransactionUsd;
     if (o.maxPerSessionUsd !== undefined) next.outbound.maxPerSessionUsd = o.maxPerSessionUsd;
     if (o.humanClickAboveUsd !== undefined) next.outbound.humanClickAboveUsd = o.humanClickAboveUsd;
+    if (o.autoApproveDailyUsd !== undefined) next.outbound.autoApproveDailyUsd = o.autoApproveDailyUsd;
     if (o.destinationAllowlist !== undefined) next.outbound.destinationAllowlist = o.destinationAllowlist.map(a => a.toLowerCase());
   }
 
@@ -244,6 +245,7 @@ export function buildCtx(ctx: PCtx, snapshot: LedgerSnapshot, policy: Policy | n
     composition: classify(snapshot, ctx.riskRows),
     ledger: snapshot,
     sessionSpentUsd: sessionSpentUsd(ctx),
+    autoApprovedSpentUsd: autoApprovedSpentUsd(ctx),
     selfAddresses: selfAddresses(ctx, snapshot),
   };
 }
@@ -504,6 +506,24 @@ export function sessionSpentUsd(ctx: PCtx): number {
     // separately, which is how the figure on screen and the figure a proposal is refused against
     // come to disagree.
     .filter(countsAgainstCap)
+    .filter(p => {
+      const at = Date.parse(p.decidedAt ?? p.createdAt);
+      return Number.isFinite(at) && at >= cutoff;
+    })
+    .reduce((sum, p) => sum + totalUsdOf(p.draft), 0);
+}
+
+/* The auto-approved slice of the same window: the same 24h and the same "money moved or is
+   moving" predicate as sessionSpentUsd, but only rows a policy 'allow' executed, never a human
+   click. It is what the engine's auto-approved daily ceiling budgets on, so a stream of
+   sub-threshold moves the human never saw is bounded by something smaller than the session cap.
+   A human-approved move does not count: the person already made that decision at the card. */
+export function autoApprovedSpentUsd(ctx: PCtx): number {
+  const cutoff = Date.now() - SESSION_WINDOW_MS;
+  return ctx.store
+    .list()
+    .filter(countsAgainstCap)
+    .filter(p => p.decidedBy === 'policy')
     .filter(p => {
       const at = Date.parse(p.decidedAt ?? p.createdAt);
       return Number.isFinite(at) && at >= cutoff;

@@ -256,6 +256,9 @@ function policyThatBinds(dir: string): void {
   policy.outbound.maxPerTransactionUsd = 9_000;
   policy.outbound.maxPerSessionUsd = 9_000;
   policy.outbound.humanClickAboveUsd = 9_000; // under the threshold, so it executes on the policy's say-so
+  // This test is about the session cap and the spend queue, not the auto-approved ceiling, so the
+  // ceiling is set out of the way: the session cap of 9,000 is what has to refuse the second move.
+  policy.outbound.autoApproveDailyUsd = 9_000;
   policy.sentences = renderSentences(policy);
   savePolicy(dir, policy);
 }

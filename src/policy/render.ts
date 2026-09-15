@@ -30,6 +30,9 @@ export function renderSentences(p: Policy): string[] {
   lines.push(`Refuse any single transaction above ${formatUsd(p.outbound.maxPerTransactionUsd)}.`);
   lines.push(`Refuse more than ${formatUsd(p.outbound.maxPerSessionUsd)} in any 24 hours.`);
   lines.push(`Ask me before anything above ${formatUsd(p.outbound.humanClickAboveUsd)}.`);
+  if (p.outbound.autoApproveDailyUsd !== undefined) {
+    lines.push(`Ask me once auto-approved moves pass ${formatUsd(p.outbound.autoApproveDailyUsd)} in 24 hours.`);
+  }
 
   if (p.outbound.destinationAllowlist.length > 0) {
     lines.push(`Additional allowed destinations: ${p.outbound.destinationAllowlist.join(', ')}.`);

@@ -32,6 +32,9 @@ export type EngineCtx = {
   composition: CompositionView;
   ledger: LedgerSnapshot;
   sessionSpentUsd: number;
+  // Auto-approved fund-moving usd in the same 24h window: only rows a policy 'allow' executed,
+  // never a human click. Optional so every existing EngineCtx literal stays valid; absent is 0.
+  autoApprovedSpentUsd?: number;
   selfAddresses: string[];
 };
 
@@ -54,6 +57,7 @@ const patchSchema = z
         maxPerTransactionUsd: usdField.optional(),
         maxPerSessionUsd: usdField.optional(),
         humanClickAboveUsd: usdField.optional(),
+        autoApproveDailyUsd: usdField.optional(),
         destinationAllowlist: z.array(z.string()).optional(),
       })
       .strict()
@@ -106,7 +110,7 @@ function patchNamesNothing(patch: PolicyPatch): boolean {
 
 // The three that get looser as they get bigger. The share fields are already bounded at 1 by
 // their own schema, and the gas floors get SAFER as they rise, so neither belongs here.
-const RAISABLE_CAPS = ['maxPerTransactionUsd', 'maxPerSessionUsd', 'humanClickAboveUsd'] as const;
+const RAISABLE_CAPS = ['maxPerTransactionUsd', 'maxPerSessionUsd', 'humanClickAboveUsd', 'autoApproveDailyUsd'] as const;
 
 function policyChangeCeiling(patch: PolicyPatch, policy: Policy, reasons: string[]): Verdict | null {
   const o = patch.outbound;
@@ -134,7 +138,11 @@ function policyChangeCeiling(patch: PolicyPatch, policy: Policy, reasons: string
   for (const field of RAISABLE_CAPS) {
     const next = o[field];
     if (next === undefined) continue;
+    // autoApproveDailyUsd is the one raisable cap that can be absent on an old policy. A field
+    // that was never set is not one this patch is RAISING, so setting it is not gated by the
+    // raise factor; it is just a value being written for the first time.
     const current = policy.outbound[field];
+    if (current === undefined) continue;
     if (next <= current) continue;
     /* Zero is not a small number here, it is a different policy: humanClickAboveUsd at 0 means
        every action waits for a person, and maxPerTransactionUsd at 0 means nothing moves. Ten
@@ -542,6 +550,12 @@ function evaluateRail(draft: RailDraft, policy: Policy, ctx: EngineCtx, reasons:
     return { outcome: 'needs_approval', reasons };
   }
 
+  const ceiling = autoApproveCeilingReason(policy, ctx, usd);
+  if (ceiling !== null) {
+    reasons.push(ceiling);
+    return { outcome: 'needs_approval', reasons };
+  }
+
   reasons.push('Within every limit.');
   return { outcome: 'allow', reasons };
 }
@@ -686,6 +700,24 @@ export function evaluate(draft: WriteDraft, ctx: EngineCtx): Verdict {
     reasons.push(`${money(totalUsd)} is above the ${money(policy.outbound.humanClickAboveUsd)} click threshold, so a human has to approve it.`);
     return { outcome: 'needs_approval', reasons };
   }
+  const ceiling = autoApproveCeilingReason(policy, ctx, totalUsd);
+  if (ceiling !== null) {
+    reasons.push(ceiling);
+    return { outcome: 'needs_approval', reasons };
+  }
   reasons.push(`${money(totalUsd)} is at or below the ${money(policy.outbound.humanClickAboveUsd)} click threshold.`);
   return { outcome: 'allow', reasons };
+}
+
+/* The auto-approved daily ceiling, checked only for a move that would otherwise be allowed (a
+   move above the click threshold already waits, and keeps its own reason). Past the ceiling the
+   next auto move waits for a click, so a stream of sub-threshold moves cannot run unattended up
+   to the whole session cap. Returns the reason to push, or null when the ceiling does not bind
+   or is not set. */
+function autoApproveCeilingReason(policy: Policy, ctx: EngineCtx, usd: number): string | null {
+  const ceiling = policy.outbound.autoApproveDailyUsd;
+  if (ceiling === undefined) return null;
+  const spent = ctx.autoApprovedSpentUsd ?? 0;
+  if (spent + usd <= ceiling) return null;
+  return `Auto-approved moves in the last 24 hours already total ${money(spent)}; with ${money(usd)} more that passes the ${money(ceiling)} ceiling, so this one waits for a click.`;
 }
