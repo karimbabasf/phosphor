@@ -96,6 +96,12 @@ export const HYPERCORE_FEE_BPS = 40; // measured about 26
 // to slip against.
 export const HYPERCORE_SLIPPAGE_BPS = 10;
 
+// How long the settle step waits for the venue to show the credit once 1Click has said
+// SUCCESS: six reads, twelve seconds apart, a minute in all. A delivery the venue has not
+// shown by then is unconfirmed, and the row says so instead of calling the account funded.
+export const HL_SETTLE_READS = 6;
+export const HL_SETTLE_WAIT_MS = 12_000;
+
 export function minCreditedFor(amount: number): number {
   if (!Number.isFinite(amount) || amount <= 0) return 0;
   return amount - (HYPERCORE_FLAT_FEE_USDC + (amount * HYPERCORE_FEE_BPS) / 10_000);
@@ -394,19 +400,45 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     }
   }
 
+  // Whether the venue shows the delivery on any side of the account.
+  function rose(before: HlAccountSummary, after: HlAccountSummary): boolean {
+    if (after.unified || before.unified) return after.availableUsdc - before.availableUsdc > 0.01;
+    return after.perpAccountValueUsd - before.perpAccountValueUsd > 0.01 || after.spotUsdc - before.spotUsdc > 0.01;
+  }
+
   // The last step, and the one that makes this rail's promise true.
   //
   // "The money arrived" and "the money is usable as margin" are different claims on a standard
   // Hyperliquid account, because spot and perp are separate books. Rather than assume which
-  // side a delivery credits, this looks, and moves it if it has to. A failure here is NOT a
-  // failed deposit: the money is on the account either way, so the sentence has to separate
-  // the two or someone reads "failed" and sends again.
-  async function settleToPerp(draft: HlDepositDraft, before: HlAccountSummary): Promise<string> {
-    let after: HlAccountSummary;
-    try {
-      after = await accountState(draft.hlAccount);
-    } catch (err) {
-      return ` Could not read the account afterwards (${oneLine(errText(err), 80)}); the deposit itself completed.`;
+  // side a delivery credits, this looks, and moves it if it has to. It looks more than once:
+  // the venue can trail 1Click's SUCCESS by a while, and one read a moment after it said the
+  // account was funded when the venue showed nothing. `shown` is whether the venue showed the
+  // credit; a delivery it never showed is unconfirmed, which is neither a failed deposit nor a
+  // funded account, and the sentence has to keep those apart or someone sends again.
+  async function settleToPerp(draft: HlDepositDraft, before: HlAccountSummary): Promise<{ shown: boolean; sentence: string }> {
+    let after: HlAccountSummary | null = null;
+    let readError = '';
+    // Counted in waits asked for rather than by the clock, so a frozen test clock still ends it.
+    for (let read = 0; read < HL_SETTLE_READS; read += 1) {
+      if (read > 0) await sleep(HL_SETTLE_WAIT_MS);
+      try {
+        after = await accountState(draft.hlAccount);
+        readError = '';
+      } catch (err) {
+        after = null;
+        readError = oneLine(errText(err), 80);
+      }
+      if (after !== null && rose(before, after)) break;
+    }
+    const window = `${Math.round(((HL_SETTLE_READS - 1) * HL_SETTLE_WAIT_MS) / 1000)}s`;
+
+    if (after === null) {
+      return {
+        shown: false,
+        sentence:
+          ` Could not read the account afterwards (${readError}), so the credit is unconfirmed: 1Click reported SUCCESS, ` +
+          'read the account before depositing again.',
+      };
     }
 
     // A UNIFIED account has no two sides. The money is collateral the moment it lands, and
@@ -414,34 +446,47 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     if (after.unified || before.unified) {
       const gain = after.availableUsdc - before.availableUsdc;
       return gain > 0.01
-        ? ` The account is unified, so it is margin already: free collateral rose by ${gain.toFixed(4)} USDC.`
-        : ' The account is unified, so anything credited is margin already. The venue has not shown the rise yet.';
+        ? { shown: true, sentence: ` The account is unified, so it is margin already: free collateral rose by ${gain.toFixed(4)} USDC.` }
+        : {
+            shown: false,
+            sentence:
+              ` The account is unified, so anything credited is margin already, but the venue had not shown the rise within ${window}, ` +
+              'so the credit is unconfirmed: read the account before depositing again.',
+          };
     }
 
     const perpGain = after.perpAccountValueUsd - before.perpAccountValueUsd;
     const spotGain = after.spotUsdc - before.spotUsdc;
 
     if (perpGain > 0.01) {
-      return ` Credited to the perp side directly; ${perpGain.toFixed(4)} USDC is margin now.`;
+      return { shown: true, sentence: ` Credited to the perp side directly; ${perpGain.toFixed(4)} USDC is margin now.` };
     }
 
     if (spotGain <= 0.01) {
-      // Neither book moved. The 1Click status said SUCCESS, so this is a timing gap far more
-      // often than a loss, and the sentence must not claim otherwise.
-      return ' The venue has not shown the credit yet. 1Click reported SUCCESS, so check the account in a minute rather than sending again.';
+      return {
+        shown: false,
+        sentence:
+          ` The venue had not shown the credit on either side within ${window}, so it is unconfirmed: 1Click reported SUCCESS, ` +
+          'read the account before depositing again.',
+      };
     }
 
     try {
       const moved = await usdClassTransfer(hl, { amount: spotGain, toPerp: true });
-      return moved.ok
-        ? ` Landed on the spot side and was moved to perp: ${spotGain.toFixed(4)} USDC is margin now.`
-        : ` Landed on the SPOT side and the move to perp failed: ${oneLine(moved.detail, 120)}. ` +
-            'The money is on the account and is not margin yet; propose the deposit again for nothing and the settle step will retry the move.';
+      return {
+        shown: true,
+        sentence: moved.ok
+          ? ` Landed on the spot side and was moved to perp: ${spotGain.toFixed(4)} USDC is margin now.`
+          : ` Landed on the SPOT side and the move to perp failed: ${oneLine(moved.detail, 120)}. ` +
+            'The money is on the account and is not margin yet; propose the deposit again for nothing and the settle step will retry the move.',
+      };
     } catch (err) {
-      return (
-        ` Landed on the SPOT side and the move to perp threw: ${oneLine(errText(err), 120)}. ` +
-        `The money is on the account and is not margin yet.`
-      );
+      return {
+        shown: true,
+        sentence:
+          ` Landed on the SPOT side and the move to perp threw: ${oneLine(errText(err), 120)}. ` +
+          `The money is on the account and is not margin yet.`,
+      };
     }
   }
 
@@ -505,11 +550,14 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
 
     if (watch.status === 'SUCCESS') {
       const settled = await settleToPerp(draft, before);
+      const amount = `${deliveredAmount(watch, quote.amountOutFormatted)} USDC from ${draft.amount} ${draft.symbol} held inside ${INTENTS_VERIFIER}`;
       return {
-        ok: true,
+        ok: settled.shown,
         detail:
-          `funded Hyperliquid with ${deliveredAmount(watch, quote.amountOutFormatted)} USDC from ${draft.amount} ${draft.symbol} ` +
-          `held inside ${INTENTS_VERIFIER} (${deliveredNote(watch)}); ${evidence}.${settled}`,
+          (settled.shown
+            ? `funded Hyperliquid with ${amount} (${deliveredNote(watch)}); ${evidence}.`
+            : `1click reported SUCCESS for ${amount} (${deliveredNote(watch)}), but the venue has not shown it; ${evidence}.`) +
+          settled.sentence,
         txids: uniqueTxids(spent.intentHash, watch),
         evidence: settledEvidence(watch, depositAddress),
       };

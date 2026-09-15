@@ -15,6 +15,7 @@ import {
   HYPERCORE_SLIPPAGE_BPS,
   HYPERCORE_USDC_ASSET_ID,
   HYPERCORE_USDC_DECIMALS,
+  HL_SETTLE_READS,
   MAX_FEE_PCT,
   MIN_DEPOSIT_USDC,
   hypercoreDepositRail,
@@ -172,7 +173,11 @@ function fakeApi(over: ApiOverrides = {}): { api: IntentsApiPort; signer: Intent
 // before and after. Each accountSummary makes three reads; the shape advances after the spot one.
 type AccountShape = { perp: number; spot: number; unifiedAvailable?: number };
 
-function fakeHl(shapes: AccountShape[]): { hl: HlUserSignedDeps; calls: string[]; exchange: any[] } {
+// `failReadsAfter`: the summary read that starts failing, counted from the first (0 is the
+// read before the deposit). A venue that stops answering after the money moved.
+type HlOverrides = { failReadsAfter?: number; transferRefused?: boolean };
+
+function fakeHl(shapes: AccountShape[], over: HlOverrides = {}): { hl: HlUserSignedDeps; calls: string[]; exchange: any[] } {
   const calls: string[] = [];
   const exchange: any[] = [];
   let reads = 0;
@@ -180,9 +185,15 @@ function fakeHl(shapes: AccountShape[]): { hl: HlUserSignedDeps; calls: string[]
     const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
     if (String(url).endsWith('/exchange')) {
       exchange.push(body);
-      return new Response(JSON.stringify({ status: 'ok', response: { type: 'default' } }), { headers: { 'content-type': 'application/json' } });
+      return new Response(
+        JSON.stringify(over.transferRefused ? { status: 'err', response: 'Insufficient balance for token transfer' } : { status: 'ok', response: { type: 'default' } }),
+        { headers: { 'content-type': 'application/json' } },
+      );
     }
     calls.push(String(body.type));
+    if (over.failReadsAfter !== undefined && reads >= over.failReadsAfter && body.type === 'clearinghouseState') {
+      throw new Error('info endpoint down');
+    }
     const shape = shapes[Math.min(reads, shapes.length - 1)] ?? { perp: 0, spot: 0 };
     if (body.type === 'clearinghouseState') {
       return new Response(
@@ -209,9 +220,9 @@ function fakeHl(shapes: AccountShape[]): { hl: HlUserSignedDeps; calls: string[]
   return { hl: { keysPath: KEYS, fetchImpl, sign, now: () => NOW }, calls, exchange };
 }
 
-function rail(apiOver: ApiOverrides = {}, shapes: AccountShape[] = [{ perp: 0, spot: 0, unifiedAvailable: 0 }], over: Partial<HypercoreDepositDeps> = {}) {
+function rail(apiOver: ApiOverrides = {}, shapes: AccountShape[] = [{ perp: 0, spot: 0, unifiedAvailable: 0 }], over: Partial<HypercoreDepositDeps> = {}, hlOver: HlOverrides = {}) {
   const { api, signer, calls } = fakeApi(apiOver);
-  const hl = fakeHl(shapes);
+  const hl = fakeHl(shapes, hlOver);
   const r = hypercoreDepositRail({
     keysPath: KEYS,
     api,
@@ -477,7 +488,7 @@ test('a submit that throws after the signature says the intent was signed and na
 });
 
 test('the executor hears the handle before the submit and the hash before the wait', async () => {
-  const { rail: r } = rail();
+  const { rail: r } = rail({}, [{ perp: 0, spot: 0, unifiedAvailable: 0 }, { perp: 0, spot: 9.66, unifiedAvailable: 9.66 }]);
   const heard: Array<{ txids?: string[]; handle?: string; deadline?: string }> = [];
   const out = await r.execute(draft(), 'p1', { onEvidence: (e) => heard.push(e) });
   assert.equal(out.ok, true, out.detail);
@@ -522,13 +533,46 @@ test('a unified account is not asked to move money between books that do not exi
   assert.equal(exchange.length, 0);
 });
 
-test('a credit the venue has not shown yet is not reported as a loss', async () => {
-  const { rail: r } = rail({}, [{ perp: 0, spot: 0 }, { perp: 0, spot: 0 }]);
+test('a credit the venue never shows is unconfirmed with its hashes, neither a loss nor a funded account', async () => {
+  const { rail: r, hlCalls } = rail({}, [{ perp: 0, spot: 0 }, { perp: 0, spot: 0 }]);
+  const out = await r.execute(draft());
+  assert.equal(out.ok, false);
+  assert.match(out.detail, /1click reported SUCCESS/);
+  assert.match(out.detail, /unconfirmed/);
+  assert.doesNotMatch(out.detail, /fail/i);
+  assert.doesNotMatch(out.detail, /^funded Hyperliquid/);
+  assert.deepEqual(out.txids, ['HASH1', '0xdest']);
+  assert.equal(out.evidence?.handle, HANDLE);
+  assert.equal(hlCalls.filter((t) => t === 'clearinghouseState').length, 1 + HL_SETTLE_READS, 'one read before, then every read the budget allows');
+});
+
+test('a unified account that never shows the rise is unconfirmed too', async () => {
+  const { rail: r } = rail({}, [{ perp: 0, spot: 0, unifiedAvailable: 0 }, { perp: 0, spot: 0, unifiedAvailable: 0 }]);
+  const out = await r.execute(draft());
+  assert.equal(out.ok, false);
+  assert.match(out.detail, /unconfirmed/);
+  assert.match(out.detail, /unified/);
+  assert.deepEqual(out.txids, ['HASH1', '0xdest']);
+});
+
+test('the credit is confirmed as soon as one of the re-reads shows it', async () => {
+  const { rail: r, hlCalls } = rail({}, [{ perp: 0, spot: 0, unifiedAvailable: 0 }, { perp: 0, spot: 0, unifiedAvailable: 0 }, { perp: 0, spot: 0, unifiedAvailable: 0 }, { perp: 0, spot: 9.66, unifiedAvailable: 9.66 }]);
   const out = await r.execute(draft());
   assert.equal(out.ok, true, out.detail);
-  assert.match(out.detail, /has not shown the credit yet/);
-  assert.doesNotMatch(out.detail, /fail/i);
+  assert.match(out.detail, /rose by 9\.66/);
+  assert.equal(hlCalls.filter((t) => t === 'clearinghouseState').length, 4);
 });
+
+test('an account that cannot be read after the deposit is unconfirmed, never "the deposit itself completed"', async () => {
+  const { rail: r } = rail({}, [{ perp: 0, spot: 0, unifiedAvailable: 0 }], {}, { failReadsAfter: 1 });
+  const out = await r.execute(draft());
+  assert.equal(out.ok, false);
+  assert.match(out.detail, /unconfirmed/);
+  assert.match(out.detail, /info endpoint down/);
+  assert.doesNotMatch(out.detail, /the deposit itself completed/);
+  assert.deepEqual(out.txids, ['HASH1', '0xdest']);
+});
+
 
 // ---------- the floor, against the measured fee ----------
 
