@@ -198,32 +198,62 @@
     return String(address).slice(-4);
   }
 
-  /* Groups of four. The first four and the last four are the ones a person
-     checks against the sending screen; a length that does not divide leaves
-     its remainder in the group before the last, never in the ends. */
-  function chunks(address) {
-    var text = String(address);
-    if (text.length <= 8) return text.length > 4 ? [text.slice(0, 4), text.slice(4)] : [text];
-    var out = [text.slice(0, 4)];
-    var middle = text.slice(4, -4);
-    for (var i = 0; i < middle.length; i += 4) out.push(middle.slice(i, i + 4));
-    out.push(text.slice(-4));
+  /* The shape an address has, from the network it is on. */
+  function kindOf(networkId) {
+    if (networkId === 'sol') return 'sol';
+    if (networkId === 'near') return 'near';
+    if (EVM.indexOf(networkId) >= 0) return 'evm';
+    return null;
+  }
+
+  /* The shape read off the address itself, for a caller that did not say. */
+  function inferKind(text) {
+    if (/^0x[0-9a-fA-F]{40}$/.test(text)) return 'evm';
+    if (/^[0-9a-f]{64}$/.test(text) || text.indexOf('.') >= 0) return 'near';
+    return 'sol';
+  }
+
+  function fours(text) {
+    var out = [];
+    for (var i = 0; i < text.length; i += 4) out.push(text.slice(i, i + 4));
     return out;
   }
 
+  /* Groups a person can check against the sending screen, even for each kind
+     of address. An EVM address is "0x" on its own and then the forty hex
+     characters in ten groups of four, so no group is ever an orphan of two.
+     A Solana address is groups of four with any short remainder last. A NEAR
+     address is an account name, never split. */
+  function chunks(address, kind) {
+    var text = String(address);
+    var k = kind || inferKind(text);
+    if (k === 'near') return [text];
+    if (k === 'evm' && /^0x/i.test(text)) return ['0x'].concat(fours(text.slice(2)));
+    return fours(text);
+  }
+
   /* The address as one block: the whole string for a screen reader, then the
-     groups, all one size and one weight, the two ends in the text colour and
-     the middle one step quieter. Nothing is bold and nothing jumps in size:
-     a person reads it left to right, checks the ends, and is done. */
-  function addressBlock(address) {
+     groups, all one size and one weight, the "0x" quiet, the first and last
+     group in the text colour and the rest one step quieter. Nothing is bold
+     and nothing jumps in size: a person reads it left to right, checks the
+     ends, and is done. */
+  function addressBlock(address, kind) {
     var block = dom.el('div', 'deposit-address mono');
     block.appendChild(dom.el('span', 'sr-only', address));
-    var parts = chunks(address);
+    var parts = chunks(address, kind);
     var shown = dom.el('span', 'deposit-chunks');
     shown.setAttribute('aria-hidden', 'true');
-    for (var i = 0; i < parts.length; i += 1) {
-      var end = i === 0 || i === parts.length - 1;
-      shown.appendChild(dom.el('span', end ? 'addr-end' : 'addr-mid', parts[i]));
+    if (parts.length > 1 && parts[0] === '0x') {
+      shown.appendChild(dom.el('span', 'addr-prefix', parts[0]));
+      parts = parts.slice(1);
+    }
+    if (parts.length === 1) {
+      shown.appendChild(dom.el('span', 'addr-whole', parts[0]));
+    } else {
+      for (var i = 0; i < parts.length; i += 1) {
+        var end = i === 0 || i === parts.length - 1;
+        shown.appendChild(dom.el('span', end ? 'addr-end' : 'addr-mid', parts[i]));
+      }
     }
     block.appendChild(shown);
     return block;
@@ -829,7 +859,7 @@
       body.appendChild(qr);
 
       var side = dom.el('div', 'deposit-side');
-      side.appendChild(addressBlock(address));
+      side.appendChild(addressBlock(address, kindOf(n.id)));
 
       if (network.memo) {
         var memo = dom.el('p', 'deposit-memo');
@@ -1079,6 +1109,8 @@
     ackRemembered: ackRemembered,
     rememberAck: rememberAck,
     chunks: chunks,
+    kindOf: kindOf,
+    addressBlock: addressBlock,
     drawChecked: drawChecked,
     copyChecked: copyChecked,
     sameBytes: sameBytes

@@ -256,7 +256,7 @@
     startWatch: startWatch,
     networkWords: networkWords,
     defaultSymbol: defaultSymbol,
-    chunks: function (address) { return pick().chunks(address); },
+    chunks: function (address, kind) { return pick().chunks(address, kind); },
     drawChecked: function (canvas, address) { return pick().drawChecked(canvas, address); },
     copyChecked: function (address, say) { return pick().copyChecked(address, say); },
     sameBytes: function (a, b) { return pick().sameBytes(a, b); }

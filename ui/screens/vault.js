@@ -646,21 +646,27 @@
     }
   }
 
-  /* Groups of four, the ends in the text colour and the middle a step
-     quieter, the same shape the address step draws so the two read as one
-     thing. */
+  /* The same block the address step draws, grouped for the kind of address
+     the network in the menu has, so the two read as one thing. */
   function chunked(address) {
-    var block = dom.el('div', 'deposit-address mono vault-address');
-    block.appendChild(dom.el('span', 'sr-only', address));
+    var pick = window.PhosphorNetPick;
+    var kind = network === 'sol' ? 'sol' : (network === 'near' ? 'near' : 'evm');
+    if (pick && typeof pick.addressBlock === 'function') {
+      var block = pick.addressBlock(address, kind);
+      block.className = block.className + ' vault-address';
+      return block;
+    }
+    var plain = dom.el('div', 'deposit-address mono vault-address');
+    plain.appendChild(dom.el('span', 'sr-only', address));
     var shown = dom.el('span', 'deposit-chunks');
     shown.setAttribute('aria-hidden', 'true');
-    var parts = window.PhosphorDeposit.chunks(address);
+    var parts = window.PhosphorDeposit.chunks(address, kind);
     for (var i = 0; i < parts.length; i += 1) {
       var end = i === 0 || i === parts.length - 1;
       shown.appendChild(dom.el('span', end ? 'addr-end' : 'addr-mid', parts[i]));
     }
-    block.appendChild(shown);
-    return block;
+    plain.appendChild(shown);
+    return plain;
   }
 
   /* ---------- the phrase ---------- */

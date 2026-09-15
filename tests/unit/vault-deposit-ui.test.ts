@@ -317,12 +317,15 @@ test('the QR is drawn, decoded back off the same pixels, and matches the address
   const bodyNode = find(dialog, '.deposit-body')[0];
   assert.equal(bodyNode.dataset.state, 'shown');
   assert.equal(find(dialog, 'canvas').length, 1, 'no QR on the card');
+  assert.equal(find(dialog, '.addr-prefix')[0].textContent, '0x', 'the 0x is not its own quiet token');
   const ends = find(dialog, '.addr-end').map((n: Any) => n.textContent);
-  assert.deepEqual(ends, ['0x7d', '0e1d'], 'the first and last four are not the large ones');
+  assert.deepEqual(ends, ['7d4e', '0e1d'], 'the first and last group are not the ones in the text colour');
   const whole = find(dialog, '.sr-only')[0];
   assert.equal(whole.textContent, ADDRESS, 'the whole address is not there for a screen reader');
-  const mid = find(dialog, '.addr-mid').map((n: Any) => n.textContent).join('');
-  assert.equal('0x7d' + mid + '0e1d', ADDRESS, 'the chunks do not add back up to the address');
+  const mids = find(dialog, '.addr-mid').map((n: Any) => n.textContent);
+  assert.equal(mids.length, 8, 'ten groups of four, two of them the ends');
+  assert.ok(mids.every((m: string) => m.length === 4), 'a group that is not four characters: ' + mids.join(' '));
+  assert.equal('0x7d4e' + mids.join('') + '0e1d', ADDRESS, 'the chunks do not add back up to the address');
 });
 
 test('a QR that reads back as anything else draws nothing and says so', async () => {

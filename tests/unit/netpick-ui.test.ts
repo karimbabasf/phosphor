@@ -404,9 +404,10 @@ test('the address step draws one address after its checks, starts the watch, and
   assert.equal(body.dataset.state, 'shown');
   assert.equal(find(body, 'canvas').length, 1, 'no QR');
   assert.equal(find(body, '.sr-only')[0].textContent, EVM);
+  assert.equal(find(body, '.addr-prefix')[0].textContent, '0x');
   const ends = find(body, '.addr-end').map((n: Any) => n.textContent);
-  assert.deepEqual(ends, ['0x7d', '0e1d']);
-  assert.equal('0x7d' + find(body, '.addr-mid').map((n: Any) => n.textContent).join('') + '0e1d', EVM);
+  assert.deepEqual(ends, ['7d4e', '0e1d']);
+  assert.equal('0x7d4e' + find(body, '.addr-mid').map((n: Any) => n.textContent).join('') + '0e1d', EVM);
   const text = textOf(root(world));
   assert.ok(text.includes('Send on Base only.'));
   assert.ok(text.some((t) => t.startsWith('Ethereum, Base and Arbitrum use this same address.') && t.endsWith('choose Base on the sending side.')));
@@ -439,6 +440,35 @@ test('a network that is not EVM says so in its own words, and NEAR and Solana ge
   assert.ok(text.some((t) => t.startsWith('Choose Solana (SPL) on the sending side.')));
   assert.equal(text.some((t) => t.includes('Ethereum, Base and Arbitrum')), false);
   assert.equal(find(world.host, '.sr-only')[0].textContent, SOL);
+  // Base58, forty-four characters: eleven even groups, no prefix, no orphan.
+  const groups = find(world.host, '.addr-end, .addr-mid').map((n: Any) => n.textContent);
+  assert.equal(find(world.host, '.addr-prefix').length, 0);
+  assert.equal(groups.length, 11);
+  assert.ok(groups.every((g: string) => g.length === 4));
+  assert.equal(groups.join(''), SOL);
+
+  const near = build({ ack: true });
+  near.render({ stage: 'address', network: 'near' });
+  await flush();
+  assert.deepEqual(find(near.host, '.addr-whole').map((n: Any) => n.textContent), ['abc.near'], 'a NEAR account name was split');
+  assert.equal(find(near.host, '.addr-end, .addr-mid').length, 0);
+});
+
+test('the groups are even for each kind of address: 0x then tens of four, base58 with the remainder last, a NEAR name whole', () => {
+  const world = build();
+  // Arrays cross the vm boundary with the sandbox's prototype, so they are copied before the strict compare.
+  const chunks = (address: string, kind?: string): string[] => Array.from(world.pick.chunks(address, kind) as string[]);
+  assert.deepEqual(chunks(EVM, 'evm'), ['0x', '7d4e', '1f0a', '2c9b', '8e6d', '3f5a', '1c7b', '9e0d', '2f4a', '6c8b', '0e1d']);
+  assert.deepEqual(chunks(EVM), chunks(EVM, 'evm'), 'the kind is not read off the address when the caller did not say');
+  assert.deepEqual(chunks('9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFi', 'sol').slice(-2), ['9Pus', 'VFi'], 'the short remainder is not the last group');
+  assert.deepEqual(chunks(SOL, 'sol').map((g: string) => g.length), [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4]);
+  assert.deepEqual(chunks('alice.near', 'near'), ['alice.near']);
+  const implicit = '7f2a9c4e1b8d3f6a0c5e2b9d4f7a1c8e3b6d9f2a5c8e1b4d7f0a3c6e9b2d5f8a';
+  assert.deepEqual(chunks(implicit), [implicit], 'a 64 hex NEAR account was split');
+  assert.deepEqual(chunks('alice.near'), ['alice.near']);
+  assert.equal(world.pick.kindOf('base'), 'evm');
+  assert.equal(world.pick.kindOf('sol'), 'sol');
+  assert.equal(world.pick.kindOf('near'), 'near');
 });
 
 test('Copy says Copied for a moment once the clipboard reads back, and the status line keeps the last four', async () => {
