@@ -96,6 +96,7 @@ async function boot() {
       sessionSpentUsd: () => 0,
       releaseQueued: async () => 0,
       reconcileOnBoot: () => [],
+      reconcileOpen: async () => 0,
       settled: async () => { throw new Error('unused'); },
       reconcile: () => Promise.reject(new Error('not wired in this stub')),
       settle: () => Promise.resolve(true),

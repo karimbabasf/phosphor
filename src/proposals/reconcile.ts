@@ -14,6 +14,7 @@
 // that cannot be looked up leaves the proposal exactly where it was, with a sentence saying why.
 
 import type { ChainId, Proposal, WriteDraft } from '../types.ts';
+import type { OneClickStatus } from '../intents.ts';
 import { errText, nowIso, persist } from './lifecycle.ts';
 import { balanceAfter } from './execute.ts';
 import type { PCtx } from './lifecycle.ts';
@@ -24,6 +25,16 @@ import type { PCtx } from './lifecycle.ts';
 // left the wallet".
 export type TxState = 'confirmed' | 'reverted' | 'pending' | 'absent' | 'unknown';
 export type TxLookup = (chain: ChainId, hash: string) => Promise<TxState>;
+
+// How a 1Click order is re-checked by the deposit address a quote minted. It is the handle the
+// rails already record on evidence, and it is what lets a row that carries no EVM hash (an
+// INTENTS-mode swap settles on NEAR, which chainTxLookup answers `unknown` for) still be settled.
+export type OneClickLookup = (handle: string) => Promise<OneClickStatus>;
+
+// Rows younger than this are still worth asking 1Click about on the scheduled sweep. Past it the
+// deposit deadline is long gone and the order is settled one way or the other; a stale row stays
+// for a human to clear rather than being re-queried forever.
+const ONECLICK_SWEEP_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 const EVM_CHAINS: ChainId[] = ['eth', 'base', 'arb'];
 
@@ -68,14 +79,25 @@ export function chainTxLookup(): TxLookup {
   };
 }
 
-/* Boot sweep. Runs once, before the port opens, so no surface ever renders an `executing` row
-   left by a process that is gone. Returns what it changed, for the audit line and the tests. */
+/* Boot sweep. Runs once, before the port opens, so no surface ever renders a row a dead process
+   left mid-decision. Returns what it changed, for the audit line and the tests.
+     `executing`      -> needs_reconciliation: it was between the rail's call and its answer.
+     `approved`       -> needs_reconciliation: it was between the approve and the executing write,
+                         a two-put window with no hash, so it is unknown for the same reason.
+     `awaiting_touch` -> pending: the Touch ID dialog died with the process and finishTouch will
+                         never fire, so the click is offered again rather than stuck on a dead
+                         dialog. Nothing was signed, so this is safe and it is not a spend. */
 export function reconcileOnBoot(ctx: PCtx): Proposal[] {
-  const stranded = ctx.store.list().filter(p => p.status === 'executing');
   const moved: Proposal[] = [];
-  for (const p of stranded) {
+  for (const p of ctx.store.list()) {
+    if (p.status === 'awaiting_touch') {
+      moved.push(persist(ctx, { ...p, status: 'pending' }));
+      continue;
+    }
+    if (p.status !== 'executing' && p.status !== 'approved') continue;
     // Whatever the rail handed over before the process died stays on the row: the hashes,
-    // and the handle or nonce a later reconcile asks the venue by.
+    // and the handle or nonce a later reconcile asks the venue by. An `approved` row never
+    // reached the rail, so it has neither.
     const txids = p.result?.txids ?? [];
     const evidence = p.result?.evidence;
     const detail =
@@ -93,11 +115,37 @@ export function reconcileOnBoot(ctx: PCtx): Proposal[] {
   if (moved.length > 0) {
     ctx.audit.append(
       'error',
-      `${moved.length} proposal(s) were mid-execution when Phosphor last stopped and are now waiting to be reconciled`,
+      `${moved.length} proposal(s) were mid-decision when Phosphor last stopped and are now waiting to be reconciled`,
       { ids: moved.map(p => p.id) },
     );
   }
   return moved;
+}
+
+/* The scheduled sweep: re-check every row that carries a 1Click handle and is young enough that
+   the order is not yet settled past recall. Wired in src/main.ts to run at boot and every ten
+   minutes, so a FAILED deposit that will be refunded at the deadline, or a SUCCESS the app never
+   saw because the process died mid-watch, settles itself instead of waiting for a human to press
+   Reconcile. Per-row errors are swallowed into the audit log: one unreachable order must not
+   stop the sweep reaching the next. Returns how many rows changed status. */
+export async function reconcileOpen(ctx: PCtx): Promise<number> {
+  if (ctx.oneClickStatus === undefined) return 0;
+  const now = Date.now();
+  const open = ctx.store
+    .list()
+    .filter((p) => p.status === 'needs_reconciliation' && typeof p.result?.evidence?.handle === 'string')
+    .filter((p) => now - Date.parse(p.settledAt ?? p.decidedAt ?? p.createdAt) < ONECLICK_SWEEP_MAX_AGE_MS);
+  let changed = 0;
+  for (const p of open) {
+    try {
+      const before = p.status;
+      const after = await reconcileProposal(ctx, p.id);
+      if (after.status !== before) changed += 1;
+    } catch (err) {
+      ctx.audit.append('error', `${p.id}: the scheduled reconcile could not re-check it: ${errText(err)}`, { id: p.id });
+    }
+  }
+  return changed;
 }
 
 function summarise(states: Array<{ hash: string; state: TxState }>): { status: Proposal['status']; detail: string } {
@@ -135,13 +183,69 @@ function summarise(states: Array<{ hash: string; state: TxState }>): { status: P
   return { status: 'executed', detail: `confirmed on chain: ${confirmed.join(', ')}` };
 }
 
-/* Ask the chain what happened. Only reachable for a row the boot sweep created, because
-   re-checking anything else would be re-deciding a proposal that already has an answer. */
+/* Re-check one 1Click order by its quote handle and map what the venue reports onto the row.
+     SUCCESS   -> executed, with the settled amount in the detail when the API gave one.
+     REFUNDED  -> failed: the input went back, so nothing is on the far side; the amount is named.
+     FAILED    -> stays needs_reconciliation: a FAILED order can still be refunded at the deadline,
+                  so it is not terminal for us. The detail says what came back (or 0), why, and
+                  that the input is held by 1Click under the handle.
+     anything else (still pending, or an address the API does not know yet) leaves the row and
+     says which status it is waiting on. */
+async function reconcileByHandle(ctx: PCtx, p: Proposal, handle: string): Promise<Proposal> {
+  const status = await ctx.oneClickStatus!(handle);
+  const txids = p.result?.txids ?? [];
+  const write = (next: Proposal['status'], ok: boolean, detail: string): Proposal => {
+    ctx.audit.append(next === 'executed' ? 'executed' : 'error', `${p.id} reconciled by 1Click: ${next}. ${detail}`, { id: p.id, handle, status: status.status });
+    return persist(ctx, {
+      ...p,
+      status: next,
+      decidedAt: p.decidedAt ?? nowIso(),
+      settledAt: next === p.status ? p.settledAt : nowIso(),
+      result: { ok, detail, txids, ...(p.result?.evidence === undefined ? {} : { evidence: p.result.evidence }) },
+    });
+  };
+
+  if (status.status === 'SUCCESS') {
+    const settled = status.settledAmountOut !== undefined ? `1click settled this: ${status.settledAmountOut} arrived.` : '1click reports this settled.';
+    return write('executed', true, settled);
+  }
+  if (status.status === 'REFUNDED') {
+    const amount = status.refundedAmount ?? '0';
+    return write('failed', false, `1click reported REFUNDED: ${amount} went back, so nothing is on the far side.`);
+  }
+  if (status.status === 'FAILED') {
+    const amount = status.refundedAmount ?? '0';
+    const reason = status.refundReason ?? 'not given';
+    return write(
+      'needs_reconciliation',
+      false,
+      `1click reported FAILED and refunded ${amount} so far, reason ${reason}. The input is held by 1Click under handle ${handle} until a refund shows in your balance.`,
+    );
+  }
+  // Not terminal yet, or an address 1Click does not know: change nothing, say what it is waiting on.
+  const said = status.found ? status.status : 'an address 1Click does not recognise yet';
+  return write(p.status, p.result?.ok ?? false, `1click has not settled this: it reports ${said}. Nothing has changed; check again shortly.`);
+}
+
+/* Ask the venue or the chain what happened. Reachable for a row waiting to be reconciled, and
+   for a `failed` row that carries a 1Click handle: a FAILED order can still be refunded at its
+   deadline, so the handle is worth re-asking even after the row was called failed. Anything else
+   already has a settled answer and re-checking it would be re-deciding it. */
 export async function reconcileProposal(ctx: PCtx, id: string): Promise<Proposal> {
   const p = ctx.store.get(id);
   if (p === undefined) throw new Error(`unknown proposal ${id}`);
-  if (p.status !== 'needs_reconciliation') {
+  const handle = p.result?.evidence?.handle;
+  const reCheckableFailed = p.status === 'failed' && typeof handle === 'string';
+  if (p.status !== 'needs_reconciliation' && !reCheckableFailed) {
     throw new Error(`proposal ${id} is ${p.status}, and only a proposal waiting to be reconciled can be re-checked`);
+  }
+
+  /* THE VENUE, BY THE HANDLE, FIRST. A 1Click order settles on NEAR for an INTENTS swap, which
+     chainTxLookup answers `unknown` for, so the quote handle is the only thing that can tell a
+     SUCCESS from a REFUND. Only when there is no handle, or no client wired, does this fall back
+     to reading the chain by hash. */
+  if (typeof handle === 'string' && ctx.oneClickStatus !== undefined) {
+    return reconcileByHandle(ctx, p, handle);
   }
 
   const txids = p.result?.txids ?? [];

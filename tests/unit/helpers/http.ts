@@ -60,6 +60,7 @@ export function serviceThatAnswers(row: Proposal, settledRow: Proposal = row): P
     list: () => [settledRow],
     sessionSpentUsd: () => 0,
     reconcileOnBoot: () => [],
+    reconcileOpen: async () => 0,
     reconcile: async () => settledRow,
     settled: async () => settledRow,
     settle: async () => true,

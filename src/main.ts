@@ -26,7 +26,7 @@ import { renderSentences } from './policy/render.ts';
 import { missingVenues, proposeVenueGap } from './policy/venues.ts';
 import { createRails, venueAllowlist } from './rails/index.ts';
 import { createLedger } from './ledger/index.ts';
-import { oneClickQuoter, syntheticQuoter, stubSigner, type TokensFile } from './intents.ts';
+import { oneClickClient, oneClickQuoter, syntheticQuoter, stubSigner, type OneClickStatus, type TokensFile } from './intents.ts';
 import { createMarketData } from './market/index.ts';
 import { lineAt } from './analysis/trendline.ts';
 import { createProposalService } from './proposals.ts';
@@ -457,6 +457,14 @@ const tradeDeps: TradeDeps = {
 // reaching for an RPC and a private key.
 const rails = createRails({ cfg, tokens, trade: tradeDeps });
 
+/* How reconcile re-checks a 1Click order by the quote handle a rail recorded. The same client
+   the rails hold; only the read is used here, and it never signs. Absent in demo mode, where
+   the intents client is not built, so reconcile falls back to the chain. */
+const oneClickStatus =
+  cfg.mode === 'live'
+    ? (handle: string): Promise<OneClickStatus> => oneClickClient().status(handle)
+    : undefined;
+
 const proposals = createProposalService({
   cfg,
   audit,
@@ -468,6 +476,7 @@ const proposals = createProposalService({
   rails,
   trade: tradeDeps,
   dataDir: cfg.dataDir,
+  oneClickStatus,
   vault,
   keystore,
 });
@@ -501,6 +510,20 @@ if (stranded.length > 0) {
       `Open the window to re-check them.`,
   );
 }
+
+/* And then it asks 1Click about them, so a FAILED deposit refunded at the deadline or a SUCCESS
+   the app never saw settles itself instead of waiting for a human to press Reconcile. Once at
+   boot, right after the sweep above turns the stranded rows into handled ones, and every ten
+   minutes after. Not awaited and never fatal: it reads the venue and writes rows, and a boot
+   must not block on a network call. */
+const RECONCILE_SWEEP_MS = 10 * 60 * 1000;
+function sweepOpenProposals(): void {
+  void proposals.reconcileOpen().catch((err: unknown) => {
+    audit.append('error', `the scheduled reconcile sweep failed: ${err instanceof Error ? err.message : String(err)}`);
+  });
+}
+sweepOpenProposals();
+setInterval(sweepOpenProposals, RECONCILE_SWEEP_MS).unref?.();
 
 // Who is driving, plural. The roster, the roles and the per-member TTL live in
 // src/agents.ts; what lives here is the sweep that turns a silent expiry into a line in the

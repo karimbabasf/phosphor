@@ -143,6 +143,7 @@ export async function bootDriverServer(opts: BootOptions = {}): Promise<Booted> 
       sessionSpentUsd: () => 0,
       releaseQueued: async () => 0,
       reconcileOnBoot: () => [],
+      reconcileOpen: async () => 0,
       settled: async () => { throw new Error('unused'); },
       settle: () => Promise.resolve(true),
       dailyLimit: (capUsd: number) => ({ capUsd, spentUsd: 0, resetsAt: null }),

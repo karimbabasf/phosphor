@@ -265,6 +265,14 @@ export type OneClickStatus = {
   reported: string; // what the API actually said, one line, bounded
   originTxHashes: string[];
   destinationTxHashes: string[];
+  // The settlement facts the API returns. Declared optional here so the reconcile in
+  // src/proposals/reconcile.ts can be written against them before Task B1 fills them in from
+  // swapDetails; until then a caller reads undefined, which every consumer already tolerates.
+  nearTxHashes?: string[]; // settlement hashes on NEAR, for an INTENTS-mode order
+  depositedAmount?: string; // formatted
+  settledAmountOut?: string; // swapDetails.amountOutFormatted
+  refundedAmount?: string; // swapDetails.refundedAmountFormatted, "0" when none on a terminal status
+  refundReason?: string; // swapDetails.refundReason when a non-null string
 };
 
 // Remote text lands in one-line audit entries and in the approval gate a human reads.

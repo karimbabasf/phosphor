@@ -746,6 +746,9 @@ export type ProposalService = {
   // Re-check one such row against the chain. Never guesses: a hash it cannot look up leaves
   // the proposal where it is, with a sentence saying why.
   reconcile(id: string): Promise<Proposal>;
+  // Re-check every open row that carries a 1Click handle, young enough to still settle. What the
+  // scheduled sweep in src/main.ts calls at boot and every ten minutes. Returns how many changed.
+  reconcileOpen(): Promise<number>;
   /* The row once its rail has answered, or the row as it stands when capMs runs out. A propose
      returns the `executing` row the moment the rail starts; this is how a caller waits for the
      settled one without holding a reply open for a five minute watch loop. */
