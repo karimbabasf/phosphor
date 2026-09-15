@@ -141,12 +141,18 @@
 
 .hold-list .row:first-child { border-top: 0; }
 
-.row-mark,
-.row-mark > * {
-  display: block;
+/* The mark's box, a flex box so the logo inside stays one too and the
+   fallback disc keeps its initial centred. */
+.row-mark {
+  display: flex;
   width: 24px;
   height: 24px;
   flex: 0 0 auto;
+}
+
+.row-mark > * {
+  width: 24px;
+  height: 24px;
 }
 
 .hold-list .row-main {

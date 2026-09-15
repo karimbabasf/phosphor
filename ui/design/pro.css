@@ -235,9 +235,16 @@
   }
 }
 
-.holding-mark,
+/* The mark's box, a flex box so the logo inside stays a flex box too: made a
+   block, the fallback disc loses its centring and its initial sits at the
+   left edge. */
+.holding-mark {
+  display: flex;
+  width: 24px;
+  height: 24px;
+}
+
 .holding-mark > * {
-  display: block;
   width: 24px;
   height: 24px;
 }
@@ -715,9 +722,13 @@ button.rule.opens:focus-visible {
   color: var(--text-2);
 }
 
-.gas-chip-mark,
+.gas-chip-mark {
+  display: flex;
+  width: 16px;
+  height: 16px;
+}
+
 .gas-chip-mark > * {
-  display: block;
   width: 16px;
   height: 16px;
 }
