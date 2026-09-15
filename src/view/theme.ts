@@ -75,7 +75,7 @@ export const COLOURWAY_PALETTE: Readonly<Record<Colourway, Palette>> = {
     slots: { accent: '#3fff6c', background: '#0e0f13', up: '#3fff6c', down: '#ff5a6e', agent: '#b79cff' },
     text: '#eceef1',
     text2: '#9ba1ab',
-    text3: '#5e656f',
+    text3: '#828890',
     warn: '#f5b942',
     gate: '#ff3b30',
   },
