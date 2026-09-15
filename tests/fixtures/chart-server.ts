@@ -181,6 +181,7 @@ export async function bootChartServer(
       settle: () => Promise.resolve(true),
       dailyLimit: (capUsd: number) => ({ capUsd, spentUsd: 0, resetsAt: null }),
       reconcile: () => Promise.reject(new Error('not wired in this stub')),
+      acknowledge: () => Promise.reject(new Error('not wired in this stub')),
     },
     getPolicy: () => defaultPolicy(),
     setKill: () => {},

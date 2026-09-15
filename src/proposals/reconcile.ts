@@ -315,8 +315,10 @@ async function reconcileByHandle(ctx: PCtx, p: Proposal, handle: string): Promis
     const current = { ok: p.result?.ok ?? false, detail: p.result?.detail ?? '', txids: p.result?.txids ?? [], evidence: p.result?.evidence ?? {} };
     if (next === p.status && stable(result) === stable(current)) return p;
     ctx.audit.append(next === 'executed' ? 'executed' : 'error', `${p.id} reconciled by 1Click: ${next}. ${said}`, { id: p.id, handle, status: status.status });
+    // Something changed, so a row a person had filed comes back to the dock with the new word.
+    const { acknowledgedAt: _filed, ...unfiled } = p;
     return persist(ctx, {
-      ...p,
+      ...unfiled,
       status: next,
       decidedAt: p.decidedAt ?? nowIso(),
       settledAt: next === p.status ? p.settledAt : nowIso(),
@@ -447,4 +449,22 @@ export async function reconcileProposal(ctx: PCtx, id: string): Promise<Proposal
     // forget the nonce or the handle a later question would go by.
     result: { ok: outcome.status === 'executed', detail: outcome.detail, txids, ...(p.result?.evidence === undefined ? {} : { evidence: p.result.evidence }) },
   });
+}
+
+/* Filing an unconfirmed row. The dock keeps an unconfirmed move in front of a person because
+   the only thing that clears it is the venue, and the venue can take days (a FAILED 1Click order
+   waits on their support). Reading the same sentence every time the window opens is not
+   information, it is nagging, so a person can say "got it": the row keeps its status, its
+   charge against the day and its place in Activity, and the dock stops asking until a re-check
+   changes what the venue says. Nothing about the money changes here, which is why it is not a
+   decision and carries no decidedBy. */
+export async function acknowledge(ctx: PCtx, id: string): Promise<Proposal> {
+  const p = ctx.store.get(id);
+  if (p === undefined) throw new Error(`unknown proposal ${id}`);
+  if (p.status !== 'needs_reconciliation') {
+    throw new Error(`proposal ${id} is ${p.status}, and only an unconfirmed row can be filed`);
+  }
+  if (p.acknowledgedAt !== undefined) throw new Error(`proposal ${id} is already filed`);
+  ctx.audit.append('acknowledged', `${id} filed by the human as unconfirmed; the venue has the last word`, { id });
+  return persist(ctx, { ...p, acknowledgedAt: nowIso() });
 }

@@ -62,6 +62,7 @@ export function serviceThatAnswers(row: Proposal, settledRow: Proposal = row): P
     reconcileOnBoot: () => [],
     reconcileOpen: async () => 0,
     reconcile: async () => settledRow,
+    acknowledge: async () => settledRow,
     settled: async () => settledRow,
     settle: async () => true,
     dailyLimit: (capUsd) => ({ capUsd, spentUsd: 0, resetsAt: null }),

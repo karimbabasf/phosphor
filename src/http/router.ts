@@ -139,6 +139,7 @@ const POST: Record<string, Route> = {
   '/api/wallet/reveal': (ctx, req, res) => handleRevealStart(ctx, req, res),
   '/api/wallet/export': (ctx, req, res) => handleWalletExport(ctx, req, res),
   '/api/reconcile': (ctx, req, res) => handleMutation(ctx, '/api/reconcile', req, res),
+  '/api/acknowledge': (ctx, req, res) => handleMutation(ctx, '/api/acknowledge', req, res),
   /* The enclave. The first two are the shell's relay (see src/vault/relay.ts); the rest are the
      wallet verbs of an enclave wallet, each of which asks the relay and waits for a person. All
      of them carry the window token, and none of them is reachable from /api/mcp. */

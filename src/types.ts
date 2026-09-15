@@ -458,6 +458,11 @@ export type Proposal = {
   // An idempotency key the proposer chose, with the session, kind and params it is scoped to.
   // A repeat carrying the same key is answered with this row instead of a second one.
   clientKey?: ClientKey;
+  // Set when a person filed an unconfirmed row from the dock ("Got it, waiting on the venue").
+  // The row stays needs_reconciliation, keeps counting against the day and keeps its place in
+  // Activity; only the dock stops asking. Cleared the moment a re-check changes what the venue
+  // says, so the card comes back when there is something new to read.
+  acknowledgedAt?: string;
   /* What the wallet was worth either side of this action, in USD, as the app knew it.
      `before` is the snapshot as execution began. `after` is taken once the ledger has re-read
      the chains, so it reflects the move rather than the stale numbers that were on screen a
@@ -616,6 +621,8 @@ export type LogEvent = {
     // is needs_reconciliation rather than failed. Its own kind so a reader scanning for what
     // left the wallet sees it beside 'executed', not filed under failures.
     | 'execution_unconfirmed'
+    // A person filed an unconfirmed row from the dock. Nothing about the money changed.
+    | 'acknowledged'
     // A rail handed the executor its evidence (a hash, a handle, a nonce) before its watch loop,
     // so the record exists while the venue is still working.
     | 'submitted'
@@ -769,6 +776,9 @@ export type ProposalService = {
   // Re-check one such row against the chain. Never guesses: a hash it cannot look up leaves
   // the proposal where it is, with a sentence saying why.
   reconcile(id: string): Promise<Proposal>;
+  // File an unconfirmed row from the dock. Decides nothing, signs nothing, settles nothing: the
+  // row keeps its status and its charge; the dock stops showing it until the venue's word changes.
+  acknowledge(id: string): Promise<Proposal>;
   // Re-check every open row that carries a 1Click handle, young enough to still settle. What the
   // scheduled sweep in src/main.ts calls at boot and every ten minutes. Returns how many changed.
   reconcileOpen(): Promise<number>;

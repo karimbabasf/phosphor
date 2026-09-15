@@ -400,7 +400,8 @@
         .then(function (answer) {
           var status = answer && answer.status;
           if (status === 'needs_reconciliation') {
-            dom.setText(error, 'Still no answer from the chain. Nothing has changed. Do not send it again.');
+            var said = answer && typeof answer.detail === 'string' && answer.detail.trim();
+            dom.setText(error, said ? 'Checked again just now: ' + said : 'Still no answer. Nothing has changed. Do not send it again.');
             error.hidden = false;
             return;
           }
@@ -556,7 +557,8 @@
             /* Still unreadable is an answer, and the card stays open on it:
                closing would look like it had been settled. */
             if (status === 'needs_reconciliation') {
-              dom.setText(error, 'Still no answer from the chain. Nothing has changed. Do not send it again.');
+              var said = answer && typeof answer.detail === 'string' && answer.detail.trim();
+              dom.setText(error, said ? 'Checked again just now: ' + said : 'Still no answer. Nothing has changed. Do not send it again.');
               error.hidden = false;
               return;
             }

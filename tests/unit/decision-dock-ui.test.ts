@@ -49,9 +49,11 @@ test('no string reaches the DOM as markup', () => {
   assert.equal(/insertAdjacentHTML|outerHTML|document\.write/.test(SOURCE), false);
 });
 
-test('the dock builds four buttons and they are named', () => {
+test('the dock builds five buttons and they are named', () => {
   const labels = SOURCE.match(/'btn-label', '([^']+)'/g) ?? [];
-  const allowed = ['No', 'Yes', 'Unlock', 'Reconcile'];
+  // Got it files an unconfirmed row without deciding anything; it is the one button that
+  // neither approves, refuses, unlocks nor re-checks.
+  const allowed = ['No', 'Yes', 'Unlock', 'Reconcile', 'Got it'];
   assert.ok(labels.length > 0, 'the dock builds no buttons at all, so this test is not looking at it');
   for (const raw of labels) {
     const label = raw.replace(/^.*, '/, '').replace(/'$/, '');
@@ -526,4 +528,55 @@ test('a Yes the enclave answers with awaiting_touch is not flashed as done', () 
   // state rather than say Done over a decision that has not been made.
   assert.ok(/answer\.status === 'awaiting_touch'/.test(SOURCE), 'decide() does not branch on awaiting_touch');
   assert.ok(SOURCE.includes("p.status === 'awaiting_touch'"), 'awaiting_touch is not a waiting status for the dock');
+});
+
+// 2026-09-15: two deposits sat FAILED at 1Click with the input held under their handles, and
+// the dock card said "we cannot read what happened to it" over a row that already carried the
+// whole sentence. A card that knows less than its row is nagging, not information.
+test('the unconfirmed card speaks the row\'s own sentence, names the handle, and offers Got it beside Reconcile', () => {
+  const said = '1click reported FAILED and refunded 0 USDC so far; the input is held by 1Click under handle 86abbc463f08f6244071c17f4cd3471285b24179a4f029fe54a1979d2de7f806; reason not given.';
+  const card = cardFor({
+    id: 'c2a15f9f',
+    kind: 'hl_deposit',
+    status: 'needs_reconciliation',
+    createdAt: '2026-09-15T19:15:23.048Z',
+    draft: { kind: 'hl_deposit', symbol: 'USDC', amount: 10, amountUsd: 10 },
+    simulation: { ok: true, summary: 'Fund Hyperliquid perps from the intents balance.' },
+    verdict: { outcome: 'allow', reasons: ['Within every limit.'] },
+    result: { ok: false, detail: said, txids: ['FgmrtfiDwgDn87qqcTsRna2h8v3W7pUz3DADjshsXonY'], evidence: { handle: '86abbc463f08f6244071c17f4cd3471285b24179a4f029fe54a1979d2de7f806', refundedAmount: '0' } },
+  });
+  const text = textOf(card);
+  assert.ok(text.some((t) => t.includes('held by 1Click under handle')), 'the rail sentence is on the card');
+  assert.ok(!text.some((t) => t.includes('cannot read what happened')), 'the stock sentence is gone when the row knows better');
+  assert.ok(text.some((t) => t.startsWith('Not confirmed')), 'the label says what this is');
+  const labels = find(card, 'btn-label').map((n) => textOf(n).join(''));
+  assert.deepEqual(labels, ['Reconcile', 'Got it']);
+});
+
+test('a filed unconfirmed row is not drawn by the dock', () => {
+  const card = cardFor({
+    id: 'c2a15f9f',
+    kind: 'hl_deposit',
+    status: 'needs_reconciliation',
+    acknowledgedAt: '2026-09-15T23:50:00.000Z',
+    createdAt: '2026-09-15T19:15:23.048Z',
+    draft: { kind: 'hl_deposit', symbol: 'USDC', amount: 10, amountUsd: 10 },
+    simulation: { ok: true, summary: 'Fund Hyperliquid perps from the intents balance.' },
+    verdict: { outcome: 'allow', reasons: ['Within every limit.'] },
+    result: { ok: false, detail: 'held by 1Click', txids: ['h'], evidence: { handle: 'dep-1' } },
+  });
+  assert.equal(find(card, 'btn-label').length, 0, 'no card, no buttons');
+});
+
+test('a row with no sentence still gets the stock line rather than an empty banner', () => {
+  const card = cardFor({
+    id: 'p9',
+    kind: 'hl_deposit',
+    status: 'needs_reconciliation',
+    createdAt: '2026-09-15T19:15:23.048Z',
+    draft: { kind: 'hl_deposit', symbol: 'USDC', amount: 10, amountUsd: 10 },
+    simulation: null,
+    verdict: { outcome: 'allow', reasons: [] },
+  });
+  assert.ok(textOf(card).some((t) => t.includes('cannot read what happened')));
 });

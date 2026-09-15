@@ -434,3 +434,32 @@ test('a lifted row is one the sweep now re-checks by its handle', async () => {
   await h.svc.reconcileOpen();
   assert.deepEqual(h.asked, [LIVE_HANDLE]);
 });
+
+test('a person can file an unconfirmed row: it leaves the dock, stays unconfirmed, and still counts', async () => {
+  const h = setup(statusOf({ status: 'FAILED', refundedAmount: '0' }));
+  seed(h.dir);
+  const filed = await h.svc.acknowledge('oc-1');
+  assert.equal(filed.status, 'needs_reconciliation', 'filing is not settling');
+  assert.ok(typeof filed.acknowledgedAt === 'string' && filed.acknowledgedAt.length > 0);
+  assert.ok(h.svc.dailyLimit(25000).spentUsd >= 10, 'the day still charges it');
+  await assert.rejects(() => h.svc.acknowledge('oc-1'), /already filed/);
+});
+
+test('only an unconfirmed row can be filed', async () => {
+  const h = setup(statusOf({ status: 'SUCCESS' }));
+  seed(h.dir, { status: 'executed', result: { ok: true, detail: 'done', txids: ['h'] } });
+  await assert.rejects(() => h.svc.acknowledge('oc-1'), /executed/);
+});
+
+test('a filed row comes back to the dock the moment 1Click says something new', async () => {
+  let status: OneClickStatus = statusOf({ status: 'FAILED', refundedAmount: '0' });
+  const h = setup(() => status);
+  seed(h.dir);
+  await h.svc.reconcile('oc-1');
+  await h.svc.acknowledge('oc-1');
+  const same = await h.svc.reconcile('oc-1');
+  assert.ok(same.acknowledgedAt, 'the same answer keeps it filed');
+  status = statusOf({ status: 'REFUNDED', refundedAmount: '9.97' });
+  const changed = await h.svc.reconcile('oc-1');
+  assert.equal(changed.acknowledgedAt, undefined, 'a new word from the venue unfiles it');
+});

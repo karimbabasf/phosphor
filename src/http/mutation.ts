@@ -286,6 +286,19 @@ export async function handleMutation(
     return;
   }
 
+  // Filing an unconfirmed row is the same kind of write: no decision, no signature, a row a
+  // human is reading changes one field, so it carries the window token like reconcile does.
+  if (route === '/api/acknowledge') {
+    try {
+      const proposal = await ctx.proposals.acknowledge(id);
+      ctx.sse.broadcastState();
+      sendJson(res, 200, { ok: true, status: proposal.status, id: proposal.id, acknowledgedAt: proposal.acknowledgedAt ?? null });
+    } catch (err) {
+      fail(res, 400, errText(err));
+    }
+    return;
+  }
+
   try {
     // approve() and refuse() own their own audit trail and any execution. A click answers with
     // the row once it has landed, or as it stands when the propose cap runs out: the legs and

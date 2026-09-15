@@ -252,8 +252,10 @@
     return p && (p.status === 'pending' || p.status === 'pending_unlock' || p.status === 'awaiting_touch');
   }
 
+  /* Filed rows ("Got it") stay unconfirmed in Activity and in the day's total; the dock
+     just stops asking about them until the venue's word changes and the server unfiles them. */
   function isUnread(p) {
-    return p && p.status === 'needs_reconciliation';
+    return p && p.status === 'needs_reconciliation' && !p.acknowledgedAt;
   }
 
   /* Newest on top. A request the assistant filed a second ago is the one the
@@ -518,18 +520,38 @@
 
   /* ---------- the unread outcome ---------- */
 
-  /* The one state a person cannot act on alone: the process died between
-     "executing" and the rail's answer, so money may have left the wallet and may
-     not have. The dock keeps it up rather than filing it away, because the only
-     thing that clears it is asking the chain again. */
+  /* The one state a person cannot act on alone: money may have left and the venue has not
+     said where it landed. The dock keeps it up rather than filing it away, because the only
+     thing that clears it is the venue: Reconcile asks again, and "Got it" files the card
+     without settling anything (the row stays unconfirmed in Activity and in the day's total,
+     and comes back the moment the venue says something new).
+
+     THE CARD SAYS WHAT THE ROW KNOWS. The row's own sentence is the rail's observation plus
+     the venue's last word ("1click reported FAILED and refunded 0 so far; the input is held
+     by 1Click under handle ..."). A generic "we cannot read what happened" on top of that is
+     a lie by omission, and it is what a person read on 2026-09-15 while the row underneath
+     already knew. The generic line is kept only for a row that carries no sentence at all. */
+  function unreadSentence(proposal) {
+    var said = proposal && proposal.result && proposal.result.detail;
+    if (typeof said === 'string' && said.trim()) return said.trim();
+    return 'We sent this and we cannot read what happened to it. Do not send it again.';
+  }
+
   function buildUnread(proposal) {
-    refs.card.appendChild(dom.el('p', 'label', 'Checking what happened.'));
+    refs.card.appendChild(dom.el('p', 'label', 'Not confirmed.'));
     refs.card.appendChild(dom.el('h2', 'title', headlineOf(proposal)));
 
     var banner = dom.el('div', 'banner');
     banner.dataset.tone = 'warn';
-    banner.appendChild(dom.el('span', '', 'We sent this and we cannot read what happened to it. Do not send it again.'));
+    banner.appendChild(dom.el('span', '', unreadSentence(proposal)));
     refs.card.appendChild(banner);
+
+    var handle = proposal.result && proposal.result.evidence && proposal.result.evidence.handle;
+    if (handle) {
+      var where = dom.el('p', 'body dim');
+      dom.setText(where, 'Do not send it again. Quote handle ' + handle);
+      refs.card.appendChild(where);
+    }
 
     var error = dom.el('p', 'body down');
     error.hidden = true;
@@ -539,16 +561,22 @@
     var again = dom.el('button', 'btn btn-primary');
     again.appendChild(dom.el('span', 'btn-label', 'Reconcile'));
     actions.appendChild(again);
+    var gotIt = dom.el('button', 'btn');
+    gotIt.appendChild(dom.el('span', 'btn-label', 'Got it'));
+    actions.appendChild(gotIt);
     refs.card.appendChild(actions);
 
     dom.on(again, 'click', function () {
       window.PhosphorShell.setPending(again, true, 'Checking');
       api.reconcile(proposal.id)
         .then(function (answer) {
-          /* Still unreadable is an answer, and the card stays up on it: closing
-             would look like it had been settled. */
+          /* Still unconfirmed is an answer, and the card stays up on it: closing would look
+             like it had been settled. What it shows is the venue's word from this check, not
+             a stock sentence about the chain. */
           if (answer && answer.status === 'needs_reconciliation') {
-            dom.setText(error, 'Still no answer from the chain. Nothing has changed. Do not send it again.');
+            var said = typeof answer.detail === 'string' && answer.detail.trim() ? answer.detail.trim() : null;
+            dom.setText(banner.firstChild, said || unreadSentence(proposal));
+            dom.setText(error, said ? 'Checked again just now. Still unconfirmed, nothing to do here until the venue moves.' : 'Still no answer. Nothing has changed. Do not send it again.');
             error.hidden = false;
             return null;
           }
@@ -563,6 +591,24 @@
         })
         .finally(function () {
           window.PhosphorShell.setPending(again, false);
+        });
+    });
+
+    dom.on(gotIt, 'click', function () {
+      window.PhosphorShell.setPending(gotIt, true, 'Filing');
+      api.acknowledge(proposal.id)
+        .then(function () {
+          return window.PhosphorShell.refresh({}).then(function () {
+            showing = null;
+            render();
+          });
+        })
+        .catch(function (err) {
+          dom.setText(error, net.readable(err));
+          error.hidden = false;
+        })
+        .finally(function () {
+          window.PhosphorShell.setPending(gotIt, false);
         });
     });
   }

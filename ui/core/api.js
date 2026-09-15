@@ -149,6 +149,11 @@
         { busy: 'wallet', label: 'Writing the backup' });
     },
 
+    /* Files an unconfirmed row: the dock stops asking, the row keeps its status and its
+       place in Activity, and it comes back if the venue says something new. */
+    acknowledge: function (id) {
+      return net.postJson('/api/acknowledge', { id: id }, { busy: 'acknowledge', label: 'Filing' });
+    },
     reconcile: function (id) {
       return net.postJson('/api/reconcile', { id: id }, { busy: 'reconcile', label: 'Checking again' });
     },

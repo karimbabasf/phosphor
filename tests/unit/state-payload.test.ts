@@ -152,6 +152,7 @@ async function boot(proposals: Proposal[]): Promise<{ url: string; store: Return
       settle: () => Promise.resolve(true),
       dailyLimit: (capUsd: number) => ({ capUsd, spentUsd: 0, resetsAt: null }),
       reconcile: () => Promise.reject(new Error('not wired in this test')),
+      acknowledge: () => Promise.reject(new Error('not wired in this test')),
     },
     getPolicy: () => defaultPolicy(),
     setKill: () => {},

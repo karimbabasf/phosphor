@@ -32,7 +32,7 @@ import {
 import type { PCtx, ProposalDeps } from './proposals/lifecycle.ts';
 import { finishTouch } from './proposals/lifecycle.ts';
 import { executeApproved, land } from './proposals/execute.ts';
-import { chainTxLookup, reconcileOnBoot, reconcileOpen, reconcileProposal } from './proposals/reconcile.ts';
+import { acknowledge, chainTxLookup, reconcileOnBoot, reconcileOpen, reconcileProposal } from './proposals/reconcile.ts';
 import { proposeConsolidate, proposePolicyChange } from './proposals/draft.ts';
 import { proposeHlDeposit, proposeHlWithdraw, proposeIntentsDeposit, proposeIntentsWithdraw, proposeSwap } from './proposals/rails.ts';
 import { proposeTrade, proposeTradeChange } from './proposals/trade.ts';
@@ -82,6 +82,7 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     // reserves budget, and holding the spend queue open for a network read is the thing task
     // 13 exists to stop.
     reconcile: (id: string) => reconcileProposal(ctx, id),
+    acknowledge: (id: string) => acknowledge(ctx, id),
     // Outside the serialiser, like reconcile: it reads the venue and writes rows, reserves no
     // budget, and holding the spend queue open for a network sweep is the thing task 13 stopped.
     reconcileOpen: () => reconcileOpen(ctx),
