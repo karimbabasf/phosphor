@@ -499,7 +499,7 @@ test('the shipped parameters really open a file written with them', async () => 
   const made = await real.create('a long enough password');
   real.lock();
 
-  assert.equal(readHeader(keysPath)?.kdf.N, 2 ** 18);
+  assert.equal(readHeader(keysPath)?.kdf?.N, 2 ** 18);
   const opened = await createKeystore({ keysPath }).unlock('a long enough password');
   assert.equal(opened.ok, true);
   assert.equal(readHeader(keysPath)?.addresses.evm, made.addresses.evm);

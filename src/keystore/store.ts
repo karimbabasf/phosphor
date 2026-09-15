@@ -37,6 +37,8 @@ import { defaultParams, deriveKek } from './kdf.ts';
 import type { KdfParams } from './kdf.ts';
 import { addressesFromKeys, newWallet, normaliseMnemonic, walletFromMnemonic } from './derive.ts';
 import type { Addresses, RailKeys } from './derive.ts';
+import { seWrap } from './sewrap.ts';
+import type { SeWrapped } from './sewrap.ts';
 import { atomicWrite } from '../fsatomic.ts';
 
 export const KEYSTORE_FILENAME = 'keys.enc.json';
@@ -84,14 +86,26 @@ export type KeysPayload = {
 
 export type StoredAddresses = { evm: string | null; solana: string | null; near: string | null; nearPublicKey: string | null };
 
+/* The Secure Enclave key a version 2 file is wrapped to. `keyBlob` is the enclave's own opaque
+   representation of the private key (CryptoKit dataRepresentation): useless off this Mac, and
+   usable on it only after the owner's Touch ID. `publicKey` is X9.63, the half the wrap needs. */
+export type EnclaveRef = { keyBlob: string; publicKey: string; createdAt: string };
+
+export type Custody = 'password' | 'secure-enclave';
+
 export type KeystoreHeader = {
-  version: 1;
+  version: 1 | 2;
   createdAt: string;
-  kdf: KdfParams;
+  // Version 1 only: the scrypt parameters the password is stretched with. A version 2 file has
+  // no password and no KDF, so the field is absent rather than filled with a decoy.
+  kdf?: KdfParams;
   addresses: StoredAddresses;
   // Whether the payload carries twelve words. A wallet imported from three raw keys has none,
   // and the window must not offer to show a phrase that does not exist.
   hasMnemonic: boolean;
+  // Absent on a version 1 file, which is a password file by construction.
+  custody?: Custody;
+  enclave?: EnclaveRef;
 };
 
 /* `headerProof` is what lets a failed unlock say WHY it failed, and it is additive: a file
@@ -107,11 +121,29 @@ export type KeystoreHeader = {
    covers every header field EXCEPT the addresses. So when the wrap fails, opening the proof
    answers "was the password right": if it opens, the password is right and the addresses in the
    header are not the ones this file was written with. That is a tamper, and it is named. */
-type KeystoreFile = { header: KeystoreHeader; wrap: Sealed; payload: Sealed; headerProof?: Sealed };
+/* VERSION 2 IS THE ENCLAVE FILE, and it is simpler than version 1 on purpose. The data key is
+   wrapped to the enclave's public key (src/keystore/sewrap.ts) instead of under a password, the
+   AAD of both envelopes is the header WITHOUT its addresses, and there is no headerProof:
+   version 1 needed one to tell "wrong password" from "edited header", and version 2 has no
+   password to be wrong. An edited address in a version 2 header leaves the envelopes openable,
+   and the open then compares the addresses it derived with the ones the header claims, which is
+   a sharper tamper signal than a failed tag: it says which file was edited and serves only the
+   derived addresses from then on. */
+type KeystoreFile = { header: KeystoreHeader; wrap: Sealed | SeWrapped; payload: Sealed; headerProof?: Sealed };
 
 export type UnlockResult =
   | { ok: true }
-  | { ok: false; error: 'wrong_password' | 'no_wallet' | 'damaged' | 'locked_out' | 'tampered'; retryInSec?: number; detail?: string };
+  | {
+      ok: false;
+      error: 'wrong_password' | 'no_wallet' | 'damaged' | 'locked_out' | 'tampered' | 'enclave_required';
+      retryInSec?: number;
+      detail?: string;
+    };
+
+/* What the shell's relay needs to ask the enclave to unwrap this wallet: the key blob, the wrap,
+   and the AAD the wrap was sealed under. All of it is on disk already; none of it opens anything
+   without the enclave and the owner. */
+export type EnclaveUnwrapRequest = { keyBlob: string; ephemeralPublicKey: string; ciphertext: string; aad: string };
 
 /* The addresses plus how much they can be believed, which is a different fact and used to be
    silently missing.
@@ -149,6 +181,27 @@ export type Keystore = {
   keys(): KeysPayload;
   path(): string;
   onChange(fn: (state: LockState) => void): () => void;
+
+  // ---- the enclave half: version 2 files ----
+  // Which kind of file is on disk. Null when there is no wallet.
+  custody(): Custody | null;
+  // The enclave key this file is wrapped to, or null for a password file.
+  enclave(): EnclaveRef | null;
+  // What to hand the shell so the enclave can unwrap the data key. Null for a password file.
+  enclaveRequest(): EnclaveUnwrapRequest | null;
+  // The version 2 unlock: the data key came back from the enclave, open the payload with it.
+  // Wipes the buffer it is given either way.
+  unlockWithDataKey(dek: Buffer): UnlockResult;
+  createWithEnclave(enclave: EnclaveRef): { addresses: StoredAddresses };
+  importWithEnclave(enclave: EnclaveRef, from: { mnemonic?: string; keys?: Partial<RailKeys> }): { addresses: StoredAddresses };
+  // A version 1 file becomes a version 2 file: the password opens it once, a fresh data key is
+  // wrapped to the enclave, and the password wrap is gone from disk.
+  rewrapToEnclave(password: string, enclave: EnclaveRef): Promise<UnlockResult>;
+  // Rewrites the payload under the open wallet's data key, for the one legitimate reason the
+  // payload changes: a Hyperliquid API wallet was added or revoked. Version 2 and unlocked only.
+  updatePayload(mutate: (payload: KeysPayload) => KeysPayload): StoredAddresses;
+  // Shreds the file. The caller has already made the person prove they mean it.
+  forget(): { destroyed: string };
 };
 
 // ---------- files ----------
@@ -176,7 +229,9 @@ function writeSecret(target: string, body: string, ownDir = true): void {
 function readKeystoreFile(file: string): KeystoreFile | null {
   if (!fs.existsSync(file)) return null;
   const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as KeystoreFile;
-  if (parsed.header?.version !== 1) throw new Error(`${file} is not a keystore this app knows how to open`);
+  if (parsed.header?.version !== 1 && parsed.header?.version !== 2) {
+    throw new Error(`${file} is not a keystore this app knows how to open`);
+  }
   return parsed;
 }
 
@@ -224,6 +279,14 @@ function proofAad(header: KeystoreHeader): Buffer {
   return aadFor(rest);
 }
 
+function isEnclaveFile(stored: KeystoreFile): boolean {
+  return stored.header.version === 2 && stored.header.custody === 'secure-enclave' && stored.header.enclave !== undefined;
+}
+
+function sameAddresses(a: StoredAddresses, b: StoredAddresses): boolean {
+  return canonical(a) === canonical(b);
+}
+
 function payloadFrom(mnemonic: string | null, keys: RailKeys, addresses: Addresses): KeysPayload {
   return {
     ...(mnemonic !== null ? { mnemonic } : {}),
@@ -249,6 +312,10 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
   // The unlocked payload, held as bytes so it can be erased. A parsed object would spread the
   // key across immutable strings the garbage collector copies and nothing can overwrite.
   let plain: Buffer | null = null;
+  /* The data key of an OPEN version 2 wallet, kept beside the payload so the payload can be
+     rewritten (an API wallet added) without a second Touch ID. It is no more than the payload
+     already is, it is wiped by the same lock, and a version 1 wallet never sets it. */
+  let dataKey: Buffer | null = null;
   let failures = 0;
   let backoffUntil = 0;
   /* The addresses this process has DECRYPTED, which is the only version of them worth serving.
@@ -288,7 +355,14 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
      So: what was decrypted beats what was read, and a file known to have been edited serves
      nothing at all. */
   function addressReport(): AddressReport {
-    if (tampered) return { addresses: NO_ADDRESSES, verified: false, tampered: true };
+    /* Tampered with the true addresses in hand (a version 2 open compared them) serves the true
+       ones and says the file was edited; tampered without them (a version 1 proof, no payload)
+       serves nothing. Both say tampered, because the window has to. */
+    if (tampered) {
+      return openAddresses !== null
+        ? { addresses: openAddresses, verified: true, tampered: true }
+        : { addresses: NO_ADDRESSES, verified: false, tampered: true };
+    }
     if (openAddresses !== null) return { addresses: openAddresses, verified: true, tampered: false };
 
     // Before migration the addresses come from the plaintext file, which is the only place
@@ -366,6 +440,9 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
       return { ok: false, error: 'damaged', detail: err instanceof Error ? err.message : String(err) };
     }
     if (stored === null) return { ok: false, error: 'no_wallet' };
+    // A version 2 file has no password. Saying so is the only right answer: counting it as a
+    // failure would let a script lock the owner out of a wallet no password could ever open.
+    if (isEnclaveFile(stored) || stored.header.kdf === undefined) return { ok: false, error: 'enclave_required' };
 
     const aad = aadFor(stored.header);
     const kek = await deriveKek(password, stored.header.kdf);
@@ -379,9 +456,9 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
       wipe(kek);
       return { ok: false, error: 'locked_out', retryInSec: Math.ceil((backoffUntil - now()) / 1000) };
     }
-    let dataKey: Buffer | null = null;
+    let unwrapped: Buffer | null = null;
     try {
-      dataKey = open(stored.wrap, kek, aad);
+      unwrapped = open(stored.wrap as Sealed, kek, aad);
     } catch {
       /* The wrap failed. That is either the password or an edited header, because the header is
          the AAD, and the two used to be reported as the same thing: "wrong password", which sends
@@ -419,14 +496,14 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
 
     let body: Buffer;
     try {
-      body = open(stored.payload, dataKey, aad);
+      body = open(stored.payload, unwrapped, aad);
       JSON.parse(body.toString('utf8'));
     } catch (err) {
       // The password was right and the file is not. Damage, not a typo, and it says so rather
       // than sending the owner to look for a password that would never have worked.
       return { ok: false, error: 'damaged', detail: err instanceof Error ? err.message : String(err) };
     } finally {
-      wipe(dataKey);
+      wipe(unwrapped);
     }
     failures = 0;
     backoffUntil = 0;
@@ -482,10 +559,195 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
 
   function lock(): boolean {
     if (plain === null) return false;
-    wipe(plain);
+    wipe(plain, dataKey);
     plain = null;
+    dataKey = null;
     announce();
     return true;
+  }
+
+  // ---------- version 2: the enclave ----------
+
+  function storedFile(): KeystoreFile | null {
+    try {
+      return readKeystoreFile(file);
+    } catch {
+      return null;
+    }
+  }
+
+  function custody(): Custody | null {
+    const stored = storedFile();
+    if (stored === null) return fs.existsSync(keysPath) ? 'password' : null;
+    return isEnclaveFile(stored) ? 'secure-enclave' : 'password';
+  }
+
+  function enclave(): EnclaveRef | null {
+    const stored = storedFile();
+    return stored !== null && isEnclaveFile(stored) ? (stored.header.enclave ?? null) : null;
+  }
+
+  function enclaveRequest(): EnclaveUnwrapRequest | null {
+    const stored = storedFile();
+    if (stored === null || !isEnclaveFile(stored)) return null;
+    const wrap = stored.wrap as SeWrapped;
+    return {
+      keyBlob: stored.header.enclave!.keyBlob,
+      ephemeralPublicKey: wrap.ephemeralPublicKey,
+      ciphertext: wrap.ciphertext,
+      aad: proofAad(stored.header).toString('base64'),
+    };
+  }
+
+  /* The version 2 write. One header, one data key, one wrap to the enclave, one payload under
+     the data key, both envelopes under the header-minus-addresses AAD. The data key is handed
+     back to the caller, which is about to hold the wallet open with it. */
+  function writeEnclave(payload: KeysPayload, ref: EnclaveRef, dek: Buffer): KeystoreHeader {
+    const header: KeystoreHeader = {
+      version: 2,
+      createdAt: new Date(now()).toISOString(),
+      addresses: addressesOf(payload),
+      hasMnemonic: typeof payload.mnemonic === 'string' && payload.mnemonic.length > 0,
+      custody: 'secure-enclave',
+      enclave: ref,
+    };
+    const aad = proofAad(header);
+    const body = Buffer.from(JSON.stringify(payload), 'utf8');
+    try {
+      const out: KeystoreFile = {
+        header,
+        wrap: seWrap(dek, ref.publicKey, aad),
+        payload: seal(body, dek, aad),
+      };
+      writeSecret(file, JSON.stringify(out, null, 2) + '\n');
+    } finally {
+      wipe(body);
+    }
+    return header;
+  }
+
+  function holdOpen(payload: KeysPayload, dek: Buffer, addrs: StoredAddresses): void {
+    if (plain !== null) wipe(plain);
+    if (dataKey !== null && dataKey !== dek) wipe(dataKey);
+    plain = Buffer.from(JSON.stringify(payload), 'utf8');
+    dataKey = dek;
+    openAddresses = addrs;
+    announce();
+  }
+
+  function unlockWithDataKey(dek: Buffer): UnlockResult {
+    let stored: KeystoreFile | null;
+    try {
+      stored = readKeystoreFile(file);
+    } catch (err) {
+      wipe(dek);
+      return { ok: false, error: 'damaged', detail: err instanceof Error ? err.message : String(err) };
+    }
+    if (stored === null) {
+      wipe(dek);
+      return { ok: false, error: 'no_wallet' };
+    }
+    if (!isEnclaveFile(stored)) {
+      wipe(dek);
+      return { ok: false, error: 'wrong_password', detail: 'this is a password wallet; the enclave cannot open it' };
+    }
+    let payload: KeysPayload;
+    let body: Buffer;
+    try {
+      body = open(stored.payload, dek, proofAad(stored.header));
+      payload = JSON.parse(body.toString('utf8')) as KeysPayload;
+    } catch (err) {
+      wipe(dek);
+      return { ok: false, error: 'damaged', detail: err instanceof Error ? err.message : String(err) };
+    }
+    /* The addresses the header claims against the ones the keys actually give. A header any
+       process can edit is never believed over the payload only the enclave could open; a
+       mismatch is recorded, the derived addresses are served, and the window is told. */
+    const derived = addressesOf(payload);
+    tampered = !sameAddresses(derived, stored.header.addresses);
+    if (plain !== null) wipe(plain);
+    if (dataKey !== null) wipe(dataKey);
+    plain = body;
+    dataKey = dek;
+    openAddresses = derived;
+    failures = 0;
+    backoffUntil = 0;
+    announce();
+    return { ok: true };
+  }
+
+  function createWithEnclave(ref: EnclaveRef): { addresses: StoredAddresses } {
+    if (hasKeystore()) throw new Error('this app already holds a wallet. Move keys.enc.json aside first, or import into a fresh data directory.');
+    const made = newWallet();
+    const payload = payloadFrom(made.mnemonic, made.wallet.keys, made.wallet.addresses);
+    const dek = newDataKey();
+    const header = writeEnclave(payload, ref, dek);
+    tampered = false;
+    holdOpen(payload, dek, header.addresses);
+    return { addresses: header.addresses };
+  }
+
+  function importWithEnclave(ref: EnclaveRef, from: { mnemonic?: string; keys?: Partial<RailKeys> }): { addresses: StoredAddresses } {
+    if (hasKeystore()) throw new Error('this app already holds a wallet. Move keys.enc.json aside first, or import into a fresh data directory.');
+    const payload = payloadFromImport(from);
+    const dek = newDataKey();
+    const header = writeEnclave(payload, ref, dek);
+    tampered = false;
+    holdOpen(payload, dek, header.addresses);
+    return { addresses: header.addresses };
+  }
+
+  async function rewrapToEnclave(password: string, ref: EnclaveRef): Promise<UnlockResult> {
+    const opened = await openWith(password);
+    if (!opened.ok) return opened;
+    let payload: KeysPayload;
+    try {
+      payload = JSON.parse(opened.body.toString('utf8')) as KeysPayload;
+    } finally {
+      wipe(opened.body);
+    }
+    const dek = newDataKey();
+    const header = writeEnclave(payload, ref, dek);
+    tampered = false;
+    holdOpen(payload, dek, header.addresses);
+    return { ok: true };
+  }
+
+  function updatePayload(mutate: (payload: KeysPayload) => KeysPayload): StoredAddresses {
+    if (plain === null || dataKey === null) throw new Error('the wallet is locked');
+    const stored = readKeystoreFile(file);
+    if (stored === null || !isEnclaveFile(stored)) throw new Error('only an enclave wallet can be rewritten in place');
+    const next = mutate(keys());
+    const aad = proofAad(stored.header);
+    const body = Buffer.from(JSON.stringify(next), 'utf8');
+    try {
+      const out: KeystoreFile = { header: stored.header, wrap: stored.wrap, payload: seal(body, dataKey, aad) };
+      writeSecret(file, JSON.stringify(out, null, 2) + '\n');
+    } finally {
+      wipe(body);
+    }
+    if (plain !== null) wipe(plain);
+    plain = Buffer.from(JSON.stringify(next), 'utf8');
+    openAddresses = addressesOf(next);
+    announce();
+    return openAddresses;
+  }
+
+  /* Overwritten before it is unlinked, so the bytes are gone from the block as well as from the
+     directory. APFS may still hold a snapshot; that is the disk's promise to keep, not this
+     function's, and the enclave wrap is what makes a lingering copy worthless anyway. */
+  function forget(): { destroyed: string } {
+    if (demo) throw new Error(DEMO_REFUSAL);
+    lock();
+    if (fs.existsSync(file)) {
+      const size = fs.statSync(file).size;
+      fs.writeFileSync(file, crypto.randomBytes(Math.max(size, 4096)));
+      fs.unlinkSync(file);
+    }
+    openAddresses = null;
+    tampered = false;
+    announce();
+    return { destroyed: file };
   }
 
   async function create(password: string): Promise<{ mnemonic: string; addresses: StoredAddresses }> {
@@ -501,26 +763,28 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     return { mnemonic: made.mnemonic, addresses: addrs };
   }
 
-  async function importWallet(password: string, from: { mnemonic?: string; keys?: Partial<RailKeys> }): Promise<{ addresses: StoredAddresses }> {
-    if (hasKeystore()) throw new Error('this app already holds a wallet. Move keys.enc.json aside first, or import into a fresh data directory.');
-    let payload: KeysPayload;
+  function payloadFromImport(from: { mnemonic?: string; keys?: Partial<RailKeys> }): KeysPayload {
     if (typeof from.mnemonic === 'string' && from.mnemonic.trim() !== '') {
       const wallet = walletFromMnemonic(from.mnemonic);
-      payload = payloadFrom(normaliseMnemonic(from.mnemonic), wallet.keys, wallet.addresses);
-    } else {
-      const raw = from.keys ?? {};
-      if (raw.evm === undefined && raw.solana === undefined && raw.nearSecret === undefined) {
-        throw new Error('bring twelve words or at least one private key');
-      }
-      const derived = addressesFromKeys(raw);
-      payload = {
-        ...(raw.evm !== undefined ? { evm: { address: derived.evm, privateKey: raw.evm } } : {}),
-        ...(raw.solana !== undefined ? { solana: { address: derived.solana, secretKey: raw.solana } } : {}),
-        ...(raw.nearSecret !== undefined
-          ? { near: { accountId: derived.near, publicKey: derived.nearPublicKey, secretKey: raw.nearSecret } }
-          : {}),
-      };
+      return payloadFrom(normaliseMnemonic(from.mnemonic), wallet.keys, wallet.addresses);
     }
+    const raw = from.keys ?? {};
+    if (raw.evm === undefined && raw.solana === undefined && raw.nearSecret === undefined) {
+      throw new Error('bring twelve words or at least one private key');
+    }
+    const derived = addressesFromKeys(raw);
+    return {
+      ...(raw.evm !== undefined ? { evm: { address: derived.evm, privateKey: raw.evm } } : {}),
+      ...(raw.solana !== undefined ? { solana: { address: derived.solana, secretKey: raw.solana } } : {}),
+      ...(raw.nearSecret !== undefined
+        ? { near: { accountId: derived.near, publicKey: derived.nearPublicKey, secretKey: raw.nearSecret } }
+        : {}),
+    };
+  }
+
+  async function importWallet(password: string, from: { mnemonic?: string; keys?: Partial<RailKeys> }): Promise<{ addresses: StoredAddresses }> {
+    if (hasKeystore()) throw new Error('this app already holds a wallet. Move keys.enc.json aside first, or import into a fresh data directory.');
+    const payload = payloadFromImport(from);
     const addrs = await write(password, payload, params());
     plain = Buffer.from(JSON.stringify(payload), 'utf8');
     openAddresses = addrs;
@@ -595,6 +859,15 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     reveal,
     keys,
     path: () => file,
+    custody,
+    enclave,
+    enclaveRequest,
+    unlockWithDataKey,
+    createWithEnclave,
+    importWithEnclave,
+    rewrapToEnclave,
+    updatePayload,
+    forget,
     onChange(fn) {
       listeners.add(fn);
       return () => listeners.delete(fn);
@@ -685,11 +958,12 @@ function plaintextResidue(keysPath: string): string[] {
 async function resumeDestroy(deps: MigrateDeps, password: string, residue: string[]): Promise<{ destroyed: string[]; addresses: StoredAddresses }> {
   const stored = readKeystoreFile(deps.file);
   if (stored === null) throw new Error('the encrypted wallet could not be read, so nothing was destroyed');
+  if (stored.header.kdf === undefined) throw new Error('the encrypted wallet is an enclave file, which this migration does not open');
   const aad = aadFor(stored.header);
   const kek = await deriveKek(password, stored.header.kdf);
   let body: Buffer;
   try {
-    const dataKey = open(stored.wrap, kek, aad);
+    const dataKey = open(stored.wrap as Sealed, kek, aad);
     body = open(stored.payload, dataKey, aad);
     wipe(dataKey);
   } catch {
@@ -740,11 +1014,12 @@ async function migrateInto(deps: MigrateDeps, password: string): Promise<{ destr
   // Read the file back from disk with the password just given, exactly as a later boot will.
   const stored = readKeystoreFile(deps.file);
   if (stored === null) throw new Error('the encrypted wallet was not written');
+  if (stored.header.kdf === undefined) throw new Error('the encrypted wallet was written without a KDF, which a password file never is');
   const aad = aadFor(stored.header);
   const kek = await deriveKek(password, stored.header.kdf);
   let body: Buffer;
   try {
-    const dataKey = open(stored.wrap, kek, aad);
+    const dataKey = open(stored.wrap as Sealed, kek, aad);
     body = open(stored.payload, dataKey, aad);
     wipe(dataKey);
   } finally {
