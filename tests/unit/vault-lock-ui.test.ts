@@ -211,7 +211,6 @@ function build(state: Any, sources: string[]): World {
   sandbox.window = sandbox;
   sandbox.PhosphorNet = { readable: (e: Any) => String(e && e.message ? e.message : e) };
   sandbox.PhosphorMotion = { reduced: () => true };
-  sandbox.PhosphorFixtures = { active: false };
   sandbox.PhosphorEvents = {
     on: (type: string, fn: (frame: Any) => void) => { (events[type] ||= []).push(fn); },
     onConnection: (fn: (c: string) => void) => { fn('live'); },

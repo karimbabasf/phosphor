@@ -32,15 +32,6 @@ html, body {
   overflow: hidden;
 }
 
-.pattern-local {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  overflow: hidden;
-  border-radius: inherit;
-  pointer-events: none;
-}
-
 /* ---------- Top bar ---------- */
 
 .topbar {
@@ -564,12 +555,8 @@ body[data-view="trade"] .stage {
   min-height: 0;
 }
 
-.span-4 { grid-column: span 4; }
 .span-5 { grid-column: span 5; }
-.span-6 { grid-column: span 6; }
 .span-7 { grid-column: span 7; }
-.span-8 { grid-column: span 8; }
-.span-12 { grid-column: span 12; }
 
 /* The same components as Basic at higher density: rows 36 instead of 48, labels
    13 instead of 14. Nothing else changes, because a person moving between the
@@ -599,7 +586,7 @@ body[data-view="trade"] .stage {
     padding-bottom: var(--s-8);
   }
 
-  .span-4, .span-5, .span-6, .span-7, .span-8, .span-12 { grid-column: span 6; }
+  .span-5, .span-7 { grid-column: span 6; }
   .pro-grid .scrolls { overflow-y: visible; }
 }
 
@@ -1064,14 +1051,7 @@ body[data-view="trade"] .stage {
 
 .stack { display: flex; flex-direction: column; gap: var(--s-3); }
 .stack-2 { display: flex; flex-direction: column; gap: var(--s-2); }
-.stack-5 { display: flex; flex-direction: column; gap: var(--s-5); }
-.hstack { display: flex; align-items: center; gap: var(--s-3); }
 .hstack-2 { display: flex; align-items: center; gap: var(--s-2); }
 .between { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); }
 .grow { flex: 1 1 auto; min-width: 0; }
 .wrap { flex-wrap: wrap; }
-
-/* A column whose blocks share the height they are given rather than stacking at
-   the top of it. The trading account is three facts of equal standing, so on a
-   panel taller than they need they space out instead of leaving one hole. */
-.spread { justify-content: space-between; }

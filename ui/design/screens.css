@@ -40,11 +40,6 @@
 
 /* ---------- basic ---------- */
 
-.panel-bare {
-  background: transparent;
-  border-color: transparent;
-}
-
 .panel-total {
   padding-top: var(--s-3);
   margin-top: var(--s-3);
@@ -1661,8 +1656,7 @@ a.receipt-hash:focus-visible {
   .layers:hover .chev { transform: rotate(135deg); }
   .layers-pop { transition-duration: 1ms; }
   .step[data-state="live"] .step-dot,
-  .turn-dot,
-  .wordmark-glyph[data-state="working"] { animation: none; opacity: 0.8; }
+  .turn-dot { animation: none; opacity: 0.8; }
   .turn-bar { animation: none; }
   /* The mark stops breathing and holds: the state is carried by its colour,
      which is the half of it that meant something. */

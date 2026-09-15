@@ -120,10 +120,6 @@ kbd {
   color: var(--warn);
 }
 
-.agentink {
-  color: var(--agent);
-}
-
 .strong {
   font-weight: 500;
   color: var(--text);

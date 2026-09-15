@@ -13,7 +13,6 @@
   var api = window.PhosphorApi;
   var events = window.PhosphorEvents;
   var store = window.PhosphorState;
-  var fixtures = window.PhosphorFixtures;
 
   var VIEWS = ['basic', 'pro', 'trade', 'vault'];
 
@@ -344,9 +343,7 @@
     return api.state(opts.first ? { busy: 'state', label: 'Checking your money' } : {})
       .then(function (result) {
         if (!result.fresh && store.loaded()) return;
-        var payload = result.data;
-        if (fixtures.active) payload = fixtures.applyToState(payload);
-        store.put(payload);
+        store.put(result.data);
       })
       .catch(function (err) {
         console.error('[shell] state', err);

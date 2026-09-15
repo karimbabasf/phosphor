@@ -87,10 +87,6 @@
   font-size: var(--fs-16);
 }
 
-.btn-block {
-  width: 100%;
-}
-
 .btn-sm {
   min-height: 30px;
   padding: 0 var(--s-3);
@@ -381,11 +377,6 @@
   padding: var(--s-5);
 }
 
-.card-raised {
-  background: var(--bg-1);
-  box-shadow: var(--lift);
-}
-
 /* ---------- Surfaces: where the beam lands ---------- */
 
 /* Any element with data-surface can glow. The glow is a layer whose OPACITY
@@ -472,12 +463,6 @@
   text-align: right;
 }
 
-@media (hover: hover) and (pointer: fine) {
-  .row-hover:hover {
-    background: var(--bg-2);
-  }
-}
-
 /* A row whose value just changed carries the afterglow for a moment. */
 .row[data-changed="true"] {
   background: color-mix(in srgb, var(--beam) 7%, transparent);
@@ -485,11 +470,6 @@
 }
 
 /* ---------- Table ---------- */
-
-.table-wrap {
-  overflow: auto;
-  max-height: var(--table-max, none);
-}
 
 .table {
   font-size: var(--fs-13);
@@ -575,10 +555,6 @@ button.chip:active {
   border-radius: 50%;
   background: currentColor;
   flex: 0 0 auto;
-}
-
-.dot-live {
-  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 18%, transparent);
 }
 
 /* ---------- Banner ---------- */
