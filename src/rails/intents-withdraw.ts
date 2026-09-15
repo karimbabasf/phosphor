@@ -50,12 +50,14 @@ import type {
   ChainId,
   IntentsWithdrawDraft,
   Rail,
+  RailHooks,
   RailResult,
   SimulationResult,
 } from '../types.ts';
 import { baseUnits, oneLine, quoteEchoProblems, resolveAsset, toBaseUnits } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, QuoteEcho, TokensFile } from '../intents.ts';
 import { spendFromIntents } from './intents-spend.ts';
+import { describeUnconfirmedSubmit } from './oneclick-words.ts';
 import { INTENTS_VERIFIER, base58Decode, intentsApi, liveIntentsSigner } from './intents-native.ts';
 import type { IntentsApiPort, IntentsSignerPort } from './intents-native.ts';
 
@@ -398,13 +400,14 @@ export function intentsWithdrawRail(deps: IntentsWithdrawRailDeps): IntentsWithd
     }
   }
 
-  async function execute(draft: IntentsWithdrawDraft): Promise<RailResult> {
+  async function execute(draft: IntentsWithdrawDraft, _proposalId?: string, hooks?: RailHooks): Promise<RailResult> {
     const p = await plan(draft);
     const owner = requireOwner(draft);
     requireEvmDestinationIsOurs(draft, p, owner);
 
     // The four shared steps: live quote, echo check, generated intent checked and signed,
-    // submitted and watched. Every refusal before the signature throws out of here.
+    // submitted and watched. Every refusal before the signature throws out of here; after it
+    // nothing does, and a submit that did not answer comes back as signed and unsubmitted.
     const spent = await spendFromIntents(
       { api, signer, keysPath, now, sleep, pollIntervalMs, pollTimeoutMs, maxDeadlineMs },
       {
@@ -418,7 +421,11 @@ export function intentsWithdrawRail(deps: IntentsWithdrawRailDeps): IntentsWithd
         echo: echoWant(draft, p),
         checkQuote: (quote) => checkQuote(draft, p, quote),
       },
+      hooks,
     );
+    if (!spent.submitted) {
+      return describeUnconfirmedSubmit({ error: spent.error, handle: spent.depositAddress, deadline: spent.deadline });
+    }
     const { quote, depositAddress, watch } = spent;
     const evidence = `intent ${spent.intentHash}, quote handle ${oneLine(depositAddress, 80)}`;
 

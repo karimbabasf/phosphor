@@ -105,6 +105,7 @@ type ApiOverrides = {
   echo?: Record<string, unknown> | null;
   status?: OneClickStatus['status'];
   statusThrows?: boolean;
+  submitThrows?: boolean;
   assetMissing?: boolean;
   assetDecimals?: number;
   originMissing?: boolean;
@@ -133,6 +134,7 @@ function fakeApi(over: ApiOverrides = {}): { api: IntentsApiPort; signer: Intent
       return { standard: 'erc191', payload: payloadOf() };
     },
     async submitIntent(signed) {
+      if (over.submitThrows) throw new Error('submit-intent timed out after 30s');
       calls.submitted.push(signed);
       return { intentHash: 'HASH1', correlationId: 'c1' };
     },
@@ -394,6 +396,31 @@ test('a refund is reported back into the verifier rather than as a success', asy
   assert.match(out.detail, /REFUNDED/);
   assert.match(out.detail, new RegExp(`back to ${ACCOUNT} inside ${INTENTS_VERIFIER}`));
   assert.deepEqual(out.txids, ['HASH1', '0xdest']);
+});
+
+test('a submit that throws after the signature says the intent was signed and names the handle, never nothing signed', async () => {
+  const { rail: r, calls } = rail({ submitThrows: true });
+  const out = await r.execute(draft());
+  assert.equal(out.ok, false);
+  assert.equal(calls.signed.length, 1, 'the key was used');
+  assert.match(out.detail, /signed/);
+  assert.match(out.detail, /unconfirmed/);
+  assert.match(out.detail, new RegExp(HANDLE));
+  assert.match(out.detail, new RegExp(DEADLINE));
+  assert.doesNotMatch(out.detail, /Nothing was signed/);
+  assert.deepEqual(out.txids, []);
+  assert.equal(out.evidence?.handle, HANDLE);
+  assert.equal(out.evidence?.deadline, DEADLINE);
+});
+
+test('the executor hears the handle before the submit and the hash before the wait', async () => {
+  const { rail: r } = rail();
+  const heard: Array<{ txids?: string[]; handle?: string; deadline?: string }> = [];
+  const out = await r.execute(draft(), 'p1', { onEvidence: (e) => heard.push(e) });
+  assert.equal(out.ok, true, out.detail);
+  assert.deepEqual(heard[0], { handle: HANDLE, deadline: DEADLINE });
+  assert.deepEqual(heard[1].txids, ['HASH1']);
+  assert.equal(heard[1].handle, HANDLE);
 });
 
 test('a poll that never reaches terminal says the intent IS SIGNED AND SUBMITTED, in capitals', async () => {

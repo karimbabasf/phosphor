@@ -43,7 +43,7 @@ import { privateKeyToAccount } from 'viem/accounts';
 
 import { evmAddress } from '../chain/evm.ts';
 import { evmPrivateKey } from '../keystore/index.ts';
-import type { Rail, RailResult, SimulationResult, SwapDraft } from '../types.ts';
+import type { Rail, RailHooks, RailResult, SimulationResult, SwapDraft } from '../types.ts';
 import {
   ONECLICK_BASE,
   ONECLICK_TERMINAL,
@@ -73,6 +73,7 @@ import {
 import type { NearSendOutcome, NearSendParams } from '../chain/near.ts';
 import { venueWriteTimeout } from '../net.ts';
 import { MAX_SLIPPAGE_BPS, floorTooLow } from './slippage.ts';
+import { describeUnconfirmedSubmit } from './oneclick-words.ts';
 
 // The verifier contract. This is the whole point of the rail: one fixed account that goes on
 // the policy allowlist once and stays there, unlike a deposit address minted per quote.
@@ -440,6 +441,20 @@ export type IntentPayloadExpectation = {
 // effectively as a transfer would, so this is the checkpoint that replaces "is the deposit
 // address one we trust", and unlike that question this one is answerable.
 //
+// The deadline a payload carries, for the sentence and the evidence once it is signed. Read
+// after checkIntentPayload has accepted the payload, so the shape is already known good;
+// undefined only if it is not.
+export function intentDeadline(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    const deadline = (parsed as Record<string, unknown> | null)?.['deadline'];
+    return typeof deadline === 'string' && deadline !== '' ? oneLine(deadline, 40) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // Returns the problems it found. An empty array means the payload says what the draft says.
 export function checkIntentPayload(raw: unknown, expect: IntentPayloadExpectation): string[] {
   /* The floor first, before the payload is even read. Every amount check below compares against
@@ -876,6 +891,16 @@ function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+// A hook is the executor's business; whatever it does with the evidence, it must not turn a
+// signature that is already released into a thrown "nothing happened".
+function tell(hooks: RailHooks | undefined, evidence: Parameters<NonNullable<RailHooks['onEvidence']>>[0]): void {
+  try {
+    hooks?.onEvidence?.(evidence);
+  } catch {
+    // reported by the executor's own persistence, not by this rail
+  }
+}
+
 export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRail {
   const { keysPath, tokens } = deps;
   const apiKey = deps.apiKey ?? process.env[INTENTS_API_KEY_ENV];
@@ -1098,7 +1123,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     }
   }
 
-  async function execute(draft: SwapDraft): Promise<RailResult> {
+  async function execute(draft: SwapDraft, _proposalId?: string, hooks?: RailHooks): Promise<RailResult> {
     requireVenue(draft);
     requireUsable();
     const client = api as IntentsApiPort;
@@ -1174,9 +1199,20 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     // normalised anywhere above: the signature has to cover the same bytes the verifier will
     // parse, and a round trip through JSON.parse and JSON.stringify would not guarantee that.
     const payload = generated.payload as string;
+    const deadline = intentDeadline(payload) ?? 'unknown';
     const signature = await signer.signErc191(keysPath, payload);
+    tell(hooks, { handle: depositAddress, deadline });
 
-    const submitted = await client.submitIntent({ payload, signature });
+    // Nothing throws from here on. The signature is released, so a submit that does not answer
+    // is an intent that may be live at 1Click, and the executor has to hear that as a fact
+    // about the money rather than as a rail that threw.
+    let submitted: SubmittedIntent;
+    try {
+      submitted = await client.submitIntent({ payload, signature });
+    } catch (err) {
+      return describeUnconfirmedSubmit({ error: errText(err), handle: depositAddress, deadline });
+    }
+    tell(hooks, { txids: [submitted.intentHash], handle: depositAddress, deadline });
     const evidence = `intent ${submitted.intentHash}, quote handle ${oneLine(depositAddress, 80)}`;
 
     const watch = await watchStatus(depositAddress);

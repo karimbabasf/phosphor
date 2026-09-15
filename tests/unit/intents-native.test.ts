@@ -126,12 +126,14 @@ function quoteOf(over: Record<string, unknown> = {}): OneClickQuote {
   } as OneClickQuote;
 }
 
+const DEADLINE = new Date(NOW + 5 * 60_000).toISOString();
+
 // The erc191 payload is a JSON *string*, which is what the signature covers.
 function payloadOf(over: Record<string, unknown> = {}): string {
   return JSON.stringify({
     signer_id: OWNER,
     verifying_contract: INTENTS_VERIFIER,
-    deadline: new Date(NOW + 5 * 60_000).toISOString(),
+    deadline: DEADLINE,
     nonce: 'Vij2xgAlKBKzwGNqwogWQxiy87p9jW5Omfg+L9bXBDw=',
     intents: [{ intent: 'token_diff', diff: { [ORIGIN_ASSET]: '-100000000', [DEST_ASSET]: '99850000' } }],
     ...over,
@@ -179,6 +181,7 @@ function harness(
     verifierBefore?: bigint | null;
     verifierAfter?: bigint | null;
     quoteError?: string;
+    submitError?: string;
     intent?: Partial<GeneratedIntent>;
     payload?: string;
     statuses?: Array<{ status: string; swapDetails?: Record<string, unknown> } | null>;
@@ -211,6 +214,7 @@ function harness(
       };
     },
     async submitIntent(signed) {
+      if (options.submitError !== undefined) throw new Error(options.submitError);
       submitted.push(signed);
       return { intentHash: INTENT_HASH, correlationId: 'test-correlation' };
     },
@@ -650,6 +654,54 @@ test('a poll timeout says the intent is signed and submitted, because it is', as
   assert.match(result.detail, /may still complete/);
   assert.match(result.detail, /before signing another/);
   assert.ok(h.statusCalls.length > 1, 'it should have polled more than once before giving up');
+});
+
+test('a submit that throws after the signature is reported as signed and unconfirmed, never thrown as nothing', async () => {
+  const h = harness({ submitError: 'submit-intent timed out after 30s' });
+  const result = await railOf(h).execute(draftOf());
+
+  assert.equal(result.ok, false);
+  assert.equal(h.signedPayloads.length, 1, 'the key was used');
+  assert.equal(h.submitted.length, 0);
+  assert.match(result.detail, /signed/);
+  assert.match(result.detail, /unconfirmed/);
+  assert.match(result.detail, new RegExp(HANDLE));
+  assert.match(result.detail, /timed out/);
+  assert.doesNotMatch(result.detail, /Nothing was signed/);
+  assert.deepEqual(result.txids, []);
+  assert.equal(result.evidence?.handle, HANDLE);
+  assert.equal(result.evidence?.deadline, DEADLINE);
+});
+
+test('the executor hears the handle after the signature and the hash after the submit, before any poll', async () => {
+  const h = harness({ statuses: [{ status: 'PROCESSING' }, { status: 'SUCCESS', swapDetails: {} }] });
+  const order: string[] = [];
+  const heard: Array<{ txids?: string[]; handle?: string; deadline?: string }> = [];
+  const api = { ...h.api, async status(addr: string) {
+    order.push('poll');
+    return h.api.status(addr);
+  } };
+  const rail = intentsNativeRail({
+    keysPath: '/nonexistent/keys.json',
+    tokens: tokensFixture,
+    api,
+    signer: h.signer,
+    verifierBalance: h.verifierBalance,
+    now: () => NOW,
+    sleepImpl: async () => {},
+    pollIntervalMs: 1,
+    pollTimeoutMs: 5,
+  });
+  const result = await rail.execute(draftOf(), 'p1', {
+    onEvidence: (e) => {
+      order.push(`evidence:${e.txids?.join(',') ?? ''}`);
+      heard.push(e);
+    },
+  });
+  assert.equal(result.ok, true, result.detail);
+  assert.deepEqual(order.slice(0, 3), ['evidence:', `evidence:${INTENT_HASH}`, 'poll']);
+  assert.deepEqual(heard[0], { handle: HANDLE, deadline: DEADLINE });
+  assert.equal(heard[1].handle, HANDLE);
 });
 
 test('a REFUNDED swap says where the refund landed, which is not a chain address', async () => {

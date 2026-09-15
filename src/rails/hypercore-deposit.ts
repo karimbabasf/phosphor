@@ -47,12 +47,13 @@
 // module called "deposit" can produce a user-signed venue action.
 
 import { formatUnits, isAddress } from 'viem';
-import type { HlDepositDraft, Rail, RailResult, SimulationResult } from '../types.ts';
+import type { HlDepositDraft, Rail, RailHooks, RailResult, SimulationResult } from '../types.ts';
 import { baseUnits, oneLine, quoteEchoProblems, toBaseUnits } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickToken, QuoteEcho } from '../intents.ts';
 import { INTENTS_VERIFIER, intentsApi, liveIntentsSigner } from './intents-native.ts';
 import type { IntentsApiPort, IntentsSignerPort } from './intents-native.ts';
 import { spendFromIntents } from './intents-spend.ts';
+import { describeUnconfirmedSubmit } from './oneclick-words.ts';
 import { accountSummary, usdClassTransfer } from './hl-user-signed.ts';
 import type { HlAccountSummary, HlUserSignedDeps } from './hl-user-signed.ts';
 
@@ -452,7 +453,7 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     return Math.max(a, b);
   }
 
-  async function execute(draft: HlDepositDraft): Promise<RailResult> {
+  async function execute(draft: HlDepositDraft, _proposalId?: string, hooks?: RailHooks): Promise<RailResult> {
     // Re-plan and re-price rather than trust the approval. An approval can be minutes old and
     // a quote is a live price, so the checks that refused a bad draft have to run again here.
     const check = await simulate(draft);
@@ -473,7 +474,8 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     }
 
     // The four shared steps. Every refusal before the signature throws out of spendFromIntents
-    // and is reported here as exactly that; after the signature nothing throws.
+    // and is reported here as exactly that; after the signature nothing throws, and a submit
+    // that did not answer comes back as signed and unsubmitted.
     let spent;
     try {
       spent = await spendFromIntents(
@@ -490,9 +492,13 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
           echo: echoWant(draft, p),
           checkQuote: (quote) => checkQuote(draft, p, quote, priceLines(draft, quote).feePct),
         },
+        hooks,
       );
     } catch (err) {
       return { ok: false, detail: `${errText(err)}. Nothing was signed.` };
+    }
+    if (!spent.submitted) {
+      return describeUnconfirmedSubmit({ error: spent.error, handle: spent.depositAddress, deadline: spent.deadline });
     }
     const { quote, depositAddress, watch } = spent;
     const evidence = `intent ${spent.intentHash}, quote handle ${oneLine(depositAddress, 80)}`;

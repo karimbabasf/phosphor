@@ -180,6 +180,7 @@ type Overrides = {
   standard?: string;
   status?: OneClickStatus['status'];
   destinationTxHashes?: string[];
+  submitThrows?: boolean;
 };
 
 function apiOf(over: Overrides = {}): { api: IntentsApiPort; calls: ApiCalls } {
@@ -197,6 +198,7 @@ function apiOf(over: Overrides = {}): { api: IntentsApiPort; calls: ApiCalls } {
       return { standard: over.standard ?? 'erc191', payload: over.payload ?? payloadOf() };
     },
     async submitIntent(signed) {
+      if (over.submitThrows) throw new Error('submit-intent timed out after 30s');
       calls.submitted.push(signed);
       return { intentHash: 'HASH123' };
     },
@@ -580,6 +582,30 @@ test('a refund is reported as money back inside the verifier, not as money in a 
   assert.equal(result.ok, false);
   assert.match(result.detail, /credited back to/);
   assert.match(result.detail, /where the balance started/);
+});
+
+test('a submit that throws after the signature is reported as signed and unconfirmed, with the handle, never thrown', async () => {
+  const { rail, calls } = railOf({ submitThrows: true });
+  const result = await rail.execute(draftOf());
+  assert.equal(result.ok, false);
+  assert.equal(calls.submitted.length, 0);
+  assert.match(result.detail, /signed/);
+  assert.match(result.detail, /unconfirmed/);
+  assert.match(result.detail, new RegExp(HANDLE));
+  assert.doesNotMatch(result.detail, /Nothing was signed/);
+  assert.deepEqual(result.txids, []);
+  assert.equal(result.evidence?.handle, HANDLE);
+  assert.equal(result.evidence?.deadline, DEADLINE);
+});
+
+test('the executor hears the handle after the signature and the hash after the submit', async () => {
+  const { rail } = railOf();
+  const heard: Array<{ txids?: string[]; handle?: string; deadline?: string }> = [];
+  const result = await rail.execute(draftOf(), 'p1', { onEvidence: (e) => heard.push(e) });
+  assert.equal(result.ok, true, result.detail);
+  assert.deepEqual(heard[0], { handle: HANDLE, deadline: DEADLINE });
+  assert.deepEqual(heard[1].txids, ['HASH123']);
+  assert.equal(heard[1].handle, HANDLE);
 });
 
 test('a poll timeout says the intent IS submitted, so nobody signs a second one', async () => {
