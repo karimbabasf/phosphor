@@ -174,9 +174,7 @@
    itself, and the first row keeps the rule that separates it from the head. */
 .tx.receipt-row {
   width: 100%;
-  text-align: left;
-  background: transparent;
-  transition: background-color var(--dur-press) var(--ease-out);
+  padding: var(--s-2) var(--s-4);
 }
 
 .activity-list > .tx.receipt-row:first-child {
@@ -195,9 +193,16 @@
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
+
+/* A time that is really an outcome ("Did not go through") reads in the warning
+   tone; the grammar's own 12 px stays. */
+.receipt-row > .tx-when.warn { color: var(--warn); }
+
+/* A move that did not go through left nothing, so its amount is unsigned and
+   quiet: the same weight as the time, not a number that means money. */
+.receipt-row > .tx-amount.dim { color: var(--text-3); }
 
 /* The rail's own words, on the opened receipt. Wrapped rather than clamped, because here the
    whole thing is the point, and broken anywhere because an intent hash is one 44 character
@@ -269,14 +274,6 @@
 .agent-status[data-state="off"] > .status-dot { background: var(--text-3); }
 .agent-status[data-state="starting"] > .status-dot { background: color-mix(in srgb, var(--beam) 60%, var(--text-3)); }
 .agent-status[data-state="error"] > .status-dot { background: var(--down); }
-/* A time that is really an outcome ("Did not go through") reads in the warning
-   tone; the grammar's own 12 px stays. */
-.receipt-row > .tx-when.warn { color: var(--warn); }
-
-/* A move that did not go through left nothing, so its amount is unsigned and
-   quiet: the same weight as the time, not a number that means money. */
-.receipt-row > .tx-amount.dim { color: var(--text-3); }
-
 .agent-status[data-state="stopped"] > .status-dot {
   background: transparent;
   box-shadow: inset 0 0 0 1.5px var(--text-3);
