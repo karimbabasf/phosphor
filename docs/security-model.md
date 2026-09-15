@@ -96,7 +96,7 @@ rather than assuming it.
 written for a non-technical reader (`basic`), and the trading surface (`trade`). The human moves
 between them with the tabs in the window; the agent moves them with this tool. All three are
 screens inside the one window, and a switch is written to the audit log either way: the tab posts
-`/api/view` with the window token (a human write like `/api/theme`), the tool posts the
+`/api/view` with the window token (a human write like `/api/kill`), the tool posts the
 `set_view_mode` op, and the server's screen record (`{ view, since, by }` on `start` and on
 `switch`; the state frame carries `view`) names which of the two moved it last. Until 2026-09-14
 the tab told nobody, so an agent went on describing the screen the human had left.

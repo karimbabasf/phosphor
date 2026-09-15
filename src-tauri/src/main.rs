@@ -105,20 +105,6 @@ pub(crate) fn data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-/// The colourway the window was left in, read off state/theme.json so the splash can paint it
-/// before the backend is up. Best effort in every direction: no file, a file that is not JSON,
-/// or a name that is not one of the two all mean green on black, which is what the splash
-/// paints with no script at all. The two names are the whole grammar, and only a name that
-/// matches one of them verbatim is ever handed to the page, so nothing read off the disk can
-/// reach the initialization script as anything but one of these literals.
-pub(crate) fn saved_colourway(data: &Path) -> Option<&'static str> {
-    const COLOURWAYS: [&str; 2] = ["green-on-black", "black-on-white"];
-    let raw = std::fs::read_to_string(data.join("state").join("theme.json")).ok()?;
-    let parsed: serde_json::Value = serde_json::from_str(&raw).ok()?;
-    let name = parsed.get("profile")?.as_str()?;
-    COLOURWAYS.iter().copied().find(|known| *known == name)
-}
-
 /// The payload directory: the old repo root, shipped verbatim.
 pub(crate) fn payload_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let dir = app
@@ -255,12 +241,16 @@ fn open_control_window(app: &tauri::AppHandle, port: u16) -> Result<(), String> 
     }
     let script = format!("window.__PHOSPHOR_TOKEN__ = \"{token}\";");
 
+    // Opens maximized: the window fills the screen without going into macOS fullscreen, so the
+    // menu bar and the dock stay where they are. The size below is what it falls back to when
+    // the person unmaximizes it.
     let window = WebviewWindowBuilder::new(app, "control", WebviewUrl::External(url))
-        .title("PHOSPHOR")
+        .title("Phosphor")
         .inner_size(1180.0, 780.0)
         .min_inner_size(900.0, 620.0)
         .center()
         .resizable(true)
+        .maximized(true)
         .initialization_script(&script)
         .build()
         .map_err(|e| format!("cannot open the control window: {e}"))?;
@@ -562,18 +552,13 @@ fn main() {
             app.set_menu(build_menu(&handle)?)?;
             app.on_menu_event(on_menu);
 
-            // The splash paints the colourway the window was last in. A data dir that cannot be
-            // resolved is reported by start() a moment later; here it only means the default.
-            let colourway = data_dir(&handle)
-                .ok()
-                .and_then(|data| saved_colourway(&data))
-                .unwrap_or("green-on-black");
+            // The splash paints the window's one colourway, green on black, and receives no
+            // script: nothing read off the disk reaches it.
             WebviewWindowBuilder::new(&handle, "splash", WebviewUrl::App("index.html".into()))
-                .title("PHOSPHOR")
+                .title("Phosphor")
                 .inner_size(420.0, 300.0)
                 .resizable(false)
                 .center()
-                .initialization_script(&format!("window.__PHOSPHOR_PROFILE__ = \"{colourway}\";"))
                 .build()?;
 
             if let Err(err) = start(&handle) {

@@ -113,10 +113,10 @@ test('shorthand hex is expanded rather than rejected', () => {
 
 /* ---------- the colourways ---------- */
 
-test('there are two colourways: the original and black on white', () => {
-  // Black on green was the mark's third and was cut from the window on 2026-09-14 ("remove the
-  // neon green"). It is not to come back as a default.
-  assert.deepEqual([...COLOURWAYS], ['green-on-black', 'black-on-white']);
+test('there is one colourway: green on black, and the window is dark only', () => {
+  // Black on green was cut from the window on 2026-09-14 ("remove the neon green") and black
+  // on white on 2026-09-15 (dark only). Neither is to come back as a default or a menu.
+  assert.deepEqual([...COLOURWAYS], ['green-on-black']);
 });
 
 test('every colourway passes every floor on its own ground, the gate red included', () => {
@@ -141,13 +141,16 @@ test('every colourway passes every floor on its own ground, the gate red include
   }
 });
 
-test('no one red clears the text floor on both the black and the white ground', () => {
-  // The reason the gate red is per colourway rather than one constant. If this ever passes,
-  // the palette can go back to one red and the comment in theme.ts is wrong.
-  const black = COLOURWAY_PALETTE['green-on-black'];
-  const white = COLOURWAY_PALETTE['black-on-white'];
-  assert.ok(contrastRatio(black.gate, white.slots.background) < MIN_TEXT_CONTRAST);
-  assert.ok(contrastRatio(white.gate, black.slots.background) < MIN_TEXT_CONTRAST);
+test('the colourways that were cut are refused by name, so nothing can bring a light ground back', () => {
+  for (const gone of ['black-on-white', 'black-on-green']) {
+    const out = applyPatch(DEFAULT_THEME, { profile: gone });
+    assert.equal(out.ok, false, `${gone} was accepted`);
+    assert.match(out.ok === false ? out.error : '', /unknown colourway/);
+  }
+  // And the gate's red on the one ground clears the text floor, which is the whole reason the
+  // ground is not a free choice.
+  const palette = COLOURWAY_PALETTE['green-on-black'];
+  assert.ok(contrastRatio(palette.gate, palette.slots.background) >= MIN_TEXT_CONTRAST);
 });
 
 /* The stylesheet is what the window paints and the table above is what the server checks.
@@ -163,7 +166,7 @@ function cssBlock(source: string, selector: string): Record<string, string> {
 
 const TOKENS_CSS = readFileSync(new URL('../../ui/design/tokens.css', import.meta.url), 'utf8');
 
-test('tokens.css carries the same values as the colourway table, for both', () => {
+test('tokens.css carries the same values as the colourway table', () => {
   for (const name of COLOURWAYS) {
     const palette = COLOURWAY_PALETTE[name];
     const block = cssBlock(TOKENS_CSS, name === 'green-on-black' ? ':root' : `:root[data-profile="${name}"]`);
@@ -184,7 +187,7 @@ test('tokens.css carries the same values as the colourway table, for both', () =
   }
 });
 
-test('the splash paints the same ground, text and ink as the window, for both', () => {
+test('the splash paints the same ground, text and ink as the window', () => {
   const splash = readFileSync(new URL('../../src-tauri/frontend/index.html', import.meta.url), 'utf8');
   for (const name of COLOURWAYS) {
     const palette = COLOURWAY_PALETTE[name];
@@ -196,56 +199,63 @@ test('the splash paints the same ground, text and ink as the window, for both', 
   }
 });
 
-test('picking a colourway repaints every slot to its own colours, and a slot in the same patch lands on top', () => {
-  const out = applyPatch(DEFAULT_THEME, { profile: 'black-on-white', accent: '#1a56db' });
+test('naming the colourway repaints every slot to its own colours, and a slot in the same patch lands on top', () => {
+  const blue = applyPatch(DEFAULT_THEME, { accent: '#5b8def', up: '#5b8def' });
+  assert.equal(blue.ok, true, blue.ok ? '' : blue.error);
+  if (!blue.ok) return;
+  const out = applyPatch(blue.theme, { profile: 'green-on-black', accent: '#5b8def' });
   assert.equal(out.ok, true, out.ok ? '' : out.error);
   if (!out.ok) return;
-  assert.equal(out.theme.profile, 'black-on-white');
-  assert.equal(out.theme.background, '#ffffff');
-  assert.equal(out.theme.up, COLOURWAY_PALETTE['black-on-white'].slots.up);
-  assert.equal(out.theme.accent, '#1a56db');
+  assert.equal(out.theme.profile, 'green-on-black');
+  assert.equal(out.theme.up, COLOURWAY_PALETTE['green-on-black'].slots.up);
+  assert.equal(out.theme.accent, '#5b8def');
 });
 
-test('a colourway that is not one of the three is refused by name', () => {
+test('a colourway that is not the one is refused by name', () => {
   const out = applyPatch(DEFAULT_THEME, { profile: 'dark' });
   assert.equal(out.ok, false);
   assert.match(out.ok === false ? out.error : '', /unknown colourway/);
 });
 
-test('reset goes back to the colourway that is current, not to green on black', () => {
-  const white = applyPatch(DEFAULT_THEME, { profile: 'black-on-white', accent: '#1a56db' });
-  assert.equal(white.ok, true);
-  if (!white.ok) return;
-  const out = applyPatch(white.theme, { reset: true });
+test('reset goes back to the colourway, whatever the slots were', () => {
+  const blue = applyPatch(DEFAULT_THEME, { accent: '#5b8def' });
+  assert.equal(blue.ok, true);
+  if (!blue.ok) return;
+  const out = applyPatch(blue.theme, { reset: true });
   assert.equal(out.ok, true);
   if (!out.ok) return;
-  assert.deepEqual(out.theme, colourwayTheme('black-on-white'));
+  assert.deepEqual(out.theme, colourwayTheme('green-on-black'));
 });
 
-test('the gate check follows the colourway, so a ground its own gate red reads on is allowed', () => {
-  // On green on black's gate red, a white ground is under the floor; on white's own it is not.
-  const out = applyPatch(DEFAULT_THEME, { profile: 'black-on-white' });
-  assert.equal(out.ok, true, out.ok ? '' : out.error);
+test('a white ground is refused because the gate red cannot be read on it', () => {
+  // The one alarm on the page has to stay readable, and no slot can move it, so the ground
+  // is held to it. This is what keeps an agent from painting a light window.
+  const out = applyPatch(DEFAULT_THEME, { background: '#ffffff', accent: '#111111', agent: '#4b1fa6', up: '#0f8f3a', down: '#d8213a' });
+  assert.equal(out.ok, false);
+  assert.match(out.ok === false ? out.error : '', /gate's red/);
 });
 
-test('a theme file from before the colourways comes back as green on black, and one with a colourway keeps it', () => {
+test('a theme file from before the colourways comes back as green on black, and one naming it keeps its slots', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'phosphor-theme-'));
   writeFileSync(path.join(dir, 'theme.json'), JSON.stringify({ accent: '#5b8def', background: '#0b0d10', up: '#33ff66', down: '#ff5a6e', agent: '#b79cff' }));
   const old = readTheme(dir);
   assert.equal(old.profile, 'green-on-black');
   assert.equal(old.accent, '#5b8def');
 
-  writeFileSync(path.join(dir, 'theme.json'), JSON.stringify({ ...colourwayTheme('black-on-white'), agent: '#6b3fd6' }));
-  const white = readTheme(dir);
-  assert.equal(white.profile, 'black-on-white');
-  assert.equal(white.background, '#ffffff');
+  writeFileSync(path.join(dir, 'theme.json'), JSON.stringify({ ...colourwayTheme('green-on-black'), agent: '#c9b3ff' }));
+  const named = readTheme(dir);
+  assert.equal(named.profile, 'green-on-black');
+  assert.equal(named.agent, '#c9b3ff');
 
-  // The colourway that was cut reads as the default too, so a theme.json written by the build
-  // that had it does not come back as a half-painted window.
+  // The colourways that were cut read as the default too, so a theme.json written by a build
+  // that had them does not come back as a half-painted window. Black on white's slots fail
+  // the floors on the dark ground, so the whole file is treated as absent, slots included.
   writeFileSync(path.join(dir, 'theme.json'), JSON.stringify({ accent: '#0e0f13', background: '#3fff6c', up: '#0e0f13', down: '#b3001b', agent: '#4b1fa6', profile: 'black-on-green' }));
   assert.equal(readTheme(dir).profile, 'green-on-black');
+  writeFileSync(path.join(dir, 'theme.json'), JSON.stringify({ accent: '#111111', background: '#ffffff', up: '#0f8f3a', down: '#d8213a', agent: '#6b3fd6', profile: 'black-on-white' }));
+  assert.deepEqual(readTheme(dir), DEFAULT_THEME);
 
   // A colourway nobody has heard of is the default, not a crash and not a half-painted window.
-  writeFileSync(path.join(dir, 'theme.json'), JSON.stringify({ ...colourwayTheme('black-on-white'), profile: 'sepia' }));
+  writeFileSync(path.join(dir, 'theme.json'), JSON.stringify({ ...colourwayTheme('green-on-black'), profile: 'sepia' }));
   assert.equal(readTheme(dir).profile, 'green-on-black');
 });

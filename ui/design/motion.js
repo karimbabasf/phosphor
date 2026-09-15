@@ -11,6 +11,10 @@
                                     spring as linear(), or the ease-out curve
                                     when the vendored file is not there
 
+   window.Motion (ui/vendor/motion-13.3.0.js) is loaded by index.html before
+   this file, so screen code calls Motion.animate(el, keyframes, options)
+   directly for its authored moments and asks reduced() before any of them.
+
    handle
      start()       run the draw loop (subject to visibility)
      stop()        stop it; the last painted frame stays
@@ -252,10 +256,12 @@
      No bounce: the window's motion is crisp rather than playful, and 0.4 s of
      visual duration settles a 20 px move in the time the eye gives it.
 
-     Without the vendored file (the unit harness has no window at all, and a
-     page that failed to load it still has to move) the easing is the strong
-     ease-out the rest of the window uses and the duration is its number
-     duration, so nothing that reads either has to know which it got. */
+     The vendored file is loaded by index.html ahead of this one, so the
+     spring is sampled the moment this file runs. Without it (the unit harness
+     has no window at all, and a page that failed to load it still has to
+     move) the easing is the strong ease-out the rest of the window uses and
+     the duration is its number duration, so nothing that reads either has to
+     know which it got. */
   var SPRING_EASE_FALLBACK = 'cubic-bezier(0.23, 1, 0.32, 1)';
   var SPRING_DUR_FALLBACK = '300ms';
   var springEase = '';
@@ -290,7 +296,7 @@
 
   /* Written at boot, once, on the root: the one place the stylesheet reads
      the spring from. Guarded, because the file also runs where there is no
-     document to write to. Written again when the vendored file lands. */
+     document to write to. */
   function seedSpringTokens() {
     var root = typeof document !== 'undefined' && document.documentElement;
     if (!root || !root.style || typeof root.style.setProperty !== 'function') return;
@@ -298,32 +304,6 @@
     root.style.setProperty('--dur-spring', springDuration());
   }
   seedSpringTokens();
-
-  /* The vendored file is 147 KB and nothing on screen waits for it, so it is
-     fetched after the window's load event rather than parsed in front of the
-     first paint, which it had cost 14 ms (Karim, 2026-09-14: "speed and
-     performance shouldnt be lost"). Until it lands every reader gets the
-     fallback curve; when it lands the spring is sampled once, the root tokens
-     are rewritten, and the next transition takes the physics. Same origin, so
-     the page's script-src 'self' admits it. */
-  function loadSpringLater() {
-    if (typeof document === 'undefined' || typeof document.createElement !== 'function') return;
-    if (typeof window.addEventListener !== 'function' || window.Motion) return;
-    function fetchIt() {
-      var tag = document.createElement('script');
-      tag.src = './vendor/motion-13.3.0.js';
-      tag.async = true;
-      tag.onload = function () {
-        springEase = '';
-        springDur = '';
-        seedSpringTokens();
-      };
-      (document.head || document.documentElement).appendChild(tag);
-    }
-    if (document.readyState === 'complete') window.setTimeout(fetchIt, 0);
-    else window.addEventListener('load', function () { window.setTimeout(fetchIt, 0); }, { once: true });
-  }
-  loadSpringLater();
 
   if (motionQuery.addEventListener) {
     motionQuery.addEventListener('change', function () {

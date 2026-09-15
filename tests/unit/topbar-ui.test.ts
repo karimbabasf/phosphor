@@ -20,12 +20,20 @@ function cluster(): string {
   return HTML.slice(start, HTML.indexOf('</header>', start));
 }
 
-test('the mark has left the bar: no tile beside the brake and no glyph in the wordmark', () => {
-  assert.equal(HTML.includes('colourway-toggle'), false, 'the colourway toggle tile is still in the bar');
-  assert.equal(HTML.includes('wordmark-glyph'), false, 'the wordmark still carries the mark');
+test('the mark sits in the brand row at left, as the banner sets it, and nowhere else in the bar', () => {
+  // The brand row is a plain div: the mark at 20px and the word, no menu, no button. The
+  // colourway menu it used to open went with light mode on 2026-09-15.
+  const start = HTML.indexOf('<div class="brand">');
+  assert.ok(start >= 0, 'the bar has no brand row');
+  const brand = HTML.slice(start, HTML.indexOf('</div>', start));
+  assert.ok(brand.includes('class="brand-mark"') && brand.includes('#phosphor-mark'), 'the brand row draws no mark');
+  assert.ok(/<span class="brand-word">Phosphor<\/span>/.test(brand), 'the brand row has no word');
+  assert.equal(brand.includes('<button'), false, 'the brand row is a control');
+  assert.equal(HTML.includes('colourway'), false, 'the colourway menu is still in the bar');
+  assert.equal(HTML.includes('wordmark'), false, 'the old wordmark button is still in the bar');
   assert.equal(cluster().includes('phosphor-mark'), false, 'the cluster draws the mark');
   assert.equal(SHELL.includes('renderGlyph'), false, 'the shell still drives a glyph that is not there');
-  assert.equal(SHELL.includes('colourway-toggle'), false, 'the shell still wires the toggle');
+  assert.equal(SHELL.includes('colourway'), false, 'the shell still wires the menu');
 });
 
 test('state is a dot or a lock and a word, never a pill, and the brake is last', () => {
