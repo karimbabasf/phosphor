@@ -185,6 +185,119 @@ export function persist(ctx: PCtx, p: Proposal): Proposal {
   return p;
 }
 
+// ---------- the outcome, in the words an agent may repeat ----------
+//
+// Five words, and the assistant reporting a proposal uses one of them and nothing else. Four
+// of them are execution outcomes: `confirmed` (the move ran and the balance shows it),
+// `settling` (the venue confirmed and the balance has not shown it yet, so nothing more is
+// signed), `failed` (nothing moved, or the sentence says what did), `unconfirmed` (the move
+// was started and its outcome is not known; it must not be sent again). `pending` is a
+// proposal nobody has executed. The sentence beside the word is plain and carries the row's
+// own detail, so "failed" is never invented for a row that is settling.
+
+export type OutcomeState = 'confirmed' | 'settling' | 'failed' | 'unconfirmed' | 'pending';
+
+export type ProposalOutcome = {
+  state: OutcomeState;
+  sentence: string;
+  // The pocket the money moved through, in USD, either side of the move. Null is "not read",
+  // never zero.
+  beforeUsd: number | null;
+  afterUsd: number | null;
+  // The same two numbers in the asset's own units when the rail read them itself.
+  pocket: { venue: 'intents' | 'hyperliquid'; symbol: string; before: string; after: string | null } | null;
+};
+
+// The plan a trade proposal armed, as the runner holds it: the entry's fate lives there.
+export type PlanFate = {
+  status: 'idea' | 'waiting' | 'placed' | 'open' | 'done';
+  endReason?: string;
+  confirm?: { state: 'filled' | 'resting' | 'canceled' | 'rejected' | 'unconfirmed'; venueStatus: string | null };
+};
+
+const LEAD: Record<OutcomeState, string> = {
+  confirmed: 'Confirmed.',
+  settling: 'Settling: the venue confirmed the move and the balance has not shown it yet. Nothing more is signed until it does.',
+  failed: 'Failed.',
+  unconfirmed: 'Unconfirmed: the move was started and its outcome is not known yet. Do not send it again; read it again instead.',
+  pending: 'Not executed yet.',
+};
+
+function unitsOf(base: string, decimals: number): string {
+  const digits = base.replace(/^-/, '').padStart(decimals + 1, '0');
+  const whole = digits.slice(0, digits.length - decimals);
+  const frac = digits.slice(digits.length - decimals).replace(/0+$/, '');
+  return `${base.startsWith('-') ? '-' : ''}${whole}${frac === '' ? '' : `.${frac}`}`;
+}
+
+function tradeState(plan: PlanFate): { state: OutcomeState; sentence: string } {
+  if (plan.status === 'waiting') return { state: 'confirmed', sentence: 'Confirmed. The plan is armed and waiting for its conditions; no order is placed yet.' };
+  if (plan.status === 'open') return { state: 'confirmed', sentence: 'Confirmed. The entry filled and the position is open with its exits resting.' };
+  if (plan.status === 'placed') {
+    const c = plan.confirm;
+    if (c === undefined) return { state: 'unconfirmed', sentence: `${LEAD.unconfirmed} The entry was sent and the venue has not been read back for it yet.` };
+    if (c.state === 'unconfirmed') return { state: 'unconfirmed', sentence: `${LEAD.unconfirmed} The venue did not answer for the entry inside the read-back window; the order may exist.` };
+    return { state: 'confirmed', sentence: `Confirmed. The venue reports the entry ${c.venueStatus ?? c.state}.` };
+  }
+  if (plan.status === 'done') {
+    const reason = plan.endReason ?? 'closed';
+    if (reason.startsWith('failed:')) return { state: 'failed', sentence: `${LEAD.failed} ${reason.slice('failed:'.length)}` };
+    if (reason === 'cancelled' || reason === 'expired') return { state: 'failed', sentence: `${LEAD.failed} The plan ended ${reason} and no position was taken.` };
+    return { state: 'confirmed', sentence: `Confirmed. The trade ran and ended ${reason}.` };
+  }
+  return { state: 'pending', sentence: `${LEAD.pending} The plan is an idea and has no authority.` };
+}
+
+export function outcomeOf(p: Proposal, plan?: PlanFate | null): ProposalOutcome {
+  const detail = p.result?.detail ?? '';
+  const pocket =
+    p.pocket === undefined
+      ? null
+      : {
+          venue: p.pocket.venue,
+          symbol: p.pocket.symbol,
+          before: unitsOf(p.pocket.before, p.pocket.decimals),
+          after: p.pocket.after === null ? null : unitsOf(p.pocket.after, p.pocket.decimals),
+        };
+  const money = { beforeUsd: p.balances?.beforeUsd ?? null, afterUsd: p.balances?.afterUsd ?? null, pocket };
+
+  let state: OutcomeState;
+  let sentence: string;
+  switch (p.status) {
+    case 'executed':
+      if (p.kind === 'trade' && plan !== undefined && plan !== null) {
+        ({ state, sentence } = tradeState(plan));
+      } else {
+        state = 'confirmed';
+        sentence = `${LEAD.confirmed} ${detail}`.trim();
+      }
+      break;
+    case 'needs_reconciliation':
+      // A settling row carries the pocket the rail read; a row the boot sweep stranded does
+      // not, and for that one the honest word is unconfirmed.
+      state = p.pocket !== undefined ? 'settling' : 'unconfirmed';
+      sentence = `${LEAD[state]} ${detail}`.trim();
+      break;
+    case 'executing':
+      state = 'unconfirmed';
+      sentence = `${LEAD.unconfirmed} The rail is still running.`;
+      break;
+    case 'failed':
+      state = 'failed';
+      sentence = `${LEAD.failed} ${detail}`.trim();
+      break;
+    case 'refused':
+    case 'policy_refused':
+      state = 'failed';
+      sentence = `${LEAD.failed} The proposal was refused${p.status === 'policy_refused' ? ' by policy' : ''} and nothing was signed.`;
+      break;
+    default:
+      state = 'pending';
+      sentence = `${LEAD.pending} The proposal is ${p.status.replace(/_/g, ' ')}.`;
+  }
+  return { state, sentence, ...money };
+}
+
 // Addresses we own: whatever the ledger reports holdings for, plus anything configured.
 export function selfAddresses(ctx: PCtx, snapshot: LedgerSnapshot): string[] {
   const set = new Set<string>();
