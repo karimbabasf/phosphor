@@ -85,7 +85,10 @@
   --s-7: 48px;
   --s-8: 64px;
 
-  /* Shape */
+  /* Shape. One scale: xs for micro controls (a checkbox, inline code, a tiny
+     tag), sm for controls and chips, the base for inputs and list containers,
+     lg for cards and panels, xl for the receipt and lock cards. */
+  --radius-xs: 6px;
   --radius: 14px;
   --radius-sm: 10px;
   --radius-lg: 20px;

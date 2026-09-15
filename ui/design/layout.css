@@ -224,7 +224,7 @@ html, body {
   height: 28px;
   padding: 0 var(--s-3);
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   font-size: var(--fs-13);
   font-weight: 500;
 }

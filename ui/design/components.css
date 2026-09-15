@@ -727,7 +727,7 @@ textarea.input {
   align-items: baseline;
   gap: var(--s-2);
   padding: 2px var(--s-2) 2px var(--s-2);
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   border: 1px solid transparent;
   background: var(--bg-2);
   font-family: var(--font-mono);
