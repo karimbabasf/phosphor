@@ -180,8 +180,8 @@ function report(overrides: Any = {}): Any {
     verified: true,
     tampered: false,
     networks: [
-      { id: 'eth', name: 'Ethereum', address: ADDRESS, memo: null, unavailable: null, accepts: [{ symbol: 'USDC', minDeposit: '1', decimals: 6 }, { symbol: 'ETH', minDeposit: '0.001', decimals: 18 }], warning: WARNING },
-      { id: 'sol', name: 'Solana', address: '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin', memo: null, unavailable: null, accepts: [{ symbol: 'USDC', minDeposit: '1', decimals: 6 }], warning: 'Solana only. Anything sent here from another network is lost.' },
+      { id: 'eth', name: 'Ethereum', address: ADDRESS, memo: null, unavailable: null, accepts: [{ symbol: 'USDC', minDeposit: '1000000', minDepositHuman: '1', decimals: 6, contract: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48' }, { symbol: 'ETH', minDeposit: '1000000000000000', minDepositHuman: '0.001', decimals: 18, contract: null }], warning: WARNING },
+      { id: 'sol', name: 'Solana', address: '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin', memo: null, unavailable: null, accepts: [{ symbol: 'USDC', minDeposit: '1000000', minDepositHuman: '1', decimals: 6, contract: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' }], warning: 'Solana only. Anything sent here from another network is lost.' },
     ],
     note: 'These addresses belong to the NEAR Intents bridge. It forwards what it receives to your intents balance.',
   }, overrides);
@@ -544,7 +544,7 @@ test('money that lands after the card was closed is said once, as a toast', asyn
 });
 
 test('an EVM card offers the other two EVM networks as chips, and a chip starts a fresh watch there', async () => {
-  const base = { id: 'base', name: 'Base', address: '0x1111111111111111111111111111111111111111', memo: null, unavailable: null, accepts: [{ symbol: 'USDC', minDeposit: '1', decimals: 6 }], warning: WARNING };
+  const base = { id: 'base', name: 'Base', address: '0x1111111111111111111111111111111111111111', memo: null, unavailable: null, accepts: [{ symbol: 'USDC', minDeposit: '1000000', minDepositHuman: '1', decimals: 6, contract: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913' }], warning: WARNING };
   const world = build({ report: report({ networks: report().networks.concat([base]) }) });
   world.deposit.onFrame(frame());
   await flush();

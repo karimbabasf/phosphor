@@ -116,9 +116,67 @@ export type PoaToken = {
   network: string;
   symbol: string;
   decimals: number;
+  // The bridge's floor in base units, as it sent it. Kept for anything that compares raw amounts.
   minDeposit: string;
+  // The same floor in the unit a person reads: "0.001", never "1000". This is the one a screen
+  // or an agent prints; the raw string printed beside a symbol read as a thousand USDC.
+  minDepositHuman: string;
+  // The token's contract on its chain, null for the chain's own coin.
+  contract: string | null;
   intentsAssetId: string;
 };
+
+/* Base units to the number a person reads, by string arithmetic: "1000" at 6 decimals is
+   "0.001", "100000000000" at 18 is "0.0000001", "1000000" at 6 is "1". A float would print
+   1e-7 for the second and drift on the big ones, and a minimum is a number somebody compares
+   against the amount they are about to type. Anything that is not a whole number of base
+   units comes back as it arrived rather than as an invented figure. */
+export function humanAmount(raw: string, decimals: number): string {
+  const digits = String(raw ?? '').trim();
+  if (!/^\d+$/.test(digits) || !Number.isInteger(decimals) || decimals < 0) return digits;
+  const units = BigInt(digits).toString();
+  if (decimals === 0) return units;
+  const padded = units.length > decimals ? units : '0'.repeat(decimals - units.length + 1) + units;
+  const whole = padded.slice(0, padded.length - decimals);
+  const fraction = padded.slice(padded.length - decimals).replace(/0+$/, '');
+  return fraction === '' ? whole : `${whole}.${fraction}`;
+}
+
+/* One bridge row to one token, or null where the row cannot be read. Shared by the live list
+   and the demo fixture so both say the same thing about the same row. */
+export function parsePoaToken(row: unknown): PoaToken | null {
+  const r = (row ?? {}) as Record<string, unknown>;
+  const id = r.defuse_asset_identifier;
+  const symbol = r.asset_name;
+  const decimals = r.decimals;
+  const min = r.min_deposit_amount;
+  const assetId = r.intents_token_id;
+  if (typeof id !== 'string' || typeof symbol !== 'string' || typeof decimals !== 'number') return null;
+  // 'eth:1:0xa0b8...' or 'eth:1' for a native asset: the network is the first two segments and
+  // the contract, when there is one, is everything after them.
+  const parts = id.split(':');
+  const contract = parts.slice(2).join(':');
+  const minDeposit = typeof min === 'string' ? min : String(min ?? '0');
+  return {
+    network: parts.slice(0, 2).join(':'),
+    symbol,
+    decimals,
+    minDeposit,
+    minDepositHuman: humanAmount(minDeposit, decimals),
+    contract: contract === '' ? null : contract,
+    intentsAssetId: typeof assetId === 'string' ? assetId : '',
+  };
+}
+
+export function parsePoaTokens(rows: unknown): PoaToken[] {
+  if (!Array.isArray(rows)) return [];
+  const out: PoaToken[] = [];
+  for (const row of rows) {
+    const token = parsePoaToken(row);
+    if (token !== null) out.push(token);
+  }
+  return out;
+}
 
 /* What the bridge will actually accept, per network. This is the half of a receive screen that
    stops a loss: an asset the bridge does not list for that network is not credited and is not
@@ -127,27 +185,7 @@ export type PoaToken = {
 export async function poaSupportedTokens(fetchImpl: typeof fetch = fetch): Promise<PoaToken[]> {
   try {
     const body = (await rpc('supported_tokens', [{}], fetchImpl)) as { result?: { tokens?: unknown } };
-    const rows = body.result?.tokens;
-    if (!Array.isArray(rows)) return [];
-    const out: PoaToken[] = [];
-    for (const row of rows) {
-      const r = row as Record<string, unknown>;
-      const id = r.defuse_asset_identifier;
-      const symbol = r.asset_name;
-      const decimals = r.decimals;
-      const min = r.min_deposit_amount;
-      const assetId = r.intents_token_id;
-      if (typeof id !== 'string' || typeof symbol !== 'string' || typeof decimals !== 'number') continue;
-      out.push({
-        // 'eth:1:0xa0b8...' or 'eth:1' for a native asset: the network is the first two segments.
-        network: id.split(':').slice(0, 2).join(':'),
-        symbol,
-        decimals,
-        minDeposit: typeof min === 'string' ? min : String(min ?? '0'),
-        intentsAssetId: typeof assetId === 'string' ? assetId : '',
-      });
-    }
-    return out;
+    return parsePoaTokens(body.result?.tokens);
   } catch {
     return [];
   }

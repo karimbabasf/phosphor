@@ -283,7 +283,8 @@
     if (!accepted) {
       return refuse(deposit.symbol + ' is not credited on ' + networkWords(deposit.chain) + '. Sending it there loses it.');
     }
-    var minimum = accepted.minDeposit ? ' Minimum ' + accepted.minDeposit + ' ' + accepted.symbol + '.' : '';
+    var floor = accepted.minDepositHuman || '';
+    var minimum = floor ? ' Minimum ' + floor + ' ' + accepted.symbol + '.' : '';
     dom.setText(refs.lead, 'On the sending side, choose the network "' + networkWords(deposit.chain) + '".' + minimum);
 
     if (network.unavailable) {
