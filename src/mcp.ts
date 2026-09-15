@@ -16,6 +16,7 @@ import { ALWAYS_CLICK_TOOLS, handshakeInstructions } from './persona.ts';
 import { THEME_SLOTS, SLOT_MEANING, COLOURWAYS, COLOURWAY_LABEL } from './view/theme.ts';
 import { readTimeout, venueWriteTimeout } from './net.ts';
 import { contentFor } from './mcp-content.ts';
+import { classifyProxyError, UNREADABLE_REPLY } from './mcp-errors.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -35,7 +36,6 @@ function resolvePort(): number {
 }
 
 const BASE_URL = `http://127.0.0.1:${resolvePort()}`;
-const NOT_RUNNING = 'The control app is not running. Start it with: npm run app';
 
 // Every post to the app carries these two headers, and the app refuses a request without them.
 //
@@ -104,8 +104,8 @@ async function proxy(body: Record<string, unknown>) {
       body: JSON.stringify({ ...body, session: SESSION, client: CLIENT, label: LABEL, parent: PARENT, secret: SEAT }),
       signal: venueWriteTimeout(),
     });
-  } catch {
-    return textResult(NOT_RUNNING);
+  } catch (err) {
+    return textResult(classifyProxyError(err));
   }
   try {
     const json: unknown = await res.json();
@@ -132,7 +132,9 @@ async function proxy(body: Record<string, unknown>) {
     // had to learn to say it.
     return contentFor(json, res.headers.get('x-phosphor-screen'));
   } catch {
-    return textResult(NOT_RUNNING);
+    // The app answered, so something happened; the body just would not parse. Never
+    // NOT_RUNNING, which would invite a retry of a call that may already have moved money.
+    return textResult(UNREADABLE_REPLY);
   }
 }
 
