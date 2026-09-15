@@ -134,10 +134,14 @@ above is the real control and the 409 is only a convenience: whichever surface t
 the human has to be looking at the same facts.
 
 One thing `basic` deliberately refuses to do: state a balance it cannot back. `totalUsd` goes
-null, and the screen says "still checking" or "checking your new balance", whenever a chain read
-failed or the newest `chainStatus.fetchedAt` predates the most recent executed proposal. The
-ledger cache serves pre-trade balances after a write while still reporting `stale: []`, and
-`basic` is aimed at a reader with nothing to cross-check against.
+null, and the state line under the number says "Still checking." or "Checking your new balance."
+(`checkingLine`), whenever a chain read failed or the newest `chainStatus.fetchedAt` predates the
+most recent executed proposal. The number's own slot keeps the last read total, or goes empty when
+that total reads as nothing, and never carries the sentence. The ledger cache serves pre-trade
+balances after a write while still reporting `stale: []`, and `basic` is aimed at a reader with
+nothing to cross-check against. The ledger stamps `fetchedAt` at the start of every refresh, so
+the sentence clears on the first read after the fill; a stamp that never moved is how it once
+stayed on screen for the life of the process.
 
 ## Fail closed
 

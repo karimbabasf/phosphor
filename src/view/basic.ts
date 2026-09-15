@@ -744,15 +744,25 @@ export function buildBasic(input: BasicInput): BasicView {
   const lastExecution = newestExecutionAt(proposals);
   const staleAfterWrite = lastExecution > 0 && newestFetchAt(input.chainStatus) < lastExecution;
 
+  /* The number and the sentence are two fields, because they land in two places. The hero's
+     own slot is set in the balance type, and a sentence there ("checking your new balance", in
+     44 px, for as long as the read stayed older than the fill) is what the screenshot of
+     2026-09-14 showed. So the slot carries the last read total whenever one exists, and the
+     sentence that says why that number is not yet fact is `checkingLine`, set in the state line
+     under it. `totalUsd` still goes null, so nothing downstream (the ask, the holdings, the
+     change since the window opened) treats the number as settled. An unknown total that reads
+     as nothing leaves the slot empty rather than showing a zero: a zero and an unknown look the
+     same on screen, and this reader has nothing to check either against. */
   let totalUsd: number | null = wallet.totalUsd;
-  let totalLine = money(wallet.totalUsd);
+  let checkingLine: string | null = null;
   if (staleChains.length > 0) {
     totalUsd = null;
-    totalLine = 'still checking';
+    checkingLine = 'Still checking.';
   } else if (staleAfterWrite) {
     totalUsd = null;
-    totalLine = 'checking your new balance';
+    checkingLine = 'Checking your new balance.';
   }
+  const totalLine = totalUsd === null && wallet.totalUsd === 0 ? '' : money(wallet.totalUsd);
 
   const placeCount = Object.keys(wallet.byChain ?? {}).length;
   let placesLine: string;
@@ -838,6 +848,7 @@ export function buildBasic(input: BasicInput): BasicView {
     tone,
     totalUsd,
     totalLine,
+    checkingLine,
     placesLine,
     headline,
     ask,

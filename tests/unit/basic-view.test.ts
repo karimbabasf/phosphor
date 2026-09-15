@@ -118,7 +118,12 @@ test('every one of the eleven states produces copy', () => {
     const view = buildBasic(input);
     assert.ok(view.headline.trim().length > 0, `${name} rendered an empty headline`);
     assert.ok(view.footer.trim().length > 0, `${name} rendered an empty footer`);
-    assert.ok(view.totalLine.trim().length > 0, `${name} rendered an empty total line`);
+    // The hero's slot is empty in exactly one state: an unknown total that reads as nothing.
+    // Then the state line carries the words, and the slot shows no number rather than a zero.
+    assert.ok(
+      view.totalLine.trim().length > 0 || (view.checkingLine !== null && input.wallet.totalUsd === 0),
+      `${name} rendered an empty total line with nothing under it`,
+    );
     assert.ok(view.agentLine.trim().length > 0, `${name} rendered an empty agent line`);
   }
 });
@@ -151,8 +156,18 @@ test('a policy refusal says what was tried, that it was stopped, and that money 
 test('a stale chain shows no number at all, never a zero', () => {
   const view = buildBasic(baseInput({ wallet: { rows: [], totalUsd: 0, byChain: {}, stale: ['near'], emptyCount: 0 } }));
   assert.equal(view.totalUsd, null);
-  assert.match(view.totalLine, /still checking/);
-  assert.ok(!view.totalLine.includes('0.00'), 'an unknown balance may not render as a zero');
+  // The words go under the number, never into its slot: the slot is empty here because
+  // the unknown total reads as nothing, and an empty slot beats a zero standing in for it.
+  assert.equal(view.totalLine, '');
+  assert.equal(view.checkingLine, 'Still checking.');
+});
+
+test('a stale chain keeps the last read total in the slot when there is one', () => {
+  const row = walletRow({ chain: 'arb', quantity: 2000, valueUsd: 2000, share: 1 });
+  const view = buildBasic(baseInput({ wallet: { rows: [row], totalUsd: 2000, byChain: { arb: 2000 }, stale: ['near'], emptyCount: 0 } }));
+  assert.equal(view.totalUsd, null, 'the number is not fact while a place is unread');
+  assert.match(view.totalLine, /2,000\.00/);
+  assert.equal(view.checkingLine, 'Still checking.');
 });
 
 test('a balance read before the last execution is not stated as fact', () => {
@@ -164,7 +179,11 @@ test('a balance read before the last execution is not stated as fact', () => {
     }),
   );
   assert.equal(view.totalUsd, null);
-  assert.match(view.totalLine, /checking your new balance/);
+  // The last read total stays in the hero's slot and the sentence sits under it. Karim's
+  // screenshot of 2026-09-14 had the sentence in the balance type, and it never left.
+  assert.match(view.totalLine, /2,341\.08/);
+  assert.equal(view.checkingLine, 'Checking your new balance.');
+  assert.match(view.headline, /Checking your new balance/);
 });
 
 test('a balance read after the last execution is stated normally', () => {
@@ -176,6 +195,8 @@ test('a balance read after the last execution is stated normally', () => {
   );
   assert.equal(view.totalUsd, 2341.08);
   assert.match(view.totalLine, /2,341\.08/);
+  assert.equal(view.checkingLine, null);
+  assert.match(view.headline, /You now have \$2,341\.08/);
 });
 
 test('a swap never claims the total goes down, because a swap does not reduce it', () => {
@@ -486,7 +507,7 @@ test('no two lines on the screen are the same sentence', () => {
   // On a screen this spare, the same words twice reads as a rendering fault.
   for (const [name, input] of ELEVEN) {
     const v = buildBasic(input);
-    const lines = [v.headline, v.placesLine, v.agentLine, v.footer, v.warning, v.ask?.headline, v.ask?.afterLine]
+    const lines = [v.headline, v.checkingLine, v.placesLine, v.agentLine, v.footer, v.warning, v.ask?.headline, v.ask?.afterLine]
       .filter((l): l is string => typeof l === 'string' && l.trim().length > 0);
     assert.equal(new Set(lines).size, lines.length, `${name} renders a duplicated sentence: ${JSON.stringify(lines)}`);
   }

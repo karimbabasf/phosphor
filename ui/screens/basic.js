@@ -272,17 +272,22 @@
     dom.setHidden(refs.delta, false);
   }
 
-  /* Four sentences, one of them true. The order is the window's order: a locked
-     wallet outranks a pending ask, which outranks a working assistant. */
+  /* Five sentences, one of them true. The order is the window's order: a locked
+     wallet outranks a pending ask, which outranks a number still being checked
+     (the server's checkingLine, under the number and never in its slot), which
+     outranks a working assistant. */
   function renderState() {
     if (!mounted) return;
     var state = store.get() || {};
     var lock = state.lock || {};
+    var basic = state.basic || {};
     var word = 'Nothing is connected to it right now.';
     if (lock.state === 'locked' || lock.state === 'no_wallet' || lock.state === 'needs_migration') {
       word = 'Locked. Nothing moves.';
     } else if (pendingCount(state) > 0) {
       word = 'Waiting for you.';
+    } else if (basic.checkingLine) {
+      word = basic.checkingLine;
     } else if (window.PhosphorAgent && typeof window.PhosphorAgent.isWorking === 'function'
       && window.PhosphorAgent.isWorking()) {
       word = 'Your assistant is reading it.';

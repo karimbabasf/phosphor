@@ -40,12 +40,13 @@ export type Ledger = {
   applyDemoTransfer(leg: TransferLeg): void;
 };
 
-/* Every chain ok, and stamped once. There is no per-chain read left to fail, so there is no
-   chain that can go stale: a STALE badge would be reporting on a request nobody made. The five
-   keys stay because chainStatus is a total Record<ChainId, ...> and several readers index it
-   without a guard; an absent key would be a crash where a truthful "nothing to say" is what is
-   meant. The verifier read carries its own ok flag (IntentsRead), and that is the one staleness
-   this app can honestly report. */
+/* Every chain ok, stamped with the moment it was built, once per refresh. There is no per-chain
+   read left to fail, so there is no chain that can go stale: a STALE badge would be reporting on
+   a request nobody made. The five keys stay because chainStatus is a total Record<ChainId, ...>
+   and several readers index it without a guard; an absent key would be a crash where a truthful
+   "nothing to say" is what is meant. The verifier read carries its own ok flag (IntentsRead),
+   and that is the one staleness this app can honestly report. The stamp is still read: see the
+   note at the top of refresh(). */
 function emptyChainStatus(): Record<ChainId, ChainStatus> {
   const fetchedAt = new Date().toISOString();
   return Object.fromEntries(ALL_CHAINS.map(c => [c, { ok: true, fetchedAt }])) as Record<ChainId, ChainStatus>;
@@ -96,7 +97,13 @@ function createDemoLedger(): Ledger {
     snapshot: () => current,
     intents: () => undefined, // demo mode signs nothing and deposits nothing
     hyperliquid: () => undefined,
-    refresh: async () => current, // fixture is static; nothing to re-fetch
+    // The fixture is static and nothing is re-fetched, but the stamp is a claim about WHEN the
+    // holdings were last read, and src/view/basic.ts holds it against the last fill. See the
+    // live refresh for what a stamp that never moved did to the basic screen.
+    refresh: async () => {
+      current = { ...current, chainStatus: emptyChainStatus() };
+      return current;
+    },
     applyDemoTransfer,
   };
 }
@@ -217,6 +224,15 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch): Ledger {
   }
 
   async function refresh(): Promise<LedgerSnapshot> {
+    /* STAMPED WHEN THE READS START, and stamped on every pass.
+       `fetchedAt` is what src/view/basic.ts holds against the newest executed proposal to decide
+       whether the total on screen already counts the last fill. It used to be stamped once, at
+       boot, and carried forward unchanged by every refresh, so from the first fill after boot
+       the read was older than the execution for the life of the process and the basic screen
+       said "checking your new balance" and never stopped. The stamp is taken before the reads
+       rather than after them because a read that started before a fill can only carry the
+       balance from before it, whatever the clock said when the answer came back. */
+    const chainStatus = emptyChainStatus();
     // Started, not awaited: the verifier read does not depend on a price to happen, only to
     // be valued, so the two run together and meet at the end.
     const livePrices = resolveLivePrices(fetchImpl, current.prices, current.priceAsOf ?? {});
@@ -235,7 +251,7 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch): Ledger {
        otherwise. */
     current = {
       holdings: [],
-      chainStatus: current.chainStatus,
+      chainStatus,
       mode: 'live',
       prices: priced.prices,
       priceAsOf: priced.asOf,

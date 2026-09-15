@@ -514,7 +514,11 @@ export type BasicView = {
   // null when unknown or stale. NEVER 0 as a stand-in: a zero and an unknown are
   // indistinguishable on screen, and basic is aimed at someone who cannot tell.
   totalUsd: number | null;
-  totalLine: string; // "$2,341.08" | "still checking" | "checking your new balance"
+  // The hero's own slot: the last read total, or "" when a place is unread and nothing has
+  // been read at all. Never a sentence, and never a zero standing in for an unknown.
+  totalLine: string; // "$2,341.08" | ""
+  // Why the number above is not yet fact, set in the state line under it; null when it is.
+  checkingLine: string | null; // "Still checking." | "Checking your new balance."
   placesLine: string;
   headline: string;
   ask: BasicAsk | null;
