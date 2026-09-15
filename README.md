@@ -64,6 +64,49 @@ loud and nobody ever writes into a config file. Authoring is a human-timescale a
 why the agent's slowness does not matter. Enforcement is a machine-timescale activity, which is why
 the agent is not in it.
 
+## The vault
+
+Phosphor is a local hot wallet an agent can drive but never hold. The wallet file opens only on
+this Mac, through its Secure Enclave, after your Touch ID on a dialog that names the move, and
+the agent never sees a key.
+
+How that is built, in five sentences. The wallet's keys are encrypted under a 32-byte data key.
+That data key is wrapped to a P-256 key that was made inside the Secure Enclave and cannot leave
+it (`src-tauri/se-helper/main.swift`, CryptoKit). Unwrapping it is an operation the enclave
+performs only after the operating system has asked you for Touch ID, or your Mac login password,
+in a dialog no page can draw over; the sentence in that dialog is composed by the app from the
+proposal's fields, never from anything an agent wrote. Touch ID opens the vault for a session,
+during which the agent's moves under your click threshold run on their own inside your policy,
+exactly as before; anything over the threshold is approved by a click AND its own Touch ID,
+every time. The recovery phrase is twelve words, revealed behind a Touch ID, printed and never
+copied, and counted as backed up only once you have typed three of them back.
+
+What it does not protect against, said plainly:
+
+- A compromised Mac. Root, a malicious signed update or a poisoned dependency runs inside the
+  process that holds the decrypted keys while the vault is open. The Secure Enclave cannot sign
+  secp256k1 or ed25519, so the wallet key is decrypted into the app's memory to sign.
+- You. Coercion, a phished login password, or a dialog approved without reading. The touch
+  releases the key; the app's code decides what is signed. Armed Hyperliquid rules trade without
+  a touch through a trading-only key that cannot withdraw but can lose.
+- Loss. The twelve words are the whole wallet and whoever holds them needs no enclave. Without
+  them, a dead Mac is a dead wallet.
+- An ad-hoc signed build. The enclave key is bound to this Mac, not to Phosphor: another
+  process on this Mac can load it and raise a Touch ID dialog of its own. A build signed with a
+  Developer ID keeps the key in the keychain, bound to Phosphor's signature, and the Vault tab
+  says which of the two is live.
+
+So the honest number is this: safe for the working balance of a seven-figure stack, with the
+reserve in a hardware wallet or a Safe and the policy capping what Phosphor holds and where it
+can send. Not a million dollars in one hot key.
+
+The Vault tab in the window manages all of it: custody and its binding, addresses, the reveal and
+the proof, restore from a phrase, the idle time, and forgetting the wallet on this Mac. Ask the
+agent where to send money and it opens the deposit card in the window, with a QR that is decoded
+back and compared before it is shown; the agent gets a fingerprint of the address, never the
+address, and tells you to send a small test amount first. Design and threat model:
+`docs/superpowers/specs/2026-09-14-phosphor-vault-design.md`.
+
 ## What it answers
 
 1. What do I hold? Every balance inside the NEAR Intents verifier, with quantity, unit price and
@@ -80,11 +123,14 @@ no bundler, no packaging.
     npm install
     npm run tauri dev
 
-That opens the window. The first run has no wallet, so the window asks for a password and makes
-one, shows you twelve words once, and writes an encrypted key file outside the working copy. After
-that the app opens LOCKED: reads keep working, an agent's writes are drafted and queued, and
-nothing can be signed until you type the password. It locks itself again after fifteen minutes
-with nobody at the window, and when the machine sleeps.
+That opens the window. The first run has no wallet, so the window makes one behind this Mac's
+Secure Enclave: one click, one Touch ID, and the key file it writes outside the working copy
+opens on this Mac only. After that the app opens LOCKED: reads keep working, an agent's writes
+are drafted and queued, and nothing can be signed until you touch the sensor. It locks itself
+again after fifteen minutes with nobody at the window (five or sixty in the Vault tab), and when
+the machine sleeps. A Mac without a Secure Enclave, or a source checkout without the sidecar,
+gets the older password wallet instead; the Vault tab says which one you have. See
+[The vault](#the-vault).
 
 The shipped config runs live, so the wallet reads zero until the addresses it made have been
 funded. Full walkthrough in [First run](#first-run).
