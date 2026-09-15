@@ -241,12 +241,16 @@ fn open_control_window(app: &tauri::AppHandle, port: u16) -> Result<(), String> 
     }
     let script = format!("window.__PHOSPHOR_TOKEN__ = \"{token}\";");
 
+    // Opens maximized: the window fills the screen without going into macOS fullscreen, so the
+    // menu bar and the dock stay where they are. The size below is what it falls back to when
+    // the person unmaximizes it.
     let window = WebviewWindowBuilder::new(app, "control", WebviewUrl::External(url))
-        .title("PHOSPHOR")
+        .title("Phosphor")
         .inner_size(1180.0, 780.0)
         .min_inner_size(900.0, 620.0)
         .center()
         .resizable(true)
+        .maximized(true)
         .initialization_script(&script)
         .build()
         .map_err(|e| format!("cannot open the control window: {e}"))?;
@@ -551,7 +555,7 @@ fn main() {
             // The splash paints the window's one colourway, green on black, and receives no
             // script: nothing read off the disk reaches it.
             WebviewWindowBuilder::new(&handle, "splash", WebviewUrl::App("index.html".into()))
-                .title("PHOSPHOR")
+                .title("Phosphor")
                 .inner_size(420.0, 300.0)
                 .resizable(false)
                 .center()
