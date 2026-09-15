@@ -85,18 +85,28 @@ Three processes, one rule each:
 |---|---|---|
 | Rust shell (`phosphor-desktop`) | the window, the per-boot handshake, the sidecar path | any key, any data key for longer than one relay |
 | Swift sidecar (`se-helper`) | one request, for one call, then it exits | files, network, state |
-| Node backend | the sealed payload; the data key and derived keys **only while an approved proposal executes** | the enclave key blob's private half (nobody does), the password (there is none) |
+| Node backend | the sealed payload; the data key and derived keys **only while the session is open** | the enclave key blob's private half (nobody does), the password (there is none) |
 | Webview window | the window token | any key, any IPC into the shell (by design, see `src-tauri/src/main.rs`) |
 | Agent (over MCP) | addresses, balances, proposals | keys, the deposit address in full (see 6) |
 
-**The unlock is gone as a state. Signing is per proposal.** An approval click no longer opens
-the wallet for fifteen minutes. It moves the proposal to `awaiting_touch`; the backend queues an
-unseal request; the shell's long-poll thread picks it up, runs the sidecar with the proposal's
-summary as the Touch ID reason ("Approve: swap 500 USDC to ETH on NEAR Intents"), and posts the
-data key back; the backend opens the payload, derives the keys, executes every leg of that
-proposal, and wipes what it derived when the proposal reaches a terminal state or after ten
-minutes, whichever is first. Reads never need any of this. Armed rules keep working the way they
-do today through the scoped Hyperliquid API-wallet session, which is a separate, limited key.
+**Touch ID opens the vault; anything over the click threshold gets its own touch.** Two tiers,
+because Phosphor's product is an agent that makes small moves on its own inside limits a person
+wrote, and a design that asked for a finger on every $20 rebalance would sell that off:
+
+1. *The session.* Touch ID replaces the password as the thing that opens the wallet. Open, the
+   wallet signs the moves the policy allows without a click (under `humanClickAboveUsd`), exactly
+   as today. It closes on idle (default 15 minutes, set in the Vault tab), on sleep, on window
+   close, on the kill switch. Nothing about the policy engine changes.
+2. *The touch.* A proposal the policy sends to a human is approved by a click AND a Touch ID whose
+   system dialog names the move ("Approve: swap 500 USDC to ETH on NEAR Intents"), every time,
+   open session or not. The click moves the proposal to `awaiting_touch`; the backend queues an
+   unseal request; the shell's long-poll thread runs the sidecar with that reason; the answer
+   both opens the wallet (if it was closed) and approves that one proposal. A cancelled dialog
+   puts the proposal back to `pending` with the cancel in the audit log. Nothing else queued is
+   released by that touch: each click-tier proposal has its own.
+
+Armed rules keep working the way they do today through the scoped Hyperliquid API-wallet
+session, which is a separate, limited key that cannot withdraw, and is provisioned under a touch.
 
 The Touch ID reason is composed by the backend from the proposal's structured fields (rail,
 asset, amount, venue), never from agent text, so the system dialog says what the click does.
@@ -184,10 +194,10 @@ triggers the backup card.
 | Offline brute force of the password | possible, slowed by scrypt | there is no password |
 | Local process reads the file | gets the envelope | same, and it is useless |
 | Local process asks the enclave | n/a | it gets the system dialog in its own name, and the user sees a request that is not Phosphor's |
-| Malware asks the backend to sign | during the 15-minute unlock, yes | never without a Touch ID whose dialog names the proposal |
+| Malware asks the backend to sign | during the 15-minute unlock, yes, any size | small moves inside the policy while the session is open; anything over the click threshold needs a Touch ID whose dialog names the proposal |
 | Compromised page (XSS) | could approve | could still move a proposal to awaiting_touch; the dialog still names it |
 | Prompt injection on the agent | proposes, cannot approve | unchanged; the deposit address it can quote is a fingerprint |
-| Memory read of the backend | needs get-task-allow (absent) or root | same, and the window is one proposal wide |
+| Memory read of the backend | needs get-task-allow (absent) or root | same, and the exposure is one session, bounded by the policy's limits |
 | Root, a malicious signed update, physical coercion | game over | game over, and the sentence says so |
 
 The sentence for the README: *every dollar that leaves this wallet leaves with your fingerprint,
@@ -195,9 +205,10 @@ and the key that signs it was made behind the Secure Enclave of this Mac and has
 
 ## 8. Verification
 
-- Unit: sewrap round trip against a software P-256 key; v2 envelope open/refuse; state machine
-  awaiting_touch to executing to done/wiped; the transport-key AEAD; the deposit tool never
-  returns a full address; the reason composer ignores agent text.
+- Unit: sewrap round trip against a software P-256 key; v2 envelope open/refuse and tamper
+  detection; awaiting_touch to approved to executing, and cancel back to pending; the
+  transport-key AEAD; the deposit tool never returns a full address; the reason composer reads
+  structured fields only.
 - Cross-implementation: Node wraps, the sidecar unwraps (one Touch ID), wrong AAD refused.
 - Rust: `cargo test` for the sidecar caller and the long-poll parser.
 - e2e: `npm run tauri dev`, create a wallet in a throwaway data dir, deposit card for SOL
