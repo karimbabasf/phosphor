@@ -82,7 +82,9 @@ jobs:
           echo "TAG=$TAG" >> "$GITHUB_ENV"
 
       - name: Install
-        run: npm ci
+        # The committed .npmrc already says ignore-scripts; the flag says it again where a reader
+        # of this file looks, and holds if the file is ever dropped from the checkout.
+        run: npm ci --ignore-scripts
 
       - name: Stage the payload and prove it boots on the bundled runtime
         run: npm run bundle
