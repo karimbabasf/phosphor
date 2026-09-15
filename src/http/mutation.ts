@@ -236,7 +236,7 @@ export async function handleMutation(
     const raw = String(body.view ?? '').trim().toLowerCase();
     const mode = VIEW_ALIASES[raw];
     if (mode === undefined) {
-      fail(res, 400, `view must be basic, pro or trade, got: ${raw || '(missing)'}`, { accepted: Object.keys(VIEW_ALIASES) });
+      fail(res, 400, `view must be basic, pro, trade or vault, got: ${raw || '(missing)'}`, { accepted: Object.keys(VIEW_ALIASES) });
       return;
     }
     const previous = ctx.getView();
@@ -325,6 +325,9 @@ const VIEW_ALIASES: Record<string, ViewMode> = {
   perps: 'trade',
   hyperliquid: 'trade',
   chart: 'trade',
+  vault: 'vault',
+  custody: 'vault',
+  keys: 'vault',
 };
 
 // The coins the basic screen tracks. Karim, 2026-08-14: "if I don't want Bitcoin, on
@@ -401,7 +404,7 @@ export function handleSetViewMode(ctx: Ctx, body: JsonBody, res: http.ServerResp
     fail(
       res,
       400,
-      `mode must be basic, pro or trade, got: ${raw || '(missing)'}`,
+      `mode must be basic, pro, trade or vault, got: ${raw || '(missing)'}`,
       { accepted: Object.keys(VIEW_ALIASES) },
     );
     return;

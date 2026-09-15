@@ -40,6 +40,14 @@ test('an unparseable view file falls back to pro rather than throwing', () => {
   assert.equal(readViewMode(dir), 'pro');
 });
 
+test('vault is a screen of its own: it reads back as itself rather than falling to pro', () => {
+  // Until 2026-09-15 the Vault tab was client-only: the server knew three modes, the tab's
+  // POST got a 400, and the next state frame snapped the window back off it.
+  const dir = tmpDir();
+  writeViewMode(dir, 'vault');
+  assert.equal(readViewMode(dir), 'vault');
+});
+
 test('a parseable file holding an unknown mode falls back to pro', () => {
   const dir = tmpDir();
   fs.writeFileSync(path.join(dir, 'view.json'), JSON.stringify({ view: 'expert' }));

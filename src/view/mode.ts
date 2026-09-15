@@ -32,7 +32,7 @@ function filePathFor(dataDir: string): string {
 }
 
 function isViewMode(value: unknown): value is ViewMode {
-  return value === 'basic' || value === 'pro' || value === 'trade';
+  return value === 'basic' || value === 'pro' || value === 'trade' || value === 'vault';
 }
 
 function isScreenBy(value: unknown): value is ScreenBy {

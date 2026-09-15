@@ -307,6 +307,8 @@ test('the words a person says resolve to a mode', async () => {
     ['hyperliquid', 'trade'],
     ['simple', 'basic'],
     ['operator', 'pro'],
+    ['vault', 'vault'],
+    ['custody', 'vault'],
     // Case and stray spacing are the human typing, not a different intent.
     ['  TRADING  ', 'trade'],
     ['BASIC', 'basic'],
