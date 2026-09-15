@@ -37,10 +37,10 @@ function surfaceIds(): Set<string> {
     const src = readFileSync(new URL(file, ROOT), 'utf8');
     for (const m of src.matchAll(/data-surface="([a-z-]+)"/g)) ids.add(m[1]);
     for (const m of src.matchAll(/dataset\.surface\s*=\s*'([a-z-]+)'/g)) ids.add(m[1]);
-    // panel(...), linkPanel(...) and fold(...): the lowercase-word string arguments are surface
+    // card(...), linkCard(...), panel(...), linkPanel(...) and fold(...): the lowercase-word string arguments are surface
     // ids ('holdings', 'account', ...); titles carry capitals or spaces and spans carry a dash,
     // so a bare [a-z]+ token in the call is the surface.
-    for (const call of src.matchAll(/(?:panel|linkPanel|fold)\(([^)]*)\)/g)) {
+    for (const call of src.matchAll(/(?:card|linkCard|panel|linkPanel|fold)\(([^)]*)\)/g)) {
       for (const q of call[1].matchAll(/'([a-z]+)'/g)) ids.add(q[1]);
     }
   }
