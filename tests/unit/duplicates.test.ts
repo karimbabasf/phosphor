@@ -46,10 +46,33 @@ test('an absent argument and an undefined one are the same proposal', () => {
   assert.equal(guard.find('swap', SWAP, 'agent-b')?.id, 'prop-1');
 });
 
-test('the same agent is never blocked, because an agent repeating itself is retrying', () => {
+test('the same agent is not blocked from repeating a proposal that has settled', () => {
   const { guard } = guardFrom(1_000_000);
   guard.remember('swap', SWAP, 'agent-a', 'prop-1');
   assert.equal(guard.find('swap', SWAP, 'agent-a'), null);
+});
+
+/* THE INCIDENT. 2026-09-15: one "deposit $10" moved $20. The propose held its reply open past
+   the proxy's patience, the proxy said the app was not running, the agent proposed the same
+   thing again, and this guard let it through because a repeat from the same session was read
+   as a harmless retry. It is a harmless retry only once the first one has settled. While the
+   first is still being drafted (no id yet) or still running, the repeat is a second spend. */
+test('the same session cannot repeat a proposal that is still being drafted', () => {
+  const g = createDuplicateGuard(() => 1000);
+  g.remember('hl_deposit', { amount: 10 }, 's1', '');
+  assert.deepEqual(g.find('hl_deposit', { amount: 10 }, 's1'), { id: '', session: 's1' });
+});
+
+test('the same session cannot repeat a proposal whose row is still in flight', () => {
+  const live = new Set(['prop-1']);
+  const g = createDuplicateGuard(() => 1000, undefined, { inFlight: (id) => live.has(id) });
+  g.remember('hl_deposit', { amount: 10 }, 's1', 'prop-1');
+  assert.deepEqual(g.find('hl_deposit', { amount: 10 }, 's1'), { id: 'prop-1', session: 's1' });
+  // The rail answered: from here a repeat by the same session is its own business again.
+  live.delete('prop-1');
+  assert.equal(g.find('hl_deposit', { amount: 10 }, 's1'), null);
+  // And a different session is still refused inside the window, in flight or not.
+  assert.equal(g.find('hl_deposit', { amount: 10 }, 's2')?.id, 'prop-1');
 });
 
 test('a different kind with identical arguments is a different proposal', () => {

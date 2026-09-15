@@ -19,8 +19,8 @@ import { land } from './execute.ts';
 import { newProposal } from './lifecycle.ts';
 import type { PCtx } from './lifecycle.ts';
 
-function noSurface(ctx: PCtx, draft: TradeDraft): Promise<Proposal> {
-  return refuseDraft(ctx, 'trade', draft, [`no trading surface is wired in ${ctx.cfg.mode} mode`]);
+function noSurface(ctx: PCtx, draft: TradeDraft, clientKey?: string): Promise<Proposal> {
+  return refuseDraft(ctx, 'trade', draft, [`no trading surface is wired in ${ctx.cfg.mode} mode`], clientKey);
 }
 
 export async function proposeTrade(ctx: PCtx, params: TradeParams): Promise<Proposal> {
@@ -63,10 +63,10 @@ export async function proposeTrade(ctx: PCtx, params: TradeParams): Promise<Prop
     counterparty: HYPERLIQUID_PERPS_COUNTERPARTY,
   };
   if (deps === undefined) return noSurface(ctx, empty);
-  if (plan === null || problems.length > 0) return refuseDraft(ctx, 'trade', empty, problems);
+  if (plan === null || problems.length > 0) return refuseDraft(ctx, 'trade', empty, problems, params.clientKey);
 
   const risk = planRisk(plan, riskInputsFor(deps, plan, plan.id));
-  if (!risk.ok) return refuseDraft(ctx, 'trade', { ...empty, plan, hash: planHash(plan) }, [risk.refusal]);
+  if (!risk.ok) return refuseDraft(ctx, 'trade', { ...empty, plan, hash: planHash(plan) }, [risk.refusal], params.clientKey);
 
   const draft: TradeDraft = {
     kind: 'trade',
@@ -77,7 +77,7 @@ export async function proposeTrade(ctx: PCtx, params: TradeParams): Promise<Prop
     amountUsd: risk.risk.amountUsd,
     counterparty: HYPERLIQUID_PERPS_COUNTERPARTY,
   };
-  return proposeRail(ctx, 'trade', draft);
+  return proposeRail(ctx, 'trade', draft, params.clientKey);
 }
 
 export async function proposeTradeChange(ctx: PCtx, params: TradeChangeParams): Promise<Proposal> {
@@ -92,7 +92,7 @@ export async function proposeTradeChange(ctx: PCtx, params: TradeChangeParams): 
     amountUsd: Number.POSITIVE_INFINITY,
     counterparty: HYPERLIQUID_PERPS_COUNTERPARTY,
   };
-  if (deps === undefined) return noSurface(ctx, base);
+  if (deps === undefined) return noSurface(ctx, base, params.clientKey);
 
   const problems: string[] = [];
   const verbs = [params.cancel === true, params.close === true, params.stop !== undefined || params.target !== undefined].filter(Boolean).length;
@@ -100,29 +100,33 @@ export async function proposeTradeChange(ctx: PCtx, params: TradeChangeParams): 
   const row = deps.runner.get(params.id);
   if (row === null) problems.push(`no plan ${params.id}`);
   else if (row.status !== 'waiting' && row.status !== 'placed' && row.status !== 'open') problems.push(`${params.id} is ${row.status}`);
-  if (row === null || problems.length > 0) return refuseDraft(ctx, 'trade', base, problems);
+  if (row === null || problems.length > 0) return refuseDraft(ctx, 'trade', base, problems, params.clientKey);
 
   const approved = row.risk ?? zero;
 
   if (params.cancel === true) {
     if (row.status === 'open') {
-      return refuseDraft(ctx, 'trade', { ...base, before: approved, after: approved }, [
-        `${row.id} is open: its exits are its protection. Close it, or change the stop`,
-      ]);
+      return refuseDraft(
+        ctx,
+        'trade',
+        { ...base, before: approved, after: approved },
+        [`${row.id} is open: its exits are its protection. Close it, or change the stop`],
+        params.clientKey,
+      );
     }
-    return landFree(ctx, { ...base, cancel: true, before: approved, after: approved, amountUsd: 0 });
+    return landFree(ctx, { ...base, cancel: true, before: approved, after: approved, amountUsd: 0 }, params.clientKey);
   }
 
   if (params.close === true) {
     if (row.status !== 'open') {
-      return refuseDraft(ctx, 'trade', { ...base, before: approved, after: approved }, [`${row.id} is ${row.status}, so there is nothing to close; cancel it instead`]);
+      return refuseDraft(ctx, 'trade', { ...base, before: approved, after: approved }, [`${row.id} is ${row.status}, so there is nothing to close; cancel it instead`], params.clientKey);
     }
-    return proposeRail(ctx, 'trade', { ...base, close: true, before: approved, after: approved, amountUsd: approved.marginUsd });
+    return proposeRail(ctx, 'trade', { ...base, close: true, before: approved, after: approved, amountUsd: approved.marginUsd }, params.clientKey);
   }
 
   const plan = planOfRow(row);
   const out = changeRisk(plan, approved, { stop: params.stop, target: params.target }, riskInputsFor(deps, plan, row.id, row.fillPx));
-  if (!out.ok) return refuseDraft(ctx, 'trade', { ...base, before: approved, after: approved }, [out.refusal]);
+  if (!out.ok) return refuseDraft(ctx, 'trade', { ...base, before: approved, after: approved }, [out.refusal], params.clientKey);
   const draft: TradeDraft = {
     ...base,
     ...(params.stop !== undefined ? { stop: params.stop } : {}),
@@ -131,13 +135,13 @@ export async function proposeTradeChange(ctx: PCtx, params: TradeChangeParams): 
     after: out.risk,
     amountUsd: out.widens ? out.risk.amountUsd : 0,
   };
-  return out.widens ? proposeRail(ctx, 'trade', draft) : landFree(ctx, draft);
+  return out.widens ? proposeRail(ctx, 'trade', draft, params.clientKey) : landFree(ctx, draft, params.clientKey);
 }
 
 // A change that only takes risk off. The engine would refuse a zero amount as one it cannot
 // check against a limit, and there is nothing to check: no wall applies. The two rules that are
 // not about the amount still do.
-async function landFree(ctx: PCtx, draft: TradeDraft): Promise<Proposal> {
+async function landFree(ctx: PCtx, draft: TradeDraft, clientKey?: string): Promise<Proposal> {
   const policy = loadPolicy(ctx.dataDir);
   let verdict: Verdict;
   if (policy === null) {
@@ -147,12 +151,12 @@ async function landFree(ctx: PCtx, draft: TradeDraft): Promise<Proposal> {
   } else {
     verdict = { outcome: 'allow', reasons: ['This change only takes risk off, so no wall applies.'] };
   }
-  if (verdict.outcome === 'refuse') return land(ctx, newProposal('trade', draft, null, verdict));
+  if (verdict.outcome === 'refuse') return land(ctx, newProposal('trade', draft, null, verdict, clientKey));
   const rail = ctx.rails.for(draft);
-  if (rail === null) return refuseDraft(ctx, 'trade', draft, [`no trade rail is wired in ${ctx.cfg.mode} mode`]);
+  if (rail === null) return refuseDraft(ctx, 'trade', draft, [`no trade rail is wired in ${ctx.cfg.mode} mode`], clientKey);
   const simulation = await rail.simulate(draft);
   if (!simulation.ok) {
-    return land(ctx, newProposal('trade', draft, simulation, { outcome: 'refuse', reasons: [simulation.error ?? simulation.summary], rule: 'simulation_required' }));
+    return land(ctx, newProposal('trade', draft, simulation, { outcome: 'refuse', reasons: [simulation.error ?? simulation.summary], rule: 'simulation_required' }, clientKey));
   }
-  return land(ctx, newProposal('trade', draft, simulation, verdict));
+  return land(ctx, newProposal('trade', draft, simulation, verdict, clientKey));
 }

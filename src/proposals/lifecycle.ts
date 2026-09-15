@@ -242,7 +242,7 @@ export function buildCtx(ctx: PCtx, snapshot: LedgerSnapshot, policy: Policy | n
   };
 }
 
-export function newProposal(kind: WriteDraft['kind'], draft: WriteDraft, simulation: SimulationResult | null, verdict: Verdict): Proposal {
+export function newProposal(kind: WriteDraft['kind'], draft: WriteDraft, simulation: SimulationResult | null, verdict: Verdict, clientKey?: string): Proposal {
   return {
     id: crypto.randomUUID(),
     kind,
@@ -251,6 +251,9 @@ export function newProposal(kind: WriteDraft['kind'], draft: WriteDraft, simulat
     draft,
     simulation,
     verdict,
+    // On the row from its first write, so a repeat carrying the key finds it whatever happened
+    // to the process in between.
+    ...(clientKey === undefined ? {} : { clientKey }),
   };
 }
 

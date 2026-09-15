@@ -231,13 +231,13 @@ export function ourIntentsAddress(ctx: PCtx, snapshot: LedgerSnapshot, problems:
   return found;
 }
 
-export function refuseDraft(ctx: PCtx, kind: RailKind, draft: RailDraft, reasons: string[]): Promise<Proposal> {
-  return land(ctx, newProposal(kind, draft, null, { outcome: 'refuse', reasons, rule: 'invalid_draft' }));
+export function refuseDraft(ctx: PCtx, kind: RailKind, draft: RailDraft, reasons: string[], clientKey?: string): Promise<Proposal> {
+  return land(ctx, newProposal(kind, draft, null, { outcome: 'refuse', reasons, rule: 'invalid_draft' }, clientKey));
 }
 
 // Shared tail for all four rails: evaluate, simulate, persist, and execute only if the
 // policy said allow. Nothing here knows which rail it is holding.
-export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft): Promise<Proposal> {
+export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, clientKey?: string): Promise<Proposal> {
   const snapshot = ctx.ledger.snapshot();
   const policy = loadPolicy(ctx.dataDir);
 
@@ -245,16 +245,22 @@ export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft): 
   // venue, the kill switch or a cap breach settles the proposal without spending the
   // round trips a rail simulation costs.
   const verdict = evaluate(draft, buildCtx(ctx, snapshot, policy));
-  if (verdict.outcome === 'refuse') return land(ctx, newProposal(kind, draft, null, verdict));
+  if (verdict.outcome === 'refuse') return land(ctx, newProposal(kind, draft, null, verdict, clientKey));
 
   const rail = ctx.rails.for(draft);
   if (rail === null) {
     return land(ctx, 
-      newProposal(kind, draft, null, {
-        outcome: 'refuse',
-        reasons: [...verdict.reasons, `No ${kind} rail is wired in ${ctx.cfg.mode} mode, so there is nothing to execute.`],
-        rule: 'no_rail',
-      }),
+      newProposal(
+        kind,
+        draft,
+        null,
+        {
+          outcome: 'refuse',
+          reasons: [...verdict.reasons, `No ${kind} rail is wired in ${ctx.cfg.mode} mode, so there is nothing to execute.`],
+          rule: 'no_rail',
+        },
+        clientKey,
+      ),
     );
   }
 
@@ -273,19 +279,25 @@ export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft): 
   // parked as pending would quietly stop counting on its way to a human click.
   if (!simulation.ok) {
     return land(ctx, 
-      newProposal(kind, draft, simulation, {
-        outcome: 'refuse',
-        reasons: [...verdict.reasons, `Simulation failed, so nothing is signed: ${simulation.error ?? simulation.summary}`],
-        rule: 'simulation_required',
-      }),
+      newProposal(
+        kind,
+        draft,
+        simulation,
+        {
+          outcome: 'refuse',
+          reasons: [...verdict.reasons, `Simulation failed, so nothing is signed: ${simulation.error ?? simulation.summary}`],
+          rule: 'simulation_required',
+        },
+        clientKey,
+      ),
     );
   }
 
-  return land(ctx, newProposal(kind, draft, simulation, verdict));
+  return land(ctx, newProposal(kind, draft, simulation, verdict, clientKey));
 }
 
 // ---------- public surface ----------
-export async function proposeConsolidate(ctx: PCtx, params: { toChain: ChainId; symbol: string; fromChains?: ChainId[]; maxTotalUsd?: number }): Promise<Proposal> {
+export async function proposeConsolidate(ctx: PCtx, params: { toChain: ChainId; symbol: string; fromChains?: ChainId[]; maxTotalUsd?: number; clientKey?: string }): Promise<Proposal> {
   const snapshot = ctx.ledger.snapshot();
   const policy = loadPolicy(ctx.dataDir);
   const selfList = selfAddresses(ctx, snapshot);
@@ -298,7 +310,7 @@ export async function proposeConsolidate(ctx: PCtx, params: { toChain: ChainId; 
       reasons: [`We hold no address on ${params.toChain}, so there is nowhere of ours to consolidate into.`],
       rule: 'destination_not_allowed',
     };
-    return land(ctx, newProposal('consolidate', draft, null, verdict));
+    return land(ctx, newProposal('consolidate', draft, null, verdict, params.clientKey));
   }
 
   const legs = planLegs(ctx, params, snapshot, recipient);
@@ -313,7 +325,7 @@ export async function proposeConsolidate(ctx: PCtx, params: { toChain: ChainId; 
   // A dead or disarmed policy refuses every write, so do not spend a quote (or a network
   // round trip) finding that out.
   if (policy === null || policy.killSwitch || legs.length === 0) {
-    return land(ctx, newProposal('consolidate', draft, null, evaluate(draft, buildCtx(ctx, snapshot, policy))));
+    return land(ctx, newProposal('consolidate', draft, null, evaluate(draft, buildCtx(ctx, snapshot, policy)), params.clientKey));
   }
 
   let simulation: SimulationResult;
@@ -341,10 +353,10 @@ export async function proposeConsolidate(ctx: PCtx, params: { toChain: ChainId; 
     // Keep the solver's own words in front of the human rather than paraphrasing them.
     verdict.reasons = [...verdict.reasons, `${ctx.quoter.name}: ${simulation.error ?? 'quote failed'}`];
   }
-  return land(ctx, newProposal('consolidate', draft, simulation, verdict));
+  return land(ctx, newProposal('consolidate', draft, simulation, verdict, params.clientKey));
 }
 
-export async function proposePolicyChange(ctx: PCtx, params: { patch: PolicyPatch; sentence: string }): Promise<Proposal> {
+export async function proposePolicyChange(ctx: PCtx, params: { patch: PolicyPatch; sentence: string; clientKey?: string }): Promise<Proposal> {
   const snapshot = ctx.ledger.snapshot();
   const policy = loadPolicy(ctx.dataDir);
   const draft: WriteDraft = { kind: 'policy_change', patch: params.patch, sentence: params.sentence };
@@ -366,5 +378,5 @@ export async function proposePolicyChange(ctx: PCtx, params: { patch: PolicyPatc
     };
   }
 
-  return land(ctx, newProposal('policy_change', draft, simulation, verdict));
+  return land(ctx, newProposal('policy_change', draft, simulation, verdict, params.clientKey));
 }

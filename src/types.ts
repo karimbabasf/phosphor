@@ -684,30 +684,37 @@ export type SwapParams = {
   toSymbol: string;
   amountIn: number;
   minAmountOut: number; // slippage floor, in toSymbol units
+  clientKey?: string;
 };
+
+/* The idempotency key a proposer may send with any propose: 1 to 64 characters of
+   [A-Za-z0-9_.:-]. A repeat carrying the same key inside CLIENT_KEY_WINDOW_MS is answered with
+   the row it already made, never a second one. Not part of the duplicate fingerprint. */
+export const CLIENT_KEY_PATTERN = /^[A-Za-z0-9_.:-]{1,64}$/;
+export const CLIENT_KEY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 // The money leaves the intents balance and nowhere else, so there is no chain to name. symbol
 // is the asset spent from that balance and defaults to USDC. The flavor spent, the credited
 // account, the loss floor and the counterparty are all resolved by the app.
-export type HlDepositParams = { amount: number; symbol?: string };
+export type HlDepositParams = { amount: number; symbol?: string; clientKey?: string };
 
 // One number. The venue account, the intents account credited, the floor and the counterparty
 // are all the app's; there is no field for a destination, which is the whole point.
-export type HlWithdrawParams = { amount: number };
+export type HlWithdrawParams = { amount: number; clientKey?: string };
 
 // The credited account, the loss floor and the counterparty are all resolved by the app.
 // symbol defaults to the origin chain's gas asset, which is what "deposit $10 of ETH" means.
-export type IntentsDepositParams = { chain: ChainId; symbol?: string; amount: number };
+export type IntentsDepositParams = { chain: ChainId; symbol?: string; amount: number; clientKey?: string };
 
 // Same shape, opposite direction, and the same silence about addresses. `chain` says where
 // the money lands; which wallet on that chain is our own is read from config and from the
 // key, never from this call.
-export type IntentsWithdrawParams = { chain: ChainId; symbol?: string; amount: number };
+export type IntentsWithdrawParams = { chain: ChainId; symbol?: string; amount: number; clientKey?: string };
 
 // No address, no recipient, no contract. The agent sends a plan or names one it drew, and
 // everything about WHERE the money is resolves from the app's own config and the venue table.
-export type TradeParams = { plan?: unknown; planId?: string; by?: string | null };
-export type TradeChangeParams = { id: string; stop?: number; target?: number; cancel?: boolean; close?: boolean };
+export type TradeParams = { plan?: unknown; planId?: string; by?: string | null; clientKey?: string };
+export type TradeChangeParams = { id: string; stop?: number; target?: number; cancel?: boolean; close?: boolean; clientKey?: string };
 
 export type ProposalService = {
   proposeConsolidate(params: {
@@ -715,8 +722,9 @@ export type ProposalService = {
     symbol: string;
     fromChains?: ChainId[];
     maxTotalUsd?: number;
+    clientKey?: string;
   }): Promise<Proposal>;
-  proposePolicyChange(params: { patch: PolicyPatch; sentence: string }): Promise<Proposal>;
+  proposePolicyChange(params: { patch: PolicyPatch; sentence: string; clientKey?: string }): Promise<Proposal>;
   proposeSwap(params: SwapParams): Promise<Proposal>;
   proposeHlDeposit(params: HlDepositParams): Promise<Proposal>;
   proposeHlWithdraw(params: HlWithdrawParams): Promise<Proposal>;
