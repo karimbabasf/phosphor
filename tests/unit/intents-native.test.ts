@@ -32,6 +32,7 @@ import {
   INTENTS_NATIVE_COUNTERPARTY,
   INTENTS_NATIVE_VENUE,
   INTENTS_VERIFIER,
+  SETTLE_READS,
   base58Encode,
   checkIntentPayload,
   erc191SignatureField,
@@ -180,6 +181,9 @@ function harness(
        one. The default is a swap that credits exactly the quoted amount. */
     verifierBefore?: bigint | null;
     verifierAfter?: bigint | null;
+    // The reads after the first, in order, the last one repeating: a verifier that shows the
+    // old balance for a while before the credit lands, which is what it does at finality.
+    verifierAfterReads?: Array<bigint | null>;
     quoteError?: string;
     submitError?: string;
     intent?: Partial<GeneratedIntent>;
@@ -244,9 +248,11 @@ function harness(
   const verifierReads: string[] = [];
   const before = options.verifierBefore === undefined ? 0n : options.verifierBefore;
   const after = options.verifierAfter === undefined ? 99_000_000n : options.verifierAfter;
+  const afterReads = options.verifierAfterReads ?? [after];
   const verifierBalance: VerifierBalancePort = async (accountId, assetId) => {
     verifierReads.push(`${accountId}:${assetId}`);
-    return verifierReads.length === 1 ? before : after;
+    if (verifierReads.length === 1) return before;
+    return afterReads[Math.min(verifierReads.length - 2, afterReads.length - 1)] ?? null;
   };
 
   return { api, signer, quotes, generated, submitted, signedPayloads, statusCalls, verifierBalance, verifierReads };
@@ -1106,6 +1112,29 @@ test('a SUCCESS that credited the floor reports the amount it actually read', as
   assert.equal(out.ok, true, out.detail);
   assert.match(out.detail, /for 99.5 USDT/, 'the delta, not the quote');
   assert.match(out.detail, /read back from the verifier/);
+});
+
+test('the floor check waits for the verifier to show the credit before it judges the amount', async () => {
+  // The incident of 2026-09-15: 1Click reported SUCCESS, 19.801706 USDC had landed, and the
+  // check read the verifier one second later at finality, saw the old balance, and marked
+  // the swap failed. The verifier is read again until it moves.
+  const h = harness({ verifierBefore: 5_000_000n, verifierAfterReads: [5_000_000n, 5_000_000n, 104_500_000n] });
+  const out = await railOf(h).execute(draftOf());
+  assert.equal(out.ok, true, out.detail);
+  assert.match(out.detail, /for 99\.5 USDT/);
+  assert.equal(h.verifierReads.length, 4, 'one read before, three after, stopping as soon as it rose');
+});
+
+test('a credit the verifier never shows is unconfirmed with its hash, not a failed swap', async () => {
+  const h = harness({ verifierBefore: 5_000_000n, verifierAfterReads: [5_000_000n], statuses: [{ status: 'SUCCESS', swapDetails: { nearTxHashes: ['nearSettle'] } }] });
+  const out = await railOf(h).execute(draftOf());
+  assert.equal(out.ok, false);
+  assert.match(out.detail, /1click reported SUCCESS/);
+  assert.match(out.detail, /unconfirmed/);
+  assert.doesNotMatch(out.detail, /below the/);
+  assert.deepEqual(out.txids, [INTENT_HASH, 'nearSettle']);
+  assert.equal(out.evidence?.handle, HANDLE);
+  assert.equal(h.verifierReads.length, 1 + SETTLE_READS, 'every read the budget allows, then it gives up');
 });
 
 test('a verifier that will not answer costs the check and not the swap', async () => {

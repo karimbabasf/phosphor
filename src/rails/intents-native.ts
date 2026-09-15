@@ -73,7 +73,7 @@ import {
 import type { NearSendOutcome, NearSendParams } from '../chain/near.ts';
 import { venueWriteTimeout } from '../net.ts';
 import { MAX_SLIPPAGE_BPS, floorTooLow } from './slippage.ts';
-import { describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, uniqueTxids } from './oneclick-words.ts';
+import { describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids } from './oneclick-words.ts';
 
 // The verifier contract. This is the whole point of the rail: one fixed account that goes on
 // the policy allowlist once and stays there, unlike a deposit address minted per quote.
@@ -887,6 +887,13 @@ export function liveVerifierBalance(fetchImpl?: typeof fetch): VerifierBalancePo
 
 export type IntentsNativeRail = Rail<SwapDraft>;
 
+// How long the after-check waits for the verifier to show the credit once 1Click has said
+// SUCCESS: six reads, 2.5 s apart, 15 s in all. The read is at finality, so it can trail the
+// solver's settlement by a block or two; on 2026-09-15 one read a second after SUCCESS saw
+// the old balance and a swap that had delivered 19.801706 USDC was recorded as failed.
+export const SETTLE_READS = 6;
+export const SETTLE_WAIT_MS = 2500;
+
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -1223,11 +1230,29 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
          solver's PROMISE, over a payload that is a transfer and names no output. So a swap that
          credited less than the approved floor, or nothing at all, was reported as a success at
          the promised size. */
-      const afterBase = await verifierBalance(owner.toLowerCase(), p.destinationAsset);
-      const txids = [submitted.intentHash, ...watch.destinationTxHashes];
+      let afterBase = await verifierBalance(owner.toLowerCase(), p.destinationAsset);
+      // Read again while the verifier still shows the old balance, or will not answer, until
+      // the budget is spent. With no before-read there is nothing to compare, so no waiting.
+      for (let read = 1; read < SETTLE_READS && beforeBase !== null && (afterBase === null || afterBase <= beforeBase); read += 1) {
+        await sleep(SETTLE_WAIT_MS);
+        afterBase = await verifierBalance(owner.toLowerCase(), p.destinationAsset);
+      }
+      const txids = uniqueTxids(submitted.intentHash, watch);
+      const railEvidence = settledEvidence(watch, depositAddress);
 
       if (beforeBase !== null && afterBase !== null) {
         const delta = afterBase - beforeBase;
+        if (delta <= 0n) {
+          return {
+            ok: false,
+            detail:
+              `1click reported SUCCESS but the balance inside ${INTENTS_VERIFIER} had not risen within ` +
+              `${Math.round(((SETTLE_READS - 1) * SETTLE_WAIT_MS) / 1000)}s (${SETTLE_READS} reads), so the swap is ` +
+              `unconfirmed; ${evidence}. Read the balance for ${owner} before signing another.`,
+            txids,
+            evidence: railEvidence,
+          };
+        }
         if (delta < p.minOutBase) {
           return {
             ok: false,
@@ -1237,6 +1262,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
               `${draft.minAmountOut} ${draft.toSymbol} floor this swap was approved with; ${evidence}. ` +
               `Read the balance for ${owner} before signing another.`,
             txids,
+            evidence: railEvidence,
           };
         }
         return {
@@ -1247,6 +1273,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
             `from the quote; ${evidence}. Nothing was transferred on any chain and the proceeds are ` +
             `credited to ${owner} inside the verifier.`,
           txids,
+          evidence: railEvidence,
         };
       }
 
@@ -1260,6 +1287,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
           `back, so the amount out is the solver's figure rather than an observed one. Nothing was transferred ` +
           `on any chain and the proceeds are credited to ${owner} inside the verifier.`,
         txids,
+        evidence: railEvidence,
       };
     }
 
