@@ -175,10 +175,13 @@
     var waiting = panel('waiting', 'Waiting');
     var done = panel('done', 'Done');
 
-    /* The column headings over the open positions, hidden with nothing open:
-       a heading over one sentence is a table with no rows. */
-    var head = positionHead();
+    /* The column headings over the open positions and over the tape, hidden
+       over an empty list: a heading over one sentence is a table with no
+       rows. */
+    var head = columnHead('pos-head', POSITION_COLUMNS);
     open.node.insertBefore(head, open.body);
+    var tapeHead = columnHead('tape-head', TAPE_COLUMNS);
+    done.node.insertBefore(tapeHead, done.body);
 
     /* The tape's foot sits under the list host, never in it: dom.reconcile
        owns the host and removes anything it did not place. */
@@ -206,6 +209,7 @@
     refs.openHead = head;
     refs.waitingBody = waiting.body;
     refs.doneBody = done.body;
+    refs.doneHead = tapeHead;
     refs.doneFoot = foot;
     refs.more = more;
     refs.panels = { open: open.node, waiting: waiting.node, done: done.node };
@@ -227,9 +231,11 @@
     var strip = dom.el('div', 'trade-strip');
     strip.setAttribute('role', 'region');
     strip.setAttribute('aria-label', 'Market');
+    var row = dom.el('div', 'strip-row');
+    strip.appendChild(row);
 
-    strip.appendChild(symbolControl());
-    strip.appendChild(venueChip());
+    row.appendChild(symbolControl());
+    row.appendChild(venueChip());
 
     /* THE PRICE. The venue's mark, 28 px mono. On a tick its digits flip to
        the direction's colour and settle back to the text colour over 600 ms,
@@ -238,27 +244,30 @@
     var px = dom.el('span', 'px mono trade-mark-price');
     px.setAttribute('title', 'Mark price');
     dom.on(px, 'animationend', function () { dom.setAttr(px, 'data-tick', null); });
-    strip.appendChild(px);
+    row.appendChild(px);
 
     var day = dom.el('div', 'strip-day');
-    var change = stripStat('24h', 'trade-change');
+    var change = stripStat('24h change', 'trade-change');
     var high = stripStat('24h high', 'trade-high');
     var low = stripStat('24h low', 'trade-low');
     day.appendChild(change.node);
     day.appendChild(high.node);
     day.appendChild(low.node);
-    strip.appendChild(day);
+    row.appendChild(day);
 
-    /* The right half: what the venue says when it has something to say, the
-       two figures, and the Layout menu. */
+    /* The right half: the two figures and the Layout menu. */
     var right = dom.el('div', 'strip-right');
-    var line = dom.el('p', 'trade-line');
-    line.hidden = true;
-    right.appendChild(line);
     var stats = dom.el('div', 'strip-stats');
     right.appendChild(stats);
     right.appendChild(layoutControl());
-    strip.appendChild(right);
+    row.appendChild(right);
+
+    /* What the venue says when it has something to say: a second line under
+       the row, there only while there is something to say, so the row itself
+       never has to make room for a sentence. */
+    var line = dom.el('p', 'trade-line');
+    line.hidden = true;
+    strip.appendChild(line);
 
     refs.strip = strip;
     refs.price = px;
@@ -312,7 +321,9 @@
       tab.setAttribute('role', 'tab');
       tab.setAttribute('aria-controls', 'trade-panel-' + TABS[i].id);
       tab.setAttribute('aria-selected', 'false');
-      tab.dataset.tab = TABS[i].id;
+      /* Not data-tab: the shell owns every [data-tab] in the document as a
+         mode tab and would write aria-selected on these too. */
+      tab.dataset.deckTab = TABS[i].id;
       tab.appendChild(dom.el('span', 'trade-tab-label', TABS[i].label));
       var count = dom.el('span', 'trade-tab-count mono', '0');
       tab.appendChild(count);
@@ -329,11 +340,11 @@
   }
 
   function onTab(event) {
-    selectTab(event.currentTarget.dataset.tab);
+    selectTab(event.currentTarget.dataset.deckTab);
   }
 
   function onTabKey(event) {
-    var at = tabIndex(event.currentTarget.dataset.tab);
+    var at = tabIndex(event.currentTarget.dataset.deckTab);
     var next = at;
     if (event.key === 'ArrowRight') next = (at + 1) % TABS.length;
     else if (event.key === 'ArrowLeft') next = (at + TABS.length - 1) % TABS.length;
@@ -1138,12 +1149,15 @@
      { coin, side, sizeCoin, notionalUsd, entryPx, markPx, liqPx, unrealisedUsd,
        ... }. */
   var POSITION_COLUMNS = ['Asset', 'Size', 'Entry', 'Mark', 'PnL', 'Stop', 'Target'];
+  var TAPE_COLUMNS = ['Time', 'Side', 'Asset', 'Size', 'Value'];
 
-  function positionHead() {
-    var head = dom.el('div', 'pos-head');
+  /* A row of column headings in 11/500 muted, on the same grid as the rows
+     under it. Hidden until the list has rows. */
+  function columnHead(className, columns) {
+    var head = dom.el('div', className);
     head.setAttribute('aria-hidden', 'true');
-    for (var i = 0; i < POSITION_COLUMNS.length; i += 1) {
-      head.appendChild(dom.el('span', 'pos-col', POSITION_COLUMNS[i]));
+    for (var i = 0; i < columns.length; i += 1) {
+      head.appendChild(dom.el('span', 'pos-col', columns[i]));
     }
     head.hidden = true;
     return head;
@@ -1404,6 +1418,7 @@
     var rows = doneRows();
     var cut = doneWindow(rows);
     setCount('done', cut.list.length);
+    dom.setHidden(refs.doneHead, !cut.list.length);
     dom.setHidden(refs.doneFoot, cut.more <= 0);
     dom.setAttr(refs.more, 'title', cut.more > 0 ? cut.more + ' older' : null);
     if (!cut.list.length) {
@@ -1443,8 +1458,7 @@
      it, with the explorer link as its own anchor at the end. Children in the
      order the stylesheet places them. */
   function fillRow(row) {
-    var node = dom.el('div', 'tx done-row fill-row');
-    node.dataset.dense = 'true';
+    var node = dom.el('div', 'done-row fill-row');
     node.setAttribute('role', 'button');
     node.tabIndex = 0;
     node.appendChild(dom.el('span', 'tx-when meta mono'));
@@ -1500,8 +1514,7 @@
   /* An ended plan: the clock, the glyph, the sentence across the middle, and
      the id where the value would be. */
   function endedRow(row) {
-    var node = dom.el('div', 'tx done-row ended-row');
-    node.dataset.dense = 'true';
+    var node = dom.el('div', 'done-row ended-row');
     node.appendChild(dom.el('span', 'tx-when meta mono'));
     node.appendChild(endedMark(row.glyph));
     node.appendChild(dom.el('span', 'tx-title'));

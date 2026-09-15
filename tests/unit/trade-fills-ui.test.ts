@@ -497,8 +497,12 @@ async function render(sizeCoin: number, szDecimals: number | null): Promise<Retu
 
 // ---------- Done: the fills ----------
 
-test('a fill is one line: the clock, the side, the coin, the size that actually traded, the value', async () => {
-  const [row] = await render(0.001, 5);
+test('a fill is one line under headings: the clock, the side, the coin, the size that actually traded, the value', async () => {
+  const world = await renderPayload(payload(0.001, 5));
+  const [head] = withClass(world.host, 'tape-head');
+  assert.equal(head.hidden, false, 'no headings over the tape');
+  assert.deepEqual(textOf(head), ['Time', 'Side', 'Asset', 'Size', 'Value']);
+  const [row] = fillRows(world.host);
   assert.ok(row !== undefined, 'no fill row on the tape');
   assert.equal(row.side, 'Buy');
   assert.equal(row.node.childNodes[1].dataset.tone, 'up', 'a buy is toned up');
@@ -605,6 +609,7 @@ test('an empty window says so in one line, and Show more still reaches the older
   const bare = await renderPayload(none);
   assert.ok(bare.lines.includes('Nothing yet.'), JSON.stringify(bare.lines));
   assert.equal(withClass(bare.host, 'trade-more')[0].parentNode!.hidden, true);
+  assert.equal(withClass(bare.host, 'tape-head')[0].hidden, true, 'headings over nothing');
 });
 
 test('the tape owns its host, so nothing is left under it for the reconciler to trip on', async () => {
