@@ -2511,8 +2511,11 @@ dependencies = [
 name = "phosphor-desktop"
 version = "0.4.2"
 dependencies = [
+ "flate2",
  "libc",
+ "plist",
  "serde_json",
+ "tar",
  "tauri",
  "tauri-build",
  "tauri-plugin-clipboard-manager",

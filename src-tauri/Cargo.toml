@@ -33,6 +33,13 @@ tauri-plugin-dialog = "2.3.0"
 # wants. It brings reqwest into the tree; the loopback GET above stays hand-rolled anyway,
 # because the trust boundary of that call is the port, not the transport.
 tauri-plugin-updater = "2.11.0"
+# Three names for crates the updater plugin and tauri already pull in, so that update.rs can
+# open the verified tarball and read the version the bundle itself carries before it is
+# installed (the manifest's version is not signed; the plist inside the bundle is). Nothing
+# new enters the tree for these: check `cargo tree -i flate2` if in doubt.
+flate2 = "1.1"
+tar = "0.4"
+plist = "1.10"
 
 # The one exception to the thin rule above, and it buys nothing new in the tree: tauri already
 # depends on libc on unix, so this is a direct name for a crate that is here anyway. It is

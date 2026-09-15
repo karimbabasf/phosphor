@@ -148,13 +148,14 @@ jobs:
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
           {
             echo "## Phosphor $VERSION for Mac (Apple silicon)"
             echo
             if [ -s "$RUNNER_TEMP/tag-body.md" ]; then cat "$RUNNER_TEMP/tag-body.md"; echo; fi
             echo "**Install.** Open the DMG, drag Phosphor into Applications, open it from there."
-            if [ -z "${{ secrets.APPLE_SIGNING_IDENTITY }}" ]; then
+            if [ -z "$APPLE_SIGNING_IDENTITY" ]; then
               echo "This build is not yet notarized by Apple, so on first open macOS says it cannot verify the app: open System Settings, Privacy & Security, scroll to Security and click Open Anyway. Compare the checksum first."
             fi
             echo

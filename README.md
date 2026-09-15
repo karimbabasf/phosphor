@@ -169,8 +169,10 @@ click Open Anyway. Do that only for a file whose checksum you compared.
 **Updates** find you. Twenty seconds after the window opens, and every six hours after that, the
 app reads the release feed and offers a newer version in a dialog: Install and relaunch, or Later.
 Phosphor > Check for Updates... in the menu bar asks on demand. Every update is signed with a key
-whose public half is compiled into the app, and the app refuses one that is not, or one that is
-not newer: a captured feed can only withhold updates, never push one.
+whose public half is compiled into the app, and the app refuses one that is not, one that is not
+the versioned release asset on GitHub, and one whose signed bundle is not newer than what is
+running: a captured feed can only withhold updates, never push one or roll one back. Nothing
+installs while a proposal is executing.
 
 **Build it yourself** instead of downloading:
 
@@ -239,9 +241,11 @@ human approval or a recorded `allow` verdict.
 `.github/workflows/release.yml` builds on a clean Apple silicon runner, signs the updater bundle,
 verifies the app inside the disk image, and publishes the release: `Phosphor-macOS-arm64.dmg`
 (the stable name the site links), `Phosphor_<version>_aarch64.app.tar.gz` and its `.sig`,
-`latest.json` and `SHA256SUMS`. Installed apps read
-`https://phosphor.karimbabasf.com/updates/latest.json`, a redirect to the latest release's
-manifest, with the GitHub URL as the fallback.
+`latest.json` and `SHA256SUMS`. Installed apps read the latest release's `latest.json` on
+GitHub and nothing else: the site is deliberately not in the loop, so nobody who holds the site,
+its DNS or the Vercel account can freeze or steer updates. The app also refuses a download that is
+not the versioned GitHub asset for the version announced, and reads the version out of the signed
+bundle before it installs it, so an old build cannot be re-announced as a new one.
 
 Secrets the workflow reads, all in the repository's Actions secrets:
 

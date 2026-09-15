@@ -470,6 +470,8 @@ test('health answers without a token and in the shape the spec fixes', async () 
       // Whether the audit chain verified at boot. It is here because verify() used to have no
       // caller outside the tests: a tamper check nothing runs detects nothing.
       'auditChain',
+      // Proposals mid-execution, read by the desktop shell before it installs an update.
+      'executing',
       'killSwitch',
       'lastError',
       'locked',
@@ -479,6 +481,7 @@ test('health answers without a token and in the shape the spec fixes', async () 
       'version',
     ]);
     assert.equal(body.ok, true);
+    assert.equal(body.executing, 0);
     assert.equal(typeof body.version, 'string');
     assert.equal(typeof body.killSwitch, 'boolean');
     assert.equal(typeof body.pending, 'number');

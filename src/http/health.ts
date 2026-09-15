@@ -24,6 +24,10 @@ type Health = {
   version: string;
   killSwitch: boolean;
   pending: number;
+  /* Proposals mid-execution right now. The desktop shell reads this before it installs an
+     update, because installing ends the process and a venue write cut at an arbitrary point
+     is the one thing an update must never do. */
+  executing: number;
   locked: boolean;
   /* The audit chain, checked rather than assumed. verify() had no caller outside the tests:
      nothing on boot, no route, not health, so the record's integrity was never actually read in
@@ -48,9 +52,12 @@ function buildHealth(ctx: Ctx): Health {
   // the one route that must answer anyway, because a person reaching for it is already asking
   // what is wrong. The failure becomes the answer rather than a 500.
   let pending = 0;
+  let executing = 0;
   let storeError: string | null = null;
   try {
-    pending = ctx.proposals.list().filter((p) => p.status === 'pending').length;
+    const all = ctx.proposals.list();
+    pending = all.filter((p) => p.status === 'pending').length;
+    executing = all.filter((p) => p.status === 'executing').length;
   } catch (err) {
     storeError = err instanceof Error ? err.message : String(err);
   }
@@ -76,6 +83,7 @@ function buildHealth(ctx: Ctx): Health {
     version: VERSION,
     killSwitch,
     pending,
+    executing,
     /* Read from the keystore rather than hardcoded. This was `false` with a comment saying the
        custody track had not landed, and it had: health reported an unlocked wallet on every
        install, including one that was shut. `locked` is the narrow question the field asks, so

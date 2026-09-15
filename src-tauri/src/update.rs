@@ -8,11 +8,20 @@
 // window, and a remote page cannot reach app commands at the ACL anyway.
 //
 // What the plugin does, and why it is the one thing here that is not hand-rolled: it fetches
-// latest.json over TLS from the endpoints in tauri.conf.json, takes the entry for this OS and
+// latest.json over TLS from the endpoint in tauri.conf.json, takes the entry for this OS and
 // architecture, downloads the bundle, verifies its minisign signature against the public key
-// compiled in from the same file, and installs only a version greater than the one running. An
-// endpoint that is captured can therefore withhold updates, never push one, and never roll one
-// back. A homemade version of that check is exactly the bug an attacker wants.
+// compiled in from the same file, and installs only when the manifest's version is greater
+// than the one running. A homemade version of that signature check is exactly the bug an
+// attacker wants.
+//
+// What the plugin does NOT do, and this file does: the manifest is not signed, only the bundle
+// is. So whoever can serve a manifest (the release host, or anyone with write access to the
+// repository) could name an old, validly signed bundle as "0.9.0" and roll a machine back to a
+// build with a hole that was since fixed. Two checks close that, both before install: the
+// download URL must be the versioned GitHub asset for the version the manifest names, and the
+// version inside the downloaded, signature-checked tarball (Contents/Info.plist) must be that
+// same version and newer than what is running. The signature covers the plist, so the version
+// is bound to the key after all. What a captured feed can still do is withhold updates.
 //
 // Installing swaps /Applications/Phosphor.app for the new bundle and relaunches. The backend is
 // stopped first, through Backend::kill, because AppHandle::restart on the main thread exits the
@@ -21,6 +30,7 @@
 // did not start. Taking the child out of Backend also tells the supervisor thread that this stop
 // was meant, so it does not respawn the backend under the feet of the restart.
 
+use std::io::Read;
 use std::path::Path;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -28,10 +38,14 @@ use std::time::Duration;
 use tauri::{AppHandle, Manager, TitleBarStyle, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
-use crate::backend::Backend;
+use crate::backend::{configured_port, get_health, post_lock, Backend};
 
 pub const CHECK_ID: &str = "check-for-updates";
 const WINDOW: &str = "update";
+
+/// Where a release lives. The only host the updater will download from; a manifest naming any
+/// other URL is refused before a byte is read.
+const RELEASES: &str = "https://github.com/karimbabasf/phosphor/releases/download";
 
 /// The first automatic check waits for the window to be up and the person to be past the
 /// splash; the ones after it are far enough apart that a release is seen the same day without
@@ -206,34 +220,17 @@ pub fn update_install(app: AppHandle, window: tauri::Window) -> Result<(), Strin
         return Err("no update is pending".to_string());
     };
     tauri::async_runtime::spawn(async move {
-        let progress_on = app.clone();
-        let mut seen: u64 = 0;
-        let installed = update
-            .download_and_install(
-                |chunk, total| {
-                    seen += chunk as u64;
-                    if let (Some(total), Some(win)) = (total, progress_on.get_webview_window(WINDOW)) {
-                        if total > 0 {
-                            let _ = win.eval(&format!("window.__phosphorProgress({})", seen as f64 / total as f64));
-                        }
-                    }
-                },
-                || {},
-            )
-            .await;
-        match installed {
+        let outcome = install(&app, &update).await;
+        match outcome {
             Ok(()) => {
-                app.state::<Backend>().kill();
                 let restart_on = app.clone();
                 let _ = app.run_on_main_thread(move || restart_on.restart());
             }
             Err(err) => {
-                eprintln!("phosphor: update install failed: {err}");
+                eprintln!("phosphor: update install refused or failed: {err}");
                 if let Some(win) = app.get_webview_window(WINDOW) {
                     let message = serde_json::json!(format!(
-                        "Nothing changed: Phosphor {} keeps running. The download is verified before anything \
-                         is replaced, so a failure here means the update was refused or the app folder could \
-                         not be written.\n\n{err}",
+                        "Nothing changed: Phosphor {} keeps running.\n\n{err}",
                         app.package_info().version
                     ));
                     let _ = win.eval(&format!("window.__phosphorFailed({message})"));
@@ -242,6 +239,120 @@ pub fn update_install(app: AppHandle, window: tauri::Window) -> Result<(), Strin
         }
     });
     Ok(())
+}
+
+/// The whole install, in the order the checks have to run. Anything that returns Err here has
+/// changed nothing on disk: the swap is the last step and the plugin's own install is atomic
+/// per bundle (rename out, rename in).
+async fn install(app: &AppHandle, update: &Update) -> Result<(), String> {
+    let running = app.package_info().version.to_string();
+    let wanted = expected_url(&update.version);
+    if update.download_url.as_str() != wanted {
+        return Err(format!(
+            "the update feed pointed somewhere other than the release for {}, so it was refused. Expected {wanted}, got {}.",
+            update.version, update.download_url
+        ));
+    }
+
+    let port = port_for(app)?;
+    if let Some(executing) = get_health(port).and_then(|h| h.get("executing").and_then(|e| e.as_u64())) {
+        if executing > 0 {
+            return Err(format!(
+                "{executing} proposal(s) are executing right now. Installing ends the process, and a venue write cut mid-flight is the one thing an update must never do. Let them finish, then try again from Phosphor > Check for Updates."
+            ));
+        }
+    }
+
+    let progress_on = app.clone();
+    let mut seen: u64 = 0;
+    let bytes = update
+        .download(
+            |chunk, total| {
+                seen += chunk as u64;
+                if let (Some(total), Some(win)) = (total, progress_on.get_webview_window(WINDOW)) {
+                    if total > 0 {
+                        let _ = win.eval(&format!("window.__phosphorProgress({})", seen as f64 / total as f64));
+                    }
+                }
+            },
+            || {},
+        )
+        .await
+        .map_err(|e| format!("the download did not verify: {e}"))?;
+
+    // The bytes are signature-checked by now. Read the version the bundle itself carries.
+    let inside = bundled_version(&bytes)?;
+    if inside != update.version || !newer(&inside, &running) {
+        return Err(format!(
+            "the feed called this update {} but the signed bundle inside is {inside}, and Phosphor is on {running}. A bundle that is not exactly the version it was announced as, or not newer than what is running, is never installed.",
+            update.version
+        ));
+    }
+
+    update.install(bytes).map_err(|e| format!("the app folder could not be replaced: {e}"))?;
+
+    // The new bundle is on disk. Lock the wallet with a reason the audit log keeps, then stop
+    // the backend the graceful way (Backend::kill drains a write in flight before SIGKILL).
+    let token = app.state::<crate::Secrets>().0.token.clone();
+    let _ = post_lock(port, &token, "installing an update");
+    app.state::<Backend>().kill();
+    Ok(())
+}
+
+fn port_for(app: &AppHandle) -> Result<u16, String> {
+    let payload = crate::payload_dir(app)?;
+    let data = crate::data_dir(app)?;
+    Ok(configured_port(&payload, &data))
+}
+
+fn expected_url(version: &str) -> String {
+    format!("{RELEASES}/v{version}/Phosphor_{version}_aarch64.app.tar.gz")
+}
+
+/// CFBundleShortVersionString out of the tarball the plugin verified: `Phosphor.app/Contents/
+/// Info.plist`, and only at that depth, so a plist buried in a resource cannot answer for the
+/// bundle. flate2, tar and plist are the crates the updater plugin and tauri already use to
+/// read the same archive; nothing new enters the tree for this.
+fn bundled_version(bytes: &[u8]) -> Result<String, String> {
+    let decoder = flate2::read::GzDecoder::new(bytes);
+    let mut archive = tar::Archive::new(decoder);
+    for entry in archive.entries().map_err(|e| format!("the update is not a tar archive: {e}"))? {
+        let mut entry = entry.map_err(|e| format!("the update archive is damaged: {e}"))?;
+        let path = entry.path().map_err(|e| format!("the update archive is damaged: {e}"))?.into_owned();
+        let parts: Vec<String> = path.iter().map(|c| c.to_string_lossy().into_owned()).collect();
+        if parts.len() == 3 && parts[0].ends_with(".app") && parts[1] == "Contents" && parts[2] == "Info.plist" {
+            let mut raw = Vec::new();
+            entry.read_to_end(&mut raw).map_err(|e| format!("the update's Info.plist could not be read: {e}"))?;
+            let value: plist::Value = plist::from_bytes(&raw).map_err(|e| format!("the update's Info.plist is not a plist: {e}"))?;
+            return value
+                .as_dictionary()
+                .and_then(|d| d.get("CFBundleShortVersionString"))
+                .and_then(|v| v.as_string())
+                .map(str::to_string)
+                .ok_or_else(|| "the update's Info.plist carries no version".to_string());
+        }
+    }
+    Err("the update carries no app bundle".to_string())
+}
+
+/// Plain MAJOR.MINOR.PATCH, the only shape the release tags take (tests/unit/version-agrees
+/// .test.ts refuses anything else), compared numerically. Anything unparseable is not newer.
+fn newer(candidate: &str, running: &str) -> bool {
+    match (parse_version(candidate), parse_version(running)) {
+        (Some(c), Some(r)) => c > r,
+        _ => false,
+    }
+}
+
+fn parse_version(text: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = text.trim().trim_start_matches('v').split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((major, minor, patch))
 }
 
 /// Later, Close, or Escape. An offer answered Later is remembered for this run.
@@ -290,7 +401,8 @@ fn clip(text: &str, limit: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{clip, init_literal, is_dismissed, runs_from_a_volume, NOTES_LIMIT};
+    use super::{bundled_version, clip, expected_url, init_literal, is_dismissed, newer, runs_from_a_volume, NOTES_LIMIT};
+    use std::io::Write;
     use std::path::Path;
 
     #[test]
@@ -327,5 +439,75 @@ mod tests {
         assert!(runs_from_a_volume(Path::new("/Volumes/Phosphor/Phosphor.app/Contents/MacOS/phosphor-desktop")));
         assert!(!runs_from_a_volume(Path::new("/Applications/Phosphor.app/Contents/MacOS/phosphor-desktop")));
         assert!(!runs_from_a_volume(Path::new("/Users/k/Volumes/Phosphor.app/Contents/MacOS/phosphor-desktop")));
+    }
+
+    #[test]
+    fn only_the_versioned_github_asset_is_a_download() {
+        assert_eq!(
+            expected_url("0.4.2"),
+            "https://github.com/karimbabasf/phosphor/releases/download/v0.4.2/Phosphor_0.4.2_aarch64.app.tar.gz"
+        );
+    }
+
+    #[test]
+    fn newer_means_numerically_greater_plain_semver_and_nothing_else() {
+        assert!(newer("0.4.2", "0.4.1"));
+        assert!(newer("0.10.0", "0.9.9"));
+        assert!(newer("1.0.0", "0.99.99"));
+        assert!(!newer("0.4.1", "0.4.1"));
+        assert!(!newer("0.4.0", "0.4.1"));
+        assert!(!newer("0.4.2-beta", "0.4.1"));
+        assert!(!newer("garbage", "0.4.1"));
+        assert!(!newer("0.4.2", "garbage"));
+    }
+
+    fn tarball(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut builder = tar::Builder::new(Vec::new());
+        for (path, data) in entries {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(data.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder.append_data(&mut header, path, *data).unwrap();
+        }
+        let tar = builder.into_inner().unwrap();
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        gz.write_all(&tar).unwrap();
+        gz.finish().unwrap()
+    }
+
+    fn info_plist(version: &str) -> Vec<u8> {
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict><key>CFBundleShortVersionString</key><string>{version}</string></dict></plist>\n"
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn the_version_is_read_from_the_bundle_inside_the_verified_tarball() {
+        let bytes = tarball(&[
+            ("Phosphor.app/Contents/Resources/phosphor/Info.plist", &info_plist("9.9.9")),
+            ("Phosphor.app/Contents/Info.plist", &info_plist("0.4.2")),
+        ]);
+        assert_eq!(bundled_version(&bytes).unwrap(), "0.4.2");
+    }
+
+    #[test]
+    fn a_bundle_with_no_info_plist_at_the_top_is_refused() {
+        let bytes = tarball(&[("Phosphor.app/Contents/Resources/phosphor/Info.plist", &info_plist("0.4.2"))]);
+        assert!(bundled_version(&bytes).unwrap_err().contains("no app bundle"));
+        assert!(bundled_version(b"not a tarball at all").is_err());
+    }
+
+    #[test]
+    fn an_old_signed_bundle_announced_as_new_is_caught_by_the_version_inside() {
+        // The rollback: the feed says 0.9.0, the download URL is forged to match, but the bytes
+        // are the 0.4.0 bundle, still validly signed. The plist inside says 0.4.0, and that is
+        // what the install compares.
+        let bytes = tarball(&[("Phosphor.app/Contents/Info.plist", &info_plist("0.4.0"))]);
+        let inside = bundled_version(&bytes).unwrap();
+        let announced = "0.9.0";
+        let running = "0.4.1";
+        assert!(inside != announced || !newer(&inside, running));
     }
 }

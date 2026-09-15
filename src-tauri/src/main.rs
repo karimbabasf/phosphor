@@ -83,7 +83,7 @@ fn probe_interval(elapsed: Duration) -> Duration {
 /// with it, and the readiness polls can recognise the backend by its nonce. Never written to disk.
 /// The token and the seat secret are never served; the nonce is served, on purpose, and is the one
 /// of the three that is not a secret from anyone who can already reach the port.
-struct Secrets(Handshake);
+pub(crate) struct Secrets(pub(crate) Handshake);
 
 /// Everything `start` resolved, so the supervisor thread does not have to resolve it again.
 #[derive(Clone)]
@@ -119,7 +119,7 @@ pub(crate) fn saved_colourway(data: &Path) -> Option<&'static str> {
 }
 
 /// The payload directory: the old repo root, shipped verbatim.
-fn payload_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn payload_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let dir = app
         .path()
         .resource_dir()
@@ -326,6 +326,10 @@ fn watch(app: tauri::AppHandle, paths: Paths, port: u16) {
     let mut respawned = false;
     loop {
         std::thread::sleep(WATCH_INTERVAL);
+        // A stop this shell chose (an update relaunching it) is not a crash to recover from.
+        if app.state::<Backend>().stopping() {
+            return;
+        }
         match app.state::<Backend>().exited() {
             Some(false) | None => continue,
             Some(true) => {}
@@ -346,6 +350,9 @@ fn watch(app: tauri::AppHandle, paths: Paths, port: u16) {
         respawned = true;
 
         std::thread::sleep(RESPAWN_BACKOFF);
+        if app.state::<Backend>().stopping() {
+            return;
+        }
 
         /* NOTHING MAY BE ON THE PORT BEFORE THE RESPAWN. This path had no check at all, which made
            it the deterministic half of the finding: the backend dies, this thread sleeps three
