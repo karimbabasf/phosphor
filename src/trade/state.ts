@@ -23,6 +23,7 @@
 import type { Highlight, OverlayName, TradeViewState } from './view.ts';
 import type { PlanRow } from './plans.ts';
 import { DUST_USD, fundingBlock, type FundingBlock } from './funding.ts';
+import { HYPERLIQUID_EXPLORER_TX } from '../explorers.ts';
 import type {
   AccountSnapshot,
   MarketCtx,
@@ -118,6 +119,13 @@ export type Fill = {
   tSec: number;
   liquidation: boolean;
   planId: string | null;
+  // The venue's ledger hash and order id when the venue stated real ones (feed-ws.ts parseFill
+  // drops the all-zero hash), and the explorer page for the hash. Absent otherwise, so the
+  // receipt card links only what resolves and the Done row shows its link only on rows that
+  // have one.
+  hash?: string;
+  oid?: string;
+  url?: string;
 };
 
 export type TradePayload = {
@@ -441,6 +449,8 @@ function fillFrom(f: RawFill, plans: PlanRow[]): Fill {
     tSec: Math.floor(f.atMs / 1000),
     liquidation: f.liquidation === true,
     planId: fillPlanId(f, plans),
+    ...(f.hash === undefined ? {} : { hash: f.hash, url: HYPERLIQUID_EXPLORER_TX + f.hash }),
+    ...(f.oid === undefined ? {} : { oid: f.oid }),
   };
 }
 

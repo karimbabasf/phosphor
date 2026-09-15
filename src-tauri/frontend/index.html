@@ -7,25 +7,14 @@
   separate webview pointed at http://127.0.0.1, so the page that holds the approval surface
   never shares an origin or a webview with anything Tauri controls.
 
-  It is the app's own mark, in the state the mark already has a meaning for. In the window,
-  the mark beside "Phosphor" sits at 0.35 opacity until the backend answers and then lights
-  up (see .wordmark-glyph in ui/design/layout.css). So this screen is not a separate loading
-  animation at all: it is that mark, not yet lit, on the same ground the window paints. When
-  the real window arrives, the same mark is in the top left, on.
+  It is the app's own mark, in the state the mark already has a meaning for: not yet lit, on
+  the same ground the window paints. So this screen is not a separate loading animation at
+  all. When the real window arrives, the same mark sits beside "Phosphor" in its top left
+  (.brand in ui/design/layout.css), on.
 
-  THE COLOURWAY. The shell reads the profile line out of state/theme.json before it opens this
-  window and hands it over as window.__PHOSPHOR_PROFILE__ in an initialization script, so a
-  person who chose black on white is not shown two seconds of black first. The two blocks
-  below are the same values as ui/design/tokens.css; only the tokens this page uses.
+  The window is dark only, so this page paints one colourway and receives no script. The block
+  below is the same values as ui/design/tokens.css; only the tokens this page uses.
 -->
-<script>
-  (function () {
-    var wanted = window.__PHOSPHOR_PROFILE__;
-    if (wanted === 'black-on-white') {
-      document.documentElement.setAttribute('data-profile', wanted);
-    }
-  })();
-</script>
 <style>
   /* Copied from ui/design/tokens.css rather than imported, because this page is served by
      Tauri and shares no origin with the app. Only the tokens this screen actually uses. */
@@ -38,18 +27,10 @@
     --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   }
 
-  :root[data-profile="black-on-white"] {
-    color-scheme: light;
-    --bg-0: #FFFFFF;
-    --text: #111111;
-    --text-2: #5C6169;
-    --ink: #111111;
-  }
-
   @font-face {
-    font-family: "Geist";
-    src: url("Geist-Variable.woff2") format("woff2-variations");
-    font-weight: 100 900;
+    font-family: "Sora";
+    src: url("Sora-Variable.woff2") format("woff2-variations");
+    font-weight: 100 800;
     font-display: swap;
   }
 
@@ -58,7 +39,8 @@
     margin: 0;
     background: var(--bg-0);
     color: var(--text);
-    font-family: "Geist", ui-sans-serif, system-ui, sans-serif;
+    font-family: "Sora", ui-sans-serif, system-ui, sans-serif;
+    font-optical-sizing: auto;
     -webkit-user-select: none;
     user-select: none;
     overflow: hidden;
@@ -86,7 +68,7 @@
 
   .wordmark {
     font-size: 15px;
-    font-weight: 500;
+    font-weight: 600;
     letter-spacing: -0.01em;
   }
 

@@ -13,8 +13,7 @@ state/
 # Claude Code config for the driver child, if a run ever points CLAUDE_CONFIG_DIR here
 data/claude/
 .superpowers/
-.design/*.png
-.design/audit.json
+.design/
 .playwright-mcp/
 *-startup.png
 node_modules

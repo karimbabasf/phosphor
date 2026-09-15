@@ -525,6 +525,18 @@ test('fills are keyed by tid, deduped, and newest first', () => {
   close(p.fills[0].notionalUsd, 200, 'fill notional');
 });
 
+test('a fill with a venue hash carries its explorer link, and one without carries no link at all', () => {
+  const hash = '0x' + 'c'.repeat(64);
+  const p = build({ fills: [fill({ tid: 'a', hash, oid: '778899' }), fill({ tid: 'b', atMs: NOW - 5000 })] });
+  const linked = p.fills.find((f) => f.tid === 'a');
+  assert.equal(linked?.hash, hash);
+  assert.equal(linked?.oid, '778899');
+  assert.equal(linked?.url, `https://app.hyperliquid.xyz/explorer/tx/${hash}`);
+  const bare = p.fills.find((f) => f.tid === 'b');
+  assert.equal('hash' in (bare ?? {}), false, 'no hash key to print as "undefined"');
+  assert.equal('url' in (bare ?? {}), false, 'no url means no button, not a dead one');
+});
+
 test('the venue block says how stale the screen is and whether to trust it', () => {
   const live = build({ lastMessageMs: NOW - 800 });
   assert.equal(live.venue.connected, true);

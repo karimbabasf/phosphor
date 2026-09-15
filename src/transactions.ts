@@ -17,6 +17,7 @@ import path from 'node:path';
 import type { ChainId, DecidedBy, LogEvent, Proposal, WriteDraft } from './types.ts';
 import { chainSpec, reader } from './chain/evm.ts';
 import { atomicWriteJson } from './fsatomic.ts';
+import { HYPERLIQUID_EXPLORER_ADDRESS, HYPERLIQUID_EXPLORER_TX } from './explorers.ts';
 
 // ---------- explorers ----------
 
@@ -28,7 +29,9 @@ const NON_EVM: Partial<Record<TxPlace, { tx: string; address: string }>> = {
   near: { tx: 'https://nearblocks.io/txns/', address: 'https://nearblocks.io/address/' },
   intents: { tx: 'https://nearblocks.io/txns/', address: 'https://nearblocks.io/address/' },
   // The venue's own explorer, keyed by address. A HyperCore credit has no tx hash of ours.
-  hyperliquid: { tx: 'https://app.hyperliquid.xyz/explorer/tx/', address: 'https://app.hyperliquid.xyz/explorer/address/' },
+  // The prefix lives in src/explorers.ts so a fill's link (src/trade/state.ts) and this table
+  // can never disagree about where a venue hash is looked at.
+  hyperliquid: { tx: HYPERLIQUID_EXPLORER_TX, address: HYPERLIQUID_EXPLORER_ADDRESS },
 };
 
 // Two members that are not chains. 'intents' is a balance inside the verifier contract, and

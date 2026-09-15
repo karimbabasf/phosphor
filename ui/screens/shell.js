@@ -13,7 +13,6 @@
   var api = window.PhosphorApi;
   var events = window.PhosphorEvents;
   var store = window.PhosphorState;
-  var fixtures = window.PhosphorFixtures;
 
   var VIEWS = ['basic', 'pro', 'trade', 'vault'];
 
@@ -23,8 +22,6 @@
   function boot() {
     refs.page = document.getElementById('page');
     refs.topbar = document.getElementById('topbar');
-    refs.wordmark = document.getElementById('wordmark');
-    refs.colourways = document.getElementById('colourways');
     refs.stage = document.getElementById('stage');
     refs.conversation = document.getElementById('conversation');
     refs.conversationBody = document.getElementById('conversation-body');
@@ -40,7 +37,6 @@
 
     mountConversation();
     wireTabs();
-    wireColourways();
     wireFreeze();
     wireBackupChip();
     wireStream();
@@ -98,88 +94,6 @@
     return state.proposals.filter(function (p) {
       return p && (p.status === 'pending' || p.status === 'pending_unlock' || p.status === 'awaiting_touch');
     });
-  }
-
-  /* ---------- the colourway menu ----------
-
-     The wordmark opens it. Three rows, one per colourway of the mark, each a
-     radio: the checked one follows the server's theme, so a colourway an agent
-     set through set_theme is shown checked here too, and the pick posts to the
-     server rather than repainting locally, because the frame that comes back is
-     what every other window and the next launch will show. Escape and a click
-     anywhere else close it; the arrows move between the rows. */
-  function wireColourways() {
-    if (!refs.wordmark || !refs.colourways) return;
-    var rows = Array.prototype.slice.call(refs.colourways.querySelectorAll('[data-profile]'));
-
-    dom.on(refs.wordmark, 'click', function () {
-      if (refs.colourways.dataset.open === 'true') closeColourways();
-      else openColourways();
-    });
-    for (var i = 0; i < rows.length; i += 1) {
-      dom.on(rows[i], 'click', onColourwayRow);
-    }
-    dom.on(refs.colourways, 'keydown', function (event) {
-      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
-      event.preventDefault();
-      var at = rows.indexOf(document.activeElement);
-      var next = event.key === 'ArrowDown' ? (at + 1) % rows.length : (at - 1 + rows.length) % rows.length;
-      rows[next].focus();
-    });
-    dom.on(document, 'keydown', function (event) {
-      if (event.key !== 'Escape' || refs.colourways.dataset.open !== 'true') return;
-      event.preventDefault();
-      closeColourways();
-      refs.wordmark.focus();
-    });
-    dom.on(document, 'click', function (event) {
-      if (refs.colourways.dataset.open !== 'true') return;
-      if (within(event.target, refs.wordmark) || within(event.target, refs.colourways)) return;
-      closeColourways();
-    });
-
-    store.select('theme', renderColourway);
-  }
-
-  function within(node, root) {
-    for (var at = node; at; at = at.parentNode) {
-      if (at === root) return true;
-    }
-    return false;
-  }
-
-  function openColourways() {
-    refs.colourways.dataset.open = 'true';
-    refs.wordmark.setAttribute('aria-expanded', 'true');
-    var checked = refs.colourways.querySelector('[aria-checked="true"]');
-    if (checked && typeof checked.focus === 'function') checked.focus();
-  }
-
-  function closeColourways() {
-    refs.colourways.dataset.open = 'false';
-    refs.wordmark.setAttribute('aria-expanded', 'false');
-  }
-
-  function onColourwayRow(event) {
-    var row = event.currentTarget;
-    var profile = row && row.dataset ? row.dataset.profile : null;
-    if (!profile) return;
-    closeColourways();
-    refs.wordmark.focus();
-    api.colourway(profile).catch(function (err) {
-      window.PhosphorToast.show(net.readable(err), 'down');
-    });
-  }
-
-  /* The checked row is whatever the server says the window is, never what was
-     last clicked here. */
-  function renderColourway(theme) {
-    var current = theme && typeof theme.profile === 'string' ? theme.profile : 'green-on-black';
-    if (!refs.colourways) return;
-    var rows = refs.colourways.querySelectorAll('[data-profile]');
-    for (var i = 0; i < rows.length; i += 1) {
-      dom.setAttr(rows[i], 'aria-checked', rows[i].dataset.profile === current ? 'true' : 'false');
-    }
   }
 
   /* ---------- the conversation column ---------- */
@@ -389,9 +303,7 @@
     return api.state(opts.first ? { busy: 'state', label: 'Checking your money' } : {})
       .then(function (result) {
         if (!result.fresh && store.loaded()) return;
-        var payload = result.data;
-        if (fixtures.active) payload = fixtures.applyToState(payload);
-        store.put(payload);
+        store.put(result.data);
       })
       .catch(function (err) {
         console.error('[shell] state', err);

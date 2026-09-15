@@ -40,26 +40,51 @@
     DEFAULT: "<path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm-7.2 9a7.2 7.2 0 1 1 14.4 0 7.2 7.2 0 0 1-14.4 0Z\" fill=\"currentColor\"/><path d=\"M12 8.7a3.3 3.3 0 1 0 0 6.6 3.3 3.3 0 0 0 0-6.6Z\" fill=\"currentColor\"/>",
   };
 
-  /* The brand colours, one per mark, from each project's own brand page. A
+  /* The brand colours, one per logo, read off the logo files in ui/logos/ (or
+     the project's brand page where the logo is a gradient or a dark disc). A
      coin with no entry paints in the text colour, which is what DEFAULT does.
-     NEAR's brand is black on white, so it takes its ecosystem teal, which is
-     far enough from the phosphor green that it cannot be read as "up". */
+     The allocation bar and the row wash use these, so a segment is the same
+     colour as the mark beside it. */
   var COLOURS = {
     ETH: '#627EEA',
     SOL: '#9945FF',
     USDC: '#2775CA',
-    USDT: '#26A17B',
-    DAI: '#F5AC37',
+    USDT: '#009393',
+    DAI: '#FDC134',
     USDS: '#FFC700',
-    PYUSD: '#0070E0',
+    PYUSD: '#3B6FEF',
     USDE: '#8A9BB8',
-    NEAR: '#00C6A2',
-    WNEAR: '#00C6A2',
+    NEAR: '#00EC97',
+    WNEAR: '#00EC97',
     BTC: '#F7931A',
-    HYPE: '#4FD1C5',
+    HYPE: '#97FCE4',
     ARB: '#12AAFF',
-    AVAX: '#E84142'
+    AVAX: '#E84142',
+    BASE: '#0000FF',
+    OP: '#FE0420',
+    POL: '#8247E5',
+    BNB: '#F0B90B',
+    XRP: '#FFFFFF',
+    DOGE: '#C2A633',
+    LINK: '#2E61DE',
+    WBTC: '#F09242',
+    TON: '#0098EA',
+    SUI: '#4BA2FF',
+    APT: '#BA6BFF',
+    TRX: '#C4342B',
+    LTC: '#345D9D',
+    ADA: '#246DD3',
+    DOT: '#E6007A'
   };
+
+  /* The logos shipped as files in ui/logos/<ticker>.svg (see LICENSE.md there).
+     Listed here so a ticker with no file draws its fallback at once instead of
+     asking the server for a file that is not there. WNEAR wears NEAR's. */
+  var LOGOS = [
+    'BTC', 'ETH', 'SOL', 'USDC', 'USDT', 'NEAR', 'ARB', 'BASE', 'HYPE', 'OP', 'AVAX', 'POL',
+    'BNB', 'XRP', 'DOGE', 'LINK', 'WBTC', 'DAI', 'TON', 'SUI', 'APT', 'TRX', 'LTC', 'ADA', 'DOT',
+    'PYUSD', 'USDE'
+  ];
 
   /* Case and whitespace tolerant, because a symbol reaches this from a wallet
      row, from a server sentence and from a name like "Ether (ETH)". wNEAR is
@@ -73,6 +98,47 @@
   function colourFor(symbol) {
     var key = String(symbol === null || symbol === undefined ? '' : symbol).trim().toUpperCase();
     return COLOURS[key] || '';
+  }
+
+  function tickerOf(symbol) {
+    var key = String(symbol === null || symbol === undefined ? '' : symbol).trim().toUpperCase();
+    return key === 'WNEAR' ? 'NEAR' : key;
+  }
+
+  /* The real mark, as an image: <span class="logo" data-token="ETH"
+     style="--logo: 24px"><img src="./logos/eth.svg" alt=""></span>. The size
+     rides on the node as --logo, which the stylesheet reads. A ticker with no
+     file, or a file that fails to load, becomes a neutral disc with the
+     ticker's first letter in mono: never an emoji, never a broken image. The
+     brand colour rides along as --coin for whatever wants it. */
+  function logo(symbol, size) {
+    var ticker = tickerOf(symbol);
+    var node = document.createElement('span');
+    node.className = 'logo';
+    node.setAttribute('data-token', ticker);
+    node.setAttribute('aria-hidden', 'true');
+    if (size) node.style.setProperty('--logo', size + 'px');
+    var colour = colourFor(symbol);
+    if (colour) node.style.setProperty('--coin', colour);
+    if (LOGOS.indexOf(ticker) < 0) return fallback(node, ticker);
+    var img = document.createElement('img');
+    img.alt = '';
+    img.decoding = 'async';
+    img.draggable = false;
+    img.onerror = function () { fallback(node, ticker); };
+    img.src = './logos/' + ticker.toLowerCase() + '.svg';
+    node.appendChild(img);
+    return node;
+  }
+
+  function fallback(node, ticker) {
+    node.textContent = '';
+    node.setAttribute('data-fallback', 'true');
+    var initial = document.createElement('span');
+    initial.className = 'logo-initial mono';
+    initial.textContent = ticker ? ticker.charAt(0) : '?';
+    node.appendChild(initial);
+    return node;
   }
 
   /* An svg built by innerHTML on a span: the HTML parser puts <svg> in its own
@@ -97,5 +163,5 @@
     return paint(node, symbol);
   }
 
-  window.PhosphorMarks = { markFor: markFor, colourFor: colourFor, paint: paint, disc: disc, MARKS: MARKS, COLOURS: COLOURS };
+  window.PhosphorMarks = { markFor: markFor, colourFor: colourFor, colour: colourFor, logo: logo, paint: paint, disc: disc, MARKS: MARKS, COLOURS: COLOURS, LOGOS: LOGOS };
 })();

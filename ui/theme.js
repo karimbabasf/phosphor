@@ -25,22 +25,16 @@
    move. The server refuses a background it would be unreadable on, which is the
    other half of the same rule.
 
-   THE COLOURWAY is the one thing here that is not a colour. The theme names one
-   of the window's two (green on black, black on white) and this
-   file writes it as data-profile on the root, where tokens.css keeps the tokens
-   no slot reaches: the text, the amber, the lift. It is an attribute and not a
-   set of properties so a colourway is one word in one place, and so the text
-   colour still cannot be named by anything in a session. */
+   THE COLOURWAY is the one thing in the theme that is not a colour. The window
+   has one, green on black, and it is the stylesheet itself: tokens.css keeps
+   the tokens no slot reaches (the text, the amber, the lift) on :root, so the
+   name rides along in the theme and nothing here acts on it. The text colour
+   still cannot be named by anything in a session. */
 
 'use strict';
 
 (function () {
   var last = null;
-
-  /* The two colourways, by name. Anything else leaves the attribute alone: the
-     server only ever sends one of these, and the root falling back to green on
-     black is the right answer to a name it has never heard. */
-  var COLOURWAYS = ['green-on-black', 'black-on-white'];
 
   /* Same grammar the server enforces: hex, or nothing. Returns null on anything
      else, and the caller leaves the page alone rather than painting half a
@@ -101,8 +95,8 @@
     return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
   }
 
-  /* The text colour, as the stylesheet resolved it for the current colourway.
-     Read rather than derived so the canvas paints the same word the DOM does. */
+  /* The text colour, as the stylesheet resolved it. Read rather than derived so
+     the canvas paints the same word the DOM does. */
   function readToken(name, fallback) {
     try {
       var raw = getComputedStyle(document.documentElement).getPropertyValue(name);
@@ -125,14 +119,6 @@
     if (accent === null || ground === null) return;
     last = key;
 
-    /* The colourway first, because the slots below are written on top of what
-       it sets and the text colour has to be in place before the chart reads it. */
-    if (COLOURWAYS.indexOf(theme.profile) >= 0) {
-      if (document.documentElement.getAttribute('data-profile') !== theme.profile) {
-        document.documentElement.setAttribute('data-profile', theme.profile);
-      }
-    }
-
     var root = document.documentElement.style;
     var lift = luminance(ground) > 0.5 ? [0, 0, 0] : [255, 255, 255];
 
@@ -143,11 +129,11 @@
     root.setProperty('--line-strong', css(mix(ground, lift, 0.17)));
 
     root.setProperty('--ink', css(accent));
-    /* The label on the action fill is the ground it sits on: green letters on
-       the black button of the green colourway, black on the green button of the
-       black one, white on white's. The server holds the accent to 4.5:1 against
-       the ground, so the ground always reads on it; white is kept only for an
-       accent it would read better on, which no colourway of its own produces. */
+    /* The label on the action fill is the ground it sits on: black letters on
+       the green button. The server holds the accent to 4.5:1 against the
+       ground, so the ground always reads on it; white is kept only for an
+       accent it would read better on, which the colourway itself never
+       produces. */
     var groundOnAccent = contrast(ground, accent);
     var whiteOnAccent = contrast([255, 255, 255], accent);
     root.setProperty('--on-ink', groundOnAccent >= 4.5 || groundOnAccent >= whiteOnAccent ? css(ground) : '#FFFFFF');

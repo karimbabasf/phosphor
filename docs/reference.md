@@ -157,7 +157,7 @@ live on `/api/trade/action`, which the agent's door does not open onto.
 | Display tool | Does |
 |---|---|
 | `watch` | Points the app at a market and leaves it there, so the window keeps showing what the conversation is about after the conversation has moved on |
-| `set_theme` | Changes the window's colours: one of the mark's two colourways (green on black, black on white), then five colour slots on top. Moves no money, and it is on this surface because a person asking their assistant to darken the screen should not have to leave the conversation. The person picks a colourway from the menu under the mark in the top left |
+| `set_theme` | Changes the window's colours: five colour slots on top of the window's one colourway (green on black; the window is dark only). Moves no money, and it is on this surface because a person asking their assistant to recolour the screen should not have to leave the conversation |
 | `switch` | Moves the window between the plain-English view (`basic`), the operator view (`pro`) and the trading surface (`trade`). Moves no money, and every switch is audited. Named `switch` rather than `set_view_mode` because the whole requirement is that changing window costs one word: an agent hunting for how to "switch to trading" finds it immediately, and did not reliably find `set_view_mode`. Aliases (trading, hft, perps, simple) resolve in the app, so both doors agree. Answers with the screen record it moved to (`{ view, since, by: 'agent' }`). Not to be confused with `chart_draw view:`, which drives the chart's render state on the trade screen |
 
 A switch used to be refused outright while a proposal was pending, so an agent could not move a

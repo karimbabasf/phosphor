@@ -40,11 +40,6 @@
 
 /* ---------- basic ---------- */
 
-.panel-bare {
-  background: transparent;
-  border-color: transparent;
-}
-
 .panel-total {
   padding-top: var(--s-3);
   margin-top: var(--s-3);
@@ -251,77 +246,6 @@ button.rule.opens[data-open="true"] .chev { transform: rotate(135deg); }
 
 .activity-list .row:first-child {
   border-top: 1px solid var(--line);
-}
-
-/* A receipt is a .tx (components.css, the money grammar) that opens. The list
-   it sits in is flush with the panel, so the row carries the side padding
-   itself, and the first row keeps the rule that separates it from the head. */
-.tx.receipt-row {
-  width: 100%;
-  padding: var(--s-3) var(--s-4);
-  column-gap: var(--s-4);
-  row-gap: 3px;
-}
-
-.activity-list > .tx.receipt-row:first-child {
-  border-top: 1px solid var(--line);
-}
-
-/* The title is the headline, clamped at two lines. It used to be the rail's verbatim
-   sentence, which wrapped to six lines, buried the time under itself and ran across the
-   amount on the right, so two receipts filled the whole panel; that sentence now lives on the
-   opened receipt. The headline is one sentence, and on Pro's half-width panel one line cut it
-   before the coin it changed into, which is the half of the sentence that says what happened.
-   Two lines hold the whole sentence at that width; anything longer ends in an ellipsis, and
-   the whole sentence rides on the title attribute. */
-.receipt-row > .tx-title {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-}
-
-/* A time that is really an outcome ("Did not go through") reads in the warning
-   tone; the grammar's own 12 px stays. */
-.receipt-row > .tx-when.warn { color: var(--warn); }
-
-/* A move that did not go through left nothing, so its amount is unsigned and
-   quiet: the same weight as the time, not a number that means money. */
-.receipt-row > .tx-amount.dim { color: var(--text-3); }
-
-/* What arrived is the second leg of the line, a size up from the grammar's 12 px
-   footnote and in the up colour, so the two legs of a swap read as a pair: what
-   went out on top, what came in underneath. */
-.receipt-row > .tx-sub[data-dir="in"] {
-  font-size: var(--fs-13);
-  color: var(--up);
-}
-
-/* The rail's own words, on the opened receipt. Wrapped rather than clamped, because here the
-   whole thing is the point, and broken anywhere because an intent hash is one 44 character
-   word that would otherwise push the card sideways. */
-.said {
-  padding: var(--s-3) var(--s-4);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--bg-1);
-}
-
-.said-body {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  line-height: 1.55;
-}
-
-.tx-row {
-  padding: var(--s-3);
-  border-radius: var(--radius-sm);
-  background: var(--bg-2);
-  border: 1px solid var(--line);
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-2);
 }
 
 /* ---------- first run ---------- */
@@ -859,7 +783,6 @@ button.rule.opens[data-open="true"] .chev { transform: rotate(135deg); }
   .trade-symbol:hover .chev,
   .layers:hover .chev { transform: rotate(135deg); }
   .layers-pop { transition-duration: 1ms; }
-  .wordmark-glyph[data-state="working"] { animation: none; opacity: 0.8; }
 }
 
 /* ---------- the deck ----------
@@ -1230,45 +1153,6 @@ dialog.confirm::backdrop {
   animation: cardin var(--dur-enter) var(--ease-out) both;
 }
 
-/* ---------- locked: nothing behind the card can be read ---------- */
-
-/* Behind the lock the whole page is frosted, top bar included: the shape of
-   the window survives, no word does. Karim, 2026-09-14: nothing is visible
-   until the password is in, and the bar goes with it. It used to be dimmed
-   and readable, on the argument that a filter on a container re-blurs on
-   every repaint under it and locked is the state an unattended app sits in
-   longest. The cost is bounded now: the field, which was the only thing
-   painting every frame, stops the moment the body is locked (pattern.js
-   watches data-locked), so the blur is rasterised once and again only when a
-   price ticks. What is blurred is also taken out of reach: no pointer, no
-   selection, and lock.js marks the page inert so neither the keyboard nor a
-   screen reader can walk into it, which puts Freeze behind the password too.
-   #page is the only thing filtered, and nothing fixed lives inside it (the
-   beam canvas, the toasts and the screens are its siblings), so the filter
-   re-anchors nothing. Unlocking releases it over one enter duration. */
-#page {
-  transition: filter var(--dur-enter) var(--ease-out),
-              opacity var(--dur-enter) var(--ease-out);
-}
-
-body[data-locked="true"] #page {
-  filter: blur(28px);
-  opacity: 0.5;
-  pointer-events: none;
-  -webkit-user-select: none;
-  user-select: none;
-}
-
-/* The screen's ground finishes the job the blur starts: heavy enough that a
-   44 px balance under 28 px of blur is a tint and not a shape. It covers the
-   bar as well, so the card is the only thing on screen. */
-.screen {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  background: color-mix(in srgb, var(--bg-0) 86%, transparent);
-}
-
 .destinations {
   padding: var(--s-3);
   border-radius: var(--radius-sm);
@@ -1336,8 +1220,8 @@ body[data-locked="true"] #page {
    (--coin, set by ui/design/marks.js) over a wash of that colour, with a ring
    at a quarter strength, so ETH, SOL and USDC are three different rows before
    a word is read. A coin with no colour draws in the text colour on the plain
-   surface, as before. The wash is mixed on top of the surface so it holds on
-   both colourways. */
+   surface, as before. The wash is mixed on top of the surface so it holds
+   whatever the surface is. */
 .coin-mark {
   flex: 0 0 auto;
   width: 28px;

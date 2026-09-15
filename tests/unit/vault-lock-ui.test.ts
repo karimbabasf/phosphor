@@ -211,7 +211,6 @@ function build(state: Any, sources: string[]): World {
   sandbox.window = sandbox;
   sandbox.PhosphorNet = { readable: (e: Any) => String(e && e.message ? e.message : e) };
   sandbox.PhosphorMotion = { reduced: () => true };
-  sandbox.PhosphorFixtures = { active: false };
   sandbox.PhosphorEvents = {
     on: (type: string, fn: (frame: Any) => void) => { (events[type] ||= []).push(fn); },
     onConnection: (fn: (c: string) => void) => { fn('live'); },
@@ -274,7 +273,7 @@ test('an enclave wallet locks to one button and never a password field', async (
   const buttons = find(screen, 'button');
   assert.equal(buttons.length, 1, 'more than one button on the lock screen');
   assert.equal(buttons[0].textContent, 'Unlock with Touch ID');
-  assert.ok(textOf(screen).includes('Locked'));
+  assert.ok(textOf(screen).includes('Phosphor is locked'));
 
   // The click posts /api/vault/unlock with no purpose, and the button is dead
   // and says why until the dialog answers.
@@ -321,12 +320,69 @@ test('a password wallet still locks to a password field and posts /api/unlock', 
   const screen = world.nodes['screen-lock'];
   const input = find(screen, 'input[type="password"]')[0];
   assert.ok(input, 'no password field on a password lock screen');
-  assert.equal(find(screen, 'button')[0].textContent, 'Unlock');
+  assert.equal(input.focused, true, 'the field is not focused on arrival');
+  assert.ok(textOf(screen).includes('Phosphor is locked'));
+  const unlock = buttonNamed(screen, 'Unlock');
+  assert.ok(unlock, 'no Unlock button');
+  assert.equal(unlock.type, 'submit', 'Enter in the field would not submit');
   input.value = 'hunter22';
   find(screen, 'form')[0].dispatch('submit');
   await flush();
   assert.ok(world.calls.some((c) => c.route === '/api/unlock' && c.password === 'hunter22'));
   assert.equal(world.calls.some((c) => c.route === '/api/vault/unlock'), false);
+});
+
+test('a wrong password says so in one line, clears the field and keeps the cursor in it', async () => {
+  const world = build({ lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState({ custody: 'software' }) }, [LOCK]);
+  world.sandbox.PhosphorApi.unlock = () => Promise.resolve({ ok: false, error: 'That password is wrong.', code: 'wrong_password' });
+  world.sandbox.PhosphorLock.boot();
+  const screen = world.nodes['screen-lock'];
+  const input = find(screen, 'input[type="password"]')[0];
+  input.value = 'nope';
+  input.focused = false;
+  find(screen, 'form')[0].dispatch('submit');
+  await flush();
+  const error = find(screen, '.lock-error')[0];
+  assert.equal(error.hidden, false);
+  assert.equal(error.textContent, 'Wrong password. Try again.');
+  assert.equal(input.value, '');
+  assert.equal(input.focused, true);
+  assert.equal(find(screen, '.banner').length, 0, 'the error is a bar, not a line');
+});
+
+test('the eye shows and hides the password without leaving the field', () => {
+  const world = build({ lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState({ custody: 'software' }) }, [LOCK]);
+  world.sandbox.PhosphorLock.boot();
+  const screen = world.nodes['screen-lock'];
+  const input = find(screen, 'input')[0];
+  const eye = find(screen, 'button.lock-eye')[0];
+  assert.ok(eye, 'no show/hide toggle');
+  assert.equal(eye.type, 'button', 'the toggle would submit the form');
+  assert.equal(eye.getAttribute('aria-pressed'), 'false');
+  input.focused = false;
+  eye.click();
+  assert.equal(input.type, 'text');
+  assert.equal(eye.getAttribute('aria-pressed'), 'true');
+  assert.equal(eye.getAttribute('aria-label'), 'Hide password');
+  assert.equal(input.focused, true, 'the toggle took the focus');
+  eye.click();
+  assert.equal(input.type, 'password');
+  assert.equal(eye.getAttribute('aria-label'), 'Show password');
+});
+
+test('unlocking without motion.dev simply takes the screen down, and a lock mid-way puts it back', () => {
+  const world = build({ lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState({ custody: 'software' }) }, [LOCK]);
+  world.sandbox.PhosphorLock.boot();
+  const screen = world.nodes['screen-lock'];
+  assert.equal(world.sandbox.document.body.getAttribute('data-locked'), 'true');
+  assert.equal(world.nodes.page.inert, true);
+  world.put({ lock: { state: 'unlocked', idleLocksInSec: null } });
+  assert.equal(screen.hidden, true);
+  assert.equal(world.sandbox.document.body.getAttribute('data-locked'), null);
+  assert.equal(world.nodes.page.inert, false);
+  world.put({ lock: { state: 'locked', idleLocksInSec: null } });
+  assert.equal(screen.hidden, false);
+  assert.ok(find(screen, 'input[type="password"]')[0], 'the field did not come back');
 });
 
 test('a wallet file made on another Mac hands over to the first run instead of asking for Touch ID', () => {
