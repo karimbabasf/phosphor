@@ -79,18 +79,19 @@ jobs:
       - name: Install
         run: npm ci
 
+      - name: Stage the payload and prove it boots on the bundled runtime
+        run: npm run bundle
+
       # The full suite is the development gate and runs on the machine that develops; four of its
       # tests depend on that machine (three seat-capacity injection tests want the claude CLI on
       # the path, one asserts a p95 latency a shared runner cannot promise). The release gate is
       # the part of the tree that decides what ships: the version files agree, the manifest is
-      # shaped right, and the shell's own tests pass.
+      # shaped right, and the shell's own tests pass. After the bundle step, because the shell's
+      # build script wants the staged Node sidecar to exist.
       - name: Release guards
         run: |
           node --test tests/unit/version-agrees.test.ts tests/unit/release-manifest.test.ts
           (cd src-tauri && cargo test)
-
-      - name: Stage the payload and prove it boots on the bundled runtime
-        run: npm run bundle
 
       - name: Build, sign and bundle
         env:
