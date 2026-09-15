@@ -812,9 +812,9 @@ test('the bar is one segmented control, the command, Layers and one status line'
   }
 });
 
-test('the status line is a dot, the state the engine writes, and the venue latency in ms', async () => {
+test('the status line is a dot, the state word and the latency slot, all three left to the engine', async () => {
   const data = funded();
-  data.venue = { connected: true, source: 'ws', ageMs: 40, latencyMs: 12, error: null, degraded: false };
+  data.venue = { connected: true, source: 'ws', ageMs: 40, latencyMs: 4_800, error: null, degraded: false };
   const { host } = await renderPayload(data);
   const feed = byId(host, 'chart-feed');
   assert.ok(feed !== null);
@@ -822,15 +822,12 @@ test('the status line is a dot, the state the engine writes, and the venue laten
   assert.equal(feed.childNodes[0].tagName, 'i', 'no dot');
   assert.equal(feed.childNodes[1].tagName, 'b', 'no state word for the engine to write');
   const ms = byId(host, 'chart-latency');
-  assert.ok(ms !== null, 'no latency');
-  assert.equal(ms.textContent, '12 ms');
-});
-
-test('an unknown latency prints nothing rather than a zero', async () => {
-  const data = funded();
-  data.venue = { connected: true, source: 'rest', ageMs: null, latencyMs: null, error: null, degraded: true };
-  const { host } = await renderPayload(data);
-  assert.equal(byId(host, 'chart-latency')?.textContent, '');
+  assert.ok(ms !== null, 'no latency slot for the engine to write');
+  // The trading payload's venue.latencyMs is the age of the account snapshot, which the venue
+  // pushes every 5 s. Painted here it read 0 to 5000 ms and reset beside a price that moved
+  // every half second. The slot belongs to the chart engine, which writes the delay of the
+  // socket that actually serves the bars (tests/unit/chart-status-ui.test.ts).
+  assert.equal(ms.textContent, '', 'the trade screen must not paint the account age as the chart latency');
 });
 
 test('Layers holds the seven overlays and volume as check rows, following the payload', async () => {

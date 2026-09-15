@@ -232,6 +232,9 @@ export function createMarketData(deps: MarketDeps = {}) {
        which is the honest answer and saves every caller a cast. */
     liveConnected: (provider: string): boolean =>
       live !== null && (provider === 'hyperliquid' || provider === 'coinbase') && live.connected(provider),
+    // The venue's delay on the socket serving a read, off the read's `source` like the one above.
+    liveLatencyMs: (provider: string): number | null =>
+      live !== null && (provider === 'hyperliquid' || provider === 'coinbase') ? live.latencyMs(provider) : null,
     stopLive: (): void => live?.stop(),
   };
 }

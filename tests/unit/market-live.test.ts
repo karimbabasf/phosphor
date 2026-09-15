@@ -180,7 +180,10 @@ test('a venue nobody watches keeps no socket, and one that is watched keeps exac
   live.track('trade', [{ product: 'ETH-USD', provider: 'hyperliquid' }]);
   assert.equal(sockets.all.length, 1, 'one socket per venue, not one per market');
 
-  const subs = sockets.last().sent as { method: string; subscription: { type: string; coin: string; interval: string } }[];
+  // The keepalive ping rides the same socket and is not a subscription.
+  const subs = (sockets.last().sent as { method: string; subscription: { type: string; coin: string; interval: string } }[]).filter(
+    (m) => m.method !== 'ping',
+  );
   assert.deepEqual(
     subs.map((s) => s.subscription.coin),
     ['BTC', 'ETH'],
@@ -317,7 +320,8 @@ test('a dropped socket comes back with backoff and resubscribes everything it wa
     { product: 'ETH-USD', provider: 'hyperliquid' },
   ]);
   sockets.last().open();
-  assert.equal(sockets.last().sent.length, 2);
+  // Two subscriptions and the keepalive ping that times the venue.
+  assert.equal(sockets.last().sent.length, 3);
 
   sockets.last().drop();
   assert.equal(sockets.all.length, 1, 'the retry is on a timer, not immediate');
@@ -327,7 +331,7 @@ test('a dropped socket comes back with backoff and resubscribes everything it wa
   await new Promise((resolve) => setTimeout(resolve, 1100));
   assert.equal(sockets.all.length, 2, 'the rail dialled again');
   sockets.last().open();
-  const subs = sockets.last().sent as { subscription: { coin: string } }[];
+  const subs = (sockets.last().sent as { method: string; subscription: { coin: string } }[]).filter((m) => m.method !== 'ping');
   assert.deepEqual(
     subs.map((s) => s.subscription.coin),
     ['BTC', 'ETH'],
@@ -380,6 +384,80 @@ test('the age of a series is the gap since its last live bar, and null before th
   // A different series on the same venue has its own age, because one market going quiet
   // says nothing about another.
   assert.equal(live.ageMs('ETH-USD', 'hyperliquid'), null);
+  live.stop();
+});
+
+/* ---------- the venue's latency ----------
+
+   The number beside the chart's state word. It used to be the age of the trading socket's
+   account snapshot, which Hyperliquid pushes every 5 s, so it climbed from 0 to 5000 ms and
+   reset, on a chart whose price was moving every half second. The number has to be about the
+   socket that serves the chart, and it has to be a delay, not an age. */
+
+test('hyperliquid latency is the ping round trip, and null until a pong has come back', () => {
+  let clock = 10_000;
+  const { live, sockets } = harness({ now: () => clock });
+  live.track('chart', [{ product: 'BTC-USD', provider: 'hyperliquid' }]);
+  sockets.last().open();
+  // The open sends the first ping itself, after the subscriptions.
+  const sent = sockets.last().sent as { method: string }[];
+  assert.equal(sent[sent.length - 1]?.method, 'ping');
+  assert.equal(live.latencyMs('hyperliquid'), null, 'nothing measured until the pong');
+
+  clock += 140;
+  sockets.last().deliver({ channel: 'pong' });
+  assert.equal(live.latencyMs('hyperliquid'), 140);
+  assert.equal(live.status()[0]?.latencyMs, 140);
+
+  // The reading is one round trip, not a running clock: time passing does not age it.
+  clock += 4_000;
+  assert.equal(live.latencyMs('hyperliquid'), 140);
+
+  // A pong with no ping in flight measures nothing: it cannot be paired with a send time.
+  clock += 900;
+  sockets.last().deliver({ channel: 'pong' });
+  assert.equal(live.latencyMs('hyperliquid'), 140);
+
+  live.ping('hyperliquid');
+  clock += 65;
+  sockets.last().deliver({ channel: 'pong' });
+  assert.equal(live.latencyMs('hyperliquid'), 65);
+  live.stop();
+});
+
+test('coinbase latency is the heartbeat stamp against the local clock, never below zero', () => {
+  let clock = Date.parse('2026-09-14T17:00:00.000Z');
+  const { live, sockets } = harness({ now: () => clock });
+  live.track('chart', [{ product: 'BTC-USD', provider: 'coinbase' }]);
+  sockets.last().open();
+  assert.equal(live.latencyMs('coinbase'), null);
+
+  clock += 38;
+  sockets.last().deliver({ type: 'heartbeat', product_id: 'BTC-USD', time: '2026-09-14T17:00:00.000Z' });
+  assert.equal(live.latencyMs('coinbase'), 38);
+
+  // A local clock behind the venue's would read as a negative delay. Zero is the floor: a
+  // negative latency is a number nobody can act on.
+  sockets.last().deliver({ type: 'heartbeat', product_id: 'BTC-USD', time: '2026-09-14T17:00:01.000Z' });
+  assert.equal(live.latencyMs('coinbase'), 0);
+  // A heartbeat with no readable stamp changes nothing.
+  sockets.last().deliver({ type: 'heartbeat', product_id: 'BTC-USD', time: 'soon' });
+  assert.equal(live.latencyMs('coinbase'), 0);
+  live.stop();
+});
+
+test('a socket that closes takes its latency with it', () => {
+  let clock = 10_000;
+  const { live, sockets } = harness({ now: () => clock });
+  live.track('chart', [{ product: 'BTC-USD', provider: 'hyperliquid' }]);
+  sockets.last().open();
+  clock += 90;
+  sockets.last().deliver({ channel: 'pong' });
+  assert.equal(live.latencyMs('hyperliquid'), 90);
+  sockets.last().drop();
+  // A round trip measured on a connection that is gone says nothing about the next one.
+  assert.equal(live.latencyMs('hyperliquid'), null);
+  assert.equal(live.latencyMs('coinbase'), null, 'a venue never dialled has no reading');
   live.stop();
 });
 

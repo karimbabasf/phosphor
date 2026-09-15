@@ -20,6 +20,7 @@ import { createStore } from '../../src/store.ts';
 import { defaultPolicy } from '../../src/policy/file.ts';
 import { createMarketData } from '../../src/market/index.ts';
 import { createMarketStore } from '../../src/market/store.ts';
+import type { LiveSocket } from '../../src/market/live.ts';
 import type { Catalog, MarketRef, Provider } from '../../src/market/catalog.ts';
 import type { AppConfig, Candle, ChainId, ChainStatus, LedgerSnapshot, ViewMode } from '../../src/types.ts';
 
@@ -93,7 +94,15 @@ function snapshot(): LedgerSnapshot {
   };
 }
 
-export async function bootChartServer(opts: { view?: ViewMode; fetchDelayMs?: number; indicators?: Record<string, string | Buffer> } = {}): Promise<ChartHarness> {
+export async function bootChartServer(
+  opts: {
+    view?: ViewMode;
+    fetchDelayMs?: number;
+    indicators?: Record<string, string | Buffer>;
+    // A fake socket factory switches the live rail on; without one the fixture dials nothing.
+    liveSocket?: (url: string) => LiveSocket;
+  } = {},
+): Promise<ChartHarness> {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-chart-'));
   // Files a test drops into the indicators folder before the server reads it at boot, the way
   // a human would: name to body, read by the real loader through the real resolver.
@@ -127,7 +136,11 @@ export async function bootChartServer(opts: { view?: ViewMode; fetchDelayMs?: nu
       return syntheticBars(product, baseSec, bars);
     },
   });
-  const market = createMarketData({ store: marketStore, catalog: fakeCatalog() });
+  const market = createMarketData({
+    store: marketStore,
+    catalog: fakeCatalog(),
+    live: opts.liveSocket === undefined ? undefined : { enabled: true, wsImpl: opts.liveSocket },
+  });
 
   const agents = createAgents();
   agents.claim({ session: 'unnamed-session', client: 'test' });
@@ -201,7 +214,10 @@ export async function bootChartServer(opts: { view?: ViewMode; fetchDelayMs?: nu
     token,
     audit,
     agents,
-    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    close: () => {
+      market.stopLive();
+      return new Promise<void>((resolve) => server.close(() => resolve()));
+    },
     view: (mode) => {
       view = mode;
     },

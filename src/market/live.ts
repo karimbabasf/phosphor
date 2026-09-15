@@ -62,6 +62,8 @@ export type VenueStatus = {
   lastMessageMs: number | null;
   reconnects: number;
   lastError: string | null;
+  // The venue's delay as this socket measures it. See latencyMs on the rail.
+  latencyMs: number | null;
   products: string[];
 };
 
@@ -71,8 +73,10 @@ export const LIVE_BASE_SEC = 60;
 const OPEN = 1;
 // Hyperliquid cuts a connection it has not sent to in 60 s. A candle subscription on a quiet
 // coin idles for whole minutes, so the ping is not optional here the way it was for a trades
-// subscription on a busy one.
-const PING_MS = 30_000;
+// subscription on a busy one. It is also the round-trip probe behind the latency readout, which
+// is why it runs at 10 s rather than the 30 s the keepalive alone would want: six messages a
+// minute is nothing to the venue, and a reading older than that is a number about the past.
+const PING_MS = 10_000;
 const RETRY_CAP_MS = 15_000;
 // A socket that never opens never fires onclose either, so backoff alone cannot recover from
 // a hung connect. This is the timeout that makes the retry chain reachable.
@@ -214,6 +218,9 @@ type Venue = {
   since: string | null;
   lastMessageMs: number | null;
   lastError: string | null;
+  // When the ping in flight went out, and the last delay measured on this connection.
+  pingSentMs: number | null;
+  latencyMs: number | null;
   retryTimer: ReturnType<typeof setTimeout> | null;
   pingTimer: ReturnType<typeof setInterval> | null;
   openTimer: ReturnType<typeof setTimeout> | null;
@@ -255,6 +262,8 @@ export function createMarketLive(deps: MarketLiveDeps) {
       since: null,
       lastMessageMs: null,
       lastError: null,
+      pingSentMs: null,
+      latencyMs: null,
       retryTimer: null,
       pingTimer: null,
       openTimer: null,
@@ -373,6 +382,9 @@ export function createMarketLive(deps: MarketLiveDeps) {
       venue.socket = null;
       venue.since = null;
       venue.sent.clear();
+      // A delay measured on a connection that is gone says nothing about the next one.
+      venue.pingSentMs = null;
+      venue.latencyMs = null;
       stopPing(venue);
       scheduleRetry(venue);
     };
@@ -411,10 +423,22 @@ export function createMarketLive(deps: MarketLiveDeps) {
     // Coinbase Exchange answers its own heartbeat channel and wants no client ping; sending
     // one is a protocol error there, so only Hyperliquid gets a timer.
     if (venue.provider !== 'hyperliquid') return;
-    venue.pingTimer = setInterval(() => {
-      send(venue, { method: 'ping' });
-    }, PING_MS);
+    venue.pingTimer = setInterval(() => ping(venue.provider), PING_MS);
     venue.pingTimer.unref?.();
+    // One at once, so the latency readout is a measurement within a round trip of the connect
+    // rather than a blank until the first tick, on the first connection and on every reconnect.
+    ping(venue.provider);
+  }
+
+  /* One ping, timed. The send instant is what the pong is measured against, and a pong that
+     arrives with nothing in flight is not measured at all: it cannot be paired with a send.
+     Public so the timer is not the only way to fire one. */
+  function ping(provider: LiveProvider): void {
+    const venue = venues.get(provider);
+    if (venue === undefined || venue.provider !== 'hyperliquid') return;
+    if (venue.socket === null || venue.socket.readyState !== OPEN) return;
+    venue.pingSentMs = now();
+    send(venue, { method: 'ping' });
   }
 
   function stopPing(venue: Venue): void {
@@ -427,6 +451,8 @@ export function createMarketLive(deps: MarketLiveDeps) {
     venue.socket = null;
     venue.since = null;
     venue.sent.clear();
+    venue.pingSentMs = null;
+    venue.latencyMs = null;
     stopPing(venue);
     clearOpenTimer(venue);
     if (venue.retryTimer !== null) clearTimeout(venue.retryTimer);
@@ -467,6 +493,12 @@ export function createMarketLive(deps: MarketLiveDeps) {
       venue.lastError = typeof msg.data === 'string' ? msg.data : 'hyperliquid websocket error';
       return;
     }
+    if (msg.channel === 'pong') {
+      if (venue.pingSentMs === null) return;
+      venue.latencyMs = Math.max(0, now() - venue.pingSentMs);
+      venue.pingSentMs = null;
+      return;
+    }
     if (msg.channel !== 'candle') return;
     const row = hyperliquidCandle(msg.data);
     if (row === null || row.interval !== '1m') return;
@@ -483,6 +515,14 @@ export function createMarketLive(deps: MarketLiveDeps) {
     const type = msg.type;
     if (type === 'error') {
       venue.lastError = typeof msg.message === 'string' ? msg.message : 'coinbase websocket error';
+      return;
+    }
+    // The heartbeat carries the venue's own clock, once a second per product. Against the local
+    // clock that is the one-way delay, floored at zero because a machine whose clock runs behind
+    // the venue's would otherwise print a negative latency, which nobody can act on.
+    if (type === 'heartbeat') {
+      const stamp = typeof msg.time === 'string' ? Date.parse(msg.time) : NaN;
+      if (Number.isFinite(stamp)) venue.latencyMs = Math.max(0, now() - stamp);
       return;
     }
     // last_match is the trade that happened before this socket attached. It is already inside
@@ -550,6 +590,23 @@ export function createMarketLive(deps: MarketLiveDeps) {
     return venue !== undefined && venue.socket !== null && venue.socket.readyState === OPEN;
   }
 
+  /* How far behind the venue this socket runs, in milliseconds, or null while nothing has been
+     measured on the current connection. It is a delay and not an age: a reading does not grow
+     between measurements, which is the whole difference from the number that used to sit
+     beside the chart's state word (the trading socket's account snapshot, pushed every 5 s,
+     so it read 0 to 5000 ms and reset while the price moved every half second).
+
+     Two venues, two measurements, because each offers only one:
+       HYPERLIQUID  the ping round trip. The venue stamps nothing it sends, so a round trip is
+                    the only delay it lets a client measure.
+       COINBASE     the heartbeat's own timestamp against the local clock, one way. The venue
+                    permits no client ping, and stamps every heartbeat. */
+  function latencyMs(provider: LiveProvider): number | null {
+    const venue = venues.get(provider);
+    if (venue === undefined || venue.socket === null || venue.socket.readyState !== OPEN) return null;
+    return venue.latencyMs;
+  }
+
   function status(): VenueStatus[] {
     const out: VenueStatus[] = [];
     for (const venue of venues.values()) {
@@ -560,6 +617,7 @@ export function createMarketLive(deps: MarketLiveDeps) {
         lastMessageMs: venue.lastMessageMs,
         reconnects: venue.reconnects,
         lastError: venue.lastError,
+        latencyMs: latencyMs(venue.provider),
         products: [...venue.wanted].sort(),
       });
     }
@@ -576,5 +634,5 @@ export function createMarketLive(deps: MarketLiveDeps) {
     folding.clear();
   }
 
-  return { track, ageMs, connected, status, stop };
+  return { track, ageMs, connected, latencyMs, ping, status, stop };
 }

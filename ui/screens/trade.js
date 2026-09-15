@@ -259,9 +259,9 @@
 
     /* The status cluster the chart engine drives: one dot that answers "is
        this price current", the state word the engine writes, and the venue's
-       latency beside it when the feed is live. The engine also appends its
-       two situational controls here (back to live, clear the agent's
-       drawings). */
+       delay beside it, which the engine writes too, off the socket serving
+       the bars. The engine also appends its two situational controls here
+       (back to live, clear the agent's drawings). */
     var status = dom.el('span', 'chartstatus');
     status.id = 'chart-status';
     var feed = dom.el('span', 'feed');
@@ -275,8 +275,6 @@
     feed.appendChild(latency);
     status.appendChild(feed);
     bar.appendChild(status);
-
-    refs.latency = latency;
     return bar;
   }
 
@@ -605,18 +603,7 @@
       }
     }
     if (refs.volumeRow) setChecked(refs.volumeRow, volumeOn(true));
-    renderLatency();
     if (typeof window.chartInvalidate === 'function') window.chartInvalidate();
-  }
-
-  /* The venue's own round trip, written beside the state word the engine
-     owns. The stylesheet shows it only while the feed reads live: a latency
-     on a delayed feed is a number about the wrong thing. */
-  function renderLatency() {
-    if (!refs.latency) return;
-    var venue = data && data.venue;
-    var ms = venue && typeof venue.latencyMs === 'number' && isFinite(venue.latencyMs) ? Math.round(venue.latencyMs) : null;
-    dom.setText(refs.latency, ms === null ? '' : ms + ' ms');
   }
 
   /* ---------- data ---------- */

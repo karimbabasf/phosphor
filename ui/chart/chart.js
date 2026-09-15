@@ -2385,6 +2385,18 @@ function renderChartStatus() {
     feed.title = CHART.meta.error || FEED_TITLE[state];
   }
 
+  /* The venue's delay on the socket serving these bars, beside the state word. The server
+     only sends it while the feed is live, and the stylesheet only shows it then: a delay on a
+     feed that REST is serving would be a number about the wrong socket. It is a delay and not
+     an age, so it does not climb between payloads; the number this replaced was the age of
+     the trading socket's account snapshot, which the venue pushes every 5 s, so it ran from
+     0 to 5000 ms and reset while the price moved every half second. */
+  var latency = document.getElementById('chart-latency');
+  if (latency) {
+    var ms = CHART.meta.latencyMs;
+    latency.textContent = typeof ms === 'number' && isFinite(ms) ? Math.round(ms) + ' ms' : '';
+  }
+
   /* The venue word, in the Layers popover's foot. It prints what is actually SERVING the
      candles, and says "pinned" only when the choice was made rather than inherited, so a pin
      can never be mistaken for the default. It used to be a button that cycled the venue on

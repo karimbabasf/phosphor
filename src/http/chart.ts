@@ -92,6 +92,9 @@ type CandleLoad = {
   // Whether a venue socket is driving this market right now. Three states and no more, because
   // a person reading a chart has one question about the feed. See src/market/push.ts.
   feed: FeedState;
+  // How far behind the venue that socket runs, only while it is the one carrying the price.
+  // On any other feed state the number would be about a socket that is not serving the chart.
+  latencyMs: number | null;
   note: string | null;
 };
 
@@ -113,6 +116,9 @@ function readCandles(
   provider: ProviderChoice = 'auto',
 ): CandleLoad {
   const held = ctx.market.read(product, granularitySec, limit, provider);
+  // Per series, not per venue: a socket carrying BTC says nothing about SOL, and an open
+  // socket that has gone silent looks healthy from its readyState and nothing like it here.
+  const feed = feedFor(held, ctx.market.liveConnected);
   return {
     candles: held.candles,
     source: held.source,
@@ -120,9 +126,8 @@ function readCandles(
     built: 'candles',
     fetchedAt: new Date(Date.now() - held.ageSec * 1000).toISOString(),
     filling: held.filling,
-    // Per series, not per venue: a socket carrying BTC says nothing about SOL, and an open
-    // socket that has gone silent looks healthy from its readyState and nothing like it here.
-    feed: feedFor(held, ctx.market.liveConnected),
+    feed,
+    latencyMs: feed === 'live' ? ctx.market.liveLatencyMs(held.source) : null,
     note: held.note,
   };
 }
@@ -330,6 +335,7 @@ export function chartPayload(ctx: Ctx, slot = 0): unknown | null {
       fetchedAt: load.fetchedAt,
       filling: load.filling,
       feed: load.feed,
+      latencyMs: load.latencyMs,
       note: load.note,
       error,
     },

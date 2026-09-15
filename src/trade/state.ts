@@ -584,7 +584,10 @@ function venueFrom(
   // feed fresher than any message we hold.
   const ageMs = lastMessageMs === null ? null : Math.max(0, nowMs - lastMessageMs);
   // How far behind the venue the screen actually is: the age of the account state being drawn.
-  // Not the same number as ageMs, which only says the socket is still talking.
+  // Not the same number as ageMs, which only says the socket is still talking. And not the
+  // number beside the chart's state word: the venue pushes this snapshot every 5 s, so this
+  // one climbs to 5000 and resets, and painted beside a price moving every half second it read
+  // as a five-second chart. The chart's number is the market rail's (src/market/live.ts).
   const latencyMs = s === null ? null : Math.max(0, nowMs - s.atMs);
   const connected = status.connected === true;
   const source: 'ws' | 'rest' | 'none' = connected ? 'ws' : s === null ? 'none' : 'rest';
