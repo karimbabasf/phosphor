@@ -254,6 +254,12 @@ file. To run both at once, give the installed app its own port in its `config.lo
     npm test            # the unit suite: policy engine, proposals, ledger, composition, rails, signers, injection
     npm run e2e         # boots the app + a real MCP client, drives 32 checks, exits 0/1
     npm run typecheck   # tsc --noEmit over src, tests and scripts
+    npm run se:selftest # the Secure Enclave half: a real key, a real Touch ID, a wrong AAD refused (macOS only)
+
+The unit suite stands a software P-256 key in for the enclave, so it proves every byte on the
+Node side and nothing about the hardware. `npm run se:selftest` (after `npm run se:build`) is the
+other half: the built sidecar makes an enclave key, Node wraps a data key to it the way the
+keystore does, a wrong AAD must fail, and the right one must open after your Touch ID.
 
 One more goes to the real venue, because a unit test cannot tell you a remote API accepts what you
 built. It spends nothing.
