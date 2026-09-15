@@ -255,12 +255,25 @@ dialog.receipt-dialog::backdrop {
   min-height: 30px;
 }
 
+/* The short hash gives way first when the row is narrow: it is already a cut,
+   and the whole of it is one press away. */
 .receipt-tx-hash {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--fs-13);
   color: var(--text);
 }
 
+/* The place stays one line, whole, and only ever cuts when it alone is wider
+   than the row. */
 .receipt-tx-place {
+  flex: 0 0 auto;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text-3);
 }
 
