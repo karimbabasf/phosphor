@@ -144,9 +144,13 @@
     return connection;
   }
 
+  /* emit is the window's own side of the bus: a screen raising an event for
+     another screen (receipt:open from a fill row or an activity row), on the
+     same listeners the stream's frames reach. */
   window.PhosphorEvents = {
     start: start,
     on: on,
+    emit: emit,
     onConnection: onConnection,
     state: state
   };

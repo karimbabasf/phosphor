@@ -1,1 +1,1389 @@
-/* The Trade screen (ui/screens/trade.js): its rules move here out of screens.css. */
+/* Phosphor trade surface: the strip, the chart, the deck under it, and the
+   panes that can be hidden. Everything the trade screen draws lives here;
+   layout.css keeps the stage and the views, screens.css the other screens.
+
+   THE WRAP IS FOUR ROWS. The strip (auto), the chart with its bar (the rest),
+   the handle (6 px), the deck (its own height: 236 px by default, 300 on a
+   tall window, or whatever the handle was dragged to, as --deck written on
+   the wrap by ui/split.js). Each child is placed by row number, so a hidden
+   pane's track can be zeroed and the rows around it keep their places. */
+
+/* ---------- the stage on trade ---------- */
+
+body[data-view="trade"] .stage {
+  --conv-w: 360px;
+}
+
+/* ---------- hidden panes ----------
+
+   ui/split.js writes data-pane-<name>="hidden" on the host; the template
+   drops the pane's track and the pane and its handle leave the flow. Nothing
+   is measured: the neighbours take the room because the grid says so. */
+.stage[data-pane-conversation="hidden"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.stage[data-pane-conversation="hidden"] > .conversation,
+.stage[data-pane-conversation="hidden"] > .split-v {
+  display: none;
+}
+
+@media (max-width: 959px) {
+  .stage[data-pane-conversation="hidden"] {
+    grid-template-rows: minmax(0, 1fr);
+  }
+}
+
+.trade-wrap[data-pane-chart="hidden"] { grid-template-rows: auto 0 0 minmax(0, 1fr); }
+.trade-wrap[data-pane-deck="hidden"] { grid-template-rows: auto minmax(0, 1fr) 0 0; }
+.trade-wrap[data-pane-chart="hidden"][data-pane-deck="hidden"] { grid-template-rows: auto 0 0 0; }
+
+.trade-wrap[data-pane-chart="hidden"] > .trade-main,
+.trade-wrap[data-pane-chart="hidden"] > .split-h,
+.trade-wrap[data-pane-deck="hidden"] > .trade-rail,
+.trade-wrap[data-pane-deck="hidden"] > .split-h {
+  display: none;
+}
+
+/* The eye-off control every pane header carries: 24 px, quiet until it is
+   pointed at, the pane's own name in its label. */
+.pane-hide {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+  transition: color var(--dur-press) var(--ease-out),
+              background-color var(--dur-press) var(--ease-out);
+}
+
+.pane-hide .icon { width: 16px; height: 16px; }
+
+@media (hover: hover) and (pointer: fine) {
+  .pane-hide:hover { color: var(--text); background: var(--bg-2); }
+}
+
+.pane-hide:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: -2px;
+}
+
+/* A hidden attribute wins over any display this file sets. */
+.trade-wrap [hidden] { display: none !important; }
+
+/* ---------- icons on this surface ---------- */
+
+.trade-wrap .icon {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 1em;
+  height: 1em;
+}
+
+.trade-wrap .icon-14 { width: 14px; height: 14px; }
+.trade-wrap .icon-16 { width: 16px; height: 16px; }
+
+/* ---------- the wrap ---------- */
+
+.trade-wrap {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) 6px var(--deck, 236px);
+  height: 100%;
+  min-height: 0;
+}
+
+.trade-strip { grid-row: 1; }
+.trade-main { grid-row: 2; }
+.trade-wrap > .split-h { grid-row: 3; }
+.trade-rail { grid-row: 4; }
+
+@media (min-height: 900px) {
+  .trade-wrap { --deck: 300px; }
+}
+
+/* ---------- the strip ----------
+
+   One row, 56 px, read left to right: the market, the venue, the price, the
+   day, then the account and the layout on the right. Hairline under it, no
+   surface of its own: it is a header, not a card. */
+.trade-strip {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+}
+
+.strip-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  height: 56px;
+  padding: 0 var(--s-4);
+  min-width: 0;
+}
+
+/* Every cell on the row keeps its own width: nothing here shrinks under its
+   number. What does not fit at a narrower world is dropped by the container
+   queries below, never squeezed. */
+.strip-row > * { flex: 0 0 auto; }
+
+/* The market: the logo, the ticker at 15/600, the caret. */
+.trade-symbol-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.trade-symbol {
+  --opens-line: transparent;
+  --opens-bg: transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  height: 32px;
+  padding: 0 var(--s-2) 0 6px;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+}
+
+.trade-symbol[disabled] {
+  color: var(--text-3);
+  cursor: default;
+}
+
+.trade-symbol-logo {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+}
+
+
+.trade-mark-coin {
+  font-size: var(--fs-15);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1;
+}
+
+.trade-symbol .chev-icon,
+.layers .chev-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--text-3);
+  transition: transform var(--dur-press) var(--ease-out),
+              color var(--dur-press) var(--ease-out);
+}
+
+/* The venue: mark, name, and the account socket's dot. */
+.trade-venue {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 var(--s-3) 0 var(--s-2);
+  border-radius: var(--radius-pill);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  font-size: var(--fs-12);
+  font-weight: 500;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+
+.trade-venue-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-3);
+  flex: 0 0 auto;
+}
+
+.trade-venue[data-feed="live"] .trade-venue-dot {
+  background: var(--up);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--up) 18%, transparent);
+}
+
+.trade-venue[data-feed="delayed"] .trade-venue-dot { background: var(--warn); }
+.trade-venue[data-feed="down"] .trade-venue-dot { background: var(--down); }
+
+/* THE PRICE. 28 px mono at 500, tabular, and the tick is the digits' colour:
+   the direction's colour at once, the text colour 600 ms later. Never a box,
+   never a wash. */
+.px {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-28);
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  font-feature-settings: "tnum" 1;
+  font-variant-numeric: tabular-nums;
+  font-optical-sizing: auto;
+  white-space: nowrap;
+}
+
+.px[data-tick="up"] { animation: px-tick-up 600ms var(--ease-out) both; }
+.px[data-tick="down"] { animation: px-tick-down 600ms var(--ease-out) both; }
+
+@keyframes px-tick-up {
+  from { color: var(--up); }
+  to { color: var(--text); }
+}
+
+@keyframes px-tick-down {
+  from { color: var(--down); }
+  to { color: var(--text); }
+}
+
+/* The day and the account, as small figures: the label over the value. */
+.strip-day,
+.strip-stats {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+}
+
+.strip-stat {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.strip-stats .strip-stat { align-items: flex-end; }
+
+.strip-label {
+  font-size: var(--fs-11);
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.strip-value {
+  font-size: var(--fs-13);
+  line-height: 1.3;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.strip-value.dim { color: var(--text-2); }
+
+/* The change is plain coloured text: the sign is the news. */
+.trade-change .strip-value[data-dir="up"] { color: var(--up); }
+.trade-change .strip-value[data-dir="down"] { color: var(--down); }
+
+.strip-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+}
+
+/* What the venue says when it has something to say: one line under the row,
+   there only while it has something to say. */
+.trade-strip .trade-line {
+  padding: 0 var(--s-4) var(--s-2);
+  margin-top: -4px;
+  font-size: var(--fs-12);
+  line-height: 1.4;
+  color: var(--text-2);
+}
+
+.trade-line.warn { color: var(--warn); }
+
+/* The Layout button: an icon and a word, on the opening grammar. */
+.layout-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.layout {
+  --opens-line: var(--line);
+  --opens-bg: var(--bg-1);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 var(--s-3) 0 var(--s-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-12);
+  font-weight: 500;
+  color: var(--text);
+}
+
+.layout .icon { color: var(--text-2); }
+
+/* Narrower worlds drop the day's extremes, then the venue's name. */
+@container world (max-width: 1039px) {
+  .trade-high,
+  .trade-low { display: none; }
+}
+
+@container world (max-width: 819px) {
+  .trade-venue-name { display: none; }
+  .trade-venue { padding-right: var(--s-2); }
+}
+
+@container world (max-width: 679px) {
+  .trade-change { display: none; }
+}
+
+/* ---------- popovers ----------
+
+   The market list, Layers and Layout: one raised sheet under its button,
+   scaled in from its own corner over 150 ms and out the same way. */
+.pop {
+  position: absolute;
+  top: calc(100% + var(--s-1));
+  left: 0;
+  z-index: 20;
+  min-width: 196px;
+  padding: var(--s-1);
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--lift-sm);
+  opacity: 0;
+  visibility: hidden;
+  transform: scale(0.97);
+  transform-origin: top left;
+  transition: opacity 150ms var(--ease-out),
+              transform 150ms var(--ease-out),
+              visibility 0s linear 150ms;
+}
+
+.pop[data-open="true"] {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition-delay: 0s;
+}
+
+.pop:focus { outline: none; }
+
+/* Layout sits at the strip's right edge, so its sheet opens to the left. */
+.layout-pop {
+  left: auto;
+  right: 0;
+  transform-origin: top right;
+}
+
+.trade-menu {
+  min-width: 164px;
+  max-height: 264px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.trade-option {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  height: 30px;
+  padding: 0 var(--s-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  color: var(--text-2);
+  transition: background-color var(--dur-press) var(--ease-out),
+              color var(--dur-press) var(--ease-out);
+}
+
+
+.trade-option-name { flex: 1 1 auto; }
+
+/* Where the keyboard is. It is the same paint as hover, because they are the
+   same thing said by two devices. */
+.trade-option[data-active="true"] {
+  background: var(--bg-1);
+  color: var(--text);
+}
+
+.trade-option[aria-selected="true"] { color: var(--text); }
+
+.trade-option[aria-selected="true"]::after {
+  content: "";
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ink);
+}
+
+/* Check rows: a drawn 12 px box that fills with the accent when on. */
+.layers-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.layers-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+  height: 28px;
+  padding: 0 var(--s-2);
+  border-radius: var(--radius-sm);
+  text-align: left;
+  font-size: var(--fs-12);
+  color: var(--text-2);
+  transition: background-color var(--dur-press) var(--ease-out),
+              color var(--dur-press) var(--ease-out);
+}
+
+.layers-row[aria-checked="true"] { color: var(--text); }
+
+.layers-row:active { transform: scale(0.97); }
+
+.layers-row:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: -2px;
+}
+
+.layers-check {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  transition: background-color var(--dur-press) var(--ease-out),
+              border-color var(--dur-press) var(--ease-out);
+}
+
+.layers-row[aria-checked="true"] .layers-check {
+  border-color: var(--ink);
+  background: var(--ink);
+}
+
+.layers-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  margin-top: var(--s-1);
+  padding: var(--s-2) var(--s-2) var(--s-1);
+  border-top: 1px solid var(--line);
+}
+
+.layers-foot-label {
+  font-size: var(--fs-12);
+  color: var(--text-3);
+}
+
+.venue {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  color: var(--text-2);
+}
+
+/* ---------- the chart pane ---------- */
+
+/* Its own container, because the bar above the chart lays out against the room
+   the CHART has rather than against the window: the conversation column takes
+   from it and is not in a media query. */
+.trade-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-bottom: 1px solid var(--line);
+  container-type: inline-size;
+  container-name: trade;
+}
+
+/* ONE ROW. The segment (the timeframes), the indicator command, Layers, the
+   status line on the right and the pane's eye-off control, all at 26 px. The
+   command gives way first when the chart is narrow, down to a floor it is
+   still readable at; the status line never squeezes, because a wrapped word
+   in it reads as two states. Under 560 px the segment takes the first row
+   alone. */
+.chart-bar {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  border-bottom: 1px solid var(--line);
+  min-height: 44px;
+}
+
+/* 80 px is the floor the word Indicators still fits in. */
+.chart-bar .chart-cmd {
+  flex: 1 1 80px;
+  min-width: 80px;
+  max-width: 152px;
+}
+
+.chart-bar .chartstatus {
+  margin-left: auto;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+@container trade (max-width: 559px) {
+  .chart-bar .seg { flex: 0 0 100%; }
+  .chart-bar .chart-cmd { max-width: none; }
+}
+
+/* The one-line answer under the bar: a refused indicator, a clamped parameter.
+   It clears itself after six seconds, and it never carries a refusal a person
+   cannot act on. */
+.chart-note {
+  font-size: var(--fs-12);
+  color: var(--warn);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* THE SEGMENT. One bordered control at 26 px holding the timeframes as cells.
+   The current cell is lifted onto the surface above the segment's ground; the
+   rest are words. Everything else on the bar sits at the same height and the
+   same radius, which is what makes the row read as one control surface. */
+.seg {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  height: 26px;
+  padding: 2px;
+  gap: 1px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-1);
+  min-width: 0;
+}
+
+.seg-cells {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+}
+
+/* Four pixels of side padding: eight timeframes share one segment that fits,
+   with the command, Layers and the status, in the room a 1280 window leaves
+   the bar. */
+.seg .timeframe {
+  height: 20px;
+  padding: 0 4px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  color: var(--text-2);
+}
+
+.seg .timeframe.on,
+.seg .timeframe[aria-pressed="true"] {
+  color: var(--text);
+  background: var(--bg-2);
+  border-color: var(--line-strong);
+}
+
+.chart-cmd {
+  min-height: 26px;
+  height: 26px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+}
+
+.timeframe {
+  height: 26px;
+  padding: 0 var(--s-3);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  color: var(--text-2);
+  border: 1px solid transparent;
+  transition: color var(--dur-press) var(--ease-out),
+              border-color var(--dur-press) var(--ease-out),
+              transform var(--dur-press) var(--ease-out);
+}
+
+.timeframe:active { transform: scale(0.97); }
+.timeframe[aria-pressed="true"],
+.timeframe.on {
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+
+/* Layers: the button on the opening grammar, the sheet under it. */
+.layers-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.layers {
+  --opens-line: var(--line);
+  --opens-bg: var(--bg-1);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  height: 26px;
+  padding: 0 var(--s-2) 0 var(--s-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-12);
+  font-weight: 500;
+  color: var(--text);
+}
+
+/* The chart's status cluster. One dot that answers "is this price current",
+   and the venue it came from. Amber is the app's colour for waiting on
+   something, so a delayed feed reads the same here as everywhere else. */
+.chartstatus {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s-3);
+  min-width: 0;
+}
+
+/* The engine's two situational notes, the agent's object count and the way
+   back to live, sit in the same line and never wrap inside it. */
+.chartstatus .meta { white-space: nowrap; }
+
+/* The venue's round trip, shown only while the feed reads live. A latency on
+   a delayed feed is a number about the wrong thing. */
+.feed-ms {
+  color: var(--text-2);
+}
+
+.feed:not([data-feed="live"]) .feed-ms { display: none; }
+
+.feed {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--fs-12);
+  font-family: var(--font-mono);
+  color: var(--text-2);
+}
+
+.feed i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: 0 0 auto;
+}
+
+.feed[data-feed="live"] { color: var(--up); }
+.feed[data-feed="live"] i { box-shadow: 0 0 0 3px color-mix(in srgb, var(--up) 18%, transparent); }
+.feed[data-feed="delayed"] { color: var(--warn); }
+.feed[data-feed="offline"] { color: var(--text-3); }
+
+/* A read is out. The dot fades rather than spinning, because a chart that is
+   refreshing is still showing real bars and a spinner would say otherwise. */
+.feed[data-busy="1"] i {
+  animation: feedpulse 900ms var(--ease-in-out) infinite;
+}
+
+@keyframes feedpulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* The stage. The canvases inside are pinned to its edges, so clipping hides
+   no bar. What it does hide is the sub-pixel the stage spills when the bar
+   above it lands on a fraction, which was one scrollable pixel on a page that
+   never scrolls. */
+.chart-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 320px;
+  overflow: hidden;
+}
+
+.chart-stage canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.chartwrap {
+  position: absolute;
+  inset: 0;
+}
+
+.chart-hud {
+  position: absolute;
+  top: var(--s-3);
+  left: var(--s-3);
+  z-index: 2;
+  pointer-events: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  color: var(--text-2);
+}
+
+/* THE GRID. chart_layout puts up to four charts side by side; the stage carries
+   the count as data-n (ui/chart/mini.js writes it) and the primary keeps its
+   ids and its own engine whatever the count. One chart fills the column, two
+   sit side by side, three and four go two by two. In a grid the primary stops
+   being pinned to the stage's edges and takes its cell like the others. */
+.chart-stage[data-n="2"],
+.chart-stage[data-n="3"],
+.chart-stage[data-n="4"] {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: minmax(0, 1fr);
+  gap: 1px;
+  background: var(--line);
+}
+
+.chart-stage[data-n="3"],
+.chart-stage[data-n="4"] {
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+}
+
+.chart-stage[data-n="2"] > .chartwrap,
+.chart-stage[data-n="3"] > .chartwrap,
+.chart-stage[data-n="4"] > .chartwrap {
+  position: relative;
+  inset: auto;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-1);
+}
+
+/* A comparison chart: the header is the coin in the first tone, the timeframe
+   in the third, and the last close in the mono face on the right. Nothing on
+   it is a control. */
+.mini {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-1);
+}
+
+.mini-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.mini-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  flex: 0 0 auto;
+  height: 26px;
+  padding: 0 var(--s-3);
+  font-size: var(--fs-12);
+  border-bottom: 1px solid var(--line);
+}
+
+.mini-coin {
+  font-weight: 500;
+  color: var(--text);
+}
+
+.mini-tf {
+  color: var(--text-3);
+}
+
+.mini-last {
+  margin-left: auto;
+  color: var(--text-2);
+}
+
+/* ---------- the handle between the chart and the deck ---------- */
+
+/* A horizontal bar, dragged up and down. A short grip sits in its middle so
+   the handle can be found before it is hovered. */
+.split-h {
+  position: relative;
+  cursor: row-resize;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid transparent;
+  transition: background-color var(--dur-press) var(--ease-out);
+  touch-action: none;
+}
+
+.split-h::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 32px;
+  height: 3px;
+  margin: -1.5px 0 0 -16px;
+  border-radius: 2px;
+  background: var(--line-strong);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .split-h:hover { background: var(--line-strong); }
+}
+
+.split-h:focus-visible { background: var(--ink); outline: none; }
+
+/* ---------- the deck: one panel, three tabs ----------
+
+   The tab row, then the one list the active tab holds, scrolling inside
+   itself with the fade at the cut. The deck never scrolls as a whole. */
+.trade-rail {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-1);
+}
+
+.trade-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  height: 36px;
+  padding: 0 var(--s-3) 0 var(--s-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.trade-tablist {
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+}
+
+.trade-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  padding: 0 var(--s-2);
+  margin-right: var(--s-2);
+  font-size: var(--fs-13);
+  font-weight: 500;
+  color: var(--text-2);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  transition: color var(--dur-press) var(--ease-out);
+}
+
+/* The underline: two pixels of ink over the hairline, only under the active
+   tab. */
+.trade-tab::after {
+  content: "";
+  position: absolute;
+  left: var(--s-2);
+  right: var(--s-2);
+  bottom: -1px;
+  height: 2px;
+  border-radius: 1px;
+  background: transparent;
+  transition: background-color var(--dur-press) var(--ease-out);
+}
+
+.trade-tab[aria-selected="true"] { color: var(--text); }
+.trade-tab[aria-selected="true"]::after { background: var(--ink); }
+
+@media (hover: hover) and (pointer: fine) {
+  .trade-tab:hover { color: var(--text); }
+}
+
+.trade-tab:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: -2px;
+}
+
+.trade-tab-count {
+  font-size: var(--fs-12);
+  color: var(--text-3);
+}
+
+.trade-tab[aria-selected="true"] .trade-tab-count { color: var(--text-2); }
+.trade-tab-count[data-zero="true"] { color: var(--text-3); }
+
+.trade-tabs .pane-hide { margin-left: auto; }
+
+.trade-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.trade-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0 var(--s-4) var(--s-3);
+}
+
+/* A routine empty answer is one quiet line and nothing else. */
+.trade-empty {
+  padding-top: var(--s-3);
+  font-size: var(--fs-12);
+  line-height: 1.45;
+  color: var(--text-3);
+}
+
+.trade-foot {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: center;
+  padding: var(--s-2) var(--s-4) var(--s-3);
+  border-top: 1px solid var(--line);
+}
+
+.trade-more {
+  min-height: 28px;
+  height: 28px;
+  font-size: var(--fs-12);
+}
+
+/* A pill: the side of a fill or a position, the state of a plan. 11/500,
+   the direction's colour on its wash, or quiet on the raised ground. */
+.trade-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-11);
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.trade-pill[data-tone="up"] { color: var(--up); background: var(--up-wash); }
+.trade-pill[data-tone="down"] { color: var(--down); background: var(--down-wash); }
+.trade-pill[data-tone="warn"] { color: var(--warn); background: var(--warn-wash); }
+.trade-pill[data-tone="ink"] { color: var(--text); }
+.trade-pill[data-tone="ink"] .icon { color: var(--ink); }
+.trade-pill .icon { width: 12px; height: 12px; }
+
+/* ---------- a row on the deck ----------
+
+   A position or a plan. Each one enters with a small rise the first time it is
+   drawn, keeps its identity across every refresh after that, and carries the
+   kind and id a highlight names. */
+.trade-row {
+  border-radius: var(--radius-sm);
+  transition: opacity 200ms var(--ease-out);
+}
+
+.trade-enter {
+  animation: trade-enter var(--dur-enter) var(--ease-out) both;
+}
+
+@keyframes trade-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Close and Cancel: the one control grammar at 26 px. A pressed one asks
+   "Sure?" in the colour this window uses for waiting on a person. */
+.trade-row-foot {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.trade-act {
+  min-height: 26px;
+  height: 26px;
+  padding: 0 var(--s-3);
+  font-size: var(--fs-12);
+}
+
+.trade-act[data-armed="true"] {
+  --btn-fg: var(--warn);
+  --btn-edge: color-mix(in srgb, var(--warn) 40%, transparent);
+}
+
+/* THE OPEN ROWS: a table. Headings in 11/500 muted over the columns, then one
+   line per position: the coin with its logo and side, then the six figures in
+   mono, Close at the end. The list scrolls sideways before a column is
+   squeezed under its number. */
+.pos-head,
+.pos-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.3fr) repeat(4, minmax(72px, 1fr)) repeat(2, minmax(56px, 0.7fr)) 72px;
+  column-gap: var(--s-3);
+  align-items: center;
+  min-width: 640px;
+}
+
+.trade-open .trade-list { overflow-x: auto; }
+
+.pos-head {
+  flex: 0 0 auto;
+  height: 28px;
+  margin: 0 var(--s-4);
+  border-bottom: 1px solid var(--line);
+}
+
+.pos-col {
+  font-size: var(--fs-11);
+  font-weight: 500;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.pos-row {
+  padding: var(--s-2) 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  font-size: var(--fs-13);
+  color: var(--text);
+}
+
+.pos-row:last-child { border-bottom: 0; }
+
+.pos-asset {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+
+.pos-coin {
+  font-size: var(--fs-14);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.pos-lev {
+  font-size: var(--fs-12);
+  color: var(--text-3);
+}
+
+.pos-row > .mono { white-space: nowrap; }
+.pos-row > .pos-stop,
+.pos-row > .pos-target { color: var(--text-2); }
+.pos-row > .trade-row-foot { justify-self: end; }
+.pos-row > .trade-callout { grid-column: 1 / -1; }
+
+/* THE WAITING ROWS. The sentence and its pill on one line, the conditions as
+   dots under it, Cancel at the right. */
+.plan-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-3) 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+}
+
+.plan-row:last-child { border-bottom: 0; }
+
+.plan-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+
+.trade-row-line {
+  font-size: var(--fs-14);
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--text);
+  min-width: 0;
+}
+
+.plan-head .trade-pill { margin-top: 2px; flex: 0 0 auto; }
+
+.trade-conds {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.trade-cond {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--fs-12);
+  line-height: 1.45;
+  color: var(--text-2);
+}
+
+.trade-cond-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid var(--text-3);
+  background: transparent;
+  transition: background-color var(--dur-press) var(--ease-out),
+              border-color var(--dur-press) var(--ease-out);
+}
+
+.trade-cond[data-holds="true"] .trade-cond-dot {
+  border-color: var(--ink);
+  background: var(--ink);
+}
+
+/* THE TAPE. One line per fill: the clock, the side, the coin with its logo,
+   the size, the value coloured by side, and the explorer link at the end. An
+   ended plan takes the glyph and its sentence across the middle. Rows are
+   ruled, not boxed; a fill row opens the receipt and takes the hover ground. */
+.tape-head,
+.done-row {
+  display: grid;
+  grid-template-columns: 40px 44px minmax(0, 1fr) minmax(64px, auto) minmax(80px, auto) 20px;
+  column-gap: var(--s-3);
+  align-items: center;
+}
+
+.tape-head {
+  flex: 0 0 auto;
+  height: 28px;
+  margin: 0 var(--s-4);
+  border-bottom: 1px solid var(--line);
+}
+
+.tape-head > .pos-col:nth-child(4),
+.tape-head > .pos-col:nth-child(5) { justify-self: end; }
+
+.done-row {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-13);
+  color: var(--text);
+  text-align: left;
+  transition: opacity 200ms var(--ease-out),
+              background-color var(--dur-press) var(--ease-out);
+}
+
+.done-row:last-child { border-bottom: 0; }
+
+.done-row > .tx-when {
+  grid-column: 1;
+  font-size: var(--fs-12);
+  line-height: 1.4;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.done-row > .tx-side { grid-column: 2; justify-self: start; }
+
+.done-row > .tx-asset {
+  grid-column: 3;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+
+.tx-coin {
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.done-row > .tx-size {
+  grid-column: 4;
+  justify-self: end;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.done-row > .tx-amount {
+  grid-column: 5;
+  justify-self: end;
+  white-space: nowrap;
+}
+
+.done-row > .tx-amount[data-dir="in"] { color: var(--up); }
+.done-row > .tx-amount[data-dir="out"] { color: var(--down); }
+.done-row > .tx-amount.dimmer { color: var(--text-3); }
+
+.done-row > .tx-link {
+  grid-column: 6;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+}
+
+.tx-open {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  color: var(--ink);
+  transition: background-color var(--dur-press) var(--ease-out);
+}
+
+.tx-open:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: -2px;
+}
+
+/* An ended plan: the glyph where the side would be, the sentence across the
+   coin and size columns, the id where the value sits. */
+.ended-row > .tx-mark {
+  grid-column: 2;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-2);
+  color: var(--text-2);
+}
+
+.ended-row > .tx-title {
+  grid-column: 3 / span 2;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.done-row > .trade-callout { grid-column: 1 / -1; grid-row: 2; margin-top: var(--s-1); }
+
+.fill-row { cursor: pointer; }
+
+@media (hover: hover) and (pointer: fine) {
+  .fill-row:hover { background: var(--bg-2); }
+  .tx-open:hover { background: var(--ink-wash); }
+  .trade-symbol:hover .chev-icon,
+  .layers:hover .chev-icon { transform: translateY(1px); color: var(--text-2); }
+  .trade-option:hover {
+    background: var(--bg-1);
+    color: var(--text);
+  }
+}
+
+.fill-row:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: -2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ---------- the spotlight ----------
+
+   The agent pointing at one row. The ring is the pulse ui/screens/trade.js
+   runs through WAAPI; under reduced motion it is this still ring instead. The
+   rest of the deck steps back to 0.55 for the same 1.2 s, both ways on the one
+   200 ms ease-out, and the note sits under the row in the agent's own words.
+   Amber, because a pointer is the agent asking a person to look. */
+.trade-rail [data-dim="true"] { opacity: 0.55; }
+
+.trade-callout {
+  margin: 0;
+  padding: 2px 0 2px var(--s-2);
+  border-left: 1px solid var(--warn);
+  font-size: var(--fs-12);
+  line-height: 1.45;
+  color: var(--text-2);
+}
+
+/* ---------- Pro: the Trading panel's positions ----------
+
+   The same row as the trade screen's open rows, folded for a panel a third as
+   wide: the coin with its logo and side on the first line with the profit at
+   the right, the size, entry and mark in mono under them. */
+.pro-pos {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  column-gap: var(--s-3);
+  row-gap: 2px;
+  align-items: center;
+  font-size: var(--fs-13);
+}
+
+.pro-pos-asset {
+  grid-column: 1;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+
+.pro-pos-coin {
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.pro-pos-lev {
+  font-size: var(--fs-12);
+  color: var(--text-3);
+}
+
+.pro-pos-pnl {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+  white-space: nowrap;
+}
+
+.pro-pos-meta {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--s-3);
+  padding-left: 28px;
+  font-size: var(--fs-12);
+  color: var(--text-2);
+}
+
+/* ---------- narrow worlds ---------- */
+
+/* When the chart can no longer hold a usable plot at the world's width, the
+   world scrolls and the deck sits under the chart at its own height, which is
+   the fallback the brief allows. The threshold is the width at which the
+   chart drops under about 530 px beside the conversation column. */
+@container world (max-width: 859px) {
+  /* flex: 0 0 auto, not the base row's 1 1: stacked, the wrap is taller than the
+     world and must say so. The chart row takes the room the world has to
+     spare; the deck row is as tall as its list. */
+  .trade-wrap {
+    flex: 0 0 auto;
+    grid-template-rows: auto minmax(0, 1fr) 0 auto;
+    height: auto;
+    min-height: 100%;
+  }
+  .trade-wrap[data-pane-chart="hidden"] { grid-template-rows: auto 0 0 auto; }
+  .trade-wrap[data-pane-deck="hidden"] { grid-template-rows: auto minmax(0, 1fr) 0 0; }
+  /* Stacked, the world scrolls again, so nothing in the deck holds a height of
+     its own: the list is as tall as what is in it. */
+  .trade-rail { overflow: visible; }
+  .trade-list { overflow: visible; }
+  .trade-wrap > .split-h { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .px[data-tick] { animation: none; color: var(--text); }
+  .feed[data-busy="1"] i { animation: none; opacity: 0.6; }
+  .trade-symbol:hover .chev-icon,
+  .layers:hover .chev-icon { transform: none; }
+  .pop { transition-duration: 1ms; }
+  .trade-rail [data-spot="true"] { box-shadow: 0 0 0 2px var(--warn); }
+  /* The dim keeps its short fade: it is a change of state, not motion. */
+  .trade-row,
+  .done-row { transition-duration: 200ms !important; }
+  .trade-enter { animation: none; }
+}

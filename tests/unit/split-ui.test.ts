@@ -291,6 +291,122 @@ test('a window too small for both floors keeps the safety surface', () => {
   assert.equal(s.splitClamp(900, 168, 40), 168);
 });
 
+// ---------- panes that can be hidden ----------
+
+/** A stage and a trade wrap for the pane state to be written on, found by their selectors. */
+function hosts(): { nodes: Record<string, Any>; querySelector: (sel: string) => Any } {
+  const make = (): Any => {
+    const attrs: Record<string, string> = {};
+    return {
+      attrs,
+      setAttribute(k: string, v: string) { attrs[k] = v; },
+      removeAttribute(k: string) { delete attrs[k]; },
+      getAttribute(k: string) { return attrs[k] ?? null; },
+    };
+  };
+  const nodes: Record<string, Any> = { '.stage': make(), '.trade-wrap': make() };
+  return { nodes, querySelector: (sel: string) => nodes[sel] ?? null };
+}
+
+function loadWithHosts(storage: Any = makeStorage()): { s: Any; nodes: Record<string, Any>; events: Any[] } {
+  const { nodes, querySelector } = hosts();
+  const events: Any[] = [];
+  const sandbox: Any = {
+    document: {
+      body: { classList: { add() {}, remove() {} } },
+      querySelector,
+      querySelectorAll: () => [],
+    },
+    setTimeout: () => 0,
+    clearTimeout: () => {},
+    console,
+    CustomEvent: function (type: string, init: Any) { return { type, detail: init?.detail }; },
+    Event: function (type: string) { return { type }; },
+  };
+  sandbox.window = sandbox;
+  sandbox.window.dispatchEvent = (ev: Any) => events.push(ev);
+  sandbox.localStorage = storage;
+  sandbox.requestAnimationFrame = () => 1;
+  sandbox.cancelAnimationFrame = () => {};
+  createContext(sandbox);
+  runInContext(SOURCE, sandbox, { filename: 'ui/split.js' });
+  return { s: sandbox, nodes, events };
+}
+
+test('every pane starts on screen, and the three are the conversation, the chart and the deck', () => {
+  const s = load();
+  // Through JSON: the arrays are built in the vm's realm and a strict deep compare tests
+  // prototypes as well as values.
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(s.splitPaneList().map((p: Any) => [p.name, p.hidden]))),
+    [['conversation', false], ['chart', false], ['deck', false]],
+  );
+  for (const pane of s.splitPaneList()) assert.ok(typeof pane.label === 'string' && pane.label.length > 0, pane.name + ' has a word');
+  assert.equal(s.splitPaneHidden('deck'), false);
+  assert.equal(s.splitPaneHidden('nothing'), false, 'a pane that does not exist is not hidden either');
+});
+
+test('hiding a pane writes the attribute the stylesheet reads, tells the page, and comes back after a reload', () => {
+  const storage = makeStorage();
+  const first = loadWithHosts(storage);
+  assert.equal(first.s.splitPaneSet('deck', false), true, 'the answer is the state the pane was left in');
+  assert.equal(first.nodes['.trade-wrap'].getAttribute('data-pane-deck'), 'hidden');
+  assert.equal(first.nodes['.stage'].getAttribute('data-pane-conversation'), null, 'another pane was touched');
+  assert.equal(storage.map.get('phosphor.pane.deck'), 'hidden');
+  assert.deepEqual(
+    first.events.map((e) => [e.type, e.detail?.name, e.detail?.hidden]),
+    [['phosphor:pane', 'deck', true], ['resize', undefined, undefined]],
+    'the page is told by name and as a resize',
+  );
+
+  // A new page, the same profile: the deck is still hidden, applied when the deck boots.
+  const second = loadWithHosts(storage);
+  assert.equal(second.s.splitPaneHidden('deck'), true);
+  second.s.splitBoot();
+  assert.equal(second.nodes['.trade-wrap'].getAttribute('data-pane-deck'), 'hidden');
+
+  // Shown again: the attribute goes, and so does the key. Shown is the default, so it is not
+  // written down.
+  assert.equal(second.s.splitPaneSet('deck', true), false);
+  assert.equal(second.nodes['.trade-wrap'].getAttribute('data-pane-deck'), null);
+  assert.equal(storage.map.has('phosphor.pane.deck'), false);
+});
+
+test('a toggle flips the pane, and a pane that is not in the table is refused', () => {
+  const { s, nodes } = loadWithHosts();
+  assert.equal(s.splitPaneToggle('conversation'), true);
+  assert.equal(nodes['.stage'].getAttribute('data-pane-conversation'), 'hidden');
+  assert.equal(s.splitPaneToggle('conversation'), false);
+  assert.equal(nodes['.stage'].getAttribute('data-pane-conversation'), null);
+  assert.equal(s.splitPaneSet('gate', false), false, 'there is no pane called gate');
+});
+
+test('storage that refuses everything still hides and shows a pane for the session', () => {
+  const { s, nodes } = loadWithHosts(makeStorage(true));
+  s.splitPaneSet('chart', false);
+  assert.equal(s.splitPaneHidden('chart'), true);
+  assert.equal(nodes['.trade-wrap'].getAttribute('data-pane-chart'), 'hidden');
+  s.splitPaneSet('chart', true);
+  assert.equal(s.splitPaneHidden('chart'), false);
+});
+
+test('a stored word that is not "hidden" leaves the pane on screen', () => {
+  const storage = makeStorage();
+  storage.map.set('phosphor.pane.chart', 'gone');
+  const s = load(storage);
+  assert.equal(s.splitPaneHidden('chart'), false);
+});
+
+test('the pane API is on the window under one name, for the headers and the Layout menu', () => {
+  const s = load();
+  assert.equal(typeof s.PhosphorSplit.paneHidden, 'function');
+  assert.equal(typeof s.PhosphorSplit.setPane, 'function');
+  assert.equal(typeof s.PhosphorSplit.togglePane, 'function');
+  assert.equal(typeof s.PhosphorSplit.panes, 'function');
+  assert.equal(typeof s.PhosphorSplit.paneControl, 'function');
+  assert.equal(s.PhosphorSplit.paneControl('deck'), null, 'no document to build a control in, so none');
+});
+
 test('two presses on a handle put it back to the stylesheet default', () => {
   const storage = makeStorage();
   const s = load(storage);

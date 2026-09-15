@@ -20,16 +20,23 @@
  * THE KEYBOARD IS NOT A CHECKBOX. This is a wallet. Every handle is a real focusable
  * separator: arrows move it, Enter puts it back. Nothing here is reachable only by a pointer.
  *
- * WHAT IT TELLS THE REST OF THE PAGE. Two events. `phosphor:split` fires once per animation
+ * WHAT IT TELLS THE REST OF THE PAGE. Three events. `phosphor:split` fires once per animation
  * frame while a boundary moves, because the box-drawing frames are measured in characters
  * and have to be redrawn on the frame the boundary moved, not after it stops. A plain
  * `resize` fires once, on release, for everything that already listens for one (the chart's
  * ResizeObserver picks the canvas up on its own; the donut and the basic canvases do not).
+ * `phosphor:pane` fires when a pane is hidden or shown, with the pane's name and state.
+ *
+ * PANES CAN BE HIDDEN, NOT DRAGGED SHUT. Hiding is a separate act from sizing: a checkbox in
+ * the Layout menu or the eye-off control in the pane's own header, never the handle. A hidden
+ * pane is a data attribute on its host and the stylesheet reflows the grid; the handle beside
+ * it goes with it, and the neighbours take the room. The choice persists on its own key.
  */
 
 'use strict';
 
 var SPLIT_PREFIX = 'phosphor.split.';
+var SPLIT_PANE_PREFIX = 'phosphor.pane.';
 var SPLIT_STEP = 16;       /* one arrow press, in px: a nudge, not a jump */
 var SPLIT_DOUBLE_MS = 400; /* two presses this close together are one double click */
 
@@ -341,4 +348,152 @@ function splitBoot() {
     if (fresh[y].conf.axis === 'y') splitRestore(fresh[y]);
   }
   for (var w = 0; w < fresh.length; w++) splitWire(fresh[w]);
+
+  /* Hidden panes come back hidden. Applied after the sizes for the same reason the
+     columns go before the panels: a size restored against a pane that is about to
+     vanish would be clamped against room that is not there. */
+  splitPanesApply();
+  splitPaneGate();
 }
+
+/* ---------- panes that can be hidden ----------
+ *
+ * The three panes a person may take off the screen, and the only place they are written
+ * down. `host` is where the state is written, as `data-pane-<name>="hidden"`; the stylesheet
+ * (ui/design/trade.css) keys the grid template off it, so the pane's track and its handle
+ * drop out and the neighbours take the room. Nothing here measures anything.
+ *
+ *   conversation   the assistant column, on every mode. Written on the stage.
+ *   chart          the chart with its bar, on trade. Written on the trade wrap.
+ *   deck           the tabbed panel under the chart, on trade. Written on the trade wrap.
+ *
+ * THE GATE STAYS REACHABLE. The approval dock lives in the conversation column, so a column
+ * hidden while a proposal waits would be a window arranged to hide the one control that
+ * stops money moving. The dock's own hidden attribute is watched: the moment it has
+ * something to show, the column is shown too. It can be hidden again once the dock is empty.
+ */
+var SPLIT_PANES = {
+  conversation: { host: '.stage', label: 'Assistant', gate: '#overlay' },
+  chart: { host: '.trade-wrap', label: 'Chart' },
+  deck: { host: '.trade-wrap', label: 'Positions and fills' },
+};
+
+function splitPaneKey(name) {
+  return SPLIT_PANE_PREFIX + name;
+}
+
+/* True when the stored word is "hidden". Anything else, including a value something else
+   wrote over the key, reads as shown: the safe default for a pane is on screen. */
+function splitPaneHidden(name) {
+  var key = splitPaneKey(name);
+  if (SPLIT_MEM[key] !== undefined) return SPLIT_MEM[key] === 'hidden';
+  try {
+    return window.localStorage.getItem(key) === 'hidden';
+  } catch (err) {
+    return false;
+  }
+}
+
+function splitPaneWrite(name, hidden) {
+  var key = splitPaneKey(name);
+  SPLIT_MEM[key] = hidden ? 'hidden' : 'shown';
+  try {
+    if (hidden) window.localStorage.setItem(key, 'hidden');
+    else window.localStorage.removeItem(key);
+  } catch (err) {
+    // The in-memory copy above still carries this session.
+  }
+}
+
+/* ONE attribute write per pane, on the host the stylesheet reads. A host that is not in the
+   document yet (the trade wrap before the view is built) is applied when its deck boots. */
+function splitPaneApply(name) {
+  var conf = SPLIT_PANES[name];
+  if (!conf) return;
+  var host = document.querySelector(conf.host);
+  if (!host) return;
+  if (splitPaneHidden(name)) host.setAttribute('data-pane-' + name, 'hidden');
+  else host.removeAttribute('data-pane-' + name);
+}
+
+function splitPanesApply() {
+  for (var name in SPLIT_PANES) {
+    if (Object.prototype.hasOwnProperty.call(SPLIT_PANES, name)) splitPaneApply(name);
+  }
+}
+
+/* The one door in and out: `shown` true puts the pane back, false takes it off. The page is
+   told twice, once by name for the controls that mirror the state and once as a resize for
+   everything that measures itself. Returns the state it left the pane in. */
+function splitPaneSet(name, shown) {
+  if (!SPLIT_PANES[name]) return false;
+  var hidden = !shown;
+  splitPaneWrite(name, hidden);
+  splitPaneApply(name);
+  if (typeof CustomEvent === 'function') {
+    window.dispatchEvent(new CustomEvent('phosphor:pane', { detail: { name: name, hidden: hidden } }));
+  }
+  if (typeof Event === 'function') window.dispatchEvent(new Event('resize'));
+  return hidden;
+}
+
+function splitPaneToggle(name) {
+  return splitPaneSet(name, splitPaneHidden(name));
+}
+
+/* Every pane with its word and its state, for a menu to list. */
+function splitPaneList() {
+  var out = [];
+  for (var name in SPLIT_PANES) {
+    if (!Object.prototype.hasOwnProperty.call(SPLIT_PANES, name)) continue;
+    out.push({ name: name, label: SPLIT_PANES[name].label, hidden: splitPaneHidden(name) });
+  }
+  return out;
+}
+
+/* The eye-off control a pane header carries: one 24 px ghost button that hides its own pane.
+   Built here so every header draws the same control, whichever file owns the header. Null in
+   a document with nothing to build it in. */
+function splitPaneControl(name) {
+  var conf = SPLIT_PANES[name];
+  if (!conf || typeof document.createElement !== 'function') return null;
+  var button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'pane-hide';
+  button.setAttribute('data-pane', name);
+  button.setAttribute('aria-label', 'Hide the ' + conf.label.toLowerCase());
+  button.title = 'Hide';
+  button.appendChild(window.PhosphorIcons.svg('hide'));
+  button.addEventListener('click', function () {
+    splitPaneSet(name, false);
+  });
+  return button;
+}
+
+/* The dock is watched once. Its hidden attribute is the one fact that says a proposal is
+   waiting on a person, and the column that holds it is shown the moment that is true. */
+var SPLIT_GATE_WATCHED = false;
+
+function splitPaneGate() {
+  if (SPLIT_GATE_WATCHED) return;
+  var conf = SPLIT_PANES.conversation;
+  var dock = document.querySelector(conf.gate);
+  if (!dock) return;
+  SPLIT_GATE_WATCHED = true;
+  function check() {
+    if (dock.hidden === false && splitPaneHidden('conversation')) splitPaneSet('conversation', true);
+  }
+  if (typeof MutationObserver === 'function') {
+    new MutationObserver(check).observe(dock, { attributes: true, attributeFilter: ['hidden'] });
+  }
+  check();
+}
+
+window.PhosphorSplit = {
+  boot: splitBoot,
+  paneHidden: splitPaneHidden,
+  setPane: splitPaneSet,
+  togglePane: splitPaneToggle,
+  panes: splitPaneList,
+  paneControl: splitPaneControl,
+};

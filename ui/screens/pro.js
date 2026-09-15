@@ -749,20 +749,37 @@
     host.appendChild(block);
   }
 
+  /* The same grammar as the trade screen's open rows, folded for a panel a
+     third as wide: the coin with its logo and side, the profit at the right,
+     and under them the size, the entry and the mark in mono. */
   function positionLine(position) {
-    var row = dom.el('div', 'between position-line');
-    var left = dom.el('span', 'body');
-    var side = position.side === 'short' ? 'Short' : 'Long';
-    var size = typeof position.sizeCoin === 'number' ? dom.qty(position.sizeCoin) + ' ' : '';
-    dom.setText(left, side + ' ' + size + String(position.coin || '')
-      + (typeof position.notionalUsd === 'number' ? ', ' + dom.usd(position.notionalUsd) : ''));
-    row.appendChild(left);
-    var pnl = dom.el('span', 'mono');
+    var coin = String(position.coin || '').toUpperCase();
+    var short = position.side === 'short';
+    var row = dom.el('div', 'position-line pro-pos');
+
+    var asset = dom.el('span', 'pro-pos-asset');
+    asset.appendChild(logo(coin, 20));
+    asset.appendChild(dom.el('span', 'pro-pos-coin', coin));
+    var side = dom.el('span', 'trade-pill', short ? 'Short' : 'Long');
+    side.dataset.tone = short ? 'down' : 'up';
+    asset.appendChild(side);
+    if (typeof position.leverage === 'number') asset.appendChild(dom.el('span', 'pro-pos-lev mono', position.leverage + 'x'));
+    row.appendChild(asset);
+
+    var pnl = dom.el('span', 'pro-pos-pnl mono');
     if (typeof position.unrealisedUsd === 'number') {
       dom.setText(pnl, (position.unrealisedUsd >= 0 ? '+' : '') + dom.usd(position.unrealisedUsd));
-      pnl.className = 'mono ' + (position.unrealisedUsd >= 0 ? 'up' : 'down');
+      pnl.className = 'pro-pos-pnl mono ' + (position.unrealisedUsd >= 0 ? 'up' : 'down');
+    } else {
+      dom.setText(pnl, '--');
     }
     row.appendChild(pnl);
+
+    var meta = dom.el('span', 'pro-pos-meta mono');
+    meta.appendChild(dom.el('span', '', typeof position.sizeCoin === 'number' ? dom.qty(position.sizeCoin) + ' ' + coin : '--'));
+    meta.appendChild(dom.el('span', '', 'entry ' + (typeof position.entryPx === 'number' ? dom.usd(position.entryPx) : '--')));
+    meta.appendChild(dom.el('span', '', 'mark ' + (typeof position.markPx === 'number' ? dom.usd(position.markPx) : '--')));
+    row.appendChild(meta);
     return row;
   }
 
