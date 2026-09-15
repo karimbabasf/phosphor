@@ -147,14 +147,42 @@ Claude Code tends to install itself.
 ## Install it as a Mac app
 
 The same app, packaged so it opens from the Dock instead of a terminal. It needs nothing installed:
-the bundle carries its own Node runtime, so Node 24 is a requirement for the repo and not for the
-app.
+the bundle carries its own Node runtime. Apple silicon, macOS 13.5 or later.
 
+**Download** [Phosphor-macOS-arm64.dmg](https://github.com/karimbabasf/phosphor/releases/latest/download/Phosphor-macOS-arm64.dmg)
+from the [latest release](https://github.com/karimbabasf/phosphor/releases/latest) or from
+[phosphor.karimbabasf.com](https://phosphor.karimbabasf.com). Those are the only two places it is
+published. Open the disk image and drag Phosphor into Applications, then open it from there.
+
+**Verify it first.** The app holds keys, so check the file before opening it. The release page
+lists the SHA-256 of the disk image; in Terminal:
+
+    shasum -a 256 ~/Downloads/Phosphor-macOS-arm64.dmg
+
+The line printed must match the release page exactly. Once the app is installed, `codesign -dv
+--verbose=2 /Applications/Phosphor.app` shows who signed it.
+
+**Until Apple notarization lands**, the app is signed but not notarized, so on the first open macOS
+says it cannot verify the app. Open System Settings, Privacy & Security, scroll to Security and
+click Open Anyway. Do that only for a file whose checksum you compared.
+
+**Updates** find you. Twenty seconds after the window opens, and every six hours after that, the
+app reads the release feed and offers a newer version in a dialog: Install and relaunch, or Later.
+Phosphor > Check for Updates... in the menu bar asks on demand. Every update is signed with a key
+whose public half is compiled into the app, and the app refuses one that is not, or one that is
+not newer: a captured feed can only withhold updates, never push one.
+
+**Build it yourself** instead of downloading:
+
+    export TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/phosphor.key)"
+    export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$(security find-generic-password -s phosphor-updater-key -w)"
     npm run app:build
 
-That stages the payload, checks it boots on the bundled runtime, and writes
-`src-tauri/target/release/bundle/macos/Phosphor.app`. Drag it to Applications. It is unsigned, so
-the first launch needs a right-click and Open rather than a double-click.
+That stages the payload, checks it boots on the bundled runtime, and writes the app, the disk image
+and the signed updater bundle under `src-tauri/target/release/bundle/`. The two variables are the
+updater signing key; without them the build stops after the disk image, on purpose, because an
+unsigned updater bundle is one no installed app would accept. Without an Apple certificate the
+build is ad-hoc signed, same as the published one.
 
 Installed, the app splits what the repo keeps in one place:
 
@@ -199,6 +227,36 @@ checks disabled, that carry a forged approval blob. Every one lands as a refusal
 proposal, is stored verbatim as the agent's claim rather than as a rule, and appears in the audit
 log. A final test scans the whole log and asserts that no execution exists without either a prior
 human approval or a recorded `allow` verdict.
+
+## Cut a release
+
+1. Set the same version in `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`
+   (`tests/unit/version-agrees.test.ts` fails when they differ), commit.
+2. `git tag -a v0.4.1 -m "What changed, in a sentence or two."` The tag body becomes the release
+   notes and the text of the update dialog.
+3. `git push origin main v0.4.1`.
+
+`.github/workflows/release.yml` builds on a clean Apple silicon runner, signs the updater bundle,
+verifies the app inside the disk image, and publishes the release: `Phosphor-macOS-arm64.dmg`
+(the stable name the site links), `Phosphor_<version>_aarch64.app.tar.gz` and its `.sig`,
+`latest.json` and `SHA256SUMS`. Installed apps read
+`https://phosphor.karimbabasf.com/updates/latest.json`, a redirect to the latest release's
+manifest, with the GitHub URL as the fallback.
+
+Secrets the workflow reads, all in the repository's Actions secrets:
+
+| Secret | What it is | Without it |
+|---|---|---|
+| `TAURI_SIGNING_PRIVATE_KEY` | the content of `~/.tauri/phosphor.key` | the build fails |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | its password, kept in the macOS keychain as `phosphor-updater-key` | the build fails |
+| `APPLE_CERTIFICATE` | a Developer ID Application certificate as a base64 `.p12` | ad-hoc signing |
+| `APPLE_CERTIFICATE_PASSWORD` | the password the `.p12` was exported with | ad-hoc signing |
+| `APPLE_SIGNING_IDENTITY` | `Developer ID Application: Name (TEAMID)` | ad-hoc signing |
+| `APPLE_API_ISSUER`, `APPLE_API_KEY`, `APPLE_API_KEY_P8` | an App Store Connect API key: issuer id, key id, base64 `.p8` | no notarization |
+
+The updater key is the one that cannot be replaced: an app in the field checks updates against the
+public key it shipped with, so a lost private key means every installed copy is reinstalled by
+hand. Keep a copy of the key file and its password somewhere that is not this Mac.
 
 ## The window
 
