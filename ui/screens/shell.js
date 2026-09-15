@@ -319,16 +319,23 @@
     var state = store.get() || {};
     var lock = state.lock || { state: 'unlocked', idleLocksInSec: null };
 
+    /* A word with a short form for a narrow bar carries it as data-short
+       (layout.css swaps the two under 1420 wide); the words that do not
+       shorten carry none. */
     if (refs.lockChip) {
       var locked = lock.state !== 'unlocked';
       var word = 'Unlocked';
+      var short = null;
       if (lock.state === 'locked') word = 'Locked';
       else if (lock.state === 'no_wallet') word = 'No wallet';
-      else if (lock.state === 'needs_migration') word = 'Keys not encrypted';
+      else if (lock.state === 'needs_migration') { word = 'Keys not encrypted'; short = 'Not encrypted'; }
       else if (typeof lock.idleLocksInSec === 'number' && lock.idleLocksInSec > 0) {
-        word = 'Locks in ' + Math.max(1, Math.round(lock.idleLocksInSec / 60)) + ' min';
+        var minutes = Math.max(1, Math.round(lock.idleLocksInSec / 60));
+        word = 'Locks in ' + minutes + ' min';
+        short = minutes + ' min';
       }
       dom.setText(refs.lockChip.querySelector('[data-role="lock-text"]'), word);
+      dom.setAttr(refs.lockChip, 'data-short', short);
       dom.setAttr(refs.lockChip, 'data-tone', locked ? 'warn' : null);
     }
 
@@ -352,6 +359,7 @@
       var vault = state.vault || {};
       var exposed = !!vault.custody && vault.backedUp === false;
       dom.setHidden(refs.backupChip, !exposed);
+      dom.setAttr(refs.backupChip, 'data-short', 'No backup');
     }
 
     updateField();

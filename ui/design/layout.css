@@ -35,6 +35,12 @@ html, body {
   flex: 0 0 auto;
 }
 
+/* The two side columns stay equal, so the tabs stay centred: neither column
+   grows for its content, and the cluster shortens its words instead (below). */
+.topbar > * {
+  min-width: 0;
+}
+
 /* The one page-load moment: a beam sweeps the topbar's hairline once. The
    shell adds data-boot after first paint and removes it when the sweep is
    done, so nothing repeats. */
@@ -170,6 +176,35 @@ html, body {
   justify-content: flex-end;
   gap: var(--s-4);
   min-width: 0;
+}
+
+/* A NARROW BAR. The cluster's column is half of what the tabs leave: at 1180
+   that is 425 px, and with every chip showing (a pending ask, no backup, the
+   lock's countdown, the stream, the brake) the full words need 543. Under
+   1420 wide the pieces sit 12 apart and the words that have a short form
+   (shell.js writes it as data-short) swap to it: "No backup", "15 min". While
+   the person is being waited on, the stream steps off the bar, because the
+   ask is the word that matters and the offline bar still says when the
+   stream is gone. That holds the worst case at 1180 with room to spare, and
+   nothing ever overlaps the tabs. */
+@media (max-width: 1419px) {
+  .status-cluster {
+    gap: var(--s-3);
+  }
+
+  .bar-state[data-short] > span:not(.status-dot),
+  .bar-lock[data-short] > [data-role="lock-text"] {
+    display: none;
+  }
+
+  .bar-state[data-short]::after,
+  .bar-lock[data-short]::after {
+    content: attr(data-short);
+  }
+
+  #chip-waiting:not([hidden]) ~ #chip-feed {
+    display: none;
+  }
 }
 
 /* The stream and a pending ask are status lines: a dot and a word, no pill.
