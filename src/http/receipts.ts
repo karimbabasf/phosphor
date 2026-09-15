@@ -37,6 +37,10 @@ export type Receipt = {
   // liquidity is a share of a position, and a number with no unit would be worse than none.
   amount: number | null;
   symbol: string | null;
+  // What arrived, when the rail recorded it (transactions.ts receivedOf): the fill of a swap,
+  // the amount paid out or credited by an Intents move. null when the rail did not say, which
+  // is a different fact from nothing arriving, so no surface prints a zero for it.
+  received: { symbol: string; amount: number } | null;
   // The venue's own fee plus whatever gas has been read back so far. null when neither is
   // known yet, which is a different fact from a fee of zero.
   feesUsd: number | null;
@@ -106,6 +110,7 @@ function buildReceipts(ctx: Ctx, limit: number): Receipt[] {
       toChain: entry.toPlace,
       amount: entry.sent?.amount ?? null,
       symbol: entry.sent?.symbol ?? null,
+      received: entry.received,
       feesUsd: feesOf(entry),
       txids: entry.hashes.map((h) => ({ chain: h.place, hash: h.hash, url: h.url })),
       balanceBefore: balances?.beforeUsd ?? null,

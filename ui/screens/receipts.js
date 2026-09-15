@@ -114,6 +114,18 @@
     return total;
   }
 
+  /* A proposal that executed is a new receipt, and the server says so with one
+     transactions frame (src/http/sse.ts broadcastTransactions). One read here
+     feeds every reader: the Activity panels and the conversation's receipt
+     card. Only once somebody has asked for the list: a window that never
+     opened Activity does not start reading receipts because gas landed on an
+     old row. */
+  if (window.PhosphorEvents && typeof window.PhosphorEvents.on === 'function') {
+    window.PhosphorEvents.on('transactions', function () {
+      if (state !== 'idle') load();
+    });
+  }
+
   window.PhosphorReceipts = {
     load: load,
     render: render,

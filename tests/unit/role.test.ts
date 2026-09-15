@@ -76,6 +76,17 @@ test('the role forbids self-approval in the same words the gate enforces', () =>
   assert.ok(text.includes('you do not develop it'));
 });
 
+test('the role keeps the agent from reading the receipt back out in prose', () => {
+  // The window draws a card from its own ledger after a move lands (ui/screens/agent.js
+  // createReceiptCard). Karim, 2026-09-14: "when trades happen I dont want to see this".
+  // Without this rule the agent prints Sold / Received / Fee / Where and the id under the card
+  // that already shows them.
+  const text = role();
+  assert.ok(text.includes('say so in one sentence and stop'), 'the rule is gone');
+  assert.ok(text.includes('Do not\nrestate the amounts, the fee, the venue or the id'), 'the four things the card shows are not named');
+  assert.ok(text.indexOf('say so in one sentence') > text.indexOf('HOW TO ANSWER'), 'the rule is not an answering rule');
+});
+
 test('the role tells the agent not to spend a turn orienting itself', () => {
   // The whole reason the index is prefilled. If this line goes, the mandatory `start` call
   // comes back and every session pays two model turns before the human is answered.

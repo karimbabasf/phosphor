@@ -131,6 +131,52 @@
   var GLYPH_ARROW_UP = 'M8 12.75V3.25M3.75 7.5L8 3.25l4.25 4.25';
   var SVG_NS = 'http://www.w3.org/2000/svg';
 
+  /* THE RECEIPT CARD. When a move this app made lands as a receipt
+     (src/http/receipts.ts, read through ui/screens/receipts.js), the
+     transcript shows one card drawn from that receipt and never from the
+     assistant's prose: the headline sentence Activity shows, one line of what
+     arrived and what it cost, and the id. Karim, 2026-09-14: "when trades
+     happen I dont want to see this, I want to see a nice card, simple, no
+     unnecessary info, and the intent id should be a clickable link".
+
+     The id opens the explorer only where the receipt carries a url for it. An
+     intent hash carries none (transactions.ts: an intent is settled by a
+     solver and has no page of its own that this window could verify on the
+     NEAR Intents explorer, which links wallet addresses and nothing else), so
+     an intent id is copied rather than opened. Where money lands, in the
+     owner's words. */
+  var WHERE = { intents: 'in your NEAR Intents balance', hl: 'in your trading account' };
+
+  function whereText(place) {
+    var key = String(place || '');
+    if (!key) return '';
+    if (Object.prototype.hasOwnProperty.call(WHERE, key)) return WHERE[key];
+    var names = window.PhosphorReceipt;
+    var chain = names && typeof names.chainName === 'function' ? names.chainName(key) : key;
+    return 'on ' + chain;
+  }
+
+  function receiptLine(receipt) {
+    var parts = [];
+    var got = receipt.received;
+    if (got && typeof got.amount === 'number' && got.symbol) {
+      parts.push(dom.qty(got.amount) + ' ' + String(got.symbol) + ' received');
+    }
+    if (typeof receipt.feesUsd === 'number') {
+      parts.push(receipt.feesUsd > 0 ? 'fee about ' + dom.fee(receipt.feesUsd) : 'no fee');
+    }
+    var where = whereText(receipt.toChain);
+    if (where) parts.push(where);
+    return parts.join(', ');
+  }
+
+  /* The first six and the last four: enough to match against a wallet or an
+     explorer by eye, and the whole id is one hover or one Copy away. */
+  function shortId(hash) {
+    var text = String(hash);
+    return text.length > 14 ? text.slice(0, 6) + '...' + text.slice(-4) : text;
+  }
+
   function glyph(path, className) {
     if (typeof document.createElementNS !== 'function') return null;
     var svg = document.createElementNS(SVG_NS, 'svg');
@@ -264,12 +310,18 @@
     return STATE_ATTR[phase] || 'off';
   }
 
-  /* The newest call still open, which is the one the status line names. */
+  /* The newest call still open, which is the one the status line names. Read
+     off the blocks rather than off the open steps block, because a receipt
+     card closes that block while the call that produced it can still be
+     running. */
   function liveStep() {
-    if (!openSteps) return null;
-    var steps = openSteps.steps;
-    for (var i = steps.length - 1; i >= 0; i -= 1) {
-      if (steps[i].state === 'live') return steps[i];
+    for (var b = blocks.length - 1; b >= 0; b -= 1) {
+      var block = blocks[b];
+      if (block.type !== 'steps' || block.done) continue;
+      var steps = block.steps;
+      for (var i = steps.length - 1; i >= 0; i -= 1) {
+        if (steps[i].state === 'live') return steps[i];
+      }
     }
     return null;
   }
@@ -1048,7 +1100,58 @@
     });
   }
 
+  /* One bordered card in the transcript's measure: the coin that left, the
+     headline, the line of what arrived and what it cost, and under them the
+     id with its Copy. Built once, from the receipt, and never updated: a
+     receipt is a record. */
+  function createReceiptCard(receipt) {
+    var card = dom.el('div', 'panel receipt-card enter');
+    var line = dom.el('div', 'tx');
+    var marks = window.PhosphorMarks;
+    var mark = receipt.symbol && marks && typeof marks.disc === 'function' ? marks.disc(receipt.symbol) : null;
+    line.appendChild(mark || dom.el('span', 'tx-mark'));
+    line.appendChild(dom.el('span', 'tx-title', receipt.headline || receipt.summary || 'Something moved.'));
+    line.appendChild(dom.el('span', 'tx-when', receiptLine(receipt)));
+    card.appendChild(line);
+
+    var tx = Array.isArray(receipt.txids) && receipt.txids.length ? receipt.txids[0] : null;
+    if (tx && tx.hash) {
+      var hash = String(tx.hash);
+      /* Only a url the server built (transactions.ts explorerTxUrl) is opened,
+         and only an http one: nothing in a receipt is typed by a person, but
+         the link is the one place this column hands the system browser a
+         string, so it is checked here as well. */
+      var url = typeof tx.url === 'string' && /^https?:\/\//.test(tx.url) ? tx.url : '';
+      var row = dom.el('div', 'receipt-id');
+      var id = dom.el(url ? 'a' : 'span', 'receipt-hash mono', shortId(hash));
+      id.title = hash;
+      if (url) {
+        id.href = url;
+        id.target = '_blank';
+        id.rel = 'noreferrer noopener';
+      }
+      row.appendChild(id);
+      var copy = dom.el('button', 'btn btn-quiet btn-sm');
+      copy.type = 'button';
+      var copyLabel = dom.el('span', 'btn-label', 'Copy');
+      copy.appendChild(copyLabel);
+      row.appendChild(copy);
+      card.appendChild(row);
+      dom.on(copy, 'click', function () { copyHash(hash, copyLabel); });
+    }
+    return card;
+  }
+
+  function copyHash(hash, label) {
+    if (!(navigator.clipboard && navigator.clipboard.writeText)) return;
+    navigator.clipboard.writeText(hash).then(function () {
+      dom.setText(label, 'Copied');
+      window.setTimeout(function () { dom.setText(label, 'Copy'); }, 1600);
+    }).catch(function () { /* the id is on screen to read */ });
+  }
+
   function createBlock(block) {
+    if (block.type === 'receipt') return createReceiptCard(block.receipt);
     if (block.type === 'steps') {
       var wrap = dom.el('div', 'steps-block');
       var fold = dom.el('button', 'steps-fold');
@@ -1076,6 +1179,7 @@
   }
 
   function updateBlock(node, row, block, now, primary) {
+    if (block.type === 'receipt') return;
     if (block.type === 'steps') {
       updateSteps(node, row, block, now, primary);
       return;
@@ -1273,6 +1377,43 @@
     }
   }
 
+  /* WHICH RECEIPTS GET A CARD. The list arrives whole on every read, newest
+     first, so the column keeps the ids it has already seen and cards only an
+     executed receipt it has not. The first read seeds that set: everything in
+     it happened before this window opened and is Activity's to show, unless
+     it was decided after the window opened, which is a move made in this
+     session that landed while the list was still loading. A failed move is
+     not a receipt for something that happened, so it gets no card and is not
+     marked seen, and a card follows if it is later read back as executed. */
+  var bootAt = Date.now();
+  var receiptsSeen = null;
+
+  function receiptAt(receipt) {
+    var at = Date.parse(String(receipt.at || ''));
+    return isFinite(at) ? at : 0;
+  }
+
+  function onReceipts(list, state) {
+    if (state !== 'ready' || !Array.isArray(list)) return;
+    var first = receiptsSeen === null;
+    if (first) receiptsSeen = Object.create(null);
+    var fresh = [];
+    for (var i = list.length - 1; i >= 0; i -= 1) {
+      var receipt = list[i];
+      if (!receipt || typeof receipt.id !== 'string' || receiptsSeen[receipt.id]) continue;
+      if (receipt.status !== 'executed') continue;
+      receiptsSeen[receipt.id] = true;
+      if (first && receiptAt(receipt) <= bootAt) continue;
+      fresh.push(receipt);
+    }
+    for (var j = 0; j < fresh.length; j += 1) {
+      /* The card closes the open steps block, so the calls that follow it
+         start a new one under the card rather than appending above it. */
+      openSteps = null;
+      pushBlock({ type: 'receipt', receipt: fresh[j] });
+    }
+  }
+
   /* A finished turn folds to one line. Any step still open when the turn ended
      is closed rather than left ticking: the answer arrived, so the call did. */
   function endTurn() {
@@ -1329,6 +1470,15 @@
       };
       renderAll();
     }).catch(function () { /* the block hides its line when there is none */ });
+
+    /* The receipts, read once now to learn what already happened and then on
+       every transactions frame (ui/screens/receipts.js), so a move that lands
+       mid conversation shows up as a card in it. */
+    var feed = window.PhosphorReceipts;
+    if (feed && typeof feed.onChange === 'function') {
+      feed.onChange(onReceipts);
+      if (typeof feed.load === 'function') feed.load();
+    }
   }
 
   window.PhosphorAgent = {

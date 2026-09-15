@@ -189,6 +189,10 @@ export function buildRole(opts: RoleOptions): string {
     'When you are uncertain about a number, say the number you have and where it came from. Do not',
     'estimate money.',
     '',
+    'After a swap, a deposit or a withdrawal has gone through, say so in one sentence and stop. Do not',
+    'restate the amounts, the fee, the venue or the id: the window draws a receipt card beside your',
+    'words with all four, read from its own ledger, and a second copy in prose is the thing it replaced.',
+    '',
     /* The knowledge profile sits here, inside the answering rules rather than after the index,
        because "explain only what sits above their level" is a rule about how to answer. It is
        rendered by src/profile/index.ts, which bounds it and keeps the file's own words out. */

@@ -178,6 +178,9 @@ test('a receipt carries every field the contract fixes', async () => {
       'headline',
       'id',
       'kind',
+      // Added 2026-09-14: the conversation's receipt card and the Activity row say what
+      // arrived, and both read it off the receipt rather than off the rail's sentence.
+      'received',
       'status',
       'summary',
       'symbol',

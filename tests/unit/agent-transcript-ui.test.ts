@@ -146,6 +146,7 @@ function build() {
   const sends: string[] = [];
   let reject: ((err: Error) => void) | null = null;
   const driverHandlers: Array<(frame: unknown) => void> = [];
+  const receiptHandlers: Array<(list: unknown[], state: string) => void> = [];
 
   const host = make('div');
   const composerHost = make('div');
@@ -196,6 +197,16 @@ function build() {
         if (type === 'driver') driverHandlers.push(handler);
       },
     },
+    /* The receipts feed (ui/screens/receipts.js): the column subscribes, asks for one read,
+       and is handed the whole list on every change. The test delivers lists by hand. */
+    PhosphorReceipts: {
+      onChange: (fn: (list: unknown[], state: string) => void) => {
+        receiptHandlers.push(fn);
+        fn([], 'idle');
+      },
+      load: () => {},
+    },
+    PhosphorReceipt: { chainName: (id: string) => ({ base: 'Base', sol: 'Solana' })[id] ?? id },
   };
   sandbox.window = win;
   sandbox.CustomEvent = function CustomEventStub(this: Record<string, unknown>, type: string, init: unknown) {
@@ -243,6 +254,32 @@ function build() {
       const due = timers.splice(0, timers.length);
       for (const timer of due) timer.fn();
     },
+    receipts: (list: unknown[]) => {
+      for (const handler of receiptHandlers) handler(list, 'ready');
+    },
+    cards: () => all(host, 'receipt-card'),
+  };
+}
+
+/* A receipt as /api/receipts hands it out (src/http/receipts.ts), for one executed swap. */
+function receipt(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: 'p1',
+    kind: 'swap',
+    at: new Date(Date.now() + 1000).toISOString(),
+    headline: 'Changed about $5 of your Solana (SOL) into USDC.',
+    summary: 'swapped 0.049 SOL for 4.981119 USDC, intent hash EafozJ2XkQ9mRtb7n16c',
+    fromChain: 'intents',
+    toChain: 'intents',
+    amount: 0.049,
+    symbol: 'SOL',
+    received: { symbol: 'USDC', amount: 4.981119 },
+    feesUsd: 0.02,
+    txids: [{ chain: 'near', hash: 'EafozJ2XkQ9mRtb7n16c', url: null }],
+    balanceBefore: 1000,
+    balanceAfter: 999.98,
+    status: 'executed',
+    ...over,
   };
 }
 
@@ -385,6 +422,76 @@ test('the composer arms on text and says why it is quiet when it is', () => {
   fire(rows[0], 'click');
   assert.equal(world.input.value, rows[0].textContent, 'a first move did not land in the box');
   assert.equal(world.sends.length, 1, 'a first move sent itself');
+});
+
+/* ---------- The receipt card ----------
+
+   Karim, 2026-09-14, on the assistant's prose after a swap (a line, a Sold / Received / Fee /
+   Where table, the id, a balance sentence): "when trades happen I dont want to see this, I want
+   to see a nice card, simple, no unnecessary info, and the intent id should be a clickable link".
+   The card is drawn from the app's own receipt, never from what the assistant wrote. */
+
+test('a move that lands mid conversation shows one card drawn from the receipt', () => {
+  const world = build();
+  world.receipts([]);
+  world.type('swap 0.049 sol to usdc');
+  world.emit({ kind: 'tool', name: 'mcp__phosphor__swap', input: { amount: 0.049, symbol: 'SOL' } });
+  world.emit({ kind: 'tool_result', name: 'mcp__phosphor__swap', ok: true });
+  world.receipts([receipt()]);
+
+  const cards = world.cards();
+  assert.equal(cards.length, 1);
+  const card = cards[0];
+  assert.equal(all(card, 'tx-title')[0].textContent, 'Changed about $5 of your Solana (SOL) into USDC.', 'the title is not the headline Activity shows');
+  const line = all(card, 'tx-when')[0].textContent;
+  assert.equal(line, '4.9811 USDC received, fee about $0.02, in your NEAR Intents balance', 'the same four places the Activity row prints');
+  const id = all(card, 'receipt-hash')[0];
+  assert.equal(id.textContent, 'EafozJ...n16c');
+  assert.equal(id.tag, 'span', 'an intent id with no url became a link to nowhere');
+  assert.equal((id as unknown as { title: string }).title, 'EafozJ2XkQ9mRtb7n16c', 'the whole id is not one hover away');
+  const labels = all(card, 'btn-label').map((n) => n.textContent);
+  assert.deepEqual(labels, ['Copy']);
+  assert.ok(!card.textContent.includes('Where'), 'a Where row crept back in');
+  assert.ok(!card.textContent.includes('Sold'), 'a Sold row crept back in');
+  assert.ok(!card.textContent.includes('$999.98'), 'the balance sentence crept back in');
+  // The card closed the steps block, so the next call starts a new one under the card.
+  world.emit({ kind: 'tool', name: 'mcp__phosphor__wallet', input: {} });
+  const order = world.host.children.length ? all(world.host, 'transcript')[0].children.map((n) => n.className.split(' ')[0]) : [];
+  assert.deepEqual(order.slice(-2), ['panel', 'steps-block'], order.join(' > '));
+});
+
+test("the id is a link when the receipt carries the explorer's url for it", () => {
+  const world = build();
+  world.receipts([]);
+  const url = 'https://basescan.org/tx/0xabc123def4567890abcdef1234567890abcdef1234567890abcdef1234567890ab';
+  world.receipts([
+    receipt({
+      id: 'p2',
+      toChain: 'base',
+      txids: [{ chain: 'base', hash: '0xabc123def4567890abcdef1234567890abcdef1234567890abcdef1234567890ab', url }],
+    }),
+  ]);
+  const id = all(world.cards()[0], 'receipt-hash')[0] as unknown as { tag: string; href: string; target: string; rel: string; textContent: string };
+  assert.equal(id.tag, 'a');
+  assert.equal(id.href, url, "the link is not the receipt's url");
+  assert.equal(id.target, '_blank');
+  assert.equal(id.rel, 'noreferrer noopener');
+  assert.equal(id.textContent, '0xabc1...90ab');
+  assert.ok(all(world.cards()[0], 'tx-when')[0].textContent.endsWith(', on Base'));
+});
+
+test('only a move that executed in this session gets a card, and only once', () => {
+  const world = build();
+  const old = receipt({ id: 'old', at: new Date(Date.now() - 60_000).toISOString() });
+  const failed = receipt({ id: 'bad', status: 'failed' });
+  world.receipts([failed, old]);
+  assert.equal(world.cards().length, 0, 'what happened before the window opened is the Activity list, not a card');
+  world.receipts([receipt(), failed, old]);
+  assert.equal(world.cards().length, 1);
+  world.receipts([receipt(), failed, old]);
+  assert.equal(world.cards().length, 1, 'a re-read of the same list drew the card again');
+  world.receipts([receipt({ id: 'bad', status: 'executed' }), receipt(), old]);
+  assert.equal(world.cards().length, 2, 'a move read back as executed after failing got no card');
 });
 
 test('text that follows text in one turn is one reply row', () => {
