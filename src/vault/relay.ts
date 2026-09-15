@@ -175,12 +175,13 @@ export function createVaultRelay(opts: { transportKey: Buffer | null; now?: () =
   function openDek(entry: Inflight, sealedB64: unknown): Buffer | null {
     if (transport === null || typeof sealedB64 !== 'string') return null;
     const combined = Buffer.from(sealedB64, 'base64');
-    if (combined.length < 12 + 16 + 1) return null;
+    // nonce || 32 bytes || tag, and nothing else: a longer or shorter blob is not an answer.
+    if (combined.length !== 12 + 32 + 16) return null;
     const nonce = combined.subarray(0, 12);
     const tag = combined.subarray(combined.length - 16);
     const ct = combined.subarray(12, combined.length - 16);
     try {
-      const decipher = crypto.createDecipheriv('aes-256-gcm', transport, nonce);
+      const decipher = crypto.createDecipheriv('aes-256-gcm', transport, nonce, { authTagLength: 16 });
       decipher.setAAD(Buffer.from(entry.request.id, 'utf8'));
       decipher.setAuthTag(tag);
       const dek = Buffer.concat([decipher.update(ct), decipher.final()]);

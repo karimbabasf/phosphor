@@ -30,7 +30,7 @@ function call(req: Record<string, unknown>): Record<string, unknown> {
 
 function openSealed(sealedB64: string, transport: Buffer, id: string): Buffer {
   const combined = Buffer.from(sealedB64, 'base64');
-  const d = crypto.createDecipheriv('aes-256-gcm', transport, combined.subarray(0, 12));
+  const d = crypto.createDecipheriv('aes-256-gcm', transport, combined.subarray(0, 12), { authTagLength: 16 });
   d.setAAD(Buffer.from(id, 'utf8'));
   d.setAuthTag(combined.subarray(combined.length - 16));
   return Buffer.concat([d.update(combined.subarray(12, combined.length - 16)), d.final()]);

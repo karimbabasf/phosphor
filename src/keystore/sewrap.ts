@@ -79,10 +79,11 @@ export function seUnwrapWithSoftwareKey(wrapped: SeWrapped, enclavePrivate: cryp
   const secret = crypto.diffieHellman({ privateKey: enclavePrivate, publicKey: x963ToKeyObject(ephPub) });
   const key = wrapKeyFor(secret, ephPub, enclavePub);
   const combined = Buffer.from(wrapped.ciphertext, 'base64');
+  if (combined.length !== 12 + 32 + 16) throw new Error('a wrapped data key is nonce, 32 bytes and a 16-byte tag');
   const nonce = combined.subarray(0, 12);
   const tag = combined.subarray(combined.length - 16);
   const ct = combined.subarray(12, combined.length - 16);
-  const decipher = crypto.createDecipheriv('aes-256-gcm', key, nonce);
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, nonce, { authTagLength: 16 });
   decipher.setAAD(aad);
   decipher.setAuthTag(tag);
   const out = Buffer.concat([decipher.update(ct), decipher.final()]);

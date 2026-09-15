@@ -184,7 +184,7 @@ async function main(): Promise<number> {
 
     const log = (await get('/api/log?limit=100')) as Json;
     const logText = JSON.stringify(log);
-    check('the audit log has the enclave lines and none of the words', /Secure Enclave|Touch ID/.test(logText) && !words.some((w) => new RegExp(`"${w}"`).test(logText)));
+    check('the audit log has the enclave lines and none of the words', /Secure Enclave|Touch ID/.test(logText) && !words.some((w) => logText.includes(`"${w}"`)));
 
     const dialogs = relayed.filter((r) => r.startsWith('unwrap:'));
     check('every dialog named itself', dialogs.length === 3 && dialogs.every((d) => d.split(':')[1].length > 10), dialogs.join(' | '));
