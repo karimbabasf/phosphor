@@ -207,34 +207,6 @@
   border-radius: var(--radius);
 }
 
-.panel-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--s-3);
-  padding: var(--s-4) var(--s-4) var(--s-3);
-  min-height: 0;
-}
-
-.panel-heading {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.panel-head-right {
-  display: flex;
-  align-items: center;
-  gap: var(--s-3);
-  flex: 0 0 auto;
-}
-
-.panel-body {
-  padding: 0 var(--s-4) var(--s-4);
-  min-height: 0;
-}
-
 /* ---------- What a surface says about itself ----------
 
    Karim, 2026-09-09: "nothing clickable, nothing unclickable, overall a bad

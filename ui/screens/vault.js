@@ -55,17 +55,17 @@
 
   /* ---------- the column ---------- */
 
+  /* A card wearing the same head as Pro's (pro.css .card): the title at the
+     left, one line of state at the right, a hairline under both. */
   function panel(title, surface) {
-    var node = dom.el('section', 'panel');
+    var node = dom.el('section', 'panel card');
     node.dataset.surface = surface;
-    var head = dom.el('div', 'panel-head');
-    var heading = dom.el('div', 'panel-heading');
-    heading.appendChild(dom.el('span', 'title-sm', title));
-    head.appendChild(heading);
-    var right = dom.el('div', 'panel-head-right');
+    var head = dom.el('div', 'card-head');
+    head.appendChild(dom.el('h2', 'card-title', title));
+    var right = dom.el('div', 'card-head-right');
     head.appendChild(right);
     node.appendChild(head);
-    var body = dom.el('div', 'panel-body stack');
+    var body = dom.el('div', 'card-body');
     node.appendChild(body);
     return { node: node, body: body, right: right };
   }
