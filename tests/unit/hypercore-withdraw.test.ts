@@ -91,6 +91,8 @@ type ClientOverrides = {
   quote?: Partial<OneClickQuote>;
   echo?: Record<string, unknown> | null;
   status?: OneClickStatus['status'];
+  refundedAmount?: string;
+  refundReason?: string;
   statusThrows?: boolean;
   originMissing?: boolean;
   originDecimals?: number;
@@ -121,7 +123,16 @@ function fakeClient(over: ClientOverrides = {}): { client: OneClickClient; quote
     async status() {
       if (over.statusThrows) throw new Error('status endpoint down');
       const status = over.status ?? 'SUCCESS';
-      return { found: true, status, reported: status, originTxHashes: [], destinationTxHashes: ['0xdest'], nearTxHashes: [] } as OneClickStatus;
+      return {
+        found: true,
+        status,
+        reported: status,
+        originTxHashes: [],
+        destinationTxHashes: ['0xdest'],
+        nearTxHashes: [],
+        ...(over.refundedAmount !== undefined ? { refundedAmount: over.refundedAmount } : {}),
+        ...(over.refundReason !== undefined ? { refundReason: over.refundReason } : {}),
+      } as OneClickStatus;
     },
   };
   return { client, quotes, submitted };
@@ -451,13 +462,25 @@ test('a send whose reply is lost is reported as ambiguous with its nonce, never 
   assert.doesNotMatch(out.detail, /Nothing was sent/);
 });
 
-test('a refund after the send is reported against the venue account, with the send kept as evidence', async () => {
-  const { rail: r } = rail({ status: 'REFUNDED' });
+test('a refund after the send names the amount and the venue account, with the send kept as evidence', async () => {
+  const { rail: r } = rail({ status: 'REFUNDED', refundedAmount: '7.9' });
   const out = await r.execute(draft());
   assert.equal(out.ok, false);
-  assert.match(out.detail, /REFUNDED/);
-  assert.match(out.detail, new RegExp(`refund .*${SELF}`));
+  assert.match(out.detail, new RegExp(`REFUNDED: 7\\.9 USDC went back to .*${SELF}`));
   assert.ok(out.txids?.includes('0xledgerhash'));
+  assert.equal(out.evidence?.refundedAmount, '7.9');
+  assert.equal(out.evidence?.handle, DEPOSIT.toLowerCase());
+});
+
+test('a FAILED routing with nothing refunded says the input is held by 1Click, never that a refund goes back', async () => {
+  const { rail: r } = rail({ status: 'FAILED', refundedAmount: '0' });
+  const out = await r.execute(draft());
+  assert.equal(out.ok, false);
+  assert.match(out.detail, /refunded 0 USDC so far/);
+  assert.match(out.detail, new RegExp(`held by 1Click under handle ${DEPOSIT.toLowerCase()}`));
+  assert.doesNotMatch(out.detail, /refund goes back/);
+  assert.ok(out.txids?.includes('0xledgerhash'));
+  assert.equal(out.evidence?.refundedAmount, '0');
 });
 
 test('a poll that never reaches terminal says THE SEND HAPPENED, in capitals, and names the address', async () => {

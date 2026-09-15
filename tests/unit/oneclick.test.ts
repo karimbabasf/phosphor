@@ -589,14 +589,31 @@ test('a failed transfer says plainly that no funds left the wallet', async () =>
   assert.equal(h.statusCalls.length, 0); // nothing to watch
 });
 
-test('a REFUNDED swap reports the refund address rather than claiming success', async () => {
-  const h = harness({ statuses: [{ status: 'REFUNDED', swapDetails: { originChainTxHashes: [txDetails(TX_HASH)] } }] });
+test('a REFUNDED swap reports the amount and the refund address rather than claiming success', async () => {
+  const h = harness({
+    statuses: [{ status: 'REFUNDED', swapDetails: { refundedAmountFormatted: '99.9', originChainTxHashes: [txDetails(TX_HASH), txDetails('0xrefund')] } }],
+  });
   const result = await railOf(h).execute(draftOf());
 
   assert.equal(result.ok, false);
-  assert.match(result.detail, /REFUNDED/);
+  assert.match(result.detail, /REFUNDED: 99\.9 USDC went back to/);
   assert.match(result.detail, new RegExp(OWNER));
-  assert.ok(result.txids?.includes(TX_HASH));
+  assert.deepEqual(result.txids, [TX_HASH, '0xrefund']);
+  assert.equal(result.evidence?.refundedAmount, '99.9');
+  assert.equal(result.evidence?.handle, DEPOSIT);
+});
+
+test('a FAILED swap with nothing refunded says the input is held by 1Click at the deposit address', async () => {
+  const h = harness({ statuses: [{ status: 'FAILED', swapDetails: { refundedAmountFormatted: '0', refundReason: 'PARTIAL_DEPOSIT' } }] });
+  const result = await railOf(h).execute(draftOf());
+
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /1click reported FAILED and refunded 0 USDC so far/);
+  assert.match(result.detail, new RegExp(`held by 1Click under handle ${DEPOSIT}`));
+  assert.match(result.detail, /reason PARTIAL_DEPOSIT/);
+  assert.doesNotMatch(result.detail, /Check the refund address/);
+  assert.deepEqual(result.txids, [TX_HASH]);
+  assert.equal(result.evidence?.refundReason, 'PARTIAL_DEPOSIT');
 });
 
 test('a poll timeout says the funds were sent, because they were', async () => {

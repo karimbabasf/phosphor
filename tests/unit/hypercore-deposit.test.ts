@@ -104,6 +104,8 @@ type ApiOverrides = {
   quote?: Partial<OneClickQuote>;
   echo?: Record<string, unknown> | null;
   status?: OneClickStatus['status'];
+  refundedAmount?: string;
+  refundReason?: string;
   statusThrows?: boolean;
   submitThrows?: boolean;
   assetMissing?: boolean;
@@ -141,7 +143,16 @@ function fakeApi(over: ApiOverrides = {}): { api: IntentsApiPort; signer: Intent
     async status() {
       if (over.statusThrows) throw new Error('status endpoint down');
       const status = over.status ?? 'SUCCESS';
-      return { found: true, status, reported: status, originTxHashes: [], destinationTxHashes: ['0xdest'], nearTxHashes: [] } as OneClickStatus;
+      return {
+        found: true,
+        status,
+        reported: status,
+        originTxHashes: [],
+        destinationTxHashes: ['0xdest'],
+        nearTxHashes: [],
+        ...(over.refundedAmount !== undefined ? { refundedAmount: over.refundedAmount } : {}),
+        ...(over.refundReason !== undefined ? { refundReason: over.refundReason } : {}),
+      } as OneClickStatus;
     },
   };
   const signer: IntentsSignerPort = {
@@ -389,13 +400,42 @@ test('the echo is checked again at execute, before anything is signed', async ()
   assert.equal(calls.signed.length, 0);
 });
 
-test('a refund is reported back into the verifier rather than as a success', async () => {
-  const { rail: r } = rail({ status: 'REFUNDED' });
+test('a refund is reported back into the verifier with the amount the API named, never as a success', async () => {
+  const { rail: r } = rail({ status: 'REFUNDED', refundedAmount: '9.97' });
   const out = await r.execute(draft());
   assert.equal(out.ok, false);
   assert.match(out.detail, /REFUNDED/);
-  assert.match(out.detail, new RegExp(`back to ${ACCOUNT} inside ${INTENTS_VERIFIER}`));
+  assert.match(out.detail, new RegExp(`9\\.97 USDC went back to ${ACCOUNT} inside ${INTENTS_VERIFIER}`));
   assert.deepEqual(out.txids, ['HASH1', '0xdest']);
+  assert.equal(out.evidence?.handle, HANDLE);
+  assert.equal(out.evidence?.refundedAmount, '9.97');
+});
+
+test('a FAILED order with nothing refunded says the input is held by 1Click, and never that a refund is credited', async () => {
+  // The incident of 2026-09-15: two $10 deposits FAILED at 1Click with refundedAmount 0, and
+  // the rail said the refund was back in the balance. It was not; the money sat at 1Click.
+  const { rail: r } = rail({ status: 'FAILED', refundedAmount: '0' });
+  const out = await r.execute(draft());
+  assert.equal(out.ok, false);
+  assert.match(out.detail, /1click reported FAILED and refunded 0 USDC so far/);
+  assert.match(out.detail, new RegExp(`held by 1Click under handle ${HANDLE}`));
+  assert.match(out.detail, /reason not given/);
+  assert.match(out.detail, /Nothing is back in your balance/);
+  assert.doesNotMatch(out.detail, /refund is credited/);
+  assert.deepEqual(out.txids, ['HASH1', '0xdest']);
+  assert.equal(out.evidence?.handle, HANDLE);
+  assert.equal(out.evidence?.refundedAmount, '0');
+});
+
+test('a FAILED order names the reason and the partial refund the API gave', async () => {
+  const { rail: r } = rail({ status: 'FAILED', refundedAmount: '4.5', refundReason: 'PARTIAL_DEPOSIT' });
+  const out = await r.execute(draft());
+  assert.equal(out.ok, false);
+  assert.match(out.detail, /refunded 4\.5 USDC so far/);
+  assert.match(out.detail, /reason PARTIAL_DEPOSIT/);
+  assert.doesNotMatch(out.detail, /Nothing is back/);
+  assert.equal(out.evidence?.refundedAmount, '4.5');
+  assert.equal(out.evidence?.refundReason, 'PARTIAL_DEPOSIT');
 });
 
 test('a submit that throws after the signature says the intent was signed and names the handle, never nothing signed', async () => {

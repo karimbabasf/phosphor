@@ -116,6 +116,8 @@ function harness(
     // sendOk:false with no hash, which is a transfer that never went out at all.
     sendHashOnFailure?: string;
     statuses?: string[];
+    refundedAmount?: string;
+    refundReason?: string;
     // What the API echoes back in quoteRequest. Left out it is the request itself; a patch
     // simulates a server pricing something else, and null a server that echoes nothing.
     echo?: Record<string, unknown> | null;
@@ -171,6 +173,8 @@ function harness(
           originTxHashes: [],
           destinationTxHashes: [],
           nearTxHashes: [],
+          ...(options.refundedAmount !== undefined ? { refundedAmount: options.refundedAmount } : {}),
+          ...(options.refundReason !== undefined ? { refundReason: options.refundReason } : {}),
         };
       },
     },
@@ -457,6 +461,30 @@ test('a poll timeout says the funds were sent, not that the deposit failed', asy
   // someone sends the same amount twice.
   assert.match(result.detail, /THE FUNDS WERE SENT/);
   assert.ok(result.txids?.includes('0xdeadbeef'));
+});
+
+test('a REFUNDED deposit names the amount that went back to the wallet', async () => {
+  const h = harness({ statuses: ['REFUNDED'], refundedAmount: '10.0' });
+  const result = await railOf(h).execute(draftOf());
+
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /REFUNDED: 10\.0 ETH went back to our eth wallet/);
+  assert.match(result.detail, new RegExp(OWNER));
+  assert.ok(result.txids?.includes('0xdeadbeef'));
+  assert.equal(result.evidence?.refundedAmount, '10.0');
+});
+
+test('a FAILED deposit with nothing refunded says the input is held by 1Click at the deposit address', async () => {
+  const h = harness({ statuses: ['FAILED'], refundedAmount: '0' });
+  const result = await railOf(h).execute(draftOf());
+
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /refunded 0 ETH so far/);
+  assert.match(result.detail, new RegExp(`held by 1Click under handle ${DEPOSIT_ADDRESS}`));
+  assert.match(result.detail, /Nothing is back in your balance/);
+  assert.doesNotMatch(result.detail, /Check the refund address/);
+  assert.ok(result.txids?.includes('0xdeadbeef'));
+  assert.equal(result.evidence?.refundedAmount, '0');
 });
 
 test('a failed transfer says plainly that nothing left the wallet', async () => {

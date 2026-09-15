@@ -180,6 +180,8 @@ type Overrides = {
   standard?: string;
   status?: OneClickStatus['status'];
   destinationTxHashes?: string[];
+  refundedAmount?: string;
+  refundReason?: string;
   submitThrows?: boolean;
 };
 
@@ -210,6 +212,8 @@ function apiOf(over: Overrides = {}): { api: IntentsApiPort; calls: ApiCalls } {
         originTxHashes: [],
         destinationTxHashes: over.destinationTxHashes ?? ['5xSolanaTxSig'],
         nearTxHashes: [],
+        ...(over.refundedAmount !== undefined ? { refundedAmount: over.refundedAmount } : {}),
+        ...(over.refundReason !== undefined ? { refundReason: over.refundReason } : {}),
       };
     },
   };
@@ -576,12 +580,26 @@ test('a draft spending another account is refused', async () => {
 
 // ---------- what happens after the signature is out ----------
 
-test('a refund is reported as money back inside the verifier, not as money in a wallet', async () => {
-  const { rail } = railOf({ status: 'REFUNDED' });
+test('a refund is reported as money back inside the verifier with its amount, not as money in a wallet', async () => {
+  const { rail } = railOf({ status: 'REFUNDED', refundedAmount: '7.6' });
   const result = await rail.execute(draftOf());
   assert.equal(result.ok, false);
-  assert.match(result.detail, /credited back to/);
-  assert.match(result.detail, /where the balance started/);
+  assert.match(result.detail, /7\.6 SOL went back to/);
+  assert.match(result.detail, /inside intents\.near/);
+  assert.doesNotMatch(result.detail, new RegExp(SOL_WALLET));
+  assert.equal(result.evidence?.refundedAmount, '7.6');
+});
+
+test('a FAILED withdrawal with nothing refunded says the input is held by 1Click, never that it is credited back', async () => {
+  const { rail } = railOf({ status: 'FAILED', refundedAmount: '0' });
+  const result = await rail.execute(draftOf());
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /refunded 0 SOL so far/);
+  assert.match(result.detail, new RegExp(`held by 1Click under handle ${HANDLE}`));
+  assert.match(result.detail, /Nothing is back in your balance/);
+  assert.doesNotMatch(result.detail, /credited back/);
+  assert.equal(result.evidence?.handle, HANDLE);
+  assert.equal(result.evidence?.refundedAmount, '0');
 });
 
 test('a submit that throws after the signature is reported as signed and unconfirmed, with the handle, never thrown', async () => {

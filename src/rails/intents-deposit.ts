@@ -45,6 +45,7 @@ import {
   toBaseUnits,
 } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickStatus, TokensFile } from '../intents.ts';
+import { describeRefund } from './oneclick-words.ts';
 import { ONECLICK_COUNTERPARTY } from './oneclick.ts';
 
 // The chains src/chain/evm.ts can sign for. 1Click accepts Solana and NEAR origins too;
@@ -477,11 +478,12 @@ export function intentsDepositRail(deps: IntentsDepositRailDeps): IntentsDeposit
     }
 
     if (watch.status === 'REFUNDED' || watch.status === 'FAILED') {
-      return {
-        ok: false,
-        detail: `1click reported ${watch.reported} after the deposit landed; ${evidence}. Check the refund address ${draft.from}.`,
-        txids: [txHash, ...watch.originTxHashes, ...watch.destinationTxHashes],
-      };
+      return describeRefund(watch, depositAddress, {
+        symbol: draft.symbol,
+        refundTarget: `our ${draft.chain} wallet ${draft.from}`,
+        evidence,
+        primaryTxid: txHash,
+      });
     }
 
     // Timed out. The transfer confirmed, so the money is already gone from the wallet and the

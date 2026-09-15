@@ -73,7 +73,7 @@ import {
 import type { NearSendOutcome, NearSendParams } from '../chain/near.ts';
 import { venueWriteTimeout } from '../net.ts';
 import { MAX_SLIPPAGE_BPS, floorTooLow } from './slippage.ts';
-import { describeUnconfirmedSubmit } from './oneclick-words.ts';
+import { describeRefund, describeUnconfirmedSubmit } from './oneclick-words.ts';
 
 // The verifier contract. This is the whole point of the rail: one fixed account that goes on
 // the policy allowlist once and stays there, unlike a deposit address minted per quote.
@@ -1264,13 +1264,12 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     }
 
     if (watch.status === 'REFUNDED' || watch.status === 'FAILED') {
-      return {
-        ok: false,
-        detail:
-          `1click reported ${watch.reported} after the intent was submitted; ${evidence}. ` +
-          `A refund is credited back to ${owner} inside ${INTENTS_VERIFIER}, not to any chain address.`,
-        txids: [submitted.intentHash, ...watch.originTxHashes, ...watch.destinationTxHashes],
-      };
+      return describeRefund(watch, depositAddress, {
+        symbol: draft.fromSymbol,
+        refundTarget: `${owner} inside ${INTENTS_VERIFIER}, not any chain address`,
+        evidence,
+        primaryTxid: submitted.intentHash,
+      });
     }
 
     // Timed out. The signature is already released and the intent already submitted, so the

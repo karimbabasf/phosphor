@@ -57,7 +57,7 @@ import type {
 import { baseUnits, oneLine, quoteEchoProblems, resolveAsset, toBaseUnits } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, QuoteEcho, TokensFile } from '../intents.ts';
 import { spendFromIntents } from './intents-spend.ts';
-import { describeUnconfirmedSubmit } from './oneclick-words.ts';
+import { describeRefund, describeUnconfirmedSubmit } from './oneclick-words.ts';
 import { INTENTS_VERIFIER, base58Decode, intentsApi, liveIntentsSigner } from './intents-native.ts';
 import type { IntentsApiPort, IntentsSignerPort } from './intents-native.ts';
 
@@ -441,13 +441,12 @@ export function intentsWithdrawRail(deps: IntentsWithdrawRailDeps): IntentsWithd
     }
 
     if (watch.status === 'REFUNDED' || watch.status === 'FAILED') {
-      return {
-        ok: false,
-        detail:
-          `1click reported ${watch.reported} after the intent was submitted; ${evidence}. ` +
-          `A refund is credited back to ${owner} inside ${INTENTS_VERIFIER}, which is where the balance started.`,
-        txids: [spent.intentHash, ...watch.originTxHashes, ...watch.destinationTxHashes],
-      };
+      return describeRefund(watch, depositAddress, {
+        symbol: draft.symbol,
+        refundTarget: `${owner} inside ${INTENTS_VERIFIER}, where the balance started`,
+        evidence,
+        primaryTxid: spent.intentHash,
+      });
     }
 
     // Timed out. The signature is released and the intent submitted, so the balance may well

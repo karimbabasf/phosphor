@@ -704,14 +704,30 @@ test('the executor hears the handle after the signature and the hash after the s
   assert.equal(heard[1].handle, HANDLE);
 });
 
-test('a REFUNDED swap says where the refund landed, which is not a chain address', async () => {
-  const h = harness({ statuses: [{ status: 'REFUNDED' }] });
+test('a REFUNDED swap names the amount and says where it landed, which is not a chain address', async () => {
+  const h = harness({ statuses: [{ status: 'REFUNDED', swapDetails: { refundedAmountFormatted: '100.0', nearTxHashes: ['nearRefund'] } }] });
   const result = await railOf(h).execute(draftOf());
 
   assert.equal(result.ok, false);
-  assert.match(result.detail, /REFUNDED/);
-  assert.match(result.detail, /not to any chain address/);
+  assert.match(result.detail, /1click reported REFUNDED: 100\.0 USDC went back to/);
+  assert.match(result.detail, /not any chain address/);
   assert.match(result.detail, new RegExp(OWNER));
+  assert.deepEqual(result.txids, [INTENT_HASH, 'nearRefund']);
+  assert.equal(result.evidence?.refundedAmount, '100.0');
+  assert.equal(result.evidence?.handle, HANDLE);
+});
+
+test('a FAILED swap with nothing refunded says the input is held by 1Click under the handle', async () => {
+  const h = harness({ statuses: [{ status: 'FAILED', swapDetails: { refundedAmountFormatted: '0', refundReason: null } }] });
+  const result = await railOf(h).execute(draftOf());
+
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /1click reported FAILED and refunded 0 USDC so far/);
+  assert.match(result.detail, new RegExp(`held by 1Click under handle ${HANDLE}`));
+  assert.match(result.detail, /reason not given/);
+  assert.doesNotMatch(result.detail, /refund is credited/);
+  assert.deepEqual(result.txids, [INTENT_HASH]);
+  assert.equal(result.evidence?.refundedAmount, '0');
 });
 
 test('an invented status is never terminal, however much it looks like SUCCESS', async () => {

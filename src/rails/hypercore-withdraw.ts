@@ -43,6 +43,7 @@ import { isAddress } from 'viem';
 import type { HlWithdrawDraft, Rail, RailResult, SimulationResult } from '../types.ts';
 import { ONECLICK_TERMINAL, baseUnits, oneClickClient, oneLine, quoteEchoProblems, toBaseUnits } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickStatus, OneClickToken, QuoteEcho } from '../intents.ts';
+import { describeRefund } from './oneclick-words.ts';
 import { fetchIntentsAssetBalance } from '../ledger/intents.ts';
 import { nearChainSpec } from '../chain/near.ts';
 import { readTimeout } from '../net.ts';
@@ -512,13 +513,12 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     }
 
     if (watch.status === 'REFUNDED' || watch.status === 'FAILED') {
-      return {
-        ok: false,
-        detail:
-          `1click reported ${watch.reported} after the send; ${evidence}. A refund goes back to the venue account ${draft.from}, ` +
-          `minus 1Click's refund fee; read the account before proposing again.`,
-        txids: [hash, ...watch.originTxHashes, ...watch.destinationTxHashes],
-      };
+      return describeRefund(watch, depositAddress.toLowerCase(), {
+        symbol: 'USDC',
+        refundTarget: `the venue account ${draft.from} (the spot side)`,
+        evidence,
+        primaryTxid: hash,
+      });
     }
 
     return {

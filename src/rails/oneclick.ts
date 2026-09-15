@@ -49,6 +49,7 @@ import {
   toBaseUnits,
 } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickStatus, TokensFile } from '../intents.ts';
+import { describeRefund } from './oneclick-words.ts';
 
 // The chains this rail can deposit from, by signer family.
 //
@@ -542,11 +543,12 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
     }
 
     if (watch.status === 'REFUNDED' || watch.status === 'FAILED') {
-      return {
-        ok: false,
-        detail: `1click reported ${watch.reported} after the deposit landed; ${evidence}. Check the refund address ${draft.from}.`,
-        txids: [txHash, ...watch.originTxHashes, ...watch.destinationTxHashes],
-      };
+      return describeRefund(watch, depositAddress, {
+        symbol: draft.fromSymbol,
+        refundTarget: `our ${draft.chain} wallet ${draft.from}`,
+        evidence,
+        primaryTxid: txHash,
+      });
     }
 
     // Timed out. The transfer confirmed, so the money is already gone from our wallet and
