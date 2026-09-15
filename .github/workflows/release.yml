@@ -108,6 +108,9 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          # Actions sets CI=true, and tauri-bundler then skips the Finder step that lays the
+          # DMG out (background, icon positions, window size). Every CI DMG shipped plain.
+          TAURI_BUNDLER_DMG_IGNORE_CI: "true"
         run: |
           if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
             echo "TAURI_SIGNING_PRIVATE_KEY is not set; refusing to build an update nobody can install" >&2
@@ -147,7 +150,9 @@ jobs:
           hdiutil attach "$RELEASE_DIR/Phosphor-macOS-arm64.dmg" -nobrowse -readonly -mountpoint "$RUNNER_TEMP/dmg"
           codesign --verify --deep --strict --verbose=2 "$RUNNER_TEMP/dmg/Phosphor.app"
           codesign -dv --verbose=2 "$RUNNER_TEMP/dmg/Phosphor.app" 2>&1 | grep -E '^(Authority|Identifier|TeamIdentifier|Signature)' || true
-          ls -la "$RUNNER_TEMP/dmg/.background" || echo "no background folder in the image"
+          ls -la "$RUNNER_TEMP/dmg/.background"
+          # The Finder layout lives in .DS_Store; without it the image opens as a plain folder.
+          test -f "$RUNNER_TEMP/dmg/.DS_Store" || { echo "DMG has no Finder layout (.DS_Store missing)"; hdiutil detach "$RUNNER_TEMP/dmg"; exit 1; }
           hdiutil detach "$RUNNER_TEMP/dmg"
 
       - name: Publish the release
