@@ -58,7 +58,9 @@ export type TradeService = {
 
 export type TradeServiceDeps = {
   wsUrl: string;
-  user: string;
+  // A function is asked per read, so the account follows a wallet created after boot (see
+  // createTradeFeed); a string is fixed for the life of the process.
+  user: string | (() => string);
   info: InfoClient;
   runner: TradeRunner;
   products: string[];
@@ -164,7 +166,7 @@ export function createTradeService(deps: TradeServiceDeps): TradeService {
       atrFor: deps.atrFor,
       products: deps.products,
       nowMs: now(),
-      address: deps.user,
+      address: typeof deps.user === 'function' ? deps.user() : deps.user,
     });
   }
 

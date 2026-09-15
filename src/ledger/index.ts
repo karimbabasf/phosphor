@@ -38,7 +38,35 @@ export type Ledger = {
   hyperliquid(): HlRead | undefined;
   refresh(): Promise<LedgerSnapshot>;
   applyDemoTransfer(leg: TransferLeg): void;
+  // Told after every refresh lands, so a proposal waiting to see a balance move can judge the
+  // same read the panel is about to show instead of making a read of its own. Returns the
+  // unsubscribe. Optional because the tests build many small ledgers by hand and none of them
+  // has anything to be told.
+  onRefresh?(fn: () => void): () => void;
 };
+
+/* The listeners, kept beside the ledger objects so demo and live share one shape. A listener
+   that throws must not cost the refresh that told it, nor the listeners behind it. */
+function refreshListeners(): { add(fn: () => void): () => void; tell(): void } {
+  const listeners = new Set<() => void>();
+  return {
+    add(fn) {
+      listeners.add(fn);
+      return () => {
+        listeners.delete(fn);
+      };
+    },
+    tell() {
+      for (const fn of [...listeners]) {
+        try {
+          fn();
+        } catch {
+          // The listener's problem, not the ledger's.
+        }
+      }
+    },
+  };
+}
 
 /* Every chain ok, stamped with the moment it was built, once per refresh. There is no per-chain
    read left to fail, so there is no chain that can go stale: a STALE badge would be reporting on
@@ -56,6 +84,7 @@ function emptyChainStatus(): Record<ChainId, ChainStatus> {
 
 function createDemoLedger(): Ledger {
   let current: LedgerSnapshot = loadDemoLedger();
+  const listeners = refreshListeners();
 
   function applyDemoTransfer(leg: TransferLeg): void {
     const holdings = current.holdings.map(h => ({ ...h }));
@@ -102,9 +131,11 @@ function createDemoLedger(): Ledger {
     // live refresh for what a stamp that never moved did to the basic screen.
     refresh: async () => {
       current = { ...current, chainStatus: emptyChainStatus() };
+      listeners.tell();
       return current;
     },
     applyDemoTransfer,
+    onRefresh: listeners.add,
   };
 }
 
@@ -174,7 +205,14 @@ async function resolveLivePrices(
 //
 // No key is a normal state, not an error: a read-only install has nothing deposited because
 // it cannot deposit. Returns null and the verifier is simply not read.
-function intentsAccountId(cfg: AppConfig): string | null {
+//
+// ASKED ON EVERY PASS, never once. This used to be captured when the ledger was built, at boot,
+// and a fresh install has no wallet at boot: the first deposit stayed invisible until a restart
+// (docs/bugs/2026-09-15-first-deposit-invisible-until-restart.md). The answer comes from the
+// keystore's plaintext header, one file read, which is nothing next to the RPC calls behind it.
+// Exported because the Hyperliquid reads in src/main.ts have to name the same account, for
+// the same reason: the trading account is this address and nothing in config.
+export function intentsAccountId(cfg: AppConfig): string | null {
   try {
     return evmAddress(cfg.keysPath).toLowerCase();
   } catch {
@@ -185,7 +223,7 @@ function intentsAccountId(cfg: AppConfig): string | null {
 function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch): Ledger {
   // Shared client so the 186-entry token list is fetched once per process, not per refresh.
   const oneClick = oneClickClient({ fetchImpl });
-  const intentsAccount = intentsAccountId(cfg);
+  const listeners = refreshListeners();
   let liveIntents: IntentsRead | undefined;
   let liveHl: HlRead | undefined;
   let current: LedgerSnapshot = {
@@ -200,11 +238,11 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch): Ledger {
   // A verifier read that fails keeps the last good holdings, exactly as a chain read does,
   // and carries ok:false so the panel can mark it stale. Blanking the row would say the
   // deposit is gone.
-  async function refreshIntents(): Promise<IntentsRead | undefined> {
-    if (intentsAccount === null) return undefined;
+  async function refreshIntents(account: string | null): Promise<IntentsRead | undefined> {
+    if (account === null) return undefined;
     const read = await fetchIntentsHoldings({
       rpcUrl: NEAR_RPC_URL,
-      accountId: intentsAccount,
+      accountId: account,
       tokenList: () => oneClick.tokens(),
       fetchImpl,
     });
@@ -216,9 +254,9 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch): Ledger {
 
   // The trading account is the same address the verifier credits, checksummed by the venue's
   // reader. A failed read keeps the last good figures under ok:false, as the verifier read does.
-  async function refreshHyperliquid(): Promise<HlRead | undefined> {
-    if (intentsAccount === null) return undefined;
-    const read = await fetchHyperliquidRead({ keysPath: cfg.keysPath, fetchImpl }, intentsAccount);
+  async function refreshHyperliquid(account: string | null): Promise<HlRead | undefined> {
+    if (account === null) return undefined;
+    const read = await fetchHyperliquidRead({ keysPath: cfg.keysPath, fetchImpl }, account);
     if (!read.ok && liveHl !== undefined) return { ...liveHl, ok: false, fetchedAt: read.fetchedAt, error: read.error };
     return read;
   }
@@ -237,7 +275,10 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch): Ledger {
     // be valued, so the two run together and meet at the end.
     const livePrices = resolveLivePrices(fetchImpl, current.prices, current.priceAsOf ?? {});
 
-    const [intentsRead, hlRead, priced] = await Promise.all([refreshIntents(), refreshHyperliquid(), livePrices]);
+    // Resolved here, on this pass, so a wallet created after boot is read from its first
+    // refresh on. See intentsAccountId for the bug this closes.
+    const account = intentsAccountId(cfg);
+    const [intentsRead, hlRead, priced] = await Promise.all([refreshIntents(account), refreshHyperliquid(account), livePrices]);
     liveIntents = intentsRead;
     liveHl = hlRead;
 
@@ -257,6 +298,7 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch): Ledger {
       priceAsOf: priced.asOf,
       gas: current.gas,
     };
+    listeners.tell();
     return current;
   }
 
@@ -268,6 +310,7 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch): Ledger {
     applyDemoTransfer: () => {
       throw new Error('applyDemoTransfer is demo-mode only');
     },
+    onRefresh: listeners.add,
   };
 }
 

@@ -11,6 +11,8 @@ import { LOG_LIMIT_MAX } from '../context.ts';
 import type { ReadTable } from '../context.ts';
 import { sentencesOf } from '../state.ts';
 import { vaultStatus } from '../vault.ts';
+import { outcomeOf } from '../../proposals/lifecycle.ts';
+import type { PlanFate } from '../../proposals/lifecycle.ts';
 import type { ChainId } from '../../types.ts';
 
 /* An address for the agent's eyes: enough to say "check it ends in 9Xk2" and not enough to
@@ -187,6 +189,19 @@ export const walletReads: ReadTable = {
       fail(res, 404, `unknown proposal id: ${id}`);
       return;
     }
-    sendJson(res, 200, proposal);
+    /* `outcome` is the one word the agent may repeat about this row (confirmed, settling,
+       failed, unconfirmed, pending) with a plain sentence and the pocket's before and after,
+       so a settling swap is never reported as failed. A trade proposal's fate is its plan's:
+       the entry is confirmed, unconfirmed or ended on the runner's row, not on this one. */
+    let plan: PlanFate | null = null;
+    if (proposal.kind === 'trade') {
+      try {
+        const plans = (ctx.trade.payload() as { plans?: Array<PlanFate & { proposalId?: string }> }).plans ?? [];
+        plan = plans.find((row) => row.proposalId === proposal.id) ?? null;
+      } catch {
+        plan = null;
+      }
+    }
+    sendJson(res, 200, { ...proposal, outcome: outcomeOf(proposal, plan) });
   },
 };
