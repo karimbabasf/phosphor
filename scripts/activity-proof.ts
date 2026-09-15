@@ -21,7 +21,8 @@ const require = createRequire(import.meta.url);
 const PLAYWRIGHT_CORE =
   process.env.PLAYWRIGHT_CORE ?? path.join(os.homedir(), '.npm/_npx/9833c18b2d85bc59/node_modules/playwright-core');
 const CDP_URL = process.env.CDP_URL ?? 'http://127.0.0.1:9333';
-const SHOTS = path.join(ROOT, 'docs', 'screenshots');
+// A working picture, not a deliverable: it goes to the temp dir, never into the repo.
+const SHOTS = process.env.PROOF_OUT_DIR ?? fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-activity-shot-'));
 
 type Json = any;
 
@@ -160,7 +161,7 @@ async function main(): Promise<void> {
     await browser.close();
   }
   const errors = log.filter((l) => l.startsWith('[page]') || l.startsWith('[console.error]'));
-  console.log(`activity: docs/screenshots/activity.png, ${errors.length} page error(s)${errors.length ? '\n' + errors.join('') : ''}`);
+  console.log(`activity: ${path.join(SHOTS, 'activity.png')}, ${errors.length} page error(s)${errors.length ? '\n' + errors.join('') : ''}`);
 }
 
 main()
