@@ -112,6 +112,18 @@ function stageRuntime(): void {
   console.log(`runtime: node ${process.versions.node} -> binaries/node-${TRIPLE} (${mb(fs.statSync(target).size)})`);
 }
 
+/* The Secure Enclave sidecar, built from src-tauri/se-helper/main.swift by the script that also
+   serves `npm run se:build`. It is a second externalBin beside node and ships under
+   Contents/MacOS/se-helper. A bundle without it still runs: the backend's relay reports the
+   enclave unreachable and the wallet stays on the password path, which is the wrong product to
+   ship by accident, so the build fails here rather than there. */
+function stageEnclaveHelper(): void {
+  execFileSync('sh', [path.join(ROOT, 'scripts', 'build-se-helper.sh')], { stdio: 'inherit' });
+  const built = path.join(BINARIES, `se-helper-${TRIPLE}`);
+  if (!fs.existsSync(built)) throw new Error('bundle-payload: the Secure Enclave sidecar was not built');
+  console.log(`enclave: se-helper -> binaries/se-helper-${TRIPLE} (${mb(fs.statSync(built).size)})`);
+}
+
 // The staged tree is only correct if it boots. Installing cleanly proves nothing: pruning once
 // removed a directory viem imports, and npm reported success right up until the app died on
 // first launch. So the build refuses to finish until the bundled runtime has actually served a
@@ -180,5 +192,6 @@ async function verifyBoots(): Promise<void> {
 
 stagePayload();
 stageRuntime();
+stageEnclaveHelper();
 await verifyBoots();
 console.log(`total: ${mb(bytes(path.join(TAURI, 'payload')) + bytes(BINARIES))} to bundle`);

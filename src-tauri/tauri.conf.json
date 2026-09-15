@@ -30,7 +30,8 @@
       "payload/phosphor": "phosphor"
     },
     "externalBin": [
-      "binaries/node"
+      "binaries/node",
+      "binaries/se-helper"
     ],
     "macOS": {
       "minimumSystemVersion": "13.5",
