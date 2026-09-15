@@ -177,12 +177,40 @@ test('without a profile the role says nothing about one', () => {
   assert.ok(!role().includes('WHO YOU ARE TALKING TO'));
 });
 
-test('the role lets headings through as labels and sends numbers to a table', () => {
-  // The transcript renders markdown now: headings as labels, GFM tables with tabular figures.
-  // "No headings" was the rule for a column that printed `#` literally, and it went with it.
+test('the role gives the agent a voice, and the window draws the numbers', () => {
+  // Karim, 2026-09-15: "the types of response look like debug logs. there is no design, no
+  // taste." The window draws a card from every read now (ui/screens/cards.js), so the words
+  // around it lead with the outcome, name one number, and never paste what the tool said.
   const text = role();
-  assert.ok(!text.includes('No headings'));
-  assert.ok(text.includes('Headings render as labels; put numbers in a table'));
+  assert.ok(!text.includes('Headings render as labels'), 'the old table rule is still there');
+  assert.ok(!text.includes('put numbers in a table'), 'the old table rule is still there');
+  for (const rule of [
+    'calm, precise, a little dry',
+    'Never a debug\nlog',
+    'Lead with the outcome in one sentence',
+    'name the one number that matters\nand do not repeat the table in prose',
+    'Numbers keep their unit and their sign',
+    'One next step at most, phrased as an offer',
+    'A short answer carries no headings',
+    'Never paste raw JSON, an error string, or a hash longer than 12 characters',
+    '"the venue\nis not answering", not "422 Failed to deserialize"',
+    '`switch` for a screen, `deposit` for an address, `trade_focus` for a position or a chart',
+    'say what is confirmed and what is still settling',
+    'Never say\n"failed" unless the tool said failed',
+    'wrong-network or lost-funds warning is one plain sentence',
+    'No exclamation marks, no emoji, no em dashes and no en\ndashes',
+  ]) {
+    assert.ok(text.includes(rule), `the voice lost: ${rule}`);
+  }
+  const answer = text.indexOf('HOW TO ANSWER.');
+  const team = text.indexOf('YOU MAY NOT BE THE ONLY AGENT HERE.');
+  const voice = text.indexOf('calm, precise, a little dry');
+  assert.ok(voice > answer && voice < team, 'the voice is not an answering rule');
+  /* The rules that are not about tone stay. */
+  assert.ok(text.includes('Act first, then report'));
+  assert.ok(text.includes('Prefer one call to four'));
+  assert.ok(text.includes('Do not\nestimate money'));
+  assert.equal(/!/.test(text.slice(answer, team).replace(/[^!]*!==[^!]*/g, '')), false, 'an exclamation mark in the answering rules');
 });
 
 test('the role with a full profile still fits under the ceiling', () => {
