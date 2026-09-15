@@ -471,21 +471,25 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
       };
     }
 
+    // On the spot side, which is observed money that is not margin yet. Nothing here says to
+    // deposit again: a second proposal signs a second intent and spends a second time.
     try {
       const moved = await usdClassTransfer(hl, { amount: spotGain, toPerp: true });
       return {
         shown: true,
         sentence: moved.ok
           ? ` Landed on the spot side and was moved to perp: ${spotGain.toFixed(4)} USDC is margin now.`
-          : ` Landed on the SPOT side and the move to perp failed: ${oneLine(moved.detail, 120)}. ` +
-            'The money is on the account and is not margin yet; propose the deposit again for nothing and the settle step will retry the move.',
+          : ` Landed on the spot side and the move to perp failed: ${oneLine(moved.detail, 120)}. ` +
+            `The collateral is on the spot side of the account and is not margin yet; do not deposit again, ` +
+            'move it to the perp side in Hyperliquid by hand.',
       };
     } catch (err) {
       return {
         shown: true,
         sentence:
-          ` Landed on the SPOT side and the move to perp threw: ${oneLine(errText(err), 120)}. ` +
-          `The money is on the account and is not margin yet.`,
+          ` Landed on the spot side and the move to perp threw: ${oneLine(errText(err), 120)}. ` +
+          'The collateral is on the spot side of the account and is not margin yet; do not deposit again, ' +
+          'move it to the perp side in Hyperliquid by hand.',
       };
     }
   }

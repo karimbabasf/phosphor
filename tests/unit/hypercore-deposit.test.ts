@@ -573,6 +573,16 @@ test('an account that cannot be read after the deposit is unconfirmed, never "th
   assert.deepEqual(out.txids, ['HASH1', '0xdest']);
 });
 
+test('collateral stuck on the spot side is named, and nobody is told to deposit again', async () => {
+  const { rail: r, exchange } = rail({}, [{ perp: 0, spot: 0 }, { perp: 0, spot: 9.6594 }], {}, { transferRefused: true });
+  const out = await r.execute(draft());
+  assert.equal(out.ok, true, out.detail);
+  assert.equal(exchange.length, 1);
+  assert.match(out.detail, /spot side/);
+  assert.match(out.detail, /do not deposit again/);
+  assert.doesNotMatch(out.detail, /for nothing/);
+  assert.doesNotMatch(out.detail, /propose the deposit again/);
+});
 
 // ---------- the floor, against the measured fee ----------
 
