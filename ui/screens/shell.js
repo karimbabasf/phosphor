@@ -190,6 +190,9 @@
     }
 
     if (changed) {
+      /* The world is the one scroller and the views share it, so a screen
+         opens at its top rather than wherever the last one was scrolled to. */
+      if (refs.views) refs.views.scrollTop = 0;
       /* Canvases mounted in a hidden view have no size to fit to, so the chart
          is told to re-measure once its view is on screen. */
       window.dispatchEvent(new CustomEvent('phosphor:view', { detail: { view: name } }));
@@ -316,16 +319,23 @@
     var state = store.get() || {};
     var lock = state.lock || { state: 'unlocked', idleLocksInSec: null };
 
+    /* A word with a short form for a narrow bar carries it as data-short
+       (layout.css swaps the two under 1420 wide); the words that do not
+       shorten carry none. */
     if (refs.lockChip) {
       var locked = lock.state !== 'unlocked';
       var word = 'Unlocked';
+      var short = null;
       if (lock.state === 'locked') word = 'Locked';
       else if (lock.state === 'no_wallet') word = 'No wallet';
-      else if (lock.state === 'needs_migration') word = 'Keys not encrypted';
+      else if (lock.state === 'needs_migration') { word = 'Keys not encrypted'; short = 'Not encrypted'; }
       else if (typeof lock.idleLocksInSec === 'number' && lock.idleLocksInSec > 0) {
-        word = 'Locks in ' + Math.max(1, Math.round(lock.idleLocksInSec / 60)) + ' min';
+        var minutes = Math.max(1, Math.round(lock.idleLocksInSec / 60));
+        word = 'Locks in ' + minutes + ' min';
+        short = minutes + ' min';
       }
       dom.setText(refs.lockChip.querySelector('[data-role="lock-text"]'), word);
+      dom.setAttr(refs.lockChip, 'data-short', short);
       dom.setAttr(refs.lockChip, 'data-tone', locked ? 'warn' : null);
     }
 
@@ -349,6 +359,7 @@
       var vault = state.vault || {};
       var exposed = !!vault.custody && vault.backedUp === false;
       dom.setHidden(refs.backupChip, !exposed);
+      dom.setAttr(refs.backupChip, 'data-short', 'No backup');
     }
 
     updateField();

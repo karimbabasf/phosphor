@@ -2,12 +2,10 @@
    and wants to see everything and set the rules.
 
    Four cards: Money and Activity down the left, Trading and Policy down the
-   right. Each column stacks its cards with 12 px between them and a card is
-   as tall as what it holds, with two exceptions on the left: Money stops at
-   half the window and scrolls its list inside, and Activity takes whatever
-   the column has left, because a list of receipts is the one thing on this
-   deck with no natural end. Nothing here folds shut, and nothing reads as
-   clickable unless it opens. */
+   right. Each column stacks its cards with 12 px between them and every card
+   is as tall as what it holds: nothing scrolls inside a card, the world does,
+   so "Show more" sits under the last row it loaded. Nothing here folds shut,
+   and nothing reads as clickable unless it opens. */
 (function () {
   'use strict';
 
@@ -131,8 +129,8 @@
 
     /* Activity: receipts of the last 24 hours, with the chips that widen the
        window or narrow the kind, and a page at a time under "Show more". The
-       head and the chips sit on the card's own ground above the list, so a row
-       scrolls under a hairline and never under the title. */
+       head and the chips sit on the card's own ground above the list, with a
+       hairline under them that the first row starts from. */
     var activity = card('Activity', 'activity', 'card-activity');
     var activityHead = dom.el('div', 'activity-head');
     activity.node.insertBefore(activityHead, activity.body);

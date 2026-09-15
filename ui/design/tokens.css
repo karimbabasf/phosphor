@@ -23,10 +23,11 @@
   --line: #262729;
   --line-strong: #363739;
 
-  /* Text */
+  /* Text. The third level is meta at 12 px, and it still has to read: 4.7:1 on
+     the raised surface (--bg-2), which is the lightest ground it sits on. */
   --text: #ECEEF1;
   --text-2: #9BA1AB;
-  --text-3: #5E656F;
+  --text-3: #828890;
 
   /* State colour. Phosphor green is the action colour, the direction up, and the
      assistant's own light: the app is named for one colour on graphite, so the
@@ -84,7 +85,10 @@
   --s-7: 48px;
   --s-8: 64px;
 
-  /* Shape */
+  /* Shape. One scale: xs for micro controls (a checkbox, inline code, a tiny
+     tag), sm for controls and chips, the base for inputs and list containers,
+     lg for cards and panels, xl for the receipt and lock cards. */
+  --radius-xs: 6px;
   --radius: 14px;
   --radius-sm: 10px;
   --radius-lg: 20px;

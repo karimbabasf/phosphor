@@ -1,40 +1,14 @@
 /* Basic: one 640 px column, read top to bottom: the total, the rules, what is
-   held, then two folds. The column is a deck while the folds are shut (the
-   holdings list gives when there is more of it than room) and a page that
-   scrolls once a fold opens, because an open fold has no natural height.
-   The cards wear the same head as Pro's (pro.css .card); this file adds what
-   only this column has. */
+   held, then two folds. The column is as tall as what it holds and the world
+   (#views) scrolls it: a wallet of twenty coins is a longer list, never a
+   list cut off inside its card. The cards wear the same head as Pro's
+   (pro.css .card); this file adds what only this column has. */
 
 /* ---------- the column ---------- */
 
 #view-basic .basic-col {
   gap: var(--s-3);
   padding: var(--s-6) var(--s-5) var(--s-5);
-}
-
-/* The holdings card gives, and never takes. It may shrink, so a wallet of
-   twenty coins scrolls inside the card rather than pushing the two folds off
-   the screen; it may not grow, because a wallet of four coins stretched to
-   fill the window is a card with a hole in it. */
-#view-basic .basic-col > .card[data-surface="holdings"] {
-  flex: 0 1 auto;
-  min-height: 148px;
-}
-
-/* An open fold turns the deck into a page: the column takes its content
-   height, the holdings list stops scrolling inside itself, and the world
-   scrolls instead. */
-#view-basic .basic-col:has(.fold[data-open="true"]) {
-  flex: 0 0 auto;
-  padding-bottom: var(--s-8);
-}
-
-#view-basic .basic-col:has(.fold[data-open="true"]) > .card[data-surface="holdings"] {
-  flex: 0 0 auto;
-}
-
-#view-basic .basic-col:has(.fold[data-open="true"]) .hold-list {
-  overflow-y: visible;
 }
 
 /* ---------- the hero ---------- */
@@ -139,12 +113,9 @@
 
 /* ---------- what you hold ---------- */
 
-/* The list under the card head. It scrolls inside the card while the deck is a
-   deck; the hairline under the head is what a row scrolls under. */
+/* The list under the card head, every row of it: the dust under a dollar is
+   counted in the note below rather than listed. */
 .hold-list {
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  min-height: 0;
   padding: 0 var(--card-x);
 }
 
@@ -170,12 +141,18 @@
 
 .hold-list .row:first-child { border-top: 0; }
 
-.row-mark,
-.row-mark > * {
-  display: block;
+/* The mark's box, a flex box so the logo inside stays one too and the
+   fallback disc keeps its initial centred. */
+.row-mark {
+  display: flex;
   width: 24px;
   height: 24px;
   flex: 0 0 auto;
+}
+
+.row-mark > * {
+  width: 24px;
+  height: 24px;
 }
 
 .hold-list .row-main {
