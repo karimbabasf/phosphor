@@ -131,6 +131,22 @@
   position: relative;
 }
 
+/* ---------- Icon ----------
+
+   One drawn set (design/icons.js), placed with <use>. An icon is the colour of
+   the text it sits in and, by default, the size of that text. */
+.icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  flex: 0 0 auto;
+  vertical-align: -0.15em;
+  color: inherit;
+}
+
+.icon-20 { width: 20px; height: 20px; }
+.icon-24 { width: 24px; height: 24px; }
+
 /* ---------- Spinner ---------- */
 
 .spinner {
