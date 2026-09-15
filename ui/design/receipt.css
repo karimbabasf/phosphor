@@ -44,6 +44,7 @@ dialog.receipt-dialog::backdrop {
   box-shadow: var(--lift);
   color: var(--text);
   outline: none;
+  container-type: inline-size;
 }
 
 /* Inline in the thread: the panel around it is flat, the card is the raised
@@ -197,6 +198,22 @@ dialog.receipt-dialog::backdrop {
   color: var(--ink);
 }
 
+/* In the thread the card is a step narrower than the popover and two legs no
+   longer share a line, so they stack and the swap arrow turns to point down
+   between them, under the logos. */
+@container (max-width: 380px) {
+  .receipt-legs {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--s-2);
+  }
+
+  .receipt-arrow {
+    margin-left: 6px;
+    transform: rotate(90deg);
+  }
+}
+
 /* Four facts in two columns: value, fee, venue or chain, wallet or account. */
 .receipt-grid {
   display: grid;
@@ -271,6 +288,11 @@ dialog.receipt-dialog::backdrop {
 .receipt-actions > .btn {
   flex: 1;
   min-width: 0;
+}
+
+/* A link dressed as the primary button: no underline, the button is the affordance. */
+.receipt-view {
+  text-decoration: none;
 }
 
 .receipt-view > .icon {
