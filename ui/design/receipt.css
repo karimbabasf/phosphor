@@ -10,11 +10,19 @@
 dialog.receipt-dialog {
   width: min(440px, calc(100vw - var(--s-6)));
   max-width: none;
+  max-height: calc(100vh - var(--s-6));
   padding: 0;
   border: 0;
   background: transparent;
   overflow: visible;
   color: var(--text);
+}
+
+/* A card with more hashes than the window has height scrolls inside its own edge,
+   so the shadow and the radius stay whole. */
+dialog.receipt-dialog > .receipt-card {
+  max-height: calc(100vh - var(--s-6));
+  overflow: auto;
 }
 
 /* A scrim, not a blur: a backdrop-filter over this document re-runs whenever the

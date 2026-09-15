@@ -308,10 +308,12 @@ test('a move that did not go through shows what would have left, unsigned and qu
 test('a deposit with no recorded arrival names where the money went instead of inventing an amount', () => {
   const rig = boot();
   const card = rig.window.PhosphorReceipt.card(swap({
-    kind: 'intents_deposit', fromChain: 'base', toChain: 'intents', received: null, venue: null, symbol: 'USDC', amount: 25,
+    kind: 'intents_deposit', fromChain: 'base', toChain: 'intents', received: null, venue: 'intents.near', symbol: 'USDC', amount: 25,
   }));
   assert.equal(text(withClass(card, 'receipt-kind')[0]), 'Deposit');
   assert.equal(text(withClass(card, 'receipt-leg-place')[0]), 'to NEAR Intents');
+  const labels = withClass(card, 'receipt-cell').map((c: Any) => text(c.childNodes[0]));
+  assert.deepEqual(labels, ['Value', 'Fee', 'Chain', 'Wallet'], 'a move between places names the route, not the venue');
   const chain = withClass(card, 'receipt-cell').find((c: Any) => text(c.childNodes[0]) === 'Chain');
   assert.equal(text(chain?.childNodes[1]), 'Base to NEAR Intents');
 });

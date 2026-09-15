@@ -217,12 +217,14 @@
     var list = dom.el('dl', 'receipt-grid');
     cell(list, 'Value', typeof receipt.valueUsd === 'number' ? dom.usd(receipt.valueUsd) : '', true);
     cell(list, 'Fee', typeof receipt.feesUsd === 'number' ? dom.fee(receipt.feesUsd) : 'none yet', typeof receipt.feesUsd === 'number');
+    /* A move between two places names the route, because that is what the person checks
+       ("Base to NEAR Intents"); a move inside one place names the venue that did it. */
     var venue = venueName(receipt.venue);
     var from = receipt.fromChain ? chainName(receipt.fromChain) : '';
     var to = receipt.toChain ? chainName(receipt.toChain) : '';
-    var place = from && to && from !== to ? from + ' to ' + to : (from || to);
-    if (venue) cell(list, 'Venue', venue, false);
-    else if (place) cell(list, 'Chain', place, false);
+    if (from && to && from !== to) cell(list, 'Chain', from + ' to ' + to, false);
+    else if (venue) cell(list, 'Venue', venue, false);
+    else if (from || to) cell(list, 'Chain', from || to, false);
     var onVenue = receipt.fromChain === 'intents' || receipt.fromChain === 'hyperliquid';
     if (receipt.wallet) cell(list, onVenue ? 'Account' : 'Wallet', shortAddress(receipt.wallet), true, String(receipt.wallet));
     else if (receipt.account) cell(list, 'Account', shortAddress(receipt.account), true, String(receipt.account));
