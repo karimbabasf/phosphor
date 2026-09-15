@@ -290,13 +290,40 @@
 
   /* Written at boot, once, on the root: the one place the stylesheet reads
      the spring from. Guarded, because the file also runs where there is no
-     document to write to. */
-  (function seedSpringTokens() {
+     document to write to. Written again when the vendored file lands. */
+  function seedSpringTokens() {
     var root = typeof document !== 'undefined' && document.documentElement;
     if (!root || !root.style || typeof root.style.setProperty !== 'function') return;
     root.style.setProperty('--ease-spring', spring());
     root.style.setProperty('--dur-spring', springDuration());
-  })();
+  }
+  seedSpringTokens();
+
+  /* The vendored file is 147 KB and nothing on screen waits for it, so it is
+     fetched after the window's load event rather than parsed in front of the
+     first paint, which it had cost 14 ms (Karim, 2026-09-14: "speed and
+     performance shouldnt be lost"). Until it lands every reader gets the
+     fallback curve; when it lands the spring is sampled once, the root tokens
+     are rewritten, and the next transition takes the physics. Same origin, so
+     the page's script-src 'self' admits it. */
+  function loadSpringLater() {
+    if (typeof document === 'undefined' || typeof document.createElement !== 'function') return;
+    if (typeof window.addEventListener !== 'function' || window.Motion) return;
+    function fetchIt() {
+      var tag = document.createElement('script');
+      tag.src = './vendor/motion-13.3.0.js';
+      tag.async = true;
+      tag.onload = function () {
+        springEase = '';
+        springDur = '';
+        seedSpringTokens();
+      };
+      (document.head || document.documentElement).appendChild(tag);
+    }
+    if (document.readyState === 'complete') window.setTimeout(fetchIt, 0);
+    else window.addEventListener('load', function () { window.setTimeout(fetchIt, 0); }, { once: true });
+  }
+  loadSpringLater();
 
   if (motionQuery.addEventListener) {
     motionQuery.addEventListener('change', function () {
