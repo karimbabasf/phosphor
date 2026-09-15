@@ -42,6 +42,9 @@ test('the wallet read op carries the Hyperliquid row the ledger read', async () 
       refresh: async () => snapshot,
       applyDemoTransfer: () => {},
     },
+    keystore: { custody: () => null, enclave: () => null, state: () => 'no_wallet', header: () => null },
+    vault: { attached: () => false, enclaveReady: () => false, capability: () => null, waiting: () => null },
+    vaultPrefs: { get: () => ({ backedUp: false, backedUpAt: null, idleMinutes: 15 }) },
   } as unknown as Ctx;
 
   const { res, body } = captured();

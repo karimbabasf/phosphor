@@ -80,9 +80,9 @@ export const READ_TOOLS: readonly string[] = [
   'balances',
   'composition',
   'wallet',
-  // Where money comes IN. One stable bridge address per network, so an agent can answer "how do
-  // I fund this" without sending somebody hunting for a screen. It moves nothing.
-  'intents_receive',
+  // Where money comes IN. Opens the deposit card in the window for one asset on one network and
+  // hands the agent a fingerprint of the address, never the address. It moves nothing.
+  'deposit',
   'policy_show',
   'log_tail',
   'proposal_status',

@@ -450,7 +450,33 @@ const INTENTS_NETWORKS: Array<{ id: ChainId; name: string }> = [
   { id: 'near', name: 'NEAR' },
 ];
 
+export type IntentsReceiveNetwork = {
+  id: ChainId;
+  name: string;
+  address: string | null;
+  memo: string | null;
+  unavailable: string | null;
+  accepts: Array<{ symbol: string; minDeposit: string; decimals: number }>;
+  warning: string;
+};
+
+export type IntentsReceiveReport = {
+  account: string | null;
+  verified: boolean;
+  tampered: boolean;
+  networks: IntentsReceiveNetwork[];
+  reason?: string;
+  note?: string;
+};
+
 export async function handleIntentsReceive(ctx: Ctx, res: http.ServerResponse): Promise<void> {
+  sendJson(res, 200, await intentsReceiveReport(ctx));
+}
+
+/* The bridge addresses and what each network credits, as one report. The route above serves
+   it to the window whole; the `deposit` read tool serves the agent one network of it with the
+   address reduced to a fingerprint, because the window is where an address is read from. */
+export async function intentsReceiveReport(ctx: Ctx): Promise<IntentsReceiveReport> {
   const report = ctx.keystore.addressReport();
   const account = report.addresses.evm;
 
@@ -458,7 +484,7 @@ export async function handleIntentsReceive(ctx: Ctx, res: http.ServerResponse): 
      by this id, so without it there is no account to deposit into and a screen showing five
      blank cards would imply otherwise. */
   if (account === null) {
-    sendJson(res, 200, {
+    return {
       account: null,
       verified: report.verified,
       tampered: report.tampered,
@@ -466,8 +492,7 @@ export async function handleIntentsReceive(ctx: Ctx, res: http.ServerResponse): 
       reason: report.tampered
         ? 'the keystore header was edited, so no address here can be trusted'
         : 'no wallet yet, so there is no intents account to deposit into',
-    });
-    return;
+    };
   }
 
   const [addresses, tokens] = await Promise.all([
@@ -506,7 +531,7 @@ export async function handleIntentsReceive(ctx: Ctx, res: http.ServerResponse): 
     };
   });
 
-  sendJson(res, 200, {
+  return {
     account,
     verified: report.verified,
     tampered: report.tampered,
@@ -514,7 +539,7 @@ export async function handleIntentsReceive(ctx: Ctx, res: http.ServerResponse): 
     // Said plainly, because it is the one thing about this screen that surprises people: the
     // address is not ours, it is a bridge address that forwards.
     note: 'These addresses belong to the NEAR Intents bridge. It forwards what it receives to your intents balance.',
-  });
+  };
 }
 
 export function handleReceive(ctx: Ctx, res: http.ServerResponse): void {

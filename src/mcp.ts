@@ -412,6 +412,26 @@ registerRead(
   'Returns everything held the way a wallet shows it: one row per token on a chain, one per balance inside NEAR Intents, and one for the Hyperliquid trading account (free collateral, margin in use, open positions), with quantity, unit price, USD value and share of the total. The three pockets in one read. Read-only, changes nothing.',
   {},
 );
+registerLeadRead(
+  'deposit',
+  [
+    'Opens the deposit card in the app window for one asset on one network, so the person can read',
+    'the address and scan the QR there, and starts watching for the money to land.',
+    '',
+    'Call it when the person asks where to send funds. Ask which network they will send on first if',
+    'they did not say: USDC on the wrong network is lost, and the bridge does not refund. You get back',
+    'the network in the words an exchange uses, the minimum, a FINGERPRINT of the address (the first',
+    'six and last four characters) and a sentence to relay. You never get the full address, and you',
+    'must never state or guess one in chat: the window is where it is read. Relay the disclaimer,',
+    'tell them to check the last four characters, and tell them to send a small test amount first.',
+    'If `backedUp` is false and money is coming in, say so and point at the Vault tab. Read-only',
+    'apart from opening the card; it moves nothing.',
+  ].join(' '),
+  {
+    asset: z.string().describe('the token symbol the person will send, for example USDC or SOL'),
+    chain: z.enum(['eth', 'base', 'arb', 'sol', 'near']).describe('the network they will send on'),
+  },
+);
 registerRead(
   'composition',
   'Returns stablecoin composition by issuer and chain: shares, freezable share, and any unclassified holdings. Read-only, changes nothing.',

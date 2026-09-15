@@ -17,6 +17,7 @@ import { LOG_LIMIT_MAX } from './context.ts';
 import { intParam, jsonWithEtag } from './respond.ts';
 import type { CachedJson } from './respond.ts';
 import type { Ctx } from './context.ts';
+import { vaultStatus } from './vault.ts';
 
 /* NOTHING UNBOUNDED RIDES ON /api/state, and this is where that rule is kept.
    The payload used to carry every proposal the data directory had ever held. Measured on a demo
@@ -152,6 +153,11 @@ export function buildState(ctx: Ctx): unknown {
       verified: lockAddresses.verified,
       tampered: lockAddresses.tampered,
     },
+    /* The vault beside the lock: which custody, whether the enclave is reachable, what the
+       Touch ID dialog is waiting on, whether the phrase is proven backed up. The Vault tab, the
+       first-run screen and the decision card all read it from here. Never a key. */
+    vault: vaultStatus(ctx),
+    deposit: ctx.deposits.current(),
     sentences: sentencesOf(policy),
     // Everything still waiting on a person, plus the last 20 decided. The rest is paged behind
     // GET /api/proposals; see the note on STATE_DECIDED_KEPT above.

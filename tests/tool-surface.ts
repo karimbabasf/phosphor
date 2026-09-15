@@ -21,6 +21,10 @@ export const EXPECTED_TOOLS: readonly string[] = [
   'balances',
   'composition',
   'wallet',
+  // Where money comes in. It opens the deposit card in the window and hands the agent a
+  // fingerprint of the address, never the address: the window is where an address is read.
+  // Lead only, because a card in the human's window is the lead's business.
+  'deposit',
   'log_tail',
   'policy_show',
   'proposal_status',
@@ -153,6 +157,7 @@ export const WORKER_WITHHELD: readonly string[] = [
   'chart_draw',
   'chart_layout',
   'chart_snapshot',
+  'deposit',
   // A worker has no human in its session to have taught anything to.
   'profile_learned',
   ...EXPECTED_TOOLS.filter((t) => t.startsWith('propose_')),
