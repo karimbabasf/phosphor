@@ -70,8 +70,11 @@ test.afterEach(() => {
 // A consolidation small enough to be auto-approved with the wallet open. It is the case that
 // matters most: with no lock it EXECUTES with nobody clicking, so a queue that let it through
 // would be money moving with no key and no person.
+// The row once it has landed: a propose answers with the executing row and the demo legs run
+// behind it, and a row that never executed comes back as it is.
 async function smallMove(h: ReturnType<typeof setup>) {
-  return await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT', maxTotalUsd: 50 });
+  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT', maxTotalUsd: 50 });
+  return await h.svc.settled(p.id, 5000);
 }
 
 test('a proposal authored while locked is queued, not refused', async () => {

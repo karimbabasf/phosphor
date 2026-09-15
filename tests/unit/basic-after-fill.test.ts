@@ -79,7 +79,8 @@ test('a fill in demo mode leaves the basic frame with a total, not a waiting sen
 
   // A stamp taken in the same millisecond as the fill would hide the bug, so the clock moves.
   await sleep(5);
-  const executed = await svc.proposeConsolidate({ toChain: 'arb', symbol: 'USDC', maxTotalUsd: 40 });
+  const started = await svc.proposeConsolidate({ toChain: 'arb', symbol: 'USDC', maxTotalUsd: 40 });
+  const executed = await svc.settled(started.id, 5000);
   assert.equal(executed.status, 'executed', JSON.stringify(executed.verdict));
 
   const after = frame(ledger, store);

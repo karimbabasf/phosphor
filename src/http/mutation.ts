@@ -15,6 +15,7 @@ import { sameOrigin, tokenFingerprint, tokenMatches } from './auth.ts';
 import { errText, fail, readBody, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
 import { pollPrice } from './chart.ts';
+import { PROPOSE_REPLY_CAP_MS } from './propose.ts';
 import { PROJECT_DIR } from './context.ts';
 import type { Ctx } from './context.ts';
 
@@ -286,8 +287,11 @@ export async function handleMutation(
   }
 
   try {
-    // approve() and refuse() own their own audit trail and any execution.
-    const proposal = route === '/api/approve' ? await ctx.proposals.approve(id) : await ctx.proposals.refuse(id);
+    // approve() and refuse() own their own audit trail and any execution. A click answers with
+    // the row once it has landed, or as it stands when the propose cap runs out: the legs and
+    // the rails run behind the executing row now, and the window's state frame carries the rest.
+    const decided = route === '/api/approve' ? await ctx.proposals.approve(id) : await ctx.proposals.refuse(id);
+    const proposal = decided.status === 'executing' ? await ctx.proposals.settled(decided.id, PROPOSE_REPLY_CAP_MS) : decided;
     ctx.sse.broadcastState();
     sendJson(res, 200, proposal);
   } catch (err) {

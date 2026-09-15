@@ -317,7 +317,8 @@ test('a send that partly succeeded lands as an unknown outcome rather than a fai
 
   const p = await svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDC' });
   assert.ok(p.draft.kind === 'consolidate' && p.draft.legs.length > 1, 'this needs more than one leg to mean anything');
-  const done = p.status === 'pending' ? await svc.approve(p.id) : p;
+  const decided = p.status === 'pending' ? await svc.approve(p.id) : p;
+  const done = await svc.settled(decided.id, 5000);
 
   assert.equal(done.status, 'needs_reconciliation', 'money left on one leg, so this is not a failure');
   assert.deepEqual(done.result?.txids, ['0xleg1']);

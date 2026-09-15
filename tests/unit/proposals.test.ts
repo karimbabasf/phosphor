@@ -21,6 +21,7 @@ import { defaultPolicy, loadPolicy, savePolicy } from '../../src/policy/file.ts'
 import { renderSentences } from '../../src/policy/render.ts';
 import { syntheticQuoter, stubSigner } from '../../src/intents.ts';
 import { createProposalService } from '../../src/proposals.ts';
+import { landed } from './helpers/proposals.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const riskRows = JSON.parse(
@@ -214,7 +215,7 @@ test('execution refuses when the deposit address changed after approval', async 
   }
   h.store.put(stored);
 
-  const executed = await h.svc.approve(p.id);
+  const executed = await landed(h, h.svc.approve(p.id));
 
   assert.equal(executed.status, 'failed');
   assert.match(executed.result?.detail ?? '', /different address than the one approved/);
@@ -226,7 +227,7 @@ test('an unchanged deposit address still executes, so the check is not just a bl
   const h = setup({ mode: 'live', quoter: depositQuoter(), signer, ledger: fakeLiveLedger() });
   const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
 
-  const executed = await h.svc.approve(p.id);
+  const executed = await landed(h, h.svc.approve(p.id));
 
   assert.equal(executed.status, 'executed');
   assert.ok(signer.sentTo.length > 0);
@@ -342,7 +343,8 @@ test('a pending proposal executes only after a human approves it', async () => {
   const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
   const expected = 9200 + amountOutTotal(p);
 
-  const approved = await h.svc.approve(p.id);
+  // The click answers with the executing row; the demo legs land behind it.
+  const approved = await landed(h, h.svc.approve(p.id));
   assert.equal(approved.status, 'executed');
   assert.equal(approved.decidedBy, 'human');
   assert.ok(approved.decidedAt);
@@ -370,7 +372,7 @@ test('refuse leaves the balances alone', async () => {
 
 test('a move below the click threshold is allowed and executes with no pending state', async () => {
   const h = setup();
-  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT', maxTotalUsd: 40 });
+  const p = await landed(h, h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT', maxTotalUsd: 40 }));
 
   assert.equal(p.verdict.outcome, 'allow');
   assert.equal(p.status, 'executed');
@@ -497,7 +499,7 @@ test('live mode with no signer lands the approved proposal in failed with the au
   const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
   assert.equal(p.status, 'pending');
 
-  const done = await h.svc.approve(p.id);
+  const done = await landed(h, h.svc.approve(p.id));
   assert.equal(done.status, 'failed');
   assert.equal(done.result?.ok, false);
   assert.match(done.result?.detail ?? '', /No signer configured/);
@@ -567,7 +569,7 @@ test('sessionSpentUsd counts executed fund moves and ignores refused ones and po
   const h = setup();
   assert.equal(h.svc.sessionSpentUsd(), 0);
 
-  const small = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT', maxTotalUsd: 40 });
+  const small = await landed(h, h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT', maxTotalUsd: 40 }));
   assert.equal(small.status, 'executed');
   assert.ok(Math.abs(h.svc.sessionSpentUsd() - 40) < 0.01);
 

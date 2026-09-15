@@ -196,19 +196,26 @@ export async function executeRail(ctx: PCtx, p: Proposal, rail: Rail): Promise<P
      with a cap (settled, in lifecycle.ts), and past the cap reads proposal_status. Every exit
      from the run below persists a terminal row, so the promise never rejects and a caller
      racing it never sees a row left `executing` by a throw. */
-  const run = runRail(ctx, p, rail, executing, beforeUsd)
+  return behind(ctx, executing, runRail(ctx, p, rail, executing, beforeUsd));
+}
+
+/* Register a run on the inflight map and answer with the executing row. Shared by the rail path
+   and the fund move, so both settle behind the same map the propose cap, the settled wait and
+   the shutdown drain read. The run's own throws are caught inside it; what is caught here is
+   the store or the log refusing the write. The row stays `executing` for the boot sweep, and
+   the wait still ends. */
+function behind(ctx: PCtx, executing: Proposal, run: Promise<Proposal>): Proposal {
+  const settled = run
     .catch((err: unknown) => {
-      // The rail's own throw is caught inside; this is the store or the log refusing the
-      // write. The row stays `executing` for the boot sweep, and the wait still ends.
       try {
-        ctx.audit.append('error', `${p.id}: recording the rail's answer failed: ${errText(err)}`, { id: p.id });
+        ctx.audit.append('error', `${executing.id}: recording the answer failed: ${errText(err)}`, { id: executing.id });
       } catch {
         // the log is what failed
       }
-      return ctx.store.get(p.id) ?? executing;
+      return ctx.store.get(executing.id) ?? executing;
     })
-    .finally(() => ctx.inflight.delete(p.id));
-  ctx.inflight.set(p.id, run);
+    .finally(() => ctx.inflight.delete(executing.id));
+  ctx.inflight.set(executing.id, settled);
   return executing;
 }
 
@@ -355,7 +362,15 @@ async function executeFundMove(ctx: PCtx, p: Proposal): Promise<Proposal> {
   const executing = persist(ctx, { ...p, status: 'executing', balances: { beforeUsd, afterUsd: null } });
   // As executeRail: reserved, so the queue moves on and the sends below run outside it.
   reservationMade();
+  /* AND BEHIND THE REPLY, AS A RAIL RUNS. The legs and the two balance re-reads below ran
+     inline, so a consolidate of three legs could hold the propose open past the proxy's thirty
+     seconds the way the rail did on 2026-09-15, and the fix for that (the executing row is the
+     answer) stopped at the rails. The same map now, so the propose cap, the settled wait and
+     the shutdown drain all cover a fund move. */
+  return behind(ctx, executing, runFundMove(ctx, p, legs, executing, beforeUsd));
+}
 
+async function runFundMove(ctx: PCtx, p: Proposal, legs: TransferLeg[], executing: Proposal, beforeUsd: number | null): Promise<Proposal> {
   if (ctx.cfg.mode === 'demo') {
     for (const leg of legs) ctx.ledger.applyDemoTransfer(leg);
     const detail = `moved ${money(totalUsdOf(p.draft))} across ${legs.length} leg(s) in demo mode`;
