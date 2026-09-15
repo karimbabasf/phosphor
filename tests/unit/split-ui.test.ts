@@ -222,6 +222,36 @@ test('a stored size that no longer fits is clamped, and the stored one is left a
   );
 });
 
+test('a stored conversation width outside the column\'s own range is clamped on load', () => {
+  // The column is clamp(360px, 30vw, 760px) in the stylesheet since 2026-09-15, and the
+  // handle carries the same two numbers. A width stored before the ceiling existed, or
+  // written by hand, comes back inside the range: past the ceiling on a wide window where
+  // the world could spare it, under the floor on any window.
+  const conf = load().SPLIT_PAGES.stage.conversation;
+  assert.equal(conf.min, 360);
+  assert.equal(conf.max, 760);
+
+  const wide = makeStorage();
+  wide.setItem('phosphor.split.stage.conversation', '1200');
+  const s = load(wide);
+  // A 27 inch screen: 760 in the column, 1794 in the world, which could give 1234 more.
+  const h = handle(s, 'stage', 'conversation', { pane: 760, give: 1794 });
+  s.splitRestore(h);
+  assert.equal(applied(h), 760, 'the ceiling holds even when the world has room');
+  assert.equal(wide.map.get('phosphor.split.stage.conversation'), '1200', 'the stored value is left alone');
+
+  const narrow = makeStorage();
+  narrow.setItem('phosphor.split.stage.conversation', '200');
+  const t = load(narrow);
+  const g = handle(t, 'stage', 'conversation', { pane: 360, give: 594 });
+  t.splitRestore(g);
+  assert.equal(applied(g), 360, 'the floor holds');
+
+  // And a drag on the wide window stops at the ceiling too.
+  s.splitBegin(h, 0);
+  assert.equal(s.splitAt(h, 5000), 760);
+});
+
 test('storage that refuses everything does not cost a person their drag', () => {
   const s = load(makeStorage(true));
   assert.equal(s.splitRead('pro', 'deck-agent'), null, 'nothing to restore, and no throw');

@@ -857,6 +857,42 @@ test('an unreachable venue says so rather than drawing its last numbers as curre
   );
 });
 
+test('the venue notice is drawn in the tone of the news: red with the link struck through for a shut socket, amber with a warning for an open one that errors', async () => {
+  // The notice under the strip carries a data-tone the stylesheet washes and a drawn icon
+  // ahead of the sentence (2026-09-15). A shut socket and an open socket that answers with an
+  // error are different news and read differently; a wait is quiet; and with nothing to say
+  // the row is gone rather than empty.
+  const shut = flat();
+  shut.venue = { connected: false, source: 'none', ageMs: null, latencyMs: null, error: 'connect ECONNREFUSED', degraded: true };
+  const a = await renderPayload(shut);
+  const [down] = withClass(a.host, 'trade-line');
+  assert.equal(down.hidden, false);
+  assert.equal(down.dataset.tone, 'down');
+  assert.equal(down.childNodes[0].dataset.icon, 'link-off', 'no drawn icon ahead of the sentence');
+  assert.ok(down.childNodes[1].className.includes('trade-line-text'));
+  assert.ok(down.childNodes[1].textContent.startsWith('No route to the venue'));
+
+  const erring = flat();
+  erring.venue = { connected: true, source: 'ws', ageMs: 40, latencyMs: 12, error: 'spot read failed: hyperliquid /info 422', degraded: false };
+  const b = await renderPayload(erring);
+  const [warn] = withClass(b.host, 'trade-line');
+  assert.equal(warn.dataset.tone, 'warn');
+  assert.equal(warn.childNodes[0].dataset.icon, 'warning');
+
+  const reading = funded();
+  reading.account = { ...reading.account, accountKnown: false, equityUsd: null, freeUsd: null, healthPct: null } as never;
+  const c = await renderPayload(reading);
+  const [quiet] = withClass(c.host, 'trade-line');
+  assert.equal(quiet.dataset.tone, undefined, 'a wait is not washed');
+  assert.equal(quiet.childNodes[0].dataset.icon, 'waiting');
+
+  const d = await renderPayload(flat());
+  const [gone] = withClass(d.host, 'trade-line');
+  assert.equal(gone.hidden, true);
+  assert.equal(gone.dataset.icon, undefined, 'the icon leaves with the sentence');
+  assert.equal(gone.childNodes.length, 1, 'only the empty text span stays');
+});
+
 test('an unreachable venue leaves the figures unknown rather than calling them empty', async () => {
   // Silence is not the same answer as zero. Printing the empty state here would be the window
   // stating a fact the venue has not stated. At risk is the app's own sum over its own plans,

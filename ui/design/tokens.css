@@ -69,6 +69,7 @@
   --fs-18: 18px;
   --fs-20: 20px;
   --fs-24: 24px;
+  --fs-26: 26px;
   --fs-28: 28px;
   --fs-32: 32px;
   --fs-40: 40px;
@@ -106,14 +107,19 @@
   --dur-glow-in: 120ms;
   --dur-glow-out: 2400ms;
 
-  /* Layout. The conversation column is the constant; the world is the rest. */
+  /* Layout. The conversation column takes a share of the window between two
+     floors and the world is the rest, so a 27 inch screen gets a wider
+     transcript and a 13 inch laptop still gets a chart (Karim, 2026-09-15:
+     "make sure this thing looks good on any screen, regardless of the
+     resolution"). The Basic column and the Pro grid grow with the world up to
+     a measure that still reads. Nothing here is a fixed pixel width. */
   --topbar-h: 48px;
-  --conv-w: 440px;
+  --conv-w: 30vw;
   --conv-min: 360px;
-  --conv-max: 640px;
+  --conv-max: 760px;
   --world-min: 560px;
-  --basic-col: 640px;
-  --pro-max: 1440px;
+  --basic-col: min(760px, 100%);
+  --pro-max: min(1680px, 100%);
   --rail-w: 320px;
   --gutter: 24px;
 
@@ -122,8 +128,40 @@
   --lift-sm: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
 
-@media (max-width: 1279px) {
-  :root { --conv-w: 400px; }
+/* A 27 inch screen (2000 px of window and up): type steps up about 12 percent
+   and space about 10 percent, through these tokens alone, so the whole window
+   steps together. 149 of the 154 font sizes in ui/design read --fs-*, and
+   four of every five paddings, margins and gaps read --s-*; the control
+   heights that are literals (26, 28, 32 px) still hold the bigger text. The
+   step is a media query on the window, never a zoom on the page: a zoom breaks
+   the chart canvas's device pixel maths and the split handles' measurements.
+   The chart draws its own labels on canvas and does not step with this. */
+@media (min-width: 2000px) {
+  :root {
+    --fs-11: 12.5px;
+    --fs-12: 13.5px;
+    --fs-13: 14.5px;
+    --fs-14: 16px;
+    --fs-15: 17px;
+    --fs-16: 18px;
+    --fs-18: 20px;
+    --fs-20: 22px;
+    --fs-24: 27px;
+    --fs-26: 29px;
+    --fs-28: 31px;
+    --fs-32: 36px;
+    --fs-40: 45px;
+    --fs-44: 49px;
+    --fs-56: 49px;
+
+    --s-2: 9px;
+    --s-3: 13px;
+    --s-4: 18px;
+    --s-5: 26px;
+    --s-6: 35px;
+    --s-7: 53px;
+    --s-8: 70px;
+  }
 }
 
 /* The five slots keep their meaning when an agent recolours the window, so the

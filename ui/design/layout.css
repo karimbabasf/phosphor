@@ -25,7 +25,7 @@ html, body {
   position: relative;
   z-index: 40;
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr);
   align-items: center;
   gap: var(--s-4);
   height: var(--topbar-h);
@@ -35,8 +35,12 @@ html, body {
   flex: 0 0 auto;
 }
 
-/* The two side columns stay equal, so the tabs stay centred: neither column
-   grows for its content, and the cluster shortens its words instead (below). */
+/* The two side columns share the room equally, so the tabs sit centred, and
+   the cluster shortens its words before it asks for more (below). A side
+   column grows past its half only when its content cannot fit in it, which
+   is the 960 px minimum with every chip showing: the tabs move over by that
+   much and nothing overlaps, where equal columns let the cluster run under
+   the tabs. */
 .topbar > * {
   min-width: 0;
 }
@@ -335,6 +339,10 @@ html, body {
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
+  /* Never sideways: a list wider than its box scrolls inside itself, and a
+     sub-pixel of overflow must not hand the whole world a horizontal
+     scrollbar. */
+  overflow-x: hidden;
   overscroll-behavior: contain;
   background: var(--bg-0);
   display: flex;
@@ -384,15 +392,16 @@ html, body {
   to { opacity: 1; filter: blur(0); }
 }
 
-/* ---------- Basic: one 640 px column ---------- */
+/* ---------- Basic: one column, 760 px at most ---------- */
 
 /* ONE COLUMN AS TALL AS WHAT IT HOLDS.
 
    The column (Basic's, and the Vault's) sizes to its cards and the world
    scrolls it. Nothing inside a card scrolls on its own: a list that is cut
-   off at a card's edge with no scrollbar reads as the whole list. */
+   off at a card's edge with no scrollbar reads as the whole list. Its width
+   is the token's measure or the world's, whichever is narrower. */
 .basic-col {
-  width: min(var(--basic-col), 100%);
+  width: var(--basic-col);
   margin: 0 auto;
   padding: var(--s-6) var(--s-5) var(--s-5);
   display: flex;

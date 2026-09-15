@@ -2,16 +2,22 @@
    panes that can be hidden. Everything the trade screen draws lives here;
    layout.css keeps the stage and the views, screens.css the other screens.
 
-   THE WRAP IS FOUR ROWS. The strip (auto), the chart with its bar (the rest),
-   the handle (6 px), the deck (its own height: 236 px by default, 300 on a
-   tall window, or whatever the handle was dragged to, as --deck written on
-   the wrap by ui/split.js). Each child is placed by row number, so a hidden
-   pane's track can be zeroed and the rows around it keep their places. */
+   THE WRAP IS A COLUMN OF FOUR. The strip (its own height), the chart with
+   its bar (the rest, never under 364 px), the handle (6 px), the deck (236 px
+   by default, 300 on a tall window, or whatever the handle was dragged to,
+   as --deck written on the wrap by ui/split.js). A flex column rather than a
+   grid, and the order matters: the chart takes every spare pixel, and when a
+   notice on the strip leaves less than the chart's floor, the deck gives
+   before the world scrolls. A grid shares spare room equally between two
+   tracks, which shrank the deck while the chart still had room. */
 
-/* ---------- the stage on trade ---------- */
+/* ---------- the stage on trade ----------
 
+   The chart has first claim on the width here, so the conversation's share
+   is smaller than on the other views: the floor on anything under 1500 px,
+   and still a real column on a 27 inch screen. */
 body[data-view="trade"] .stage {
-  --conv-w: 360px;
+  --conv-w: 24vw;
 }
 
 /* ---------- hidden panes ----------
@@ -34,15 +40,17 @@ body[data-view="trade"] .stage {
   }
 }
 
-.trade-wrap[data-pane-chart="hidden"] { grid-template-rows: auto 0 0 minmax(0, 1fr); }
-.trade-wrap[data-pane-deck="hidden"] { grid-template-rows: auto minmax(0, 1fr) 0 0; }
-.trade-wrap[data-pane-chart="hidden"][data-pane-deck="hidden"] { grid-template-rows: auto 0 0 0; }
-
 .trade-wrap[data-pane-chart="hidden"] > .trade-main,
 .trade-wrap[data-pane-chart="hidden"] > .split-h,
 .trade-wrap[data-pane-deck="hidden"] > .trade-rail,
 .trade-wrap[data-pane-deck="hidden"] > .split-h {
   display: none;
+}
+
+/* With the chart gone the deck takes its room; with the deck gone the chart
+   already does. */
+.trade-wrap[data-pane-chart="hidden"] > .trade-rail {
+  flex: 1 1 auto;
 }
 
 /* The eye-off control every pane header carries: 24 px, quiet until it is
@@ -89,16 +97,23 @@ body[data-view="trade"] .stage {
 
 .trade-wrap {
   flex: 1 1 auto;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) 6px var(--deck, 236px);
+  display: flex;
+  flex-direction: column;
   height: 100%;
   min-height: 0;
 }
 
-.trade-strip { grid-row: 1; }
-.trade-main { grid-row: 2; }
-.trade-wrap > .split-h { grid-row: 3; }
-.trade-rail { grid-row: 4; }
+.trade-strip { flex: 0 0 auto; }
+.trade-wrap > .split-h { flex: 0 0 6px; }
+
+/* The deck's height is its flex basis, so the handle's one property write
+   sizes it; 168 is its floor (one zone heading with a price tag and a row of
+   figures, or one open position with its Close button). It shrinks only once
+   the chart above it is at its own floor. */
+.trade-rail {
+  flex: 0 1 var(--deck, 236px);
+  min-height: 168px;
+}
 
 @media (min-height: 900px) {
   .trade-wrap { --deck: 300px; }
@@ -106,9 +121,21 @@ body[data-view="trade"] .stage {
 
 /* ---------- the strip ----------
 
-   One row, 56 px, read left to right: the market, the venue, the price, the
-   day, then the account and the layout on the right. Hairline under it, no
-   surface of its own: it is a header, not a card. */
+   One row, read left to right: the market, the venue, the price, the day,
+   then the account and the layout on the right. Hairline under it, no surface
+   of its own: it is a header, not a card.
+
+   THE ROW IS AS TALL AS ITS CONTENT. Twelve pixels above and below, and the
+   height follows the tallest group; the old fixed 56 px squeezed the labels
+   onto their values (Karim, 2026-09-15: "the top looks super squished and
+   squeezed"). Twenty pixels between groups, six inside a group.
+
+   ONE LINE OR TWO, NEVER A SQUEEZE. A world of 1100 px or more holds the
+   whole header on one line. Under that the row is a grid of two lines: the
+   market, the venue, the price and the Layout menu on the first, the day's
+   figures and the account's on the second, each side keeping its own edge.
+   Nothing shrinks under its number and nothing is hidden: at the window's
+   minimum (a 594 px world) both lines still fit with room to spare. */
 .trade-strip {
   display: flex;
   flex-direction: column;
@@ -117,18 +144,32 @@ body[data-view="trade"] .stage {
 }
 
 .strip-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto auto auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: var(--s-4);
-  height: 56px;
-  padding: 0 var(--s-4);
+  gap: var(--s-2) 20px;
+  min-height: 56px;
+  padding: var(--s-3) var(--s-4);
   min-width: 0;
 }
 
-/* Every cell on the row keeps its own width: nothing here shrinks under its
-   number. What does not fit at a narrower world is dropped by the container
-   queries below, never squeezed. */
-.strip-row > * { flex: 0 0 auto; }
+.strip-row > .trade-symbol-wrap { grid-area: 1 / 1; }
+.strip-row > .trade-venue { grid-area: 1 / 2; }
+.strip-row > .px { grid-area: 1 / 3; }
+.strip-row > .layout-wrap { grid-area: 1 / 5; justify-self: end; }
+.strip-row > .strip-day { grid-area: 2 / 1 / 3 / 5; }
+.strip-row > .strip-stats { grid-area: 2 / 5; justify-self: end; }
+
+@container world (min-width: 1100px) {
+  .strip-row {
+    display: flex;
+    align-items: center;
+  }
+  /* Every cell keeps its own width: nothing on the line shrinks under its
+     number. The account's figures push to the right, the menu after them. */
+  .strip-row > * { flex: 0 0 auto; }
+  .strip-row > .strip-stats { margin-left: auto; }
+}
 
 /* The market: the logo, the ticker at 15/600, the caret. */
 .trade-symbol-wrap {
@@ -141,7 +182,7 @@ body[data-view="trade"] .stage {
   --opens-bg: transparent;
   display: inline-flex;
   align-items: center;
-  gap: var(--s-2);
+  gap: 6px;
   height: 32px;
   padding: 0 var(--s-2) 0 6px;
   border-radius: var(--radius-sm);
@@ -211,23 +252,21 @@ body[data-view="trade"] .stage {
 .trade-venue[data-feed="delayed"] .trade-venue-dot { background: var(--warn); }
 .trade-venue[data-feed="down"] .trade-venue-dot { background: var(--down); }
 
-/* THE PRICE. 28 px Sora at 600, tabular, and the tick is the digits' colour:
+/* THE PRICE. 26 px mono at 500, tabular, and the tick is the digits' colour:
    the direction's colour at once, the text colour 600 ms later. Never a box,
-   never a wash. The strip is the one place a changing number is set in the
-   word face: it is the market's name and its price read as one header, not a
-   cell in a table. Sora carries tnum, so the digits still hold their columns
-   when the price ticks. */
+   never a wash. Mono like every other changing number in the window, so the
+   digits hold their columns when the price ticks and the price reads as a
+   figure beside the day's figures, not as a headline over them. */
 .px {
   flex: 0 0 auto;
-  font-family: var(--font-ui);
-  font-size: var(--fs-28);
-  font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: var(--fs-26);
+  font-weight: 500;
   line-height: 1;
   letter-spacing: -0.02em;
   color: var(--text);
   font-feature-settings: "tnum" 1;
   font-variant-numeric: tabular-nums;
-  font-optical-sizing: auto;
   white-space: nowrap;
 }
 
@@ -244,7 +283,10 @@ body[data-view="trade"] .stage {
   to { color: var(--text); }
 }
 
-/* The day and the account, as small figures: the label over the value. */
+/* The day and the account, as small figures: the label at 11 px over the
+   value at 13 px mono, three pixels apart, sixteen between figures. The line
+   heights are whole pixels so the row's height is one too: a fraction here
+   became a one pixel scroll of the world on the smallest window. */
 .strip-day,
 .strip-stats {
   display: flex;
@@ -256,7 +298,7 @@ body[data-view="trade"] .stage {
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 3px;
 }
 
 .strip-stats .strip-stat { align-items: flex-end; }
@@ -264,16 +306,17 @@ body[data-view="trade"] .stage {
 .strip-label {
   font-size: var(--fs-11);
   font-weight: 500;
-  line-height: 1.3;
+  line-height: 14px;
+  letter-spacing: 0.02em;
   color: var(--text-3);
   white-space: nowrap;
 }
 
 .strip-value {
-  font-family: var(--font-ui);
+  font-family: var(--font-mono);
   font-size: var(--fs-13);
   font-weight: 500;
-  line-height: 1.3;
+  line-height: 16px;
   color: var(--text);
   font-feature-settings: "tnum" 1;
   font-variant-numeric: tabular-nums;
@@ -286,24 +329,48 @@ body[data-view="trade"] .stage {
 .trade-change .strip-value[data-dir="up"] { color: var(--up); }
 .trade-change .strip-value[data-dir="down"] { color: var(--down); }
 
-.strip-right {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: var(--s-4);
-}
-
-/* What the venue says when it has something to say: one line under the row,
-   there only while it has something to say. */
+/* THE NOTICE. What the venue says when it has something to say, on its own
+   row under the strip's row: a 16 px icon for the kind of news, the sentence
+   beside it, on a wash in the tone of the news. Eight pixels above the
+   hairline, and no negative margin: it sits under the row, it does not lean
+   into it. Nothing is reserved for it; the chart under the strip flexes. */
 .trade-strip .trade-line {
-  padding: 0 var(--s-4) var(--s-2);
-  margin-top: -4px;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  margin: 0 var(--s-4) var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  border-radius: 8px;
+  background: var(--bg-1);
   font-size: var(--fs-12);
-  line-height: 1.4;
+  line-height: 18px;
   color: var(--text-2);
 }
 
-.trade-line.warn { color: var(--warn); }
+.trade-line .trade-line-icon {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  color: var(--text-3);
+}
+
+.trade-line .trade-line-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.trade-line[data-tone="warn"] {
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+  color: var(--warn);
+}
+
+.trade-line[data-tone="down"] {
+  background: color-mix(in srgb, var(--down) 10%, transparent);
+  color: var(--down);
+}
+
+.trade-line[data-tone] .trade-line-icon { color: currentColor; }
 
 /* The Layout button: an icon and a word, on the opening grammar. */
 .layout-wrap {
@@ -327,19 +394,13 @@ body[data-view="trade"] .stage {
 
 .layout .icon { color: var(--text-2); }
 
-/* Narrower worlds drop the day's extremes, then the venue's name. */
-@container world (max-width: 1039px) {
+/* The one world narrower than the window's own minimum: the assistant column
+   dragged to its widest on the smallest window leaves 560. The day's extremes
+   go so the second line keeps the change and the account together; anything
+   wider holds everything. */
+@container world (max-width: 579px) {
   .trade-high,
   .trade-low { display: none; }
-}
-
-@container world (max-width: 819px) {
-  .trade-venue-name { display: none; }
-  .trade-venue { padding-right: var(--s-2); }
-}
-
-@container world (max-width: 679px) {
-  .trade-change { display: none; }
 }
 
 /* ---------- popovers ----------
@@ -498,10 +559,13 @@ body[data-view="trade"] .stage {
    the CHART has rather than against the window: the conversation column takes
    from it and is not in a media query. */
 .trade-main {
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   min-width: 0;
-  min-height: 0;
+  /* The bar's 44 over the stage's 320: the floor under which candles stop
+     being read. The same number ui/split.js holds as the handle's giveMin. */
+  min-height: 364px;
   border-bottom: 1px solid var(--line);
   container-type: inline-size;
   container-name: trade;
@@ -847,7 +911,6 @@ body[data-view="trade"] .stage {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  min-height: 0;
   overflow: hidden;
   background: var(--bg-1);
 }
@@ -1366,19 +1429,20 @@ body[data-view="trade"] .stage {
    chart drops under about 530 px beside the conversation column. */
 @container world (max-width: 859px) {
   /* flex: 0 0 auto, not the base row's 1 1: stacked, the wrap is taller than the
-     world and must say so. The chart row takes the room the world has to
-     spare; the deck row is as tall as its list. */
+     world and must say so. The chart takes the room the world has to spare;
+     the deck is as tall as its list. */
   .trade-wrap {
     flex: 0 0 auto;
-    grid-template-rows: auto minmax(0, 1fr) 0 auto;
     height: auto;
     min-height: 100%;
   }
-  .trade-wrap[data-pane-chart="hidden"] { grid-template-rows: auto 0 0 auto; }
-  .trade-wrap[data-pane-deck="hidden"] { grid-template-rows: auto minmax(0, 1fr) 0 0; }
   /* Stacked, the world scrolls again, so nothing in the deck holds a height of
      its own: the list is as tall as what is in it. */
-  .trade-rail { overflow: visible; }
+  .trade-rail {
+    flex: 0 0 auto;
+    min-height: 0;
+    overflow: visible;
+  }
   .trade-list { overflow: visible; }
   .trade-wrap > .split-h { display: none; }
 }
