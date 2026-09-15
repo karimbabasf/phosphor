@@ -295,3 +295,34 @@ test('without a trading surface every trade proposal refuses by name', async () 
   assert.match(p.verdict.reasons.join(' '), /no trading surface/);
   assert.deepEqual(h.runner.calls, []);
 });
+
+// ---------- a retried plan does not arm twice (A.F3) ----------
+//
+// A lost reply or a transient-looking error brings the same plan back. Without a guard each
+// call draws a fresh id and arms its own bracket: two positions, double margin, one coin. The
+// second identical propose is refused, and the refusal names the plan that is already live.
+test('two identical proposeTrade calls arm one plan; the second is refused and names the first', async () => {
+  const h = setup();
+  const first = await landed(h, h.svc.proposeTrade({ plan: plan(), by: 'agent-1' }));
+  assert.equal(first.status, 'executed', JSON.stringify(first.verdict));
+  const firstPlanId = h.runner.calls.find((c) => c.startsWith('arm '))?.split(' ')[1];
+  assert.ok(firstPlanId, 'the first plan armed');
+
+  const second = await landed(h, h.svc.proposeTrade({ plan: plan(), by: 'agent-1' }));
+  assert.equal(second.status, 'policy_refused', JSON.stringify(second.verdict));
+  assert.equal(second.verdict.outcome, 'refuse');
+  assert.match(second.verdict.reasons.join(' '), new RegExp(String(firstPlanId)));
+
+  const armed = [...h.runner.rows.values()].filter((r) => r.status === 'waiting' || r.status === 'placed' || r.status === 'open');
+  assert.equal(armed.length, 1, `one armed plan, not ${armed.length}`);
+  assert.equal(h.runner.calls.filter((c) => c.startsWith('arm ')).length, 1, 'arm ran once');
+});
+
+test('a different size on the same coin is not a twin and arms', async () => {
+  const h = setup();
+  await landed(h, h.svc.proposeTrade({ plan: plan(), by: 'agent-1' }));
+  const other = await landed(h, h.svc.proposeTrade({ plan: plan({ sizeUsd: 400 }), by: 'agent-1' }));
+  assert.equal(other.status, 'executed', JSON.stringify(other.verdict));
+  const armed = [...h.runner.rows.values()].filter((r) => r.status === 'waiting');
+  assert.equal(armed.length, 2);
+});

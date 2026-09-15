@@ -12,7 +12,8 @@ import { loadPolicy } from '../policy/file.ts';
 import { HYPERLIQUID_PERPS_COUNTERPARTY, planOfRow, riskInputsFor } from '../trade/rail.ts';
 import type { TradeDeps } from '../trade/rail.ts';
 import { planHash, validatePlanInput } from '../trade/plan.ts';
-import type { Plan } from '../trade/plan.ts';
+import type { Entry, Plan, PlanInput } from '../trade/plan.ts';
+import type { PlanRow } from '../trade/plans.ts';
 import { changeRisk, planRisk } from '../trade/risk.ts';
 import { proposeRail, refuseDraft } from './draft.ts';
 import { land } from './execute.ts';
@@ -21,6 +22,41 @@ import type { PCtx } from './lifecycle.ts';
 
 function noSurface(ctx: PCtx, draft: TradeDraft, clientKey?: string): Promise<Proposal> {
   return refuseDraft(ctx, 'trade', draft, [`no trading surface is wired in ${ctx.cfg.mode} mode`], clientKey);
+}
+
+// Two entries are the same order for this purpose when they are the same kind and, for a
+// resting or stop entry, the same price. Two market entries always match.
+function sameEntry(a: Entry, b: Entry): boolean {
+  if (a.type !== b.type) return false;
+  if (a.type === 'market' || b.type === 'market') return a.type === b.type;
+  return a.px === b.px;
+}
+
+// A plan already live (waiting, placed or open) that this one would double: same coin, side,
+// entry, notional size and the same margin multiple. The multiple is in the match because it is
+// what turns one notional into a different amount of collateral, so the same size at a different
+// multiple is a different position a person may want beside the first. `exceptId` skips the
+// plan's own row on the arm-by-id path.
+function armedTwin(deps: TradeDeps, plan: PlanInput | Plan, exceptId: string | null): PlanRow | null {
+  return (
+    deps.runner
+      .plans()
+      .find(
+        (r) =>
+          r.id !== exceptId &&
+          (r.status === 'waiting' || r.status === 'placed' || r.status === 'open') &&
+          r.symbol === plan.symbol &&
+          r.side === plan.side &&
+          r.sizeUsd === plan.sizeUsd &&
+          r.leverage === plan.leverage &&
+          sameEntry(r.entry, plan.entry),
+      ) ?? null
+  );
+}
+
+function twinReason(plan: PlanInput | Plan, twin: PlanRow): string {
+  const proposal = twin.proposalId === undefined ? '' : ` (proposal ${twin.proposalId})`;
+  return `A ${plan.side} on ${plan.symbol} this size is already live as ${twin.id}${proposal}. Change or cancel it instead of arming a second one on the same coin.`;
 }
 
 export async function proposeTrade(ctx: PCtx, params: TradeParams): Promise<Proposal> {
@@ -42,14 +78,24 @@ export async function proposeTrade(ctx: PCtx, params: TradeParams): Promise<Prop
       const drawn = planOfRow(row);
       const at = Date.parse(drawn.expiresAt ?? '');
       if (Number.isFinite(at) && at <= now()) problems.push(`${params.planId} expired at ${drawn.expiresAt ?? ''}; redraw it with a new expiry`);
-      else plan = drawn;
+      else {
+        const twin = deps === undefined ? null : armedTwin(deps, drawn, row.id);
+        if (twin !== null) problems.push(twinReason(drawn, twin));
+        else plan = drawn;
+      }
     }
   } else {
     const parsed = validatePlanInput(params.plan, now());
     if (!parsed.ok) problems.push(...parsed.errors);
     else if (deps !== undefined) {
+      // A RETRY MUST NOT ARM A SECOND BRACKET. A lost reply, or an error the agent reads as
+      // transient, brings the same plan back; without this each call draws a fresh id and arms
+      // its own position, two brackets and double margin on one coin (A.F3). Checked before the
+      // draw so a refused retry does not even leave a stray idea behind.
+      const twin = armedTwin(deps, parsed.plan, null);
+      if (twin !== null) problems.push(twinReason(parsed.plan, twin));
       // Drawn first, so the card and the chart show the same object while the human decides.
-      plan = planOfRow(deps.runner.draw(parsed.plan, params.by ?? null));
+      else plan = planOfRow(deps.runner.draw(parsed.plan, params.by ?? null));
     }
   }
 
