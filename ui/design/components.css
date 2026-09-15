@@ -147,6 +147,43 @@
 .icon-20 { width: 20px; height: 20px; }
 .icon-24 { width: 24px; height: 24px; }
 
+/* ---------- Logo ----------
+
+   A token or chain mark as the real image (design/marks.js logo()), sized by
+   --logo: 24 in lists, 20 in chips, 32 on the receipt card, 16 inline. A
+   ticker with no file is a neutral disc with its first letter in mono. */
+.logo {
+  --logo: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: var(--logo);
+  height: var(--logo);
+  vertical-align: middle;
+}
+
+.logo > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.logo[data-fallback] {
+  border-radius: var(--radius-pill);
+  background: var(--bg-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text-2);
+}
+
+.logo-initial {
+  font-size: calc(var(--logo) * 0.5);
+  font-weight: 500;
+  line-height: 1;
+}
+
 /* ---------- Spinner ---------- */
 
 .spinner {
