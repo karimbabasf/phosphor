@@ -157,6 +157,72 @@
 
     reconcile: function (id) {
       return net.postJson('/api/reconcile', { id: id }, { busy: 'reconcile', label: 'Checking again' });
+    },
+
+    /* ---------- the vault ----------
+
+       Every route that raises the Touch ID dialog is posted with `touch: true`,
+       because the answer arrives when the person has touched the sensor or
+       cancelled, and that can be most of the 150 s the backend allows. */
+
+    vault: function () {
+      return net.getJson('/api/vault', { noCache: true });
+    },
+
+    vaultCreate: function () {
+      return net.postJson('/api/vault/create', {}, { busy: 'wallet', label: 'Making your wallet', touch: true });
+    },
+
+    vaultUnlock: function (purpose) {
+      var body = purpose ? { purpose: purpose } : {};
+      return net.postJson('/api/vault/unlock', body, { busy: 'lock', label: 'Waiting for Touch ID', touch: true });
+    },
+
+    vaultReveal: function () {
+      return net.postJson('/api/vault/reveal', {}, { busy: 'reveal', label: 'Waiting for Touch ID', touch: true });
+    },
+
+    vaultBackupProven: function (words) {
+      return net.postJson('/api/vault/backup-proven', { words: words }, { busy: 'reveal', label: 'Checking your words' });
+    },
+
+    vaultRestore: function (mnemonic) {
+      return net.postJson('/api/vault/restore', { mnemonic: mnemonic }, { busy: 'wallet', label: 'Restoring your wallet', touch: true });
+    },
+
+    vaultMigrate: function (password) {
+      return net.postJson('/api/vault/migrate', { password: password }, { busy: 'wallet', label: 'Moving your keys', touch: true });
+    },
+
+    vaultForget: function () {
+      return net.postJson('/api/vault/forget', { confirm: 'FORGET' }, { busy: 'wallet', label: 'Forgetting this wallet', touch: true });
+    },
+
+    vaultPrefs: function (prefs) {
+      return net.postJson('/api/vault/prefs', prefs);
+    },
+
+    /* ---------- money in ---------- */
+
+    /* The bridge addresses, one per network, with what each one credits. Never
+       cached: the card compares this against the frame that opened it, and a
+       stale copy is exactly what that comparison exists to catch. */
+    intentsReceive: function () {
+      return net.getJson('/api/intents-receive', { noCache: true, busy: 'deposit', label: 'Reading your addresses' });
+    },
+
+    deposit: function () {
+      return net.getJson('/api/deposit', { noCache: true });
+    },
+
+    depositShow: function (chain, symbol, address) {
+      var body = { chain: chain, symbol: symbol };
+      if (address) body.address = address;
+      return net.postJson('/api/deposit/show', body, { busy: 'deposit', label: 'Opening the deposit card' });
+    },
+
+    depositStop: function () {
+      return net.postJson('/api/deposit/stop', {});
     }
   };
 

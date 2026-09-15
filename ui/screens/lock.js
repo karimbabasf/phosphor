@@ -18,12 +18,18 @@
   function boot() {
     refs.host = document.getElementById('screen-lock');
     if (!refs.host) return;
-    store.select('lock', render);
-    render(store.get() ? store.get().lock : null);
+    /* Two slices decide what this screen is: the lock says whether it is up,
+       the vault says whether it asks for a password or a finger. */
+    store.select('lock', function () { render(); });
+    store.select('vault', function () { render(); });
+    render();
   }
 
-  function render(lock) {
-    var state = (lock && lock.state) || 'unlocked';
+  function render() {
+    var whole = store.get() || {};
+    var lock = whole.lock || {};
+    var vault = whole.vault || {};
+    var state = lock.state || 'unlocked';
     if (state === 'unlocked') {
       dom.setHidden(refs.host, true);
       dom.setAttr(document.body, 'data-locked', null);
@@ -31,17 +37,24 @@
       mode = null;
       return;
     }
-    if (state === 'no_wallet') {
+    /* No wallet, or a wallet file this Mac cannot open because another Mac made
+       it: both are the first run's job. It reads `vault.foreign` itself and opens
+       on the Restore screen for the second case. */
+    if (state === 'no_wallet' || vault.foreign === true) {
       dom.setHidden(refs.host, true);
+      mode = null;
       window.PhosphorFirstRun.open();
       return;
     }
-    if (mode === state) return;
-    mode = state;
+    var custody = vault.custody === 'secure-enclave' ? 'enclave' : 'software';
+    var key = state + ':' + custody;
+    if (mode === key) return;
+    mode = key;
     dom.setAttr(document.body, 'data-locked', 'true');
     setPageInert(true);
     dom.setHidden(refs.host, false);
     if (state === 'needs_migration') buildMigrate();
+    else if (custody === 'enclave') buildTouch();
     else buildLock();
   }
 
@@ -142,11 +155,63 @@
     input.focus();
   }
 
+  /* The enclave wallet. No field: the key that opens this file lives in the
+     Secure Enclave and the only way to ask it is the system's own dialog, which
+     the button raises. The window draws nothing that looks like that dialog. */
+  function buildTouch() {
+    var card = shell();
+    card.appendChild(dom.el('h1', 'title', 'Locked'));
+    card.appendChild(dom.el('p', 'body dim', 'Touch ID opens this wallet on this Mac. Your Mac login password works too.'));
+
+    var error = dom.el('p', 'body down');
+    error.hidden = true;
+
+    var actions = dom.el('div', 'screen-actions');
+    var unlock = dom.el('button', 'btn btn-primary btn-lg');
+    unlock.type = 'button';
+    unlock.appendChild(dom.el('span', 'btn-label', 'Unlock with Touch ID'));
+    actions.appendChild(unlock);
+    card.appendChild(actions);
+    card.appendChild(error);
+    card.appendChild(dom.el('p', 'meta', 'Your money is still here and still being read. Nothing moves while this app is locked.'));
+
+    /* One dialog at a time. The request answers when the person has touched the
+       sensor or cancelled, which can be most of the 150 s the backend allows, so
+       the button is dead and says why for the whole wait. */
+    var inFlight = false;
+    dom.on(unlock, 'click', function () {
+      if (inFlight) return;
+      inFlight = true;
+      error.hidden = true;
+      window.PhosphorShell.setPending(unlock, true, 'Waiting for Touch ID');
+      api.vaultUnlock()
+        .then(function (answer) {
+          if (answer && answer.ok === false) {
+            /* A cancel is not an error. The button simply comes back. */
+            if (answer.code !== 'user_cancel') fail(error, reason(answer.code || answer.error, answer.retryInSec));
+            return;
+          }
+          return window.PhosphorShell.refresh({});
+        })
+        .catch(function (err) {
+          fail(error, net.readable(err));
+        })
+        .finally(function () {
+          inFlight = false;
+          window.PhosphorShell.setPending(unlock, false);
+        });
+    });
+    unlock.focus();
+  }
+
   /* The custody routes answer { ok, error, code }: `error` is already a sentence a
      person can read, and `code` is what a screen branches on. This table exists
      because the window can say it better in context than a route can. */
   function reason(code, retryInSec) {
     if (code === 'wrong_password') return 'That password is wrong.';
+    if (code === 'enclave_unavailable') return 'The Secure Enclave did not answer. Phosphor may be running outside its desktop shell.';
+    if (code === 'foreign') return 'This wallet was made on another Mac. Restore it from your recovery phrase.';
+    if (code === 'garbled') return 'The Secure Enclave answered the wrong thing. Try again.';
     if (code === 'locked_out') {
       var wait = typeof retryInSec === 'number' && retryInSec > 0
         ? 'Wait ' + retryInSec + (retryInSec === 1 ? ' second' : ' seconds')
@@ -268,12 +333,13 @@
     go.focus();
   }
 
-  /* Put the cursor in the password field. The queued-request card hands over to
-     the lock this way rather than drawing a second password box of its own. */
+  /* Put the cursor in the password field, or on the Touch ID button where there
+     is no field. The queued-request card hands over to the lock this way rather
+     than drawing a second way in of its own. */
   function focus() {
     if (!refs.host || refs.host.hidden) return;
-    var input = refs.host.querySelector('input[type="password"]');
-    if (input) input.focus();
+    var target = refs.host.querySelector('input[type="password"]') || refs.host.querySelector('.btn-primary');
+    if (target) target.focus();
   }
 
   window.PhosphorLock = { boot: boot, focus: focus };

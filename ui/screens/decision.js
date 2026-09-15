@@ -238,10 +238,18 @@
     refs.dock = document.getElementById('overlay');
     refs.card = document.getElementById('overlay-card');
     store.select('proposals', render);
+    /* The Touch ID sentence under a card that is waiting on the sensor comes off
+       the vault slice, which can move on its own when the dialog closes. */
+    store.select('vault', function () {
+      if (showing && showing.kind === 'ask') render();
+    });
   }
 
+  /* awaiting_touch is still waiting on the person: the click landed and the
+     Touch ID dialog that names the move is up. The card stays, with its buttons
+     dead, until the enclave answers or the dialog is cancelled. */
   function isWaiting(p) {
-    return p && (p.status === 'pending' || p.status === 'pending_unlock');
+    return p && (p.status === 'pending' || p.status === 'pending_unlock' || p.status === 'awaiting_touch');
   }
 
   function isUnread(p) {
@@ -295,7 +303,16 @@
     return [entry.kind, p.id, p.status, entry.queued, sim.feeUsd, sim.gasUsd,
       sim.priceImpact, sim.amountOut, deposits, diff, sim.summary || '',
       (Array.isArray(p.verdict && p.verdict.reasons) ? p.verdict.reasons.join(' ') : ''),
-      (p.verdict && p.verdict.reason) || ''].join('|');
+      (p.verdict && p.verdict.reason) || '',
+      p.status === 'awaiting_touch' ? touchReason() : ''].join('|');
+  }
+
+  /* What the Touch ID dialog says, as the backend composed it. Shown under the
+     dead Yes so the person can check the window and the dialog agree. */
+  function touchReason() {
+    var state = store.get() || {};
+    var waiting = state.vault && state.vault.waiting;
+    return waiting && typeof waiting.reason === 'string' ? waiting.reason : '';
   }
 
   function open(next) {
@@ -357,8 +374,9 @@
     var proposal = entry.proposal;
     var draft = proposal.draft || {};
     var locked = proposal.status === 'pending_unlock';
+    var touching = proposal.status === 'awaiting_touch';
 
-    refs.card.appendChild(dom.el('p', 'label', locked ? 'Unlock to decide' : 'Waiting for you'));
+    refs.card.appendChild(dom.el('p', 'label', locked ? 'Unlock to decide' : (touching ? 'Confirm on your Mac' : 'Waiting for you')));
     refs.card.appendChild(dom.el('h2', 'title', headlineOf(proposal)));
 
     var amount = amountOf(proposal);
@@ -463,10 +481,26 @@
     var no = dom.el('button', 'btn btn-ghost');
     no.appendChild(dom.el('span', 'btn-label', 'No'));
     var yes = dom.el('button', 'btn btn-primary');
-    yes.appendChild(dom.el('span', 'btn-label', 'Yes'));
+    var yesLabel = dom.el('span', 'btn-label', 'Yes');
+    yes.appendChild(yesLabel);
     actions.appendChild(no);
     actions.appendChild(yes);
     refs.card.appendChild(actions);
+
+    /* The click has landed and the system dialog owns the moment. Both buttons
+       go dead: a second Yes would be a second ask, and the backend only takes a
+       No on a row that is pending. The dialog's own sentence sits under them so
+       the window and the dialog can be checked against each other. It all comes
+       back on the next frame, as approved or as pending again. */
+    if (touching) {
+      dom.setText(yesLabel, 'Touch ID: confirm on your Mac');
+      yes.disabled = true;
+      no.disabled = true;
+      dom.setAttr(yes, 'data-touch', 'true');
+      refs.card.appendChild(dom.el('p', 'meta touch-reason',
+        touchReason() || 'The Touch ID dialog is up. Confirm it there, or cancel to come back here.'));
+      return;
+    }
 
     if (entry.queued > 0) {
       refs.card.appendChild(dom.el('p', 'meta', entry.queued === 1
@@ -540,10 +574,19 @@
     errorNode.hidden = true;
     window.PhosphorShell.setPending(pressed, true, verb);
     route(id)
-      .then(function () {
-        return window.PhosphorShell.refresh({});
+      .then(function (answer) {
+        return window.PhosphorShell.refresh({}).then(function () { return answer; });
       })
-      .then(function () {
+      .then(function (answer) {
+        /* An enclave wallet answers a Yes with awaiting_touch: the dialog is up
+           and nothing is decided. There is nothing to flash. The refreshed frame
+           redraws this card in its waiting state, and render() is called again
+           here in case that frame was one the cache had already seen. */
+        if (answer && answer.status === 'awaiting_touch') {
+          showing = null;
+          render();
+          return;
+        }
         flash(word, ms, receiptId);
       })
       .catch(function (err) {

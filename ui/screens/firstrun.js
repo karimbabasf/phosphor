@@ -1,19 +1,30 @@
-/* First run: ten screens, each one card on the pattern field.
+/* First run: one card on the pattern field, as many screens as the custody needs.
 
    This is the largest gap the product had. Before it, setting Phosphor up meant
    running a terminal command that printed addresses and then hand-editing a
-   config file. */
+   config file.
+
+   Three flows share the card. With the Secure Enclave ready it is three screens:
+   Create wallet, the addresses, the assistant. The phrase is not shown here;
+   backup is prompted later and proven in the Vault tab. A wallet file another
+   Mac made opens on Restore instead of Create. Without an enclave the ten
+   software screens run as they always have. */
 (function () {
   'use strict';
 
   var dom = window.PhosphorDom;
   var net = window.PhosphorNet;
   var api = window.PhosphorApi;
+  var store = window.PhosphorState;
 
-  var STEPS = [
+  var SOFTWARE_STEPS = [
     'what', 'choose', 'password', 'words', 'prove', 'addresses',
     'money', 'connect', 'threshold', 'done'
   ];
+  var ENCLAVE_STEPS = ['create', 'addresses', 'connect'];
+  var FOREIGN_STEPS = ['foreign', 'addresses', 'connect'];
+
+  var STEPS = SOFTWARE_STEPS;
 
   var host = null;
   var card = null;
@@ -25,9 +36,19 @@
     host = document.getElementById('screen-firstrun');
   }
 
+  /* Which flow, read off the vault slice at the moment the card opens. */
+  function flowOf() {
+    var state = store && typeof store.get === 'function' ? (store.get() || {}) : {};
+    var vault = state.vault || {};
+    if (vault.foreign === true) return FOREIGN_STEPS;
+    if (vault.enclave && vault.enclave.ready === true) return ENCLAVE_STEPS;
+    return SOFTWARE_STEPS;
+  }
+
   function open() {
     if (!host || open_) return;
     open_ = true;
+    STEPS = flowOf();
     dom.setAttr(document.body, 'data-locked', 'true');
     setPageInert(true);
     dom.setHidden(host, false);
@@ -64,13 +85,30 @@
     draw();
   }
 
+  /* The step after this one, or Home when there is none. The enclave flow ends
+     on the assistant screen; the software flow has its own Done. */
+  function next() {
+    if (step + 1 >= STEPS.length) {
+      finish();
+      return;
+    }
+    go(step + 1);
+  }
+
+  function finish() {
+    close();
+    window.PhosphorShell.setView('basic', { fromClick: true });
+  }
+
   function draw() {
     dom.clear(card);
     if (step > 0) {
       card.appendChild(dom.el('p', 'screen-steps', 'Step ' + (step + 1) + ' of ' + STEPS.length));
     }
     var name = STEPS[step];
-    if (name === 'what') screenWhat();
+    if (name === 'create') screenCreate();
+    else if (name === 'foreign') screenForeign();
+    else if (name === 'what') screenWhat();
     else if (name === 'choose') screenChoose();
     else if (name === 'password') screenPassword();
     else if (name === 'words') screenWords();
@@ -97,7 +135,7 @@
       var skip = dom.el('button', 'btn btn-quiet');
       skip.appendChild(dom.el('span', 'btn-label', opts.skip));
       row.appendChild(skip);
-      dom.on(skip, 'click', function () { go(step + 1); });
+      dom.on(skip, 'click', function () { next(); });
     }
     var primary = dom.el('button', 'btn btn-primary btn-lg');
     primary.appendChild(dom.el('span', 'btn-label', primaryLabel));
@@ -108,15 +146,84 @@
     return primary;
   }
 
-  /* 1 */
-  function screenWhat() {
-    /* The mark above the name, in the window's own light: the one screen that
-       introduces the product opens on the thing it is recognised by. */
+  /* The mark above the name, in the window's own light: the one screen that
+     introduces the product opens on the thing it is recognised by. */
+  function markBlock() {
     var mark = dom.el('div', 'firstrun-mark');
     mark.setAttribute('aria-hidden', 'true');
     var markSvg = dom.mark();
     if (markSvg) mark.appendChild(markSvg);
     card.appendChild(mark);
+  }
+
+  /* The enclave first run, whole. One click makes the wallet and one Touch ID
+     proves this Mac can open it before the screen says so. No phrase here: the
+     words are revealed later, behind Touch ID, once there is something to lose. */
+  function screenCreate() {
+    markBlock();
+    card.appendChild(dom.el('h1', 'headline', 'Phosphor'));
+    card.appendChild(dom.el('p', 'body', 'This Mac makes your wallet and its Secure Enclave keeps the key: one touch opens it, and your assistant never sees it.'));
+
+    var error = dom.el('p', 'body down');
+    error.hidden = true;
+    card.appendChild(error);
+
+    actions('Create wallet', function (button) {
+      error.hidden = true;
+      window.PhosphorShell.setPending(button, true, 'Waiting for Touch ID');
+      api.vaultCreate()
+        .then(function (answer) {
+          if (answer && answer.ok === false) {
+            fail(error, vaultProblem(answer.code || answer.error));
+            return;
+          }
+          draft.addresses = answer.addresses || null;
+          next();
+        })
+        .catch(function (err) { fail(error, net.readable(err)); })
+        .finally(function () { window.PhosphorShell.setPending(button, false); });
+    }, { back: false });
+    card.appendChild(dom.el('p', 'meta', 'One Touch ID confirms it. Nothing to write down yet.'));
+  }
+
+  /* A version 2 file another Mac made. Its key lives in that Mac's Secure
+     Enclave and nothing here can ask it, so the only way in is the phrase. */
+  function screenForeign() {
+    markBlock();
+    card.appendChild(dom.el('h1', 'title', 'Made on another Mac'));
+    card.appendChild(dom.el('p', 'body dim', 'The wallet file on this Mac was made by a different Mac, so this one cannot open it. Type your recovery phrase to bring the wallet here.'));
+
+    var f = phraseField('Recovery phrase, 12 or 24 words');
+    card.appendChild(f.node);
+    var error = dom.el('p', 'body down');
+    error.hidden = true;
+    card.appendChild(error);
+
+    actions('Restore', function (button) {
+      var words = wordsOf(f.input.value);
+      if (words.length !== 12 && words.length !== 24) {
+        return fail(error, 'That is ' + words.length + (words.length === 1 ? ' word' : ' words') + '. It should be 12 or 24.');
+      }
+      error.hidden = true;
+      window.PhosphorShell.setPending(button, true, 'Restoring your wallet');
+      api.vaultRestore(words.join(' '))
+        .then(function (answer) {
+          if (answer && answer.ok === false) {
+            fail(error, vaultProblem(answer.code || answer.error));
+            return;
+          }
+          f.input.value = '';
+          draft.addresses = answer.addresses || null;
+          next();
+        })
+        .catch(function (err) { fail(error, net.readable(err)); })
+        .finally(function () { window.PhosphorShell.setPending(button, false); });
+    }, { back: false });
+  }
+
+  /* 1 */
+  function screenWhat() {
+    markBlock();
     card.appendChild(dom.el('h1', 'headline', 'Phosphor'));
     card.appendChild(dom.el('p', 'body', 'Phosphor lets your AI assistant use your money, without ever letting it spend your money. You decide. Every time.'));
     actions('Get started', function () { go(1); }, { back: false });
@@ -308,7 +415,7 @@
     var body = dom.el('div', 'stack');
     card.appendChild(body);
     window.PhosphorMoneyIn.render(body);
-    actions('Continue', function () { go(6); });
+    actions('Continue', function () { next(); });
   }
 
   /* 7 */
@@ -394,7 +501,7 @@
         .finally(function () { window.PhosphorShell.setPending(start, false); });
     });
 
-    actions('Continue', function () { go(8); }, { skip: 'Do this later' });
+    actions('Continue', function () { next(); }, { skip: 'Do this later' });
   }
 
   /* 9 */
@@ -450,6 +557,37 @@
     if (code === 'exists') return 'There is already a wallet on this computer.';
     if (code === 'no_wallet') return 'There is no wallet on this computer.';
     return 'That did not work.';
+  }
+
+  /* The vault routes' refusals, in the words of the screen that asked. */
+  function vaultProblem(code) {
+    if (code === 'user_cancel') return 'Touch ID was cancelled. Nothing was changed.';
+    if (code === 'enclave_unavailable') return 'The Secure Enclave did not answer. Phosphor may be running outside its desktop shell.';
+    if (code === 'bad_phrase') return 'That phrase is not right. Check every word and the order they are in.';
+    if (code === 'not_backed_up') return 'The wallet already on this Mac is not backed up yet, so it cannot be replaced.';
+    if (code === 'garbled') return 'The Secure Enclave answered the wrong thing. Try again.';
+    return walletProblem(code);
+  }
+
+  /* A phrase is typed into a box that wraps, with every helper that would
+     remember or correct it switched off. */
+  function phraseField(label) {
+    var node = dom.el('div', 'field');
+    node.appendChild(dom.el('label', 'label', label));
+    var input = dom.el('textarea', 'input phrase-input');
+    input.name = 'phrase';
+    input.rows = 3;
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+    input.setAttribute('autocapitalize', 'off');
+    input.setAttribute('autocorrect', 'off');
+    node.appendChild(input);
+    return { node: node, input: input };
+  }
+
+  function wordsOf(text) {
+    var clean = String(text || '').trim().toLowerCase();
+    return clean ? clean.split(/\s+/) : [];
   }
 
   /* A password input carries a name and an autocomplete hint so a password

@@ -1,0 +1,494 @@
+// The enclave wallet's way in, and the way the window learns about it.
+//
+// Three screens share one property: on a Secure Enclave wallet nothing in the
+// window asks for, draws, or imitates a password. The lock screen is one
+// button that raises the system dialog; the first run is one button that makes
+// the wallet and one Touch ID that proves it opens; the shell routes the
+// deposit watcher's frames and wears the "not backed up" badge until the
+// phrase has been typed back. Each is run for real over a small DOM.
+
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { createContext, runInContext } from 'node:vm';
+
+type Any = Record<string, any>;
+
+const read = (path: string): string => readFileSync(new URL(path, import.meta.url), 'utf8');
+const DOM = read('../../ui/core/dom.js');
+const STATE = read('../../ui/core/state.js');
+const LOCK = read('../../ui/screens/lock.js');
+const FIRSTRUN = read('../../ui/screens/firstrun.js');
+const SHELL = read('../../ui/screens/shell.js');
+
+/* ---------- a DOM small enough to read ---------- */
+
+function makeNode(tagName: string): Any {
+  const attrs: Record<string, string> = {};
+  const listeners: Record<string, Array<(event: Any) => void>> = {};
+  let ownText = '';
+  const node: Any = {
+    tagName: tagName.toUpperCase(),
+    className: '',
+    hidden: false,
+    disabled: false,
+    type: '',
+    name: '',
+    value: '',
+    rows: 0,
+    inert: false,
+    tabIndex: 0,
+    dataset: {} as Record<string, string>,
+    style: { setProperty() {} } as Any,
+    childNodes: [] as Any[],
+    parentNode: null as unknown as Any,
+    get textContent(): string {
+      return node.childNodes.length ? node.childNodes.map((c: Any) => c.textContent).join('') : ownText;
+    },
+    set textContent(value: string) {
+      ownText = String(value);
+      for (const child of node.childNodes) child.parentNode = null;
+      node.childNodes = [];
+    },
+    get firstChild() { return node.childNodes[0] ?? null; },
+    get children() { return node.childNodes; },
+    get nextSibling() {
+      const siblings = node.parentNode?.childNodes ?? [];
+      return siblings[siblings.indexOf(node) + 1] ?? null;
+    },
+    appendChild(child: Any) {
+      child.parentNode?.removeChild(child);
+      child.parentNode = node;
+      node.childNodes.push(child);
+      return child;
+    },
+    insertBefore(child: Any, before: Any | null) {
+      child.parentNode?.removeChild(child);
+      child.parentNode = node;
+      const at = before === null ? node.childNodes.length : node.childNodes.indexOf(before);
+      node.childNodes.splice(at < 0 ? node.childNodes.length : at, 0, child);
+      return child;
+    },
+    removeChild(child: Any) {
+      const at = node.childNodes.indexOf(child);
+      if (at >= 0) node.childNodes.splice(at, 1);
+      child.parentNode = null;
+      return child;
+    },
+    remove() { node.parentNode?.removeChild(node); },
+    setAttribute(name: string, value: string) { attrs[name] = String(value); },
+    getAttribute(name: string) { return name in attrs ? attrs[name] : null; },
+    hasAttribute(name: string) { return name in attrs; },
+    removeAttribute(name: string) { delete attrs[name]; },
+    addEventListener(type: string, fn: (event: Any) => void) { (listeners[type] ||= []).push(fn); },
+    removeEventListener() {},
+    dispatch(type: string, event: Any = {}) {
+      for (const fn of listeners[type] ?? []) fn(Object.assign({ target: node, currentTarget: node, preventDefault() {} }, event));
+    },
+    click() { node.dispatch('click'); },
+    focus() { node.focused = true; },
+    getBoundingClientRect: () => ({ width: 0, height: 0 }),
+    querySelector(selector: string) { return find(node, selector)[0] ?? null; },
+    querySelectorAll(selector: string) { return find(node, selector); },
+  };
+  return node;
+}
+
+function matches(node: Any, selector: string): boolean {
+  const parts = selector.trim().match(/^([a-z]+)?((?:\.[\w-]+)*)((?:\[[^\]]+\])*)$/i);
+  if (!parts) return false;
+  const [, tag, classes, attrsPart] = parts;
+  if (tag && node.tagName !== tag.toUpperCase()) return false;
+  for (const cls of classes.split('.').filter(Boolean)) {
+    if (!String(node.className).split(' ').includes(cls)) return false;
+  }
+  for (const raw of attrsPart.match(/\[[^\]]+\]/g) ?? []) {
+    const m = /^\[([\w-]+)(?:="([^"]*)")?\]$/.exec(raw);
+    if (!m) return false;
+    const value = m[1] === 'type' ? node.type : node.getAttribute(m[1]);
+    if (m[2] === undefined ? value === null : value !== m[2]) return false;
+  }
+  return true;
+}
+
+function find(root: Any, selector: string): Any[] {
+  const out: Any[] = [];
+  const wanted = selector.split(',').map((s) => s.trim());
+  const walk = (n: Any): void => {
+    for (const child of n.childNodes) {
+      if (wanted.some((w) => matches(child, w))) out.push(child);
+      walk(child);
+    }
+  };
+  walk(root);
+  return out;
+}
+
+function textOf(node: Any): string[] {
+  const out: string[] = [];
+  const walk = (n: Any): void => {
+    if (n.childNodes.length === 0) {
+      if (n.textContent !== '') out.push(n.textContent);
+      return;
+    }
+    for (const child of n.childNodes) walk(child);
+  };
+  walk(node);
+  return out;
+}
+
+const buttonNamed = (root: Any, label: string): Any => find(root, 'button').find((b: Any) => b.textContent === label) as Any;
+const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+/* ---------- the window ---------- */
+
+function vaultState(overrides: Any = {}): Any {
+  return Object.assign({
+    custody: 'secure-enclave',
+    state: 'locked',
+    enclave: { attached: true, ready: true, capability: { secureEnclave: true, biometry: 'touchid', canAuthenticate: true }, keyMadeAt: '2026-09-14T09:00:00.000Z', binding: 'device' },
+    foreign: false,
+    waiting: null,
+    backedUp: false,
+    backedUpAt: null,
+    idleMinutes: 15,
+    hasMnemonic: true,
+  }, overrides);
+}
+
+type World = {
+  sandbox: Any;
+  store: Any;
+  nodes: Record<string, Any>;
+  calls: Any[];
+  answer: Any;
+  put: (patch: Any) => void;
+  events: Record<string, Array<(frame: Any) => void>>;
+};
+
+function build(state: Any, sources: string[]): World {
+  const nodes: Record<string, Any> = {};
+  for (const id of ['screen-lock', 'screen-firstrun', 'page', 'chip-lock', 'chip-waiting', 'chip-backup', 'chip-feed']) {
+    nodes[id] = makeNode('div');
+  }
+  for (const id of ['chip-lock', 'chip-waiting', 'chip-feed']) {
+    const text = makeNode('span');
+    text.setAttribute('data-role', id.replace('chip-', '') + '-text');
+    nodes[id].appendChild(text);
+  }
+  nodes['chip-backup'].hidden = true;
+  const body = makeNode('body');
+  const calls: Any[] = [];
+  const answer: Any = {
+    unlock: { ok: true, released: 0 },
+    create: { ok: true, addresses: { evm: '0xabc', solana: 'sol', near: 'near' }, custody: 'secure-enclave' },
+    restore: { ok: true, addresses: {} },
+    state: null,
+  };
+  const events: Record<string, Array<(frame: Any) => void>> = {};
+
+  const doc: Any = {
+    body,
+    createElement: makeNode,
+    getElementById: (id: string) => nodes[id] ?? null,
+    querySelectorAll: () => [],
+    addEventListener() {},
+  };
+  const sandbox: Any = {
+    console,
+    document: doc,
+    location: { search: '' },
+    URLSearchParams,
+    setTimeout: (fn: () => void) => { setTimeout(fn, 0); return 1; },
+    clearTimeout() {},
+    setInterval: () => 1,
+    clearInterval() {},
+    addEventListener() {},
+    dispatchEvent() {},
+    CustomEvent: class { type: string; detail: Any; constructor(type: string, init: Any) { this.type = type; this.detail = init && init.detail; } },
+    requestAnimationFrame: (fn: () => void) => { fn(); return 1; },
+  };
+  sandbox.window = sandbox;
+  sandbox.PhosphorNet = { readable: (e: Any) => String(e && e.message ? e.message : e) };
+  sandbox.PhosphorMotion = { reduced: () => true };
+  sandbox.PhosphorFixtures = { active: false };
+  sandbox.PhosphorEvents = {
+    on: (type: string, fn: (frame: Any) => void) => { (events[type] ||= []).push(fn); },
+    onConnection: (fn: (c: string) => void) => { fn('live'); },
+    start() {},
+  };
+  sandbox.PhosphorShell = {
+    setPending(button: Any, pending: boolean, label: string) { button.disabled = !!pending; button.pendingLabel = pending ? label : ''; },
+    refresh: () => { calls.push({ route: 'refresh' }); return Promise.resolve(); },
+    setView: (name: string) => { calls.push({ route: 'setView', view: name }); },
+    view: () => 'basic',
+    updateField() {},
+  };
+  sandbox.PhosphorToast = { show: (message: string) => { calls.push({ route: 'toast', message }); } };
+  sandbox.PhosphorMoneyIn = { render: (host: Any) => { calls.push({ route: 'moneyin.render' }); host.appendChild(makeNode('div')); } };
+  sandbox.PhosphorDeposit = { onFrame: (frame: Any) => { calls.push({ route: 'deposit.onFrame', frame }); } };
+  sandbox.PhosphorVault = { focusRecovery() { calls.push({ route: 'focusRecovery' }); } };
+  sandbox.PhosphorFirstRun = { open() { calls.push({ route: 'firstrun.open' }); }, boot() {}, strengthWords: () => '' };
+  sandbox.PhosphorApi = {
+    unlock: (password: string) => { calls.push({ route: '/api/unlock', password }); return Promise.resolve({ ok: true }); },
+    vaultUnlock: (purpose?: string) => { calls.push({ route: '/api/vault/unlock', purpose }); return Promise.resolve(answer.unlock); },
+    vaultCreate: () => { calls.push({ route: '/api/vault/create' }); return Promise.resolve(answer.create); },
+    vaultRestore: (mnemonic: string) => { calls.push({ route: '/api/vault/restore', mnemonic }); return Promise.resolve(answer.restore); },
+    walletCreate: (password: string) => { calls.push({ route: '/api/wallet/create', password }); return Promise.resolve({ ok: true, mnemonic: [], addresses: {} }); },
+    connection: () => Promise.resolve({ missing: true }),
+    driver: () => Promise.resolve({}),
+    state: () => Promise.resolve({ data: answer.state ?? state, fresh: true }),
+    health: () => Promise.resolve({ data: {} }),
+  };
+
+  createContext(sandbox);
+  runInContext(DOM, sandbox, { filename: 'ui/core/dom.js' });
+  runInContext(STATE, sandbox, { filename: 'ui/core/state.js' });
+  for (const source of sources) {
+    const file = source === LOCK ? 'ui/screens/lock.js' : source === FIRSTRUN ? 'ui/screens/firstrun.js' : 'ui/screens/shell.js';
+    runInContext(source, sandbox, { filename: file });
+  }
+
+  const store = sandbox.PhosphorState;
+  store.put(state);
+  return {
+    sandbox,
+    store,
+    nodes,
+    calls,
+    answer,
+    events,
+    put: (patch: Any) => store.put(Object.assign({}, store.get(), patch)),
+  };
+}
+
+/* ---------- the lock screen ---------- */
+
+test('an enclave wallet locks to one button and never a password field', async () => {
+  const world = build({ lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState() }, [LOCK]);
+  world.sandbox.PhosphorLock.boot();
+  const screen = world.nodes['screen-lock'];
+  assert.equal(screen.hidden, false, 'the lock screen is not up');
+  assert.equal(find(screen, 'input').length, 0, 'a field was drawn on an enclave lock screen');
+  assert.equal(find(screen, 'form').length, 0);
+  const buttons = find(screen, 'button');
+  assert.equal(buttons.length, 1, 'more than one button on the lock screen');
+  assert.equal(buttons[0].textContent, 'Unlock with Touch ID');
+  assert.ok(textOf(screen).includes('Locked'));
+
+  // The click posts /api/vault/unlock with no purpose, and the button is dead
+  // and says why until the dialog answers.
+  let resolveUnlock: (value: Any) => void = () => {};
+  world.sandbox.PhosphorApi.vaultUnlock = (purpose?: string) => {
+    world.calls.push({ route: '/api/vault/unlock', purpose });
+    return new Promise((resolve) => { resolveUnlock = resolve; });
+  };
+  buttons[0].click();
+  assert.equal(buttons[0].disabled, true, 'the button took a second click while the dialog was up');
+  assert.equal(buttons[0].pendingLabel, 'Waiting for Touch ID');
+  const post = world.calls.find((c) => c.route === '/api/vault/unlock');
+  assert.ok(post, 'nothing was posted');
+  assert.equal(post.purpose, undefined);
+  assert.equal(world.calls.some((c) => c.route === '/api/unlock'), false, 'the password route was posted from an enclave lock screen');
+
+  // A cancel brings the button back, with nothing to read.
+  resolveUnlock({ ok: false, error: 'cancelled', code: 'user_cancel' });
+  await flush();
+  assert.equal(buttons[0].disabled, false, 'the button stayed dead after a cancel');
+  assert.equal(find(screen, '.down').some((n: Any) => n.hidden === false && n.textContent !== ''), false, 'a cancel was shown as an error');
+
+  // A success refreshes the state, and the screen goes with the lock.
+  world.sandbox.PhosphorApi.vaultUnlock = () => Promise.resolve({ ok: true, released: 0 });
+  buttons[0].click();
+  await flush();
+  assert.ok(world.calls.some((c) => c.route === 'refresh'));
+  world.put({ lock: { state: 'unlocked', idleLocksInSec: null } });
+  assert.equal(screen.hidden, true);
+});
+
+test('a refusal other than a cancel is on the screen, in words', async () => {
+  const world = build({ lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState() }, [LOCK]);
+  world.sandbox.PhosphorLock.boot();
+  world.answer.unlock = { ok: false, error: 'no relay', code: 'enclave_unavailable' };
+  find(world.nodes['screen-lock'], 'button')[0].click();
+  await flush();
+  assert.ok(textOf(world.nodes['screen-lock']).some((t) => t.startsWith('The Secure Enclave did not answer')));
+});
+
+test('a password wallet still locks to a password field and posts /api/unlock', async () => {
+  const world = build({ lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState({ custody: 'software' }) }, [LOCK]);
+  world.sandbox.PhosphorLock.boot();
+  const screen = world.nodes['screen-lock'];
+  const input = find(screen, 'input[type="password"]')[0];
+  assert.ok(input, 'no password field on a password lock screen');
+  assert.equal(find(screen, 'button')[0].textContent, 'Unlock');
+  input.value = 'hunter22';
+  find(screen, 'form')[0].dispatch('submit');
+  await flush();
+  assert.ok(world.calls.some((c) => c.route === '/api/unlock' && c.password === 'hunter22'));
+  assert.equal(world.calls.some((c) => c.route === '/api/vault/unlock'), false);
+});
+
+test('a wallet file made on another Mac hands over to the first run instead of asking for Touch ID', () => {
+  const world = build({ lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState({ foreign: true }) }, [LOCK]);
+  world.sandbox.PhosphorLock.boot();
+  assert.equal(world.nodes['screen-lock'].hidden, true);
+  assert.ok(world.calls.some((c) => c.route === 'firstrun.open'));
+});
+
+test('focus lands on the Touch ID button where there is no field', () => {
+  const world = build({ lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState() }, [LOCK]);
+  world.sandbox.PhosphorLock.boot();
+  const button = find(world.nodes['screen-lock'], 'button')[0];
+  button.focused = false;
+  world.sandbox.PhosphorLock.focus();
+  assert.equal(button.focused, true);
+});
+
+/* ---------- the first run ---------- */
+
+test('with the enclave ready, the first run is Create wallet, the addresses, the assistant, then Home', async () => {
+  const world = build({ lock: { state: 'no_wallet', idleLocksInSec: null }, vault: vaultState({ custody: null, state: 'no_wallet' }) }, [FIRSTRUN]);
+  world.sandbox.PhosphorFirstRun.boot();
+  world.sandbox.PhosphorFirstRun.open();
+  const screen = world.nodes['screen-firstrun'];
+  assert.equal(screen.hidden, false);
+  assert.equal(find(screen, 'input').length, 0, 'the enclave first run asks for something typed');
+  assert.equal(find(screen, '.firstrun-mark').length, 1, 'no mark');
+  const buttons = find(screen, 'button');
+  assert.equal(buttons.length, 1, 'more than one button on the first screen');
+  assert.equal(buttons[0].textContent, 'Create wallet');
+  assert.equal(find(screen, '.screen-steps').length, 0, 'a step count on the first screen');
+
+  buttons[0].click();
+  assert.equal(buttons[0].pendingLabel, 'Waiting for Touch ID');
+  await flush();
+  assert.ok(world.calls.some((c) => c.route === '/api/vault/create'));
+  assert.equal(world.calls.some((c) => c.route === '/api/wallet/create'), false, 'the password route was posted');
+
+  // The addresses step, the existing one.
+  assert.ok(textOf(screen).includes('Your addresses'));
+  assert.ok(textOf(screen).includes('Step 2 of 3'));
+  assert.ok(world.calls.some((c) => c.route === 'moneyin.render'));
+  buttonNamed(screen, 'Continue').click();
+
+  // Connect your assistant, the existing one, and its Continue is Home.
+  assert.ok(textOf(screen).includes('Connect your assistant'));
+  assert.ok(textOf(screen).includes('Step 3 of 3'));
+  buttonNamed(screen, 'Continue').click();
+  assert.equal(screen.hidden, true, 'the first run did not close');
+  assert.ok(world.calls.some((c) => c.route === 'setView' && c.view === 'basic'), 'Home was not opened');
+});
+
+test('a cancelled Touch ID on Create says so and stays on the screen', async () => {
+  const world = build({ lock: { state: 'no_wallet', idleLocksInSec: null }, vault: vaultState({ custody: null, state: 'no_wallet' }) }, [FIRSTRUN]);
+  world.answer.create = { ok: false, error: 'cancelled', code: 'user_cancel' };
+  world.sandbox.PhosphorFirstRun.boot();
+  world.sandbox.PhosphorFirstRun.open();
+  const screen = world.nodes['screen-firstrun'];
+  find(screen, 'button')[0].click();
+  await flush();
+  assert.ok(textOf(screen).includes('Touch ID was cancelled. Nothing was changed.'));
+  assert.equal(find(screen, 'button')[0].textContent, 'Create wallet');
+});
+
+test('a file made on another Mac opens on Restore: one field, one button, 12 or 24 words', async () => {
+  const world = build({ lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState({ foreign: true }) }, [FIRSTRUN]);
+  world.sandbox.PhosphorFirstRun.boot();
+  world.sandbox.PhosphorFirstRun.open();
+  const screen = world.nodes['screen-firstrun'];
+  assert.ok(textOf(screen).includes('Made on another Mac'));
+  const fields = find(screen, 'textarea');
+  assert.equal(fields.length, 1, 'the restore screen does not have exactly one field');
+  assert.equal(find(screen, 'input').length, 0);
+  const buttons = find(screen, 'button');
+  assert.equal(buttons.length, 1);
+  assert.equal(buttons[0].textContent, 'Restore');
+
+  fields[0].value = 'one two three';
+  buttons[0].click();
+  await flush();
+  assert.equal(world.calls.some((c) => c.route === '/api/vault/restore'), false, 'three words were posted');
+  assert.ok(textOf(screen).includes('That is 3 words. It should be 12 or 24.'));
+
+  const words = Array.from({ length: 24 }, (_v, i) => 'w' + (i + 1));
+  fields[0].value = '  ' + words.join('   ').toUpperCase() + '\n';
+  buttons[0].click();
+  await flush();
+  const post = world.calls.find((c) => c.route === '/api/vault/restore');
+  assert.ok(post, 'nothing was posted');
+  assert.equal(post.mnemonic, words.join(' '));
+  assert.ok(textOf(screen).includes('Your addresses'), 'restore did not go on to the addresses');
+});
+
+test('without an enclave the software first run is unchanged: ten steps from Get started', () => {
+  const world = build({ lock: { state: 'no_wallet', idleLocksInSec: null }, vault: vaultState({ custody: null, state: 'no_wallet', enclave: { attached: true, ready: false, capability: null, keyMadeAt: null, binding: null } }) }, [FIRSTRUN]);
+  world.sandbox.PhosphorFirstRun.boot();
+  world.sandbox.PhosphorFirstRun.open();
+  const screen = world.nodes['screen-firstrun'];
+  assert.equal(find(screen, 'button')[0].textContent, 'Get started');
+  find(screen, 'button')[0].click();
+  assert.ok(textOf(screen).includes('Step 2 of 10'));
+  assert.ok(textOf(screen).includes('Create or bring a wallet'));
+});
+
+/* ---------- the shell ---------- */
+
+test('the shell routes deposit frames to the store and the card, and wears the backup badge', async () => {
+  const state = {
+    lock: { state: 'unlocked', idleLocksInSec: null },
+    vault: vaultState({ state: 'unlocked', backedUp: false }),
+    proposals: [],
+    policy: {},
+    deposit: null,
+  };
+  const world = build(state, [SHELL]);
+  world.sandbox.PhosphorShell.boot();
+  await flush();
+  assert.ok(world.events.deposit && world.events.deposit.length === 1, 'the shell does not listen for deposit frames');
+
+  const frame = { type: 'deposit', phase: 'watching', chain: 'sol', symbol: 'USDC', address: 'abc', startedAt: '2026-09-14T10:00:00.000Z', baseline: 0, amount: null, txHash: null, ms: null };
+  world.events.deposit[0](frame);
+  const stored = world.store.get().deposit;
+  assert.equal(stored.phase, 'watching');
+  assert.equal(stored.type, undefined, 'the frame type leaked into the state slice');
+  const routed = world.calls.find((c) => c.route === 'deposit.onFrame');
+  assert.ok(routed, 'the card was not told');
+  assert.equal(routed.frame.startedAt, frame.startedAt);
+
+  // A frame with no phase is not a deposit frame.
+  world.events.deposit[0]({ type: 'deposit' });
+  assert.equal(world.calls.filter((c) => c.route === 'deposit.onFrame').length, 1);
+
+  // The badge: on while a wallet exists and is not proven backed up, off once it is.
+  const badge = world.nodes['chip-backup'];
+  assert.equal(badge.hidden, false, 'no badge on a wallet that is not backed up');
+  world.put({ vault: vaultState({ state: 'unlocked', backedUp: true }) });
+  assert.equal(badge.hidden, true, 'the badge stayed after the phrase was proven');
+  world.put({ vault: vaultState({ custody: null, state: 'no_wallet', backedUp: false }) });
+  assert.equal(badge.hidden, true, 'a badge with no wallet to back up');
+
+  // The badge is a way in.
+  badge.click();
+  assert.ok(world.calls.some((c) => c.route === 'focusRecovery'));
+});
+
+test('awaiting_touch counts as waiting on the bar', async () => {
+  const state = {
+    lock: { state: 'unlocked', idleLocksInSec: null },
+    vault: vaultState({ state: 'unlocked', backedUp: true }),
+    proposals: [{ id: 'p1', status: 'awaiting_touch', createdAt: '2026-09-14T10:00:00.000Z', draft: {} }],
+    policy: {},
+    deposit: null,
+  };
+  const world = build(state, [SHELL]);
+  world.sandbox.PhosphorShell.boot();
+  await flush();
+  const chip = world.nodes['chip-waiting'];
+  assert.equal(chip.hidden, false);
+  assert.equal(find(chip, '[data-role="waiting-text"]')[0].textContent, '1 waiting');
+});
+
+test('the Vault tab is one of the views the shell knows', () => {
+  assert.ok(/VIEWS = \[[^\]]*'vault'/.test(SHELL), 'shell.js does not list the vault view');
+});

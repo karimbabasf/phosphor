@@ -9,6 +9,10 @@
 
   var READ_TIMEOUT_MS = 10000;
   var WRITE_TIMEOUT_MS = 30000;
+  /* A write that waits on a Touch ID dialog. The backend holds the request open
+     for up to 150 s while the person reaches for the sensor, so the window has
+     to wait at least that long before it calls the app silent. */
+  var TOUCH_TIMEOUT_MS = 160000;
 
   var etags = {};
   var cache = {};
@@ -166,6 +170,9 @@
   function postJson(path, body, options) {
     var opts = options || {};
     var release = opts.busy ? busy(opts.busy, opts.label || '') : null;
+    /* `touch: true` is the one way to wait longer than a write: the routes that
+       raise a system dialog answer only when the person has. */
+    var wait = opts.touch ? TOUCH_TIMEOUT_MS : WRITE_TIMEOUT_MS;
     return ensureToken()
       .then(function (value) {
         var payload = Object.assign({}, body);
@@ -174,7 +181,7 @@
           method: 'POST',
           headers: { 'content-type': 'application/json', accept: 'application/json' },
           body: JSON.stringify(payload),
-          signal: signal(WRITE_TIMEOUT_MS)
+          signal: signal(wait)
         });
       })
       .then(function (res) {

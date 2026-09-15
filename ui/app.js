@@ -38,6 +38,8 @@
     window.PhosphorBasic.boot();
     window.PhosphorPro.boot();
     window.PhosphorTrade.boot();
+    window.PhosphorDeposit.boot();
+    window.PhosphorVault.boot();
     window.PhosphorFirstRun.boot();
     window.PhosphorLock.boot();
     window.PhosphorShell.boot();

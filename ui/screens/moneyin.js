@@ -1,26 +1,29 @@
-/* Money in: where to send money, one address per chain, with a QR and the
-   warning that matters.
+/* Money in: which networks money can arrive on, one row each, and the way to
+   the deposit card that shows the address for one of them.
 
-   The app had no surface anywhere that showed a person where to send money,
-   which is why a first run could not complete. The addresses come from the
-   keystore header, so this works while the app is locked. */
+   The address itself is not drawn here. It is drawn once, on the deposit card,
+   after three checks (the wallet is open, the QR decodes back to the same
+   bytes, the clipboard reads back what was written), and a second copy of it
+   on this fold would be a copy without those checks. This fold names the
+   network in the words an exchange uses and hands over. */
 (function () {
   'use strict';
 
   var dom = window.PhosphorDom;
   var net = window.PhosphorNet;
   var api = window.PhosphorApi;
+  var store = window.PhosphorState;
 
-  var loaded = null;
   var loading = null;
 
+  /* Never cached across opens: the report carries `verified`, which flips when
+     the wallet opens, and a fold that remembered the locked answer would say
+     "unverified" over an address the enclave has since confirmed. */
   function load() {
-    if (loaded) return Promise.resolve(loaded);
     if (loading) return loading;
-    loading = api.receive().then(function (result) {
-      loaded = result.data || null;
+    loading = api.intentsReceive().then(function (result) {
       loading = null;
-      return loaded;
+      return result.data || null;
     }).catch(function () {
       loading = null;
       return null;
@@ -33,40 +36,91 @@
     var pending = dom.el('div', 'stack');
     for (var i = 0; i < 3; i += 1) {
       var skel = dom.el('div', 'skel');
-      skel.style.height = '72px';
+      skel.style.height = '56px';
       pending.appendChild(skel);
     }
     host.appendChild(pending);
 
     load().then(function (data) {
       dom.clear(host);
-      if (!data || !Array.isArray(data.chains) || !data.chains.length) {
+      if (!data || !Array.isArray(data.networks) || !data.networks.length) {
         var empty = dom.el('div', 'empty');
         empty.appendChild(dom.el('p', 'empty-title', 'No addresses yet'));
-        empty.appendChild(dom.el('p', '', 'This app has no wallet on this computer yet. Make one and your addresses appear here.'));
+        empty.appendChild(dom.el('p', '', data && data.reason
+          ? data.reason.charAt(0).toUpperCase() + data.reason.slice(1) + '.'
+          : 'This app has no wallet on this computer yet. Make one and your addresses appear here.'));
         host.appendChild(empty);
         return;
       }
 
       var lead = dom.el('p', 'body dim');
-      dom.setText(lead, 'Send money to the address on the chain you are sending from. If you are not sure, use the first one.');
+      dom.setText(lead, 'Pick the network you are sending on. The card that opens shows the address, checks it, and watches for the money to land.');
       host.appendChild(lead);
 
-      for (var i = 0; i < data.chains.length; i += 1) {
-        host.appendChild(chainCard(data.chains[i]));
+      var list = dom.el('div', 'stack-2');
+      for (var i = 0; i < data.networks.length; i += 1) {
+        list.appendChild(networkRow(data.networks[i]));
       }
+      host.appendChild(list);
 
       var caution = dom.el('div', 'banner');
       caution.dataset.tone = 'warn';
-      caution.appendChild(dom.el('span', '', 'Money sent to the wrong chain is gone. This is not something anyone can undo.'));
+      caution.appendChild(dom.el('span', '', 'Money sent on the wrong network is gone. This is not something anyone can undo.'));
       host.appendChild(caution);
 
-      /* The keys live on this surface because this is the wallet surface: the
-         addresses money arrives at, and the words that are the only way back to
-         them. Both are behind the password, every time, with no session that
-         remembers you just typed it. */
-      host.appendChild(keysBlock());
+      /* The words that are the only way back. On a password wallet they are
+         behind the password, here, every time. On an enclave wallet they are
+         behind Touch ID on the Vault tab, which also proves the backup. */
+      var state = store.get() || {};
+      var vault = state.vault || {};
+      host.appendChild(vault.custody === 'secure-enclave' ? vaultPointer() : keysBlock());
     });
+  }
+
+  /* One network, one button. The asset the card opens on is the one an exchange
+     is most likely to send: USDC where the network credits it, else the first
+     thing it does credit. The card lets the person switch. */
+  function networkRow(network) {
+    var row = dom.el('div', 'network-row');
+    var left = dom.el('div', 'stack-2 grow');
+    left.appendChild(dom.el('p', 'title-sm', window.PhosphorDeposit.networkWords(network.id)));
+    var accepts = Array.isArray(network.accepts) ? network.accepts : [];
+    var symbols = accepts.map(function (a) { return a.symbol; });
+    if (network.unavailable) {
+      left.appendChild(dom.el('p', 'meta', 'Not available right now: ' + network.unavailable));
+    } else if (symbols.length) {
+      left.appendChild(dom.el('p', 'meta', 'Credits ' + symbols.join(', ') + '.'));
+    } else {
+      left.appendChild(dom.el('p', 'meta', 'Credits nothing right now.'));
+    }
+    row.appendChild(left);
+
+    var show = dom.el('button', 'btn btn-ghost');
+    show.type = 'button';
+    show.appendChild(dom.el('span', 'btn-label', 'Show address'));
+    show.disabled = !!network.unavailable || !network.address || !symbols.length;
+    row.appendChild(show);
+
+    dom.on(show, 'click', function () {
+      window.PhosphorDeposit.open({ chain: network.id, symbol: window.PhosphorDeposit.defaultSymbol(accepts) });
+    });
+    return row;
+  }
+
+  function vaultPointer() {
+    var wrap = dom.el('section', 'keys-block');
+    wrap.appendChild(dom.el('p', 'title-sm', 'Your recovery phrase'));
+    wrap.appendChild(dom.el('p', 'meta', 'It lives behind Touch ID on the Vault tab, where you can reveal it, prove you saved it, or restore from it.'));
+    var row = dom.el('div', 'hstack-2');
+    var go = dom.el('button', 'btn btn-ghost');
+    go.type = 'button';
+    go.appendChild(dom.el('span', 'btn-label', 'Open the Vault tab'));
+    row.appendChild(go);
+    wrap.appendChild(row);
+    dom.on(go, 'click', function () {
+      window.PhosphorShell.setView('vault', { fromClick: true });
+    });
+    return wrap;
   }
 
   /* ---------- your keys ---------- */
@@ -178,95 +232,8 @@
     });
   }
 
-  function chainCard(chain) {
-    var card = dom.el('div', 'receive-card');
-
-    var left = dom.el('div', 'stack-2 grow');
-    left.appendChild(dom.el('p', 'title-sm', chain.name));
-    left.appendChild(dom.el('p', 'addr dim', chain.address));
-
-    var actions = dom.el('div', 'hstack-2');
-    var copy = dom.el('button', 'btn btn-ghost');
-    copy.type = 'button';
-    copy.appendChild(dom.el('span', 'btn-label', 'Copy address'));
-    actions.appendChild(copy);
-    left.appendChild(actions);
-
-    if (chain.warning) {
-      left.appendChild(dom.el('p', 'meta', chain.warning));
-    }
-
-    var qr = dom.el('div', 'qr');
-    var canvas = dom.el('canvas');
-    qr.appendChild(canvas);
-
-    card.appendChild(left);
-    card.appendChild(qr);
-
-    drawQr(canvas, chain.address);
-
-    dom.on(copy, 'click', function () {
-      if (!navigator.clipboard || !navigator.clipboard.writeText) return;
-      navigator.clipboard.writeText(chain.address).then(function () {
-        dom.setText(copy.querySelector('.btn-label'), 'Copied');
-        window.setTimeout(function () {
-          dom.setText(copy.querySelector('.btn-label'), 'Copy address');
-        }, 1600);
-      });
-    });
-
-    return card;
-  }
-
-  /* Dark modules on a light quiet zone, which is the way round the QR standard
-     specifies. An inverted code reads fine on a modern phone and is rejected by
-     plenty of older scanners, and the thing on the other side of this code is
-     an address money is sent to: a code that some camera cannot read is worth
-     more than a white tile is worth avoiding. The quiet zone is four modules,
-     which is what a reader needs to find the code's edge. */
-  function drawQr(canvas, text) {
-    if (typeof window.qrcode !== 'function' || !text) {
-      canvas.remove();
-      return;
-    }
-    var code;
-    try {
-      code = window.qrcode(0, 'M');
-      code.addData(String(text));
-      code.make();
-    } catch (err) {
-      canvas.remove();
-      return;
-    }
-
-    var count = code.getModuleCount();
-    var quiet = 4;
-    var total = count + quiet * 2;
-    var scale = Math.max(2, Math.floor(132 / total));
-    var dpr = Math.min(window.devicePixelRatio || 1, 2);
-    var size = total * scale;
-
-    canvas.width = Math.round(size * dpr);
-    canvas.height = Math.round(size * dpr);
-    canvas.style.width = size + 'px';
-    canvas.style.height = size + 'px';
-
-    var ctx = canvas.getContext('2d');
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(0, 0, size, size);
-    ctx.fillStyle = '#000000';
-    for (var row = 0; row < count; row += 1) {
-      for (var col = 0; col < count; col += 1) {
-        if (!code.isDark(row, col)) continue;
-        ctx.fillRect((col + quiet) * scale, (row + quiet) * scale, scale, scale);
-      }
-    }
-  }
-
   window.PhosphorMoneyIn = {
     render: render,
-    load: load,
-    drawQr: drawQr
+    load: load
   };
 })();

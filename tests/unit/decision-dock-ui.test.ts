@@ -481,3 +481,49 @@ test('a mandate row from an older build still reads as a sentence, not as an enu
   assert.ok(text.includes('Arm a trading rule on BTC'));
   assert.equal(text.includes('mandate_arm'), false, 'the card printed a draft enum at a person');
 });
+
+// The enclave wallet's second half of a Yes. The click landed and the Touch ID
+// dialog that names the move is up: the row is awaiting_touch. Both buttons go
+// dead (a second Yes would be a second ask, and the backend takes a No only on
+// a pending row), the Yes says what is happening, and the dialog's own sentence
+// sits under it so the window and the dialog can be checked against each other.
+test('awaiting_touch kills both buttons, renames Yes, and shows the dialog sentence', () => {
+  const REASON = 'Phosphor: Swap 500 USDC for ETH on Arbitrum';
+  const proposal = {
+    id: 'p7',
+    kind: 'swap',
+    status: 'awaiting_touch',
+    createdAt: '2026-09-14T10:00:00.000Z',
+    draft: { kind: 'swap', chain: 'arb', toChain: 'arb', fromSymbol: 'USDC', toSymbol: 'ETH', amountUsd: 500 },
+    simulation: { ok: true, summary: 'swap 500 USDC for ETH' },
+    verdict: { outcome: 'needs_approval', reasons: ['It is above the $100.00 you said to ask about.'] },
+  };
+  const card = cardFor(proposal, { vault: { waiting: { id: 'approve:p7', op: 'unwrap', reason: REASON, since: 1 } } });
+  const buttons = find(card, 'btn');
+  assert.equal(buttons.length, 2, 'the waiting card does not carry exactly No and Yes');
+  const yes = buttons.find((b) => String(b.className).includes('btn-primary'));
+  const no = buttons.find((b) => String(b.className).includes('btn-ghost'));
+  assert.ok(yes && no);
+  assert.equal(yes.disabled, true, 'Yes still takes a click while the dialog is up');
+  assert.equal(no.disabled, true, 'No still takes a click while the dialog is up');
+  assert.deepEqual(textOf(yes), ['Touch ID: confirm on your Mac']);
+  const text = textOf(card);
+  assert.ok(text.includes('Confirm on your Mac'), 'the label still says the person is being waited on');
+  assert.ok(text.includes(REASON), 'the dialog sentence is not under the button');
+  assert.equal(find(card, 'touch-reason').length, 1);
+
+  // The same row back at pending: the buttons are live again and the sentence is gone.
+  const back = cardFor(Object.assign({}, proposal, { status: 'pending' }), { vault: { waiting: null } });
+  const live = find(back, 'btn');
+  assert.ok(live.every((b) => b.disabled === false));
+  assert.equal(textOf(back).includes(REASON), false);
+  assert.ok(textOf(back).includes('Yes'));
+});
+
+test('a Yes the enclave answers with awaiting_touch is not flashed as done', () => {
+  // decide() reads the answer /api/approve gives back. On an enclave wallet that
+  // answer is the row itself, awaiting_touch, and the card has to redraw in that
+  // state rather than say Done over a decision that has not been made.
+  assert.ok(/answer\.status === 'awaiting_touch'/.test(SOURCE), 'decide() does not branch on awaiting_touch');
+  assert.ok(SOURCE.includes("p.status === 'awaiting_touch'"), 'awaiting_touch is not a waiting status for the dock');
+});

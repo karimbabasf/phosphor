@@ -15,7 +15,7 @@
   var store = window.PhosphorState;
   var fixtures = window.PhosphorFixtures;
 
-  var VIEWS = ['basic', 'pro', 'trade'];
+  var VIEWS = ['basic', 'pro', 'trade', 'vault'];
 
   var refs = {};
   var field = null;
@@ -35,6 +35,7 @@
     refs.tabsIndicator = document.getElementById('tabs-indicator');
     refs.lockChip = document.getElementById('chip-lock');
     refs.waitingChip = document.getElementById('chip-waiting');
+    refs.backupChip = document.getElementById('chip-backup');
     refs.feedChip = document.getElementById('chip-feed');
     refs.freeze = document.getElementById('btn-freeze');
     refs.offline = document.getElementById('offline-bar');
@@ -45,6 +46,7 @@
     wireTabs();
     wireColourways();
     wireFreeze();
+    wireBackupChip();
     wireStream();
 
     window.PhosphorShell.setView(readInitialView(), { silent: true });
@@ -128,10 +130,13 @@
     if (field) field.setState(next);
   }
 
+  /* The same filter ui/screens/decision.js draws from. awaiting_touch counts: the
+     click landed but the Touch ID dialog has not answered, so the person still
+     owes the window something. */
   function pendingOf(state) {
     if (!Array.isArray(state.proposals)) return [];
     return state.proposals.filter(function (p) {
-      return p && (p.status === 'pending' || p.status === 'pending_unlock');
+      return p && (p.status === 'pending' || p.status === 'pending_unlock' || p.status === 'awaiting_touch');
     });
   }
 
@@ -361,6 +366,18 @@
         store.put(Object.assign({}, state, { lock: { state: frame.state, idleLocksInSec: null } }));
       }
     });
+    /* The deposit watcher speaks on every change. The frame is the `deposit`
+       slice of the state, minus its type, so the card renders off the store the
+       way everything else does; the card itself decides whether a frame opens
+       it, because only it knows which watch it has already seen. */
+    events.on('deposit', function (frame) {
+      if (!frame || typeof frame.phase !== 'string') return;
+      var state = store.get() || {};
+      var deposit = Object.assign({}, frame);
+      delete deposit.type;
+      store.put(Object.assign({}, state, { deposit: deposit }));
+      if (window.PhosphorDeposit) window.PhosphorDeposit.onFrame(deposit);
+    });
     events.start();
   }
 
@@ -454,7 +471,27 @@
       dom.setAttr(refs.freeze, 'data-frozen', frozen ? 'true' : null);
     }
 
+    /* Quiet, and there until the phrase has been typed back: a wallet that
+       exists and has not been proven backed up is one bad disk away from gone. */
+    if (refs.backupChip) {
+      var vault = state.vault || {};
+      var exposed = !!vault.custody && vault.backedUp === false;
+      dom.setHidden(refs.backupChip, !exposed);
+    }
+
     updateField();
+  }
+
+  /* The badge is a way in, not just a word: it lands on the Vault tab, where
+     Reveal and Prove are. */
+  function wireBackupChip() {
+    if (!refs.backupChip) return;
+    dom.on(refs.backupChip, 'click', function () {
+      setView('vault', { fromClick: true });
+      if (window.PhosphorVault && typeof window.PhosphorVault.focusRecovery === 'function') {
+        window.PhosphorVault.focusRecovery();
+      }
+    });
   }
 
   function wireFreeze() {

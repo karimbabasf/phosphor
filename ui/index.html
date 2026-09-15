@@ -52,6 +52,7 @@
       <button class="tab" role="tab" data-tab="basic" data-surface="tab-basic" aria-selected="true">Basic</button>
       <button class="tab" role="tab" data-tab="pro" data-surface="tab-pro" aria-selected="false">Pro</button>
       <button class="tab" role="tab" data-tab="trade" data-surface="tab-trade" aria-selected="false">Trade</button>
+      <button class="tab" role="tab" data-tab="vault" data-surface="tab-vault" aria-selected="false">Vault</button>
     </nav>
 
     <!-- The bar's right side: one quiet line of state, and one real control. A pending ask and
@@ -62,6 +63,10 @@
         <span class="status-dot" aria-hidden="true"></span>
         <span data-role="waiting-text">1 waiting</span>
       </span>
+      <button class="status-line bar-state" id="chip-backup" type="button" data-tone="warn" title="Open the Vault tab to back up" hidden>
+        <span class="status-dot" aria-hidden="true"></span>
+        <span>Not backed up</span>
+      </button>
       <span class="bar-lock" id="chip-lock">
         <svg class="bar-lock-glyph" viewBox="0 0 16 16" focusable="false" aria-hidden="true"><path d="M5.5 7V5.25a2.5 2.5 0 0 1 5 0V7M3.75 7h8.5a1 1 0 0 1 1 1v4.5a1 1 0 0 1-1 1h-8.5a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
         <span data-role="lock-text">Unlocked</span>
@@ -98,6 +103,7 @@
       <section class="view" id="view-basic" role="tabpanel" aria-label="Basic" data-active="true"></section>
       <section class="view" id="view-pro" role="tabpanel" aria-label="Pro"></section>
       <section class="view" id="view-trade" role="tabpanel" aria-label="Trade"></section>
+      <section class="view" id="view-vault" role="tabpanel" aria-label="Vault"></section>
     </main>
 
   </div>
@@ -106,6 +112,7 @@
 
 <div class="screen" id="screen-lock" hidden></div>
 <div class="screen" id="screen-firstrun" hidden></div>
+<div class="screen" id="screen-migrate" hidden></div>
 
 <canvas id="beam" class="beam-layer" aria-hidden="true"></canvas>
 
@@ -113,6 +120,7 @@
 <script src="./design/pattern.js" defer></script>
 <script src="./design/marks.js" defer></script>
 <script src="./vendor/qrcode.js" defer></script>
+<script src="./vendor/jsqr.js" defer></script>
 <script src="./theme.js" defer></script>
 <script src="./split.js" defer></script>
 <script src="./core/dom.js" defer></script>
@@ -127,6 +135,7 @@
 <script src="./activity.js" defer></script>
 <script src="./screens/receipts.js" defer></script>
 <script src="./screens/moneyin.js" defer></script>
+<script src="./screens/deposit.js" defer></script>
 <script src="./beam/beam.js" defer></script>
 <script src="./screens/agent.js" defer></script>
 <script src="./beam/trace.js" defer></script>
@@ -137,6 +146,7 @@
 <script src="./screens/trade.js" defer></script>
 <script src="./screens/lock.js" defer></script>
 <script src="./screens/firstrun.js" defer></script>
+<script src="./screens/vault.js" defer></script>
 <script src="./chart/chart.js" defer></script>
 <script src="./chart/labels.js" defer></script>
 <script src="./chart/mini.js" defer></script>

@@ -103,8 +103,10 @@ function load(proposals: unknown[]): { card: Node; render: () => void } {
       PhosphorNet: {},
       PhosphorApi: {},
       PhosphorState: {
-        select: (_name: string, fn: () => void) => {
-          listener = fn;
+        /* The dock also selects the vault slice, for the Touch ID sentence. The
+           render this harness drives is the proposals one. */
+        select: (name: string, fn: () => void) => {
+          if (name === 'proposals') listener = fn;
         },
         get: () => ({ proposals, policy: { outbound: { humanClickAboveUsd: 100 } } }),
       },
