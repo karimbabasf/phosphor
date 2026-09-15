@@ -22,6 +22,7 @@ import type { ChildProcess } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { inheritedEnv } from '../driver.ts';
 import { SIGNING_SESSION_DEFAULT_MS } from '../keystore/session.ts';
 import type { Session } from '../keystore/session.ts';
 import { aggregate } from '../market/aggregate.ts';
@@ -37,6 +38,15 @@ import { isFromChild } from './protocol.ts';
 import type { AssetMeta, Command, FromChild, ToChild } from './protocol.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/* The runner child's environment: the names a process needs (INHERITED_ENV in src/driver.ts) and
+   the two names src/runner/main.ts reads, the venue URL and the master address. Nothing else. It
+   was the whole of process.env before, which put PHOSPHOR_1CLICK_API_KEY and whatever the
+   launching shell carried into a process `ps eww` shows to every other process this user runs.
+   The key itself never goes here: see forkChild. */
+export function runnerChildEnv(baseUrl: string, user: string, parent: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return { ...inheritedEnv(parent), PHOSPHOR_HL_URL: baseUrl, PHOSPHOR_HL_USER: user };
+}
 
 // `venueMs` is the child's word on how long the venue took to answer the command behind the
 // event, carried through so the audit line can say it. A done that never asked the venue (a
@@ -237,7 +247,7 @@ export function createRunnerHost(deps: HostDeps) {
        of any process this user owns, which is the attacker this app is built against. A pipe
        has two ends and no third reader. */
     const spawned = (deps.forkImpl ?? fork)(entry, [], {
-      env: { ...process.env, PHOSPHOR_HL_URL: deps.baseUrl, PHOSPHOR_HL_USER: deps.user },
+      env: runnerChildEnv(deps.baseUrl, deps.user),
       stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
     });
     child = spawned;
