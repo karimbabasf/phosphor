@@ -277,6 +277,14 @@
     line.hidden = true;
     var text = dom.el('span', 'trade-line-text');
     line.appendChild(text);
+    /* The venue's own words, under the sentence, for whoever has the
+       developer switch on: the plain sentence is what a person reads, the raw
+       error is jargon (Karim read it as scary debug output). Hidden until the
+       switch is on (devmode.css), and hidden outright while there is none. */
+    var raw = dom.el('span', 'trade-line-raw mono');
+    raw.setAttribute('data-dev-only', '');
+    raw.hidden = true;
+    line.appendChild(raw);
     strip.appendChild(line);
 
     refs.strip = strip;
@@ -286,6 +294,7 @@
     refs.low = low.value;
     refs.statusLine = line;
     refs.statusText = text;
+    refs.statusRaw = raw;
     refs.stats = stats;
     return strip;
   }
@@ -1005,17 +1014,23 @@
     var account = data && data.account;
 
     /* A venue that is not answering has not said the account is empty, it has
-       said nothing, and those are different sentences. So the line names the
-       venue's own words and the figures under it read as unknown rather than as
-       the empty state, which would be the window inventing a fact. A socket
-       that is shut is red with the link struck through; a socket that is open
-       and answering with an error is amber with a warning. */
+       said nothing, and those are different sentences. So the line says what
+       is wrong in plain words, keeps the venue's own words behind the
+       developer switch, and the figures under it read as unknown rather than
+       as the empty state, which would be the window inventing a fact. A
+       socket that is shut is red with the link struck through; a socket that
+       is open and answering with an error is amber with a warning; a read
+       skipped because there is no wallet yet is a quiet wait, keyed off the
+       error's text until the feed carries it as a flag of its own. */
     if (venueDown()) {
-      var shut = data.venue.connected === false;
-      statusLine(data.venue.error
-        ? 'No route to the venue: ' + data.venue.error + '. The window keeps asking.'
-        : 'No route to the venue. The window keeps asking.',
-        shut ? 'down' : 'warn', shut ? 'link-off' : 'warning');
+      var raw = data.venue.error ? String(data.venue.error) : '';
+      if (/no wallet/i.test(raw)) {
+        statusLine('Nothing to read until a wallet exists.', null, 'waiting', raw);
+      } else if (data.venue.connected === false) {
+        statusLine('Not connected to Hyperliquid. Trying again.', 'down', 'link-off', raw);
+      } else {
+        statusLine('Hyperliquid is not answering one of our reads. Trying again.', 'warn', 'warning', raw);
+      }
       renderFigures(account, true);
       return;
     }
@@ -1039,10 +1054,11 @@
   }
 
   /* The notice under the row. `tone` is the wash behind it (warn, down, or
-     none for a quiet wait), `iconName` the drawn icon ahead of the sentence.
-     The icon is swapped only when its name changes, so a line that is
-     repainted every tick keeps its node. Empty text takes the row away. */
-  function statusLine(text, tone, iconName) {
+     none for a quiet wait), `iconName` the drawn icon ahead of the sentence,
+     `raw` the venue's own words for the developer switch. The icon is swapped
+     only when its name changes, so a line that is repainted every tick keeps
+     its node. Empty text takes the row away. */
+  function statusLine(text, tone, iconName, raw) {
     var line = refs.statusLine;
     var name = text ? iconName : null;
     if ((line.dataset.icon || null) !== name) {
@@ -1051,8 +1067,11 @@
       if (name) line.insertBefore(icon(name, 'icon-16 trade-line-icon'), refs.statusText);
       dom.setAttr(line, 'data-icon', name);
     }
+    var words = text && raw ? String(raw) : '';
     dom.setAttr(line, 'data-tone', text ? tone : null);
     dom.setText(refs.statusText, text);
+    dom.setText(refs.statusRaw, words);
+    dom.setHidden(refs.statusRaw, !words);
     dom.setAttr(line, 'title', text || null);
     dom.setHidden(line, !text);
   }
