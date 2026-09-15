@@ -371,6 +371,36 @@ export async function userRole(deps: HlUserSignedDeps, address: string): Promise
   return typeof body?.role === 'string' ? body.role : 'unknown';
 }
 
+// One entry of the venue's non-funding ledger: a deposit, a withdrawal, a transfer between
+// accounts or between the account's own books. Every number is a string, like every read here.
+type LedgerUpdate = { time?: number; hash?: string; delta?: Record<string, unknown> };
+
+/* USDC credited to an account since a moment, off the venue's own ledger of what moved: bridge
+   deposits, and USDC transfers on either book whose destination is this account. Money leaving,
+   money moving between the account's own books, and any other token are not credits.
+   The reconcile sweep reads this to confirm a Hyperliquid deposit 1Click calls SUCCESS: after
+   the fact a balance comparison cannot answer it (the rail's before-read is gone with the
+   process, and trading moves the same figure), and the ledger names each credit with its amount.
+   No key, a public /info POST. Throws when the ledger will not answer, so the caller can leave a
+   row unconfirmed rather than read a failure as "nothing arrived". */
+export async function usdcCreditedSince(deps: HlUserSignedDeps, account: string, sinceMs: number): Promise<number> {
+  const user = account.trim().toLowerCase();
+  if (!isAddress(user)) throw new Error(`hyperliquid usdcCreditedSince: ${account} is not an address`);
+  const rows = await info<unknown>(deps, { type: 'userNonFundingLedgerUpdates', user, startTime: sinceMs });
+  if (!Array.isArray(rows)) throw new Error('hyperliquid userNonFundingLedgerUpdates answered with something that is not a list');
+  let credited = 0;
+  for (const row of rows as LedgerUpdate[]) {
+    const delta = row.delta;
+    if (delta === undefined || (typeof row.time === 'number' && row.time < sinceMs)) continue;
+    const toUs = String(delta.destination ?? '').toLowerCase() === user;
+    if (delta.type === 'deposit') credited += num(String(delta.usdc ?? ''));
+    else if (delta.type === 'internalTransfer' && toUs) credited += num(String(delta.usdc ?? ''));
+    else if ((delta.type === 'spotTransfer' || delta.type === 'send') && toUs && delta.token === 'USDC') credited += num(String(delta.amount ?? ''));
+  }
+  // Six decimals is the venue's own precision for USDC; summing strings as doubles drifts past it.
+  return Math.round(credited * 1e6) / 1e6;
+}
+
 // ---------- the write path ----------
 
 export type HlActionResult = {

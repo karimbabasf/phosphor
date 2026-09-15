@@ -31,6 +31,49 @@ export type TxLookup = (chain: ChainId, hash: string) => Promise<TxState>;
 // INTENTS-mode swap settles on NEAR, which chainTxLookup answers `unknown` for) still be settled.
 export type OneClickLookup = (handle: string) => Promise<OneClickStatus>;
 
+// Whether the venue on the far side of a 1Click order shows the money it delivered. For a
+// Hyperliquid deposit that is the account's own record of the credit; 1Click's SUCCESS is the
+// solver's delivery, which the account can trail by a while or never show.
+export type VenueCredited = (p: Proposal) => Promise<boolean>;
+
+/* The venue read main.ts wires, over the Hyperliquid account's ledger of credits.
+   A balance comparison cannot answer "did this deposit land" after the fact: the rail's own
+   before-read is gone with the process, and trading moves the same figure. The ledger names each
+   credit with its amount, so the question becomes whether the account has been credited, since
+   a minute before this row was decided, with at least what every deposit decided since then was
+   promised (this row's floor and each later row's). Two $10 deposits a second apart, the first
+   unconfirmed: the first asks for $20 since its time, sees $10, and stays unconfirmed; once both
+   credits show, both settle. Asking for the sum errs the safe way: a row this leaves unconfirmed
+   is a row a person reads, a row it settled wrongly is money described that is not there. A
+   ledger that will not answer is "not shown", never "nothing arrived". */
+export function hlDepositCredited(deps: { credited(account: string, sinceMs: number): Promise<number>; rows(): Proposal[] }): VenueCredited {
+  const MAY_HAVE_LANDED: ReadonlySet<Proposal['status']> = new Set(['executing', 'executed', 'needs_reconciliation']);
+  const decided = (p: Proposal): number => Date.parse(p.decidedAt ?? p.createdAt);
+  return async (p) => {
+    if (p.draft.kind !== 'hl_deposit') return false;
+    const account = p.draft.hlAccount.toLowerCase();
+    const since = decided(p) - 60_000;
+    if (!Number.isFinite(since)) return false;
+    const owed = deps
+      .rows()
+      .filter((r) => r.draft.kind === 'hl_deposit' && r.draft.hlAccount.toLowerCase() === account && MAY_HAVE_LANDED.has(r.status) && decided(r) >= since)
+      .reduce((sum, r) => sum + (r.draft.kind === 'hl_deposit' ? r.draft.minCredited : 0), 0);
+    try {
+      return (await deps.credited(account, since)) + 1e-6 >= owed;
+    } catch {
+      return false;
+    }
+  };
+}
+
+/* Rows 1Click's word cannot settle on its own: a Hyperliquid deposit, where the venue credits
+   the account after the solver delivers and only the account says when, and any row whose rail
+   wrote that the venue had not shown the money (hypercore-deposit.ts settleToPerp, in either
+   tense). Both stay unconfirmed on SUCCESS until the venue read says otherwise. */
+function awaitsVenue(p: Proposal): boolean {
+  return p.kind === 'hl_deposit' || /\bha[sd] not shown\b/.test(p.result?.detail ?? '');
+}
+
 // Rows younger than this are still worth asking 1Click about on the scheduled sweep. Past it the
 // deposit deadline is long gone and the order is settled one way or the other; a stale row stays
 // for a human to clear rather than being re-queried forever.
@@ -184,7 +227,10 @@ function summarise(states: Array<{ hash: string; state: TxState }>): { status: P
 }
 
 /* Re-check one 1Click order by its quote handle and map what the venue reports onto the row.
-     SUCCESS   -> executed, with the settled amount in the detail when the API gave one.
+     SUCCESS   -> executed, with the settled amount in the detail when the API gave one. A
+                  Hyperliquid deposit is the exception: it stays needs_reconciliation until the
+                  account read (ctx.venueCredited) shows the credit, because the solver's
+                  delivery and the venue's credit are two events and only the second is money.
      REFUNDED  -> failed: the input went back, so nothing is on the far side; the amount is named.
      FAILED    -> stays needs_reconciliation: a FAILED order can still be refunded at the deadline,
                   so it is not terminal for us. The detail says what came back (or 0), why, and
@@ -217,6 +263,27 @@ async function reconcileByHandle(ctx: PCtx, p: Proposal, handle: string): Promis
 
   if (status.status === 'SUCCESS') {
     const settled = status.settledAmountOut !== undefined ? `1click settled this: ${status.settledAmountOut} arrived.` : '1click reports this settled.';
+    /* 1CLICK'S WORD IS NOT THE VENUE'S. The rail had read the Hyperliquid account and found no
+       credit; this used to overwrite that observation with the solver's promise ten minutes
+       later and write executed, ok true, which is the sentence rule this branch exists for. The
+       row stays unconfirmed, with both facts on it, until the account shows the rise. */
+    if (awaitsVenue(p)) {
+      if (ctx.venueCredited === undefined) {
+        return write(
+          'needs_reconciliation',
+          false,
+          `${settled} This app has no venue read wired to confirm the credit, so this stays unconfirmed: read the account before depositing again.`,
+        );
+      }
+      if (!(await ctx.venueCredited(p))) {
+        return write(
+          'needs_reconciliation',
+          false,
+          `${settled} The Hyperliquid account has not shown the credit, so this stays unconfirmed: read the account before depositing again.`,
+        );
+      }
+      return write('executed', true, `${settled} The Hyperliquid account shows the credit.`);
+    }
     return write('executed', true, settled);
   }
   if (status.status === 'REFUNDED') {

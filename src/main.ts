@@ -25,11 +25,13 @@ import { loadPolicy, savePolicy, defaultPolicy } from './policy/file.ts';
 import { renderSentences } from './policy/render.ts';
 import { missingVenues, proposeVenueGap } from './policy/venues.ts';
 import { createRails, venueAllowlist } from './rails/index.ts';
+import { usdcCreditedSince } from './rails/hl-user-signed.ts';
 import { createLedger } from './ledger/index.ts';
 import { oneClickClient, oneClickQuoter, syntheticQuoter, stubSigner, type OneClickStatus, type TokensFile } from './intents.ts';
 import { createMarketData } from './market/index.ts';
 import { lineAt } from './analysis/trendline.ts';
 import { createProposalService } from './proposals.ts';
+import { hlDepositCredited } from './proposals/reconcile.ts';
 import { MAX_AGENTS, RESERVED_SEATS, createAgents, seatSecretPath } from './agents.ts';
 import { atomicWrite } from './fsatomic.ts';
 import { createRunnerHost } from './runner/host.ts';
@@ -471,6 +473,17 @@ const oneClickStatus =
     ? (handle: string): Promise<OneClickStatus> => oneClickClient().status(handle)
     : undefined;
 
+/* And how it tells a Hyperliquid deposit 1Click calls SUCCESS from one the venue has credited:
+   the account's own ledger of credits, read with no key over the same public endpoint the
+   wallet panel reads. 1Click's word is the solver's delivery; only this is the money. */
+const venueCredited =
+  cfg.mode === 'live'
+    ? hlDepositCredited({
+        credited: (account, sinceMs) => usdcCreditedSince({ keysPath: cfg.keysPath }, account, sinceMs),
+        rows: () => store.list(),
+      })
+    : undefined;
+
 const proposals = createProposalService({
   cfg,
   audit,
@@ -483,6 +496,7 @@ const proposals = createProposalService({
   trade: tradeDeps,
   dataDir: cfg.dataDir,
   oneClickStatus,
+  venueCredited,
   vault,
   keystore,
 });

@@ -34,7 +34,7 @@ import type { VaultRelay, VaultResult } from '../vault/relay.ts';
 import { reasonFor } from '../vault/reason.ts';
 import type { RailRegistry } from '../rails/index.ts';
 import type { TradeDeps } from '../trade/rail.ts';
-import type { OneClickLookup, TxLookup } from './reconcile.ts';
+import type { OneClickLookup, TxLookup, VenueCredited } from './reconcile.ts';
 import { withReservation } from './reservation.ts';
 
 export const ALL_CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
@@ -66,6 +66,11 @@ export type ProposalDeps = {
   // How a 1Click order is re-checked by its quote handle, for reconcile. Wired from the intents
   // client in src/main.ts; absent means no venue lookup and reconcile falls back to the chain.
   oneClickStatus?: OneClickLookup;
+  /* Whether the venue on the far side of a 1Click order shows the money: for a Hyperliquid
+     deposit, the account's own record of the credit. 1Click's SUCCESS is the solver's delivery,
+     not the venue's credit, and reconcile refuses to call a deposit executed on the first alone.
+     Wired from the venue ledger in src/main.ts; absent leaves such a row unconfirmed for a person. */
+  venueCredited?: VenueCredited;
   /* The enclave relay and the keystore it opens, for the click-tier touch. Absent in tests and
      in a bare `npm run app`, where approve behaves exactly as it did before the enclave: the
      wallet is opened by password and a click is a click. */
@@ -180,6 +185,9 @@ export type PCtx = {
   // How a 1Click order is re-checked by its quote handle. Optional: absent falls back to the
   // chain lookup, which is demo mode and every test that does not drive the venue path.
   oneClickStatus?: OneClickLookup;
+  // Whether the far venue shows the money a 1Click order delivered. Optional: absent leaves a
+  // Hyperliquid deposit 1Click calls SUCCESS unconfirmed rather than deciding it.
+  venueCredited?: VenueCredited;
   vault?: VaultRelay;
   keystore?: Keystore;
   // finishTouch, serialised by the service like approve is, so the continuation of a click

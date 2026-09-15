@@ -17,6 +17,7 @@ import {
   spotSend,
   toAmountString,
   usdClassTransfer,
+  usdcCreditedSince,
   userRole,
 } from '../../src/rails/hl-user-signed.ts';
 import type { HlSignPort, HlTypedData, HlUserSignedDeps } from '../../src/rails/hl-user-signed.ts';
@@ -467,4 +468,38 @@ test('no result or action ever carries the private key', async () => {
   assert.equal(dumped.includes(FIXTURE_KEY), false);
   assert.equal(/"privateKey"/.test(dumped), false);
   assert.equal(/0x[0-9a-fA-F]{64}/.test(JSON.stringify(out.action)), false);
+});
+
+/* The venue's own ledger of credits, for the reconcile sweep. A deposit 1Click calls SUCCESS is
+   confirmed by the account showing a credit, and after the fact the only record of one is this
+   ledger: a bridge deposit, or a USDC transfer whose destination is the account, on either book.
+   Money moving between the account's own books, and money leaving, are not credits. */
+test('usdcCreditedSince sums the deposits and incoming USDC transfers since a time, and nothing else', async () => {
+  const posts: Array<{ body: any }> = [];
+  const fetchImpl: typeof fetch = async (_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    posts.push({ body });
+    return jsonResponse([
+      { time: NOW - 5_000, hash: '0xa', delta: { type: 'deposit', usdc: '10.0' } },
+      { time: NOW - 4_000, hash: '0xb', delta: { type: 'spotTransfer', token: 'USDC', amount: '9.97', usdcValue: '9.97', user: '0xsolver', destination: OWN, fee: '0.0' } },
+      { time: NOW - 3_000, hash: '0xc', delta: { type: 'internalTransfer', usdc: '5.5', user: '0xsolver', destination: OWN.toUpperCase(), fee: '0.0' } },
+      // Leaving, moving between the account's own books, a different token, and a bad number.
+      { time: NOW - 2_000, hash: '0xd', delta: { type: 'spotTransfer', token: 'USDC', amount: '100', usdcValue: '100', user: OWN, destination: '0xelse', fee: '0.0' } },
+      { time: NOW - 2_000, hash: '0xe', delta: { type: 'accountClassTransfer', usdc: '50', toPerp: true } },
+      { time: NOW - 1_000, hash: '0xf', delta: { type: 'withdraw', usdc: '20', fee: '1' } },
+      { time: NOW - 1_000, hash: '0xg', delta: { type: 'spotTransfer', token: 'PURR', amount: '3', usdcValue: '0.5', user: '0xsolver', destination: OWN, fee: '0.0' } },
+      { time: NOW - 500, hash: '0xh', delta: { type: 'deposit', usdc: 'not-a-number' } },
+    ]);
+  };
+  const seen = await usdcCreditedSince(deps({ fetchImpl }), OWN, NOW - 60_000);
+  assert.equal(seen, 25.47);
+  assert.equal(posts.length, 1);
+  assert.deepEqual(posts[0].body, { type: 'userNonFundingLedgerUpdates', user: OWN, startTime: NOW - 60_000 });
+});
+
+test('usdcCreditedSince throws when the ledger will not answer, so the caller can leave the row unconfirmed', async () => {
+  const failing = deps({ fetchImpl: async () => jsonResponse({ error: 'nope' }, false, 500) });
+  await assert.rejects(() => usdcCreditedSince(failing, OWN, NOW - 60_000), /failed: 500/);
+  const garbage = deps({ fetchImpl: async () => jsonResponse({ not: 'a list' }) });
+  await assert.rejects(() => usdcCreditedSince(garbage, OWN, NOW - 60_000), /not a list/);
 });
