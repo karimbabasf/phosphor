@@ -15,13 +15,50 @@ import type http from 'node:http';
 
 import type { Proposal } from '../types.ts';
 import type { TxEntry } from '../transactions.ts';
-import { intParam, sendJson } from './respond.ts';
+import { fail, intParam, sendJson } from './respond.ts';
 import { transactionsPayload } from './state.ts';
 import type { Ctx } from './context.ts';
 import { amountUsdOf, didHeadline } from '../view/basic.ts';
 
 export const RECEIPT_LIMIT_DEFAULT = 25;
 export const RECEIPT_LIMIT_MAX = 200;
+
+/* The four words the Activity filter offers, each standing for the draft kinds it covers. The
+   window asks for `kind=move` rather than listing seven kinds itself, so the taxonomy lives
+   here beside the projection and a new rail joins one list. `trade` and `bot` are named now
+   and empty for as long as transactions.ts keeps trades and mandates out of the history
+   (ACTIONS: a trade moves nothing off the venue); the filter still answers, with nothing. */
+export const RECEIPT_KINDS: Record<string, readonly string[]> = {
+  swap: ['swap'],
+  trade: ['trade'],
+  move: [
+    'intents_deposit', 'intents_withdraw', 'hl_deposit', 'hl_withdraw', 'transfer', 'consolidate',
+    'lp_add', 'lp_remove', 'yield_deposit', 'yield_withdraw',
+  ],
+  bot: ['mandate_arm'],
+};
+
+export type ReceiptQuery = {
+  // Both are ms since the epoch. `since` keeps receipts at or after it; `before` is the paging
+  // cursor and keeps receipts strictly older than it, so a page never repeats its last row.
+  since: number | null;
+  before: number | null;
+  limit: number;
+  // null is every kind. Otherwise the draft kinds behind one word of RECEIPT_KINDS.
+  kinds: readonly string[] | null;
+};
+
+export type ReceiptPage = {
+  receipts: Receipt[];
+  // How many receipts the window and kind hold in all, before the cursor and the limit, so a
+  // panel can say "12 in the last 24 hours" while showing five of them.
+  total: number;
+  // Whether anything older than the last row on this page is still in the window.
+  hasMore: boolean;
+  // The fees of everything in the window, not only of the page: the head line says what
+  // the window cost, and a number that grew with each Show more would be a different fact.
+  feesUsd: number;
+};
 
 type ReceiptTx = { chain: string; hash: string; url: string | null };
 
@@ -80,7 +117,10 @@ function headlineFor(proposal: Proposal | undefined): string {
   return didHeadline(proposal.draft, amountUsdOf(proposal.draft));
 }
 
-function buildReceipts(ctx: Ctx, limit: number): Receipt[] {
+/* Every receipt, newest first: the history is already sorted that way (transactions.ts), and
+   the projection keeps the order. Filtering and paging happen after, over the whole list,
+   because `total` and `feesUsd` describe the window and not the page. */
+function buildReceipts(ctx: Ctx): Receipt[] {
   const proposals = new Map<string, Proposal>();
   for (const p of ctx.proposals.list()) proposals.set(p.id, p);
 
@@ -117,12 +157,68 @@ function buildReceipts(ctx: Ctx, limit: number): Receipt[] {
       balanceAfter: balances?.afterUsd ?? null,
       status,
     });
-    if (out.length >= limit) break;
   }
   return out;
 }
 
+/* A time parameter is ms since the epoch or absent. Anything else is refused rather than
+   read as "no window": a panel that asked for the last day and silently got all time would
+   show a fee total for the wrong window with nothing on screen to say so. */
+function msParam(raw: string | null): number | null | undefined {
+  if (raw === null || raw === '') return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
+export function parseReceiptQuery(params: URLSearchParams): ReceiptQuery | { error: string } {
+  const since = msParam(params.get('since'));
+  if (since === undefined) return { error: 'since must be a time in ms since the epoch' };
+  const before = msParam(params.get('before'));
+  if (before === undefined) return { error: 'before must be a time in ms since the epoch' };
+  const kind = params.get('kind');
+  let kinds: readonly string[] | null = null;
+  if (kind !== null && kind !== '' && kind !== 'all') {
+    const known = RECEIPT_KINDS[kind];
+    if (known === undefined) return { error: `kind must be one of ${Object.keys(RECEIPT_KINDS).join(', ')}, or all` };
+    kinds = known;
+  }
+  return {
+    since,
+    before,
+    limit: intParam(params.get('limit'), RECEIPT_LIMIT_DEFAULT, RECEIPT_LIMIT_MAX),
+    kinds,
+  };
+}
+
+function atMs(receipt: Receipt): number {
+  const ms = Date.parse(receipt.at);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+/* The window first (since and kind), then the cursor and the limit inside it. `total` and
+   `feesUsd` are counted on the window so they do not move as pages are read. */
+export function pageReceipts(all: Receipt[], query: ReceiptQuery): ReceiptPage {
+  const inWindow = all.filter((r) => {
+    if (query.kinds !== null && !query.kinds.includes(r.kind)) return false;
+    if (query.since !== null && atMs(r) < query.since) return false;
+    return true;
+  });
+  const older = query.before === null ? inWindow : inWindow.filter((r) => atMs(r) < (query.before as number));
+  let feesUsd = 0;
+  for (const r of inWindow) if (typeof r.feesUsd === 'number') feesUsd += r.feesUsd;
+  return {
+    receipts: older.slice(0, query.limit),
+    total: inWindow.length,
+    hasMore: older.length > query.limit,
+    feesUsd,
+  };
+}
+
 export function sendReceipts(ctx: Ctx, url: URL, res: http.ServerResponse): void {
-  const limit = intParam(url.searchParams.get('limit'), RECEIPT_LIMIT_DEFAULT, RECEIPT_LIMIT_MAX);
-  sendJson(res, 200, { receipts: buildReceipts(ctx, limit) });
+  const query = parseReceiptQuery(url.searchParams);
+  if ('error' in query) {
+    fail(res, 400, query.error);
+    return;
+  }
+  sendJson(res, 200, pageReceipts(buildReceipts(ctx), query));
 }

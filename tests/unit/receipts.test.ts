@@ -336,3 +336,143 @@ test('a receipt and the history row it came from agree on every shared fact', as
     await h.close();
   }
 });
+
+// ---------- the window, the cursor and the kind ----------
+//
+// The Activity panel opens on the last 24 hours and pages backwards from there. The server owns
+// the window (since), the cursor (before), the kind taxonomy and the two figures that describe
+// the window rather than the page (total, feesUsd), so both Activity panels and the chat read
+// one answer and never count for themselves.
+
+type Page = { receipts: Receipt[]; total: number; hasMore: boolean; feesUsd: number };
+
+async function page(urlBase: string, query = ''): Promise<Page> {
+  const out = await get(urlBase, `/api/receipts${query}`);
+  assert.equal(out.status, 200, out.body);
+  return JSON.parse(out.body) as Page;
+}
+
+const HOUR = 3_600_000;
+
+function ago(hours: number): string {
+  return new Date(Date.now() - hours * HOUR).toISOString();
+}
+
+// One receipt settled `hours` ago, of one kind, with a venue fee the history parses off the
+// simulation summary the way the real rails write it.
+function aged(id: string, hours: number, kind: string, fee: number): Proposal {
+  const at = ago(hours);
+  const draft = kind === 'swap'
+    ? {
+        kind: 'swap', venue: 'intents-native', chain: 'eth', toChain: 'eth', fromSymbol: 'ETH', toSymbol: 'USDC',
+        amountIn: 0.002, amountUsd: 5, minAmountOut: 4.9, from: SELF, to: SELF, counterparty: 'intents.near', quote: null,
+      }
+    : { kind, chain: 'arb', symbol: 'USDC', amount: 100, amountUsd: 100, from: SELF, to: SELF };
+  return settled(id, 'executed', {
+    kind: kind as Proposal['kind'],
+    createdAt: at,
+    decidedAt: at,
+    draft: draft as unknown as Proposal['draft'],
+    simulation: { ok: true, summary: `fee $${fee.toFixed(2)}` } as unknown as Proposal['simulation'],
+  });
+}
+
+const SPREAD = [
+  aged('h2', 2, 'swap', 0.02),
+  aged('h5', 5, 'intents_deposit', 0.03),
+  aged('h20', 20, 'swap', 0.05),
+  aged('h30', 30, 'hl_deposit', 0.32),
+  aged('h100', 100, 'swap', 0.01),
+  aged('h200', 200, 'intents_withdraw', 0.04),
+];
+
+test('with no parameters the answer keeps its old shape and gains the three window figures', async () => {
+  const h = await boot(SPREAD);
+  try {
+    const out = await page(h.url);
+    assert.deepEqual(Object.keys(out).sort(), ['feesUsd', 'hasMore', 'receipts', 'total']);
+    assert.deepEqual(out.receipts.map((r) => r.id), ['h2', 'h5', 'h20', 'h30', 'h100', 'h200'], 'newest first, all of them');
+    assert.equal(out.total, 6);
+    assert.equal(out.hasMore, false);
+    assert.equal(out.feesUsd.toFixed(2), '0.47');
+  } finally {
+    await h.close();
+  }
+});
+
+test('since keeps the window, and total and fees describe the window', async () => {
+  const h = await boot(SPREAD);
+  try {
+    const out = await page(h.url, `?since=${Date.now() - 24 * HOUR}`);
+    assert.deepEqual(out.receipts.map((r) => r.id), ['h2', 'h5', 'h20']);
+    assert.equal(out.total, 3);
+    assert.equal(out.hasMore, false);
+    assert.equal(out.feesUsd.toFixed(2), '0.10', 'the fees of the window, not of everything');
+  } finally {
+    await h.close();
+  }
+});
+
+test('before is the cursor: strictly older than the last row, so a page never repeats', async () => {
+  const h = await boot(SPREAD);
+  try {
+    const first = await page(h.url, '?limit=2');
+    assert.deepEqual(first.receipts.map((r) => r.id), ['h2', 'h5']);
+    assert.equal(first.hasMore, true);
+    assert.equal(first.total, 6, 'the total is the window, not the page');
+    const cursor = Date.parse(first.receipts[1]!.at);
+    const second = await page(h.url, `?limit=2&before=${cursor}`);
+    assert.deepEqual(second.receipts.map((r) => r.id), ['h20', 'h30']);
+    assert.equal(second.hasMore, true);
+    const third = await page(h.url, `?limit=2&before=${Date.parse(second.receipts[1]!.at)}`);
+    assert.deepEqual(third.receipts.map((r) => r.id), ['h100', 'h200']);
+    assert.equal(third.hasMore, false);
+    assert.equal(third.feesUsd.toFixed(2), '0.47', 'the window figures do not move as pages are read');
+  } finally {
+    await h.close();
+  }
+});
+
+test('the cursor stays inside the window', async () => {
+  const h = await boot(SPREAD);
+  try {
+    const out = await page(h.url, `?since=${Date.now() - 24 * HOUR}&limit=2&before=${Date.now() - 4 * HOUR}`);
+    assert.deepEqual(out.receipts.map((r) => r.id), ['h5', 'h20']);
+    assert.equal(out.hasMore, false, 'h30 is older than the window, so there is no more');
+    assert.equal(out.total, 3);
+  } finally {
+    await h.close();
+  }
+});
+
+test('kind is one word for a family of rails, and the four words are the taxonomy', async () => {
+  const h = await boot(SPREAD);
+  try {
+    assert.deepEqual((await page(h.url, '?kind=swap')).receipts.map((r) => r.id), ['h2', 'h20', 'h100']);
+    const moves = await page(h.url, '?kind=move');
+    assert.deepEqual(moves.receipts.map((r) => r.id), ['h5', 'h30', 'h200']);
+    assert.equal(moves.feesUsd.toFixed(2), '0.39');
+    assert.deepEqual((await page(h.url, '?kind=all')).receipts.length, 6);
+    // Trades and bots are not transactions today (transactions.ts ACTIONS), so the words answer with nothing rather than refusing.
+    assert.deepEqual(await page(h.url, '?kind=trade'), { receipts: [], total: 0, hasMore: false, feesUsd: 0 });
+    assert.deepEqual(await page(h.url, '?kind=bot'), { receipts: [], total: 0, hasMore: false, feesUsd: 0 });
+    const swapsToday = await page(h.url, `?kind=swap&since=${Date.now() - 24 * HOUR}`);
+    assert.deepEqual(swapsToday.receipts.map((r) => r.id), ['h2', 'h20']);
+    assert.equal(swapsToday.total, 2);
+  } finally {
+    await h.close();
+  }
+});
+
+test('a parameter that cannot be read is refused, never read as no window', async () => {
+  const h = await boot(SPREAD);
+  try {
+    for (const bad of ['?since=yesterday', '?before=-1', '?kind=sandwich']) {
+      const out = await get(h.url, `/api/receipts${bad}`);
+      assert.equal(out.status, 400, bad);
+      assert.ok(typeof (JSON.parse(out.body) as { error: string }).error === 'string');
+    }
+  } finally {
+    await h.close();
+  }
+});
