@@ -57,7 +57,7 @@ import type {
 import { baseUnits, oneLine, quoteEchoProblems, resolveAsset, toBaseUnits } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, QuoteEcho, TokensFile } from '../intents.ts';
 import { spendFromIntents } from './intents-spend.ts';
-import { deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids } from './oneclick-words.ts';
+import { deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids, withQuote } from './oneclick-words.ts';
 import { INTENTS_VERIFIER, base58Decode, intentsApi, liveIntentsSigner } from './intents-native.ts';
 import type { IntentsApiPort, IntentsSignerPort } from './intents-native.ts';
 
@@ -159,6 +159,9 @@ export type IntentsWithdrawRailDeps = {
   pollIntervalMs?: number;
   pollTimeoutMs?: number;
   maxDeadlineMs?: number;
+  // The key 1Click signs quotes with. Left unset it is the production key; a test hands the
+  // key its own fake signs with, and nothing else ever sets it.
+  quoteKey?: string;
 };
 
 export type IntentsWithdrawRail = Rail<IntentsWithdrawDraft>;
@@ -409,7 +412,7 @@ export function intentsWithdrawRail(deps: IntentsWithdrawRailDeps): IntentsWithd
     // submitted and watched. Every refusal before the signature throws out of here; after it
     // nothing does, and a submit that did not answer comes back as signed and unsubmitted.
     const spent = await spendFromIntents(
-      { api, signer, keysPath, now, sleep, pollIntervalMs, pollTimeoutMs, maxDeadlineMs },
+      { api, signer, keysPath, now, sleep, pollIntervalMs, pollTimeoutMs, maxDeadlineMs, quoteKey: deps.quoteKey },
       {
         owner,
         originAsset: p.asset,
@@ -424,9 +427,9 @@ export function intentsWithdrawRail(deps: IntentsWithdrawRailDeps): IntentsWithd
       hooks,
     );
     if (!spent.submitted) {
-      return describeUnconfirmedSubmit({ error: spent.error, handle: spent.depositAddress, deadline: spent.deadline });
+      return withQuote(describeUnconfirmedSubmit({ error: spent.error, handle: spent.depositAddress, deadline: spent.deadline }), spent.signedQuote);
     }
-    const { quote, depositAddress, watch } = spent;
+    const { quote, depositAddress, watch, signedQuote } = spent;
     const evidence = `intent ${spent.intentHash}, quote handle ${oneLine(depositAddress, 80)}`;
 
     if (watch.status === 'SUCCESS') {
@@ -437,27 +440,27 @@ export function intentsWithdrawRail(deps: IntentsWithdrawRailDeps): IntentsWithd
           `${deliveredAmount(watch, quote.amountOutFormatted)} ${draft.symbol} paid out to our ${draft.chain} wallet ${p.to} ` +
           `(${deliveredNote(watch)}); ${evidence}. The balance inside the verifier is now smaller by ${draft.amount} ${draft.symbol}.`,
         txids: uniqueTxids(spent.intentHash, watch),
-        evidence: settledEvidence(watch, depositAddress),
+        evidence: { ...settledEvidence(watch, depositAddress), quote: signedQuote },
       };
     }
 
     if (watch.status === 'REFUNDED' || watch.status === 'FAILED') {
-      return describeRefund(watch, depositAddress, {
+      return withQuote(describeRefund(watch, depositAddress, {
         symbol: draft.symbol,
         refundTarget: `${owner} inside ${INTENTS_VERIFIER}, where the balance started`,
         evidence,
         primaryTxid: spent.intentHash,
-      });
+      }), signedQuote);
     }
 
     if (watch.status === 'INCOMPLETE_DEPOSIT') {
-      return describeIncompleteDeposit(watch, depositAddress, {
+      return withQuote(describeIncompleteDeposit(watch, depositAddress, {
         symbol: draft.symbol,
         quotedIn: oneLine(quote.amountInFormatted, 40),
         refundTarget: `${owner} inside ${INTENTS_VERIFIER}`,
         evidence,
         primaryTxid: spent.intentHash,
-      });
+      }), signedQuote);
     }
 
     // Timed out. The signature is released and the intent submitted, so the balance may well
@@ -472,7 +475,7 @@ export function intentsWithdrawRail(deps: IntentsWithdrawRailDeps): IntentsWithd
         `THE INTENT IS SIGNED AND SUBMITTED and the payout may still land, so it is unconfirmed: check the ${draft.chain} ` +
         `wallet ${p.to} and the balance inside ${INTENTS_VERIFIER} before signing another.`,
       txids: uniqueTxids(spent.intentHash, watch),
-      evidence: { handle: oneLine(depositAddress, 80) },
+      evidence: { handle: oneLine(depositAddress, 80), quote: signedQuote },
     };
   }
 

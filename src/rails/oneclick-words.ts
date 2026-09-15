@@ -7,9 +7,27 @@
 // quoted, a move the venue has not confirmed is called unconfirmed, and a refund is named
 // only with the amount the API reported.
 
-import type { RailEvidence, RailResult } from '../types.ts';
+import type { RailEvidence, RailHooks, RailResult } from '../types.ts';
 import { oneLine } from '../intents.ts';
 import type { OneClickStatus } from '../intents.ts';
+import type { QuoteRecord } from '../quote-signature.ts';
+
+// A hook is the executor's business. Whatever it does with the evidence, it must not turn a
+// transfer that is already on the wire into a thrown "nothing happened".
+export function tell(hooks: RailHooks | undefined, evidence: Parameters<NonNullable<RailHooks['onEvidence']>>[0]): void {
+  try {
+    hooks?.onEvidence?.(evidence);
+  } catch {
+    // reported by the executor's own persistence, not by this rail
+  }
+}
+
+// The same answer with the signed quote on its evidence. Every answer a rail gives after the
+// quote was verified carries it, whatever the venue then said, because the dispute a signed
+// quote settles is most likely on exactly the answers that were not a clean success.
+export function withQuote(result: RailResult, quote: QuoteRecord): RailResult {
+  return { ...result, evidence: { ...result.evidence, quote } };
+}
 
 // The hashes a row keeps, in the order they were learned, with none repeated. The primary
 // one is what this app produced (an intent hash, a chain transaction, a ledger hash); the rest

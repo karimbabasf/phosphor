@@ -38,7 +38,7 @@ import {
 import type { NearSendOutcome, NearSendParams } from '../chain/near.ts';
 import { MAX_SLIPPAGE_BPS, floorTooLow } from './slippage.ts';
 import { addressProblem } from './intents-withdraw.ts';
-import type { ChainId, Rail, RailResult, SimulationResult, SwapDraft } from '../types.ts';
+import type { ChainId, Rail, RailHooks, RailResult, SimulationResult, SwapDraft } from '../types.ts';
 import {
   ONECLICK_TERMINAL,
   assetIdFor,
@@ -49,7 +49,8 @@ import {
   toBaseUnits,
 } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickStatus, TokensFile } from '../intents.ts';
-import { deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, settledEvidence, uniqueTxids } from './oneclick-words.ts';
+import { quoteSignatureProblems, signedQuoteRecord } from '../quote-signature.ts';
+import { deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, settledEvidence, tell, uniqueTxids, withQuote } from './oneclick-words.ts';
 
 // The chains this rail can deposit from, by signer family.
 //
@@ -156,6 +157,9 @@ export type OneClickRailDeps = {
   now?: () => number;
   pollIntervalMs?: number; // default 5s; the API's own time estimate is ~42s
   pollTimeoutMs?: number; // default 5 min
+  // The key 1Click signs quotes with. Left unset it is the production key; a test hands the
+  // key its own fake signs with, and nothing else ever sets it.
+  quoteKey?: string;
 };
 
 export type OneClickRail = Rail<SwapDraft>;
@@ -173,6 +177,7 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
   const now = deps.now ?? Date.now;
   const pollIntervalMs = deps.pollIntervalMs ?? 5_000;
   const pollTimeoutMs = deps.pollTimeoutMs ?? 5 * 60_000;
+  const quoteKey = deps.quoteKey;
 
   // ---------- resolution, shared by simulate and execute ----------
 
@@ -312,9 +317,10 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
      sibling withdraw rail has had this check since it was written; this one never got it.
 
      It does not close the trust this rail already accepts and states in its header: the deposit
-     address is chosen by the API and no signature proves who holds it, so a hostile server can
-     still keep the money. What it closes is the quieter case, a server that accepts the request
-     and prices something else. */
+     address is chosen by the API, so a hostile server can still keep the money. What it closes is
+     the quieter case, a server that accepts the request and prices something else. What stands
+     between the wire and the address is the quote signature (src/quote-signature.ts), checked in
+     execute beside this. */
   function checkQuoteEcho(draft: SwapDraft, p: Plan, raw: unknown): string[] {
     return quoteEchoProblems(raw, {
       recipient: draft.to,
@@ -350,8 +356,9 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
   }
 
   // The deposit address is the one field in the whole flow we cannot verify the ownership
-  // of: the API picks it and no signature proves who holds it. That trust is inherent to the
-  // protocol. What is checkable is the SHAPE, and the shape has to be checked against the
+  // of: the API picks it. That trust is inherent to the protocol; 1Click's signature over the
+  // quote proves the API picked THIS address (checked in execute), and nothing proves who holds
+  // it. What is checkable here is the SHAPE, and the shape has to be checked against the
   // chain being signed for, because the two families are not interchangeable:
   //
   //   - An EVM origin must get a checksummed 20-byte address. getAddress throws on a
@@ -461,7 +468,7 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
     }
   }
 
-  async function execute(draft: SwapDraft): Promise<RailResult> {
+  async function execute(draft: SwapDraft, _proposalId?: string, hooks?: RailHooks): Promise<RailResult> {
     const p = await plan(draft);
 
     // The draft names the wallet a human approved. If the configured key is a different
@@ -481,7 +488,10 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
     });
     const quote = response.quote;
 
-    const problems = [...checkQuote(draft, p, quote), ...checkQuoteEcho(draft, p, response.raw)];
+    /* Three checks and one signature, before the deposit address is read for anything. The
+       signature is what makes the other two mean something: a quote 1Click did not sign, or
+       signed with a different deposit address, is refused here whatever its echo says. */
+    const problems = [...checkQuote(draft, p, quote), ...checkQuoteEcho(draft, p, response.raw), ...quoteSignatureProblems(response, quoteKey)];
     if (problems.length > 0) throw new Error(`live quote does not match the approved draft: ${problems.join('; ')}`);
 
     if (typeof quote.depositMemo === 'string' && quote.depositMemo !== '') {
@@ -495,7 +505,11 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
     }
 
     const depositAddress = checkDepositAddress(p.family, quote.depositAddress);
+    const signed = signedQuoteRecord(response);
     const sent = await depositTransfer(draft, p, depositAddress);
+    // The hash and the signed quote reach the row the moment the transfer is on the wire, ahead
+    // of the watch loop, so a process that dies polling still has both.
+    if (sent.hash !== undefined) tell(hooks, { txids: [sent.hash], handle: depositAddress, quote: signed });
 
     if (!sent.ok) {
       /* Two different sentences, because they are two different facts and the difference is
@@ -513,12 +527,14 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
             `${oneLine(sent.error ?? 'unknown error', 120)}. THE FUNDS MAY ALREADY HAVE LEFT THE WALLET. ` +
             `Check ${sent.hash} and the deposit address ${depositAddress} before sending again.`,
           txids: [sent.hash],
+          evidence: { handle: depositAddress, quote: signed },
         };
       }
       return {
         ok: false,
         detail: `deposit transfer failed: ${oneLine(sent.error ?? 'unknown error')}. No funds left the wallet.`,
         txids: [],
+        evidence: { quote: signed },
       };
     }
 
@@ -540,27 +556,27 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
           `(${deliveredNote(watch)}); ${evidence}` +
           (destination.length > 0 ? `, destination tx ${destination.join(', ')}` : ''),
         txids: uniqueTxids(txHash, watch),
-        evidence: settledEvidence(watch, depositAddress),
+        evidence: { ...settledEvidence(watch, depositAddress), quote: signed },
       };
     }
 
     if (watch.status === 'REFUNDED' || watch.status === 'FAILED') {
-      return describeRefund(watch, depositAddress, {
+      return withQuote(describeRefund(watch, depositAddress, {
         symbol: draft.fromSymbol,
         refundTarget: `our ${draft.chain} wallet ${draft.from}`,
         evidence,
         primaryTxid: txHash,
-      });
+      }), signed);
     }
 
     if (watch.status === 'INCOMPLETE_DEPOSIT') {
-      return describeIncompleteDeposit(watch, depositAddress, {
+      return withQuote(describeIncompleteDeposit(watch, depositAddress, {
         symbol: draft.fromSymbol,
         quotedIn: oneLine(quote.amountInFormatted, 40),
         refundTarget: `our ${draft.chain} wallet ${draft.from}`,
         evidence,
         primaryTxid: txHash,
-      });
+      }), signed);
     }
 
     // Timed out. The transfer confirmed, so the money is already gone from our wallet and
@@ -574,7 +590,7 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
         `(last status ${watch.reported}); ${evidence}. THE FUNDS WERE SENT and the swap may still complete, so it is ` +
         'unconfirmed: check the deposit address before retrying.',
       txids: uniqueTxids(txHash, watch),
-      evidence: { handle: depositAddress },
+      evidence: { handle: depositAddress, quote: signed },
     };
   }
 

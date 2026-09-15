@@ -27,6 +27,7 @@ import {
   minCreditedFor,
 } from '../../src/rails/intents-deposit.ts';
 import type { DepositEvmPort } from '../../src/rails/intents-deposit.ts';
+import { TEST_QUOTE_KEY, signQuote } from './helpers/signed-quote.ts';
 
 // ---------- fixtures ----------
 
@@ -123,6 +124,9 @@ function harness(
     // What the API echoes back in quoteRequest. Left out it is the request itself; a patch
     // simulates a server pricing something else, and null a server that echoes nothing.
     echo?: Record<string, unknown> | null;
+    // Applied to the quote response AFTER it is signed: what a proxy between this app and the
+    // API would do to it. Left out, the response arrives as signed.
+    tamper?: (signed: Record<string, unknown>) => Record<string, unknown>;
   } = {},
 ): Harness {
   const quotes: Array<Record<string, unknown>> = [];
@@ -141,26 +145,29 @@ function harness(
       },
       async quote(params) {
         quotes.push(params as unknown as Record<string, unknown>);
-        return {
+        // The live API echoes the request it priced, verbatim, and the rail checks it; then it
+        // signs the whole answer, and the rail checks that too. The fake signs with the test key.
+        const signed = signQuote({
           quote: options.quote ?? quoteOf(),
-          // The live API echoes the request it priced, verbatim, and the rail checks it.
-          raw:
-            options.echo === null
-              ? {}
-              : {
-                  quoteRequest: {
-                    originAsset: params.originAsset,
-                    destinationAsset: params.destinationAsset,
-                    amount: params.amount,
-                    refundTo: params.refundTo,
-                    refundType: params.refundType,
-                    recipient: params.recipient,
-                    recipientType: params.recipientType,
-                    depositType: params.depositType,
-                    ...(options.echo ?? {}),
-                  },
+          ...(options.echo === null
+            ? {}
+            : {
+                quoteRequest: {
+                  dry: params.dry,
+                  originAsset: params.originAsset,
+                  destinationAsset: params.destinationAsset,
+                  amount: params.amount,
+                  refundTo: params.refundTo,
+                  refundType: params.refundType,
+                  recipient: params.recipient,
+                  recipientType: params.recipientType,
+                  depositType: params.depositType,
+                  ...(options.echo ?? {}),
                 },
-        };
+              }),
+        });
+        const raw = options.tamper === undefined ? signed : options.tamper(signed);
+        return { quote: raw['quote'] as OneClickQuote, raw };
       },
       async submitDeposit() {
         return { ok: true, detail: 'deposit notified' };
@@ -213,6 +220,7 @@ function railOf(h: Harness) {
     sleepImpl: async () => {},
     pollIntervalMs: 1,
     pollTimeoutMs: 5,
+    quoteKey: TEST_QUOTE_KEY,
   });
 }
 
@@ -593,4 +601,36 @@ test('a deposit quietly rerouted onto a chain instead of into the verifier is re
   const out = await railOf(h).simulate(draftOf());
   assert.equal(out.ok, false);
   assert.match(out.error ?? '', /not INTENTS/);
+});
+
+// ---------- the quote signature ----------
+//
+// The deposit address is the one field the echo never covered. The rail verifies 1Click's
+// signature over the quote (src/quote-signature.ts) before the address is used for anything.
+
+test('a quote whose deposit address was changed after signing is refused before any send', async () => {
+  const h = harness({
+    tamper: (signed) => ({ ...signed, quote: { ...(signed.quote as Record<string, unknown>), depositAddress: '0x000000000000000000000000000000000000dEaD' } }),
+  });
+  await assert.rejects(() => railOf(h).execute(draftOf()), /signature does not verify/);
+  assert.equal(h.sends.length, 0, 'nothing was signed');
+});
+
+test('an unsigned quote is refused before any send, and a signed one lands its record in the evidence', async () => {
+  const unsigned = harness({ tamper: (signed) => ({ ...signed, signature: undefined }) });
+  await assert.rejects(() => railOf(unsigned).execute(draftOf()), /carries no signature/);
+  assert.equal(unsigned.sends.length, 0);
+
+  const h = harness();
+  const early: Array<Record<string, unknown>> = [];
+  const out = await railOf(h).execute(draftOf(), 'p_1', { onEvidence: (e) => early.push(e as Record<string, unknown>) });
+  assert.equal(out.ok, true, out.detail);
+  const quote = out.evidence?.quote;
+  assert.ok(quote !== undefined, 'the signed quote is on the result');
+  assert.equal(quote.depositAddress, DEPOSIT_ADDRESS);
+  assert.match(quote.signature, /^ed25519:/);
+  assert.match(quote.correlationId, /^test-quote-/);
+  assert.equal(early.length, 1, 'the executor heard about the hash before the watch loop');
+  assert.deepEqual(early[0].txids, ['0xdeadbeef']);
+  assert.deepEqual(early[0].quote, quote);
 });

@@ -49,6 +49,7 @@ import type {
   IntentsSignerPort,
 } from '../../src/rails/intents-native.ts';
 import type { NearSendParams } from '../../src/chain/near.ts';
+import { TEST_QUOTE_KEY, signQuote } from './helpers/signed-quote.ts';
 
 // ---------- fixtures ----------
 
@@ -192,6 +193,9 @@ function harness(
     intent?: Partial<GeneratedIntent>;
     payload?: string;
     statuses?: Array<{ status: string; swapDetails?: Record<string, unknown> } | null>;
+    // Applied to the quote response AFTER it is signed: what a proxy between this app and the
+    // API would do to it. Left out, the response arrives as signed.
+    tamper?: (signed: Record<string, unknown>) => Record<string, unknown>;
   } = {},
 ): Harness {
   const quotes: unknown[] = [];
@@ -209,8 +213,12 @@ function harness(
     async quote(params) {
       quotes.push(params);
       if (options.quoteError !== undefined) throw new Error(options.quoteError);
-      const echo = options.echo === undefined ? echoOf() : options.echo;
-      return { quote: options.quote ?? quoteOf(), raw: echo === null ? {} : { quoteRequest: echo } };
+      // The live API echoes the request it priced, its dry flag included.
+      const echo = options.echo === undefined ? echoOf({ dry: params.dry }) : options.echo === null ? null : { dry: params.dry, ...options.echo };
+      // Signed the way 1Click signs its answers, over the whole payload, quote included.
+      const signed = signQuote({ quote: options.quote ?? quoteOf(), ...(echo === null ? {} : { quoteRequest: echo }) });
+      const raw = options.tamper === undefined ? signed : options.tamper(signed);
+      return { quote: raw['quote'] as OneClickQuote, raw };
     },
     async generateIntent(params) {
       generated.push(params);
@@ -271,6 +279,7 @@ function harness(
 function railOf(h: Harness) {
   return intentsNativeRail({
     keysPath: '/nonexistent/keys.json', // never read: the signer port is stubbed
+    quoteKey: TEST_QUOTE_KEY,
     tokens: tokensFixture,
     api: h.api,
     signer: h.signer,
@@ -300,6 +309,7 @@ test('a keyless rail prices a swap instead of refusing it', async () => {
   const h = harness();
   const rail = intentsNativeRail({
     keysPath: '/nonexistent/keys.json',
+    quoteKey: TEST_QUOTE_KEY,
     tokens: tokensFixture,
     apiKey: '',
     api: h.api,
@@ -316,6 +326,7 @@ test('a keyless rail signs and submits, because the key was never what authorise
   const h = harness();
   const rail = intentsNativeRail({
     keysPath: '/nonexistent/keys.json',
+    quoteKey: TEST_QUOTE_KEY,
     tokens: tokensFixture,
     apiKey: '',
     api: h.api,
@@ -730,6 +741,7 @@ test('the executor hears the handle after the signature and the hash after the s
   } };
   const rail = intentsNativeRail({
     keysPath: '/nonexistent/keys.json',
+    quoteKey: TEST_QUOTE_KEY,
     tokens: tokensFixture,
     api,
     signer: h.signer,
@@ -747,7 +759,10 @@ test('the executor hears the handle after the signature and the hash after the s
   });
   assert.equal(result.ok, true, result.detail);
   assert.deepEqual(order.slice(0, 3), ['evidence:', `evidence:${INTENT_HASH}`, 'poll']);
-  assert.deepEqual(heard[0], { handle: HANDLE, deadline: DEADLINE });
+  // The signed quote rides on both, so a row that dies inside the wait still has what 1Click signed.
+  const { quote: signedQuote, ...rest } = heard[0] as { quote?: unknown; handle?: string; deadline?: string };
+  assert.deepEqual(rest, { handle: HANDLE, deadline: DEADLINE });
+  assert.equal((signedQuote as { depositAddress?: string } | undefined)?.depositAddress, HANDLE);
   assert.equal(heard[1].handle, HANDLE);
 });
 
@@ -1278,4 +1293,33 @@ test('a token_diff crediting zero is refused when the draft floor is zero', () =
 
   assert.ok(problems.length > 0, 'a zero floor is not a floor, whatever the payload says');
   assert.match(problems[0], /no slippage floor/);
+});
+
+// ---------- the quote signature ----------
+//
+// The handle is the one field the echo never covered. The rail verifies 1Click's signature over
+// the quote (src/quote-signature.ts) before the handle is used for anything.
+
+test('a quote whose handle was changed after signing is refused before anything is signed', async () => {
+  const h = harness({
+    tamper: (signed) => ({ ...signed, quote: { ...(signed.quote as Record<string, unknown>), depositAddress: 'attacker.near' } }),
+  });
+  await assert.rejects(() => railOf(h).execute(draftOf()), /signature does not verify/);
+  assert.equal(h.generated.length, 0, 'no intent was generated');
+  assert.equal(h.signedPayloads.length, 0, 'nothing was signed');
+});
+
+test('an unsigned quote is refused before anything is signed, and a signed one lands its record in the evidence', async () => {
+  const unsigned = harness({ tamper: (signed) => ({ ...signed, signature: undefined }) });
+  await assert.rejects(() => railOf(unsigned).execute(draftOf()), /carries no signature/);
+  assert.equal(unsigned.signedPayloads.length, 0);
+
+  const h = harness();
+  const result = await railOf(h).execute(draftOf());
+  assert.equal(result.ok, true, result.detail);
+  const quote = result.evidence?.quote;
+  assert.ok(quote !== undefined, 'the signed quote is on the result');
+  assert.equal(quote.depositAddress, HANDLE);
+  assert.match(quote.signature, /^ed25519:/);
+  assert.match(quote.correlationId, /^test-quote-/);
 });

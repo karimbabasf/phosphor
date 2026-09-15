@@ -357,6 +357,10 @@ export type RailEvidence = {
   refundReason?: string;
   settledAmountOut?: string;
   explorerUrl?: string;
+  // The 1Click quote the move paid into, as 1Click signed it: verified before the deposit address
+  // was used (src/quote-signature.ts) and kept so a dispute is filed with the vendor's own
+  // commitment rather than this app's memory of it.
+  quote?: { correlationId: string; timestamp: string; signature: string; depositAddress: string };
 };
 
 export type RailResult = { ok: boolean; detail: string; txids?: string[]; evidence?: RailEvidence };

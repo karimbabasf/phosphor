@@ -31,7 +31,7 @@ import { formatUnits, getAddress, isAddress } from 'viem';
 import type { Address } from 'viem';
 import { erc20TransferData, evmAddress, reader, sendTx } from '../chain/evm.ts';
 import type { SendOutcome, SendParams } from '../chain/evm.ts';
-import type { ChainId, IntentsDepositDraft, Rail, RailResult, SimulationResult } from '../types.ts';
+import type { ChainId, IntentsDepositDraft, Rail, RailHooks, RailResult, SimulationResult } from '../types.ts';
 import {
   NATIVE_ASSET,
   NATIVE_TOKEN_ID,
@@ -45,7 +45,8 @@ import {
   toBaseUnits,
 } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickStatus, TokensFile } from '../intents.ts';
-import { deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, settledEvidence, uniqueTxids } from './oneclick-words.ts';
+import { quoteSignatureProblems, signedQuoteRecord } from '../quote-signature.ts';
+import { deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, settledEvidence, tell, uniqueTxids, withQuote } from './oneclick-words.ts';
 import { ONECLICK_COUNTERPARTY } from './oneclick.ts';
 
 // The chains src/chain/evm.ts can sign for. 1Click accepts Solana and NEAR origins too;
@@ -143,6 +144,9 @@ export type IntentsDepositRailDeps = {
   now?: () => number;
   pollIntervalMs?: number;
   pollTimeoutMs?: number;
+  // The key 1Click signs quotes with. Left unset it is the production key; a test hands the
+  // key its own fake signs with, and nothing else ever sets it.
+  quoteKey?: string;
 };
 
 export type IntentsDepositRail = Rail<IntentsDepositDraft>;
@@ -159,6 +163,7 @@ export function intentsDepositRail(deps: IntentsDepositRailDeps): IntentsDeposit
   const now = deps.now ?? Date.now;
   const pollIntervalMs = deps.pollIntervalMs ?? 5_000;
   const pollTimeoutMs = deps.pollTimeoutMs ?? 5 * 60_000;
+  const quoteKey = deps.quoteKey;
 
   type Plan = {
     asset: string; // the 1Click asset id, the same one on both sides
@@ -375,7 +380,7 @@ export function intentsDepositRail(deps: IntentsDepositRailDeps): IntentsDeposit
     }
   }
 
-  async function execute(draft: IntentsDepositDraft): Promise<RailResult> {
+  async function execute(draft: IntentsDepositDraft, _proposalId?: string, hooks?: RailHooks): Promise<RailResult> {
     const p = await plan(draft);
 
     // The draft names the wallet a human approved. If the configured key is a different
@@ -409,7 +414,9 @@ export function intentsDepositRail(deps: IntentsDepositRailDeps): IntentsDeposit
     });
     const quote = response.quote;
 
-    const problems = [...checkQuote(draft, p, quote), ...checkQuoteEcho(draft, p, response.raw)];
+    // The signature is checked beside the amounts and the echo, before the deposit address is
+    // read for anything: a quote 1Click did not sign, or signed with a different address, stops here.
+    const problems = [...checkQuote(draft, p, quote), ...checkQuoteEcho(draft, p, response.raw), ...quoteSignatureProblems(response, quoteKey)];
     if (problems.length > 0) throw new Error(`live quote does not match the approved draft: ${problems.join('; ')}`);
 
     if (typeof quote.depositMemo === 'string' && quote.depositMemo !== '') {
@@ -422,6 +429,7 @@ export function intentsDepositRail(deps: IntentsDepositRailDeps): IntentsDeposit
     }
     // Throws on a mixed-case address with a bad checksum, which is exactly when we want to stop.
     const depositAddress = getAddress(quote.depositAddress);
+    const signed = signedQuoteRecord(response);
 
     // Last gate before the key is touched, re-estimated against the real destination.
     const reserve = await checkNativeReserve(draft, p, depositAddress);
@@ -432,6 +440,9 @@ export function intentsDepositRail(deps: IntentsDepositRailDeps): IntentsDeposit
         ? { chain: draft.chain, keysPath, to: depositAddress, data: '0x', value: p.amountBase }
         : { chain: draft.chain, keysPath, to: p.token as Address, data: erc20TransferData(depositAddress, p.amountBase) },
     );
+    // The hash and the signed quote reach the row the moment the transfer is on the wire, ahead
+    // of the watch loop, so a process that dies polling still has both.
+    if (sent.hash !== undefined) tell(hooks, { txids: [sent.hash], handle: depositAddress, quote: signed });
 
     if (!sent.ok) {
       /* Two different sentences, because they are two different facts and the difference is
@@ -449,12 +460,14 @@ export function intentsDepositRail(deps: IntentsDepositRailDeps): IntentsDeposit
             `${oneLine(sent.error ?? 'unknown error', 120)}. THE FUNDS MAY ALREADY HAVE LEFT THE WALLET. ` +
             `Check ${sent.hash} and the deposit address ${depositAddress} before sending again.`,
           txids: [sent.hash],
+          evidence: { handle: depositAddress, quote: signed },
         };
       }
       return {
         ok: false,
         detail: `deposit transfer failed: ${oneLine(sent.error ?? 'unknown error')}. No funds left the wallet.`,
         txids: [],
+        evidence: { quote: signed },
       };
     }
 
@@ -474,27 +487,27 @@ export function intentsDepositRail(deps: IntentsDepositRailDeps): IntentsDeposit
           `${deliveredAmount(watch, quote.amountOutFormatted)} ${draft.symbol} now credited to ${draft.intentsAccount} ` +
           `(${deliveredNote(watch)}) and spendable by the intents-native swap rail; ${evidence}`,
         txids: uniqueTxids(txHash, watch),
-        evidence: settledEvidence(watch, depositAddress),
+        evidence: { ...settledEvidence(watch, depositAddress), quote: signed },
       };
     }
 
     if (watch.status === 'REFUNDED' || watch.status === 'FAILED') {
-      return describeRefund(watch, depositAddress, {
+      return withQuote(describeRefund(watch, depositAddress, {
         symbol: draft.symbol,
         refundTarget: `our ${draft.chain} wallet ${draft.from}`,
         evidence,
         primaryTxid: txHash,
-      });
+      }), signed);
     }
 
     if (watch.status === 'INCOMPLETE_DEPOSIT') {
-      return describeIncompleteDeposit(watch, depositAddress, {
+      return withQuote(describeIncompleteDeposit(watch, depositAddress, {
         symbol: draft.symbol,
         quotedIn: oneLine(quote.amountInFormatted, 40),
         refundTarget: `our ${draft.chain} wallet ${draft.from}`,
         evidence,
         primaryTxid: txHash,
-      });
+      }), signed);
     }
 
     // Timed out. The transfer confirmed, so the money is already gone from the wallet and the
@@ -508,7 +521,7 @@ export function intentsDepositRail(deps: IntentsDepositRailDeps): IntentsDeposit
         `(last status ${watch.reported}); ${evidence}. THE FUNDS WERE SENT and the credit may still land, so it is ` +
         'unconfirmed: check the balance inside intents.near before retrying.',
       txids: uniqueTxids(txHash, watch),
-      evidence: { handle: depositAddress },
+      evidence: { handle: depositAddress, quote: signed },
     };
   }
 

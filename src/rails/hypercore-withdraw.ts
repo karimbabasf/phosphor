@@ -40,10 +40,11 @@
 //   the total as a rate, and the floor refuses sizes where the flat part is most of it.
 
 import { isAddress } from 'viem';
-import type { HlWithdrawDraft, Rail, RailResult, SimulationResult } from '../types.ts';
+import type { HlWithdrawDraft, Rail, RailHooks, RailResult, SimulationResult } from '../types.ts';
 import { ONECLICK_TERMINAL, baseUnits, oneClickClient, oneLine, quoteEchoProblems, toBaseUnits } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickStatus, OneClickToken, QuoteEcho } from '../intents.ts';
-import { deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, settledEvidence, uniqueTxids } from './oneclick-words.ts';
+import { deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, settledEvidence, tell, uniqueTxids } from './oneclick-words.ts';
+import { quoteSignatureProblems, signedQuoteRecord } from '../quote-signature.ts';
 import { fetchIntentsAssetBalance } from '../ledger/intents.ts';
 import { nearChainSpec } from '../chain/near.ts';
 import { readTimeout } from '../net.ts';
@@ -103,6 +104,9 @@ export type HypercoreWithdrawDeps = {
   now?: () => number;
   pollIntervalMs?: number;
   pollTimeoutMs?: number;
+  // The key 1Click signs quotes with. Left unset it is the production key; a test hands the
+  // key its own fake signs with, and nothing else ever sets it.
+  quoteKey?: string;
 };
 
 export type HypercoreWithdrawRail = Rail<HlWithdrawDraft>;
@@ -132,6 +136,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const pollIntervalMs = deps.pollIntervalMs ?? 3000;
   const pollTimeoutMs = deps.pollTimeoutMs ?? 180_000;
+  const quoteKey = deps.quoteKey;
 
   function refusal(draft: HlWithdrawDraft, reasons: string[], lines: string[] = []): SimulationResult {
     const joined = reasons.join('; ');
@@ -439,7 +444,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     }
   }
 
-  async function execute(draft: HlWithdrawDraft): Promise<RailResult> {
+  async function execute(draft: HlWithdrawDraft, _proposalId?: string, hooks?: RailHooks): Promise<RailResult> {
     // Re-plan and re-price rather than trust the approval: the position check and the price
     // are both live facts, and an approval can be minutes old. The live quote below is checked
     // with the same functions the simulation used, so no dry quote is needed here.
@@ -459,7 +464,9 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
 
     const response = await client.quote(quoteParams(draft, p, false));
     const quote = response.quote;
-    const problems = [...checkQuote(draft, p, quote), ...quoteEchoProblems(response.raw, echoWant(draft, p))];
+    // The signature is checked beside the amounts and the echo, before the deposit address is
+    // read for anything: a quote 1Click did not sign, or signed with a different address, stops here.
+    const problems = [...checkQuote(draft, p, quote), ...quoteEchoProblems(response.raw, echoWant(draft, p)), ...quoteSignatureProblems(response, quoteKey)];
     if (problems.length > 0) {
       return { ok: false, detail: `live quote does not match the approved draft: ${problems.join('; ')}. Nothing was sent.` };
     }
@@ -470,6 +477,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     if (!isAddress(depositAddress)) {
       return { ok: false, detail: `1click returned a deposit address that is not an EVM address: ${oneLine(quote.depositAddress, 60)}. Nothing was sent.` };
     }
+    const signedQuote = signedQuoteRecord(response);
 
     // A standard account pays spotSend out of the spot book; move what is short from perp.
     // Same account, different side: nothing leaves, but a refusal after this point has to say
@@ -508,6 +516,13 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
       if (ledger === null) sent = await spotSend(hl, { destination: depositAddress, amount: draft.amount, nonce: first.nonce });
     }
     const landed = sent.ok || ledger !== null;
+    // A send the venue took, or one it may have taken, reaches the row now with its nonce and
+    // the signed quote, ahead of the watch loop, so a process that dies polling still has both.
+    // A send the venue refused outright is not evidence of anything and is not reported here.
+    if (landed || first.ambiguous) {
+      const early = first.nonce ?? sent.nonce;
+      tell(hooks, { handle, ...(early !== undefined ? { nonce: String(early) } : {}), quote: signedQuote });
+    }
     if (!landed) {
       if (first.ambiguous) {
         // The nonce is the identity of the action on this venue and the only thing a retry can
@@ -522,7 +537,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
             `so it is unconfirmed: read the Hyperliquid ledger for nonce ${String(first.nonce)} and 1Click status for that address ` +
             'before proposing again.',
           txids: [],
-          evidence: { handle, ...(first.nonce !== undefined ? { nonce: String(first.nonce) } : {}) },
+          evidence: { handle, ...(first.nonce !== undefined ? { nonce: String(first.nonce) } : {}), quote: signedQuote },
         };
       }
       return {
@@ -531,6 +546,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
           `${sent.detail}. ` +
           (movedToSpot ? 'The collateral was moved to the spot side and stays there; nothing was sent out.' : 'Nothing was sent.'),
         txids: [],
+        evidence: { quote: signedQuote },
       };
     }
     const nonce = first.nonce ?? sent.nonce ?? now();
@@ -538,7 +554,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     // the nonce and no hash: an invented id in txids reaches Activity as a transaction.
     if (ledger === null) ledger = await ledgerHash(owner, nonce, depositAddress);
     const evidence = `sent ${draft.amount} USDC to ${handle} (nonce ${String(nonce)}, ledger ${ledger ?? 'not found yet'})`;
-    const railEvidence = (status: OneClickStatus) => ({ ...settledEvidence(status, handle), nonce: String(nonce) });
+    const railEvidence = (status: OneClickStatus) => ({ ...settledEvidence(status, handle), nonce: String(nonce), quote: signedQuote });
     const hash = ledger ?? '';
 
     const watch = await watchStatus(depositAddress);
@@ -562,7 +578,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
         evidence,
         primaryTxid: hash,
       });
-      return { ...refund, evidence: { ...refund.evidence, nonce: String(nonce) } };
+      return { ...refund, evidence: { ...refund.evidence, nonce: String(nonce), quote: signedQuote } };
     }
 
     if (watch.status === 'INCOMPLETE_DEPOSIT') {
@@ -573,7 +589,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
         evidence,
         primaryTxid: hash,
       });
-      return { ...short, evidence: { ...short.evidence, nonce: String(nonce) } };
+      return { ...short, evidence: { ...short.evidence, nonce: String(nonce), quote: signedQuote } };
     }
 
     // The send happened and the watch ran out. The ledger hash and the address stay on the row
@@ -585,7 +601,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
         `(last status ${watch.reported}); ${evidence}. THE SEND HAPPENED and the routing may still complete, so it is ` +
         `unconfirmed: read the intents balance and 1Click status for ${handle} before proposing again.`,
       txids: uniqueTxids(hash, watch),
-      evidence: { handle, nonce: String(nonce) },
+      evidence: { handle, nonce: String(nonce), quote: signedQuote },
     };
   }
 

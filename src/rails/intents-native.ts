@@ -73,7 +73,8 @@ import {
 import type { NearSendOutcome, NearSendParams } from '../chain/near.ts';
 import { venueWriteTimeout } from '../net.ts';
 import { MAX_SLIPPAGE_BPS, floorTooLow } from './slippage.ts';
-import { describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids } from './oneclick-words.ts';
+import { describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids, withQuote } from './oneclick-words.ts';
+import { quoteSignatureProblems, signedQuoteRecord } from '../quote-signature.ts';
 import { submitSignedIntent } from './intents-submit.ts';
 
 // The verifier contract. This is the whole point of the rail: one fixed account that goes on
@@ -862,6 +863,9 @@ export type IntentsNativeRailDeps = {
   firstPollMs?: number;
   maxDeadlineMs?: number;
   verifierBalance?: VerifierBalancePort;
+  // The key 1Click signs quotes with. Left unset it is the production key; a test hands the
+  // key its own fake signs with, and nothing else ever sets it.
+  quoteKey?: string;
 };
 
 /* The default reader, over the same view calls the ledger uses. It never throws: a verifier that
@@ -925,6 +929,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
   // and a slow one still backs off to one poll every 5s.
   const firstPollMs = deps.firstPollMs ?? 250;
   const maxDeadlineMs = deps.maxDeadlineMs ?? MAX_DEADLINE_MS;
+  const quoteKey = deps.quoteKey;
 
   // The key is optional: it selects a fee tier, it does not authorise the calls. See the
   // comment on INTENTS_NO_API_KEY_REASON for what was re-tested and when.
@@ -1155,7 +1160,9 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     });
     const quote = response.quote;
 
-    const problems = [...checkQuote(draft, p, quote), ...checkQuoteEcho(p, owner, response.raw)];
+    // The signature is checked beside the amounts and the echo, before the handle is read for
+    // anything: a quote 1Click did not sign, or signed with a different handle, stops here.
+    const problems = [...checkQuote(draft, p, quote), ...checkQuoteEcho(p, owner, response.raw), ...quoteSignatureProblems(response, quoteKey)];
     if (problems.length > 0) throw new Error(`live quote does not match the approved draft: ${problems.join('; ')}`);
 
     // For an INTENTS quote this is an account id inside the verifier, not a chain address,
@@ -1165,6 +1172,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     if (typeof depositAddress !== 'string' || depositAddress.trim() === '') {
       throw new Error(`the quote carries no deposit handle to attach an intent to (got ${oneLine(depositAddress, 60)})`);
     }
+    const signedQuote = signedQuoteRecord(response);
 
     /* Read before, so the after-read below has something to subtract. A read that fails costs
        the check and nothing else: this is deliberately taken before anything is signed, so a
@@ -1209,7 +1217,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     const payload = generated.payload as string;
     const deadline = intentDeadline(payload) ?? 'unknown';
     const signature = await signer.signErc191(keysPath, payload);
-    tell(hooks, { handle: depositAddress, deadline });
+    tell(hooks, { handle: depositAddress, deadline, quote: signedQuote });
 
     // Nothing throws from here on, and the key is never used again for this move: the rule and
     // the one safe retry are described at the top of src/rails/intents-spend.ts. A submit that
@@ -1217,10 +1225,10 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     // that as a fact about the money rather than as a rail that threw.
     const sent = await submitSignedIntent(client, { payload, signature });
     if (!sent.submitted) {
-      return describeUnconfirmedSubmit({ error: sent.error, handle: depositAddress, deadline });
+      return withQuote(describeUnconfirmedSubmit({ error: sent.error, handle: depositAddress, deadline }), signedQuote);
     }
     const submitted: SubmittedIntent = sent.intent;
-    tell(hooks, { txids: [submitted.intentHash], handle: depositAddress, deadline });
+    tell(hooks, { txids: [submitted.intentHash], handle: depositAddress, deadline, quote: signedQuote });
     const evidence = `intent ${submitted.intentHash}, quote handle ${oneLine(depositAddress, 80)}`;
 
     const watch = await watchStatus(depositAddress);
@@ -1239,7 +1247,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
         afterBase = await verifierBalance(owner.toLowerCase(), p.destinationAsset);
       }
       const txids = uniqueTxids(submitted.intentHash, watch);
-      const railEvidence = settledEvidence(watch, depositAddress);
+      const railEvidence = { ...settledEvidence(watch, depositAddress), quote: signedQuote };
 
       if (beforeBase !== null && afterBase !== null) {
         const delta = afterBase - beforeBase;
@@ -1293,22 +1301,22 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     }
 
     if (watch.status === 'REFUNDED' || watch.status === 'FAILED') {
-      return describeRefund(watch, depositAddress, {
+      return withQuote(describeRefund(watch, depositAddress, {
         symbol: draft.fromSymbol,
         refundTarget: `${owner} inside ${INTENTS_VERIFIER}, not any chain address`,
         evidence,
         primaryTxid: submitted.intentHash,
-      });
+      }), signedQuote);
     }
 
     if (watch.status === 'INCOMPLETE_DEPOSIT') {
-      return describeIncompleteDeposit(watch, depositAddress, {
+      return withQuote(describeIncompleteDeposit(watch, depositAddress, {
         symbol: draft.fromSymbol,
         quotedIn: oneLine(quote.amountInFormatted, 40),
         refundTarget: `${owner} inside ${INTENTS_VERIFIER}`,
         evidence,
         primaryTxid: submitted.intentHash,
-      });
+      }), signedQuote);
     }
 
     // Timed out. The signature is already released and the intent already submitted, so the
@@ -1323,7 +1331,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
         `THE INTENT IS SIGNED AND SUBMITTED and the swap may still complete, so it is unconfirmed: check the balance ` +
         `inside ${INTENTS_VERIFIER} before signing another.`,
       txids: uniqueTxids(submitted.intentHash, watch),
-      evidence: { handle: oneLine(depositAddress, 80) },
+      evidence: { handle: oneLine(depositAddress, 80), quote: signedQuote },
     };
   }
 

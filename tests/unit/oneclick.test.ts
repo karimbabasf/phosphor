@@ -28,6 +28,7 @@ import type { SwapEvmPort, SwapNearPort } from '../../src/rails/oneclick.ts';
 import type { SendOutcome, SendParams } from '../../src/chain/evm.ts';
 import type { NearSendOutcome, NearSendParams } from '../../src/chain/near.ts';
 import type { SwapDraft } from '../../src/types.ts';
+import { TEST_QUOTE_KEY, signQuote } from './helpers/signed-quote.ts';
 
 // ---------- fixtures ----------
 
@@ -117,9 +118,6 @@ function quoteBody(over: Record<string, unknown> = {}): Record<string, unknown> 
       depositAddress: DEPOSIT,
       ...over,
     },
-    signature: 'ed25519:test',
-    timestamp: '2026-08-12T01:42:11.047Z',
-    correlationId: 'test-correlation-id',
   };
 }
 
@@ -159,6 +157,9 @@ function harness(
     // and null a server that echoes nothing at all.
     echo?: Record<string, unknown> | null;
     statuses?: unknown[]; // one payload per /v0/status call; the last one repeats
+    // Applied to the quote response AFTER it is signed: what a proxy between this app and the
+    // API would do to it. Left out, the response goes out as signed.
+    tamper?: (signed: Record<string, unknown>) => Record<string, unknown>;
     send?: SendOutcome;
     nearSend?: NearSendOutcome;
     nearRegistered?: boolean;
@@ -178,10 +179,9 @@ function harness(
       quoteBodies.push(body);
       const payload = options.quote ?? quoteBody();
       const echoed = options.echo === null ? null : { ...body, ...(options.echo ?? {}) };
-      return jsonResponse(
-        echoed === null ? payload : { ...payload, quoteRequest: echoed },
-        options.quoteStatus ?? 201,
-      );
+      // Signed the way 1Click signs its answers, over exactly what goes down the wire.
+      const signed = signQuote(echoed === null ? payload : { ...payload, quoteRequest: echoed });
+      return jsonResponse(options.tamper === undefined ? signed : options.tamper(signed), options.quoteStatus ?? 201);
     }
     if (u.endsWith('/v0/deposit/submit')) {
       depositSubmits.push(JSON.parse(String(init?.body)));
@@ -244,6 +244,7 @@ function railOf(h: Harness) {
     now: () => clock,
     pollIntervalMs: 1,
     pollTimeoutMs: 5,
+    quoteKey: TEST_QUOTE_KEY,
   });
 }
 
@@ -918,4 +919,54 @@ test('a token whose 1Click decimals disagree with the registry is refused before
   assert.equal(out.ok, false);
   assert.match(out.error ?? '', /decimals/);
   assert.equal(h.quoteBodies.length, 0, 'refused before the API was asked to price anything');
+});
+
+// ---------- the quote signature ----------
+//
+// The deposit address is the one field the echo never covered. 1Click signs the quote, and the
+// rail now verifies that signature (src/quote-signature.ts) before the address is used for
+// anything: a proxy that rewrites the address after signing, or a server that never signed, is
+// refused with nothing sent, and a verified quote is kept on the row for a dispute.
+
+test('a quote whose deposit address was changed after signing is refused before any send', async () => {
+  const attacker = '0x000000000000000000000000000000000000dEaD';
+  const h = harness({
+    tamper: (signed) => ({ ...signed, quote: { ...(signed.quote as Record<string, unknown>), depositAddress: attacker } }),
+  });
+  await assert.rejects(() => railOf(h).execute(draftOf()), /signature does not verify/);
+  assert.equal(h.sends.length, 0, 'nothing was signed');
+  assert.equal(h.depositSubmits.length, 0);
+});
+
+test('a quote with no signature, or one signed by another key, is refused before any send', async () => {
+  const unsigned = harness({ tamper: (signed) => ({ ...signed, signature: undefined }) });
+  await assert.rejects(() => railOf(unsigned).execute(draftOf()), /carries no signature/);
+  assert.equal(unsigned.sends.length, 0);
+
+  // Signed, but the rail trusts 1Click's production key and not the test one.
+  const h = harness();
+  const rail = oneClickRail({ keysPath: '/nonexistent/keys.json', tokens: tokensFixture, evm: h.evm, near: h.near, fetchImpl: h.fetchImpl });
+  await assert.rejects(() => rail.execute(draftOf()), /signature does not verify/);
+  assert.equal(h.sends.length, 0);
+});
+
+test('a signed quote passes, and the record 1Click signed lands in the evidence, early and at the end', async () => {
+  const h = harness();
+  const early: Array<Record<string, unknown>> = [];
+  const out = await railOf(h).execute(draftOf(), 'p_1', { onEvidence: (e) => early.push(e as Record<string, unknown>) });
+  assert.equal(out.ok, true, out.detail);
+  assert.equal(h.sends.length, 1);
+
+  const quote = out.evidence?.quote;
+  assert.ok(quote !== undefined, 'the signed quote is on the result');
+  assert.equal(quote.depositAddress, DEPOSIT);
+  assert.match(quote.signature, /^ed25519:/);
+  assert.match(quote.correlationId, /^test-quote-/);
+  assert.match(quote.timestamp, /^2026-/);
+  assert.equal(out.evidence?.handle, DEPOSIT);
+
+  // And the executor heard about it with the hash, before the watch loop.
+  assert.equal(early.length, 1);
+  assert.deepEqual(early[0].txids, [TX_HASH]);
+  assert.deepEqual(early[0].quote, quote);
 });
