@@ -139,6 +139,16 @@
               opacity var(--dur-press) var(--ease-out);
 }
 
+.netsel-option .logo[data-token="BASE"] {
+  filter: grayscale(1) brightness(3.2);
+}
+
+.netsel-option[data-active="true"] .logo[data-token="BASE"],
+.netsel-option:hover .logo[data-token="BASE"],
+.netsel-option[aria-selected="true"] .logo[data-token="BASE"] {
+  filter: none;
+}
+
 .netsel-option-name {
   flex: 1 1 auto;
 }

@@ -115,6 +115,18 @@
   opacity: 0.45;
 }
 
+/* Base's mark is a square of pure blue, which grayscale turns to near black:
+   lifted at rest so it reads as a square like the others read as marks. */
+.net-tile .logo[data-token="BASE"] {
+  filter: grayscale(1) brightness(3.2);
+}
+
+.net-tile:hover .logo[data-token="BASE"],
+.net-tile:focus-visible .logo[data-token="BASE"],
+.net-tile[aria-current="true"] .logo[data-token="BASE"] {
+  filter: none;
+}
+
 /* ---------- the line above steps two and three ---------- */
 
 .netpick-head {
@@ -177,6 +189,18 @@
 .netpick-back:focus-visible {
   outline: 2px solid var(--ink);
   outline-offset: 2px;
+}
+
+/* Under the Vault tab's network menu the network is already named and
+   marked, so the line above the list is a quiet label rather than a title. */
+.netpick[data-context="vault"] .netpick-title-mark {
+  display: none;
+}
+
+.netpick[data-context="vault"] .netpick-title-text {
+  font-size: var(--fs-13);
+  font-weight: 500;
+  color: var(--text-2);
 }
 
 /* ---------- step two: the tokens ---------- */
