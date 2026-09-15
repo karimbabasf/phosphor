@@ -111,10 +111,14 @@ async function openThroughEnclave(ctx: Ctx, reason: string): Promise<JsonBody> {
   if (request === null) return refusal('no_wallet');
   const answer = await ctx.vault.ask({ op: 'unwrap', reason, ...request });
   if (!answer.ok) {
-    if (answer.error === 'crypto_failed') {
+    if (answer.error === 'foreign_key') {
       foreign = true;
       return refusal('foreign');
     }
+    // The enclave loaded its key and the wrap still did not open: the file's header or wrap was
+    // edited or damaged on this Mac. Restore from the phrase is the way back, and the sentence
+    // says so; it is a different sentence from the other Mac's file.
+    if (answer.error === 'crypto_failed') return refusal('damaged');
     return enclaveRefusal(answer);
   }
   if (answer.op !== 'unwrap') return { ok: false, error: 'the enclave answered the wrong thing', code: 'garbled' };

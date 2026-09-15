@@ -182,7 +182,7 @@ async function boot(opts: { mode?: AppConfig['mode'] } = {}) {
           dek = null;
         }
         if (dek === null) {
-          await post('/api/vault/answer', { id: request.id, ok: false, error: 'crypto_failed', message: 'not this enclave' });
+          await post('/api/vault/answer', { id: request.id, ok: false, error: 'foreign_key', message: 'not this enclave' });
           continue;
         }
         const nonce = crypto.randomBytes(12);

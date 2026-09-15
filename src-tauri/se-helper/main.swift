@@ -212,7 +212,15 @@ func unwrap(_ req: [String: Any]) throws -> Never {
     let ctx = LAContext()
     ctx.localizedReason = reason
     ctx.localizedCancelTitle = "Cancel"
-    let key = try SecureEnclave.P256.KeyAgreement.PrivateKey(dataRepresentation: blob, authenticationContext: ctx)
+    let key: SecureEnclave.P256.KeyAgreement.PrivateKey
+    do {
+      key = try SecureEnclave.P256.KeyAgreement.PrivateKey(dataRepresentation: blob, authenticationContext: ctx)
+    } catch {
+      // The blob is not one this enclave wrote: a wallet file carried over from another Mac.
+      // Named apart from a wrap that will not open, so the window can offer Restore instead of
+      // a Touch ID that can never work. Neither answer says anything about the key.
+      throw Fail(code: "foreign_key", message: "this Secure Enclave did not make that key")
+    }
     let eph = try P256.KeyAgreement.PublicKey(x963Representation: ephRaw)
     do {
       let secret = try key.sharedSecretFromKeyAgreement(with: eph)
@@ -253,8 +261,9 @@ func presence(_ req: [String: Any]) -> Never {
 }
 
 // Errors: bad_input, se_unavailable, user_cancel, interaction_required, auth_failed,
-// crypto_failed. A wrong AAD or a foreign ciphertext surfaces as crypto_failed, never as a
-// partial plaintext: AES-GCM authenticates before it decrypts.
+// foreign_key, crypto_failed. A wrong AAD or a foreign ciphertext surfaces as crypto_failed,
+// never as a partial plaintext: AES-GCM authenticates before it decrypts. foreign_key is a blob
+// this enclave cannot load at all, which is the other Mac's wallet file.
 guard let line = readLine(strippingNewline: true), let data = line.data(using: .utf8),
       let req = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
       let op = req["op"] as? String
