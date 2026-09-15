@@ -484,3 +484,63 @@ test('a parameter that cannot be read is refused, never read as no window', asyn
     await h.close();
   }
 });
+
+// ---------- the venue receipts: bots and trades ----------
+//
+// An approved plan is a bot from the moment the click lands, and a close or a moved stop is a
+// trade. Both are receipts now, in the plan's own figures. What a receipt never claims is a
+// fill: the proposal record holds no fill price, size, time or fee, so none is printed.
+
+const RISK = { marginUsd: 6, maxLossUsd: 0.62, stopSlipUsd: 0.1, entryRef: 76_425, liquidationPx: 40_000, notionalUsd: 12, amountUsd: 6 };
+
+function venue(id: string, hours: number, draft: Record<string, unknown>, detail: string, status: ProposalStatus = 'executed'): Proposal {
+  const at = ago(hours);
+  return settled(id, status, {
+    kind: 'trade',
+    createdAt: at,
+    decidedAt: at,
+    draft: { kind: 'trade', counterparty: 'hyperliquid-perps', ...draft } as unknown as Proposal['draft'],
+    simulation: { ok: true, summary: 'Long BTC $12 at 2x' } as unknown as Proposal['simulation'],
+    result: { ok: status === 'executed', detail, txids: [] },
+  });
+}
+
+const PLAN = { id: 'plan-1', symbol: 'BTC', side: 'long', sizeUsd: 12, leverage: 2, entry: { type: 'market', maxSlippageBps: 30 }, stop: 76_000, target: 79_500 };
+
+test('an armed plan is a bot receipt in the plan\'s own figures, and a close is a trade receipt', async () => {
+  const h = await boot([
+    venue('arm', 1, { op: 'open', plan: PLAN, hash: 'h1', risk: RISK, amountUsd: 6 }, 'plan-1 armed on BTC'),
+    venue('short', 2, { op: 'open', plan: { ...PLAN, id: 'plan-2', side: 'short', target: undefined, stop: 0.4512, symbol: 'SOL' }, hash: 'h2', risk: RISK, amountUsd: 6 }, 'plan-2 armed on SOL'),
+    venue('close', 3, { op: 'change', id: 'plan-1', close: true, before: RISK, after: RISK, amountUsd: 6 }, 'plan-1 closed'),
+    venue('cancel', 4, { op: 'change', id: 'plan-2', cancel: true, before: RISK, after: RISK, amountUsd: 0 }, 'plan-2 cancelled before it fired'),
+    venue('stop', 5, { op: 'change', id: 'plan-1', stop: 77_000, before: RISK, after: RISK, amountUsd: 0 }, 'plan-1: stop 77000, target 79500'),
+    aged('swap', 6, 'swap', 0.02),
+  ]);
+  try {
+    const bots = await page(h.url, '?kind=bot');
+    assert.deepEqual(bots.receipts.map((r) => [r.id, r.kind, r.headline]), [
+      ['arm', 'bot', 'Armed a bot: Long BTC $12.00 at 2x, stop 76,000, target 79,500.'],
+      ['short', 'bot', 'Armed a bot: Short SOL $12.00 at 2x, stop 0.4512.'],
+      ['cancel', 'bot', 'Cancelled bot plan-2 before it opened.'],
+    ]);
+    const trades = await page(h.url, '?kind=trade');
+    assert.deepEqual(trades.receipts.map((r) => [r.id, r.kind, r.headline]), [
+      ['close', 'trade', 'Closed trade plan-1 at the market.'],
+      ['stop', 'trade', 'Moved the stop to 77,000 on trade plan-1.'],
+    ]);
+    // Nothing left the trading account, and no fill is claimed.
+    for (const r of [...bots.receipts, ...trades.receipts]) {
+      assert.equal(r.amount, null);
+      assert.equal(r.symbol, null);
+      assert.equal(r.received, null);
+      assert.equal(r.fromChain, 'hyperliquid');
+      assert.equal(r.toChain, 'hyperliquid');
+      assert.equal(r.feesUsd, null, 'the proposal holds no fee for a venue action');
+      assert.deepEqual(r.txids, []);
+    }
+    assert.equal((await page(h.url, '?kind=swap')).receipts.length, 1, 'the swap chip is unchanged');
+    assert.equal((await page(h.url)).total, 6, 'every kind, in one window');
+  } finally {
+    await h.close();
+  }
+});

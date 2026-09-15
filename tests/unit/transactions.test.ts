@@ -112,7 +112,11 @@ test('a policy change is not a transaction: it moves no money', () => {
   assert.equal(build([policy]).length, 0);
 });
 
-test('a trade is not a transaction: margin, position and profit stay on the venue', () => {
+/* Until 2026-09-15 a trade had no row at all, because margin, position and profit stay on the
+   venue. It is a row now (the lead's call: what the click armed or closed belongs in Activity),
+   but the old reason still shapes it: nothing is sent, nothing is received, and the value is
+   the stake the policy engine governed on. */
+test('a trade is a row on the venue, not a movement: nothing sent, the stake as its value', () => {
   const trade = {
     id: 'p-trade',
     kind: 'trade',
@@ -133,9 +137,18 @@ test('a trade is not a transaction: margin, position and profit stay on the venu
     decidedAt: '2026-09-11T10:00:01.000Z',
     result: { ok: true, detail: 'pl_1 armed on BTC', txids: [] },
   } as unknown as Proposal;
-  assert.equal(build([trade]).length, 0);
+  const [arm] = build([trade]);
+  assert.ok(arm);
+  assert.equal(arm.kind, 'bot');
+  assert.equal(arm.sent, null);
+  assert.equal(arm.received, null);
+  assert.equal(arm.valueUsd, 200);
+  assert.equal(arm.place, 'hyperliquid');
   const change = { ...trade, id: 'p-change', draft: { kind: 'trade', op: 'change', id: 'pl_1', close: true, before: {}, after: {}, amountUsd: 200, counterparty: 'hyperliquid-perps' } } as unknown as Proposal;
-  assert.equal(build([change]).length, 0);
+  const [closed] = build([change]);
+  assert.ok(closed);
+  assert.equal(closed.kind, 'trade');
+  assert.equal(closed.sent, null);
 });
 
 test('a failed execution stays in the history: what did not happen is part of the record', () => {
@@ -398,4 +411,116 @@ test('a full exit records no amount, because the figure in the draft was stale b
   assert.equal(entry!.sent, null);
   assert.equal(entry!.venue, 'aave-v3');
   assert.equal(entry!.place, 'arb');
+});
+
+// ---------- the venue rows: an armed plan, a close, a cancel, a moved stop ----------
+//
+// A trade moves nothing off the venue, and it used to have no row for that reason. It is still
+// something that happened to the money: the click armed a bot that acts without asking again, or
+// closed a trade at the market. So the executed proposal becomes a row on the venue, with the
+// proposal's own time, no sent amount (nothing left the trading account), the stake as its value,
+// and the venue's own sentence. What the row does NOT carry is a fill: the proposal record holds
+// no fill price, size, time or fee, because the runner reads fills off the venue after the click.
+
+const HL_HASH = '0x' + 'b'.repeat(64);
+
+function plan(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: 'plan-1', symbol: 'BTC', side: 'long', sizeUsd: 12, leverage: 2,
+    entry: { type: 'market', maxSlippageBps: 30 }, stop: 76_000, target: 79_500, ...over,
+  };
+}
+
+const RISK = { marginUsd: 6, maxLossUsd: 0.62, stopSlipUsd: 0.1, entryRef: 76_425, liquidationPx: 40_000, notionalUsd: 12, amountUsd: 6 };
+
+function armed(over: Partial<Proposal> = {}): Proposal {
+  return {
+    id: 'p-arm',
+    kind: 'trade',
+    createdAt: '2026-09-15T10:00:00.000Z',
+    status: 'executed',
+    draft: { kind: 'trade', op: 'open', plan: plan(), hash: 'h1', risk: RISK, amountUsd: 6, counterparty: 'hyperliquid-perps' },
+    simulation: { ok: true, summary: 'Long BTC $12 at 2x' },
+    verdict: { outcome: 'allow', reasons: ['under the click threshold'] },
+    decidedBy: 'human',
+    decidedAt: '2026-09-15T10:00:05.000Z',
+    result: { ok: true, detail: 'plan-1 armed on BTC' },
+    ...over,
+  } as unknown as Proposal;
+}
+
+function change(over: Record<string, unknown>, id = 'p-change'): Proposal {
+  return armed({
+    id,
+    draft: { kind: 'trade', op: 'change', id: 'plan-1', before: RISK, after: RISK, amountUsd: 0, counterparty: 'hyperliquid-perps', ...over },
+    result: { ok: true, detail: 'plan-1 closed' },
+  } as unknown as Partial<Proposal>);
+}
+
+test('an armed plan is a bot row on the venue: no sent amount, the stake as its value, the venue sentence', () => {
+  const [row] = build([armed()]);
+  assert.ok(row);
+  assert.equal(row.action, 'trade');
+  assert.equal(row.kind, 'bot');
+  assert.equal(row.status, 'executed');
+  assert.equal(row.place, 'hyperliquid');
+  assert.equal(row.toPlace, 'hyperliquid');
+  assert.equal(row.venue, 'hyperliquid');
+  assert.equal(row.sent, null, 'nothing left the trading account');
+  assert.equal(row.received, null);
+  assert.equal(row.valueUsd, 6, 'the stake is what the policy engine governed on');
+  assert.equal(row.ts, '2026-09-15T10:00:05.000Z', 'the proposal\'s own time');
+  assert.equal(row.detail, 'plan-1 armed on BTC');
+  assert.equal(row.counterparty?.address, 'hyperliquid-perps');
+  assert.deepEqual(row.hashes, [], 'an arm records no venue hash, and none is invented');
+});
+
+test('a close and a moved stop are trade rows, a cancel is a bot row', () => {
+  const rows = build([
+    change({ close: true }, 'p-close'),
+    change({ cancel: true }, 'p-cancel'),
+    change({ stop: 77_000 }, 'p-stop'),
+  ]);
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  assert.equal(byId.get('p-close')?.kind, 'trade');
+  assert.equal(byId.get('p-cancel')?.kind, 'bot');
+  assert.equal(byId.get('p-stop')?.kind, 'trade');
+  for (const r of rows) {
+    assert.equal(r.action, 'trade');
+    assert.equal(r.place, 'hyperliquid');
+    assert.equal(r.sent, null);
+  }
+});
+
+test('a venue hash on a trade links to the venue explorer and never goes looking for an EVM receipt', () => {
+  const [row] = build([armed({ result: { ok: true, detail: 'plan-1 armed on BTC', txids: [HL_HASH] } })]);
+  assert.ok(row);
+  assert.equal(row.hashes.length, 1);
+  assert.equal(row.hashes[0]?.place, 'hyperliquid');
+  assert.equal(row.hashes[0]?.url, explorerTxUrl('hyperliquid', HL_HASH));
+  assert.equal(row.hashes[0]?.gasPending, true, 'the gas reader is asked once, and skips a place with no native symbol');
+});
+
+test('a trade that the venue refused is a failed row, and a pending one is no row', () => {
+  const rows = build([
+    armed({ id: 'p-refused', status: 'failed', result: { ok: false, detail: 'the venue refused the order' } }),
+    armed({ id: 'p-waiting', status: 'pending', result: undefined }),
+  ]);
+  assert.deepEqual(rows.map((r) => [r.id, r.status]), [['p-refused', 'failed']]);
+});
+
+test('a retired standing mandate still on disk reads as a bot that was armed', () => {
+  const [row] = build([
+    armed({
+      id: 'p-mandate',
+      kind: 'mandate_arm' as Proposal['kind'],
+      draft: { kind: 'mandate_arm', symbol: 'ETH', maxNotionalUsd: 100, maxLossUsd: 10, amountUsd: 100, counterparty: 'hyperliquid-perps' } as unknown as Proposal['draft'],
+      result: { ok: true, detail: 'mandate armed' },
+    }),
+  ]);
+  assert.ok(row);
+  assert.equal(row.action, 'arm');
+  assert.equal(row.kind, 'bot');
+  assert.equal(row.place, 'hyperliquid');
+  assert.equal(row.valueUsd, 100);
 });

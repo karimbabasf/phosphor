@@ -24,11 +24,11 @@ import { explorerName } from '../explorers.ts';
 export const RECEIPT_LIMIT_DEFAULT = 25;
 export const RECEIPT_LIMIT_MAX = 200;
 
-/* The four words the Activity filter offers, each standing for the draft kinds it covers. The
+/* The four words the Activity filter offers, each standing for the entry kinds it covers. The
    window asks for `kind=move` rather than listing seven kinds itself, so the taxonomy lives
-   here beside the projection and a new rail joins one list. `trade` and `bot` are named now
-   and empty for as long as transactions.ts keeps trades and mandates out of the history
-   (ACTIONS: a trade moves nothing off the venue); the filter still answers, with nothing. */
+   here beside the projection and a new rail joins one list. `trade` and `bot` are the two
+   words transactions.ts gives a venue row (venueKindOf): an armed plan or a cancelled one is a
+   bot, a close or a moved stop is a trade. */
 export const RECEIPT_KINDS: Record<string, readonly string[]> = {
   swap: ['swap'],
   trade: ['trade'],
@@ -36,7 +36,7 @@ export const RECEIPT_KINDS: Record<string, readonly string[]> = {
     'intents_deposit', 'intents_withdraw', 'hl_deposit', 'hl_withdraw', 'transfer', 'consolidate',
     'lp_add', 'lp_remove', 'yield_deposit', 'yield_withdraw',
   ],
-  bot: ['mandate_arm'],
+  bot: ['bot'],
 };
 
 export type ReceiptQuery = {
