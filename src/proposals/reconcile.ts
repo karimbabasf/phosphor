@@ -15,6 +15,7 @@
 
 import type { ChainId, Proposal, RailEvidence, WriteDraft } from '../types.ts';
 import type { OneClickStatus } from '../intents.ts';
+import { depositHandleOf } from '../transactions.ts';
 import { errText, nowIso, persist } from './lifecycle.ts';
 import { balanceAfter } from './execute.ts';
 import type { PCtx } from './lifecycle.ts';
@@ -129,8 +130,11 @@ export function chainTxLookup(): TxLookup {
                          a two-put window with no hash, so it is unknown for the same reason.
      `awaiting_touch` -> pending: the Touch ID dialog died with the process and finishTouch will
                          never fire, so the click is offered again rather than stuck on a dead
-                         dialog. Nothing was signed, so this is safe and it is not a spend. */
+                         dialog. Nothing was signed, so this is safe and it is not a spend.
+   First, the one-off lift below for `failed` rows written before a failure with a hash was
+   unconfirmed; those are not in what this returns, because they were not mid-decision. */
 export function reconcileOnBoot(ctx: PCtx): Proposal[] {
+  liftFailedWithHandle(ctx);
   const moved: Proposal[] = [];
   for (const p of ctx.store.list()) {
     if (p.status === 'awaiting_touch') {
@@ -163,6 +167,38 @@ export function reconcileOnBoot(ctx: PCtx): Proposal[] {
     );
   }
   return moved;
+}
+
+/* ONE-OFF LIFT, run from the boot sweep, for rows written before a failure with a hash was
+   unconfirmed. Until this branch a rail's ok:false with the intent hash on it landed `failed`:
+   the 2026-09-15 rows sit there with the hash in txids and no evidence.handle, charged nothing
+   to the day, unseen by the sweep and refused by reconcile, while the handle sits in the
+   sentence where the receipts parser reads it. Each such row becomes needs_reconciliation with
+   the handle on its evidence, the sentence kept, one audit line, and the sweep takes it from
+   there. Once per row by construction: a lifted row is no longer `failed`, and a row the sweep
+   later calls failed again carries the handle on its evidence.
+   A failed row whose sentence names no handle is left alone. Reconcile's own verdicts (a hash
+   the chain rejected, a hash that never existed) are definite, carry the hash too, and lifting
+   them would reopen a settled answer on every boot. */
+export function liftFailedWithHandle(ctx: PCtx): Proposal[] {
+  const lifted: Proposal[] = [];
+  for (const p of ctx.store.list()) {
+    if (p.status !== 'failed' || (p.result?.txids?.length ?? 0) === 0 || p.result?.evidence?.handle !== undefined) continue;
+    const handle = depositHandleOf(p.result?.detail ?? '');
+    if (handle === null) continue;
+    const row = persist(ctx, {
+      ...p,
+      status: 'needs_reconciliation',
+      result: { ...p.result!, evidence: { ...p.result?.evidence, handle } },
+    });
+    ctx.audit.append('execution_unconfirmed', `${p.id}: a failure that carries a hash is lifted to unconfirmed, with its handle ${handle} on the row for the sweep to re-check`, {
+      id: p.id,
+      handle,
+      txids: row.result?.txids ?? [],
+    });
+    lifted.push(row);
+  }
+  return lifted;
 }
 
 /* The scheduled sweep: re-check every row that carries a 1Click handle and is young enough that

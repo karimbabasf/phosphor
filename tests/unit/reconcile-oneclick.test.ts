@@ -374,3 +374,63 @@ test('a re-check that changes what the venue says replaces its last word rather 
   assert.doesNotMatch(out.result?.detail ?? '', /refunded 0 so far/, 'the earlier word is gone');
   assert.equal(out.result?.evidence?.refundedAmount, '9.5');
 });
+
+/* Rows written before a failure with a hash was unconfirmed. Until this branch a rail's ok:false
+   with the intent hash on it landed `failed`: the 2026-09-15 rows sit there with the hash in
+   txids and no evidence.handle, charged nothing to the day, unseen by the sweep and refused by
+   reconcile, while the handle sits in the sentence where the receipts parser reads it. Boot lifts
+   each such row once. */
+const LIVE_HANDLE = '86abbc463f08f6244071c17f4cd3471285b24179a4f029fe54a1979d2de7f806';
+const LIVE_INTENT = '0x' + 'a'.repeat(64);
+function liveFailedRow(dir: string, id: string, over: Partial<Proposal> = {}): Proposal {
+  return seed(dir, {
+    id,
+    status: 'failed',
+    result: {
+      ok: false,
+      detail:
+        `1click reported FAILED and refunded 0 USDC so far; the input is held by 1Click under handle ${LIVE_HANDLE}; ` +
+        `reason not given; intent ${LIVE_INTENT}, quote handle ${LIVE_HANDLE}. Nothing is back in your balance until a refund shows there.`,
+      txids: [LIVE_INTENT],
+    },
+    ...over,
+  });
+}
+
+test('boot lifts a failed row that carries a hash and names its handle in the sentence to unconfirmed, once', () => {
+  const h = setup(statusOf({ status: 'PROCESSING' }));
+  liveFailedRow(h.dir, 'live-1');
+  liveFailedRow(h.dir, 'old-2', { decidedAt: '2026-09-08T10:00:00.000Z', createdAt: '2026-09-08T10:00:00.000Z' });
+  // Left alone: a failure with no hash, a failure the chain decided (no handle in the sentence),
+  // and a refund reconcile already settled (the handle is on the evidence).
+  seed(h.dir, { id: 'no-hash', status: 'failed', result: { ok: false, detail: 'quote handle dep-9 was refused. Nothing was signed.', txids: [] } });
+  seed(h.dir, { id: 'reverted', status: 'failed', result: { ok: false, detail: `the chain rejected ${LIVE_INTENT}, so nothing moved on that transaction`, txids: [LIVE_INTENT] } });
+  seed(h.dir, { id: 'refunded', status: 'failed', result: { ok: false, detail: '1click reported REFUNDED: 9.9 went back, so nothing is on the far side.', txids: [LIVE_INTENT], evidence: { handle: 'dep-1' } } });
+
+  h.svc.reconcileOnBoot();
+  const live = h.svc.get('live-1');
+  assert.equal(live?.status, 'needs_reconciliation');
+  assert.equal(live?.result?.evidence?.handle, LIVE_HANDLE, 'the handle moves from the sentence to the evidence');
+  assert.deepEqual(live?.result?.txids, [LIVE_INTENT], 'the hash stays');
+  assert.match(live?.result?.detail ?? '', /held by 1Click under handle/, 'the rail\'s sentence stays');
+  assert.equal(h.svc.get('old-2')?.status, 'needs_reconciliation', 'age is no bar: the human can still re-check it');
+  assert.equal(h.svc.get('no-hash')?.status, 'failed');
+  assert.equal(h.svc.get('reverted')?.status, 'failed');
+  assert.equal(h.svc.get('refunded')?.status, 'failed');
+  assert.ok(h.svc.dailyLimit(500).spentUsd >= 10, 'and the day counts the money the venue holds');
+
+  const lifted = h.audit.tail(50).filter((e) => /lifted to unconfirmed/.test(e.msg));
+  assert.equal(lifted.length, 2, 'one line per row');
+
+  h.svc.reconcileOnBoot();
+  assert.equal(h.audit.tail(50).filter((e) => /lifted to unconfirmed/.test(e.msg)).length, 2, 'a second boot changes nothing');
+  assert.equal(h.svc.get('live-1')?.status, 'needs_reconciliation');
+});
+
+test('a lifted row is one the sweep now re-checks by its handle', async () => {
+  const h = setup(statusOf({ status: 'FAILED', refundedAmount: '0', refundReason: 'SLIPPAGE' }));
+  liveFailedRow(h.dir, 'live-1');
+  h.svc.reconcileOnBoot();
+  await h.svc.reconcileOpen();
+  assert.deepEqual(h.asked, [LIVE_HANDLE]);
+});
