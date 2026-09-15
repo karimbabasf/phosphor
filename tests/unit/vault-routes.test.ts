@@ -80,6 +80,18 @@ async function boot(opts: { mode?: AppConfig['mode'] } = {}) {
     cfg,
     token,
     vault,
+    intentsReceive: async () => {
+      const report = keystore.addressReport();
+      return {
+        account: report.addresses.evm,
+        verified: report.verified,
+        tampered: report.tampered,
+        networks: [
+          { id: 'sol', name: 'Solana', address: 'Dep0s1tSoLaNaAddre55', memo: null, unavailable: null, accepts: [{ symbol: 'SOL', minDeposit: '0.01', decimals: 9 }], warning: 'Solana only.' },
+          { id: 'base', name: 'Base', address: '0xbridge', memo: null, unavailable: null, accepts: [{ symbol: 'USDC', minDeposit: '1', decimals: 6 }], warning: 'Base only.' },
+        ],
+      };
+    },
     audit,
     store: createStore(dataDir),
     keystore,
@@ -436,10 +448,14 @@ test('the vault prefs set the idle time and the deposit card is opened and watch
     assert.equal(ok.json.idleMinutes, 60);
     assert.equal((await b.get('/api/vault')).json.idleMinutes, 60);
 
-    const shown = await b.post('/api/deposit/show', { chain: 'sol', symbol: 'sol', address: 'Dep0s1t' });
-    assert.equal(shown.json.ok, true);
+    await b.post('/api/vault/create', {});
+    const shown = await b.post('/api/deposit/show', { chain: 'sol', symbol: 'sol', address: 'Attacker' });
+    assert.equal(shown.json.ok, true, JSON.stringify(shown.json));
     assert.equal(shown.json.deposit.phase, 'watching');
     assert.equal(shown.json.deposit.symbol, 'SOL');
+    assert.equal(shown.json.deposit.address, 'Dep0s1tSoLaNaAddre55', 'the address is the bridge\'s for this account, never the body\'s');
+    const notCredited = await b.post('/api/deposit/show', { chain: 'sol', symbol: 'USDC' });
+    assert.equal(notCredited.status, 409);
     assert.equal((await b.get('/api/deposit')).json.deposit.chain, 'sol');
     assert.equal((await b.get('/api/state')).json.deposit.phase, 'watching');
     const nope = await b.post('/api/deposit/show', { chain: 'btc', symbol: 'BTC' });

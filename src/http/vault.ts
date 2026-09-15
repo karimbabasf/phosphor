@@ -335,14 +335,25 @@ export async function handleVaultPrefs(ctx: Ctx, req: http.IncomingMessage, res:
 
 // ---------- the deposit card ----------
 
+/* The address the watcher carries is the bridge's, read here from the bridge for this wallet's
+   account, never taken from the body: the window asks for a chain and an asset and gets back
+   what the app resolved, so nothing that holds the window token can make the card show an
+   address the app did not derive. */
 export async function handleDepositShow(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const body = await guarded(ctx, '/api/deposit/show', req, res);
   if (body === null) return;
   const chain = typeof body.chain === 'string' && CHAINS.has(body.chain) ? (body.chain as ChainId) : null;
   const symbol = typeof body.symbol === 'string' ? body.symbol.trim().toUpperCase() : '';
   if (chain === null || symbol === '' || symbol.length > 12) return fail(res, 400, 'chain and symbol are required');
-  const address = typeof body.address === 'string' ? body.address : null;
-  sendJson(res, 200, { ok: true, deposit: ctx.deposits.show(chain, symbol, address) });
+  const report = await ctx.intentsReceive();
+  const network = report.networks.find((n) => n.id === chain);
+  if (report.account === null || network === undefined || network.address === null) {
+    return fail(res, 409, network?.unavailable ?? report.reason ?? `no deposit address for ${chain} right now`);
+  }
+  if (!network.accepts.some((a) => a.symbol.toUpperCase() === symbol)) {
+    return fail(res, 409, `${symbol} is not credited on ${network.name}; accepted: ${network.accepts.map((a) => a.symbol).join(', ') || 'nothing'}`);
+  }
+  sendJson(res, 200, { ok: true, deposit: ctx.deposits.show(chain, symbol, network.address) });
 }
 
 export function handleDepositStatus(ctx: Ctx, res: http.ServerResponse): void {

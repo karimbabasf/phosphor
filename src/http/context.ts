@@ -38,6 +38,7 @@ import type { DuplicateGuard } from '../duplicates.ts';
 import type { Keystore, LockState } from '../keystore/index.ts';
 import type { Session } from '../keystore/session.ts';
 import type { VaultRelay } from '../vault/relay.ts';
+import type { IntentsReceiveReport } from './wallet.ts';
 import type { VaultPrefs } from '../vault/prefs.ts';
 import type { DepositWatch } from '../vault/watch.ts';
 import type { JsonBody } from './respond.ts';
@@ -162,6 +163,9 @@ export type ServerDeps = {
      reason the token is: a test server has no shell. Absent means a relay with no transport key,
      which answers every ask with no_relay and leaves the wallet on the password path. */
   vault?: VaultRelay;
+  /* Where money comes in: the bridge's deposit addresses for this wallet's account. Optional so
+     a test can answer without the network; the app reads the bridge. */
+  intentsReceive?: () => Promise<IntentsReceiveReport>;
   audit: Audit;
   store: Store;
   ledger: Ledger;
@@ -295,6 +299,7 @@ export type Ctx = Omit<ServerDeps, 'getTheme' | 'setTheme' | 'getScreen' | 'keys
   // The idle clock and the signing sessions. See src/keystore/session.ts.
   session: Session;
   vault: VaultRelay;
+  intentsReceive: () => Promise<IntentsReceiveReport>;
   // What the window remembers about the vault that is not a key: backed up, idle minutes.
   vaultPrefs: VaultPrefs;
   // The deposit watcher: one address at a time, until landed or a day.

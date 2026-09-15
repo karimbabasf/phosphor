@@ -470,7 +470,7 @@ export type IntentsReceiveReport = {
 };
 
 export async function handleIntentsReceive(ctx: Ctx, res: http.ServerResponse): Promise<void> {
-  sendJson(res, 200, await intentsReceiveReport(ctx));
+  sendJson(res, 200, await ctx.intentsReceive());
 }
 
 /* The bridge addresses and what each network credits, as one report. The route above serves

@@ -10,7 +10,6 @@ import { fail, intParam, round2, sendJson } from '../respond.ts';
 import { LOG_LIMIT_MAX } from '../context.ts';
 import type { ReadTable } from '../context.ts';
 import { sentencesOf } from '../state.ts';
-import { intentsReceiveReport } from '../wallet.ts';
 import { vaultStatus } from '../vault.ts';
 import type { ChainId } from '../../types.ts';
 
@@ -111,7 +110,7 @@ export const walletReads: ReadTable = {
   deposit: async (ctx, _body, args, res) => {
     const chainRaw = typeof args?.chain === 'string' ? args.chain.trim().toLowerCase() : '';
     const symbol = typeof args?.asset === 'string' ? args.asset.trim().toUpperCase() : '';
-    const report = await intentsReceiveReport(ctx);
+    const report = await ctx.intentsReceive();
     const accepted = report.networks.map((n) => ({ chain: n.id, network: EXCHANGE_NETWORK[n.id], accepts: n.accepts.map((a) => a.symbol) }));
     if (report.account === null) {
       return sendJson(res, 200, { ok: false, reason: report.reason ?? 'no wallet', accepted });

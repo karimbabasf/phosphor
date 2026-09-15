@@ -31,6 +31,7 @@ import { HOST, windowToken } from './http/auth.ts';
 import { createKeystore } from './keystore/index.ts';
 import { createSession } from './keystore/session.ts';
 import { createVaultRelay } from './vault/relay.ts';
+import { intentsReceiveReport } from './http/wallet.ts';
 import { createVaultPrefs } from './vault/prefs.ts';
 import { createDepositWatch } from './vault/watch.ts';
 import { createSseHub } from './http/sse.ts';
@@ -255,6 +256,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     keystore,
     session,
     vault,
+    intentsReceive: () => (deps.intentsReceive !== undefined ? deps.intentsReceive() : intentsReceiveReport(ctx)),
     vaultPrefs,
     deposits,
     releaseQueued: () => deps.proposals.releaseQueued(),

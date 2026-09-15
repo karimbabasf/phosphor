@@ -127,7 +127,7 @@ test('a click on an enclave wallet waits for a finger, and the finger approves e
   assert.equal(clicked.status, 'awaiting_touch');
   assert.equal(h.keystore.state(), 'locked', 'nothing is open until the enclave answers');
   assert.equal(h.vault.waiting()?.op, 'unwrap');
-  assert.match(h.vault.waiting()?.reason ?? '', /^Approve: Consolidate USDT onto eth/);
+  assert.match(h.vault.waiting()?.reason ?? '', /^Approve: Consolidate USDT onto ETH/);
 
   const request = await playShell(h.vault, h.enclave.priv, h.transport);
   assert.equal(request.id, `approve:${big.id}`, 'the request is named after the proposal it approves');
