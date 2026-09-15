@@ -77,6 +77,23 @@ export function describeRefund(status: OneClickStatus, handle: string, words: Re
   };
 }
 
+// The deposit arrived short of the quote. This app sends exactly once, so nothing it does
+// afterwards completes the order; 1Click's documented behaviour is to refund a short deposit
+// at the quote deadline, and until that shows the money is neither here nor delivered.
+export function describeIncompleteDeposit(status: OneClickStatus, handle: string, words: RefundWords & { quotedIn: string }): RailResult {
+  const shortHandle = oneLine(handle, 80);
+  const seen = status.depositedAmount !== undefined ? `${status.depositedAmount} ${words.symbol}` : `less than the quoted amount of ${words.symbol}`;
+  return {
+    ok: false,
+    detail:
+      `1click reported INCOMPLETE_DEPOSIT: it saw ${seen} arrive against a quoted ${words.quotedIn} ${words.symbol}, ` +
+      `so the order does not run; 1Click's documented behaviour is to refund a short deposit to ${words.refundTarget} at the ` +
+      `quote deadline, and that refund is unconfirmed until it shows there; ${words.evidence}. Do not send more to handle ${shortHandle}.`,
+    txids: uniqueTxids(words.primaryTxid, status),
+    evidence: { handle: shortHandle },
+  };
+}
+
 // The signature was released and the submit call did not answer, or answered with an error.
 // The intent may be live at 1Click until its deadline, so this is unconfirmed rather than
 // failed, and the handle is what a later check asks about.

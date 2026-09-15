@@ -49,7 +49,7 @@ import {
   toBaseUnits,
 } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickStatus, TokensFile } from '../intents.ts';
-import { describeRefund } from './oneclick-words.ts';
+import { describeIncompleteDeposit, describeRefund, uniqueTxids } from './oneclick-words.ts';
 
 // The chains this rail can deposit from, by signer family.
 //
@@ -551,16 +551,28 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
       });
     }
 
+    if (watch.status === 'INCOMPLETE_DEPOSIT') {
+      return describeIncompleteDeposit(watch, depositAddress, {
+        symbol: draft.fromSymbol,
+        quotedIn: oneLine(quote.amountInFormatted, 40),
+        refundTarget: `our ${draft.chain} wallet ${draft.from}`,
+        evidence,
+        primaryTxid: txHash,
+      });
+    }
+
     // Timed out. The transfer confirmed, so the money is already gone from our wallet and
     // the swap is very likely still running. Saying "failed" without that sentence is how
-    // someone sends the same amount twice.
+    // someone sends the same amount twice. The hash and the deposit address stay on the row
+    // so the swap can be checked later.
     return {
       ok: false,
       detail:
         `deposit confirmed but 1click did not reach a terminal status within ${Math.round(pollTimeoutMs / 1000)}s ` +
-        `(last status ${watch.reported}); ${evidence}. THE FUNDS WERE SENT and the swap may still complete: ` +
-        'check the deposit address before retrying.',
-      txids: [txHash, ...watch.originTxHashes],
+        `(last status ${watch.reported}); ${evidence}. THE FUNDS WERE SENT and the swap may still complete, so it is ` +
+        'unconfirmed: check the deposit address before retrying.',
+      txids: uniqueTxids(txHash, watch),
+      evidence: { handle: depositAddress },
     };
   }
 

@@ -463,6 +463,15 @@ test('a poll timeout says the funds were sent, not that the deposit failed', asy
   assert.ok(result.txids?.includes('0xdeadbeef'));
 });
 
+test('a watch that runs out is unconfirmed and keeps the hash and the deposit address for a later check', async () => {
+  const h = harness({ statuses: ['PENDING_DEPOSIT'] });
+  const result = await railOf(h).execute(draftOf());
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /unconfirmed/);
+  assert.ok(result.txids?.includes('0xdeadbeef'));
+  assert.equal(result.evidence?.handle, DEPOSIT_ADDRESS);
+});
+
 test('a REFUNDED deposit names the amount that went back to the wallet', async () => {
   const h = harness({ statuses: ['REFUNDED'], refundedAmount: '10.0' });
   const result = await railOf(h).execute(draftOf());

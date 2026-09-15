@@ -704,6 +704,15 @@ test('the executor hears the handle after the signature and the hash after the s
   assert.equal(heard[1].handle, HANDLE);
 });
 
+test('a watch that runs out is unconfirmed and keeps the hash and the handle for a later check', async () => {
+  const h = harness({ statuses: [{ status: 'PROCESSING', swapDetails: { nearTxHashes: ['nearSeen'] } }] });
+  const result = await railOf(h).execute(draftOf());
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /unconfirmed/);
+  assert.deepEqual(result.txids, [INTENT_HASH, 'nearSeen']);
+  assert.equal(result.evidence?.handle, HANDLE);
+});
+
 test('a REFUNDED swap names the amount and says where it landed, which is not a chain address', async () => {
   const h = harness({ statuses: [{ status: 'REFUNDED', swapDetails: { refundedAmountFormatted: '100.0', nearTxHashes: ['nearRefund'] } }] });
   const result = await railOf(h).execute(draftOf());

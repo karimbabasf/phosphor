@@ -53,7 +53,7 @@ import type { OneClickClient, OneClickQuote, OneClickToken, QuoteEcho } from '..
 import { INTENTS_VERIFIER, intentsApi, liveIntentsSigner } from './intents-native.ts';
 import type { IntentsApiPort, IntentsSignerPort } from './intents-native.ts';
 import { spendFromIntents } from './intents-spend.ts';
-import { describeRefund, describeUnconfirmedSubmit } from './oneclick-words.ts';
+import { describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, uniqueTxids } from './oneclick-words.ts';
 import { accountSummary, usdClassTransfer } from './hl-user-signed.ts';
 import type { HlAccountSummary, HlUserSignedDeps } from './hl-user-signed.ts';
 
@@ -523,17 +523,29 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
       });
     }
 
+    if (watch.status === 'INCOMPLETE_DEPOSIT') {
+      return describeIncompleteDeposit(watch, depositAddress, {
+        symbol: draft.symbol,
+        quotedIn: oneLine(quote.amountInFormatted, 40),
+        refundTarget: `${owner} inside ${INTENTS_VERIFIER}`,
+        evidence,
+        primaryTxid: spent.intentHash,
+      });
+    }
+
     // Timed out. The signature is released and the intent submitted, so the balance may well
     // move after this returns. Saying "failed" without that sentence is how someone signs a
-    // second deposit for money that is already on its way.
+    // second deposit for money that is already on its way. The hash and the handle stay on the
+    // row so the move can be checked later.
     return {
       ok: false,
       detail:
         `the intent was submitted but 1click did not reach a terminal status within ` +
         `${Math.round(pollTimeoutMs / 1000)}s (last status ${watch.reported}); ${evidence}. ` +
-        `THE INTENT IS SIGNED AND SUBMITTED and the collateral may still land: read the Hyperliquid account ` +
-        `${draft.hlAccount} and the balance inside ${INTENTS_VERIFIER} before signing another.`,
-      txids: [spent.intentHash],
+        `THE INTENT IS SIGNED AND SUBMITTED and the collateral may still land, so this move is unconfirmed: read the ` +
+        `Hyperliquid account ${draft.hlAccount} and the balance inside ${INTENTS_VERIFIER} before signing another.`,
+      txids: uniqueTxids(spent.intentHash, watch),
+      evidence: { handle: oneLine(depositAddress, 80) },
     };
   }
 

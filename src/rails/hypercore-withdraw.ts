@@ -43,7 +43,7 @@ import { isAddress } from 'viem';
 import type { HlWithdrawDraft, Rail, RailResult, SimulationResult } from '../types.ts';
 import { ONECLICK_TERMINAL, baseUnits, oneClickClient, oneLine, quoteEchoProblems, toBaseUnits } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickStatus, OneClickToken, QuoteEcho } from '../intents.ts';
-import { describeRefund } from './oneclick-words.ts';
+import { describeIncompleteDeposit, describeRefund, uniqueTxids } from './oneclick-words.ts';
 import { fetchIntentsAssetBalance } from '../ledger/intents.ts';
 import { nearChainSpec } from '../chain/near.ts';
 import { readTimeout } from '../net.ts';
@@ -521,13 +521,26 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
       });
     }
 
+    if (watch.status === 'INCOMPLETE_DEPOSIT') {
+      return describeIncompleteDeposit(watch, depositAddress.toLowerCase(), {
+        symbol: 'USDC',
+        quotedIn: oneLine(quote.amountInFormatted, 40),
+        refundTarget: `the venue account ${draft.from} (the spot side)`,
+        evidence,
+        primaryTxid: hash,
+      });
+    }
+
+    // The send happened and the watch ran out. The ledger hash and the address stay on the row
+    // so the routing can be checked later.
     return {
       ok: false,
       detail:
         `the send confirmed but 1click did not reach a terminal status within ${Math.round(pollTimeoutMs / 1000)}s ` +
-        `(last status ${watch.reported}); ${evidence}. THE SEND HAPPENED and the routing may still complete: read the intents ` +
-        `balance and 1Click status for ${depositAddress.toLowerCase()} before proposing again.`,
-      txids: [hash],
+        `(last status ${watch.reported}); ${evidence}. THE SEND HAPPENED and the routing may still complete, so it is ` +
+        `unconfirmed: read the intents balance and 1Click status for ${depositAddress.toLowerCase()} before proposing again.`,
+      txids: uniqueTxids(hash, watch),
+      evidence: { handle: depositAddress.toLowerCase() },
     };
   }
 

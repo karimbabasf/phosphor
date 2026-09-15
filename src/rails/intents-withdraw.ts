@@ -57,7 +57,7 @@ import type {
 import { baseUnits, oneLine, quoteEchoProblems, resolveAsset, toBaseUnits } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, QuoteEcho, TokensFile } from '../intents.ts';
 import { spendFromIntents } from './intents-spend.ts';
-import { describeRefund, describeUnconfirmedSubmit } from './oneclick-words.ts';
+import { describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, uniqueTxids } from './oneclick-words.ts';
 import { INTENTS_VERIFIER, base58Decode, intentsApi, liveIntentsSigner } from './intents-native.ts';
 import type { IntentsApiPort, IntentsSignerPort } from './intents-native.ts';
 
@@ -449,17 +449,29 @@ export function intentsWithdrawRail(deps: IntentsWithdrawRailDeps): IntentsWithd
       });
     }
 
+    if (watch.status === 'INCOMPLETE_DEPOSIT') {
+      return describeIncompleteDeposit(watch, depositAddress, {
+        symbol: draft.symbol,
+        quotedIn: oneLine(quote.amountInFormatted, 40),
+        refundTarget: `${owner} inside ${INTENTS_VERIFIER}`,
+        evidence,
+        primaryTxid: spent.intentHash,
+      });
+    }
+
     // Timed out. The signature is released and the intent submitted, so the balance may well
     // move after this returns. Saying "failed" without that sentence is how someone signs a
-    // second withdrawal for money that is already on its way.
+    // second withdrawal for money that is already on its way. The hash and the handle stay on
+    // the row so the payout can be checked later.
     return {
       ok: false,
       detail:
         `the intent was submitted but 1click did not reach a terminal status within ` +
         `${Math.round(pollTimeoutMs / 1000)}s (last status ${watch.reported}); ${evidence}. ` +
-        `THE INTENT IS SIGNED AND SUBMITTED and the payout may still land: check the ${draft.chain} wallet ` +
-        `${p.to} and the balance inside ${INTENTS_VERIFIER} before signing another.`,
-      txids: [spent.intentHash],
+        `THE INTENT IS SIGNED AND SUBMITTED and the payout may still land, so it is unconfirmed: check the ${draft.chain} ` +
+        `wallet ${p.to} and the balance inside ${INTENTS_VERIFIER} before signing another.`,
+      txids: uniqueTxids(spent.intentHash, watch),
+      evidence: { handle: oneLine(depositAddress, 80) },
     };
   }
 

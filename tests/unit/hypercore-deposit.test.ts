@@ -471,6 +471,15 @@ test('a poll that never reaches terminal says the intent IS SIGNED AND SUBMITTED
   assert.match(out.detail, /HASH1/);
 });
 
+test('a watch that runs out is unconfirmed and keeps the hash and the handle for a later check', async () => {
+  const { rail: r } = rail({ status: 'PROCESSING' });
+  const out = await r.execute(draft());
+  assert.equal(out.ok, false);
+  assert.match(out.detail, /unconfirmed/);
+  assert.ok(out.txids?.includes('HASH1'));
+  assert.equal(out.evidence?.handle, HANDLE);
+});
+
 test('collateral that lands on the spot book of a standard account is moved to perp, and the detail says so', async () => {
   const { rail: r, exchange } = rail({}, [{ perp: 0, spot: 0 }, { perp: 0, spot: 9.6594 }]);
   const out = await r.execute(draft());

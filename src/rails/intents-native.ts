@@ -73,7 +73,7 @@ import {
 import type { NearSendOutcome, NearSendParams } from '../chain/near.ts';
 import { venueWriteTimeout } from '../net.ts';
 import { MAX_SLIPPAGE_BPS, floorTooLow } from './slippage.ts';
-import { describeRefund, describeUnconfirmedSubmit } from './oneclick-words.ts';
+import { describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, uniqueTxids } from './oneclick-words.ts';
 
 // The verifier contract. This is the whole point of the rail: one fixed account that goes on
 // the policy allowlist once and stays there, unlike a deposit address minted per quote.
@@ -1272,17 +1272,29 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
       });
     }
 
+    if (watch.status === 'INCOMPLETE_DEPOSIT') {
+      return describeIncompleteDeposit(watch, depositAddress, {
+        symbol: draft.fromSymbol,
+        quotedIn: oneLine(quote.amountInFormatted, 40),
+        refundTarget: `${owner} inside ${INTENTS_VERIFIER}`,
+        evidence,
+        primaryTxid: submitted.intentHash,
+      });
+    }
+
     // Timed out. The signature is already released and the intent already submitted, so the
     // balance may well move after this returns. Same rule as the oneclick rail: a poll
     // timeout is not a failed swap, and saying so is what stops someone signing a second one.
+    // The hash and the handle stay on the row so the swap can be checked later.
     return {
       ok: false,
       detail:
         `the intent was submitted but 1click did not reach a terminal status within ` +
         `${Math.round(pollTimeoutMs / 1000)}s (last status ${watch.reported}); ${evidence}. ` +
-        `THE INTENT IS SIGNED AND SUBMITTED and the swap may still complete: check the balance inside ` +
-        `${INTENTS_VERIFIER} before signing another.`,
-      txids: [submitted.intentHash],
+        `THE INTENT IS SIGNED AND SUBMITTED and the swap may still complete, so it is unconfirmed: check the balance ` +
+        `inside ${INTENTS_VERIFIER} before signing another.`,
+      txids: uniqueTxids(submitted.intentHash, watch),
+      evidence: { handle: oneLine(depositAddress, 80) },
     };
   }
 

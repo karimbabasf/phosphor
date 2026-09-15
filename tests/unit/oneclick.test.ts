@@ -627,6 +627,29 @@ test('a poll timeout says the funds were sent, because they were', async () => {
   assert.ok(h.statusCalls.length > 1, 'it should have polled more than once before giving up');
 });
 
+test('a watch that runs out is unconfirmed and keeps the hash and the deposit address for a later check', async () => {
+  const h = harness({ statuses: [{ status: 'PROCESSING', swapDetails: {} }] });
+  const result = await railOf(h).execute(draftOf());
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /unconfirmed/);
+  assert.ok(result.txids?.includes(TX_HASH));
+  assert.equal(result.evidence?.handle, DEPOSIT);
+});
+
+test('a short deposit is reported as INCOMPLETE_DEPOSIT with what 1Click saw, and the refund is unconfirmed', async () => {
+  const h = harness({ statuses: [{ status: 'INCOMPLETE_DEPOSIT', swapDetails: { depositedAmountFormatted: '50.0' } }] });
+  const result = await railOf(h).execute(draftOf());
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /INCOMPLETE_DEPOSIT/);
+  assert.match(result.detail, /50\.0 USDC/);
+  assert.match(result.detail, /quoted 100/);
+  assert.match(result.detail, /unconfirmed/);
+  assert.doesNotMatch(result.detail, /did not reach a terminal status/);
+  assert.ok(result.txids?.includes(TX_HASH));
+  assert.equal(result.evidence?.handle, DEPOSIT);
+  assert.equal(h.statusCalls.length, 1, 'a short deposit is terminal for this app: nothing it does changes it');
+});
+
 // ---------- the API is data, never an instruction ----------
 
 test('an invented status is never terminal, however much it looks like SUCCESS', async () => {

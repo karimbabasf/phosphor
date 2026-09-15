@@ -627,12 +627,14 @@ test('the executor hears the handle after the signature and the hash after the s
 });
 
 test('a poll timeout says the intent IS submitted, so nobody signs a second one', async () => {
-  const { rail } = railOf({ status: 'PROCESSING' });
+  const { rail } = railOf({ status: 'PROCESSING', destinationTxHashes: [] });
   const result = await rail.execute(draftOf());
   assert.equal(result.ok, false);
   assert.match(result.detail, /THE INTENT IS SIGNED AND SUBMITTED/);
   assert.match(result.detail, /before signing another/);
+  assert.match(result.detail, /unconfirmed/);
   assert.deepEqual(result.txids, ['HASH123']);
+  assert.equal(result.evidence?.handle, HANDLE);
 });
 
 test('valueUsd trusts a finite amount and refuses to under-report an unusable one', () => {

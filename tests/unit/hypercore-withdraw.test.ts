@@ -491,6 +491,27 @@ test('a poll that never reaches terminal says THE SEND HAPPENED, in capitals, an
   assert.match(out.detail, new RegExp(DEPOSIT.toLowerCase()));
 });
 
+test('a watch that runs out is unconfirmed and keeps the ledger hash and the address for a later check', async () => {
+  const { rail: r } = rail({ status: 'PROCESSING' });
+  const out = await r.execute(draft());
+  assert.equal(out.ok, false);
+  assert.match(out.detail, /unconfirmed/);
+  assert.ok(out.txids?.includes('0xledgerhash'));
+  assert.equal(out.evidence?.handle, DEPOSIT.toLowerCase());
+});
+
+test('a short deposit is reported as INCOMPLETE_DEPOSIT with what 1Click saw, not as a poll that ran out', async () => {
+  const { rail: r } = rail({ status: 'INCOMPLETE_DEPOSIT' });
+  const out = await r.execute(draft());
+  assert.equal(out.ok, false);
+  assert.match(out.detail, /INCOMPLETE_DEPOSIT/);
+  assert.match(out.detail, /quoted 8\.0 USDC/);
+  assert.match(out.detail, /unconfirmed/);
+  assert.doesNotMatch(out.detail, /did not reach a terminal status/);
+  assert.ok(out.txids?.includes('0xledgerhash'));
+  assert.equal(out.evidence?.handle, DEPOSIT.toLowerCase());
+});
+
 test('a standard account moves perp collateral to spot before the send', async () => {
   // Reads, in order: the plan, the transfer's own balance check, the send's, the proof.
   const { rail: r, exchange } = rail({}, [
