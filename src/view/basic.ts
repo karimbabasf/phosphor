@@ -140,14 +140,39 @@ function newestFetchAt(chainStatus: Record<ChainId, ChainStatus>): number {
   return newest;
 }
 
+// A row after which the balance may differ from the last read: anything that went through,
+// and anything that carries a hash whatever its status, because a hash means money moved or
+// may have. Stamped by when the rail returned when that was recorded: the decision can be a
+// minute earlier, and a read taken between the two is not the new balance.
+function movedMoney(p: Proposal): boolean {
+  if (p.status === 'executed') return true;
+  if (p.status !== 'failed' && p.status !== 'needs_reconciliation') return false;
+  return (p.result?.txids ?? []).length > 0;
+}
+
+function movedAt(p: Proposal): string {
+  return p.settledAt ?? p.decidedAt ?? p.createdAt;
+}
+
 function newestExecutionAt(proposals: Proposal[]): number {
   let newest = 0;
   for (const p of proposals) {
-    if (p.status !== 'executed') continue;
-    const t = Date.parse(p.decidedAt ?? '');
+    if (!movedMoney(p)) continue;
+    const t = Date.parse(movedAt(p));
     if (Number.isFinite(t) && t > newest) newest = t;
   }
   return newest;
+}
+
+// The newest row the app cannot confirm, when it is newer than the newest settled outcome:
+// "Done. You now have $X" would be the wrong sentence over it.
+function newestUnconfirmed(proposals: Proposal[]): Proposal | null {
+  let best: Proposal | null = null;
+  for (const p of proposals) {
+    if (p.status === 'executed' || !movedMoney(p)) continue;
+    if (best === null || movedAt(p) > movedAt(best)) best = p;
+  }
+  return best;
 }
 
 // ---------- the ask ----------
@@ -602,6 +627,28 @@ export function didHeadline(draft: WriteDraft, amountUsd: number): string {
   return 'Changed one of your safety rules.';
 }
 
+// The same sentence as a thing that was tried and did not, or may not have, go through. Built
+// from the past tense form so the two never drift: only the verb changes.
+const TRIED_VERBS: Record<string, string> = {
+  Changed: 'change',
+  Moved: 'move',
+  Brought: 'bring',
+  Put: 'put',
+  Took: 'take',
+  Gathered: 'gather',
+  Sent: 'send',
+  Armed: 'arm',
+  Cancelled: 'cancel',
+  Closed: 'close',
+};
+
+export function triedHeadline(draft: WriteDraft, amountUsd: number): string {
+  const did = didHeadline(draft, amountUsd);
+  const space = did.indexOf(' ');
+  const verb = TRIED_VERBS[space > 0 ? did.slice(0, space) : did];
+  return verb === undefined ? `Tried: ${did}` : `Tried to ${verb}${did.slice(space)}`;
+}
+
 // A venue price in the sentence, as the venue quotes it: grouped thousands, no trailing
 // zeros, and as many decimals as the plan gave it, so a stop at 0.4512 is not rounded to 0.45.
 function price(n: number): string {
@@ -815,6 +862,9 @@ export function buildBasic(input: BasicInput): BasicView {
   // reported as an unrelated policy refusal from 02:13: the person pressed NO and
   // the screen told them about something else. Found by pressing the button.
   const settled = newestBy(proposals, ['executed', 'refused', 'policy_refused']);
+  const unconfirmed = newestUnconfirmed(proposals);
+  const unconfirmedIsNewest =
+    unconfirmed !== null && (settled === null || movedAt(unconfirmed) > (settled.decidedAt ?? settled.createdAt));
 
   // Most dangerous first. Kill switch and an unreadable policy both mean nothing can
   // move at all, so they outrank a question the human cannot act on anyway.
@@ -837,6 +887,9 @@ export function buildBasic(input: BasicInput): BasicView {
   } else if (working !== null) {
     tone = 'working';
     headline = 'Working on it. Please wait.';
+  } else if (unconfirmedIsNewest) {
+    tone = 'stopped';
+    headline = 'The last move is not confirmed. Do not send it again; open Activity to check it.';
   } else if (settled !== null && settled.status === 'policy_refused') {
     tone = 'stopped';
     headline = refusalHeadline(settled);

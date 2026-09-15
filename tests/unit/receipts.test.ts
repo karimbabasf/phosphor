@@ -175,12 +175,18 @@ test('a receipt carries every field the contract fixes', async () => {
       'balanceBefore',
       'feesUsd',
       'fromChain',
+      // Added 2026-09-15: the 1Click handle (or nonce) a later check asks about, so an
+      // unconfirmed card can show it beside the rail's sentence.
+      'handle',
       'headline',
       'id',
       'kind',
       // Added 2026-09-14: the conversation's receipt card and the Activity row say what
       // arrived, and both read it off the receipt rather than off the rail's sentence.
       'received',
+      // Added 2026-09-15: what 1Click reported refunded on a failed row, so the row can say
+      // "refunded" instead of "did not go through" when money went out and came back.
+      'refunded',
       'status',
       'summary',
       'symbol',
@@ -340,6 +346,98 @@ test('a receipt and the history row it came from agree on every shared fact', as
     assert.equal(receipt.toChain, row.toPlace);
     assert.equal(receipt.summary, row.detail);
     assert.equal(receipt.amount, (row.sent as { amount: number } | null)?.amount ?? null);
+  } finally {
+    await h.close();
+  }
+});
+
+// ---------- what a row that did not go through says ----------
+//
+// The incident of 2026-09-15: two $10 deposits FAILED at 1Click with the money still at 1Click,
+// and Activity read "Moved $10.00 of your USDC to your Hyperliquid trading account. Did not go
+// through, $0.34 in fees": a past tense headline, a fee charged for a move that never happened,
+// and a sentence that said nothing left. These pin what such a row says now.
+
+function hlDeposit(id: string, status: ProposalStatus, over: Partial<Proposal> = {}): Proposal {
+  return settled(id, status, {
+    kind: 'hl_deposit',
+    draft: {
+      kind: 'hl_deposit', symbol: 'USDC', originAsset: 'nep141:usdc', amount: 10, amountUsd: 10, minCredited: 9.6,
+      from: SELF, hlAccount: SELF, counterparty: 'intents.near',
+    } as unknown as Proposal['draft'],
+    simulation: { ok: true, summary: 'hypercore: 10 USDC -> 9.6594 USDC, fee $0.34' } as unknown as Proposal['simulation'],
+    ...over,
+  });
+}
+
+test('a row that did not go through is headlined as tried, not as done', async () => {
+  const h = await boot([
+    hlDeposit('done', 'executed'),
+    hlDeposit('broke', 'failed', { result: { ok: false, detail: 'refused before the key', txids: [] } }),
+    hlDeposit('unknown', 'needs_reconciliation', { result: { ok: false, detail: '1click reported FAILED and refunded 0 USDC so far; the input is held by 1Click under handle abc123', txids: ['HASH1'], evidence: { handle: 'abc123', refundedAmount: '0' } } }),
+  ]);
+  try {
+    const byId = new Map((await receipts(h.url)).map((r) => [r.id, r]));
+    assert.match(byId.get('done')!.headline, /^Moved \$10\.00 of your/);
+    assert.match(byId.get('broke')!.headline, /^Tried to move \$10\.00 of your/);
+    assert.match(byId.get('unknown')!.headline, /^Tried to move \$10\.00 of your/);
+    assert.doesNotMatch(byId.get('unknown')!.headline, /^Moved/);
+  } finally {
+    await h.close();
+  }
+});
+
+test('the venue fee is charged only on a row that went through, and the window total agrees', async () => {
+  const h = await boot([
+    hlDeposit('done', 'executed'),
+    hlDeposit('broke', 'failed', { result: { ok: false, detail: 'refused before the key', txids: [] } }),
+    hlDeposit('unknown', 'needs_reconciliation', { result: { ok: false, detail: 'unconfirmed', txids: ['HASH1'] } }),
+  ]);
+  try {
+    const out = await page(h.url);
+    const byId = new Map(out.receipts.map((r) => [r.id, r]));
+    assert.equal(byId.get('done')!.feesUsd, 0.34);
+    assert.equal(byId.get('broke')!.feesUsd, null, 'a move that never happened cost no venue fee');
+    assert.equal(byId.get('unknown')!.feesUsd, null, 'a fee is not known until the move is');
+    assert.equal(out.feesUsd, 0.34);
+  } finally {
+    await h.close();
+  }
+});
+
+test('an unconfirmed row carries its handle and what was refunded, and nothing arriving', async () => {
+  const h = await boot([
+    hlDeposit('unknown', 'needs_reconciliation', {
+      result: { ok: false, detail: '1click reported FAILED; quote handle abc123', txids: ['HASH1'], evidence: { handle: 'abc123', refundedAmount: '0' } },
+    }),
+    hlDeposit('refunded', 'failed', {
+      result: { ok: false, detail: '1click reported REFUNDED: 9.97 USDC went back', txids: ['HASH2'], evidence: { handle: 'def456', refundedAmount: '9.97' } },
+    }),
+    hlDeposit('legacy', 'failed', {
+      result: { ok: false, detail: 'funded Hyperliquid with 9.6594 USDC; intent HASH3, quote handle 81aee1ec126b2b0f041fe080b2195d4ff63c88c13f23da1859b4b6f203cb885a', txids: ['HASH3'] },
+    }),
+  ]);
+  try {
+    const byId = new Map((await receipts(h.url)).map((r) => [r.id, r]));
+    assert.equal(byId.get('unknown')!.handle, 'abc123');
+    assert.equal(byId.get('unknown')!.refunded, null, 'a zero refund is no refund');
+    assert.equal(byId.get('unknown')!.received, null);
+    assert.equal(byId.get('refunded')!.refunded, '9.97');
+    assert.equal(byId.get('refunded')!.handle, 'def456');
+    assert.equal(byId.get('legacy')!.handle, '81aee1ec126b2b0f041fe080b2195d4ff63c88c13f23da1859b4b6f203cb885a', 'a row from before evidence existed still has the handle in its sentence');
+    assert.equal(byId.get('legacy')!.refunded, null);
+  } finally {
+    await h.close();
+  }
+});
+
+test('a settled time outranks the decision time, because the decision can be a minute before the money moved', async () => {
+  const decided = new Date(Date.now() - 2 * 3_600_000).toISOString();
+  const moved = new Date(Date.now() - 3_600_000).toISOString();
+  const h = await boot([hlDeposit('done', 'executed', { decidedAt: decided, settledAt: moved })]);
+  try {
+    const [receipt] = await receipts(h.url);
+    assert.equal(receipt.at, moved);
   } finally {
     await h.close();
   }

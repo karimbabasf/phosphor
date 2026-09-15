@@ -18,7 +18,8 @@ import type { TxEntry } from '../transactions.ts';
 import { fail, intParam, sendJson } from './respond.ts';
 import { transactionsPayload } from './state.ts';
 import type { Ctx } from './context.ts';
-import { amountUsdOf, didHeadline } from '../view/basic.ts';
+import { amountUsdOf, didHeadline, triedHeadline } from '../view/basic.ts';
+import { depositHandleOf } from '../transactions.ts';
 import { explorerName } from '../explorers.ts';
 
 export const RECEIPT_LIMIT_DEFAULT = 25;
@@ -82,9 +83,17 @@ export type Receipt = {
   // is a different fact from nothing arriving, so no surface prints a zero for it.
   received: { symbol: string; amount: number } | null;
   // The venue's own fee plus whatever gas has been read back so far. null when neither is
-  // known yet, which is a different fact from a fee of zero.
+  // known yet, which is a different fact from a fee of zero. The venue fee is charged only
+  // on a row that went through: it is parsed off the quote the human approved, and a move
+  // that never ran, or that the app cannot confirm, did not pay it as far as the app knows.
   feesUsd: number | null;
   txids: ReceiptTx[];
+  // The 1Click handle (or the venue nonce) a later check asks about, from the rail's
+  // evidence or, for rows from before that existed, from its sentence. null when none.
+  handle: string | null;
+  // What 1Click reported refunded on a row that did not go through, formatted, when it was
+  // more than nothing. null otherwise, so a row never says "refunded 0".
+  refunded: string | null;
   // Three facts the receipt card's grid prints beside the fee: what the move was worth when it
   // was approved, the venue that did it (null for a plain chain transfer), and the address the
   // money left from (or landed at, when the record has no sender). All three come off the same
@@ -115,16 +124,33 @@ function feesOf(entry: TxEntry): number | null {
     .map((h) => h.gas?.feeUsd ?? null)
     .filter((usd): usd is number => usd !== null)
     .reduce<number | null>((sum, usd) => (sum ?? 0) + usd, null);
-  if (entry.venueFeeUsd === null && gas === null) return null;
-  return (entry.venueFeeUsd ?? 0) + (gas ?? 0);
+  const venueFee = entry.status === 'executed' ? entry.venueFeeUsd : null;
+  if (venueFee === null && gas === null) return null;
+  return (venueFee ?? 0) + (gas ?? 0);
 }
 
-/* The row's sentence. Falls back to null rather than to a guess: a receipt whose proposal
-   has been pruned from the store still has the rail's own line to show, and inventing a
-   headline for a draft we cannot read would be the one thing worse than showing the raw one. */
-function headlineFor(proposal: Proposal | undefined): string {
+/* The row's sentence. Past tense only for a row that went through; anything else is what
+   was tried, so a move that failed or that the app cannot confirm never reads as a receipt
+   for one that happened. Falls back to an empty line rather than to a guess: a receipt whose
+   proposal has been pruned from the store still has the rail's own line to show, and
+   inventing a headline for a draft we cannot read would be the one thing worse than
+   showing the raw one. */
+function headlineFor(proposal: Proposal | undefined, status: Receipt['status']): string {
   if (proposal === undefined) return '';
-  return didHeadline(proposal.draft, amountUsdOf(proposal.draft));
+  const amount = amountUsdOf(proposal.draft);
+  return status === 'executed' ? didHeadline(proposal.draft, amount) : triedHeadline(proposal.draft, amount);
+}
+
+function handleOf(proposal: Proposal | undefined, detail: string): string | null {
+  const evidence = proposal?.result?.evidence;
+  return evidence?.handle ?? evidence?.nonce ?? depositHandleOf(detail);
+}
+
+function refundedOf(proposal: Proposal | undefined): string | null {
+  const amount = proposal?.result?.evidence?.refundedAmount;
+  if (typeof amount !== 'string') return null;
+  const n = Number(amount);
+  return Number.isFinite(n) && n > 0 ? amount : null;
 }
 
 /* Every receipt, newest first: the history is already sorted that way (transactions.ts), and
@@ -138,7 +164,8 @@ function buildReceipts(ctx: Ctx): Receipt[] {
   for (const entry of transactionsPayload(ctx).entries) {
     const status = receiptStatus(entry);
     if (status === null) continue;
-    const balances = proposals.get(entry.id)?.balances;
+    const proposal = proposals.get(entry.id);
+    const balances = proposal?.balances;
     out.push({
       id: entry.id,
       kind: entry.kind,
@@ -154,15 +181,20 @@ function buildReceipts(ctx: Ctx): Receipt[] {
          written by the thing that actually did the work. It belongs on the opened receipt,
          not as the title of a row: basic.ts:570 already says why, that text is written for
          whoever is debugging this app and reads as noise to the person who owns the money. */
-      headline: headlineFor(proposals.get(entry.id)),
+      headline: headlineFor(proposal, status),
       summary: entry.detail,
       fromChain: entry.place,
       toChain: entry.toPlace,
       amount: entry.sent?.amount ?? null,
       symbol: entry.sent?.symbol ?? null,
-      received: entry.received,
+      // An arrival is a fact only on a row that went through. A row the app cannot confirm
+      // may carry the venue's settled figure, and printing it in green would be asserting
+      // exactly what the row says the app cannot see.
+      received: status === 'executed' ? entry.received : null,
       feesUsd: feesOf(entry),
       txids: entry.hashes.map((h) => ({ chain: h.place, hash: h.hash, url: h.url, explorer: explorerName(h.url) })),
+      handle: handleOf(proposal, entry.detail),
+      refunded: refundedOf(proposal),
       valueUsd: Number.isFinite(entry.valueUsd) && entry.valueUsd > 0 ? entry.valueUsd : null,
       venue: entry.venue,
       wallet: entry.from?.address ?? entry.to?.address ?? null,

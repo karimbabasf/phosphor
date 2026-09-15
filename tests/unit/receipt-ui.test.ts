@@ -421,17 +421,56 @@ test('moment 3: the card enters at 0.96 over 220 ms, and reduced motion keeps on
   assert.equal(dialog.open, true, 'no motion library is not a reason not to open');
 });
 
-test('the unknown outcome says so before the numbers and keeps Check it again', () => {
+test('the unconfirmed outcome says so before the numbers, quotes the rail, names the handle and keeps Check it again', () => {
   const rig = boot();
-  const card = rig.window.PhosphorReceipt.card(swap({ status: 'needs_reconciliation' }));
+  const card = rig.window.PhosphorReceipt.card(swap({
+    status: 'needs_reconciliation',
+    summary: '1click reported FAILED and refunded 0 USDC so far; the input is held by 1Click under handle abc123',
+    handle: 'abc123',
+    received: { symbol: 'USDC', amount: 4.9811 },
+  }));
   const note = withClass(card, 'receipt-note')[0];
-  assert.ok(text(note).startsWith('We sent this and cannot read what happened to it. Do not send it again.'));
+  assert.ok(text(note).startsWith('Not confirmed.'), text(note));
+  assert.ok(text(note).includes('Do not send it again.'));
+  assert.ok(text(note).includes('held by 1Click under handle abc123'), 'the rail sentence, verbatim');
+  const handle = withClass(card, 'receipt-handle')[0];
+  assert.ok(handle, 'the handle has its own row');
+  assert.ok(text(handle).includes('abc123'));
   const chip = withClass(card, 'receipt-status')[0];
-  assert.equal(text(chip), 'Unknown');
+  assert.equal(text(chip), 'Not confirmed');
   assert.equal(chip.dataset.tone, 'warn');
+  const legs = withClass(card, 'receipt-leg');
+  assert.equal(legs.length, 1, 'nothing arriving on a move the app cannot confirm');
+  const amount = withClass(legs[0], 'receipt-amount')[0];
+  assert.equal(text(amount), '0.002 ETH', 'unsigned: it may or may not have left');
+  assert.ok(!amount.className.includes('dim'), 'and not quiet: this is the money in question');
   const actions = withClass(card, 'receipt-actions')[0];
   assert.equal(actions.childNodes.length, 2, 'Check it again beside the link out');
   assert.equal(text(withClass(actions.childNodes[0], 'btn-label')[0]), 'Check it again');
+});
+
+test('a failed row that carries a hash is not confirmed, and one that was refunded says so', () => {
+  const rig = boot();
+  const R = rig.window.PhosphorReceipt;
+  const unconfirmed = R.row();
+  R.updateRow(unconfirmed, swap({ status: 'failed', received: null, feesUsd: null }));
+  assert.equal(text(unconfirmed.childNodes[2]), 'Not confirmed');
+  assert.equal(text(unconfirmed.childNodes[3]), '0.002 ETH');
+  assert.ok(!unconfirmed.childNodes[3].getAttribute('class').includes('dim'));
+
+  const refunded = R.row();
+  R.updateRow(refunded, swap({ status: 'failed', received: null, feesUsd: null, refunded: '0.002' }));
+  assert.equal(text(refunded.childNodes[2]), 'Refunded 0.002 ETH');
+
+  const nothing = R.row();
+  R.updateRow(nothing, swap({ status: 'failed', received: null, feesUsd: null, txids: [] }));
+  assert.equal(text(nothing.childNodes[2]), 'Did not go through');
+  assert.ok(nothing.childNodes[3].getAttribute('class').includes('dim'));
+
+  const unknown = R.row();
+  R.updateRow(unknown, swap({ status: 'needs_reconciliation', feesUsd: null }));
+  assert.equal(text(unknown.childNodes[2]), 'Not confirmed');
+  assert.equal(text(unknown.childNodes[4]), '', 'nothing arrives in green on a row the app cannot confirm');
 });
 
 test('the Activity row still builds and updates the way the list expects', () => {
