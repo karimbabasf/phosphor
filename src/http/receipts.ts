@@ -19,11 +19,14 @@ import { intParam, sendJson } from './respond.ts';
 import { transactionsPayload } from './state.ts';
 import type { Ctx } from './context.ts';
 import { amountUsdOf, didHeadline } from '../view/basic.ts';
+import { explorerName } from '../explorers.ts';
 
 export const RECEIPT_LIMIT_DEFAULT = 25;
 export const RECEIPT_LIMIT_MAX = 200;
 
-type ReceiptTx = { chain: string; hash: string; url: string | null };
+// `explorer` is the name on the card's button ("View on Basescan"), derived from the url's host
+// and null when there is no url or the host is not one this app links to.
+type ReceiptTx = { chain: string; hash: string; url: string | null; explorer: string | null };
 
 export type Receipt = {
   id: string;
@@ -45,6 +48,13 @@ export type Receipt = {
   // known yet, which is a different fact from a fee of zero.
   feesUsd: number | null;
   txids: ReceiptTx[];
+  // Three facts the receipt card's grid prints beside the fee: what the move was worth when it
+  // was approved, the venue that did it (null for a plain chain transfer), and the address the
+  // money left from (or landed at, when the record has no sender). All three come off the same
+  // TxEntry as everything above.
+  valueUsd: number | null;
+  venue: string | null;
+  wallet: string | null;
   balanceBefore: number | null;
   balanceAfter: number | null;
   status: 'executed' | 'failed' | 'needs_reconciliation';
@@ -112,7 +122,10 @@ function buildReceipts(ctx: Ctx, limit: number): Receipt[] {
       symbol: entry.sent?.symbol ?? null,
       received: entry.received,
       feesUsd: feesOf(entry),
-      txids: entry.hashes.map((h) => ({ chain: h.place, hash: h.hash, url: h.url })),
+      txids: entry.hashes.map((h) => ({ chain: h.place, hash: h.hash, url: h.url, explorer: explorerName(h.url) })),
+      valueUsd: Number.isFinite(entry.valueUsd) && entry.valueUsd > 0 ? entry.valueUsd : null,
+      venue: entry.venue,
+      wallet: entry.from?.address ?? entry.to?.address ?? null,
       balanceBefore: balances?.beforeUsd ?? null,
       balanceAfter: balances?.afterUsd ?? null,
       status,

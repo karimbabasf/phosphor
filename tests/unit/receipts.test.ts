@@ -186,6 +186,11 @@ test('a receipt carries every field the contract fixes', async () => {
       'symbol',
       'toChain',
       'txids',
+      // Added 2026-09-15: the receipt card's grid prints what it was worth, who did it and
+      // which address it left from, and reads all three off the receipt.
+      'valueUsd',
+      'venue',
+      'wallet',
     ]);
   } finally {
     await h.close();
@@ -254,9 +259,12 @@ test('the hashes carry a chain and a link, not a bare string', async () => {
   try {
     const [receipt] = await receipts(h.url);
     assert.equal(receipt.txids.length, 1);
-    assert.deepEqual(Object.keys(receipt.txids[0]).sort(), ['chain', 'hash', 'url']);
+    assert.deepEqual(Object.keys(receipt.txids[0]).sort(), ['chain', 'explorer', 'hash', 'url']);
     assert.equal(receipt.txids[0].hash, '0x' + 'a'.repeat(64));
     assert.equal(typeof receipt.txids[0].chain, 'string');
+    // The name on the card's button follows the link, never the row: no link, no name.
+    assert.equal(receipt.txids[0].url, 'https://arbiscan.io/tx/0x' + 'a'.repeat(64));
+    assert.equal(receipt.txids[0].explorer, 'Arbiscan');
   } finally {
     await h.close();
   }
