@@ -152,8 +152,9 @@ dialog.receipt-dialog::backdrop {
   line-height: 1.45;
 }
 
-/* The from and to line. Wraps when both legs are long rather than shrinking the
-   figures: the amounts are the card. */
+/* The from and to line. Sized so two ordinary legs and the arrow share the
+   popover's 390 px of content ("-0.002 ETH" and "+4.9811 USDC" leave 24 px);
+   two long ones wrap rather than shrink, because the amounts are the card. */
 .receipt-legs {
   display: flex;
   flex-wrap: wrap;
@@ -165,7 +166,7 @@ dialog.receipt-dialog::backdrop {
 .receipt-leg {
   display: inline-flex;
   align-items: center;
-  gap: var(--s-3);
+  gap: 10px;
   min-width: 0;
 }
 
@@ -174,7 +175,7 @@ dialog.receipt-dialog::backdrop {
 }
 
 .receipt-amount {
-  font-size: var(--fs-20);
+  font-size: var(--fs-18);
   font-weight: 500;
   letter-spacing: -0.01em;
   line-height: 1.2;
