@@ -551,9 +551,36 @@ body[data-view="trade"] .stage {
 /* Basic's rows are 48 tall: the value over the amount, and no slack in either,
    because the list is read as one column of numbers rather than as ten cards. */
 .basic-col .row {
+  position: relative;
+  isolation: isolate;
   min-height: 48px;
   padding: var(--s-2) var(--s-4);
-  transition: background-color 600ms var(--ease-out);
+}
+
+/* The tint a change lands on is a layer under the row's content that fades on
+   opacity, never a background colour that repaints the row: in fast, out
+   slow, once. The row isolates so the layer can sit under its own text
+   without falling behind the panel. The shared afterglow on
+   .row[data-changed] is overridden here. */
+.basic-col .row::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: color-mix(in srgb, var(--coin, var(--beam)) 8%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 600ms var(--ease-out);
+}
+
+.basic-col .row[data-changed="true"] {
+  background: transparent;
+  transition: none;
+}
+
+.basic-col .row[data-changed="true"]::before {
+  opacity: 1;
+  transition: opacity 120ms var(--ease-out);
 }
 
 .basic-col .row-side {
@@ -587,13 +614,7 @@ body[data-view="trade"] .stage {
 .basic-col .row-delta[data-dir="up"] { color: var(--up); }
 .basic-col .row-delta[data-dir="down"] { color: var(--down); }
 
-/* A row whose value just moved tints in its coin's colour, in fast and out
-   slow, and shows its delta for the same beat. */
-.basic-col .row[data-changed="true"] {
-  background: color-mix(in srgb, var(--coin, var(--beam)) 8%, transparent);
-  transition: background-color 120ms var(--ease-out);
-}
-
+/* The delta shows for the same beat as the tint. */
 .basic-col .row[data-changed="true"] .row-delta {
   opacity: 1;
   transition: opacity 120ms var(--ease-out);

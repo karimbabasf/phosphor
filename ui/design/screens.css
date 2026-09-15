@@ -59,6 +59,13 @@
   color: var(--text-2);
 }
 
+/* The number's slot keeps its line while there is no number to put in it (the
+   server sends an empty total when nothing has been read yet), so the hero
+   does not collapse and jump when the first total lands. */
+.hero .balance {
+  min-height: 1.05em;
+}
+
 /* The change since the window opened, between the total and the sentence:
    mono at 13, in the direction's colour, and absent when there is none. */
 .hero-delta {
