@@ -28,6 +28,7 @@ import { fileURLToPath } from 'node:url';
 
 import { createStore } from '../../src/store.ts';
 import { createAudit } from '../../src/audit.ts';
+import { seatSecretPath } from '../../src/agents.ts';
 import { defaultPolicy, savePolicy } from '../../src/policy/file.ts';
 import { renderSentences } from '../../src/policy/render.ts';
 import { fetchIntentsHoldings } from '../../src/ledger/intents.ts';
@@ -56,6 +57,8 @@ async function boot(dir: string, port: number): Promise<{ pid: number; stop: () 
     });
   });
   assert.equal(up, true, `the backend came up on ${port}`);
+  // Every /api/mcp op carries this boot's seat secret; the backend wrote it to the data dir.
+  secrets.set(port, fs.readFileSync(seatSecretPath(dir), 'utf8').trim());
   return {
     pid: child.pid ?? -1,
     stop: () =>
@@ -66,7 +69,22 @@ async function boot(dir: string, port: number): Promise<{ pid: number; stop: () 
   };
 }
 
-function request(port: number, route: string, body?: string): Promise<{ status: number; body: string }> {
+// The seat secret of the backend on each port, read off its data dir when it came up.
+const secrets = new Map<number, string>();
+
+// The same body with the seat secret added, on the agent's door only. A body that is not JSON
+// goes down the wire as it is, because a test that sends one is testing exactly that.
+function withSeat(port: number, route: string, body: string): string {
+  if (route !== '/api/mcp') return body;
+  try {
+    return JSON.stringify({ ...(JSON.parse(body) as Record<string, unknown>), secret: secrets.get(port) ?? '' });
+  } catch {
+    return body;
+  }
+}
+
+function request(port: number, route: string, rawBody?: string): Promise<{ status: number; body: string }> {
+  const body = rawBody === undefined ? undefined : withSeat(port, route, rawBody);
   return new Promise((resolve, reject) => {
     const req = http.request(
       {

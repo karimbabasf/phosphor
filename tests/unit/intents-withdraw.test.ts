@@ -31,6 +31,7 @@ import {
   minReceivedFor,
   ourWalletOn,
 } from '../../src/rails/intents-withdraw.ts';
+import { TEST_QUOTE_KEY, signQuote } from './helpers/signed-quote.ts';
 
 // ---------- fixtures ----------
 
@@ -185,6 +186,9 @@ type Overrides = {
   settledAmountOut?: string;
   nearTxHashes?: string[];
   submitThrows?: boolean;
+  // Applied to the quote response AFTER it is signed: what a proxy between this app and the
+  // API would do to it. Left out, the response arrives as signed.
+  tamper?: (signed: Record<string, unknown>) => Record<string, unknown>;
 };
 
 function apiOf(over: Overrides = {}): { api: IntentsApiPort; calls: ApiCalls } {
@@ -193,9 +197,12 @@ function apiOf(over: Overrides = {}): { api: IntentsApiPort; calls: ApiCalls } {
     tokens: async () => apiTokens,
     async quote(params) {
       calls.quotes.push(params);
-      const raw: Record<string, unknown> = { quote: quoteOf(over.quote) };
-      if (over.echo !== null) raw['quoteRequest'] = echoOf(over.echo ?? {});
-      return { quote: quoteOf(over.quote), raw };
+      const unsigned: Record<string, unknown> = { quote: quoteOf(over.quote) };
+      if (over.echo !== null) unsigned['quoteRequest'] = echoOf({ dry: params.dry, ...(over.echo ?? {}) });
+      // Signed the way 1Click signs its answers, over the whole payload, quote included.
+      const signed = signQuote(unsigned);
+      const raw = over.tamper === undefined ? signed : over.tamper(signed);
+      return { quote: raw['quote'] as OneClickQuote, raw };
     },
     async generateIntent(params) {
       calls.generated.push(params);
@@ -240,6 +247,7 @@ function railOf(over: Overrides = {}, opts: { addresses?: AppConfig['addresses']
     sleepImpl: async () => {},
     pollIntervalMs: 1,
     pollTimeoutMs: 10,
+    quoteKey: TEST_QUOTE_KEY,
   });
   return { rail, calls };
 }
@@ -643,7 +651,10 @@ test('the executor hears the handle after the signature and the hash after the s
   const heard: Array<{ txids?: string[]; handle?: string; deadline?: string }> = [];
   const result = await rail.execute(draftOf(), 'p1', { onEvidence: (e) => heard.push(e) });
   assert.equal(result.ok, true, result.detail);
-  assert.deepEqual(heard[0], { handle: HANDLE, deadline: DEADLINE });
+  // The signed quote rides on both, so a row that dies inside the wait still has what 1Click signed.
+  const { quote: signedQuote, ...rest } = heard[0] as { quote?: unknown; handle?: string; deadline?: string };
+  assert.deepEqual(rest, { handle: HANDLE, deadline: DEADLINE });
+  assert.equal((signedQuote as { depositAddress?: string } | undefined)?.depositAddress, HANDLE);
   assert.deepEqual(heard[1].txids, ['HASH123']);
   assert.equal(heard[1].handle, HANDLE);
 });
@@ -663,4 +674,30 @@ test('valueUsd trusts a finite amount and refuses to under-report an unusable on
   const { rail } = railOf();
   assert.equal(rail.valueUsd(draftOf()), 7.607);
   assert.equal(rail.valueUsd(draftOf({ amountUsd: Number.NaN })), Infinity, 'an unpriced draft is not a cheap one');
+});
+
+// ---------- the quote signature ----------
+//
+// The handle is the one field the echo never covered. The rail verifies 1Click's signature over
+// the quote (src/quote-signature.ts, through spendFromIntents) before the handle is used.
+
+test('a quote whose handle was changed after signing is refused before anything is signed', async () => {
+  const { rail, calls } = railOf({ tamper: (signed) => ({ ...signed, quote: { ...(signed.quote as Record<string, unknown>), depositAddress: 'attacker.near' } }) });
+  await assert.rejects(() => rail.execute(draftOf()), /signature does not verify/);
+  assert.equal(calls.generated.length, 0, 'no intent was generated');
+  assert.equal(calls.submitted.length, 0, 'nothing was submitted');
+});
+
+test('an unsigned quote is refused, and a signed one lands its record in the evidence', async () => {
+  const unsigned = railOf({ tamper: (signed) => ({ ...signed, signature: undefined }) });
+  await assert.rejects(() => unsigned.rail.execute(draftOf()), /carries no signature/);
+  assert.equal(unsigned.calls.submitted.length, 0);
+
+  const { rail } = railOf();
+  const result = await rail.execute(draftOf());
+  assert.equal(result.ok, true, result.detail);
+  const quote = result.evidence?.quote;
+  assert.ok(quote !== undefined, 'the signed quote is on the result');
+  assert.equal(quote.depositAddress, HANDLE);
+  assert.match(quote.signature, /^ed25519:/);
 });

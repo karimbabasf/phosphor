@@ -23,9 +23,10 @@
 //   Presence is still a TTL over pings, because an MCP process cannot say goodbye when it is
 //   killed. Each member carries its own TTL, derived from the interval its client declared.
 //
-//   This is still not a security boundary. Anything with a shell can post as any session; see
-//   the KNOWN HOLE note at the top of src/server.ts. It is what keeps a team coordinated, not
-//   what keeps an attacker out.
+//   This is still not a security boundary. Anything holding this boot's seat secret can post as
+//   any session; see the KNOWN HOLE note at the top of src/server.ts. It is what keeps a team
+//   coordinated, not what keeps an attacker out. The door in src/http/mcp.ts is what does that,
+//   and it asks `recognises` below before any op reaches the roster.
 //
 //   The money path is still guarded, and now by something narrower than exclusivity. A member
 //   holds a ROLE. An `operator` may propose; an `analyst` cannot, and the tools that would let
@@ -36,6 +37,7 @@
 //   three agents cannot outvote a human.
 
 import crypto from 'node:crypto';
+import path from 'node:path';
 
 export type AgentRole = 'operator' | 'analyst';
 
@@ -73,11 +75,15 @@ export type AgentPresence = {
   markAnalyst(session: string): void;
   /* No `role`. It used to be read off the body and it is decided by the seat now; a client may
      still send one and it is ignored, which is what makes the wire claim stop mattering. */
-  /* `secret` is this boot's seat secret, if the caller has one. It is not a role and it is not an
-     authorisation for anything the agent does: it only decides whether a NEW session may take one
-     of the seats reserved for the agents this app starts. See RESERVED_SEATS. */
+  /* `secret` is this boot's seat secret. The door has already checked it by the time a body
+     reaches claim or check (see `recognises`); here it only decides whether a NEW session may
+     take one of the seats reserved for the agents this app starts. See RESERVED_SEATS. */
   claim(params: { session?: unknown; client?: unknown; intervalMs?: unknown; label?: unknown; parent?: unknown; secret?: unknown }): JoinResult;
   check(params: { session?: unknown; client?: unknown; secret?: unknown }): JoinResult;
+  /* Whether `supplied` is this boot's seat secret. THE DOOR'S CREDENTIAL: src/http/mcp.ts asks
+     this before any op, hello and bye included, reaches the roster or a handler. A roster built
+     with no secret answers false to everything, which is closed rather than open. */
+  recognises(supplied: unknown): boolean;
   release(session: unknown): AgentMember | null;
   // The human replacing the agents, from the window. Frees the roster AND revokes every
   // session on it, which are two different things and both are needed: freeing alone would let
@@ -126,9 +132,23 @@ export const MAX_AGENTS = 6;
    the two hand-attached agents the cap was sized for in the first place.
    RECOGNISED means one of two things, and neither can be claimed on the wire: the session id is
    one this app minted (it spawns the driver and every worker, so it knows their ids before their
-   first call), or the caller presented this boot's seat secret, which reaches an agent this app
-   spawned through childEnv and reaches nothing else. */
+   first call), or the caller presented this boot's seat secret.
+   Since the door started taking the secret on every op (src/http/mcp.ts), nothing without it
+   reaches this roster at all, so every seated session is a recognised one and this reservation
+   is a second wall behind the first. It stays because it costs nothing and because a roster
+   built without a secret (every presence test) still needs the rule stated. */
 export const RESERVED_SEATS = 4;
+
+/* Where a proxy a human started by hand finds this boot's seat secret: one line, owner-readable
+   only, written under the data directory by src/main.ts before the port opens and rewritten on
+   every boot. The agents this app spawns get the same value through PHOSPHOR_SEAT instead and
+   never read the file. src/mcp.ts reads it when the variable is absent; src/http/mcp.ts names it
+   in the refusal, so a proxy that has neither is told where to look. */
+export const SEAT_SECRET_FILE = 'agent.secret';
+
+export function seatSecretPath(dataDir: string): string {
+  return path.join(dataDir, SEAT_SECRET_FILE);
+}
 
 export type AgentOptions = {
   // Seats an unrecognised session may not take. Zero, the default, is the old behaviour and is
@@ -222,10 +242,12 @@ export function createAgents(
      secret matches nothing rather than matching everything.
      It is NOT as strong as the window token and the difference is worth stating. It reaches the
      agents this app spawns through childEnv, and `ps eww <pid>` prints the environment of any
-     process this user owns, so a local process can read it off a running driver child. That is
-     survivable because of when the attack lands: the roster is filled BEFORE the human presses
-     Start, when there is no child to read it from. Recognition by minted session id, below, does
-     not depend on it at all. */
+     process this user owns, so a local process can read it off a running driver child; the file
+     it is also written to (SEAT_SECRET_FILE) is readable by any process running as this user.
+     What it closes is everything that is not that: a web page, a sandboxed iframe, an extension's
+     native host with no shell, a process under another account, and any local process that
+     did not go looking. Loopback TCP has no peer identity, and this is the credential in its
+     place until the door moves to a socket that has one. */
   function presentedSecret(supplied: unknown): boolean {
     if (secret.length === 0) return false;
     if (typeof supplied !== 'string' || supplied.length === 0) return false;
@@ -324,6 +346,7 @@ export function createAgents(
       analysts.add(session);
     },
     claim: (params) => resolve(params, true),
+    recognises: (supplied) => presentedSecret(supplied),
     check: (params) => {
       const result = resolve(params, false);
       // Stamped only on a granted op. A refused check is an agent being turned away, not a

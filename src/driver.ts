@@ -249,9 +249,34 @@ export function resolveClaudeBin(override?: string): string {
   );
 }
 
-// The child inherits a scrubbed environment. ANTHROPIC_API_KEY would silently move billing off
-// the subscription this whole design is built on, and a stray OPENAI_API_KEY has no business in
-// a process that talks to a wallet. Removing them is not politeness, it is the business model.
+/* THE CHILD'S ENVIRONMENT IS A LIST OF NAMES THIS APP CHOSE, never the parent's minus a list.
+   childEnv used to copy process.env and delete the twelve names in STRIPPED. Everything else in
+   the shell that launched the app rode along into a process that `ps eww` shows to every other
+   process this user runs: PHOSPHOR_1CLICK_API_KEY, which the list never named, and whatever
+   AWS_SECRET_ACCESS_KEY, GITHUB_TOKEN or NPM_TOKEN a developer's shell carries. A denylist is
+   a list of the names somebody thought of. This is the other kind of list: what a process needs
+   to run at all (a path, a home, a locale, a temp dir, a terminal), plus the names each child's
+   own code reads, added by name below. NODE_OPTIONS is deliberately not here: it is a way to
+   load code into any Node process, and the runner child is one. */
+export const INHERITED_ENV = ['PATH', 'HOME', 'USER', 'SHELL', 'LANG', 'LC_ALL', 'TMPDIR', 'TERM'] as const;
+
+export function inheritedEnv(parent: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const name of INHERITED_ENV) if (parent[name] !== undefined) env[name] = parent[name];
+  return env;
+}
+
+// Where Claude Code keeps its login when the person moved it off ~/.claude. Passed through when
+// set and only then, because it is the one name outside INHERITED_ENV the child needs to be
+// logged in: the credentials file lives under it, and a child that cannot find it answers
+// "Not logged in" and the driver is dead (see the note above assertMemory).
+const CLAUDE_CONFIG_DIR = 'CLAUDE_CONFIG_DIR';
+
+// The names STRIPPED used to delete, kept as the statement of what must never reach an agent and
+// as the second wall the test holds the allowlist against. ANTHROPIC_API_KEY would silently move
+// billing off the subscription this whole design is built on, and a stray OPENAI_API_KEY has no
+// business in a process that talks to a wallet. None of them is on INHERITED_ENV, so none is
+// passed; this list is what says that on purpose rather than by omission.
 export const STRIPPED = [
   /* The approval token, if anything ever puts it here again. It travels down the backend's stdin
      now (src/http/auth.ts), so this process has none to pass on, and the line stays because the
@@ -333,9 +358,12 @@ export function childEnv(
   port: number,
   sessionId: string,
   identity?: { role?: string; label?: string; parent?: string },
+  parent: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
+  // See INHERITED_ENV: the names a process needs, and nothing the parent's shell happened to hold.
+  const env = inheritedEnv(parent);
   for (const key of STRIPPED) delete env[key];
+  if (parent[CLAUDE_CONFIG_DIR] !== undefined) env[CLAUDE_CONFIG_DIR] = parent[CLAUDE_CONFIG_DIR];
   // See the note above assertMemory. This is what keeps ~/.claude/projects/<slug>/memory/ out of
   // a session that can move money; assertMemory is what checks that it worked.
   env[DISABLE_AUTO_MEMORY] = '1';

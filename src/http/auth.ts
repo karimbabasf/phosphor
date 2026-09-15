@@ -190,8 +190,8 @@ export function hostIsLocal(req: http.IncomingMessage): boolean {
 // Origin is a forbidden header name, so no page can set it: a matching Origin can only come
 // from a page this app served, or from a local process that chose to send one. The local
 // process is not held out by this line, it is held out by the window token on every route that
-// decides anything; on /api/mcp, where the agent's door deliberately has no token, this is
-// what makes the door unreachable from a browser.
+// decides anything and by the seat secret on /api/mcp (src/http/mcp.ts); this line is what
+// makes both doors unreachable from a browser.
 export function sameOrigin(req: http.IncomingMessage): boolean {
   if (!hostIsLocal(req)) return false;
   const host = String(req.headers.host ?? '');

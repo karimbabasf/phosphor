@@ -20,6 +20,7 @@ import {
   cloidFor,
   createExchange,
   defaultTransport,
+  expiredAction,
   isAmbiguousVenue,
   orderErrors,
   stopLimitPx,
@@ -335,7 +336,13 @@ async function fire(m: Extract<ToChild, { cmd: 'fire' }>): Promise<FromChild> {
         return { ev: 'error', seq: m.seq, id: m.id, message: `the venue did not give a clear answer to the bracket: ${refused.join('; ')}`, ambiguous: true };
       }
       h.fired = false;
-      return { ev: 'refused', seq: m.seq, id: m.id, reason: `the venue refused the bracket: ${refused.join('; ')}` };
+      // A stale expiresAfter is the venue saying the action reached it more than a minute after
+      // it was signed. Definite (nothing rests), and worth naming: the market did not refuse
+      // this, the clock on this machine or the path to the venue did.
+      const why = expiredAction(res)
+        ? 'the venue refused the bracket as expired: it read the action more than a minute after it was signed, so the clock here or the path to the venue is slow and nothing rests'
+        : 'the venue refused the bracket';
+      return { ev: 'refused', seq: m.seq, id: m.id, reason: `${why}: ${refused.join('; ')}` };
     }
     h.cloids = cloids;
     let oids: { entry?: number; stop?: number; target?: number } = { entry: oidOf(first), stop: oidOf(statuses[1]), target: oidOf(statuses[2]) };

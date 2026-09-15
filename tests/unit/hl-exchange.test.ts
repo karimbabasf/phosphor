@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  EXPIRES_AFTER_MS,
   aggressiveLimitPrice,
   buildCancelAction,
   buildOrderAction,
@@ -8,8 +9,15 @@ import {
   buildUpdateLeverageAction,
   createExchange,
   createNonces,
+  expiredAction,
+  isAmbiguousVenue,
   newCloid,
+  orderErrors,
 } from '../../src/hl/exchange.ts';
+import { signL1Action } from '../../src/hl/sign.ts';
+
+// A throwaway key. It signs nothing on any real network and holds nothing.
+const KEY = '0x0123456789012345678901234567890123456789012345678901234567890123' as const;
 
 const base = {
   assetId: 0,
@@ -98,15 +106,16 @@ test('cancel and leverage actions keep their documented shapes', () => {
     { type: 'updateLeverage', asset: 3, isCross: true, leverage: 5 });
 });
 
-test('the posted envelope carries action, nonce, signature and a null vault', async () => {
+test('the posted envelope carries action, nonce, signature, a null vault and an expiry a minute ahead', async () => {
   // Typed rather than inferred from the initial null: the assignment happens inside an async
   // callback, which control-flow narrowing does not follow, so an inferred type collapses to
   // never at the assertions below.
   let seen = null as Record<string, unknown> | null;
+  const NOW = 1_700_000_000_000;
   const ex = createExchange({
-    privKey: '0x0123456789012345678901234567890123456789012345678901234567890123',
-
+    privKey: KEY,
     baseUrl: 'https://example.invalid',
+    now: () => NOW,
     transport: async (_url, body) => {
       seen = body as Record<string, unknown>;
       return { status: 'ok' };
@@ -115,12 +124,35 @@ test('the posted envelope carries action, nonce, signature and a null vault', as
 
   await ex.order([base]);
   assert.ok(seen);
-  assert.deepEqual(Object.keys(seen).sort(), ['action', 'nonce', 'signature', 'vaultAddress']);
+  assert.deepEqual(Object.keys(seen).sort(), ['action', 'expiresAfter', 'nonce', 'signature', 'vaultAddress']);
   assert.equal(seen.vaultAddress, null);
   const sig = seen.signature as { r: string; s: string; v: number };
   assert.match(sig.r, /^0x[0-9a-f]{64}$/);
   assert.ok(sig.v === 27 || sig.v === 28);
-  assert.ok(!('expiresAfter' in seen), 'omitted when unused, since an extra key changes the hash');
+  /* EVERY L1 ACTION EXPIRES A MINUTE AFTER IT WAS SIGNED. The venue rejects an action whose
+     expiresAfter has passed, so one held up on the way (a stalled socket, a retry after a
+     timeout) cannot land minutes later against a market that moved. It is part of the signed
+     bytes (src/hl/sign.ts appends it to the hash), so the signature below has to have been made
+     over it, and the vendor vectors in tests/unit/hl-sign.test.ts, which carry none, still hold. */
+  assert.equal(seen.expiresAfter, NOW + EXPIRES_AFTER_MS);
+  assert.equal(EXPIRES_AFTER_MS, 60_000);
+  const expected = await signL1Action(KEY, seen.action, seen.nonce as number, null, NOW + EXPIRES_AFTER_MS);
+  assert.deepEqual(sig, expected, 'the signature covers the expiry');
+  const without = await signL1Action(KEY, seen.action, seen.nonce as number, null, null);
+  assert.notEqual(sig.r, without.r, 'and is not the signature of the same action with no expiry');
+});
+
+test('an action the venue rejected as expired is a definite refusal, never ambiguous', async () => {
+  const ex = createExchange({
+    privKey: KEY,
+    baseUrl: 'https://example.invalid',
+    transport: async () => ({ status: 'err', response: 'Action expired: expiresAfter 1700000060000 is before the current time' }),
+  });
+  const res = await ex.order([base]);
+  assert.deepEqual(orderErrors(res), ['Action expired: expiresAfter 1700000060000 is before the current time']);
+  assert.equal(isAmbiguousVenue(res), false, 'the venue answered: the action does not exist');
+  assert.equal(expiredAction(res), true);
+  assert.equal(expiredAction({ status: 'ok', response: { type: 'order', data: { statuses: [{ error: 'Insufficient margin' }] } } }), false);
 });
 
 // ---------- a venue error the transport cannot read is ambiguous (A.F8) ----------

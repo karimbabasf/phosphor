@@ -46,6 +46,8 @@
 import { ONECLICK_TERMINAL, oneLine, quoteEchoProblems } from '../intents.ts';
 import type { OneClickEndpointType, OneClickQuote, OneClickStatus, QuoteEcho } from '../intents.ts';
 import type { RailHooks } from '../types.ts';
+import { quoteSignatureProblems, signedQuoteRecord } from '../quote-signature.ts';
+import type { QuoteRecord } from '../quote-signature.ts';
 import { INTENTS_SIGNING_STANDARD, checkIntentPayload, intentDeadline } from './intents-native.ts';
 import type { IntentsApiPort, IntentsSignerPort } from './intents-native.ts';
 import { submitSignedIntent } from './intents-submit.ts';
@@ -59,6 +61,9 @@ export type IntentsSpendDeps = {
   pollIntervalMs: number;
   pollTimeoutMs: number;
   maxDeadlineMs: number;
+  // The key 1Click signs quotes with. Left unset it is the production key; a test hands the
+  // key its own fake signs with, and nothing else ever sets it.
+  quoteKey?: string;
 };
 
 export type IntentsSpendRequest = {
@@ -87,6 +92,7 @@ export type IntentsSpendOutcome =
       depositAddress: string; // the handle inside the verifier the balance was handed to
       deadline: string; // the signed intent's own deadline, ISO
       quote: OneClickQuote;
+      signedQuote: QuoteRecord; // what 1Click signed, verified before the handle was used
       watch: OneClickStatus; // the last status seen, terminal or not
     }
   | {
@@ -96,6 +102,7 @@ export type IntentsSpendOutcome =
       depositAddress: string;
       deadline: string;
       quote: OneClickQuote;
+      signedQuote: QuoteRecord;
     };
 
 function errText(err: unknown): string {
@@ -126,7 +133,9 @@ export async function spendFromIntents(deps: IntentsSpendDeps, req: IntentsSpend
   });
   const quote = response.quote;
 
-  const problems = [...(req.checkQuote?.(quote) ?? []), ...quoteEchoProblems(response.raw, req.echo)];
+  // The signature is checked beside the caller's own checks and the echo, before the handle is
+  // read for anything: a quote 1Click did not sign, or signed with a different handle, stops here.
+  const problems = [...(req.checkQuote?.(quote) ?? []), ...quoteEchoProblems(response.raw, req.echo), ...quoteSignatureProblems(response, deps.quoteKey)];
   if (problems.length > 0) throw new Error(`live quote does not match the approved draft: ${problems.join('; ')}`);
 
   // For an INTENTS deposit type this is a handle inside the verifier rather than a chain
@@ -136,6 +145,7 @@ export async function spendFromIntents(deps: IntentsSpendDeps, req: IntentsSpend
   if (typeof depositAddress !== 'string' || depositAddress.trim() === '') {
     throw new Error(`the quote carries no deposit handle to attach an intent to (got ${oneLine(depositAddress, 60)})`);
   }
+  const signedQuote = signedQuoteRecord(response);
 
   const generated = await deps.api.generateIntent({ signerId: req.owner, depositAddress });
 
@@ -167,18 +177,18 @@ export async function spendFromIntents(deps: IntentsSpendDeps, req: IntentsSpend
   const payload = generated.payload as string;
   const deadline = intentDeadline(payload) ?? 'unknown';
   const signature = await deps.signer.signErc191(deps.keysPath, payload);
-  tell(hooks, { handle: depositAddress, deadline });
+  tell(hooks, { handle: depositAddress, deadline, quote: signedQuote });
 
   const sent = await submitSignedIntent(deps.api, { payload, signature });
   if (!sent.submitted) {
-    return { signed: true, submitted: false, error: sent.error, depositAddress, deadline, quote };
+    return { signed: true, submitted: false, error: sent.error, depositAddress, deadline, quote, signedQuote };
   }
   const submitted = sent.intent;
-  tell(hooks, { txids: [submitted.intentHash], handle: depositAddress, deadline });
+  tell(hooks, { txids: [submitted.intentHash], handle: depositAddress, deadline, quote: signedQuote });
 
   const watch = await watchStatus(deps, depositAddress);
 
-  return { signed: true, submitted: true, intentHash: submitted.intentHash, depositAddress, deadline, quote, watch };
+  return { signed: true, submitted: true, intentHash: submitted.intentHash, depositAddress, deadline, quote, signedQuote, watch };
 }
 
 // Polls until terminal, out of attempts, or out of time. Never throws once the intent has

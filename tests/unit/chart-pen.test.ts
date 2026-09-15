@@ -182,7 +182,7 @@ test('chart_draw: NaN, Infinity, strings and nulls in a price or a time are refu
       assert.ok(out.json.refused.some((r: string) => why.test(r)), `${why}: ${JSON.stringify(out.json.refused)}`);
     }
     // 1e999 is not a JSON number a client can build, so it goes down the wire by hand.
-    const body = JSON.stringify({ op: 'view', tool: 'chart_draw', session: 'a', args: { zones: [{ p1: 1, p2: 2 }], levels: [{ px: 1 }] } })
+    const body = JSON.stringify({ op: 'view', tool: 'chart_draw', session: 'a', secret: h.seat, args: { zones: [{ p1: 1, p2: 2 }], levels: [{ px: 1 }] } })
       .replace('"p1":1', '"p1":1e999')
       .replace('"px":1', '"px":-1e999');
     const inf = await raw(h.url, '/api/mcp', { 'content-type': 'application/json', origin: h.url }, body);

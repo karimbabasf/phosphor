@@ -14,7 +14,7 @@ import type { AddressInfo } from 'node:net';
 
 import { createServer } from '../../src/server.ts';
 import { createTradeView } from '../../src/trade/view.ts';
-import { createAgents } from '../../src/agents.ts';
+import { MAX_AGENTS, createAgents } from '../../src/agents.ts';
 import { createAudit } from '../../src/audit.ts';
 import { createStore } from '../../src/store.ts';
 import { defaultPolicy } from '../../src/policy/file.ts';
@@ -29,6 +29,9 @@ import type {
   ViewMode,
 } from '../../src/types.ts';
 
+// The seat secret every op on /api/mcp carries (src/http/mcp.ts).
+const SEAT = 's'.repeat(64);
+
 const CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 
 function tmpDir(): string {
@@ -42,7 +45,7 @@ const TOKEN = 'deadbeefcafef00d';
 // op takes the free seat and the rest are the same session. Seating it up front keeps the
 // connect edge out of the audit assertions, which is what the old agentSeen stub did.
 function seatedAgents() {
-  const agents = createAgents();
+  const agents = createAgents(Date.now, MAX_AGENTS, { secret: SEAT });
   agents.claim({ session: 'unnamed-session', client: 'test' });
   return agents;
 }
@@ -179,7 +182,7 @@ async function postMcp(h: Harness, body: unknown): Promise<{ status: number; jso
   const res = await fetch(`${h.url}/api/mcp`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', origin: h.url },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ secret: SEAT, ...(body as Record<string, unknown>) }),
   });
   return { status: res.status, json: await res.json() };
 }
@@ -202,7 +205,7 @@ async function screenHeader(h: Harness, body: unknown): Promise<string | null> {
   const res = await fetch(`${h.url}/api/mcp`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', origin: h.url },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ secret: SEAT, ...(body as Record<string, unknown>) }),
   });
   await res.text();
   return res.headers.get('x-phosphor-screen');

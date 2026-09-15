@@ -13,7 +13,8 @@
 // be checked; it is never a rule, and a symbol from the remote token list never becomes a
 // decision. The one thing we cannot verify is who owns the deposit address: that trust is
 // inherent to the protocol, so the rail checks the address is well formed, checks the
-// amounts the server echoes back, and lets the policy engine cap what is at stake.
+// amounts the server echoes back, verifies 1Click's signature over the whole quote before the
+// address is used (src/quote-signature.ts), and lets the policy engine cap what is at stake.
 
 import { parseUnits } from 'viem';
 import type { ChainId, TransferLeg, LegQuote, Quoter, Signer } from './types.ts';
@@ -229,7 +230,10 @@ export type OneClickQuote = {
 export type OneClickQuoteResponse = {
   quote: OneClickQuote;
   quoteRequest?: unknown;
-  signature?: string; // keep it: the docs say this is what resolves a dispute
+  // 1Click's Ed25519 signature over the quote, and the stamp it covers. Verified against the
+  // published key by every rail before a deposit address is used, and kept on the proposal row
+  // afterwards, because it is what resolves a dispute: see src/quote-signature.ts.
+  signature?: string;
   timestamp?: string;
   correlationId?: string;
   raw: unknown;

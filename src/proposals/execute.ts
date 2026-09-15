@@ -175,6 +175,7 @@ function pickEvidence(e: RailEvidence): RailEvidence {
   if (e.refundReason !== undefined) out.refundReason = e.refundReason;
   if (e.settledAmountOut !== undefined) out.settledAmountOut = e.settledAmountOut;
   if (e.explorerUrl !== undefined) out.explorerUrl = e.explorerUrl;
+  if (e.quote !== undefined) out.quote = e.quote;
   return out;
 }
 

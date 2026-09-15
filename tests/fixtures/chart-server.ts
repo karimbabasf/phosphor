@@ -14,7 +14,7 @@ import type { AddressInfo } from 'node:net';
 
 import { createServer } from '../../src/server.ts';
 import { createTradeView } from '../../src/trade/view.ts';
-import { createAgents } from '../../src/agents.ts';
+import { MAX_AGENTS, createAgents } from '../../src/agents.ts';
 import { createAudit } from '../../src/audit.ts';
 import { createStore } from '../../src/store.ts';
 import { defaultPolicy } from '../../src/policy/file.ts';
@@ -78,6 +78,8 @@ export type ChartHarness = {
   post: (route: string, body: unknown, headers?: Record<string, string>) => Promise<{ status: number; json: any }>;
   get: (route: string) => Promise<{ status: number; json: any }>;
   token: string;
+  // The seat secret the door takes; `mcp` carries it, `post` does not.
+  seat: string;
   audit: ReturnType<typeof createAudit>;
   agents: ReturnType<typeof createAgents>;
 };
@@ -142,7 +144,11 @@ export async function bootChartServer(
     live: opts.liveSocket === undefined ? undefined : { enabled: true, wsImpl: opts.liveSocket },
   });
 
-  const agents = createAgents();
+  /* This boot's seat secret, which every op on /api/mcp has to carry (src/http/mcp.ts). `mcp`
+     below sends it for a test that is not about the door; a test that is posts through `post`
+     and chooses what to carry. */
+  const seat = 's'.repeat(64);
+  const agents = createAgents(Date.now, MAX_AGENTS, { secret: seat });
   agents.claim({ session: 'unnamed-session', client: 'test' });
 
   const server = createServer({
@@ -214,6 +220,7 @@ export async function bootChartServer(
   return {
     url,
     token,
+    seat,
     audit,
     agents,
     close: () => {
@@ -227,7 +234,7 @@ export async function bootChartServer(
       plans = next;
     },
     fetches: () => fetches,
-    mcp: (body) => post('/api/mcp', body),
+    mcp: (body) => post('/api/mcp', { secret: seat, ...(body as Record<string, unknown>) }),
     post,
     get: async (route) => {
       const res = await fetch(`${url}${route}`);

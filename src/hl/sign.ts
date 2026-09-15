@@ -24,8 +24,9 @@
 //   4. Upper case in an address changes the hash. Every address is lowercased here.
 //   5. A local recover returning the right address proves nothing, because the payload you
 //      recovered from may not be the payload the L1 rebuilds. The test therefore pins the action
-//      hash itself against a fixed byte string, so a msgpack regression fails loudly here rather
-//      than silently at the venue.
+//      hash and the signatures against the vectors in the vendor's own Python SDK tests (same
+//      throwaway key, same actions, same nonces), so a msgpack regression fails loudly here
+//      rather than silently at the venue.
 
 import { keccak256, toHex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';

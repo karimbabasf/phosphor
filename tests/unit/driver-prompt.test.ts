@@ -37,8 +37,9 @@ test('no prose reaches the command line, whatever the caller asked for', () => {
 async function driveOnce(opts: { systemPrompt?: string }): Promise<{ turns: string[]; argv: string }> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-driver-prompt-'));
   const turnFile = path.join(dir, 'turns.jsonl');
-  const previous = process.env.PHOSPHOR_TEST_TURNS;
-  process.env.PHOSPHOR_TEST_TURNS = turnFile;
+  // The fixture writes under TMPDIR, one of the few names the driver lets a child inherit.
+  const previous = process.env.TMPDIR;
+  process.env.TMPDIR = dir;
   try {
     const driver = createDriver({
       repo: ROOT,
@@ -69,8 +70,8 @@ async function driveOnce(opts: { systemPrompt?: string }): Promise<{ turns: stri
       argv: buildArgv({ repo: ROOT, nodeBin: '/n', settings: '/s.json', sessionId: 'x' }).join(' '),
     };
   } finally {
-    if (previous === undefined) delete process.env.PHOSPHOR_TEST_TURNS;
-    else process.env.PHOSPHOR_TEST_TURNS = previous;
+    if (previous === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = previous;
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }
@@ -98,8 +99,9 @@ test('a driver with no role text sends the turn unchanged', async () => {
 test('the role text rides exactly one turn, not every turn', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-driver-prompt-'));
   const turnFile = path.join(dir, 'turns.jsonl');
-  const previous = process.env.PHOSPHOR_TEST_TURNS;
-  process.env.PHOSPHOR_TEST_TURNS = turnFile;
+  // The fixture writes under TMPDIR, one of the few names the driver lets a child inherit.
+  const previous = process.env.TMPDIR;
+  process.env.TMPDIR = dir;
   try {
     const driver = createDriver({
       repo: ROOT,
@@ -128,8 +130,8 @@ test('the role text rides exactly one turn, not every turn', async () => {
     assert.ok(turns[0].message.content[0].text.includes(ROLE));
     assert.equal(turns[1].message.content[0].text, 'second', 'a conversation is not the role text over and over');
   } finally {
-    if (previous === undefined) delete process.env.PHOSPHOR_TEST_TURNS;
-    else process.env.PHOSPHOR_TEST_TURNS = previous;
+    if (previous === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = previous;
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });

@@ -91,7 +91,9 @@ function stagePayload(): void {
 
   // `npm ci` against the copied lockfile rather than a copy of the working node_modules, so the
   // bundle carries exactly the locked versions and nothing a stray `npm install` left behind.
-  execFileSync('npm', ['ci', '--omit=dev', '--no-audit', '--no-fund'], { cwd: STAGE, stdio: 'inherit' });
+  // --ignore-scripts because the stage has no .npmrc: no dependency runs code at install time
+  // into the tree that ships, whatever a future version of one of them declares.
+  execFileSync('npm', ['ci', '--omit=dev', '--no-audit', '--no-fund', '--ignore-scripts'], { cwd: STAGE, stdio: 'inherit' });
   const installed = bytes(path.join(STAGE, 'node_modules'));
 
   prune(path.join(STAGE, 'node_modules'));

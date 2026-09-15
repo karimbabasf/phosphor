@@ -27,7 +27,33 @@ export type ExchangeConfig = {
   privKey: `0x${string}`;
   baseUrl: string;
   transport?: Transport;
+  // The clock the expiry is read from. Injected by tests; the runner leaves it on Date.now.
+  now?: () => number;
+  // How far ahead of `now` every action expires. See EXPIRES_AFTER_MS.
+  expiresAfterMs?: number;
 };
+
+/* EVERY L1 ACTION THIS APP SIGNS EXPIRES ONE MINUTE AFTER IT WAS SIGNED.
+   `expiresAfter` is a unix millisecond timestamp the venue reads on every L1 action (order,
+   cancel, modify, leverage, scheduleCancel) and rejects the action after; it is part of the
+   signed bytes (src/hl/sign.ts appends it to the action hash), so it cannot be stripped on the
+   way. What it closes: a bracket that sat in a stalled socket, or was retried after a timeout,
+   landing minutes later against a market that has moved, when the plan that authorised it was
+   priced against a mark that is gone. A minute is long enough for a slow venue round trip and
+   short enough that a stale fill is impossible. The venue documents the consequence: a rejected
+   stale action costs five times the usual address rate limit, which is a reason to keep the
+   window honest, not a reason to drop it. User-signed actions (spotSend, usdClassTransfer, the
+   master-key rails) do not take the field, and they do not come through here. */
+export const EXPIRES_AFTER_MS = 60_000;
+
+// Whether the venue rejected an action because its expiresAfter had passed. A definite answer:
+// the action does not exist at the venue, so the caller refuses and may sign a fresh one. The
+// venue does not document the exact sentence, so this reads the top-level error for the word.
+export function expiredAction(response: unknown): boolean {
+  const r = response as { status?: unknown; response?: unknown } | null;
+  if (r === null || typeof r !== 'object' || r.status === 'ok') return false;
+  return typeof r.response === 'string' && /expir/i.test(r.response);
+}
 
 export type OrderRequest = {
   assetId: number;
@@ -433,13 +459,18 @@ export function aggressiveLimitPrice(reference: number, isBuy: boolean, maxSlipp
 
 export function createExchange(cfg: ExchangeConfig) {
   const transport = cfg.transport ?? defaultTransport;
-  const nonces = createNonces();
+  const now = cfg.now ?? (() => Date.now());
+  const expiresAfterMs = cfg.expiresAfterMs ?? EXPIRES_AFTER_MS;
+  const nonces = createNonces(now);
 
-  async function post(action: unknown, expiresAfter: number | null = null): Promise<unknown> {
+  // Every action expires EXPIRES_AFTER_MS after it is signed unless the caller says otherwise;
+  // null is for an action that does not take the field, and nothing posted through here is one.
+  async function post(action: unknown, expiresAfter?: number | null): Promise<unknown> {
+    const expires = expiresAfter === undefined ? now() + expiresAfterMs : expiresAfter;
     const nonce = nonces.next();
-    const signature = await signL1Action(cfg.privKey, action, nonce, null, expiresAfter);
+    const signature = await signL1Action(cfg.privKey, action, nonce, null, expires);
     const body: Record<string, unknown> = { action, nonce, signature, vaultAddress: null };
-    if (expiresAfter !== null) body.expiresAfter = expiresAfter;
+    if (expires !== null) body.expiresAfter = expires;
     return await transport(`${cfg.baseUrl}/exchange`, body);
   }
 

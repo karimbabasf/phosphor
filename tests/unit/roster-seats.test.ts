@@ -7,15 +7,15 @@
 // attacker cared to, and the audit log filled with agent_connected lines for six agents that did
 // not exist. Availability of the money surface, taken by anything with a shell and a loop.
 //
-// THE FIX, and it is deliberately not authentication. /api/mcp still has no credential, an agent's
-// door still has none by design, and nothing here decides what an agent may DO. What it decides is
-// narrower: four of the six seats may only be taken by a session this app recognises, which means
-// either an id this app minted (it spawns the driver and every worker, so it knows their ids
-// before their first call) or a caller that presented this boot's seat secret, which reaches an
-// agent this app spawned through childEnv and reaches nothing else.
+// THE FIX, in two layers. The roster holds four of the six seats for a session this app
+// recognises: an id this app minted (it spawns the driver and every worker, so it knows their ids
+// before their first call) or a caller that presented this boot's seat secret. That was written
+// as deliberately not authentication. It became authentication later: the door itself
+// (src/http/mcp.ts) now takes the secret on EVERY op from every session, hello included, so the
+// six-hello script never reaches the roster at all. The reservation stays as the wall behind it.
 //
-// The first half is asserted against createAgents, the second over real HTTP through handleMcp,
-// because the gate is only worth anything if the route reads what the roster checks.
+// The roster half is asserted against createAgents, the door half over real HTTP through
+// handleMcp, because the gate is only worth anything if the route reads what the roster checks.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -119,14 +119,15 @@ test('the reserved gate is off unless the app asks for it', () => {
 
 /* ---------- over the wire ----------
 
-   The roster can hold whatever it likes back if the route never passes the secret on. handleMcp
-   hands the whole body to claim(), so this is the assertion that the field survives the trip. */
+   The door reads the secret before the roster does. handleMcp hands the whole body to claim(),
+   so this is also the assertion that the field survives the trip for a caller that has it. */
 
 type Wire = { url: string; close: () => Promise<void>; audit: string[] };
 
 async function boot(agents: ReturnType<typeof createAgents>): Promise<Wire> {
   const audit: string[] = [];
   const ctx = {
+    cfg: { dataDir: '/tmp/phosphor-roster-test' },
     agents,
     seats: new Set<string>(),
     audit: { append: (type: string) => audit.push(type) },
@@ -157,21 +158,35 @@ async function hello(wire: Wire, body: Record<string, unknown>): Promise<number>
   return res.status;
 }
 
-test('the six-hello script no longer keeps the app own agent out', async () => {
+test('the six-hello script is refused at the door and seats nobody', async () => {
   const agents = roster();
   const wire = await boot(agents);
   try {
     // The attack, verbatim: six distinct invented sessions, no credential.
     const codes: number[] = [];
     for (let n = 0; n < 6; n += 1) codes.push(await hello(wire, { session: `sess${n}` }));
-    assert.deepEqual(codes, [200, 200, 409, 409, 409, 409], 'four of the six seats are not on offer');
+    assert.deepEqual(codes, [401, 401, 401, 401, 401, 401], 'no seat is on offer without the secret');
+    assert.equal(agents.connected(), 0, 'a refused hello is not a member');
 
-    // And the app's own two routes in, over the same wire that just refused four times.
+    // And the app's own agents in, over the same wire that just refused six times. A worker's
+    // id was minted by the app AND its process carries the secret (childEnv), so it brings both.
     agents.markAnalyst('worker-1');
-    assert.equal(await hello(wire, { session: 'worker-1' }), 200, 'a session the app minted');
-    assert.equal(await hello(wire, { session: 'driver-1', secret: SECRET }), 200, 'and one carrying the secret');
+    assert.equal(await hello(wire, { session: 'worker-1', secret: SECRET }), 200, 'a session the app minted');
+    assert.equal(await hello(wire, { session: 'driver-1', secret: SECRET }), 200, 'and the driver');
+    assert.equal(agents.member('worker-1')?.role, 'analyst');
+    assert.equal(agents.connected(), 2);
+  } finally {
+    await wire.close();
+  }
+});
 
-    assert.equal(agents.connected(), 4);
+test('a minted id without the secret is still refused: the door does not know the roster', async () => {
+  const agents = roster();
+  const wire = await boot(agents);
+  try {
+    agents.markAnalyst('worker-1');
+    assert.equal(await hello(wire, { session: 'worker-1' }), 401);
+    assert.equal(agents.connected(), 0);
   } finally {
     await wire.close();
   }
@@ -181,7 +196,6 @@ test('a refused hello is logged once rather than once a heartbeat', async () => 
   const agents = roster();
   const wire = await boot(agents);
   try {
-    for (let n = 0; n < 2; n += 1) await hello(wire, { session: `sess${n}` });
     for (let n = 0; n < 5; n += 1) await hello(wire, { session: 'noisy' });
     assert.equal(
       wire.audit.filter((type) => type === 'agent_rejected').length,

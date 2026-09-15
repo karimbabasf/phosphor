@@ -36,7 +36,8 @@ test('evidence a rail hands back mid-flight is on the row while it is still exec
   const hooks = slow.hooks();
   assert.ok(hooks?.onEvidence !== undefined, 'the executor handed the rail no hooks');
 
-  hooks.onEvidence({ handle: 'dep1', deadline: '2026-09-16T00:00:00.000Z' });
+  const signedQuote = { correlationId: 'c-1', timestamp: '2026-09-15T00:00:00.000Z', signature: 'ed25519:sig', depositAddress: 'dep1' };
+  hooks.onEvidence({ handle: 'dep1', deadline: '2026-09-16T00:00:00.000Z', quote: signedQuote });
   hooks.onEvidence({ txids: ['h1'], handle: 'dep1' });
 
   const row = h.store.list()[0];
@@ -44,6 +45,8 @@ test('evidence a rail hands back mid-flight is on the row while it is still exec
   assert.deepEqual(row.result?.txids, ['h1']);
   assert.equal(row.result?.evidence?.handle, 'dep1');
   assert.equal(row.result?.evidence?.deadline, '2026-09-16T00:00:00.000Z');
+  // The signed 1Click quote is kept as a rail handed it over, so a dispute has the vendor's own commitment.
+  assert.deepEqual(row.result?.evidence?.quote, signedQuote);
   assert.equal(h.eventTypes().filter((t) => t === 'submitted').length, 2, 'each piece of evidence is an audit line');
 
   // The process dies here. The next boot finds the row with its evidence, not without it.
@@ -52,6 +55,7 @@ test('evidence a rail hands back mid-flight is on the row while it is still exec
   assert.equal(moved[0].status, 'needs_reconciliation');
   assert.deepEqual(moved[0].result?.txids, ['h1']);
   assert.equal(moved[0].result?.evidence?.handle, 'dep1');
+  assert.deepEqual(moved[0].result?.evidence?.quote, signedQuote);
   assert.match(moved[0].result?.detail ?? '', /may already have sent/);
   assert.equal(h.svc.dailyLimit(25_000).spentUsd, 10, 'a hash on the row is money that left, and it counts');
 

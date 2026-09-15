@@ -16,12 +16,16 @@ import type { AddressInfo } from 'node:net';
 
 import { createServer } from '../../src/server.ts';
 import { createTradeView } from '../../src/trade/view.ts';
-import { createAgents } from '../../src/agents.ts';
+import { MAX_AGENTS, createAgents } from '../../src/agents.ts';
 import { createAudit } from '../../src/audit.ts';
 import { createStore } from '../../src/store.ts';
 import { defaultPolicy } from '../../src/policy/file.ts';
 import { createMarketData } from '../../src/market/index.ts';
 import type { AppConfig, ChainId, ChainStatus, LedgerSnapshot, Proposal } from '../../src/types.ts';
+
+// The seat secret every op on /api/mcp carries (src/http/mcp.ts); a test about the door's other
+// walls (Origin, Host, the body type) leaves it out on purpose, because those walls come first.
+const SEAT = 's'.repeat(64);
 
 const CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 
@@ -120,7 +124,7 @@ async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
     },
     getPolicy: () => defaultPolicy(),
     setKill: () => {},
-    agents: createAgents(),
+    agents: createAgents(Date.now, MAX_AGENTS, { secret: SEAT }),
     getView: () => 'pro',
     setView: () => {},
     trade: {
@@ -194,7 +198,7 @@ test('a cross-origin POST to /api/mcp is refused, closing CSRF (Findings 2 and 3
     const local = await raw(h.url, '/api/mcp', {
       method: 'POST',
       headers: { 'content-type': 'application/json', Origin: h.url },
-      body: JSON.stringify({ op: 'read', tool: 'start' }),
+      body: JSON.stringify({ secret: SEAT, op: 'read', tool: 'start' }),
     });
     assert.notEqual(local.status, 403, 'an Origin naming this app must be allowed');
   } finally {
@@ -263,7 +267,7 @@ test('a cross-chain swap that names no venue now builds, because the default ven
     const out = await raw(h.url, '/api/mcp', {
       method: 'POST',
       headers: { 'content-type': 'application/json', Origin: h.url },
-      body: JSON.stringify({
+      body: JSON.stringify({ secret: SEAT,
         op: 'propose',
         kind: 'swap',
         params: { chain: 'arb', toChain: 'sol', fromSymbol: 'USDC', toSymbol: 'SOL', amountIn: 100, minAmountOut: 0.5 },
@@ -281,7 +285,7 @@ test('a venue this app does not run is refused by name rather than swapped somew
     const out = await raw(h.url, '/api/mcp', {
       method: 'POST',
       headers: { 'content-type': 'application/json', Origin: h.url },
-      body: JSON.stringify({
+      body: JSON.stringify({ secret: SEAT,
         op: 'propose',
         kind: 'swap',
         params: { chain: 'arb', toChain: 'arb', fromSymbol: 'USDC', toSymbol: 'WETH', amountIn: 100, minAmountOut: 0.5, venue: 'uniswap-v3' },
@@ -300,7 +304,7 @@ test('the same cross-chain swap with venue oneclick passes the guard and builds'
     const out = await raw(h.url, '/api/mcp', {
       method: 'POST',
       headers: { 'content-type': 'application/json', Origin: h.url },
-      body: JSON.stringify({
+      body: JSON.stringify({ secret: SEAT,
         op: 'propose',
         kind: 'swap',
         params: { chain: 'arb', toChain: 'sol', fromSymbol: 'USDC', toSymbol: 'SOL', amountIn: 100, minAmountOut: 0.5, venue: 'oneclick' },
@@ -318,7 +322,7 @@ test('a negative amountIn is refused at the edge, never reaching the USD math (F
     const out = await raw(h.url, '/api/mcp', {
       method: 'POST',
       headers: { 'content-type': 'application/json', Origin: h.url },
-      body: JSON.stringify({
+      body: JSON.stringify({ secret: SEAT,
         op: 'propose',
         kind: 'swap',
         params: { chain: 'arb', fromSymbol: 'USDC', toSymbol: 'WETH', amountIn: -5, minAmountOut: 0 },
@@ -384,7 +388,7 @@ async function proposeWith(url: string, kind: string, params: Record<string, unk
        Origin is a forbidden header name, so no page can set it: a matching one can only come
        from a page this app served or from a local process that chose to send it. */
     headers: { 'content-type': 'application/json', origin: new URL(url).origin },
-    body: JSON.stringify({ op: 'propose', kind, params }),
+    body: JSON.stringify({ secret: SEAT, op: 'propose', kind, params }),
   });
 }
 

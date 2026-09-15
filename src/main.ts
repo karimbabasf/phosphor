@@ -30,7 +30,8 @@ import { oneClickClient, oneClickQuoter, syntheticQuoter, stubSigner, type OneCl
 import { createMarketData } from './market/index.ts';
 import { lineAt } from './analysis/trendline.ts';
 import { createProposalService } from './proposals.ts';
-import { MAX_AGENTS, RESERVED_SEATS, createAgents } from './agents.ts';
+import { MAX_AGENTS, RESERVED_SEATS, createAgents, seatSecretPath } from './agents.ts';
+import { atomicWrite } from './fsatomic.ts';
 import { createRunnerHost } from './runner/host.ts';
 import { readApiWallet, readApiWalletKey } from './runner/keys.ts';
 import { createTradeService } from './trade/service.ts';
@@ -170,10 +171,15 @@ useIdentityValue(handshake[1] ?? '');
    Minting here rather than doing without is what keeps a `npm run app` install working the same
    way as an installed one: the app's own driver child is recognised because it carries this value,
    and a developer running the app by hand has an in-app driver too. It is never served, never
-   logged and never printed. It goes to the agents this app spawns, through childEnv, and nowhere
-   else. See RESERVED_SEATS in src/agents.ts for what it decides and what it does not. */
+   logged and never printed. It goes to the agents this app spawns, through childEnv, and to one
+   file: EVERY op on /api/mcp needs it now (src/http/mcp.ts), and a proxy a human started by hand
+   (`npm run mcp`, the `claude mcp` registration) has no childEnv to get it from. So it is written
+   to <dataDir>/agent.secret before the port opens, owner-readable only, one line, and rewritten
+   on every boot so a copy taken from an earlier run opens nothing. src/mcp.ts reads it from there
+   when PHOSPHOR_SEAT is absent. */
 const seatSecret = (handshake[2] ?? '').length >= 32 ? (handshake[2] as string) : mintToken();
 useSeatSecret(seatSecret);
+atomicWrite(seatSecretPath(cfg.dataDir), `${seatSecret}\n`, { mode: 0o600 });
 
 /* The enclave transport key, line 4, and the relay built over it. Absent (a bare `npm run app`,
    an older shell) means a relay with no key, which answers every ask with no_relay: the wallet

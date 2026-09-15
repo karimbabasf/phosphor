@@ -15,7 +15,7 @@ import type { AddressInfo } from 'node:net';
 
 import { createServer } from '../../src/server.ts';
 import { createTradeView } from '../../src/trade/view.ts';
-import { createAgents } from '../../src/agents.ts';
+import { MAX_AGENTS, createAgents } from '../../src/agents.ts';
 import { createAudit } from '../../src/audit.ts';
 import { createStore } from '../../src/store.ts';
 import { defaultPolicy } from '../../src/policy/file.ts';
@@ -23,6 +23,9 @@ import { createMarketData } from '../../src/market/index.ts';
 import { createKeystore } from '../../src/keystore/index.ts';
 import { defaultParams } from '../../src/keystore/kdf.ts';
 import type { AppConfig, ChainId, ChainStatus, LedgerSnapshot } from '../../src/types.ts';
+
+// The seat secret every op on /api/mcp carries (src/http/mcp.ts).
+const SEAT = 's'.repeat(64);
 
 const CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 const VECTOR = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
@@ -136,7 +139,7 @@ async function boot(mode: AppConfig['mode'] = 'demo', opts: { releaseDelayMs?: n
     },
     getPolicy: () => defaultPolicy(),
     setKill: () => {},
-    agents: createAgents(),
+    agents: createAgents(Date.now, MAX_AGENTS, { secret: SEAT }),
     getView: () => 'pro',
     setView: () => {},
     trade: {
@@ -547,14 +550,14 @@ test('no op on the agent door unlocks, locks, creates or reveals anything', asyn
     await b.post('/api/lock', { token: b.token });
 
     for (const op of ['unlock', 'lock', 'wallet_create', 'wallet_import', 'wallet_reveal', 'wallet_export', 'migrate']) {
-      const out = await b.post('/api/mcp', { op, password: PASSWORD, token: b.token, session: 's', client: 'test' });
+      const out = await b.post('/api/mcp', { op, password: PASSWORD, token: b.token, session: 's', client: 'test', secret: SEAT });
       assert.equal(out.status, 400, `op ${op} must not exist`);
       assert.match(String(out.json.error), /unknown op/);
     }
     assert.equal(b.keystore.state(), 'locked', 'the agent could not reach the lock');
 
     // And a read tool by that name is not there either.
-    const read = await b.post('/api/mcp', { op: 'read', tool: 'reveal', session: 's', client: 'test' });
+    const read = await b.post('/api/mcp', { op: 'read', tool: 'reveal', session: 's', client: 'test', secret: SEAT });
     assert.equal(read.status, 400);
     assert.match(String(read.json.error), /unknown read tool/);
   } finally {
@@ -574,7 +577,7 @@ test('the beacon moves the lock countdown and an agent call does not', async () 
     // Twenty agent reads, back to back. Every one is audited, every one answers, and the
     // countdown must be no further away afterwards than it was before.
     for (let i = 0; i < 20; i += 1) {
-      const out = await b.post('/api/mcp', { op: 'read', tool: 'balances', session: 'agent-1', client: 'test' });
+      const out = await b.post('/api/mcp', { op: 'read', tool: 'balances', session: 'agent-1', client: 'test', secret: SEAT });
       assert.equal(out.status, 200, 'the agent can still work while this is being asserted');
     }
     const afterAgent = (await b.get('/api/state')).json.lock.idleLocksInSec as number;

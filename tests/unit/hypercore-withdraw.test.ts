@@ -19,6 +19,7 @@ import {
   minReceivedForHlWithdraw,
 } from '../../src/rails/hypercore-withdraw.ts';
 import type { HypercoreWithdrawDeps } from '../../src/rails/hypercore-withdraw.ts';
+import { TEST_QUOTE_KEY, signQuote } from './helpers/signed-quote.ts';
 
 // The only way collateral leaves Hyperliquid. One spotSend, signed with the master key, to an
 // address 1Click mints for the quote the rail just checked; the money lands in the app's own
@@ -99,6 +100,9 @@ type ClientOverrides = {
   originMissing?: boolean;
   originDecimals?: number;
   destinationMissing?: boolean;
+  // Applied to the quote response AFTER it is signed: what a proxy between this app and the
+  // API would do to it. Left out, the response arrives as signed.
+  tamper?: (signed: Record<string, unknown>) => Record<string, unknown>;
 };
 
 function fakeClient(over: ClientOverrides = {}): { client: OneClickClient; quotes: OneClickQuoteParams[]; submitted: string[] } {
@@ -113,10 +117,12 @@ function fakeClient(over: ClientOverrides = {}): { client: OneClickClient; quote
     },
     async quote(params) {
       quotes.push(params);
-      const quote = quoteOf(over.quote);
-      const raw: Record<string, unknown> = { quote };
-      if (over.echo !== null) raw['quoteRequest'] = echoOf({ dry: params.dry, ...(over.echo ?? {}) });
-      return { quote, raw };
+      const unsigned: Record<string, unknown> = { quote: quoteOf(over.quote) };
+      if (over.echo !== null) unsigned['quoteRequest'] = echoOf({ dry: params.dry, ...(over.echo ?? {}) });
+      // Signed the way 1Click signs its answers, over the whole payload, quote included.
+      const signed = signQuote(unsigned);
+      const raw = over.tamper === undefined ? signed : over.tamper(signed);
+      return { quote: raw['quote'] as OneClickQuote, raw };
     },
     async submitDeposit(depositAddress) {
       submitted.push(depositAddress);
@@ -241,6 +247,7 @@ function rail(
     sleep: async () => {},
     pollIntervalMs: 1,
     pollTimeoutMs: 3,
+    quoteKey: TEST_QUOTE_KEY,
     ...over,
   });
   return { rail: r, quotes, submitted, signed: hl.signed, exchange: hl.exchange, infoTypes: hl.infoTypes, posts: hl.posts };
@@ -663,4 +670,43 @@ test('a draft that cannot price itself fails every budget instead of passing the
   const { rail: r } = rail();
   assert.equal(r.valueUsd(draft({ amountUsd: Number.NaN })), Infinity);
   assert.equal(r.valueUsd(draft({ amountUsd: 8, amount: 12 })), 12);
+});
+
+// ---------- the quote signature ----------
+//
+// The deposit address is the one field the echo never covered, and this rail sends the largest
+// single number the app moves to it. The rail verifies 1Click's signature over the quote
+// (src/quote-signature.ts) before the address is used for anything.
+
+test('a quote whose deposit address was changed after signing is refused before any send', async () => {
+  const { rail: r, signed, exchange } = rail(
+    { tamper: (s) => ({ ...s, quote: { ...(s.quote as Record<string, unknown>), depositAddress: '0x000000000000000000000000000000000000dEaD' } }) },
+    [{ available: 20, spot: 20, perp: 0 }],
+  );
+  const out = await r.execute(draft());
+  assert.equal(out.ok, false);
+  assert.match(out.detail, /signature does not verify/);
+  assert.match(out.detail, /Nothing was sent/);
+  assert.equal(signed.length, 0, 'nothing was signed');
+  assert.equal(exchange.length, 0, 'nothing was posted');
+});
+
+test('an unsigned quote is refused before any send, and a signed one lands its record in the evidence', async () => {
+  const unsigned = rail({ tamper: (s) => ({ ...s, signature: undefined }) }, [{ available: 20, spot: 20, perp: 0 }]);
+  const refused = await unsigned.rail.execute(draft());
+  assert.equal(refused.ok, false);
+  assert.match(refused.detail, /carries no signature/);
+  assert.equal(unsigned.signed.length, 0);
+
+  const { rail: r } = rail({}, [{ available: 20, spot: 20, perp: 0 }, { available: 11, spot: 11, perp: 0 }]);
+  const early: Array<Record<string, unknown>> = [];
+  const out = await r.execute(draft(), 'p_1', { onEvidence: (e) => early.push(e as Record<string, unknown>) });
+  assert.equal(out.ok, true, out.detail);
+  const quote = out.evidence?.quote;
+  assert.ok(quote !== undefined, 'the signed quote is on the result');
+  assert.equal(quote.depositAddress, DEPOSIT);
+  assert.match(quote.signature, /^ed25519:/);
+  assert.equal(early.length, 1, 'the executor heard about the send before the watch loop');
+  assert.equal(early[0].nonce, String(NOW));
+  assert.deepEqual(early[0].quote, quote);
 });

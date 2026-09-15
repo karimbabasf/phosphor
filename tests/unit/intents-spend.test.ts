@@ -6,6 +6,7 @@ import type { IntentsApiPort, IntentsQuoteParams, IntentsSignerPort } from '../.
 import { spendFromIntents } from '../../src/rails/intents-spend.ts';
 import type { IntentsSpendOutcome, IntentsSpendRequest } from '../../src/rails/intents-spend.ts';
 import type { RailEvidence } from '../../src/types.ts';
+import { TEST_QUOTE_KEY, signQuote } from './helpers/signed-quote.ts';
 
 // The step every rail that spends the intents balance shares: quote, check the echo, ask
 // 1Click for the intent, check it, sign it, submit it, watch it. The tests here pin the one
@@ -84,6 +85,9 @@ type Overrides = {
   // One outcome per submit call, the last one repeating. 'timeout' and 'reset' are a call that
   // got no reply; 'reply' is the venue answering with an error.
   submitOutcomes?: Array<'ok' | 'timeout' | 'reset' | 'reply'>;
+  // Applied to the quote response AFTER it is signed: what a proxy between this app and the
+  // API would do to it. Left out, the response arrives as signed.
+  tamper?: (signed: Record<string, unknown>) => Record<string, unknown>;
 };
 
 // Every call in the order it happened, so a test can say what came before what.
@@ -95,9 +99,12 @@ function harness(over: Overrides = {}): { api: IntentsApiPort; signer: IntentsSi
     tokens: async () => apiTokens,
     async quote(params) {
       calls.quotes.push(params);
-      const raw: Record<string, unknown> = { quote: quoteOf(over.quote) };
-      if (over.echo !== null) raw['quoteRequest'] = echoOf(over.echo ?? {});
-      return { quote: quoteOf(over.quote), raw };
+      const unsigned: Record<string, unknown> = { quote: quoteOf(over.quote) };
+      if (over.echo !== null) unsigned['quoteRequest'] = echoOf(over.echo ?? {});
+      // Signed the way 1Click signs its answers, over the whole payload, quote included.
+      const signed = signQuote(unsigned);
+      const raw = over.tamper === undefined ? signed : over.tamper(signed);
+      return { quote: raw['quote'] as OneClickQuote, raw };
     },
     async generateIntent(params) {
       calls.generated.push(params);
@@ -189,6 +196,7 @@ function depsOf(h: ReturnType<typeof harness>) {
     pollIntervalMs: 1,
     pollTimeoutMs: 3,
     maxDeadlineMs: 4 * 24 * 60 * 60 * 1000,
+    quoteKey: TEST_QUOTE_KEY,
   };
 }
 
@@ -311,7 +319,10 @@ test('the executor hears the handle right after the signature and the hash right
   });
   assert.ok(out.submitted);
   assert.deepEqual(h.calls.order, ['sign', `evidence::${HANDLE}`, 'submit', `evidence:HASH1:${HANDLE}`, 'poll']);
-  assert.deepEqual(heard[0], { handle: HANDLE, deadline: DEADLINE });
+  // The signed quote rides on both, so a row that dies inside the wait still has what 1Click signed.
+  const { quote: signedQuote, ...rest } = heard[0] as { quote?: unknown; handle?: string; deadline?: string };
+  assert.deepEqual(rest, { handle: HANDLE, deadline: DEADLINE });
+  assert.equal((signedQuote as { depositAddress?: string } | undefined)?.depositAddress, HANDLE);
   assert.equal(heard[1].deadline, DEADLINE, 'the second call carries everything the first did');
 });
 
@@ -390,4 +401,33 @@ test('a watch that runs out signs nothing more either', async () => {
   assert.equal(h.calls.generated.length, 1);
   assert.equal(h.calls.signed.length, 1);
   assert.equal(h.calls.submitAttempts, 1);
+});
+
+// ---------- the quote signature ----------
+//
+// The handle is the one field the echo never covered. Every rail that spends through here
+// verifies 1Click's signature over the quote (src/quote-signature.ts) before the handle is used.
+
+test('a quote whose handle was changed after signing is refused before anything is signed', async () => {
+  const h = harness({ tamper: (signed) => ({ ...signed, quote: { ...(signed.quote as Record<string, unknown>), depositAddress: 'attacker.near' } }) });
+  await assert.rejects(() => spendFromIntents(depsOf(h), requestOf()), /signature does not verify/);
+  assert.equal(h.calls.generated.length, 0, 'no intent was generated');
+  assert.equal(h.calls.signed.length, 0, 'nothing was signed');
+});
+
+test('an unsigned quote is refused, and a signed one carries its record through both outcomes', async () => {
+  const unsigned = harness({ tamper: (signed) => ({ ...signed, signature: undefined }) });
+  await assert.rejects(() => spendFromIntents(depsOf(unsigned), requestOf()), /carries no signature/);
+  assert.equal(unsigned.calls.signed.length, 0);
+
+  const h = harness();
+  const out = await spendFromIntents(depsOf(h), requestOf());
+  assert.equal(out.signedQuote.depositAddress, HANDLE);
+  assert.match(out.signedQuote.signature, /^ed25519:/);
+  assert.match(out.signedQuote.correlationId, /^test-quote-/);
+
+  const noReply = harness({ submitOutcomes: ['timeout'] });
+  const stuck = await spendFromIntents(depsOf(noReply), requestOf());
+  assert.equal(stuck.submitted, false);
+  assert.equal(stuck.signedQuote.depositAddress, HANDLE, 'an unconfirmed submit keeps the signed quote too');
 });
