@@ -110,6 +110,12 @@ export type RawFill = {
   closedPnlUsd: number | null;
   atMs: number;
   liquidation: boolean;
+  // The venue's own ledger hash of the fill and the id of the order it filled. Both are absent
+  // rather than null when the venue did not state them, and the hash is absent when the venue
+  // wrote the all-zero one, which it does on a great many fills: a zero hash resolves nowhere,
+  // and a receipt that linked it would be a link to nothing.
+  hash?: string;
+  oid?: string;
 };
 
 export type MarketCtx = {
@@ -720,6 +726,8 @@ export function createTradeFeed(deps: {
       lastError = `fill ${coin || '?'} dropped: a field could not be read as a number`;
       return null;
     }
+    const hash = ledgerHashOf(row.hash);
+    const oid = orderIdOf(row.oid);
     return {
       tid,
       coin,
@@ -732,7 +740,24 @@ export function createTradeFeed(deps: {
       // There is no boolean for this. A liquidated fill carries a `liquidation` object holding
       // the liquidated user, the mark and the method; an ordinary fill has no such key.
       liquidation: isRecord(row.liquidation),
+      ...(hash === null ? {} : { hash }),
+      ...(oid === null ? {} : { oid }),
     };
+  }
+
+  // A venue hash worth keeping: 32 bytes of hex, and not the all-zero one the venue writes when
+  // the fill has no ledger entry of its own.
+  function ledgerHashOf(raw: unknown): string | null {
+    if (typeof raw !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(raw)) return null;
+    return /^0x0+$/.test(raw) ? null : raw;
+  }
+
+  // The venue sends the order id as a number; it is an identifier, so it is kept as a string
+  // the way tid is, and never done arithmetic on.
+  function orderIdOf(raw: unknown): string | null {
+    if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw);
+    if (typeof raw === 'string' && raw !== '') return raw;
+    return null;
   }
 
   function onActiveAsset(data: unknown): void {

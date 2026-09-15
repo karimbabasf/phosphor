@@ -186,6 +186,11 @@ test('a receipt carries every field the contract fixes', async () => {
       'symbol',
       'toChain',
       'txids',
+      // Added 2026-09-15: the receipt card's grid prints what it was worth, who did it and
+      // which address it left from, and reads all three off the receipt.
+      'valueUsd',
+      'venue',
+      'wallet',
     ]);
   } finally {
     await h.close();
@@ -254,9 +259,12 @@ test('the hashes carry a chain and a link, not a bare string', async () => {
   try {
     const [receipt] = await receipts(h.url);
     assert.equal(receipt.txids.length, 1);
-    assert.deepEqual(Object.keys(receipt.txids[0]).sort(), ['chain', 'hash', 'url']);
+    assert.deepEqual(Object.keys(receipt.txids[0]).sort(), ['chain', 'explorer', 'hash', 'url']);
     assert.equal(receipt.txids[0].hash, '0x' + 'a'.repeat(64));
     assert.equal(typeof receipt.txids[0].chain, 'string');
+    // The name on the card's button follows the link, never the row: no link, no name.
+    assert.equal(receipt.txids[0].url, 'https://arbiscan.io/tx/0x' + 'a'.repeat(64));
+    assert.equal(receipt.txids[0].explorer, 'Arbiscan');
   } finally {
     await h.close();
   }
@@ -332,6 +340,206 @@ test('a receipt and the history row it came from agree on every shared fact', as
     assert.equal(receipt.toChain, row.toPlace);
     assert.equal(receipt.summary, row.detail);
     assert.equal(receipt.amount, (row.sent as { amount: number } | null)?.amount ?? null);
+  } finally {
+    await h.close();
+  }
+});
+
+// ---------- the window, the cursor and the kind ----------
+//
+// The Activity panel opens on the last 24 hours and pages backwards from there. The server owns
+// the window (since), the cursor (before), the kind taxonomy and the two figures that describe
+// the window rather than the page (total, feesUsd), so both Activity panels and the chat read
+// one answer and never count for themselves.
+
+type Page = { receipts: Receipt[]; total: number; hasMore: boolean; feesUsd: number };
+
+async function page(urlBase: string, query = ''): Promise<Page> {
+  const out = await get(urlBase, `/api/receipts${query}`);
+  assert.equal(out.status, 200, out.body);
+  return JSON.parse(out.body) as Page;
+}
+
+const HOUR = 3_600_000;
+
+function ago(hours: number): string {
+  return new Date(Date.now() - hours * HOUR).toISOString();
+}
+
+// One receipt settled `hours` ago, of one kind, with a venue fee the history parses off the
+// simulation summary the way the real rails write it.
+function aged(id: string, hours: number, kind: string, fee: number): Proposal {
+  const at = ago(hours);
+  const draft = kind === 'swap'
+    ? {
+        kind: 'swap', venue: 'intents-native', chain: 'eth', toChain: 'eth', fromSymbol: 'ETH', toSymbol: 'USDC',
+        amountIn: 0.002, amountUsd: 5, minAmountOut: 4.9, from: SELF, to: SELF, counterparty: 'intents.near', quote: null,
+      }
+    : { kind, chain: 'arb', symbol: 'USDC', amount: 100, amountUsd: 100, from: SELF, to: SELF };
+  return settled(id, 'executed', {
+    kind: kind as Proposal['kind'],
+    createdAt: at,
+    decidedAt: at,
+    draft: draft as unknown as Proposal['draft'],
+    simulation: { ok: true, summary: `fee $${fee.toFixed(2)}` } as unknown as Proposal['simulation'],
+  });
+}
+
+const SPREAD = [
+  aged('h2', 2, 'swap', 0.02),
+  aged('h5', 5, 'intents_deposit', 0.03),
+  aged('h20', 20, 'swap', 0.05),
+  aged('h30', 30, 'hl_deposit', 0.32),
+  aged('h100', 100, 'swap', 0.01),
+  aged('h200', 200, 'intents_withdraw', 0.04),
+];
+
+test('with no parameters the answer keeps its old shape and gains the three window figures', async () => {
+  const h = await boot(SPREAD);
+  try {
+    const out = await page(h.url);
+    assert.deepEqual(Object.keys(out).sort(), ['feesUsd', 'hasMore', 'receipts', 'total']);
+    assert.deepEqual(out.receipts.map((r) => r.id), ['h2', 'h5', 'h20', 'h30', 'h100', 'h200'], 'newest first, all of them');
+    assert.equal(out.total, 6);
+    assert.equal(out.hasMore, false);
+    assert.equal(out.feesUsd.toFixed(2), '0.47');
+  } finally {
+    await h.close();
+  }
+});
+
+test('since keeps the window, and total and fees describe the window', async () => {
+  const h = await boot(SPREAD);
+  try {
+    const out = await page(h.url, `?since=${Date.now() - 24 * HOUR}`);
+    assert.deepEqual(out.receipts.map((r) => r.id), ['h2', 'h5', 'h20']);
+    assert.equal(out.total, 3);
+    assert.equal(out.hasMore, false);
+    assert.equal(out.feesUsd.toFixed(2), '0.10', 'the fees of the window, not of everything');
+  } finally {
+    await h.close();
+  }
+});
+
+test('before is the cursor: strictly older than the last row, so a page never repeats', async () => {
+  const h = await boot(SPREAD);
+  try {
+    const first = await page(h.url, '?limit=2');
+    assert.deepEqual(first.receipts.map((r) => r.id), ['h2', 'h5']);
+    assert.equal(first.hasMore, true);
+    assert.equal(first.total, 6, 'the total is the window, not the page');
+    const cursor = Date.parse(first.receipts[1]!.at);
+    const second = await page(h.url, `?limit=2&before=${cursor}`);
+    assert.deepEqual(second.receipts.map((r) => r.id), ['h20', 'h30']);
+    assert.equal(second.hasMore, true);
+    const third = await page(h.url, `?limit=2&before=${Date.parse(second.receipts[1]!.at)}`);
+    assert.deepEqual(third.receipts.map((r) => r.id), ['h100', 'h200']);
+    assert.equal(third.hasMore, false);
+    assert.equal(third.feesUsd.toFixed(2), '0.47', 'the window figures do not move as pages are read');
+  } finally {
+    await h.close();
+  }
+});
+
+test('the cursor stays inside the window', async () => {
+  const h = await boot(SPREAD);
+  try {
+    const out = await page(h.url, `?since=${Date.now() - 24 * HOUR}&limit=2&before=${Date.now() - 4 * HOUR}`);
+    assert.deepEqual(out.receipts.map((r) => r.id), ['h5', 'h20']);
+    assert.equal(out.hasMore, false, 'h30 is older than the window, so there is no more');
+    assert.equal(out.total, 3);
+  } finally {
+    await h.close();
+  }
+});
+
+test('kind is one word for a family of rails, and the four words are the taxonomy', async () => {
+  const h = await boot(SPREAD);
+  try {
+    assert.deepEqual((await page(h.url, '?kind=swap')).receipts.map((r) => r.id), ['h2', 'h20', 'h100']);
+    const moves = await page(h.url, '?kind=move');
+    assert.deepEqual(moves.receipts.map((r) => r.id), ['h5', 'h30', 'h200']);
+    assert.equal(moves.feesUsd.toFixed(2), '0.39');
+    assert.deepEqual((await page(h.url, '?kind=all')).receipts.length, 6);
+    // Trades and bots are not transactions today (transactions.ts ACTIONS), so the words answer with nothing rather than refusing.
+    assert.deepEqual(await page(h.url, '?kind=trade'), { receipts: [], total: 0, hasMore: false, feesUsd: 0 });
+    assert.deepEqual(await page(h.url, '?kind=bot'), { receipts: [], total: 0, hasMore: false, feesUsd: 0 });
+    const swapsToday = await page(h.url, `?kind=swap&since=${Date.now() - 24 * HOUR}`);
+    assert.deepEqual(swapsToday.receipts.map((r) => r.id), ['h2', 'h20']);
+    assert.equal(swapsToday.total, 2);
+  } finally {
+    await h.close();
+  }
+});
+
+test('a parameter that cannot be read is refused, never read as no window', async () => {
+  const h = await boot(SPREAD);
+  try {
+    for (const bad of ['?since=yesterday', '?before=-1', '?kind=sandwich']) {
+      const out = await get(h.url, `/api/receipts${bad}`);
+      assert.equal(out.status, 400, bad);
+      assert.ok(typeof (JSON.parse(out.body) as { error: string }).error === 'string');
+    }
+  } finally {
+    await h.close();
+  }
+});
+
+// ---------- the venue receipts: bots and trades ----------
+//
+// An approved plan is a bot from the moment the click lands, and a close or a moved stop is a
+// trade. Both are receipts now, in the plan's own figures. What a receipt never claims is a
+// fill: the proposal record holds no fill price, size, time or fee, so none is printed.
+
+const RISK = { marginUsd: 6, maxLossUsd: 0.62, stopSlipUsd: 0.1, entryRef: 76_425, liquidationPx: 40_000, notionalUsd: 12, amountUsd: 6 };
+
+function venue(id: string, hours: number, draft: Record<string, unknown>, detail: string, status: ProposalStatus = 'executed'): Proposal {
+  const at = ago(hours);
+  return settled(id, status, {
+    kind: 'trade',
+    createdAt: at,
+    decidedAt: at,
+    draft: { kind: 'trade', counterparty: 'hyperliquid-perps', ...draft } as unknown as Proposal['draft'],
+    simulation: { ok: true, summary: 'Long BTC $12 at 2x' } as unknown as Proposal['simulation'],
+    result: { ok: status === 'executed', detail, txids: [] },
+  });
+}
+
+const PLAN = { id: 'plan-1', symbol: 'BTC', side: 'long', sizeUsd: 12, leverage: 2, entry: { type: 'market', maxSlippageBps: 30 }, stop: 76_000, target: 79_500 };
+
+test('an armed plan is a bot receipt in the plan\'s own figures, and a close is a trade receipt', async () => {
+  const h = await boot([
+    venue('arm', 1, { op: 'open', plan: PLAN, hash: 'h1', risk: RISK, amountUsd: 6 }, 'plan-1 armed on BTC'),
+    venue('short', 2, { op: 'open', plan: { ...PLAN, id: 'plan-2', side: 'short', target: undefined, stop: 0.4512, symbol: 'SOL' }, hash: 'h2', risk: RISK, amountUsd: 6 }, 'plan-2 armed on SOL'),
+    venue('close', 3, { op: 'change', id: 'plan-1', close: true, before: RISK, after: RISK, amountUsd: 6 }, 'plan-1 closed'),
+    venue('cancel', 4, { op: 'change', id: 'plan-2', cancel: true, before: RISK, after: RISK, amountUsd: 0 }, 'plan-2 cancelled before it fired'),
+    venue('stop', 5, { op: 'change', id: 'plan-1', stop: 77_000, before: RISK, after: RISK, amountUsd: 0 }, 'plan-1: stop 77000, target 79500'),
+    aged('swap', 6, 'swap', 0.02),
+  ]);
+  try {
+    const bots = await page(h.url, '?kind=bot');
+    assert.deepEqual(bots.receipts.map((r) => [r.id, r.kind, r.headline]), [
+      ['arm', 'bot', 'Armed a bot: Long BTC $12.00 at 2x, stop 76,000, target 79,500.'],
+      ['short', 'bot', 'Armed a bot: Short SOL $12.00 at 2x, stop 0.4512.'],
+      ['cancel', 'bot', 'Cancelled bot plan-2 before it opened.'],
+    ]);
+    const trades = await page(h.url, '?kind=trade');
+    assert.deepEqual(trades.receipts.map((r) => [r.id, r.kind, r.headline]), [
+      ['close', 'trade', 'Closed trade plan-1 at the market.'],
+      ['stop', 'trade', 'Moved the stop to 77,000 on trade plan-1.'],
+    ]);
+    // Nothing left the trading account, and no fill is claimed.
+    for (const r of [...bots.receipts, ...trades.receipts]) {
+      assert.equal(r.amount, null);
+      assert.equal(r.symbol, null);
+      assert.equal(r.received, null);
+      assert.equal(r.fromChain, 'hyperliquid');
+      assert.equal(r.toChain, 'hyperliquid');
+      assert.equal(r.feesUsd, null, 'the proposal holds no fee for a venue action');
+      assert.deepEqual(r.txids, []);
+    }
+    assert.equal((await page(h.url, '?kind=swap')).receipts.length, 1, 'the swap chip is unchanged');
+    assert.equal((await page(h.url)).total, 6, 'every kind, in one window');
   } finally {
     await h.close();
   }

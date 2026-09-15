@@ -1,16 +1,13 @@
-/* Pro: a 12-column grid at most 1440 wide, for a person who already holds
-   crypto and wants to see everything and set the rules.
+/* Pro: two columns at most 1440 wide, for a person who already holds crypto
+   and wants to see everything and set the rules.
 
-   Four panels on a full-height grid, and none of them starts shut. Three of
-   them used to, so the screen a person landed on was one open panel and three
-   title bars over half a page of nothing, and a shut panel head looked exactly
-   like a static one, so nothing on the deck read as clickable either. Karim,
-   2026-09-09: "nothing clickable, nothing unclickable ... has to be dynamic and
-   always fill the blank spaces."
-
-   A panel now carries its content. The grid is two rows, the second one grows
-   to close the page, and anything taller than its box scrolls inside the box
-   with a fade at the cut rather than pushing the page down. */
+   Four cards: Money and Activity down the left, Trading and Policy down the
+   right. Each column stacks its cards with 12 px between them and a card is
+   as tall as what it holds, with two exceptions on the left: Money stops at
+   half the window and scrolls its list inside, and Activity takes whatever
+   the column has left, because a list of receipts is the one thing on this
+   deck with no natural end. Nothing here folds shut, and nothing reads as
+   clickable unless it opens. */
 (function () {
   'use strict';
 
@@ -30,6 +27,9 @@
      screen asks for it on its own clock and only while it is the visible one. */
   var TRADE_POLL_MS = 20000;
 
+  /* A group of rules longer than this folds to its heading and a count. */
+  var GROUP_FOLD_AT = 5;
+
   var refs = {};
   var mounted = false;
 
@@ -45,6 +45,10 @@
     intents: 'NEAR Intents', hyperliquid: 'Hyperliquid'
   };
 
+  /* The mark a chain wears on a chip: its own network mark where one exists
+     (ui/logos), else its native coin. */
+  var CHAIN_MARKS = { eth: 'ETH', base: 'BASE', arb: 'ARB', sol: 'SOL', near: 'NEAR' };
+
   /* Allowlist entries that are venues rather than addresses. The policy stores
      the id it checks against; the window shows the name a person knows it by. */
   var VENUE_NAMES = {
@@ -53,58 +57,33 @@
     'hyperliquid-perps': 'Hyperliquid'
   };
 
-  /* One glyph per kind of rule on the Policy card, so a person can tell an ask
-     from a refusal before reading it: a hand for what gets asked, a wall for
-     what gets refused, a stack of coins for what is held back, a door for
-     where money may go. Strokes on a 0 0 16 16 box in currentColor, drawn
-     here so the window loads no icon set. */
-  var SVG_NS = 'http://www.w3.org/2000/svg';
-  var GLYPHS = {
-    /* The same drawing as Basic's rules strip (ui/screens/basic.js HAND), so
-       the ask rule reads as one thing on both screens. */
-    hand: [
-      'M4.75 9V4.75a1.25 1.25 0 0 1 2.5 0V8.5M7.25 8.5V3.25a1.25 1.25 0 0 1 2.5 0V8.5M9.75 8.5V4.25a1.25 1.25 0 0 1 2.5 0V10.5M4.75 9l-1.3-1.3a1.24 1.24 0 0 0-1.75 1.75L5 12.75A4.25 4.25 0 0 0 8 14h1.25a3 3 0 0 0 3-3v-.5'
-    ],
-    wall: [
-      'M3.75 3.75h8.5a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1h-8.5a1 1 0 0 1-1-1v-6.5a1 1 0 0 1 1-1z',
-      'M2.75 6.6h10.5M2.75 9.4h10.5',
-      'M8 3.75v2.85M5.4 6.6v2.8M10.6 6.6v2.8M8 9.4v2.85'
-    ],
-    coin: [
-      'M8 6.5c3.2 0 5.25-1 5.25-2.25S11.2 2 8 2 2.75 3 2.75 4.25 4.8 6.5 8 6.5z',
-      'M2.75 4.25V8c0 1.25 2.05 2.25 5.25 2.25S13.25 9.25 13.25 8V4.25',
-      'M2.75 8v3.75C2.75 13 4.8 14 8 14s5.25-1 5.25-2.25V8'
-    ],
-    door: [
-      'M12 13.33V4a1.33 1.33 0 0 0-1.33-1.33H5.33A1.33 1.33 0 0 0 4 4v9.33',
-      'M1.33 13.33h13.33',
-      'M9.33 8v.01'
-    ]
-  };
+  /* One icon per kind of rule, from the window's own set (ui/design/icons.js),
+     so a person can tell an ask from a refusal before reading it: a clock for
+     what waits on them, a slashed circle for what is refused, a lock for what
+     is held back, an arrow out for where money may go, stop for the switch. */
+  var RULE_ICONS = { ask: 'waiting', refuse: 'refused', keep: 'lock', pay: 'send', kill: 'stop' };
 
-  /* Built in the svg namespace rather than by innerHTML, the way dom.mark does
-     it. Null where there is no namespace to build in (the unit harness), and
-     the rule draws without its glyph. */
-  function glyph(name) {
-    var paths = GLYPHS[name];
-    if (!paths || typeof document.createElementNS !== 'function') return null;
-    var svg = document.createElementNS(SVG_NS, 'svg');
-    svg.setAttribute('viewBox', '0 0 16 16');
-    svg.setAttribute('width', '16');
-    svg.setAttribute('height', '16');
-    svg.setAttribute('fill', 'none');
-    svg.setAttribute('stroke', 'currentColor');
-    svg.setAttribute('stroke-width', '1.5');
-    svg.setAttribute('stroke-linecap', 'round');
-    svg.setAttribute('stroke-linejoin', 'round');
-    svg.setAttribute('aria-hidden', 'true');
-    svg.setAttribute('focusable', 'false');
-    for (var i = 0; i < paths.length; i += 1) {
-      var path = document.createElementNS(SVG_NS, 'path');
-      path.setAttribute('d', paths[i]);
-      svg.appendChild(path);
-    }
-    return svg;
+  /* One icon from the window's set (ui/design/icons.js). */
+  function icon(name, className) {
+    return window.PhosphorIcons.svg(name, className);
+  }
+
+  /* A token or chain mark at a size (ui/design/marks.js). */
+  function logo(symbol, size) {
+    return marks.logo(symbol, size);
+  }
+
+  function colourOf(symbol) {
+    return marks.colour(symbol);
+  }
+
+  /* Keep one mark under a host in step with a symbol, replacing it only when
+     the symbol changes so a refresh does not reload every logo. */
+  function setMark(host, symbol, size) {
+    if (host.dataset.symbol === symbol) return;
+    host.dataset.symbol = symbol;
+    dom.clear(host);
+    host.appendChild(logo(symbol, size));
   }
 
   function boot() {
@@ -113,13 +92,6 @@
     build(host);
     mounted = true;
     store.subscribe(render);
-    window.PhosphorReceipts.onChange(function () {
-      if (refs.activityBody) {
-        window.PhosphorReceipts.render(refs.activityBody, { limit: 25 });
-        renderFeeTotal();
-        refs.activityCut();
-      }
-    });
     loadTrade();
     window.setInterval(function () {
       if (document.hidden) return;
@@ -129,62 +101,64 @@
   }
 
   function build(host) {
-    var grid = dom.el('div', 'pro-grid pro-dense');
+    var grid = dom.el('div', 'pro-grid');
+    var left = dom.el('div', 'pro-col');
+    var right = dom.el('div', 'pro-col');
+    grid.appendChild(left);
+    grid.appendChild(right);
 
     /* Money: one row per COIN, with the places it sits in folded under it.
        It used to be one flat row per holding, so ETH in four places was four
        rows that a person had to add up themselves to answer "how much ETH do I
        have", and the coin they own was never on screen as one thing. */
-    var money = panel('Money', 'span-7', 'holdings');
+    var money = card('Money', 'holdings', 'card-money');
     var bar = dom.el('div', 'comp-bar');
     bar.setAttribute('aria-hidden', 'true');
     money.body.appendChild(bar);
-    var moneyList = dom.el('div', 'holding-list scrolls');
+    var moneyList = dom.el('div', 'holding-list');
     money.body.appendChild(moneyList);
     var emptyNote = dom.el('p', 'meta');
     money.body.appendChild(emptyNote);
-    grid.appendChild(money.node);
+    left.appendChild(money.node);
 
     /* Trading. Phosphor reaches two venues and this deck named one of them: the
        money at NEAR Intents is a row in the wallet above, and the money at the
        trading venue was on no screen but the trade screen. */
-    var trading = linkPanel('Trading', 'span-5', 'account', 'Open the trade screen');
+    var trading = linkCard('Trading', 'account', 'Open the trade screen');
     var tradingBody = dom.el('div', 'stack grow');
     trading.body.appendChild(tradingBody);
-    grid.appendChild(trading.node);
+    right.appendChild(trading.node);
 
-    /* Activity: receipts, with fees per row and a total for the window. */
-    var activity = panel('Activity', 'span-7', 'activity');
-    var activityBody = dom.el('div', 'panel-body-flush activity-list scrolls grow');
-    activity.body.appendChild(activityBody);
-    var feeRow = dom.el('div', 'between panel-total');
-    feeRow.appendChild(dom.el('span', 'label', 'Fees in this window'));
-    var feeValue = dom.el('span', 'body mono');
-    feeRow.appendChild(feeValue);
-    activity.body.appendChild(feeRow);
-    grid.appendChild(activity.node);
+    /* Activity: receipts of the last 24 hours, with the chips that widen the
+       window or narrow the kind, and a page at a time under "Show more". The
+       head and the chips sit on the card's own ground above the list, so a row
+       scrolls under a hairline and never under the title. */
+    var activity = card('Activity', 'activity', 'card-activity');
+    var activityHead = dom.el('div', 'activity-head');
+    activity.node.insertBefore(activityHead, activity.body);
+    activity.body.className = 'card-body activity-scroll';
+    var activityList = window.PhosphorReceipts.list(activity.body, {
+      filtersHost: activityHead,
+      window: '24h',
+      kind: 'all',
+      source: 'activity',
+      onMeta: function (meta) { setMeta(activity, activityWords(meta)); }
+    });
+    left.appendChild(activity.node);
 
-    /* Policy: what the app will do, as rules a person can read in one look.
-       Karim, 2026-09-14: "this thing should be policy and not limits, we
-       shouldnt have limits unless specified." So a rule that is not set is not
-       drawn, the count in the sub line counts only what is drawn, and the one
-       meter on the card sits under the one rule it belongs to. The surface
-       keeps its id, because the beam finds it by name. */
-    /* TWO REGIONS, AND ONLY THE FIRST ONE SCROLLS.
-
-       The rules are the part whose length this window does not control, a
-       policy can carry five of them or fifteen, so the rules are the part that
-       scrolls, with the allowlist folded under the rule it belongs to. The
-       line under them, which tells a person how to change a rule, is fixed
-       furniture and stays on screen whatever the policy says. */
-    var limits = panel('Policy', 'span-5', 'rules');
-    var limitsBody = dom.el('div', 'stack-2 grow limits-body');
-    var limitsRules = dom.el('div', 'rules scrolls grow');
-    var limitsFoot = dom.el('div', 'stack-2');
-    limitsBody.appendChild(limitsRules);
-    limitsBody.appendChild(limitsFoot);
-    limits.body.appendChild(limitsBody);
-    grid.appendChild(limits.node);
+    /* Policy: what the app will do, as rules a person can read in one look,
+       grouped by what they do: ask, refuse, keep back, pay out. Karim,
+       2026-09-14: "this thing should be policy and not limits, we shouldnt
+       have limits unless specified." So a rule that is not set is not drawn,
+       the count in the meta counts only what is drawn, and the one meter on
+       the card sits under the one rule it belongs to. The surface keeps its
+       id, because the beam finds it by name. */
+    var limits = card('Policy', 'rules', 'card-policy');
+    var limitsRules = dom.el('div', 'rules');
+    var limitsFoot = dom.el('div', 'rules-foot');
+    limits.body.appendChild(limitsRules);
+    limits.body.appendChild(limitsFoot);
+    right.appendChild(limits.node);
 
     host.appendChild(grid);
 
@@ -200,102 +174,80 @@
       limitsRules: limitsRules,
       limitsFoot: limitsFoot,
       activity: activity,
-      activityBody: activityBody,
-      feeValue: feeValue,
-      moneyCut: cuts(moneyList),
-      activityCut: cuts(activityBody),
-      limitsCut: cuts(limitsRules)
+      activityList: activityList
     };
 
-    window.PhosphorReceipts.load();
+    activityList.load();
   }
 
-  /* A PANEL IS A TITLE, ONE LINE THAT STANDS IN FOR THE REST, AND ITS CONTENT.
+  /* A CARD IS A TITLE, ONE LINE OF META, A HAIRLINE, AND ITS CONTENT.
 
-     The head used to be a button and the panel used to fold. Three of the four
-     started shut, which is why the deck was half empty, and a head that folds
-     is drawn exactly like a head that does nothing, which is why nothing read
-     as clickable. So a head is a static readout now: no caret, no cursor, no
+     The same head on every card: the title at the left, the one line that
+     stands in for the content at the right, and a hairline under both. Money
+     and Trading also carry a lead figure above their meta, because the total
+     is the answer somebody opened the deck for and belongs in the head rather
+     than under a list. A head is a static readout: no caret, no cursor, no
      hover. The things that open on this screen say so instead. */
-  function panel(title, span, surface) {
-    var node = dom.el('section', 'panel ' + span);
+  function card(title, surface, className) {
+    var node = dom.el('section', 'panel card ' + (className || ''));
     node.dataset.surface = surface;
 
-    var head = dom.el('div', 'panel-head');
-    var heading = dom.el('div', 'panel-heading');
-    heading.appendChild(dom.el('h2', 'title-sm', title));
-    var summary = dom.el('p', 'panel-summary');
-    heading.appendChild(summary);
-    head.appendChild(heading);
-
-    var right = dom.el('div', 'panel-head-right');
-    var lead = dom.el('span', 'panel-lead mono tick');
+    var head = dom.el('div', 'card-head');
+    head.appendChild(dom.el('h2', 'card-title', title));
+    var right = dom.el('div', 'card-head-right');
+    var lead = dom.el('span', 'card-lead mono tick');
+    lead.hidden = true;
     right.appendChild(lead);
+    var meta = dom.el('p', 'card-meta');
+    right.appendChild(meta);
     head.appendChild(right);
 
-    var body = dom.el('div', 'panel-body panel-fill');
+    var body = dom.el('div', 'card-body');
     node.appendChild(head);
     node.appendChild(body);
 
-    return { node: node, head: head, body: body, summary: summary, lead: lead };
+    return { node: node, head: head, body: body, meta: meta, lead: lead };
   }
 
-  /* The same panel, whole, as one target. It is a link rather than a button
+  /* The same card, whole, as one target. It is a link rather than a button
      because it goes somewhere: role and keys say so, and the foot says so in
      words, because a surface that navigates and does not admit it is the thing
      this screen was rebuilt to stop doing. */
-  function linkPanel(title, span, surface, hint) {
-    var p = panel(title, span, surface);
-    p.node.className += ' opens';
-    p.node.setAttribute('role', 'link');
-    p.node.tabIndex = 0;
-    p.node.setAttribute('aria-label', title + '. ' + hint);
+  function linkCard(title, surface, hint) {
+    var c = card(title, surface, 'card-trading');
+    c.node.className += ' opens';
+    c.node.setAttribute('role', 'link');
+    c.node.tabIndex = 0;
+    c.node.setAttribute('aria-label', title + '. ' + hint);
 
-    var foot = dom.el('div', 'panel-foot');
+    var foot = dom.el('div', 'card-foot');
     foot.appendChild(dom.el('span', 'meta', hint));
-    foot.appendChild(dom.el('span', 'chev'));
-    p.node.appendChild(foot);
+    var chev = dom.el('span', 'chev');
+    chev.appendChild(icon('chevron-right'));
+    foot.appendChild(chev);
+    c.node.appendChild(foot);
 
     function go() {
       window.PhosphorShell.setView('trade', { fromClick: true });
     }
-    dom.on(p.node, 'click', go);
-    dom.on(p.node, 'keydown', function (event) {
+    dom.on(c.node, 'click', go);
+    dom.on(c.node, 'keydown', function (event) {
       if (event.key !== 'Enter' && event.key !== ' ') return;
       event.preventDefault();
       go();
     });
-    return p;
+    return c;
   }
 
-  /* A region that scrolls inside itself says where it was cut, so a sentence
-     sliced in half is drawn as a sentence sliced in half rather than as the end
-     of the list. The attribute drives the mask; the mask is not painted at all
-     when there is nothing over the edge. */
-  function cuts(node) {
-    function paint() {
-      var top = node.scrollTop > 2;
-      var bottom = node.scrollTop + node.clientHeight < node.scrollHeight - 2;
-      dom.setAttr(node, 'data-cut', top && bottom ? 'both' : (top ? 'top' : (bottom ? 'bottom' : null)));
-    }
-    dom.on(node, 'scroll', paint, { passive: true });
-    if (window.ResizeObserver) new window.ResizeObserver(paint).observe(node);
-    paint();
-    return paint;
+  function setMeta(c, text) {
+    dom.setText(c.meta, text || '');
+    dom.setHidden(c.meta, !text);
   }
 
-  /* The one number on this screen that is the answer to the question somebody
-     opened it for. It sits in the head of the Money panel rather than under its
-     table, because a total below five rows of a table is a footnote and this is
-     the headline. */
-  function setSummary(p, text) {
-    dom.setText(p.summary, text || '');
-    dom.setHidden(p.summary, !text);
-  }
-
-  function setLead(p, text) {
-    dom.setNumber(p.lead, text || '');
-    dom.setHidden(p.lead, !text);
+  function setLead(c, text) {
+    dom.setNumber(c.lead, text || '');
+    dom.setHidden(c.lead, !text);
+    dom.setAttr(c.head, 'data-lead', text ? 'true' : null);
   }
 
   function chainName(id) {
@@ -309,7 +261,6 @@
     var state = store.get() || {};
     renderMoney(state);
     renderLimits(state);
-    renderFeeTotal();
   }
 
   /* WHAT YOU OWN, ONE ROW PER COIN.
@@ -400,17 +351,16 @@
       dom.reconcile(refs.moneyList, [], function (item) { return item; });
       if (stale.length) {
         setLead(refs.money, '--');
-        setSummary(refs.money, 'Unread');
+        setMeta(refs.money, 'Unread');
         refs.moneyList.appendChild(emptyBlock('Could not read what you hold',
           'The ' + stale.map(chainName).join(' and ') + ' read failed. What is there is unknown, not zero.'));
       } else {
         setLead(refs.money, dom.usd(0));
-        setSummary(refs.money, 'Nothing held');
+        setMeta(refs.money, 'Nothing held');
         refs.moneyList.appendChild(emptyBlock('Nothing here yet',
           'Ask your assistant where to send money, and it will give you an address.'));
       }
       dom.setHidden(refs.emptyNote, true);
-      refs.moneyCut();
       return;
     }
 
@@ -421,7 +371,7 @@
        Phosphor holds money in two places and the wallet is one of them, so
        every row on this panel now reads "NEAR Intents" under the symbol: the
        same four words four times, which is the column doing no work. When the
-       whole wallet is in one place the panel says so in its own summary and the
+       whole wallet is in one place the panel says so in its own meta and the
        rows drop the line. The moment a coin sits somewhere else, or in more
        than one place, the per row label comes back, because then it is the
        answer to a real question. */
@@ -433,21 +383,20 @@
       var wrap = dom.el('div', 'holding');
       var head = dom.el('button', 'holding-head');
       head.type = 'button';
-      head.appendChild(marks.disc(''));
+      head.appendChild(dom.el('span', 'holding-mark'));
       var name = dom.el('div', 'holding-name');
       name.appendChild(dom.el('span', 'holding-symbol'));
-      name.appendChild(dom.el('span', 'holding-where meta'));
+      name.appendChild(dom.el('span', 'holding-where'));
       head.appendChild(name);
       /* The value is the figure, the amount is the footnote under it. Three
          right-aligned number columns is what made every row read the same.
          The change sits to the left of the value and is only visible while
          the row is marked changed. */
       var figures = dom.el('div', 'holding-figures');
-      figures.appendChild(dom.el('span', 'holding-value tick'));
+      figures.appendChild(dom.el('span', 'holding-value mono tick'));
       figures.appendChild(dom.el('span', 'holding-qty mono'));
       figures.appendChild(dom.el('span', 'holding-delta mono'));
       head.appendChild(figures);
-      head.appendChild(dom.el('span', 'chev'));
       wrap.appendChild(head);
       var places = dom.el('div', 'holding-places');
       wrap.appendChild(places);
@@ -455,7 +404,7 @@
         if (wrap.dataset.single === 'true') return;
         var open = wrap.dataset.open === 'true';
         dom.setAttr(wrap, 'data-open', open ? null : 'true');
-        refs.moneyCut();
+        dom.setAttr(head, 'aria-expanded', open ? 'false' : 'true');
       });
       lightWith(wrap, head);
       return wrap;
@@ -468,18 +417,23 @@
       dom.setAttr(wrap, 'data-single', single ? 'true' : null);
       wrap.dataset.coin = coin.id;
       /* A coin in one place opens onto nothing, so it is a static readout and
-         is drawn as one. Only a row that has something under it is a target. */
+         is drawn as one. Only a row that has something under it is a target,
+         and only a target carries the chevron. */
       dom.setAttr(head, 'class', single ? 'holding-head' : 'holding-head opens');
-
-      if (mark.dataset.symbol !== coin.symbol) {
-        mark.dataset.symbol = coin.symbol;
-        marks.paint(mark, coin.symbol);
-        /* The row carries its coin's colour too, so the change tint can be
-           the coin's own rather than a state colour. */
-        var colour = marks.colourFor(coin.symbol);
-        if (colour) wrap.style.setProperty('--coin', colour);
-        else wrap.style.removeProperty('--coin');
+      setChevron(head, !single);
+      if (single) {
+        dom.setAttr(head, 'aria-expanded', null);
+        dom.setAttr(wrap, 'data-open', null);
+      } else {
+        dom.setAttr(head, 'aria-expanded', wrap.dataset.open === 'true' ? 'true' : 'false');
       }
+
+      setMark(mark, coin.symbol, 24);
+      /* The row carries its coin's colour too, so the change tint can be
+         the coin's own rather than a state colour. */
+      var colour = colourOf(coin.symbol);
+      if (colour) wrap.style.setProperty('--coin', colour);
+      else wrap.style.removeProperty('--coin');
 
       dom.setText(name.children[0], coin.symbol);
       /* One place is named on the row itself, because a fold that opens onto a
@@ -496,9 +450,9 @@
         return (row.kind || 'token') + ':' + (row.chain || '') + ':' + i;
       }, function () {
         var line = dom.el('div', 'holding-place');
-        line.appendChild(dom.el('span', 'meta grow'));
-        line.appendChild(dom.el('span', 'mono meta'));
-        line.appendChild(dom.el('span', 'mono'));
+        line.appendChild(dom.el('span', 'holding-place-name grow'));
+        line.appendChild(dom.el('span', 'mono holding-place-qty'));
+        line.appendChild(dom.el('span', 'mono holding-place-value'));
         return line;
       }, function (line, row) {
         dom.setText(line.children[0], placeName(row));
@@ -510,10 +464,10 @@
 
     renderComposition(coins);
 
-    /* The total is the head of the panel, so it is the first thing read rather
+    /* The total is the head of the card, so it is the first thing read rather
        than a sum under a list. */
     setLead(refs.money, dom.usd(wallet.totalUsd || 0));
-    setSummary(refs.money, moneySummary(coins, wallet, common));
+    setMeta(refs.money, moneySummary(coins, wallet, common));
 
     var notes = [];
     if (wallet.emptyCount) notes.push(wallet.emptyCount + ' empty, not listed');
@@ -525,7 +479,20 @@
     dom.setText(refs.emptyNote, notes.join('. '));
     dom.setHidden(refs.emptyNote, !notes.length);
     dom.setAttr(refs.emptyNote, 'class', stale.length ? 'meta warn' : 'meta');
-    refs.moneyCut();
+  }
+
+  /* The chevron is drawn only on a row that opens. It is the last child of the
+     head, added and removed as the row changes shape between frames. */
+  function setChevron(head, wanted) {
+    var last = head.children[head.children.length - 1];
+    var has = last && String(last.className).split(' ').indexOf('chev') >= 0;
+    if (wanted && !has) {
+      var chev = dom.el('span', 'chev');
+      chev.appendChild(icon('chevron-down'));
+      head.appendChild(chev);
+    } else if (!wanted && has) {
+      head.removeChild(last);
+    }
   }
 
   /* THE SHAPE OF THE WALLET, ONCE, AS A BAR.
@@ -533,14 +500,14 @@
      The rows carried a third number column for each coin's share of the total,
      and three right-aligned figures per row is why they all read the same. The
      share is one fact about the whole wallet rather than nine facts about nine
-     coins, so it is drawn once, as one 4px bar under the head.
+     coins, so it is drawn once, as one pill under the head.
 
-     Each segment is its coin's brand colour, the same one the mark on its row
-     wears (ui/design/marks.js), so the bar and the list are read as the same
-     facts. It is the one thing on this deck that is coloured and is not a
-     state, and it is allowed because a coin's colour is its name: the state
-     colours keep their meaning because a brand colour never lands on a
-     number. A coin without a colour takes the quiet text tone. */
+     Each segment is its coin's brand colour, the same one its logo wears, so
+     the bar and the list are read as the same facts. It is the one thing on
+     this deck that is coloured and is not a state, and it is allowed because
+     a coin's colour is its name: the state colours keep their meaning because
+     a brand colour never lands on a number. A coin without a colour takes the
+     quiet text tone. */
   function renderComposition(coins) {
     var priced = [];
     var total = 0;
@@ -564,7 +531,7 @@
     }, function (seg, coin) {
       seg.dataset.coin = coin.id;
       seg.style.flexGrow = String(coin.valueUsd / total);
-      seg.style.setProperty('--seg', marks.colourFor(coin.symbol) || 'var(--text-3)');
+      seg.style.setProperty('--seg', colourOf(coin.symbol) || 'var(--text-3)');
       seg.title = coin.symbol + ' ' + dom.pct(coin.valueUsd / total);
     });
   }
@@ -619,9 +586,6 @@
     }, CHANGED_MS);
   }
 
-  /* The coins, counted, plus anything the panel could not price. An unpriced
-     row is named in the summary rather than left for somebody to spot in the
-     list, because it is the one thing on this panel that makes the total wrong. */
   /* The one place the whole wallet sits in, or an empty string when there is
      more than one. Two coins in one place each is still one place; a coin in
      two places is not. */
@@ -636,6 +600,9 @@
     return found;
   }
 
+  /* The coins, counted, plus anything the panel could not price. An unpriced
+     row is named in the meta rather than left for somebody to spot in the
+     list, because it is the one thing on this panel that makes the total wrong. */
   function moneySummary(coins, wallet, common) {
     if (!coins.length) return 'Nothing held';
     var unpriced = [];
@@ -699,7 +666,7 @@
 
     if (trade.failed) {
       setLead(refs.trading, '--');
-      setSummary(refs.trading, 'Hyperliquid, unread');
+      setMeta(refs.trading, 'Hyperliquid, unread');
       var facts = dom.el('div', 'facts');
       fact(facts, 'Trading money', '--');
       fact(facts, 'Spare', '--');
@@ -713,7 +680,7 @@
     var account = data && data.account;
     if (!data || !account || account.accountKnown === false) {
       setLead(refs.trading, '');
-      setSummary(refs.trading, 'Hyperliquid');
+      setMeta(refs.trading, 'Hyperliquid');
       host.appendChild(emptyBlock('Still reading the account',
         'The venue has not said yet what kind of account this is.'));
       return;
@@ -723,7 +690,7 @@
       || typeof account.freeUsd === 'number';
     if (!funded) {
       setLead(refs.trading, '');
-      setSummary(refs.trading, 'Hyperliquid, not funded');
+      setMeta(refs.trading, 'Hyperliquid, not funded');
       host.appendChild(emptyBlock('No trading money yet',
         'Ask your assistant to fund the trading account, and it will ask you first.'));
       return;
@@ -731,7 +698,7 @@
 
     setLead(refs.trading, typeof account.equityUsd === 'number' ? dom.usd(account.equityUsd) : '');
     var positions = Array.isArray(data.positions) ? data.positions : [];
-    setSummary(refs.trading, 'Hyperliquid' + (positions.length
+    setMeta(refs.trading, 'Hyperliquid' + (positions.length
       ? ', ' + (positions.length === 1 ? '1 position open' : positions.length + ' positions open')
       : ', nothing open'));
 
@@ -742,7 +709,7 @@
     host.appendChild(box);
 
     /* How much of the account is still between the position and a forced close.
-       It is the third figure of a leveraged account and it comes off the same
+       It is the third figure of an account on margin and it comes off the same
        read as the other two, drawn with the meter the trade screen uses so the
        two screens do not disagree about what a margin bar looks like. */
     if (typeof account.healthPct === 'number') {
@@ -791,7 +758,7 @@
     var row = dom.el('div', 'position-line pro-pos');
 
     var asset = dom.el('span', 'pro-pos-asset');
-    asset.appendChild(coinLogo(coin, 20));
+    asset.appendChild(logo(coin, 20));
     asset.appendChild(dom.el('span', 'pro-pos-coin', coin));
     var side = dom.el('span', 'trade-pill', short ? 'Short' : 'Long');
     side.dataset.tone = short ? 'down' : 'up';
@@ -816,30 +783,24 @@
     return row;
   }
 
-  /* The coin's real mark through ui/design/marks.js, or the old disc on a
-     window that has not loaded the logos yet. */
-  function coinLogo(coin, size) {
-    var marks = window.PhosphorMarks;
-    if (marks && typeof marks.logo === 'function') return marks.logo(coin, size);
-    if (marks && typeof marks.disc === 'function') return marks.disc(coin);
-    var node = dom.el('span', 'logo');
-    node.setAttribute('aria-hidden', 'true');
-    return node;
-  }
+  /* ---------- the policy card ---------- */
 
-  /* THE POLICY CARD.
+  /* Rules, grouped by what they do and in the order a person needs them: what
+     gets asked, what gets refused (at once, over a day, and anything else the
+     engine enforces), what is held back for gas, and where money may go. Each
+     one is the server's own sentence (src/policy/render.ts) said in the app's
+     voice, so the card and the assistant never disagree about a number. A rule
+     that is not set is not drawn, which is what "no limits unless specified"
+     means here: an unset allowlist draws no Pays only group, a policy with no
+     daily cap draws no meter. The sentences this card does not know the shape
+     of (an issuer cap, a forbidden issuer) still render, verbatim, under
+     Refuses, because a rule the app enforces is a rule the person gets to
+     read. The kill switch leads, outside every group, in the down colour.
 
-     Rules, in the order a person needs them: what gets asked, what gets
-     refused at once, what gets refused over a day, what is held back for gas,
-     and where money may go. Each one is the server's own sentence
-     (src/policy/render.ts) said in the app's voice, so the card and the
-     assistant never disagree about a number. A rule that is not set is not
-     drawn, which is what "no limits unless specified" means here: an unset
-     allowlist draws no door, a policy with no daily cap draws no meter. The
-     sentences this card does not know the shape of (an issuer cap, a
-     forbidden issuer) still render, verbatim, behind a wall, because a rule
-     the app enforces is a rule the person gets to read. */
+     Twenty rules must still read: a group with more than five rows folds to
+     its heading and a count, and opens on a click. */
   var allowOpen = false;
+  var openGroups = {};
 
   function renderLimits(state) {
     dom.clear(refs.limitsRules);
@@ -851,32 +812,32 @@
     var drawn = 0;
 
     if (rules.kill) {
-      var kill = rule('wall', 'Refuses everything while the kill switch is on.');
+      var kill = rule('kill', 'Refuses everything while the kill switch is on.');
       kill.node.dataset.rule = 'kill';
       kill.node.dataset.tone = 'down';
       refs.limitsRules.appendChild(kill.node);
       drawn += 1;
     }
 
+    var asks = [];
     if (rules.ask) {
-      var ask = rule('hand', 'Asks you before anything above ' + rules.ask + '.');
+      var ask = rule('ask', 'Asks you before anything above ' + rules.ask + '.');
       ask.node.dataset.rule = 'ask';
-      refs.limitsRules.appendChild(ask.node);
-      drawn += 1;
+      asks.push(ask.node);
     }
 
+    var refuses = [];
     if (rules.perTx) {
-      var once = rule('wall', 'Refuses any single transaction above ' + rules.perTx + '.');
+      var once = rule('refuse', 'Refuses any single transaction above ' + rules.perTx + '.');
       once.node.dataset.rule = 'refuse';
-      refs.limitsRules.appendChild(once.node);
-      drawn += 1;
+      refuses.push(once.node);
     }
 
     /* The one meter on the card, under the one rule it measures. Only a cap
        the daily counter knows about draws it: a sentence with no counter
        behind it is a rule, not a gauge. */
     if (rules.perDay) {
-      var day = rule('wall', 'Refuses more than ' + rules.perDay + ' in any 24 hours.');
+      var day = rule('refuse', 'Refuses more than ' + rules.perDay + ' in any 24 hours.');
       day.node.dataset.rule = 'daily';
       if (daily && daily.capUsd > 0) {
         var spent = Number(daily.spentUsd) || 0;
@@ -903,31 +864,38 @@
         meter.appendChild(dom.el('i'));
         day.node.appendChild(meter);
       }
-      refs.limitsRules.appendChild(day.node);
-      drawn += 1;
+      refuses.push(day.node);
+    }
+
+    for (var o = 0; o < rules.other.length; o += 1) {
+      var other = rule('refuse', rules.other[o]);
+      other.node.dataset.rule = 'other';
+      refuses.push(other.node);
     }
 
     /* THE GAS FLOORS ARE ONE RULE, NOT FOUR.
        They arrive as one sentence per chain, and four lines that differ in two
-       words each are four lines nobody reads. One rule naming the four
-       numbers says the same thing and can be taken in at a glance. */
+       words each are four lines nobody reads. One rule, and under it one chip
+       per chain wearing the chain's mark and its floor, can be taken in at a
+       glance. */
+    var keeps = [];
     if (rules.gas.length) {
-      var gas = rule('coin', rules.gas.length === 1
+      var gas = rule('keep', rules.gas.length === 1
         ? 'Keeps gas back on ' + chainName(rules.gas[0].chain) + '.'
         : 'Keeps gas back on each chain.');
       gas.node.dataset.rule = 'gas';
-      gas.text.appendChild(dom.el('span', 'meta mono', rules.gas.map(function (g) {
-        return chainName(g.chain) + ' ' + g.amount;
-      }).join(', ')));
-      refs.limitsRules.appendChild(gas.node);
-      drawn += 1;
-    }
-
-    for (var o = 0; o < rules.other.length; o += 1) {
-      var other = rule('wall', rules.other[o]);
-      other.node.dataset.rule = 'other';
-      refs.limitsRules.appendChild(other.node);
-      drawn += 1;
+      var chips = dom.el('div', 'gas-chips');
+      for (var g = 0; g < rules.gas.length; g += 1) {
+        var chip = dom.el('span', 'chip gas-chip');
+        var chain = String(rules.gas[g].chain || '').toLowerCase();
+        var mark = dom.el('span', 'gas-chip-mark');
+        mark.appendChild(logo(CHAIN_MARKS[chain] || chain.toUpperCase(), 16));
+        chip.appendChild(mark);
+        chip.appendChild(dom.el('span', 'gas-chip-text', chainName(chain) + ' ' + rules.gas[g].amount));
+        chips.appendChild(chip);
+      }
+      gas.text.appendChild(chips);
+      keeps.push(gas.node);
     }
 
     /* The destination allowlist existed in the policy engine with no way to
@@ -936,6 +904,7 @@
        character by character on the day somebody has a reason to and is noise
        on every other day; a venue name is read at a glance and is the half of
        this list that answers a question. */
+    var pays = [];
     var allow = policy.outbound && Array.isArray(policy.outbound.destinationAllowlist)
       ? policy.outbound.destinationAllowlist
       : [];
@@ -952,16 +921,17 @@
       }
       var sentence = 'Pays only ' + listWords(names) + '.';
 
-      var door = rule('door', sentence, addresses.length ? 'button' : 'div');
+      var door = rule('pay', sentence, addresses.length ? 'button' : 'div');
       door.node.dataset.rule = 'destinations';
-      refs.limitsRules.appendChild(door.node);
-      drawn += 1;
+      pays.push(door.node);
 
       if (addresses.length) {
         door.node.className += ' opens';
         door.node.type = 'button';
         door.node.setAttribute('aria-label', sentence);
-        door.node.appendChild(dom.el('span', 'chev'));
+        var chev = dom.el('span', 'chev');
+        chev.appendChild(icon('chevron-down'));
+        door.node.appendChild(chev);
         var box = dom.el('div', 'allowlist');
         for (var b = 0; b < addresses.length; b += 1) {
           box.appendChild(dom.el('p', 'addr dim', addresses[b]));
@@ -974,11 +944,15 @@
           dom.setHidden(box, !allowOpen);
           dom.setAttr(door.node, 'aria-expanded', allowOpen ? 'true' : 'false');
           dom.setAttr(door.node, 'data-open', allowOpen ? 'true' : null);
-          refs.limitsCut();
         });
-        refs.limitsRules.appendChild(box);
+        pays.push(box);
       }
     }
+
+    drawn += group('ask', 'Asks first', asks);
+    drawn += group('refuse', 'Refuses', refuses);
+    drawn += group('keep', 'Keeps', keeps);
+    drawn += group('pay', 'Pays only', pays);
 
     if (!drawn) {
       refs.limitsRules.appendChild(emptyBlock('No rules set',
@@ -986,18 +960,60 @@
     }
 
     refs.limitsFoot.appendChild(askLine());
-    setSummary(refs.limits, policySummary(drawn, daily));
-    refs.limitsCut();
+    setMeta(refs.limits, policySummary(drawn, daily));
   }
 
-  /* One rule row: the glyph, the sentence, and room on the right for the one
+  /* A group: a heading in the quiet weight and its rows. Nothing is drawn for
+     an empty group. Over GROUP_FOLD_AT rules the heading becomes the control
+     that opens them, with the count beside it, and the rows stay folded until
+     asked for; the choice survives a re-render. Returns how many rules the
+     group holds, for the meta line. */
+  function group(id, title, nodes) {
+    var count = 0;
+    for (var i = 0; i < nodes.length; i += 1) {
+      if (String(nodes[i].className).split(' ').indexOf('rule') >= 0) count += 1;
+    }
+    if (!count) return 0;
+    var section = dom.el('section', 'rule-group');
+    section.dataset.group = id;
+    var folds = count > GROUP_FOLD_AT;
+    var rows = dom.el('div', 'rule-group-rows');
+    if (folds) {
+      var open = openGroups[id] === true;
+      var head = dom.el('button', 'rule-group-title opens');
+      head.type = 'button';
+      head.appendChild(dom.el('span', 'rule-group-name', title));
+      head.appendChild(dom.el('span', 'rule-group-count mono', String(count)));
+      var chev = dom.el('span', 'chev');
+      chev.appendChild(icon('chevron-down'));
+      head.appendChild(chev);
+      dom.setAttr(head, 'aria-expanded', open ? 'true' : 'false');
+      dom.setAttr(section, 'data-open', open ? 'true' : null);
+      dom.setHidden(rows, !open);
+      dom.on(head, 'click', function () {
+        var now = rows.hidden;
+        openGroups[id] = now;
+        dom.setHidden(rows, !now);
+        dom.setAttr(head, 'aria-expanded', now ? 'true' : 'false');
+        dom.setAttr(section, 'data-open', now ? 'true' : null);
+      });
+      section.appendChild(head);
+    } else {
+      section.appendChild(dom.el('h3', 'rule-group-title', title));
+    }
+    for (var n = 0; n < nodes.length; n += 1) rows.appendChild(nodes[n]);
+    section.appendChild(rows);
+    refs.limitsRules.appendChild(section);
+    return count;
+  }
+
+  /* One rule row: the icon, the sentence, and room on the right for the one
      figure a rule may carry. The sentence is a span of its own so a second
-     line (the gas amounts) can sit under it. */
+     line (the gas chips) can sit under it. */
   function rule(kind, text, tag) {
     var node = dom.el(tag || 'div', 'rule');
     var mark = dom.el('span', 'rule-glyph');
-    var svg = glyph(kind);
-    if (svg) mark.appendChild(svg);
+    mark.appendChild(icon(RULE_ICONS[kind] || 'refused', 'icon-20'));
     node.appendChild(mark);
     var body = dom.el('div', 'rule-text');
     body.appendChild(dom.el('span', 'rule-line', text));
@@ -1045,9 +1061,7 @@
   /* One sentence, rather than an Edit button on every rule that only ever
      opened a toast saying the same thing. Seven buttons that cannot do what
      they offer is worse than no button: it teaches a person that the controls
-     on this screen are decoration. It sits last, under the rules, because this
-     panel holds more than its box on a short window and something has to be
-     the thing below the cut. */
+     on this screen are decoration. */
   function askLine() {
     return dom.el('p', 'meta', 'Ask your assistant to change a rule. Every change waits for your click.');
   }
@@ -1072,15 +1086,14 @@
     return 'in ' + hours + (hours === 1 ? ' hour' : ' hours');
   }
 
-  function renderFeeTotal() {
-    if (!refs.feeValue) return;
-    var total = window.PhosphorReceipts.feeTotal();
-    dom.setText(refs.feeValue, total > 0 ? dom.fee(total) : 'None yet');
-
-    var list = window.PhosphorReceipts.get();
-    var count = Array.isArray(list) ? list.length : 0;
-    setSummary(refs.activity, count === 0 ? 'Nothing has happened yet'
-      : (count === 1 ? '1 receipt' : count + ' receipts') + (total > 0 ? ', ' + dom.fee(total) + ' in fees' : ''));
+  /* The Activity head's one line: the window, then what it cost. "last 24
+     hours, $0.02 in fees"; a window with nothing in it says so. */
+  function activityWords(meta) {
+    if (!meta) return '';
+    if (meta.state === 'error') return meta.words + ', unread';
+    if (meta.state === 'loading' && !meta.count) return meta.words;
+    if (!meta.total) return meta.words + ', nothing yet';
+    return meta.words + ', ' + (meta.feesUsd > 0 ? dom.fee(meta.feesUsd) + ' in fees' : 'no fees');
   }
 
   function fact(host, label, value) {

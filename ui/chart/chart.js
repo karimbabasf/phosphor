@@ -77,7 +77,7 @@ var RGB_TEXT2 = '155, 161, 171';
    "rgb(246, 246, 246)" is read too, because that is the shape theme.js writes every token in
    once a theme has been applied. Until it was, a token read off the document after the first
    theme frame was refused here and the dark fallback stood: invisible on graphite, and a dark
-   chart on a white window the moment a light colourway existed. */
+   chart on any light ground an agent set. */
 function rgbTriple(hex) {
   if (typeof hex !== 'string') return null;
   var value = hex.trim().toLowerCase();
@@ -135,9 +135,9 @@ function chartTheme(theme) {
   var agent = chosen(theme.agent);
   var before = [C_BG, C_UP, C_DOWN, C_HI, RGB_ACCENT, RGB_DOWN, RGB_AGENT, RGB_LINE, RGB_TEXT, RGB_TEXT2].join('|');
 
-  /* The structure first. A colourway moves the grid, the axes and the labels, which no slot
-     carries, so they are read off the document again here rather than once at boot. The slots
-     below then land on top, as they always did. */
+  /* The structure first. The grid, the axes and the labels come from tokens no slot carries,
+     so they are read off the document again here rather than once at boot. The slots below
+     then land on top, as they always did. */
   readTokens();
 
   if (accent !== null) C_HI = lighten(theme.accent, 0.45);

@@ -17,6 +17,7 @@ import path from 'node:path';
 import type { ChainId, DecidedBy, LogEvent, Proposal, WriteDraft } from './types.ts';
 import { chainSpec, reader } from './chain/evm.ts';
 import { atomicWriteJson } from './fsatomic.ts';
+import { HYPERLIQUID_EXPLORER_ADDRESS, HYPERLIQUID_EXPLORER_TX } from './explorers.ts';
 
 // ---------- explorers ----------
 
@@ -28,7 +29,9 @@ const NON_EVM: Partial<Record<TxPlace, { tx: string; address: string }>> = {
   near: { tx: 'https://nearblocks.io/txns/', address: 'https://nearblocks.io/address/' },
   intents: { tx: 'https://nearblocks.io/txns/', address: 'https://nearblocks.io/address/' },
   // The venue's own explorer, keyed by address. A HyperCore credit has no tx hash of ours.
-  hyperliquid: { tx: 'https://app.hyperliquid.xyz/explorer/tx/', address: 'https://app.hyperliquid.xyz/explorer/address/' },
+  // The prefix lives in src/explorers.ts so a fill's link (src/trade/state.ts) and this table
+  // can never disagree about where a venue hash is looked at.
+  hyperliquid: { tx: HYPERLIQUID_EXPLORER_TX, address: HYPERLIQUID_EXPLORER_ADDRESS },
 };
 
 // Two members that are not chains. 'intents' is a balance inside the verifier contract, and
@@ -106,8 +109,11 @@ export type TxParty = { label: string; address: string; place: TxPlace; url: str
 export type TxEntry = {
   id: string; // the proposal id: the same handle the log and proposal_status use
   ts: string; // when it settled, or when it was created if it never did
-  action: 'swap' | 'deposit' | 'withdraw' | 'transfer' | 'consolidate' | 'lp add' | 'lp remove';
-  kind: WriteDraft['kind'];
+  action: 'swap' | 'deposit' | 'withdraw' | 'transfer' | 'consolidate' | 'lp add' | 'lp remove' | 'trade' | 'arm';
+  // The draft kind, except on the venue: an armed plan and the retired standing mandate both
+  // read as 'bot' (a thing that acts on its own once armed), and a close, a cancel or a moved
+  // stop keeps 'trade'. Activity filters on these two words (src/http/receipts.ts).
+  kind: WriteDraft['kind'] | 'bot';
   // 'needs_reconciliation' is a row the app cannot say moved money or did not. It belongs in
   // the history precisely because of that: dropping it would hide the one transaction a person
   // most needs to look at.
@@ -162,11 +168,22 @@ const ACTIONS: Record<string, TxEntry['action'] | null | undefined> = {
   // Not a transaction. It moves no money and it is already a line in the log.
   policy_change: null,
   // A trade moves nothing off the venue: margin, position and profit stay inside the trading
-  // account, and the fills are on the trade page. Not a transaction here. The retired mandate
-  // kind is kept for the rows already on disk, for the same reason as the pool kinds.
-  trade: null,
-  mandate_arm: null,
+  // account. It is still something that happened to the money, so it has a row: an armed
+  // plan, a close, a cancel or a moved stop, each with the proposal's own time and the
+  // venue's own sentence. Fills are not here, because the proposal never learns them: the
+  // runner reads them off the venue and the trade page shows them. The retired mandate kind
+  // is kept for the rows already on disk, for the same reason as the pool kinds.
+  trade: 'trade',
+  mandate_arm: 'arm',
 };
+
+// The two words Activity sorts venue rows by. An arm is a bot: from the moment the click
+// lands, the runner acts on the plan without asking again. A cancel takes a bot down before
+// it acted, so it is a bot too. A close and a moved stop act on a trade.
+function venueKindOf(draft: WriteDraft): 'trade' | 'bot' {
+  if (draft.kind === 'trade') return draft.op === 'open' || draft.cancel === true ? 'bot' : 'trade';
+  return 'bot';
+}
 
 const EVM_HASH = /^0x[0-9a-fA-F]{64}$/;
 const EVM_PLACES: TxPlace[] = ['eth', 'base', 'arb'];
@@ -225,6 +242,9 @@ function classifyHash(
   if (index === 0 && (kind === 'intents_withdraw' || kind === 'hl_deposit' || venue === 'intents-native')) {
     return { place: 'intents', kind: 'intent' };
   }
+  // A hash a trade recorded is the venue's own ledger hash: the venue's explorer resolves
+  // it and no chain does, so it never goes looking for an EVM receipt.
+  if (place === 'hyperliquid' && toPlace === 'hyperliquid') return { place: 'hyperliquid', kind: 'chain' };
   if (EVM_HASH.test(hash)) {
     // A hash carries no chain id, so which EVM chain it was mined on is a guess until a
     // receipt is read: the first hash of a move is the one this app broadcast on the origin,
@@ -342,6 +362,19 @@ function retiredSidesOf(draft: RetiredDraft): Sides {
 // where to. Every field comes off the draft the policy engine governed.
 function sidesOf(draft: WriteDraft): Sides {
   if (RETIRED_KINDS.includes(draft.kind)) return retiredSidesOf(draft as unknown as RetiredDraft);
+  // A trade and the retired standing mandate both start and end on the venue: nothing leaves
+  // the trading account, so there is no sent amount, no from and no to. The stake is valueUsd.
+  if (draft.kind === 'trade' || (draft as { kind: string }).kind === 'mandate_arm') {
+    return {
+      place: 'hyperliquid',
+      toPlace: 'hyperliquid',
+      venue: 'hyperliquid',
+      sent: null,
+      from: undefined,
+      to: undefined,
+      counterparty: (draft as { counterparty?: string }).counterparty,
+    };
+  }
   switch (draft.kind) {
     case 'swap':
       return {
@@ -535,7 +568,7 @@ export function buildTransactions(params: BuildParams): TxEntry[] {
       id: p.id,
       ts: p.decidedAt ?? p.createdAt,
       action,
-      kind: p.draft.kind,
+      kind: action === 'trade' || action === 'arm' ? venueKindOf(p.draft) : p.draft.kind,
       status: p.status,
       venue: sides.venue,
       place: sides.place,

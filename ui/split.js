@@ -452,9 +452,8 @@ function splitPaneList() {
 }
 
 /* The eye-off control a pane header carries: one 24 px ghost button that hides its own pane.
-   Built here so every header draws the same control, whichever file owns the header. The
-   icon comes from the shared sprite; a document without the sprite yet gets the same eye
-   drawn in place, so the control is never a blank square. */
+   Built here so every header draws the same control, whichever file owns the header. Null in
+   a document with nothing to build it in. */
 function splitPaneControl(name) {
   var conf = SPLIT_PANES[name];
   if (!conf || typeof document.createElement !== 'function') return null;
@@ -464,35 +463,11 @@ function splitPaneControl(name) {
   button.setAttribute('data-pane', name);
   button.setAttribute('aria-label', 'Hide the ' + conf.label.toLowerCase());
   button.title = 'Hide';
-  var icon = window.PhosphorIcons && typeof window.PhosphorIcons.svg === 'function'
-    ? window.PhosphorIcons.svg('hide')
-    : splitEyeOff();
-  if (icon) button.appendChild(icon);
+  button.appendChild(window.PhosphorIcons.svg('hide'));
   button.addEventListener('click', function () {
     splitPaneSet(name, false);
   });
   return button;
-}
-
-/* The eye-off glyph on the sprite's own grid (24, 1.5 px stroke, round caps), for a window
-   that has not loaded the sprite. */
-function splitEyeOff() {
-  if (typeof document.createElementNS !== 'function') return null;
-  var ns = 'http://www.w3.org/2000/svg';
-  var svg = document.createElementNS(ns, 'svg');
-  svg.setAttribute('class', 'icon');
-  svg.setAttribute('viewBox', '0 0 24 24');
-  svg.setAttribute('aria-hidden', 'true');
-  svg.setAttribute('focusable', 'false');
-  var path = document.createElementNS(ns, 'path');
-  path.setAttribute('d', 'M3 3l18 18M10.6 5.3A9.8 9.8 0 0 1 12 5.2c4.5 0 8.3 2.9 9.8 6.8a10.4 10.4 0 0 1-3 4.2M6.6 6.6A10.2 10.2 0 0 0 2.2 12c1.5 3.9 5.3 6.8 9.8 6.8 1.6 0 3.1-.4 4.4-1M9.9 9.9a3 3 0 0 0 4.2 4.2');
-  path.setAttribute('fill', 'none');
-  path.setAttribute('stroke', 'currentColor');
-  path.setAttribute('stroke-width', '1.5');
-  path.setAttribute('stroke-linecap', 'round');
-  path.setAttribute('stroke-linejoin', 'round');
-  svg.appendChild(path);
-  return svg;
 }
 
 /* The dock is watched once. Its hidden attribute is the one fact that says a proposal is

@@ -515,7 +515,7 @@
     return m ? m.canvas : null;
   }
 
-  /* A colourway moved the tokens under every mounted mini. Read them again and repaint what
+  /* A theme moved the tokens under every mounted mini. Read them again and repaint what
      is up; a slot with no payload yet paints itself when its candles arrive. */
   function retheme() {
     readTokens();

@@ -169,6 +169,9 @@
     /* The deck keeps the class name trade-rail: the spotlight, the stylesheet
        and the tests all read it, and a rename would buy nothing they can see. */
     var deck = dom.el('div', 'trade-rail');
+    /* The beam's surface for everything about positions and plans
+       (ui/beam/trace.js routes trade, trade_read, propose_trade here). */
+    deck.dataset.surface = 'position';
     deck.appendChild(buildTabs());
 
     var open = panel('open', 'Open');
@@ -620,9 +623,8 @@
   }
 
   function renderLayout() {
-    var split = window.PhosphorSplit;
-    if (!refs.layoutRows || !split || typeof split.panes !== 'function') return;
-    dom.reconcile(refs.layoutRows, split.panes(), function (pane) {
+    if (!refs.layoutRows) return;
+    dom.reconcile(refs.layoutRows, window.PhosphorSplit.panes(), function (pane) {
       return pane.name;
     }, function (pane) {
       var row = checkRow(pane.label);
@@ -636,19 +638,15 @@
 
   function onPaneRow(event) {
     var row = event.currentTarget;
-    var split = window.PhosphorSplit;
-    if (!split || typeof split.setPane !== 'function') return;
     var on = row.getAttribute('aria-checked') !== 'true';
     setChecked(row, on);
-    split.setPane(row.dataset.pane, on);
+    window.PhosphorSplit.setPane(row.dataset.pane, on);
   }
 
   /* The eye-off control for a pane header, from ui/split.js so every header
-     draws the same one. Null where the split script is not loaded. */
+     draws the same one. Null in a document with nothing to build it in. */
   function paneControl(name) {
-    var split = window.PhosphorSplit;
-    if (!split || typeof split.paneControl !== 'function') return null;
-    return split.paneControl(name);
+    return window.PhosphorSplit.paneControl(name);
   }
 
   /* ---------- the market ----------
@@ -1052,7 +1050,7 @@
     var was = lastPx[symbol];
     lastPx[symbol] = mark;
     if (typeof was !== 'number' || was === mark) return;
-    if (window.PhosphorMotion && window.PhosphorMotion.reduced()) return;
+    if (window.PhosphorMotion.reduced()) return;
     dom.setAttr(refs.price, 'data-tick', null);
     void refs.price.offsetWidth;
     dom.setAttr(refs.price, 'data-tick', mark > was ? 'up' : 'down');
@@ -1549,46 +1547,55 @@
   }
 
   function openReceipt(receipt) {
-    if (!events || typeof events.emit !== 'function') return;
     events.emit('receipt:open', { receipt: receipt, source: 'trade' });
   }
 
-  /* A fill as a Receipt (src/http/receipts.ts): what left and what arrived,
-     the venue fee, the venue's transaction when the fill carries one. A buy
-     sends dollars out and brings the coin in; a sell the other way. */
+  /* A fill as a Receipt (src/http/receipts.ts) for the shared card: what left
+     and what arrived, the venue fee, the venue's transaction when the fill
+     carries one (feed-ws.ts keeps hash and url only when the venue stated real
+     ones). A buy sends dollars out and brings the coin in; a sell the other
+     way. `side` and `closed` let the card say Bought, Sold or Trade closed:
+     a fill that realised a profit or a loss closed something. The venue
+     writes a zero for an opening fill, so a close at exactly break even reads
+     as an open, which is the one case the payload cannot tell apart. */
   function mapFill(fill) {
     var coin = String(fill.coin || '').toUpperCase();
     var sold = fill.side === 'sell' || fill.side === 'A';
     var px = typeof fill.px === 'number' ? fill.px : null;
     var size = typeof fill.sizeCoin === 'number' ? fill.sizeCoin : null;
     var notional = notionalOf(fill);
+    var closed = typeof fill.closedPnlUsd === 'number' && fill.closedPnlUsd !== 0;
     var qty = size !== null ? dom.qty(size, precisionOf(coin)) : '';
     var at = fill.atMs ? new Date(fill.atMs).toISOString() : '';
     var summary = (sold ? 'Sold ' : 'Bought ') + qty + ' ' + coin
       + (px !== null ? ' at ' + priceText(px) : '') + ' on Hyperliquid'
-      + (typeof fill.closedPnlUsd === 'number' && fill.closedPnlUsd !== 0 ? ', ' + signedUsd(fill.closedPnlUsd) + ' realised' : '')
+      + (closed ? ', ' + signedUsd(fill.closedPnlUsd) + ' realised' : '')
       + (fill.liquidation ? ', a liquidation' : '') + '.';
     return {
       id: 'fill:' + String(fill.tid || fill.atMs || ''),
       kind: 'trade',
+      side: sold ? 'sell' : 'buy',
+      closed: closed,
       at: at,
       headline: (sold ? 'Sold ' : 'Bought ') + coin + ' ' + qty,
       summary: summary,
       fromChain: 'hyperliquid',
       toChain: 'hyperliquid',
+      venue: 'Hyperliquid',
       amount: sold ? size : notional,
       symbol: sold ? coin : 'USDC',
       received: sold
         ? (notional !== null ? { symbol: 'USDC', amount: notional } : null)
         : (size !== null ? { symbol: coin, amount: size } : null),
+      valueUsd: notional,
+      price: px,
       feesUsd: typeof fill.feeUsd === 'number' ? fill.feeUsd : null,
-      txids: fill.url ? [{ chain: 'hyperliquid', hash: String(fill.hash || ''), url: String(fill.url) }] : [],
+      txids: typeof fill.hash === 'string' && fill.hash
+        ? [{ chain: 'hyperliquid', hash: fill.hash, url: typeof fill.url === 'string' ? fill.url : null }]
+        : [],
       balanceBefore: null,
       balanceAfter: null,
-      status: 'done',
-      side: sold ? 'sell' : 'buy',
-      price: px,
-      venue: 'Hyperliquid'
+      status: 'done'
     };
   }
 
@@ -1604,8 +1611,8 @@
     for (var i = 0; i < fills.length; i += 1) {
       var fill = fills[i];
       /* The field names are the payload's own: a Fill is
-         { tid, coin, side, px, sizeCoin, notionalUsd, atMs, ... }, and the
-         receipt builder adds hash and url when the venue gave them. */
+         { tid, coin, side, px, sizeCoin, notionalUsd, atMs, ... , hash, url },
+         the last two only when the venue stated real ones. */
       var sold = fill.side === 'sell' || fill.side === 'A';
       var px = typeof fill.px === 'number' ? fill.px : null;
       var notional = notionalOf(fill);
@@ -1621,7 +1628,7 @@
         amount: notional !== null ? dom.usd(notional) : '',
         dir: notional !== null ? (sold ? 'in' : 'out') : '',
         sub: px !== null ? 'at ' + priceText(px) + ', ' + dom.clock(fill.atMs) : '',
-        url: typeof fill.url === 'string' && fill.url ? fill.url : ''
+        url: fill.url || ''
       });
     }
     var plans = plansOf();
@@ -1671,16 +1678,9 @@
   /* ---------- logos and icons ----------
 
      The real marks through ui/design/marks.js and the shared sprite through
-     ui/design/icons.js. A window that has neither yet (the unit harness, a
-     tree before the foundation landed) gets the old disc and a glyph drawn in
-     place, so no row is ever a blank square. */
+     ui/design/icons.js. */
   function logo(coin, size) {
-    var marks = window.PhosphorMarks;
-    if (marks && typeof marks.logo === 'function') return marks.logo(coin, size);
-    if (marks && typeof marks.disc === 'function') return marks.disc(coin);
-    var node = dom.el('span', 'logo');
-    node.setAttribute('aria-hidden', 'true');
-    return node;
+    return window.PhosphorMarks.logo(coin, size);
   }
 
   /* The logo inside a built control, replaced only when the coin changes. */
@@ -1692,43 +1692,8 @@
     if (coin) slot.appendChild(logo(coin, size));
   }
 
-  var GLYPHS = {
-    external: 'M14 4h6v6M20 4l-9 9M20 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4',
-    layout: 'M5 4h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zM4 10h16M10 10v10',
-    armed: 'M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM12 2v3M12 19v3M2 12h3M19 12h3',
-    done: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM8.5 12.5l2.5 2.5 4.5-5',
-    refused: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM5.6 5.6l12.8 12.8',
-    'chevron-down': 'M6 9l6 6 6-6'
-  };
-
   function icon(name, className) {
-    var icons = window.PhosphorIcons;
-    if (icons && typeof icons.svg === 'function') return icons.svg(name, className);
-    return glyph(name, className);
-  }
-
-  /* The glyph on the sprite's own grid, for a window without the sprite. Built
-     in the svg namespace, never from markup, and an empty span where there is
-     no namespace to build in (the unit harness), so a caller can always
-     append what it gets. */
-  function glyph(name, className) {
-    var classes = 'icon' + (className ? ' ' + className : '');
-    if (typeof document.createElementNS !== 'function') return dom.el('span', classes);
-    var ns = 'http://www.w3.org/2000/svg';
-    var svg = document.createElementNS(ns, 'svg');
-    svg.setAttribute('viewBox', '0 0 24 24');
-    svg.setAttribute('aria-hidden', 'true');
-    svg.setAttribute('focusable', 'false');
-    var path = document.createElementNS(ns, 'path');
-    path.setAttribute('d', GLYPHS[name] || GLYPHS.done);
-    path.setAttribute('fill', 'none');
-    path.setAttribute('stroke', 'currentColor');
-    path.setAttribute('stroke-width', '1.5');
-    path.setAttribute('stroke-linecap', 'round');
-    path.setAttribute('stroke-linejoin', 'round');
-    svg.appendChild(path);
-    svg.setAttribute('class', classes);
-    return svg;
+    return window.PhosphorIcons.svg(name, className);
   }
 
   /* ---------- rows and the two controls ---------- */
@@ -1927,7 +1892,7 @@
       hit[keys[k]] = true;
       spotActive[keys[k]] = true;
     }
-    var reduced = !!(window.PhosphorMotion && window.PhosphorMotion.reduced());
+    var reduced = window.PhosphorMotion.reduced();
     var rows = spotRows();
     var lit = 0;
     var bring = '';

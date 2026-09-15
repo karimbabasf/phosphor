@@ -576,7 +576,36 @@ export function didHeadline(draft: WriteDraft, amountUsd: number): string {
   if (kindOf(draft) === 'yield_withdraw') return 'Brought your money back out of the place it was earning interest.';
   if (draft.kind === 'consolidate') return `Gathered ${amt}your ${plainSymbol(draft.symbol)} onto ${plainChain(draft.toChain)}.`;
   if (draft.kind === 'transfer') return `Sent ${amt}your ${plainSymbol(draft.leg.symbol)} to another address.`;
+  /* The venue rows. An approved plan is a bot from the moment the click lands: the runner
+     places the entry and manages the exits without asking again, so the receipt says what
+     was armed, in the plan's own figures. The fill is not here, because the proposal never
+     learns it: the runner reads fills off the venue, and the trade page shows them. A
+     change names the plan by its id, which is all the change draft carries. */
+  if (draft.kind === 'trade') {
+    if (draft.op === 'open') {
+      const plan = draft.plan;
+      const side = plan.side === 'long' ? 'Long' : 'Short';
+      const target = plan.target === undefined ? '' : `, target ${price(plan.target)}`;
+      return `Armed a bot: ${side} ${plan.symbol} ${money(plan.sizeUsd)} at ${plan.leverage}x, stop ${price(plan.stop)}${target}.`;
+    }
+    if (draft.cancel === true) return `Cancelled bot ${draft.id} before it opened.`;
+    if (draft.close === true) return `Closed trade ${draft.id} at the market.`;
+    const moved: string[] = [];
+    if (draft.stop !== undefined) moved.push(`the stop to ${price(draft.stop)}`);
+    if (draft.target !== undefined) moved.push(`the target to ${price(draft.target)}`);
+    return `Moved ${moved.length > 0 ? moved.join(' and ') : 'the exits'} on trade ${draft.id}.`;
+  }
+  if (kindOf(draft) === 'mandate_arm') {
+    const arm = retired(draft);
+    return `Armed a bot on ${arm.symbol ?? 'the venue'}: at most ${money(arm.maxNotionalUsd ?? 0)} at a time, stopping for good after ${money(arm.maxLossUsd ?? 0)} lost.`;
+  }
   return 'Changed one of your safety rules.';
+}
+
+// A venue price in the sentence, as the venue quotes it: grouped thousands, no trailing
+// zeros, and as many decimals as the plan gave it, so a stop at 0.4512 is not rounded to 0.45.
+function price(n: number): string {
+  return n.toLocaleString('en-US', { maximumFractionDigits: 8 });
 }
 
 // The same action as a thing that did NOT happen, so a refusal never reads as a receipt.

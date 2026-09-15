@@ -90,6 +90,16 @@ function makeNode(tagName: string): Any {
   return node;
 }
 
+/* The card wearing a surface id, wherever the deck put it. */
+function bySurface(node: Any, surface: string): Any | undefined {
+  if (node.dataset?.surface === surface) return node;
+  for (const child of node.childNodes) {
+    const found = bySurface(child, surface);
+    if (found) return found;
+  }
+  return undefined;
+}
+
 function withClass(node: Any, name: string, out: Any[] = []): Any[] {
   if (String(node.className).split(' ').includes(name)) out.push(node);
   for (const child of node.childNodes) withClass(child, name, out);
@@ -126,8 +136,12 @@ function boot(): Rig {
       get: () => current,
       loaded: () => true,
     },
-    PhosphorReceipts: { onChange: () => {}, load: () => {}, render: () => {}, get: () => [], feeTotal: () => 0 },
+    // The Activity card mounts the shared list (ui/screens/receipts.js); the Money card under
+    // test never reads it, so a stub that draws nothing is the whole contract.
+    PhosphorReceipts: { list: () => ({ load: () => Promise.resolve([]), setWindow: () => {}, setKind: () => {}, expand: () => {}, get: () => [] }) },
     PhosphorShell: { setView: () => {} },
+    // The icon set (ui/design/icons.js): one stand-in svg per name.
+    PhosphorIcons: { svg: (name: string) => { const n = makeNode('svg'); n.className = 'icon'; n.dataset.icon = name; return n; } },
   };
   window.window = window;
   const ctx = createContext({ window, document, console, Promise });
@@ -158,7 +172,7 @@ const ROWS = [
 ];
 
 function moneyOf(host: Any): Any {
-  return host.childNodes[0].childNodes.find((n: Any) => n.dataset.surface === 'holdings')!;
+  return bySurface(host, 'holdings')!;
 }
 
 test('the bar is one segment per coin, each in its coin colour, by share', () => {

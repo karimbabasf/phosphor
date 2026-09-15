@@ -457,7 +457,26 @@ async function renderPayload(data: unknown, opts: Options = {}): Promise<World> 
     },
     PhosphorShell: { view: () => opts.view ?? 'basic', setPending: () => {} },
     PhosphorAgent: { mount: () => {} },
-    PhosphorSplit: opts.split,
+    // The foundation's marks, icons and pane state, as stand-ins: a logo is a span that
+    // remembers its ticker, an icon a span that remembers its name.
+    PhosphorMarks: {
+      logo: (symbol: string, size: number) => {
+        const node = makeNode('span');
+        node.className = 'logo';
+        node.dataset.token = symbol;
+        node.style['--logo'] = size + 'px';
+        return node;
+      },
+    },
+    PhosphorIcons: {
+      svg: (name: string, className?: string) => {
+        const node = makeNode('svg');
+        node.className = 'icon' + (className ? ' ' + className : '');
+        node.dataset.icon = name;
+        return node;
+      },
+    },
+    PhosphorSplit: opts.split ?? { panes: () => [], setPane: () => false, paneControl: () => null },
     // The chart engine's repaint hook, recorded so a test can see the spotlight ask for it.
     chartInvalidate: (scene: boolean) => {
       if (opts.onInvalidate) opts.onInvalidate(scene);

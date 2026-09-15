@@ -122,8 +122,13 @@ function build() {
     },
     addEventListener: () => {},
     PhosphorMotion: { reduced: () => false },
-    PhosphorReceipts: { onChange: () => {}, load: () => {}, get: () => [], render: () => {} },
+    // The Activity fold mounts the shared list (ui/screens/receipts.js) into its body; the
+    // column under test never opens it, so a stub that draws nothing is the whole contract.
+    PhosphorReceipts: { list: () => ({ load: () => Promise.resolve([]), setWindow: () => {}, setKind: () => {}, expand: () => {}, get: () => [] }) },
     PhosphorMoneyIn: { render: () => {} },
+    // The icon set (ui/design/icons.js): one stand-in svg per name, so the strip and the folds
+    // can be checked for the icon they asked for.
+    PhosphorIcons: { svg: (name: string) => { const n = make('svg'); n.className = 'icon'; n.dataset.icon = name; return n; } },
   };
   const sandbox: Any = {
     console,
@@ -149,7 +154,7 @@ function build() {
     bar: () => all(host, 'alloc')[0],
     segments: () => all(host, 'alloc-seg'),
     strip: () => all(host, 'strip')[0],
-    rows: () => all(host, 'row').filter((row) => row.parentNode === all(host, 'panel-body-flush')[0]),
+    rows: () => all(host, 'row').filter((row) => row.parentNode === all(host, 'hold-list')[0]),
     runTimers() {
       const due = timers.splice(0, timers.length);
       for (const timer of due) timer.fn();
@@ -233,12 +238,13 @@ test('a row whose value moved carries its delta and its tint for a beat, then se
   assert.equal(eth.dataset.changed, undefined, 'the tint never left');
 });
 
-test('the rules strip keeps its surface and its sentence, with the hand at its left', () => {
+test('the rules strip keeps its surface and its sentence, with the ask icon at its left', () => {
   const world = build();
   world.put(frame(1000, COINS));
   const strip = world.strip();
   assert.equal(strip.dataset.surface, 'rules');
-  assert.equal(all(strip, 'strip-glyph').length, 1, 'no hand on the strip');
+  assert.equal(all(strip, 'strip-glyph').length, 1, 'no icon slot on the strip');
+  assert.equal(all(strip, 'strip-glyph')[0].children[0].dataset.icon, 'waiting', 'the strip wears the ask rule icon');
   assert.equal(all(strip, 'strip-text')[0].textContent,
     'Asks you above $100. Refuses above $10,000 at once and $25,000 a day.');
 });

@@ -69,9 +69,9 @@ test('the shell and the backend agree on the channel and the injected global', (
   assert.ok(shell.includes('window.__PHOSPHOR_TOKEN__'), 'the shell injects the token into the page');
   assert.ok(shell.includes('.initialization_script(&script)'), 'through an initialization script, so it runs before page script');
   // On the control window only. A splash that carried the token would put it on a second webview
-  // for no reason, and the splash is created by a different builder call. The splash does get a
-  // script of its own since the colourways: it carries one of three literal colourway names read
-  // off theme.json, and nothing else, so what is asserted is that the token is not in it.
+  // for no reason, and the splash is created by a different builder call. Since the window went
+  // dark only (2026-09-15) the splash receives no script at all: nothing read off the disk
+  // reaches it, and the colourway it paints is the one in its own stylesheet.
   const controlBlock = shell.slice(shell.indexOf('fn open_control_window'), shell.indexOf('fn refuse_existing'));
   assert.ok(controlBlock.includes('initialization_script'), 'the injection sits in open_control_window');
   const splashStart = shell.indexOf('WebviewWindowBuilder::new(&handle, "splash"');
@@ -80,9 +80,8 @@ test('the shell and the backend agree on the channel and the injected global', (
   assert.ok(!splashBlock.includes('__PHOSPHOR_TOKEN__'), 'the splash window never receives the token');
   assert.ok(!splashBlock.includes('token'), 'nothing named token reaches the splash builder');
   assert.ok(!shell.slice(shell.indexOf('"splash"')).includes('initialization_script(&script)'), 'the token script is injected once, before the splash is ever named');
-  assert.ok(splashBlock.includes('window.__PHOSPHOR_PROFILE__ = \\"{colourway}\\"'), 'the splash receives the colourway, as one literal');
-  const readBlock = shell.slice(shell.indexOf('fn saved_colourway'), shell.indexOf('fn payload_dir'));
-  assert.ok(readBlock.includes('COLOURWAYS.iter().copied().find(|known| *known == name)'), 'and only a name matching one of the three verbatim is ever handed over');
+  assert.ok(!splashBlock.includes('initialization_script'), 'the splash receives no script at all');
+  assert.ok(!shell.includes('__PHOSPHOR_PROFILE__'), 'no colourway is read off the disk and handed to a page');
 });
 
 test('the shell refuses to inject anything that is not hex', () => {

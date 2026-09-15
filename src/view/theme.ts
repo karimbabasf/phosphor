@@ -22,14 +22,14 @@
 // `#rgb` and `#rrggbb` are the whole grammar. Named colours would be safe too and are still
 // refused: one shape is one thing to prove.
 //
-// THE COLOURWAYS. The window ships in two of the mark's colourways: green on black and black on
-// white (brand/README.md; the mark's third, black on green, was cut from the window on 2026-09-14,
-// Karim: "remove the neon green"). Each is a whole palette, not five slots: the text, the warning
-// amber and the gate's red all have to change with the ground, because the amber that reads on
-// graphite vanishes on white and no single red clears 4.5:1 on both. So a colourway carries its
-// own gate red, and the agent still cannot name it: it can pick a colourway, and every colourway
-// was checked against every floor before it was written down (tests/unit/theme-slots.test.ts).
-// The five slots then sit on top of whichever colourway is current, exactly as before.
+// THE COLOURWAY. The window ships in one of the mark's colourways, green on black
+// (brand/README.md). The mark's black on green was cut from the window on 2026-09-14 (Karim:
+// "remove the neon green") and black on white on 2026-09-15 (dark only). The colourway is a
+// whole palette, not five slots: the text, the warning amber and the gate's red belong to the
+// ground, and the agent cannot name any of them. The palette was checked against every floor
+// before it was written down (tests/unit/theme-slots.test.ts), and the five slots sit on top of
+// it. The `profile` field stays in the theme and the tool so an agent or a theme.json that names
+// green-on-black keeps working; any other name is refused or read as the default.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -39,13 +39,13 @@ const FILE = 'theme.json';
 
 export type ThemeSlot = 'accent' | 'background' | 'up' | 'down' | 'agent';
 
-export type Colourway = 'green-on-black' | 'black-on-white';
+export type Colourway = 'green-on-black';
 
 export type Theme = Record<ThemeSlot, string> & { profile: Colourway };
 
 export const THEME_SLOTS: readonly ThemeSlot[] = ['accent', 'background', 'up', 'down', 'agent'];
 
-export const COLOURWAYS: readonly Colourway[] = ['green-on-black', 'black-on-white'];
+export const COLOURWAYS: readonly Colourway[] = ['green-on-black'];
 
 // What every slot means, handed to the agent in the tool description so it never has to guess
 // which one moves which pixels.
@@ -61,7 +61,7 @@ export type Palette = {
   // The five slots as the colourway ships them.
   slots: Record<ThemeSlot, string>;
   // The tokens no slot reaches. The window paints them from ui/design/tokens.css, which carries
-  // the same values under [data-profile]; the test that pins the two together reads both.
+  // the same values on :root; the test that pins the two together reads both.
   text: string;
   text2: string;
   text3: string;
@@ -79,20 +79,11 @@ export const COLOURWAY_PALETTE: Readonly<Record<Colourway, Palette>> = {
     warn: '#f5b942',
     gate: '#ff3b30',
   },
-  'black-on-white': {
-    slots: { accent: '#111111', background: '#ffffff', up: '#0f8f3a', down: '#d8213a', agent: '#6b3fd6' },
-    text: '#111111',
-    text2: '#5c6169',
-    text3: '#8a9099',
-    warn: '#9a5f00',
-    gate: '#d0261a',
-  },
 };
 
 // How a colourway is described to the agent and labelled for the human, one line each.
 export const COLOURWAY_LABEL: Readonly<Record<Colourway, string>> = {
   'green-on-black': 'Green on black',
-  'black-on-white': 'Black on white',
 };
 
 export const DEFAULT_COLOURWAY: Colourway = 'green-on-black';
@@ -171,10 +162,8 @@ type ThemeOutcome =
    not be written. Pure: it reads and writes nothing, so the same check runs in a test.
 
    Order inside one patch: the colourway first, then reset, then the slots. So
-   { profile: 'black-on-white', accent: '#5b8def' } is the white colourway with a blue action
-   colour, and reset:true puts the slots back to the colourway that is current, not to green on
-   black: a person who chose white and an agent that then resets should not be handed a
-   different ground. */
+   { profile: 'green-on-black', accent: '#5b8def' } is the colourway with a blue action colour,
+   and reset:true puts the slots back to the colourway's own. */
 export function applyPatch(current: Theme, patch: Record<string, unknown>): ThemeOutcome {
   const next: Theme = { ...current };
   const notes: string[] = [];
@@ -250,7 +239,8 @@ export function readTheme(dataDir: string): Theme {
     const parsed = JSON.parse(raw) as Record<string, unknown> | null;
     if (parsed === null || typeof parsed !== 'object') return { ...DEFAULT_THEME };
     // A file from before the colourways has no profile line and means green on black, which
-    // is what every window painted then. An unknown name is treated the same way.
+    // is what every window painted then. An unknown name, and the two colourways that were
+    // cut, are treated the same way.
     const profile = isColourway(parsed.profile) ? parsed.profile : DEFAULT_COLOURWAY;
     const out: Theme = colourwayTheme(profile);
     for (const slot of THEME_SLOTS) {

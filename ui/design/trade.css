@@ -160,8 +160,6 @@ body[data-view="trade"] .stage {
   height: 20px;
 }
 
-.trade-symbol-logo .coin-mark { width: 20px; height: 20px; }
-.trade-symbol-logo .coin-mark svg { width: 14px; height: 14px; }
 
 .trade-mark-coin {
   font-size: var(--fs-15);
@@ -196,8 +194,6 @@ body[data-view="trade"] .stage {
   white-space: nowrap;
 }
 
-.trade-venue .coin-mark { width: 16px; height: 16px; }
-.trade-venue .coin-mark svg { width: 11px; height: 11px; }
 
 .trade-venue-dot {
   width: 6px;
@@ -263,7 +259,7 @@ body[data-view="trade"] .stage {
 .strip-stats .strip-stat { align-items: flex-end; }
 
 .strip-label {
-  font-size: var(--fs-11, 11px);
+  font-size: var(--fs-11);
   font-weight: 500;
   line-height: 1.3;
   color: var(--text-3);
@@ -353,7 +349,7 @@ body[data-view="trade"] .stage {
   background: var(--bg-2);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius);
-  box-shadow: var(--lift-sm, 0 8px 24px rgba(0, 0, 0, 0.45));
+  box-shadow: var(--lift-sm);
   opacity: 0;
   visibility: hidden;
   transform: scale(0.97);
@@ -401,8 +397,6 @@ body[data-view="trade"] .stage {
               color var(--dur-press) var(--ease-out);
 }
 
-.trade-option .coin-mark { width: 16px; height: 16px; }
-.trade-option .coin-mark svg { width: 11px; height: 11px; }
 
 .trade-option-name { flex: 1 1 auto; }
 
@@ -963,7 +957,7 @@ body[data-view="trade"] .stage {
   border-radius: var(--radius-pill);
   background: var(--bg-2);
   font-family: var(--font-ui);
-  font-size: var(--fs-11, 11px);
+  font-size: var(--fs-11);
   font-weight: 500;
   line-height: 1;
   letter-spacing: 0;
@@ -1039,7 +1033,7 @@ body[data-view="trade"] .stage {
 }
 
 .pos-col {
-  font-size: var(--fs-11, 11px);
+  font-size: var(--fs-11);
   font-weight: 500;
   color: var(--text-3);
   white-space: nowrap;
@@ -1062,8 +1056,6 @@ body[data-view="trade"] .stage {
   min-width: 0;
 }
 
-.pos-asset .coin-mark { width: 20px; height: 20px; }
-.pos-asset .coin-mark svg { width: 14px; height: 14px; }
 
 .pos-coin {
   font-size: var(--fs-14);
@@ -1198,8 +1190,6 @@ body[data-view="trade"] .stage {
   min-width: 0;
 }
 
-.tx-asset .coin-mark { width: 20px; height: 20px; }
-.tx-asset .coin-mark svg { width: 14px; height: 14px; }
 
 .tx-coin {
   font-weight: 500;
@@ -1331,8 +1321,6 @@ body[data-view="trade"] .stage {
   min-width: 0;
 }
 
-.pro-pos-asset .coin-mark { width: 20px; height: 20px; }
-.pro-pos-asset .coin-mark svg { width: 14px; height: 14px; }
 
 .pro-pos-coin {
   font-weight: 500;
