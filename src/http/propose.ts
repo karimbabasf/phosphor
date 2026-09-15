@@ -13,9 +13,19 @@ import type { JsonBody } from './respond.ts';
 import { CHAINS, PROPOSE_KINDS } from './context.ts';
 import type { Ctx } from './context.ts';
 
-// What the agent gets back from any propose: the id to poll, what the policy decided,
-// and what the simulation said. Never the draft itself, so the app's resolved addresses
-// are not echoed to the caller that was deliberately not allowed to name them.
+/* How long a propose holds its reply open for the rail. Under the proxy's thirty second budget
+   with room for the reply to travel, and the whole of the fix for 2026-09-15: a rail that ran
+   43 s answered nothing, the proxy said the app was not running, the agent proposed again, and
+   "deposit $10" moved $20. Past this the reply carries the `executing` row and says where the
+   answer will appear. */
+export const PROPOSE_REPLY_CAP_MS = 20_000;
+
+// What the agent gets back from any propose: the id to poll, what the policy decided, what
+// the simulation said, and what the rail said if it has answered. Never the draft itself, so
+// the app's resolved addresses are not echoed to the caller that was deliberately not allowed
+// to name them. The rail's sentence rides along because it is the one that says "do not send
+// this again", and a reply that carried only the status word left the agent reading `failed`
+// as a cue to retry.
 function sendProposal(ctx: Ctx, res: http.ServerResponse, proposal: Proposal): void {
   ctx.sse.broadcastState();
   sendJson(res, 200, {
@@ -23,6 +33,8 @@ function sendProposal(ctx: Ctx, res: http.ServerResponse, proposal: Proposal): v
     status: proposal.status,
     verdict: proposal.verdict,
     simulation: proposal.simulation,
+    ...(proposal.result === undefined ? {} : { result: proposal.result }),
+    ...(proposal.status === 'executing' ? { next: 'executing: read proposal_status until it settles' } : {}),
   });
 }
 
@@ -133,10 +145,12 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
   let landed = false;
   const problems: string[] = [];
 
-  const respond = (proposal: Proposal): void => {
+  // The id is remembered before the wait, so a repeat arriving during it is told which row it
+  // is repeating; the reply is the row as it stands when the rail answers or the cap runs out.
+  const respond = async (proposal: Proposal): Promise<void> => {
     landed = true;
     ctx.duplicates.remember(kind, params, session, proposal.id);
-    sendProposal(ctx, res, proposal);
+    sendProposal(ctx, res, await ctx.proposals.settled(proposal.id, PROPOSE_REPLY_CAP_MS));
   };
 
   try {
@@ -170,7 +184,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         fail(res, 400, problems.join('; '));
         return;
       }
-      respond(
+      await respond(
         await ctx.proposals.proposeSwap({
           venue: venueRaw as 'oneclick' | 'intents-native',
           chain,
@@ -203,7 +217,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         fail(res, 400, problems.join('; '));
         return;
       }
-      respond(await ctx.proposals.proposeTrade({ plan, planId, by: session }));
+      await respond(await ctx.proposals.proposeTrade({ plan, planId, by: session }));
       return;
     }
     if (kind === 'trade_change') {
@@ -216,7 +230,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         fail(res, 400, problems.join('; '));
         return;
       }
-      respond(await ctx.proposals.proposeTradeChange({ id, stop, target, cancel, close }));
+      await respond(await ctx.proposals.proposeTradeChange({ id, stop, target, cancel, close }));
       return;
     }
     if (kind === 'hl_deposit') {
@@ -228,7 +242,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         fail(res, 400, problems.join('; '));
         return;
       }
-      respond(await ctx.proposals.proposeHlDeposit({ symbol, amount }));
+      await respond(await ctx.proposals.proposeHlDeposit({ symbol, amount }));
       return;
     }
     if (kind === 'hl_withdraw') {
@@ -239,7 +253,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         fail(res, 400, problems.join('; '));
         return;
       }
-      respond(await ctx.proposals.proposeHlWithdraw({ amount }));
+      await respond(await ctx.proposals.proposeHlWithdraw({ amount }));
       return;
     }
     if (kind === 'intents_deposit') {
@@ -252,7 +266,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         fail(res, 400, problems.join('; '));
         return;
       }
-      respond(await ctx.proposals.proposeIntentsDeposit({ chain, symbol, amount }));
+      await respond(await ctx.proposals.proposeIntentsDeposit({ chain, symbol, amount }));
       return;
     }
     if (kind === 'intents_withdraw') {
@@ -267,7 +281,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         fail(res, 400, problems.join('; '));
         return;
       }
-      respond(await ctx.proposals.proposeIntentsWithdraw({ chain, symbol, amount }));
+      await respond(await ctx.proposals.proposeIntentsWithdraw({ chain, symbol, amount }));
       return;
     }
     if (kind === 'consolidate') {
@@ -287,7 +301,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
       const maxTotalUsd = typeof params.maxTotalUsd === 'number' && Number.isFinite(params.maxTotalUsd)
         ? params.maxTotalUsd
         : undefined;
-      respond(
+      await respond(
         await ctx.proposals.proposeConsolidate({
           toChain: toChain as ChainId,
           symbol,
@@ -301,7 +315,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
       // patch and sentence are passed through as authored: the engine validates
       // the patch, and the sentence is stored as data, never read as instruction.
       const sentence = typeof params.sentence === 'string' ? params.sentence : '';
-      respond(await ctx.proposals.proposePolicyChange({ patch: asRecord(params.patch), sentence }));
+      await respond(await ctx.proposals.proposePolicyChange({ patch: asRecord(params.patch), sentence }));
       return;
     }
     fail(res, 400, `unknown propose kind: ${kind}. known kinds: ${PROPOSE_KINDS.join(', ')}`);

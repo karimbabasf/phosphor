@@ -28,6 +28,7 @@ import type {
   IntentsWithdrawDraft,
   LedgerSnapshot,
   Policy,
+  Proposal,
   Rail,
   RailResult,
   RiskRow,
@@ -124,6 +125,12 @@ type Harness = {
   rails: Spy;
   eventTypes(): string[];
 };
+
+// A propose or an approve answers with the row as it stands, `executing` while the rail runs.
+// The tests here are about where the row lands, so they wait for it.
+async function landed(h: Harness, reply: Promise<Proposal>): Promise<Proposal> {
+  return h.svc.settled((await reply).id, 5000);
+}
 
 // intents: null means the ledger has no read at all; omitted means the default holdings.
 function setup(over: { policy?: Policy; rails?: Spy; intents?: IntentsRead | null } = {}): Harness {
@@ -254,7 +261,7 @@ test('a Hyperliquid withdrawal under the click threshold still parks pending for
   assert.equal(draft.to, SELF_EVM.toLowerCase(), 'the intents account credited is ours, derived not passed');
   assert.equal(draft.counterparty, ONECLICK_COUNTERPARTY);
 
-  const done = await h.svc.approve(p.id);
+  const done = await landed(h, h.svc.approve(p.id));
   assert.equal(done.status, 'executed');
   assert.equal(done.decidedBy, 'human');
   assert.deepEqual(h.rails.executed.map((d) => d.kind), ['hl_withdraw']);
@@ -272,7 +279,7 @@ test('a swap above the click threshold parks pending, then executes through the 
   assert.equal(h.rails.simulated.length, 1);
   assert.equal(h.rails.executed.length, 0, 'nothing runs while a proposal is pending');
 
-  const done = await h.svc.approve(p.id);
+  const done = await landed(h, h.svc.approve(p.id));
   assert.equal(done.status, 'executed');
   assert.equal(done.decidedBy, 'human');
   assert.equal(done.result?.ok, true);
@@ -288,7 +295,7 @@ test('a swap above the click threshold parks pending, then executes through the 
 test('a swap below the click threshold is the policy own decision and executes with no pending state', async () => {
   const h = setup();
 
-  const p = await h.svc.proposeSwap(swapParams(50));
+  const p = await landed(h, h.svc.proposeSwap(swapParams(50)));
   assert.equal(p.verdict.outcome, 'allow');
   assert.equal(p.status, 'executed');
   assert.equal(p.decidedBy, 'policy');
@@ -528,7 +535,7 @@ test('a failed simulation refuses instead of asking a human to approve it', asyn
 test('a rail that fails at execution lands failed, not executed', async () => {
   const h = setup({ rails: spyRails({ result: { ok: false, detail: 'transaction reverted on chain' } }) });
 
-  const p = await h.svc.proposeSwap(swapParams(50));
+  const p = await landed(h, h.svc.proposeSwap(swapParams(50)));
   assert.equal(p.status, 'failed');
   assert.equal(p.result?.ok, false);
   assert.match(p.result?.detail ?? '', /reverted/);

@@ -187,6 +187,31 @@ export async function executeRail(ctx: PCtx, p: Proposal, rail: Rail): Promise<P
      refuse in the app for up to five minutes. */
   reservationMade();
 
+  /* THE REPLY IS THE ROW AS IT STANDS, AND THE RAIL RUNS BEHIND IT. This awaited the rail, so
+     the propose that started it held its HTTP reply open for the whole watch loop: up to five
+     minutes against a proxy that gives up at thirty seconds and told the agent the app was not
+     running. On 2026-09-15 "deposit $10" moved $20 that way. The `executing` row is durable, the
+     budget is charged, and it is an answer; whoever wants the settled row waits on `inflight`
+     with a cap (settled, in lifecycle.ts), and past the cap reads proposal_status. Every exit
+     from the run below persists a terminal row, so the promise never rejects and a caller
+     racing it never sees a row left `executing` by a throw. */
+  const run = runRail(ctx, p, rail, executing, beforeUsd)
+    .catch((err: unknown) => {
+      // The rail's own throw is caught inside; this is the store or the log refusing the
+      // write. The row stays `executing` for the boot sweep, and the wait still ends.
+      try {
+        ctx.audit.append('error', `${p.id}: recording the rail's answer failed: ${errText(err)}`, { id: p.id });
+      } catch {
+        // the log is what failed
+      }
+      return ctx.store.get(p.id) ?? executing;
+    })
+    .finally(() => ctx.inflight.delete(p.id));
+  ctx.inflight.set(p.id, run);
+  return executing;
+}
+
+async function runRail(ctx: PCtx, p: Proposal, rail: Rail, executing: Proposal, beforeUsd: number | null): Promise<Proposal> {
   /* THE EVIDENCE IS WRITTEN THE MOMENT IT EXISTS. A rail hands back a handle once the quote is
      taken, a hash once the intent is submitted, a nonce once the action is signed, and each one
      lands on the row here, before the rail's watch loop, so a quit or a crash during the three

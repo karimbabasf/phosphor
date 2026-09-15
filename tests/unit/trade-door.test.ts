@@ -15,7 +15,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { bootChartServer } from '../fixtures/chart-server.ts';
-import type { AppConfig, LedgerSnapshot, Policy, RiskRow, TradeDraft } from '../../src/types.ts';
+import type { AppConfig, LedgerSnapshot, Policy, Proposal, ProposalService, RiskRow, TradeDraft } from '../../src/types.ts';
 import type { Ledger } from '../../src/ledger/index.ts';
 import { createAudit } from '../../src/audit.ts';
 import { createStore } from '../../src/store.ts';
@@ -184,6 +184,13 @@ function seededPolicy(clickUsd: number): Policy {
   return p;
 }
 
+
+// A propose or an approve answers with the row as it stands, `executing` while the rail runs.
+// The tests here are about where the row lands, so they wait for it.
+async function landed(h: { svc: ProposalService }, reply: Promise<Proposal>): Promise<Proposal> {
+  return h.svc.settled((await reply).id, 5000);
+}
+
 function setup(clickUsd: number) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-trade-door-'));
   const cfg: AppConfig = {
@@ -264,12 +271,12 @@ test('a change reaches a plan whoever drew it: ownership is recorded, and the po
   openRow(h.runner, 'pl_resting', 'agent-1', 'placed');
 
   // No `by` exists to pass. The only identity a change carries is the plan id.
-  const closed = await h.svc.proposeTradeChange({ id: 'pl_theirs', close: true });
+  const closed = await landed(h, h.svc.proposeTradeChange({ id: 'pl_theirs', close: true }));
   assert.equal(closed.status, 'executed', JSON.stringify(closed.verdict));
   assert.equal((closed.draft as TradeDraft).amountUsd, 60, 'a close is priced at the margin, whoever asks');
   assert.equal(h.runner.calls[0], 'close pl_theirs 30');
 
-  const cancelled = await h.svc.proposeTradeChange({ id: 'pl_resting', cancel: true });
+  const cancelled = await landed(h, h.svc.proposeTradeChange({ id: 'pl_resting', cancel: true }));
   assert.equal(cancelled.status, 'executed');
   assert.equal((cancelled.draft as TradeDraft).amountUsd, 0, 'a cancel is free at the wall');
   assert.equal(h.runner.calls[1], 'cancel pl_resting');
@@ -299,7 +306,7 @@ test('a redraw while the proposal waits changes the chart and not what the click
   assert.ok(row !== undefined);
   h.runner.rows.set(id, { ...row, sizeUsd: 30_000, stop: 50, hash: 'redrawn' });
 
-  const approved = await h.svc.approve(p.id);
+  const approved = await landed(h, h.svc.approve(p.id));
   assert.equal(approved.status, 'executed', JSON.stringify(approved.verdict));
   const armed = h.runner.get(id);
   assert.ok(armed !== null);

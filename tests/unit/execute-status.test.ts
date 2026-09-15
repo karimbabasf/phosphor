@@ -10,13 +10,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { makeCtx, railThat } from './helpers/proposals.ts';
+import { landed, makeCtx, railThat } from './helpers/proposals.ts';
 
 test('a rail that failed with a hash lands unconfirmed, charged to the day, with its evidence kept', async () => {
   const h = makeCtx({
     rails: [railThat('hl_deposit', async () => ({ ok: false, detail: '1click reported FAILED', txids: ['intent-h1'], evidence: { handle: 'dep-1', refundedAmount: '0' } }))],
   });
-  const p = await h.svc.proposeHlDeposit({ amount: 10 });
+  const p = await landed(h, h.svc.proposeHlDeposit({ amount: 10 }));
   assert.equal(p.verdict.outcome, 'allow');
   assert.equal(p.status, 'needs_reconciliation');
   assert.equal(p.result?.ok, false);
@@ -32,7 +32,7 @@ test('a rail that failed with a hash lands unconfirmed, charged to the day, with
 
 test('a rail that failed with no hash still lands failed and charges nothing', async () => {
   const h = makeCtx({ rails: [railThat('hl_deposit', async () => ({ ok: false, detail: 'refused before anything was signed' }))] });
-  const p = await h.svc.proposeHlDeposit({ amount: 10 });
+  const p = await landed(h, h.svc.proposeHlDeposit({ amount: 10 }));
   assert.equal(p.status, 'failed');
   assert.deepEqual(p.result?.txids, []);
   assert.ok(typeof p.settledAt === 'string');
@@ -43,7 +43,7 @@ test('a rail that failed with no hash still lands failed and charges nothing', a
 test('a rail that succeeded lands executed with its evidence and a settled stamp', async () => {
   const h = makeCtx({ rails: [railThat('hl_deposit', async () => ({ ok: true, detail: 'funded', txids: ['intent-h2'], evidence: { settledAmountOut: '9.97' } }))] });
   const before = Date.now();
-  const p = await h.svc.proposeHlDeposit({ amount: 10 });
+  const p = await landed(h, h.svc.proposeHlDeposit({ amount: 10 }));
   assert.equal(p.status, 'executed');
   assert.equal(p.result?.evidence?.settledAmountOut, '9.97');
   assert.ok(Date.parse(p.settledAt ?? '') >= before - 1000);

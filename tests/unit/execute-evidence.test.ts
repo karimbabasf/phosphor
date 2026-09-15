@@ -14,7 +14,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { makeCtx, railThat, slowRail } from './helpers/proposals.ts';
+import { landed, makeCtx, railThat, slowRail } from './helpers/proposals.ts';
 
 function until(check: () => boolean, ms: number): Promise<boolean> {
   return new Promise((resolve) => {
@@ -65,7 +65,7 @@ test('the balance before a move is the wallet total, read from the verifier, not
     intentsUsdc: 24.78,
     rails: [railThat('hl_deposit', async () => ({ ok: true, detail: 'funded', txids: ['h2'] }))],
   });
-  const p = await h.svc.proposeHlDeposit({ amount: 10 });
+  const p = await landed(h, h.svc.proposeHlDeposit({ amount: 10 }));
   assert.equal(p.status, 'executed');
   assert.equal(p.balances?.beforeUsd, 24.78);
 });
@@ -75,7 +75,7 @@ test('the balance before is null, not zero, when the verifier read failed', asyn
     intents: { ok: false, fetchedAt: new Date().toISOString(), holdings: [], error: 'rpc down' },
     rails: [railThat('swap', async () => ({ ok: true, detail: 'swapped', txids: ['h3'] }))],
   });
-  const p = await h.svc.proposeSwap({ venue: 'oneclick', chain: 'arb', fromSymbol: 'USDT', toSymbol: 'USDC', amountIn: 50, minAmountOut: 49 });
+  const p = await landed(h, h.svc.proposeSwap({ venue: 'oneclick', chain: 'arb', fromSymbol: 'USDT', toSymbol: 'USDC', amountIn: 50, minAmountOut: 49 }));
   assert.equal(p.status, 'executed', JSON.stringify(p.verdict));
   assert.equal(p.balances?.beforeUsd, null, 'a total the app could not read is not a total of zero');
 });
@@ -100,7 +100,7 @@ test('the balance after waits for a ledger read stamped later than the settlemen
     reads += 1;
     return refresh();
   };
-  const p = await h.svc.proposeHlDeposit({ amount: 10 });
+  const p = await landed(h, h.svc.proposeHlDeposit({ amount: 10 }));
   assert.equal(p.status, 'executed');
   assert.ok(await until(() => typeof h.store.get(p.id)?.balances?.afterUsd === 'number', 6000), 'the after balance never landed');
   assert.equal(reads, 3, `the after was read on a stale stamp after ${reads} read(s)`);

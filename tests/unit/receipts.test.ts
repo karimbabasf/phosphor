@@ -116,6 +116,7 @@ async function boot(proposals: Proposal[]): Promise<{ url: string; close: () => 
       sessionSpentUsd: () => 0,
       releaseQueued: async () => 0,
       reconcileOnBoot: () => [],
+      settled: async (id: string) => store.get(id) ?? settled('x', 'executed'),
       settle: () => Promise.resolve(true),
       dailyLimit: (capUsd: number) => ({ capUsd, spentUsd: 0, resetsAt: null }),
       reconcile: () => Promise.reject(new Error('not wired in this test')),

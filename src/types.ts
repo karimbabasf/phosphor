@@ -738,6 +738,10 @@ export type ProposalService = {
   // Re-check one such row against the chain. Never guesses: a hash it cannot look up leaves
   // the proposal where it is, with a sentence saying why.
   reconcile(id: string): Promise<Proposal>;
+  /* The row once its rail has answered, or the row as it stands when capMs runs out. A propose
+     returns the `executing` row the moment the rail starts; this is how a caller waits for the
+     settled one without holding a reply open for a five minute watch loop. */
+  settled(id: string, capMs: number): Promise<Proposal>;
   // Wait for whatever is already executing, up to capMs. True if it finished in time. What a
   // clean shutdown awaits before it closes the sockets.
   settle(capMs: number): Promise<boolean>;

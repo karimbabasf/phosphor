@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { AppConfig, LedgerSnapshot, Policy, Rail, RailHooks, RailResult, RiskRow, WriteDraft } from '../../../src/types.ts';
+import type { AppConfig, LedgerSnapshot, Policy, Proposal, Rail, RailHooks, RailResult, RiskRow, WriteDraft } from '../../../src/types.ts';
 import type { Ledger } from '../../../src/ledger/index.ts';
 import type { IntentsRead } from '../../../src/ledger/intents.ts';
 import type { Audit } from '../../../src/audit.ts';
@@ -67,6 +67,12 @@ export function slowRail(kind: WriteDraft['kind']): {
     });
   });
   return { rail, release: (result) => release(result), hooks: () => hooks, started: () => started };
+}
+
+// A propose or an approve answers with the row as it stands, `executing` while the rail runs.
+// For a test about where the row lands.
+export async function landed(h: { svc: { settled(id: string, capMs: number): Promise<Proposal> } }, reply: Promise<Proposal>): Promise<Proposal> {
+  return h.svc.settled((await reply).id, 5000);
 }
 
 export function seededPolicy(): Policy {

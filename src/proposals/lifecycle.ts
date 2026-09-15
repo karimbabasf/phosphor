@@ -177,7 +177,31 @@ export type PCtx = {
   // finishTouch, serialised by the service like approve is, so the continuation of a click
   // never interleaves with another proposal's execution.
   afterTouch: (id: string, result: VaultResult) => Promise<Proposal | null>;
+  /* Every rail still running, by proposal id, each resolving with the row it recorded. A propose
+     returns the `executing` row and this is how a caller who wants the settled one waits for it
+     with a cap (settled, below), and how the shutdown drain knows a rail is still out. */
+  inflight: Map<string, Promise<Proposal>>;
 };
+
+/* The row once it is terminal, or the row as it stands when `capMs` runs out. The caller reads
+   `status` to tell the two apart: `executing` past the cap means the rail is still working and
+   proposal_status is where the answer will appear. Never throws for a slow rail; only for an id
+   the store does not hold. */
+export async function settled(ctx: PCtx, id: string, capMs: number): Promise<Proposal> {
+  const run = ctx.inflight.get(id);
+  if (run !== undefined) {
+    await Promise.race([
+      run.then(
+        () => undefined,
+        () => undefined,
+      ),
+      new Promise<void>((resolve) => setTimeout(resolve, capMs).unref()),
+    ]);
+  }
+  const p = ctx.store.get(id);
+  if (p === undefined) throw new Error(`unknown proposal ${id}`);
+  return p;
+}
 
 export function persist(ctx: PCtx, p: Proposal): Proposal {
   ctx.store.put(p);

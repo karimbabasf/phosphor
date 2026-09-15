@@ -91,6 +91,7 @@ async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
       sessionSpentUsd: () => 0,
       releaseQueued: async () => 0,
       reconcileOnBoot: () => [],
+      settled: async () => { throw new Error('unused'); },
       settle: () => Promise.resolve(true),
       dailyLimit: (capUsd: number) => ({ capUsd, spentUsd: 0, resetsAt: null }),
       reconcile: () => Promise.reject(new Error('not wired in this stub')),
