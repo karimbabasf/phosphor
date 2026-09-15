@@ -12,7 +12,7 @@
 //
 // HOW THE BACKEND ASKS. The window has no IPC bridge into this process on purpose (see main.rs),
 // so the request cannot come from the page. It comes from the backend, by long poll: a thread
-// here asks `GET /api/vault/pending` with the window token, the backend holds the request open
+// here asks `POST /api/vault/pending` with the relay secret, the backend holds the request open
 // until it has something (an approval that needs a Touch ID, a wallet to create, a lock to
 // lift), and this thread runs the sidecar and posts the answer to `/api/vault/answer`. The page
 // only ever moves a proposal into the state that makes the backend ask. That keeps the boundary
@@ -122,10 +122,12 @@ const POLL_READ_TIMEOUT: Duration = Duration::from_secs(40);
 /// again, so a dead backend is not hammered and a restarting one is picked up within a second.
 const RETRY_PAUSE: Duration = Duration::from_secs(1);
 
-/// What the relay needs and nothing more: no handle on the window, no path to the key file.
+/// What the relay needs and nothing more: no handle on the window, no path to the key file, and
+/// not the window token either: the two relay routes take the relay secret, which the page
+/// never receives, so a page cannot play the shell and the shell never sends the token anywhere.
 pub struct Relay {
     pub port: u16,
-    pub token: String,
+    pub relay: String,
     pub nonce: String,
     pub transport: String,
 }
@@ -155,7 +157,7 @@ fn post(relay: &Relay, path: &str, body: &serde_json::Value, read_timeout: Durat
 /// One turn of the relay: ask, run, answer. Returns false when the hop failed and the caller
 /// should pause before trying again.
 fn turn(relay: &Relay) -> bool {
-    let ask = serde_json::json!({ "token": relay.token, "waitMs": POLL_HOLD_MS });
+    let ask = serde_json::json!({ "relay": relay.relay, "waitMs": POLL_HOLD_MS });
     let Some(pending) = post(relay, "/api/vault/pending", &ask, POLL_READ_TIMEOUT) else {
         return false;
     };
@@ -171,7 +173,7 @@ fn turn(relay: &Relay) -> bool {
     }
     let mut answer = call(&forwarded);
     if let Some(map) = answer.as_object_mut() {
-        map.insert("token".to_string(), serde_json::Value::String(relay.token.clone()));
+        map.insert("relay".to_string(), serde_json::Value::String(relay.relay.clone()));
         if let Some(id) = request.get("id") {
             map.insert("id".to_string(), id.clone());
         }

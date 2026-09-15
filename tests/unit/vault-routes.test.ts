@@ -64,7 +64,8 @@ async function boot(opts: { mode?: AppConfig['mode'] } = {}) {
   const keysPath = path.join(dataDir, 'keys', 'keys.json');
   const keystore = createKeystore({ keysPath, mode: opts.mode ?? 'demo', kdf: fast });
   const transport = crypto.randomBytes(32);
-  const vault = createVaultRelay({ transportKey: transport });
+  const relaySecret = crypto.randomBytes(32).toString('hex');
+  const vault = createVaultRelay({ transportKey: transport, secret: relaySecret });
   const cfg: AppConfig = {
     mode: opts.mode ?? 'demo',
     port: 0,
@@ -154,6 +155,10 @@ async function boot(opts: { mode?: AppConfig['mode'] } = {}) {
     });
     return { status: res.status, json: (await res.json().catch(() => null)) as any };
   }
+  /* The shell's two routes carry the relay secret, never the window token. */
+  async function relayPost(route: string, body: Record<string, unknown>) {
+    return post(route, { relay: relaySecret, ...body }, false);
+  }
   async function get(route: string) {
     const res = await fetch(`${url}${route}`, { headers: { origin: url } });
     return { status: res.status, json: (await res.json().catch(() => null)) as any };
@@ -167,21 +172,21 @@ async function boot(opts: { mode?: AppConfig['mode'] } = {}) {
   const seen: string[] = [];
   const shell = (async () => {
     while (running) {
-      const pending = await post('/api/vault/pending', { waitMs: 200 });
+      const pending = await relayPost('/api/vault/pending', { waitMs: 200 });
       if (pending.status !== 200) break;
       const request = pending.json?.request;
       if (!request) continue;
       seen.push(`${request.op}:${request.reason ?? ''}`);
       if (dialog.mode === 'cancel') {
-        await post('/api/vault/answer', { id: request.id, ok: false, error: 'user_cancel', message: 'cancelled' });
+        await relayPost('/api/vault/answer', { id: request.id, ok: false, error: 'user_cancel', message: 'cancelled' });
         continue;
       }
       if (request.op === 'probe') {
-        await post('/api/vault/answer', { id: request.id, ok: true, secureEnclave: true, biometry: 'touchid', canAuthenticate: true });
+        await relayPost('/api/vault/answer', { id: request.id, ok: true, secureEnclave: true, biometry: 'touchid', canAuthenticate: true });
       } else if (request.op === 'create') {
-        await post('/api/vault/answer', { id: request.id, ok: true, keyBlob: crypto.randomBytes(64).toString('base64'), publicKey: mac.pub, binding: 'device' });
+        await relayPost('/api/vault/answer', { id: request.id, ok: true, keyBlob: crypto.randomBytes(64).toString('base64'), publicKey: mac.pub, binding: 'device' });
       } else if (request.op === 'presence') {
-        await post('/api/vault/answer', { id: request.id, ok: true });
+        await relayPost('/api/vault/answer', { id: request.id, ok: true });
       } else if (request.op === 'unwrap') {
         let dek: Buffer | null = null;
         try {
@@ -194,14 +199,14 @@ async function boot(opts: { mode?: AppConfig['mode'] } = {}) {
           dek = null;
         }
         if (dek === null) {
-          await post('/api/vault/answer', { id: request.id, ok: false, error: 'foreign_key', message: 'not this enclave' });
+          await relayPost('/api/vault/answer', { id: request.id, ok: false, error: 'foreign_key', message: 'not this enclave' });
           continue;
         }
         const nonce = crypto.randomBytes(12);
         const c = crypto.createCipheriv('aes-256-gcm', transport, nonce);
         c.setAAD(Buffer.from(request.id, 'utf8'));
         const ct = Buffer.concat([c.update(dek), c.final()]);
-        await post('/api/vault/answer', { id: request.id, ok: true, dekSealed: Buffer.concat([nonce, ct, c.getAuthTag()]).toString('base64') });
+        await relayPost('/api/vault/answer', { id: request.id, ok: true, dekSealed: Buffer.concat([nonce, ct, c.getAuthTag()]).toString('base64') });
       }
     }
   })();
@@ -218,6 +223,7 @@ async function boot(opts: { mode?: AppConfig['mode'] } = {}) {
     vault,
     audit,
     post,
+    relayPost,
     get,
     seen,
     releases: () => releases,
@@ -238,14 +244,18 @@ async function boot(opts: { mode?: AppConfig['mode'] } = {}) {
   };
 }
 
-test('the relay routes refuse a caller without the window token', async () => {
+test('the relay routes take the relay secret and refuse the window token, which the page holds', async () => {
   const b = await boot();
   try {
     const pending = await b.post('/api/vault/pending', { waitMs: 0 }, false);
     assert.equal(pending.status, 403);
     const answer = await b.post('/api/vault/answer', { id: 'x', ok: true }, false);
     assert.equal(answer.status, 403);
-    const nothing = await b.post('/api/vault/answer', { id: 'x', ok: true });
+    const withToken = await b.post('/api/vault/pending', { waitMs: 0 });
+    assert.equal(withToken.status, 403, 'the window token is not the relay secret');
+    const answerWithToken = await b.post('/api/vault/answer', { id: 'x', ok: true });
+    assert.equal(answerWithToken.status, 403, 'a page cannot answer a request');
+    const nothing = await b.relayPost('/api/vault/answer', { id: 'x', ok: true });
     assert.equal(nothing.status, 409, 'an answer with nothing waiting is refused');
   } finally {
     await b.close();
@@ -309,6 +319,13 @@ test('unlock, reveal, prove and forget: each touch names itself and the phrase i
     const byPassword = await b.post('/api/unlock', { password: 'anything' });
     assert.equal(byPassword.json.ok, false);
     assert.equal(byPassword.json.code, 'enclave_required');
+
+    const forAddress = await b.post('/api/vault/unlock', { purpose: 'address' });
+    assert.equal(forAddress.json.ok, true, JSON.stringify(forAddress.json));
+    assert.equal(b.keystore.state(), 'locked', 'showing an address opens no session');
+    assert.equal(b.keystore.addressReport().verified, true, 'but the addresses are now verified');
+    assert.equal(b.releases(), 0, 'and nothing queued was released');
+    assert.ok(b.seen.includes('unwrap:Show your deposit address'));
 
     const opened = await b.post('/api/vault/unlock', {});
     assert.equal(opened.json.ok, true, JSON.stringify(opened.json));

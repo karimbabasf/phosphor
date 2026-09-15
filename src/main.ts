@@ -93,7 +93,7 @@ const keystore = createKeystore({ keysPath: cfg.keysPath, mode: cfg.mode });
 useKeystore(keystore);
 
 /* THE SHELL'S HANDSHAKE, off the pipe and before the port opens.
-   Four lines, in this order, written by src-tauri/src/backend.rs and then the pipe is closed:
+   Five lines, in this order, written by src-tauri/src/backend.rs and then the pipe is closed:
 
      1. the window token, which every write from the control page carries
      2. the boot nonce, which this process echoes in its x-phosphor header so the shell can tell
@@ -101,6 +101,8 @@ useKeystore(keystore);
      3. the roster seat secret, which reaches the agents this app spawns and nothing else
      4. the enclave transport key, under which the Secure Enclave sidecar seals the wallet's data
         key on its way back here over loopback; see src/vault/relay.ts
+     5. the relay secret, which the two relay routes take instead of the window token, so the
+        page (which holds the token) can never play the shell
 
    Why a pipe and not the environment: `ps eww <pid>` prints the environment of any process this
    user owns, which is the attacker this app is built against. A local process read the token back
@@ -137,8 +139,8 @@ function readHandshake(
 
     const onData = (chunk: Buffer | string): void => {
       buffered += String(chunk);
-      // Four values means four newlines, because the shell writes one after the last of them.
-      if (buffered.split('\n').length > 4) finish();
+      // Five values means five newlines, because the shell writes one after the last of them.
+      if (buffered.split('\n').length > 5) finish();
     };
 
     const timer = setTimeout(finish, waitMs);
@@ -180,7 +182,10 @@ useSeatSecret(seatSecret);
    whether this Mac has an enclave before anyone clicks Create. */
 const transportHex = handshake[3] ?? '';
 const transportKey = /^[0-9a-f]{64}$/i.test(transportHex) ? Buffer.from(transportHex, 'hex') : null;
-const vault = createVaultRelay({ transportKey });
+const relaySecret = /^[0-9a-f]{64}$/i.test(handshake[4] ?? '') ? (handshake[4] as string) : null;
+// No relay secret means no relay: a transport key with nothing to gate the routes would let the
+// page play the shell, so both must arrive or neither counts.
+const vault = createVaultRelay({ transportKey: relaySecret !== null ? transportKey : null, secret: relaySecret });
 if (transportKey !== null) {
   void vault.ask({ op: 'probe' }).then((probe) => {
     if (probe.ok && probe.op === 'probe') {

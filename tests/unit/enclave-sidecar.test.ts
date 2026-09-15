@@ -39,6 +39,8 @@ test('the data key leaves the sidecar only sealed under the transport key with t
   // The shell adds the transport key and nothing else, and reads nothing out of the request.
   assert.ok(rust.includes('map.insert("transportKey".to_string()'));
   assert.ok(!rust.includes('dekSealed'), 'the shell never looks inside an answer');
+  assert.ok(!rust.includes('"token"'), 'the relay never sends the window token anywhere');
+  assert.ok(rust.includes('"relay": relay.relay'), 'it sends the relay secret, which the page never holds');
   assert.ok(rust.includes('identity_matches(response, Some(nonce))'), 'every hop is checked against this boot\'s nonce');
 });
 

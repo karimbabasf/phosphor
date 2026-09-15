@@ -303,13 +303,22 @@ export function enclaveGated(ctx: PCtx): boolean {
    back to pending with the reason in the audit log: the click is not lost, and nothing has
    been signed. */
 export async function finishTouch(ctx: PCtx, id: string, result: VaultResult): Promise<Proposal | null> {
+  // A data key that arrives with nowhere to go is wiped here; unlockWithDataKey is the only other
+  // place that wipes it, and every path that does not reach it must.
+  const drop = (): void => {
+    if (result.ok && result.op === 'unwrap') result.dek.fill(0);
+  };
   const current = ctx.store.get(id);
-  if (current === undefined || current.status !== 'awaiting_touch') return null;
+  if (current === undefined || current.status !== 'awaiting_touch') {
+    drop();
+    return null;
+  }
   if (!result.ok) {
     ctx.audit.append('proposal_created', `${id} goes back to pending: the Touch ID did not complete (${result.error})`, { id, error: result.error });
     return persist(ctx, { ...current, status: 'pending' });
   }
   if (result.op !== 'unwrap' || ctx.keystore === undefined) {
+    drop();
     ctx.audit.append('proposal_created', `${id} goes back to pending: the enclave answered the wrong thing`, { id });
     return persist(ctx, { ...current, status: 'pending' });
   }

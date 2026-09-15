@@ -524,7 +524,7 @@ fn start_enclave_relay(app: &tauri::AppHandle, port: u16) {
     let hand = app.state::<Secrets>();
     let relay = enclave::Relay {
         port,
-        token: hand.0.token.clone(),
+        relay: hand.0.relay.clone(),
         nonce: hand.0.nonce.clone(),
         transport: hand.0.transport.clone(),
     };

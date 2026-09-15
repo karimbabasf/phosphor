@@ -440,7 +440,7 @@ test('the Custody panel says which binding is live, and the software case offers
 
 /* ---------- addresses ---------- */
 
-test('three address rows, each with its badge, Copy through the read-back, and Show QR to the card', async () => {
+test('three address rows with badges; only the EVM row copies, and every row shows the deposit card', async () => {
   const world = build();
   await flush();
   const rows = find(world.view, '.vault-row');
@@ -448,12 +448,23 @@ test('three address rows, each with its badge, Copy through the read-back, and S
   assert.ok(rows.every((r: Any) => find(r, '.chip')[0].textContent === 'Verified'));
   assert.equal(find(rows[0], '.sr-only')[0].textContent, EVM);
 
+  // The EVM address is the account id money is keyed by, so it can be copied.
+  assert.ok(textOf(rows[0]).includes('your account id on NEAR Intents and Hyperliquid'));
   buttonNamed(rows[0], 'Copy').click();
   await flush();
   assert.deepEqual(world.calls.find((c) => c.route === 'copy'), { route: 'copy', address: EVM });
   assert.ok(textOf(rows[0]).includes('Copied, ends in ...0e1d'));
 
-  buttonNamed(rows[1], 'Show QR').click();
+  // The wallet's own Solana and NEAR addresses have no rail out of them, so
+  // handing one out as a deposit target strands the money: no Copy, and the
+  // row says so in the Money-in fold's own words.
+  for (const row of [rows[1], rows[2]]) {
+    assert.equal(buttonNamed(row, 'Copy'), undefined, 'a Copy button on the ' + row.dataset.chain + ' row');
+    assert.ok(textOf(row).includes('not a deposit address; use Show address'), row.dataset.chain + ' row does not say it is not a deposit address');
+    assert.ok(buttonNamed(row, 'Show address'), 'no Show address on the ' + row.dataset.chain + ' row');
+  }
+
+  buttonNamed(rows[1], 'Show address').click();
   await flush();
   await flush();
   const opened = world.calls.find((c) => c.route === 'deposit.open');

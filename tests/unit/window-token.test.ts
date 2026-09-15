@@ -57,11 +57,11 @@ test('the shell and the backend agree on the channel and the injected global', (
   /* Down the pipe, never through the environment. `ps eww <pid>` prints the environment of any
      process this user owns, so a token that travelled there was readable by every process on the
      machine: a local one drove the kill switch and approved a real proposal with it. */
-  // Four lines now: the window token, the boot nonce the shell recognises its own backend by,
-  // the roster seat secret, and the enclave transport key. The token is still line one, which is
-  // what src/http/auth.ts reads.
+  // Five lines now: the window token, the boot nonce the shell recognises its own backend by,
+  // the roster seat secret, the enclave transport key and the relay secret. The token is still
+  // line one, which is what src/http/auth.ts reads.
   assert.ok(
-    child.includes('writeln!(pipe, "{}\\n{}\\n{}\\n{}", hand.token, hand.nonce, hand.seat, hand.transport)'),
+    child.includes('writeln!(pipe, "{}\\n{}\\n{}\\n{}\\n{}", hand.token, hand.nonce, hand.seat, hand.transport, hand.relay)'),
     "the shell writes the handshake to the backend's stdin, token first",
   );
   assert.ok(child.includes('.stdin(Stdio::piped())'), 'and opens a pipe for it to go down');

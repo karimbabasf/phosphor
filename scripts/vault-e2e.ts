@@ -64,6 +64,7 @@ async function main(): Promise<number> {
   const seat = crypto.randomBytes(32).toString('hex');
   const transportHex = crypto.randomBytes(32).toString('hex');
   const transport = Buffer.from(transportHex, 'hex');
+  const relaySecret = crypto.randomBytes(32).toString('hex');
 
   const child = spawn(process.execPath, ['src/main.ts'], {
     cwd: ROOT,
@@ -82,14 +83,15 @@ async function main(): Promise<number> {
   const output: string[] = [];
   child.stdout.on('data', (d: Buffer) => output.push(d.toString()));
   child.stderr.on('data', (d: Buffer) => output.push(d.toString()));
-  child.stdin.write(`${token}\n${nonce}\n${seat}\n${transportHex}\n`);
+  child.stdin.write(`${token}\n${nonce}\n${seat}\n${transportHex}\n${relaySecret}\n`);
   child.stdin.end();
 
-  async function post(route: string, body: Json): Promise<Json> {
+  async function post(route: string, body: Json, asShell = false): Promise<Json> {
     const res = await fetch(`${base}${route}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', origin: base },
-      body: JSON.stringify({ token, ...body }),
+      // The window sends the token; the shell's relay sends the relay secret and never the token.
+      body: JSON.stringify(asShell ? { relay: relaySecret, ...body } : { token, ...body }),
     });
     if (!res.headers.get('x-phosphor')?.toLowerCase().includes(nonce.toLowerCase())) {
       throw new Error(`the answer on ${route} did not carry this boot's nonce`);
@@ -129,7 +131,7 @@ async function main(): Promise<number> {
     while (relaying) {
       let pending: Json;
       try {
-        pending = await post('/api/vault/pending', { waitMs: 2000 });
+        pending = await post('/api/vault/pending', { waitMs: 2000 }, true);
       } catch {
         break;
       }
@@ -137,7 +139,7 @@ async function main(): Promise<number> {
       if (!request) continue;
       relayed.push(`${request.op}:${request.reason ?? ''}`);
       const answer = helper({ ...request, transportKey: transport.toString('base64') });
-      await post('/api/vault/answer', { ...answer, id: request.id });
+      await post('/api/vault/answer', { ...answer, id: request.id }, true);
     }
   })();
 

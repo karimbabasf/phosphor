@@ -14,8 +14,9 @@
 import http from 'node:http';
 
 import type { ChainId } from '../types.ts';
-import { fail, sendJson } from './respond.ts';
+import { fail, readBody, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
+import { sameOrigin } from './auth.ts';
 import type { Ctx } from './context.ts';
 import { announce, guarded, refusal } from './wallet.ts';
 import { mnemonicProblem, normaliseMnemonic, walletFromMnemonic } from '../keystore/derive.ts';
@@ -41,8 +42,27 @@ let foreign = false;
 
 // ---------- the relay's two routes ----------
 
+/* The relay's own gate: same origin, and the relay secret rather than the window token. The
+   page holds the token and must not be able to stand where the shell stands; the shell holds
+   this and nothing the page can read. A refusal is audited like every other knock. */
+async function relayGuarded(ctx: Ctx, route: string, req: http.IncomingMessage, res: http.ServerResponse): Promise<JsonBody | null> {
+  const parsed = await readBody(req);
+  if (!parsed.ok) {
+    fail(res, parsed.status, parsed.error);
+    return null;
+  }
+  const body = parsed.value;
+  const reason = !sameOrigin(req) ? 'cross-origin request' : !ctx.vault.authenticate(body.relay) ? 'the relay secret is missing or wrong' : null;
+  if (reason !== null) {
+    ctx.audit.append('approve_attempt_rejected', `POST ${route} rejected: ${reason}`, { route, reason, origin: req.headers.origin ?? '(absent)' });
+    fail(res, 403, reason);
+    return null;
+  }
+  return body;
+}
+
 export async function handleVaultPending(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  const body = await guarded(ctx, '/api/vault/pending', req, res);
+  const body = await relayGuarded(ctx, '/api/vault/pending', req, res);
   if (body === null) return;
   const waitMs = typeof body.waitMs === 'number' && Number.isFinite(body.waitMs) ? body.waitMs : 0;
   const request = await ctx.vault.next(waitMs);
@@ -50,7 +70,7 @@ export async function handleVaultPending(ctx: Ctx, req: http.IncomingMessage, re
 }
 
 export async function handleVaultAnswer(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  const body = await guarded(ctx, '/api/vault/answer', req, res);
+  const body = await relayGuarded(ctx, '/api/vault/answer', req, res);
   if (body === null) return;
   const taken = ctx.vault.answer(body);
   if (!taken.ok) return fail(res, 409, taken.error);
@@ -168,10 +188,20 @@ export async function handleVaultUnlock(ctx: Ctx, req: http.IncomingMessage, res
   const body = await guarded(ctx, '/api/vault/unlock', req, res);
   if (body === null) return;
   if (ctx.keystore.custody() !== 'secure-enclave') return sendJson(res, 200, refusal('wrong_password'));
-  const reason = body.purpose === 'address' ? ADDRESS_REASON : UNLOCK_REASON;
-  const opened = await openThroughEnclave(ctx, reason);
+  const forAddress = body.purpose === 'address';
+  const opened = await openThroughEnclave(ctx, forAddress ? ADDRESS_REASON : UNLOCK_REASON);
   if (opened.ok !== true) return sendJson(res, 200, opened);
-  ctx.audit.append('app_start', 'the wallet was opened with Touch ID', { purpose: body.purpose === 'address' ? 'address' : 'unlock' });
+  /* "Show your deposit address" does what it says and nothing more. The open derived the
+     addresses and marked them verified, which is what the card needed; the wallet is shut again
+     at once, no session starts and nothing queued is released. A dialog that named less than
+     the touch did would be the one dishonest sentence in the product. */
+  if (forAddress) {
+    ctx.keystore.lock();
+    ctx.audit.append('app_start', 'the addresses were verified with Touch ID; the wallet stays shut', { purpose: 'address' });
+    announce(ctx);
+    return sendJson(res, 200, { ok: true, released: 0, verified: true });
+  }
+  ctx.audit.append('app_start', 'the wallet was opened with Touch ID', { purpose: 'unlock' });
   ctx.session.touch();
   announce(ctx);
   const released = await ctx.releaseQueued();

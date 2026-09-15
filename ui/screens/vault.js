@@ -123,7 +123,7 @@
     refs.addressList = dom.el('div', 'stack-2 vault-addresses');
     addr.body.appendChild(refs.addressList);
     refs.addressNote = dom.el('p', 'meta');
-    dom.setText(refs.addressNote, 'Show QR opens the deposit card: the address to send money to on that network, checked before it is drawn.');
+    dom.setText(refs.addressNote, 'Show address opens the deposit card: the address to send money to on that network, checked before it is drawn.');
     addr.body.appendChild(refs.addressNote);
     col.appendChild(addr.node);
 
@@ -375,12 +375,12 @@
   /* Only the EVM address is copyable. It is the account id on NEAR Intents and Hyperliquid, so
      money sent to it on an EVM chain can be moved in by a proposal. The wallet's own Solana and
      NEAR addresses exist (the keys are derived) but no rail moves money out of them, so a copied
-     one would strand a deposit; they are shown, badged, and pointed at Show QR, which opens the
+     one would strand a deposit; they are shown, badged, and pointed at Show address, which opens the
      bridge address for that network. */
   var ROWS = [
     { id: 'eth', label: 'EVM', note: 'your account id on NEAR Intents and Hyperliquid', copy: true },
-    { id: 'sol', label: 'Solana', note: 'not a deposit address; use Show QR', copy: false },
-    { id: 'near', label: 'NEAR', note: 'not a deposit address; use Show QR', copy: false }
+    { id: 'sol', label: 'Solana', note: 'not a deposit address; use Show address', copy: false },
+    { id: 'near', label: 'NEAR', note: 'not a deposit address; use Show address', copy: false }
   ];
 
   function loadAddresses() {
@@ -439,8 +439,8 @@
     var tools = dom.el('div', 'hstack-2 vault-row-tools');
     var said = dom.el('span', 'meta');
     said.setAttribute('role', 'status');
-    var qr = button('Show QR', 'btn-ghost btn-sm');
-    if (spec.copy) {
+    var qr = button('Show address', 'btn-ghost btn-sm');
+    if (spec.copy && verified) {
       var copy = button('Copy', 'btn-ghost btn-sm');
       tools.appendChild(copy);
       dom.on(copy, 'click', function () {

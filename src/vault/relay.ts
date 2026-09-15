@@ -13,6 +13,10 @@
 // waits until the shell has answered the first or the first has timed out, and the order is the
 // order of asking.
 //
+// WHO MAY ANSWER. The two routes take the relay secret (line 5 of the handshake), not the window
+// token. The page holds the token, and a page that could answer a presence check would be a page
+// that can pass a Touch ID gate with no finger; the page never sees this value.
+//
 // WHAT COMES BACK. A data key never crosses in the clear: the sidecar seals it under the
 // per-boot transport key (line 4 of the shell's handshake) with the request id as AAD, and only
 // this process holds the other copy. An answer that opens under the wrong id, or does not open,
@@ -58,6 +62,8 @@ export type VaultRelay = {
   /** The long poll. Resolves with the next request, or null after waitMs with nothing to hand out. */
   next(waitMs: number): Promise<VaultRequest | null>;
   answer(body: Record<string, unknown>): { ok: true } | { ok: false; error: string };
+  /** The relay secret check for the two routes: constant time, and false with no secret. */
+  authenticate(supplied: unknown): boolean;
   /** For the state payload and tests. */
   queued(): number;
   stop(): void;
@@ -82,10 +88,12 @@ type Inflight = {
   since: number;
 };
 
-export function createVaultRelay(opts: { transportKey: Buffer | null; now?: () => number; askTimeoutMs?: number }): VaultRelay {
+export function createVaultRelay(opts: { transportKey: Buffer | null; secret?: string | null; now?: () => number; askTimeoutMs?: number }): VaultRelay {
   const now = opts.now ?? Date.now;
   const askTimeout = opts.askTimeoutMs ?? ASK_TIMEOUT_MS;
   const transport = opts.transportKey;
+  const secret = opts.secret ?? null;
+  const secretDigest = secret === null ? null : crypto.createHash('sha256').update(secret).digest();
   const queue: Inflight[] = [];
   let waiter: { resolve: (r: VaultRequest | null) => void; timer: NodeJS.Timeout } | null = null;
   let lastPoll = 0;
@@ -240,8 +248,14 @@ export function createVaultRelay(opts: { transportKey: Buffer | null; now?: () =
     return { id: entry.request.id, op: entry.request.op, reason: entry.request.reason ?? '', since: entry.since };
   }
 
+  function authenticate(supplied: unknown): boolean {
+    if (secretDigest === null || typeof supplied !== 'string' || supplied.length === 0) return false;
+    return crypto.timingSafeEqual(crypto.createHash('sha256').update(supplied).digest(), secretDigest);
+  }
+
   return {
     attached,
+    authenticate,
     capability: () => capability,
     enclaveReady: () => attached() && capability !== null && capability.secureEnclave && capability.canAuthenticate,
     ask,

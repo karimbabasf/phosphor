@@ -251,14 +251,19 @@ pub fn mint_token() -> Result<String, String> {
 /// `transport` is the key the Secure Enclave sidecar seals the wallet's data key under on its way
 /// back to the backend over loopback, so a capture of that hop shows ciphertext. This shell hands
 /// it to the sidecar and never uses it itself; see enclave.rs.
+/// `relay` is what the enclave relay's two routes take instead of the window token. The window
+/// holds the token and must not be able to play the shell: with the token alone a compromised
+/// page could answer a presence check for a forget, or steal every handed-out request and fail
+/// it. The page never sees this value; only this thread and the backend do.
 ///
-/// All four are separate values. A secret reused for a second purpose is a secret whose exposure
+/// All five are separate values. A secret reused for a second purpose is a secret whose exposure
 /// in the weaker place costs you the stronger one, and the nonce is deliberately public.
 pub struct Handshake {
     pub token: String,
     pub nonce: String,
     pub seat: String,
     pub transport: String,
+    pub relay: String,
 }
 
 impl Handshake {
@@ -268,6 +273,7 @@ impl Handshake {
             nonce: mint_token()?,
             seat: mint_token()?,
             transport: mint_token()?,
+            relay: mint_token()?,
         })
     }
 }
@@ -415,7 +421,8 @@ pub fn node_binary() -> Result<PathBuf, String> {
 /// argument the runner already uses for the Hyperliquid API wallet key.
 ///
 /// Line 1 is the window token, line 2 the boot nonce, line 3 the roster seat secret, line 4 the
-/// enclave transport key. Order is the contract; src/main.ts reads them in it. A backend started with no pipe at all is a developer
+/// enclave transport key, line 5 the relay secret. Order is the contract; src/main.ts reads them
+/// in it. A backend started with no pipe at all is a developer
 /// running `npm run app`, and it mints what it needs and says so.
 pub fn spawn_backend(payload: &Path, data: &Path, hand: &Handshake) -> Result<Child, String> {
     let node = node_binary()?;
@@ -441,7 +448,7 @@ pub fn spawn_backend(payload: &Path, data: &Path, hand: &Handshake) -> Result<Ch
     // Taken and dropped, so the pipe closes as soon as the lines are written: the backend reads the
     // handshake and wants nothing else from stdin ever again.
     match child.stdin.take() {
-        Some(mut pipe) => writeln!(pipe, "{}\n{}\n{}\n{}", hand.token, hand.nonce, hand.seat, hand.transport)
+        Some(mut pipe) => writeln!(pipe, "{}\n{}\n{}\n{}\n{}", hand.token, hand.nonce, hand.seat, hand.transport, hand.relay)
             .map_err(|e| format!("could not hand the handshake to the control app: {e}"))?,
         None => return Err("the control app was started with no stdin to hand the handshake to".into()),
     }

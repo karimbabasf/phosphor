@@ -19,6 +19,16 @@ function sealLikeTheSidecar(dek: Buffer, id: string, key = transport): string {
   return Buffer.concat([nonce, ct, c.getAuthTag()]).toString('base64');
 }
 
+test('the relay secret is checked in constant time and a missing secret admits nobody', () => {
+  const relay = createVaultRelay({ transportKey: transport, secret: 'a'.repeat(64) });
+  assert.equal(relay.authenticate('a'.repeat(64)), true);
+  assert.equal(relay.authenticate('a'.repeat(63) + 'b'), false);
+  assert.equal(relay.authenticate(''), false);
+  assert.equal(relay.authenticate(undefined), false);
+  const bare = createVaultRelay({ transportKey: transport });
+  assert.equal(bare.authenticate('anything'), false, 'no secret, no relay routes');
+});
+
 test('a backend with no transport key has no enclave and says so at once', async () => {
   const relay = createVaultRelay({ transportKey: null });
   assert.equal(relay.attached(), false);
