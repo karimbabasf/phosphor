@@ -29,6 +29,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod backend;
+mod update;
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -82,7 +83,7 @@ fn probe_interval(elapsed: Duration) -> Duration {
 /// with it, and the readiness polls can recognise the backend by its nonce. Never written to disk.
 /// The token and the seat secret are never served; the nonce is served, on purpose, and is the one
 /// of the three that is not a secret from anyone who can already reach the port.
-struct Secrets(Handshake);
+pub(crate) struct Secrets(pub(crate) Handshake);
 
 /// Everything `start` resolved, so the supervisor thread does not have to resolve it again.
 #[derive(Clone)]
@@ -94,7 +95,7 @@ struct Paths {
 /// Where the app keeps everything it writes. The bundle is read-only, so state, the audit log,
 /// the policy file and config.local.json all live here instead. Keys are not among them: they
 /// stay at ~/.phosphor/, outside every working copy and every bundle, as they always have.
-fn data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let dir = app
         .path()
         .app_data_dir()
@@ -109,7 +110,7 @@ fn data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 /// paints with no script at all. The two names are the whole grammar, and only a name that
 /// matches one of them verbatim is ever handed to the page, so nothing read off the disk can
 /// reach the initialization script as anything but one of these literals.
-fn saved_colourway(data: &Path) -> Option<&'static str> {
+pub(crate) fn saved_colourway(data: &Path) -> Option<&'static str> {
     const COLOURWAYS: [&str; 2] = ["green-on-black", "black-on-white"];
     let raw = std::fs::read_to_string(data.join("state").join("theme.json")).ok()?;
     let parsed: serde_json::Value = serde_json::from_str(&raw).ok()?;
@@ -118,7 +119,7 @@ fn saved_colourway(data: &Path) -> Option<&'static str> {
 }
 
 /// The payload directory: the old repo root, shipped verbatim.
-fn payload_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn payload_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let dir = app
         .path()
         .resource_dir()
@@ -149,6 +150,7 @@ fn mcp_command(payload: &Path, port: u16) -> Result<String, String> {
 
 fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let copy = MenuItem::with_id(app, COPY_MCP_ID, "Copy MCP Config", true, None::<&str>)?;
+    let updates = MenuItem::with_id(app, update::CHECK_ID, "Check for Updates...", true, None::<&str>)?;
     let app_menu = Submenu::with_items(
         app,
         "Phosphor",
@@ -156,6 +158,7 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         &[
             &PredefinedMenuItem::about(app, None, None)?,
             &PredefinedMenuItem::separator(app)?,
+            &updates,
             &copy,
             &PredefinedMenuItem::separator(app)?,
             &PredefinedMenuItem::hide(app, None)?,
@@ -177,6 +180,10 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 }
 
 fn on_menu(app: &tauri::AppHandle, event: MenuEvent) {
+    if event.id() == update::CHECK_ID {
+        update::check(app.clone(), true);
+        return;
+    }
     if event.id() != COPY_MCP_ID {
         return;
     }
@@ -319,6 +326,10 @@ fn watch(app: tauri::AppHandle, paths: Paths, port: u16) {
     let mut respawned = false;
     loop {
         std::thread::sleep(WATCH_INTERVAL);
+        // A stop this shell chose (an update relaunching it) is not a crash to recover from.
+        if app.state::<Backend>().stopping() {
+            return;
+        }
         match app.state::<Backend>().exited() {
             Some(false) | None => continue,
             Some(true) => {}
@@ -339,6 +350,9 @@ fn watch(app: tauri::AppHandle, paths: Paths, port: u16) {
         respawned = true;
 
         std::thread::sleep(RESPAWN_BACKOFF);
+        if app.state::<Backend>().stopping() {
+            return;
+        }
 
         /* NOTHING MAY BE ON THE PORT BEFORE THE RESPAWN. This path had no check at all, which made
            it the deterministic half of the finding: the backend dies, this thread sleeps three
@@ -481,6 +495,7 @@ fn start(app: &tauri::AppHandle) -> Result<(), String> {
                         fail(&ready, err);
                     }
                 });
+                update::schedule(&handle);
                 watch(handle, paths, port);
                 return;
             }
@@ -514,8 +529,13 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Backend::new())
         .manage(Secrets(secrets))
+        .manage(update::Updates::default())
+        // The only commands this shell has, and only the update window can call them: the
+        // control window is a remote page, which the ACL keeps away from app commands.
+        .invoke_handler(tauri::generate_handler![update::update_install, update::update_dismiss])
         .setup(|app| {
             let handle = app.handle().clone();
             app.set_menu(build_menu(&handle)?)?;

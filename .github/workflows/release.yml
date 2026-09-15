@@ -1,0 +1,184 @@
+# Builds the Mac app from a version tag and publishes it as a GitHub Release.
+#
+# Push a tag v<version> where <version> is what package.json, Cargo.toml and tauri.conf.json say
+# (tests/unit/version-agrees.test.ts keeps those three together). The runner is a clean Apple
+# silicon Mac; nothing is built on a laptop. What comes out, and what each secret does:
+#
+#   TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+#       Required. The minisign key every installed copy checks an update against. Without it
+#       the build fails on purpose: an unsigned updater bundle would be refused by every app
+#       anyway. The key lives at ~/.tauri/phosphor.key on the release machine and nowhere in git.
+#
+#   APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY
+#       Optional. A Developer ID Application certificate (base64 .p12), its export password, and
+#       the identity string ("Developer ID Application: Name (TEAMID)"). Set, the app and the
+#       DMG are signed with it; unset, they are ad-hoc signed and macOS asks the person to allow
+#       the app under Privacy & Security on first open.
+#
+#   APPLE_API_ISSUER, APPLE_API_KEY, APPLE_API_KEY_P8
+#       Optional, and only useful with the certificate. An App Store Connect API key (issuer id,
+#       key id, base64 .p8) for notarization. Set, Tauri submits the signed app to Apple and
+#       staples the ticket, so Gatekeeper opens it without a dialog.
+#
+# Every third-party action is pinned to a commit, not a tag: a tag can be moved.
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  mac:
+    name: macOS (Apple silicon)
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      TARGET: aarch64-apple-darwin
+    steps:
+      - name: Check out the tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Node 24
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Rust stable
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1, resolves to stable
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri
+
+      - name: The tag names the version the tree carries
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          TAG="${GITHUB_REF_NAME}"
+          if [ "$TAG" != "v$VERSION" ]; then
+            echo "tag $TAG does not match package.json version $VERSION" >&2
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+
+      - name: Install
+        run: npm ci
+
+      - name: Stage the payload and prove it boots on the bundled runtime
+        run: npm run bundle
+
+      # The full suite is the development gate and runs on the machine that develops; four of its
+      # tests depend on that machine (three seat-capacity injection tests want the claude CLI on
+      # the path, one asserts a p95 latency a shared runner cannot promise). The release gate is
+      # the part of the tree that decides what ships: the version files agree, the manifest is
+      # shaped right, and the shell's own tests pass. After the bundle step, because the shell's
+      # build script wants the staged Node sidecar to exist.
+      - name: Release guards
+        run: |
+          node --test tests/unit/version-agrees.test.ts tests/unit/release-manifest.test.ts
+          (cd src-tauri && cargo test)
+
+      - name: Build, sign and bundle
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY is not set; refusing to build an update nobody can install" >&2
+            exit 1
+          fi
+          # A secret that is not set arrives as an empty string, and Tauri treats a set but empty
+          # APPLE_* variable as a broken value rather than an absent one. Unset the empty ones so
+          # the build falls back to ad-hoc signing cleanly.
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_API_ISSUER APPLE_API_KEY APPLE_API_KEY_P8; do
+            if [ -z "${!name}" ]; then unset "$name"; fi
+          done
+          if [ -n "${APPLE_API_KEY_P8:-}" ]; then
+            echo "$APPLE_API_KEY_P8" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+            export APPLE_API_KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
+          fi
+          if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
+            echo "signing with $APPLE_SIGNING_IDENTITY"
+          else
+            echo "no Apple certificate in secrets: ad-hoc signing, no notarization"
+          fi
+          npx tauri build --target "$TARGET" --bundles app,dmg
+
+      - name: Stage the release assets and write latest.json and SHA256SUMS
+        run: |
+          # The whole tag message, subject and body, trimmed. A one-line message has an empty
+          # body, and %(contents:body) alone shipped 0.4.1 with no notes at all.
+          node -e "process.stdout.write(require('child_process').execFileSync('git', ['tag', '-l', '--format=%(contents)', process.argv[1]]).toString().trim() + '\\n')" "$TAG" > "$RUNNER_TEMP/tag-body.md"
+          node scripts/release-manifest.ts \
+            --version "$VERSION" --tag "$TAG" \
+            --bundle "src-tauri/target/$TARGET/release/bundle" \
+            --out "$RUNNER_TEMP/release" \
+            --notes-file "$RUNNER_TEMP/tag-body.md"
+          echo "RELEASE_DIR=$RUNNER_TEMP/release" >> "$GITHUB_ENV"
+
+      - name: The app inside the DMG is signed the way this run was told to sign it
+        run: |
+          hdiutil attach "$RELEASE_DIR/Phosphor-macOS-arm64.dmg" -nobrowse -readonly -mountpoint "$RUNNER_TEMP/dmg"
+          codesign --verify --deep --strict --verbose=2 "$RUNNER_TEMP/dmg/Phosphor.app"
+          codesign -dv --verbose=2 "$RUNNER_TEMP/dmg/Phosphor.app" 2>&1 | grep -E '^(Authority|Identifier|TeamIdentifier|Signature)' || true
+          ls -la "$RUNNER_TEMP/dmg/.background" || echo "no background folder in the image"
+          hdiutil detach "$RUNNER_TEMP/dmg"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          {
+            echo "## Phosphor $VERSION for Mac (Apple silicon)"
+            echo
+            if [ -s "$RUNNER_TEMP/tag-body.md" ]; then cat "$RUNNER_TEMP/tag-body.md"; echo; fi
+            echo "**Install.** Open the DMG, drag Phosphor into Applications, open it from there."
+            if [ -z "$APPLE_SIGNING_IDENTITY" ]; then
+              echo "This build is not yet notarized by Apple, so on first open macOS says it cannot verify the app: open System Settings, Privacy & Security, scroll to Security and click Open Anyway. Compare the checksum first."
+            fi
+            echo
+            echo "**Verify the download** before opening it. In Terminal:"
+            echo
+            echo '```'
+            echo "shasum -a 256 ~/Downloads/Phosphor-macOS-arm64.dmg"
+            echo '```'
+            echo
+            echo "It must print exactly:"
+            echo
+            echo '```'
+            cat "$RELEASE_DIR/SHA256SUMS"
+            echo '```'
+            echo
+            echo "Installed copies are offered this version automatically; the update is signed and the app refuses one that is not. Only download Phosphor from this page or from https://phosphor.karimbabasf.com."
+          } > "$RUNNER_TEMP/notes.md"
+          gh release create "$TAG" \
+            --verify-tag \
+            --title "Phosphor $VERSION" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            "$RELEASE_DIR/Phosphor-macOS-arm64.dmg" \
+            "$RELEASE_DIR/Phosphor_${VERSION}_aarch64.app.tar.gz" \
+            "$RELEASE_DIR/Phosphor_${VERSION}_aarch64.app.tar.gz.sig" \
+            "$RELEASE_DIR/latest.json" \
+            "$RELEASE_DIR/SHA256SUMS"

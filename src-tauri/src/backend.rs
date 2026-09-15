@@ -15,16 +15,26 @@ use std::io::{Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 pub const DEFAULT_PORT: u16 = 4177;
 pub const PROBE_TIMEOUT: Duration = Duration::from_millis(700);
 
-/// What the control app gets to shut itself and its agent down in before it is taken out. It
-/// needs one SIGTERM round trip of its own (see TERM_GRACE_MS in src/driver.ts), so this is that
-/// plus room, and it is short enough that a quit still feels like a quit.
-const SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
+/// What the control app gets to shut itself and its agent down in before it is taken out.
+///
+/// This was three seconds, sized to the driver's own SIGTERM round trip, and it was wrong by an
+/// order of magnitude: src/shutdown.ts waits for a venue write in flight for up to SETTLE_CAP_MS
+/// (a 30 s venue timeout plus 2 s), and a SIGKILL at 3 s cut that write at an arbitrary point,
+/// left the proposal `executing` with nothing in the audit log saying why, and orphaned the agent
+/// group the close step takes down. So this is that cap plus room. It costs nothing on an idle
+/// quit: `serialise.idle()` resolves at once and the process exits in the same second it always
+/// did. The wait is only ever paid when money is moving, which is exactly when it must be.
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(35);
+/// The number above must clear, kept here so the test reads it beside the constant.
+#[cfg(test)]
+const SETTLE_CAP_MS_IN_SHUTDOWN_TS: u64 = 32_000;
 
 const PID_FILE: &str = "backend.pid";
 
@@ -34,6 +44,10 @@ const PID_FILE: &str = "backend.pid";
 pub struct Backend {
     child: Mutex<Option<Child>>,
     pid_file: Mutex<Option<PathBuf>>,
+    /// Set the moment kill() begins and never cleared: this shell has decided to stop its
+    /// backend, so a respawn that lands afterwards (the supervisor was mid-respawn when an
+    /// update finished installing) must not be kept. See adopt().
+    stopping: AtomicBool,
 }
 
 /// Who is running, according to the file on disk. `shell` is the desktop app that spawned the
@@ -49,6 +63,7 @@ impl Backend {
         Backend {
             child: Mutex::new(None),
             pid_file: Mutex::new(None),
+            stopping: AtomicBool::new(false),
         }
     }
 
@@ -65,6 +80,7 @@ impl Backend {
     /// So SIGTERM first, which src/shutdown.ts handles by draining its writes, awaiting whatever
     /// is in flight and taking its own child down, and SIGKILL only as the backstop.
     pub fn kill(&self) {
+        self.stopping.store(true, Ordering::SeqCst);
         self.clear_pid_file();
         let Ok(mut guard) = lock(&self.child) else {
             return;
@@ -85,7 +101,22 @@ impl Backend {
         let _ = child.wait();
     }
 
+    /// Has kill() been called? The supervisor asks before it respawns and stops when it has.
+    pub fn stopping(&self) -> bool {
+        self.stopping.load(Ordering::SeqCst)
+    }
+
     pub fn adopt(&self, child: Child, pid_file: PathBuf) {
+        // A child spawned after the decision to stop is taken down here, not kept: the shell is
+        // about to exit (an update relaunch), and a backend adopted now would outlive it with
+        // the wallet loaded and no window, the orphan this whole file exists to prevent.
+        if self.stopping() {
+            let mut late = child;
+            request_stop(&late);
+            let _ = late.kill();
+            let _ = late.wait();
+            return;
+        }
         let pid = child.id();
         if let Ok(mut guard) = lock(&self.child) {
             guard.replace(child);
@@ -254,6 +285,15 @@ fn request(port: u16, head: &str, body: Option<&str>) -> Option<String> {
     Some(String::from_utf8_lossy(&out).into_owned())
 }
 
+/// The backend's health answer, parsed. No token: /api/health is the one route that answers
+/// anyone on loopback, and it says nothing a local caller could not already see.
+pub fn get_health(port: u16) -> Option<serde_json::Value> {
+    let head = format!("GET /api/health HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+    let raw = request(port, &head, None)?;
+    let body = raw.split_once("\r\n\r\n").map(|(_, b)| b)?;
+    serde_json::from_str(body.trim()).ok()
+}
+
 pub fn get_root(port: u16) -> Option<String> {
     let head = format!("GET / HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
     request(port, &head, None)
@@ -401,6 +441,23 @@ pub fn spawn_backend(payload: &Path, data: &Path, hand: &Handshake) -> Result<Ch
 mod tests {
     use super::*;
     use std::net::TcpListener;
+
+    #[test]
+    fn the_shutdown_grace_outlasts_a_venue_write_in_flight() {
+        assert!(SHUTDOWN_GRACE > Duration::from_millis(SETTLE_CAP_MS_IN_SHUTDOWN_TS));
+    }
+
+    #[test]
+    fn a_child_adopted_after_kill_began_is_reaped_not_kept() {
+        let backend = Backend::new();
+        backend.kill();
+        assert!(backend.stopping());
+        let child = Command::new("sleep").arg("30").stdin(Stdio::null()).spawn().unwrap();
+        let pid = child.id();
+        backend.adopt(child, std::env::temp_dir().join(format!("phosphor-adopt-test-{pid}.pid")));
+        assert!(matches!(backend.exited(), None), "nothing is kept after stopping");
+        assert!(!pid_is_alive(pid as i32), "the late child was taken down");
+    }
 
     /// A server that answers `GET /` with one `x-phosphor` header and the value it was given.
     /// This is the attacker in variant A and B of the finding: any local process can send the

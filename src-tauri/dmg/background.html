@@ -1,0 +1,86 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Phosphor disk image background</title>
+<!--
+  The picture behind the two icons in the disk image window. 660 x 400 points, the window size
+  in tauri.conf.json, but that size includes the title bar, so only the top 372 points show:
+  everything is composed inside those. The app icon sits centred on (165, 165) and the
+  Applications alias on (495, 165), both drawn by Finder on top of this at 128 px with a 16 px
+  label underneath.
+
+  Finder paints those two labels itself, black in the light appearance and white in the dark
+  one, and offers no way to choose. Ink under black text is invisible, so the icons sit on a
+  flat green slab that reads against either: #17883B is 4.6:1 against black and 4.5:1 against
+  white. One solid shape, no gradient, no shadow; the slab is the install zone and the only
+  thing on the picture besides the name and one line.
+
+  Rendered by render.ts into background.tiff, a two-scale TIFF, so the picture is sharp on a
+  Retina display. Edit this file, run the renderer, commit both.
+-->
+<style>
+  @font-face { font-family: "Sora"; font-weight: 600; src: url("fonts/Sora-SemiBold.woff2") format("woff2"); }
+  @font-face { font-family: "Geist"; font-weight: 100 900; src: url("../frontend/Geist-Variable.woff2") format("woff2"); }
+  html, body { margin: 0; }
+  body {
+    position: relative;
+    width: 660px;
+    height: 400px;
+    overflow: hidden;
+    background: #0E0F13;
+    font-family: "Geist", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wordmark {
+    position: absolute;
+    left: 0; right: 0; top: 40px;
+    margin: 0;
+    text-align: center;
+    font-family: "Sora", sans-serif;
+    font-weight: 600;
+    font-size: 21px;
+    line-height: 1;
+    letter-spacing: 0.07em;
+    text-indent: 0.07em;
+    text-transform: uppercase;
+    color: #ECEEF1;
+  }
+  .slab {
+    position: absolute;
+    left: 32px; right: 32px; top: 92px;
+    height: 172px;
+    background: #17883B;
+    border-radius: 18px;
+  }
+  .arrow {
+    position: absolute;
+    top: 163px; left: 262px;
+    width: 136px; height: 3px;
+    background: #0E0F13;
+    border-radius: 2px;
+  }
+  .arrow::after {
+    content: "";
+    position: absolute;
+    right: 1px; top: -7px;
+    width: 14px; height: 14px;
+    border-top: 3px solid #0E0F13;
+    border-right: 3px solid #0E0F13;
+    border-radius: 0 2px 0 0;
+    transform: rotate(45deg);
+    transform-origin: 7px 8.5px;
+    box-sizing: border-box;
+  }
+  .line {
+    position: absolute;
+    left: 0; right: 0; top: 302px;
+    margin: 0;
+    text-align: center;
+    font-size: 15px;
+    line-height: 1.4;
+    color: #9BA1AB;
+  }
+</style>
+<div class="slab"></div>
+<div class="arrow" role="presentation"></div>
+<h1 class="wordmark">Phosphor</h1>
+<p class="line">Drag Phosphor into Applications, then open it from there.</p>
