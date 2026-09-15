@@ -447,3 +447,38 @@ test('the Activity row still builds and updates the way the list expects', () =>
   assert.equal(text(row.childNodes[4]), '+4.9811 USDC');
   assert.equal(row.childNodes[4].getAttribute('data-dir'), 'in');
 });
+
+test('the row leads with the logo pair for a swap, one logo for a move, the kind icon for a trade or a bot', () => {
+  const rig = boot();
+  const R = rig.window.PhosphorReceipt;
+  const row = R.row();
+  R.updateRow(row, swap());
+  const slot = row.childNodes[0];
+  assert.equal(slot.className, 'tx-logos');
+  assert.equal(slot.getAttribute('data-shape'), 'pair');
+  assert.deepEqual(slot.childNodes.map((c: Any) => c.className), ['logo', 'icon tx-logos-arrow', 'logo']);
+  assert.deepEqual([slot.childNodes[0], slot.childNodes[2]].map((l: Any) => l.getAttribute('data-token')), ['ETH', 'USDC']);
+  assert.equal(slot.childNodes[0].style.getPropertyValue('--logo'), '24px');
+  assert.equal(slot.childNodes[1].dataset.icon, 'swap');
+
+  // The same receipt again: the slot is left alone (its key has not changed).
+  const before = slot.childNodes[0];
+  R.updateRow(row, swap());
+  assert.equal(slot.childNodes[0], before, 'an update that changes nothing redraws nothing');
+
+  R.updateRow(row, swap({ kind: 'intents_deposit', received: null }));
+  assert.equal(slot.getAttribute('data-shape'), 'logo');
+  assert.deepEqual(slot.childNodes.map((c: Any) => c.getAttribute('data-token')), ['ETH']);
+
+  R.updateRow(row, swap({ kind: 'trade', side: 'buy', symbol: 'USDC', received: { symbol: 'BTC', amount: 0.001 } }));
+  assert.equal(slot.getAttribute('data-shape'), 'icon');
+  assert.equal(slot.childNodes[0].className, 'tx-mark');
+  assert.equal(slot.childNodes[0].childNodes[0].dataset.icon, 'long');
+
+  R.updateRow(row, swap({ kind: 'mandate_arm', symbol: null, amount: null, received: null }));
+  assert.equal(slot.childNodes[0].childNodes[0].dataset.icon, 'armed');
+
+  // A failed swap has no arrival to pair with, so it shows the coin that would have left.
+  R.updateRow(row, swap({ status: 'failed', received: null }));
+  assert.equal(slot.getAttribute('data-shape'), 'logo');
+});

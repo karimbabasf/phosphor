@@ -591,11 +591,18 @@
      unformatted: three facts in 12 px mono in the same grey. Now each side of
      the row carries two facts of the same kind (words left, money right), and
      the arrival is the one green thing on the line. The coin comes from the
-     receipt's own fields, never parsed out of the sentence. */
+     receipt's own fields, never parsed out of the sentence.
+
+     At the left, the marks (2026-09-15): a swap shows the pair, the coin that
+     left, a small swap arrow, the coin that arrived; a move shows the one coin
+     it moved; a trade or a bot row shows its kind icon, because no single coin
+     is the point of it. The slot is one fixed width so every sentence in a list
+     starts on the same line. The five children and their order are the row's
+     contract with receipts.js and the tests. */
   function row(receipt) {
     var node = dom.el('button', 'tx receipt-row');
     node.type = 'button';
-    node.appendChild(marks.disc(''));
+    node.appendChild(dom.el('span', 'tx-logos'));
     node.appendChild(dom.el('span', 'tx-title', ''));
     node.appendChild(dom.el('span', 'tx-when', ''));
     node.appendChild(dom.el('span', 'tx-amount', ''));
@@ -603,17 +610,51 @@
     return node;
   }
 
+  /* What the left slot shows for a receipt, as one key so an update that changes
+     nothing redraws nothing. */
+  function marksKey(receipt) {
+    var kind = String(receipt.kind || '');
+    var symbol = receipt.symbol ? String(receipt.symbol) : '';
+    var got = receipt.received && receipt.received.symbol ? String(receipt.received.symbol) : '';
+    if (kind === 'trade' || kind === 'fill' || kind === 'bot' || kind === 'mandate_arm' || kind === 'policy_change') {
+      return 'icon:' + kindOf(receipt).icon;
+    }
+    if (kind === 'swap' && symbol && got && got !== symbol) return 'pair:' + symbol + '>' + got;
+    return symbol ? 'logo:' + symbol : 'icon:' + kindOf(receipt).icon;
+  }
+
+  function paintMarks(slot, key) {
+    dom.clear(slot);
+    var at = key.indexOf(':');
+    var shape = key.slice(0, at);
+    var rest = key.slice(at + 1);
+    if (shape === 'pair') {
+      var coins = rest.split('>');
+      slot.appendChild(logo(coins[0], 24));
+      slot.appendChild(icon('swap', 'tx-logos-arrow'));
+      slot.appendChild(logo(coins[1], 24));
+    } else if (shape === 'logo') {
+      slot.appendChild(logo(rest, 24));
+    } else {
+      var disc = dom.el('span', 'tx-mark');
+      disc.appendChild(icon(rest));
+      slot.appendChild(disc);
+    }
+    dom.setAttr(slot, 'data-shape', shape);
+  }
+
   function updateRow(node, receipt) {
-    var mark = node.children[0];
+    var slot = node.children[0];
     var title = node.children[1];
     var when = node.children[2];
     var amount = node.children[3];
     var sub = node.children[4];
 
     var symbol = receipt.symbol ? String(receipt.symbol) : '';
-    if (mark.dataset.symbol !== symbol) {
-      mark.dataset.symbol = symbol;
-      marks.paint(mark, symbol);
+    var key = marksKey(receipt);
+    if (slot.dataset.marks !== key) {
+      slot.dataset.marks = key;
+      paintMarks(slot, key);
     }
 
     /* The headline, not the rail's sentence. `summary` carries an intent hash and a quote

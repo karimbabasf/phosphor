@@ -340,8 +340,9 @@ button.tx {
   transition: background-color var(--dur-press) var(--ease-out);
 }
 
+/* Hover lifts the row one surface step. */
 @media (hover: hover) and (pointer: fine) {
-  button.tx:hover { background: color-mix(in srgb, var(--bg-2) 70%, transparent); }
+  button.tx:hover { background: var(--bg-2); }
 }
 
 button.tx:focus-visible {
@@ -351,12 +352,62 @@ button.tx:focus-visible {
 
 /* A receipt is a .tx (components.css, the money grammar) that opens. The list
    it sits in is flush with the panel, so the row carries the side padding
-   itself, and the first row keeps the rule that separates it from the head. */
+   itself, and the first row keeps the rule that separates it from the head.
+   The first column is the marks slot, one width for every row so the
+   sentences line up whether the row shows a pair, one coin or an icon. */
 .tx.receipt-row {
+  grid-template-columns: 70px minmax(0, 1fr) auto;
   width: 100%;
   padding: var(--s-3) var(--s-4);
   column-gap: var(--s-4);
   row-gap: 3px;
+}
+
+.receipt-row > .tx-logos {
+  grid-row: 1 / span 2;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  min-height: 24px;
+}
+
+.receipt-row > .tx-logos > .logo {
+  flex: none;
+}
+
+.receipt-row > .tx-logos > .tx-logos-arrow {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--text-3);
+}
+
+/* A kind icon in the disc the grammar draws for a coinless transaction, at the
+   logo's size so the column keeps one rhythm. */
+.receipt-row > .tx-logos > .tx-mark {
+  width: 24px;
+  height: 24px;
+}
+
+.receipt-row > .tx-logos > .tx-mark > .icon {
+  width: 14px;
+  height: 14px;
+}
+
+/* The sentence: Sora 14/500, two lines at most. */
+.receipt-row > .tx-title {
+  font-weight: 500;
+}
+
+/* Two amounts stacked on the right, the same size, out in the second text tone
+   and in, the one green thing on the line, in the up colour. */
+.receipt-row > .tx-amount {
+  color: var(--text-2);
+}
+
+.receipt-row > .tx-sub {
+  font-size: var(--fs-14);
 }
 
 .activity-list > .tx.receipt-row:first-child {
@@ -386,10 +437,8 @@ button.tx:focus-visible {
    quiet: the same weight as the time, not a number that means money. */
 .receipt-row > .tx-amount.dim { color: var(--text-3); }
 
-/* What arrived is the second leg of the line, a size up from the grammar's 12 px
-   footnote and in the up colour, so the two legs of a swap read as a pair: what
-   went out on top, what came in underneath. */
+/* What arrived is the second leg of the line, in the up colour, so the two legs
+   of a swap read as a pair: what went out on top, what came in underneath. */
 .receipt-row > .tx-sub[data-dir="in"] {
-  font-size: var(--fs-13);
   color: var(--up);
 }
