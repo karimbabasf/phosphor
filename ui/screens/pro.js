@@ -63,22 +63,18 @@
      is held back, an arrow out for where money may go, stop for the switch. */
   var RULE_ICONS = { ask: 'waiting', refuse: 'refused', keep: 'lock', pay: 'send', kill: 'stop' };
 
-  /* The icon set arrives with the foundation. Until it is on this branch the
-     call is guarded, and a rule draws without its icon rather than throwing. */
+  /* One icon from the window's set (ui/design/icons.js). */
   function icon(name, className) {
-    if (!window.PhosphorIcons || typeof window.PhosphorIcons.svg !== 'function') return null;
     return window.PhosphorIcons.svg(name, className);
   }
 
-  /* A token or chain mark at a size. The logo component is the foundation's;
-     the disc it replaces keeps drawing until the merge lands. */
+  /* A token or chain mark at a size (ui/design/marks.js). */
   function logo(symbol, size) {
-    if (typeof marks.logo === 'function') return marks.logo(symbol, size);
-    return marks.disc(symbol);
+    return marks.logo(symbol, size);
   }
 
   function colourOf(symbol) {
-    return typeof marks.colour === 'function' ? marks.colour(symbol) : marks.colourFor(symbol);
+    return marks.colour(symbol);
   }
 
   /* Keep one mark under a host in step with a symbol, replacing it only when
@@ -227,8 +223,7 @@
     var foot = dom.el('div', 'card-foot');
     foot.appendChild(dom.el('span', 'meta', hint));
     var chev = dom.el('span', 'chev');
-    var svg = icon('chevron-right');
-    if (svg) chev.appendChild(svg);
+    chev.appendChild(icon('chevron-right'));
     foot.appendChild(chev);
     c.node.appendChild(foot);
 
@@ -493,8 +488,7 @@
     var has = last && String(last.className).split(' ').indexOf('chev') >= 0;
     if (wanted && !has) {
       var chev = dom.el('span', 'chev');
-      var svg = icon('chevron-down');
-      if (svg) chev.appendChild(svg);
+      chev.appendChild(icon('chevron-down'));
       head.appendChild(chev);
     } else if (!wanted && has) {
       head.removeChild(last);
@@ -919,8 +913,7 @@
         door.node.type = 'button';
         door.node.setAttribute('aria-label', sentence);
         var chev = dom.el('span', 'chev');
-        var svg = icon('chevron-down');
-        if (svg) chev.appendChild(svg);
+        chev.appendChild(icon('chevron-down'));
         door.node.appendChild(chev);
         var box = dom.el('div', 'allowlist');
         for (var b = 0; b < addresses.length; b += 1) {
@@ -975,8 +968,7 @@
       head.appendChild(dom.el('span', 'rule-group-name', title));
       head.appendChild(dom.el('span', 'rule-group-count mono', String(count)));
       var chev = dom.el('span', 'chev');
-      var svg = icon('chevron-down');
-      if (svg) chev.appendChild(svg);
+      chev.appendChild(icon('chevron-down'));
       head.appendChild(chev);
       dom.setAttr(head, 'aria-expanded', open ? 'true' : 'false');
       dom.setAttr(section, 'data-open', open ? 'true' : null);
@@ -1004,8 +996,7 @@
   function rule(kind, text, tag) {
     var node = dom.el(tag || 'div', 'rule');
     var mark = dom.el('span', 'rule-glyph');
-    var svg = icon(RULE_ICONS[kind] || 'refused', 'icon-20');
-    if (svg) mark.appendChild(svg);
+    mark.appendChild(icon(RULE_ICONS[kind] || 'refused', 'icon-20'));
     node.appendChild(mark);
     var body = dom.el('div', 'rule-text');
     body.appendChild(dom.el('span', 'rule-line', text));

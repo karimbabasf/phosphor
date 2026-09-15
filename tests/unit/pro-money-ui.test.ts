@@ -140,6 +140,8 @@ function boot(): Rig {
     // test never reads it, so a stub that draws nothing is the whole contract.
     PhosphorReceipts: { list: () => ({ load: () => Promise.resolve([]), setWindow: () => {}, setKind: () => {}, expand: () => {}, get: () => [] }) },
     PhosphorShell: { setView: () => {} },
+    // The icon set (ui/design/icons.js): one stand-in svg per name.
+    PhosphorIcons: { svg: (name: string) => { const n = makeNode('svg'); n.className = 'icon'; n.dataset.icon = name; return n; } },
   };
   window.window = window;
   const ctx = createContext({ window, document, console, Promise });

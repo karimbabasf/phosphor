@@ -33,22 +33,18 @@
      opened the window. */
   var firstTotal = null;
 
-  /* The icon set arrives with the foundation. Until it is on this branch the
-     call is guarded, and the strip and the folds draw without their icon. */
+  /* One icon from the window's set (ui/design/icons.js). */
   function icon(name, className) {
-    if (!window.PhosphorIcons || typeof window.PhosphorIcons.svg !== 'function') return null;
     return window.PhosphorIcons.svg(name, className);
   }
 
-  /* A token mark at a size: the foundation's logo, or the disc it replaces
-     until the merge lands. */
+  /* A token mark at a size (ui/design/marks.js). */
   function logo(symbol, size) {
-    if (typeof marks.logo === 'function') return marks.logo(symbol, size);
-    return marks.disc(symbol);
+    return marks.logo(symbol, size);
   }
 
   function colourOf(symbol) {
-    return typeof marks.colour === 'function' ? marks.colour(symbol) : marks.colourFor(symbol);
+    return marks.colour(symbol);
   }
 
   function boot() {
@@ -109,8 +105,7 @@
     var strip = dom.el('p', 'strip');
     strip.dataset.surface = 'rules';
     var glyph = dom.el('span', 'strip-glyph');
-    var waiting = icon('waiting');
-    if (waiting) glyph.appendChild(waiting);
+    glyph.appendChild(icon('waiting'));
     strip.appendChild(glyph);
     var stripText = dom.el('span', 'strip-text');
     strip.appendChild(stripText);
@@ -202,8 +197,7 @@
     right.appendChild(meta);
     var mark = dom.el('span', 'fold-mark');
     mark.setAttribute('aria-hidden', 'true');
-    var chevron = icon('chevron-down');
-    if (chevron) mark.appendChild(chevron);
+    mark.appendChild(icon('chevron-down'));
     right.appendChild(mark);
     head.appendChild(right);
     var body = dom.el('div', 'fold-body');

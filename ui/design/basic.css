@@ -57,7 +57,7 @@
    first total lands. */
 .hero .balance {
   font-family: var(--font-mono);
-  font-size: var(--fs-40, 40px);
+  font-size: var(--fs-40);
   font-weight: 500;
   letter-spacing: -0.02em;
   line-height: 1.05;
