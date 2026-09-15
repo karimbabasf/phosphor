@@ -143,7 +143,9 @@ export const walletReads: ReadTable = {
       chain,
       network: EXCHANGE_NETWORK[chain],
       asset: token.symbol,
-      minDeposit: token.minDeposit,
+      // In the token's own unit ("0.001"), never the bridge's base units ("1000"): the agent
+      // relays this number to a person about to type an amount.
+      minDeposit: token.minDepositHuman,
       addressFingerprint: fingerprint(network.address),
       addressVerified: report.verified,
       memo: network.memo,
