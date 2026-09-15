@@ -31,12 +31,17 @@
     return loading;
   }
 
+  var steps = null;
+
+  /* The fold renders again every time it opens. The steps that were there go
+     with their watch subscription and their clock, not just their nodes. */
   function render(host, options) {
     var opts = options || {};
+    if (steps) steps.destroy();
     dom.clear(host);
-    var steps = dom.el('div', 'moneyin-steps');
-    host.appendChild(steps);
-    window.PhosphorNetPick.render(steps, { context: opts.context || 'basic' });
+    var mount = dom.el('div', 'moneyin-steps');
+    host.appendChild(mount);
+    steps = window.PhosphorNetPick.render(mount, { context: opts.context || 'basic' });
 
     /* The words that are the only way back. On a password wallet they are
        behind the password, here, every time. On an enclave wallet they are
