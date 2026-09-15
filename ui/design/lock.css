@@ -1,0 +1,208 @@
+/* The lock screen: the frosted page, the scrim, the card and the way in.
+   Owned by ui/screens/lock.js. The first run and the migration cards share
+   .screen below and keep their own rules in layout.css. */
+
+/* Behind the lock the whole page is frosted, top bar included: the shape of
+   the window survives, no word does. Karim, 2026-09-14: nothing is visible
+   until the password is in, and the bar goes with it. A filter on a container
+   re-blurs on every repaint under it and locked is the state an unattended app
+   sits in longest, so the cost is bounded: the field, which was the only thing
+   painting every frame, stops the moment the body is locked (pattern.js
+   watches data-locked), and the blur is rasterised once and again only when a
+   price ticks. What is blurred is also taken out of reach: no pointer, no
+   selection, and lock.js marks the page inert so neither the keyboard nor a
+   screen reader can walk into it, which puts Freeze behind the password too.
+   #page is the only thing filtered, and nothing fixed lives inside it (the
+   beam canvas, the toasts and the screens are its siblings), so the filter
+   re-anchors nothing. The release is lock.js's own moment, played with
+   motion.dev, so there is no transition here to fight it. */
+body[data-locked="true"] #page {
+  filter: blur(24px);
+  opacity: 0.5;
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* The scrim finishes the job the blur starts: sixty percent black over the
+   frosted page, so a 44 px balance is a tint and not a shape. It covers the
+   bar as well, so the card is the only thing on screen. */
+.screen {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+#screen-lock {
+  display: grid;
+  place-items: center;
+  padding: var(--s-6) var(--s-5);
+}
+
+/* The card: one centre column, 420 wide, everything on it centred. */
+.lock-card {
+  position: relative;
+  width: min(420px, 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-5);
+  padding: var(--s-6) var(--s-5);
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--lift);
+  text-align: center;
+}
+
+.lock-brand { color: var(--text); }
+
+.lock-title {
+  margin: 0;
+  font-size: var(--fs-40);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  color: var(--text);
+  text-wrap: balance;
+}
+
+.lock-form {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+/* The field: 48 tall, the lock at its left, the eye at its right, and the
+   hairline turns to the ink while it has focus. */
+.lock-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 48px;
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  transition: border-color var(--dur-press) var(--ease-out),
+              box-shadow var(--dur-press) var(--ease-out);
+}
+
+.lock-field:focus-within {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 3px var(--ink-wash);
+}
+
+.lock-field-icon {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-3);
+  pointer-events: none;
+}
+
+.lock-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0 48px 0 44px;
+  background: none;
+  border: 0;
+  outline: none;
+  color: var(--text);
+  font-size: var(--fs-15);
+  letter-spacing: 0.02em;
+}
+
+.lock-input::placeholder {
+  color: var(--text-3);
+  letter-spacing: 0;
+}
+
+.lock-eye {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+  transition: color var(--dur-press) var(--ease-out),
+              background-color var(--dur-press) var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .lock-eye:hover { color: var(--text); background: var(--bg-1); }
+}
+
+.lock-eye[aria-pressed="true"] { color: var(--text); }
+
+.lock-eye:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: -2px;
+}
+
+/* One short red line under the field. Never a bar. */
+.lock-error {
+  margin: 0;
+  padding: 0 var(--s-1);
+  text-align: left;
+  font-size: var(--fs-13);
+  line-height: 1.4;
+}
+
+/* The one button: full width, 48 tall, the ink with the ground's letters on
+   it. The arrow slides in from behind the word on hover. */
+.lock-unlock {
+  width: 100%;
+  min-height: 48px;
+  border-radius: 12px;
+  font-size: var(--fs-15);
+  font-weight: 600;
+}
+
+.lock-unlock .btn-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.lock-arrow {
+  width: 1em;
+  height: 1em;
+  margin-left: -1em;
+  opacity: 0;
+  transform: translateX(-6px);
+  transition: opacity var(--dur-swap) var(--ease-out),
+              transform var(--dur-swap) var(--ease-out),
+              margin-left var(--dur-swap) var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .lock-unlock:hover:not(:disabled) .lock-arrow {
+    margin-left: 0;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.lock-fine {
+  margin: 0;
+  max-width: 44ch;
+  font-size: var(--fs-12);
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--text-2);
+  text-wrap: pretty;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lock-arrow,
+  .lock-field,
+  .lock-eye { transition: none; }
+}

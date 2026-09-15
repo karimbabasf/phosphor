@@ -14,6 +14,9 @@
 
   var refs = {};
   var mode = null;
+  /* The unlock moment in flight, so a lock that lands mid-release can stop it. */
+  var releasing = null;
+  var EASE = [0.22, 1, 0.36, 1];
 
   function boot() {
     refs.host = document.getElementById('screen-lock');
@@ -31,12 +34,23 @@
     var vault = whole.vault || {};
     var state = lock.state || 'unlocked';
     if (state === 'unlocked') {
-      dom.setHidden(refs.host, true);
-      dom.setAttr(document.body, 'data-locked', null);
-      setPageInert(false);
+      /* A second unlocked frame while the release plays changes nothing: the
+         moment finishes on its own and hides the screen when it is done. */
+      if (releasing) {
+        mode = null;
+        return;
+      }
+      if (mode !== null && !refs.host.hidden) release();
+      else {
+        dom.setHidden(refs.host, true);
+        dom.setAttr(document.body, 'data-locked', null);
+        setPageInert(false);
+      }
       mode = null;
       return;
     }
+    stopRelease();
+    clearRelease({ page: document.getElementById('page'), card: null });
     /* No wallet, or a wallet file this Mac cannot open because another Mac made
        it: both are the first run's job. It reads `vault.foreign` itself and opens
        on the Restore screen for the second case. */
@@ -69,10 +83,126 @@
     dom.setAttr(page, 'aria-hidden', on ? 'true' : null);
   }
 
-  /* No field of its own. The window has exactly one, it is already behind
-     everything, and the shell drives it to `locked` the moment the lock state
-     arrives. A second field here would paint an opaque ground over the
-     frosted shell. */
+  /* THE UNLOCK MOMENT. The page behind comes back into focus over 700 ms: its
+     blur goes from 24 px to none, its opacity from half to whole, and it settles
+     from 1.015 to 1, while the scrim fades over the same 700 ms and the card
+     shrinks to 0.97 and fades in half that time. The page is made reachable at
+     the start, not the end: nothing should wait on a fade. Reduced motion keeps
+     the fades and skips the blur and the scale. Without motion.dev (the unit
+     harness) the screen simply goes. */
+  function release() {
+    var page = document.getElementById('page');
+    var host = refs.host;
+    var card = host.querySelector('.lock-card') || host.querySelector('.screen-card');
+    dom.setAttr(document.body, 'data-locked', null);
+    setPageInert(false);
+    var Motion = window.Motion;
+    if (!Motion || typeof Motion.animate !== 'function') {
+      dom.setHidden(host, true);
+      return;
+    }
+    var reduced = !!(window.PhosphorMotion && window.PhosphorMotion.reduced());
+    var runs = [];
+    if (page) {
+      runs.push(Motion.animate(page, reduced
+        ? { opacity: [0.5, 1] }
+        : { filter: ['blur(24px)', 'blur(0px)'], opacity: [0.5, 1], transform: ['scale(1.015)', 'scale(1)'] },
+      { duration: 0.7, ease: EASE }));
+    }
+    host.style.pointerEvents = 'none';
+    runs.push(Motion.animate(host, { opacity: [1, 0] }, { duration: 0.7, ease: EASE }));
+    if (card) {
+      runs.push(Motion.animate(card, reduced
+        ? { opacity: [1, 0] }
+        : { opacity: [1, 0], transform: ['scale(1)', 'scale(0.97)'] },
+      { duration: 0.35, ease: EASE }));
+    }
+    var run = { runs: runs, page: page, card: card };
+    releasing = run;
+    var settle = function () {
+      if (releasing !== run) return;
+      releasing = null;
+      dom.setHidden(host, true);
+      /* motion.dev writes the final values inline as it finishes, after its
+         promise settles, so the sweep waits a frame or the scrim keeps an
+         opacity of nought into the next lock. */
+      if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(function () { clearRelease(run); });
+      else clearRelease(run);
+    };
+    Promise.all(runs.map(function (r) { return r && r.finished ? r.finished : r; })).then(settle, settle);
+  }
+
+  /* Every inline value the moment writes, taken back off, so the next lock
+     starts from the stylesheet alone. */
+  function clearRelease(run) {
+    refs.host.style.pointerEvents = '';
+    refs.host.style.opacity = '';
+    if (run.page) {
+      run.page.style.filter = '';
+      run.page.style.opacity = '';
+      run.page.style.transform = '';
+    }
+    if (run.card) {
+      run.card.style.opacity = '';
+      run.card.style.transform = '';
+    }
+  }
+
+  /* A lock that arrives while the release is still playing: stop it where it
+     is and hand the screen back whole. */
+  function stopRelease() {
+    var run = releasing;
+    if (!run) return;
+    releasing = null;
+    for (var i = 0; i < run.runs.length; i += 1) {
+      var r = run.runs[i];
+      if (r && typeof r.stop === 'function') r.stop();
+    }
+    clearRelease(run);
+  }
+
+  /* One icon from the drawn set, or nothing where the set is not loaded. */
+  function icon(name, className) {
+    var icons = window.PhosphorIcons;
+    return icons && typeof icons.svg === 'function' ? icons.svg(name, className) : null;
+  }
+
+  function append(parent, child) {
+    if (child) parent.appendChild(child);
+    return child;
+  }
+
+  /* A wrong password shakes the field once, 300 ms side to side, then the
+     line under it says what happened. No shake under reduced motion. */
+  function shake(node) {
+    var Motion = window.Motion;
+    if (!Motion || typeof Motion.animate !== 'function') return;
+    if (window.PhosphorMotion && window.PhosphorMotion.reduced()) return;
+    Motion.animate(node, { x: [0, -7, 7, -5, 5, -2, 0] }, { duration: 0.3, ease: 'easeOut' });
+  }
+
+  /* The lock card, shared by the password and the Touch ID screens: the brand
+     row, the title, then whatever the custody needs, then the fine print. */
+  function lockCard() {
+    dom.clear(refs.host);
+    var card = dom.el('div', 'lock-card');
+    var brand = dom.el('div', 'brand lock-brand');
+    append(brand, dom.mark('brand-mark'));
+    brand.appendChild(dom.el('span', 'brand-word', 'Phosphor'));
+    card.appendChild(brand);
+    card.appendChild(dom.el('h1', 'lock-title', 'Phosphor is locked'));
+    refs.host.appendChild(card);
+    return card;
+  }
+
+  function finePrint(card, text) {
+    card.appendChild(dom.el('p', 'lock-fine', text));
+  }
+
+  /* The migration card. No field of its own: the window has exactly one, it
+     is already behind everything, and the shell drives it to `locked` the
+     moment the lock state arrives. A second field here would paint an opaque
+     ground over the frosted shell. */
   function shell() {
     dom.clear(refs.host);
     var card = dom.el('div', 'screen-card');
@@ -81,35 +211,56 @@
   }
 
   function buildLock() {
-    var card = shell();
-    card.appendChild(dom.el('h1', 'title', 'Locked'));
-    card.appendChild(dom.el('p', 'body dim', 'Your password unlocks this app on this computer. Nobody can reset it.'));
+    var card = lockCard();
 
     /* A real form, not a loose input: it is what lets a password manager offer
        to fill and to save, and it gives Enter to submit without a key handler. */
-    var form = dom.el('form', 'stack');
-    var field = dom.el('div', 'field');
-    field.appendChild(dom.el('label', 'label', 'Password'));
-    var input = dom.el('input', 'input');
+    var form = dom.el('form', 'lock-form');
+    var field = dom.el('div', 'lock-field');
+    append(field, icon('lock', 'lock-field-icon icon-20'));
+    var input = dom.el('input', 'lock-input');
     input.type = 'password';
     input.name = 'password';
     input.autocomplete = 'current-password';
+    input.setAttribute('autofocus', '');
+    input.setAttribute('aria-label', 'Password');
+    input.placeholder = 'Password';
     field.appendChild(input);
+
+    /* Show or hide what was typed. A button, not a link, and it hands focus
+       straight back to the field so the toggle never breaks the typing. */
+    var eye = dom.el('button', 'lock-eye');
+    eye.type = 'button';
+    eye.setAttribute('aria-label', 'Show password');
+    eye.setAttribute('aria-pressed', 'false');
+    append(eye, icon('show', 'icon-20'));
+    field.appendChild(eye);
+    dom.on(eye, 'click', function () {
+      var shown = input.type === 'text';
+      input.type = shown ? 'password' : 'text';
+      eye.setAttribute('aria-pressed', shown ? 'false' : 'true');
+      eye.setAttribute('aria-label', shown ? 'Show password' : 'Hide password');
+      dom.clear(eye);
+      append(eye, icon(shown ? 'show' : 'hide', 'icon-20'));
+      input.focus();
+    });
     form.appendChild(field);
 
-    var error = dom.el('p', 'body down');
+    var error = dom.el('p', 'lock-error down');
     error.hidden = true;
     form.appendChild(error);
 
-    var actions = dom.el('div', 'screen-actions');
-    var unlock = dom.el('button', 'btn btn-primary btn-lg');
+    var unlock = dom.el('button', 'btn btn-primary lock-unlock');
     unlock.type = 'submit';
-    unlock.appendChild(dom.el('span', 'btn-label', 'Unlock'));
-    actions.appendChild(unlock);
-    form.appendChild(actions);
+    var label = dom.el('span', 'btn-label');
+    append(label, icon('unlock', 'icon-20'));
+    label.appendChild(dom.el('span', '', 'Unlock'));
+    append(label, icon('chevron-right', 'lock-arrow'));
+    unlock.appendChild(label);
+    form.appendChild(unlock);
     card.appendChild(form);
 
-    card.appendChild(dom.el('p', 'meta', 'Your money is still here and still being read. Nothing moves while this app is locked.'));
+    finePrint(card, 'Your password unlocks Phosphor on this Mac and cannot be reset. Your funds stay where they are: nothing moves while the app is locked.');
 
     /* One unlock in flight at a time. The disabled button covers the click; this
        covers Enter in the password field, which submits the form without going
@@ -130,6 +281,7 @@
         .then(function (answer) {
           if (answer && answer.ok === false) {
             fail(error, reason(answer.code || answer.error, answer.retryInSec));
+            shake(field);
             /* The field is cleared on a refusal and kept on a success, because
                a wrong password is retyped and a right one is finished with. */
             input.value = '';
@@ -141,6 +293,7 @@
         })
         .catch(function (err) {
           fail(error, net.readable(err));
+          shake(field);
         })
         .finally(function () {
           inFlight = false;
@@ -159,21 +312,22 @@
      Secure Enclave and the only way to ask it is the system's own dialog, which
      the button raises. The window draws nothing that looks like that dialog. */
   function buildTouch() {
-    var card = shell();
-    card.appendChild(dom.el('h1', 'title', 'Locked'));
-    card.appendChild(dom.el('p', 'body dim', 'Touch ID opens this wallet on this Mac. Your Mac login password works too.'));
+    var card = lockCard();
 
-    var error = dom.el('p', 'body down');
+    var error = dom.el('p', 'lock-error down');
     error.hidden = true;
 
-    var actions = dom.el('div', 'screen-actions');
-    var unlock = dom.el('button', 'btn btn-primary btn-lg');
+    var actions = dom.el('div', 'lock-form');
+    var unlock = dom.el('button', 'btn btn-primary lock-unlock');
     unlock.type = 'button';
-    unlock.appendChild(dom.el('span', 'btn-label', 'Unlock with Touch ID'));
+    var label = dom.el('span', 'btn-label');
+    append(label, icon('unlock', 'icon-20'));
+    label.appendChild(dom.el('span', '', 'Unlock with Touch ID'));
+    unlock.appendChild(label);
     actions.appendChild(unlock);
+    actions.appendChild(error);
     card.appendChild(actions);
-    card.appendChild(error);
-    card.appendChild(dom.el('p', 'meta', 'Your money is still here and still being read. Nothing moves while this app is locked.'));
+    finePrint(card, 'Touch ID unlocks Phosphor on this Mac. Your Mac login password works too. Your funds stay where they are: nothing moves while the app is locked.');
 
     /* One dialog at a time. The request answers when the person has touched the
        sensor or cancelled, which can be most of the 150 s the backend allows, so
@@ -208,7 +362,7 @@
      person can read, and `code` is what a screen branches on. This table exists
      because the window can say it better in context than a route can. */
   function reason(code, retryInSec) {
-    if (code === 'wrong_password') return 'That password is wrong.';
+    if (code === 'wrong_password') return 'Wrong password. Try again.';
     if (code === 'enclave_unavailable') return 'The Secure Enclave did not answer. Phosphor may be running outside its desktop shell.';
     if (code === 'foreign') return 'This wallet was made on another Mac. Restore it from your recovery phrase.';
     if (code === 'garbled') return 'The Secure Enclave answered the wrong thing. Try again.';
