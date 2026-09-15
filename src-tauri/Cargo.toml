@@ -1,6 +1,6 @@
 [package]
 name = "phosphor-desktop"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 rust-version = "1.77"
 description = "Phosphor: local stablecoin control app driven by any MCP agent"
@@ -26,6 +26,13 @@ serde_json = "1.0"
 tauri = { version = "2.9.5", features = [] }
 tauri-plugin-clipboard-manager = "2.3.0"
 tauri-plugin-dialog = "2.3.0"
+# The second exception, and the one that must not be hand-rolled: it fetches the release
+# manifest over TLS, checks the minisign signature of the update against the public key
+# compiled in from tauri.conf.json, refuses anything that is not a strictly newer version,
+# and swaps the bundle. A homemade version of that check is exactly the bug an attacker
+# wants. It brings reqwest into the tree; the loopback GET above stays hand-rolled anyway,
+# because the trust boundary of that call is the port, not the transport.
+tauri-plugin-updater = "2.11.0"
 
 # The one exception to the thin rule above, and it buys nothing new in the tree: tauri already
 # depends on libc on unix, so this is a direct name for a crate that is here anyway. It is
