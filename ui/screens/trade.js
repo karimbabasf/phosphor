@@ -1,20 +1,26 @@
-/* Trade: the chart takes the whole width, a deck under it.
+/* Trade: a strip, the chart, and one tabbed panel under it.
 
-   FOUR ZONES ON THE DECK, THREE COLUMNS, ONE HIERARCHY. The deck is a strip
-   under the chart, read left to right the way a statement line reads. Status,
-   on the left, is what the market and the account are: the coin, its price as
-   a tag tinted by the last tick, and the figures (free, at risk, max loss) as
-   small stats with a 2 px line for how much of the money is committed. The
-   middle column stacks Open (each position with its profit and the distance
-   to its exits) over Waiting (each plan as one English line with its
-   conditions as dots). Done, on the right, is what happened: fills and ended
-   plans as a tape of dense transaction rows, a coin mark, a sentence and the
-   amount, newest first. Every zone body scrolls inside itself. Karim,
-   2026-09-14: "this trade panel on the side I want to be below the chart, so
-   the whole chart horizontally", the price should "look like a price tag and
-   not a balance", the figures looked like the Basic and Pro balances, and
-   "transactions should look like transactions too". The class name
-   trade-rail stays on the deck: the spotlight and the tests read it.
+   THREE PANES, READ TOP TO BOTTOM. The strip is the market as an exchange
+   header reads it: the coin with its logo (which is also the market picker),
+   the venue, the mark price at 28 px that ticks in colour, the 24 hour change
+   as plain coloured text, the day's high and low, and on the right the two
+   figures a person checks before a plan (free, at risk) and the Layout menu.
+   The chart takes the whole width under it. The deck under the chart is one
+   panel with three tabs, Open, Waiting and Done, each with its count, instead
+   of three columns of which two were usually empty. Karim, 2026-09-14: the
+   price should "look like a price tag and not a balance", and "transactions
+   should look like transactions too"; the direction of 2026-09-15 is
+   Hyperliquid's own grammar for both. The class name trade-rail stays on the
+   deck: the spotlight and the tests read it.
+
+   PANES CAN BE HIDDEN. The chart and the deck each carry an eye-off control in
+   their header, the Layout button on the strip lists every pane with a
+   checkbox, and ui/split.js holds the state and reflows the grid.
+
+   THE TAPE IS THE LAST 24 HOURS. Fills and ended plans newer than a day are
+   listed; Show more reveals the next twenty older ones. A fill row opens the
+   shared receipt card through the receipt:open event, and ends in the
+   explorer link when the fill carries one.
 
    The two controls on the deck, Close and Cancel, are the only way a person
    reduces exposure from here. They confirm inline (the button becomes "Sure?"
@@ -47,12 +53,23 @@
     { id: 'fills', label: 'Fills' }
   ];
 
+  /* The three tabs on the deck, in reading order. */
+  var TABS = [
+    { id: 'open', label: 'Open' },
+    { id: 'waiting', label: 'Waiting' },
+    { id: 'done', label: 'Done' }
+  ];
+
   /* How long a pressed Close or Cancel waits for its second press. */
   var CONFIRM_MS = 4000;
   /* How long a row that just appeared is marked as entering: the enter
      animation plus a beat, so a refresh landing mid-animation cannot cut it. */
   var ENTER_MS = 260;
-  var DONE_ROWS = 20;
+  /* The tape's window, and how many older rows one press of Show more adds. */
+  var DONE_WINDOW_MS = 24 * 60 * 60 * 1000;
+  var DONE_PAGE = 20;
+  /* How often the day's candles behind the 24h figures are read again. */
+  var RANGE_MS = 60 * 1000;
 
   function boot() {
     var host = document.getElementById('view-trade');
@@ -65,16 +82,19 @@
     /* The chart engine's own boot wires listeners, starts a 5 s watchdog and a
        one second bar-close timer. None of that should run in a window whose
        owner never opens trade, so it starts the first time the view is on
-       screen and never before. */
+       screen and never before. The day's candles are read on the same cue. */
     window.addEventListener('phosphor:view', function (event) {
       if (!event.detail || event.detail.view !== 'trade') return;
       startChart();
       refresh();
+      loadRange();
     });
     if (window.PhosphorShell.view() === 'trade') {
       startChart();
       refresh();
+      loadRange();
     }
+    window.addEventListener('phosphor:pane', renderLayout);
 
     events.on('candles', function () {
       if (charted && typeof window.candlesPushed === 'function') window.candlesPushed();
@@ -109,6 +129,8 @@
     var wrap = dom.el('div', 'trade-wrap');
     wrap.dataset.split = 'trade';
 
+    wrap.appendChild(buildStrip());
+
     var main = dom.el('div', 'trade-main');
     main.appendChild(buildBar());
 
@@ -141,21 +163,34 @@
     resizer.dataset.splitHandle = 'deck-rail';
     resizer.setAttribute('role', 'separator');
     resizer.setAttribute('aria-orientation', 'horizontal');
+    resizer.setAttribute('aria-label', 'Resize the panel under the chart');
     resizer.tabIndex = 0;
 
     /* The deck keeps the class name trade-rail: the spotlight, the stylesheet
        and the tests all read it, and a rename would buy nothing they can see. */
     var deck = dom.el('div', 'trade-rail');
-    var status = zone('trade-status');
-    var open = zone('trade-open', 'Open');
-    var waiting = zone('trade-waiting', 'Waiting');
-    var done = zone('trade-done', 'Done');
-    status.body.className += ' scrolls';
-    open.body.className += ' scrolls';
-    waiting.body.className += ' scrolls';
-    done.body.className += ' scrolls';
+    deck.appendChild(buildTabs());
 
-    deck.appendChild(status.node);
+    var open = panel('open', 'Open');
+    var waiting = panel('waiting', 'Waiting');
+    var done = panel('done', 'Done');
+
+    /* The column headings over the open positions, hidden with nothing open:
+       a heading over one sentence is a table with no rows. */
+    var head = positionHead();
+    open.node.insertBefore(head, open.body);
+
+    /* The tape's foot sits under the list host, never in it: dom.reconcile
+       owns the host and removes anything it did not place. */
+    var foot = dom.el('div', 'trade-foot');
+    var more = dom.el('button', 'btn btn-ghost btn-sm trade-more');
+    more.type = 'button';
+    more.appendChild(dom.el('span', 'btn-label', 'Show more'));
+    dom.on(more, 'click', onMore);
+    foot.appendChild(more);
+    foot.hidden = true;
+    done.node.appendChild(foot);
+
     deck.appendChild(open.node);
     deck.appendChild(waiting.node);
     deck.appendChild(done.node);
@@ -165,49 +200,193 @@
     wrap.appendChild(deck);
     host.appendChild(wrap);
 
+    refs.wrap = wrap;
     refs.rail = deck;
-    refs.statusBody = status.body;
     refs.openBody = open.body;
-    refs.openCount = open.count;
+    refs.openHead = head;
     refs.waitingBody = waiting.body;
-    refs.waitingCount = waiting.count;
     refs.doneBody = done.body;
-    refs.doneCount = done.count;
+    refs.doneFoot = foot;
+    refs.more = more;
+    refs.panels = { open: open.node, waiting: waiting.node, done: done.node };
 
-    buildStatus(status.body);
+    refs.paintCuts = [cuts(open.body), cuts(waiting.body), cuts(done.body)];
 
-    refs.paintCuts = [cuts(status.body), cuts(open.body), cuts(waiting.body), cuts(done.body)];
+    selectTab('open');
 
     if (typeof window.splitBoot === 'function') window.splitBoot();
   }
 
-  /* A zone is a heading and a body on the deck's own ground. It is deliberately
-     not a .panel: four bordered cards down a 320 px rail is what made three
-     empty answers cost as much room as the one full one. The count beside the
-     heading is a sibling of the h2, not inside it, so the heading's own text
-     stays the one word. */
-  function zone(name, title) {
-    var node = dom.el('section', 'trade-zone ' + name);
-    var count = null;
-    if (title) {
-      var head = dom.el('div', 'trade-zone-head');
-      head.appendChild(dom.el('h2', '', title));
-      count = dom.el('span', 'trade-zone-count');
-      count.hidden = true;
-      head.appendChild(count);
-      node.appendChild(head);
-    }
-    var body = dom.el('div', 'trade-zone-body');
-    node.appendChild(body);
-    return { node: node, body: body, count: count };
+  /* ---------- the strip ----------
+
+     One row, 56 px, the way an exchange header reads: the market, the venue,
+     the price, the day, then the account, then the layout. Built once and
+     filled every pass, so the price ticks in place and a figure that changes
+     rolls rather than the strip being torn down for a number that moved. */
+  function buildStrip() {
+    var strip = dom.el('div', 'trade-strip');
+    strip.setAttribute('role', 'region');
+    strip.setAttribute('aria-label', 'Market');
+
+    strip.appendChild(symbolControl());
+    strip.appendChild(venueChip());
+
+    /* THE PRICE. The venue's mark, 28 px mono. On a tick its digits flip to
+       the direction's colour and settle back to the text colour over 600 ms,
+       and never a background flash: the digits are the price, the box is not.
+       data-tick is set on change and cleared when the animation ends. */
+    var px = dom.el('span', 'px mono trade-mark-price');
+    px.setAttribute('title', 'Mark price');
+    dom.on(px, 'animationend', function () { dom.setAttr(px, 'data-tick', null); });
+    strip.appendChild(px);
+
+    var day = dom.el('div', 'strip-day');
+    var change = stripStat('24h', 'trade-change');
+    var high = stripStat('24h high', 'trade-high');
+    var low = stripStat('24h low', 'trade-low');
+    day.appendChild(change.node);
+    day.appendChild(high.node);
+    day.appendChild(low.node);
+    strip.appendChild(day);
+
+    /* The right half: what the venue says when it has something to say, the
+       two figures, and the Layout menu. */
+    var right = dom.el('div', 'strip-right');
+    var line = dom.el('p', 'trade-line');
+    line.hidden = true;
+    right.appendChild(line);
+    var stats = dom.el('div', 'strip-stats');
+    right.appendChild(stats);
+    right.appendChild(layoutControl());
+    strip.appendChild(right);
+
+    refs.strip = strip;
+    refs.price = px;
+    refs.change = change.value;
+    refs.high = high.value;
+    refs.low = low.value;
+    refs.statusLine = line;
+    refs.stats = stats;
+    return strip;
   }
 
-  /* How many rows a zone holds, beside its heading, and nothing at all when
-     it holds none: "Open" with a 0 after it is a zone apologising. */
-  function setCount(node, n) {
+  /* A small figure on the strip: the label over the value, mono, tabular. */
+  function stripStat(label, className) {
+    var node = dom.el('div', 'strip-stat ' + className);
+    node.appendChild(dom.el('span', 'strip-label', label));
+    var value = dom.el('span', 'strip-value mono', '--');
+    node.appendChild(value);
+    return { node: node, value: value };
+  }
+
+  /* The venue: its mark and its name, and a dot for the account socket that
+     serves the figures. The chart bar keeps its own dot for the bars' feed,
+     because those are two sockets and they can differ. */
+  function venueChip() {
+    var chip = dom.el('span', 'trade-venue');
+    chip.appendChild(logo('HYPE', 16));
+    chip.appendChild(dom.el('span', 'trade-venue-name', 'Hyperliquid'));
+    var dot = dom.el('i', 'trade-venue-dot');
+    dot.setAttribute('aria-hidden', 'true');
+    chip.appendChild(dot);
+    refs.venue = chip;
+    return chip;
+  }
+
+  /* ---------- the tabs ----------
+
+     One row of three tabs with their counts in mono, the deck's eye-off control
+     at its right end. The active tab is underlined in ink; arrow keys move
+     between them, Home and End jump. */
+  function buildTabs() {
+    var row = dom.el('div', 'trade-tabs');
+    var list = dom.el('div', 'trade-tablist');
+    list.setAttribute('role', 'tablist');
+    list.setAttribute('aria-label', 'Open, waiting and done');
+    refs.tabs = {};
+    refs.counts = {};
+    for (var i = 0; i < TABS.length; i += 1) {
+      var tab = dom.el('button', 'trade-tab');
+      tab.type = 'button';
+      tab.id = 'trade-tab-' + TABS[i].id;
+      tab.setAttribute('role', 'tab');
+      tab.setAttribute('aria-controls', 'trade-panel-' + TABS[i].id);
+      tab.setAttribute('aria-selected', 'false');
+      tab.dataset.tab = TABS[i].id;
+      tab.appendChild(dom.el('span', 'trade-tab-label', TABS[i].label));
+      var count = dom.el('span', 'trade-tab-count mono', '0');
+      tab.appendChild(count);
+      dom.on(tab, 'click', onTab);
+      dom.on(tab, 'keydown', onTabKey);
+      list.appendChild(tab);
+      refs.tabs[TABS[i].id] = tab;
+      refs.counts[TABS[i].id] = count;
+    }
+    row.appendChild(list);
+    var hide = paneControl('deck');
+    if (hide) row.appendChild(hide);
+    return row;
+  }
+
+  function onTab(event) {
+    selectTab(event.currentTarget.dataset.tab);
+  }
+
+  function onTabKey(event) {
+    var at = tabIndex(event.currentTarget.dataset.tab);
+    var next = at;
+    if (event.key === 'ArrowRight') next = (at + 1) % TABS.length;
+    else if (event.key === 'ArrowLeft') next = (at + TABS.length - 1) % TABS.length;
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = TABS.length - 1;
+    else return;
+    event.preventDefault();
+    selectTab(TABS[next].id);
+    var tab = refs.tabs[TABS[next].id];
+    if (tab && tab.focus) tab.focus();
+  }
+
+  function tabIndex(id) {
+    for (var i = 0; i < TABS.length; i += 1) {
+      if (TABS[i].id === id) return i;
+    }
+    return 0;
+  }
+
+  function selectTab(id) {
+    if (!refs.tabs || !refs.tabs[id]) return;
+    refs.tab = id;
+    for (var i = 0; i < TABS.length; i += 1) {
+      var on = TABS[i].id === id;
+      var tab = refs.tabs[TABS[i].id];
+      dom.setAttr(tab, 'aria-selected', on ? 'true' : 'false');
+      dom.setAttr(tab, 'tabindex', on ? '0' : '-1');
+      dom.setHidden(refs.panels[TABS[i].id], !on);
+    }
+    repaintCuts();
+  }
+
+  /* A panel is a tabpanel holding one list host that scrolls inside itself.
+     The host belongs to the reconciler; a heading or a foot is a sibling. */
+  function panel(id, title) {
+    var node = dom.el('section', 'trade-panel trade-' + id);
+    node.id = 'trade-panel-' + id;
+    node.setAttribute('role', 'tabpanel');
+    node.setAttribute('aria-labelledby', 'trade-tab-' + id);
+    node.setAttribute('aria-label', title);
+    node.hidden = true;
+    var body = dom.el('div', 'trade-list scrolls');
+    node.appendChild(body);
+    return { node: node, body: body };
+  }
+
+  /* How many rows a tab holds, beside its word. A zero is written as a zero:
+     the tab is a count, not an apology. */
+  function setCount(id, n) {
+    var node = refs.counts && refs.counts[id];
     if (!node) return;
-    dom.setText(node, n > 0 ? String(n) : '');
-    dom.setHidden(node, !(n > 0));
+    dom.setText(node, String(n));
+    dom.setAttr(node, 'data-zero', n > 0 ? null : 'true');
   }
 
   /* A region that scrolls inside itself says where it was cut, so a fill sliced
@@ -228,21 +407,19 @@
 
   /* ---------- the bar above the chart ----------
 
-     One row: a segmented control holding the market and the six timeframes,
-     the indicator command, Layers, and one status line on the right. What used
-     to be a floating word, three chips and a venue cycling button is one
-     control grammar at 26 px. Under 560 px the row wraps, on purpose. */
+     One row: a segmented control holding the eight timeframes, the indicator
+     command, Layers, one status line on the right, and the chart pane's
+     eye-off control at the end. The market moved up to the strip, where its
+     logo is. Under 560 px the row wraps, on purpose. */
   function buildBar() {
     var bar = dom.el('div', 'chart-bar');
 
-    /* The segment. The market is its first cell and the timeframes fill the
-       rest: ui/chart/chart.js writes button.timeframe[data-sec] into
+    /* The segment. ui/chart/chart.js writes button.timeframe[data-sec] into
        #timeframes and marks the current one .on, which is the contract the
        segment styles against. */
     var seg = dom.el('div', 'seg');
     seg.setAttribute('role', 'group');
-    seg.setAttribute('aria-label', 'Market and timeframe');
-    seg.appendChild(symbolControl());
+    seg.setAttribute('aria-label', 'Timeframe');
     var timeframes = dom.el('div', 'seg-cells');
     timeframes.id = 'timeframes';
     seg.appendChild(timeframes);
@@ -275,7 +452,67 @@
     feed.appendChild(latency);
     status.appendChild(feed);
     bar.appendChild(status);
+
+    var hide = paneControl('chart');
+    if (hide) bar.appendChild(hide);
     return bar;
+  }
+
+  /* ---------- popovers ----------
+
+     Layers on the bar and Layout on the strip are the same control: a button
+     that opens a small raised sheet under itself, closed by Escape, by a
+     click anywhere else, or by its own button. A click outside is found by a
+     walk rather than through contains(), because the unit harness's stand-in
+     nodes have neither. */
+  function popover(wrap, button, pop, onOpen) {
+    function open() {
+      if (onOpen) onOpen();
+      dom.setAttr(pop, 'data-open', 'true');
+      dom.setAttr(button, 'aria-expanded', 'true');
+      var first = firstRow(pop);
+      if (first && first.focus) first.focus();
+    }
+    function close() {
+      dom.setAttr(pop, 'data-open', null);
+      dom.setAttr(button, 'aria-expanded', 'false');
+      if (button.focus) button.focus();
+    }
+    dom.on(button, 'click', function () {
+      if (pop.dataset.open === 'true') close();
+      else open();
+    });
+    dom.on(document, 'keydown', function (event) {
+      if (event.key !== 'Escape' || pop.dataset.open !== 'true') return;
+      event.preventDefault();
+      close();
+    });
+    dom.on(document, 'click', function (event) {
+      if (pop.dataset.open !== 'true') return;
+      if (within(event.target, wrap)) return;
+      close();
+    });
+    return { open: open, close: close };
+  }
+
+  function firstRow(pop) {
+    var rows = pop.children[0];
+    return rows && rows.children ? rows.children[0] : null;
+  }
+
+  /* One check row: a drawn box and a word. aria-checked is the whole state. */
+  function checkRow(label) {
+    var row = dom.el('button', 'check-row layers-row');
+    row.type = 'button';
+    row.setAttribute('role', 'menuitemcheckbox');
+    row.setAttribute('aria-checked', 'true');
+    row.appendChild(dom.el('i', 'check layers-check'));
+    row.appendChild(dom.el('span', '', label));
+    return row;
+  }
+
+  function setChecked(row, on) {
+    dom.setAttr(row, 'aria-checked', on ? 'true' : 'false');
   }
 
   /* ---------- Layers ----------
@@ -283,8 +520,7 @@
      The seven overlays and the volume pane as check rows in one popover, with
      the venue that is serving the candles as its foot. A popover rather than
      a row of chips, because eight chips is a toolbar and the bar has room for
-     one word. It scales in from its own corner over 150 ms and closes on
-     Escape or a click anywhere else. */
+     one word. */
   function layersControl() {
     var wrap = dom.el('div', 'layers-wrap');
 
@@ -294,9 +530,9 @@
     button.setAttribute('aria-expanded', 'false');
     button.setAttribute('aria-controls', 'chart-layers');
     button.appendChild(dom.el('span', '', 'Layers'));
-    button.appendChild(dom.el('span', 'chev'));
+    button.appendChild(icon('chevron-down', 'chev-icon'));
 
-    var pop = dom.el('div', 'layers-pop');
+    var pop = dom.el('div', 'layers-pop pop');
     pop.id = 'chart-layers';
     pop.setAttribute('role', 'menu');
     pop.setAttribute('aria-label', 'What the chart draws');
@@ -304,12 +540,12 @@
 
     var rows = dom.el('div', 'layers-rows');
     for (var i = 0; i < OVERLAYS.length; i += 1) {
-      var row = layerRow(OVERLAYS[i].label);
+      var row = checkRow(OVERLAYS[i].label);
       row.dataset.overlay = OVERLAYS[i].id;
       dom.on(row, 'click', onOverlayRow);
       rows.appendChild(row);
     }
-    var volume = layerRow('Volume');
+    var volume = checkRow('Volume');
     volume.dataset.layer = 'volume';
     dom.on(volume, 'click', onVolumeRow);
     rows.appendChild(volume);
@@ -328,67 +564,92 @@
     wrap.appendChild(button);
     wrap.appendChild(pop);
 
-    dom.on(button, 'click', function () {
-      if (pop.dataset.open === 'true') closeLayers();
-      else openLayers();
-    });
-    dom.on(document, 'keydown', function (event) {
-      if (event.key !== 'Escape' || pop.dataset.open !== 'true') return;
-      event.preventDefault();
-      closeLayers();
-    });
-    /* A click anywhere else shuts it. Written as a walk rather than through
-       contains(), because the unit harness's stand-in nodes have neither. */
-    dom.on(document, 'click', function (event) {
-      if (pop.dataset.open !== 'true') return;
-      if (within(event.target, wrap)) return;
-      closeLayers();
-    });
-
     refs.layersButton = button;
     refs.layersPop = pop;
     refs.layerRows = rows;
     refs.volumeRow = volume;
+    refs.layers = popover(wrap, button, pop, renderOverlays);
     return wrap;
   }
 
-  /* One check row: a drawn box and a word. aria-checked is the whole state. */
-  function layerRow(label) {
-    var row = dom.el('button', 'layers-row');
-    row.type = 'button';
-    row.setAttribute('role', 'menuitemcheckbox');
-    row.setAttribute('aria-checked', 'true');
-    row.appendChild(dom.el('i', 'layers-check'));
-    row.appendChild(dom.el('span', '', label));
-    return row;
+  /* ---------- Layout ----------
+
+     Every pane the window can hide, as a check row: on means on screen. The
+     state is ui/split.js's; this menu only mirrors it, and it re-reads it
+     each time it opens and each time a pane changes, so an eye-off press in a
+     header and a press here never disagree. */
+  function layoutControl() {
+    var wrap = dom.el('div', 'layout-wrap');
+
+    var button = dom.el('button', 'layout opens');
+    button.type = 'button';
+    button.setAttribute('aria-haspopup', 'menu');
+    button.setAttribute('aria-expanded', 'false');
+    button.setAttribute('aria-controls', 'trade-layout');
+    button.appendChild(icon('layout', 'icon-16'));
+    button.appendChild(dom.el('span', '', 'Layout'));
+
+    var pop = dom.el('div', 'layout-pop pop');
+    pop.id = 'trade-layout';
+    pop.setAttribute('role', 'menu');
+    pop.setAttribute('aria-label', 'Which panes are on screen');
+    pop.tabIndex = -1;
+    var rows = dom.el('div', 'layers-rows');
+    pop.appendChild(rows);
+
+    wrap.appendChild(button);
+    wrap.appendChild(pop);
+
+    refs.layoutButton = button;
+    refs.layoutPop = pop;
+    refs.layoutRows = rows;
+    refs.layout = popover(wrap, button, pop, renderLayout);
+    renderLayout();
+    return wrap;
   }
 
-  function openLayers() {
-    if (!refs.layersPop) return;
-    renderOverlays();
-    dom.setAttr(refs.layersPop, 'data-open', 'true');
-    dom.setAttr(refs.layersButton, 'aria-expanded', 'true');
-    var first = refs.layerRows && refs.layerRows.children[0];
-    if (first && first.focus) first.focus();
+  function renderLayout() {
+    var split = window.PhosphorSplit;
+    if (!refs.layoutRows || !split || typeof split.panes !== 'function') return;
+    dom.reconcile(refs.layoutRows, split.panes(), function (pane) {
+      return pane.name;
+    }, function (pane) {
+      var row = checkRow(pane.label);
+      row.dataset.pane = pane.name;
+      dom.on(row, 'click', onPaneRow);
+      return row;
+    }, function (row, pane) {
+      setChecked(row, !pane.hidden);
+    });
   }
 
-  function closeLayers() {
-    if (!refs.layersPop) return;
-    dom.setAttr(refs.layersPop, 'data-open', null);
-    dom.setAttr(refs.layersButton, 'aria-expanded', 'false');
-    if (refs.layersButton && refs.layersButton.focus) refs.layersButton.focus();
+  function onPaneRow(event) {
+    var row = event.currentTarget;
+    var split = window.PhosphorSplit;
+    if (!split || typeof split.setPane !== 'function') return;
+    var on = row.getAttribute('aria-checked') !== 'true';
+    setChecked(row, on);
+    split.setPane(row.dataset.pane, on);
+  }
+
+  /* The eye-off control for a pane header, from ui/split.js so every header
+     draws the same one. Null where the split script is not loaded. */
+  function paneControl(name) {
+    var split = window.PhosphorSplit;
+    if (!split || typeof split.paneControl !== 'function') return null;
+    return split.paneControl(name);
   }
 
   /* ---------- the market ----------
 
-     This was a native <select>, so it drew OS chrome and was the one element on
-     the surface that did not look finished. It is a listbox now, on the
-     timeframe pills' own metrics, and it carries the window's whole opening
-     grammar through .opens rather than half of it.
+     The strip's first cell: the coin's logo and its ticker, which opens a
+     listbox of the markets the app charts. It was a native <select> once,
+     which drew OS chrome, and then a cell in the bar's segment; the exchange
+     header puts the coin first with its mark, so it lives on the strip now.
 
      It writes the focus to /api/trade, which sets the trading view's symbol AND
      the chart's product server side and broadcasts both, so one write moves the
-     canvas and the rail together. Nothing here touches the chart engine. */
+     canvas and the deck together. Nothing here touches the chart engine. */
   function symbolControl() {
     var wrap = dom.el('div', 'trade-symbol-wrap');
 
@@ -398,11 +659,13 @@
     button.setAttribute('aria-expanded', 'false');
     button.setAttribute('aria-controls', 'trade-markets');
     button.setAttribute('aria-label', 'Which market');
-    var label = dom.el('span', '', '--');
+    var mark = dom.el('span', 'trade-symbol-logo');
+    button.appendChild(mark);
+    var label = dom.el('span', 'trade-mark-coin', '--');
     button.appendChild(label);
-    button.appendChild(dom.el('span', 'chev'));
+    button.appendChild(icon('chevron-down', 'chev-icon'));
 
-    var menu = dom.el('div', 'trade-menu');
+    var menu = dom.el('div', 'trade-menu pop');
     menu.id = 'trade-markets';
     menu.setAttribute('role', 'listbox');
     menu.setAttribute('aria-label', 'Which market');
@@ -425,8 +688,6 @@
       var option = optionOf(event.target);
       if (option) pick(option.dataset.product);
     });
-    /* A click anywhere else shuts it. Written as a walk rather than through
-       contains(), because the unit harness's stand-in nodes have neither. */
     dom.on(document, 'click', function (event) {
       if (menu.dataset.open !== 'true') return;
       if (within(event.target, wrap)) return;
@@ -434,6 +695,7 @@
     });
 
     refs.symbolButton = button;
+    refs.symbolLogo = mark;
     refs.symbolLabel = label;
     refs.symbolMenu = menu;
     return wrap;
@@ -504,10 +766,11 @@
     var was = data ? data.symbol : null;
     if (!data || coin === was) return;
     /* Optimistic, and rolled back if the write is refused, the same way the
-       overlay toggles are: the bar is never in a state the payload disagrees
+       overlay toggles are: the strip is never in a state the payload disagrees
        with, and a refusal arrives as the answer to this click. */
     data.symbol = coin;
     render();
+    loadRange();
     net.postJson('/api/trade', { focus: { symbol: coin } })
       .then(function () { return refresh(); })
       .catch(function (err) {
@@ -538,20 +801,24 @@
     if (!refs.symbolLabel) return;
     var list = products();
     var current = currentProduct();
-    dom.setText(refs.symbolLabel, current || '--');
+    var symbol = symbolOf();
+    dom.setText(refs.symbolLabel, symbol || '--');
+    setLogo(refs.symbolLogo, symbol, 20);
     dom.setAttr(refs.symbolButton, 'disabled', list.length ? null : true);
     dom.setAttr(refs.symbolMenu, 'aria-activedescendant', null);
 
     dom.reconcile(refs.symbolMenu, list, function (product) {
       return String(product);
-    }, function () {
+    }, function (product) {
       var option = dom.el('div', 'trade-option');
       option.setAttribute('role', 'option');
+      option.appendChild(logo(String(product).split('-')[0].toUpperCase(), 16));
+      option.appendChild(dom.el('span', 'trade-option-name'));
       return option;
     }, function (option, product, i) {
       dom.setAttr(option, 'id', 'trade-market-' + i);
       option.dataset.product = product;
-      dom.setText(option, product);
+      dom.setText(option.children[1], product);
       dom.setAttr(option, 'aria-selected', product === current ? 'true' : 'false');
       dom.setAttr(option, 'data-active', product === menuActive ? 'true' : null);
       if (product === menuActive) dom.setAttr(refs.symbolMenu, 'aria-activedescendant', 'trade-market-' + i);
@@ -588,10 +855,6 @@
     return fallback !== false;
   }
 
-  function setChecked(row, on) {
-    dom.setAttr(row, 'aria-checked', on ? 'true' : 'false');
-  }
-
   /* What the payload says is on, not what this window last pressed: an agent can
      move an overlay too, and the rows follow it. */
   function renderOverlays() {
@@ -618,6 +881,7 @@
            before the render that draws on top of it. */
         window.TRADE = data;
         render();
+        ensureRange();
       })
       .catch(function (err) {
         console.error('[trade]', err);
@@ -627,7 +891,7 @@
   function render() {
     renderOverlays();
     renderSymbol();
-    renderStatus();
+    renderStrip();
     renderOpen();
     renderWaiting();
     renderDone();
@@ -635,69 +899,91 @@
     repaintCuts();
   }
 
-  /* Where each zone body is cut, painted after every render and again once a
-     row has finished entering: the enter rise is a transform, and a row still
-     4 px below its place counts as overflow, so a body that fits exactly
-     read as cut at the bottom and kept the fade after the row had settled. */
+  /* Where each list is cut, painted after every render and again once a row
+     has finished entering: the enter rise is a transform, and a row still
+     4 px below its place counts as overflow, so a list that fits exactly read
+     as cut at the bottom and kept the fade after the row had settled. */
   function repaintCuts() {
     for (var i = 0; refs.paintCuts && i < refs.paintCuts.length; i += 1) refs.paintCuts[i]();
   }
 
-  /* ---------- zone one: status ----------
+  /* ---------- the day's candles ----------
 
-     The coin, its price as a tag, and three figures: what is free to put
-     behind a plan, what the placed and open plans have posted, and the most
-     they can lose at their stops. The tag is the one loud thing on the deck
-     and everything under it is quiet. Max loss is a figure only when there is
-     one: a zero there is not a fact anybody reads.
+     The trade payload carries no yesterday (a Market is { coin, markPx,
+     fundingRateHourly, premiumPct, openInterestUsd, atr, maxLeverage } and
+     nothing about the day), and the chart's own candles cover a day only at
+     the wider timeframes. So the strip reads 25 hourly bars for the focused
+     market from /api/candles, once a minute and on every market change: the
+     close 24 bars back is the price a day ago, the high and low are over the
+     24 bars since, and the change is the live mark against that close. */
+  var range = { symbol: '', open: null, high: null, low: null };
+  var rangeTimer = 0;
+  var rangeSeq = 0;
+  var rangeAsked = '';
 
-     The zone is built once and filled every pass, so the price rolls its
-     digits when it ticks and a figure that changes rolls too, instead of the
-     whole zone being torn down for a number that moved. The parts a pass may
-     not need (the line, the meter) are emptied and hidden rather than
-     rebuilt.
-
-     Every name below is the payload's own: an Account is { accountKnown,
-     freeUsd, atRiskUsd, maxLossUsd, ... }. */
-  function buildStatus(host) {
-    var mark = dom.el('div', 'trade-mark');
-    /* The venue's mark, which is not the last close the chart's axis paints
-       off the exchange feed, so the cell says which price it is. */
-    var head = dom.el('div', 'trade-mark-head');
-    head.appendChild(dom.el('span', 'trade-mark-coin', 'Market'));
-    head.appendChild(dom.el('span', 'trade-mark-which', 'mark'));
-    mark.appendChild(head);
-    var tag = dom.el('div', 'tag');
-    tag.appendChild(dom.el('span', 'trade-mark-price'));
-    var delta = dom.el('span', 'tag-delta');
-    delta.hidden = true;
-    tag.appendChild(delta);
-    mark.appendChild(tag);
-    host.appendChild(mark);
-
-    var line = dom.el('p', 'trade-line');
-    line.hidden = true;
-    host.appendChild(line);
-
-    var stats = dom.el('div', 'stats');
-    host.appendChild(stats);
-
-    var risk = dom.el('div', 'trade-risk');
-    risk.appendChild(dom.el('i'));
-    risk.hidden = true;
-    host.appendChild(risk);
-
-    refs.markCoin = head.children[0];
-    refs.tag = tag;
-    refs.price = tag.children[0];
-    refs.delta = delta;
-    refs.statusLine = line;
-    refs.stats = stats;
-    refs.risk = risk;
+  function onTrade() {
+    return !!(window.PhosphorShell && typeof window.PhosphorShell.view === 'function' && window.PhosphorShell.view() === 'trade');
   }
 
-  function renderStatus() {
-    renderTag();
+  function loadRange() {
+    if (!mounted || !net || typeof net.getJson !== 'function') return;
+    var product = currentProduct();
+    var symbol = symbolOf();
+    if (!symbol || !product) return;
+    var seq = ++rangeSeq;
+    rangeAsked = symbol;
+    net.getJson('/api/candles?product=' + encodeURIComponent(product) + '&granularity=3600&limit=25')
+      .then(function (result) {
+        if (seq !== rangeSeq) return;
+        setRange(symbol, Array.isArray(result.data) ? result.data : []);
+      })
+      .catch(function () {
+        if (seq !== rangeSeq) return;
+        setRange(symbol, []);
+      })
+      .then(scheduleRange);
+  }
+
+  /* The first payload lands after boot, and a market change can land on a
+     trade frame as well as on a pick, so every payload checks that the day
+     on the strip is the day of the market on the strip. Only while the trade
+     view is up: the deck refreshes on every trade frame whichever tab shows. */
+  function ensureRange() {
+    var symbol = symbolOf();
+    if (!symbol || !onTrade()) return;
+    if (range.symbol === symbol || rangeAsked === symbol) return;
+    loadRange();
+  }
+
+  function scheduleRange() {
+    window.clearTimeout(rangeTimer);
+    if (!onTrade()) return;
+    rangeTimer = window.setTimeout(loadRange, RANGE_MS);
+  }
+
+  function setRange(symbol, candles) {
+    var day = candles.slice(-25);
+    if (day.length < 2) {
+      range = { symbol: symbol, open: null, high: null, low: null };
+    } else {
+      var since = day[0];
+      var high = null;
+      var low = null;
+      for (var i = 1; i < day.length; i += 1) {
+        if (typeof day[i].h === 'number' && (high === null || day[i].h > high)) high = day[i].h;
+        if (typeof day[i].l === 'number' && (low === null || day[i].l < low)) low = day[i].l;
+      }
+      range = { symbol: symbol, open: typeof since.c === 'number' ? since.c : null, high: high, low: low };
+    }
+    renderDay();
+  }
+
+  /* ---------- the strip, filled ---------- */
+
+  function renderStrip() {
+    renderPrice();
+    renderDay();
+    renderVenue();
 
     var account = data && data.account;
 
@@ -735,136 +1021,139 @@
     var line = refs.statusLine;
     line.className = 'trade-line' + (warn ? ' warn' : '');
     dom.setText(line, text);
+    dom.setAttr(line, 'title', text || null);
     dom.setHidden(line, !text);
   }
 
-  /* THE PRICE TAG. The payload carries no day change (a Market is { coin,
-     markPx, fundingRateHourly, premiumPct, openInterestUsd, atr, maxLeverage }
-     and nothing about yesterday), so the change beside the price is the move
-     since this window first saw the market, and the delta's title says so.
-     The tag's wash follows the direction of the last tick, the same way the
-     chart's own last price label does on its axis; the delta's colour follows
-     its own sign, because a plus in red is a lie. A tick flashes the wash for
-     one beat, and a second tick inside that beat restarts it. */
-  var openPx = {};
+  /* THE PRICE. Set as text, not rolled: an exchange header does not roll its
+     digits, it recolours them. The tick attribute is set on a change and
+     cleared by the animation's end; the same direction twice inside 600 ms
+     restarts it, which is what the reflow between the two writes is for.
+     Reduced motion skips the tick altogether. */
   var lastPx = {};
-  var flashTimer = 0;
-  var FLASH_MS = 300;
 
-  function renderTag() {
+  function renderPrice() {
     var symbol = symbolOf();
     var mark = markOf();
-    dom.setText(refs.markCoin, symbol || 'Market');
-    dom.setNumber(refs.price, priceText(mark));
+    dom.setText(refs.price, priceText(mark));
+    if (typeof mark !== 'number' || !isFinite(mark) || !symbol) return;
 
-    if (typeof mark !== 'number' || !isFinite(mark) || !symbol) {
-      dom.setAttr(refs.tag, 'data-dir', null);
-      dom.setText(refs.delta, '');
-      dom.setAttr(refs.delta, 'data-dir', null);
-      dom.setHidden(refs.delta, true);
-      return;
-    }
-
-    if (typeof openPx[symbol] !== 'number') openPx[symbol] = mark;
     var was = lastPx[symbol];
     lastPx[symbol] = mark;
-    if (typeof was === 'number' && was !== mark) {
-      dom.setAttr(refs.tag, 'data-dir', mark > was ? 'up' : 'down');
-      flashTag();
+    if (typeof was !== 'number' || was === mark) return;
+    if (window.PhosphorMotion && window.PhosphorMotion.reduced()) return;
+    dom.setAttr(refs.price, 'data-tick', null);
+    void refs.price.offsetWidth;
+    dom.setAttr(refs.price, 'data-tick', mark > was ? 'up' : 'down');
+  }
+
+  /* The day. The change is the mark against the close a day ago, as
+     "-2,188.00 / -2.78%" in the direction's colour and nothing else: no chip,
+     no wash. High and low are the day's extremes. All three read -- until the
+     candles for this market have landed. */
+  function renderDay() {
+    var symbol = symbolOf();
+    var mark = markOf();
+    var have = range.symbol === symbol && typeof range.open === 'number' && range.open > 0
+      && typeof mark === 'number' && isFinite(mark);
+    if (!have) {
+      dom.setText(refs.change, '--');
+      dom.setAttr(refs.change, 'data-dir', null);
+      dom.setText(refs.high, range.symbol === symbol ? priceText(range.high) : '--');
+      dom.setText(refs.low, range.symbol === symbol ? priceText(range.low) : '--');
+      return;
     }
-
-    var since = openPx[symbol];
-    var pct = since > 0 ? ((mark - since) / since) * 100 : 0;
-    var rounded = Math.abs(pct) < 0.05 ? 0 : pct;
-    dom.setText(refs.delta, (rounded > 0 ? '+' : rounded < 0 ? '-' : '') + Math.abs(rounded).toFixed(1) + '%');
-    dom.setAttr(refs.delta, 'data-dir', rounded > 0 ? 'up' : rounded < 0 ? 'down' : null);
-    dom.setAttr(refs.delta, 'title', 'Since this window opened');
-    /* A zero is not a move. The delta shows once the price has gone
-       somewhere; until then the tag is the price alone. */
-    dom.setHidden(refs.delta, rounded === 0);
+    var delta = mark - range.open;
+    var pct = (delta / range.open) * 100;
+    var dir = Math.abs(delta) < 1e-9 ? null : (delta > 0 ? 'up' : 'down');
+    dom.setText(refs.change, signedPlain(delta, decimalsOf(mark)) + ' / ' + (pct > 0 ? '+' : pct < 0 ? '-' : '') + Math.abs(pct).toFixed(2) + '%');
+    dom.setAttr(refs.change, 'data-dir', dir);
+    dom.setText(refs.high, priceText(range.high));
+    dom.setText(refs.low, priceText(range.low));
   }
 
-  function flashTag() {
-    dom.setAttr(refs.tag, 'data-flash', 'true');
-    window.clearTimeout(flashTimer);
-    flashTimer = window.setTimeout(function () {
-      dom.setAttr(refs.tag, 'data-flash', null);
-    }, FLASH_MS);
+  /* A signed number in the price's own places, without the currency sign:
+     the sign is the news, the unit is the price beside it. */
+  function signedPlain(value, decimals) {
+    var abs = Math.abs(value).toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+    return (value > 0 ? '+' : value < 0 ? '-' : '') + abs;
   }
 
-  /* THE FIGURES, as stats: the label above, the number under it, side by
-     side. `unknown` draws Free whatever the payload holds, because a missing
+  function decimalsOf(price) {
+    var abs = Math.abs(price);
+    if (abs >= 1) return 2;
+    return abs >= 0.01 ? 4 : 6;
+  }
+
+  /* The venue dot: the account socket's state, which the payload names. */
+  function renderVenue() {
+    var venue = data && data.venue;
+    var state = !venue ? null : (venue.connected === false || venue.error ? 'down' : (venue.degraded ? 'delayed' : 'live'));
+    dom.setAttr(refs.venue, 'data-feed', state);
+    dom.setAttr(refs.venue, 'title', state === 'live' ? 'Account feed live'
+      : state === 'delayed' ? 'Account feed delayed' : state === 'down' ? 'Account feed down' : null);
+  }
+
+  /* THE FIGURES, right-aligned: the label above, the number under it.
+     `unknown` draws Free whatever the payload holds, because a missing
      figure and a figure reading -- say different things and only the second
      one is true when the venue has gone quiet. At risk is the app's own sum
-     over its own plans, so it stays a number either way. Under them, while
-     something is at risk, a 2 px line shows how much of the money is
-     committed: at risk over free plus at risk. Reconciled by key so a figure
-     that changes rolls its digits and one that goes is removed. */
+     over its own plans, so it stays a number either way. Reconciled by key so
+     a figure that changes rolls its digits and one that goes is removed. */
   function renderFigures(account, unknown) {
     var free = account && typeof account.freeUsd === 'number' ? account.freeUsd : null;
     var atRisk = account && typeof account.atRiskUsd === 'number' ? account.atRiskUsd : 0;
-    var maxLoss = account && typeof account.maxLossUsd === 'number' ? account.maxLossUsd : 0;
 
     var items = [];
     if (account || unknown) {
       if (free !== null || unknown) items.push({ key: 'free', label: 'Free', value: free !== null ? dom.usd(free) : '--', dim: free === null });
       items.push({ key: 'risk', label: 'At risk', value: dom.usd(atRisk), dim: false });
-      if (maxLoss > 0) items.push({ key: 'loss', label: 'Max loss', value: dom.usd(maxLoss), dim: false });
     }
 
     dom.reconcile(refs.stats, items, function (item) {
       return item.key;
     }, function () {
-      var stat = dom.el('div', 'stat');
-      stat.appendChild(dom.el('span', 'label'));
-      stat.appendChild(dom.el('span', 'value'));
+      var stat = dom.el('div', 'strip-stat');
+      stat.appendChild(dom.el('span', 'strip-label'));
+      stat.appendChild(dom.el('span', 'strip-value mono'));
       return stat;
     }, function (stat, item) {
       dom.setText(stat.children[0], item.label);
-      stat.children[1].className = 'value' + (item.dim ? ' dim' : '');
+      stat.children[1].className = 'strip-value mono' + (item.dim ? ' dim' : '');
       dom.setNumber(stat.children[1], item.value);
     });
     dom.setHidden(refs.stats, items.length === 0);
-
-    var committed = free !== null && atRisk > 0 ? atRisk / (free + atRisk) : 0;
-    var share = Math.max(0, Math.min(1, committed));
-    setVar(refs.risk, '--used', share.toFixed(3));
-    dom.setAttr(refs.risk, 'data-tone', share >= 0.75 ? 'warn' : null);
-    dom.setAttr(refs.risk, 'title', committed > 0 ? Math.round(share * 100) + '% of your trading money is behind plans' : null);
-    dom.setHidden(refs.risk, !(committed > 0));
   }
 
-  /* A custom property on a node, where the document can take one. The unit
-     harness's stand-in style object cannot, and the meter it drives is not a
-     fact the tests read. */
-  function setVar(node, name, value) {
-    if (node && node.style && typeof node.style.setProperty === 'function') node.style.setProperty(name, value);
-  }
+  /* ---------- Open ----------
 
-  function fact(host, label, value) {
-    if (!value) return;
-    var row = dom.el('div', 'fact');
-    row.appendChild(dom.el('span', 'label', label));
-    row.appendChild(dom.el('span', 'body mono', value));
-    host.appendChild(row);
-  }
-
-  /* ---------- zone two: open ----------
-
-     One row per position: the side and the coin as the title, the profit
-     beside it, then size, entry and the distance to the stop and the target as
-     signed percentages of the mark. The exits come from the open plan on that
-     coin, or from the working triggers when no plan of this app's is behind
-     the position. Close posts the plan's id, so a position with no plan has no
-     button: there is no door for it.
+     One line per position, under column headings: the coin with its logo and
+     side, then size, entry, mark, profit, and the distance to the stop and
+     the target as signed percentages of the mark. The exits come from the
+     open plan on that coin, or from the working triggers when no plan of this
+     app's is behind the position. Close posts the plan's id, so a position
+     with no plan has no button: there is no door for it.
 
      Every name below is the payload's: a Position is
      { coin, side, sizeCoin, notionalUsd, entryPx, markPx, liqPx, unrealisedUsd,
        ... }. */
+  var POSITION_COLUMNS = ['Asset', 'Size', 'Entry', 'Mark', 'PnL', 'Stop', 'Target'];
+
+  function positionHead() {
+    var head = dom.el('div', 'pos-head');
+    head.setAttribute('aria-hidden', 'true');
+    for (var i = 0; i < POSITION_COLUMNS.length; i += 1) {
+      head.appendChild(dom.el('span', 'pos-col', POSITION_COLUMNS[i]));
+    }
+    head.hidden = true;
+    return head;
+  }
+
   function renderOpen() {
     var host = refs.openBody;
     var positions = (data && Array.isArray(data.positions)) ? data.positions : [];
-    setCount(refs.openCount, positions.length);
+    setCount('open', positions.length);
+    dom.setHidden(refs.openHead, !positions.length);
     if (!positions.length) {
       dom.clear(host);
       host.appendChild(empty('Nothing open.'));
@@ -873,33 +1162,44 @@
     dom.reconcile(host, positions, function (p) {
       return String(p.coin).toUpperCase();
     }, function (p) {
-      var row = tradeRow('position', String(p.coin).toUpperCase());
-      var head = dom.el('div', 'trade-row-head');
-      head.appendChild(dom.el('span', 'trade-title'));
-      head.appendChild(dom.el('span', 'trade-pnl mono'));
-      row.appendChild(head);
-      row.appendChild(dom.el('div', 'facts'));
+      var coin = String(p.coin).toUpperCase();
+      var row = tradeRow('position', coin);
+      row.className += ' pos-row';
+      var asset = dom.el('div', 'pos-asset');
+      asset.appendChild(logo(coin, 20));
+      asset.appendChild(dom.el('span', 'pos-coin', coin));
+      asset.appendChild(dom.el('span', 'trade-pill pos-side'));
+      asset.appendChild(dom.el('span', 'pos-lev mono'));
+      row.appendChild(asset);
+      row.appendChild(dom.el('span', 'pos-size mono'));
+      row.appendChild(dom.el('span', 'pos-entry mono'));
+      row.appendChild(dom.el('span', 'pos-mark mono'));
+      row.appendChild(dom.el('span', 'trade-pnl pos-pnl mono'));
+      row.appendChild(dom.el('span', 'pos-stop mono'));
+      row.appendChild(dom.el('span', 'pos-target mono'));
       row.appendChild(dom.el('div', 'trade-row-foot'));
       return row;
     }, function (row, p) {
       var coin = String(p.coin).toUpperCase();
-      var head = row.children[0];
-      dom.setText(head.children[0], (p.side === 'short' ? 'Short ' : 'Long ') + coin);
-      var pnl = head.children[1];
-      var up = typeof p.unrealisedUsd === 'number' && p.unrealisedUsd >= 0;
-      pnl.className = 'trade-pnl mono ' + (up ? 'up' : 'down');
-      dom.setText(pnl, typeof p.unrealisedUsd === 'number' ? signedUsd(p.unrealisedUsd) : '');
+      var asset = row.children[0];
+      var short = p.side === 'short';
+      dom.setText(asset.children[2], short ? 'Short' : 'Long');
+      dom.setAttr(asset.children[2], 'data-tone', short ? 'down' : 'up');
+      dom.setText(asset.children[3], typeof p.leverage === 'number' ? p.leverage + 'x' : '');
 
-      var facts = row.children[1];
-      dom.clear(facts);
-      fact(facts, 'Size', typeof p.sizeCoin === 'number' ? dom.qty(p.sizeCoin, precisionOf(coin)) : '');
-      fact(facts, 'Entry', typeof p.entryPx === 'number' ? priceText(p.entryPx) : '');
-      var exits = exitsOf(coin);
       var mark = typeof p.markPx === 'number' ? p.markPx : markFor(coin);
-      fact(facts, 'Stop', distance(exits.stop, mark));
-      fact(facts, 'Target', distance(exits.target, mark));
+      var exits = exitsOf(coin);
+      dom.setText(row.children[1], typeof p.sizeCoin === 'number' ? dom.qty(p.sizeCoin, precisionOf(coin)) : '--');
+      dom.setText(row.children[2], typeof p.entryPx === 'number' ? priceText(p.entryPx) : '--');
+      dom.setText(row.children[3], typeof mark === 'number' ? priceText(mark) : '--');
+      var pnl = row.children[4];
+      var up = typeof p.unrealisedUsd === 'number' && p.unrealisedUsd >= 0;
+      pnl.className = 'trade-pnl pos-pnl mono ' + (up ? 'up' : 'down');
+      dom.setText(pnl, typeof p.unrealisedUsd === 'number' ? signedUsd(p.unrealisedUsd) : '--');
+      dom.setText(row.children[5], distance(exits.stop, mark) || '--');
+      dom.setText(row.children[6], distance(exits.target, mark) || '--');
 
-      var foot = row.children[2];
+      var foot = row.children[7];
       dom.clear(foot);
       if (exits.plan) foot.appendChild(actButton('Close', 'close', exits.plan.id));
     });
@@ -946,21 +1246,23 @@
     return (value > 0 ? '+' : '') + dom.usd(value);
   }
 
-  /* ---------- zone three: waiting ----------
+  /* ---------- Waiting ----------
 
      Every plan that is not open and not done: an idea the agent drew, a plan
      waiting on its conditions, a plan whose entry rests on the venue. One
      English line each, built from the plan's own fields, so the sentence on
-     the rail is the sentence on the chart. Under it the conditions as dots:
-     filled when the watcher says it holds, hollow when it does not or when
-     nothing is watching yet. Cancel is only offered where the host would take
-     it, which is a waiting or a placed plan. */
+     the deck is the sentence on the chart, with its state as a pill beside it:
+     Idea, Armed (with the armed icon in ink), Placed, or the two waits on a
+     person, Needs unlock and Feed stale, in the waiting colour. Under it the
+     conditions as dots: filled when the watcher says it holds, hollow when it
+     does not or when nothing is watching yet. Cancel is only offered where the
+     host would take it, which is a waiting or a placed plan. */
   function renderWaiting() {
     var host = refs.waitingBody;
     var plans = plansOf().filter(function (p) {
       return p.status === 'idea' || p.status === 'waiting' || p.status === 'placed';
     });
-    setCount(refs.waitingCount, plans.length);
+    setCount('waiting', plans.length);
     if (!plans.length) {
       dom.clear(host);
       host.appendChild(empty('Nothing waiting.'));
@@ -970,13 +1272,18 @@
       return String(p.id);
     }, function (p) {
       var row = tradeRow('plan', String(p.id));
-      row.appendChild(dom.el('p', 'trade-row-line'));
+      row.className += ' plan-row';
+      var head = dom.el('div', 'plan-head');
+      head.appendChild(dom.el('p', 'trade-row-line'));
+      head.appendChild(dom.el('span', 'trade-pill trade-row-state'));
+      row.appendChild(head);
       row.appendChild(dom.el('ul', 'trade-conds'));
-      row.appendChild(dom.el('p', 'trade-row-state'));
       row.appendChild(dom.el('div', 'trade-row-foot'));
       return row;
     }, function (row, p) {
-      dom.setText(row.children[0], planLine(p));
+      var head = row.children[0];
+      dom.setText(head.children[0], planLine(p));
+      paintState(head.children[1], planState(p));
 
       var conds = row.children[1];
       dom.clear(conds);
@@ -990,16 +1297,22 @@
       }
       dom.setHidden(conds, rows.length === 0);
 
-      var state = row.children[2];
-      var said = planState(p);
-      state.className = 'trade-row-state' + (said.warn ? ' warn' : '');
-      dom.setText(state, said.text);
-      dom.setHidden(state, !said.text);
-
-      var foot = row.children[3];
+      var foot = row.children[2];
       dom.clear(foot);
       if (p.status === 'waiting' || p.status === 'placed') foot.appendChild(actButton('Cancel', 'cancel', String(p.id)));
     });
+  }
+
+  /* The state pill, rebuilt from its parts: the icon when the state has one,
+     then the word. The classes carry the tone the tests and the stylesheet
+     read. */
+  function paintState(pill, state) {
+    dom.clear(pill);
+    pill.className = 'trade-pill trade-row-state' + (state.warn ? ' warn' : '');
+    dom.setAttr(pill, 'data-tone', state.tone || null);
+    dom.setAttr(pill, 'title', state.title || null);
+    if (state.icon) pill.appendChild(icon(state.icon, 'icon-14'));
+    pill.appendChild(dom.el('span', '', state.text));
   }
 
   /* "Long ETH $200 at 3x, market, stop 3,180, target 3,420". The shape a
@@ -1061,105 +1374,215 @@
     return parts.length ? parts.join(' and ') : 'any time';
   }
 
-  /* The one line under a plan that says what it is waiting on besides its
-     conditions. Amber is this window's colour for waiting on a person, and a
-     locked plan is exactly that: it re-arms on the next unlock. A blind one is
-     waiting on the feed, which is the same kind of wait. */
+  /* The pill beside a plan. Amber is this window's colour for waiting on a
+     person, and a locked plan is exactly that: it re-arms on the next unlock.
+     A blind one is waiting on the feed, which is the same kind of wait. */
   function planState(plan) {
-    if (plan.status === 'idea') return { text: 'idea, not armed', warn: false };
-    if (plan.locked === true) return { text: 'waiting, needs unlock', warn: true };
-    if (plan.blind === true) return { text: 'waiting, feed stale', warn: true };
-    if (plan.status === 'placed') return { text: 'placed, the venue holds the entry', warn: false };
-    return { text: '', warn: false };
+    if (plan.status === 'idea') return { text: 'Idea', tone: null, warn: false, title: 'Drawn, not armed' };
+    if (plan.locked === true) return { text: 'Needs unlock', tone: 'warn', warn: true, title: 'Waiting: it re-arms on the next unlock' };
+    if (plan.blind === true) return { text: 'Feed stale', tone: 'warn', warn: true, title: 'Waiting on the feed' };
+    if (plan.status === 'placed') return { text: 'Placed', tone: 'ink', icon: 'armed', warn: false, title: 'The venue holds the entry' };
+    return { text: 'Armed', tone: 'ink', icon: 'armed', warn: false, title: 'Watching its conditions' };
   }
 
-  /* ---------- zone four: done ----------
+  /* ---------- Done ----------
 
-     The tape: fills and ended plans as dense transaction rows, newest first,
-     the last twenty, scrolling inside its column. Each row is the money
-     grammar's .tx in its dense form: the coin's mark, the sentence, the clock,
-     and the amount on the right coloured by which way the money went (a sell
-     brings money in, a buy sends it out). The price it happened at rides on
-     the row as its title. An ended plan takes a glyph instead of a coin mark
-     and keeps its id where the amount would be, dimmed, so the row the agent
-     names is the row the person sees. Nothing here animates in: the list is
-     reconciled by key and a row that is already on screen keeps its identity.
-     The host belongs to the reconciler, so nothing is appended under it that
-     would have to be put back after every pass.
+     The tape: fills and ended plans as dense rows, newest first, the last 24
+     hours by default and twenty older ones per press of Show more. A fill row
+     reads the way an exchange's own fills read: the clock, the side as a
+     pill, the coin with its logo, the size, the value coloured by side, and
+     the explorer link at the end when the fill carries one. A fill row opens
+     the shared receipt card. An ended plan keeps its sentence, takes a glyph
+     instead of a logo, and keeps its id where the value would be, dimmed, so
+     the row the agent names is the row the person sees. The list is
+     reconciled by key and a row that is already on screen keeps its identity;
+     the host belongs to the reconciler, so Show more sits under it, not in it. */
+  var doneExtra = 0;
 
-     The children are in the order the tests read them: the mark, then the
-     sentence as children[1]; the stylesheet places the clock between them. */
   function renderDone() {
     var host = refs.doneBody;
     var rows = doneRows();
-    setCount(refs.doneCount, rows.length);
-    if (!rows.length) {
+    var cut = doneWindow(rows);
+    setCount('done', cut.list.length);
+    dom.setHidden(refs.doneFoot, cut.more <= 0);
+    dom.setAttr(refs.more, 'title', cut.more > 0 ? cut.more + ' older' : null);
+    if (!cut.list.length) {
       dom.clear(host);
-      host.appendChild(empty('Nothing yet.'));
+      host.appendChild(empty(rows.length ? 'Nothing in the last 24 hours.' : 'Nothing yet.'));
       return;
     }
 
-    dom.reconcile(host, rows, function (row) {
+    dom.reconcile(host, cut.list, function (row) {
       return row.key;
     }, function (row) {
-      var node = dom.el('div', 'tx done-row');
-      node.dataset.dense = 'true';
-      node.appendChild(row.coin ? coinMark(row.coin) : endedMark(row.glyph));
-      node.appendChild(dom.el('span', 'tx-title'));
-      node.appendChild(dom.el('span', 'tx-when meta mono'));
-      node.appendChild(dom.el('span', 'tx-amount'));
-      node.appendChild(dom.el('span', 'tx-sub'));
-      return node;
+      return row.fill ? fillRow(row) : endedRow(row);
     }, function (node, row) {
       node.dataset.spotKey = row.spotKey;
-      dom.setText(node.children[1], row.text);
-      dom.setAttr(node.children[1], 'title', row.title || null);
-      dom.setText(node.children[2], dom.clock(row.at));
-      var amount = node.children[3];
-      amount.className = 'tx-amount' + (row.dim ? ' dimmer' : '');
-      dom.setAttr(amount, 'data-dir', row.dir || null);
-      dom.setNumber(amount, row.amount);
-      dom.setText(node.children[4], row.sub);
-      dom.setAttr(node, 'title', row.sub || null);
+      if (row.fill) fillFill(node, row);
+      else fillEnded(node, row);
     });
   }
 
-  /* The coin's disc from ui/design/marks.js, in the coin's own colour. The unit
-     harness loads no marks, and a row there takes a plain mark instead. */
-  function coinMark(coin) {
-    var marks = window.PhosphorMarks;
-    if (marks && typeof marks.disc === 'function') return marks.disc(coin);
-    var node = dom.el('span', 'tx-mark');
-    node.setAttribute('aria-hidden', 'true');
+  /* The window: everything newer than a day, plus what Show more has
+     revealed. Rows arrive newest first, so the day is a prefix. */
+  function doneWindow(rows) {
+    var since = Date.now() - DONE_WINDOW_MS;
+    var inDay = 0;
+    while (inDay < rows.length && timeOf(rows[inDay].at) >= since) inDay += 1;
+    var shown = Math.min(rows.length, inDay + doneExtra);
+    return { list: rows.slice(0, shown), more: rows.length - shown };
+  }
+
+  function onMore() {
+    doneExtra += DONE_PAGE;
+    renderDone();
+    repaintCuts();
+  }
+
+  /* A fill row: a button in all but name, since the receipt card opens from
+     it, with the explorer link as its own anchor at the end. Children in the
+     order the stylesheet places them. */
+  function fillRow(row) {
+    var node = dom.el('div', 'tx done-row fill-row');
+    node.dataset.dense = 'true';
+    node.setAttribute('role', 'button');
+    node.tabIndex = 0;
+    node.appendChild(dom.el('span', 'tx-when meta mono'));
+    node.appendChild(dom.el('span', 'trade-pill tx-side'));
+    var asset = dom.el('span', 'tx-asset');
+    asset.appendChild(logo(row.coin, 20));
+    asset.appendChild(dom.el('span', 'tx-coin', row.coin));
+    node.appendChild(asset);
+    node.appendChild(dom.el('span', 'tx-size mono'));
+    node.appendChild(dom.el('span', 'tx-amount mono'));
+    node.appendChild(dom.el('span', 'tx-link'));
+    dom.on(node, 'click', onFillRow);
+    dom.on(node, 'keydown', function (event) {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      onFillRow(event);
+    });
     return node;
   }
 
-  /* A plan that ended: a check when it ended the way it was meant to, a cross
-     when it was cancelled, expired or failed. Built in the svg namespace, never
-     from markup, and empty where there is no namespace to build in. */
-  var DONE_GLYPHS = {
-    check: 'M3.5 8.5l3 3 6-7',
-    cross: 'M4.5 4.5l7 7M11.5 4.5l-7 7'
-  };
+  function fillFill(node, row) {
+    node.__fill = row.fill;
+    dom.setText(node.children[0], dom.clock(row.at));
+    var side = node.children[1];
+    dom.setText(side, row.sold ? 'Sell' : 'Buy');
+    dom.setAttr(side, 'data-tone', row.sold ? 'down' : 'up');
+    dom.setText(node.children[3], row.size);
+    var amount = node.children[4];
+    dom.setAttr(amount, 'data-dir', row.dir || null);
+    dom.setNumber(amount, row.amount);
+    dom.setAttr(node, 'title', row.sub || null);
+    dom.setAttr(node, 'aria-label', (row.sold ? 'Sold ' : 'Bought ') + row.coin + ' ' + row.size + (row.sub ? ', ' + row.sub : '') + '. Open the receipt.');
+    paintLink(node.children[5], row.url);
+  }
 
+  /* The explorer link, an anchor only when there is somewhere to go. It is
+     the row's own link, so a click on it does not also open the receipt. */
+  function paintLink(cell, url) {
+    dom.clear(cell);
+    if (!url) return;
+    var link = dom.el('a', 'tx-open');
+    link.href = url;
+    link.target = '_blank';
+    link.rel = 'noreferrer noopener';
+    link.setAttribute('aria-label', 'View on Hyperliquid');
+    link.title = 'View on Hyperliquid';
+    link.appendChild(icon('external', 'icon-14'));
+    dom.on(link, 'click', function (event) { event.stopPropagation(); });
+    dom.on(link, 'keydown', function (event) { event.stopPropagation(); });
+    cell.appendChild(link);
+  }
+
+  /* An ended plan: the clock, the glyph, the sentence across the middle, and
+     the id where the value would be. */
+  function endedRow(row) {
+    var node = dom.el('div', 'tx done-row ended-row');
+    node.dataset.dense = 'true';
+    node.appendChild(dom.el('span', 'tx-when meta mono'));
+    node.appendChild(endedMark(row.glyph));
+    node.appendChild(dom.el('span', 'tx-title'));
+    node.appendChild(dom.el('span', 'tx-amount mono dimmer'));
+    return node;
+  }
+
+  function fillEnded(node, row) {
+    dom.setText(node.children[0], row.at ? dom.clock(row.at) : '');
+    dom.setText(node.children[2], row.text);
+    dom.setAttr(node.children[2], 'title', row.title || null);
+    dom.setText(node.children[3], row.amount);
+  }
+
+  /* A plan that ended: the done icon when it ended the way it was meant to,
+     the refused icon when it was cancelled, expired or failed. */
   function endedMark(glyph) {
     var node = dom.el('span', 'tx-mark');
     node.setAttribute('aria-hidden', 'true');
-    if (typeof document.createElementNS !== 'function') return node;
-    var ns = 'http://www.w3.org/2000/svg';
-    var svg = document.createElementNS(ns, 'svg');
-    svg.setAttribute('viewBox', '0 0 16 16');
-    svg.setAttribute('focusable', 'false');
-    var path = document.createElementNS(ns, 'path');
-    path.setAttribute('d', DONE_GLYPHS[glyph] || DONE_GLYPHS.check);
-    path.setAttribute('fill', 'none');
-    path.setAttribute('stroke', 'currentColor');
-    path.setAttribute('stroke-width', '1.5');
-    path.setAttribute('stroke-linecap', 'round');
-    path.setAttribute('stroke-linejoin', 'round');
-    svg.appendChild(path);
-    node.appendChild(svg);
+    var svg = icon(glyph === 'cross' ? 'refused' : 'done', 'icon-14');
+    if (svg) node.appendChild(svg);
     return node;
+  }
+
+  /* A row pressed: the fill it carries goes to the receipt card, mapped to
+     the shape src/http/receipts.ts emits, and the card is the one the money
+     screens open. The row is data; nothing here reads it back as markup. */
+  function onFillRow(event) {
+    var node = event.currentTarget;
+    if (!node || !node.__fill) return;
+    openReceipt(mapFill(node.__fill));
+  }
+
+  function openReceipt(receipt) {
+    if (!events || typeof events.emit !== 'function') return;
+    events.emit('receipt:open', { receipt: receipt, source: 'trade' });
+  }
+
+  /* A fill as a Receipt (src/http/receipts.ts): what left and what arrived,
+     the venue fee, the venue's transaction when the fill carries one. A buy
+     sends dollars out and brings the coin in; a sell the other way. */
+  function mapFill(fill) {
+    var coin = String(fill.coin || '').toUpperCase();
+    var sold = fill.side === 'sell' || fill.side === 'A';
+    var px = typeof fill.px === 'number' ? fill.px : null;
+    var size = typeof fill.sizeCoin === 'number' ? fill.sizeCoin : null;
+    var notional = notionalOf(fill);
+    var qty = size !== null ? dom.qty(size, precisionOf(coin)) : '';
+    var at = fill.atMs ? new Date(fill.atMs).toISOString() : '';
+    var summary = (sold ? 'Sold ' : 'Bought ') + qty + ' ' + coin
+      + (px !== null ? ' at ' + priceText(px) : '') + ' on Hyperliquid'
+      + (typeof fill.closedPnlUsd === 'number' && fill.closedPnlUsd !== 0 ? ', ' + signedUsd(fill.closedPnlUsd) + ' realised' : '')
+      + (fill.liquidation ? ', a liquidation' : '') + '.';
+    return {
+      id: 'fill:' + String(fill.tid || fill.atMs || ''),
+      kind: 'trade',
+      at: at,
+      headline: (sold ? 'Sold ' : 'Bought ') + coin + ' ' + qty,
+      summary: summary,
+      fromChain: 'hyperliquid',
+      toChain: 'hyperliquid',
+      amount: sold ? size : notional,
+      symbol: sold ? coin : 'USDC',
+      received: sold
+        ? (notional !== null ? { symbol: 'USDC', amount: notional } : null)
+        : (size !== null ? { symbol: coin, amount: size } : null),
+      feesUsd: typeof fill.feeUsd === 'number' ? fill.feeUsd : null,
+      txids: fill.url ? [{ chain: 'hyperliquid', hash: String(fill.hash || ''), url: String(fill.url) }] : [],
+      balanceBefore: null,
+      balanceAfter: null,
+      status: 'done',
+      side: sold ? 'sell' : 'buy',
+      price: px,
+      venue: 'Hyperliquid'
+    };
+  }
+
+  function notionalOf(fill) {
+    if (typeof fill.notionalUsd === 'number') return fill.notionalUsd;
+    var px = typeof fill.px === 'number' ? fill.px : null;
+    return px !== null && typeof fill.sizeCoin === 'number' ? fill.sizeCoin * px : null;
   }
 
   function doneRows() {
@@ -1168,25 +1591,24 @@
     for (var i = 0; i < fills.length; i += 1) {
       var fill = fills[i];
       /* The field names are the payload's own: a Fill is
-         { tid, coin, side, px, sizeCoin, notionalUsd, atMs, ... }. This read
-         fill.sz, fill.size and fill.time, none of which the payload has ever
-         carried, so every row said "Bought BTC 0" with no time beside it
-         whatever had traded. */
+         { tid, coin, side, px, sizeCoin, notionalUsd, atMs, ... }, and the
+         receipt builder adds hash and url when the venue gave them. */
       var sold = fill.side === 'sell' || fill.side === 'A';
       var px = typeof fill.px === 'number' ? fill.px : null;
-      var notional = typeof fill.notionalUsd === 'number' ? fill.notionalUsd
-        : (px !== null && typeof fill.sizeCoin === 'number' ? fill.sizeCoin * px : null);
+      var notional = notionalOf(fill);
+      var coin = String(fill.coin || '').toUpperCase();
       out.push({
         key: 'fill:' + (fill.tid || fill.atMs || '') + ':' + i,
         spotKey: 'fill:' + String(fill.tid || ''),
+        fill: fill,
         at: fill.atMs,
-        coin: String(fill.coin || ''),
-        text: (sold ? 'Sold ' : 'Bought ')
-          + (fill.coin || '') + ' ' + dom.qty(fill.sizeCoin, precisionOf(fill.coin)),
+        coin: coin,
+        sold: sold,
+        size: dom.qty(fill.sizeCoin, precisionOf(coin)),
         amount: notional !== null ? dom.usd(notional) : '',
         dir: notional !== null ? (sold ? 'in' : 'out') : '',
         sub: px !== null ? 'at ' + priceText(px) + ', ' + dom.clock(fill.atMs) : '',
-        dim: false
+        url: typeof fill.url === 'string' && fill.url ? fill.url : ''
       });
     }
     var plans = plansOf();
@@ -1197,19 +1619,17 @@
       out.push({
         key: 'plan:' + plan.id,
         spotKey: 'plan:' + plan.id,
+        fill: null,
         at: Date.parse(plan.updatedAt || plan.createdAt || '') || 0,
         coin: '',
         glyph: ended.clean ? 'check' : 'cross',
         text: ended.text,
         title: ended.title,
-        amount: String(plan.id),
-        dir: '',
-        sub: '',
-        dim: true
+        amount: String(plan.id)
       });
     }
     out.sort(function (a, b) { return timeOf(b.at) - timeOf(a.at); });
-    return out.slice(0, DONE_ROWS);
+    return out;
   }
 
   function timeOf(at) {
@@ -1233,6 +1653,69 @@
       return { text: 'Failed, ' + why, title: who + ': ' + why, clean: false };
     }
     return { text: 'Ended ' + who, title: reason, clean: false };
+  }
+
+  /* ---------- logos and icons ----------
+
+     The real marks through ui/design/marks.js and the shared sprite through
+     ui/design/icons.js. A window that has neither yet (the unit harness, a
+     tree before the foundation landed) gets the old disc and a glyph drawn in
+     place, so no row is ever a blank square. */
+  function logo(coin, size) {
+    var marks = window.PhosphorMarks;
+    if (marks && typeof marks.logo === 'function') return marks.logo(coin, size);
+    if (marks && typeof marks.disc === 'function') return marks.disc(coin);
+    var node = dom.el('span', 'logo');
+    node.setAttribute('aria-hidden', 'true');
+    return node;
+  }
+
+  /* The logo inside a built control, replaced only when the coin changes. */
+  function setLogo(slot, coin, size) {
+    if (!slot) return;
+    if (slot.dataset.coin === coin) return;
+    slot.dataset.coin = coin;
+    dom.clear(slot);
+    if (coin) slot.appendChild(logo(coin, size));
+  }
+
+  var GLYPHS = {
+    external: 'M14 4h6v6M20 4l-9 9M20 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4',
+    layout: 'M5 4h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zM4 10h16M10 10v10',
+    armed: 'M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM12 2v3M12 19v3M2 12h3M19 12h3',
+    done: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM8.5 12.5l2.5 2.5 4.5-5',
+    refused: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM5.6 5.6l12.8 12.8',
+    'chevron-down': 'M6 9l6 6 6-6'
+  };
+
+  function icon(name, className) {
+    var icons = window.PhosphorIcons;
+    if (icons && typeof icons.svg === 'function') return icons.svg(name, className);
+    return glyph(name, className);
+  }
+
+  /* The glyph on the sprite's own grid, for a window without the sprite. Built
+     in the svg namespace, never from markup, and an empty span where there is
+     no namespace to build in (the unit harness), so a caller can always
+     append what it gets. */
+  function glyph(name, className) {
+    var classes = 'icon' + (className ? ' ' + className : '');
+    if (typeof document.createElementNS !== 'function') return dom.el('span', classes);
+    var ns = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+    var path = document.createElementNS(ns, 'path');
+    path.setAttribute('d', GLYPHS[name] || GLYPHS.done);
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke', 'currentColor');
+    path.setAttribute('stroke-width', '1.5');
+    path.setAttribute('stroke-linecap', 'round');
+    path.setAttribute('stroke-linejoin', 'round');
+    svg.appendChild(path);
+    svg.setAttribute('class', classes);
+    return svg;
   }
 
   /* ---------- rows and the two controls ---------- */
@@ -1327,8 +1810,9 @@
      window renders every one. The row it names gets an amber ring that pulses
      twice over 1.2 s, the rows beside it drop to 0.55 for the same 1.2 s, and
      the note sits under the row for as long as the server carries the
-     highlight. An object on the canvas is lit through chartSpotActive, which
-     the engine asks as it draws each label.
+     highlight. The tab holding the row is brought up, so a pointer never
+     lands behind a tab. An object on the canvas is lit through
+     chartSpotActive, which the engine asks as it draws each label.
 
      A highlight pulses ONCE, when it arrives. The payload carries it on every
      frame until it expires, and a ring that fired on every frame would be a
@@ -1372,6 +1856,7 @@
     if (fresh.length) spot(fresh);
   }
 
+  /* Every row on the deck with the tab it sits under. */
   function spotRows() {
     var out = [];
     var bodies = [refs.openBody, refs.waitingBody, refs.doneBody];
@@ -1382,6 +1867,15 @@
       }
     }
     return out;
+  }
+
+  function tabOf(row) {
+    for (var at = row; at; at = at.parentNode) {
+      if (at === refs.openBody) return 'open';
+      if (at === refs.waitingBody) return 'waiting';
+      if (at === refs.doneBody) return 'done';
+    }
+    return '';
   }
 
   /* The note under the row, built with textContent: it is the agent's own
@@ -1423,15 +1917,18 @@
     var reduced = !!(window.PhosphorMotion && window.PhosphorMotion.reduced());
     var rows = spotRows();
     var lit = 0;
+    var bring = '';
     for (var i = 0; i < rows.length; i += 1) {
       if (spotActive[rows[i].dataset.spotKey] === true) lit += 1;
+      if (hit[rows[i].dataset.spotKey] && !bring) bring = tabOf(rows[i]);
     }
+    if (bring) selectTab(bring);
     for (var r = 0; r < rows.length; r += 1) {
       var row = rows[r];
       var on = spotActive[row.dataset.spotKey] === true;
       flag(row, 'spot', on);
-      /* The rest of the rail steps back only when the pointer landed on the
-         rail. A highlight on a chart level dims nothing here. */
+      /* The rest of the deck steps back only when the pointer landed on the
+         deck. A highlight on a chart level dims nothing here. */
       flag(row, 'dim', !on && lit > 0);
       if (hit[row.dataset.spotKey] && !reduced && typeof row.animate === 'function') pulse(row);
     }
@@ -1487,7 +1984,7 @@
     return spotActive[spotKeyOf({ kind: kind, id: id })] === true;
   };
 
-  /* ---------- what the rail reads ---------- */
+  /* ---------- what the deck reads ---------- */
 
   function plansOf() {
     return (data && Array.isArray(data.plans)) ? data.plans : [];
@@ -1537,7 +2034,7 @@
     var account = data && data.account;
     /* An account object with no numbers in it is the same thing to a person as
        no account at all, so it gets the same sentence rather than an empty
-       zone that looks like a render that failed. */
+       strip that looks like a render that failed. */
     return !!(account && (typeof account.equityUsd === 'number'
       || typeof account.freeUsd === 'number'
       || typeof account.healthPct === 'number'));
@@ -1555,5 +2052,5 @@
     return undefined;
   }
 
-  window.PhosphorTrade = { boot: boot, refresh: refresh };
+  window.PhosphorTrade = { boot: boot, refresh: refresh, mapFill: mapFill, selectTab: selectTab };
 })();
