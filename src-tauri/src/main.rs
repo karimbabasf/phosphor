@@ -29,6 +29,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod backend;
+mod update;
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -149,6 +150,7 @@ fn mcp_command(payload: &Path, port: u16) -> Result<String, String> {
 
 fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let copy = MenuItem::with_id(app, COPY_MCP_ID, "Copy MCP Config", true, None::<&str>)?;
+    let updates = MenuItem::with_id(app, update::CHECK_ID, "Check for Updates...", true, None::<&str>)?;
     let app_menu = Submenu::with_items(
         app,
         "Phosphor",
@@ -156,6 +158,7 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         &[
             &PredefinedMenuItem::about(app, None, None)?,
             &PredefinedMenuItem::separator(app)?,
+            &updates,
             &copy,
             &PredefinedMenuItem::separator(app)?,
             &PredefinedMenuItem::hide(app, None)?,
@@ -177,6 +180,10 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 }
 
 fn on_menu(app: &tauri::AppHandle, event: MenuEvent) {
+    if event.id() == update::CHECK_ID {
+        update::check(app.clone(), true);
+        return;
+    }
     if event.id() != COPY_MCP_ID {
         return;
     }
@@ -481,6 +488,7 @@ fn start(app: &tauri::AppHandle) -> Result<(), String> {
                         fail(&ready, err);
                     }
                 });
+                update::schedule(&handle);
                 watch(handle, paths, port);
                 return;
             }
@@ -514,8 +522,10 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Backend::new())
         .manage(Secrets(secrets))
+        .manage(update::Dismissed::default())
         .setup(|app| {
             let handle = app.handle().clone();
             app.set_menu(build_menu(&handle)?)?;
