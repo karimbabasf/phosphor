@@ -351,13 +351,11 @@ html, body {
 
 /* ---------- Basic: one 640 px column ---------- */
 
-/* ONE COLUMN THAT TAKES THE HEIGHT OF THE WINDOW.
+/* ONE COLUMN AS TALL AS WHAT IT HOLDS.
 
-   Basic is a deck, not a page: everything it holds is on screen at once, and
-   the list of what is held is the region that gives when there is more of it
-   than there is room. It fell back to a scrolling column here because the
-   column was sized by its content, so a seventh coin pushed Activity under the
-   fold and the deck became a page after all. */
+   The column (Basic's, and the Vault's) sizes to its cards and the world
+   scrolls it. Nothing inside a card scrolls on its own: a list that is cut
+   off at a card's edge with no scrollbar reads as the whole list. */
 .basic-col {
   width: min(var(--basic-col), 100%);
   margin: 0 auto;
@@ -365,22 +363,7 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: var(--s-4);
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-/* Short window or narrow window, and it goes back to being a column that
-   scrolls as a column: below this there is no height left to give. */
-@media (max-height: 640px) {
-  .basic-col { flex: 0 0 auto; padding-bottom: var(--s-8); }
-  .basic-col .panel[data-surface="holdings"] { flex: 0 0 auto; }
-  .basic-col .scrolls { overflow-y: visible; }
-}
-
-@container world (max-width: 560px) {
-  .basic-col { flex: 0 0 auto; padding-bottom: var(--s-8); }
-  .basic-col .panel[data-surface="holdings"] { flex: 0 0 auto; }
-  .basic-col .scrolls { overflow-y: visible; }
+  flex: 0 0 auto;
 }
 
 /* An empty panel in a 640 column is one sentence, and it does not need a panel's
