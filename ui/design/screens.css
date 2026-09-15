@@ -143,20 +143,93 @@
   background: var(--bg-2);
 }
 
-/* ---------- limits ---------- */
+/* ---------- policy ----------
 
-.limit-row {
-  padding: var(--s-2) 0;
-  border-top: 1px solid var(--line);
+   The Policy card is a list of .rule rows (components.css, the money grammar):
+   a glyph, a sentence, and the one figure a rule may carry. What this section
+   adds is the one row that opens (the destinations rule, onto its addresses),
+   the fold under it, and the tone of a rule that refuses everything. */
+
+/* The rows sit in a region that scrolls inside itself; the rules between them
+   are the rows' own top borders, so the list needs no gap. */
+.rules {
+  display: flex;
+  flex-direction: column;
 }
 
-.limit-row:first-of-type {
-  border-top: 0;
+/* The one rule that opens is a button, and it is drawn as the Money rows are
+   drawn: the hover ground sits on the row's own box and the rule above it
+   goes under the ground, so a lit row is one clean slab rather than a slab
+   with a line through its top edge. .opens gives it all four borders; only
+   the top one is a rule. */
+button.rule {
+  width: 100%;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  border-left: 0;
+  border-right: 0;
+  border-bottom: 0;
 }
 
+@media (hover: hover) and (pointer: fine) {
+  button.rule.opens:hover {
+    border-radius: var(--radius-sm);
+    border-top-color: transparent;
+  }
+}
+
+button.rule.opens:focus-visible {
+  border-radius: var(--radius-sm);
+}
+
+button.rule.opens[data-open="true"] .chev { transform: rotate(135deg); }
+
+@media (hover: hover) and (pointer: fine) {
+  button.rule.opens[data-open="true"]:hover .chev { transform: translateY(2px) rotate(135deg); }
+}
+
+.rule > .chev {
+  align-self: center;
+  margin-right: 2px;
+}
+
+/* A rule that refuses everything is a state, and it is the one rule drawn in
+   a state colour. */
+.rule[data-tone="down"] > .rule-glyph,
+.rule[data-tone="down"] > .rule-text { color: var(--down); }
+
+/* The meter under the daily rule takes a line of its own with its figure at
+   the right end, so the sentence keeps the whole width and never wraps
+   around the figure. Nothing spent draws a line with no fill, and something
+   spent is drawn as something spent: against a $25,000 cap a real $22.84 is
+   a sub-pixel sliver otherwise, which reads as a fault. */
+.rule[data-rule="daily"] { row-gap: var(--s-1); }
+
+.rule[data-rule="daily"] > .rule-text { grid-column: 2 / span 2; }
+
+.rule[data-rule="daily"] > .rule-meter {
+  grid-column: 2;
+  grid-row: 2;
+  align-self: center;
+  margin-top: 0;
+}
+
+.rule[data-rule="daily"] > .rule-figure {
+  grid-column: 3;
+  grid-row: 2;
+  align-self: center;
+  padding-top: 0;
+}
+
+.rule-meter[data-spent="true"] > i { min-width: 3px; }
+
+/* The addresses behind the destinations rule, folded under it and indented
+   to its sentence. */
 .allowlist {
   max-height: 168px;
   overflow-y: auto;
+  margin: 0 0 var(--s-2) 28px;
   padding: var(--s-3);
   border-radius: var(--radius-sm);
   background: var(--bg-2);
@@ -2136,23 +2209,9 @@ body[data-locked="true"] #page {
   border-top: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
 }
 
-/* The rules, as lines rather than as rows with a button each. */
-.limit-line {
-  padding: var(--s-2) 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--line) 45%, transparent);
-  gap: var(--s-4);
-}
 
-/* The gas line is a label and four figures. The label is short and fixed and
-   the figures are the part that has to wrap, so the label is told not to, and
-   it sits on the first of the lines it names rather than floating in the
-   middle of three of them. */
-.limit-line { align-items: flex-start; }
-.limit-line > .body { flex: 0 0 auto; }
-.limit-line > .meta { text-align: right; min-width: 0; }
 /* ---------- the assistant column, reduced motion (2026-09-14) ---------- */
 
-.limit-line:last-of-type { border-bottom: 0; }
 /* The seat light stops breathing and holds a still ring, the verb stops
    shimmering and stays in the first text tone, the settle ring never runs
    (agent.js checks), and the first moves fade in with no travel and no blur.
@@ -2162,16 +2221,6 @@ body[data-locked="true"] #page {
   from { opacity: 0; }
 }
 
-.allow-head {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: var(--s-3);
-  padding: var(--s-2);
-  border-radius: var(--radius-sm);
-  text-align: left;
-  color: inherit;
-  font: inherit;
 @media (prefers-reduced-motion: reduce) {
   .agent-status[data-state="working"] > .status-dot,
   .agent-status[data-state="starting"] > .status-dot {
