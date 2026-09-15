@@ -15,13 +15,48 @@
   var store = window.PhosphorState;
   var marks = window.PhosphorMarks;
 
-  /* How long a row that just moved keeps the afterglow. The same figure as a
-     surface's decay, because it is the same idea at row scale. */
-  var CHANGED_MS = 2400;
+  /* How long a row that just moved keeps its tint and its delta: long enough to
+     be seen by someone who was reading the number above, short enough that
+     three ticks in a row do not leave the list lit. */
+  var CHANGED_MS = 1200;
+
+  /* The hand on the rules strip: an open palm on a 16 box, 1.5 stroke, the
+     same drawing Pro's Policy card gives the ask rule. */
+  var HAND = 'M4.75 9V4.75a1.25 1.25 0 0 1 2.5 0V8.5M7.25 8.5V3.25a1.25 1.25 0 0 1 2.5 0V8.5'
+    + 'M9.75 8.5V4.25a1.25 1.25 0 0 1 2.5 0V10.5'
+    + 'M4.75 9l-1.3-1.3a1.24 1.24 0 0 0-1.75 1.75L5 12.75A4.25 4.25 0 0 0 8 14h1.25a3 3 0 0 0 3-3v-.5';
+
+  var SVG_NS = 'http://www.w3.org/2000/svg';
 
   var refs = {};
   var mounted = false;
   var allActivity = false;
+
+  /* The first total the window saw this session. The frame carries no day
+     change, so the one honest comparison is against the moment the person
+     opened the window. */
+  var firstTotal = null;
+
+  /* One stroked path in the svg namespace, built rather than assigned as
+     markup. Null where there is no namespace to build in, which is the unit
+     harness, and every caller treats null as "no glyph". */
+  function glyph(className, path) {
+    if (typeof document.createElementNS !== 'function') return null;
+    var svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('class', className);
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('focusable', 'false');
+    svg.setAttribute('aria-hidden', 'true');
+    var line = document.createElementNS(SVG_NS, 'path');
+    line.setAttribute('d', path);
+    line.setAttribute('fill', 'none');
+    line.setAttribute('stroke', 'currentColor');
+    line.setAttribute('stroke-width', '1.5');
+    line.setAttribute('stroke-linecap', 'round');
+    line.setAttribute('stroke-linejoin', 'round');
+    svg.appendChild(line);
+    return svg;
+  }
 
   function boot() {
     var host = document.getElementById('view-basic');
@@ -47,11 +82,26 @@
     var hero = dom.el('section', 'hero');
     var total = dom.el('p', 'balance tick');
     total.dataset.role = 'total';
+    /* The change since the window opened, in the direction's colour, and only
+       while there is one: a zero is nothing to say, and a number the frame
+       does not carry is never invented. */
+    var delta = dom.el('p', 'hero-delta mono tick');
+    delta.dataset.role = 'delta';
+    delta.hidden = true;
     var line = dom.el('p', 'hero-line');
     line.dataset.role = 'state';
     hero.appendChild(total);
+    hero.appendChild(delta);
     hero.appendChild(line);
     col.appendChild(hero);
+
+    /* What the money is made of: one segment per coin by share, each in the
+       coin's own colour. It is the one coloured thing on the page and it is
+       information, so it carries no label and no box. */
+    var alloc = dom.el('div', 'alloc');
+    alloc.setAttribute('aria-hidden', 'true');
+    alloc.hidden = true;
+    col.appendChild(alloc);
 
     var warning = dom.el('div', 'banner');
     warning.dataset.tone = 'warn';
@@ -63,9 +113,15 @@
     col.appendChild(warning);
 
     /* Your rules, one strip. It teaches the safety model in a sentence and it is
-       where policy_show lands, so it is a surface without being a box. */
+       where policy_show lands, so it is a surface without being a box. The hand
+       at its left is the same glyph Pro's Policy card gives the ask rule, so
+       the sentence reads as a rule rather than a stray line of text. */
     var strip = dom.el('p', 'strip');
     strip.dataset.surface = 'rules';
+    var hand = glyph('strip-glyph', HAND);
+    if (hand) strip.appendChild(hand);
+    var stripText = dom.el('span', 'strip-text');
+    strip.appendChild(stripText);
     col.appendChild(strip);
 
     var hold = panel('What you hold', 'holdings');
@@ -86,10 +142,13 @@
 
     refs = {
       total: total,
+      delta: delta,
       state: line,
+      alloc: alloc,
       warning: warning,
       warnText: warnText,
       strip: strip,
+      stripText: stripText,
       holdBody: holdBody,
       smallNote: smallNote,
       moneyIn: moneyIn,
@@ -182,6 +241,7 @@
     var basic = state.basic || {};
 
     dom.setNumber(refs.total, basic.totalLine || '');
+    renderDelta(basic);
     renderState();
     renderRules(state);
 
@@ -191,6 +251,25 @@
     renderHoldings(basic, state);
 
     if (refs.activity.node.dataset.open === 'true') renderActivity();
+  }
+
+  /* The change since the window opened. A total the frame could not settle
+     (still checking, or checking after a write) is null, and null is not a
+     number to compare, so the line waits rather than guessing; the first real
+     total after the window opened is the mark everything after is measured
+     from. Under half a cent either way, there is nothing to say. */
+  function renderDelta(basic) {
+    var total = typeof basic.totalUsd === 'number' && isFinite(basic.totalUsd) ? basic.totalUsd : null;
+    if (total !== null && firstTotal === null) firstTotal = total;
+    var change = total === null || firstTotal === null ? 0 : total - firstTotal;
+    if (Math.abs(change) < 0.005) {
+      dom.setHidden(refs.delta, true);
+      return;
+    }
+    var up = change > 0;
+    dom.setAttr(refs.delta, 'data-dir', up ? 'up' : 'down');
+    dom.setNumber(refs.delta, (up ? '+' : '-') + dom.usd(Math.abs(change), 2) + ' since you opened');
+    dom.setHidden(refs.delta, false);
   }
 
   /* Four sentences, one of them true. The order is the window's order: a locked
@@ -235,7 +314,7 @@
     } else if (typeof out.maxPerTransactionUsd === 'number') {
       parts.push('Refuses above ' + dom.usd(out.maxPerTransactionUsd, 0) + ' at once.');
     }
-    dom.setText(refs.strip, parts.length ? parts.join(' ') : 'No limits are set yet.');
+    dom.setText(refs.stripText, parts.length ? parts.join(' ') : 'No limits are set yet.');
   }
 
   /* Dust is not an answer to "is my money OK". A row worth under a dollar is
@@ -260,6 +339,8 @@
       ? 'One smaller holding, not listed.'
       : small + ' smaller holdings, not listed.'));
     dom.setHidden(refs.smallNote, small === 0);
+
+    renderAlloc(holdings);
 
     if (!holdings.length && !store.loaded()) {
       renderHoldSkeleton();
@@ -289,7 +370,12 @@
       var main = dom.el('div', 'row-main');
       main.appendChild(dom.el('span', 'body'));
       var side = dom.el('div', 'row-side stack-2');
-      side.appendChild(dom.el('span', 'body mono tick'));
+      /* The value line holds the change beside the value, so a number that
+         moved says by how much, in the direction's colour, for a moment. */
+      var value = dom.el('div', 'row-value');
+      value.appendChild(dom.el('span', 'row-delta mono'));
+      value.appendChild(dom.el('span', 'body mono tick'));
+      side.appendChild(value);
       side.appendChild(dom.el('span', 'meta mono'));
       node.appendChild(main);
       node.appendChild(side);
@@ -300,13 +386,39 @@
       if (mark.dataset.symbol !== symbol) {
         mark.dataset.symbol = symbol;
         marks.paint(mark, symbol);
+        /* The row reads the coin's colour too, for the tint a change lands on. */
+        var colour = marks.colourFor(symbol);
+        if (colour) node.style.setProperty('--coin', colour);
+        else node.style.removeProperty('--coin');
       }
       dom.setText(node.children[1].children[0], row.name);
-      dom.setNumber(node.children[2].children[0], row.valueLine);
+      dom.setNumber(node.children[2].children[0].children[1], row.valueLine);
       dom.setText(node.children[2].children[1], row.quantityLine);
-      markChanged(node, row.valueLine);
+      markChanged(node, row);
     });
     refs.holdCut();
+  }
+
+  /* The bar under the hero. Shares are of what is listed, and one coin makes
+     no shape, so the bar waits for a second one. A coin without a brand
+     colour takes the quiet text colour, which the stylesheet falls back to. */
+  function renderAlloc(holdings) {
+    var total = 0;
+    for (var i = 0; i < holdings.length; i += 1) total += Math.max(0, Number(holdings[i].valueUsd) || 0);
+    var shown = holdings.length >= 2 && total > 0;
+    dom.reconcile(refs.alloc, shown ? holdings : [], function (row) {
+      return row.name;
+    }, function () {
+      return dom.el('span', 'alloc-seg');
+    }, function (seg, row) {
+      var share = Math.max(0, Number(row.valueUsd) || 0) / total;
+      seg.style.flexGrow = String(share);
+      var colour = marks.colourFor(symbolOf(row.name));
+      if (colour) seg.style.setProperty('--coin', colour);
+      else seg.style.removeProperty('--coin');
+      seg.title = row.name + ', ' + dom.pct(share, 0);
+    });
+    dom.setHidden(refs.alloc, !shown);
   }
 
   /* This screen is given names rather than tickers, because a person who has
@@ -320,14 +432,26 @@
     return /^[A-Za-z0-9]{2,6}$/.test(text) ? text : '';
   }
 
-  /* A row whose number just moved carries the afterglow for a moment, so a
-     change that arrived while the person was reading something else is still
-     visible when they look back. The first fill is not a change. */
-  function markChanged(node, value) {
-    var next = value === undefined || value === null ? '' : String(value);
+  /* A row whose number just moved tints in its coin's colour for a moment and
+     says by how much beside the value, so a change that arrived while the
+     person was reading something else is still visible when they look back.
+     The first fill is not a change. */
+  function markChanged(node, row) {
+    var next = row.valueLine === undefined || row.valueLine === null ? '' : String(row.valueLine);
     var had = node.dataset.shown;
+    var usd = Number(row.valueUsd);
+    var was = node.__usd;
     node.dataset.shown = next;
+    node.__usd = isFinite(usd) ? usd : undefined;
     if (had === undefined || had === next) return;
+    var delta = node.children[2].children[0].children[0];
+    var moved = isFinite(usd) && typeof was === 'number' ? usd - was : 0;
+    if (Math.abs(moved) >= 0.005) {
+      dom.setAttr(delta, 'data-dir', moved > 0 ? 'up' : 'down');
+      dom.setText(delta, (moved > 0 ? '+' : '-') + dom.usd(Math.abs(moved), 2));
+    } else {
+      dom.setText(delta, '');
+    }
     node.dataset.changed = 'true';
     if (node.__changeTimer) window.clearTimeout(node.__changeTimer);
     node.__changeTimer = window.setTimeout(function () {

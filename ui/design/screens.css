@@ -59,11 +59,26 @@
   color: var(--text-2);
 }
 
+/* The change since the window opened, between the total and the sentence:
+   mono at 13, in the direction's colour, and absent when there is none. */
+.hero-delta {
+  font-size: var(--fs-13);
+  line-height: 1.4;
+  color: var(--text-2);
+}
+
+.hero-delta[data-dir="up"] { color: var(--up); }
+.hero-delta[data-dir="down"] { color: var(--down); }
+
 /* The rules strip: one sentence about the safety model. Hairlines rather than a
    box, because a box in this window means the assistant can act on the thing
    inside it, and these are the rules it acts under. It is still a surface: the
-   glow marks it when policy_show lands. */
+   glow marks it when policy_show lands. The hand at its left is the ask rule's
+   glyph from the Policy card, so the line reads as a rule. */
 .strip {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
   padding: var(--s-3) 0;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
@@ -71,6 +86,16 @@
   line-height: 1.5;
   color: var(--text-2);
 }
+
+.strip-glyph {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin-top: 3px;
+  color: var(--text-3);
+}
+
+.strip-text { min-width: 0; }
 
 /* Under the five newest receipts, and only while there are more than five. */
 .see-all {
