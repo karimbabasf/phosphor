@@ -1,13 +1,14 @@
 /* Phosphor type. Two faces, both vendored variable woff2, never a CDN.
 
-   The grammar: a noun is set in Geist, a number that can change is set in
+   The grammar: a word is set in Sora, a number that can change is set in
    Geist Mono with tabular figures, so a value never moves its neighbours when
-   it ticks. Titles are short noun phrases. */
+   it ticks. Titles are short noun phrases. Weights: 400 body, 500 labels and
+   rows, 600 titles and buttons. Never 700. */
 
 @font-face {
-  font-family: "Geist";
-  src: url("../fonts/Geist-Variable.woff2") format("woff2-variations");
-  font-weight: 100 900;
+  font-family: "Sora";
+  src: url("../fonts/Sora[wght].woff2") format("woff2-variations");
+  font-weight: 100 800;
   font-style: normal;
   font-display: swap;
 }
