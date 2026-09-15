@@ -1564,6 +1564,9 @@
     var px = typeof fill.px === 'number' ? fill.px : null;
     var size = typeof fill.sizeCoin === 'number' ? fill.sizeCoin : null;
     var notional = notionalOf(fill);
+    /* The dollar leg to the cent: the card prints an amount in its coin's own
+       places, and a notional of 91.6152 USDC is not a fact the venue stated. */
+    var dollars = notional !== null ? Math.round(notional * 100) / 100 : null;
     var closed = typeof fill.closedPnlUsd === 'number' && fill.closedPnlUsd !== 0;
     var qty = size !== null ? dom.qty(size, precisionOf(coin)) : '';
     var at = fill.atMs ? new Date(fill.atMs).toISOString() : '';
@@ -1582,10 +1585,10 @@
       fromChain: 'hyperliquid',
       toChain: 'hyperliquid',
       venue: 'Hyperliquid',
-      amount: sold ? size : notional,
+      amount: sold ? size : dollars,
       symbol: sold ? coin : 'USDC',
       received: sold
-        ? (notional !== null ? { symbol: 'USDC', amount: notional } : null)
+        ? (dollars !== null ? { symbol: 'USDC', amount: dollars } : null)
         : (size !== null ? { symbol: coin, amount: size } : null),
       valueUsd: notional,
       price: px,

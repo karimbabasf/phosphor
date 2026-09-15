@@ -683,13 +683,21 @@ test('pressing a fill row opens the receipt card with the fill mapped to the rec
   assert.deepEqual(plain(receipt.received), { symbol: 'BTC', amount: 0.001 });
   assert.deepEqual(plain(receipt.txids), [{ chain: 'hyperliquid', hash: '0xabc', url: 'https://app.hyperliquid.xyz/explorer/tx/0xabc' }]);
   assert.ok(receipt.summary.startsWith('Bought 0.001 BTC at $60,000.00 on Hyperliquid'), receipt.summary);
-  // A sell the other way, and a fill with no hash carries no transaction.
-  const sold = world.window.PhosphorTrade.mapFill(fill({ side: 'sell', tid: 'r2' }));
+  assert.equal(receipt.side, 'buy');
+  assert.equal(receipt.closed, false, 'an opening fill is not a close');
+  assert.equal(receipt.valueUsd, 60);
+  assert.equal(receipt.venue, 'Hyperliquid');
+  // A sell the other way, and a fill with no hash carries no transaction. A fill that
+  // realised something closed a position, and the dollar leg is rounded to the cent.
+  const sold = world.window.PhosphorTrade.mapFill(fill({ side: 'sell', tid: 'r2', closedPnlUsd: 7.25, notionalUsd: 61.2345 }));
   assert.equal(sold.headline, 'Sold BTC 0.001');
+  assert.equal(sold.side, 'sell');
+  assert.equal(sold.closed, true);
   assert.equal(sold.amount, 0.001);
   assert.equal(sold.symbol, 'BTC');
-  assert.deepEqual(plain(sold.received), { symbol: 'USDC', amount: 60 });
+  assert.deepEqual(plain(sold.received), { symbol: 'USDC', amount: 61.23 });
   assert.deepEqual(plain(sold.txids), []);
+  assert.ok(sold.summary.includes('+$7.25 realised'), sold.summary);
 });
 
 // ---------- the strip ----------
