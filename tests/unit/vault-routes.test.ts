@@ -150,7 +150,7 @@ async function boot(opts: { mode?: AppConfig['mode'] } = {}) {
   /* The fake shell. `mac` is the enclave it answers with; a request wrapped to a different
      enclave fails as the real one would, with crypto_failed. */
   const mac = enclave();
-  let mode: Mode = 'answer';
+  const dialog: { mode: Mode } = { mode: 'answer' };
   let running = true;
   const seen: string[] = [];
   const shell = (async () => {
@@ -160,7 +160,7 @@ async function boot(opts: { mode?: AppConfig['mode'] } = {}) {
       const request = pending.json?.request;
       if (!request) continue;
       seen.push(`${request.op}:${request.reason ?? ''}`);
-      if (mode === 'cancel') {
+      if (dialog.mode === 'cancel') {
         await post('/api/vault/answer', { id: request.id, ok: false, error: 'user_cancel', message: 'cancelled' });
         continue;
       }
@@ -210,7 +210,7 @@ async function boot(opts: { mode?: AppConfig['mode'] } = {}) {
     seen,
     releases: () => releases,
     setMode: (m: Mode) => {
-      mode = m;
+      dialog.mode = m;
     },
     swapMac: () => {
       const other = enclave();

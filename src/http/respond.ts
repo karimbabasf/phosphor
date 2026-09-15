@@ -61,12 +61,18 @@ export function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+/* The identity header rides on every JSON answer too, not only on the page. The shell's enclave
+   relay reads it on /api/vault/pending and /api/vault/answer and refuses any answer without
+   this boot's nonce, so a local process that took the port cannot hand the relay a request to
+   run against the enclave, nor swallow the answer to one. It was the page's header alone until
+   the relay existed; nothing about the page changes. */
 export function sendJson(res: http.ServerResponse, status: number, payload: unknown): void {
   const body = JSON.stringify(payload);
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'content-length': Buffer.byteLength(body),
     'cache-control': 'no-store',
+    [IDENTITY_HEADER]: identityValue(),
   });
   res.end(body);
 }
