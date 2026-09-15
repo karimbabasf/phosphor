@@ -2079,22 +2079,73 @@ body[data-locked="true"] #page {
 }
 
 /* The value is the figure. The amount is the footnote under it, in the mono
-   face, because the amount is the thing a person checks rather than reads. */
+   face, because the amount is the thing a person checks rather than reads.
+   The change, when there is one, sits to the left of the value on its line. */
 .holding-figures {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 1px;
+  display: grid;
+  grid-template-columns: auto auto;
+  grid-template-rows: auto auto;
+  row-gap: 1px;
+  align-items: baseline;
+  justify-items: end;
   text-align: right;
 }
 
 .holding-value {
+  grid-column: 2;
+  grid-row: 1;
   font-size: var(--fs-15);
   color: var(--text);
   font-feature-settings: "tnum" 1;
 }
 
+/* WHEN A FIGURE MOVES. The digits roll (dom.setNumber), the change appears
+   beside the value in the direction's colour, and the row's ground tints in
+   the coin's own colour, in fast and out slow, for the 1.2 s the row is
+   marked. The tint is a layer of its own under the row so the hover ground
+   keeps its quick transition; both are opacity only, so reduced motion keeps
+   the signal and loses nothing it needs. */
+.holding-delta {
+  grid-column: 1;
+  grid-row: 1;
+  font-size: var(--fs-12);
+  line-height: 1.2;
+  color: var(--text-2);
+  font-feature-settings: "tnum" 1;
+  opacity: 0;
+  transition: opacity 600ms var(--ease-out);
+}
+
+.holding-delta:not(:empty) { padding-right: var(--s-2); }
+.holding-delta[data-dir="up"] { color: var(--up); }
+.holding-delta[data-dir="down"] { color: var(--down); }
+
+.holding[data-changed="true"] .holding-delta {
+  opacity: 1;
+  transition-duration: 120ms;
+}
+
+.holding-head { position: relative; }
+
+.holding-head::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--coin, var(--text-3)) 8%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 900ms var(--ease-out);
+}
+
+.holding[data-changed="true"] > .holding-head::after {
+  opacity: 1;
+  transition-duration: 120ms;
+}
+
 .holding-qty {
+  grid-column: 2;
+  grid-row: 2;
   font-size: var(--fs-12);
   color: var(--text-2);
   font-feature-settings: "tnum" 1;
@@ -2130,30 +2181,34 @@ body[data-locked="true"] #page {
 
 /* ---------- The shape of the wallet, once ----------
 
-   One 4 px bar under the Money head, one segment per coin, each a step of
-   neutral lightness off --text and never a hue. It is the one thing on this
-   deck built to be remembered, so everything around it is kept quiet.
+   One 4 px bar under the Money head, one segment per coin by share, each in
+   the coin's own brand colour (the same one its mark wears), rounded at the
+   two ends only, with the ground showing through one-pixel gaps so the
+   segments read as parts of one whole. It is the one coloured thing on this
+   deck that is not a state, so everything around it is kept quiet.
 
-   Pointing at a coin brightens its segment and pointing at a segment brightens
-   the coin, because the bar and the list are the same facts said twice and a
-   person should not have to work out which slice is which. */
+   Pointing at a coin holds its segment and lets the others fall back, and
+   pointing at a segment lights the coin's row, because the bar and the list
+   are the same facts said twice and a person should not have to work out
+   which slice is which. */
 .comp-bar {
   display: flex;
-  gap: 2px;
+  gap: 1px;
   height: 4px;
   flex: 0 0 auto;
   margin-bottom: var(--s-1);
+  border-radius: 2px;
+  overflow: hidden;
 }
 
 .comp-seg {
   flex: 1 1 0;
   min-width: 3px;
-  border-radius: 2px;
   background: var(--seg, var(--text-3));
-  transition: background-color var(--dur-press) var(--ease-out);
+  transition: opacity var(--dur-press) var(--ease-out);
 }
 
-.comp-seg[data-lit="true"] { background: var(--text); }
+.comp-bar:has(> [data-lit="true"]) > .comp-seg:not([data-lit="true"]) { opacity: 0.4; }
 
 .holding[data-lit="true"] .holding-head { background: var(--bg-2); }
 

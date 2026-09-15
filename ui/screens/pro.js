@@ -20,9 +20,11 @@
   var store = window.PhosphorState;
   var marks = window.PhosphorMarks;
 
-  /* The same figure as a surface's decay: a row that just moved keeps the
-     afterglow for as long as the panel it sits in would. */
-  var CHANGED_MS = 2400;
+  /* How long a Money row stays marked after its figure moved: the digits roll,
+     the ground tints in the coin's colour and the change sits beside the
+     value, then all three settle. Long enough to be seen from the corner of
+     an eye, short enough that two frames in a row read as two changes. */
+  var CHANGED_MS = 1200;
 
   /* The trading venue is a second feed, not part of the state frame, so this
      screen asks for it on its own clock and only while it is the visible one. */
@@ -438,10 +440,13 @@
       name.appendChild(dom.el('span', 'holding-where meta'));
       head.appendChild(name);
       /* The value is the figure, the amount is the footnote under it. Three
-         right-aligned number columns is what made every row read the same. */
+         right-aligned number columns is what made every row read the same.
+         The change sits to the left of the value and is only visible while
+         the row is marked changed. */
       var figures = dom.el('div', 'holding-figures');
       figures.appendChild(dom.el('span', 'holding-value tick'));
       figures.appendChild(dom.el('span', 'holding-qty mono'));
+      figures.appendChild(dom.el('span', 'holding-delta mono'));
       head.appendChild(figures);
       head.appendChild(dom.el('span', 'chev'));
       wrap.appendChild(head);
@@ -470,6 +475,11 @@
       if (mark.dataset.symbol !== coin.symbol) {
         mark.dataset.symbol = coin.symbol;
         marks.paint(mark, coin.symbol);
+        /* The row carries its coin's colour too, so the change tint can be
+           the coin's own rather than a state colour. */
+        var colour = marks.colourFor(coin.symbol);
+        if (colour) wrap.style.setProperty('--coin', colour);
+        else wrap.style.removeProperty('--coin');
       }
 
       dom.setText(name.children[0], coin.symbol);
@@ -481,7 +491,7 @@
       dom.setNumber(figures.children[0], coin.priced ? dom.usd(coin.valueUsd) : 'not priced');
       dom.setAttr(figures.children[0], 'data-unpriced', coin.priced ? null : 'true');
       dom.setText(figures.children[1], coin.countable ? dom.qty(coin.quantity) : '');
-      markChanged(figures.children[0], coin.priced ? dom.usd(coin.valueUsd) : 'not priced');
+      markChanged(wrap, figures.children[2], coin);
 
       dom.reconcile(wrap.children[1], single ? [] : coin.places, function (row, i) {
         return (row.kind || 'token') + ':' + (row.chain || '') + ':' + i;
@@ -526,9 +536,12 @@
      share is one fact about the whole wallet rather than nine facts about nine
      coins, so it is drawn once, as one 4px bar under the head.
 
-     The segments are steps of neutral lightness off --text and never a hue. A
-     coloured wallet is a wallet where the one number that means something, a
-     loss or a chain that would not answer, no longer stands out. */
+     Each segment is its coin's brand colour, the same one the mark on its row
+     wears (ui/design/marks.js), so the bar and the list are read as the same
+     facts. It is the one thing on this deck that is coloured and is not a
+     state, and it is allowed because a coin's colour is its name: the state
+     colours keep their meaning because a brand colour never lands on a
+     number. A coin without a colour takes the quiet text tone. */
   function renderComposition(coins) {
     var priced = [];
     var total = 0;
@@ -543,21 +556,16 @@
       return;
     }
 
-    var last = priced.length - 1;
     dom.reconcile(refs.bar, priced, function (coin) {
       return coin.id;
     }, function () {
       var seg = dom.el('span', 'comp-seg');
       lightWith(seg, seg);
       return seg;
-    }, function (seg, coin, index) {
+    }, function (seg, coin) {
       seg.dataset.coin = coin.id;
       seg.style.flexGrow = String(coin.valueUsd / total);
-      /* Lightest first, and the run is spread over however many coins there
-         are, so two coins are told apart as easily as nine. */
-      var step = last === 0 ? 0 : (index / last);
-      seg.style.setProperty('--seg', 'color-mix(in srgb, var(--text) '
-        + Math.round(88 - step * 66) + '%, var(--bg-2))');
+      seg.style.setProperty('--seg', marks.colourFor(coin.symbol) || 'var(--text-3)');
       seg.title = coin.symbol + ' ' + dom.pct(coin.valueUsd / total);
     });
   }
@@ -581,19 +589,34 @@
     }
   }
 
-  /* A row whose number just moved carries the afterglow for a moment, so a
-     change that arrived while the person was reading something else is still
-     visible when they look back. The first fill is not a change. */
-  function markChanged(node, value) {
-    var next = value === undefined || value === null ? '' : String(value);
-    var had = node.dataset.shown;
-    node.dataset.shown = next;
-    if (had === undefined || had === next) return;
-    node.dataset.changed = 'true';
-    if (node.__changeTimer) window.clearTimeout(node.__changeTimer);
-    node.__changeTimer = window.setTimeout(function () {
-      delete node.dataset.changed;
-      node.__changeTimer = 0;
+  /* A row whose figure just moved says so for a moment, so a change that
+     arrived while the person was reading something else is still visible when
+     they look back: the value rolls (dom.setNumber), the row tints in its
+     coin's colour and the change sits beside the value, signed, in the
+     direction's colour. Karim, 2026-09-14: "so it is clear when something
+     happens." The change is in dollars when the value moved and in coin when
+     only the amount did; the first fill is not a change. */
+  function markChanged(wrap, delta, coin) {
+    var usd = coin.priced ? Number(coin.valueUsd) : null;
+    var qty = coin.countable ? Number(coin.quantity) : null;
+    var was = wrap.__shown;
+    wrap.__shown = { usd: usd, qty: qty };
+    if (!was) return;
+    var byUsd = usd !== null && was.usd !== null ? usd - was.usd : 0;
+    var byQty = qty !== null && was.qty !== null ? qty - was.qty : 0;
+    /* Under half a cent is a rounding of the same number, not a move. */
+    if (Math.abs(byUsd) < 0.005) byUsd = 0;
+    if (byUsd === 0 && byQty === 0) return;
+    var moved = byUsd !== 0 ? byUsd : byQty;
+    dom.setText(delta, (moved > 0 ? '+' : '-') + (byUsd !== 0
+      ? dom.usd(Math.abs(byUsd))
+      : dom.qty(Math.abs(byQty)) + ' ' + coin.symbol));
+    dom.setAttr(delta, 'data-dir', moved > 0 ? 'up' : 'down');
+    dom.setAttr(wrap, 'data-changed', 'true');
+    if (wrap.__changeTimer) window.clearTimeout(wrap.__changeTimer);
+    wrap.__changeTimer = window.setTimeout(function () {
+      dom.setAttr(wrap, 'data-changed', null);
+      wrap.__changeTimer = 0;
     }, CHANGED_MS);
   }
 
