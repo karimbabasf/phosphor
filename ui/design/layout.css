@@ -19,28 +19,6 @@ html, body {
   width: 100%;
 }
 
-/* ---------- The afterglow field ---------- */
-
-/* The field is the conversation column's ground: the living part of the window
-   is where the assistant lives. Absolute inside the column, so it is the
-   column's size and no larger, which is most of its frame budget. */
-.pattern-field {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  overflow: hidden;
-}
-
-.pattern-local {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  overflow: hidden;
-  border-radius: inherit;
-  pointer-events: none;
-}
-
 /* ---------- Top bar ---------- */
 
 .topbar {

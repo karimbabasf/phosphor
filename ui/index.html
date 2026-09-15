@@ -16,6 +16,7 @@
 <link rel="stylesheet" href="./design/components.css">
 <link rel="stylesheet" href="./design/layout.css">
 <link rel="stylesheet" href="./design/screens.css">
+<link rel="stylesheet" href="./design/agent.css">
 </head>
 <body data-view="basic">
 
@@ -89,7 +90,6 @@
   <div class="stage" id="stage" data-split="stage" data-surface="window">
 
     <aside class="conversation" id="conversation" aria-label="Your assistant" data-surface="assistant">
-      <div id="field" class="pattern-field" aria-hidden="true"></div>
       <div class="conversation-body" id="conversation-body"></div>
       <div class="dock" id="overlay" role="region" aria-label="Waiting for you" hidden>
         <div class="dock-card" id="overlay-card"></div>
@@ -117,7 +117,6 @@
 <canvas id="beam" class="beam-layer" aria-hidden="true"></canvas>
 
 <script src="./design/motion.js" defer></script>
-<script src="./design/pattern.js" defer></script>
 <script src="./design/marks.js" defer></script>
 <script src="./vendor/qrcode.js" defer></script>
 <script src="./vendor/jsqr.js" defer></script>
