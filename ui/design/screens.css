@@ -169,20 +169,31 @@
   border-top: 1px solid var(--line);
 }
 
-.receipt-row {
+/* A receipt is a .tx (components.css, the money grammar) that opens. The list
+   it sits in is flush with the panel, so the row carries the side padding
+   itself, and the first row keeps the rule that separates it from the head. */
+.tx.receipt-row {
   width: 100%;
   text-align: left;
   background: transparent;
   transition: background-color var(--dur-press) var(--ease-out);
 }
 
-/* A row is one line of what happened and one line of when. The title used to be the rail's
-   verbatim sentence, which wrapped to six lines, buried the time under itself and ran across
-   the amount on the right, so two receipts filled the whole panel. The sentence now lives on
-   the opened receipt and the row's title is clamped, so a long one ends in an ellipsis instead
-   of rewriting the layout. */
-.receipt-row .row-main > .body {
-  display: block;
+.activity-list > .tx.receipt-row:first-child {
+  border-top: 1px solid var(--line);
+}
+
+/* The title is the headline, clamped at two lines. It used to be the rail's verbatim
+   sentence, which wrapped to six lines, buried the time under itself and ran across the
+   amount on the right, so two receipts filled the whole panel; that sentence now lives on the
+   opened receipt. The headline is one sentence, and on Pro's half-width panel one line cut it
+   before the coin it changed into, which is the half of the sentence that says what happened.
+   Two lines hold the whole sentence at that width; anything longer ends in an ellipsis, and
+   the whole sentence rides on the title attribute. */
+.receipt-row > .tx-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -258,6 +269,14 @@
 .agent-status[data-state="off"] > .status-dot { background: var(--text-3); }
 .agent-status[data-state="starting"] > .status-dot { background: color-mix(in srgb, var(--beam) 60%, var(--text-3)); }
 .agent-status[data-state="error"] > .status-dot { background: var(--down); }
+/* A time that is really an outcome ("Did not go through") reads in the warning
+   tone; the grammar's own 12 px stays. */
+.receipt-row > .tx-when.warn { color: var(--warn); }
+
+/* A move that did not go through left nothing, so its amount is unsigned and
+   quiet: the same weight as the time, not a number that means money. */
+.receipt-row > .tx-amount.dim { color: var(--text-3); }
+
 .agent-status[data-state="stopped"] > .status-dot {
   background: transparent;
   box-shadow: inset 0 0 0 1.5px var(--text-3);
