@@ -9,7 +9,10 @@
 
    The column never calls the beam either. Every step row dispatches
    phosphor:step on window and ui/beam/trace.js decides what lights up, so the
-   transcript keeps working in a window where the beam file is not there. */
+   transcript keeps working in a window where the beam file is not there.
+
+   The look lives in ui/design/agent.css. This file writes state as attributes
+   and text, never as style. */
 (function () {
   'use strict';
 
@@ -115,20 +118,51 @@
   var COMPOSER_MAX_LINES = 6;
   var COMPOSER_LINE_FALLBACK_PX = 21;
 
-  /* What the box says while it cannot be used, and what it says when it can.
-     The first is the sentence that used to sit under the box as a note. */
+  /* What the box says while it cannot be used, and what it says when it can. */
   var PLACEHOLDER_OFF = 'Start your assistant to talk to it.';
   var PLACEHOLDER_STARTING = 'Starting your assistant.';
-  var PLACEHOLDER_ON = 'Tell your assistant what to do.';
+  var PLACEHOLDER_ON = 'Tell your assistant what to do';
 
   /* The three first moves on the empty card. Each is a question this window
      answers from what it already holds, in the words a person would use. */
   var SUGGESTIONS = ['What do I hold?', 'Is anything waiting on me?', 'Find a trade on BTC'];
 
-  /* One glyph, drawn here: the send arrow. A path on a 16 box in the current
-     colour at 1.5 px, built in the svg namespace the way dom.mark builds the
-     logo, and null where there is no namespace to build in. */
-  var GLYPH_ARROW_UP = 'M8 12.75V3.25M3.75 7.5L8 3.25l4.25 4.25';
+  /* The card's sentences, in one place. The title says who is at the wheel and
+     the line under it says the one next thing to do. */
+  var COPY = {
+    offTitle: 'Nobody is at the wheel.',
+    offLine: 'Start your assistant, or connect one you already use.',
+    comingTitle: 'Taking the wheel.',
+    comingLine: 'Starting your assistant.',
+    liveTitle: 'Your assistant is at the wheel.',
+    liveLine: 'Tell it what to do. It picks up your wallet, the policy and the chart on your first message.',
+    ownTitle: 'Your own agent is at the wheel.',
+    ownLine: 'Talk to it from its own terminal. Its moves land in Activity.',
+    connectTitle: 'Connect your own agent',
+    connectLine: 'Any MCP client can drive Phosphor.',
+    connectHint: 'Paste this into your terminal, then send a message from there.',
+    waiting: 'Waiting for a connection...',
+    connected: 'Connected',
+    /* The one failure the window can only decide for itself: a start that
+       never reported back. Every other reason arrives from the driver. */
+    noAnswer: 'The assistant did not answer in time.',
+    /* A failed start that named no reason. It should not happen, and when it
+       does the person still gets a sentence rather than a blank line. */
+    failedUnsaid: 'The assistant could not start.'
+  };
+
+  /* How long a start may sit at "Starting..." before the window says so. Ready
+     arrives on the child's spawn event (src/driver.ts), a few hundred
+     milliseconds after the click, so twenty seconds is not a start that is
+     slow, it is one that has stopped reporting. The window only says it: the
+     next frame from the driver still wins. */
+  var START_TIMEOUT_MS = 20000;
+
+  /* The icons are the shared set (ui/design/icons.js). The two the composer
+     cannot do without are drawn here as well, so a window loading without the
+     sprite still has an arrow to send with and a square to stop with. */
+  var GLYPH_SEND = 'M8 12.75V3.25M3.75 7.5L8 3.25l4.25 4.25';
+  var GLYPH_STOP = 'M4.75 4.75h6.5v6.5h-6.5z';
   var SVG_NS = 'http://www.w3.org/2000/svg';
 
   /* THE RECEIPT CARD. When a move this app made lands as a receipt
@@ -138,6 +172,10 @@
      arrived and what it cost, and the id. Karim, 2026-09-14: "when trades
      happen I dont want to see this, I want to see a nice card, simple, no
      unnecessary info, and the intent id should be a clickable link".
+
+     The shared receipt card (ui/screens/receipt.js, PhosphorReceipt.card) is
+     used when it is there; the one drawn below is the same information in
+     this column's own hand and stays as the fallback.
 
      The id opens the explorer only where the receipt carries a url for it,
      and the server decides that (src/transactions.ts): a chain hash opens its
@@ -177,13 +215,25 @@
     return text.length > 14 ? text.slice(0, 6) + '...' + text.slice(-4) : text;
   }
 
+  /* An icon from the shared sprite, or the fallback path drawn here. Both are
+     built in the svg namespace, never as markup. */
+  function icon(name, fallbackPath, className) {
+    var icons = window.PhosphorIcons;
+    if (icons && typeof icons.svg === 'function') {
+      var shared = icons.svg(name, className);
+      if (shared) return shared;
+    }
+    if (!fallbackPath) return null;
+    return glyph(fallbackPath, className);
+  }
+
   function glyph(path, className) {
     if (typeof document.createElementNS !== 'function') return null;
     var svg = document.createElementNS(SVG_NS, 'svg');
     svg.setAttribute('viewBox', '0 0 16 16');
     svg.setAttribute('focusable', 'false');
     svg.setAttribute('aria-hidden', 'true');
-    if (className) svg.setAttribute('class', className);
+    svg.setAttribute('class', 'icon' + (className ? ' ' + className : ''));
     var line = document.createElementNS(SVG_NS, 'path');
     line.setAttribute('d', path);
     line.setAttribute('fill', 'none');
@@ -242,8 +292,24 @@
       parts.push(text);
     }
     var joined = parts.join(' ');
-    if (joined.length > ARG_MAX) joined = joined.slice(0, ARG_MAX - 1).replace(/\s+\S*$/, '') + '…';
+    if (joined.length > ARG_MAX) joined = joined.slice(0, ARG_MAX - 1).replace(/\s+\S*$/, '') + '...';
     return joined;
+  }
+
+  /* The scalar arguments of a call, kept beside the row for the trace: the
+     screen a `switch` moved to is the one thing the beam has to know that the
+     phrase does not say. Nothing nested is kept. */
+  function scalarArgs(input) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+    var out = null;
+    for (var key in input) {
+      if (!Object.prototype.hasOwnProperty.call(input, key)) continue;
+      var value = input[key];
+      if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') continue;
+      if (!out) out = {};
+      out[key] = value;
+    }
+    return out;
   }
 
   var mounts = [];
@@ -251,11 +317,27 @@
   var seq = 0;
   var phase = 'idle';
   var serverWord = 'off';
-  var detail = '';
-  var connection = { command: '', connected: [] };
+  var connection = { command: '' };
+  var roster = [];
   var openSteps = null;
   var ticker = 0;
   var announced = [];
+
+  /* WHAT THE CENTRE SHOWS while there is no transcript: the card, or the
+     connect sheet in its place. The sheet is the only thing that ever holds
+     the mcp-add command, and it can only be opened while nobody is at the
+     wheel. The moment somebody is (starting, ready, working) it closes, so a
+     Ready card never carries a block meant for a terminal. That is the whole
+     fix for the command that used to stay on screen after Start: the block
+     was hidden by its own toggle and by nothing else. */
+  var view = 'card';
+
+  /* THE ONE THING THAT WENT WRONG, in words. Set from a failed start or an
+     exit the person did not ask for, shown under the status line with a Retry,
+     and cleared by the next start. `reason` is the driver's plain sentence;
+     `detail` is its technical line, kept so the error frame that follows the
+     same failure is not printed a second time as a row. */
+  var failure = null;
 
   /* THE TURN, and why it is not a transcript row.
 
@@ -265,17 +347,13 @@
      and after the last one while the answer is being written. A person watching
      that has no way to tell a working agent from a dead one.
 
-     This is one line that lives between the transcript and the composer, from
-     the moment a prompt goes out until the turn ends. It does not scroll away,
-     it names what is happening now in the same words the step rows use, and it
-     carries the turn's own clock. Three states, each one an event rather than a
-     guess: `thinking` (sent, nothing back yet), `calling` (a tool is open) and
-     `writing` (text has arrived and no tool is open).
-
-     Since 2026-09-14 the seat light in the head shows the same thing (the
-     verb and the clock come from this same record), so the bar is clipped
-     out of sight by the stylesheet and kept as the live region a screen
-     reader hears. The record is the source for both. */
+     This is one record that lives from the moment a prompt goes out until the
+     turn ends. Three states, each one an event rather than a guess: `thinking`
+     (sent, nothing back yet), `calling` (a tool is open) and `writing` (text
+     has arrived and no tool is open). The seat light in the head shows it (the
+     verb and the clock come from this record), and the turn bar under the
+     transcript is clipped out of sight by the stylesheet and kept as the live
+     region a screen reader hears. */
   var turn = null;
 
   /* WHICH CONVERSATION THIS COLUMN IS. The stream carries every chat's events
@@ -285,12 +363,13 @@
      ignores the rest. */
   var chatId = null;
 
-  /* Five phases for the rest of the window, six words for the person. `ready`
-     and `stopped` are both a live assistant that is not answering, so they share
-     a phase, and only the status line tells them apart. */
+  /* Five phases for the rest of the window, five words for the person. A
+     stopped assistant is off: the word is the same whether the person turned
+     it off or it left on its own, and the line under the status is what
+     tells those two apart. */
   var STATE_WORDS = {
     idle: 'Off',
-    starting: 'Starting',
+    starting: 'Starting...',
     connected: 'Ready',
     working: 'Working',
     error: 'Could not start'
@@ -306,7 +385,6 @@
   };
 
   function stateAttr() {
-    if (phase === 'connected' && serverWord === 'stopped') return 'stopped';
     return STATE_ATTR[phase] || 'off';
   }
 
@@ -337,7 +415,6 @@
      "Working" only when the column knows it is busy and nothing more, which
      is a window that opened onto a turn already under way. */
   function statusVerb() {
-    if (phase === 'connected' && serverWord === 'stopped') return 'Stopped';
     if (phase !== 'working') return STATE_WORDS[phase] || 'Off';
     var step = liveStep();
     if (step) return sentence(step.label);
@@ -365,6 +442,17 @@
     return phase === 'connected' || phase === 'working';
   }
 
+  function canStart() {
+    return phase === 'idle' || phase === 'error';
+  }
+
+  /* Somebody else's agent, attached over MCP while the built-in one is off.
+     The roster lists the built-in child too once it has attached, so it is
+     only read while this column knows nobody of its own is at the wheel. */
+  function ownAgents() {
+    return canStart() ? roster : [];
+  }
+
   /* ---------- mount ---------- */
 
   function mount(host, options) {
@@ -377,21 +465,29 @@
     return node;
   }
 
+  function button(className, label, title) {
+    var btn = dom.el('button', className);
+    btn.type = 'button';
+    if (title) btn.title = title;
+    btn.appendChild(dom.el('span', 'btn-label', label));
+    return btn;
+  }
+
   function build(node) {
     var host = node.host;
     dom.clear(host);
 
-    var head = dom.el('div', 'between agent-head');
+    /* THE HEAD. The name, the seat light, and one control. */
+    var head = dom.el('div', 'agent-head');
     var title = dom.el('div', 'agent-title');
-    title.appendChild(dom.el('span', 'title-sm', 'Assistant'));
+    title.appendChild(dom.el('span', 'agent-name', 'Assistant'));
     /* THE SEAT LIGHT. One status line beside the name, in the shared grammar
        (components.css): a 6 px dot, the verb, and the seconds. The dot is
        still while nobody is working and breathes while a call is open; the
        verb is the state word until a tool runs, and then the tool's own
-       words. It replaced a pill that said "Working" in a border, which was a
-       label about the state rather than the state itself. The id is how the
-       beam finds it: ui/beam/beam.js sets data-live on it while it holds a
-       surface, and this file never writes that attribute. */
+       words. The id is how the beam finds it: ui/beam/beam.js sets data-live
+       on it while it holds a surface, and this file never writes that
+       attribute. */
     var status = dom.el('div', 'status-line agent-status');
     status.id = 'agent-status';
     var dot = dom.el('span', 'status-dot');
@@ -407,35 +503,41 @@
     title.appendChild(status);
     head.appendChild(title);
 
-    /* Two controls that used to read as one: "Stop the answer" and "Stop"
-       side by side were the same word twice. The one a person reaches for
-       while an answer is running is Stop, and it stops the answer; turning
-       the assistant off is the rarer, larger act, so it is a quiet text
-       button with the verb that says what it does. */
-    var controls = dom.el('div', 'hstack-2');
-    var start = dom.el('button', 'btn btn-primary btn-sm');
-    start.appendChild(dom.el('span', 'btn-label', 'Start your assistant'));
-    var stopAnswer = dom.el('button', 'btn btn-ghost btn-sm');
-    stopAnswer.title = 'Stop this answer';
-    stopAnswer.appendChild(dom.el('span', 'btn-label', 'Stop'));
-    var stopAgent = dom.el('button', 'btn btn-quiet btn-sm');
-    stopAgent.title = 'Turn your assistant off';
-    stopAgent.appendChild(dom.el('span', 'btn-label', 'Turn off'));
+    /* One control at the right, and only one at a time: Turn off while
+       somebody is at the wheel, Start when the card that offers it has
+       scrolled away under a transcript. Stopping an answer is the composer's
+       button, where the answer was sent from. */
+    var controls = dom.el('div', 'agent-controls');
+    var start = button('btn btn-primary btn-sm', 'Start your assistant');
+    var stopAgent = button('btn btn-quiet btn-sm', 'Turn off', 'Turn your assistant off');
     controls.appendChild(start);
     controls.appendChild(stopAgent);
-    controls.appendChild(stopAnswer);
     head.appendChild(controls);
     host.appendChild(head);
+
+    /* WHAT WENT WRONG, under the status it belongs to: one sentence and a
+       Retry, present only while there is a failure to name. It is the same
+       line whether the card is on screen or a transcript is, so a person
+       whose assistant died mid conversation reads the reason in the head
+       rather than losing it under the last message. */
+    var note = dom.el('div', 'agent-note');
+    note.setAttribute('role', 'status');
+    var noteText = dom.el('span', 'agent-note-text');
+    var retry = button('chip agent-retry', 'Retry');
+    note.appendChild(noteText);
+    note.appendChild(retry);
+    note.hidden = true;
+    host.appendChild(note);
 
     /* Who else is holding the reins. A second client that can ask for money is
        not a detail, so it is named under the head rather than behind a fold. */
     var clients = dom.el('div', 'agent-clients');
     host.appendChild(clients);
 
-    var detailLine = dom.el('p', 'meta agent-detail');
-    host.appendChild(detailLine);
+    /* THE CENTRE: the card, or the connect sheet in its place. */
+    var centre = dom.el('div', 'agent-centre');
 
-    /* THE EMPTY STATE, AND WHY IT HAS THREE OF THEM NOW.
+    /* THE CARD, AND WHY IT HAS THREE ANSWERS.
 
        It used to be one card keyed on nothing but an empty transcript, so it
        said "Nobody is at the wheel" and offered a Start button for the whole
@@ -450,66 +552,74 @@
        a thing that can be done. */
     var empty = dom.el('div', 'agent-empty');
     var emptyInner = dom.el('div', 'agent-empty-inner');
-    /* The seat is the mark (Karim, 2026-09-14: the ring and its dot gave way
-       to the logo). It keeps the seat's three answers by colour: grey when
-       nobody is there, waking while one comes up, lit once one is. */
+    /* The seat is the mark: 40 px of the window's own light. Muted when
+       nobody is there, waking while one comes up, lit with one soft glow
+       once one is. It is the only thing in the panel that glows. */
     var emptySeat = dom.el('div', 'agent-seat');
     emptySeat.setAttribute('aria-hidden', 'true');
     var seatMark = dom.mark('agent-seat-mark');
     if (seatMark) emptySeat.appendChild(seatMark);
     emptyInner.appendChild(emptySeat);
-    var emptyTitle = dom.el('p', 'title-sm agent-empty-title', 'Nobody is at the wheel.');
-    var emptyNote = dom.el('p', 'meta', 'Start your assistant, or connect one you already use.');
+    var emptyTitle = dom.el('p', 'agent-empty-title', COPY.offTitle);
+    var emptyNote = dom.el('p', 'agent-empty-line', COPY.offLine);
     emptyInner.appendChild(emptyTitle);
     emptyInner.appendChild(emptyNote);
     var emptyActions = dom.el('div', 'agent-empty-actions');
-    var startBig = dom.el('button', 'btn btn-primary');
-    startBig.appendChild(dom.el('span', 'btn-label', 'Start your assistant'));
-    var connectBtn = dom.el('button', 'btn btn-quiet');
-    connectBtn.appendChild(dom.el('span', 'btn-label', 'Connect your own'));
+    var startBig = button('btn btn-primary', 'Start your assistant');
+    var connectBtn = button('btn btn-ghost', 'Connect your own');
     emptyActions.appendChild(startBig);
     emptyActions.appendChild(connectBtn);
     emptyInner.appendChild(emptyActions);
 
-    var connectBlock = dom.el('div', 'connection-block');
-    connectBlock.hidden = true;
-    var row = dom.el('div', 'connection-row');
-    var line = dom.el('code', 'connection-line');
-    var copy = dom.el('button', 'btn btn-ghost btn-sm');
-    copy.type = 'button';
-    copy.appendChild(dom.el('span', 'btn-label', 'Copy'));
-    row.appendChild(line);
-    row.appendChild(copy);
-    connectBlock.appendChild(row);
-    connectBlock.appendChild(dom.el('p', 'meta', 'Paste this into your terminal.'));
-    emptyInner.appendChild(connectBlock);
-
     /* THREE FIRST MOVES. A card that only says nobody is there is a dead end:
-       the person has an assistant and no idea what to say to it. Each row is
-       a real question this window can answer, and pressing one puts the words
-       in the box rather than sending them, so the first message is still
-       theirs to send. They are rows, not buttons with borders: the card is
-       already the quietest thing on screen and three boxes would make it a
-       menu. */
+       the person has an assistant and no idea what to say to it. Each pill is
+       a real question this window can answer, and pressing one asks it: on a
+       live column at once, on a quiet one by starting the assistant first. */
+    var rule = dom.el('hr', 'agent-rule');
+    emptyInner.appendChild(rule);
     var suggest = dom.el('div', 'agent-suggest');
     for (var s = 0; s < SUGGESTIONS.length; s += 1) {
-      var suggestion = dom.el('button', 'suggest', SUGGESTIONS[s]);
+      var suggestion = dom.el('button', 'chip suggest', SUGGESTIONS[s]);
       suggestion.type = 'button';
       suggest.appendChild(suggestion);
       dom.on(suggestion, 'click', suggestClick(node, SUGGESTIONS[s]));
     }
     emptyInner.appendChild(suggest);
     empty.appendChild(emptyInner);
-    host.appendChild(empty);
+    centre.appendChild(empty);
+
+    /* THE CONNECT SHEET. In the card's place, not over it: a title, one line,
+       the command with its Copy inside, the hint, a status line that reads
+       the roster, and the way back. */
+    var sheet = dom.el('div', 'agent-connect');
+    sheet.hidden = true;
+    sheet.appendChild(dom.el('p', 'agent-connect-title', COPY.connectTitle));
+    sheet.appendChild(dom.el('p', 'agent-connect-line', COPY.connectLine));
+    var block = dom.el('div', 'connection-block');
+    var line = dom.el('code', 'connection-line');
+    var copy = button('chip connection-copy', 'Copy', 'Copy the command');
+    block.appendChild(line);
+    block.appendChild(copy);
+    sheet.appendChild(block);
+    sheet.appendChild(dom.el('p', 'agent-connect-hint', COPY.connectHint));
+    var connectStatus = dom.el('div', 'status-line agent-connect-status');
+    connectStatus.appendChild(dom.el('span', 'status-dot'));
+    var connectVerb = dom.el('span', 'status-verb', COPY.waiting);
+    connectStatus.appendChild(connectVerb);
+    sheet.appendChild(connectStatus);
+    var back = button('btn btn-ghost btn-sm agent-connect-back', 'Back');
+    sheet.appendChild(back);
+    centre.appendChild(sheet);
+    host.appendChild(centre);
 
     var list = dom.el('div', 'transcript');
     list.setAttribute('role', 'log');
     list.setAttribute('aria-live', 'polite');
     host.appendChild(list);
 
-    /* The turn bar sits above the composer rather than in the transcript, so
-       it is in the same place every time and a scrolled-back reader still has
-       it. It is text and one dot: no control, nothing that decides anything. */
+    /* The turn bar is text and one dot: no control, nothing that decides
+       anything. Heard and not seen (agent.css clips it): the seat light says
+       the same words with the same clock. */
     var turnBar = dom.el('div', 'turn-bar');
     turnBar.setAttribute('role', 'status');
     turnBar.setAttribute('aria-live', 'polite');
@@ -518,24 +628,25 @@
     turnBar.appendChild(dom.el('span', 'turn-time'));
     turnBar.hidden = true;
 
-    /* THE COMPOSER. One field on the column's own ground under a hairline,
-       no box around the box: the textarea is bare and grows to six lines, and
-       the one control is a round arrow inside the field that is grey until
-       there is something to send. The line that used to sit under it saying
-       "Start your assistant to talk to it." is the placeholder now, so the
-       box says why it is quiet in the place a person looks for words. */
+    /* THE COMPOSER. One pill on a raised ground, a hairline that turns ink
+       on focus, the textarea bare inside it growing to six lines, and one
+       round ink button at the right: the send arrow, which becomes a stop
+       square while an answer is running. Enter sends. */
     var composer = dom.el('form', 'agent-composer');
     var field = dom.el('div', 'composer-field');
     var input = dom.el('textarea', 'input composer-input');
     input.rows = 1;
     input.placeholder = PLACEHOLDER_OFF;
     input.autocomplete = 'off';
+    input.setAttribute('aria-label', 'Message to your assistant');
     var send = dom.el('button', 'composer-send');
     send.type = 'submit';
     send.setAttribute('aria-label', 'Send');
     send.title = 'Send';
-    var arrow = glyph(GLYPH_ARROW_UP, 'composer-send-glyph');
-    if (arrow) send.appendChild(arrow);
+    var sendGlyph = icon('send', GLYPH_SEND, 'composer-send-glyph');
+    if (sendGlyph) send.appendChild(sendGlyph);
+    var stopGlyph = icon('stop', GLYPH_STOP, 'composer-stop-glyph');
+    if (stopGlyph) send.appendChild(stopGlyph);
     field.appendChild(input);
     field.appendChild(send);
     composer.appendChild(field);
@@ -552,20 +663,23 @@
       field: field,
       start: start,
       startBig: startBig,
-      stopAnswer: stopAnswer,
       stopAgent: stopAgent,
       connect: connectBtn,
-      connectBlock: connectBlock,
-      detail: detailLine,
+      note: note,
+      noteText: noteText,
+      retry: retry,
       empty: empty,
       emptyInner: emptyInner,
+      sheet: sheet,
       list: list,
       composer: composer,
       input: input,
       send: send,
       line: line,
-      row: row,
       copy: copy,
+      back: back,
+      connectVerb: connectVerb,
+      connectStatus: connectStatus,
       clients: clients,
       turnBar: turnBar,
       turnDot: turnBar.children[0],
@@ -574,19 +688,18 @@
       emptySeat: emptySeat,
       emptyTitle: emptyTitle,
       emptyNote: emptyNote,
-      emptyActions: emptyActions
+      emptyActions: emptyActions,
+      rule: rule,
+      suggest: suggest
     };
 
     dom.on(start, 'click', function () { doStart(node, start); });
     dom.on(startBig, 'click', function () { doStart(node, startBig); });
-    dom.on(stopAnswer, 'click', function () { doStop('interrupt', node); });
+    dom.on(retry, 'click', function () { doStart(node, retry); });
     dom.on(stopAgent, 'click', function () { doStop('stop', node); });
     dom.on(copy, 'click', function () { copyLine(node); });
-    dom.on(connectBtn, 'click', function () {
-      var open = connectBlock.hidden;
-      dom.setHidden(connectBlock, !open);
-      dom.setAttr(emptyInner, 'data-connect', open ? 'true' : null);
-    });
+    dom.on(connectBtn, 'click', function () { setView('connect'); });
+    dom.on(back, 'click', function () { setView('card'); });
 
     /* Enter sends and Shift+Enter breaks the line, which is the shape every
        chat box has. Nothing animates on the keyboard path: a person who has
@@ -596,14 +709,18 @@
       event.preventDefault();
       submit(node);
     });
+    /* The one button does two things and the form knows which: while an
+       answer is running it is Stop, and a submit then is an interrupt. */
     dom.on(composer, 'submit', function (event) {
       event.preventDefault();
+      if (phase === 'working') {
+        doStop('interrupt', node);
+        return;
+      }
       submit(node);
     });
-    /* The box has always been described as growing and never did: it was one
-       row of a textarea and a paragraph scrolled inside it. The arrow arms on
-       the same event, because "there is something to send" is a fact about
-       the text and not about the phase. */
+    /* The arrow arms on the same event the box grows on, because "there is
+       something to send" is a fact about the text and not about the phase. */
     dom.on(input, 'input', function () {
       autogrow(input);
       arm(node);
@@ -618,16 +735,21 @@
     dom.setAttr(node.refs.field, 'data-armed', text ? 'true' : null);
   }
 
+  function setView(next) {
+    if (next === 'connect' && !canStart()) return;
+    if (next === view) return;
+    view = next;
+    renderAll();
+  }
+
   /* A SUGGESTION IS A QUESTION, SO PRESSING ONE ASKS IT.
 
      On a live column it goes straight out. On a column with nobody at the
-     wheel it used to land in a box the column keeps disabled, where it sat
-     as grey text over the placeholder that had just explained why the box
-     was quiet. So it starts the assistant instead, through the same door
-     the Start button uses, with the words waiting in the box, and sends them
-     the moment the seat reports ready. A start that fails leaves the words
-     where they are and lets the card say what went wrong; nothing sends,
-     and the next press is the person's. */
+     wheel it starts the assistant, through the same door the Start button
+     uses, with the words waiting in the box, and sends them the moment the
+     seat reports ready. A start that fails leaves the words where they are
+     and lets the status line say what went wrong; nothing sends, and the
+     next press is the person's. */
   var queued = null;
 
   function suggestClick(node, text) {
@@ -706,41 +828,50 @@
     });
   }
 
-  function doStart(node, button) {
+  function doStart(node, btn) {
     /* Starting over gives the app a new chat with a new id, so the column has
        to forget the one it was following or it filters out its own agent. */
     chatId = null;
-    setPhase('starting', 'starting', 'Starting your assistant.');
-    window.PhosphorShell.setPending(button, true, 'Starting');
+    failure = null;
+    setPhase('starting', 'starting');
+    window.PhosphorShell.setPending(btn, true, 'Starting');
     api.driver({ action: 'start', chat: '' })
       .catch(function (err) {
-        setPhase('error', 'failed', net.readable(err));
+        fail(net.readable(err), '');
       })
       .finally(function () {
-        window.PhosphorShell.setPending(button, false);
+        window.PhosphorShell.setPending(btn, false);
       });
   }
 
   function doStop(action, node) {
-    var button = action === 'stop' ? node.refs.stopAgent : node.refs.stopAnswer;
-    window.PhosphorShell.setPending(button, true, action === 'stop' ? 'Turning off' : 'Stopping');
+    var btn = action === 'stop' ? node.refs.stopAgent : node.refs.send;
+    window.PhosphorShell.setPending(btn, true, action === 'stop' ? 'Turning off' : 'Stopping');
     api.driver({ action: action, chat: '' })
       .catch(function (err) {
         window.PhosphorToast.show(net.readable(err), 'down');
       })
       .finally(function () {
-        window.PhosphorShell.setPending(button, false);
+        window.PhosphorShell.setPending(btn, false);
       });
+  }
+
+  /* A start that did not happen, in the window's own words: the reason the
+     driver gave, or the one the window found out for itself. */
+  function fail(reason, detail) {
+    failure = { reason: reason || COPY.failedUnsaid, detail: detail || '' };
+    setPhase('error', 'failed');
   }
 
   function copyLine(node) {
     var value = node.refs.line.textContent;
     if (!value) return;
+    var label = node.refs.copy.querySelector('.btn-label');
     var done = function () {
-      dom.setText(node.refs.copy.querySelector('.btn-label'), 'Copied');
+      dom.setText(label, 'Copied');
       window.setTimeout(function () {
-        dom.setText(node.refs.copy.querySelector('.btn-label'), 'Copy');
-      }, 1600);
+        dom.setText(label, 'Copy');
+      }, 1500);
     };
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(value).then(done).catch(function () { /* the line is on screen to read */ });
@@ -758,6 +889,15 @@
     if (blocks.length > TRANSCRIPT_CAP) blocks.splice(0, blocks.length - TRANSCRIPT_CAP);
     renderAll();
     return block;
+  }
+
+  /* A note from the child's own stderr is kept, quietly, and it does not make
+     a conversation: the card stays until somebody has actually said something. */
+  function hasConversation() {
+    for (var i = 0; i < blocks.length; i += 1) {
+      if (blocks[i].type !== 'note') return true;
+    }
+    return false;
   }
 
   function said(text, state) {
@@ -795,13 +935,10 @@
     renderAll();
   }
 
-  /* WHAT THE BAR SAYS, and what it deliberately does not.
-
-     It named the open tool call at first, and that was wrong: the step row
-     directly above it already names the call and times it, so the two lines
-     said the same thing one under the other. The bar carries what the
-     transcript cannot, which is the state of the TURN. The step rows answer
-     "on what", this answers "still going, and for how long". */
+  /* WHAT THE BAR SAYS, and what it deliberately does not. The step row
+     already names the call and times it, so the bar carries what the
+     transcript cannot, which is the state of the TURN: "still going, and for
+     how long". */
   function turnLine() {
     if (!turn) return '';
     if (turn.state === 'writing') return 'writing the answer';
@@ -823,6 +960,7 @@
       name: name,
       label: toolLabel(name),
       args: argsLabel(input),
+      input: scalarArgs(input),
       leaves: leavesMachine(name),
       state: 'live',
       startedAt: at,
@@ -900,8 +1038,28 @@
   var STARTING_FLOOR_MS = 450;
   var startingAt = 0;
   var floorTimer = 0;
+  var startTimer = 0;
 
-  function setPhase(next, word, note) {
+  function clearStartWatch() {
+    if (!startTimer) return;
+    window.clearTimeout(startTimer);
+    startTimer = 0;
+  }
+
+  /* Armed whenever the column enters starting, from a click here or from a
+     frame the app sent, and disarmed by the first thing that proves the start
+     is alive: a phase change, or any event of the conversation. */
+  function armStartWatch() {
+    clearStartWatch();
+    startTimer = window.setTimeout(function () {
+      startTimer = 0;
+      if (phase !== 'starting') return;
+      fail(COPY.noAnswer, '');
+    }, START_TIMEOUT_MS);
+  }
+
+  function setPhase(next, word) {
+    if (next !== 'starting') clearStartWatch();
     if (floorTimer) {
       window.clearTimeout(floorTimer);
       floorTimer = 0;
@@ -911,16 +1069,19 @@
       if (waited < STARTING_FLOOR_MS) {
         floorTimer = window.setTimeout(function () {
           floorTimer = 0;
-          applyPhase(next, word, note);
+          applyPhase(next, word);
         }, STARTING_FLOOR_MS - waited);
         return;
       }
     }
-    if (next === 'starting' && phase !== 'starting') startingAt = Date.now();
-    applyPhase(next, word, note);
+    if (next === 'starting' && phase !== 'starting') {
+      startingAt = Date.now();
+      armStartWatch();
+    }
+    applyPhase(next, word);
   }
 
-  function applyPhase(next, word, note) {
+  function applyPhase(next, word) {
     var changed = phase !== next;
     /* Coming up and then arriving is the one transition a person was watching,
        so it is the one that hands them the caret. Keyed on `starting` rather
@@ -930,7 +1091,9 @@
     var settled = phase === 'working' && next !== 'working';
     phase = next;
     if (word) serverWord = word;
-    detail = note || '';
+    /* The sheet belongs to nobody being at the wheel. Somebody arriving, or
+       on the way, closes it. */
+    if (!canStart()) view = 'card';
     renderAll();
     if (arrived) focusComposer();
     if (arrived) sendQueued();
@@ -974,7 +1137,7 @@
   function announceStep(step, dot) {
     if (typeof CustomEvent !== 'function' || typeof window.dispatchEvent !== 'function') return;
     window.dispatchEvent(new CustomEvent('phosphor:step', {
-      detail: { id: step.id, name: step.name, state: step.state, node: dot }
+      detail: { id: step.id, name: step.name, state: step.state, node: dot, input: step.input }
     }));
   }
 
@@ -1007,25 +1170,28 @@
     dom.setHidden(refs.elapsed, !since);
     if (since) dom.setText(refs.elapsed, secondsText(now - since));
 
-    var empty = blocks.length === 0;
-    /* The empty state already asks once, in the middle of the column, and two
-       Start buttons on one screen is the window asking twice. The head's copy
-       takes over the moment there is a transcript to keep company. */
-    dom.setHidden(refs.start, empty || (phase !== 'idle' && phase !== 'error'));
-    dom.setHidden(refs.stopAnswer, phase !== 'working');
+    var empty = !hasConversation();
+    var failed = failure !== null && canStart();
+
+    /* The failure line and its Retry. While it is up it is the one way to
+       start again, so the head's Start stays out of its way. */
+    dom.setHidden(refs.note, !failed);
+    dom.setText(refs.noteText, failed ? failure.reason : '');
+    dom.setAttr(refs.note, 'title', failed && failure.detail ? failure.detail : null);
+    dom.setAttr(refs.status, 'data-failed', failed ? 'true' : null);
+
+    /* The card already asks once, in the middle of the column, and two Start
+       buttons on one screen is the window asking twice. The head's copy takes
+       over the moment there is a transcript to keep company. */
+    dom.setHidden(refs.start, empty || failed || !canStart());
     dom.setHidden(refs.stopAgent, !canTalk());
 
-    dom.setHidden(refs.empty, !empty);
+    var sheet = view === 'connect' && empty && canStart();
+    dom.setHidden(refs.sheet, !sheet);
+    dom.setHidden(refs.empty, !empty || sheet);
     dom.setHidden(refs.list, empty);
-    if (empty) renderEmpty(node);
-
-    var note = detail;
-    if (!note && phase === 'starting') note = 'Starting your assistant.';
-    dom.setText(refs.detail, note);
-    /* One place says it. The empty card carries the same sentence in the middle
-       of the column and larger, so printing it under the head as well was the
-       window telling somebody twice. */
-    dom.setHidden(refs.detail, !note || empty);
+    if (empty && !sheet) renderEmpty(node);
+    if (sheet) renderSheet(node);
 
     /* The composer is present in every phase and says why it cannot be used,
        because a box that vanishes teaches nothing about how to get it back. */
@@ -1033,6 +1199,10 @@
     refs.send.disabled = !canTalk();
     refs.input.placeholder = canTalk() ? PLACEHOLDER_ON
       : (phase === 'starting' ? PLACEHOLDER_STARTING : PLACEHOLDER_OFF);
+    var stopping = phase === 'working';
+    dom.setAttr(refs.field, 'data-mode', stopping ? 'stop' : null);
+    dom.setAttr(refs.send, 'aria-label', stopping ? 'Stop this answer' : 'Send');
+    refs.send.title = stopping ? 'Stop this answer' : 'Send';
     arm(node);
 
     dom.setHidden(refs.turnBar, !turn);
@@ -1050,18 +1220,15 @@
        A button that reveals an empty block is worse than no button. */
     dom.setText(refs.line, connection.command || '');
     dom.setHidden(refs.connect, !connection.command);
-    if (!connection.command) {
-      dom.setHidden(refs.connectBlock, true);
-      dom.setAttr(refs.emptyInner, 'data-connect', null);
-    }
 
-    dom.reconcile(refs.clients, connection.connected || [], function (client, i) {
+    /* Somebody else's agents, while the built-in one is off. */
+    dom.reconcile(refs.clients, ownAgents(), function (client, i) {
       return client.name + ':' + i;
     }, function () {
-      var row = dom.el('div', 'hstack-2 agent-client');
+      var row = dom.el('div', 'agent-client');
       row.appendChild(dom.el('span', 'dot'));
-      row.appendChild(dom.el('span', 'meta grow truncate'));
-      row.appendChild(dom.el('span', 'meta mono'));
+      row.appendChild(dom.el('span', 'agent-client-name'));
+      row.appendChild(dom.el('span', 'agent-client-calls mono'));
       return row;
     }, function (row, client) {
       var kids = row.children;
@@ -1072,38 +1239,42 @@
 
   /* No, coming, and yes. The seat carries the state as an attribute so the
      stylesheet draws the light, and the two buttons are present only in the one
-     state where pressing them means anything.
-
-     The connected copy names the first thing that has to happen rather than
-     congratulating anybody: an agent nobody has spoken to has not attached its
-     tools yet, because Claude Code does not emit its init event until a turn
-     arrives. Saying so is the difference between a screen that is friendly and
-     one that is true. */
+     state where pressing them means anything. A failed start is the off card
+     with the mark in the down tone: the reason and the Retry are in the head,
+     so the card offers only the other way in. */
   function renderEmpty(node) {
     var refs = node.refs;
-    var seat = phase === 'connected' || phase === 'working' ? 'live'
+    var seat = canTalk() ? 'live'
       : (phase === 'starting' ? 'coming' : (phase === 'error' ? 'error' : 'off'));
-    if (seat === 'live' && serverWord === 'stopped') seat = 'off';
-    dom.setAttr(refs.emptySeat, 'data-seat', seat);
+    var own = ownAgents().length > 0;
+    dom.setAttr(refs.emptySeat, 'data-seat', seat === 'off' && own ? 'own' : seat);
 
     if (seat === 'live') {
-      dom.setText(refs.emptyTitle, 'Your assistant is at the wheel.');
-      dom.setText(refs.emptyNote, 'Tell it what to do. It picks up your wallet, the policy and the chart on your first message.');
+      dom.setText(refs.emptyTitle, COPY.liveTitle);
+      dom.setText(refs.emptyNote, COPY.liveLine);
     } else if (seat === 'coming') {
-      dom.setText(refs.emptyTitle, 'Taking the wheel.');
-      dom.setText(refs.emptyNote, detail || 'Starting your assistant.');
-    } else if (seat === 'error') {
-      dom.setText(refs.emptyTitle, 'It could not start.');
-      dom.setText(refs.emptyNote, detail || 'The assistant did not come up. Try again, or connect one you already use.');
+      dom.setText(refs.emptyTitle, COPY.comingTitle);
+      dom.setText(refs.emptyNote, COPY.comingLine);
+    } else if (own) {
+      dom.setText(refs.emptyTitle, COPY.ownTitle);
+      dom.setText(refs.emptyNote, COPY.ownLine);
     } else {
-      dom.setText(refs.emptyTitle, 'Nobody is at the wheel.');
-      dom.setText(refs.emptyNote, 'Start your assistant, or connect one you already use.');
+      dom.setText(refs.emptyTitle, COPY.offTitle);
+      dom.setText(refs.emptyNote, COPY.offLine);
     }
 
     /* Offering Start to somebody whose agent is already running is the window
        asking a question it knows the answer to, and it was the whole reason
        pressing the button looked like it did nothing. */
-    dom.setHidden(refs.emptyActions, seat === 'live' || seat === 'coming');
+    dom.setHidden(refs.emptyActions, !canStart());
+    dom.setHidden(refs.startBig, phase === 'error');
+  }
+
+  function renderSheet(node) {
+    var refs = node.refs;
+    var attached = ownAgents().length > 0;
+    dom.setAttr(refs.connectStatus, 'data-state', attached ? 'connected' : 'waiting');
+    dom.setText(refs.connectVerb, attached ? COPY.connected : COPY.waiting);
   }
 
   /* The caret lands in the box the moment the box can take a message. It is the
@@ -1134,15 +1305,24 @@
     });
   }
 
-  /* One bordered card in the transcript's measure: the coin that left, the
+  /* One card in the transcript, full width: the coin that left, the
      headline, the line of what arrived and what it cost, and under them the
      id with its Copy. Built once, from the receipt, and never updated: a
      receipt is a record. */
   function createReceiptCard(receipt) {
+    var shared = window.PhosphorReceipt;
+    if (shared && typeof shared.card === 'function') {
+      var made = shared.card(receipt);
+      if (made) return made;
+    }
     var card = dom.el('div', 'panel receipt-card enter');
     var line = dom.el('div', 'tx');
     var marks = window.PhosphorMarks;
-    var mark = receipt.symbol && marks && typeof marks.disc === 'function' ? marks.disc(receipt.symbol) : null;
+    var mark = null;
+    if (receipt.symbol && marks) {
+      if (typeof marks.logo === 'function') mark = marks.logo(receipt.symbol, 24);
+      else if (typeof marks.disc === 'function') mark = marks.disc(receipt.symbol);
+    }
     line.appendChild(mark || dom.el('span', 'tx-mark'));
     line.appendChild(dom.el('span', 'tx-title', receipt.headline || receipt.summary || 'Something moved.'));
     line.appendChild(dom.el('span', 'tx-when', receiptLine(receipt)));
@@ -1165,10 +1345,8 @@
         id.rel = 'noreferrer noopener';
       }
       row.appendChild(id);
-      var copy = dom.el('button', 'btn btn-quiet btn-sm');
-      copy.type = 'button';
-      var copyLabel = dom.el('span', 'btn-label', 'Copy');
-      copy.appendChild(copyLabel);
+      var copy = button('chip', 'Copy');
+      var copyLabel = copy.querySelector('.btn-label');
       row.appendChild(copy);
       card.appendChild(row);
       dom.on(copy, 'click', function () { copyHash(hash, copyLabel); });
@@ -1180,12 +1358,15 @@
     if (!(navigator.clipboard && navigator.clipboard.writeText)) return;
     navigator.clipboard.writeText(hash).then(function () {
       dom.setText(label, 'Copied');
-      window.setTimeout(function () { dom.setText(label, 'Copy'); }, 1600);
+      window.setTimeout(function () { dom.setText(label, 'Copy'); }, 1500);
     }).catch(function () { /* the id is on screen to read */ });
   }
 
   function createBlock(block) {
     if (block.type === 'receipt') return createReceiptCard(block.receipt);
+    /* A card somebody else built (the receipt popover posting itself into the
+       thread). It is an element already, and the column only places it. */
+    if (block.type === 'card') return block.node;
     if (block.type === 'steps') {
       var wrap = dom.el('div', 'steps-block');
       var fold = dom.el('button', 'steps-fold');
@@ -1202,18 +1383,19 @@
       return wrap;
     }
     var kind = block.type === 'said' ? 'chat-said'
-      : (block.type === 'error' ? 'chat-error' : 'chat-reply');
+      : (block.type === 'error' ? 'chat-error'
+        : (block.type === 'note' ? 'chat-note' : 'chat-reply'));
     var chat = dom.el('div', 'chat-row ' + kind);
     chat.appendChild(dom.el('span', 'chat-who'));
-    /* A reply is rendered, the two others are set as text. The renderer is
-       the one place a reply's shape is decided, and it builds elements and
-       sets strings: nothing a model writes reaches the DOM as markup. */
+    /* A reply is rendered, the others are set as text. The renderer is the
+       one place a reply's shape is decided, and it builds elements and sets
+       strings: nothing a model writes reaches the DOM as markup. */
     chat.appendChild(dom.el('div', block.type === 'reply' ? 'chat-text md' : 'chat-text'));
     return chat;
   }
 
   function updateBlock(node, row, block, now, primary) {
-    if (block.type === 'receipt') return;
+    if (block.type === 'receipt' || block.type === 'card') return;
     if (block.type === 'steps') {
       updateSteps(node, row, block, now, primary);
       return;
@@ -1221,20 +1403,24 @@
     var who = row.children[0];
     var text = row.children[1];
     if (block.type === 'said') {
-      /* Three words for three states, and the row only says one of them out
-         loud. A delivered message needs no label: it is the normal case and
-         labelling it would put a receipt under every line a person types. */
-      dom.setText(who, block.state === 'failed' ? 'you, not sent' : 'you');
+      /* The bubble sits on the right, so it needs no name. The one thing
+         worth a label is a message the app never took. */
+      dom.setText(who, block.state === 'failed' ? 'Not sent' : 'You');
       dom.setText(text, block.text);
       dom.setAttr(row, 'data-state', block.state || 'sent');
       return;
     }
     if (block.type === 'error') {
-      dom.setText(who, 'stopped');
+      dom.setText(who, 'The app');
       dom.setText(text, block.text);
       return;
     }
-    dom.setText(who, 'assistant');
+    if (block.type === 'note') {
+      dom.setText(who, 'Note');
+      dom.setText(text, block.text);
+      return;
+    }
+    dom.setText(who, 'Assistant');
     renderReply(text, block.text);
   }
 
@@ -1327,8 +1513,11 @@
 
   /* ---------- wiring ---------- */
 
+  /* Off and stopped are both nobody at the wheel. The composer used to stay
+     open after Turn off because stopped read as connected, and the first
+     message into it came back "not sent". */
   function mapState(word) {
-    if (word === 'off' || !word) return 'idle';
+    if (word === 'off' || word === 'stopped' || !word) return 'idle';
     if (word === 'booting' || word === 'starting') return 'starting';
     if (word === 'working' || word === 'thinking') return 'working';
     if (word === 'error' || word === 'failed') return 'error';
@@ -1350,9 +1539,21 @@
         endTurn();
         turn = null;
       }
-      setPhase(next, event.state, event.detail || '');
+      /* The reason travels on the frame in plain words (src/driver.ts). A
+         failed start always has one; an exit the person did not ask for has
+         one; a stop they asked for has none and clears nothing but the seat. */
+      if (next === 'error') {
+        failure = { reason: event.reason || COPY.failedUnsaid, detail: event.detail || '' };
+      } else if (next === 'idle' && event.reason) {
+        failure = { reason: event.reason, detail: event.detail || '' };
+      } else if (next === 'starting' || next === 'connected' || next === 'working') {
+        failure = null;
+      }
+      setPhase(next, event.state);
       return;
     }
+    /* Anything the conversation does is proof the start is alive. */
+    clearStartWatch();
     if (event.kind === 'said') {
       if (replay) {
         openSteps = null;
@@ -1406,7 +1607,12 @@
     }
     if (event.kind === 'error') {
       turn = null;
-      pushBlock({ type: 'error', text: event.message });
+      /* The technical line of a failure the status frame already named in
+         words. The head carries the reason; printing the driver's own string
+         under it as a row is the thing that used to bury the card. Everything
+         else on this channel is the child's stderr, kept as a quiet note. */
+      if (failure && failure.detail && failure.detail === String(event.message)) return;
+      pushBlock({ type: 'note', text: event.message });
       return;
     }
   }
@@ -1448,6 +1654,18 @@
     }
   }
 
+  /* A receipt opened anywhere in the window (an Activity row, a Done fill)
+     posts the same card into the thread, as a message from the app. */
+  function onReceiptOpen(payload) {
+    var receipt = payload && payload.receipt;
+    if (!receipt || typeof receipt !== 'object') return;
+    var shared = window.PhosphorReceipt;
+    var card = shared && typeof shared.card === 'function' ? shared.card(receipt) : null;
+    openSteps = null;
+    if (card) pushBlock({ type: 'card', node: card });
+    else pushBlock({ type: 'receipt', receipt: receipt });
+  }
+
   /* A finished turn folds to one line. Any step still open when the turn ended
      is closed rather than left ticking: the answer arrived, so the call did. */
   function endTurn() {
@@ -1467,6 +1685,23 @@
     openSteps = null;
   }
 
+  /* The roster, as the state frame carries it: the clients attached over
+     MCP, named by themselves. Text, never markup. */
+  function onAgents(slice) {
+    var members = slice && Array.isArray(slice.members) ? slice.members : [];
+    var next = [];
+    for (var i = 0; i < members.length; i += 1) {
+      var m = members[i] || {};
+      next.push({
+        name: String(m.client || m.label || m.session || 'an agent'),
+        role: String(m.role || ''),
+        calls: typeof m.ops === 'number' ? m.ops : 0
+      });
+    }
+    roster = next;
+    renderAll();
+  }
+
   function start() {
     events.on('driver', function (frame) {
       var event = frame && frame.event;
@@ -1483,6 +1718,8 @@
       ingest(event, false);
     });
 
+    if (typeof events.on === 'function') events.on('receipt:open', onReceiptOpen);
+
     api.driverState().then(function (result) {
       var data = result.data || {};
       var chat = (data.chats && data.chats[0]) || {};
@@ -1498,12 +1735,12 @@
 
     api.connection().then(function (data) {
       if (!data || data.missing) return;
-      connection = {
-        command: typeof data.command === 'string' ? data.command : '',
-        connected: Array.isArray(data.connected) ? data.connected : []
-      };
+      connection = { command: typeof data.command === 'string' ? data.command : '' };
       renderAll();
-    }).catch(function () { /* the block hides its line when there is none */ });
+    }).catch(function () { /* the sheet hides its offer when there is none */ });
+
+    var store = window.PhosphorState;
+    if (store && typeof store.select === 'function') store.select('agents', onAgents);
 
     /* The receipts, read once now to learn what already happened and then on
        every transactions frame (ui/screens/receipts.js), so a move that lands
