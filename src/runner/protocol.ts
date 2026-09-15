@@ -47,7 +47,11 @@ export type FromChild =
   | { ev: 'flat'; seq: number; stillOpen: string[]; detail: string }
   | { ev: 'released'; seq: number; id: string }
   | { ev: 'refused'; seq: number; id: string | null; reason: string }
-  | { ev: 'error'; seq: number; id: string | null; message: string };
+  // `ambiguous` marks an error the venue may or may not have acted on: a transport throw, a 5xx,
+  // a 429, a timeout. The host treats it as placed rather than failed, so a bracket the venue is
+  // holding is never abandoned to a second fire; the account feed settles it. Absent means a
+  // definite failure (a rejection the venue answered, a plan the child does not hold).
+  | { ev: 'error'; seq: number; id: string | null; message: string; ambiguous?: boolean };
 
 // A command as the host writes it, before the sequence number is stamped on. Distributed over
 // the union by hand: Omit on a union keeps only the keys every member shares.

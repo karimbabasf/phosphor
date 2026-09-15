@@ -20,6 +20,7 @@ import {
   cloidFor,
   createExchange,
   defaultTransport,
+  isAmbiguousVenue,
   orderErrors,
   stopLimitPx,
 } from '../hl/exchange.ts';
@@ -327,6 +328,12 @@ async function fire(m: Extract<ToChild, { cmd: 'fire' }>): Promise<FromChild> {
     const filledSz = first !== undefined && typeof first !== 'string' && first.filled !== undefined ? Number(first.filled.totalSz) : 0;
     const avgPx = first !== undefined && typeof first !== 'string' && first.filled !== undefined ? Number(first.filled.avgPx) : null;
     if (refused.length > 0 && filledSz <= 0) {
+      // A 5xx or a 429 from the venue is not a clean rejection: the venue took the request and
+      // may hold the bracket. Answer ambiguous and KEEP h.fired, so the host treats it as placed
+      // and the account feed settles it, rather than a second fire on top of a live order (F8).
+      if (isAmbiguousVenue(res)) {
+        return { ev: 'error', seq: m.seq, id: m.id, message: `the venue did not give a clear answer to the bracket: ${refused.join('; ')}`, ambiguous: true };
+      }
       h.fired = false;
       return { ev: 'refused', seq: m.seq, id: m.id, reason: `the venue refused the bracket: ${refused.join('; ')}` };
     }
@@ -534,11 +541,16 @@ process.on('message', (raw: unknown) => {
       const out = await handle(m);
       if (out !== null) send(out);
     } catch (err) {
+      // A transport throw (a timeout, a reset, a refused socket) is ambiguous: the request may
+      // have reached the venue. h.fired was set before the await and is left true, so the host
+      // treats the plan as placed rather than firing it again (F8). Anything else is a plain bug
+      // and stays a definite error.
       send({
         ev: 'error',
         seq: m.seq,
         id: 'id' in m ? m.id : null,
         message: `runner command ${String(m.cmd)} failed: ${err instanceof Error ? err.message : String(err)}`,
+        ...(isAmbiguousVenue(err) ? { ambiguous: true } : {}),
       });
     }
   });

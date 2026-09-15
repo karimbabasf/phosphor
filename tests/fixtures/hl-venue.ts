@@ -30,12 +30,21 @@ export function venue() {
     // and a trigger rest.
     answer: null as null | ((orders: Wire[]) => unknown[]),
     cancelAnswer: null as null | ((cancels: unknown[]) => unknown[]),
+    // The HTTP status the next /exchange POST gets, then cleared. A test sets it to 502 or 429
+    // to stand in for the venue failing after the request reached it.
+    exchangeStatus: null as null | number,
   };
   const server = http.createServer((req, res) => {
     state.arrivals.push({ path: req.url ?? '', at: performance.now() });
     let body = '';
     req.on('data', (c) => (body += c));
     req.on('end', () => {
+      if (req.url === '/exchange' && state.exchangeStatus !== null) {
+        const code = state.exchangeStatus;
+        state.exchangeStatus = null;
+        res.writeHead(code, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ error: `the venue is having a bad time (${code})` }));
+      }
       const json = JSON.parse(body || '{}') as Record<string, unknown>;
       res.writeHead(200, { 'content-type': 'application/json' });
       if (req.url === '/info') {
