@@ -215,3 +215,50 @@ and the key that signs it was made behind the Secure Enclave of this Mac and has
   decodes to the derived address, approve a proposal and see the dialog.
 - Penetration test: independent agents attack the built branch (local process, malicious
   page, malicious agent, crypto review) and every finding is fixed or listed.
+
+## 9. Decisions after the review (2026-09-14, five independent passes)
+
+Three agents attacked the design above (an attacker, two users, a skeptic buyer) and two mapped
+the code and the field. What changed:
+
+1. **Deposit-in, unanimously.** Both users and the skeptic land on it: the beginner never sees a
+   text field for a string they do not have, and the whale trusts a wallet they can check (the
+   phrase's derivation paths match Phantom, the card's address comes from a Touch ID open, a test
+   deposit lands) more than one they pasted into a hot app. Import stays as Restore only.
+2. **Backup is proven, not shown.** "Backed up" clears only after the person types three of the
+   24 words back (the existing first-run Prove step stays). The reveal has Print and no Copy. The
+   agent's `start` and `wallet` tools return `backedUp`, so it can say "you have money in and no
+   backup" once there is a balance. The first deposit that lands opens the backup card.
+3. **Restore has to work on a Mac that cannot open the file.** A version 2 file made on another
+   Mac boots to "Made on another Mac: restore from your recovery phrase", never to Create. Restore
+   is refused only while the current wallet is not proven backed up AND the phrase derives
+   different addresses AND this Mac can open the file. Restore takes 12 or 24 words.
+4. **Deposit is chain-first.** The `deposit` tool takes `{asset, chain}`; the refusal lists what
+   is accepted; the card names the network in the exchange's words ("on Coinbase choose
+   Solana"); the watcher runs until landed or 24 hours, not while the card is open.
+5. **The Connect-your-assistant step stays** after Create. Home shows whether an agent is attached.
+6. **The dialog says Phosphor.** The sidecar carries an embedded Info.plist naming it, and the
+   reason always starts with "Phosphor:". When the app is signed with a Developer ID the enclave
+   key moves into the data-protection keychain, app-bound by code signature, so no other process
+   can even raise the dialog; ad-hoc signed, the key is device-bound only. The Vault tab shows
+   which of the two is live.
+
+What the review settled about the claim:
+
+- The enclave makes and keeps the P-256 lock key. The wallet keys (secp256k1, ed25519) are made
+  in the app from the phrase and are decrypted into the app's memory while the vault is open.
+  The Secure Enclave cannot sign those curves, and no Mac software wallet signs behind it.
+- `userPresence` means Touch ID, or Apple Watch, or the Mac login password. That password is now
+  a key to the vault and the Vault tab says so.
+- Armed Hyperliquid rules trade through a trading-only key that cannot withdraw but can lose.
+- An untrusted process running as the user, a poisoned dependency inside the backend, root, a
+  malicious signed update or coercion are not stopped by any of this.
+
+**The honest sentence:** Phosphor is a local hot wallet an agent can drive but never hold. The
+wallet file opens only on this Mac, through its Secure Enclave, after your Touch ID on a dialog
+that names the move, and the agent never sees a key.
+
+**The honest number:** safe for the working balance of a seven-figure stack, with the reserve in
+a hardware wallet or a Safe and the policy capping what Phosphor holds and where it can send.
+Not "a million dollars in one hot key". Before a bigger number: a Developer ID build with the
+enclave key app-bound in the keychain, and a third-party audit.
