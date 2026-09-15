@@ -252,6 +252,7 @@ fn open_control_window(app: &tauri::AppHandle, port: u16) -> Result<(), String> 
         .resizable(true)
         .maximized(true)
         .initialization_script(&script)
+        .on_new_window(|url, _features| open_in_browser(url))
         .build()
         .map_err(|e| format!("cannot open the control window: {e}"))?;
 
@@ -274,6 +275,22 @@ fn open_control_window(app: &tauri::AppHandle, port: u16) -> Result<(), String> 
         let _ = splash.close();
     }
     Ok(())
+}
+
+/// A link the page opens in a new window (target=_blank, window.open) goes to the system
+/// browser, and only there. Without this handler the webview silently drops the request, which
+/// is what the receipt card's "View on <explorer>" button hit before 2026-09-15. A second
+/// webview would be a second window onto the wallet with none of this shell's handshake, so
+/// every request is denied here and the https ones are handed to `open` first. Anything else
+/// (file:, javascript:, a custom scheme) is dropped: the page only ever opens explorer urls the
+/// backend built, and this is the last place that promise is checked.
+fn open_in_browser(url: tauri::Url) -> tauri::webview::NewWindowResponse<tauri::Wry> {
+    if url.scheme() == "https" {
+        // `open` takes the url as one argument with no shell in between, and an https url
+        // cannot start with a dash, so it cannot be read as an option.
+        let _ = std::process::Command::new("open").arg(url.as_str()).spawn();
+    }
+    tauri::webview::NewWindowResponse::Deny
 }
 
 /// What to do when the port already answers.
