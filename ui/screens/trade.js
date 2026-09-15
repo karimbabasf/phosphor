@@ -240,11 +240,11 @@
     row.appendChild(symbolControl());
     row.appendChild(venueChip());
 
-    /* THE PRICE. The venue's mark, 28 px mono. On a tick its digits flip to
+    /* THE PRICE. The venue's mark, 28 px Sora. On a tick its digits flip to
        the direction's colour and settle back to the text colour over 600 ms,
        and never a background flash: the digits are the price, the box is not.
        data-tick is set on change and cleared when the animation ends. */
-    var px = dom.el('span', 'px mono trade-mark-price');
+    var px = dom.el('span', 'px trade-mark-price');
     px.setAttribute('title', 'Mark price');
     dom.on(px, 'animationend', function () { dom.setAttr(px, 'data-tick', null); });
     row.appendChild(px);
@@ -286,7 +286,7 @@
   function stripStat(label, className) {
     var node = dom.el('div', 'strip-stat ' + className);
     node.appendChild(dom.el('span', 'strip-label', label));
-    var value = dom.el('span', 'strip-value mono', '--');
+    var value = dom.el('span', 'strip-value', '--');
     node.appendChild(value);
     return { node: node, value: value };
   }
