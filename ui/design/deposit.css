@@ -449,12 +449,25 @@
   letter-spacing: 0;
 }
 
+.addr-prefix {
+  color: var(--text-3);
+}
+
 .addr-end {
   color: var(--text);
 }
 
 .addr-mid {
   color: var(--text-2);
+}
+
+/* A NEAR account name is shown whole; a long implicit one wraps where the
+   room ends rather than being split into groups. */
+.addr-whole {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
 }
 
 .deposit-memo {
