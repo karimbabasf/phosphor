@@ -1,11 +1,12 @@
-/* Money in: which networks money can arrive on, one row each, and the way to
-   the deposit card that shows the address for one of them.
+/* Money in: the three steps of a deposit, run in place, and the way to the
+   recovery phrase under them.
 
-   The address itself is not drawn here. It is drawn once, on the deposit card,
-   after three checks (the wallet is open, the QR decodes back to the same
-   bytes, the clipboard reads back what was written), and a second copy of it
-   on this fold would be a copy without those checks. This fold names the
-   network in the words an exchange uses and hands over. */
+   The steps are ui/screens/netpick.js: the network, what it credits, the
+   address. This fold used to be five cards that each said "Credits USDC,
+   USDT, ..." and a button that opened the deposit card; the steps run here
+   now, in the fold, so a person picks a network and reads the address without
+   a dialog opening over the screen. The same component draws the wizard's
+   addresses step: basic.js and firstrun.js both call render(host). */
 (function () {
   'use strict';
 
@@ -16,9 +17,8 @@
 
   var loading = null;
 
-  /* Never cached across opens: the report carries `verified`, which flips when
-     the wallet opens, and a fold that remembered the locked answer would say
-     "unverified" over an address the enclave has since confirmed. */
+  /* The report, for anything that wants it whole. The steps read it through
+     the same route and the backend keeps it for a minute, so this is cheap. */
   function load() {
     if (loading) return loading;
     loading = api.intentsReceive().then(function (result) {
@@ -31,80 +31,19 @@
     return loading;
   }
 
-  function render(host) {
+  function render(host, options) {
+    var opts = options || {};
     dom.clear(host);
-    var pending = dom.el('div', 'stack');
-    for (var i = 0; i < 3; i += 1) {
-      var skel = dom.el('div', 'skel');
-      skel.style.height = '56px';
-      pending.appendChild(skel);
-    }
-    host.appendChild(pending);
+    var steps = dom.el('div', 'moneyin-steps');
+    host.appendChild(steps);
+    window.PhosphorNetPick.render(steps, { context: opts.context || 'basic' });
 
-    load().then(function (data) {
-      dom.clear(host);
-      if (!data || !Array.isArray(data.networks) || !data.networks.length) {
-        var empty = dom.el('div', 'empty');
-        empty.appendChild(dom.el('p', 'empty-title', 'No addresses yet'));
-        empty.appendChild(dom.el('p', '', data && data.reason
-          ? data.reason.charAt(0).toUpperCase() + data.reason.slice(1) + '.'
-          : 'This app has no wallet on this computer yet. Make one and your addresses appear here.'));
-        host.appendChild(empty);
-        return;
-      }
-
-      var lead = dom.el('p', 'body dim');
-      dom.setText(lead, 'Pick the network you are sending on. The card that opens shows the address, checks it, and watches for the money to land.');
-      host.appendChild(lead);
-
-      var list = dom.el('div', 'stack-2');
-      for (var i = 0; i < data.networks.length; i += 1) {
-        list.appendChild(networkRow(data.networks[i]));
-      }
-      host.appendChild(list);
-
-      var caution = dom.el('div', 'banner');
-      caution.dataset.tone = 'warn';
-      caution.appendChild(dom.el('span', '', 'Money sent on the wrong network is gone. This is not something anyone can undo.'));
-      host.appendChild(caution);
-
-      /* The words that are the only way back. On a password wallet they are
-         behind the password, here, every time. On an enclave wallet they are
-         behind Touch ID on the Vault tab, which also proves the backup. */
-      var state = store.get() || {};
-      var vault = state.vault || {};
-      host.appendChild(vault.custody === 'secure-enclave' ? vaultPointer() : keysBlock());
-    });
-  }
-
-  /* One network, one button. The asset the card opens on is the one an exchange
-     is most likely to send: USDC where the network credits it, else the first
-     thing it does credit. The card lets the person switch. */
-  function networkRow(network) {
-    var row = dom.el('div', 'network-row');
-    var left = dom.el('div', 'stack-2 grow');
-    left.appendChild(dom.el('p', 'title-sm', window.PhosphorDeposit.networkWords(network.id)));
-    var accepts = Array.isArray(network.accepts) ? network.accepts : [];
-    var symbols = accepts.map(function (a) { return a.symbol; });
-    if (network.unavailable) {
-      left.appendChild(dom.el('p', 'meta', 'Not available right now: ' + network.unavailable));
-    } else if (symbols.length) {
-      left.appendChild(dom.el('p', 'meta', 'Credits ' + symbols.join(', ') + '.'));
-    } else {
-      left.appendChild(dom.el('p', 'meta', 'Credits nothing right now.'));
-    }
-    row.appendChild(left);
-
-    var show = dom.el('button', 'btn btn-ghost');
-    show.type = 'button';
-    show.appendChild(dom.el('span', 'btn-label', 'Show address'));
-    show.disabled = !!network.unavailable || !network.address || !symbols.length;
-    row.appendChild(show);
-
-    dom.on(show, 'click', function () {
-      window.PhosphorDeposit.open({ chain: network.id, symbol: window.PhosphorDeposit.defaultSymbol(accepts) });
-    });
-    return row;
+    /* The words that are the only way back. On a password wallet they are
+       behind the password, here, every time. On an enclave wallet they are
+       behind Touch ID on the Vault tab, which also proves the backup. */
+    var state = store.get() || {};
+    var vault = state.vault || {};
+    host.appendChild(vault.custody === 'secure-enclave' ? vaultPointer() : keysBlock());
   }
 
   function vaultPointer() {

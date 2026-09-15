@@ -1,1 +1,571 @@
-/* Reserved for the first-run team; filled in on its own branch. */
+/* Money in: the network tiles, the token list and the address, wherever they
+   are drawn (the Money in fold, the wizard's addresses step, the Vault tab's
+   Addresses card, the deposit card). ui/screens/netpick.js builds them.
+
+   The one coloured thing in this app that is not a state is a brand mark, and
+   here the tiles borrow that licence for a moment: colourless at rest, so the
+   five read as one quiet choice, and the real network colour under the
+   pointer, so the one about to be picked is unmistakable. The colour never
+   lands on a number. */
+
+.netpick {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  /* Its own container, because it is drawn in four hosts of four widths (a
+     fold, a wizard card, a Vault card, the deposit card) and the address
+     layout answers to the room it has, not to the window. */
+  container-type: inline-size;
+}
+
+.netpick-stage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  min-width: 0;
+}
+
+.netpick-lead {
+  font-size: var(--fs-14);
+  line-height: 1.55;
+  color: var(--text-2);
+}
+
+/* ---------- step one: the network ---------- */
+
+.netpick-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: var(--s-2);
+}
+
+.net-tile {
+  --net: var(--text-2);
+  --net-accent: var(--net);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: 92px;
+  padding: var(--s-4) var(--s-2) var(--s-3);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--bg-1);
+  color: var(--text-2);
+  font-size: var(--fs-13);
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 200ms var(--ease-out),
+              background-color 200ms var(--ease-out),
+              color 200ms var(--ease-out),
+              transform var(--dur-press) var(--ease-out);
+}
+
+.net-tile-mark {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+}
+
+.net-tile .logo {
+  filter: grayscale(1);
+  opacity: 0.72;
+  transition: filter 220ms var(--ease-out),
+              opacity 220ms var(--ease-out),
+              transform 300ms var(--ease-out);
+}
+
+.net-tile-name {
+  line-height: 1.2;
+}
+
+.net-tile:hover,
+.net-tile:focus-visible,
+.net-tile[aria-current="true"] {
+  border-color: var(--net);
+  color: var(--net);
+  background: linear-gradient(135deg,
+    color-mix(in srgb, var(--net) 12%, var(--bg-1)),
+    color-mix(in srgb, var(--net-accent) 12%, var(--bg-1)));
+}
+
+.net-tile:hover .logo,
+.net-tile:focus-visible .logo,
+.net-tile[aria-current="true"] .logo {
+  filter: none;
+  opacity: 1;
+  transform: translateY(-1px) scale(1.06);
+}
+
+.net-tile:focus-visible {
+  outline: 2px solid var(--net);
+  outline-offset: 2px;
+}
+
+.net-tile:active {
+  transform: scale(0.97);
+}
+
+/* The bridge refused this one just now. Still on the board, still tells why
+   on hover, and the click leads to the sentence instead of an address. */
+.net-tile[data-unavailable="true"] {
+  opacity: 0.45;
+}
+
+/* ---------- the line above steps two and three ---------- */
+
+.netpick-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  min-width: 0;
+}
+
+.netpick-title {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.netpick-title-mark {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+
+.netpick-title-text {
+  font-size: var(--fs-16);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.netpick-back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 0 var(--s-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  font-size: var(--fs-13);
+  font-weight: 500;
+  transition: color var(--dur-press) var(--ease-out),
+              background-color var(--dur-press) var(--ease-out);
+}
+
+.netpick-back-icon {
+  width: 14px;
+  height: 14px;
+  transform: rotate(180deg);
+}
+
+.netpick-back:hover {
+  color: var(--text);
+  background: var(--bg-2);
+}
+
+.netpick-back:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+/* ---------- step two: the tokens ---------- */
+
+.netpick-tokens-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-width: 0;
+}
+
+.netpick-search {
+  position: relative;
+}
+
+.netpick-search-icon {
+  position: absolute;
+  top: 50%;
+  left: var(--s-3);
+  width: 16px;
+  height: 16px;
+  transform: translateY(-50%);
+  color: var(--text-3);
+  pointer-events: none;
+}
+
+.netpick-search-input {
+  padding-left: calc(var(--s-3) + 16px + var(--s-2));
+}
+
+/* The list a wallet shows: one row per token, the mark, the symbol, and at
+   the right the minimum in the unit a person types. Long lists scroll behind
+   the search rather than pushing the acknowledgement off the card. */
+.netpick-list {
+  display: flex;
+  flex-direction: column;
+  max-height: min(42vh, 392px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+}
+
+.token-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-height: 48px;
+  padding: var(--s-2) var(--s-3);
+  border-top: 1px solid var(--line);
+}
+
+.token-row:first-child {
+  border-top: 0;
+}
+
+.token-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.token-symbol {
+  font-size: var(--fs-14);
+  font-weight: 500;
+  color: var(--text);
+}
+
+.token-contract {
+  font-size: var(--fs-11);
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+
+:root[data-developer="true"] .token-contract {
+  display: block;
+}
+
+.token-min {
+  flex: 0 0 auto;
+  font-size: var(--fs-13);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.netpick-empty {
+  padding: var(--s-4) var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-14);
+  color: var(--text-2);
+}
+
+.netpick-dev {
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+
+/* The acknowledgement: one big row a person reads and ticks, once. After that
+   it is a small button under the list. */
+.netpick-ack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.ack-row {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line-strong);
+  background: var(--bg-2);
+  cursor: pointer;
+  user-select: none;
+  transition: border-color var(--dur-press) var(--ease-out),
+              background-color var(--dur-press) var(--ease-out);
+}
+
+.ack-row[data-checked="true"] {
+  border-color: color-mix(in srgb, var(--ink) 50%, transparent);
+  background: var(--ink-wash);
+}
+
+.ack-input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+}
+
+.ack-box {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-top: 1px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--line-strong);
+  background: var(--bg-1);
+  color: var(--on-ink);
+  transition: background-color var(--dur-press) var(--ease-out),
+              border-color var(--dur-press) var(--ease-out);
+}
+
+.ack-check {
+  width: 14px;
+  height: 14px;
+  opacity: 0;
+  transform: scale(0.6);
+  transition: opacity var(--dur-press) var(--ease-out),
+              transform var(--dur-press) var(--ease-out);
+}
+
+.ack-input:checked ~ .ack-box {
+  border-color: var(--ink);
+  background: var(--ink);
+}
+
+.ack-input:checked ~ .ack-box .ack-check {
+  opacity: 1;
+  transform: none;
+}
+
+.ack-input:focus-visible ~ .ack-box {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.ack-text {
+  font-size: var(--fs-14);
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.netpick-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+
+.netpick-ack[data-remembered="true"] .netpick-actions {
+  justify-content: flex-start;
+}
+
+/* ---------- step three: the address ---------- */
+
+/* The QR at the left, the address and its Copy at the right, the two
+   sentences under both. The QR is a white tile in a dark app on purpose: the
+   standard wants dark modules on a light ground, and so does every scanner. */
+.deposit-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-width: 0;
+}
+
+.deposit-body[data-state="shown"] {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--s-4) var(--s-5);
+  align-items: start;
+}
+
+.deposit-body[data-state="shown"] > .deposit-notes {
+  grid-column: 1 / -1;
+}
+
+.deposit-qr {
+  justify-self: start;
+}
+
+.deposit-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-width: 0;
+}
+
+/* One size, one weight, groups of four with a normal space between them. The
+   first and last group are in the text colour, the middle one step quieter:
+   the ends are what a person checks against the sending screen, and nothing
+   else on the block competes with them. */
+.deposit-address {
+  min-width: 0;
+}
+
+.deposit-chunks {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 1ch;
+  row-gap: 2px;
+  font-size: var(--fs-18);
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0;
+}
+
+.addr-end {
+  color: var(--text);
+}
+
+.addr-mid {
+  color: var(--text-2);
+}
+
+.deposit-memo {
+  font-size: var(--fs-13);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.deposit-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+}
+
+.deposit-tools .btn[data-copied="true"] {
+  --btn-fg: var(--up);
+  --btn-edge: color-mix(in srgb, var(--up) 40%, transparent);
+}
+
+.deposit-copied:empty {
+  display: none;
+}
+
+.deposit-notes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--line);
+}
+
+.deposit-plain {
+  font-size: var(--fs-14);
+  line-height: 1.55;
+  color: var(--text-2);
+}
+
+.deposit-min {
+  font-size: var(--fs-14);
+  line-height: 1.55;
+  color: var(--text);
+}
+
+.deposit-min .mono {
+  font-variant-numeric: tabular-nums;
+}
+
+.netpick-link {
+  color: var(--text-2);
+  font-size: var(--fs-13);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--line-strong);
+  transition: color var(--dur-press) var(--ease-out);
+}
+
+.netpick-link:hover {
+  color: var(--text);
+}
+
+.netpick-link:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+
+/* The watcher, one line. The dot carries the phase: breathing while it waits,
+   amber once something is seen and not yet confirmed, the up colour when the
+   money has landed, and quiet when the watch was stopped. */
+.deposit-watch {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--line);
+  color: var(--text-2);
+}
+
+.deposit-watch-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.deposit-watch[data-phase="watching"] .dot {
+  color: var(--ink);
+  animation: feedpulse 1800ms var(--ease-in-out) infinite;
+}
+
+.deposit-watch[data-phase="seen"] { color: var(--text); }
+.deposit-watch[data-phase="seen"] .dot { color: var(--warn); }
+.deposit-watch[data-phase="landed"] { color: var(--text); }
+.deposit-watch[data-phase="landed"] .dot { color: var(--up); }
+.deposit-watch[data-phase="stopped"] .dot { color: var(--text-3); }
+
+/* ---------- the deposit card ---------- */
+
+/* Wider than a confirm: a QR tile and an address in groups of four have to sit
+   side by side without the address folding into a column of fours. */
+dialog.deposit-dialog {
+  max-width: min(640px, calc(100vw - var(--s-6)));
+  width: 100%;
+}
+
+.deposit-card {
+  gap: var(--s-4);
+}
+
+.deposit-head {
+  align-items: flex-start;
+}
+
+/* Under 440 px of room the QR goes above the address rather than beside it. */
+@container (max-width: 440px) {
+  .deposit-body[data-state="shown"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .net-tile,
+  .net-tile .logo,
+  .netpick-back,
+  .ack-row,
+  .ack-box,
+  .ack-check,
+  .netpick-link {
+    transition: none;
+  }
+  .net-tile:hover .logo,
+  .net-tile:focus-visible .logo,
+  .net-tile[aria-current="true"] .logo {
+    transform: none;
+  }
+  .deposit-watch[data-phase="watching"] .dot {
+    animation: none;
+  }
+}
