@@ -60,11 +60,10 @@
      here so the window loads no icon set. */
   var SVG_NS = 'http://www.w3.org/2000/svg';
   var GLYPHS = {
+    /* The same drawing as Basic's rules strip (ui/screens/basic.js HAND), so
+       the ask rule reads as one thing on both screens. */
     hand: [
-      'M12 7.33V4a1.33 1.33 0 0 0-2.67 0v.67',
-      'M9.33 6.67V2.67a1.33 1.33 0 0 0-2.67 0V4',
-      'M6.67 7V4a1.33 1.33 0 0 0-2.67 0v5.33',
-      'M12 5.33a1.33 1.33 0 1 1 2.67 0v4a5.33 5.33 0 0 1-5.33 5.33H8c-1.87 0-3-.57-4-1.56l-2.4-2.4a1.33 1.33 0 0 1 1.89-1.88L4.67 10'
+      'M4.75 9V4.75a1.25 1.25 0 0 1 2.5 0V8.5M7.25 8.5V3.25a1.25 1.25 0 0 1 2.5 0V8.5M9.75 8.5V4.25a1.25 1.25 0 0 1 2.5 0V10.5M4.75 9l-1.3-1.3a1.24 1.24 0 0 0-1.75 1.75L5 12.75A4.25 4.25 0 0 0 8 14h1.25a3 3 0 0 0 3-3v-.5'
     ],
     wall: [
       'M3.75 3.75h8.5a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1h-8.5a1 1 0 0 1-1-1v-6.5a1 1 0 0 1 1-1z',
