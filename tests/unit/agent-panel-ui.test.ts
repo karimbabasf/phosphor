@@ -29,6 +29,8 @@ function load(): Sandbox {
       PhosphorNet: {},
       PhosphorApi: { driverState: () => Promise.resolve({ data: {} }), connection: () => Promise.resolve({}) },
       PhosphorEvents: { on: () => {} },
+      PhosphorIcons: { svg: () => ({}) },
+      PhosphorMotion: { reduced: () => false, spring: () => 'linear' },
       setTimeout: () => 0,
     },
     document: { createElement: () => ({}), addEventListener: () => {} },
@@ -70,13 +72,23 @@ test('the renderer builds nothing that decides anything', () => {
 test('the panel builds no control that decides anything', () => {
   // The panel's own buttons, named. A button this list does not know about is a
   // button somebody added to a transcript, which is the thing being prevented.
-  const labels = SOURCE.match(/'btn-label', '([^']+)'/g) ?? [];
-  const allowed = ['Start your assistant', 'Stop', 'Turn off', 'Connect your own', 'Copy', 'Send'];
+  // Every labelled button goes through the one helper, button(className, label), and the three
+  // suggestion pills carry the questions in SUGGESTIONS. No other site builds a <button>.
+  const labels = SOURCE.match(/\bbutton\('[^']*', '([^']+)'/g) ?? [];
+  const allowed = ['Start your assistant', 'Turn off', 'Connect your own', 'Copy', 'Retry', 'Back'];
   assert.ok(labels.length > 0, 'the panel builds no buttons at all, so this test is not looking at it');
   for (const raw of labels) {
     const label = raw.replace(/^.*, '/, '').replace(/'$/, '');
     assert.ok(allowed.includes(label), `the panel built a button labelled "${label}"`);
   }
+  const sites = SOURCE.match(/dom\.el\('button'[^\n]*/g) ?? [];
+  const known = [
+    "dom.el('button', className);",
+    "dom.el('button', 'chip suggest', SUGGESTIONS[s]);",
+    "dom.el('button', 'composer-send');",
+    "dom.el('button', 'steps-fold');",
+  ];
+  for (const site of sites) assert.ok(known.includes(site.trim()), `an unknown button site: ${site.trim()}`);
   assert.equal(/\bapprove\b|\brefuse\b/i.test(SOURCE), false, 'the panel names an approval route');
 });
 

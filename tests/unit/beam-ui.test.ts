@@ -369,3 +369,48 @@ test('reduced motion skips the flight and lands the light immediately', () => {
   assert.equal(panel.getAttribute('data-glow'), 'on');
   assert.equal(world.draws(), 0, 'a flight was drawn under reduced motion');
 });
+
+test('a tool that answers before its flight lands leaves no stuck glow or seat', () => {
+  // The race the beam existed to have: switch, set_theme and trade_focus all answer in well under
+  // the 320 ms flight, so the release arrives before the hold. The hold is armed at fire time, so
+  // the release cancels it and the arrival lights nothing.
+  const world = build();
+  const panel = world.el('holdings-basic');
+  const seat = world.el('agent-status');
+  world.beam.fire({ from: world.el('conversation'), to: 'holdings', tone: 'glow', then: 'hold' });
+  world.beam.release('holdings', true); // the result beat the flight
+  for (let now = 16; now <= 400; now += 16) world.frame(now);
+  assert.equal(panel.getAttribute('data-glow'), null, 'the surface kept a glow with no call behind it');
+  assert.equal(seat.getAttribute('data-live'), null, 'the seat light stayed live after the call was done');
+});
+
+test('a fast failure still shows: an early release with an error flashes the surface rose', () => {
+  const world = build();
+  const panel = world.el('holdings-basic');
+  world.beam.fire({ from: world.el('conversation'), to: 'holdings', tone: 'glow', then: 'hold' });
+  world.beam.release('holdings', false); // failed before the flight landed
+  for (let now = 16; now <= 400; now += 16) world.frame(now);
+  assert.equal(panel.getAttribute('data-glow-tone'), 'down', 'a fast failure showed nothing');
+  assert.equal(world.el('agent-status').getAttribute('data-live'), null, 'the seat outlived a failed call');
+});
+
+test('a trade proposal aimed at position lands on the chart when no position surface exists', () => {
+  // 'position' is the trade deck, which the trade screen carries. Until it lands, the beam falls
+  // back to the chart on the same view, so a trade proposal is never aimed at nothing (the old bug:
+  // surface() returned null and the amber wait painted nowhere).
+  const world = build();
+  assert.equal(world.beam.surface('position'), world.el('tab-trade'), 'a trade proposal lit nothing');
+});
+
+test('a flight whose target leaves the DOM mid-flight lands nothing and keeps the seat balanced', () => {
+  const world = build();
+  const panel = world.el('holdings-basic');
+  const seat = world.el('agent-status');
+  world.beam.fire({ from: world.el('conversation'), to: 'holdings', tone: 'glow', then: 'hold' });
+  panel.isConnected = false; // the view swapped it out while the light was on its way
+  for (let now = 16; now <= 400; now += 16) world.frame(now);
+  assert.equal(seat.getAttribute('data-live'), null, 'the seat stayed live for a target that is gone');
+  // A later, present target still lights, so the drop did not leave the count negative.
+  world.beam.hold('holdings');
+  assert.equal(seat.getAttribute('data-live'), 'true');
+});

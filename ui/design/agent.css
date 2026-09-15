@@ -1,1 +1,999 @@
-/* The assistant panel (ui/screens/agent.js): its rules move here out of screens.css. */
+/* The assistant panel: the conversation column (ui/screens/agent.js) and the
+   beam that points from it (ui/beam). Flat panel on the column's own ground.
+   Nothing in here glows except the mark while the assistant is live, and the
+   surfaces the beam lands on.
+
+   Type is Sora (--font-ui) with numbers in Geist Mono, on the foundation's
+   scale. */
+
+/* ---------- the head ---------- */
+
+.agent-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-3);
+  flex: 0 0 auto;
+  min-height: 32px;
+}
+
+/* The name and the seat light on one line while the light has one word to
+   say ("Assistant  . Ready"). At work the verb is a tool phrase, so the line
+   drops under the name and gets the full width rather than trimming "Reading
+   the chart" to three letters beside the control. The wrap is the flex row's
+   own: nothing is measured. */
+.agent-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-1) var(--s-3);
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.agent-name {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  font-size: var(--fs-15);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.agent-controls {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: 32px;
+}
+
+.agent-status {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* The status line's colours by state. The grammar in components.css paints
+   the dot in the beam colour; here it is a hollow ring until somebody is at
+   the wheel (a filled grey dot at the same gap read as a middle-dot between
+   "Assistant" and "Off"), half lit while one comes up, rose when the start
+   failed. The verb reads in the second text tone at rest and in the first
+   while the assistant is at work. */
+.agent-status > .status-dot {
+  position: relative;
+  transition: background-color var(--dur-enter) var(--ease-out),
+              box-shadow var(--dur-enter) var(--ease-out);
+}
+
+.agent-status[data-state="off"] > .status-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--text-3);
+}
+.agent-status[data-state="starting"] > .status-dot { background: color-mix(in srgb, var(--beam) 60%, var(--text-3)); }
+.agent-status[data-state="error"] > .status-dot,
+.agent-status[data-failed="true"] > .status-dot { background: var(--down); box-shadow: none; }
+
+.agent-status > .status-verb {
+  color: var(--text-2);
+  transition: color var(--dur-enter) var(--ease-out);
+}
+
+.agent-status[data-state="error"] > .status-verb { color: var(--down); }
+
+/* At work: the dot breathes, and it is the one animation running in the
+   window while the assistant works (one infinite animation on screen at
+   most, none while idle). It breathes on transform and opacity only, for
+   both attributes that light this line: data-state from the column,
+   data-live from the beam while it holds a surface, so a read that never
+   fires the beam and a write that does look the same from the head. The
+   verb steps up to the first text tone and holds. */
+.agent-status[data-state="working"] > .status-dot,
+.agent-status[data-state="starting"] > .status-dot,
+.agent-status[data-live="true"] > .status-dot {
+  animation: seat-breathe 1.8s var(--ease-in-out) infinite;
+  box-shadow: none;
+}
+
+@keyframes seat-breathe {
+  0%   { transform: scale(1); opacity: 1; }
+  50%  { transform: scale(1.35); opacity: 0.55; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.agent-status[data-state="working"] > .status-verb,
+.agent-status[data-live="true"] > .status-verb {
+  animation: none;
+  background: none;
+  color: var(--text);
+}
+
+/* The ring the settle leaves behind (agent.js settleRing): a hairline of the
+   beam colour around the dot, transparent until the Web Animations API runs
+   it once. Larger than the dot so the 1.6 scale it grows to is a ring a
+   person can see and not a dot that twitched. */
+.status-ring {
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 1px solid var(--beam);
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* WHAT WENT WRONG: one sentence under the status and the Retry beside it.
+   The sentence is in the second text tone, not red: the dot above it is
+   already red, and a red paragraph under a red dot is the window shouting. */
+.agent-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) var(--s-3);
+  flex: 0 0 auto;
+  font-size: var(--fs-13);
+  line-height: 1.45;
+  color: var(--text-2);
+}
+
+.agent-note-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.agent-retry {
+  color: var(--ink);
+  border-color: var(--ink-edge);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .agent-retry:hover {
+    border-color: var(--ink);
+    color: var(--ink);
+  }
+}
+
+/* Somebody else's agents, under the head, in one quiet row apiece. */
+.agent-clients {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.agent-clients:empty {
+  display: none;
+}
+
+.agent-client {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--fs-12);
+  color: var(--text-2);
+}
+
+.agent-client .dot {
+  color: var(--up);
+}
+
+.agent-client-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-client-calls {
+  color: var(--text-3);
+}
+
+/* ---------- the centre: the card, or the sheet ---------- */
+
+.agent-centre {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.agent-empty {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  padding: var(--s-5) var(--s-3);
+  text-align: center;
+}
+
+.agent-empty-inner {
+  text-align: center;
+  width: 100%;
+  max-width: 36ch;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  align-items: center;
+}
+
+/* THE SEAT. The mark above the headline, 40 px of the window's own light,
+   and the only thing on this card a person can read from across the room.
+   Muted when nobody is there, waking while one comes up, lit with one soft
+   glow once one is. Muted is the beam colour at forty percent rather than
+   grey: an unlit phosphor is still the colour it will light in. */
+.agent-seat {
+  width: 36px;
+  height: 40px;
+  margin-bottom: var(--s-1);
+  color: var(--beam);
+  opacity: 0.4;
+  transition: color var(--dur-enter) var(--ease-out),
+              opacity var(--dur-enter) var(--ease-out),
+              filter var(--dur-enter) var(--ease-out);
+}
+
+.agent-seat-mark {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.agent-seat[data-seat="coming"] {
+  color: color-mix(in srgb, var(--beam) 60%, var(--text-3));
+  opacity: 0.7;
+}
+
+.agent-seat[data-seat="live"] {
+  color: var(--beam);
+  opacity: 1;
+  filter: drop-shadow(0 0 10px color-mix(in srgb, var(--beam) 55%, transparent));
+}
+
+.agent-seat[data-seat="own"] {
+  color: var(--beam);
+  opacity: 0.85;
+}
+
+.agent-seat[data-seat="error"] {
+  color: var(--down);
+  opacity: 0.8;
+  filter: none;
+}
+
+.agent-empty-title {
+  font-size: var(--fs-18);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+  color: var(--text);
+  text-wrap: balance;
+}
+
+.agent-empty-line {
+  font-size: var(--fs-13);
+  line-height: 1.5;
+  color: var(--text-2);
+  max-width: 34ch;
+  text-wrap: pretty;
+}
+
+.agent-empty-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  margin-top: var(--s-1);
+}
+
+.agent-rule {
+  width: 100%;
+  height: 1px;
+  margin: var(--s-2) 0 0;
+  border: 0;
+  background: var(--line);
+}
+
+/* THE FIRST MOVES. Three pills under the hairline, each a question a person
+   can put to the assistant with one press. They come in after the card, one
+   after another, out of a slight blur: the same reveal a reply gets. */
+.agent-suggest {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--s-2);
+}
+
+.suggest {
+  height: 32px;
+  padding: 0 var(--s-4);
+  font-size: var(--fs-13);
+  color: var(--text-2);
+  /* Backwards, not both: the reveal holds the pill hidden through its delay
+     and then lets go, so the press scale under it is free once it has landed. */
+  animation: suggest-in 500ms var(--ease-out) backwards;
+}
+
+.suggest:nth-child(1) { animation-delay: 60ms; }
+.suggest:nth-child(2) { animation-delay: 120ms; }
+.suggest:nth-child(3) { animation-delay: 180ms; }
+
+@keyframes suggest-in {
+  from { opacity: 0; transform: translateY(6px); filter: blur(4px); }
+}
+
+/* THE CONNECT SHEET, in the card's place. Left aligned: it holds a command,
+   and a command is read left to right. */
+.agent-connect {
+  width: 100%;
+  max-width: 48ch;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-3);
+  padding: var(--s-5) var(--s-3);
+  text-align: left;
+  animation: sheet-in var(--dur-enter) var(--ease-out) both;
+}
+
+@keyframes sheet-in {
+  from { opacity: 0; transform: translateY(6px); }
+}
+
+.agent-connect-title {
+  font-size: var(--fs-18);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+  color: var(--text);
+}
+
+.agent-connect-line,
+.agent-connect-hint {
+  font-size: var(--fs-13);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.agent-connect-hint {
+  font-size: var(--fs-12);
+}
+
+/* The command: the raised surface, the input radius, and the Copy inside at
+   the top right. The line wraps at any character because the interesting
+   half is the path at the end and a path has no spaces to break on. */
+.connection-block {
+  position: relative;
+  width: 100%;
+  padding: var(--s-3) 84px var(--s-3) var(--s-3);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+}
+
+.connection-line {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.connection-copy {
+  position: absolute;
+  top: var(--s-2);
+  right: var(--s-2);
+}
+
+.agent-connect-status[data-state="waiting"] > .status-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--text-3);
+}
+
+.agent-connect-status[data-state="waiting"] > .status-verb {
+  color: var(--text-2);
+}
+
+.agent-connect-status[data-state="connected"] > .status-verb {
+  color: var(--text);
+}
+
+/* ---------- the transcript ---------- */
+
+.transcript {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: var(--s-1);
+  scrollbar-gutter: stable;
+}
+
+/* A short conversation sits against the composer rather than floating at the top
+   of an empty column. The auto margin resolves to zero once the transcript is
+   taller than its box, so it costs the scroll nothing. */
+.transcript > :first-child {
+  margin-top: auto;
+}
+
+/* Rows. The person's words sit in a bubble on the right; the assistant's
+   words are plain text on the left, because they are the surface. Neither
+   needs a name: the side says who. The label stays in the tree for a screen
+   reader, and comes back on the one row worth one, a message never taken. */
+.chat-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  font-size: var(--fs-14);
+  line-height: 1.5;
+}
+
+.chat-who {
+  color: var(--text-3);
+  font-size: var(--fs-12);
+}
+
+.chat-said .chat-who,
+.chat-reply .chat-who {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.chat-text {
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.chat-reply {
+  align-self: flex-start;
+  max-width: 66ch;
+}
+
+.chat-reply .chat-text {
+  font-weight: 400;
+}
+
+/* A rendered reply. The container stops preserving whitespace, because the
+   blocks inside it each carry their own; a paragraph keeps its line breaks. */
+.chat-text.md {
+  white-space: normal;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.chat-p {
+  white-space: pre-wrap;
+  margin: 0;
+}
+
+/* A heading is a label: 13 px, medium, the second text tone, never larger than
+   the body. The model's own sense of hierarchy stays, in a size that does not
+   shout in a column that is already dense with what happened. */
+.chat-h {
+  font-size: var(--fs-13);
+  font-weight: 500;
+  color: var(--text-2);
+  line-height: 1.4;
+  margin-top: var(--s-1);
+}
+
+.chat-list {
+  margin: 0;
+  padding-left: var(--s-5);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chat-list li {
+  list-style: disc;
+}
+
+.chat-text.md code {
+  font-size: 0.92em;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--bg-2);
+  color: var(--text);
+}
+
+.chat-code {
+  margin: 0;
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  font-size: var(--fs-13);
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.chat-code code {
+  padding: 0;
+  background: transparent;
+}
+
+/* Numbers in a table: 13 px, mono, tabular, right aligned. The header row is
+   the label size in the third text tone and every row is ruled with a hairline,
+   so a column of prices reads down its decimal point. */
+.chat-table {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.chat-table table {
+  border-collapse: collapse;
+  font-size: var(--fs-13);
+  line-height: 1.4;
+  min-width: 0;
+}
+
+.chat-table th {
+  font-size: var(--fs-12);
+  font-weight: 500;
+  color: var(--text-3);
+  text-align: left;
+  padding: 2px var(--s-3) var(--s-1) 0;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.chat-table td {
+  padding: var(--s-1) var(--s-3) var(--s-1) 0;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+.chat-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.chat-table th.num,
+.chat-table td.num {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum" 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* A signed figure carries its tone with its sign. In mono where it sits in a
+   cell, and in the running face where it sits in a sentence. */
+.md-n {
+  font-feature-settings: "tnum" 1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* THE BUBBLE. On the right, on the raised ground, the input radius, hugging
+   what was said: a raised ground stretched across the column for four words
+   reads as a panel rather than as a person talking. */
+.chat-said {
+  align-self: flex-end;
+  align-items: flex-end;
+  max-width: min(66ch, 86%);
+}
+
+.chat-said .chat-text {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--s-2) var(--s-3);
+  transition: color var(--dur-enter) var(--ease-out),
+              border-color var(--dur-enter) var(--ease-out);
+}
+
+/* A message the app has not taken responsibility for yet reads as one: the
+   words are there in full, held back a step, and they settle the moment the
+   server has it. Nothing moves, because a line of text that shifts under the
+   eye is worse than one that waits. */
+.chat-said[data-state="pending"] .chat-text {
+  color: var(--text-2);
+  border-color: color-mix(in srgb, var(--line) 55%, transparent);
+}
+
+.chat-said[data-state="failed"] .chat-who {
+  position: static;
+  width: auto;
+  height: auto;
+  margin: 0;
+  clip-path: none;
+  white-space: normal;
+  color: var(--down);
+}
+
+.chat-said[data-state="failed"] .chat-text {
+  color: var(--text-2);
+  border-color: color-mix(in srgb, var(--down) 45%, transparent);
+}
+
+/* The app's own failure to send: named and in the down tone, because a
+   message that never went is the thing a person most needs to know. */
+.chat-error {
+  max-width: 66ch;
+}
+
+.chat-error .chat-who,
+.chat-error .chat-text {
+  color: var(--down);
+}
+
+/* A line from the child's own stderr: kept, in mono and the third tone, so a
+   person debugging can read it and nobody else has to. */
+.chat-note {
+  max-width: 66ch;
+  gap: 2px;
+}
+
+.chat-note .chat-who {
+  font-size: var(--fs-11);
+}
+
+.chat-note .chat-text {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  line-height: 1.5;
+  color: var(--text-3);
+}
+
+/* The receipt card in the thread is the shared one (ui/screens/receipt.js,
+   styled in receipt.css as [data-inline]); this file draws nothing for it. */
+
+/* Steps: the trace of a turn, between what was asked and what came back. One
+   row per tool call, a dot that is lit while the call is in flight, the phrase,
+   and the elapsed time in mono. */
+.steps-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 66ch;
+}
+
+.steps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: var(--s-1);
+}
+
+.step {
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  gap: var(--s-2);
+  align-items: baseline;
+  font-size: var(--fs-13);
+  color: var(--text-2);
+  min-height: 22px;
+}
+
+/* Pinned to the first line rather than centred, because a row that wraps put
+   the dot in the gutter between its two lines and pointed at neither. Eight
+   pixels is the row's own 22 less the dot, halved. */
+.step-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--beam);
+  opacity: 0.5;
+  align-self: start;
+  margin-top: 8px;
+  transition: opacity var(--dur-enter) var(--ease-out),
+              background-color var(--dur-enter) var(--ease-out);
+}
+
+.steps-fold .step-dot { align-self: center; margin-top: 0; }
+
+/* A call in flight is a lit dot, still. The breathing is the seat light's in
+   the head, and one light moving at a time is the rule: a row that pulsed
+   under a head that pulsed was two clocks for one call. */
+.step[data-state="live"] .step-dot {
+  opacity: 1;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--beam) 18%, transparent);
+  animation: none;
+}
+
+.step[data-state="done"] .step-dot { opacity: 0.7; }
+.step[data-state="error"] .step-dot { background: var(--down); opacity: 1; animation: none; }
+
+.step-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.step-time {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  color: var(--text-3);
+  font-feature-settings: "tnum" 1;
+}
+
+/* WHAT the call was about. It is the half of a step row that proves the app is
+   working on the thing that was asked for, so it is the assistant's own light
+   rather than another grey, and it is mono because most of what lands here is a
+   ticker, a chain or an amount. */
+.step-args {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  color: color-mix(in srgb, var(--beam) 62%, var(--text-3));
+}
+
+.step-args::before,
+.step-leaves::before {
+  content: ", ";
+  color: var(--text-3);
+  font-family: var(--font-ui);
+}
+
+/* The tool that reaches past this machine says so on its own row. */
+.step-leaves {
+  color: var(--warn);
+}
+
+/* A finished turn folds its steps to one line. */
+.steps-fold {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--fs-12);
+  color: var(--text-3);
+  padding: 2px 0;
+  text-align: left;
+  align-self: flex-start;
+  transition: color var(--dur-press) var(--ease-out);
+}
+
+.steps-fold .step-dot { opacity: 0.6; }
+.steps-fold[data-state="error"] .step-dot { background: var(--down); opacity: 1; }
+
+@media (hover: hover) and (pointer: fine) {
+  .steps-fold:hover { color: var(--text-2); }
+}
+
+.steps[data-folded="true"] .step { display: none; }
+
+/* THE TURN BAR. Heard and not seen: the seat light in the head says the same
+   words with the same clock. The bar stays in the tree as the live region it
+   always was, clipped to a pixel rather than display: none, because
+   display: none takes it out of the accessibility tree too. */
+.turn-bar {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.turn-bar .turn-dot { animation: none; }
+
+/* ---------- the composer ---------- */
+
+/* One pill on the raised ground: 52 px tall with one line in it, a hairline
+   that turns ink on focus, the textarea bare inside it growing to six lines,
+   and one round ink button at the right. The pill is the boundary between
+   the thread and the box, so the host draws no line of its own. */
+.agent-composer {
+  padding: var(--s-2) var(--s-4) var(--s-3);
+}
+
+.composer-field {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--s-2);
+  min-height: 52px;
+  padding: 7px 7px 7px var(--s-5);
+  border-radius: 26px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  transition: border-color var(--dur-press) var(--ease-out);
+}
+
+.composer-field:focus-within {
+  border-color: var(--ink);
+}
+
+/* The textarea, stripped of the shared field's box: the ground is the
+   pill's, the edge is the pill's. Its line height is what the six line cap
+   in agent.js autogrow is read from. */
+.agent-composer .input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 36px;
+  max-height: none;
+  padding: 8px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: var(--fs-14);
+  line-height: 1.45;
+  field-sizing: fixed;
+  caret-color: var(--ink);
+}
+
+.agent-composer .input:focus {
+  border-color: transparent;
+  outline: none;
+}
+
+.agent-composer .input:disabled {
+  color: var(--text-3);
+  cursor: default;
+}
+
+/* The button: 36 px round, the ink at half strength until there is something
+   to send and full once there is, and a stop square on the text colour
+   while an answer is running. The press scales; the fill crosses over in
+   200 ms so the arming reads as the box waking rather than a swap. */
+.composer-send {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-pill);
+  background: var(--ink);
+  color: var(--on-ink);
+  opacity: 0.45;
+  transition: background-color 200ms var(--ease-out),
+              color 200ms var(--ease-out),
+              transform var(--dur-press) var(--ease-out),
+              opacity 200ms var(--ease-out);
+}
+
+.composer-send .icon {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+
+.composer-send .composer-stop-glyph { display: none; }
+
+.composer-field[data-armed="true"] .composer-send:not(:disabled) {
+  opacity: 1;
+}
+
+.composer-field[data-mode="stop"] .composer-send:not(:disabled) {
+  opacity: 1;
+  background: var(--text);
+  color: var(--bg-0);
+}
+
+.composer-field[data-mode="stop"] .composer-send .composer-send-glyph { display: none; }
+.composer-field[data-mode="stop"] .composer-send .composer-stop-glyph { display: block; }
+
+.composer-send:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.composer-send:disabled {
+  opacity: 0.3;
+}
+
+.composer-send:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .composer-send:hover:not(:disabled) { opacity: 1; }
+  .composer-field[data-armed="true"] .composer-send:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--ink) 88%, var(--bg-0));
+  }
+}
+
+/* ---------- surfaces: where the beam lands ---------- */
+
+/* Any element with data-surface can glow. The glow is a layer whose OPACITY
+   moves, never a shadow that animates: in at 120 ms, out over 2.4 s. The tone
+   is the assistant's light by default, amber for a proposal waiting on a
+   person, rose for a tool that failed. ui/beam/beam.js writes the attributes
+   and never touches a style property.
+
+   The inset ring is drawn here, inside the element, so a surface that clips
+   its overflow (a fold, the conversation column) still shows its edge. The
+   outer bloom is painted by beam.js on the #beam canvas over the whole
+   window, which no overflow can clip. */
+[data-surface] {
+  position: relative;
+  --glow-c: var(--beam);
+}
+
+[data-surface][data-glow-tone="wait"] { --glow-c: var(--warn); }
+[data-surface][data-glow-tone="down"] { --glow-c: var(--down); }
+
+[data-surface]::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  /* The edge is held back to a little over half the tone and the bloom
+     carries the rest, inside and out. At full strength the hairline reads as
+     a selected border, which is a different thing from a surface something
+     just lit up. The inset half is never clipped; the outer half is what a
+     fold's overflow used to eat, so a glowing fold lifts its overflow below. */
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--glow-c) 55%, transparent),
+              inset 0 0 34px -12px var(--glow-c),
+              0 0 26px -6px var(--glow-c);
+  transition: opacity var(--dur-glow-out) var(--ease-out);
+  z-index: 3;
+}
+
+[data-surface][data-glow="on"]::after {
+  opacity: 1;
+  transition-duration: var(--dur-glow-in);
+}
+
+/* THE FOLD CLIP. A fold keeps overflow:hidden for its collapse, which ate the
+   outer bloom of a surface that landed on it (moneyin, activity on Basic).
+   A fold only ever glows while it is open and the agent is touching it, so
+   lifting its overflow for the life of the glow shows the bloom without
+   breaking the collapse, which runs from the closed state where nothing
+   glows. */
+.fold[data-surface][data-glow="on"] {
+  overflow: visible;
+}
+
+/* The rules strip and the tabs are inline surfaces: the edge only, no bloom. */
+.tab::after,
+.strip::after {
+  box-shadow: inset 0 0 0 1px var(--glow-c);
+}
+
+/* The beam itself is drawn on one fixed canvas over the whole window. It is
+   pointer transparent and the loop runs only while a flight is in the air or
+   a bloom is fading. */
+.beam-layer {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 80;
+  pointer-events: none;
+}
+
+/* ---------- reduced motion ---------- */
+
+/* The seat light stops breathing and holds a still ring, the settle ring
+   never runs (agent.js checks), and the first moves fade in with no travel
+   and no blur. State is still carried by colour and by words, which is the
+   half of the motion that meant something. */
+@keyframes suggest-in-still {
+  from { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-status[data-state="working"] > .status-dot,
+  .agent-status[data-state="starting"] > .status-dot,
+  .agent-status[data-live="true"] > .status-dot {
+    animation: none;
+    opacity: 1;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--beam) 18%, transparent);
+  }
+  .suggest { animation-name: suggest-in-still; }
+  .agent-connect { animation: none; }
+  .composer-send:active:not(:disabled) { transform: none; }
+  /* The glow keeps a short fade: it is the one motion that carries meaning. */
+  [data-surface]::after { transition-duration: 200ms !important; }
+}

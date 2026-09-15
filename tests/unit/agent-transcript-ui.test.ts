@@ -142,11 +142,18 @@ function all(node: Node, className: string, found: Node[] = []): Node[] {
   return found;
 }
 
-function build() {
+function build(options: { command?: string } = {}) {
   const sends: string[] = [];
+  /* The shared receipt card (ui/screens/receipt.js) is somebody else's: the column hands it the
+     receipt and places what comes back. The stub records what it was handed and returns one
+     marker node, so a test can say the card was posted and built from the app's own receipt
+     without asserting the card's insides, which receipt-ui.test.ts owns. */
+  const built: unknown[] = [];
   let reject: ((err: Error) => void) | null = null;
   const driverHandlers: Array<(frame: unknown) => void> = [];
   const receiptHandlers: Array<(list: unknown[], state: string) => void> = [];
+  const agentsHandlers: Array<(slice: unknown) => void> = [];
+  const busHandlers: Record<string, Array<(payload: unknown) => void>> = {};
   const actions: string[] = [];
 
   const host = make('div');
@@ -192,11 +199,12 @@ function build() {
         return Promise.resolve({});
       },
       driverState: () => Promise.resolve({ data: { state: 'ready', chats: [{ id: 'c1', transcript: [] }] } }),
-      connection: () => Promise.resolve({ command: '', connected: [] }),
+      connection: () => Promise.resolve({ command: options.command ?? '', connected: [] }),
     },
     PhosphorEvents: {
       on: (type: string, handler: (frame: unknown) => void) => {
         if (type === 'driver') driverHandlers.push(handler);
+        else (busHandlers[type] ??= []).push(handler);
       },
     },
     /* The receipts feed (ui/screens/receipts.js): the column subscribes, asks for one read,
@@ -208,7 +216,26 @@ function build() {
       },
       load: () => {},
     },
-    PhosphorReceipt: { chainName: (id: string) => ({ base: 'Base', sol: 'Solana' })[id] ?? id },
+    PhosphorReceipt: {
+      chainName: (id: string) => ({ base: 'Base', sol: 'Solana' })[id] ?? id,
+      card: (receipt: unknown) => {
+        built.push(receipt);
+        const node = make('div');
+        node.className = 'receipt-card';
+        node.setAttribute('data-inline', 'true');
+        return node;
+      },
+    },
+    /* The shared icon set and the motion helper (foundation): one svg per name, no motion. */
+    PhosphorIcons: { svg: (name: string, className: string) => { const n = make('svg'); n.className = 'icon ' + (className || ''); n.setAttribute('data-icon', name); return n; } },
+    PhosphorMotion: { reduced: () => false, spring: () => 'linear' },
+    /* The state store: the column reads the roster slice for the connect sheet. */
+    PhosphorState: {
+      select: (key: string, fn: (slice: unknown) => void) => {
+        if (key === 'agents') agentsHandlers.push(fn);
+        return () => {};
+      },
+    },
   };
   sandbox.window = win;
   sandbox.CustomEvent = function CustomEventStub(this: Record<string, unknown>, type: string, init: unknown) {
@@ -249,7 +276,28 @@ function build() {
     turnBar: () => all(composerHost, 'turn-bar')[0],
     seat: () => all(host, 'agent-seat')[0].getAttribute('data-seat'),
     card: () => all(host, 'agent-empty-inner')[0].textContent,
+    cardHidden: () => all(host, 'agent-empty')[0].hidden,
     actionsHidden: () => all(host, 'agent-empty-actions')[0].hidden,
+    /* The failure line under the status: hidden, or the one sentence plus its Retry. */
+    note: () => all(host, 'agent-note')[0],
+    noteText: () => all(host, 'agent-note-text')[0].textContent,
+    retry: () => all(host, 'agent-retry')[0],
+    sheet: () => all(host, 'agent-connect')[0],
+    connectLine: () => all(host, 'connection-line')[0].textContent,
+    connectStatus: () => all(host, 'agent-connect-status')[0].textContent,
+    press: (label: string) => {
+      const btn = all(host, 'btn').concat(all(host, 'chip')).find((b) => b.textContent === label);
+      if (!btn) throw new Error(`no button "${label}"`);
+      fire(btn, 'click');
+    },
+    agents: (members: unknown[]) => {
+      for (const handler of agentsHandlers) handler({ members });
+    },
+    bus: (type: string, payload: unknown) => {
+      for (const handler of busHandlers[type] ?? []) handler(payload);
+    },
+    noteRows: () => all(host, 'chat-note'),
+    built,
     input,
     /* Fire every timer the column has booked. The starting floor is the one that matters, and a
        test that could not hold it open could not tell a state that stays from one that flickers. */
@@ -415,7 +463,7 @@ test('the seat light in the head names the open call in its own words and settle
 test('the composer arms on text and says why it is quiet when it is', () => {
   const world = build();
   const field = all(world.composerHost, 'composer-field')[0];
-  assert.equal(world.input.placeholder, 'Tell your assistant what to do.');
+  assert.equal(world.input.placeholder, 'Tell your assistant what to do');
   assert.equal(field.getAttribute('data-armed'), null);
   world.input.value = 'hello';
   fire(world.input, 'input');
@@ -463,12 +511,13 @@ test('a first move whose start fails keeps its words in the box and sends nothin
   world.emit({ kind: 'status', state: 'off' });
   const rows = all(world.host, 'suggest');
   fire(rows[2], 'click');
-  world.emit({ kind: 'status', state: 'failed', detail: 'claude was not found on PATH.' });
+  world.emit({ kind: 'status', state: 'failed', detail: 'driver: the claude CLI was not found.', reason: 'Claude Code is not installed on this Mac.' });
   world.runTimers();
   assert.deepEqual(world.sends, []);
   assert.equal(world.input.value, rows[2].textContent, 'the words were lost with the start');
   assert.equal(world.input.disabled, true);
-  assert.ok(world.card().includes('could not start'));
+  assert.equal(world.note().hidden, false, 'nothing under the status says what went wrong');
+  assert.equal(world.noteText(), 'Claude Code is not installed on this Mac.');
 
   /* A later start that works does not fire the old question on its own: the failure ended the
      press, and the words are in the box for the person to send. */
@@ -486,7 +535,7 @@ test('a first move whose start fails keeps its words in the box and sends nothin
    to see a nice card, simple, no unnecessary info, and the intent id should be a clickable link".
    The card is drawn from the app's own receipt, never from what the assistant wrote. */
 
-test('a move that lands mid conversation shows one card drawn from the receipt', () => {
+test('a move that lands mid conversation posts one shared card, drawn from the receipt', () => {
   const world = build();
   world.receipts([]);
   world.type('swap 0.049 sol to usdc');
@@ -494,45 +543,30 @@ test('a move that lands mid conversation shows one card drawn from the receipt',
   world.emit({ kind: 'tool_result', name: 'mcp__phosphor__swap', ok: true });
   world.receipts([receipt()]);
 
-  const cards = world.cards();
-  assert.equal(cards.length, 1);
-  const card = cards[0];
-  assert.equal(all(card, 'tx-title')[0].textContent, 'Changed about $5 of your Solana (SOL) into USDC.', 'the title is not the headline Activity shows');
-  const line = all(card, 'tx-when')[0].textContent;
-  assert.equal(line, '4.9811 USDC received, fee about $0.02, in your NEAR Intents balance', 'the same four places the Activity row prints');
-  const id = all(card, 'receipt-hash')[0];
-  assert.equal(id.textContent, 'EafozJ...n16c');
-  assert.equal(id.tag, 'span', 'an intent id with no url became a link to nowhere');
-  assert.equal((id as unknown as { title: string }).title, 'EafozJ2XkQ9mRtb7n16c', 'the whole id is not one hover away');
-  const labels = all(card, 'btn-label').map((n) => n.textContent);
-  assert.deepEqual(labels, ['Copy']);
-  assert.ok(!card.textContent.includes('Where'), 'a Where row crept back in');
-  assert.ok(!card.textContent.includes('Sold'), 'a Sold row crept back in');
-  assert.ok(!card.textContent.includes('$999.98'), 'the balance sentence crept back in');
+  assert.equal(world.cards().length, 1);
+  /* Built by PhosphorReceipt.card from the app's own receipt, untouched: the headline, the id
+     and the url the server built all reach the card, which decides its own link from them. */
+  assert.equal(world.built.length, 1);
+  const handed = world.built[0] as Record<string, unknown>;
+  assert.equal(handed.headline, 'Changed about $5 of your Solana (SOL) into USDC.');
+  assert.deepEqual(handed.txids, [{ chain: 'near', hash: 'EafozJ2XkQ9mRtb7n16c', url: null }]);
+  assert.equal(world.cards()[0].getAttribute('data-inline'), 'true', 'the thread got the popover, not the inline card');
   // The card closed the steps block, so the next call starts a new one under the card.
   world.emit({ kind: 'tool', name: 'mcp__phosphor__wallet', input: {} });
-  const order = world.host.children.length ? all(world.host, 'transcript')[0].children.map((n) => n.className.split(' ')[0]) : [];
-  assert.deepEqual(order.slice(-2), ['panel', 'steps-block'], order.join(' > '));
+  const order = all(world.host, 'transcript')[0].children.map((n) => n.className.split(' ')[0]);
+  assert.deepEqual(order.slice(-2), ['receipt-card', 'steps-block'], order.join(' > '));
 });
 
-test("the id is a link when the receipt carries the explorer's url for it", () => {
+test("the explorer url the server built reaches the card untouched, so the card can link it", () => {
   const world = build();
   world.receipts([]);
   const url = 'https://basescan.org/tx/0xabc123def4567890abcdef1234567890abcdef1234567890abcdef1234567890ab';
-  world.receipts([
-    receipt({
-      id: 'p2',
-      toChain: 'base',
-      txids: [{ chain: 'base', hash: '0xabc123def4567890abcdef1234567890abcdef1234567890abcdef1234567890ab', url }],
-    }),
-  ]);
-  const id = all(world.cards()[0], 'receipt-hash')[0] as unknown as { tag: string; href: string; target: string; rel: string; textContent: string };
-  assert.equal(id.tag, 'a');
-  assert.equal(id.href, url, "the link is not the receipt's url");
-  assert.equal(id.target, '_blank');
-  assert.equal(id.rel, 'noreferrer noopener');
-  assert.equal(id.textContent, '0xabc1...90ab');
-  assert.ok(all(world.cards()[0], 'tx-when')[0].textContent.endsWith(', on Base'));
+  const txids = [{ chain: 'base', hash: '0xabc123def4567890abcdef1234567890abcdef1234567890abcdef1234567890ab', url }];
+  world.receipts([receipt({ id: 'p2', toChain: 'base', txids })]);
+  assert.equal(world.cards().length, 1);
+  const handed = world.built[0] as Record<string, unknown>;
+  assert.deepEqual(handed.txids, txids, 'the column rewrote the receipt on its way to the card');
+  assert.equal(handed.toChain, 'base');
 });
 
 test('only a move that executed in this session gets a card, and only once', () => {
@@ -679,38 +713,129 @@ test('a window that opens onto a running agent does not steal focus', () => {
   assert.equal((world.input as unknown as { focused: boolean }).focused, false);
 });
 
-test('a start that failed says so where the person is looking', () => {
+test('a start that failed says so under the status, in plain words, with a Retry', () => {
   const world = build();
   world.emit({ kind: 'status', state: 'starting' });
-  world.emit({ kind: 'status', state: 'failed', detail: 'claude was not found on PATH.' });
+  world.emit({ kind: 'status', state: 'failed', detail: 'driver: the claude CLI was not found. Install Claude Code.', reason: 'Claude Code is not installed on this Mac.' });
+  /* The technical line follows on the error channel, exactly as src/driver.ts fail() sends it. */
+  world.emit({ kind: 'error', message: 'driver: the claude CLI was not found. Install Claude Code.' });
   world.runTimers();
   assert.equal(world.seat(), 'error');
-  assert.ok(world.card().includes('could not start'));
-  assert.ok(world.card().includes('claude was not found on PATH.'));
+  assert.equal(world.noteText(), 'Claude Code is not installed on this Mac.');
+  assert.equal(all(world.host, 'agent-status')[0].getAttribute('data-failed'), 'true');
+  assert.ok(!world.card().includes('driver:'), 'the raw driver string reached the card');
+  assert.equal(world.cardHidden(), false, 'the failure buried the card under a row');
+  assert.equal(world.saidRows().length + world.replyRows().length + world.noteRows().length, 0, 'the technical line was printed as a row');
   assert.equal(world.actionsHidden(), false, 'no way back from a failed start');
+  world.press('Retry');
+  assert.deepEqual(world.actions, ['start'], 'Retry did not start the assistant');
+  assert.equal(world.note().hidden, true, 'the old reason is still up while a new start runs');
 });
 
-test('the same sentence is not printed twice on one screen', () => {
-  // The head's detail line and the empty card carried the same string, one under the other.
+test('while it starts the card says so once and the status line says Starting', () => {
   const world = build();
   world.emit({ kind: 'status', state: 'starting', detail: 'Starting your assistant.' });
-  const head = all(world.host, 'agent-detail')[0];
-  assert.equal(head.hidden, true);
+  assert.equal(world.note().hidden, true, 'a failure line is up with nothing having failed');
   assert.ok(world.card().includes('Starting your assistant.'));
+  assert.equal(all(world.host, 'status-verb')[0].textContent, 'Starting...');
 });
 
-test('once there is a transcript the card is gone and the detail line takes the sentence back', () => {
+test('an assistant that leaves mid conversation says why under the status, and Turn off says nothing', () => {
   const world = build();
-  world.emit({ kind: 'status', state: 'starting', detail: 'Starting your assistant.' });
-  assert.equal(all(world.host, 'agent-detail')[0].hidden, true, 'both places said it at once');
-
+  world.emit({ kind: 'status', state: 'starting' });
   world.emit({ kind: 'status', state: 'ready' });
   world.runTimers();
   world.type('hello');
-  assert.equal(all(world.host, 'agent-empty')[0].hidden, true);
+  assert.equal(world.cardHidden(), true);
 
-  world.emit({ kind: 'status', state: 'failed', detail: 'the agent exited with code 1' });
-  const head = all(world.host, 'agent-detail')[0];
-  assert.equal(head.hidden, false, 'with the card gone, nothing carries the reason');
-  assert.equal(head.textContent, 'the agent exited with code 1');
+  world.emit({ kind: 'status', state: 'stopped', detail: 'the agent exited with code 1', reason: 'The assistant stopped: it exited with code 1.' });
+  assert.equal(world.note().hidden, false, 'with the card gone, nothing carries the reason');
+  assert.equal(world.noteText(), 'The assistant stopped: it exited with code 1.');
+  assert.equal(world.input.disabled, true, 'the box is open with nobody to send to');
+  assert.equal(all(world.host, 'status-verb')[0].textContent, 'Off');
+
+  /* A stop the person asked for: the state word alone. */
+  world.press('Retry');
+  world.emit({ kind: 'status', state: 'ready' });
+  world.runTimers();
+  world.emit({ kind: 'status', state: 'stopped' });
+  assert.equal(world.note().hidden, true, 'Turn off was reported as a failure');
+  assert.equal(world.input.disabled, true);
+});
+
+test('a first move on a quiet column whose start never reports back says so, and Retry starts again', () => {
+  const world = build();
+  world.emit({ kind: 'status', state: 'off' });
+  const rows = all(world.host, 'suggest');
+  fire(rows[0], 'click');
+  assert.equal(all(world.host, 'status-verb')[0].textContent, 'Starting...');
+  /* Nothing comes back. The start watch fires, and the failure waits the starting floor. */
+  world.runTimers();
+  world.runTimers();
+  assert.equal(world.noteText(), 'The assistant did not answer in time.');
+  assert.equal(world.input.value, rows[0].textContent, 'the words were lost with the start');
+  world.press('Retry');
+  assert.deepEqual(world.actions, ['start', 'start']);
+});
+
+test('the connect sheet takes the card\'s place and closes the moment somebody is at the wheel', async () => {
+  const world = build({ command: 'claude mcp add phosphor -- node /repo/src/mcp.ts' });
+  /* The command arrives from the backend after mount. */
+  await new Promise((r) => setImmediate(r));
+  world.emit({ kind: 'status', state: 'off' });
+  assert.equal(world.sheet().hidden, true);
+  world.press('Connect your own');
+  assert.equal(world.sheet().hidden, false);
+  assert.equal(world.cardHidden(), true, 'the sheet went over the card rather than in its place');
+  assert.equal(world.connectLine(), 'claude mcp add phosphor -- node /repo/src/mcp.ts');
+  assert.ok(world.connectStatus().includes('Waiting for a connection'));
+
+  /* A client attaching flips the line; it is read off the state frame's roster. */
+  world.agents([{ client: 'claude-code', role: 'operator', ops: 2 }]);
+  assert.ok(world.connectStatus().includes('Connected'));
+  world.agents([]);
+
+  world.press('Back');
+  assert.equal(world.sheet().hidden, true);
+  assert.equal(world.cardHidden(), false);
+
+  /* Open again, then start: the sheet is not a thing a Ready card can carry. */
+  world.press('Connect your own');
+  world.emit({ kind: 'status', state: 'starting' });
+  assert.equal(world.sheet().hidden, true, 'the mcp-add block survived the start');
+  world.emit({ kind: 'status', state: 'ready' });
+  world.runTimers();
+  assert.equal(world.sheet().hidden, true, 'the Ready card carries the mcp-add block');
+  assert.ok(world.card().includes('at the wheel'));
+});
+
+test('the child\'s stderr is a quiet note that does not bury the card', () => {
+  const world = build();
+  world.emit({ kind: 'status', state: 'off' });
+  world.emit({ kind: 'error', message: '(node) some deprecation warning' });
+  assert.equal(world.noteRows().length, 1);
+  assert.equal(world.cardHidden(), false, 'a stderr line replaced the card');
+  assert.equal(all(world.host, 'chat-error').length, 0, 'a stderr line was drawn as a stopped row');
+});
+
+test('while an answer runs the composer button is Stop, and it interrupts', () => {
+  const world = build();
+  world.type('read the chart');
+  world.emit({ kind: 'tool', name: 'mcp__phosphor__chart_read', input: {} });
+  const field = all(world.composerHost, 'composer-field')[0];
+  assert.equal(field.getAttribute('data-mode'), 'stop');
+  const composer = all(world.composerHost, 'agent-composer')[0];
+  fire(composer, 'submit');
+  assert.ok(world.actions.includes('interrupt'), 'the press did not stop the answer');
+  world.emit({ kind: 'turn_end', error: false, turns: 1 });
+  world.emit({ kind: 'status', state: 'ready' });
+  assert.equal(field.getAttribute('data-mode'), null);
+});
+
+test('a receipt opened anywhere in the window is posted into the thread as the shared card', () => {
+  const world = build();
+  world.bus('receipt:open', { receipt: receipt(), source: 'activity' });
+  assert.equal(world.cards().length, 1);
+  assert.equal((world.built[0] as Record<string, unknown>).id, 'p1');
+  assert.equal(world.cardHidden(), true, 'a card in the thread and the empty card at once');
 });

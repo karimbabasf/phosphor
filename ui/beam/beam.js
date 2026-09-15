@@ -123,9 +123,13 @@
      tool called from Basic lights the Trade tab a beat before the server moves
      the window. That beat is the point: the light arrives first and the view
      follows it. */
-  function surface(id) {
-    if (!id) return null;
-    var key = String(id);
+  /* A surface that does not exist yet falls back to one that does, on the same
+     screen. 'position' is the trade deck (the Open/Waiting/Done pane): the
+     trade screen carries it, and until that lands the chart on the same view
+     takes the light, so a trade proposal is never aimed at nothing. */
+  var FALLBACK = { position: 'chart' };
+
+  function resolve(key) {
     if (key === 'window') return document.getElementById('stage');
     if (key === 'assistant') return document.getElementById('conversation');
     if (key === 'tabs') return activeTab();
@@ -146,6 +150,24 @@
     return null;
   }
 
+  function surface(id) {
+    if (!id) return null;
+    var key = String(id);
+    var el = resolve(key);
+    if (!el && FALLBACK[key]) el = resolve(FALLBACK[key]);
+    return el;
+  }
+
+  /* An element is a target only once it has a box: a display:none panel or one
+     in a view still crossfading in measures at zero, and a flight to 0,0 lands
+     under the composer. isConnected is a cheap detach check with no layout in
+     it; the rect read is the one layout read, at fire time. */
+  function visible(el) {
+    if (!el || el.isConnected === false || typeof el.getBoundingClientRect !== 'function') return false;
+    var rect = el.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+
   /* ---------------------------------------------------------------- glow */
 
   function recordFor(id) {
@@ -155,6 +177,17 @@
       rec = {
         id: key,
         holds: 0,
+        /* THE RACE. A hold is armed at fire time and applied on arrival, so a
+           result that comes back faster than the 320 ms flight (switch,
+           set_theme, trade_focus all answer in well under it) has something
+           to cancel. `armed` counts flights on the way to holding this
+           surface; `cancels` counts releases that arrived before their
+           flight, so the arrival knows to skip the hold rather than stick a
+           glow with no call behind it. `errored` carries a rose flash for a
+           failure that beat its flight. */
+        armed: 0,
+        cancels: 0,
+        errored: 0,
         waiting: false,
         pulse: false,
         tone: 'glow',
@@ -254,6 +287,13 @@
     paintSeat();
   }
 
+  /* A flight that intends to hold arms its record now, so the surface can be
+     released before the light has arrived. */
+  function arm(id) {
+    if (!id) return;
+    recordFor(id).armed += 1;
+  }
+
   function release(id, ok) {
     if (!id) return;
     var rec = records[String(id)];
@@ -261,14 +301,24 @@
     if (rec.holds > 0) {
       rec.holds -= 1;
       if (liveHolds > 0) liveHolds -= 1;
+      /* An error is the louder signal: it colours the surface even while
+         another call is still holding it, because the thing a person needs to
+         see is that something failed, not that something else is still
+         running. */
+      if (ok === false) rec.tone = 'down';
+      else if (rec.tone !== 'down') rec.tone = 'glow';
+      paint(rec);
+      paintSeat();
+      return;
     }
-    /* An error is the louder signal: it colours the surface even while another
-       call is still holding it, because the thing a person needs to see is that
-       something failed, not that something else is still running. */
-    if (ok === false) rec.tone = 'down';
-    else if (rec.tone !== 'down') rec.tone = 'glow';
-    paint(rec);
-    paintSeat();
+    /* The result beat the flight: cancel the hold it would otherwise apply on
+       arrival. The seat light was never lit for this call (hold() runs on
+       arrival), so nothing there to settle. A failure still gets its one rose
+       flash when the flight lands. */
+    if (rec.armed > rec.cancels) {
+      rec.cancels += 1;
+      if (ok === false) rec.errored += 1;
+    }
   }
 
   /* Glow once and fade: the shape of "this changed on its own". The attribute
@@ -418,6 +468,52 @@
     py = u * u * f.y0 + 2 * u * t * f.cy + t * t * f.y1;
   }
 
+  /* RE-MEASURE ON RESIZE AND SCROLL, and nowhere else. A flight reads its
+     rects once at fire time (the draw loop reads no layout, which is the
+     budget rule the performance audit wrote), so a window that resizes or a
+     panel that scrolls under the light mid-flight would leave the dot landing
+     where the element WAS. These listeners recompute the endpoints on the two
+     events that move them, off the elements the flight kept. They are added
+     only while flights are in the air and dropped with the last one, so a
+     window at rest carries no beam listeners. The glow itself is attribute
+     based and already follows its element. */
+  var reflowing = false;
+
+  function reflow() {
+    if (!flights.length) return;
+    for (var i = 0; i < flights.length; i += 1) {
+      var f = flights[i];
+      if (f.fromEl) {
+        var fp = pointOf(f.fromEl);
+        if (fp) { f.x0 = fp.x; f.y0 = fp.y; }
+      }
+      if (f.toEl) {
+        var tp = pointOf(f.toEl);
+        if (tp) { f.x1 = tp.x; f.y1 = tp.y; }
+      }
+      f.cx = (f.x0 + f.x1) / 2;
+      f.cy = (f.y0 + f.y1) / 2 - LIFT;
+    }
+    if (handle && typeof handle.start === 'function') handle.start();
+  }
+
+  function watchReflow() {
+    if (reflowing || typeof window.addEventListener !== 'function') return;
+    reflowing = true;
+    /* Capture, so a scroll inside any pane is heard: a scroll event does not
+       bubble, and the nearest scrolling ancestor of the target is whichever
+       pane the panel sits in. */
+    window.addEventListener('scroll', reflow, true);
+    window.addEventListener('resize', reflow);
+  }
+
+  function unwatchReflow() {
+    if (!reflowing) return;
+    reflowing = false;
+    window.removeEventListener('scroll', reflow, true);
+    window.removeEventListener('resize', reflow);
+  }
+
   function draw(now) {
     if (dirty) {
       ctx.clearRect(dx0 - CLEAR_PAD, dy0 - CLEAR_PAD,
@@ -432,6 +528,15 @@
 
     for (var i = flights.length - 1; i >= 0; i -= 1) {
       var f = flights[i];
+      /* The target left the DOM while the light was on its way. isConnected
+         is not a layout read, so this costs the loop nothing. Drop the flight
+         and give back its armed hold, so nothing lights an element that is
+         gone. */
+      if (f.toEl && f.toEl.isConnected === false) {
+        flights.splice(i, 1);
+        if (f.then === 'hold' && typeof f.to === 'string') release(f.to, true);
+        continue;
+      }
       var p = (now - f.startedAt) / f.durationMs;
       if (p < 0) p = 0;
       var t = easeAt(f.ease, p > 1 ? 1 : p);
@@ -521,6 +626,7 @@
   function teardown() {
     teardownAt = 0;
     if (flights.length > 0) return;
+    unwatchReflow();
     if (handle) {
       handle.destroy();
       handle = null;
@@ -528,8 +634,23 @@
   }
 
   function arrive(f) {
-    if (f.then === 'hold') hold(f.to, f.tone);
-    else if (f.then === 'decay') decay(f.to, f.tone);
+    if (f.then === 'hold') {
+      var rec = f.to ? recordFor(f.to) : null;
+      if (rec && rec.armed > 0) rec.armed -= 1;
+      if (rec && rec.cancels > 0) {
+        /* The result already came back. Skip the hold, and if it failed give
+           the surface its one rose flash so a fast failure still shows. */
+        rec.cancels -= 1;
+        if (rec.errored > 0) {
+          rec.errored -= 1;
+          decay(f.to, 'down');
+        }
+      } else {
+        hold(f.to, f.tone);
+      }
+    } else if (f.then === 'decay') {
+      decay(f.to, f.tone);
+    }
     if (typeof f.done === 'function') {
       try {
         f.done();
@@ -541,13 +662,58 @@
 
   /* ----------------------------------------------------------------- fire */
 
+  /* Wait up to a second for a surface to exist and have a box, then run the
+     body. A tool that switches the view fires its light a beat before the
+     panel it names is mounted or crossfaded in, and a flight measured then
+     lands at 0,0 under the composer. Resolved fresh on each poll, because the
+     element that answers a surface id changes as views swap. */
+  var WAIT_MS = 1000;
+
+  function whenVisible(id, run) {
+    var direct = typeof id !== 'string';
+    var first = direct ? id : surface(id);
+    if (visible(first) || direct) {
+      run(first);
+      return;
+    }
+    var startedAt = window.performance && performance.now ? performance.now() : Date.now();
+    var poll = function () {
+      var el = surface(id);
+      if (visible(el)) {
+        run(el);
+        return;
+      }
+      var now = window.performance && performance.now ? performance.now() : Date.now();
+      if (now - startedAt >= WAIT_MS) {
+        /* It never appeared. Land the glow on whatever the id resolves to now
+           (which may be a tab), or drop it if there is nothing at all. */
+        if (el) run(el);
+        return;
+      }
+      if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(poll);
+      else window.setTimeout(poll, 16);
+    };
+    if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(poll);
+    else window.setTimeout(poll, 16);
+  }
+
   function fire(opts) {
     var o = opts || {};
     var tone = TONE_TOKEN[o.tone] ? o.tone : 'glow';
     var then = o.then === 'hold' || o.then === 'none' ? o.then : 'decay';
+    /* The hold is armed now, not on arrival, so a release that beats the
+       flight is not lost (see recordFor). */
+    if (then === 'hold' && typeof o.to === 'string') arm(o.to);
+    whenVisible(o.to, function (target) { launch(o, tone, then, target); });
+  }
 
-    var target = typeof o.to === 'string' ? surface(o.to) : o.to;
-    if (!target) return;
+  function launch(o, tone, then, target) {
+    if (!target) {
+      /* Nothing to aim at even after the wait: give back the armed hold so the
+         seat and the count stay balanced. */
+      if (then === 'hold' && typeof o.to === 'string') release(o.to, true);
+      return;
+    }
 
     var motion = window.PhosphorMotion;
 
@@ -564,6 +730,7 @@
     }
     if (!fitted) fit();
 
+    var fromEl = o.from && typeof o.from.getBoundingClientRect === 'function' ? o.from : null;
     var from = pointOf(o.from);
     var to = pointOf(target);
     if (!from || !to) {
@@ -581,7 +748,7 @@
     halo.addColorStop(0.6, 'rgba(' + rgb + ',0.08)');
     halo.addColorStop(1, 'rgba(' + rgb + ',0)');
 
-    flights.push({
+    var flight = {
       x0: from.x,
       y0: from.y,
       x1: to.x,
@@ -596,10 +763,17 @@
       startedAt: (window.performance && performance.now ? performance.now() : Date.now()),
       durationMs: duration,
       to: o.to,
+      /* The elements, kept so the flight can be re-measured when the window
+         resizes or the target's scroller moves, and dropped if the target
+         leaves the DOM mid-flight. */
+      fromEl: fromEl,
+      toEl: target,
       tone: tone,
       then: then,
       done: o.done
-    });
+    };
+    flights.push(flight);
+    watchReflow();
 
     if (teardownAt) {
       window.clearTimeout(teardownAt);

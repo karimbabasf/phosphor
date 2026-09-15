@@ -17,9 +17,7 @@
   var VIEWS = ['basic', 'pro', 'trade', 'vault'];
 
   var refs = {};
-  var field = null;
   var currentView = 'basic';
-  var patternState = 'idle';
 
   function boot() {
     refs.page = document.getElementById('page');
@@ -36,9 +34,7 @@
     refs.feedChip = document.getElementById('chip-feed');
     refs.freeze = document.getElementById('btn-freeze');
     refs.offline = document.getElementById('offline-bar');
-    refs.fieldHost = document.getElementById('field');
 
-    mountField();
     mountConversation();
     wireTabs();
     wireFreeze();
@@ -84,47 +80,11 @@
     });
   }
 
-  /* ---------- the afterglow field ---------- */
-
-  /* The field is the conversation column's ground, and the column's size:
-     the living part of the window is where the assistant lives, and a canvas
-     one column wide is most of the frame budget saved. */
-  function mountField() {
-    if (!refs.fieldHost || !window.PhosphorPattern) return;
-    field = window.PhosphorPattern.mount(refs.fieldHost, { cellPx: 42, state: 'idle' });
-    window.patternTheme = function () {
-      if (field) field.refreshColors();
-    };
-
-    var refit = dom.debounce(function () {
-      if (field) field.resize();
-    }, 140);
-    window.addEventListener('resize', refit);
-
-    if (typeof ResizeObserver === 'function' && refs.conversation) {
-      new ResizeObserver(refit).observe(refs.conversation);
-    }
-  }
-
-  /* The field is the app's pulse, so exactly one thing decides its intensity
-     and it reads the whole window rather than any one panel. Order matters:
-     a locked wallet outranks a pending ask, which outranks a working agent. */
-  function updateField() {
-    var state = store.get() || {};
-    var lock = state.lock || {};
-    var pending = pendingOf(state);
-    var next = 'idle';
-    if (lock.state === 'locked' || lock.state === 'no_wallet' || lock.state === 'needs_migration') {
-      next = 'locked';
-    } else if (pending.length > 0) {
-      next = 'waiting';
-    } else if (window.PhosphorAgent && window.PhosphorAgent.isWorking()) {
-      next = 'working';
-    }
-    if (next === patternState) return;
-    patternState = next;
-    if (field) field.setState(next);
-  }
+  /* The afterglow field that used to sit behind the conversation column is gone
+     (2026-09-15: the panel is flat, and the mark alone carries the live state).
+     Callers in decision.js and agent.js still poke this on every state change,
+     so it stays as the one place a column-wide pulse would be decided. */
+  function updateField() {}
 
   /* The same filter ui/screens/decision.js draws from. awaiting_touch counts: the
      click landed but the Touch ID dialog has not answered, so the person still
