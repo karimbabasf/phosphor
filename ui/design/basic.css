@@ -114,13 +114,15 @@
 /* ---------- what you hold ---------- */
 
 /* The list under the card head, every row of it: the dust under a dollar is
-   counted in the note below rather than listed. */
+   counted in the note below rather than listed. The list carries the 16 px
+   under its last row; the note, when there is one, sits in that space and
+   carries its own 16 under itself. */
 .hold-list {
-  padding: 0 var(--card-x);
+  padding: 0 var(--card-x) var(--s-4);
 }
 
 .hold-note {
-  padding: var(--s-2) var(--card-x) var(--s-3);
+  padding: 0 var(--card-x) var(--s-4);
   color: var(--text-3);
 }
 
@@ -262,6 +264,11 @@
   border-bottom: 0;
   cursor: pointer;
   transition: background-color var(--dur-press) var(--ease-out);
+}
+
+/* Shut, the head is the card's last row, so it carries the 16 under it. */
+.fold:not([data-open="true"]) > .fold-head {
+  padding-bottom: var(--s-4);
 }
 
 .fold-head-right {

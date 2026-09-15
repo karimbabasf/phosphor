@@ -42,11 +42,15 @@
 
 /* ---------- a card ---------- */
 
+/* The card keeps the 24 px inset around its head, so the hairline sits inside
+   the edge, and no inset at the foot: what ends a card (its body, its foot,
+   a list's own padding) leaves 16 px under the last row, never 40. */
 .card {
   --card-x: 20px;
   display: flex;
   flex-direction: column;
   min-width: 0;
+  padding-bottom: 0;
   background: var(--bg-1);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
@@ -119,6 +123,12 @@
   padding: var(--s-4) var(--s-3);
 }
 
+/* A row of actions with nothing showing in it leaves the flow, so the body's
+   gap above it goes too and the last sentence keeps its 16. */
+.card-body > .hstack-2:not(:has(> :not([hidden]))) {
+  display: none;
+}
+
 /* Where a card that goes somewhere says so, in words, at the bottom edge. */
 .card-foot {
   display: flex;
@@ -126,7 +136,7 @@
   justify-content: space-between;
   gap: var(--s-3);
   margin-top: auto;
-  padding: var(--s-3) var(--card-x);
+  padding: var(--s-3) var(--card-x) var(--s-4);
   border-top: 1px solid var(--line);
 }
 
@@ -462,7 +472,7 @@
 
 .activity-foot {
   flex: 0 0 auto;
-  padding: var(--s-3) 0 var(--s-1);
+  padding: var(--s-3) 0 0;
 }
 
 .activity-foot:empty {
