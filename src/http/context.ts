@@ -333,7 +333,7 @@ export type Ctx = Omit<ServerDeps, 'getTheme' | 'setTheme' | 'getScreen' | 'keys
   prices: PriceCache;
   gas: GasFill;
   duplicates: DuplicateGuard;
-  // One audit line per refused session, then silence. See rejectSeat in mcp.ts.
+  // One audit line per refused session or client, then silence. See firstRefusal in mcp.ts.
   seats: Set<string>;
 };
 

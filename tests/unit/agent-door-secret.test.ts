@@ -109,3 +109,29 @@ test('the window routes still take the window token and never the seat secret', 
     await h.close();
   }
 });
+
+/* The 401 line carries caller-chosen strings. They were written raw, bounded only by the 1 MB
+   body cap, so a same-user process with no secret could put a megabyte into the log that
+   log_tail hands to every agent, once per distinct session string. Now both strings are capped,
+   and the line is written once per client rather than once per session string. */
+test('a refusal is logged once per client, with the session and client strings capped', async () => {
+  const h = await bootChartServer();
+  try {
+    const long = 'x'.repeat(10_000);
+    for (let n = 0; n < 5; n += 1) await h.post('/api/mcp', { op: 'hello', client: 'noisy-client', session: `s${n}-${long}` });
+    const first = h.audit.tail(50).filter((e) => e.type === 'agent_rejected');
+    assert.equal(first.length, 1, 'five session strings from one client are one line');
+    const data = first[0].data as { session: string; client: string };
+    assert.ok(data.session.length <= 83, `the session string is capped, got ${data.session.length}`);
+    assert.equal(data.client, 'noisy-client');
+
+    await h.post('/api/mcp', { op: 'hello', client: long, session: 'other' });
+    const second = h.audit.tail(50).filter((e) => e.type === 'agent_rejected');
+    assert.equal(second.length, 2, 'another client is one more line');
+    const clients = second.map((e) => (e.data as { client: string }).client);
+    assert.ok(clients.every((c) => c.length <= 83), `the client string is capped, got ${clients.map((c) => c.length).join(', ')}`);
+    assert.equal(h.agents.member('other'), null);
+  } finally {
+    await h.close();
+  }
+});

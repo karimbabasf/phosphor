@@ -175,9 +175,10 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   const gas: GasFill = { cache: createGasCache({ dataDir: cfg.dataDir }), filling: false };
 
   // A refused agent keeps trying: its heartbeat alone is one attempt every few seconds, and
-  // the condition it is waiting on (a full roster, or its own revocation) can last hours. One
-  // audit line per refused session, then silence. The refusal itself is never silent (every
-  // call gets the 409 and the reason), only the log is.
+  // the condition it is waiting on (a full roster, a missing secret) can last hours. One audit
+  // line per refused session or client, then silence, over a set mcp.ts keeps bounded because
+  // the keys are the caller's own strings. The refusal itself is never silent (every call gets
+  // its status and the reason), only the log is.
   const seats = new Set<string>();
 
   // ---------- the three prices the basic screen tracks ----------

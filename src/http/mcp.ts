@@ -10,6 +10,7 @@
 import type http from 'node:http';
 
 import { SEAT_SECRET_FILE, seatSecretPath } from '../agents.ts';
+import { oneLine } from '../intents.ts';
 import { sameOrigin } from './auth.ts';
 import { asRecord, capLabel, fail, readBody, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
@@ -61,8 +62,24 @@ export async function handleRead(ctx: Ctx, body: JsonBody, res: http.ServerRespo
   await handler(ctx, body, asRecord(body.args), res);
 }
 
+/* One audit line per key, then silence, over a set that cannot grow past a few hundred. The
+   keys are caller-chosen strings (a session, a client name), and a process guessing them would
+   otherwise fill memory one refusal at a time. Oldest out first: a long-running app forgets a
+   refusal it logged hours ago rather than refusing to log a new one. */
+const MAX_REFUSALS_REMEMBERED = 200;
+function firstRefusal(seen: Set<string>, key: string): boolean {
+  if (seen.has(key)) return false;
+  seen.add(key);
+  while (seen.size > MAX_REFUSALS_REMEMBERED) {
+    const oldest = seen.values().next();
+    if (oldest.done) break;
+    seen.delete(oldest.value);
+  }
+  return true;
+}
+
 function rejectSeat(ctx: Ctx, error: string, body: JsonBody, res: http.ServerResponse, revoked = false): void {
-  const session = String(body.session ?? 'unnamed-session');
+  const session = oneLine(body.session ?? 'unnamed-session', 80);
   if (revoked) {
     // A replaced agent is not a second agent that showed up: the human took the seat off it
     // on purpose. It gets its own marker so the proxy exits instead of reporting a busy
@@ -75,13 +92,12 @@ function rejectSeat(ctx: Ctx, error: string, body: JsonBody, res: http.ServerRes
     fail(res, 409, error, { seat: 'revoked' });
     return;
   }
-  if (!ctx.seats.has(session)) {
-    ctx.seats.add(session);
+  if (firstRefusal(ctx.seats, `roster:${session}`)) {
     // Not "a second agent was refused" any more: a second agent is welcome. This line is now
     // only ever a FULL roster, which is a capacity fact and reads differently in a log.
     ctx.audit.append('agent_rejected', 'an agent tried to attach to a full roster and was refused', {
       op: String(body.op ?? ''),
-      client: body.client,
+      client: body.client === undefined ? undefined : oneLine(body.client, 80),
       attached: ctx.agents.roster().map((m) => m.label),
     });
   }
@@ -167,17 +183,20 @@ export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.S
      sees the session, before the audit sees the arguments and before any handler runs. The agents
      this app spawns carry it in PHOSPHOR_SEAT; a hand-started proxy reads it off the file named in
      the refusal. Compared hashed and constant-time in src/agents.ts.
-     One audit line per refused session, the way a full roster is logged: the proxy's heartbeat
+     One audit line per refused CLIENT, the way a full roster is logged: the proxy's heartbeat
      alone is one attempt every five seconds, and the refusal is never silent, only the log is.
-     The line names the session and the op, and never the value, right or wrong. */
+     The line names the session, the client and the op, and never the value, right or wrong.
+     BOTH STRINGS ARE THE CALLER'S AND BOTH ARE CAPPED. They were written raw, bounded only by
+     the body cap, so a process with no secret could put a megabyte into the log that log_tail
+     hands to every agent, once per invented session string, and grow the set below by one
+     entry each time. A session that failed the secret is never seated in that set. */
   if (!ctx.agents.recognises(body.secret)) {
-    const session = String(body.session ?? 'unnamed-session');
-    if (!ctx.seats.has(session)) {
-      ctx.seats.add(session);
+    const client = body.client === undefined ? undefined : oneLine(body.client, 80);
+    if (firstRefusal(ctx.seats, `secret:${client ?? ''}`)) {
       ctx.audit.append('agent_rejected', 'an /api/mcp call was refused: it carried no seat secret, or a wrong one', {
         op,
-        session,
-        client: body.client,
+        session: oneLine(body.session ?? 'unnamed-session', 80),
+        client,
         secretPresent: typeof body.secret === 'string' && body.secret.length > 0,
       });
     }

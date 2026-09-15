@@ -122,14 +122,15 @@ test('the reserved gate is off unless the app asks for it', () => {
    The door reads the secret before the roster does. handleMcp hands the whole body to claim(),
    so this is also the assertion that the field survives the trip for a caller that has it. */
 
-type Wire = { url: string; close: () => Promise<void>; audit: string[] };
+type Wire = { url: string; close: () => Promise<void>; audit: string[]; seats: Set<string> };
 
 async function boot(agents: ReturnType<typeof createAgents>): Promise<Wire> {
   const audit: string[] = [];
+  const seats = new Set<string>();
   const ctx = {
     cfg: { dataDir: '/tmp/phosphor-roster-test' },
     agents,
-    seats: new Set<string>(),
+    seats,
     audit: { append: (type: string) => audit.push(type) },
     sse: { broadcastState: () => {}, broadcastActivity: () => {} },
     // Every answer on this door names the screen the window is on (src/http/mcp.ts stampScreen).
@@ -145,6 +146,7 @@ async function boot(agents: ReturnType<typeof createAgents>): Promise<Wire> {
     url: `http://127.0.0.1:${port}`,
     close: () => new Promise<void>((resolve) => server.close(() => resolve())),
     audit,
+    seats,
   };
 }
 
@@ -202,6 +204,24 @@ test('a refused hello is logged once rather than once a heartbeat', async () => 
       1,
       'a loop of refusals must not be a loop of audit lines',
     );
+  } finally {
+    await wire.close();
+  }
+});
+
+/* The set behind "logged once" is keyed on caller-chosen strings. A refused session used to be
+   added to it, one entry per invented session string, with no bound. A session that failed the
+   secret is never seated in it now, and the set cannot grow past a few hundred distinct clients. */
+test('refused sessions never grow the seats set, and distinct clients cannot grow it without bound', async () => {
+  const agents = roster();
+  const wire = await boot(agents);
+  try {
+    for (let n = 0; n < 20; n += 1) await hello(wire, { session: `invented-${n}`, client: 'one-client' });
+    assert.equal(wire.seats.size, 1, 'one client, one entry, whatever the session strings');
+    assert.ok(![...wire.seats].some((key) => key.includes('invented-')), 'a session that failed the secret is not seated');
+    for (let n = 0; n < 500; n += 1) await hello(wire, { session: 'same', client: `client-${n}` });
+    assert.ok(wire.seats.size <= 200, `bounded, got ${wire.seats.size}`);
+    assert.equal(agents.connected(), 0);
   } finally {
     await wire.close();
   }
