@@ -6,7 +6,8 @@ the script that draws the wordmark.
 ## The mark
 
 An isometric P built from four slabs, drawn once as a vector and shipped in three colourways.
-The colours are the whole identity. The app carries two of them (`ui/design/tokens.css`): green
+The colours are the whole identity. White on black is the site's own light on its ink, for places
+where the green would shout (added 2026-09-14). The app carries two of them (`ui/design/tokens.css`): green
 on black and black on white. Black on green is for banners and social only, never the window
 (cut from it on 2026-09-14).
 
@@ -15,6 +16,7 @@ on black and black on white. Black on green is for banners and social only, neve
 | Green on black | `#0E0F13` | `#3FFF6C` | `phosphor-logo-green-on-black.png` (2000 x 2000) |
 | Black on green | `#3FFF6C` | `#0E0F13` | `phosphor-logo-black-on-green.png` (2000 x 2000) |
 | Black on white | `#FFFFFF` | `#111111` | `phosphor-logo-black-on-white.png` (2000 x 2000) |
+| White on black | `#0E0F13` | `#ECEEF1` | `phosphor-logo-white-on-black.png` (2000 x 2000) |
 
 - `phosphor-mark.svg`, the vector, one path in `currentColor` in a box the size of its own ink
   (58.05 x 64.75 units). Traced from the black on white PNG with potrace; 0.6 percent of edge
@@ -25,7 +27,8 @@ on black and black on white. Black on green is for banners and social only, neve
   brand/phosphor-app-icon.png -o src-tauri/icons` regenerates the icon set from it; delete the
   `android` and `ios` folders it also writes.
 - `phosphor-banner-twitter.png` (3000 x 1000) and `phosphor-banner-linkedin.png` (3168 x 792),
-  the mark and the name on black. The `-wordmark` pair is the name alone.
+  the mark and the name on black. The `-wordmark` pair is the name alone. The `-white-on-black`
+  pair is the same banner in the site's light, `#ECEEF1` on `#0E0F13`.
 
 The app switches between its two colourways from the menu under the mark in its top left,
 and an agent can do the same with `set_theme { profile }`. Each colourway is a whole palette
