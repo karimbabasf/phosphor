@@ -111,3 +111,130 @@ mod tests {
         assert_eq!(v["error"], "helper_missing");
     }
 }
+
+// ---------- the relay ----------
+
+/// How long the backend may hold a poll open before answering "nothing yet". Under the socket's
+/// read deadline below, so a held poll is never mistaken for a dead backend.
+const POLL_HOLD_MS: u64 = 25_000;
+const POLL_READ_TIMEOUT: Duration = Duration::from_secs(40);
+/// After a failed hop (backend restarting, port busy) the relay waits this long before asking
+/// again, so a dead backend is not hammered and a restarting one is picked up within a second.
+const RETRY_PAUSE: Duration = Duration::from_secs(1);
+
+/// What the relay needs and nothing more: no handle on the window, no path to the key file.
+pub struct Relay {
+    pub port: u16,
+    pub token: String,
+    pub nonce: String,
+    pub transport: String,
+}
+
+/// The JSON body of a 2xx response whose x-phosphor header carries this boot's nonce. Anything
+/// else, including a squatter answering with a different nonce, is `None`.
+fn body_of_ours(response: &str, nonce: &str) -> Option<serde_json::Value> {
+    if !response.starts_with("HTTP/1.1 2") || !crate::backend::identity_matches(response, Some(nonce)) {
+        return None;
+    }
+    let (_, body) = response.split_once("\r\n\r\n")?;
+    serde_json::from_str(body).ok()
+}
+
+fn post(relay: &Relay, path: &str, body: &serde_json::Value, read_timeout: Duration) -> Option<serde_json::Value> {
+    let payload = body.to_string();
+    let head = format!(
+        "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: http://127.0.0.1:{port}\r\n\
+         Content-Type: application/json\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n",
+        port = relay.port,
+        len = payload.len()
+    );
+    let response = crate::backend::request_within(relay.port, &head, Some(&payload), read_timeout)?;
+    body_of_ours(&response, &relay.nonce)
+}
+
+/// One turn of the relay: ask, run, answer. Returns false when the hop failed and the caller
+/// should pause before trying again.
+fn turn(relay: &Relay) -> bool {
+    let ask = serde_json::json!({ "token": relay.token, "waitMs": POLL_HOLD_MS });
+    let Some(pending) = post(relay, "/api/vault/pending", &ask, POLL_READ_TIMEOUT) else {
+        return false;
+    };
+    let Some(request) = pending.get("request").filter(|r| r.is_object()) else {
+        return true;
+    };
+    // The request is relayed to the sidecar as the backend wrote it, plus the transport key the
+    // backend cannot know and the sidecar needs. The shell adds nothing else and reads nothing
+    // out of it: the reason string, the blobs and the AAD are the backend's to compose.
+    let mut forwarded = request.clone();
+    if let Some(map) = forwarded.as_object_mut() {
+        map.insert("transportKey".to_string(), serde_json::Value::String(hex_to_base64(&relay.transport)));
+    }
+    let mut answer = call(&forwarded);
+    if let Some(map) = answer.as_object_mut() {
+        map.insert("token".to_string(), serde_json::Value::String(relay.token.clone()));
+        if let Some(id) = request.get("id") {
+            map.insert("id".to_string(), id.clone());
+        }
+    }
+    post(relay, "/api/vault/answer", &answer, POLL_READ_TIMEOUT).is_some()
+}
+
+/// Runs until `alive` says the backend is gone. One request at a time, in order, and never the
+/// same request twice: the backend hands each out once and the sidecar is stateless, so a relay
+/// that crashed mid-request leaves that request to time out on the backend's side rather than
+/// be re-run against a second Touch ID dialog.
+pub fn run(relay: Relay, alive: impl Fn() -> bool) {
+    while alive() {
+        if !turn(&relay) {
+            std::thread::sleep(RETRY_PAUSE);
+        }
+    }
+}
+
+/// mint_token gives hex; the sidecar and the backend both take the transport key as base64.
+fn hex_to_base64(hex: &str) -> String {
+    let bytes: Vec<u8> = (0..hex.len())
+        .step_by(2)
+        .filter_map(|i| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok())
+        .collect();
+    base64_encode(&bytes)
+}
+
+/// Standard base64 with padding, written out because the tree is kept free of a crate for it.
+fn base64_encode(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        out.push(TABLE[(n >> 18) as usize & 63] as char);
+        out.push(TABLE[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 { TABLE[(n >> 6) as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 2 { TABLE[n as usize & 63] as char } else { '=' });
+    }
+    out
+}
+
+#[cfg(test)]
+mod relay_tests {
+    use super::*;
+
+    #[test]
+    fn the_transport_key_crosses_as_base64_of_its_bytes() {
+        assert_eq!(hex_to_base64("00ff10"), "AP8Q");
+        assert_eq!(base64_encode(b"hello"), "aGVsbG8=");
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_encode(&[0u8; 32]).len(), 44);
+    }
+
+    #[test]
+    fn only_a_2xx_carrying_this_boots_nonce_is_read() {
+        let ok = "HTTP/1.1 200 OK\r\nX-Phosphor: abc\r\n\r\n{\"request\":null}";
+        assert_eq!(body_of_ours(ok, "abc"), Some(serde_json::json!({ "request": null })));
+        assert_eq!(body_of_ours(ok, "def"), None, "a squatter's answer is not read");
+        let forbidden = "HTTP/1.1 403 Forbidden\r\nX-Phosphor: abc\r\n\r\n{}";
+        assert_eq!(body_of_ours(forbidden, "abc"), None);
+        let bare = "HTTP/1.1 200 OK\r\n\r\n{}";
+        assert_eq!(body_of_ours(bare, "abc"), None, "no identity header, no read");
+    }
+}

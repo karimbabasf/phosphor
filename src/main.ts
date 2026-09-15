@@ -402,12 +402,14 @@ if (stranded.length > 0) {
 // Two lines per session instead of 240 an hour, and the transcript still answers "was an
 // agent attached at 19:52".
 /* THE SHELL'S HANDSHAKE, off the pipe and before the port opens.
-   Three lines, in this order, written by src-tauri/src/backend.rs and then the pipe is closed:
+   Four lines, in this order, written by src-tauri/src/backend.rs and then the pipe is closed:
 
      1. the window token, which every write from the control page carries
      2. the boot nonce, which this process echoes in its x-phosphor header so the shell can tell
         its OWN backend from anything else that took the port
      3. the roster seat secret, which reaches the agents this app spawns and nothing else
+     4. the enclave transport key, under which the Secure Enclave sidecar seals the wallet's data
+        key on its way back here over loopback; see src/vault/relay.ts
 
    Why a pipe and not the environment: `ps eww <pid>` prints the environment of any process this
    user owns, which is the attacker this app is built against. A local process read the token back
@@ -444,8 +446,8 @@ function readHandshake(
 
     const onData = (chunk: Buffer | string): void => {
       buffered += String(chunk);
-      // Three values means three newlines, because the shell writes one after the last of them.
-      if (buffered.split('\n').length > 3) finish();
+      // Four values means four newlines, because the shell writes one after the last of them.
+      if (buffered.split('\n').length > 4) finish();
     };
 
     const timer = setTimeout(finish, waitMs);

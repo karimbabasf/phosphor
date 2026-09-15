@@ -22,9 +22,16 @@
 // this helper exists to import into an app that is otherwise plain code.
 //
 // THE PROTOCOL. Requests: {"op":"probe"}, {"op":"create"},
-// {"op":"unwrap","keyBlob":b64,"ephemeralPublicKey":b64,"ciphertext":b64,"aad":b64,"reason":s},
-// {"op":"presence","reason":s}. Every answer has ok:true plus fields, or ok:false with an error
-// code from the list at the bottom. Base64 everywhere. Nothing is logged.
+// {"op":"unwrap","id":s,"keyBlob":b64,"ephemeralPublicKey":b64,"ciphertext":b64,"aad":b64,
+//  "reason":s,"transportKey":b64}, {"op":"presence","reason":s}. Every answer has ok:true plus
+// fields, or ok:false with an error code from the list at the bottom. Base64 everywhere. Nothing
+// is logged.
+//
+// THE DATA KEY NEVER LEAVES HERE IN THE CLEAR. An unwrap answers with the data key sealed under
+// the per-boot transport key the shell was given (AES-256-GCM, the request id as AAD), so the
+// shell that relays the answer and the loopback hop it travels over both see ciphertext, and an
+// answer cannot be replayed against a different request. Only the backend, which holds the other
+// copy of the transport key from its stdin, can open it.
 //
 // THE WRAP IS DONE ELSEWHERE ON PURPOSE. Wrapping a data key needs only the enclave's public key
 // (ephemeral ECDH, HKDF-SHA256, AES-256-GCM), so the Node side does it and the plaintext key
@@ -105,6 +112,9 @@ func unwrap(_ req: [String: Any]) throws -> Never {
   let ephRaw = try b64(req, "ephemeralPublicKey")
   let combined = try b64(req, "ciphertext")
   let aad = try b64(req, "aad")
+  let transport = try b64(req, "transportKey")
+  guard transport.count == 32 else { throw Fail(code: "bad_input", message: "transportKey must be 32 bytes") }
+  guard let id = req["id"] as? String, !id.isEmpty else { throw Fail(code: "bad_input", message: "id is required") }
   let reason = (req["reason"] as? String) ?? "Phosphor needs your approval"
   let ctx = LAContext()
   ctx.localizedReason = reason
@@ -127,7 +137,8 @@ func unwrap(_ req: [String: Any]) throws -> Never {
   let wrapKey = secret.hkdfDerivedSymmetricKey(using: SHA256.self, salt: wrapSalt, sharedInfo: info, outputByteCount: 32)
   let box = try AES.GCM.SealedBox(combined: combined)
   let dek = try AES.GCM.open(box, using: wrapKey, authenticating: aad)
-  emit(["ok": true, "dek": dek.base64EncodedString()])
+  let sealed = try AES.GCM.seal(dek, using: SymmetricKey(data: transport), authenticating: Data(id.utf8))
+  emit(["ok": true, "id": id, "dekSealed": sealed.combined!.base64EncodedString()])
 }
 
 /* Touch ID with nothing to unwrap: the window asks for it to lift the frost. */

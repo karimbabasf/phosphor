@@ -29,6 +29,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod backend;
+mod enclave;
 mod update;
 
 use std::path::{Path, PathBuf};
@@ -496,6 +497,7 @@ fn start(app: &tauri::AppHandle) -> Result<(), String> {
                     }
                 });
                 update::schedule(&handle);
+                start_enclave_relay(&handle, port);
                 watch(handle, paths, port);
                 return;
             }
@@ -511,6 +513,25 @@ fn start(app: &tauri::AppHandle) -> Result<(), String> {
 
 fn app_backend_exited(app: &tauri::AppHandle) -> bool {
     matches!(app.state::<Backend>().exited(), Some(true))
+}
+
+/// The thread that lends the backend this shell's reach into the Secure Enclave, for as long as
+/// the backend this shell started is alive. It is started only after the backend answered with
+/// this boot's nonce, so it never relays for anything else on the port, and it stops on its own
+/// when the child is gone; a respawned backend gets a fresh one from the watch loop's caller.
+/// See enclave.rs for why the request comes from the backend and never from the page.
+fn start_enclave_relay(app: &tauri::AppHandle, port: u16) {
+    let hand = app.state::<Secrets>();
+    let relay = enclave::Relay {
+        port,
+        token: hand.0.token.clone(),
+        nonce: hand.0.nonce.clone(),
+        transport: hand.0.transport.clone(),
+    };
+    let alive = app.clone();
+    std::thread::spawn(move || {
+        enclave::run(relay, || !app_backend_exited(&alive));
+    });
 }
 
 fn main() {

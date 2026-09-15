@@ -241,20 +241,24 @@ pub fn mint_token() -> Result<String, String> {
     Err("Phosphor's desktop shell needs a random source and only supports unix today".to_string())
 }
 
-/// The three secrets this shell mints per boot and hands to the backend down one pipe.
+/// The four secrets this shell mints per boot and hands to the backend down one pipe.
 ///
 /// `token` is the approval token, injected into the control webview and checked on every write.
 /// `nonce` is how this shell recognises its OWN backend: the backend echoes it in the x-phosphor
 /// header and nowhere else, so a local process that grabs the port cannot answer with it.
 /// `seat` is the roster handshake secret, which the backend passes to the agents it spawns so a
 /// seat claimed from outside cannot fill the roster the human's own agent needs.
+/// `transport` is the key the Secure Enclave sidecar seals the wallet's data key under on its way
+/// back to the backend over loopback, so a capture of that hop shows ciphertext. This shell hands
+/// it to the sidecar and never uses it itself; see enclave.rs.
 ///
-/// All three are separate values. A secret reused for a second purpose is a secret whose exposure
+/// All four are separate values. A secret reused for a second purpose is a secret whose exposure
 /// in the weaker place costs you the stronger one, and the nonce is deliberately public.
 pub struct Handshake {
     pub token: String,
     pub nonce: String,
     pub seat: String,
+    pub transport: String,
 }
 
 impl Handshake {
@@ -263,6 +267,7 @@ impl Handshake {
             token: mint_token()?,
             nonce: mint_token()?,
             seat: mint_token()?,
+            transport: mint_token()?,
         })
     }
 }
@@ -271,9 +276,15 @@ impl Handshake {
 /// which is what src/http/auth.ts requires: a DNS-rebinding page cannot produce that header, and
 /// a client that omits it is refused.
 fn request(port: u16, head: &str, body: Option<&str>) -> Option<String> {
+    request_within(port, head, body, PROBE_TIMEOUT)
+}
+
+/// The same request with its own read deadline, for the one caller that waits on purpose: the
+/// enclave relay's long poll, which the backend holds open until it has something to ask.
+pub fn request_within(port: u16, head: &str, body: Option<&str>, read_timeout: Duration) -> Option<String> {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let mut stream = TcpStream::connect_timeout(&addr, PROBE_TIMEOUT).ok()?;
-    stream.set_read_timeout(Some(PROBE_TIMEOUT)).ok()?;
+    stream.set_read_timeout(Some(read_timeout)).ok()?;
     stream.set_write_timeout(Some(PROBE_TIMEOUT)).ok()?;
     stream.write_all(head.as_bytes()).ok()?;
     if let Some(payload) = body {
@@ -403,8 +414,8 @@ pub fn node_binary() -> Result<PathBuf, String> {
 /// signed hardened runtime does not close that either. It is the same channel and the same
 /// argument the runner already uses for the Hyperliquid API wallet key.
 ///
-/// Line 1 is the window token, line 2 the boot nonce, line 3 the roster seat secret. Order is the
-/// contract; src/main.ts reads them in it. A backend started with no pipe at all is a developer
+/// Line 1 is the window token, line 2 the boot nonce, line 3 the roster seat secret, line 4 the
+/// enclave transport key. Order is the contract; src/main.ts reads them in it. A backend started with no pipe at all is a developer
 /// running `npm run app`, and it mints what it needs and says so.
 pub fn spawn_backend(payload: &Path, data: &Path, hand: &Handshake) -> Result<Child, String> {
     let node = node_binary()?;
@@ -430,7 +441,7 @@ pub fn spawn_backend(payload: &Path, data: &Path, hand: &Handshake) -> Result<Ch
     // Taken and dropped, so the pipe closes as soon as the lines are written: the backend reads the
     // handshake and wants nothing else from stdin ever again.
     match child.stdin.take() {
-        Some(mut pipe) => writeln!(pipe, "{}\n{}\n{}", hand.token, hand.nonce, hand.seat)
+        Some(mut pipe) => writeln!(pipe, "{}\n{}\n{}\n{}", hand.token, hand.nonce, hand.seat, hand.transport)
             .map_err(|e| format!("could not hand the handshake to the control app: {e}"))?,
         None => return Err("the control app was started with no stdin to hand the handshake to".into()),
     }
