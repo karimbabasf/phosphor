@@ -11,10 +11,13 @@
    before the world scrolls. A grid shares spare room equally between two
    tracks, which shrank the deck while the chart still had room. */
 
-/* ---------- the stage on trade ---------- */
+/* ---------- the stage on trade ----------
 
+   The chart has first claim on the width here, so the conversation's share
+   is smaller than on the other views: the floor on anything under 1500 px,
+   and still a real column on a 27 inch screen. */
 body[data-view="trade"] .stage {
-  --conv-w: 360px;
+  --conv-w: 24vw;
 }
 
 /* ---------- hidden panes ----------

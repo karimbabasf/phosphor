@@ -243,11 +243,14 @@ fn open_control_window(app: &tauri::AppHandle, port: u16) -> Result<(), String> 
 
     // Opens maximized: the window fills the screen without going into macOS fullscreen, so the
     // menu bar and the dock stay where they are. The size below is what it falls back to when
-    // the person unmaximizes it.
+    // the person unmaximizes it. The minimum is the stylesheet's own floors summed: a 360 px
+    // conversation beside a 560 px world plus the handle for the width, and the topbar over
+    // the trade strip, the chart at its 364 px floor and the deck at its 168 px floor for the
+    // height, so the window can never be dragged under what the layout can hold.
     let window = WebviewWindowBuilder::new(app, "control", WebviewUrl::External(url))
         .title("Phosphor")
         .inner_size(1180.0, 780.0)
-        .min_inner_size(900.0, 620.0)
+        .min_inner_size(960.0, 700.0)
         .center()
         .resizable(true)
         .maximized(true)

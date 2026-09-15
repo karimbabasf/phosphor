@@ -107,24 +107,25 @@
   --dur-glow-in: 120ms;
   --dur-glow-out: 2400ms;
 
-  /* Layout. The conversation column is the constant; the world is the rest. */
+  /* Layout. The conversation column takes a share of the window between two
+     floors and the world is the rest, so a 27 inch screen gets a wider
+     transcript and a 13 inch laptop still gets a chart (Karim, 2026-09-15:
+     "make sure this thing looks good on any screen, regardless of the
+     resolution"). The Basic column and the Pro grid grow with the world up to
+     a measure that still reads. Nothing here is a fixed pixel width. */
   --topbar-h: 48px;
-  --conv-w: 440px;
+  --conv-w: 30vw;
   --conv-min: 360px;
-  --conv-max: 640px;
+  --conv-max: 760px;
   --world-min: 560px;
-  --basic-col: 640px;
-  --pro-max: 1440px;
+  --basic-col: min(760px, 100%);
+  --pro-max: min(1680px, 100%);
   --rail-w: 320px;
   --gutter: 24px;
 
   /* Depth. Two shadows in the whole app, for the few things that float. */
   --lift: 0 12px 40px rgba(0, 0, 0, 0.55), 0 1px 0 rgba(255, 255, 255, 0.04) inset;
   --lift-sm: 0 8px 24px rgba(0, 0, 0, 0.45);
-}
-
-@media (max-width: 1279px) {
-  :root { --conv-w: 400px; }
 }
 
 /* The five slots keep their meaning when an agent recolours the window, so the

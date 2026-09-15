@@ -384,15 +384,16 @@ html, body {
   to { opacity: 1; filter: blur(0); }
 }
 
-/* ---------- Basic: one 640 px column ---------- */
+/* ---------- Basic: one column, 760 px at most ---------- */
 
 /* ONE COLUMN AS TALL AS WHAT IT HOLDS.
 
    The column (Basic's, and the Vault's) sizes to its cards and the world
    scrolls it. Nothing inside a card scrolls on its own: a list that is cut
-   off at a card's edge with no scrollbar reads as the whole list. */
+   off at a card's edge with no scrollbar reads as the whole list. Its width
+   is the token's measure or the world's, whichever is narrower. */
 .basic-col {
-  width: min(var(--basic-col), 100%);
+  width: var(--basic-col);
   margin: 0 auto;
   padding: var(--s-6) var(--s-5) var(--s-5);
   display: flex;
