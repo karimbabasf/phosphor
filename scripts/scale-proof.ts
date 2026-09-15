@@ -44,10 +44,11 @@ const SIZES = process.env.PROOF_SIZES
   : ALL_SIZES;
 const TABS = process.env.PROOF_TABS ? ALL_TABS.filter((t) => (process.env.PROOF_TABS as string).split(',').includes(t)) : ALL_TABS;
 
-// What the strip says when Hyperliquid refuses the account read, word for word as the window
-// builds it from the feed's own error (src/trade/feed-ws.ts readSpot).
-const VENUE_LINE =
-  'No route to the venue: spot read failed: hyperliquid /info 422: Failed to deserialize the JSON body into the target type. The window keeps asking.';
+// What the strip says when Hyperliquid refuses the account read: the plain sentence the
+// window shows, and the feed's own words (src/trade/feed-ws.ts readSpot) that sit behind the
+// developer switch.
+const VENUE_LINE = 'Hyperliquid is not answering one of our reads. Trying again.';
+const VENUE_RAW = 'spot read failed: hyperliquid /info 422: Failed to deserialize the JSON body into the target type';
 
 type Json = any;
 
@@ -128,16 +129,17 @@ async function createWallet(): Promise<void> {
 // The venue notice, forced onto the strip through the DOM the window builds for it. The
 // window's own path needs the feed to fail, which the demo venue never does; the picture only
 // needs the notice on screen.
-const FORCE_LINE = `(function (text) {
+const FORCE_LINE = `(function (text, raw) {
   var line = document.querySelector('.trade-strip .trade-line');
   if (!line) return false;
   var span = line.querySelector('.trade-line-text');
   if (span) span.textContent = text; else line.textContent = text;
+  var words = line.querySelector('.trade-line-raw');
+  if (words) { words.textContent = raw; words.hidden = false; }
   line.setAttribute('data-tone', 'warn');
-  line.classList.add('warn');
   line.hidden = false;
   return true;
-})(${JSON.stringify(VENUE_LINE)})`;
+})(${JSON.stringify(VENUE_LINE)}, ${JSON.stringify(VENUE_RAW)})`;
 
 // What the eye cannot check from a picture alone: any box wider than the window (a sideways
 // scroll), the chart's height, and whether the composer is on screen.
