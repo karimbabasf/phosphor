@@ -889,6 +889,38 @@ test('what happened lists only finished things, newest first, and is capped', ()
   );
 });
 
+test('a move the app cannot confirm is listed as unconfirmed with the rail\'s sentence, never as one that did not happen', () => {
+  const sentence = 'the intent was signed and its submission is unconfirmed (timeout); handle abc123, deadline 2026-08-15T12:00:00.000Z.';
+  const v = buildBasic(
+    baseInput({
+      proposals: [
+        proposal({ id: 'a', status: 'executed', decidedAt: T0 }),
+        proposal({ id: 'b', status: 'needs_reconciliation', decidedAt: T1, settledAt: T2, result: { ok: false, detail: sentence, txids: ['h1'], evidence: { handle: 'abc123' } } }),
+      ],
+    }),
+  );
+  assert.deepEqual(v.recent.map((r) => r.outcome), ['unconfirmed', 'done'], 'newest first, by when the rail returned');
+  const [open] = v.recent;
+  assert.match(open!.headline, /^Tried to change /, 'never past tense: it may not have happened');
+  assert.match(open!.headline, /Not confirmed/);
+  assert.ok(open!.headline.includes(sentence), 'the rail\'s own sentence, verbatim');
+  assert.doesNotMatch(open!.headline, /did not happen|blocked|said no/);
+});
+
+test('a failed row with a handle or a nonce but no hash is unconfirmed too, and one with nothing is not listed', () => {
+  const v = buildBasic(
+    baseInput({
+      proposals: [
+        proposal({ id: 'handle', status: 'failed', decidedAt: T2, result: { ok: false, detail: 'signed, unconfirmed; handle abc', txids: [], evidence: { handle: 'abc' } } }),
+        proposal({ id: 'nonce', status: 'failed', decidedAt: T1, result: { ok: false, detail: 'no reply; nonce 5', txids: [], evidence: { nonce: '5' } } }),
+        proposal({ id: 'nothing', status: 'failed', decidedAt: T0, result: { ok: false, detail: 'refused before the key', txids: [] } }),
+      ],
+    }),
+  );
+  assert.deepEqual(v.recent.map((r) => r.outcome), ['unconfirmed', 'unconfirmed']);
+  assert.ok(v.recent.every((r) => !r.headline.includes('refused before the key')), 'a move that never happened is not a thing that happened');
+});
+
 test('nothing has happened yet is a state, not an empty box', () => {
   assert.deepEqual(buildBasic(baseInput()).recent, []);
 });

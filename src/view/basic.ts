@@ -147,7 +147,10 @@ function newestFetchAt(chainStatus: Record<ChainId, ChainStatus>): number {
 function movedMoney(p: Proposal): boolean {
   if (p.status === 'executed') return true;
   if (p.status !== 'failed' && p.status !== 'needs_reconciliation') return false;
-  return (p.result?.txids ?? []).length > 0;
+  // A hash, or the handle or nonce of a signed intent or a venue send that got no answer:
+  // each is something live at a venue that this app did not see settle.
+  const evidence = p.result?.evidence;
+  return (p.result?.txids ?? []).length > 0 || evidence?.handle !== undefined || evidence?.nonce !== undefined;
 }
 
 function movedAt(p: Proposal): string {
@@ -690,16 +693,30 @@ function clockTime(stamp: string | undefined): string {
 // That text is written for whoever is debugging this app and reads as noise to the
 // person who owns the money.
 function buildRecent(proposals: Proposal[]): BasicRecent[] {
+  // Everything that finished, plus everything that may have moved money and did not finish:
+  // a move the app cannot confirm is the one line on this list the owner most needs to see,
+  // and leaving it out reads as "nothing happened". A failed row with no hash and no handle
+  // moved nothing and stays off the list, as before.
   const finished = proposals.filter(
-    (p) => p.status === 'executed' || p.status === 'refused' || p.status === 'policy_refused',
+    (p) => p.status === 'executed' || p.status === 'refused' || p.status === 'policy_refused' || movedMoney(p),
   );
 
-  finished.sort((a, b) => (b.decidedAt ?? b.createdAt).localeCompare(a.decidedAt ?? a.createdAt));
+  finished.sort((a, b) => movedAt(b).localeCompare(movedAt(a)));
 
   return finished.slice(0, RECENT_MAX).map((p) => {
     const amount = amountUsdOf(p.draft);
     if (p.status === 'executed') {
-      return { headline: didHeadline(p.draft, amount), timeLine: clockTime(p.decidedAt), outcome: 'done' as const };
+      return { headline: didHeadline(p.draft, amount), timeLine: clockTime(movedAt(p)), outcome: 'done' as const };
+    }
+    if (p.status === 'failed' || p.status === 'needs_reconciliation') {
+      // Never past tense, and the rail's own sentence beside it: that line names the handle,
+      // the hash and what the venue said, which is what the owner checks against.
+      const sentence = p.result?.detail ?? '';
+      return {
+        headline: `${triedHeadline(p.draft, amount)} Not confirmed${sentence === '' ? '.' : `: ${sentence}`}`,
+        timeLine: clockTime(movedAt(p)),
+        outcome: 'unconfirmed' as const,
+      };
     }
     if (p.status === 'refused') {
       return {
