@@ -109,7 +109,7 @@ function fakeLedger(): Ledger & { setUsdt(amountBase: string | null): void; refr
   return ledger;
 }
 
-function spyRail(result: RailResult): { registry: RailRegistry; executed: WriteDraft[] } {
+function spyRail(result: RailResult | (() => RailResult)): { registry: RailRegistry; executed: WriteDraft[] } {
   const executed: WriteDraft[] = [];
   const rail: Rail = {
     kind: 'swap',
@@ -117,13 +117,13 @@ function spyRail(result: RailResult): { registry: RailRegistry; executed: WriteD
     simulate: async () => ({ ok: true, summary: 'spy rail' }),
     execute: async (draft) => {
       executed.push(draft);
-      return result;
+      return typeof result === 'function' ? result() : result;
     },
   };
   return { registry: { for: (d) => (d.kind === 'swap' ? rail : null), kinds: () => ['swap'] }, executed };
 }
 
-function setup(result: RailResult = settlingResult(), seed: Proposal[] = []) {
+function setup(result: RailResult | ((ledger: ReturnType<typeof fakeLedger>) => RailResult) = settlingResult(), seed: Proposal[] = []) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-settling-'));
   const cfg: AppConfig = {
     mode: 'live',
@@ -139,7 +139,7 @@ function setup(result: RailResult = settlingResult(), seed: Proposal[] = []) {
   const store = createStore(dataDir);
   for (const p of seed) store.put(p);
   const ledger = fakeLedger();
-  const rails = spyRail(result);
+  const rails = spyRail(typeof result === 'function' ? () => result(ledger) : result);
   const svc = createProposalService({ cfg, audit, store, ledger, riskRows, quoter: syntheticQuoter(), signer: stubSigner(), rails: rails.registry, dataDir });
   return { svc, store, ledger, rails, audit, lines: () => audit.tail(50).reverse() };
 }
@@ -239,4 +239,63 @@ test('a settling row found on disk at boot is watched too', async () => {
   h.ledger.setUsdt('104500000');
   await h.ledger.refresh();
   assert.equal(h.store.get('from-last-run')?.status, 'executed');
+});
+
+// ---------- the receipt's before and after ----------
+//
+// `balances` used to sum snapshot().holdings, which is always empty on a live ledger, so every
+// live receipt read "$0 before, $0 after". The figure is now the pocket the move went through:
+// the rail's own reads where it took them, the ledger's read of that pocket otherwise.
+
+async function drained(): Promise<void> {
+  for (let i = 0; i < 6; i += 1) await new Promise((resolve) => setImmediate(resolve));
+}
+
+test('a receipt carries the rail\'s own before and after for the pocket that moved, off the read the rail decided on', async () => {
+  const h = setup({
+    ok: true,
+    detail: 'swapped 100 USDC for 99.5 USDT inside intents.near',
+    txids: ['0xintent'],
+    pocket: pocket({ after: '104500000' }),
+  });
+  const p = await h.svc.proposeSwap(swap);
+  assert.equal(p.status, 'executed');
+  assert.deepEqual(p.balances, { beforeUsd: 5, afterUsd: 104.5 });
+  await drained();
+  assert.deepEqual(h.store.get(p.id)?.balances, { beforeUsd: 5, afterUsd: 104.5 }, 'no ledger poll overwrote the rail\'s numbers');
+  assert.equal(h.ledger.refreshes, 0, 'the rail already read the after, so no re-read was needed for the receipt');
+});
+
+test('without a rail read, the before and after are the intents pocket as the ledger read it, not zero', async () => {
+  const h = setup((ledger) => {
+    // The move lands while the rail runs; the ledger sees it on the re-read afterwards.
+    ledger.setUsdt('104500000');
+    return { ok: true, detail: 'spy rail', txids: ['0xintent'] };
+  });
+  const p = await h.svc.proposeSwap({ ...swap, venue: 'intents-native' as const });
+  assert.equal(p.status, 'executed', p.result?.detail ?? '');
+  assert.equal(p.balances?.beforeUsd, 105, '100 USDC and 5 USDT inside the verifier before');
+  await drained();
+  assert.equal(h.store.get(p.id)?.balances?.afterUsd, 204.5, '100 USDC and 104.5 USDT after the re-read');
+  assert.ok(h.ledger.refreshes >= 1, 'the after came off a fresh read');
+});
+
+test('a Hyperliquid pocket is priced as its USDC', async () => {
+  const h = setup({
+    ok: true,
+    detail: 'funded',
+    txids: ['0xintent'],
+    pocket: { venue: 'hyperliquid', account: ACCOUNT, assetId: 'USDC', symbol: 'USDC', decimals: 6, before: '0', after: '9659400', floor: '9600000' },
+  });
+  const p = await h.svc.proposeSwap(swap);
+  assert.deepEqual(p.balances, { beforeUsd: 0, afterUsd: 9.6594 });
+});
+
+test('a settled row gets its after priced from the read that settled it', async () => {
+  const h = setup();
+  const p = await h.svc.proposeSwap(swap);
+  assert.deepEqual(p.balances, { beforeUsd: 5, afterUsd: null }, 'settling: the after is not known yet');
+  h.ledger.setUsdt('104500000');
+  await h.ledger.refresh();
+  assert.deepEqual(h.store.get(p.id)?.balances, { beforeUsd: 5, afterUsd: 104.5 });
 });

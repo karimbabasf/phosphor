@@ -192,7 +192,7 @@ export async function reconcileProposal(ctx: PCtx, id: string): Promise<Proposal
      and inventing one would be worse than the blank. */
   const balances =
     outcome.status === 'executed' && p.balances !== undefined
-      ? { ...p.balances, afterUsd: await balanceAfter(ctx) }
+      ? { ...p.balances, afterUsd: await balanceAfter(ctx, p.draft) }
       : p.balances;
 
   return persist(ctx, {
