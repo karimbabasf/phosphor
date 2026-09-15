@@ -220,6 +220,89 @@
   align-items: center;
   flex: 0 0 auto;
   gap: var(--s-3);
+  min-height: 30px;
+}
+
+/* The name and the seat light on one line. The light shrinks before the
+   name does, and its verb trims with an ellipsis rather than wrapping, so a
+   long tool phrase beside two buttons never pushes the head to two rows. */
+.agent-title {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.agent-title > .title-sm {
+  flex: 0 0 auto;
+}
+
+.agent-status {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/* The status line's colours by state. The grammar in components.css paints
+   the dot in the beam colour; here it is grey until somebody is at the
+   wheel, half lit while one comes up, rose when the start failed, and it
+   holds a still ring around it while stopped. The verb reads in the second
+   text tone at rest and in the first while the assistant is at work: the
+   shimmer that runs through it then is the grammar's own. */
+.agent-status > .status-dot {
+  position: relative;
+  transition: background-color var(--dur-enter) var(--ease-out),
+              box-shadow var(--dur-enter) var(--ease-out);
+}
+
+.agent-status[data-state="off"] > .status-dot { background: var(--text-3); }
+.agent-status[data-state="starting"] > .status-dot { background: color-mix(in srgb, var(--beam) 60%, var(--text-3)); }
+.agent-status[data-state="error"] > .status-dot { background: var(--down); }
+.agent-status[data-state="stopped"] > .status-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--text-3);
+}
+
+.agent-status > .status-verb {
+  color: var(--text-2);
+  transition: color var(--dur-enter) var(--ease-out);
+}
+
+.agent-status[data-state="error"] > .status-verb { color: var(--down); }
+
+/* At work: the same breathing and the same light through the verb the beam
+   gives the line while it holds a surface (components.css, data-live), so a
+   read that never fires the beam and a write that does look the same from
+   the head. Both attributes light it, neither one clears the other. The
+   light runs through the second text tone rather than the first: on white
+   the beam colour IS the text colour, so a light the colour of the word it
+   passes through would be no light at all. */
+.agent-status[data-state="working"] > .status-dot,
+.agent-status[data-state="starting"] > .status-dot {
+  animation: status-breathe 1.8s var(--ease-in-out) infinite;
+}
+
+.agent-status[data-state="working"] > .status-verb,
+.agent-status[data-live="true"] > .status-verb {
+  background: linear-gradient(90deg, var(--text-2) 0%, var(--text-2) 40%, var(--beam) 50%, var(--text-2) 60%, var(--text-2) 100%);
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: status-shimmer 1.6s linear infinite;
+}
+
+/* The ring the settle leaves behind (agent.js settleRing): a hairline of the
+   beam colour around the dot, transparent until the Web Animations API runs
+   it once. Larger than the dot so the 1.6 scale it grows to is a ring a
+   person can see and not a dot that twitched. */
+.status-ring {
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 1px solid var(--beam);
+  opacity: 0;
+  pointer-events: none;
 }
 
 .agent-detail {
@@ -275,8 +358,11 @@
   max-width: 46ch;
 }
 
-.agent-empty-inner .title {
+/* The headline at 16 px: the card is a seat, not a hero, and the number on
+   the screen beside it is the thing that gets to be large. */
+.agent-empty-title {
   color: var(--text);
+  line-height: 1.35;
 }
 
 /* The mark on the first screen: 40 px of the window's own light, and nothing
@@ -295,18 +381,21 @@
 }
 
 /* THE SEAT. The mark above the headline, and it is the only thing on this
-   card that a person can read from across the room. Grey when nobody is
+   card that a person can read from across the room. Dim when nobody is
    there, waking while one comes up, lit and holding once one is. The card
    said the same sentence in all three states before it existed, so pressing
    Start changed the chip and nothing a person was looking at. It was a ring
-   with a dot until 2026-09-14; the mark carries the same three answers in
-   the same colours, and the topbar glyph is the same mark in the same states,
-   so the two agree from across the room too. */
+   with a dot until 2026-09-14; the mark carries the same three answers, and
+   the topbar glyph is the same mark in the same states, so the two agree
+   from across the room too. Dim is the beam colour at forty percent rather
+   than grey: an unlit phosphor is still the colour it will light in. */
 .agent-seat {
   width: 32px;
   height: 36px;
-  color: var(--text-3);
+  color: var(--beam);
+  opacity: 0.4;
   transition: color var(--dur-enter) var(--ease-out),
+              opacity var(--dur-enter) var(--ease-out),
               filter var(--dur-enter) var(--ease-out);
 }
 
@@ -331,18 +420,21 @@
 
 .agent-seat[data-seat="live"] {
   color: var(--beam);
+  opacity: 1;
   filter: drop-shadow(var(--beam-glow));
 }
 
 .agent-seat[data-seat="error"] {
   color: var(--down);
+  opacity: 1;
   filter: none;
 }
 
-.agent-empty-inner:has(.agent-seat[data-seat="error"]) .title { color: var(--down); }
+.agent-empty-inner:has(.agent-seat[data-seat="error"]) .agent-empty-title { color: var(--down); }
 
 .agent-empty-actions {
   display: flex;
+  align-items: center;
   gap: var(--s-2);
   margin-top: var(--s-2);
 }
@@ -359,6 +451,59 @@
 @keyframes revealin {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+/* THE FIRST MOVES. Three ruled rows under the buttons, left aligned on the
+   card's own measure, each one a question a person can put to the assistant
+   with one press. They come in after the card, one after another, out of a
+   slight blur: the same reveal a reply gets, so the card and the answers it
+   leads to are one thing. Hover lifts the words to the first text tone and
+   the press scales, the way every pressable thing here does. */
+.agent-suggest {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  margin-top: var(--s-3);
+  text-align: left;
+}
+
+.suggest {
+  display: block;
+  width: 100%;
+  min-height: 36px;
+  padding: var(--s-2) 0;
+  border-top: 1px solid var(--line);
+  color: var(--text-2);
+  font-size: var(--fs-13);
+  line-height: 1.4;
+  text-align: left;
+  /* Backwards, not both: the reveal holds the row hidden through its delay
+     and then lets go, so the press scale under it is free once it has landed. */
+  animation: suggest-in 500ms var(--ease-out) backwards;
+  transition: color var(--dur-press) var(--ease-out),
+              transform var(--dur-press) var(--ease-out);
+}
+
+.suggest:nth-child(1) { animation-delay: 60ms; }
+.suggest:nth-child(2) { animation-delay: 120ms; }
+.suggest:nth-child(3) { animation-delay: 180ms; }
+
+.suggest:last-child { border-bottom: 1px solid var(--line); }
+
+.suggest:active { transform: scale(0.99); }
+
+.suggest:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .suggest:hover { color: var(--text); }
+}
+
+@keyframes suggest-in {
+  from { opacity: 0; transform: translateY(6px); filter: blur(4px); }
 }
 
 .transcript {
@@ -591,10 +736,12 @@
 
 .steps-fold .step-dot { align-self: center; margin-top: 0; }
 
+/* A call in flight breathes at the head's own rate (status-breathe in
+   components.css), so the light in the head and the light on the row are
+   one light seen twice. */
 .step[data-state="live"] .step-dot {
   opacity: 1;
-  box-shadow: 0 0 8px -1px var(--beam);
-  animation: breathe 1200ms var(--ease-in-out) infinite;
+  animation: status-breathe 1.8s var(--ease-in-out) infinite;
 }
 
 .step[data-state="done"] .step-dot { opacity: 0.7; }
@@ -721,27 +868,107 @@
   opacity: 1;
 }
 
-/* The composer: a textarea that grows to five lines, Enter sends. */
+/* THE COMPOSER. One field on the column's own ground under a hairline, and
+   no box around the box: the textarea is bare, grows to six lines, and the
+   one control is a round arrow inside the field that is grey until there is
+   a word to send. The field itself is an unpainted rounded region that only
+   shows when it has focus, as a 2 px ring in the ink edge, so the column at
+   rest is a hairline, a sentence and an arrow. Enter sends. */
 .agent-composer {
-  display: flex;
-  gap: var(--s-2);
-  align-items: flex-end;
-  padding: var(--s-3) var(--s-4) var(--s-4);
+  padding: var(--s-2) var(--s-2) var(--s-2);
   border-top: 1px solid var(--line);
   background: color-mix(in srgb, var(--bg-0) 92%, transparent);
 }
 
+.composer-field {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--s-2);
+  padding: var(--s-1) var(--s-1) var(--s-1) var(--s-2);
+  border-radius: var(--radius-sm);
+  transition: box-shadow var(--dur-press) var(--ease-out);
+}
+
+.composer-field:focus-within {
+  box-shadow: 0 0 0 2px var(--ink-edge);
+}
+
+/* The textarea, stripped of the shared field's box: the ground is the
+   column's, the edge is the field's ring. Its line height is what the six
+   line cap in agent.js autogrow is read from. */
 .agent-composer .input {
   flex: 1 1 auto;
   min-width: 0;
+  min-height: 28px;
+  max-height: none;
+  padding: 4px 0 5px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: var(--fs-14);
+  line-height: 1.45;
+  field-sizing: fixed;
 }
 
-.composer-note {
-  padding: 0 var(--s-4) var(--s-4);
-  margin-top: calc(var(--s-4) * -1 + var(--s-2));
-  font-size: var(--fs-12);
+.agent-composer .input:focus {
+  border-color: transparent;
+  outline: none;
+}
+
+.agent-composer .input:disabled {
   color: var(--text-3);
-  background: color-mix(in srgb, var(--bg-0) 92%, transparent);
+  cursor: default;
+}
+
+/* The arrow: 28 px round, grey until the field is armed, the ink fill once
+   there is something to send, and half strength while the assistant cannot
+   take a message. The press scales, the fill and the colour cross over in
+   200 ms so the arming reads as the box waking rather than a swap. */
+.composer-send {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-pill);
+  background: var(--bg-2);
+  color: var(--text-3);
+  transition: background-color 200ms var(--ease-out),
+              color 200ms var(--ease-out),
+              transform var(--dur-press) var(--ease-out),
+              opacity var(--dur-press) var(--ease-out);
+}
+
+.composer-send-glyph {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+
+.composer-field[data-armed="true"] .composer-send:not(:disabled) {
+  background: var(--ink);
+  color: var(--on-ink);
+}
+
+.composer-send:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.composer-send:disabled {
+  opacity: 0.5;
+}
+
+.composer-send:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .composer-send:hover:not(:disabled) { color: var(--text); }
+  .composer-field[data-armed="true"] .composer-send:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--ink) 88%, var(--bg-0));
+    color: var(--on-ink);
+  }
 }
 
 /* The whole command, wrapped, because a person has to read it before they
@@ -1811,8 +2038,17 @@ body[data-locked="true"] #page {
 .limit-line { align-items: flex-start; }
 .limit-line > .body { flex: 0 0 auto; }
 .limit-line > .meta { text-align: right; min-width: 0; }
+/* ---------- the assistant column, reduced motion (2026-09-14) ---------- */
 
 .limit-line:last-of-type { border-bottom: 0; }
+/* The seat light stops breathing and holds a still ring, the verb stops
+   shimmering and stays in the first text tone, the settle ring never runs
+   (agent.js checks), and the first moves fade in with no travel and no blur.
+   State is still carried by colour and by words, which is the half of the
+   motion that meant something. */
+@keyframes suggest-in-still {
+  from { opacity: 0; }
+}
 
 .allow-head {
   width: 100%;
@@ -1824,4 +2060,19 @@ body[data-locked="true"] #page {
   text-align: left;
   color: inherit;
   font: inherit;
+@media (prefers-reduced-motion: reduce) {
+  .agent-status[data-state="working"] > .status-dot,
+  .agent-status[data-state="starting"] > .status-dot {
+    animation: none;
+    opacity: 1;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--beam) 18%, transparent);
+  }
+  .agent-status[data-state="working"] > .status-verb,
+  .agent-status[data-live="true"] > .status-verb {
+    animation: none;
+    background: none;
+    color: var(--text);
+  }
+  .suggest { animation-name: suggest-in-still; }
+  .composer-send:active:not(:disabled) { transform: none; }
 }

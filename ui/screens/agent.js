@@ -110,10 +110,44 @@
   var TRANSCRIPT_CAP = 400;
   var TICK_MS = 100;
   var STICK_PX = 40;
-  /* Five lines, and the line's height is read off the box rather than written
+  /* Six lines, and the line's height is read off the box rather than written
      down here: the fallback is only for a computed style that says `normal`. */
-  var COMPOSER_MAX_LINES = 5;
+  var COMPOSER_MAX_LINES = 6;
   var COMPOSER_LINE_FALLBACK_PX = 21;
+
+  /* What the box says while it cannot be used, and what it says when it can.
+     The first is the sentence that used to sit under the box as a note. */
+  var PLACEHOLDER_OFF = 'Start your assistant to talk to it.';
+  var PLACEHOLDER_STARTING = 'Starting your assistant.';
+  var PLACEHOLDER_ON = 'Tell your assistant what to do.';
+
+  /* The three first moves on the empty card. Each is a question this window
+     answers from what it already holds, in the words a person would use. */
+  var SUGGESTIONS = ['What do I hold?', 'Is anything waiting on me?', 'Find a trade on BTC'];
+
+  /* One glyph, drawn here: the send arrow. A path on a 16 box in the current
+     colour at 1.5 px, built in the svg namespace the way dom.mark builds the
+     logo, and null where there is no namespace to build in. */
+  var GLYPH_ARROW_UP = 'M8 12.75V3.25M3.75 7.5L8 3.25l4.25 4.25';
+  var SVG_NS = 'http://www.w3.org/2000/svg';
+
+  function glyph(path, className) {
+    if (typeof document.createElementNS !== 'function') return null;
+    var svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('focusable', 'false');
+    svg.setAttribute('aria-hidden', 'true');
+    if (className) svg.setAttribute('class', className);
+    var line = document.createElementNS(SVG_NS, 'path');
+    line.setAttribute('d', path);
+    line.setAttribute('fill', 'none');
+    line.setAttribute('stroke', 'currentColor');
+    line.setAttribute('stroke-width', '1.5');
+    line.setAttribute('stroke-linecap', 'round');
+    line.setAttribute('stroke-linejoin', 'round');
+    svg.appendChild(line);
+    return svg;
+  }
 
   /* typeof, not truthiness: the tool id arrives from a language model, and a
      lookup on a plain object hands back Object.prototype's own members for ids
@@ -202,7 +236,7 @@
 
   /* Five phases for the rest of the window, six words for the person. `ready`
      and `stopped` are both a live assistant that is not answering, so they share
-     a phase, and only the chip tells them apart. */
+     a phase, and only the status line tells them apart. */
   var STATE_WORDS = {
     idle: 'Off',
     starting: 'Starting',
@@ -211,9 +245,57 @@
     error: 'Could not start'
   };
 
-  function chipWord() {
+  /* The state as the stylesheet reads it: one word per light. */
+  var STATE_ATTR = {
+    idle: 'off',
+    starting: 'starting',
+    connected: 'ready',
+    working: 'working',
+    error: 'error'
+  };
+
+  function stateAttr() {
+    if (phase === 'connected' && serverWord === 'stopped') return 'stopped';
+    return STATE_ATTR[phase] || 'off';
+  }
+
+  /* The newest call still open, which is the one the status line names. */
+  function liveStep() {
+    if (!openSteps) return null;
+    var steps = openSteps.steps;
+    for (var i = steps.length - 1; i >= 0; i -= 1) {
+      if (steps[i].state === 'live') return steps[i];
+    }
+    return null;
+  }
+
+  function sentence(text) {
+    var value = String(text || '');
+    return value.charAt(0).toUpperCase() + value.slice(1);
+  }
+
+  /* WHAT THE STATUS LINE SAYS. The state word, until the assistant is at
+     work: then the open call's own words ("Reading the chart"), the turn's
+     state between calls ("Thinking", "Writing the answer"), and a plain
+     "Working" only when the column knows it is busy and nothing more, which
+     is a window that opened onto a turn already under way. */
+  function statusVerb() {
     if (phase === 'connected' && serverWord === 'stopped') return 'Stopped';
-    return STATE_WORDS[phase] || 'Off';
+    if (phase !== 'working') return STATE_WORDS[phase] || 'Off';
+    var step = liveStep();
+    if (step) return sentence(step.label);
+    if (turn) return sentence(turnLine());
+    return STATE_WORDS.working;
+  }
+
+  /* When the work being shown began: the open call, else the turn, else
+     nothing, because a clock with no start would have to invent one. */
+  function statusStartedAt() {
+    if (phase !== 'working') return 0;
+    var step = liveStep();
+    if (step) return step.startedAt;
+    if (turn) return turn.startedAt;
+    return 0;
   }
 
   function isWorking() {
@@ -241,13 +323,29 @@
     dom.clear(host);
 
     var head = dom.el('div', 'between agent-head');
-    var title = dom.el('div', 'hstack-2');
-    title.appendChild(dom.el('span', 'title-sm', 'Your assistant'));
-    var chip = dom.el('span', 'chip');
-    var dot = dom.el('span', 'dot');
-    chip.appendChild(dot);
-    chip.appendChild(dom.el('span', '', 'Off'));
-    title.appendChild(chip);
+    var title = dom.el('div', 'agent-title');
+    title.appendChild(dom.el('span', 'title-sm', 'Assistant'));
+    /* THE SEAT LIGHT. One status line beside the name, in the shared grammar
+       (components.css): a 6 px dot, the verb, and the seconds. The dot is
+       still while nobody is working and breathes while a call is open; the
+       verb is the state word until a tool runs, and then the tool's own
+       words. It replaced a pill that said "Working" in a border, which was a
+       label about the state rather than the state itself. The id is how the
+       beam finds it: ui/beam/beam.js sets data-live on it while it holds a
+       surface, and this file never writes that attribute. */
+    var status = dom.el('div', 'status-line agent-status');
+    status.id = 'agent-status';
+    var dot = dom.el('span', 'status-dot');
+    var ring = dom.el('span', 'status-ring');
+    ring.setAttribute('aria-hidden', 'true');
+    dot.appendChild(ring);
+    var verb = dom.el('span', 'status-verb', 'Off');
+    var elapsed = dom.el('span', 'status-elapsed');
+    elapsed.hidden = true;
+    status.appendChild(dot);
+    status.appendChild(verb);
+    status.appendChild(elapsed);
+    title.appendChild(status);
     head.appendChild(title);
 
     var controls = dom.el('div', 'hstack-2');
@@ -294,14 +392,14 @@
     var seatMark = dom.mark('agent-seat-mark');
     if (seatMark) emptySeat.appendChild(seatMark);
     emptyInner.appendChild(emptySeat);
-    var emptyTitle = dom.el('p', 'title', 'Nobody is at the wheel.');
+    var emptyTitle = dom.el('p', 'title-sm agent-empty-title', 'Nobody is at the wheel.');
     var emptyNote = dom.el('p', 'meta', 'Start your assistant, or connect one you already use.');
     emptyInner.appendChild(emptyTitle);
     emptyInner.appendChild(emptyNote);
     var emptyActions = dom.el('div', 'agent-empty-actions');
     var startBig = dom.el('button', 'btn btn-primary');
     startBig.appendChild(dom.el('span', 'btn-label', 'Start your assistant'));
-    var connectBtn = dom.el('button', 'btn btn-ghost');
+    var connectBtn = dom.el('button', 'btn btn-quiet');
     connectBtn.appendChild(dom.el('span', 'btn-label', 'Connect your own'));
     emptyActions.appendChild(startBig);
     emptyActions.appendChild(connectBtn);
@@ -319,6 +417,22 @@
     connectBlock.appendChild(row);
     connectBlock.appendChild(dom.el('p', 'meta', 'Paste this into your terminal.'));
     emptyInner.appendChild(connectBlock);
+
+    /* THREE FIRST MOVES. A card that only says nobody is there is a dead end:
+       the person has an assistant and no idea what to say to it. Each row is
+       a real question this window can answer, and pressing one puts the words
+       in the box rather than sending them, so the first message is still
+       theirs to send. They are rows, not buttons with borders: the card is
+       already the quietest thing on screen and three boxes would make it a
+       menu. */
+    var suggest = dom.el('div', 'agent-suggest');
+    for (var s = 0; s < SUGGESTIONS.length; s += 1) {
+      var suggestion = dom.el('button', 'suggest', SUGGESTIONS[s]);
+      suggestion.type = 'button';
+      suggest.appendChild(suggestion);
+      dom.on(suggestion, 'click', suggestClick(node, SUGGESTIONS[s]));
+    }
+    emptyInner.appendChild(suggest);
     empty.appendChild(emptyInner);
     host.appendChild(empty);
 
@@ -338,26 +452,38 @@
     turnBar.appendChild(dom.el('span', 'turn-time'));
     turnBar.hidden = true;
 
+    /* THE COMPOSER. One field on the column's own ground under a hairline,
+       no box around the box: the textarea is bare and grows to six lines, and
+       the one control is a round arrow inside the field that is grey until
+       there is something to send. The line that used to sit under it saying
+       "Start your assistant to talk to it." is the placeholder now, so the
+       box says why it is quiet in the place a person looks for words. */
     var composer = dom.el('form', 'agent-composer');
-    var input = dom.el('textarea', 'input');
+    var field = dom.el('div', 'composer-field');
+    var input = dom.el('textarea', 'input composer-input');
     input.rows = 1;
-    input.placeholder = 'Tell your assistant what to do.';
+    input.placeholder = PLACEHOLDER_OFF;
     input.autocomplete = 'off';
-    var send = dom.el('button', 'btn btn-primary');
+    var send = dom.el('button', 'composer-send');
     send.type = 'submit';
-    send.appendChild(dom.el('span', 'btn-label', 'Send'));
-    composer.appendChild(input);
-    composer.appendChild(send);
-    var note = dom.el('p', 'composer-note', 'Start your assistant to talk to it.');
+    send.setAttribute('aria-label', 'Send');
+    send.title = 'Send';
+    var arrow = glyph(GLYPH_ARROW_UP, 'composer-send-glyph');
+    if (arrow) send.appendChild(arrow);
+    field.appendChild(input);
+    field.appendChild(send);
+    composer.appendChild(field);
     var composerHost = node.composerHost || host;
     composerHost.appendChild(turnBar);
     composerHost.appendChild(composer);
-    composerHost.appendChild(note);
 
     node.refs = {
-      chip: chip,
+      status: status,
       dot: dot,
-      word: chip.lastChild,
+      ring: ring,
+      verb: verb,
+      elapsed: elapsed,
+      field: field,
       start: start,
       startBig: startBig,
       stopAnswer: stopAnswer,
@@ -371,7 +497,6 @@
       composer: composer,
       input: input,
       send: send,
-      note: note,
       line: line,
       row: row,
       copy: copy,
@@ -409,12 +534,39 @@
       event.preventDefault();
       submit(node);
     });
-    /* The box has always been described as growing to five lines and never did:
-       it was one row of a textarea and a paragraph scrolled inside it. */
-    dom.on(input, 'input', function () { autogrow(input); });
+    /* The box has always been described as growing and never did: it was one
+       row of a textarea and a paragraph scrolled inside it. The arrow arms on
+       the same event, because "there is something to send" is a fact about
+       the text and not about the phase. */
+    dom.on(input, 'input', function () {
+      autogrow(input);
+      arm(node);
+    });
   }
 
-  /* Height from content, capped at five lines, and measured from zero so
+  /* The send arrow is grey until the box holds a word. Read off the value,
+     never off the phase, so a box that was typed into before the assistant
+     came up is armed the moment it can be used. */
+  function arm(node) {
+    var text = String(node.refs.input.value || '').trim();
+    dom.setAttr(node.refs.field, 'data-armed', text ? 'true' : null);
+  }
+
+  /* A suggestion puts its words in the box and hands over the caret. It
+     never sends: the first message an assistant gets is still a thing the
+     person pressed Enter on. Nothing here starts an assistant either, so a
+     press on a quiet column changes the box and nothing else. */
+  function suggestClick(node, text) {
+    return function () {
+      var input = node.refs.input;
+      input.value = text;
+      autogrow(input);
+      arm(node);
+      if (!input.disabled && typeof input.focus === 'function') input.focus();
+    };
+  }
+
+  /* Height from content, capped at six lines, and measured from zero so
      deleting a line gives the space back. No transition on it: the box has to
      be under the caret on the frame the character lands, not on the way there.
 
@@ -454,6 +606,7 @@
     if (!text || !canTalk()) return;
     node.refs.input.value = '';
     autogrow(node.refs.input);
+    arm(node);
     var mine = said(text, 'pending');
     api.driver({ action: 'prompt', text: text, chat: '' }).catch(function (err) {
       mine.state = 'failed';
@@ -683,11 +836,13 @@
        than on canTalk() so a window that loads with an agent already running
        does not take focus off whatever they were doing. */
     var arrived = phase === 'starting' && (next === 'connected' || next === 'working');
+    var settled = phase === 'working' && next !== 'working';
     phase = next;
     if (word) serverWord = word;
     detail = note || '';
     renderAll();
     if (arrived) focusComposer();
+    if (settled) settleRing();
     window.PhosphorShell.updateField();
     /* The world reads the assistant's state to write its own hero sentence, and
        polling a getter on every heartbeat frame is a read the event replaces. */
@@ -697,6 +852,30 @@
   function announcePhase() {
     if (typeof CustomEvent !== 'function' || typeof window.dispatchEvent !== 'function') return;
     window.dispatchEvent(new CustomEvent('phosphor:agent-phase', { detail: { phase: phase } }));
+  }
+
+  /* THE SETTLE. When the work ends the seat light stops breathing, and one
+     ring leaves it: a phosphor pixel that was lit and is decaying, half a
+     second on the spring. It runs once per turn, on the frame the verb goes
+     back to "Ready", and it is the Web Animations API rather than a class so
+     nothing has to be cleaned up: the ring is transparent again the moment
+     it is done. Under reduced motion the dot simply stops. */
+  var RING_MS = 500;
+
+  function settleRing() {
+    var motion = window.PhosphorMotion;
+    if (motion && typeof motion.reduced === 'function' && motion.reduced()) return;
+    var ease = motion && typeof motion.spring === 'function'
+      ? motion.spring()
+      : 'cubic-bezier(0.23, 1, 0.32, 1)';
+    for (var i = 0; i < mounts.length; i += 1) {
+      var ring = mounts[i].refs.ring;
+      if (!ring || typeof ring.animate !== 'function') continue;
+      ring.animate([
+        { transform: 'scale(1)', opacity: 0.6 },
+        { transform: 'scale(1.6)', opacity: 0 }
+      ], { duration: RING_MS, easing: ease });
+    }
   }
 
   function announceStep(step, dot) {
@@ -728,9 +907,12 @@
     var refs = node.refs;
     node.live = [];
 
-    dom.setText(refs.word, chipWord());
-    dom.setAttr(refs.chip, 'data-tone', phase === 'error' ? 'down' : (phase === 'idle' ? null : 'beam'));
-    dom.setAttr(refs.dot, 'class', phase === 'working' ? 'dot dot-live' : 'dot');
+    var now = Date.now();
+    dom.setAttr(refs.status, 'data-state', stateAttr());
+    dom.setText(refs.verb, statusVerb());
+    var since = statusStartedAt();
+    dom.setHidden(refs.elapsed, !since);
+    if (since) dom.setText(refs.elapsed, secondsText(now - since));
 
     var empty = blocks.length === 0;
     /* The empty state already asks once, in the middle of the column, and two
@@ -756,7 +938,9 @@
        because a box that vanishes teaches nothing about how to get it back. */
     refs.input.disabled = !canTalk();
     refs.send.disabled = !canTalk();
-    dom.setHidden(refs.note, canTalk());
+    refs.input.placeholder = canTalk() ? PLACEHOLDER_ON
+      : (phase === 'starting' ? PLACEHOLDER_STARTING : PLACEHOLDER_OFF);
+    arm(node);
 
     dom.setHidden(refs.turnBar, !turn);
     if (turn) {
@@ -985,12 +1169,14 @@
   /* Text writes only. The rows already exist, so the tick touches no layout. */
   function tick() {
     var now = Date.now();
+    var since = statusStartedAt();
     for (var i = 0; i < mounts.length; i += 1) {
       var live = mounts[i].live;
       for (var j = 0; j < live.length; j += 1) {
         dom.setText(live[j].time, secondsText(elapsedOf(live[j].step, now)));
       }
       if (turn) dom.setText(mounts[i].refs.turnTime, secondsText(now - turn.startedAt));
+      if (since) dom.setText(mounts[i].refs.elapsed, secondsText(now - since));
     }
   }
 
