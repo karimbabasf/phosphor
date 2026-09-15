@@ -95,7 +95,7 @@ struct Paths {
 /// Where the app keeps everything it writes. The bundle is read-only, so state, the audit log,
 /// the policy file and config.local.json all live here instead. Keys are not among them: they
 /// stay at ~/.phosphor/, outside every working copy and every bundle, as they always have.
-fn data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let dir = app
         .path()
         .app_data_dir()
@@ -110,7 +110,7 @@ fn data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 /// paints with no script at all. The two names are the whole grammar, and only a name that
 /// matches one of them verbatim is ever handed to the page, so nothing read off the disk can
 /// reach the initialization script as anything but one of these literals.
-fn saved_colourway(data: &Path) -> Option<&'static str> {
+pub(crate) fn saved_colourway(data: &Path) -> Option<&'static str> {
     const COLOURWAYS: [&str; 2] = ["green-on-black", "black-on-white"];
     let raw = std::fs::read_to_string(data.join("state").join("theme.json")).ok()?;
     let parsed: serde_json::Value = serde_json::from_str(&raw).ok()?;
@@ -525,7 +525,10 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Backend::new())
         .manage(Secrets(secrets))
-        .manage(update::Dismissed::default())
+        .manage(update::Updates::default())
+        // The only commands this shell has, and only the update window can call them: the
+        // control window is a remote page, which the ACL keeps away from app commands.
+        .invoke_handler(tauri::generate_handler![update::update_install, update::update_dismiss])
         .setup(|app| {
             let handle = app.handle().clone();
             app.set_menu(build_menu(&handle)?)?;

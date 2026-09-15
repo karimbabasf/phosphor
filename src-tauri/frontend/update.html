@@ -1,0 +1,284 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Phosphor update</title>
+<!--
+  The update window. Served by Tauri like the splash, and for the same reason the splash is:
+  this page is the shell's, not the backend's, so it can have the two IPC commands it needs
+  (install, dismiss) without the control window gaining any. The control window stays a
+  remote page with no bridge; see src-tauri/src/main.rs.
+
+  One page, four states, chosen by the shell through window.__PHOSPHOR_UPDATE__ before any
+  script runs:
+
+    { state: "offer",     version, current, notes }   a newer version is on the feed
+    { state: "current",   version }                    asked, and this is the latest
+    { state: "failed",    message }                    the check or the install failed
+    { state: "installing" }                            set by the page itself after Install
+
+  While the install runs the shell calls window.__phosphorProgress(0 to 1) and, if it goes
+  wrong, window.__phosphorFailed(message), through WebviewWindow::eval. A finished install
+  never reaches the page: the app relaunches.
+
+  Same tokens as the splash and ui/design/tokens.css, copied because this page has no origin
+  to import them from. The colourway is handed over as window.__PHOSPHOR_PROFILE__ like the
+  splash, so the window matches the one behind it.
+-->
+<script>
+  (function () {
+    if (window.__PHOSPHOR_PROFILE__ === 'black-on-white') {
+      document.documentElement.setAttribute('data-profile', 'black-on-white');
+    }
+  })();
+</script>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg-0: #0E0F13;
+    --bg-2: #1B1D20;
+    --line: #262729;
+    --line-strong: #363739;
+    --text: #ECEEF1;
+    --text-2: #9BA1AB;
+    --text-3: #5E656F;
+    --ink: #3FFF6C;
+    --on-ink: #0E0F13;
+    --down: #FF5A6E;
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  }
+  :root[data-profile="black-on-white"] {
+    color-scheme: light;
+    --bg-0: #FFFFFF;
+    --bg-2: #EDEDED;
+    --line: #E3E3E3;
+    --line-strong: #D4D4D4;
+    --text: #111111;
+    --text-2: #5C6169;
+    --text-3: #8A9099;
+    --ink: #111111;
+    --on-ink: #FFFFFF;
+  }
+  @font-face {
+    font-family: "Geist";
+    src: url("Geist-Variable.woff2") format("woff2-variations");
+    font-weight: 100 900;
+    font-display: swap;
+  }
+  html, body {
+    height: 100%;
+    margin: 0;
+    background: var(--bg-0);
+    color: var(--text);
+    font-family: "Geist", ui-sans-serif, system-ui, sans-serif;
+    font-size: 13px;
+    -webkit-user-select: none;
+    user-select: none;
+    overflow: hidden;
+  }
+  /* The title bar is overlaid and hidden, so the top of the page is the drag region and the
+     traffic lights sit over the ink. */
+  main {
+    box-sizing: border-box;
+    height: 100%;
+    padding: 44px 32px 24px;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    gap: 16px;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    -webkit-app-region: drag;
+  }
+  .mark {
+    width: 22px;
+    height: 24.5px;
+    color: var(--ink);
+    flex: none;
+  }
+  h1 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+  }
+  .body {
+    min-height: 0;
+    color: var(--text-2);
+    line-height: 1.5;
+  }
+  .body p { margin: 0; }
+  .notes {
+    margin-top: 10px;
+    max-height: 96px;
+    overflow: auto;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    color: var(--text);
+    white-space: pre-wrap;
+    -webkit-user-select: text;
+    user-select: text;
+  }
+  .notes:empty { display: none; }
+  footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 34px;
+    padding: 0 16px;
+    border-radius: 10px;
+    border: 1px solid var(--line-strong);
+    background: var(--bg-2);
+    color: var(--text);
+    font: inherit;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    white-space: nowrap;
+    cursor: default;
+    transition: transform 160ms var(--ease-out), background-color 160ms var(--ease-out), border-color 160ms var(--ease-out);
+  }
+  .btn-primary {
+    background: var(--ink);
+    border-color: var(--ink);
+    color: var(--on-ink);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .btn:hover:not(:disabled) { border-color: var(--text-3); }
+    .btn-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--ink) 88%, var(--bg-0)); border-color: transparent; }
+  }
+  .btn:active:not(:disabled) { transform: scale(0.97); }
+  .btn:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  .btn:disabled { opacity: 0.5; }
+
+  /* The download, as a bar rather than a spinner: 55 MB is long enough that a person wants
+     to see it move. */
+  .progress {
+    height: 4px;
+    border-radius: 2px;
+    background: var(--bg-2);
+    overflow: hidden;
+    margin-top: 14px;
+  }
+  .progress > i {
+    display: block;
+    height: 100%;
+    width: 0;
+    background: var(--ink);
+    transition: width 200ms var(--ease-out);
+  }
+  .progress[data-indeterminate] > i {
+    width: 30%;
+    animation: sweep 1200ms var(--ease-out) infinite;
+  }
+  @keyframes sweep {
+    from { transform: translateX(-100%); }
+    to   { transform: translateX(333%); }
+  }
+  .fail { color: var(--down); }
+  [hidden] { display: none !important; }
+  @media (prefers-reduced-motion: reduce) {
+    .btn { transition: none; }
+    .progress[data-indeterminate] > i { animation: none; width: 100%; opacity: 0.4; }
+  }
+</style>
+<main>
+  <header>
+    <!-- brand/phosphor-mark.svg, verbatim, as on the splash. -->
+    <svg class="mark" viewBox="0 0 58.05 64.75" aria-hidden="true" focusable="false">
+      <path fill="currentColor" d="M28.25 0.05c-0.45 0.05-1.4 0.2-1.9 0.35c-1.4 0.4-2.25 0.75-4.1 1.85c-0.35 0.2-1 0.55-1.35 0.75c-0.35 0.2-0.85 0.5-1 0.6c-0.55 0.3-4.2 2.35-5.15 2.9c-0.45 0.25-1.35 0.75-2 1.15c-0.65 0.35-1.6 0.9-2.05 1.15c-0.5 0.3-1.4 0.8-1.95 1.15c-0.6 0.3-1.8 1-2.7 1.5c-1.8 1.05-2.4 1.45-3.2 2.25c-1.45 1.5-2.3 3.05-2.7 5.15l-0.1 0.7l-0.05 14.25c0 7.8 0 14.4 0.05 14.6l0.05 0.35l0.4 0.3c0.25 0.1 0.7 0.4 1.1 0.6c1.9 1.1 2.95 1.75 3.1 1.85c0.15 0.1 1.45 0.8 2 1.1c0.15 0.1 0.3 0.15 0.35 0.15l0.15-0.05l0-14.3l0.05-14.3l0.1-0.6c0.5-2.05 1.3-3.6 2.65-4.95c1-1.05 1.8-1.6 3.65-2.65c0.05 0 0.35-0.2 0.7-0.4c0.3-0.15 1.1-0.65 1.75-1c0.65-0.4 1.4-0.8 1.65-0.95c0.45-0.25 0.55-0.35 3-1.75c1.25-0.75 2.75-1.65 3.45-2c0.15-0.1 0.5-0.3 0.75-0.45c0.2-0.15 0.7-0.45 1.05-0.65c0.35-0.15 0.85-0.45 1.15-0.65c0.25-0.15 0.6-0.35 0.8-0.45c0.15-0.1 0.6-0.35 1.05-0.6c0.4-0.25 0.85-0.5 1-0.6c0.2-0.05 6.6-3.75 6.7-3.85c0.05 0-0.15-0.15-0.45-0.3c-0.25-0.15-0.65-0.4-0.9-0.55c-1.15-0.75-2.45-1.25-3.95-1.55c-0.6-0.1-0.85-0.1-1.8-0.1c-0.65-0.05-1.25-0.05-1.35 0zM36 6c-1.8 1.1-3.4 2-3.5 2.05c-0.1 0.1-1.6 0.95-3.35 2c-1.7 1-3.45 2-3.8 2.2c-1.4 0.85-1.95 1.2-2.05 1.2c0 0-0.25 0.15-0.5 0.3c-0.45 0.25-1.3 0.75-2.45 1.45c-0.25 0.15-0.6 0.35-0.7 0.4c-0.1 0.1-0.8 0.45-1.45 0.85c-0.65 0.4-1.5 0.9-1.85 1.1c-0.4 0.2-0.95 0.55-1.3 0.75c-0.8 0.45-1.15 0.65-1.7 1.15c-0.9 0.7-1.7 1.55-2.2 2.35c-0.6 0.9-1.1 2.15-1.2 3.05c-0.05 0.25-0.05 6.4-0.05 14.95l0 14.55l0.15 0.15c0.05 0.1 0.75 0.5 1.55 0.95c0.75 0.45 1.6 0.95 1.85 1.05c2.3 1.4 3.1 1.8 3.2 1.85c0.1 0 0.15 0 0.2-0.05c0-0.05 0.05-6.75 0.05-15.1l0.05-15l0.15-0.6c0.5-1.7 1.15-2.75 2.35-3.95c0.9-0.85 1.25-1.1 3.65-2.45c0.15-0.15 0.45-0.3 0.55-0.35c0.1-0.1 0.6-0.35 1.1-0.65c1.9-1.1 7.9-4.7 11.05-6.65c2.5-1.5 3.15-1.9 3.3-1.9c0.1 0 6.3-3.65 6.6-3.9c0 0-1.35-0.8-2.9-1.7c-0.75-0.4-1.65-0.95-2-1.15c-0.4-0.25-0.9-0.55-1.1-0.65l-0.35-0.2l-3.35 1.95zM46.75 10.2c-2.25 1.35-7.45 4.45-9.6 5.7c-2.2 1.35-5.7 3.4-7.05 4.25c-0.6 0.35-1.8 1.05-2.65 1.55c-0.85 0.5-2.1 1.25-2.7 1.6c-1.3 0.8-1.8 1.1-2.35 1.65c-1.6 1.5-2.5 3.15-2.8 5.25c-0.1 0.6-0.1 1.35-0.1 15.15c0 13.7 0 14.55 0.05 14.65c0.05 0.05 0.45 0.35 0.9 0.6c0.85 0.45 1.05 0.6 1.85 1.05c0.25 0.15 0.7 0.45 1.05 0.6c0.35 0.2 0.85 0.5 1.15 0.65c0.25 0.2 0.75 0.5 1.1 0.7c0.35 0.15 0.85 0.45 1.1 0.6c0.25 0.15 0.5 0.3 0.55 0.3c0.05 0 0.1-0.05 0.15-0.1c0.05-0.05 0.05-4.75 0.05-14.8l0-14.7l0.15-0.65c0.35-1.7 1.2-3.15 2.7-4.45c0.75-0.7 1.3-1.05 2.4-1.7c0.25-0.15 0.75-0.4 1.05-0.6c0.75-0.45 2.8-1.6 3.25-1.85c0.15-0.1 0.6-0.4 1-0.6c0.35-0.2 0.85-0.5 1.15-0.65c0.25-0.2 0.85-0.55 1.3-0.8c0.45-0.25 1.1-0.65 1.45-0.85c0.35-0.2 0.8-0.45 1-0.6c0.15-0.1 0.6-0.35 0.95-0.55c0.85-0.5 2.25-1.3 3-1.75c0.35-0.2 1-0.6 1.5-0.9c0.5-0.3 1-0.55 1.1-0.65c0.1-0.05 0.6-0.35 1.1-0.65c0.5-0.3 1.05-0.6 1.25-0.7c0.15-0.15 0.6-0.4 0.95-0.6c0.35-0.2 0.9-0.55 1.3-0.75c0.35-0.2 0.95-0.6 1.4-0.8c0.4-0.25 0.8-0.5 0.85-0.6c0.1-0.1 0.1-0.1 0.05-0.2c-0.05-0.05-0.45-0.3-0.85-0.55c-0.45-0.25-1.1-0.65-1.55-0.9c-0.45-0.25-1.05-0.6-1.35-0.8c-1.1-0.65-1.55-0.9-2.8-1.6c-0.7-0.45-1.3-0.8-1.35-0.85c-0.1-0.05-0.3 0.05-1.7 0.9zM56.8 17.05c-0.9 0.5-1.05 0.6-2.15 1.25c-0.35 0.2-0.9 0.55-1.2 0.7c-0.35 0.2-0.85 0.5-1.1 0.65c-0.3 0.2-0.8 0.5-1.15 0.7c-0.4 0.2-1 0.6-1.4 0.8c-0.45 0.25-1.1 0.65-1.45 0.9c-0.4 0.2-0.95 0.5-1.2 0.65c-0.4 0.25-1.9 1.1-3.1 1.85c-0.25 0.15-1.05 0.6-1.85 1.05c-0.8 0.5-1.6 0.95-1.75 1.05c-0.2 0.15-0.8 0.5-1.3 0.75c-0.5 0.3-1.1 0.65-1.25 0.75c-0.2 0.15-0.65 0.4-1 0.6c-0.35 0.2-0.9 0.55-1.2 0.75c-0.35 0.15-0.95 0.55-1.35 0.8c-1 0.55-1.35 0.85-2 1.45c-1.05 1.1-1.7 2.45-2.05 4.3l-0.1 0.55l0 14.05l0.05 14l0.1 0.05c0.1 0 0.35-0.1 1.6-0.85c1.75-1.05 3.1-1.85 3.35-2c0.15-0.1 0.45-0.25 0.65-0.35c0.15-0.15 0.8-0.5 1.35-0.85c0.6-0.35 1.1-0.65 1.15-0.75c0.1-0.1 0.1-0.25 0.1-3.65c0-2.7 0-3.55 0.05-3.65c0.1-0.15 0.25-0.25 2.2-1.35c0.75-0.4 2.4-1.35 3.7-2.1c1.3-0.7 2.85-1.6 3.5-1.95c0.6-0.35 1.3-0.75 1.55-0.9c0.2-0.15 0.7-0.4 1.1-0.65c3-1.7 3.55-2.05 4.3-2.65c0.65-0.6 1.45-1.5 1.85-2.2c0.6-1 0.85-1.7 1.05-2.8l0.15-0.6l0-10.45l0-10.45l-0.15 0c-0.15 0-0.4 0.15-1.05 0.55zM51.4 30.55c0.05 1.6 0.05 3.6-0.05 4.05c-0.15 1-0.75 1.95-1.65 2.6c-0.4 0.3-1 0.65-4.05 2.4c-0.35 0.2-1 0.6-1.45 0.85c-0.45 0.25-1.15 0.65-1.6 0.9c-0.45 0.25-1.35 0.8-1.95 1.15c-1.9 1.1-2.05 1.15-2.1 1.15c-0.15-0.05-0.15-0.3-0.15-1.9c0-1.35 0-1.55 0.1-1.9c0.05-0.2 0.1-0.4 0.1-0.45c0-0.15 0.25-0.85 0.45-1.25c0.3-0.6 0.7-1.15 1.15-1.65c0.6-0.55 0.95-0.8 2.05-1.45c2.3-1.3 7.4-4.3 8.45-5c0.25-0.2 0.4-0.25 0.55-0.25l0.15 0l0 0.75z"/>
+    </svg>
+    <h1 id="title"></h1>
+  </header>
+  <section class="body">
+    <p id="line"></p>
+    <div id="notes" class="notes"></div>
+    <div id="progress" class="progress" hidden><i></i></div>
+  </section>
+  <footer>
+    <button id="later" class="btn" type="button"></button>
+    <button id="install" class="btn btn-primary" type="button">Install and relaunch</button>
+  </footer>
+</main>
+<script>
+  (function () {
+    // The IPC the shell injects into every webview it creates; the ACL decides who may call
+    // what, and only this window (a local Tauri page) can reach the two app commands below.
+    // The control window is a remote page and is refused at the ACL, see webview/mod.rs in
+    // tauri: remote origins never reach app commands without an explicit remote capability.
+    var internals = window.__TAURI_INTERNALS__;
+    function invoke(cmd) { if (internals && internals.invoke) internals.invoke(cmd).catch(function () {}); }
+    var info = window.__PHOSPHOR_UPDATE__ || { state: 'failed', message: 'This window was opened without an update to show.' };
+    var title = document.getElementById('title');
+    var line = document.getElementById('line');
+    var notes = document.getElementById('notes');
+    var progress = document.getElementById('progress');
+    var later = document.getElementById('later');
+    var install = document.getElementById('install');
+
+    function dismiss() { invoke('update_dismiss'); }
+
+    function render(s) {
+      notes.textContent = '';
+      progress.hidden = true;
+      progress.removeAttribute('data-indeterminate');
+      progress.firstElementChild.style.width = '0';
+      line.classList.remove('fail');
+      install.hidden = true;
+      later.hidden = false;
+      later.disabled = false;
+      later.textContent = 'Close';
+      if (s.state === 'offer') {
+        title.textContent = 'Phosphor ' + s.version + ' is available';
+        line.textContent = 'You have ' + s.current + '. Installing takes a few seconds: the wallet locks, the app closes, and it opens again on the new version.';
+        notes.textContent = s.notes || '';
+        install.hidden = false;
+        later.textContent = 'Later';
+      } else if (s.state === 'current') {
+        title.textContent = 'Up to date';
+        line.textContent = 'Phosphor ' + s.version + ' is the current version.';
+      } else if (s.state === 'installing') {
+        title.textContent = 'Installing Phosphor ' + s.version;
+        line.textContent = 'Downloading and checking the signature. The app relaunches on its own when this is done.';
+        progress.hidden = false;
+        progress.setAttribute('data-indeterminate', '');
+        later.disabled = true;
+        later.textContent = 'Installing';
+      } else {
+        title.textContent = s.title || 'Could not check for updates';
+        line.textContent = s.message || '';
+        line.classList.add('fail');
+      }
+    }
+
+    // Called by the shell through WebviewWindow::eval while the install runs.
+    window.__phosphorProgress = function (p) {
+      p = Number(p);
+      if (!(p >= 0)) return;
+      progress.removeAttribute('data-indeterminate');
+      progress.firstElementChild.style.width = Math.round(Math.min(1, p) * 100) + '%';
+    };
+    window.__phosphorFailed = function (message) {
+      render({ state: 'failed', title: 'The update was not installed', message: String(message || '') });
+    };
+
+    later.addEventListener('click', dismiss);
+    install.addEventListener('click', function () {
+      render({ state: 'installing', version: info.version });
+      invoke('update_install');
+    });
+    // Return installs and Escape dismisses, so the window answers the keyboard without a
+    // focus ring sitting on the green button before anyone has pressed anything.
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !later.disabled) dismiss();
+      if (e.key === 'Enter' && !install.hidden && document.activeElement !== later) install.click();
+    });
+
+    render(info);
+  })();
+</script>

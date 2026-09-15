@@ -127,10 +127,9 @@ jobs:
 
       - name: Stage the release assets and write latest.json and SHA256SUMS
         run: |
-          git tag -l --format='%(contents:body)' "$TAG" > "$RUNNER_TEMP/tag-body.md" || true
-          if [ ! -s "$RUNNER_TEMP/tag-body.md" ]; then
-            git tag -l --format='%(contents:subject)' "$TAG" > "$RUNNER_TEMP/tag-body.md" || true
-          fi
+          # The whole tag message, subject and body, trimmed. A one-line message has an empty
+          # body, and %(contents:body) alone shipped 0.4.1 with no notes at all.
+          node -e "process.stdout.write(require('child_process').execFileSync('git', ['tag', '-l', '--format=%(contents)', process.argv[1]]).toString().trim() + '\\n')" "$TAG" > "$RUNNER_TEMP/tag-body.md"
           node scripts/release-manifest.ts \
             --version "$VERSION" --tag "$TAG" \
             --bundle "src-tauri/target/$TARGET/release/bundle" \
