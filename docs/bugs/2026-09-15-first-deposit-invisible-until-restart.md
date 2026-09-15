@@ -1,7 +1,7 @@
 # First deposit is invisible until the app restarts
 
 Found: 2026-09-15, on a clean install of 0.5.0, during the first-run walkthrough.
-Status: open. Severity: high. Every new user hits it on their very first deposit.
+Status: fixed on feat/first-run (9f29642): the ledger resolves the wallet on every refresh. Severity was high: every new user hit it on their very first deposit.
 
 ## What happens
 
