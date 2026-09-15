@@ -29,6 +29,8 @@ function load(): Sandbox {
       PhosphorNet: {},
       PhosphorApi: { driverState: () => Promise.resolve({ data: {} }), connection: () => Promise.resolve({}) },
       PhosphorEvents: { on: () => {} },
+      PhosphorIcons: { svg: () => ({}) },
+      PhosphorMotion: { reduced: () => false, spring: () => 'linear' },
       setTimeout: () => 0,
     },
     document: { createElement: () => ({}), addEventListener: () => {} },

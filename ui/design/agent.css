@@ -3,8 +3,8 @@
    Nothing in here glows except the mark while the assistant is live, and the
    surfaces the beam lands on.
 
-   Tokens the foundation adds are read with their fallbacks so the panel draws
-   the same before and after that merge. */
+   Type is Sora (--font-ui) with numbers in Geist Mono, on the foundation's
+   scale. */
 
 /* ---------- the head ---------- */
 
@@ -263,7 +263,7 @@
 }
 
 .agent-empty-title {
-  font-size: var(--fs-18, 18px);
+  font-size: var(--fs-18);
   font-weight: 600;
   letter-spacing: -0.02em;
   line-height: 1.3;
@@ -343,7 +343,7 @@
 }
 
 .agent-connect-title {
-  font-size: var(--fs-18, 18px);
+  font-size: var(--fs-18);
   font-weight: 600;
   letter-spacing: -0.02em;
   line-height: 1.3;
@@ -643,7 +643,7 @@
 }
 
 .chat-note .chat-who {
-  font-size: var(--fs-11, 11px);
+  font-size: var(--fs-11);
 }
 
 .chat-note .chat-text {
@@ -653,61 +653,8 @@
   color: var(--text-3);
 }
 
-/* THE RECEIPT CARD drawn here (agent.js createReceiptCard, the fallback when
-   the shared card is not loaded). Full width in the thread, the panel's own
-   ground, the card radius: a transaction row from the money grammar and
-   under it the id in mono with its Copy. */
-.transcript .receipt-card {
-  width: 100%;
-  max-width: none;
-  padding: var(--s-3) var(--s-3) var(--s-2);
-  border-radius: var(--radius-lg, 20px);
-  gap: var(--s-1);
-}
-
-.receipt-card > .tx {
-  padding: 0;
-  border-top: 0;
-}
-
-.receipt-card > .tx > .tx-title {
-  font-size: var(--fs-14);
-  line-height: 1.4;
-}
-
-/* The id sits under the words, not under the mark: 28 px of mark and the
-   grammar's 12 px gap. */
-.receipt-id {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-  padding-left: 40px;
-  min-height: 28px;
-}
-
-.receipt-hash {
-  font-size: var(--fs-12);
-  color: var(--text-2);
-  text-decoration: none;
-}
-
-a.receipt-hash {
-  color: var(--text);
-  text-decoration: underline;
-  text-decoration-color: var(--line-strong);
-  text-underline-offset: 3px;
-  transition: text-decoration-color var(--dur-press) var(--ease-out);
-}
-
-a.receipt-hash:focus-visible {
-  outline: 2px solid var(--ink);
-  outline-offset: 2px;
-  border-radius: 3px;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  a.receipt-hash:hover { text-decoration-color: currentColor; }
-}
+/* The receipt card in the thread is the shared one (ui/screens/receipt.js,
+   styled in receipt.css as [data-inline]); this file draws nothing for it. */
 
 /* Steps: the trace of a turn, between what was asked and what came back. One
    row per tool call, a dot that is lit while the call is in flight, the phrase,

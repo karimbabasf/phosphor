@@ -158,91 +158,17 @@
      next frame from the driver still wins. */
   var START_TIMEOUT_MS = 20000;
 
-  /* The icons are the shared set (ui/design/icons.js). The two the composer
-     cannot do without are drawn here as well, so a window loading without the
-     sprite still has an arrow to send with and a square to stop with. */
-  var GLYPH_SEND = 'M8 12.75V3.25M3.75 7.5L8 3.25l4.25 4.25';
-  var GLYPH_STOP = 'M4.75 4.75h6.5v6.5h-6.5z';
-  var SVG_NS = 'http://www.w3.org/2000/svg';
-
   /* THE RECEIPT CARD. When a move this app made lands as a receipt
      (src/http/receipts.ts, read through ui/screens/receipts.js), the
-     transcript shows one card drawn from that receipt and never from the
-     assistant's prose: the headline sentence Activity shows, one line of what
-     arrived and what it cost, and the id. Karim, 2026-09-14: "when trades
-     happen I dont want to see this, I want to see a nice card, simple, no
-     unnecessary info, and the intent id should be a clickable link".
+     transcript shows the shared card (ui/screens/receipt.js,
+     PhosphorReceipt.card) drawn from that receipt and never from the
+     assistant's prose. Karim, 2026-09-14: "when trades happen I dont want to
+     see this, I want to see a nice card, simple, no unnecessary info, and the
+     intent id should be a clickable link". The card decides its own link,
+     from the url the server built; this column only places it. */
 
-     The shared receipt card (ui/screens/receipt.js, PhosphorReceipt.card) is
-     used when it is there; the one drawn below is the same information in
-     this column's own hand and stays as the fallback.
-
-     The id opens the explorer only where the receipt carries a url for it,
-     and the server decides that (src/transactions.ts): a chain hash opens its
-     chain's explorer, an intent hash opens the swap's page on the NEAR
-     Intents explorer, which is keyed by the deposit address the rail wrote
-     into its evidence sentence, and an id with no page is copied rather than
-     opened. Where money lands, in the owner's words. */
-  var WHERE = { intents: 'in your NEAR Intents balance', hyperliquid: 'in your trading account' };
-
-  function whereText(place) {
-    var key = String(place || '');
-    if (!key) return '';
-    if (Object.prototype.hasOwnProperty.call(WHERE, key)) return WHERE[key];
-    var names = window.PhosphorReceipt;
-    var chain = names && typeof names.chainName === 'function' ? names.chainName(key) : key;
-    return 'on ' + chain;
-  }
-
-  function receiptLine(receipt) {
-    var parts = [];
-    var got = receipt.received;
-    if (got && typeof got.amount === 'number' && got.symbol) {
-      parts.push(dom.qty(got.amount) + ' ' + String(got.symbol) + ' received');
-    }
-    if (typeof receipt.feesUsd === 'number') {
-      parts.push(receipt.feesUsd > 0 ? 'fee about ' + dom.fee(receipt.feesUsd) : 'no fee');
-    }
-    var where = whereText(receipt.toChain);
-    if (where) parts.push(where);
-    return parts.join(', ');
-  }
-
-  /* The first six and the last four: enough to match against a wallet or an
-     explorer by eye, and the whole id is one hover or one Copy away. */
-  function shortId(hash) {
-    var text = String(hash);
-    return text.length > 14 ? text.slice(0, 6) + '...' + text.slice(-4) : text;
-  }
-
-  /* An icon from the shared sprite, or the fallback path drawn here. Both are
-     built in the svg namespace, never as markup. */
-  function icon(name, fallbackPath, className) {
-    var icons = window.PhosphorIcons;
-    if (icons && typeof icons.svg === 'function') {
-      var shared = icons.svg(name, className);
-      if (shared) return shared;
-    }
-    if (!fallbackPath) return null;
-    return glyph(fallbackPath, className);
-  }
-
-  function glyph(path, className) {
-    if (typeof document.createElementNS !== 'function') return null;
-    var svg = document.createElementNS(SVG_NS, 'svg');
-    svg.setAttribute('viewBox', '0 0 16 16');
-    svg.setAttribute('focusable', 'false');
-    svg.setAttribute('aria-hidden', 'true');
-    svg.setAttribute('class', 'icon' + (className ? ' ' + className : ''));
-    var line = document.createElementNS(SVG_NS, 'path');
-    line.setAttribute('d', path);
-    line.setAttribute('fill', 'none');
-    line.setAttribute('stroke', 'currentColor');
-    line.setAttribute('stroke-width', '1.5');
-    line.setAttribute('stroke-linecap', 'round');
-    line.setAttribute('stroke-linejoin', 'round');
-    svg.appendChild(line);
-    return svg;
+  function icon(name, className) {
+    return window.PhosphorIcons.svg(name, className);
   }
 
   /* typeof, not truthiness: the tool id arrives from a language model, and a
@@ -511,6 +437,14 @@
     var stopAgent = button('btn btn-quiet btn-sm', 'Turn off', 'Turn your assistant off');
     controls.appendChild(start);
     controls.appendChild(stopAgent);
+    /* The pane's own hide control (ui/split.js, drawn by trade.css), last in
+       the cluster. The Layout menu on the trade strip brings the pane back.
+       Guarded until the trade branch lands the pane API. */
+    var split = window.PhosphorSplit;
+    if (split && typeof split.paneControl === 'function') {
+      var hide = split.paneControl('conversation');
+      if (hide) controls.appendChild(hide);
+    }
     head.appendChild(controls);
     host.appendChild(head);
 
@@ -642,10 +576,8 @@
     send.type = 'submit';
     send.setAttribute('aria-label', 'Send');
     send.title = 'Send';
-    var sendGlyph = icon('send', GLYPH_SEND, 'composer-send-glyph');
-    if (sendGlyph) send.appendChild(sendGlyph);
-    var stopGlyph = icon('stop', GLYPH_STOP, 'composer-stop-glyph');
-    if (stopGlyph) send.appendChild(stopGlyph);
+    send.appendChild(icon('send', 'composer-send-glyph'));
+    send.appendChild(icon('stop', 'composer-stop-glyph'));
     field.appendChild(input);
     field.appendChild(send);
     composer.appendChild(field);
@@ -1118,10 +1050,8 @@
 
   function settleRing() {
     var motion = window.PhosphorMotion;
-    if (motion && typeof motion.reduced === 'function' && motion.reduced()) return;
-    var ease = motion && typeof motion.spring === 'function'
-      ? motion.spring()
-      : 'cubic-bezier(0.23, 1, 0.32, 1)';
+    if (motion.reduced()) return;
+    var ease = motion.spring();
     for (var i = 0; i < mounts.length; i += 1) {
       var ring = mounts[i].refs.ring;
       if (!ring || typeof ring.animate !== 'function') continue;
@@ -1303,68 +1233,9 @@
     });
   }
 
-  /* One card in the transcript, full width: the coin that left, the
-     headline, the line of what arrived and what it cost, and under them the
-     id with its Copy. Built once, from the receipt, and never updated: a
-     receipt is a record. */
-  function createReceiptCard(receipt) {
-    var shared = window.PhosphorReceipt;
-    if (shared && typeof shared.card === 'function') {
-      var made = shared.card(receipt);
-      if (made) return made;
-    }
-    var card = dom.el('div', 'panel receipt-card enter');
-    var line = dom.el('div', 'tx');
-    var marks = window.PhosphorMarks;
-    var mark = null;
-    if (receipt.symbol && marks) {
-      if (typeof marks.logo === 'function') mark = marks.logo(receipt.symbol, 24);
-      else if (typeof marks.disc === 'function') mark = marks.disc(receipt.symbol);
-    }
-    line.appendChild(mark || dom.el('span', 'tx-mark'));
-    line.appendChild(dom.el('span', 'tx-title', receipt.headline || receipt.summary || 'Something moved.'));
-    line.appendChild(dom.el('span', 'tx-when', receiptLine(receipt)));
-    card.appendChild(line);
-
-    var tx = Array.isArray(receipt.txids) && receipt.txids.length ? receipt.txids[0] : null;
-    if (tx && tx.hash) {
-      var hash = String(tx.hash);
-      /* Only a url the server built (transactions.ts explorerTxUrl) is opened,
-         and only an http one: nothing in a receipt is typed by a person, but
-         the link is the one place this column hands the system browser a
-         string, so it is checked here as well. */
-      var url = typeof tx.url === 'string' && /^https?:\/\//.test(tx.url) ? tx.url : '';
-      var row = dom.el('div', 'receipt-id');
-      var id = dom.el(url ? 'a' : 'span', 'receipt-hash mono', shortId(hash));
-      id.title = hash;
-      if (url) {
-        id.href = url;
-        id.target = '_blank';
-        id.rel = 'noreferrer noopener';
-      }
-      row.appendChild(id);
-      var copy = button('chip', 'Copy');
-      var copyLabel = copy.querySelector('.btn-label');
-      row.appendChild(copy);
-      card.appendChild(row);
-      dom.on(copy, 'click', function () { copyHash(hash, copyLabel); });
-    }
-    return card;
-  }
-
-  function copyHash(hash, label) {
-    if (!(navigator.clipboard && navigator.clipboard.writeText)) return;
-    navigator.clipboard.writeText(hash).then(function () {
-      dom.setText(label, 'Copied');
-      window.setTimeout(function () { dom.setText(label, 'Copy'); }, 1500);
-    }).catch(function () { /* the id is on screen to read */ });
-  }
-
   function createBlock(block) {
-    if (block.type === 'receipt') return createReceiptCard(block.receipt);
-    /* A card somebody else built (the receipt popover posting itself into the
-       thread). It is an element already, and the column only places it. */
-    if (block.type === 'card') return block.node;
+    /* The shared receipt card, full width, as a message from the app. */
+    if (block.type === 'receipt') return window.PhosphorReceipt.card(block.receipt);
     if (block.type === 'steps') {
       var wrap = dom.el('div', 'steps-block');
       var fold = dom.el('button', 'steps-fold');
@@ -1393,7 +1264,7 @@
   }
 
   function updateBlock(node, row, block, now, primary) {
-    if (block.type === 'receipt' || block.type === 'card') return;
+    if (block.type === 'receipt') return;
     if (block.type === 'steps') {
       updateSteps(node, row, block, now, primary);
       return;
@@ -1657,11 +1528,8 @@
   function onReceiptOpen(payload) {
     var receipt = payload && payload.receipt;
     if (!receipt || typeof receipt !== 'object') return;
-    var shared = window.PhosphorReceipt;
-    var card = shared && typeof shared.card === 'function' ? shared.card(receipt) : null;
     openSteps = null;
-    if (card) pushBlock({ type: 'card', node: card });
-    else pushBlock({ type: 'receipt', receipt: receipt });
+    pushBlock({ type: 'receipt', receipt: receipt });
   }
 
   /* A finished turn folds to one line. Any step still open when the turn ended
@@ -1716,7 +1584,7 @@
       ingest(event, false);
     });
 
-    if (typeof events.on === 'function') events.on('receipt:open', onReceiptOpen);
+    events.on('receipt:open', onReceiptOpen);
 
     api.driverState().then(function (result) {
       var data = result.data || {};

@@ -142,8 +142,13 @@ function all(node: Node, className: string, found: Node[] = []): Node[] {
   return found;
 }
 
-function build(options: { command?: string; card?: (receipt: unknown) => Node } = {}) {
+function build(options: { command?: string } = {}) {
   const sends: string[] = [];
+  /* The shared receipt card (ui/screens/receipt.js) is somebody else's: the column hands it the
+     receipt and places what comes back. The stub records what it was handed and returns one
+     marker node, so a test can say the card was posted and built from the app's own receipt
+     without asserting the card's insides, which receipt-ui.test.ts owns. */
+  const built: unknown[] = [];
   let reject: ((err: Error) => void) | null = null;
   const driverHandlers: Array<(frame: unknown) => void> = [];
   const receiptHandlers: Array<(list: unknown[], state: string) => void> = [];
@@ -213,8 +218,17 @@ function build(options: { command?: string; card?: (receipt: unknown) => Node } 
     },
     PhosphorReceipt: {
       chainName: (id: string) => ({ base: 'Base', sol: 'Solana' })[id] ?? id,
-      ...(options.card ? { card: options.card } : {}),
+      card: (receipt: unknown) => {
+        built.push(receipt);
+        const node = make('div');
+        node.className = 'receipt-card';
+        node.setAttribute('data-inline', 'true');
+        return node;
+      },
     },
+    /* The shared icon set and the motion helper (foundation): one svg per name, no motion. */
+    PhosphorIcons: { svg: (name: string, className: string) => { const n = make('svg'); n.className = 'icon ' + (className || ''); n.setAttribute('data-icon', name); return n; } },
+    PhosphorMotion: { reduced: () => false, spring: () => 'linear' },
     /* The state store: the column reads the roster slice for the connect sheet. */
     PhosphorState: {
       select: (key: string, fn: (slice: unknown) => void) => {
@@ -283,6 +297,7 @@ function build(options: { command?: string; card?: (receipt: unknown) => Node } 
       for (const handler of busHandlers[type] ?? []) handler(payload);
     },
     noteRows: () => all(host, 'chat-note'),
+    built,
     input,
     /* Fire every timer the column has booked. The starting floor is the one that matters, and a
        test that could not hold it open could not tell a state that stays from one that flickers. */
@@ -520,7 +535,7 @@ test('a first move whose start fails keeps its words in the box and sends nothin
    to see a nice card, simple, no unnecessary info, and the intent id should be a clickable link".
    The card is drawn from the app's own receipt, never from what the assistant wrote. */
 
-test('a move that lands mid conversation shows one card drawn from the receipt', () => {
+test('a move that lands mid conversation posts one shared card, drawn from the receipt', () => {
   const world = build();
   world.receipts([]);
   world.type('swap 0.049 sol to usdc');
@@ -528,45 +543,30 @@ test('a move that lands mid conversation shows one card drawn from the receipt',
   world.emit({ kind: 'tool_result', name: 'mcp__phosphor__swap', ok: true });
   world.receipts([receipt()]);
 
-  const cards = world.cards();
-  assert.equal(cards.length, 1);
-  const card = cards[0];
-  assert.equal(all(card, 'tx-title')[0].textContent, 'Changed about $5 of your Solana (SOL) into USDC.', 'the title is not the headline Activity shows');
-  const line = all(card, 'tx-when')[0].textContent;
-  assert.equal(line, '4.9811 USDC received, fee about $0.02, in your NEAR Intents balance', 'the same four places the Activity row prints');
-  const id = all(card, 'receipt-hash')[0];
-  assert.equal(id.textContent, 'EafozJ...n16c');
-  assert.equal(id.tag, 'span', 'an intent id with no url became a link to nowhere');
-  assert.equal((id as unknown as { title: string }).title, 'EafozJ2XkQ9mRtb7n16c', 'the whole id is not one hover away');
-  const labels = all(card, 'btn-label').map((n) => n.textContent);
-  assert.deepEqual(labels, ['Copy']);
-  assert.ok(!card.textContent.includes('Where'), 'a Where row crept back in');
-  assert.ok(!card.textContent.includes('Sold'), 'a Sold row crept back in');
-  assert.ok(!card.textContent.includes('$999.98'), 'the balance sentence crept back in');
+  assert.equal(world.cards().length, 1);
+  /* Built by PhosphorReceipt.card from the app's own receipt, untouched: the headline, the id
+     and the url the server built all reach the card, which decides its own link from them. */
+  assert.equal(world.built.length, 1);
+  const handed = world.built[0] as Record<string, unknown>;
+  assert.equal(handed.headline, 'Changed about $5 of your Solana (SOL) into USDC.');
+  assert.deepEqual(handed.txids, [{ chain: 'near', hash: 'EafozJ2XkQ9mRtb7n16c', url: null }]);
+  assert.equal(world.cards()[0].getAttribute('data-inline'), 'true', 'the thread got the popover, not the inline card');
   // The card closed the steps block, so the next call starts a new one under the card.
   world.emit({ kind: 'tool', name: 'mcp__phosphor__wallet', input: {} });
-  const order = world.host.children.length ? all(world.host, 'transcript')[0].children.map((n) => n.className.split(' ')[0]) : [];
-  assert.deepEqual(order.slice(-2), ['panel', 'steps-block'], order.join(' > '));
+  const order = all(world.host, 'transcript')[0].children.map((n) => n.className.split(' ')[0]);
+  assert.deepEqual(order.slice(-2), ['receipt-card', 'steps-block'], order.join(' > '));
 });
 
-test("the id is a link when the receipt carries the explorer's url for it", () => {
+test("the explorer url the server built reaches the card untouched, so the card can link it", () => {
   const world = build();
   world.receipts([]);
   const url = 'https://basescan.org/tx/0xabc123def4567890abcdef1234567890abcdef1234567890abcdef1234567890ab';
-  world.receipts([
-    receipt({
-      id: 'p2',
-      toChain: 'base',
-      txids: [{ chain: 'base', hash: '0xabc123def4567890abcdef1234567890abcdef1234567890abcdef1234567890ab', url }],
-    }),
-  ]);
-  const id = all(world.cards()[0], 'receipt-hash')[0] as unknown as { tag: string; href: string; target: string; rel: string; textContent: string };
-  assert.equal(id.tag, 'a');
-  assert.equal(id.href, url, "the link is not the receipt's url");
-  assert.equal(id.target, '_blank');
-  assert.equal(id.rel, 'noreferrer noopener');
-  assert.equal(id.textContent, '0xabc1...90ab');
-  assert.ok(all(world.cards()[0], 'tx-when')[0].textContent.endsWith(', on Base'));
+  const txids = [{ chain: 'base', hash: '0xabc123def4567890abcdef1234567890abcdef1234567890abcdef1234567890ab', url }];
+  world.receipts([receipt({ id: 'p2', toChain: 'base', txids })]);
+  assert.equal(world.cards().length, 1);
+  const handed = world.built[0] as Record<string, unknown>;
+  assert.deepEqual(handed.txids, txids, 'the column rewrote the receipt on its way to the card');
+  assert.equal(handed.toChain, 'base');
 });
 
 test('only a move that executed in this session gets a card, and only once', () => {
@@ -833,8 +833,9 @@ test('while an answer runs the composer button is Stop, and it interrupts', () =
 });
 
 test('a receipt opened anywhere in the window is posted into the thread as the shared card', () => {
-  const world = build({ card: () => { const n = make('div'); n.className = 'receipt-shared'; return n; } });
+  const world = build();
   world.bus('receipt:open', { receipt: receipt(), source: 'activity' });
-  assert.equal(all(world.host, 'receipt-shared').length, 1);
+  assert.equal(world.cards().length, 1);
+  assert.equal((world.built[0] as Record<string, unknown>).id, 'p1');
   assert.equal(world.cardHidden(), true, 'a card in the thread and the empty card at once');
 });
