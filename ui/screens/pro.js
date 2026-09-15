@@ -861,6 +861,8 @@
         day.node.appendChild(figure);
         var meter = dom.el('div', 'rule-meter');
         meter.style.setProperty('--used', (used * 100).toFixed(2) + '%');
+        /* The fill is a scale, not a width, so the bar never lays out again. */
+        meter.style.setProperty('--used-scale', used.toFixed(4));
         /* Something spent is drawn as something spent. Against a $25,000 cap a
            real $22.84 is 0.09 percent, which rounds to a sub-pixel sliver and
            reads as a fault rather than as a number. */

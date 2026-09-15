@@ -787,7 +787,9 @@
     dom.setText(refs.delta, (rounded > 0 ? '+' : rounded < 0 ? '-' : '') + Math.abs(rounded).toFixed(1) + '%');
     dom.setAttr(refs.delta, 'data-dir', rounded > 0 ? 'up' : rounded < 0 ? 'down' : null);
     dom.setAttr(refs.delta, 'title', 'Since this window opened');
-    dom.setHidden(refs.delta, false);
+    /* A zero is not a move. The delta shows once the price has gone
+       somewhere; until then the tag is the price alone. */
+    dom.setHidden(refs.delta, rounded === 0);
   }
 
   function flashTag() {

@@ -1060,9 +1060,11 @@ button.tx:focus-visible {
 .rule-meter > i {
   display: block;
   height: 100%;
-  width: var(--used, 0%);
+  width: 100%;
+  transform: scaleX(var(--used-scale, 0));
+  transform-origin: left center;
   background: var(--text-2);
-  transition: width var(--dur-enter) var(--ease-out);
+  transition: transform var(--dur-enter) var(--ease-out);
 }
 
 .rule-meter[data-tone="warn"] > i { background: var(--warn); }
