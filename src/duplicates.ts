@@ -16,9 +16,11 @@
 //
 // THREE THINGS IT DELIBERATELY DOES NOT DO.
 //
-//   It does not refuse the same session. An agent repeating itself is retrying, that is its own
-//   business, and the rails are idempotent enough for it. Blocking a retry would turn a network
-//   blip into a stuck agent.
+//   It does not refuse the same session once its first proposal has settled. An agent repeating
+//   a settled proposal is retrying, that is its own business, and blocking it would turn a
+//   network blip into a stuck agent. While the first is still running, or landed unconfirmed
+//   with evidence that money moved, the repeat IS refused: that is the incident of 2026-09-15,
+//   and `stillInFlight` below is the line between the two.
 //
 //   It does not persist. This guards a race between two agents working at the same moment, not
 //   a human who asked for the same swap twice in an afternoon. A memory that outlived the app
@@ -28,6 +30,8 @@
 //   the KNOWN HOLE note at the top of src/server.ts), and two agents that genuinely both want
 //   the same swap can have it a minute and a half apart. It removes an accident, not an attack.
 
+import type { Proposal } from './types.ts';
+
 export type Duplicate = { id: string; session: string };
 
 // Whether the proposal with this id is still in flight: no id yet (an empty string, the claim
@@ -35,6 +39,25 @@ export type Duplicate = { id: string; session: string };
 // store in src/server.ts; a guard built without it treats every id as settled, which is the old
 // behaviour and what the pure unit tests use.
 export type InFlight = (id: string) => boolean;
+
+const SETTLED: ReadonlySet<Proposal['status']> = new Set(['executed', 'failed', 'refused', 'policy_refused']);
+
+/* What "in flight" means for a stored row, for the server's wiring and the door's tests alike.
+   A row the store does not hold yet is still being written. A terminal row has settled, with one
+   exception: an UNCONFIRMED row that carries a hash, a handle or a nonce is money that may be
+   live at the venue, and it holds its claim for the window. In the incident replay the first $10
+   landed needs_reconciliation at 43 s and a repeat at 44 s walked through, because unconfirmed
+   read as terminal; the reply sentence and the daily ceiling were the only walls left. An
+   unconfirmed row with none of those is the app not knowing, and holds nothing, the same line
+   the daily cap draws (countsAgainstCap in src/proposals/lifecycle.ts). */
+export function stillInFlight(row: Proposal | undefined): boolean {
+  if (row === undefined) return true;
+  if (row.status === 'needs_reconciliation') {
+    const evidence = row.result?.evidence;
+    return (row.result?.txids?.length ?? 0) > 0 || evidence?.handle !== undefined || evidence?.nonce !== undefined;
+  }
+  return !SETTLED.has(row.status);
+}
 
 export type GuardDeps = { inFlight?: InFlight };
 

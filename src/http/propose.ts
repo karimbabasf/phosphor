@@ -185,13 +185,18 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
     // would have doubled without a second call.
     const existing = clash.id === '' ? undefined : ctx.proposals.get(clash.id);
     const names = clash.id === '' ? '' : ` (proposal ${clash.id})`;
-    const lead = own
-      ? `this ${kind} is still in flight${names}, so a repeat of it is refused rather than sending it twice.`
-      : `another agent proposed exactly this ${kind} moments ago${names}. It has not been superseded, so this one is refused rather than doubling it.`;
+    // An unconfirmed first move is the incident's exact shape: the money may be live at the
+    // venue, and "in flight" would under-describe it to an agent deciding whether to send again.
+    const unconfirmed = own && existing?.status === 'needs_reconciliation';
+    const lead = unconfirmed
+      ? `this ${kind} was sent by this session moments ago${names} and the first one is unconfirmed, do not send it again; read proposal_status ${clash.id}.`
+      : own
+        ? `this ${kind} is still in flight${names}, so a repeat of it is refused rather than sending it twice.`
+        : `another agent proposed exactly this ${kind} moments ago${names}. It has not been superseded, so this one is refused rather than doubling it.`;
     fail(
       res,
       409,
-      `${lead} Read it with proposal_status before repeating anything.`,
+      unconfirmed ? lead : `${lead} Read it with proposal_status before repeating anything.`,
       {
         duplicate: clash.id,
         ...(existing === undefined ? {} : { status: existing.status, ...(existing.result === undefined ? {} : { result: existing.result }) }),

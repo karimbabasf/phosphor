@@ -121,3 +121,25 @@ test('the same session repeating while the first is still running is refused wit
   assert.equal(reply.json.status, 'executed');
   assert.equal(again.json.duplicate, reply.json.id);
 });
+
+/* The window holds for an UNCONFIRMED first move too. needs_reconciliation read as terminal, so
+   once the first $10 landed unconfirmed with its handle, an identical repeat a second later from
+   the same session walked through the guard and the daily ceiling was the only wall left. */
+test('a same-session repeat of a move that landed unconfirmed is refused with the first row and told not to send again', async () => {
+  const h = makeCtx({
+    rails: [railThat('hl_deposit', async () => ({ ok: false, detail: '1click reported SUCCESS but the venue has not shown it; quote handle dep-1.', txids: ['intent-h1'], evidence: { handle: 'dep-1' } }))],
+  });
+  const door = makeHttp({ proposals: h.svc, dataDir: h.dataDir });
+  const first = await door.post('hl_deposit', { amount: 10 }, 'agent-a');
+  assert.equal(first.status, 200, JSON.stringify(first.json));
+  assert.equal(first.json.status, 'needs_reconciliation');
+
+  await new Promise((resolve) => setTimeout(resolve, 1_000));
+  const again = await door.post('hl_deposit', { amount: 10 }, 'agent-a');
+  assert.equal(again.status, 409, JSON.stringify(again.json));
+  assert.equal(again.json.duplicate, first.json.id);
+  assert.equal(again.json.status, 'needs_reconciliation');
+  assert.match(String(again.json.error), /the first one is unconfirmed, do not send it again; read proposal_status/);
+  assert.match(String(again.json.error), new RegExp(String(first.json.id)));
+  assert.equal(h.store.list().length, 1, 'one row, not two');
+});

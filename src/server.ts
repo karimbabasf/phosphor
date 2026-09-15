@@ -23,7 +23,7 @@ import { createSnapshotBroker } from './snapshot.ts';
 import { createCustomIndicators } from './indicators-custom/loader.ts';
 import { DEFAULT_THEME, type Theme } from './view/theme.ts';
 import { createBoard } from './board.ts';
-import { createDuplicateGuard } from './duplicates.ts';
+import { createDuplicateGuard, stillInFlight } from './duplicates.ts';
 import { createCrew } from './crew.ts';
 import { BASIC_EVENT_SCAN, PROJECT_DIR } from './http/context.ts';
 import type { Ctx, GasFill, PriceCache, ServerDeps, PhosphorServer, SseHub } from './http/context.ts';
@@ -163,15 +163,12 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   const chats = createChatRegistry({ cfg, audit, agents, getView, sse, makeDriver: deps.makeDriver });
 
   // Two agents cannot double the same proposal by accident, and one agent cannot repeat its own
-  // proposal while it is still running. `inFlight` is how the guard tells a settled retry (its
-  // own business) from an in-flight repeat (the incident): a row the store does not yet hold, or
-  // holds in a non-terminal status, is still in flight. See src/duplicates.ts.
-  const TERMINAL: ReadonlySet<string> = new Set(['executed', 'failed', 'needs_reconciliation', 'refused', 'policy_refused']);
+  // proposal while it is still running or unconfirmed. `inFlight` is how the guard tells a
+  // settled retry (its own business) from an in-flight repeat (the incident): a row the store
+  // does not yet hold, holds in a non-terminal status, or holds unconfirmed with evidence that
+  // money moved, is still in flight. See stillInFlight in src/duplicates.ts.
   const duplicates = createDuplicateGuard(Date.now, undefined, {
-    inFlight: (id) => {
-      const row = store.get(id);
-      return row === undefined || !TERMINAL.has(row.status);
-    },
+    inFlight: (id) => stillInFlight(store.get(id)),
   });
 
   // The receipt reader behind the history panel, and the one-at-a-time latch in front of it.

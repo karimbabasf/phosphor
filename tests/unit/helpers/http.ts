@@ -10,7 +10,7 @@ import type { Proposal, ProposalService } from '../../../src/types.ts';
 import type { Ctx } from '../../../src/http/context.ts';
 import type { JsonBody } from '../../../src/http/respond.ts';
 import { handlePropose } from '../../../src/http/propose.ts';
-import { createDuplicateGuard } from '../../../src/duplicates.ts';
+import { createDuplicateGuard, stillInFlight } from '../../../src/duplicates.ts';
 import { createAgents } from '../../../src/agents.ts';
 import { createAudit } from '../../../src/audit.ts';
 import type { Audit } from '../../../src/audit.ts';
@@ -68,16 +68,10 @@ export function serviceThatAnswers(row: Proposal, settledRow: Proposal = row): P
   };
 }
 
-const TERMINAL: ReadonlySet<string> = new Set(['executed', 'failed', 'needs_reconciliation', 'refused', 'policy_refused']);
-
 export function makeHttp(over: { proposals: ProposalService; audit?: Audit; dataDir?: string; now?: () => number }): HttpHarness {
-  // Wired off the service the way src/server.ts wires it off the store: a row the service does
-  // not hold, or holds in a non-terminal status, is still in flight.
+  // Wired off the service the way src/server.ts wires it off the store, through the same rule.
   const duplicates = createDuplicateGuard(over.now ?? Date.now, undefined, {
-    inFlight: (id) => {
-      const row = over.proposals.get(id);
-      return row === undefined || !TERMINAL.has(row.status);
-    },
+    inFlight: (id) => stillInFlight(over.proposals.get(id)),
   });
   const audit = over.audit ?? createAudit(over.dataDir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-http-')));
   const ctx = {

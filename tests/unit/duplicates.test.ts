@@ -10,7 +10,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createDuplicateGuard, fingerprint, DUPLICATE_MS } from '../../src/duplicates.ts';
+import { createDuplicateGuard, fingerprint, stillInFlight, DUPLICATE_MS } from '../../src/duplicates.ts';
+import type { Proposal } from '../../src/types.ts';
 
 function guardFrom(start: number): { guard: ReturnType<typeof createDuplicateGuard>; advance: (ms: number) => void } {
   let now = start;
@@ -174,4 +175,24 @@ test('forgetting something never claimed is not an error', () => {
   const { guard } = guardFrom(1_000_000);
   guard.forget('swap', SWAP);
   assert.equal(guard.size(), 0);
+});
+
+/* What "in flight" means for a stored row, in one place for the server and the door's tests.
+   Terminal rows have settled, with one exception: an unconfirmed row that carries a hash, a
+   handle or a nonce is money that may be live at the venue, and an identical repeat inside the
+   window would double it. In the incident replay the first $10 landed unconfirmed at 43 s and a
+   repeat at 44 s walked through the guard, because needs_reconciliation read as terminal. */
+test('an unconfirmed row with evidence still holds its claim, and one with none does not', () => {
+  const row = (over: Partial<Proposal>): Proposal =>
+    ({ id: 'x', kind: 'hl_deposit', createdAt: '', status: 'executed', draft: {}, simulation: null, verdict: { outcome: 'allow', reasons: [] }, ...over }) as Proposal;
+  assert.equal(stillInFlight(undefined), true, 'a row the store does not hold yet is still being written');
+  assert.equal(stillInFlight(row({ status: 'executing' })), true);
+  assert.equal(stillInFlight(row({ status: 'pending' })), true);
+  for (const status of ['executed', 'failed', 'refused', 'policy_refused'] as const) {
+    assert.equal(stillInFlight(row({ status })), false, `${status} has settled`);
+  }
+  assert.equal(stillInFlight(row({ status: 'needs_reconciliation' })), false, 'unconfirmed with nothing sent is the app not knowing, and holds nothing');
+  assert.equal(stillInFlight(row({ status: 'needs_reconciliation', result: { ok: false, detail: 'x', txids: ['0xh'] } })), true, 'a hash is money that may have moved');
+  assert.equal(stillInFlight(row({ status: 'needs_reconciliation', result: { ok: false, detail: 'x', evidence: { handle: 'dep-1' } } })), true, 'so is a handle');
+  assert.equal(stillInFlight(row({ status: 'needs_reconciliation', result: { ok: false, detail: 'x', evidence: { nonce: '7' } } })), true, 'and a nonce');
 });
