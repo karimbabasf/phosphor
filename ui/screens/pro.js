@@ -782,21 +782,47 @@
     host.appendChild(block);
   }
 
+  /* The same grammar as the trade screen's open rows: the coin with its
+     logo, the side as a pill, then size, entry, mark and the profit in mono,
+     every number in its column. */
   function positionLine(position) {
-    var row = dom.el('div', 'between position-line');
-    var left = dom.el('span', 'body');
-    var side = position.side === 'short' ? 'Short' : 'Long';
-    var size = typeof position.sizeCoin === 'number' ? dom.qty(position.sizeCoin) + ' ' : '';
-    dom.setText(left, side + ' ' + size + String(position.coin || '')
-      + (typeof position.notionalUsd === 'number' ? ', ' + dom.usd(position.notionalUsd) : ''));
-    row.appendChild(left);
-    var pnl = dom.el('span', 'mono');
+    var coin = String(position.coin || '').toUpperCase();
+    var short = position.side === 'short';
+    var row = dom.el('div', 'position-line pro-pos');
+
+    var asset = dom.el('span', 'pro-pos-asset');
+    asset.appendChild(coinLogo(coin, 20));
+    asset.appendChild(dom.el('span', 'pro-pos-coin', coin));
+    var side = dom.el('span', 'trade-pill', short ? 'Short' : 'Long');
+    side.dataset.tone = short ? 'down' : 'up';
+    asset.appendChild(side);
+    if (typeof position.leverage === 'number') asset.appendChild(dom.el('span', 'pro-pos-lev mono', position.leverage + 'x'));
+    row.appendChild(asset);
+
+    row.appendChild(dom.el('span', 'pro-pos-size mono', typeof position.sizeCoin === 'number' ? dom.qty(position.sizeCoin) : '--'));
+    row.appendChild(dom.el('span', 'pro-pos-px mono', typeof position.entryPx === 'number' ? dom.usd(position.entryPx) : '--'));
+    row.appendChild(dom.el('span', 'pro-pos-px mono', typeof position.markPx === 'number' ? dom.usd(position.markPx) : '--'));
+
+    var pnl = dom.el('span', 'pro-pos-pnl mono');
     if (typeof position.unrealisedUsd === 'number') {
       dom.setText(pnl, (position.unrealisedUsd >= 0 ? '+' : '') + dom.usd(position.unrealisedUsd));
-      pnl.className = 'mono ' + (position.unrealisedUsd >= 0 ? 'up' : 'down');
+      pnl.className = 'pro-pos-pnl mono ' + (position.unrealisedUsd >= 0 ? 'up' : 'down');
+    } else {
+      dom.setText(pnl, '--');
     }
     row.appendChild(pnl);
     return row;
+  }
+
+  /* The coin's real mark through ui/design/marks.js, or the old disc on a
+     window that has not loaded the logos yet. */
+  function coinLogo(coin, size) {
+    var marks = window.PhosphorMarks;
+    if (marks && typeof marks.logo === 'function') return marks.logo(coin, size);
+    if (marks && typeof marks.disc === 'function') return marks.disc(coin);
+    var node = dom.el('span', 'logo');
+    node.setAttribute('aria-hidden', 'true');
+    return node;
   }
 
   /* THE POLICY CARD.
