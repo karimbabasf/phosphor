@@ -199,6 +199,42 @@ test('a balance read after the last execution is stated normally', () => {
   assert.match(view.headline, /You now have \$2,341\.08/);
 });
 
+test('the stale check judges by when the money moved, not by when the click landed', () => {
+  // Decided at T0, filled at T2 (a 1Click deposit can take a minute). A read stamped T1 is
+  // after the decision and before the fill, and it used to be stated as the new balance.
+  const view = buildBasic(
+    baseInput({
+      proposals: [proposal({ status: 'executed', decidedAt: T0, settledAt: T2 })],
+      chainStatus: chainStatus(T1),
+    }),
+  );
+  assert.equal(view.totalUsd, null);
+  assert.equal(view.checkingLine, 'Checking your new balance.');
+});
+
+test('a move the app could not confirm keeps the balance unstated until the ledger has read past it', () => {
+  const unconfirmed = proposal({ status: 'needs_reconciliation', decidedAt: T2, result: { ok: false, detail: 'unconfirmed', txids: ['h1'] } });
+  const stale = buildBasic(baseInput({ proposals: [unconfirmed], chainStatus: chainStatus(T1) }));
+  assert.equal(stale.totalUsd, null, 'money may have left');
+  assert.equal(stale.checkingLine, 'Checking your new balance.');
+
+  const fresh = buildBasic(baseInput({ proposals: [unconfirmed], chainStatus: chainStatus('2026-08-12T13:00:00.000Z') }));
+  assert.equal(fresh.totalUsd, 2341.08);
+  assert.match(fresh.headline, /not confirmed/i);
+  assert.doesNotMatch(fresh.headline, /Done\. You now have/);
+});
+
+test('a failed row with no hash moved nothing, so it never puts the balance in question', () => {
+  const view = buildBasic(
+    baseInput({
+      proposals: [proposal({ status: 'failed', decidedAt: T2, result: { ok: false, detail: 'refused before the key', txids: [] } })],
+      chainStatus: chainStatus(T1),
+    }),
+  );
+  assert.equal(view.totalUsd, 2341.08);
+  assert.equal(view.checkingLine, null);
+});
+
 test('a swap never claims the total goes down, because a swap does not reduce it', () => {
   const view = buildBasic(baseInput({ proposals: [proposal()] }));
   assert.match(view.ask!.afterLine, /stays about the same/);

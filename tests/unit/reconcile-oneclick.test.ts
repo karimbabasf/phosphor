@@ -30,7 +30,7 @@ function tmpDir(): string {
 }
 
 function statusOf(over: Partial<OneClickStatus>): OneClickStatus {
-  return { found: true, status: 'PROCESSING', reported: '', originTxHashes: [], destinationTxHashes: [], ...over };
+  return { found: true, status: 'PROCESSING', reported: '', originTxHashes: [], destinationTxHashes: [], nearTxHashes: [], ...over };
 }
 
 type Harness = { svc: ProposalService; dir: string; asked: string[] };

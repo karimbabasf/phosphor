@@ -180,6 +180,11 @@ type Overrides = {
   standard?: string;
   status?: OneClickStatus['status'];
   destinationTxHashes?: string[];
+  refundedAmount?: string;
+  refundReason?: string;
+  settledAmountOut?: string;
+  nearTxHashes?: string[];
+  submitThrows?: boolean;
 };
 
 function apiOf(over: Overrides = {}): { api: IntentsApiPort; calls: ApiCalls } {
@@ -197,6 +202,7 @@ function apiOf(over: Overrides = {}): { api: IntentsApiPort; calls: ApiCalls } {
       return { standard: over.standard ?? 'erc191', payload: over.payload ?? payloadOf() };
     },
     async submitIntent(signed) {
+      if (over.submitThrows) throw new Error('submit-intent timed out after 30s');
       calls.submitted.push(signed);
       return { intentHash: 'HASH123' };
     },
@@ -207,6 +213,10 @@ function apiOf(over: Overrides = {}): { api: IntentsApiPort; calls: ApiCalls } {
         reported: over.status ?? 'SUCCESS',
         originTxHashes: [],
         destinationTxHashes: over.destinationTxHashes ?? ['5xSolanaTxSig'],
+        nearTxHashes: over.nearTxHashes ?? [],
+        ...(over.refundedAmount !== undefined ? { refundedAmount: over.refundedAmount } : {}),
+        ...(over.refundReason !== undefined ? { refundReason: over.refundReason } : {}),
+        ...(over.settledAmountOut !== undefined ? { settledAmountOut: over.settledAmountOut } : {}),
       };
     },
   };
@@ -347,6 +357,25 @@ test('execute signs one intent, submits it, and reports the destination tx', asy
   assert.equal(calls.submitted[0].payload, payloadOf());
   assert.deepEqual(result.txids, ['HASH123', '5xSolanaTxSig']);
   assert.match(result.detail, new RegExp(SOL_WALLET));
+});
+
+test('a success reports the amount 1Click settled, not the quote, and keeps the NEAR settlement hash', async () => {
+  const { rail } = railOf({ settledAmountOut: '0.0995', nearTxHashes: ['nearSettle'] });
+  const result = await rail.execute(draftOf());
+  assert.equal(result.ok, true, result.detail);
+  assert.match(result.detail, /0\.0995 SOL paid out to/);
+  assert.doesNotMatch(result.detail, /0\.099761184/);
+  assert.match(result.detail, /smaller by 0\.1 SOL/, 'the verifier fell by what went in, not by what came out');
+  assert.equal(result.evidence?.settledAmountOut, '0.0995');
+  assert.equal(result.evidence?.handle, HANDLE);
+  assert.deepEqual(result.txids, ['HASH123', '5xSolanaTxSig', 'nearSettle']);
+});
+
+test('a success without a settled amount says the figure is quoted', async () => {
+  const { rail } = railOf();
+  const result = await rail.execute(draftOf());
+  assert.equal(result.ok, true, result.detail);
+  assert.match(result.detail, /a quoted 0\.099761184 SOL paid out/);
 });
 
 test('nothing is sent on any chain: the rail has no chain port at all', async () => {
@@ -573,21 +602,61 @@ test('a draft spending another account is refused', async () => {
 
 // ---------- what happens after the signature is out ----------
 
-test('a refund is reported as money back inside the verifier, not as money in a wallet', async () => {
-  const { rail } = railOf({ status: 'REFUNDED' });
+test('a refund is reported as money back inside the verifier with its amount, not as money in a wallet', async () => {
+  const { rail } = railOf({ status: 'REFUNDED', refundedAmount: '7.6' });
   const result = await rail.execute(draftOf());
   assert.equal(result.ok, false);
-  assert.match(result.detail, /credited back to/);
-  assert.match(result.detail, /where the balance started/);
+  assert.match(result.detail, /7\.6 SOL went back to/);
+  assert.match(result.detail, /inside intents\.near/);
+  assert.doesNotMatch(result.detail, new RegExp(SOL_WALLET));
+  assert.equal(result.evidence?.refundedAmount, '7.6');
+});
+
+test('a FAILED withdrawal with nothing refunded says the input is held by 1Click, never that it is credited back', async () => {
+  const { rail } = railOf({ status: 'FAILED', refundedAmount: '0' });
+  const result = await rail.execute(draftOf());
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /refunded 0 SOL so far/);
+  assert.match(result.detail, new RegExp(`held by 1Click under handle ${HANDLE}`));
+  assert.match(result.detail, /Nothing is back in your balance/);
+  assert.doesNotMatch(result.detail, /credited back/);
+  assert.equal(result.evidence?.handle, HANDLE);
+  assert.equal(result.evidence?.refundedAmount, '0');
+});
+
+test('a submit that throws after the signature is reported as signed and unconfirmed, with the handle, never thrown', async () => {
+  const { rail, calls } = railOf({ submitThrows: true });
+  const result = await rail.execute(draftOf());
+  assert.equal(result.ok, false);
+  assert.equal(calls.submitted.length, 0);
+  assert.match(result.detail, /signed/);
+  assert.match(result.detail, /unconfirmed/);
+  assert.match(result.detail, new RegExp(HANDLE));
+  assert.doesNotMatch(result.detail, /Nothing was signed/);
+  assert.deepEqual(result.txids, []);
+  assert.equal(result.evidence?.handle, HANDLE);
+  assert.equal(result.evidence?.deadline, DEADLINE);
+});
+
+test('the executor hears the handle after the signature and the hash after the submit', async () => {
+  const { rail } = railOf();
+  const heard: Array<{ txids?: string[]; handle?: string; deadline?: string }> = [];
+  const result = await rail.execute(draftOf(), 'p1', { onEvidence: (e) => heard.push(e) });
+  assert.equal(result.ok, true, result.detail);
+  assert.deepEqual(heard[0], { handle: HANDLE, deadline: DEADLINE });
+  assert.deepEqual(heard[1].txids, ['HASH123']);
+  assert.equal(heard[1].handle, HANDLE);
 });
 
 test('a poll timeout says the intent IS submitted, so nobody signs a second one', async () => {
-  const { rail } = railOf({ status: 'PROCESSING' });
+  const { rail } = railOf({ status: 'PROCESSING', destinationTxHashes: [] });
   const result = await rail.execute(draftOf());
   assert.equal(result.ok, false);
   assert.match(result.detail, /THE INTENT IS SIGNED AND SUBMITTED/);
   assert.match(result.detail, /before signing another/);
+  assert.match(result.detail, /unconfirmed/);
   assert.deepEqual(result.txids, ['HASH123']);
+  assert.equal(result.evidence?.handle, HANDLE);
 });
 
 test('valueUsd trusts a finite amount and refuses to under-report an unusable one', () => {

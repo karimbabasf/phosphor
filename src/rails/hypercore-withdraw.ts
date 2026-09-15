@@ -43,6 +43,7 @@ import { isAddress } from 'viem';
 import type { HlWithdrawDraft, Rail, RailResult, SimulationResult } from '../types.ts';
 import { ONECLICK_TERMINAL, baseUnits, oneClickClient, oneLine, quoteEchoProblems, toBaseUnits } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickStatus, OneClickToken, QuoteEcho } from '../intents.ts';
+import { deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, settledEvidence, uniqueTxids } from './oneclick-words.ts';
 import { fetchIntentsAssetBalance } from '../ledger/intents.ts';
 import { nearChainSpec } from '../chain/near.ts';
 import { readTimeout } from '../net.ts';
@@ -400,7 +401,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
   async function watchStatus(depositAddress: string): Promise<OneClickStatus> {
     const deadline = now() + pollTimeoutMs;
     const maxPolls = Math.max(1, Math.ceil(pollTimeoutMs / pollIntervalMs));
-    let last: OneClickStatus = { found: false, status: 'PENDING_DEPOSIT', reported: 'not polled', originTxHashes: [], destinationTxHashes: [] };
+    let last: OneClickStatus = { found: false, status: 'PENDING_DEPOSIT', reported: 'not polled', originTxHashes: [], destinationTxHashes: [], nearTxHashes: [] };
     for (let attempt = 0; attempt < maxPolls; attempt += 1) {
       try {
         last = await client.status(depositAddress);
@@ -471,69 +472,126 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     }
 
     // A standard account pays spotSend out of the spot book; move what is short from perp.
+    // Same account, different side: nothing leaves, but a refusal after this point has to say
+    // that the collateral now sits on spot, or the human reads "nothing was sent" as "nothing
+    // changed" and the next look at the perp book comes up short.
+    const handle = depositAddress.toLowerCase();
+    let movedToSpot = false;
     if (p.moveToSpot > 0) {
       const moved = await usdClassTransfer(hl, { amount: p.moveToSpot, toPerp: false });
       if (!moved.ok) {
         return {
           ok: false,
-          detail:
-            `moving ${p.moveToSpot} USDC from the perp side to spot failed before the send: ${oneLine(moved.detail, 160)}. ` +
-            'Nothing left the account.',
+          detail: moved.ambiguous
+            ? `moving ${p.moveToSpot} USDC from the perp side to spot got no answer from the venue before the send: ` +
+              `${oneLine(moved.detail, 160)}. Nothing was sent out, but the move between sides is unconfirmed: read both ` +
+              'sides of the account before proposing again.'
+            : `moving ${p.moveToSpot} USDC from the perp side to spot failed before the send: ${oneLine(moved.detail, 160)}. ` +
+              'Nothing left the account.',
+          txids: [],
+          ...(moved.ambiguous && moved.nonce !== undefined ? { evidence: { nonce: String(moved.nonce) } } : {}),
         };
       }
+      movedToSpot = true;
     }
 
-    const sent = await spotSend(hl, { destination: depositAddress, amount: draft.amount });
-    if (!sent.ok) {
-      if (sent.ambiguous) {
+    // One nonce per move, whatever happens. The venue dedupes on the nonce and on nothing
+    // else, so a send it did not answer is retried once with the SAME nonce (the same send
+    // again, or a refused duplicate) and never with a fresh one, which would be a second real
+    // payout. The ledger is read first: a send that landed shows there under its nonce, and
+    // then there is nothing to retry. The rule is written out at the top of intents-spend.ts.
+    const first = await spotSend(hl, { destination: depositAddress, amount: draft.amount });
+    let sent = first;
+    let ledger: string | null = null;
+    if (!first.ok && first.ambiguous && first.nonce !== undefined) {
+      ledger = await ledgerHash(owner, first.nonce, depositAddress);
+      if (ledger === null) sent = await spotSend(hl, { destination: depositAddress, amount: draft.amount, nonce: first.nonce });
+    }
+    const landed = sent.ok || ledger !== null;
+    if (!landed) {
+      if (first.ambiguous) {
+        // The nonce is the identity of the action on this venue and the only thing a retry can
+        // reuse, so it is the evidence; there is no hash to record and none is invented. A
+        // refusal of the same nonce on the retry is not proof either way: the venue refuses a
+        // nonce it has already taken, and it refuses a send it cannot fund.
+        const again = sent === first ? '' : ` The same nonce was sent once more and the venue answered: ${oneLine(sent.detail, 160)}.`;
         return {
           ok: false,
           detail:
-            `${sent.detail} The send was to ${depositAddress.toLowerCase()} for 1Click quote of ${oneLine(quote.amountOutFormatted, 40)} USDC; ` +
-            `read the Hyperliquid ledger for nonce ${String(sent.nonce)} and 1Click status for that address before proposing again.`,
+            `${first.detail}${again} The send was to ${handle} for 1Click quote of ${oneLine(quote.amountOutFormatted, 40)} USDC, ` +
+            `so it is unconfirmed: read the Hyperliquid ledger for nonce ${String(first.nonce)} and 1Click status for that address ` +
+            'before proposing again.',
           txids: [],
+          evidence: { handle, ...(first.nonce !== undefined ? { nonce: String(first.nonce) } : {}) },
         };
       }
-      return { ok: false, detail: `${sent.detail}. Nothing was sent.`, txids: [] };
+      return {
+        ok: false,
+        detail:
+          `${sent.detail}. ` +
+          (movedToSpot ? 'The collateral was moved to the spot side and stays there; nothing was sent out.' : 'Nothing was sent.'),
+        txids: [],
+      };
     }
-    const nonce = sent.nonce ?? now();
-    const hash = (await ledgerHash(owner, nonce, depositAddress)) ?? `hl-nonce-${String(nonce)}`;
-    const evidence = `sent ${draft.amount} USDC to ${depositAddress.toLowerCase()} (nonce ${String(nonce)}, ledger ${hash})`;
+    const nonce = first.nonce ?? sent.nonce ?? now();
+    // The venue's ledger hash when it has one. When it has not shown the send yet the row keeps
+    // the nonce and no hash: an invented id in txids reaches Activity as a transaction.
+    if (ledger === null) ledger = await ledgerHash(owner, nonce, depositAddress);
+    const evidence = `sent ${draft.amount} USDC to ${handle} (nonce ${String(nonce)}, ledger ${ledger ?? 'not found yet'})`;
+    const railEvidence = (status: OneClickStatus) => ({ ...settledEvidence(status, handle), nonce: String(nonce) });
+    const hash = ledger ?? '';
 
     const watch = await watchStatus(depositAddress);
 
     if (watch.status === 'SUCCESS') {
-      const proof = await proveBothSides(draft, before, intentsBefore, quote);
+      const proof = await proveBothSides(draft, before, intentsBefore, deliveredAmount(watch, quote.amountOutFormatted));
       return {
         ok: true,
-        detail: `withdrew ${draft.amount} USDC from Hyperliquid; ${oneLine(quote.amountOutFormatted, 40)} USDC credited to our intents account ${draft.to}; ${evidence}.${proof}`,
-        txids: [hash, ...watch.destinationTxHashes],
+        detail:
+          `withdrew ${draft.amount} USDC from Hyperliquid; ${deliveredAmount(watch, quote.amountOutFormatted)} USDC credited to our ` +
+          `intents account ${draft.to} (${deliveredNote(watch)}); ${evidence}.${proof}`,
+        txids: uniqueTxids(hash, watch),
+        evidence: railEvidence(watch),
       };
     }
 
     if (watch.status === 'REFUNDED' || watch.status === 'FAILED') {
-      return {
-        ok: false,
-        detail:
-          `1click reported ${watch.reported} after the send; ${evidence}. A refund goes back to the venue account ${draft.from}, ` +
-          `minus 1Click's refund fee; read the account before proposing again.`,
-        txids: [hash, ...watch.originTxHashes, ...watch.destinationTxHashes],
-      };
+      const refund = describeRefund(watch, handle, {
+        symbol: 'USDC',
+        refundTarget: `the venue account ${draft.from} (the spot side)`,
+        evidence,
+        primaryTxid: hash,
+      });
+      return { ...refund, evidence: { ...refund.evidence, nonce: String(nonce) } };
     }
 
+    if (watch.status === 'INCOMPLETE_DEPOSIT') {
+      const short = describeIncompleteDeposit(watch, handle, {
+        symbol: 'USDC',
+        quotedIn: oneLine(quote.amountInFormatted, 40),
+        refundTarget: `the venue account ${draft.from} (the spot side)`,
+        evidence,
+        primaryTxid: hash,
+      });
+      return { ...short, evidence: { ...short.evidence, nonce: String(nonce) } };
+    }
+
+    // The send happened and the watch ran out. The ledger hash and the address stay on the row
+    // so the routing can be checked later.
     return {
       ok: false,
       detail:
         `the send confirmed but 1click did not reach a terminal status within ${Math.round(pollTimeoutMs / 1000)}s ` +
-        `(last status ${watch.reported}); ${evidence}. THE SEND HAPPENED and the routing may still complete: read the intents ` +
-        `balance and 1Click status for ${depositAddress.toLowerCase()} before proposing again.`,
-      txids: [hash],
+        `(last status ${watch.reported}); ${evidence}. THE SEND HAPPENED and the routing may still complete, so it is ` +
+        `unconfirmed: read the intents balance and 1Click status for ${handle} before proposing again.`,
+      txids: uniqueTxids(hash, watch),
+      evidence: { handle, nonce: String(nonce) },
     };
   }
 
   // What changed on each side, read back rather than assumed. Never throws: the money has
   // moved by now and a read that fails changes the sentence, not the fact.
-  async function proveBothSides(draft: HlWithdrawDraft, before: HlAccountSummary, intentsBefore: bigint | null, quote: OneClickQuote): Promise<string> {
+  async function proveBothSides(draft: HlWithdrawDraft, before: HlAccountSummary, intentsBefore: bigint | null, delivered: string): Promise<string> {
     const parts: string[] = [];
     try {
       const after = await accountSummary(hl, draft.from);
@@ -548,7 +606,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
       parts.push(
         gain > 0n
           ? ` The intents balance rose by ${Number(gain) / 10 ** INTENTS_USDC_DECIMALS} USDC.`
-          : ` The verifier has not shown the credit yet; 1Click reported SUCCESS for ${oneLine(quote.amountOutFormatted, 40)} USDC, so read the wallet in a minute rather than sending again.`,
+          : ` The verifier has not shown the credit yet; 1Click reported SUCCESS for ${delivered} USDC, so read the wallet in a minute rather than sending again.`,
       );
     } else {
       parts.push(' The verifier would not answer a balance read, so the credit is unconfirmed here; read the wallet.');

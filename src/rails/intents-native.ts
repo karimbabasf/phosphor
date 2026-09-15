@@ -43,7 +43,7 @@ import { privateKeyToAccount } from 'viem/accounts';
 
 import { evmAddress } from '../chain/evm.ts';
 import { evmPrivateKey } from '../keystore/index.ts';
-import type { Rail, RailResult, SimulationResult, SwapDraft } from '../types.ts';
+import type { Rail, RailHooks, RailResult, SimulationResult, SwapDraft } from '../types.ts';
 import {
   ONECLICK_BASE,
   ONECLICK_TERMINAL,
@@ -73,6 +73,8 @@ import {
 import type { NearSendOutcome, NearSendParams } from '../chain/near.ts';
 import { venueWriteTimeout } from '../net.ts';
 import { MAX_SLIPPAGE_BPS, floorTooLow } from './slippage.ts';
+import { describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids } from './oneclick-words.ts';
+import { submitSignedIntent } from './intents-submit.ts';
 
 // The verifier contract. This is the whole point of the rail: one fixed account that goes on
 // the policy allowlist once and stays there, unlike a deposit address minted per quote.
@@ -440,6 +442,20 @@ export type IntentPayloadExpectation = {
 // effectively as a transfer would, so this is the checkpoint that replaces "is the deposit
 // address one we trust", and unlike that question this one is answerable.
 //
+// The deadline a payload carries, for the sentence and the evidence once it is signed. Read
+// after checkIntentPayload has accepted the payload, so the shape is already known good;
+// undefined only if it is not.
+export function intentDeadline(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    const deadline = (parsed as Record<string, unknown> | null)?.['deadline'];
+    return typeof deadline === 'string' && deadline !== '' ? oneLine(deadline, 40) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // Returns the problems it found. An empty array means the payload says what the draft says.
 export function checkIntentPayload(raw: unknown, expect: IntentPayloadExpectation): string[] {
   /* The floor first, before the payload is even read. Every amount check below compares against
@@ -872,8 +888,25 @@ export function liveVerifierBalance(fetchImpl?: typeof fetch): VerifierBalancePo
 
 export type IntentsNativeRail = Rail<SwapDraft>;
 
+// How long the after-check waits for the verifier to show the credit once 1Click has said
+// SUCCESS: six reads, 2.5 s apart, 15 s in all. The read is at finality, so it can trail the
+// solver's settlement by a block or two; on 2026-09-15 one read a second after SUCCESS saw
+// the old balance and a swap that had delivered 19.801706 USDC was recorded as failed.
+export const SETTLE_READS = 6;
+export const SETTLE_WAIT_MS = 2500;
+
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+// A hook is the executor's business; whatever it does with the evidence, it must not turn a
+// signature that is already released into a thrown "nothing happened".
+function tell(hooks: RailHooks | undefined, evidence: Parameters<NonNullable<RailHooks['onEvidence']>>[0]): void {
+  try {
+    hooks?.onEvidence?.(evidence);
+  } catch {
+    // reported by the executor's own persistence, not by this rail
+  }
 }
 
 export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRail {
@@ -1098,7 +1131,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     }
   }
 
-  async function execute(draft: SwapDraft): Promise<RailResult> {
+  async function execute(draft: SwapDraft, _proposalId?: string, hooks?: RailHooks): Promise<RailResult> {
     requireVenue(draft);
     requireUsable();
     const client = api as IntentsApiPort;
@@ -1174,9 +1207,20 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     // normalised anywhere above: the signature has to cover the same bytes the verifier will
     // parse, and a round trip through JSON.parse and JSON.stringify would not guarantee that.
     const payload = generated.payload as string;
+    const deadline = intentDeadline(payload) ?? 'unknown';
     const signature = await signer.signErc191(keysPath, payload);
+    tell(hooks, { handle: depositAddress, deadline });
 
-    const submitted = await client.submitIntent({ payload, signature });
+    // Nothing throws from here on, and the key is never used again for this move: the rule and
+    // the one safe retry are described at the top of src/rails/intents-spend.ts. A submit that
+    // does not answer is an intent that may be live at 1Click, and the executor has to hear
+    // that as a fact about the money rather than as a rail that threw.
+    const sent = await submitSignedIntent(client, { payload, signature });
+    if (!sent.submitted) {
+      return describeUnconfirmedSubmit({ error: sent.error, handle: depositAddress, deadline });
+    }
+    const submitted: SubmittedIntent = sent.intent;
+    tell(hooks, { txids: [submitted.intentHash], handle: depositAddress, deadline });
     const evidence = `intent ${submitted.intentHash}, quote handle ${oneLine(depositAddress, 80)}`;
 
     const watch = await watchStatus(depositAddress);
@@ -1187,11 +1231,29 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
          solver's PROMISE, over a payload that is a transfer and names no output. So a swap that
          credited less than the approved floor, or nothing at all, was reported as a success at
          the promised size. */
-      const afterBase = await verifierBalance(owner.toLowerCase(), p.destinationAsset);
-      const txids = [submitted.intentHash, ...watch.destinationTxHashes];
+      let afterBase = await verifierBalance(owner.toLowerCase(), p.destinationAsset);
+      // Read again while the verifier still shows the old balance, or will not answer, until
+      // the budget is spent. With no before-read there is nothing to compare, so no waiting.
+      for (let read = 1; read < SETTLE_READS && beforeBase !== null && (afterBase === null || afterBase <= beforeBase); read += 1) {
+        await sleep(SETTLE_WAIT_MS);
+        afterBase = await verifierBalance(owner.toLowerCase(), p.destinationAsset);
+      }
+      const txids = uniqueTxids(submitted.intentHash, watch);
+      const railEvidence = settledEvidence(watch, depositAddress);
 
       if (beforeBase !== null && afterBase !== null) {
         const delta = afterBase - beforeBase;
+        if (delta <= 0n) {
+          return {
+            ok: false,
+            detail:
+              `1click reported SUCCESS but the balance inside ${INTENTS_VERIFIER} had not risen within ` +
+              `${Math.round(((SETTLE_READS - 1) * SETTLE_WAIT_MS) / 1000)}s (${SETTLE_READS} reads), so the swap is ` +
+              `unconfirmed; ${evidence}. Read the balance for ${owner} before signing another.`,
+            txids,
+            evidence: railEvidence,
+          };
+        }
         if (delta < p.minOutBase) {
           return {
             ok: false,
@@ -1201,6 +1263,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
               `${draft.minAmountOut} ${draft.toSymbol} floor this swap was approved with; ${evidence}. ` +
               `Read the balance for ${owner} before signing another.`,
             txids,
+            evidence: railEvidence,
           };
         }
         return {
@@ -1211,6 +1274,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
             `from the quote; ${evidence}. Nothing was transferred on any chain and the proceeds are ` +
             `credited to ${owner} inside the verifier.`,
           txids,
+          evidence: railEvidence,
         };
       }
 
@@ -1224,30 +1288,42 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
           `back, so the amount out is the solver's figure rather than an observed one. Nothing was transferred ` +
           `on any chain and the proceeds are credited to ${owner} inside the verifier.`,
         txids,
+        evidence: railEvidence,
       };
     }
 
     if (watch.status === 'REFUNDED' || watch.status === 'FAILED') {
-      return {
-        ok: false,
-        detail:
-          `1click reported ${watch.reported} after the intent was submitted; ${evidence}. ` +
-          `A refund is credited back to ${owner} inside ${INTENTS_VERIFIER}, not to any chain address.`,
-        txids: [submitted.intentHash, ...watch.originTxHashes, ...watch.destinationTxHashes],
-      };
+      return describeRefund(watch, depositAddress, {
+        symbol: draft.fromSymbol,
+        refundTarget: `${owner} inside ${INTENTS_VERIFIER}, not any chain address`,
+        evidence,
+        primaryTxid: submitted.intentHash,
+      });
+    }
+
+    if (watch.status === 'INCOMPLETE_DEPOSIT') {
+      return describeIncompleteDeposit(watch, depositAddress, {
+        symbol: draft.fromSymbol,
+        quotedIn: oneLine(quote.amountInFormatted, 40),
+        refundTarget: `${owner} inside ${INTENTS_VERIFIER}`,
+        evidence,
+        primaryTxid: submitted.intentHash,
+      });
     }
 
     // Timed out. The signature is already released and the intent already submitted, so the
     // balance may well move after this returns. Same rule as the oneclick rail: a poll
     // timeout is not a failed swap, and saying so is what stops someone signing a second one.
+    // The hash and the handle stay on the row so the swap can be checked later.
     return {
       ok: false,
       detail:
         `the intent was submitted but 1click did not reach a terminal status within ` +
         `${Math.round(pollTimeoutMs / 1000)}s (last status ${watch.reported}); ${evidence}. ` +
-        `THE INTENT IS SIGNED AND SUBMITTED and the swap may still complete: check the balance inside ` +
-        `${INTENTS_VERIFIER} before signing another.`,
-      txids: [submitted.intentHash],
+        `THE INTENT IS SIGNED AND SUBMITTED and the swap may still complete, so it is unconfirmed: check the balance ` +
+        `inside ${INTENTS_VERIFIER} before signing another.`,
+      txids: uniqueTxids(submitted.intentHash, watch),
+      evidence: { handle: oneLine(depositAddress, 80) },
     };
   }
 
@@ -1262,6 +1338,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
       reported: 'not polled',
       originTxHashes: [],
       destinationTxHashes: [],
+      nearTxHashes: [],
     };
 
     /* Bounded by the deadline AND by the waits it has already spent. A precomputed attempt

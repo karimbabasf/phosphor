@@ -50,12 +50,14 @@ import type {
   ChainId,
   IntentsWithdrawDraft,
   Rail,
+  RailHooks,
   RailResult,
   SimulationResult,
 } from '../types.ts';
 import { baseUnits, oneLine, quoteEchoProblems, resolveAsset, toBaseUnits } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, QuoteEcho, TokensFile } from '../intents.ts';
 import { spendFromIntents } from './intents-spend.ts';
+import { deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids } from './oneclick-words.ts';
 import { INTENTS_VERIFIER, base58Decode, intentsApi, liveIntentsSigner } from './intents-native.ts';
 import type { IntentsApiPort, IntentsSignerPort } from './intents-native.ts';
 
@@ -398,13 +400,14 @@ export function intentsWithdrawRail(deps: IntentsWithdrawRailDeps): IntentsWithd
     }
   }
 
-  async function execute(draft: IntentsWithdrawDraft): Promise<RailResult> {
+  async function execute(draft: IntentsWithdrawDraft, _proposalId?: string, hooks?: RailHooks): Promise<RailResult> {
     const p = await plan(draft);
     const owner = requireOwner(draft);
     requireEvmDestinationIsOurs(draft, p, owner);
 
     // The four shared steps: live quote, echo check, generated intent checked and signed,
-    // submitted and watched. Every refusal before the signature throws out of here.
+    // submitted and watched. Every refusal before the signature throws out of here; after it
+    // nothing does, and a submit that did not answer comes back as signed and unsubmitted.
     const spent = await spendFromIntents(
       { api, signer, keysPath, now, sleep, pollIntervalMs, pollTimeoutMs, maxDeadlineMs },
       {
@@ -418,7 +421,11 @@ export function intentsWithdrawRail(deps: IntentsWithdrawRailDeps): IntentsWithd
         echo: echoWant(draft, p),
         checkQuote: (quote) => checkQuote(draft, p, quote),
       },
+      hooks,
     );
+    if (!spent.submitted) {
+      return describeUnconfirmedSubmit({ error: spent.error, handle: spent.depositAddress, deadline: spent.deadline });
+    }
     const { quote, depositAddress, watch } = spent;
     const evidence = `intent ${spent.intentHash}, quote handle ${oneLine(depositAddress, 80)}`;
 
@@ -427,33 +434,45 @@ export function intentsWithdrawRail(deps: IntentsWithdrawRailDeps): IntentsWithd
         ok: true,
         detail:
           `withdrew ${draft.amount} ${draft.symbol} from ${INTENTS_VERIFIER}; ` +
-          `${oneLine(quote.amountOutFormatted, 40)} ${draft.symbol} paid out to our ${draft.chain} wallet ${p.to}; ` +
-          `${evidence}. The balance inside the verifier is now smaller by that amount.`,
-        txids: [spent.intentHash, ...watch.destinationTxHashes],
+          `${deliveredAmount(watch, quote.amountOutFormatted)} ${draft.symbol} paid out to our ${draft.chain} wallet ${p.to} ` +
+          `(${deliveredNote(watch)}); ${evidence}. The balance inside the verifier is now smaller by ${draft.amount} ${draft.symbol}.`,
+        txids: uniqueTxids(spent.intentHash, watch),
+        evidence: settledEvidence(watch, depositAddress),
       };
     }
 
     if (watch.status === 'REFUNDED' || watch.status === 'FAILED') {
-      return {
-        ok: false,
-        detail:
-          `1click reported ${watch.reported} after the intent was submitted; ${evidence}. ` +
-          `A refund is credited back to ${owner} inside ${INTENTS_VERIFIER}, which is where the balance started.`,
-        txids: [spent.intentHash, ...watch.originTxHashes, ...watch.destinationTxHashes],
-      };
+      return describeRefund(watch, depositAddress, {
+        symbol: draft.symbol,
+        refundTarget: `${owner} inside ${INTENTS_VERIFIER}, where the balance started`,
+        evidence,
+        primaryTxid: spent.intentHash,
+      });
+    }
+
+    if (watch.status === 'INCOMPLETE_DEPOSIT') {
+      return describeIncompleteDeposit(watch, depositAddress, {
+        symbol: draft.symbol,
+        quotedIn: oneLine(quote.amountInFormatted, 40),
+        refundTarget: `${owner} inside ${INTENTS_VERIFIER}`,
+        evidence,
+        primaryTxid: spent.intentHash,
+      });
     }
 
     // Timed out. The signature is released and the intent submitted, so the balance may well
     // move after this returns. Saying "failed" without that sentence is how someone signs a
-    // second withdrawal for money that is already on its way.
+    // second withdrawal for money that is already on its way. The hash and the handle stay on
+    // the row so the payout can be checked later.
     return {
       ok: false,
       detail:
         `the intent was submitted but 1click did not reach a terminal status within ` +
         `${Math.round(pollTimeoutMs / 1000)}s (last status ${watch.reported}); ${evidence}. ` +
-        `THE INTENT IS SIGNED AND SUBMITTED and the payout may still land: check the ${draft.chain} wallet ` +
-        `${p.to} and the balance inside ${INTENTS_VERIFIER} before signing another.`,
-      txids: [spent.intentHash],
+        `THE INTENT IS SIGNED AND SUBMITTED and the payout may still land, so it is unconfirmed: check the ${draft.chain} ` +
+        `wallet ${p.to} and the balance inside ${INTENTS_VERIFIER} before signing another.`,
+      txids: uniqueTxids(spent.intentHash, watch),
+      evidence: { handle: oneLine(depositAddress, 80) },
     };
   }
 

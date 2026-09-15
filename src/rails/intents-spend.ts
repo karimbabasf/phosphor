@@ -22,13 +22,33 @@
 // TWO PHASES, TWO CONTRACTS. Before the signature is released, every problem THROWS: nothing
 // has happened and the caller's executor records the reason. After it is released, nothing
 // throws: the balance may already be moving, and a status endpoint that goes down must not
-// turn into an unhandled rejection that reads as "nothing happened". The caller gets the hash,
-// the handle and the last status seen, and writes the sentence.
+// turn into an unhandled rejection that reads as "nothing happened". That includes the submit
+// call itself: a submit that times out after the signature is returned as signed and
+// unsubmitted, because 1Click may have taken the intent and the caller's sentence must say
+// so. The caller gets the hash, the handle and the last status seen, and writes the sentence.
+//
+// NEVER SIGN AGAIN AFTER AN AMBIGUOUS OUTCOME. Once the key has been used for a move, this
+// function does not call generate-intent or signErc191 for that move a second time, whatever
+// happens next: a submit that got no reply, a submit the venue answered with an error, a watch
+// that ran out. The verifier dedupes on the nonce inside the signed bytes and on nothing else,
+// so a fresh signature is a fresh nonce and a second real balance move. The one retry that is
+// safe is the identical signed bytes, once, inside this same call, and only when the first
+// POST produced no reply at all (src/rails/intents-submit.ts); after that, or after any
+// answered error, the outcome is returned as unconfirmed with the handle and the rail stops.
+// The Hyperliquid rails follow the same rule with the venue nonce: an ambiguous spotSend is
+// retried only with the nonce it already used, never a new one. The tests count the signer
+// calls: exactly one per move.
+//
+// The executor is told twice, through the hooks, before any wait: the handle and deadline the
+// moment the signature exists, and the hash the moment the submit answers. A process that
+// dies inside the watch loop then still has both on the row.
 
 import { ONECLICK_TERMINAL, oneLine, quoteEchoProblems } from '../intents.ts';
 import type { OneClickEndpointType, OneClickQuote, OneClickStatus, QuoteEcho } from '../intents.ts';
-import { INTENTS_SIGNING_STANDARD, checkIntentPayload } from './intents-native.ts';
+import type { RailHooks } from '../types.ts';
+import { INTENTS_SIGNING_STANDARD, checkIntentPayload, intentDeadline } from './intents-native.ts';
 import type { IntentsApiPort, IntentsSignerPort } from './intents-native.ts';
+import { submitSignedIntent } from './intents-submit.ts';
 
 export type IntentsSpendDeps = {
   api: IntentsApiPort;
@@ -57,18 +77,42 @@ export type IntentsSpendRequest = {
   checkQuote?: (quote: OneClickQuote) => string[];
 };
 
-export type IntentsSpendOutcome = {
-  intentHash: string;
-  depositAddress: string; // the handle inside the verifier the balance was handed to
-  quote: OneClickQuote;
-  watch: OneClickStatus; // the last status seen, terminal or not
-};
+// Always signed by the time this exists: everything before the signature throws. Whether the
+// submit answered is the discriminant, and a caller has to look at it before reading a hash.
+export type IntentsSpendOutcome =
+  | {
+      signed: true;
+      submitted: true;
+      intentHash: string;
+      depositAddress: string; // the handle inside the verifier the balance was handed to
+      deadline: string; // the signed intent's own deadline, ISO
+      quote: OneClickQuote;
+      watch: OneClickStatus; // the last status seen, terminal or not
+    }
+  | {
+      signed: true;
+      submitted: false;
+      error: string; // what the submit call said, or how it failed to answer
+      depositAddress: string;
+      deadline: string;
+      quote: OneClickQuote;
+    };
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export async function spendFromIntents(deps: IntentsSpendDeps, req: IntentsSpendRequest): Promise<IntentsSpendOutcome> {
+// A hook is the executor's business. Whatever it does with the evidence, it must not turn a
+// signature that is already released into a thrown "nothing happened".
+function tell(hooks: RailHooks | undefined, evidence: Parameters<NonNullable<RailHooks['onEvidence']>>[0]): void {
+  try {
+    hooks?.onEvidence?.(evidence);
+  } catch {
+    // reported by the executor's own persistence, not by this rail
+  }
+}
+
+export async function spendFromIntents(deps: IntentsSpendDeps, req: IntentsSpendRequest, hooks?: RailHooks): Promise<IntentsSpendOutcome> {
   const response = await deps.api.quote({
     dry: false,
     originAsset: req.originAsset,
@@ -121,12 +165,20 @@ export async function spendFromIntents(deps: IntentsSpendDeps, req: IntentsSpend
   // Signed exactly as returned: the signature has to cover the same bytes the verifier will
   // parse, so the payload string is never re-serialised.
   const payload = generated.payload as string;
+  const deadline = intentDeadline(payload) ?? 'unknown';
   const signature = await deps.signer.signErc191(deps.keysPath, payload);
+  tell(hooks, { handle: depositAddress, deadline });
 
-  const submitted = await deps.api.submitIntent({ payload, signature });
+  const sent = await submitSignedIntent(deps.api, { payload, signature });
+  if (!sent.submitted) {
+    return { signed: true, submitted: false, error: sent.error, depositAddress, deadline, quote };
+  }
+  const submitted = sent.intent;
+  tell(hooks, { txids: [submitted.intentHash], handle: depositAddress, deadline });
+
   const watch = await watchStatus(deps, depositAddress);
 
-  return { intentHash: submitted.intentHash, depositAddress, quote, watch };
+  return { signed: true, submitted: true, intentHash: submitted.intentHash, depositAddress, deadline, quote, watch };
 }
 
 // Polls until terminal, out of attempts, or out of time. Never throws once the intent has
@@ -141,6 +193,7 @@ export async function watchStatus(deps: IntentsSpendDeps, depositAddress: string
     reported: 'not polled',
     originTxHashes: [],
     destinationTxHashes: [],
+    nearTxHashes: [],
   };
 
   for (let attempt = 0; attempt < maxPolls; attempt += 1) {

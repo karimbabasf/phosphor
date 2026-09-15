@@ -24,6 +24,7 @@ import { defaultPolicy } from '../../src/policy/file.ts';
 import { evaluate } from '../../src/policy/engine.ts';
 import type { EngineCtx } from '../../src/policy/engine.ts';
 import type { RiskRow, SwapDraft } from '../../src/types.ts';
+import { parseStatus } from '../../src/intents.ts';
 import type { OneClickQuote, OneClickToken, TokensFile } from '../../src/intents.ts';
 import { venueAllowlist } from '../../src/rails/index.ts';
 
@@ -31,6 +32,7 @@ import {
   INTENTS_NATIVE_COUNTERPARTY,
   INTENTS_NATIVE_VENUE,
   INTENTS_VERIFIER,
+  SETTLE_READS,
   base58Encode,
   checkIntentPayload,
   erc191SignatureField,
@@ -125,12 +127,14 @@ function quoteOf(over: Record<string, unknown> = {}): OneClickQuote {
   } as OneClickQuote;
 }
 
+const DEADLINE = new Date(NOW + 5 * 60_000).toISOString();
+
 // The erc191 payload is a JSON *string*, which is what the signature covers.
 function payloadOf(over: Record<string, unknown> = {}): string {
   return JSON.stringify({
     signer_id: OWNER,
     verifying_contract: INTENTS_VERIFIER,
-    deadline: new Date(NOW + 5 * 60_000).toISOString(),
+    deadline: DEADLINE,
     nonce: 'Vij2xgAlKBKzwGNqwogWQxiy87p9jW5Omfg+L9bXBDw=',
     intents: [{ intent: 'token_diff', diff: { [ORIGIN_ASSET]: '-100000000', [DEST_ASSET]: '99850000' } }],
     ...over,
@@ -143,6 +147,7 @@ type Harness = {
   quotes: unknown[];
   generated: Array<{ signerId: string; depositAddress: string }>;
   submitted: Array<{ payload: string; signature: string }>;
+  submitAttempts: Array<{ payload: string; signature: string }>;
   signedPayloads: string[];
   statusCalls: string[];
   verifierBalance: VerifierBalancePort;
@@ -177,7 +182,13 @@ function harness(
        one. The default is a swap that credits exactly the quoted amount. */
     verifierBefore?: bigint | null;
     verifierAfter?: bigint | null;
+    // The reads after the first, in order, the last one repeating: a verifier that shows the
+    // old balance for a while before the credit lands, which is what it does at finality.
+    verifierAfterReads?: Array<bigint | null>;
     quoteError?: string;
+    submitError?: string;
+    // How many submit calls get no reply (a TimeoutError) before one answers.
+    submitNoReply?: number;
     intent?: Partial<GeneratedIntent>;
     payload?: string;
     statuses?: Array<{ status: string; swapDetails?: Record<string, unknown> } | null>;
@@ -186,6 +197,7 @@ function harness(
   const quotes: unknown[] = [];
   const generated: Array<{ signerId: string; depositAddress: string }> = [];
   const submitted: Array<{ payload: string; signature: string }> = [];
+  const submitAttempts: Array<{ payload: string; signature: string }> = [];
   const signedPayloads: string[] = [];
   const statusCalls: string[] = [];
   const statuses = options.statuses ?? [{ status: 'SUCCESS', swapDetails: {} }];
@@ -210,6 +222,13 @@ function harness(
       };
     },
     async submitIntent(signed) {
+      submitAttempts.push(signed);
+      if (options.submitError !== undefined) throw new Error(options.submitError);
+      if ((options.submitNoReply ?? 0) >= submitAttempts.length) {
+        const err = new Error('The operation was aborted due to timeout');
+        err.name = 'TimeoutError';
+        throw err;
+      }
       submitted.push(signed);
       return { intentHash: INTENT_HASH, correlationId: 'test-correlation' };
     },
@@ -218,16 +237,11 @@ function harness(
       statusCalls.push(depositAddress);
       const payload = statuses[index];
       if (payload === null) {
-        return { found: false, status: 'PENDING_DEPOSIT', reported: 'not found yet', originTxHashes: [], destinationTxHashes: [] };
+        return { found: false, status: 'PENDING_DEPOSIT', reported: 'not found yet', originTxHashes: [], destinationTxHashes: [], nearTxHashes: [] };
       }
-      const known = ['PENDING_DEPOSIT', 'KNOWN_DEPOSIT_TX', 'INCOMPLETE_DEPOSIT', 'PROCESSING', 'SUCCESS', 'REFUNDED', 'FAILED'];
-      return {
-        found: true,
-        status: (known.includes(payload.status) ? payload.status : 'UNKNOWN') as never,
-        reported: payload.status,
-        originTxHashes: [],
-        destinationTxHashes: (payload.swapDetails?.['destinationChainTxHashes'] as string[]) ?? [],
-      };
+      // The real reader over the fixture body, so the stub cannot drift from what the client
+      // hands the rail on the live API.
+      return parseStatus(payload);
     },
   };
 
@@ -244,12 +258,14 @@ function harness(
   const verifierReads: string[] = [];
   const before = options.verifierBefore === undefined ? 0n : options.verifierBefore;
   const after = options.verifierAfter === undefined ? 99_000_000n : options.verifierAfter;
+  const afterReads = options.verifierAfterReads ?? [after];
   const verifierBalance: VerifierBalancePort = async (accountId, assetId) => {
     verifierReads.push(`${accountId}:${assetId}`);
-    return verifierReads.length === 1 ? before : after;
+    if (verifierReads.length === 1) return before;
+    return afterReads[Math.min(verifierReads.length - 2, afterReads.length - 1)] ?? null;
   };
 
-  return { api, signer, quotes, generated, submitted, signedPayloads, statusCalls, verifierBalance, verifierReads };
+  return { api, signer, quotes, generated, submitted, submitAttempts, signedPayloads, statusCalls, verifierBalance, verifierReads };
 }
 
 function railOf(h: Harness) {
@@ -656,14 +672,118 @@ test('a poll timeout says the intent is signed and submitted, because it is', as
   assert.ok(h.statusCalls.length > 1, 'it should have polled more than once before giving up');
 });
 
-test('a REFUNDED swap says where the refund landed, which is not a chain address', async () => {
-  const h = harness({ statuses: [{ status: 'REFUNDED' }] });
+test('a submit that throws after the signature is reported as signed and unconfirmed, never thrown as nothing', async () => {
+  const h = harness({ submitError: 'submit-intent timed out after 30s' });
   const result = await railOf(h).execute(draftOf());
 
   assert.equal(result.ok, false);
-  assert.match(result.detail, /REFUNDED/);
-  assert.match(result.detail, /not to any chain address/);
+  assert.equal(h.signedPayloads.length, 1, 'the key was used');
+  assert.equal(h.submitted.length, 0);
+  assert.match(result.detail, /signed/);
+  assert.match(result.detail, /unconfirmed/);
+  assert.match(result.detail, new RegExp(HANDLE));
+  assert.match(result.detail, /timed out/);
+  assert.doesNotMatch(result.detail, /Nothing was signed/);
+  assert.deepEqual(result.txids, []);
+  assert.equal(result.evidence?.handle, HANDLE);
+  assert.equal(result.evidence?.deadline, DEADLINE);
+});
+
+test('a submit with no reply is resent once with the same bytes, and the key is used exactly once', async () => {
+  const h = harness({ submitNoReply: 1 });
+  const result = await railOf(h).execute(draftOf());
+  assert.equal(result.ok, true, result.detail);
+  assert.equal(h.submitAttempts.length, 2);
+  assert.deepEqual(h.submitAttempts[0], h.submitAttempts[1], 'the identical signed bytes');
+  assert.equal(h.generated.length, 1, 'generate-intent once');
+  assert.equal(h.signedPayloads.length, 1, 'signErc191 exactly once');
+});
+
+test('two submits with no reply end unconfirmed with the handle, and nothing is signed again', async () => {
+  const h = harness({ submitNoReply: 2 });
+  const result = await railOf(h).execute(draftOf());
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /unconfirmed/);
+  assert.equal(result.evidence?.handle, HANDLE);
+  assert.equal(h.submitAttempts.length, 2, 'never a third');
+  assert.equal(h.generated.length, 1);
+  assert.equal(h.signedPayloads.length, 1);
+  assert.equal(h.statusCalls.length, 0);
+});
+
+test('a submit the venue answered with an error is not resent, and the key is used exactly once', async () => {
+  const h = harness({ submitError: 'submit-intent failed: 502' });
+  const result = await railOf(h).execute(draftOf());
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /unconfirmed/);
+  assert.equal(h.submitAttempts.length, 1);
+  assert.equal(h.signedPayloads.length, 1);
+});
+
+test('the executor hears the handle after the signature and the hash after the submit, before any poll', async () => {
+  const h = harness({ statuses: [{ status: 'PROCESSING' }, { status: 'SUCCESS', swapDetails: {} }] });
+  const order: string[] = [];
+  const heard: Array<{ txids?: string[]; handle?: string; deadline?: string }> = [];
+  const api = { ...h.api, async status(addr: string) {
+    order.push('poll');
+    return h.api.status(addr);
+  } };
+  const rail = intentsNativeRail({
+    keysPath: '/nonexistent/keys.json',
+    tokens: tokensFixture,
+    api,
+    signer: h.signer,
+    verifierBalance: h.verifierBalance,
+    now: () => NOW,
+    sleepImpl: async () => {},
+    pollIntervalMs: 1,
+    pollTimeoutMs: 5,
+  });
+  const result = await rail.execute(draftOf(), 'p1', {
+    onEvidence: (e) => {
+      order.push(`evidence:${e.txids?.join(',') ?? ''}`);
+      heard.push(e);
+    },
+  });
+  assert.equal(result.ok, true, result.detail);
+  assert.deepEqual(order.slice(0, 3), ['evidence:', `evidence:${INTENT_HASH}`, 'poll']);
+  assert.deepEqual(heard[0], { handle: HANDLE, deadline: DEADLINE });
+  assert.equal(heard[1].handle, HANDLE);
+});
+
+test('a watch that runs out is unconfirmed and keeps the hash and the handle for a later check', async () => {
+  const h = harness({ statuses: [{ status: 'PROCESSING', swapDetails: { nearTxHashes: ['nearSeen'] } }] });
+  const result = await railOf(h).execute(draftOf());
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /unconfirmed/);
+  assert.deepEqual(result.txids, [INTENT_HASH, 'nearSeen']);
+  assert.equal(result.evidence?.handle, HANDLE);
+});
+
+test('a REFUNDED swap names the amount and says where it landed, which is not a chain address', async () => {
+  const h = harness({ statuses: [{ status: 'REFUNDED', swapDetails: { refundedAmountFormatted: '100.0', nearTxHashes: ['nearRefund'] } }] });
+  const result = await railOf(h).execute(draftOf());
+
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /1click reported REFUNDED: 100\.0 USDC went back to/);
+  assert.match(result.detail, /not any chain address/);
   assert.match(result.detail, new RegExp(OWNER));
+  assert.deepEqual(result.txids, [INTENT_HASH, 'nearRefund']);
+  assert.equal(result.evidence?.refundedAmount, '100.0');
+  assert.equal(result.evidence?.handle, HANDLE);
+});
+
+test('a FAILED swap with nothing refunded says the input is held by 1Click under the handle', async () => {
+  const h = harness({ statuses: [{ status: 'FAILED', swapDetails: { refundedAmountFormatted: '0', refundReason: null } }] });
+  const result = await railOf(h).execute(draftOf());
+
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /1click reported FAILED and refunded 0 USDC so far/);
+  assert.match(result.detail, new RegExp(`held by 1Click under handle ${HANDLE}`));
+  assert.match(result.detail, /reason not given/);
+  assert.doesNotMatch(result.detail, /refund is credited/);
+  assert.deepEqual(result.txids, [INTENT_HASH]);
+  assert.equal(result.evidence?.refundedAmount, '0');
 });
 
 test('an invented status is never terminal, however much it looks like SUCCESS', async () => {
@@ -1033,6 +1153,29 @@ test('a SUCCESS that credited the floor reports the amount it actually read', as
   assert.equal(out.ok, true, out.detail);
   assert.match(out.detail, /for 99.5 USDT/, 'the delta, not the quote');
   assert.match(out.detail, /read back from the verifier/);
+});
+
+test('the floor check waits for the verifier to show the credit before it judges the amount', async () => {
+  // The incident of 2026-09-15: 1Click reported SUCCESS, 19.801706 USDC had landed, and the
+  // check read the verifier one second later at finality, saw the old balance, and marked
+  // the swap failed. The verifier is read again until it moves.
+  const h = harness({ verifierBefore: 5_000_000n, verifierAfterReads: [5_000_000n, 5_000_000n, 104_500_000n] });
+  const out = await railOf(h).execute(draftOf());
+  assert.equal(out.ok, true, out.detail);
+  assert.match(out.detail, /for 99\.5 USDT/);
+  assert.equal(h.verifierReads.length, 4, 'one read before, three after, stopping as soon as it rose');
+});
+
+test('a credit the verifier never shows is unconfirmed with its hash, not a failed swap', async () => {
+  const h = harness({ verifierBefore: 5_000_000n, verifierAfterReads: [5_000_000n], statuses: [{ status: 'SUCCESS', swapDetails: { nearTxHashes: ['nearSettle'] } }] });
+  const out = await railOf(h).execute(draftOf());
+  assert.equal(out.ok, false);
+  assert.match(out.detail, /1click reported SUCCESS/);
+  assert.match(out.detail, /unconfirmed/);
+  assert.doesNotMatch(out.detail, /below the/);
+  assert.deepEqual(out.txids, [INTENT_HASH, 'nearSettle']);
+  assert.equal(out.evidence?.handle, HANDLE);
+  assert.equal(h.verifierReads.length, 1 + SETTLE_READS, 'every read the budget allows, then it gives up');
 });
 
 test('a verifier that will not answer costs the check and not the swap', async () => {

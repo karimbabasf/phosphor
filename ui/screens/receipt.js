@@ -92,13 +92,15 @@
   }
 
   /* The outcome as a chip. Executed is done; failed is the venue saying no after the
-     fact, which is not the same as a refusal at the gate, so each keeps its own word. */
+     fact, which is not the same as a refusal at the gate, so each keeps its own word.
+     Not confirmed is a move the app cannot say went through or did not: it carries a
+     hash, so money moved or may have, and the venue has not said which. */
   var STATUS = {
     executed: { word: 'Done', tone: 'up', icon: 'done' },
     done: { word: 'Done', tone: 'up', icon: 'done' },
     failed: { word: 'Failed', tone: 'down', icon: 'refused' },
     refused: { word: 'Refused', tone: 'down', icon: 'refused' },
-    needs_reconciliation: { word: 'Unknown', tone: 'warn', icon: 'waiting' },
+    needs_reconciliation: { word: 'Not confirmed', tone: 'warn', icon: 'waiting' },
     pending: { word: 'Waiting', tone: 'warn', icon: 'waiting' },
     pending_unlock: { word: 'Waiting', tone: 'warn', icon: 'waiting' },
     awaiting_touch: { word: 'Waiting', tone: 'warn', icon: 'waiting' },
@@ -107,6 +109,28 @@
 
   function statusOf(receipt) {
     return STATUS[String(receipt.status || '')] || STATUS.done;
+  }
+
+  /* The three things a row that is not done can be. A failed row with no hash moved
+     nothing. A failed row with a hash is a move the venue rejected after the money went:
+     refunded when 1Click said so, and otherwise no more confirmed than an unknown one,
+     which is why "did not go through" is never said over a hash. */
+  function hashCount(receipt) {
+    return Array.isArray(receipt.txids) ? receipt.txids.filter(function (tx) { return tx && tx.hash; }).length : 0;
+  }
+
+  function nothingLeft(receipt) {
+    return receipt.status === 'failed' && hashCount(receipt) === 0;
+  }
+
+  function unconfirmed(receipt) {
+    if (receipt.status === 'needs_reconciliation') return true;
+    return receipt.status === 'failed' && hashCount(receipt) > 0 && !receipt.refunded;
+  }
+
+  function refundedLine(receipt) {
+    var symbol = receipt.symbol ? ' ' + String(receipt.symbol) : '';
+    return 'Refunded ' + String(receipt.refunded) + symbol;
   }
 
   function icon(name, className) {
@@ -162,23 +186,26 @@
   }
 
   /* The from and to line. What left is signed minus, what arrived is signed plus and
-     green, and the swap icon between them is in the accent. A failed move left
-     nothing, so its amount is unsigned and quiet and nothing arrives. A move with no
-     recorded arrival names where the money went instead of inventing a number. */
+     green, and the swap icon between them is in the accent. A move that moved nothing
+     shows its amount unsigned and quiet and nothing arrives. A move the app cannot
+     confirm shows the amount unsigned but not quiet, since that is the money in
+     question, and nothing arriving. A move with no recorded arrival names where the
+     money went instead of inventing a number. */
   function legs(receipt) {
     var wrap = dom.el('div', 'receipt-legs');
-    var failed = receipt.status === 'failed';
+    var done = receipt.status === 'executed';
+    var nothing = nothingLeft(receipt);
     var symbol = receipt.symbol ? String(receipt.symbol) : '';
     var left = typeof receipt.amount === 'number';
     if (left) {
-      wrap.appendChild(leg('out', (failed ? '' : '-') + dom.qty(receipt.amount) + (symbol ? ' ' + symbol : ''), symbol, failed));
+      wrap.appendChild(leg('out', (done ? '-' : '') + dom.qty(receipt.amount) + (symbol ? ' ' + symbol : ''), symbol, nothing));
     }
     var got = receipt.received;
-    var arrived = !failed && got && typeof got.amount === 'number' && got.symbol;
+    var arrived = done && got && typeof got.amount === 'number' && got.symbol;
     if (arrived) {
       wrap.appendChild(icon('swap', 'receipt-arrow'));
       wrap.appendChild(leg('in', '+' + dom.qty(got.amount) + ' ' + String(got.symbol), String(got.symbol), false));
-    } else if (!failed && left && receipt.toChain && receipt.toChain !== receipt.fromChain) {
+    } else if (done && left && receipt.toChain && receipt.toChain !== receipt.fromChain) {
       wrap.appendChild(icon('swap', 'receipt-arrow'));
       wrap.appendChild(dom.el('span', 'receipt-leg receipt-leg-place', 'to ' + chainName(receipt.toChain)));
     }
@@ -316,11 +343,26 @@
     }
     card.appendChild(head);
 
-    if (unknown) {
+    /* The note leads with what the app knows and then hands over to the rail's own sentence,
+       verbatim: that line names the handle, what was refunded and where the input sits, and
+       it is the one thing on the card written by the code that did the work. */
+    if (unconfirmed(receipt)) {
       var warn = dom.el('p', 'receipt-note');
       warn.dataset.tone = 'warn';
-      dom.setText(warn, 'We sent this and cannot read what happened to it. Do not send it again. Check it again below, or open it in the explorer.');
+      dom.setText(warn, 'Not confirmed. The app cannot tell whether this move went through. Do not send it again.'
+        + (receipt.summary ? ' ' + String(receipt.summary) : ''));
       card.appendChild(warn);
+    } else if (receipt.status === 'failed' && receipt.refunded) {
+      var back = dom.el('p', 'receipt-note');
+      back.dataset.tone = 'warn';
+      dom.setText(back, refundedLine(receipt) + '.' + (receipt.summary ? ' ' + String(receipt.summary) : ''));
+      card.appendChild(back);
+    }
+    if (receipt.handle && receipt.status !== 'executed') {
+      var handle = dom.el('p', 'receipt-handle mono');
+      handle.title = String(receipt.handle);
+      dom.setText(handle, 'Handle ' + String(receipt.handle));
+      card.appendChild(handle);
     }
 
     card.appendChild(legs(receipt));
@@ -362,7 +404,7 @@
             error.hidden = false;
             return;
           }
-          window.PhosphorToast.show('Checked. It is ' + readableStatus(status) + '.'
+          window.PhosphorToast.show('Checked. It is ' + readableStatus(status, receipt) + '.'
             + (answer && answer.detail ? ' ' + answer.detail : ''));
           if (onClose) onClose();
         })
@@ -446,15 +488,16 @@
   function fill(host, receipt, onClose) {
     dom.clear(host);
     var unknown = receipt.status === 'needs_reconciliation';
-    var failed = receipt.status === 'failed';
+    var open = unconfirmed(receipt);
 
-    host.appendChild(dom.el('p', 'label', unknown ? 'We cannot tell what happened' : (failed ? 'This did not go through' : 'Receipt')));
+    host.appendChild(dom.el('p', 'label', open ? 'Not confirmed' : (nothingLeft(receipt) ? 'This did not go through' : 'Receipt')));
     host.appendChild(dom.el('h2', 'title', receipt.headline || receipt.summary || 'Something moved'));
 
-    if (unknown) {
+    if (open) {
       var warn = dom.el('div', 'banner');
       warn.dataset.tone = 'warn';
-      warn.appendChild(dom.el('span', '', 'We sent this and we cannot read what happened to it. Do not send it again. Check it again below, or open it in a block explorer.'));
+      warn.appendChild(dom.el('span', '', 'Not confirmed. The app cannot tell whether this move went through. Do not send it again.'
+        + (receipt.summary ? ' ' + String(receipt.summary) : '')));
       host.appendChild(warn);
     }
 
@@ -537,10 +580,12 @@
     dom.on(done, 'click', function () { if (onClose) onClose(); });
   }
 
-  function readableStatus(status) {
+  /* "nothing left your wallet" is said only over a row with no hash: a check that answers
+     failed on a row that carries one is the venue saying no after the money went. */
+  function readableStatus(status, receipt) {
     if (status === 'executed') return 'done';
-    if (status === 'failed') return 'not done, and nothing left your wallet';
-    if (status === 'needs_reconciliation') return 'still unreadable';
+    if (status === 'failed') return hashCount(receipt || {}) === 0 ? 'not done, and nothing left your wallet' : 'not done';
+    if (status === 'needs_reconciliation') return 'still not confirmed';
     return 'no longer waiting';
   }
 
@@ -667,32 +712,37 @@
 
     /* When, then what it cost, in the words the panel head already uses ("$0.44 in fees").
        An outcome that is not "done" takes the time's place: the row says it did not go
-       through before it says when. */
-    var failed = receipt.status === 'failed';
+       through, or that it is not confirmed, before it says when. "Did not go through" is
+       said only over a row with no hash. */
+    var done = receipt.status === 'executed';
+    var nothing = nothingLeft(receipt);
     var note = dom.ago(receipt.at);
-    if (receipt.status === 'needs_reconciliation') note = 'We cannot tell what happened';
-    else if (failed) note = 'Did not go through';
+    if (unconfirmed(receipt)) note = 'Not confirmed';
+    else if (receipt.status === 'failed' && receipt.refunded) note = refundedLine(receipt);
+    else if (nothing) note = 'Did not go through';
     if (typeof receipt.feesUsd === 'number' && receipt.feesUsd > 0) note += ', ' + dom.fee(receipt.feesUsd) + ' in fees';
     dom.setText(when, note);
-    dom.setAttr(when, 'class', receipt.status === 'executed' ? 'tx-when' : 'tx-when warn');
+    dom.setAttr(when, 'class', done ? 'tx-when' : 'tx-when warn');
 
-    /* Money that left is signed. A move that did not go through left nothing, so its
-       amount is unsigned and quiet rather than a minus that was never taken. */
+    /* Money that left is signed. A move that moved nothing shows its amount unsigned and
+       quiet rather than a minus that was never taken; one the app cannot confirm shows it
+       unsigned and plain, because that is the money in question. */
     var left = typeof receipt.amount === 'number';
     dom.setText(amount, left
-      ? (failed ? '' : '-') + dom.qty(receipt.amount) + (symbol ? ' ' + symbol : '')
+      ? (done ? '-' : '') + dom.qty(receipt.amount) + (symbol ? ' ' + symbol : '')
       : '');
     /* A swap or a move between the person's own pockets changes what the money is, not
        how much of it there is, so what left reads in the text tone. Red is for money that
        left the wallet altogether. */
     var gone = receipt.kind === 'transfer' || receipt.kind === 'consolidate' || receipt.kind === 'send';
-    dom.setAttr(amount, 'data-dir', left && !failed && gone ? 'out' : null);
-    dom.setAttr(amount, 'class', left && failed ? 'tx-amount dim' : 'tx-amount');
+    dom.setAttr(amount, 'data-dir', left && done && gone ? 'out' : null);
+    dom.setAttr(amount, 'class', left && nothing ? 'tx-amount dim' : 'tx-amount');
 
     /* What arrived, when the rail recorded it: the second leg of the statement line,
-       signed plus and green. Nothing else shares this line. */
+       signed plus and green. Only on a row that went through: nothing else shares this
+       line, and nothing is green on a row the app cannot confirm. */
     var got = receipt.received;
-    var arrived = !failed && got && typeof got.amount === 'number' && got.symbol;
+    var arrived = done && got && typeof got.amount === 'number' && got.symbol;
     dom.setText(sub, arrived ? '+' + dom.qty(got.amount) + ' ' + String(got.symbol) : '');
     dom.setAttr(sub, 'data-dir', arrived ? 'in' : null);
   }

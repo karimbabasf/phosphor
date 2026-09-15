@@ -133,6 +133,12 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 // A scripted 1Click. Records every request so a test can assert what was actually sent.
+// The shape the API documents for a chain hash (openapi.yaml TransactionDetails). The
+// fixtures used to be bare strings, which is the one shape the live API never sends.
+function txDetails(hash: string): { hash: string; explorerUrl: string } {
+  return { hash, explorerUrl: `https://explorer.example/tx/${hash}` };
+}
+
 type Harness = {
   fetchImpl: typeof fetch;
   quoteBodies: Record<string, unknown>[];
@@ -162,7 +168,7 @@ function harness(
   const depositSubmits: Record<string, unknown>[] = [];
   const statusCalls: string[] = [];
   const sends: SendParams[] = [];
-  const statuses = options.statuses ?? [{ status: 'SUCCESS', swapDetails: { destinationChainTxHashes: ['0xdestination'] } }];
+  const statuses = options.statuses ?? [{ status: 'SUCCESS', swapDetails: { destinationChainTxHashes: [txDetails('0xdestination')] } }];
 
   const fetchImpl: typeof fetch = async (url, init) => {
     const u = String(url);
@@ -349,7 +355,7 @@ test('execute quotes live, sends the input to the deposit address, and polls to 
     statuses: [
       null, // 404: the API has not seen the address yet
       { status: 'KNOWN_DEPOSIT_TX', swapDetails: {} },
-      { status: 'SUCCESS', swapDetails: { originChainTxHashes: [TX_HASH], destinationChainTxHashes: ['0xdestination'] } },
+      { status: 'SUCCESS', swapDetails: { originChainTxHashes: [txDetails(TX_HASH)], destinationChainTxHashes: [txDetails('0xdestination')] } },
     ],
   });
   const result = await railOf(h).execute(draftOf());
@@ -379,6 +385,28 @@ test('execute quotes live, sends the input to the deposit address, and polls to 
   assert.match(result.detail, new RegExp(TX_HASH));
   assert.match(result.detail, /99\.85 USDT on arb/);
   assert.deepEqual(result.txids, [TX_HASH, '0xdestination']);
+});
+
+test('a success reports the amount 1Click settled, not the quote, and keeps the NEAR settlement hash', async () => {
+  const h = harness({
+    statuses: [{ status: 'SUCCESS', swapDetails: { amountOutFormatted: '99.8', nearTxHashes: ['nearSettle'], destinationChainTxHashes: [txDetails('0xdestination')] } }],
+  });
+  const result = await railOf(h).execute(draftOf());
+  assert.equal(result.ok, true, result.detail);
+  assert.match(result.detail, /for 99\.8 USDT on arb/);
+  assert.doesNotMatch(result.detail, /99\.85/);
+  assert.doesNotMatch(result.detail, /quoted/);
+  assert.equal(result.evidence?.settledAmountOut, '99.8');
+  assert.equal(result.evidence?.handle, DEPOSIT);
+  assert.deepEqual(result.txids, [TX_HASH, '0xdestination', 'nearSettle']);
+});
+
+test('a success without a settled amount says the figure is quoted', async () => {
+  const h = harness();
+  const result = await railOf(h).execute(draftOf());
+  assert.equal(result.ok, true, result.detail);
+  assert.match(result.detail, /for a quoted 99\.85 USDT on arb/);
+  assert.equal(result.evidence?.settledAmountOut, undefined);
 });
 
 // ---------- execute, every way it refuses ----------
@@ -583,14 +611,31 @@ test('a failed transfer says plainly that no funds left the wallet', async () =>
   assert.equal(h.statusCalls.length, 0); // nothing to watch
 });
 
-test('a REFUNDED swap reports the refund address rather than claiming success', async () => {
-  const h = harness({ statuses: [{ status: 'REFUNDED', swapDetails: { originChainTxHashes: [TX_HASH] } }] });
+test('a REFUNDED swap reports the amount and the refund address rather than claiming success', async () => {
+  const h = harness({
+    statuses: [{ status: 'REFUNDED', swapDetails: { refundedAmountFormatted: '99.9', originChainTxHashes: [txDetails(TX_HASH), txDetails('0xrefund')] } }],
+  });
   const result = await railOf(h).execute(draftOf());
 
   assert.equal(result.ok, false);
-  assert.match(result.detail, /REFUNDED/);
+  assert.match(result.detail, /REFUNDED: 99\.9 USDC went back to/);
   assert.match(result.detail, new RegExp(OWNER));
-  assert.ok(result.txids?.includes(TX_HASH));
+  assert.deepEqual(result.txids, [TX_HASH, '0xrefund']);
+  assert.equal(result.evidence?.refundedAmount, '99.9');
+  assert.equal(result.evidence?.handle, DEPOSIT);
+});
+
+test('a FAILED swap with nothing refunded says the input is held by 1Click at the deposit address', async () => {
+  const h = harness({ statuses: [{ status: 'FAILED', swapDetails: { refundedAmountFormatted: '0', refundReason: 'PARTIAL_DEPOSIT' } }] });
+  const result = await railOf(h).execute(draftOf());
+
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /1click reported FAILED and refunded 0 USDC so far/);
+  assert.match(result.detail, new RegExp(`held by 1Click under handle ${DEPOSIT}`));
+  assert.match(result.detail, /reason PARTIAL_DEPOSIT/);
+  assert.doesNotMatch(result.detail, /Check the refund address/);
+  assert.deepEqual(result.txids, [TX_HASH]);
+  assert.equal(result.evidence?.refundReason, 'PARTIAL_DEPOSIT');
 });
 
 test('a poll timeout says the funds were sent, because they were', async () => {
@@ -602,6 +647,29 @@ test('a poll timeout says the funds were sent, because they were', async () => {
   assert.match(result.detail, /may still complete/);
   assert.match(result.detail, new RegExp(TX_HASH));
   assert.ok(h.statusCalls.length > 1, 'it should have polled more than once before giving up');
+});
+
+test('a watch that runs out is unconfirmed and keeps the hash and the deposit address for a later check', async () => {
+  const h = harness({ statuses: [{ status: 'PROCESSING', swapDetails: {} }] });
+  const result = await railOf(h).execute(draftOf());
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /unconfirmed/);
+  assert.ok(result.txids?.includes(TX_HASH));
+  assert.equal(result.evidence?.handle, DEPOSIT);
+});
+
+test('a short deposit is reported as INCOMPLETE_DEPOSIT with what 1Click saw, and the refund is unconfirmed', async () => {
+  const h = harness({ statuses: [{ status: 'INCOMPLETE_DEPOSIT', swapDetails: { depositedAmountFormatted: '50.0' } }] });
+  const result = await railOf(h).execute(draftOf());
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /INCOMPLETE_DEPOSIT/);
+  assert.match(result.detail, /50\.0 USDC/);
+  assert.match(result.detail, /quoted 100/);
+  assert.match(result.detail, /unconfirmed/);
+  assert.doesNotMatch(result.detail, /did not reach a terminal status/);
+  assert.ok(result.txids?.includes(TX_HASH));
+  assert.equal(result.evidence?.handle, DEPOSIT);
+  assert.equal(h.statusCalls.length, 1, 'a short deposit is terminal for this app: nothing it does changes it');
 });
 
 // ---------- the API is data, never an instruction ----------

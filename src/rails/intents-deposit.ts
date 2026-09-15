@@ -45,6 +45,7 @@ import {
   toBaseUnits,
 } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickStatus, TokensFile } from '../intents.ts';
+import { deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, settledEvidence, uniqueTxids } from './oneclick-words.ts';
 import { ONECLICK_COUNTERPARTY } from './oneclick.ts';
 
 // The chains src/chain/evm.ts can sign for. 1Click accepts Solana and NEAR origins too;
@@ -470,30 +471,44 @@ export function intentsDepositRail(deps: IntentsDepositRailDeps): IntentsDeposit
         ok: true,
         detail:
           `deposited ${draft.amount} ${draft.symbol} from ${draft.chain} into intents.near; ` +
-          `${oneLine(quote.amountOutFormatted, 40)} ${draft.symbol} now credited to ${draft.intentsAccount} ` +
-          `and spendable by the intents-native swap rail; ${evidence}`,
-        txids: [txHash, ...watch.destinationTxHashes],
+          `${deliveredAmount(watch, quote.amountOutFormatted)} ${draft.symbol} now credited to ${draft.intentsAccount} ` +
+          `(${deliveredNote(watch)}) and spendable by the intents-native swap rail; ${evidence}`,
+        txids: uniqueTxids(txHash, watch),
+        evidence: settledEvidence(watch, depositAddress),
       };
     }
 
     if (watch.status === 'REFUNDED' || watch.status === 'FAILED') {
-      return {
-        ok: false,
-        detail: `1click reported ${watch.reported} after the deposit landed; ${evidence}. Check the refund address ${draft.from}.`,
-        txids: [txHash, ...watch.originTxHashes, ...watch.destinationTxHashes],
-      };
+      return describeRefund(watch, depositAddress, {
+        symbol: draft.symbol,
+        refundTarget: `our ${draft.chain} wallet ${draft.from}`,
+        evidence,
+        primaryTxid: txHash,
+      });
+    }
+
+    if (watch.status === 'INCOMPLETE_DEPOSIT') {
+      return describeIncompleteDeposit(watch, depositAddress, {
+        symbol: draft.symbol,
+        quotedIn: oneLine(quote.amountInFormatted, 40),
+        refundTarget: `our ${draft.chain} wallet ${draft.from}`,
+        evidence,
+        primaryTxid: txHash,
+      });
     }
 
     // Timed out. The transfer confirmed, so the money is already gone from the wallet and the
     // deposit is very likely still settling. Saying "failed" without that sentence is how
-    // someone sends the same amount twice.
+    // someone sends the same amount twice. The hash and the deposit address stay on the row
+    // so the credit can be checked later.
     return {
       ok: false,
       detail:
         `deposit confirmed on chain but 1click did not reach a terminal status within ${Math.round(pollTimeoutMs / 1000)}s ` +
-        `(last status ${watch.reported}); ${evidence}. THE FUNDS WERE SENT and the credit may still land: ` +
-        'check the balance inside intents.near before retrying.',
-      txids: [txHash, ...watch.originTxHashes],
+        `(last status ${watch.reported}); ${evidence}. THE FUNDS WERE SENT and the credit may still land, so it is ` +
+        'unconfirmed: check the balance inside intents.near before retrying.',
+      txids: uniqueTxids(txHash, watch),
+      evidence: { handle: depositAddress },
     };
   }
 
@@ -508,6 +523,7 @@ export function intentsDepositRail(deps: IntentsDepositRailDeps): IntentsDeposit
       reported: 'not polled',
       originTxHashes: [],
       destinationTxHashes: [],
+      nearTxHashes: [],
     };
 
     for (let attempt = 0; attempt < maxPolls; attempt += 1) {
