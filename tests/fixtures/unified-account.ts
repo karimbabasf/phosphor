@@ -22,12 +22,15 @@
 //   withdrawable reads 0.0 while 888 dollars sit in spot, which is the unified account's
 //   signature and the reason no figure on this panel can be taken from the perp view.
 //
-// The wallet is a placeholder. Nothing here identifies an account.
+// The wallet is a placeholder. Nothing here identifies an account. It is a well-formed address
+// because the feed checks the account with isAddress before it asks the venue anything about it
+// (an empty or malformed user is what the venue answers 422 to), so a placeholder that is not an
+// address reads as "no wallet yet" and the feed stays quiet.
 
 import { createTradeFeed, type FeedSocket, type TradeFeed } from '../../src/trade/feed-ws.ts';
 import type { InfoClient } from '../../src/hl/info.ts';
 
-export const USER = '0xREDACTED00000000000000000000000000000000';
+export const USER = '0x0000000000000000000000000000000000000dac';
 
 // The venue's own liquidation price for the short, and the number every risk figure on the panel
 // has to agree with.

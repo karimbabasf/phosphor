@@ -1,11 +1,20 @@
 /* The Vault tab: who holds the key, where money arrives, and the phrase.
 
-   Six panels, top to bottom: Custody, Addresses, Recovery, Agent, Window,
-   Danger. Everything here reads off the state's `vault` slice and the two
-   address routes; nothing here draws a key. The one secret that ever reaches
-   this screen is the recovery phrase, shown once behind a fresh Touch ID, held
-   in this file's memory until Done, and wiped the moment the window locks or
-   the person leaves the tab.
+   Six panels on a two column grid when the world is wide enough (Custody and
+   Recovery side by side, Addresses across both, then Agent, Window, Danger),
+   one column when it is not. Everything here reads off the state's `vault`
+   slice and the two address routes; nothing here draws a key. The one secret
+   that ever reaches this screen is the recovery phrase, shown once behind a
+   fresh Touch ID, held in this file's memory until Done, and wiped the moment
+   the window locks or the person leaves the tab.
+
+   Karim, 2026-09-15: "I hate how the vault has to be so scrollable, make it
+   wider, make the info easier to read, and in the addresses section same
+   thing, just make it a drop down of the networks and their supported tokens
+   shown with a search." So the Addresses card is a network menu over the
+   token list from ui/screens/netpick.js, and Show the address opens the
+   deposit card. The wallet's own key address for that network is still here,
+   behind the developer switch: it is the account id, not where to send.
 
    The migration card lives here too: the boot-time offer to move a password
    wallet behind the Secure Enclave, and the same form behind the Custody
@@ -26,6 +35,9 @@
   var visible = false;
   var lastVerifiedKey = null;
   var addresses = null;
+  var report = null;
+  var network = 'eth';
+  var tokensView = null;
   var phrase = null;
   var migrateOffered = false;
 
@@ -118,15 +130,6 @@
     dom.on(refs.migrate, 'click', function () { openMigrate(false); });
     col.appendChild(custody.node);
 
-    /* Addresses */
-    var addr = panel('Addresses', 'addresses');
-    refs.addressList = dom.el('div', 'stack-2 vault-addresses');
-    addr.body.appendChild(refs.addressList);
-    refs.addressNote = dom.el('p', 'meta');
-    dom.setText(refs.addressNote, 'Show address opens the deposit card: the address to send money to on that network, checked before it is drawn.');
-    addr.body.appendChild(refs.addressNote);
-    col.appendChild(addr.node);
-
     /* Recovery */
     var recovery = panel('Recovery', 'recovery');
     refs.recoveryPanel = recovery.node;
@@ -148,6 +151,18 @@
     dom.on(refs.reveal, 'click', startReveal);
     dom.on(refs.restore, 'click', startRestore);
     col.appendChild(recovery.node);
+
+    /* Addresses: the network menu, the tokens it credits, and behind the
+       developer switch the wallet's own key on that network. */
+    var addr = panel('Addresses', 'addresses');
+    addr.body.appendChild(dom.el('p', 'body dim', 'Pick the network you are sending on. Show the address opens the deposit card, which checks the address before it draws it.'));
+    addr.body.appendChild(networkSelect());
+    refs.tokensHost = dom.el('div', 'vault-tokens');
+    addr.body.appendChild(refs.tokensHost);
+    refs.keyRow = dom.el('div', 'vault-key');
+    refs.keyRow.setAttribute('data-dev-only', '');
+    addr.body.appendChild(refs.keyRow);
+    col.appendChild(addr.node);
 
     /* Agent */
     var agent = panel('Agent', 'agent');
@@ -372,129 +387,286 @@
 
   /* ---------- addresses ---------- */
 
-  /* Only the EVM address is copyable. It is the account id on NEAR Intents and Hyperliquid, so
-     money sent to it on an EVM chain can be moved in by a proposal. The wallet's own Solana and
-     NEAR addresses exist (the keys are derived) but no rail moves money out of them, so a copied
-     one would strand a deposit; they are shown, badged, and pointed at Show address, which opens the
-     bridge address for that network. */
-  var ROWS = [
-    { id: 'eth', label: 'EVM', note: 'your account id on NEAR Intents and Hyperliquid', copy: true },
-    { id: 'sol', label: 'Solana', note: 'not a deposit address; use Show address', copy: false },
-    { id: 'near', label: 'NEAR', note: 'not a deposit address; use Show address', copy: false }
-  ];
-
-  function loadAddresses() {
-    if (!refs.addressList) return;
-    api.receive()
-      .then(function (result) {
-        addresses = result.data || null;
-        renderAddresses();
-      })
-      .catch(function () {
-        addresses = null;
-        renderAddresses();
-      });
+  /* The five networks the bridge credits, in the component's own order and
+     colours, so the menu and the tiles elsewhere are the same five things. */
+  function networks() {
+    var pick = window.PhosphorNetPick;
+    return pick && Array.isArray(pick.NETWORKS) ? pick.NETWORKS : [
+      { id: 'eth', name: 'Ethereum', mark: 'ETH' },
+      { id: 'base', name: 'Base', mark: 'BASE' },
+      { id: 'arb', name: 'Arbitrum', mark: 'ARB' },
+      { id: 'sol', name: 'Solana', mark: 'SOL' },
+      { id: 'near', name: 'NEAR', mark: 'NEAR' }
+    ];
   }
 
-  function renderAddresses() {
-    var host = refs.addressList;
-    dom.clear(host);
-    var chains = addresses && Array.isArray(addresses.chains) ? addresses.chains : [];
-    if (!chains.length) {
-      var empty = dom.el('div', 'empty');
-      empty.appendChild(dom.el('p', 'empty-title', 'No addresses yet'));
-      empty.appendChild(dom.el('p', '', addresses && addresses.tampered
-        ? 'The wallet file has been edited, so no address in it can be trusted.'
-        : 'Make a wallet and your addresses appear here.'));
-      host.appendChild(empty);
-      return;
+  function networkOf(id) {
+    var list = networks();
+    for (var i = 0; i < list.length; i += 1) {
+      if (list[i].id === id) return list[i];
     }
-    var verified = addresses.verified === true;
-    ROWS.forEach(function (spec) {
-      var chain = null;
-      for (var i = 0; i < chains.length; i += 1) {
-        if (chains[i] && chains[i].id === spec.id) chain = chains[i];
-      }
-      if (!chain || !chain.address) return;
-      host.appendChild(addressRow(spec, chain, verified));
+    return null;
+  }
+
+  function logo(symbol, size) {
+    var marks = window.PhosphorMarks;
+    if (marks && typeof marks.logo === 'function') return marks.logo(symbol, size);
+    var node = dom.el('span', 'logo');
+    node.setAttribute('aria-hidden', 'true');
+    node.appendChild(dom.el('span', 'logo-initial mono', String(symbol || '?').charAt(0)));
+    return node;
+  }
+
+  function icon(name, className) {
+    var icons = window.PhosphorIcons;
+    if (icons && typeof icons.svg === 'function') return icons.svg(name, className);
+    return dom.el('span', 'icon ' + (className || ''));
+  }
+
+  function within(node, root) {
+    for (var at = node; at; at = at.parentNode) {
+      if (at === root) return true;
+    }
+    return false;
+  }
+
+  /* The network menu: a button wearing the mark and the name, opening a
+     listbox of the five, the same shape as the market menu on the Trade tab
+     rather than a native select that draws OS chrome. Arrow keys open it and
+     walk it, Enter picks, Escape and a click elsewhere close it. */
+  var menuActive = 'eth';
+
+  function networkSelect() {
+    var wrap = dom.el('div', 'netsel-wrap');
+    var button = dom.el('button', 'netsel');
+    button.type = 'button';
+    button.setAttribute('aria-haspopup', 'listbox');
+    button.setAttribute('aria-expanded', 'false');
+    button.setAttribute('aria-controls', 'vault-networks');
+    button.setAttribute('aria-label', 'Which network');
+    refs.netselMark = dom.el('span', 'netsel-mark');
+    button.appendChild(refs.netselMark);
+    refs.netselLabel = dom.el('span', 'netsel-name');
+    button.appendChild(refs.netselLabel);
+    button.appendChild(icon('chevron-down', 'chev-icon'));
+
+    var menu = dom.el('div', 'netsel-menu pop');
+    menu.id = 'vault-networks';
+    menu.setAttribute('role', 'listbox');
+    menu.setAttribute('aria-label', 'Which network');
+    menu.tabIndex = -1;
+
+    wrap.appendChild(button);
+    wrap.appendChild(menu);
+    refs.netselButton = button;
+    refs.netselMenu = menu;
+
+    dom.on(button, 'click', function () {
+      if (menu.dataset.open === 'true') closeMenu();
+      else openMenu();
+    });
+    dom.on(button, 'keydown', function (event) {
+      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+      event.preventDefault();
+      openMenu();
+    });
+    dom.on(menu, 'keydown', onMenuKey);
+    dom.on(menu, 'click', function (event) {
+      var option = optionOf(event.target);
+      if (option) pickNetwork(option.dataset.network);
+    });
+    dom.on(document, 'click', function (event) {
+      if (menu.dataset.open !== 'true') return;
+      if (within(event.target, wrap)) return;
+      closeMenu();
+    });
+
+    renderSelect();
+    return wrap;
+  }
+
+  function optionOf(node) {
+    for (var at = node; at; at = at.parentNode) {
+      if (at.dataset && at.dataset.network) return at;
+    }
+    return null;
+  }
+
+  function renderSelect() {
+    if (!refs.netselMenu) return;
+    var current = networkOf(network) || networks()[0];
+    dom.clear(refs.netselMark);
+    refs.netselMark.appendChild(logo(current.mark, 20));
+    dom.setText(refs.netselLabel, current.name);
+    dom.clear(refs.netselMenu);
+    networks().forEach(function (n) {
+      var option = dom.el('div', 'netsel-option');
+      option.setAttribute('role', 'option');
+      option.dataset.network = n.id;
+      option.setAttribute('aria-selected', n.id === network ? 'true' : 'false');
+      if (n.id === menuActive) option.dataset.active = 'true';
+      if (n.colour && option.style && typeof option.style.setProperty === 'function') option.style.setProperty('--net', n.colour);
+      option.appendChild(logo(n.mark, 20));
+      option.appendChild(dom.el('span', 'netsel-option-name', n.name));
+      refs.netselMenu.appendChild(option);
     });
   }
 
-  function addressRow(spec, chain, verified) {
-    var row = dom.el('div', 'vault-row');
-    row.dataset.chain = spec.id;
+  function openMenu() {
+    var menu = refs.netselMenu;
+    if (!menu) return;
+    menuActive = network;
+    renderSelect();
+    menu.dataset.open = 'true';
+    dom.setAttr(refs.netselButton, 'aria-expanded', 'true');
+    if (menu.focus) menu.focus();
+  }
 
-    var main = dom.el('div', 'stack-2 grow');
-    var head = dom.el('div', 'hstack-2 wrap');
-    head.appendChild(dom.el('span', 'title-sm', spec.label));
-    if (spec.note) head.appendChild(dom.el('span', 'meta', spec.note));
-    head.appendChild(chip(verified ? 'Verified' : 'Unverified', verified ? 'up' : 'warn'));
-    main.appendChild(head);
-    main.appendChild(chunked(chain.address));
-    if (!verified) {
-      main.appendChild(dom.el('p', 'meta', 'Read from the file, not from your keys. It is verified once this Mac opens the wallet.'));
+  function closeMenu() {
+    var menu = refs.netselMenu;
+    if (!menu) return;
+    delete menu.dataset.open;
+    dom.setAttr(refs.netselButton, 'aria-expanded', 'false');
+    if (refs.netselButton && refs.netselButton.focus) refs.netselButton.focus();
+  }
+
+  function onMenuKey(event) {
+    var ids = networks().map(function (n) { return n.id; });
+    var at = ids.indexOf(menuActive);
+    if (event.key === 'Escape' || event.key === 'Tab') {
+      closeMenu();
+      if (event.key === 'Escape') event.preventDefault();
+      return;
     }
-    row.appendChild(main);
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      pickNetwork(menuActive);
+      return;
+    }
+    var next = at;
+    if (event.key === 'ArrowDown') next = Math.min(ids.length - 1, at + 1);
+    else if (event.key === 'ArrowUp') next = Math.max(0, at - 1);
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = ids.length - 1;
+    else return;
+    event.preventDefault();
+    menuActive = ids[next] || menuActive;
+    renderSelect();
+  }
 
-    var tools = dom.el('div', 'hstack-2 vault-row-tools');
-    var said = dom.el('span', 'meta');
-    said.setAttribute('role', 'status');
-    var qr = button('Show address', 'btn-ghost btn-sm');
-    if (spec.copy && verified) {
+  function pickNetwork(id) {
+    if (!id) return;
+    closeMenu();
+    if (id === network) return;
+    network = id;
+    renderSelect();
+    renderTokens();
+    renderKey();
+  }
+
+  /* Both address routes, read together: the bridge report feeds the token
+     list, the wallet's own key feeds the row behind the developer switch. */
+  function loadAddresses() {
+    if (!refs.tokensHost) return;
+    var wallet = api.receive()
+      .then(function (result) { addresses = result.data || null; })
+      .catch(function () { addresses = null; });
+    var bridge = api.intentsReceive()
+      .then(function (result) { report = result && result.data ? result.data : null; })
+      .catch(function () { report = null; });
+    Promise.all([wallet, bridge]).then(function () {
+      renderTokens();
+      renderKey();
+    });
+  }
+
+  /* The tokens the bridge credits on the network in the menu, with the
+     minimum for each, searchable; Show the address opens the deposit card. */
+  function renderTokens() {
+    if (!refs.tokensHost) return;
+    var pick = window.PhosphorNetPick;
+    if (!pick || typeof pick.render !== 'function') return;
+    tokensView = pick.render(refs.tokensHost, {
+      context: 'vault',
+      stage: 'tokens',
+      network: network,
+      report: report,
+      onAddress: function (chain, symbol, row) {
+        window.PhosphorDeposit.open({ chain: chain, symbol: symbol, address: row && row.address ? row.address : null });
+      }
+    });
+  }
+
+  /* The wallet's own key on that network. The EVM one is the account id on
+     NEAR Intents and Hyperliquid, so it may be copied; the Solana and NEAR
+     keys have no rail out of them, so a deposit sent to one would be
+     stranded, and the row says so and offers no Copy. */
+  function renderKey() {
+    var host = refs.keyRow;
+    if (!host) return;
+    dom.clear(host);
+    var chains = addresses && Array.isArray(addresses.chains) ? addresses.chains : [];
+    var chain = null;
+    for (var i = 0; i < chains.length; i += 1) {
+      if (chains[i] && chains[i].id === network) chain = chains[i];
+    }
+    var n = networkOf(network) || { name: String(network) };
+    host.appendChild(dom.el('p', 'label', 'Wallet key address on ' + n.name));
+    if (!chain || !chain.address) {
+      host.appendChild(dom.el('p', 'body dim', addresses && addresses.tampered
+        ? 'The wallet file has been edited, so no address in it can be trusted.'
+        : 'No wallet on this Mac yet.'));
+      return;
+    }
+    var verified = addresses.verified === true;
+    var evm = network === 'eth' || network === 'base' || network === 'arb';
+    var head = dom.el('div', 'hstack-2 wrap');
+    head.appendChild(chip(verified ? 'Verified' : 'Unverified', verified ? 'up' : 'warn'));
+    head.appendChild(dom.el('span', 'meta', evm
+      ? 'Your account id on NEAR Intents and Hyperliquid.'
+      : 'Not a deposit address: nothing moves money out of it. Use Show the address.'));
+    host.appendChild(head);
+    host.appendChild(chunked(chain.address));
+    if (!verified) {
+      host.appendChild(dom.el('p', 'meta', 'Read from the file, not from your keys. It is verified once this Mac opens the wallet.'));
+    }
+    if (evm && verified) {
+      var tools = dom.el('div', 'hstack-2 wrap');
+      var said = dom.el('span', 'meta');
+      said.setAttribute('role', 'status');
       var copy = button('Copy', 'btn-ghost btn-sm');
       tools.appendChild(copy);
+      tools.appendChild(said);
+      host.appendChild(tools);
       dom.on(copy, 'click', function () {
         copy.disabled = true;
         window.PhosphorDeposit.copyChecked(chain.address, function (sentence) { dom.setText(said, sentence); })
           .finally(function () { copy.disabled = false; });
       });
     }
-    tools.appendChild(qr);
-    tools.appendChild(said);
-    row.appendChild(tools);
-
-    dom.on(qr, 'click', function () {
-      openDeposit(spec.id);
-    });
-    return row;
   }
 
-  /* Groups of four, the ends in the stronger weight, the same shape the
-     deposit card draws so the two read as one thing. */
+  /* The same block the address step draws, grouped for the kind of address
+     the network in the menu has, so the two read as one thing. */
   function chunked(address) {
-    var block = dom.el('div', 'deposit-address mono vault-address');
-    block.appendChild(dom.el('span', 'sr-only', address));
+    var pick = window.PhosphorNetPick;
+    var kind = network === 'sol' ? 'sol' : (network === 'near' ? 'near' : 'evm');
+    if (pick && typeof pick.addressBlock === 'function') {
+      var block = pick.addressBlock(address, kind);
+      block.className = block.className + ' vault-address';
+      return block;
+    }
+    var plain = dom.el('div', 'deposit-address mono vault-address');
+    plain.appendChild(dom.el('span', 'sr-only', address));
     var shown = dom.el('span', 'deposit-chunks');
     shown.setAttribute('aria-hidden', 'true');
-    var parts = window.PhosphorDeposit.chunks(address);
+    var parts = window.PhosphorDeposit.chunks(address, kind);
     for (var i = 0; i < parts.length; i += 1) {
       var end = i === 0 || i === parts.length - 1;
       shown.appendChild(dom.el('span', end ? 'addr-end' : 'addr-mid', parts[i]));
     }
-    block.appendChild(shown);
-    return block;
-  }
-
-  /* The deposit card for a chain. The asset and the bridge address for it come
-     off the receive report, so the card opens on the asset an exchange is most
-     likely to send and carries the address the watcher should hold. */
-  function openDeposit(chain) {
-    api.intentsReceive()
-      .then(function (result) {
-        var report = result.data || {};
-        var networks = Array.isArray(report.networks) ? report.networks : [];
-        var network = null;
-        for (var i = 0; i < networks.length; i += 1) {
-          if (networks[i] && networks[i].id === chain) network = networks[i];
-        }
-        var symbol = network ? window.PhosphorDeposit.defaultSymbol(network.accepts) : '';
-        if (!network || !symbol) {
-          window.PhosphorToast.show('No deposit address on ' + window.PhosphorDeposit.networkWords(chain) + ' right now.', 'down');
-          return;
-        }
-        return window.PhosphorDeposit.open({ chain: chain, symbol: symbol, address: network.address || null });
-      })
-      .catch(function (err) { window.PhosphorToast.show(net.readable(err), 'down'); });
+    plain.appendChild(shown);
+    return plain;
   }
 
   /* ---------- the phrase ---------- */

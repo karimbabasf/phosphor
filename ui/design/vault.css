@@ -1,0 +1,215 @@
+/* The Vault tab: a wide column of six cards, two abreast where the world has
+   the room, and the Addresses card's network menu.
+
+   Karim, 2026-09-15: "I hate how the vault has to be so scrollable, make it
+   wider, make the info easier to read." The column that was Basic's 640 px is
+   1120 here, the cards sit on a two column grid from 980 px of world, and the
+   words inside them are one step larger with more air between rows. Mono is
+   kept for what is read as digits: an address, a hash, a number. */
+
+.vault-col {
+  width: min(1120px, 100%);
+}
+
+@container world (min-width: 980px) {
+  .vault-col {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(440px, 1fr));
+    align-items: start;
+  }
+
+  /* Custody and Recovery share the first row; Addresses takes the whole of
+     the second, because a token list and an address need the width. */
+  .vault-col > .panel[data-surface="addresses"] {
+    grid-column: 1 / -1;
+  }
+}
+
+/* ---------- readability inside the cards ---------- */
+
+.vault-col .card-body {
+  gap: var(--s-4);
+}
+
+.vault-col .card-body > .body,
+.vault-col .card-body > .meta {
+  line-height: 1.55;
+}
+
+.vault-col .card-body > .meta {
+  font-size: var(--fs-13);
+}
+
+.vault-col .card-body > .body.dim {
+  color: var(--text-2);
+}
+
+.vault-col .facts {
+  gap: var(--s-3) var(--s-5);
+}
+
+.vault-col .fact > .label {
+  font-size: var(--fs-13);
+  color: var(--text-2);
+}
+
+.vault-col .fact > .body {
+  color: var(--text);
+  text-align: left;
+}
+
+/* ---------- the network menu ---------- */
+
+.netsel-wrap {
+  position: relative;
+  align-self: flex-start;
+}
+
+.netsel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: 40px;
+  padding: 0 var(--s-3) 0 var(--s-3);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line-strong);
+  background: var(--bg-2);
+  color: var(--text);
+  font-size: var(--fs-14);
+  font-weight: 500;
+  transition: border-color var(--dur-press) var(--ease-out),
+              background-color var(--dur-press) var(--ease-out);
+}
+
+.netsel:hover {
+  border-color: var(--text-3);
+}
+
+.netsel:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.netsel[aria-expanded="true"] .chev-icon {
+  transform: rotate(180deg);
+}
+
+.netsel .chev-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--text-3);
+  transition: transform var(--dur-press) var(--ease-out);
+}
+
+.netsel-mark {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+}
+
+.netsel-name {
+  line-height: 1;
+}
+
+.netsel-menu {
+  min-width: 220px;
+}
+
+.netsel-option {
+  --net: var(--text);
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  height: 36px;
+  padding: 0 var(--s-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--fs-14);
+  font-weight: 500;
+  color: var(--text-2);
+  transition: background-color var(--dur-press) var(--ease-out),
+              color var(--dur-press) var(--ease-out);
+}
+
+.netsel-option .logo {
+  filter: grayscale(1);
+  opacity: 0.8;
+  transition: filter var(--dur-press) var(--ease-out),
+              opacity var(--dur-press) var(--ease-out);
+}
+
+.netsel-option .logo[data-token="BASE"] {
+  filter: grayscale(1) brightness(3.2);
+}
+
+.netsel-option[data-active="true"] .logo[data-token="BASE"],
+.netsel-option:hover .logo[data-token="BASE"],
+.netsel-option[aria-selected="true"] .logo[data-token="BASE"] {
+  filter: none;
+}
+
+.netsel-option-name {
+  flex: 1 1 auto;
+}
+
+/* Where the keyboard is, and where the pointer is: the same paint. The one
+   in the menu that is already picked carries the ink dot. */
+.netsel-option[data-active="true"],
+.netsel-option:hover {
+  background: var(--bg-1);
+  color: var(--text);
+}
+
+.netsel-option[data-active="true"] .logo,
+.netsel-option:hover .logo,
+.netsel-option[aria-selected="true"] .logo {
+  filter: none;
+  opacity: 1;
+}
+
+.netsel-option[aria-selected="true"] {
+  color: var(--text);
+}
+
+.netsel-option[aria-selected="true"]::after {
+  content: "";
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ink);
+}
+
+/* ---------- the tokens and the key ---------- */
+
+.vault-tokens {
+  min-width: 0;
+}
+
+/* Behind the developer switch: the wallet's own key on the network in the
+   menu, one step smaller than the address step draws, because it is read
+   rather than copied by eye. */
+.vault-key {
+  flex-direction: column;
+  gap: var(--s-2);
+  padding-top: var(--s-4);
+  border-top: 1px solid var(--line);
+}
+
+:root[data-developer="true"] .vault-key {
+  display: flex;
+}
+
+.vault-address .deposit-chunks {
+  font-size: var(--fs-14);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .netsel,
+  .netsel .chev-icon,
+  .netsel-option,
+  .netsel-option .logo {
+    transition: none;
+  }
+}

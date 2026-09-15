@@ -5,7 +5,10 @@
 // signing: proposals persist to disk as JSON in between, so the quote a leg carries at send
 // time is not necessarily the one the human saw.
 
-import type { Proposal, Rail, RailResult, TransferLeg } from '../types.ts';
+import type { Proposal, Rail, RailResult, TransferLeg, WriteDraft } from '../types.ts';
+import { buildWallet } from '../wallet.ts';
+import type { PocketRead } from '../ledger/settle.ts';
+import { SETTLING_SENTENCE } from '../ledger/settle.ts';
 import { loadPolicy, savePolicy } from '../policy/file.ts';
 import { renderSentences } from '../policy/render.ts';
 import { isRailKind } from '../rails/index.ts';
@@ -112,21 +115,67 @@ export async function executeApproved(ctx: PCtx, p: Proposal): Promise<Proposal>
   return executeFundMove(ctx, p);
 }
 
-/* The wallet total the app currently believes, in USD. Synchronous: the snapshot is memory the
-   refresh loop fills, so this costs nothing and never waits. */
-function walletUsd(ctx: PCtx): number {
-  return ctx.ledger.snapshot().holdings.reduce((sum, h) => sum + h.usd, 0);
+/* Which pocket a draft moves money through. The intents rails read the verifier, the
+   Hyperliquid rails the trading account; a chain-side move (the oneclick swap, consolidate,
+   transfer) has no pocket the live ledger reads and is valued as the wallet total. */
+function pocketOf(draft: WriteDraft | undefined): 'intents' | 'hyperliquid' | null {
+  switch (draft?.kind) {
+    case 'swap':
+      return draft.venue === 'intents-native' ? 'intents' : null;
+    case 'intents_deposit':
+    case 'intents_withdraw':
+      return 'intents';
+    case 'hl_deposit':
+    case 'hl_withdraw':
+    case 'trade':
+      return 'hyperliquid';
+    default:
+      return null;
+  }
 }
 
-/* The balance after the move, once the chains have actually been re-read.
+/* The balance the receipt is about, in USD, off the ledger's last read: the intents pocket for
+   an intents rail, the trading account for a Hyperliquid rail, the wallet total (as the panel
+   shows it, priced the same way) for anything else, and for a pocket the ledger has never
+   read (demo mode, which signs nothing). Synchronous: the reads are memory the refresh loop
+   fills.
+
+   This used to sum `snapshot().holdings`, which is always empty on a live ledger (the money
+   sits inside the verifier and the trading account, see src/ledger/index.ts), so every live
+   receipt said 0 before and 0 after. */
+function pocketUsd(ctx: PCtx, draft: WriteDraft | undefined): number {
+  const venue = pocketOf(draft);
+  const wallet = buildWallet(ctx.ledger.snapshot(), ctx.ledger.intents(), ctx.ledger.hyperliquid());
+  if (venue === null) return wallet.totalUsd;
+  const read = venue === 'intents' ? ctx.ledger.intents() : ctx.ledger.hyperliquid();
+  if (read === undefined) return wallet.totalUsd;
+  return wallet.rows.filter((r) => r.kind === venue).reduce((sum, r) => sum + r.valueUsd, 0);
+}
+
+/* The rail's own read, priced. A dollar stable (the risk table is the register) and the
+   venue's USDC are their amount; a gas asset is priced off the ledger's table; anything else
+   is null, so the caller falls back to the ledger's figure rather than printing $0 for money
+   that is there. */
+function pocketPriced(ctx: PCtx, pocket: PocketRead, base: string | null): number | null {
+  if (base === null) return null;
+  const amount = Number(base) / 10 ** pocket.decimals;
+  if (pocket.venue === 'hyperliquid') return amount;
+  const upper = pocket.symbol.toUpperCase();
+  const symbol = upper === 'WETH' ? 'ETH' : upper;
+  if (ctx.stables.has(symbol)) return amount;
+  const price = ctx.ledger.snapshot().prices[symbol];
+  return typeof price === 'number' && price > 0 ? amount * price : null;
+}
+
+/* The balance after the move, once the pocket has actually been re-read.
    Taking a snapshot the instant the rail returns would report the numbers that were on screen
    BEFORE the move, because the ledger is a poll and the poll has not run yet. So the refresh is
    awaited, bounded, and a failure reports null rather than a number that would be wrong.
    This runs outside the one-at-a-time queue (the reservation was released when the row was
-   written), so nobody waits behind it. */
-export async function balanceAfter(ctx: PCtx): Promise<number | null> {
+   written), so nobody waits behind it. No draft means the wallet total. */
+export async function balanceAfter(ctx: PCtx, draft?: WriteDraft): Promise<number | null> {
   const refreshed = await within(BALANCE_REFRESH_CAP_MS, ctx.ledger.refresh());
-  return refreshed ? walletUsd(ctx) : null;
+  return refreshed ? pocketUsd(ctx, draft) : null;
 }
 
 // Long enough for five chains of RPC reads that each carry a 10 s deadline of their own, short
@@ -134,7 +183,7 @@ export async function balanceAfter(ctx: PCtx): Promise<number | null> {
 const BALANCE_REFRESH_CAP_MS = 15_000;
 
 export async function executeRail(ctx: PCtx, p: Proposal, rail: Rail): Promise<Proposal> {
-  const beforeUsd = walletUsd(ctx);
+  const beforeUsd = pocketUsd(ctx, p.draft);
   const executing = persist(ctx, { ...p, status: 'executing', balances: { beforeUsd, afterUsd: null } });
   /* The budget is now on disk and sessionSpentUsd counts it, so the next caller can safely read,
      decide and reserve. Everything below is a network wait with no shared state in it. Before
@@ -163,9 +212,36 @@ export async function executeRail(ctx: PCtx, p: Proposal, rail: Rail): Promise<P
      So the durable write happens the instant the rail answers, and the balance is a second
      update afterwards. */
   const txids = result.txids ?? [];
-  const status = result.ok ? 'executed' : 'failed';
-  ctx.audit.append(result.ok ? 'executed' : 'execution_failed', `${p.id}: ${result.detail}`, { id: p.id, txids });
-  const recorded = persist(ctx, { ...executing, status, result: { ok: result.ok, detail: result.detail, txids } });
+  /* THREE ANSWERS, not two. A rail that watched the venue confirm and the balance not move
+     inside its window says `settling`: the intent is signed and submitted, the money is most
+     likely a block away, and "failed" would be the word that gets a second copy signed. The
+     row lands as needs_reconciliation, which already counts against the cap (it carries a
+     hash), already has a screen, and is re-judged on every ledger refresh below. */
+  const settling = !result.ok && result.settling === true;
+  const status = result.ok ? 'executed' : settling ? 'needs_reconciliation' : 'failed';
+  ctx.audit.append(
+    result.ok || settling ? 'executed' : 'execution_failed',
+    `${p.id}: ${settling ? 'settling. ' : ''}${result.detail}`,
+    { id: p.id, txids },
+  );
+  /* THE RAIL'S OWN READS WIN. A rail that read the pocket either side of the move hands the
+     numbers over, and the receipt prints those: the same read the rail decided on, not a
+     ledger poll taken some seconds before or after. The ledger's figure stands in only where
+     the rail took no read of its own. */
+  const pocket = result.pocket;
+  const exactBefore = pocket === undefined ? null : pocketPriced(ctx, pocket, pocket.before);
+  // A settling row has no after yet: the read the rail holds is the balance from BEFORE the
+  // move showed, and the receipt says "not re-read" until the read that settles it.
+  const exactAfter = pocket === undefined || settling ? null : pocketPriced(ctx, pocket, pocket.after);
+  const balances = { beforeUsd: exactBefore ?? beforeUsd, afterUsd: exactAfter };
+  const recorded = persist(ctx, {
+    ...executing,
+    status,
+    result: { ok: result.ok, detail: result.detail, txids },
+    balances,
+    ...(pocket === undefined ? {} : { pocket }),
+  });
+  if (settling) watchSettling(ctx);
 
   /* And the decoration is not on the caller's clock either. `balanceAfter` is up to fifteen
      seconds of RPC across every chain, and until now the agent's tool call and the HTTP
@@ -176,19 +252,134 @@ export async function executeRail(ctx: PCtx, p: Proposal, rail: Rail): Promise<P
      It runs detached now. `persist` calls `ctx.notify()`, which is the SSE broadcast the
      window already listens to, so the balance lands on screen when the chains answer. A
      refresh that fails, or a process that exits first, leaves `afterUsd` null, which is the
-     same thing it has always meant: the move is recorded, the balance was not read. */
-  void balanceAfter(ctx)
-    .then((afterUsd) => {
-      if (afterUsd === null) return;
-      const current = ctx.store.get(recorded.id) ?? recorded;
-      persist(ctx, { ...current, balances: { beforeUsd, afterUsd } });
-    })
-    .catch(() => {
-      // A decoration that cannot be read is not an error anyone is told about; the row
-      // already says afterUsd is null.
-    });
+     same thing it has always meant: the move is recorded, the balance was not read. Skipped
+     when the rail's own after-read already answered it, and for a settling row, whose after
+     is written by the read that settles it (judgeSettling). */
+  if (exactAfter === null && !settling) {
+    void balanceAfter(ctx, p.draft)
+      .then((afterUsd) => {
+        if (afterUsd === null) return;
+        const current = ctx.store.get(recorded.id) ?? recorded;
+        persist(ctx, { ...current, balances: { beforeUsd: balances.beforeUsd, afterUsd } });
+      })
+      .catch(() => {
+        // A decoration that cannot be read is not an error anyone is told about; the row
+        // already says afterUsd is null.
+      });
+  }
 
   return recorded;
+}
+
+// ---------- settling rows ----------
+//
+// A row the rail left settling is judged again on every ledger refresh, against the same read
+// the wallet panel is about to show. Nothing here signs or sends: the only thing that can
+// change the row is a balance that has moved.
+
+/* One listener per proposal service, whatever the number of settling rows: the ledger tells
+   it, it sweeps the store. Idempotent, so the executor calls it whenever it lands a settling
+   row and the boot path calls it once for the rows found on disk. A ledger without onRefresh
+   (the hand-built ones in tests) is simply never heard from. */
+const watching = new WeakSet<PCtx>();
+
+export function watchSettling(ctx: PCtx): void {
+  if (watching.has(ctx) || ctx.ledger.onRefresh === undefined) return;
+  watching.add(ctx);
+  ctx.ledger.onRefresh(() => {
+    for (const p of ctx.store.list()) {
+      if (p.status === 'needs_reconciliation' && p.pocket !== undefined) judgeSettling(ctx, p);
+    }
+  });
+}
+
+/* The pocket's balance as the ledger last read it, in the pocket's base units, or null when
+   the ledger has no good read to offer. An intents asset the verifier no longer lists is a
+   balance of zero, not a missing read: the enumeration only returns what is held. */
+function pocketBalance(ctx: PCtx, pocket: PocketRead): bigint | null {
+  if (pocket.venue === 'intents') {
+    const read = ctx.ledger.intents();
+    if (read === undefined || !read.ok) return null;
+    const row = read.holdings.find(
+      (h) => h.assetId === pocket.assetId && h.accountId.toLowerCase() === pocket.account.toLowerCase(),
+    );
+    if (row === undefined) return 0n;
+    if (row.amountBase === undefined) return null;
+    return BigInt(row.amountBase);
+  }
+  const read = ctx.ledger.hyperliquid();
+  if (read === undefined || !read.ok || read.account.toLowerCase() !== pocket.account.toLowerCase()) return null;
+  // The same measure the deposit rail records: free collateral on a unified account, both
+  // books on a standard one.
+  return BigInt(Math.round((read.unified ? read.availableUsdc : read.collateralUsdc) * 10 ** pocket.decimals));
+}
+
+function units(base: bigint, decimals: number): string {
+  const negative = base < 0n;
+  const digits = (negative ? -base : base).toString().padStart(decimals + 1, '0');
+  const whole = digits.slice(0, digits.length - decimals);
+  const frac = digits.slice(digits.length - decimals).replace(/0+$/, '');
+  return `${negative ? '-' : ''}${whole}${frac === '' ? '' : `.${frac}`}`;
+}
+
+/* The three outcomes a later read can give a settling row, the same three the rail gives at
+   the moment of the swap: risen by the floor is executed, risen by less is the short fill,
+   not risen is still settling and the row is left exactly as it was. Returns the row as it
+   stands afterwards. */
+export function judgeSettling(ctx: PCtx, p: Proposal): Proposal {
+  const pocket = p.pocket;
+  if (p.status !== 'needs_reconciliation' || pocket === undefined) return p;
+  const after = pocketBalance(ctx, pocket);
+  if (after === null) return p;
+  const before = BigInt(pocket.before);
+  const floor = BigInt(pocket.floor);
+  const delta = after - before;
+  if (delta <= 0n) return p;
+
+  const place = pocket.venue === 'intents' ? 'inside intents.near' : 'on the Hyperliquid account';
+  const txids = p.result?.txids ?? [];
+  const settled = { ...pocket, after: after.toString() };
+  const balances = {
+    beforeUsd: p.balances?.beforeUsd ?? pocketPriced(ctx, settled, settled.before),
+    afterUsd: pocketPriced(ctx, settled, settled.after),
+  };
+  if (delta < floor) {
+    const detail =
+      `A later read shows the balance ${place} rose by ${units(delta, pocket.decimals)} ${pocket.symbol}, below the ` +
+      `${units(floor, pocket.decimals)} ${pocket.symbol} floor this move was approved with (${units(before, pocket.decimals)} before, ` +
+      `${units(after, pocket.decimals)} after). Read the balance for ${pocket.account} before signing another.`;
+    ctx.audit.append('execution_failed', `${p.id}: ${detail}`, { id: p.id, txids });
+    return persist(ctx, { ...p, status: 'failed', pocket: settled, balances, result: { ok: false, detail, txids } });
+  }
+  const detail =
+    `confirmed on a later read: the balance ${place} rose by ${units(delta, pocket.decimals)} ${pocket.symbol} ` +
+    `(${units(before, pocket.decimals)} before, ${units(after, pocket.decimals)} after), at or above the ` +
+    `${units(floor, pocket.decimals)} ${pocket.symbol} floor this move was approved with.`;
+  ctx.audit.append('executed', `${p.id}: ${detail}`, { id: p.id, txids });
+  return persist(ctx, { ...p, status: 'executed', pocket: settled, balances, result: { ok: true, detail, txids } });
+}
+
+/* The explicit re-check, for a person clicking on the row: one fresh ledger read, then the
+   judgment above. A row still not risen is told when it was last looked at, so the click
+   visibly did something. */
+export async function settleProposal(ctx: PCtx, id: string): Promise<Proposal> {
+  const p = ctx.store.get(id);
+  if (p === undefined) throw new Error(`unknown proposal ${id}`);
+  if (p.status !== 'needs_reconciliation' || p.pocket === undefined) return p;
+  await within(BALANCE_REFRESH_CAP_MS, ctx.ledger.refresh());
+  const judged = judgeSettling(ctx, ctx.store.get(id) ?? p);
+  if (judged.status !== 'needs_reconciliation') return judged;
+  const pocket = judged.pocket ?? p.pocket;
+  const after = pocketBalance(ctx, pocket);
+  const reading =
+    after === null
+      ? 'the balance could not be read just now'
+      : `${pocket.symbol} for ${pocket.account} reads ${units(after, pocket.decimals)}, not up from ${units(BigInt(pocket.before), pocket.decimals)}`;
+  const txids = judged.result?.txids ?? [];
+  return persist(ctx, {
+    ...judged,
+    result: { ok: false, detail: `${SETTLING_SENTENCE} Re-read at ${nowIso()}: ${reading}.`, txids },
+  });
 }
 
 function legKey(leg: TransferLeg): string {
@@ -242,7 +433,7 @@ function depositAddressMismatch(p: Proposal, legs: TransferLeg[]): string | null
 
 async function executeFundMove(ctx: PCtx, p: Proposal): Promise<Proposal> {
   const legs = p.draft.kind === 'consolidate' ? p.draft.legs : p.draft.kind === 'transfer' ? [p.draft.leg] : [];
-  const beforeUsd = walletUsd(ctx);
+  const beforeUsd = pocketUsd(ctx, p.draft);
   const executing = persist(ctx, { ...p, status: 'executing', balances: { beforeUsd, afterUsd: null } });
   // As executeRail: reserved, so the queue moves on and the sends below run outside it.
   reservationMade();
@@ -254,7 +445,7 @@ async function executeFundMove(ctx: PCtx, p: Proposal): Promise<Proposal> {
     /* The demo ledger has already moved, so the receipt can say what it moved to. This branch
        returned without balances and kept { beforeUsd, afterUsd: null } off the executing row, so
        every demo receipt read "balance after: unknown" about a transfer that plainly happened. */
-    const balances = { beforeUsd, afterUsd: await balanceAfter(ctx) };
+    const balances = { beforeUsd, afterUsd: await balanceAfter(ctx, p.draft) };
     return persist(ctx, { ...executing, status: 'executed', balances, result: { ok: true, detail } });
   }
 
@@ -316,7 +507,7 @@ async function executeFundMove(ctx: PCtx, p: Proposal): Promise<Proposal> {
 
   // The balance last, as a second update. It is a receipt decoration and it costs up to fifteen
   // seconds; the hashes above are the record and they are already durable.
-  return persist(ctx, { ...recorded, balances: { beforeUsd, afterUsd: await balanceAfter(ctx) } });
+  return persist(ctx, { ...recorded, balances: { beforeUsd, afterUsd: await balanceAfter(ctx, p.draft) } });
 }
 
 async function applyPolicyChange(ctx: PCtx, p: Proposal): Promise<Proposal> {

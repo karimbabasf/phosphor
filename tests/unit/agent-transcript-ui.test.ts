@@ -465,7 +465,7 @@ test('the composer arms on text and leaves the screen when nobody of ours can ta
   const composer = all(world.composerHost, 'agent-composer')[0];
   const field = all(world.composerHost, 'composer-field')[0];
   assert.equal(composer.hidden, false, 'a Ready assistant has no box to talk into');
-  assert.equal(world.input.placeholder, 'Tell your assistant what to do');
+  assert.equal(world.input.placeholder, 'Ask, or tell it what to do');
   assert.equal(field.getAttribute('data-armed'), null);
   world.input.value = 'hello';
   fire(world.input, 'input');

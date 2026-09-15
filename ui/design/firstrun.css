@@ -1,0 +1,212 @@
+/* The first run: the black screen, the field, the card and its steps.
+   Owned by ui/screens/firstrun.js. Loads after lock.css, whose .screen rule
+   it narrows: while this screen is up the ground is the ink itself, not a
+   scrim over a frosted page, because there is no page to see yet. */
+
+#screen-firstrun {
+  background: var(--bg-0);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+/* The field, under the card. Fixed to the window rather than to the screen's
+   scroll box, so a tall step scrolls its card over lines that stay put. The
+   mask clears an ellipse behind the card: fully clear out to 62 percent of
+   each radius, then the lines fade in to full strength at the edge. field.js
+   sets the four values from the card's own box, and these are the fallbacks
+   for the frame before it has. */
+#screen-firstrun .field-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  --fx: 50%;
+  --fy: 50%;
+  --rx: 60vw;
+  --ry: 22vh;
+  -webkit-mask-image: radial-gradient(ellipse var(--rx) var(--ry) at var(--fx) var(--fy), transparent 62%, #000 100%);
+  mask-image: radial-gradient(ellipse var(--rx) var(--ry) at var(--fx) var(--fy), transparent 62%, #000 100%);
+}
+
+/* The card: a touch wider and roomier than the lock's, since it holds fields
+   and a list. Fluid under 610 px so nothing is cut off in a narrow window. */
+#screen-firstrun .screen-card {
+  width: min(560px, 92vw);
+  padding: calc(var(--s-6) + var(--s-1)) calc(var(--s-6) + var(--s-2));
+}
+
+/* The card takes the focus on the welcome so the one button does not open
+   with a ring on it. The card is not a control, so it draws none. */
+#screen-firstrun .screen-card:focus {
+  outline: none;
+}
+
+/* The body is what a step draws into and what a step change swaps: the card
+   itself stays put, with the progress at its top. While a body is leaving it
+   is lifted out of the flow and the card clips it, so the card can take the
+   next body's height at once and the old paint fades over the new. */
+.screen-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  min-width: 0;
+}
+
+.screen-body-ghost {
+  position: absolute;
+  pointer-events: none;
+}
+
+.screen-card[data-swapping="true"] {
+  overflow: hidden;
+}
+
+/* The progress: one thin segment per step, the ones reached in the ink. The
+   count in words sits beside it for a screen reader (.sr-only, reset.css). */
+.screen-progress {
+  display: flex;
+  gap: 6px;
+  height: 2px;
+}
+
+.screen-progress-seg {
+  flex: 1 1 0;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--line-strong);
+  transition: background-color var(--dur-swap) var(--ease-out);
+}
+
+.screen-progress-seg[data-done="true"] {
+  background: var(--ink);
+}
+
+/* ---------- the welcome ---------- */
+
+/* Centred, the one screen on the card that is: the mark, the name, one line,
+   one button. The mark is larger here than on any other card, 48 tall. */
+.firstrun-welcome {
+  align-items: center;
+  text-align: center;
+  padding: var(--s-4) 0 var(--s-2);
+}
+
+.firstrun-welcome .firstrun-mark {
+  width: 43px;
+  height: 48px;
+  margin-bottom: var(--s-2);
+}
+
+.firstrun-welcome-title {
+  margin: 0;
+  font-size: var(--fs-32);
+  font-weight: 500;
+  letter-spacing: -0.025em;
+  line-height: 1.15;
+  color: var(--text);
+  text-wrap: balance;
+}
+
+.firstrun-welcome-line {
+  margin: 0;
+  max-width: 42ch;
+  font-size: var(--fs-15);
+  line-height: 1.55;
+  color: var(--text-2);
+  text-wrap: pretty;
+}
+
+.firstrun-welcome .screen-actions {
+  justify-content: center;
+  margin-top: var(--s-3);
+}
+
+.firstrun-welcome .btn-lg {
+  padding-left: var(--s-6);
+  padding-right: var(--s-6);
+}
+
+/* ---------- where the wallet lives ---------- */
+
+/* Three facts under a hairline, then the developer switch, then the same
+   facts in their technical words while the switch is on. The lead of each
+   fact is in the text colour and the rest a step down, so the three leads
+   read as a list on their own. The icon is the only ink on the card. */
+.firstrun-where {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--line);
+}
+
+.firstrun-facts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.firstrun-fact {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+}
+
+.firstrun-fact-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  color: var(--ink);
+}
+
+.firstrun-fact-icon .icon {
+  width: 16px;
+  height: 16px;
+  vertical-align: top;
+}
+
+.firstrun-fact-text {
+  margin: 0;
+  font-size: var(--fs-13);
+  line-height: 1.5;
+  color: var(--text-2);
+  text-wrap: pretty;
+}
+
+.firstrun-fact-lead {
+  font-weight: 500;
+  color: var(--text);
+}
+
+/* The technical form. devmode.css shows it as a block while the switch is
+   on, so the rhythm here is margins, not a flex gap. Names are set in the
+   mono face at the size the meta line uses. */
+.firstrun-dev {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 calc(16px + var(--s-3));
+  font-size: var(--fs-12);
+  line-height: 1.45;
+  color: var(--text-3);
+  text-wrap: pretty;
+}
+
+.firstrun-dev-line + .firstrun-dev-line {
+  margin-top: 6px;
+}
+
+.firstrun-dev code {
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .screen-progress-seg { transition: none; }
+}

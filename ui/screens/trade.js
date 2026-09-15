@@ -226,10 +226,13 @@
 
   /* ---------- the strip ----------
 
-     One row, 56 px, the way an exchange header reads: the market, the venue,
-     the price, the day, then the account, then the layout. Built once and
-     filled every pass, so the price ticks in place and a figure that changes
-     rolls rather than the strip being torn down for a number that moved. */
+     One row, the way an exchange header reads: the market, the venue, the
+     price, the day, then the account, then the layout. Its height is its
+     content plus its padding, never a number, and on a narrow world the groups
+     wrap onto a second line rather than being squeezed (Karim, 2026-09-15:
+     "the top looks super squished and squeezed"). Built once and filled every
+     pass, so the price ticks in place and a figure that changes rolls rather
+     than the strip being torn down for a number that moved. */
   function buildStrip() {
     var strip = dom.el('div', 'trade-strip');
     strip.setAttribute('role', 'region');
@@ -240,7 +243,7 @@
     row.appendChild(symbolControl());
     row.appendChild(venueChip());
 
-    /* THE PRICE. The venue's mark, 28 px Sora. On a tick its digits flip to
+    /* THE PRICE. The venue's mark, 26 px mono. On a tick its digits flip to
        the direction's colour and settle back to the text colour over 600 ms,
        and never a background flash: the digits are the price, the box is not.
        data-tick is set on change and cleared when the animation ends. */
@@ -258,18 +261,30 @@
     day.appendChild(low.node);
     row.appendChild(day);
 
-    /* The right half: the two figures and the Layout menu. */
-    var right = dom.el('div', 'strip-right');
+    /* The right half: the two figures and the Layout menu, each a cell of the
+       row in its own right, so a narrow world can put the figures on the
+       second line and keep the menu on the first (trade.css). */
     var stats = dom.el('div', 'strip-stats');
-    right.appendChild(stats);
-    right.appendChild(layoutControl());
-    row.appendChild(right);
+    row.appendChild(stats);
+    row.appendChild(layoutControl());
 
-    /* What the venue says when it has something to say: a second line under
-       the row, there only while there is something to say, so the row itself
-       never has to make room for a sentence. */
+    /* What the venue says when it has something to say: a notice on its own
+       row under the strip, there only while there is something to say. The row
+       never makes room for a sentence, and nothing is reserved for the notice
+       either: the chart under it flexes when it appears. An icon for the kind
+       of news, then the sentence, on a wash in the tone of the news. */
     var line = dom.el('p', 'trade-line');
     line.hidden = true;
+    var text = dom.el('span', 'trade-line-text');
+    line.appendChild(text);
+    /* The venue's own words, under the sentence, for whoever has the
+       developer switch on: the plain sentence is what a person reads, the raw
+       error is jargon (Karim read it as scary debug output). Hidden until the
+       switch is on (devmode.css), and hidden outright while there is none. */
+    var raw = dom.el('span', 'trade-line-raw mono');
+    raw.setAttribute('data-dev-only', '');
+    raw.hidden = true;
+    line.appendChild(raw);
     strip.appendChild(line);
 
     refs.strip = strip;
@@ -278,6 +293,8 @@
     refs.high = high.value;
     refs.low = low.value;
     refs.statusLine = line;
+    refs.statusText = text;
+    refs.statusRaw = raw;
     refs.stats = stats;
     return strip;
   }
@@ -997,13 +1014,23 @@
     var account = data && data.account;
 
     /* A venue that is not answering has not said the account is empty, it has
-       said nothing, and those are different sentences. So the line names the
-       venue's own words and the figures under it read as unknown rather than as
-       the empty state, which would be the window inventing a fact. */
+       said nothing, and those are different sentences. So the line says what
+       is wrong in plain words, keeps the venue's own words behind the
+       developer switch, and the figures under it read as unknown rather than
+       as the empty state, which would be the window inventing a fact. A
+       socket that is shut is red with the link struck through; a socket that
+       is open and answering with an error is amber with a warning; a read
+       skipped because there is no wallet yet is a quiet wait, keyed off the
+       error's text until the feed carries it as a flag of its own. */
     if (venueDown()) {
-      statusLine(data.venue.error
-        ? 'No route to the venue: ' + data.venue.error + '. The window keeps asking.'
-        : 'No route to the venue. The window keeps asking.', true);
+      var raw = data.venue.error ? String(data.venue.error) : '';
+      if (/no wallet/i.test(raw)) {
+        statusLine('Nothing to read until a wallet exists.', null, 'waiting', raw);
+      } else if (data.venue.connected === false) {
+        statusLine('Not connected to Hyperliquid. Trying again.', 'down', 'link-off', raw);
+      } else {
+        statusLine('Hyperliquid is not answering one of our reads. Trying again.', 'warn', 'warning', raw);
+      }
       renderFigures(account, true);
       return;
     }
@@ -1012,24 +1039,39 @@
        this is, and every figure is null while it is. Waiting is not the same
        answer as empty, so it does not get the empty answer. */
     if (account && account.accountKnown === false) {
-      statusLine('Still reading the account. The venue has not said what kind it is.', false);
+      statusLine('Still reading the account. The venue has not said what kind it is.', null, 'waiting');
       renderFigures(null, false);
       return;
     }
     if (!funded()) {
-      statusLine('No trading money yet. Ask your assistant to fund it.', false);
+      statusLine('No trading money yet. Ask your assistant to fund it.', null, 'deposit');
       renderFigures(null, false);
       return;
     }
 
-    statusLine('', false);
+    statusLine('', null, null);
     renderFigures(account, false);
   }
 
-  function statusLine(text, warn) {
+  /* The notice under the row. `tone` is the wash behind it (warn, down, or
+     none for a quiet wait), `iconName` the drawn icon ahead of the sentence,
+     `raw` the venue's own words for the developer switch. The icon is swapped
+     only when its name changes, so a line that is repainted every tick keeps
+     its node. Empty text takes the row away. */
+  function statusLine(text, tone, iconName, raw) {
     var line = refs.statusLine;
-    line.className = 'trade-line' + (warn ? ' warn' : '');
-    dom.setText(line, text);
+    var name = text ? iconName : null;
+    if ((line.dataset.icon || null) !== name) {
+      var old = line.firstChild;
+      if (old && old !== refs.statusText) line.removeChild(old);
+      if (name) line.insertBefore(icon(name, 'icon-16 trade-line-icon'), refs.statusText);
+      dom.setAttr(line, 'data-icon', name);
+    }
+    var words = text && raw ? String(raw) : '';
+    dom.setAttr(line, 'data-tone', text ? tone : null);
+    dom.setText(refs.statusText, text);
+    dom.setText(refs.statusRaw, words);
+    dom.setHidden(refs.statusRaw, !words);
     dom.setAttr(line, 'title', text || null);
     dom.setHidden(line, !text);
   }

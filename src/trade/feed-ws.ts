@@ -30,6 +30,8 @@
 // activeAssetData is the authority for what there is to trade with, spotClearinghouseState holds
 // the balance that backs it, and `unified` on the snapshot tells the caller which reading it has.
 
+import { isAddress } from 'viem';
+
 import type { InfoClient } from '../hl/info.ts';
 
 export type FeedStatus = {
@@ -42,6 +44,11 @@ export type FeedStatus = {
   // an hour is degraded even though it is connected right now.
   reconnects: number;
   lastError: string | null;
+  // The wallet the account channels are reading for, or null before one exists. A fresh install
+  // has no wallet at boot, and that is a quiet state, not a fault: nothing account-shaped is
+  // asked of the venue and lastError stays empty. Optional only for the hand-built statuses in
+  // tests; the feed always reports it.
+  account?: string | null;
 };
 
 export type AccountSnapshot = {
@@ -261,14 +268,30 @@ function nativeSocket(url: string): FeedSocket {
 
 export function createTradeFeed(deps: {
   wsUrl: string;
-  user: string;
+  /* The trading account. A function is asked again on every read and every subscription, so a
+     wallet created after boot is the account from then on; a string is what it always was. An
+     answer that is not an address (a fresh install answers '') means there is no account yet,
+     and the feed goes quiet on the account channels rather than asking the venue about
+     nobody: `{user: ''}` is what Hyperliquid answers with 422 "Failed to deserialize" on every
+     spot poll, and that sentence sat on the Trade tab as "No route to the venue" for the life
+     of the process. */
+  user: string | (() => string);
   info: InfoClient; // src/hl/info.ts, for meta at boot and as the fallback
   maxFills?: number; // default 200
   // Test seam. The socket is the only thing in here that cannot be reasoned about offline.
   wsImpl?: (url: string) => FeedSocket;
 }): TradeFeed {
-  const user = deps.user;
   const maxFills = deps.maxFills ?? DEFAULT_MAX_FILLS;
+
+  // The wallet as of now, or null when there is nothing to read for. Every account-shaped
+  // request goes through this and none goes out on a null.
+  function wallet(): string | null {
+    const raw = (typeof deps.user === 'function' ? deps.user() : deps.user).trim();
+    return isAddress(raw) ? raw : null;
+  }
+  // The wallet the open socket's account channels were subscribed with, so a change is a
+  // resubscribe rather than a second set of channels.
+  let subscribed: string | null = null;
   const makeSocket = deps.wsImpl ?? nativeSocket;
 
   const listeners: Array<() => void> = [];
@@ -366,6 +389,14 @@ export function createTradeFeed(deps: {
   // Only USDC backs perps. `total` includes the part working as perp margin and `hold` is the
   // reserved slice, so total - hold is what is genuinely free.
   async function readSpot(): Promise<void> {
+    // No wallet yet: nothing to ask, and nothing to complain about. The balance the surface
+    // would show is genuinely unknown, so spot is cleared rather than left over from a wallet
+    // that no longer exists.
+    const user = wallet();
+    if (user === null) {
+      spot = null;
+      return;
+    }
     try {
       const res = await deps.info.post<unknown>({ type: 'spotClearinghouseState', user });
       const rows = isRecord(res) && Array.isArray(res.balances) ? res.balances : [];
@@ -378,6 +409,10 @@ export function createTradeFeed(deps: {
       }
       spot = { totalUsd: total, holdUsd: hold };
       if (accountAtMs === 0) accountAtMs = Date.now();
+      // A read that works retires the complaint the last one left. lastError is one slot and
+      // the spot poll is the one writer that runs for the life of the process, so without this
+      // a single bad answer sat on the surface as "no route to the venue" until a reconnect.
+      if (lastError !== null && lastError.startsWith('spot read failed')) lastError = null;
       notify();
     } catch (err) {
       lastError = `spot read failed: ${errText(err)}`;
@@ -388,13 +423,16 @@ export function createTradeFeed(deps: {
   // the socket already carries every number the surface shows.
   function maybeReadSpot(): void {
     if (closed) return;
+    // The poll is also where a wallet made after boot is noticed: the account channels follow
+    // it before the balance is read for it.
+    syncAccountSubs();
     if (clearing !== null && !detectUnified()) return;
     void readSpot();
   }
 
   // ---------- subscriptions ----------
 
-  function accountSubs(): Array<Record<string, unknown>> {
+  function accountSubs(user: string): Array<Record<string, unknown>> {
     return [
       { type: 'clearinghouseState', user, dex: '' },
       { type: 'openOrders', user, dex: '' },
@@ -403,11 +441,47 @@ export function createTradeFeed(deps: {
     ];
   }
 
+  // The market half of a coin, which needs no wallet.
+  function marketSubs(coin: string): Array<Record<string, unknown>> {
+    return [{ type: 'activeAssetCtx', coin }];
+  }
+
+  // The account half of a coin, for a named wallet.
+  function accountCoinSubs(user: string, coin: string): Array<Record<string, unknown>> {
+    return [{ type: 'activeAssetData', user, coin }];
+  }
+
+  // Everything a watched coin subscribes to, given the wallet as of now.
   function coinSubs(coin: string): Array<Record<string, unknown>> {
-    return [
-      { type: 'activeAssetData', user, coin },
-      { type: 'activeAssetCtx', coin },
-    ];
+    const user = subscribed;
+    return [...(user === null ? [] : accountCoinSubs(user, coin)), ...marketSubs(coin)];
+  }
+
+  /* The account channels on the open socket follow the wallet. Nothing is sent while the
+     wallet is unchanged, so the 30 s poll that calls this costs nothing in the steady state;
+     a wallet that appears (or changes) after boot drops the old channels and takes the new
+     ones, and the state read for the old one is cleared because it is about someone else. */
+  function syncAccountSubs(): void {
+    const sock = socket;
+    if (!sock || sock.readyState !== OPEN) return;
+    const user = wallet();
+    if (user === subscribed) return;
+    if (subscribed !== null) {
+      for (const s of accountSubs(subscribed)) unsub(sock, s);
+      for (const coin of watched) for (const s of accountCoinSubs(subscribed, coin)) unsub(sock, s);
+      clearing = null;
+      positions = [];
+      orders = [];
+      held = [];
+      activeAssets.clear();
+      spot = null;
+    }
+    subscribed = user;
+    if (user !== null) {
+      for (const s of accountSubs(user)) sub(sock, s);
+      for (const coin of watched) for (const s of accountCoinSubs(user, coin)) sub(sock, s);
+    }
+    notify();
   }
 
   function send(sock: FeedSocket, msg: unknown): void {
@@ -449,9 +523,12 @@ export function createTradeFeed(deps: {
       // Errors are kept for the life of a connection and cleared by the next one, so a stale
       // complaint from an hour ago does not sit on the screen looking current.
       lastError = null;
-      for (const s of accountSubs()) sub(sock, s);
+      // A new socket starts with no channels on it, whatever the last one had. The account
+      // half of every watched coin goes on with the account channels; the market half here.
+      subscribed = null;
+      syncAccountSubs();
       for (const coin of watched) {
-        for (const s of coinSubs(coin)) sub(sock, s);
+        for (const s of marketSubs(coin)) sub(sock, s);
       }
       startPing();
       // State can have moved while the socket was down and spot is not on it.
@@ -1055,6 +1132,7 @@ export function createTradeFeed(deps: {
       lastMessageMs,
       reconnects,
       lastError,
+      account: wallet(),
     }),
     onUpdate: (fn: () => void) => {
       listeners.push(fn);

@@ -46,6 +46,12 @@ export function venue() {
           return res.end(JSON.stringify({ assetPositions: positions }));
         }
         if (type === 'openOrders') return res.end(JSON.stringify(state.openOrders));
+        // The read-back after placing (src/hl/confirm.ts): this venue knows every order it
+        // accepted, so the host's confirmation stops at its first read rather than polling for
+        // twenty seconds against a fixture that only ever answered {}.
+        if (type === 'orderStatus') {
+          return res.end(JSON.stringify({ status: 'order', order: { status: 'open', statusTimestamp: Date.now(), order: { oid: json.oid, coin: 'ETH' } } }));
+        }
         return res.end('{}');
       }
       const action = (json.action ?? {}) as Action;

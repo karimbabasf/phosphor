@@ -37,6 +37,10 @@ export type IntentsHolding = {
   symbol: string; // 'ETH', 'USDC', ...
   originChain: string; // which chain the asset came from, for the row label only
   amount: number; // UI units
+  // The verifier's own integer, as a decimal string. A floor decision (did this swap credit
+  // what it was approved with) compares this and never `amount` multiplied back up. Optional
+  // only for the hand-built rows in tests; every row this module returns carries it.
+  amountBase?: string;
   decimals: number;
 };
 
@@ -194,6 +198,7 @@ export async function fetchIntentsHoldings(deps: IntentsBalanceDeps): Promise<In
         symbol,
         originChain,
         amount: Number(raw) / 10 ** decimals,
+        amountBase: raw.toString(),
         decimals,
       });
     }

@@ -41,6 +41,7 @@
     research: 'reading the news',
     skill: 'reading its instructions',
     trade_read: 'reading the account',
+    deposit: 'showing a deposit address',
     /* the chart */
     chart_read: 'reading the chart',
     chart_scan: 'scanning the timeframes',
@@ -119,7 +120,7 @@
   var COMPOSER_LINE_FALLBACK_PX = 21;
 
   /* What the box says. It is only on screen while it can be used. */
-  var PLACEHOLDER_ON = 'Tell your assistant what to do';
+  var PLACEHOLDER_ON = 'Ask, or tell it what to do';
 
   /* The three first moves on the empty card. Each is a question this window
      answers from what it already holds, in the words a person would use. */
@@ -641,9 +642,15 @@
     dom.on(back, 'click', function () { setView('card'); });
 
     /* Enter sends and Shift+Enter breaks the line, which is the shape every
-       chat box has. Nothing animates on the keyboard path: a person who has
-       just typed does not need the window to confirm that they pressed a key. */
+       chat box has. Escape lets go of the box and keeps the draft: leaving is
+       not the same as throwing away. Nothing animates on the keyboard path: a
+       person who has just typed does not need the window to confirm that they
+       pressed a key. */
     dom.on(input, 'keydown', function (event) {
+      if (event.key === 'Escape') {
+        if (typeof input.blur === 'function') input.blur();
+        return;
+      }
       if (event.key !== 'Enter' || event.shiftKey) return;
       event.preventDefault();
       submit(node);
@@ -672,6 +679,10 @@
   function arm(node) {
     var text = String(node.refs.input.value || '').trim();
     dom.setAttr(node.refs.field, 'data-armed', text ? 'true' : null);
+    /* Three states and the button is only pressable in two: Stop while an
+       answer runs, Send while there are words. An empty box has nothing to
+       send, so the arrow is out rather than dim. */
+    node.refs.send.disabled = !canTalk() || (phase !== 'working' && !text);
   }
 
   function setView(next) {
@@ -955,6 +966,17 @@
     }
     var count = steps.length === 1 ? '1 step' : steps.length + ' steps';
     return count + ', ' + secondsText(last - first);
+  }
+
+  /* What the folded turn did, by name: the phrases of its calls, once each. */
+  function foldNames(block) {
+    var cards = window.PhosphorCards;
+    if (cards && typeof cards.foldNames === 'function') return cards.foldNames(block.steps);
+    var out = [];
+    for (var i = 0; i < block.steps.length; i += 1) {
+      if (out.indexOf(block.steps[i].label) === -1) out.push(block.steps[i].label);
+    }
+    return out.join(', ');
   }
 
   /* ---------- state ---------- */
@@ -1242,16 +1264,42 @@
     });
   }
 
+  /* A card's own open state lives on the block, so a person who closed one
+     finds it closed after every re-render, and a receipt that arrives closes
+     the ones before it (ui/screens/cards.js draws the shell). */
+  function foldOptions(block) {
+    return {
+      name: block.name,
+      input: block.input,
+      at: block.at,
+      open: block.open !== false,
+      onToggle: function (open) { block.open = open; }
+    };
+  }
+
   function createBlock(block) {
-    /* The shared receipt card, full width, as a message from the app. */
-    if (block.type === 'receipt') return window.PhosphorReceipt.card(block.receipt);
+    var cards = window.PhosphorCards;
+    /* The shared receipt card, as a message from the app, in a shell it can
+       close from. Without the shell file it is the bare card it always was. */
+    if (block.type === 'receipt') {
+      var receipt = window.PhosphorReceipt.card(block.receipt);
+      return cards && typeof cards.wrapReceipt === 'function' ? cards.wrapReceipt(block.receipt, receipt, foldOptions(block)) : receipt;
+    }
+    /* A tool's answer, drawn. The data came off the driver's tool_data event
+       and never through the model's words. */
+    if (block.type === 'card') {
+      var host = dom.el('div', 'chat-card');
+      if (cards && typeof cards.render === 'function') host.appendChild(cards.render(block.kind, block.data, foldOptions(block)));
+      return host;
+    }
     if (block.type === 'steps') {
       var wrap = dom.el('div', 'steps-block');
       var fold = dom.el('button', 'steps-fold');
       fold.type = 'button';
       fold.hidden = true;
-      fold.appendChild(dom.el('span', 'step-dot'));
-      fold.appendChild(dom.el('span', ''));
+      fold.appendChild(cards && typeof cards.glyph === 'function' ? cards.glyph('chevron', 'steps-chevron') : dom.el('span', 'steps-chevron'));
+      fold.appendChild(dom.el('span', 'steps-fold-label'));
+      fold.appendChild(dom.el('span', 'steps-fold-names'));
       wrap.appendChild(fold);
       wrap.appendChild(dom.el('div', 'steps'));
       dom.on(fold, 'click', function () {
@@ -1269,11 +1317,30 @@
        one place a reply's shape is decided, and it builds elements and sets
        strings: nothing a model writes reaches the DOM as markup. */
     chat.appendChild(dom.el('div', block.type === 'reply' ? 'chat-text md' : 'chat-text'));
+    /* A reply carries the app's mark at its top left and the clock it landed
+       at, which the stylesheet shows on hover. Both after the text, so the
+       who and the text keep their places for the update below. */
+    if (block.type === 'reply') {
+      var mark = dom.mark('chat-mark');
+      if (mark) chat.appendChild(mark);
+      chat.__time = chat.appendChild(dom.el('span', 'chat-time mono'));
+    }
     return chat;
   }
 
+  function clockOf(at) {
+    if (typeof at !== 'number' || !isFinite(at)) return '';
+    return dom.clock(new Date(at).toISOString());
+  }
+
   function updateBlock(node, row, block, now, primary) {
-    if (block.type === 'receipt') return;
+    if (block.type === 'receipt' || block.type === 'card') {
+      /* The shell keeps its own open flag and the block keeps the truth. */
+      var cards = window.PhosphorCards;
+      var fold = cards && typeof cards.foldOf === 'function' ? cards.foldOf(block.type === 'card' ? row.firstChild : row) : null;
+      if (fold && fold.isOpen() !== (block.open !== false)) fold.setOpen(block.open !== false);
+      return;
+    }
     if (block.type === 'steps') {
       updateSteps(node, row, block, now, primary);
       return;
@@ -1299,6 +1366,7 @@
       return;
     }
     dom.setText(who, 'Assistant');
+    if (row.__time) dom.setText(row.__time, clockOf(block.at));
     renderReply(text, block.text);
   }
 
@@ -1324,6 +1392,7 @@
        The one row left on screen carries the worst outcome under it. */
     dom.setAttr(fold, 'data-state', block.done && anyError(block) ? 'error' : null);
     dom.setText(fold.children[1], block.done ? foldLabel(block, now) : '');
+    dom.setText(fold.children[2], block.done ? foldNames(block) : '');
     dom.setAttr(fold, 'aria-expanded', block.folded ? 'false' : 'true');
     dom.setAttr(list, 'data-folded', block.folded ? 'true' : null);
 
@@ -1460,6 +1529,24 @@
       if (!replay) renderAll();
       return;
     }
+    /* A read's answer, as data (src/driver.ts). It goes in as a card under
+       the steps that produced it, and the steps close there, so the next
+       call opens its own fold under the card rather than above it. */
+    if (event.kind === 'tool_data') {
+      var cards = window.PhosphorCards;
+      if (!cards || typeof cards.kindFor !== 'function') return;
+      openSteps = null;
+      pushBlock({
+        type: 'card',
+        kind: cards.kindFor(event.name, event.data),
+        name: event.name,
+        input: event.input,
+        data: event.data,
+        at: at,
+        open: true
+      });
+      return;
+    }
     if (event.kind === 'text') {
       if (phase === 'connected') phase = 'working';
       if (turn) turn.state = 'writing';
@@ -1474,7 +1561,7 @@
         if (!replay) renderAll();
         return;
       }
-      pushBlock({ type: 'reply', text: event.text });
+      pushBlock({ type: 'reply', text: event.text, at: at });
       return;
     }
     if (event.kind === 'turn_end') {
@@ -1528,8 +1615,22 @@
       /* The card closes the open steps block, so the calls that follow it
          start a new one under the card rather than appending above it. */
       openSteps = null;
-      pushBlock({ type: 'receipt', receipt: fresh[j] });
+      pushReceipt(fresh[j], receiptWhen(fresh[j]));
     }
+  }
+
+  function receiptWhen(receipt) {
+    var when = receiptAt(receipt);
+    return when > 0 ? when : Date.now();
+  }
+
+  /* The newest receipt is the one a person is looking for, so it opens; the
+     ones before it fold to their one line. */
+  function pushReceipt(receipt, when) {
+    for (var i = 0; i < blocks.length; i += 1) {
+      if (blocks[i].type === 'receipt') blocks[i].open = false;
+    }
+    return pushBlock({ type: 'receipt', receipt: receipt, at: when, open: true });
   }
 
   /* A receipt opened anywhere in the window (an Activity row, a Done fill)
@@ -1538,7 +1639,7 @@
     var receipt = payload && payload.receipt;
     if (!receipt || typeof receipt !== 'object') return;
     openSteps = null;
-    pushBlock({ type: 'receipt', receipt: receipt });
+    pushReceipt(receipt, receiptWhen(receipt));
   }
 
   /* A finished turn folds to one line. Any step still open when the turn ended

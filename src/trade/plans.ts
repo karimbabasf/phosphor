@@ -8,6 +8,7 @@
 // leaves the last good file rather than half of a new one. Owner-only, like every other file
 // under the data dir that says what this app is allowed to do.
 
+import type { OrderConfirm } from '../hl/confirm.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -33,6 +34,9 @@ export type PlanRow = Plan & {
   // so cancel and reconcile go by an id this app owns and no oid ever needs re-reading.
   cloids: { entry?: string; stop?: string; target?: string };
   gen: number;
+  // What the venue said about the entry when it was read back by id after placing, or that it
+  // never answered inside the window (src/hl/confirm.ts). Absent on rows placed before this.
+  confirm?: OrderConfirm;
   // The fill the entry actually got, once it has one. Changes on an open plan measure from here.
   fillPx?: number;
   // The position size the exits were last sized to. A fill that grows the position past it

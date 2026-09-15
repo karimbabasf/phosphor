@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import {
   POA_BRIDGE_RPC,
   POA_NETWORK,
+  humanAmount,
   intentsDepositAddress,
   poaRecentDeposits,
   poaSupportedTokens,
@@ -119,8 +120,28 @@ test('the token list keeps only rows it can actually read, and cuts the network 
   assert.equal(tokens.length, 2, 'the two unreadable rows are dropped rather than half-read');
   assert.equal(tokens[0]!.network, 'eth:1');
   assert.equal(tokens[0]!.symbol, 'USDC');
-  assert.equal(tokens[0]!.minDeposit, '1000');
+  assert.equal(tokens[0]!.minDeposit, '1000', 'the raw base units are kept as the bridge sent them');
+  assert.equal(tokens[0]!.minDepositHuman, '0.001', 'the floor is not in the unit a person reads');
+  assert.equal(tokens[0]!.contract, '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', 'the contract is cut off the asset id');
   assert.equal(tokens[1]!.network, 'eth:1', 'a native asset id is already just the network');
+  assert.equal(tokens[1]!.minDepositHuman, '0.0000001', '18 decimals printed as a float would be 1e-7');
+  assert.equal(tokens[1]!.contract, null, 'the chain\'s own coin has no contract');
+});
+
+// The minimum is a number a person compares against the amount they are about to type, so it
+// is printed in the token's unit and never in base units: "Minimum 1000 USDC" was a thousand
+// dollars on screen for a floor of a tenth of a cent.
+test('base units become the number a person reads, by string arithmetic, with no float in it', () => {
+  assert.equal(humanAmount('100000000000', 18), '0.0000001');
+  assert.equal(humanAmount('1000', 6), '0.001');
+  assert.equal(humanAmount('1000000', 6), '1');
+  assert.equal(humanAmount('1500000', 6), '1.5');
+  assert.equal(humanAmount('0', 6), '0');
+  assert.equal(humanAmount('123456789012345678901234567890', 18), '123456789012.34567890123456789', 'past 2^53 a float would round');
+  assert.equal(humanAmount('42', 0), '42');
+  assert.equal(humanAmount('0000100', 3), '0.1', 'leading zeros are not digits');
+  assert.equal(humanAmount('abc', 6), 'abc', 'a value that is not base units comes back as it arrived');
+  assert.equal(humanAmount('1000', -1), '1000');
 });
 
 // Same contract as the token list, for the same reason: this is the "seen, not yet credited"

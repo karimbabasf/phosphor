@@ -51,6 +51,9 @@ var SPLIT_DOUBLE_MS = 400; /* two presses this close together are one double cli
  *   give     the pane that pays for it, and giveMin the floor it may not be pushed under.
  *            No give means the handle only takes from slack that is already spare.
  *   min      the floor for the sized pane itself.
+ *   max      the ceiling for the sized pane, where one exists: the same number the
+ *            stylesheet clamps the column to, so a stored size from a wider window is
+ *            brought back inside it on load rather than applied blindly.
  *
  * The minimums are measured, not guessed: 380 for a chart column is where candles stop
  * being read and start being estimated (the same number ui/trade.css states for a chart's
@@ -59,11 +62,11 @@ var SPLIT_DOUBLE_MS = 400; /* two presses this close together are one double cli
  */
 var SPLIT_PAGES = {
   /* The stage: the conversation column against the world. The person may widen
-     the transcript to 640 and narrow it to 360; the world never goes under 560,
-     which is one Basic column with its margins. */
+     the transcript to 760 (the --conv-max token) and narrow it to 360; the
+     world never goes under 560, which is one Basic column with its margins. */
   stage: {
     conversation: {
-      axis: 'x', sign: 1, min: 360,
+      axis: 'x', sign: 1, min: 360, max: 760,
       pane: '.conversation', host: '.stage', prop: '--conv',
       give: '.world', giveMin: 560,
     },
@@ -155,12 +158,14 @@ function splitSizeOf(node, horiz) {
 
 /* Everything a drag needs, read once. `max` is what the sized pane already holds plus what
    the give can spare, so a pane can never be grown past the point where its neighbour hits
-   its own floor. */
+   its own floor; a pane with a ceiling of its own stops there first. */
 function splitBounds(h) {
   var horiz = h.conf.axis === 'x';
   var size = splitSizeOf(h.pane, horiz);
   var room = h.give ? Math.max(0, splitSizeOf(h.give, horiz) - h.conf.giveMin) : 0;
-  return { size: size, min: h.conf.min, max: Math.max(h.conf.min, size + room) };
+  var max = size + room;
+  if (typeof h.conf.max === 'number' && h.conf.max < max) max = h.conf.max;
+  return { size: size, min: h.conf.min, max: Math.max(h.conf.min, max) };
 }
 
 function splitBegin(h, pos) {

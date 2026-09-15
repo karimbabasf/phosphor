@@ -19,11 +19,13 @@
 // replayed.
 
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import type http from 'node:http';
 import path from 'node:path';
 
 import { sameOrigin, tokenMatches } from './auth.ts';
-import { POA_NETWORK, intentsDepositAddress, poaSupportedTokens } from '../rails/intents-address.ts';
+import { POA_NETWORK, intentsDepositAddress, parsePoaTokens, poaSupportedTokens } from '../rails/intents-address.ts';
+import type { PoaToken } from '../rails/intents-address.ts';
 import type { ChainId } from '../types.ts';
 import { errText, fail, readBody, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
@@ -450,13 +452,24 @@ const INTENTS_NETWORKS: Array<{ id: ChainId; name: string }> = [
   { id: 'near', name: 'NEAR' },
 ];
 
+export type IntentsReceiveToken = {
+  symbol: string;
+  // Base units, as the bridge said it. The window never prints this one.
+  minDeposit: string;
+  // The floor in the token's own unit: "0.001" USDC, "0.0000001" ETH. The one that is printed.
+  minDepositHuman: string;
+  decimals: number;
+  // The contract on that chain, null for the chain's own coin. Shown behind the developer switch.
+  contract: string | null;
+};
+
 export type IntentsReceiveNetwork = {
   id: ChainId;
   name: string;
   address: string | null;
   memo: string | null;
   unavailable: string | null;
-  accepts: Array<{ symbol: string; minDeposit: string; decimals: number }>;
+  accepts: IntentsReceiveToken[];
   warning: string;
 };
 
@@ -473,10 +486,75 @@ export async function handleIntentsReceive(ctx: Ctx, res: http.ServerResponse): 
   sendJson(res, 200, await ctx.intentsReceive());
 }
 
+/* The bridge's half of the report: five addresses and the token list, six round trips. It is
+   what the bridge said about an account, and the bridge says the same thing every time (the
+   whole point of these addresses is that they do not change), so it is kept for a minute per
+   account. The window read it three times for one deposit card and the wizard read it on
+   every step change; each read was the six calls again. `verified` and `tampered` are NOT in
+   here: those flip when the wallet opens and are read fresh on every call below. A call that
+   came back with no addresses or no tokens is not kept, so a bridge that was down a second ago
+   is asked again on the next call rather than remembered as down for a minute. */
+type BridgeAddress = { net: { id: ChainId; name: string }; got: { address: string; memo: string | null } | null; why: string | null };
+type BridgeHalf = { at: number; addresses: BridgeAddress[]; tokens: PoaToken[] };
+const RECEIVE_CACHE_MS = 60_000;
+const bridgeCache = new Map<string, BridgeHalf>();
+
+async function readBridge(ctx: Ctx, account: string, force: boolean): Promise<BridgeHalf> {
+  const held = bridgeCache.get(account);
+  if (!force && held !== undefined && Date.now() - held.at < RECEIVE_CACHE_MS) return held;
+
+  const fixture = ctx.cfg.mode === 'demo' ? demoFixture() : null;
+  const [addresses, tokens] = fixture !== null
+    ? [fixture.addresses, fixture.tokens]
+    : await Promise.all([
+        Promise.all(
+          INTENTS_NETWORKS.map(async (n): Promise<BridgeAddress> => {
+            try {
+              const got = await intentsDepositAddress(account, n.id);
+              return { net: n, got: { address: got.address, memo: got.memo }, why: null };
+            } catch (err) {
+              // One network refusing is not the others failing. The row says why and the rest draw.
+              return { net: n, got: null, why: err instanceof Error ? err.message : String(err) };
+            }
+          }),
+        ),
+        poaSupportedTokens(),
+      ]);
+
+  const half: BridgeHalf = { at: Date.now(), addresses, tokens };
+  if (tokens.length > 0 && addresses.some((row) => row.got !== null)) bridgeCache.set(account, half);
+  return half;
+}
+
+/* PHOSPHOR_DEMO_RECEIVE: a JSON file that stands in for the bridge in demo mode, for a proof
+   run on a machine that cannot reach it. Shape: { "addresses": { "eth": "0x..", "sol": "..",
+   ... }, "tokens": [ bridge rows as supported_tokens returns them ] }. Demo mode without the
+   file still asks the real bridge, as it always did. Never read in live mode. */
+function demoFixture(): { addresses: BridgeAddress[]; tokens: PoaToken[] } | null {
+  const file = process.env.PHOSPHOR_DEMO_RECEIVE;
+  if (file === undefined || file === '') return null;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as { addresses?: Record<string, unknown>; tokens?: unknown };
+    const book = parsed.addresses ?? {};
+    const addresses = INTENTS_NETWORKS.map((n): BridgeAddress => {
+      const address = book[n.id];
+      return typeof address === 'string' && address !== ''
+        ? { net: n, got: { address, memo: null }, why: null }
+        : { net: n, got: null, why: 'not in the demo fixture' };
+    });
+    return { addresses, tokens: parsePoaTokens(parsed.tokens) };
+  } catch (err) {
+    console.error(`phosphor: PHOSPHOR_DEMO_RECEIVE could not be read: ${errText(err)}`);
+    return null;
+  }
+}
+
 /* The bridge addresses and what each network credits, as one report. The route above serves
    it to the window whole; the `deposit` read tool serves the agent one network of it with the
-   address reduced to a fingerprint, because the window is where an address is read from. */
-export async function intentsReceiveReport(ctx: Ctx): Promise<IntentsReceiveReport> {
+   address reduced to a fingerprint, because the window is where an address is read from.
+   `force` skips the minute's cache, for a caller that has a reason to believe the bridge
+   changed its answer; nothing in the app needs it today. */
+export async function intentsReceiveReport(ctx: Ctx, opts: { force?: boolean } = {}): Promise<IntentsReceiveReport> {
   const report = ctx.keystore.addressReport();
   const account = report.addresses.evm;
 
@@ -495,19 +573,7 @@ export async function intentsReceiveReport(ctx: Ctx): Promise<IntentsReceiveRepo
     };
   }
 
-  const [addresses, tokens] = await Promise.all([
-    Promise.all(
-      INTENTS_NETWORKS.map(async (n) => {
-        try {
-          return { net: n, got: await intentsDepositAddress(account, n.id), why: null as string | null };
-        } catch (err) {
-          // One network refusing is not the others failing. The row says why and the rest draw.
-          return { net: n, got: null, why: err instanceof Error ? err.message : String(err) };
-        }
-      }),
-    ),
-    poaSupportedTokens(),
-  ]);
+  const { addresses, tokens } = await readBridge(ctx, account, opts.force === true);
 
   const networks = addresses.map((row) => {
     const network = POA_NETWORK[row.net.id];
@@ -521,7 +587,13 @@ export async function intentsReceiveReport(ctx: Ctx): Promise<IntentsReceiveRepo
       /* What the bridge will credit on this network. An asset that is not on this list is not
          credited and is not refunded, which is the one loss this screen exists to prevent, so
          the list is shown rather than left to the address to imply. */
-      accepts: accepts.map((t) => ({ symbol: t.symbol, minDeposit: t.minDeposit, decimals: t.decimals })),
+      accepts: accepts.map((t) => ({
+        symbol: t.symbol,
+        minDeposit: t.minDeposit,
+        minDepositHuman: t.minDepositHuman,
+        decimals: t.decimals,
+        contract: t.contract,
+      })),
       warning:
         row.net.id === 'sol'
           ? 'Solana only. Anything sent here from another network is lost.'

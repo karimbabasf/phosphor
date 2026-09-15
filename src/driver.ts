@@ -53,8 +53,137 @@ export type DriverEvent =
   | { kind: 'text'; text: string }
   | { kind: 'tool'; name: string; input: unknown }
   | { kind: 'tool_result'; name: string; ok: boolean }
+  /* The structured answer of one read, for the window to draw as a card rather than for the
+     model to read back out in prose. Only the tools in TOOL_DATA_TOOLS below produce one, and
+     the payload is scrubbed and capped before it leaves this process: see toolDataFor. */
+  | { kind: 'tool_data'; name: string; input: unknown; data: unknown }
   | { kind: 'turn_end'; error: boolean; turns: number }
   | { kind: 'error'; message: string };
+
+/* WHICH ANSWERS REACH THE WINDOW AS DATA, AND HOW MUCH OF THEM.
+
+   The window used to see nothing of a tool's answer but its name and whether it failed, so a
+   balance came back as a table the model typed out (Karim, 2026-09-15: "when I ask how much I
+   won it just prints a boring white table"). These are the reads whose answers the window knows
+   how to draw: holdings, positions, a proposal's status, a deposit address, and every propose.
+   Everything else stays where it was. The list is an allow list on purpose: a tool absent from
+   it sends nothing, so the vault and keystore surface cannot reach the window by accident, and
+   a key-shaped field is dropped from the ones that are on it as a second line of defence.
+
+   The cap is a size, not an editorial choice. A window that receives a 400 KB fill history in
+   one SSE frame stalls for everyone, so arrays are cut from the longest one down, each cut
+   leaving a `{ truncated: n }` marker in the array it shortened, until the answer fits. */
+export const TOOL_DATA_TOOLS: ReadonlySet<string> = new Set([
+  'wallet',
+  'balances',
+  'trade_read',
+  'trade_batch',
+  'deposit',
+  'watch',
+  'receipts',
+  'proposal_status',
+]);
+export const TOOL_DATA_CAP = 32 * 1024;
+const TOOL_PREFIX = 'mcp__phosphor__';
+const SECRET_KEY = /mnemonic|seed|private|secret|passphrase|keystore|password/i;
+
+function bareName(name: string): string {
+  return name.startsWith(TOOL_PREFIX) ? name.slice(TOOL_PREFIX.length) : name;
+}
+
+export function isToolDataTool(name: string): boolean {
+  const bare = bareName(name);
+  return TOOL_DATA_TOOLS.has(bare) || bare.startsWith('propose_');
+}
+
+/* The text of a tool result block, whichever shape the stream carried it in: a string, or a
+   list of content blocks of which the first text block is the answer. */
+function resultText(content: unknown): string | null {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return null;
+  for (const block of content) {
+    if (block !== null && typeof block === 'object' && (block as { type?: unknown }).type === 'text') {
+      const text = (block as { text?: unknown }).text;
+      if (typeof text === 'string') return text;
+    }
+  }
+  return null;
+}
+
+function scrub(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(scrub);
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {
+      if (SECRET_KEY.test(key)) continue;
+      out[key] = scrub(inner);
+    }
+    return out;
+  }
+  return value;
+}
+
+function cutArrays(value: unknown, keep: number): unknown {
+  if (Array.isArray(value)) {
+    if (value.length <= keep) return value.map((v) => cutArrays(v, keep));
+    const head = value.slice(0, keep).map((v) => cutArrays(v, keep));
+    head.push({ truncated: value.length - keep });
+    return head;
+  }
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, inner] of Object.entries(value as Record<string, unknown>)) out[key] = cutArrays(inner, keep);
+    return out;
+  }
+  return value;
+}
+
+function cutStrings(value: unknown, keep: number): unknown {
+  if (typeof value === 'string') return value.length > keep ? `${value.slice(0, keep)} (cut)` : value;
+  if (Array.isArray(value)) return value.map((v) => cutStrings(v, keep));
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, inner] of Object.entries(value as Record<string, unknown>)) out[key] = cutStrings(inner, keep);
+    return out;
+  }
+  return value;
+}
+
+function size(value: unknown): number {
+  try {
+    return JSON.stringify(value).length;
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
+}
+
+export function capPayload(data: unknown, limit: number = TOOL_DATA_CAP): unknown {
+  if (size(data) <= limit) return data;
+  for (const keep of [64, 32, 16, 8, 4, 2, 1]) {
+    const cut = cutArrays(data, keep);
+    if (size(cut) <= limit) return cut;
+  }
+  const strings = cutStrings(cutArrays(data, 1), 512);
+  if (size(strings) <= limit) return strings;
+  return { truncated: true };
+}
+
+/* The tool_data event for one settled call, or null when the window gets nothing: a tool off
+   the list, a failed call, or an answer that was not JSON (the proxy's "not running" sentence,
+   a chart's picture). `name` is the full tool id as the child said it. */
+export function toolDataFor(name: string, input: unknown, content: unknown, ok: boolean = true): DriverEvent | null {
+  if (!ok || !isToolDataTool(name)) return null;
+  const text = resultText(content);
+  if (text === null) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (parsed === null || typeof parsed !== 'object') return null;
+  return { kind: 'tool_data', name, input: scrub(input ?? {}), data: capPayload(scrub(parsed)) };
+}
 
 export type DriverState = 'off' | 'starting' | 'ready' | 'thinking' | 'stopped' | 'failed';
 
@@ -382,6 +511,14 @@ export function createDriver(opts: DriverOptions) {
      asked for it, and a sentence explaining it would read as something having gone wrong. */
   let stopping = false;
 
+  /* The calls in flight, by the id the model gave them. A tool_result block carries
+     `tool_use_id` and nothing else that names the tool, so the name is read back off the
+     tool_use that opened it. Before this the result was matched on a `name` field the stream
+     does not carry, every result came through as "tool", and a step row only closed when the
+     whole turn did. Cleared at every turn end, so an id from a turn that was interrupted cannot
+     name a later call. */
+  const calls = new Map<string, { name: string; input: unknown }>();
+
   function set(next: DriverState, detail?: string, reason?: string): void {
     state = next;
     const event: DriverEvent = { kind: 'status', state: next, detail };
@@ -459,6 +596,7 @@ export function createDriver(opts: DriverOptions) {
           opts.onEvent({ kind: 'text', text: block.text });
         }
         if (block.type === 'tool_use' && typeof block.name === 'string') {
+          if (typeof block.id === 'string') calls.set(block.id, { name: block.name, input: block.input });
           opts.onEvent({ kind: 'tool', name: block.name, input: block.input });
         }
       }
@@ -468,14 +606,21 @@ export function createDriver(opts: DriverOptions) {
     if (event.type === 'user') {
       const message = event.message as { content?: Array<Record<string, unknown>> } | undefined;
       for (const block of message?.content ?? []) {
-        if (block.type === 'tool_result') {
-          opts.onEvent({ kind: 'tool_result', name: String(block.name ?? 'tool'), ok: block.is_error !== true });
-        }
+        if (block.type !== 'tool_result') continue;
+        const id = typeof block.tool_use_id === 'string' ? block.tool_use_id : '';
+        const call = calls.get(id);
+        if (call !== undefined) calls.delete(id);
+        const name = call?.name ?? (typeof block.name === 'string' ? block.name : 'tool');
+        const ok = block.is_error !== true;
+        opts.onEvent({ kind: 'tool_result', name, ok });
+        const data = toolDataFor(name, call?.input, block.content, ok);
+        if (data !== null) opts.onEvent(data);
       }
       return;
     }
 
     if (event.type === 'result') {
+      calls.clear();
       opts.onEvent({
         kind: 'turn_end',
         error: event.is_error === true,
@@ -574,6 +719,7 @@ export function createDriver(opts: DriverOptions) {
     child.on('exit', (code, signal) => {
       child = null;
       buffer = '';
+      calls.clear();
       const asked = stopping;
       stopping = false;
       if (state === 'failed' || state === 'stopped') return;

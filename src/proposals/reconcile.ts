@@ -15,7 +15,7 @@
 
 import type { ChainId, Proposal, WriteDraft } from '../types.ts';
 import { errText, nowIso, persist } from './lifecycle.ts';
-import { balanceAfter } from './execute.ts';
+import { balanceAfter, settleProposal } from './execute.ts';
 import type { PCtx } from './lifecycle.ts';
 
 // What the chain says about one hash. `unknown` is a real answer and the most important one:
@@ -141,6 +141,10 @@ export async function reconcileProposal(ctx: PCtx, id: string): Promise<Proposal
     throw new Error(`proposal ${id} is ${p.status}, and only a proposal waiting to be reconciled can be re-checked`);
   }
 
+  // A row the rail left settling is judged by its balance, not by a chain hash: an intent
+  // hash is nothing a block explorer can answer for. See settleProposal.
+  if (p.pocket !== undefined) return settleProposal(ctx, id);
+
   const txids = p.result?.txids ?? [];
   if (txids.length === 0) {
     // Nothing to look up. Say so and change nothing: an app that cleared this row would be
@@ -188,7 +192,7 @@ export async function reconcileProposal(ctx: PCtx, id: string): Promise<Proposal
      and inventing one would be worse than the blank. */
   const balances =
     outcome.status === 'executed' && p.balances !== undefined
-      ? { ...p.balances, afterUsd: await balanceAfter(ctx) }
+      ? { ...p.balances, afterUsd: await balanceAfter(ctx, p.draft) }
       : p.balances;
 
   return persist(ctx, {

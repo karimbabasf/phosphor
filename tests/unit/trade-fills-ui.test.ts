@@ -847,14 +847,75 @@ test('a market the payload does not price reads as unknown rather than as zero',
   assert.equal(withClass(host, 'trade-mark-price')[0].textContent, '--');
 });
 
-test('an unreachable venue says so rather than drawing its last numbers as current', async () => {
+test('an unreachable venue says so in plain words rather than drawing its last numbers as current', async () => {
+  // The sentence a person reads is plain; the venue's own words are there for the developer
+  // switch and nowhere else (Karim read the raw error as scary debug output, 2026-09-15).
   const data = flat();
   data.venue = { connected: false, source: 'none', ageMs: null, latencyMs: null, error: 'connect ECONNREFUSED', degraded: true };
-  const { lines } = await renderPayload(data);
-  assert.ok(
-    lines.some((l) => l.startsWith('No route to the venue') && l.includes('connect ECONNREFUSED')),
-    `the venue failed silently: ${JSON.stringify(lines)}`,
-  );
+  const { host, lines } = await renderPayload(data);
+  assert.ok(lines.includes('Not connected to Hyperliquid. Trying again.'), `the venue failed silently: ${JSON.stringify(lines)}`);
+  assert.ok(!lines.some((l) => l.startsWith('No route to the venue')), 'the old sentence is still there');
+  const [raw] = withClass(host, 'trade-line-raw');
+  assert.equal(raw.textContent, 'connect ECONNREFUSED');
+  assert.ok(raw.hasAttribute('data-dev-only'), 'the raw error is on screen without the developer switch');
+});
+
+test('the venue notice is drawn in the tone of the news: red with the link struck through for a shut socket, amber with a warning for an open one that errors', async () => {
+  // The notice under the strip carries a data-tone the stylesheet washes and a drawn icon
+  // ahead of the sentence (2026-09-15). A shut socket and an open socket that answers with an
+  // error are different news and read differently; a wait is quiet; and with nothing to say
+  // the row is gone rather than empty.
+  // The notice is [icon][sentence][raw]: the raw span carries the venue's own words behind
+  // the developer switch (data-dev-only) and is hidden outright while there are none.
+  const shut = flat();
+  shut.venue = { connected: false, source: 'none', ageMs: null, latencyMs: null, error: 'connect ECONNREFUSED', degraded: true };
+  const a = await renderPayload(shut);
+  const [down] = withClass(a.host, 'trade-line');
+  assert.equal(down.hidden, false);
+  assert.equal(down.dataset.tone, 'down');
+  assert.equal(down.childNodes[0].dataset.icon, 'link-off', 'no drawn icon ahead of the sentence');
+  assert.ok(down.childNodes[1].className.includes('trade-line-text'));
+  assert.equal(down.childNodes[1].textContent, 'Not connected to Hyperliquid. Trying again.');
+  assert.ok(down.childNodes[2].className.includes('trade-line-raw'));
+  assert.ok(down.childNodes[2].hasAttribute('data-dev-only'), 'the raw words must wait for the developer switch');
+  assert.equal(down.childNodes[2].hidden, false);
+  assert.equal(down.childNodes[2].textContent, 'connect ECONNREFUSED');
+
+  const erring = flat();
+  erring.venue = { connected: true, source: 'ws', ageMs: 40, latencyMs: 12, error: 'spot read failed: hyperliquid /info 422: Failed to deserialize the JSON body into the target type', degraded: false };
+  const b = await renderPayload(erring);
+  const [warn] = withClass(b.host, 'trade-line');
+  assert.equal(warn.dataset.tone, 'warn');
+  assert.equal(warn.childNodes[0].dataset.icon, 'warning');
+  assert.equal(warn.childNodes[1].textContent, 'Hyperliquid is not answering one of our reads. Trying again.');
+  assert.equal(warn.childNodes[2].textContent, 'spot read failed: hyperliquid /info 422: Failed to deserialize the JSON body into the target type');
+  assert.ok(!b.lines.some((l) => l.includes('422') && !l.startsWith('spot read failed')), 'the raw words leaked into the sentence');
+
+  // No wallet yet: the read was skipped, not refused, so it is a quiet wait. Keyed off the
+  // error's text until the feed carries it as a flag of its own.
+  const walletless = flat();
+  walletless.venue = { connected: true, source: 'ws', ageMs: 40, latencyMs: 12, error: 'spot read skipped: no wallet yet', degraded: false };
+  const w = await renderPayload(walletless);
+  const [wait] = withClass(w.host, 'trade-line');
+  assert.equal(wait.dataset.tone, undefined, 'no wallet is not a fault');
+  assert.equal(wait.childNodes[0].dataset.icon, 'waiting');
+  assert.equal(wait.childNodes[1].textContent, 'Nothing to read until a wallet exists.');
+  assert.equal(wait.childNodes[2].textContent, 'spot read skipped: no wallet yet');
+
+  const reading = funded();
+  reading.account = { ...reading.account, accountKnown: false, equityUsd: null, freeUsd: null, healthPct: null } as never;
+  const c = await renderPayload(reading);
+  const [quiet] = withClass(c.host, 'trade-line');
+  assert.equal(quiet.dataset.tone, undefined, 'a wait is not washed');
+  assert.equal(quiet.childNodes[0].dataset.icon, 'waiting');
+  assert.equal(quiet.childNodes[2].hidden, true, 'a wait has no raw words to show');
+
+  const d = await renderPayload(flat());
+  const [gone] = withClass(d.host, 'trade-line');
+  assert.equal(gone.hidden, true);
+  assert.equal(gone.dataset.icon, undefined, 'the icon leaves with the sentence');
+  assert.equal(gone.childNodes.length, 2, 'only the empty text and raw spans stay');
+  assert.equal(gone.childNodes[1].textContent, '');
 });
 
 test('an unreachable venue leaves the figures unknown rather than calling them empty', async () => {

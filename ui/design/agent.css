@@ -436,7 +436,7 @@
   flex-direction: column;
   gap: var(--s-1);
   font-size: var(--fs-14);
-  line-height: 1.5;
+  line-height: 1.55;
 }
 
 .chat-who {
@@ -463,13 +463,65 @@
   overflow-wrap: anywhere;
 }
 
+/* THE REPLY. The app's mark at the top left, the words beside it in a 66ch
+   measure, and the clock it landed at under them, shown on hover. A grid
+   rather than a row, so the mark sits on the first line whatever the reply
+   wraps to. The who label stays in the tree for a screen reader. */
 .chat-reply {
-  align-self: flex-start;
-  max-width: 66ch;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: var(--s-3);
+  row-gap: 2px;
+  align-self: stretch;
+  width: 100%;
+  max-width: calc(66ch + 20px + var(--s-3));
 }
 
 .chat-reply .chat-text {
+  grid-column: 2;
+  grid-row: 1;
   font-weight: 400;
+}
+
+.chat-mark {
+  grid-column: 1;
+  grid-row: 1;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  color: var(--ink);
+  opacity: 0.85;
+}
+
+.chat-time {
+  grid-column: 2;
+  grid-row: 2;
+  font-size: var(--fs-12);
+  line-height: 16px;
+  color: var(--text-3);
+  opacity: 0;
+  transition: opacity var(--dur-press) var(--ease-out);
+}
+
+.chat-time:empty {
+  display: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .chat-reply:hover .chat-time { opacity: 1; }
+}
+
+.chat-reply:focus-within .chat-time {
+  opacity: 1;
+}
+
+/* A drawn card in the thread, at the reply's width. */
+.chat-card {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  width: 100%;
+  max-width: 560px;
 }
 
 /* Emphasis in a reply steps up one weight, to the titles' 600, never to a
@@ -542,15 +594,18 @@
 }
 
 /* Numbers in a table: 13 px, mono, tabular, right aligned. The header row is
-   the label size in the third text tone and every row is ruled with a hairline,
-   so a column of prices reads down its decimal point. */
+   the label size in the second text tone, no capitals, and every row is ruled
+   with one hairline and nothing else: no box, no column lines. A column of
+   prices reads down its decimal point. */
 .chat-table {
   overflow-x: auto;
   max-width: 100%;
+  margin: var(--s-1) 0;
 }
 
 .chat-table table {
   border-collapse: collapse;
+  width: 100%;
   font-size: var(--fs-13);
   line-height: 1.4;
   min-width: 0;
@@ -559,17 +614,22 @@
 .chat-table th {
   font-size: var(--fs-12);
   font-weight: 500;
-  color: var(--text-3);
+  color: var(--text-2);
   text-align: left;
-  padding: 2px var(--s-3) var(--s-1) 0;
-  border-bottom: 1px solid var(--line);
+  padding: 2px var(--s-3) 6px 0;
+  border-bottom: 1px solid var(--line-strong);
   white-space: nowrap;
 }
 
 .chat-table td {
-  padding: var(--s-1) var(--s-3) var(--s-1) 0;
+  padding: 6px var(--s-3) 6px 0;
   border-bottom: 1px solid var(--line);
   vertical-align: top;
+}
+
+.chat-table th:last-child,
+.chat-table td:last-child {
+  padding-right: 0;
 }
 
 .chat-table tr:last-child td {
@@ -598,14 +658,14 @@
 .chat-said {
   align-self: flex-end;
   align-items: flex-end;
-  max-width: min(66ch, 86%);
+  max-width: min(66ch, 78%);
 }
 
 .chat-said .chat-text {
   background: var(--bg-2);
   border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: var(--s-2) var(--s-3);
+  border-radius: 14px;
+  padding: 10px 14px;
   transition: color var(--dur-enter) var(--ease-out),
               border-color var(--dur-enter) var(--ease-out);
 }
@@ -708,8 +768,6 @@
               background-color var(--dur-enter) var(--ease-out);
 }
 
-.steps-fold .step-dot { align-self: center; margin-top: 0; }
-
 /* A call in flight is a lit dot, still. The breathing is the seat light's in
    the head, and one light moving at a time is the rule: a row that pulsed
    under a head that pulsed was two clocks for one call. */
@@ -756,24 +814,65 @@
   color: var(--warn);
 }
 
-/* A finished turn folds its steps to one line. */
+/* A finished turn folds its steps to one quiet line: a chevron, the count and
+   the time, then what the calls were, by name. The chevron turns down when
+   the rows are open. Never a green dot: a dot says "live", and this is over. */
 .steps-fold {
   display: inline-flex;
   align-items: center;
-  gap: var(--s-2);
+  gap: 0;
+  min-height: 22px;
   font-size: var(--fs-12);
   color: var(--text-3);
-  padding: 2px 0;
+  padding: 0;
   text-align: left;
   align-self: flex-start;
+  max-width: 100%;
   transition: color var(--dur-press) var(--ease-out);
 }
 
-.steps-fold .step-dot { opacity: 0.6; }
-.steps-fold[data-state="error"] .step-dot { background: var(--down); opacity: 1; }
+.steps-chevron {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin-right: var(--s-1);
+  color: var(--text-3);
+  transition: transform 200ms var(--ease-out);
+}
+
+.steps-fold[aria-expanded="true"] .steps-chevron {
+  transform: rotate(90deg);
+}
+
+.steps-fold-label {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.steps-fold-names {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+  opacity: 0.8;
+}
+
+.steps-fold-names:not(:empty)::before {
+  content: ": ";
+}
+
+.steps-fold[data-state="error"] .steps-fold-label { color: var(--down); }
 
 @media (hover: hover) and (pointer: fine) {
   .steps-fold:hover { color: var(--text-2); }
+  .steps-fold:hover .steps-chevron { color: var(--text-2); }
+}
+
+.steps-fold:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
 }
 
 .steps[data-folded="true"] .step { display: none; }
@@ -798,10 +897,12 @@
 
 /* ---------- the composer ---------- */
 
-/* One pill on the raised ground: 52 px tall with one line in it, a hairline
-   that turns ink on focus, the textarea bare inside it growing to six lines,
-   and one round ink button at the right. The pill is the boundary between
-   the thread and the box, so the host draws no line of its own. */
+/* THE BOX. One field on the first surface up from the ground: a strong
+   hairline, the 16 px radius, the textarea bare inside it growing to six
+   lines, and one round ink button at the right. On focus the edge turns ink
+   and the field lifts on its shadow, which is the one thing that moves. The
+   field is the boundary between the thread and the box, so the host draws
+   no line of its own. */
 .agent-composer {
   padding: var(--s-2) var(--s-4) var(--s-3);
 }
@@ -810,16 +911,19 @@
   display: flex;
   align-items: flex-end;
   gap: var(--s-2);
-  min-height: 52px;
-  padding: 7px 7px 7px var(--s-5);
-  border-radius: 26px;
-  background: var(--bg-2);
-  border: 1px solid var(--line);
-  transition: border-color var(--dur-press) var(--ease-out);
+  min-height: 50px;
+  padding: 6px 6px 6px 14px;
+  border-radius: 16px;
+  background: var(--bg-1);
+  border: 1px solid var(--line-strong);
+  box-shadow: 0 0 0 0 transparent;
+  transition: border-color var(--dur-press) var(--ease-out),
+              box-shadow var(--dur-enter) var(--ease-out);
 }
 
 .composer-field:focus-within {
   border-color: var(--ink);
+  box-shadow: var(--lift);
 }
 
 /* The textarea, stripped of the shared field's box: the ground is the
@@ -850,10 +954,11 @@
   cursor: default;
 }
 
-/* The button: 36 px round, the ink at half strength until there is something
-   to send and full once there is, and a stop square on the text colour
-   while an answer is running. The press scales; the fill crosses over in
-   200 ms so the arming reads as the box waking rather than a swap. */
+/* The button, three states: dim while the box is empty (and out, so a press
+   does nothing), the ink circle with the up arrow once there are words, and
+   a stop square on the text colour while an answer is running. The press
+   scales; the fill crosses over in 200 ms so the arming reads as the box
+   waking rather than a swap. */
 .composer-send {
   flex: 0 0 auto;
   width: 36px;
@@ -863,7 +968,7 @@
   border-radius: var(--radius-pill);
   background: var(--ink);
   color: var(--on-ink);
-  opacity: 0.45;
+  opacity: 0.35;
   transition: background-color 200ms var(--ease-out),
               color 200ms var(--ease-out),
               transform var(--dur-press) var(--ease-out),
@@ -896,6 +1001,11 @@
 }
 
 .composer-send:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.composer-field[data-mode="stop"] .composer-send:disabled {
   opacity: 0.3;
 }
 

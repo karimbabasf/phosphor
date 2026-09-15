@@ -18,7 +18,10 @@
   var BULLET = /^\s*[-*+]\s+(.*)$/;
   var NUMBERED = /^\s*\d+[.)]\s+(.*)$/;
   var FENCE = /^\s*```/;
-  var NUMERIC = /^[+-]?\$?\d[\d,]*(\.\d+)?%?$/;
+  /* A figure, with or without the ticker it is counted in: 4.98, $12.50,
+     +3.2%, 0.049 SOL. A cell that is one of these sits in the number column,
+     right aligned and in mono, so a column of them reads down its point. */
+  var NUMERIC = /^[+-]?\$?\d[\d,]*(\.\d+)?%?(\s[A-Z][A-Z0-9.]{1,6})?$/;
   /* A signed figure: +3.2%, -$0.40, +1,250. The lookbehind keeps a date's
      second half (2026-09-11) and a ticker's dash (ETH-USD) out of it. */
   var SIGNED = /(?<![\w$.\-])([+-]\$?\d[\d,]*(?:\.\d+)?%?)(?![\w.%])/g;
