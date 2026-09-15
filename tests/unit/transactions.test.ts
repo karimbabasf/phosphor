@@ -191,6 +191,8 @@ test("an intent hash links to the venue explorer's page for its swap, keyed by t
 
 test('the quote handle is read off the two sentences the rails write, and off nothing else', () => {
   assert.equal(depositHandleOf('swapped 1 ETH for 3000 USDC; intent Abc123, quote handle 0xabc.near'), '0xabc.near');
+  assert.equal(depositHandleOf('swapped 1 ETH for 3000 USDC; intent Abc123, quote handle HXJX3Dq7Wn2mXy1b.'), 'HXJX3Dq7Wn2mXy1b', 'the full stop that ends the sentence is not part of the handle');
+  assert.equal(depositHandleOf('quote handle a.b.near.'), 'a.b.near', 'dots inside a NEAR account stay, the last one goes');
   assert.equal(depositHandleOf('swapped 1 ETH on base for 3000 USDC on arb; deposit 0xF121dEAE804852e25a92fe4eB64A0dA405a564c7, origin tx 0x1'), '0xF121dEAE804852e25a92fe4eB64A0dA405a564c7');
   assert.equal(depositHandleOf('1.9927 USDC paid out to our arb wallet'), null, 'a sentence with no handle invented one');
   assert.equal(depositHandleOf('deposit transfer failed: no funds left the wallet.'), null, 'the word deposit alone is not a handle');

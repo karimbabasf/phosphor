@@ -214,9 +214,11 @@ export const INTENTS_EXPLORER_TX = 'https://explorer.near-intents.org/transactio
 // "deposit <address>, origin tx" from the ones that transfer to the address. Anchored on
 // the words on both sides, so a hash, an amount or a failure sentence ("deposit transfer
 // failed") can never be read as an address, and bounded to the characters an EVM, NEAR,
-// Solana or Bitcoin address can carry.
+// Solana or Bitcoin address can carry. The handle may hold dots inside (a NEAR account)
+// but never ends in one: the sentence's own full stop was read into the link on 2026-09-15
+// and the explorer answered 404.
 const HANDLE_SHAPES = [
-  /\bquote handle ([A-Za-z0-9._:-]{8,120})(?=[,;.\s]|$)/,
+  /\bquote handle ([A-Za-z0-9._:-]{7,119}[A-Za-z0-9])(?=[,;.\s]|$)/,
   /\bdeposit ([A-Za-z0-9._:-]{8,120}), origin tx\b/,
 ];
 
