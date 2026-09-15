@@ -1,11 +1,13 @@
 # Phosphor brand
 
-The official Phosphor mark, its three colourways, the banners, the app icon, the wordmark, and
-the script that draws the wordmark.
+The official Phosphor mark, its four colourways, the banners, the app icon, the wordmark, and
+the two scripts that draw them.
 
 ## The mark
 
-An isometric P built from four slabs, drawn once as a vector and shipped in three colourways.
+An isometric P built from four slabs, drawn from geometry by `src/mark.py` (since 2026-09-14; before
+that it was a hand-drawn raster with wobbly cuts, and the SVG a potrace trace of it) and shipped in
+four colourways.
 The colours are the whole identity. White on black is the site's own light on its ink, for places
 where the green would shout (added 2026-09-14). The app carries two of them (`ui/design/tokens.css`): green
 on black and black on white. Black on green is for banners and social only, never the window
@@ -17,11 +19,14 @@ on black and black on white. Black on green is for banners and social only, neve
 | Black on green | `#3FFF6C` | `#0E0F13` | `phosphor-logo-black-on-green.png` (2000 x 2000) |
 | Black on white | `#FFFFFF` | `#111111` | `phosphor-logo-black-on-white.png` (2000 x 2000) |
 | White on black | `#0E0F13` | `#ECEEF1` | `phosphor-logo-white-on-black.png` (2000 x 2000) |
+| White on black, rounded | `#0E0F13` tile, radius 450, clear corners | `#ECEEF1` | `phosphor-logo-white-on-black-rounded.png` (2000 x 2000) |
 
 - `phosphor-mark.svg`, the vector, one path in `currentColor` in a box the size of its own ink
-  (58.05 x 64.75 units). Traced from the black on white PNG with potrace; 0.6 percent of edge
-  pixels differ from the source at 2000 px. This is the copy the app draws: `ui/index.html`
-  holds it as a `<symbol>`, the splash (`src-tauri/frontend/index.html`) holds it inline.
+  (59.46 x 64.75 units). Every edge is vertical or on a 30 degree line, every bend a circular arc,
+  and the three cuts are one outline translated along the depth axis, so they widen a touch around
+  the bends the way a real cut does. The app still draws the older traced path: `ui/index.html`
+  holds it as a `<symbol>` and the splash (`src-tauri/frontend/index.html`) inline, both at
+  58.05 x 64.75; swap the path data in when the app next touches the mark.
 - `phosphor-app-icon.png` (1024 x 1024), the macOS app icon source: the green on black logo on
   an 824 px rounded square (radius 185) centred on a transparent canvas. `npx tauri icon
   brand/phosphor-app-icon.png -o src-tauri/icons` regenerates the icon set from it; delete the
@@ -70,6 +75,7 @@ size or the weight and the geometry follows.
 Needs a local Brave and `playwright-core`. Both come from the machine, not from this repo:
 `BROWSER` and `PW` below default to the paths this was built with.
 
+    uv run src/mark.py                       # the mark: SVG, the four logos, the rounded one, the app icon, the four mark banners
     node build.mjs mark.html ../phosphor-wordmark.png
     node build.mjs hq.html ../phosphor-headquarters.png
     node build.mjs mark-outline.html ../phosphor-wordmark-white-outline.png
