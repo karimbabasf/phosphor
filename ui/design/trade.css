@@ -452,7 +452,7 @@ body[data-view="trade"] .stage {
   flex: 0 0 auto;
   width: 12px;
   height: 12px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   border: 1px solid var(--line-strong);
   background: transparent;
   transition: background-color var(--dur-press) var(--ease-out),
@@ -576,7 +576,7 @@ body[data-view="trade"] .stage {
 .seg .timeframe {
   height: 20px;
   padding: 0 4px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   border: 1px solid transparent;
   font-family: var(--font-mono);
   font-size: var(--fs-12);
@@ -1209,9 +1209,10 @@ body[data-view="trade"] .stage {
   white-space: nowrap;
 }
 
-.done-row > .tx-amount[data-dir="in"] { color: var(--up); }
-.done-row > .tx-amount[data-dir="out"] { color: var(--down); }
-.done-row > .tx-amount.dimmer { color: var(--text-3); }
+/* The value takes the side's colour, the same as the pill beside it: a buy
+   green, a sell red. On an ended plan it is the closed figure, by its sign. */
+.done-row > .tx-amount[data-dir="up"] { color: var(--up); }
+.done-row > .tx-amount[data-dir="down"] { color: var(--down); }
 
 .done-row > .tx-link {
   grid-column: 6;
@@ -1226,7 +1227,7 @@ body[data-view="trade"] .stage {
   place-items: center;
   width: 20px;
   height: 20px;
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   color: var(--ink);
   transition: background-color var(--dur-press) var(--ease-out);
 }
