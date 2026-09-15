@@ -284,7 +284,9 @@ body[data-view="trade"] .stage {
 }
 
 /* The day and the account, as small figures: the label at 11 px over the
-   value at 13 px mono, three pixels apart, sixteen between figures. */
+   value at 13 px mono, three pixels apart, sixteen between figures. The line
+   heights are whole pixels so the row's height is one too: a fraction here
+   became a one pixel scroll of the world on the smallest window. */
 .strip-day,
 .strip-stats {
   display: flex;
@@ -304,7 +306,7 @@ body[data-view="trade"] .stage {
 .strip-label {
   font-size: var(--fs-11);
   font-weight: 500;
-  line-height: 1.2;
+  line-height: 14px;
   letter-spacing: 0.02em;
   color: var(--text-3);
   white-space: nowrap;
@@ -314,7 +316,7 @@ body[data-view="trade"] .stage {
   font-family: var(--font-mono);
   font-size: var(--fs-13);
   font-weight: 500;
-  line-height: 1.2;
+  line-height: 16px;
   color: var(--text);
   font-feature-settings: "tnum" 1;
   font-variant-numeric: tabular-nums;
@@ -341,7 +343,7 @@ body[data-view="trade"] .stage {
   border-radius: 8px;
   background: var(--bg-1);
   font-size: var(--fs-12);
-  line-height: 1.4;
+  line-height: 18px;
   color: var(--text-2);
 }
 
@@ -349,7 +351,7 @@ body[data-view="trade"] .stage {
   flex: 0 0 auto;
   width: 16px;
   height: 16px;
-  margin-top: 0.5px;
+  margin-top: 1px;
   color: var(--text-3);
 }
 
