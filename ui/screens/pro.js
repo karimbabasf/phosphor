@@ -469,6 +469,11 @@
 
     var notes = [];
     if (wallet.emptyCount) notes.push(wallet.emptyCount + ' empty, not listed');
+    /* Dust is money, so the total above already holds it; the note is what keeps a hidden row
+       from reading as a vanished one. */
+    if (wallet.dustCount) {
+      notes.push(wallet.dustCount + (wallet.dustCount === 1 ? ' tiny balance' : ' tiny balances') + ' under a cent, in the total, not listed');
+    }
     /* Per-chain staleness badges are gone from every row that reads fine. Only
        a place that actually failed is named, and it is named in words. */
     if (stale.length) {

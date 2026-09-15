@@ -16,6 +16,9 @@ function unitPrice(amount: number, usd: number): number {
   return amount > 0 ? usd / amount : 0;
 }
 
+// Below this a balance renders as $0.00, which is where a row stops carrying information.
+const DUST_USD = 0.005;
+
 export function buildWallet(snapshot: LedgerSnapshot, intents?: IntentsRead, hyperliquid?: HlRead): WalletView {
   // Symbol -> unit price, learned from the holdings themselves and topped up from the
   // snapshot's native price table for symbols held only inside a pool.
@@ -132,12 +135,23 @@ export function buildWallet(snapshot: LedgerSnapshot, intents?: IntentsRead, hyp
   const held = [...tokenRows, ...intentsRows, ...hlRows].filter(r => r.quantity > 0 || r.valueUsd > 0);
   const emptyCount = tokenRows.length + intentsRows.length + hlRows.length - held.length;
 
-  const rows = held.sort((a, b) => b.valueUsd - a.valueUsd);
-  const totalUsd = rows.reduce((sum, r) => sum + r.valueUsd, 0);
+  // Dust. A priced balance that rounds to $0.00 (0.001 USDC left on a venue after a withdrawal)
+  // is money, so the total and the place keep it, but a row reading "$0.00" beside a real one
+  // is noise the eye has to step over every time. Only a PRICED balance can be dust: a holding
+  // the app cannot value (priced false, or a token row whose price came back 0) is a hole, not a
+  // small number, and hiding it would be the 2026-09-08 bug again (money shown as nothing). The
+  // count and the sum go out so the card can say so.
+  const isDust = (r: WalletRow): boolean => r.priced !== false && r.priceUsd > 0 && r.valueUsd < DUST_USD;
+  const dust = held.filter(isDust);
+  const dustCount = dust.length;
+  const dustUsd = dust.reduce((sum, r) => sum + r.valueUsd, 0);
+
+  const rows = held.filter(r => !isDust(r)).sort((a, b) => b.valueUsd - a.valueUsd);
+  const totalUsd = held.reduce((sum, r) => sum + r.valueUsd, 0);
   for (const row of rows) row.share = totalUsd > 0 ? row.valueUsd / totalUsd : 0;
 
   const byChain: Record<string, number> = {};
-  for (const row of rows) byChain[row.chain] = (byChain[row.chain] ?? 0) + row.valueUsd;
+  for (const row of held) byChain[row.chain] = (byChain[row.chain] ?? 0) + row.valueUsd;
 
   const stale: WalletPlace[] = (Object.entries(snapshot.chainStatus) as Array<[ChainId, { ok: boolean }]>)
     .filter(([, status]) => !status.ok)
@@ -148,5 +162,5 @@ export function buildWallet(snapshot: LedgerSnapshot, intents?: IntentsRead, hyp
   if (intents !== undefined && !intents.ok) stale.push('intents');
   if (hyperliquid !== undefined && !hyperliquid.ok) stale.push('hyperliquid');
 
-  return { rows, totalUsd, byChain, stale, emptyCount };
+  return { rows, totalUsd, byChain, stale, emptyCount, dustCount, dustUsd };
 }

@@ -140,6 +140,10 @@ export type WalletView = {
   // the list (a wallet lists what you hold), but the number stays: "we looked at 19
   // tokens and 14 were empty" and "we only looked at 5" are different facts.
   emptyCount: number;
+  // Priced balances that round to $0.00, kept out of the rows but inside totalUsd and byChain.
+  // The count and the sum let a card say "1 tiny balance, not listed" instead of hiding money.
+  dustCount: number;
+  dustUsd: number;
 };
 
 // ---------- Policy ----------

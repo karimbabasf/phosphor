@@ -56,7 +56,7 @@ test('a token with nothing in it is not a row, and the number dropped is still r
 
   const wallet = buildWallet(snap);
   assert.equal(wallet.rows.some(r => r.quantity === 0 && r.kind === 'token'), false, 'no empty rows');
-  assert.equal(wallet.rows.length, held);
+  assert.equal(wallet.rows.length, held - wallet.dustCount, 'held minus the dust the list hides');
   assert.equal(wallet.emptyCount, 2, 'a short list and a shallow read are different facts');
 });
 
@@ -265,4 +265,29 @@ test('an empty trading account is not a row, and a failed venue read is stale ra
   assert.ok(failed.stale.includes('hyperliquid'), 'showing no row would claim the collateral is gone');
 
   assert.equal(buildWallet(loadDemoLedger()).stale.includes('hyperliquid'), false, 'a venue never asked did not go stale');
+});
+
+test('a priced balance that rounds to $0.00 is dust: hidden from the rows, kept in the total, counted in the note', () => {
+  // The demo ledger already carries one dust row (0.001 NEAR of gas), so every count is relative.
+  const plain = buildWallet(loadDemoLedger());
+  const dustHl = { ...HL_READ, collateralUsdc: 0.001038, availableUsdc: 0.001038 };
+  const wallet = buildWallet(loadDemoLedger(), undefined, dustHl);
+  assert.equal(wallet.rows.some(r => r.kind === 'hyperliquid'), false, 'the $0.00 row is not listed');
+  assert.equal(wallet.dustCount, plain.dustCount + 1);
+  closeTo(wallet.dustUsd, plain.dustUsd + 0.001038, 0.000001);
+  const listed = wallet.rows.reduce((sum, r) => sum + r.valueUsd, 0);
+  closeTo(wallet.totalUsd - listed, wallet.dustUsd, 0.000001, 'the total still carries the dust');
+  assert.ok(wallet.byChain.hyperliquid > 0, 'and the place still counts it');
+});
+
+test('a balance the app could not price is never dust, however small', () => {
+  const wallet = buildWallet(loadDemoLedger(), {
+    holdings: [{ ...INTENTS_ETH, symbol: 'ZZZ', assetId: 'nep141:zzz.omft.near', amount: 0.000001, decimals: 18 }],
+    ok: true,
+    fetchedAt: 'now',
+  });
+  const row = wallet.rows.find(r => r.kind === 'intents');
+  assert.ok(row !== undefined, 'an unpriced holding stays on the list');
+  assert.equal(row.priced, false);
+  assert.equal(wallet.dustCount, buildWallet(loadDemoLedger()).dustCount, 'an unpriced holding never joins the dust');
 });
