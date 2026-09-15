@@ -247,11 +247,18 @@ fn open_control_window(app: &tauri::AppHandle, port: u16) -> Result<(), String> 
     // conversation beside a 560 px world plus the handle for the width, and the topbar over
     // the trade strip, the chart at its 364 px floor and the deck at its 168 px floor for the
     // height, so the window can never be dragged under what the layout can hold.
+    //
+    // NO `.center()` HERE. On macOS tao queues the maximize (an NSWindow `zoom:`) on the main
+    // dispatch queue, and tauri re-applies a centered position right after the build as a
+    // `setFrameTopLeftPoint:` on the same queue. The zoom ran first and filled the screen, then
+    // the move dragged the screen-sized window to where a 1180 x 780 one would be centered, so
+    // it opened hanging off the bottom right (Karim, 2026-09-15: "default it to fill the
+    // screen"). tao centers a window that was given no position on its own, so the fallback
+    // frame is still centered without the call, and the zoom is the last word.
     let window = WebviewWindowBuilder::new(app, "control", WebviewUrl::External(url))
         .title("Phosphor")
         .inner_size(1180.0, 780.0)
         .min_inner_size(960.0, 700.0)
-        .center()
         .resizable(true)
         .maximized(true)
         .initialization_script(&script)
