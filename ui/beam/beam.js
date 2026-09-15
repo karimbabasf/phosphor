@@ -3,10 +3,13 @@
    A phosphor screen glows where the beam hits and fades once it has moved on,
    which is the name of the product and exactly the feedback this window owes a
    person. A tool call sends a point of light from its step row in the
-   conversation to the panel the tool touched. The panel lights, holds a scan
+   conversation to the panel the tool touched. The panel lights and holds
    while the call is open, and decays over two and a half seconds once the
    result is back. Amber while a person still has to click, rose when the tool
-   failed.
+   failed. While any call is held, the assistant's seat light (the status line
+   in the head of the conversation, #agent-status) is live: that line is where
+   "working" is shown now. It used to be a band sweeping the panel, which read
+   as a scanner rather than as a screen.
 
    window.PhosphorBeam
      fire(opts)        one flight. opts:
@@ -15,17 +18,18 @@
                          tone  'glow' | 'wait' | 'down'
                          then  'hold' | 'decay' | 'none', default 'decay'
                          done  called on arrival, after `then`
-     hold(id, tone)    the scan, while a tool is in flight
-     release(id, ok)   stop the scan, then glow and decay; rose when ok is false
+     hold(id, tone)    the glow held and the seat light live, while a tool is in flight
+     release(id, ok)   let go: glow and decay, the seat light settles; rose when ok is false
      decay(id, tone)   glow once and fade, no flight
      wait(id, on)      amber, held while a proposal waits for a click
      surface(id)       the element for a surface id, or null
 
    THE CANVAS CARRIES THE FLIGHT AND NOTHING ELSE. Everything that happens on a
-   surface is two attributes (data-glow, data-glow-tone) and one appended child
-   (.surface-scan); the Surfaces block in components.css draws all of it. This
-   file never writes a style property to a surface, so a theme change or a
-   reduced-motion preference reaches the glow without it knowing.
+   surface is two attributes (data-glow, data-glow-tone), and everything that
+   happens on the seat light is one (data-live); the Surfaces block and the
+   status line in components.css draw all of it. This file never writes a
+   style property, so a theme change or a reduced-motion preference reaches
+   the glow without it knowing.
 
    The budget, and each line of it is a rule the performance audit wrote:
    the rAF handle exists only while a flight is in the air and unregisters
@@ -154,7 +158,6 @@
         waiting: false,
         pulse: false,
         tone: 'glow',
-        scan: null,
         el: null,
         wroteGlow: '',
         wroteTone: '',
@@ -179,8 +182,6 @@
       if (rec.el) {
         rec.el.removeAttribute('data-glow');
         rec.el.removeAttribute('data-glow-tone');
-        if (rec.scan && rec.scan.parentNode) rec.scan.parentNode.removeChild(rec.scan);
-        rec.scan = null;
       }
       rec.el = el;
       rec.wroteGlow = '';
@@ -198,20 +199,6 @@
       if (on) el.setAttribute('data-glow', 'on');
       else el.removeAttribute('data-glow');
       rec.wroteGlow = on;
-    }
-
-    if (rec.holds > 0 && !rec.scan) {
-      var scan = document.createElement('div');
-      scan.className = 'surface-scan';
-      /* The bar travels the surface's own height, so it reaches the bottom edge
-         of a tall panel and a short one alike. Read here, at the event, never
-         in the loop. */
-      scan.style.setProperty('--scan-h', (el.offsetHeight || 0) + 'px');
-      el.appendChild(scan);
-      rec.scan = scan;
-    } else if (rec.holds <= 0 && rec.scan) {
-      if (rec.scan.parentNode) rec.scan.parentNode.removeChild(rec.scan);
-      rec.scan = null;
     }
 
     /* The tone outlives the glow, because a rose surface fading out has to stay
@@ -233,25 +220,55 @@
     }
   }
 
+  /* THE SEAT LIGHT. One count across every surface: a tool in flight anywhere
+     is the assistant at work, so the status line in the head of the
+     conversation is live while the count is above zero and settles the moment
+     the last call lets go. One attribute, read by the status line's own
+     block in components.css; the breathing and the light through the verb
+     are drawn there. The element is looked up at the event, never kept: the
+     column rebuilds its head when it mounts, and a held reference would be
+     the old one. */
+  var liveHolds = 0;
+
+  function seat() {
+    return document.getElementById('agent-status');
+  }
+
+  function paintSeat() {
+    var line = seat();
+    if (!line) return;
+    if (liveHolds > 0) {
+      if (line.getAttribute('data-live') !== 'true') line.setAttribute('data-live', 'true');
+    } else if (line.getAttribute('data-live') !== null) {
+      line.removeAttribute('data-live');
+    }
+  }
+
   function hold(id, tone) {
     if (!id) return;
     var rec = recordFor(id);
     rec.holds += 1;
+    liveHolds += 1;
     if (tone && TONE_TOKEN[tone]) rec.tone = tone;
     paint(rec);
+    paintSeat();
   }
 
   function release(id, ok) {
     if (!id) return;
     var rec = records[String(id)];
     if (!rec) return;
-    if (rec.holds > 0) rec.holds -= 1;
+    if (rec.holds > 0) {
+      rec.holds -= 1;
+      if (liveHolds > 0) liveHolds -= 1;
+    }
     /* An error is the louder signal: it colours the surface even while another
        call is still holding it, because the thing a person needs to see is that
        something failed, not that something else is still running. */
     if (ok === false) rec.tone = 'down';
     else if (rec.tone !== 'down') rec.tone = 'glow';
     paint(rec);
+    paintSeat();
   }
 
   /* Glow once and fade: the shape of "this changed on its own". The attribute

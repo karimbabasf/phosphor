@@ -11,7 +11,7 @@
 // leaves this machine is marked, so the trace can send its light out of the
 // window and back rather than across it. And the beam flies for WRITES only:
 // a tool that changes what the window shows, or asks a person to click. A
-// read lights nothing, because a panel that scanned on every balance read was
+// read lights nothing, because a panel that lit on every balance read was
 // a window flashing for an agent thinking, and the agent thinks constantly.
 
 import test from 'node:test';
@@ -223,7 +223,7 @@ const WRITES: Array<[string, string, string]> = [
 ];
 
 for (const [tool, id, tone] of WRITES) {
-  test(`${tool} is a write: the scan holds on ${id} while it runs and the glow lands after`, () => {
+  test(`${tool} is a write: the beam holds ${id} while it runs and the glow lands after`, () => {
     const world = build();
     const node = { dot: true };
     world.step({ id: 'w', name: tool, state: 'live', node });
@@ -241,7 +241,7 @@ const QUIET: string[] = [
 ];
 
 for (const tool of QUIET) {
-  test(`${tool} is a read: no flight, no scan, no glow, and nothing to release`, () => {
+  test(`${tool} is a read: no flight, no hold, no glow, and nothing to release`, () => {
     const world = build();
     const node = { dot: true };
     world.step({ id: 'r', name: tool, state: 'live', node });

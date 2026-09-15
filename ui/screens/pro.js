@@ -51,61 +51,6 @@
     'hyperliquid-perps': 'Hyperliquid'
   };
 
-  /* One glyph per kind of rule on the Policy card, so a person can tell an ask
-     from a refusal before reading it: a hand for what gets asked, a wall for
-     what gets refused, a stack of coins for what is held back, a door for
-     where money may go. Strokes on a 0 0 16 16 box in currentColor, drawn
-     here so the window loads no icon set. */
-  var SVG_NS = 'http://www.w3.org/2000/svg';
-  var GLYPHS = {
-    hand: [
-      'M12 7.33V4a1.33 1.33 0 0 0-2.67 0v.67',
-      'M9.33 6.67V2.67a1.33 1.33 0 0 0-2.67 0V4',
-      'M6.67 7V4a1.33 1.33 0 0 0-2.67 0v5.33',
-      'M12 5.33a1.33 1.33 0 1 1 2.67 0v4a5.33 5.33 0 0 1-5.33 5.33H8c-1.87 0-3-.57-4-1.56l-2.4-2.4a1.33 1.33 0 0 1 1.89-1.88L4.67 10'
-    ],
-    wall: [
-      'M3.75 3.75h8.5a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1h-8.5a1 1 0 0 1-1-1v-6.5a1 1 0 0 1 1-1z',
-      'M2.75 6.6h10.5M2.75 9.4h10.5',
-      'M8 3.75v2.85M5.4 6.6v2.8M10.6 6.6v2.8M8 9.4v2.85'
-    ],
-    coin: [
-      'M8 6.5c3.2 0 5.25-1 5.25-2.25S11.2 2 8 2 2.75 3 2.75 4.25 4.8 6.5 8 6.5z',
-      'M2.75 4.25V8c0 1.25 2.05 2.25 5.25 2.25S13.25 9.25 13.25 8V4.25',
-      'M2.75 8v3.75C2.75 13 4.8 14 8 14s5.25-1 5.25-2.25V8'
-    ],
-    door: [
-      'M12 13.33V4a1.33 1.33 0 0 0-1.33-1.33H5.33A1.33 1.33 0 0 0 4 4v9.33',
-      'M1.33 13.33h13.33',
-      'M9.33 8v.01'
-    ]
-  };
-
-  /* Built in the svg namespace rather than by innerHTML, the way dom.mark does
-     it. Null where there is no namespace to build in (the unit harness), and
-     the rule draws without its glyph. */
-  function glyph(name) {
-    var paths = GLYPHS[name];
-    if (!paths || typeof document.createElementNS !== 'function') return null;
-    var svg = document.createElementNS(SVG_NS, 'svg');
-    svg.setAttribute('viewBox', '0 0 16 16');
-    svg.setAttribute('width', '16');
-    svg.setAttribute('height', '16');
-    svg.setAttribute('fill', 'none');
-    svg.setAttribute('stroke', 'currentColor');
-    svg.setAttribute('stroke-width', '1.5');
-    svg.setAttribute('stroke-linecap', 'round');
-    svg.setAttribute('stroke-linejoin', 'round');
-    svg.setAttribute('aria-hidden', 'true');
-    svg.setAttribute('focusable', 'false');
-    for (var i = 0; i < paths.length; i += 1) {
-      var path = document.createElementNS(SVG_NS, 'path');
-      path.setAttribute('d', paths[i]);
-      svg.appendChild(path);
-    }
-    return svg;
-  }
-
   function boot() {
     var host = document.getElementById('view-pro');
     if (!host) return;
@@ -163,23 +108,24 @@
     activity.body.appendChild(feeRow);
     grid.appendChild(activity.node);
 
-    /* Policy: what the app will do, as rules a person can read in one look.
-       Karim, 2026-09-14: "this thing should be policy and not limits, we
-       shouldnt have limits unless specified." So a rule that is not set is not
-       drawn, the count in the sub line counts only what is drawn, and the one
-       meter on the card sits under the one rule it belongs to. The surface
-       keeps its id, because the beam finds it by name. */
-    /* TWO REGIONS, AND ONLY THE FIRST ONE SCROLLS.
+    /* Limits: the policy, the daily spend and the allowlist. It is reference
+       material, so it reads as reference material: sentences, one meter, and
+       the addresses behind the one thing on this deck worth a click to open. */
+    /* THREE REGIONS, AND ONLY THE MIDDLE ONE SCROLLS.
 
-       The rules are the part whose length this window does not control, a
-       policy can carry five of them or fifteen, so the rules are the part that
-       scrolls, with the allowlist folded under the rule it belongs to. The
-       line under them, which tells a person how to change a rule, is fixed
-       furniture and stays on screen whatever the policy says. */
-    var limits = panel('Policy', 'span-5', 'rules');
+       The whole body used to scroll, so on a short panel the thing under the cut
+       was whatever happened to be last: the one control on the panel, or half of
+       the sentence that tells a person how to change a limit. The sentences are
+       the part whose length this window does not control, a policy can carry
+       five of them or fifteen, so the sentences are the part that scrolls. The
+       spend meter above and the allowlist and the footnote below are fixed
+       furniture and stay on screen whatever the policy says. */
+    var limits = panel('Limits', 'span-5', 'rules');
     var limitsBody = dom.el('div', 'stack-2 grow limits-body');
-    var limitsRules = dom.el('div', 'rules scrolls grow');
+    var limitsSpend = dom.el('div', 'stack-2');
+    var limitsRules = dom.el('div', 'stack-2 scrolls grow');
     var limitsFoot = dom.el('div', 'stack-2');
+    limitsBody.appendChild(limitsSpend);
     limitsBody.appendChild(limitsRules);
     limitsBody.appendChild(limitsFoot);
     limits.body.appendChild(limitsBody);
@@ -196,6 +142,7 @@
       trading: trading,
       tradingBody: tradingBody,
       limits: limits,
+      limitsSpend: limitsSpend,
       limitsRules: limitsRules,
       limitsFoot: limitsFoot,
       activity: activity,
@@ -776,236 +723,174 @@
     return row;
   }
 
-  /* THE POLICY CARD.
-
-     Rules, in the order a person needs them: what gets asked, what gets
-     refused at once, what gets refused over a day, what is held back for gas,
-     and where money may go. Each one is the server's own sentence
-     (src/policy/render.ts) said in the app's voice, so the card and the
-     assistant never disagree about a number. A rule that is not set is not
-     drawn, which is what "no limits unless specified" means here: an unset
-     allowlist draws no door, a policy with no daily cap draws no meter. The
-     sentences this card does not know the shape of (an issuer cap, a
-     forbidden issuer) still render, verbatim, behind a wall, because a rule
-     the app enforces is a rule the person gets to read. */
-  var allowOpen = false;
-
   function renderLimits(state) {
+    dom.clear(refs.limitsSpend);
     dom.clear(refs.limitsRules);
     dom.clear(refs.limitsFoot);
     var policy = state.policy || {};
     var sentences = state.sentences || policy.sentences || [];
+
+    /* The daily limit: rolling 24 hours, survives a restart, so it is a limit a
+       person can reason about rather than one that resets when the app does. */
     var daily = state.dailyLimit;
-    var rules = parseRules(sentences, policy);
-    var drawn = 0;
-
-    if (rules.kill) {
-      var kill = rule('wall', 'Refuses everything while the kill switch is on.');
-      kill.node.dataset.rule = 'kill';
-      kill.node.dataset.tone = 'down';
-      refs.limitsRules.appendChild(kill.node);
-      drawn += 1;
+    if (daily) {
+      var block = dom.el('div', 'stack-2');
+      var top = dom.el('div', 'between');
+      top.appendChild(dom.el('span', 'label', 'Limit per day'));
+      var value = dom.el('span', 'body mono');
+      dom.setText(value, dom.usd(daily.spentUsd) + ' of ' + dom.usd(daily.capUsd, 0));
+      top.appendChild(value);
+      block.appendChild(top);
+      var meter = dom.el('div', 'meter');
+      var fill = dom.el('div', 'meter-fill');
+      var used = daily.capUsd ? Math.min(1, daily.spentUsd / daily.capUsd) : 0;
+      fill.style.width = (used * 100).toFixed(1) + '%';
+      /* Something spent is drawn as something spent. Against a $25,000 cap a
+         real $22.84 is 0.09 percent, which rounds to a sub-pixel sliver and
+         reads as a fault rather than as a number. */
+      dom.setAttr(fill, 'data-spent', daily.spentUsd > 0 ? 'true' : null);
+      if (used > 0.8) fill.dataset.tone = 'warn';
+      meter.appendChild(fill);
+      block.appendChild(meter);
+      /* resetsAt is when the oldest counted spend leaves the window, not
+         midnight. A cap that rolls is described as rolling. */
+      block.appendChild(dom.el('p', 'meta', daily.resetsAt === null
+        ? 'Nothing has been spent in the last 24 hours.'
+        : 'The oldest of it stops counting ' + resetWords(daily.resetsAt) + '.'));
+      refs.limitsSpend.appendChild(block);
     }
 
-    if (rules.ask) {
-      var ask = rule('hand', 'Asks you before anything above ' + rules.ask + '.');
-      ask.node.dataset.rule = 'ask';
-      refs.limitsRules.appendChild(ask.node);
-      drawn += 1;
-    }
-
-    if (rules.perTx) {
-      var once = rule('wall', 'Refuses any single transaction above ' + rules.perTx + '.');
-      once.node.dataset.rule = 'refuse';
-      refs.limitsRules.appendChild(once.node);
-      drawn += 1;
-    }
-
-    /* The one meter on the card, under the one rule it measures. Only a cap
-       the daily counter knows about draws it: a sentence with no counter
-       behind it is a rule, not a gauge. */
-    if (rules.perDay) {
-      var day = rule('wall', 'Refuses more than ' + rules.perDay + ' in any 24 hours.');
-      day.node.dataset.rule = 'daily';
-      if (daily && daily.capUsd > 0) {
-        var spent = Number(daily.spentUsd) || 0;
-        var used = Math.min(1, spent / daily.capUsd);
-        var figure = dom.el('span', 'rule-figure', usdShort(spent) + ' used');
-        /* resetsAt is when the oldest counted spend leaves the window, not
-           midnight. A cap that rolls is described as rolling. */
-        figure.title = daily.resetsAt === null || spent === 0
-          ? 'Nothing has been spent in the last 24 hours.'
-          : 'The oldest of it stops counting ' + resetWords(daily.resetsAt) + '.';
-        day.node.appendChild(figure);
-        var meter = dom.el('div', 'rule-meter');
-        meter.style.setProperty('--used', (used * 100).toFixed(2) + '%');
-        /* Something spent is drawn as something spent. Against a $25,000 cap a
-           real $22.84 is 0.09 percent, which rounds to a sub-pixel sliver and
-           reads as a fault rather than as a number. */
-        dom.setAttr(meter, 'data-spent', spent > 0 ? 'true' : null);
-        if (used > 0.8) {
-          meter.dataset.tone = 'warn';
-          figure.dataset.tone = 'warn';
-        }
-        meter.appendChild(dom.el('i'));
-        day.node.appendChild(meter);
-      }
-      refs.limitsRules.appendChild(day.node);
-      drawn += 1;
-    }
+    /* The destination sentence is dropped here because the allowlist gets its
+       own block below, and printing eight addresses twice on one panel is how a
+       person stops reading either copy. */
+    var spoken = sentences.filter(function (line) {
+      return !/allowed destinations/i.test(String(line));
+    });
 
     /* THE GAS FLOORS ARE ONE RULE, NOT FOUR.
-       They arrive as one sentence per chain, and four lines that differ in two
-       words each are four lines nobody reads. One rule naming the four
-       numbers says the same thing and can be taken in at a glance. */
-    if (rules.gas.length) {
-      var gas = rule('coin', rules.gas.length === 1
-        ? 'Keeps gas back on ' + chainName(rules.gas[0].chain) + '.'
-        : 'Keeps gas back on each chain.');
-      gas.node.dataset.rule = 'gas';
-      gas.text.appendChild(dom.el('span', 'meta mono', rules.gas.map(function (g) {
-        return chainName(g.chain) + ' ' + g.amount;
-      }).join(', ')));
-      refs.limitsRules.appendChild(gas.node);
-      drawn += 1;
+       They arrived as four sentences of identical shape, one per chain, and
+       four lines that differ in two words each are four lines nobody reads. One
+       line naming the four numbers says the same thing and can be taken in at a
+       glance. Anything that is not a gas floor keeps its own sentence, because
+       those genuinely are separate rules. */
+    var gas = [];
+    var rules = [];
+    for (var i = 0; i < spoken.length; i += 1) {
+      var line = String(spoken[i]);
+      var found = /^keep at least (.+) of gas on (\w+)\.?$/i.exec(line);
+      if (found) gas.push({ amount: found[1], chain: found[2] });
+      else rules.push(line);
     }
 
-    for (var o = 0; o < rules.other.length; o += 1) {
-      var other = rule('wall', rules.other[o]);
-      other.node.dataset.rule = 'other';
-      refs.limitsRules.appendChild(other.node);
-      drawn += 1;
+    if (rules.length) {
+      var list = dom.el('div', 'stack-2');
+      for (var r = 0; r < rules.length; r += 1) {
+        list.appendChild(dom.el('p', 'body limit-line', rules[r]));
+      }
+      refs.limitsRules.appendChild(list);
     }
 
-    /* The destination allowlist existed in the policy engine with no way to
-       see it. This is where it lives: the rule names the venues and counts the
-       wallets, and the addresses fold under it. An address is checked
-       character by character on the day somebody has a reason to and is noise
-       on every other day; a venue name is read at a glance and is the half of
-       this list that answers a question. */
+    if (gas.length) {
+      var gasRow = dom.el('div', 'between limit-line');
+      gasRow.appendChild(dom.el('span', 'body', gas.length === 1 ? 'Gas kept back' : 'Gas kept back on each chain'));
+      var amounts = gas.map(function (g) { return chainName(g.chain) + ' ' + g.amount; }).join(', ');
+      gasRow.appendChild(dom.el('span', 'meta mono', amounts));
+      refs.limitsRules.appendChild(gasRow);
+    }
+
+    /* The destination allowlist existed in the policy engine with no way to see
+       it. This is where it lives now. */
     var allow = policy.outbound && Array.isArray(policy.outbound.destinationAllowlist)
       ? policy.outbound.destinationAllowlist
       : [];
-    if (allow.length) {
-      var venues = [];
-      var addresses = [];
-      for (var a = 0; a < allow.length; a += 1) {
-        if (VENUE_NAMES[allow[a]]) venues.push(VENUE_NAMES[allow[a]]);
-        else addresses.push(allow[a]);
-      }
-      var names = venues.slice();
-      if (addresses.length) {
-        names.unshift(addresses.length === 1 ? '1 wallet of yours' : addresses.length + ' wallets of yours');
-      }
-      var sentence = 'Pays only ' + listWords(names) + '.';
-
-      var door = rule('door', sentence, addresses.length ? 'button' : 'div');
-      door.node.dataset.rule = 'destinations';
-      refs.limitsRules.appendChild(door.node);
-      drawn += 1;
-
-      if (addresses.length) {
-        door.node.className += ' opens';
-        door.node.type = 'button';
-        door.node.setAttribute('aria-label', sentence);
-        door.node.appendChild(dom.el('span', 'chev'));
-        var box = dom.el('div', 'allowlist');
-        for (var b = 0; b < addresses.length; b += 1) {
-          box.appendChild(dom.el('p', 'addr dim', addresses[b]));
-        }
-        dom.setHidden(box, !allowOpen);
-        dom.setAttr(door.node, 'aria-expanded', allowOpen ? 'true' : 'false');
-        dom.setAttr(door.node, 'data-open', allowOpen ? 'true' : null);
-        dom.on(door.node, 'click', function () {
-          allowOpen = box.hidden;
-          dom.setHidden(box, !allowOpen);
-          dom.setAttr(door.node, 'aria-expanded', allowOpen ? 'true' : 'false');
-          dom.setAttr(door.node, 'data-open', allowOpen ? 'true' : null);
-          refs.limitsCut();
-        });
-        refs.limitsRules.appendChild(box);
-      }
+    var wrap = dom.el('div', 'stack-2');
+    if (!allow.length) {
+      wrap.appendChild(dom.el('p', 'label', 'Money can only go to your own wallets and these venues'));
+      wrap.appendChild(dom.el('p', 'meta', 'No list is set, so a destination is checked against your limits alone.'));
+      refs.limitsFoot.appendChild(wrap);
+      refs.limitsFoot.appendChild(askLine());
+      setSummary(refs.limits, limitsSummary(state));
+      refs.limitsCut();
+      return;
     }
 
-    if (!drawn) {
-      refs.limitsRules.appendChild(emptyBlock('No rules set',
-        'Everything your assistant does will ask you first.'));
+    /* The addresses fold and the names do not. An address is checked character
+       by character on the day somebody has a reason to and is noise on every
+       other day; a venue name is read at a glance and is the half of this list
+       that answers a question. */
+    var venues = [];
+    var addresses = [];
+    for (var a = 0; a < allow.length; a += 1) {
+      if (VENUE_NAMES[allow[a]]) venues.push(VENUE_NAMES[allow[a]]);
+      else addresses.push(allow[a]);
     }
 
+    var head = dom.el('button', 'allow-head opens');
+    head.type = 'button';
+    var headText = addresses.length === 1 ? '1 wallet of yours' : addresses.length + ' wallets of yours';
+    if (venues.length) headText += ', ' + venues.join(', ');
+    /* One line, truncated. It wrapped to two, and on a short panel that put the
+       one control here half under the cut, which is the fade hiding a button
+       rather than a footnote. The whole list is one click away and the label
+       carries it for a reader who cannot see the end of the line. */
+    var label = dom.el('span', 'body grow truncate', 'Money can only go to ' + headText);
+    head.setAttribute('aria-label', 'Money can only go to ' + headText);
+    head.appendChild(label);
+    head.appendChild(dom.el('span', 'chev'));
+    wrap.appendChild(head);
+
+    var box = dom.el('div', 'allowlist');
+    box.hidden = true;
+    for (var b = 0; b < addresses.length; b += 1) {
+      box.appendChild(dom.el('p', 'addr dim', addresses[b]));
+    }
+    dom.on(head, 'click', function () {
+      var open = !box.hidden;
+      dom.setHidden(box, open);
+      dom.setAttr(head, 'aria-expanded', open ? 'false' : 'true');
+      refs.limitsCut();
+    });
+    dom.setAttr(head, 'aria-expanded', 'false');
+    if (addresses.length) wrap.appendChild(box);
+    refs.limitsFoot.appendChild(wrap);
     refs.limitsFoot.appendChild(askLine());
-    setSummary(refs.limits, policySummary(drawn, daily));
+
+    setSummary(refs.limits, limitsSummary(state));
     refs.limitsCut();
   }
 
-  /* One rule row: the glyph, the sentence, and room on the right for the one
-     figure a rule may carry. The sentence is a span of its own so a second
-     line (the gas amounts) can sit under it. */
-  function rule(kind, text, tag) {
-    var node = dom.el(tag || 'div', 'rule');
-    var mark = dom.el('span', 'rule-glyph');
-    var svg = glyph(kind);
-    if (svg) mark.appendChild(svg);
-    node.appendChild(mark);
-    var body = dom.el('div', 'rule-text');
-    body.appendChild(dom.el('span', 'rule-line', text));
-    node.appendChild(body);
-    return { node: node, text: body };
-  }
+  /* One sentence, rather than an Edit button on every rule that only ever opened
+     a toast saying the same thing. Seven buttons that cannot do what they offer
+     is worse than no button: it teaches a person that the controls on this
+     screen are decoration.
 
-  /* What the sentences say, by shape. The three caps are always sent by the
-     server and always render; gas floors and the rest render only when set.
-     Any sentence with a shape this card does not know is kept whole. */
-  function parseRules(sentences, policy) {
-    var out = { ask: '', perTx: '', perDay: '', gas: [], other: [], kill: false };
-    for (var i = 0; i < sentences.length; i += 1) {
-      var line = String(sentences[i]).trim();
-      var found;
-      if (/allowed destinations/i.test(line)) continue;
-      if ((found = /^ask me before anything above (\$[\d,]+(?:\.\d+)?)\.?$/i.exec(line))) out.ask = found[1];
-      else if ((found = /^refuse any single transaction above (\$[\d,]+(?:\.\d+)?)\.?$/i.exec(line))) out.perTx = found[1];
-      else if ((found = /^refuse more than (\$[\d,]+(?:\.\d+)?) in any 24 hours\.?$/i.exec(line))) out.perDay = found[1];
-      else if ((found = /^keep at least (.+) of gas on (\w+)\.?$/i.exec(line))) out.gas.push({ amount: found[1], chain: found[2] });
-      else if (/^kill switch on/i.test(line)) out.kill = true;
-      else if (line) out.other.push(line);
-    }
-    /* The typed policy outranks the sentence when both are there, so a number
-       never comes from a regex when it can come from a field. */
-    var gate = policy && policy.approval;
-    if (gate && typeof gate.thresholdUsd === 'number') out.ask = usdShort(gate.thresholdUsd);
-    return out;
-  }
-
-  /* "a, b and c": a list in a sentence, not a list with commas. */
-  function listWords(items) {
-    if (items.length < 2) return items.join('');
-    return items.slice(0, -1).join(', ') + ' and ' + items[items.length - 1];
-  }
-
-  /* Whole dollars when the figure is whole, cents when it is not: "$120" and
-     "$1,150.20", never "$120.00". */
-  function usdShort(value) {
-    var n = Number(value) || 0;
-    var cents = Math.round(n * 100);
-    return dom.usd(n, cents % 100 === 0 ? 0 : 2);
-  }
-
-  /* One sentence, rather than an Edit button on every rule that only ever
-     opened a toast saying the same thing. Seven buttons that cannot do what
-     they offer is worse than no button: it teaches a person that the controls
-     on this screen are decoration. It sits last, under the rules, because this
-     panel holds more than its box on a short window and something has to be
-     the thing below the cut. */
+     It sits last, under the allowlist, because this panel holds more than its
+     box on a short window and something has to be the thing below the cut. A
+     line of prose is the right thing: putting it above the allowlist pushed the
+     one control on the panel off the bottom, so the fade was hiding a button
+     rather than a footnote. */
   function askLine() {
-    return dom.el('p', 'meta', 'Ask your assistant to change a rule. Every change waits for your click.');
+    return dom.el('p', 'meta',
+      'Ask your assistant to change any of these. A limit change files a request you have to click.');
   }
 
-  /* The count of what is drawn, then the day's spend in words: "4 rules,
-     nothing spent today" or "4 rules, $120 spent today". */
-  function policySummary(drawn, daily) {
-    var parts = [drawn === 1 ? '1 rule' : drawn + ' rules'];
-    if (daily && daily.capUsd > 0) {
-      var spent = Number(daily.spentUsd) || 0;
-      parts.push(spent > 0 ? usdShort(spent) + ' spent today' : 'nothing spent today');
+  /* The three facts somebody opens Limits to check: what gets asked, what gets
+     refused, and how much of today's room is gone. */
+  function limitsSummary(state) {
+    var parts = [];
+    var gate = state.policy && state.policy.approval;
+    var ask = gate && typeof gate.thresholdUsd === 'number' ? gate.thresholdUsd : null;
+    if (ask === null) {
+      var sentences = state.sentences || (state.policy && state.policy.sentences) || [];
+      for (var i = 0; i < sentences.length; i += 1) {
+        var found = /ask me before anything above \$([\d,.]+)/i.exec(String(sentences[i]));
+        if (found) { ask = Number(found[1].replace(/,/g, '')); break; }
+      }
+    }
+    if (ask !== null && isFinite(ask)) parts.push('Asks above ' + dom.usd(ask, 0));
+    var daily = state.dailyLimit;
+    if (daily && daily.capUsd) {
+      parts.push(dom.usd(daily.spentUsd) + ' of ' + dom.usd(daily.capUsd, 0) + ' used today');
     }
     return parts.join(', ');
   }

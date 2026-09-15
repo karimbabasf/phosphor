@@ -1,9 +1,13 @@
 // The beam's two properties, and neither is a tidiness preference.
 //
-// One: what happens ON a surface is an attribute and one appended child.
-// components.css owns every pixel of the glow and the scan, so a theme change
-// or a reduced-motion preference reaches them without this file knowing. A
-// style property written here would be a second place the look lives.
+// One: what happens ON a surface is an attribute, and what happens on the
+// assistant's seat light while a call is held is one more attribute on the
+// status line in the head of the conversation. components.css owns every
+// pixel of the glow and the light, so a theme change or a reduced-motion
+// preference reaches them without this file knowing. A style property
+// written here would be a second place the look lives. (It used to hang a
+// sweeping band on the held surface; the sweep read as a scanner, so the
+// working signal moved to the seat light on 2026-09-14.)
 //
 // Two: the loop reads no layout. Rects are read at fire time, once, and the
 // flight runs off those numbers. A getBoundingClientRect inside a draw is a
@@ -95,7 +99,10 @@ function build(options: { reduced?: boolean } = {}): World {
 
   const body = makeEl('body', 'body');
   const stage = add('div', 'stage', 'window', body);
-  add('div', 'conversation', 'assistant', stage);
+  const conversation = add('div', 'conversation', 'assistant', stage);
+  /* The seat light: the status line agent.js builds in the head of the
+     conversation, which the beam finds by id and sets live while it holds. */
+  add('div', 'agent-status', null, conversation);
   const topbar = add('header', 'topbar', null, body);
   const tabBasic = add('button', 'tab-basic', 'tab-basic', topbar);
   add('button', 'tab-trade', 'tab-trade', topbar);
@@ -228,15 +235,10 @@ function build(options: { reduced?: boolean } = {}): World {
   };
 }
 
-test('the look lives in the stylesheet: the only style property written is the scan height', () => {
+test('the look lives in the stylesheet: beam.js writes no style property at all', () => {
   const uses = SOURCE.match(/\.style\b[^\n]*/g) ?? [];
-  assert.ok(uses.length > 0, 'beam.js writes no style at all, so this test is not looking at it');
-  for (const use of uses) {
-    assert.ok(
-      /^\.style\.setProperty\('--scan-h'/.test(use),
-      `beam.js writes a style property other than the scan height: ${use.trim()}`,
-    );
-  }
+  assert.deepEqual(uses, [], `beam.js writes a style property: ${uses.map((u) => u.trim()).join(', ')}`);
+  assert.equal(/\boffsetHeight\b|\boffsetWidth\b/.test(SOURCE), false, "beam.js reads a surface's size");
 });
 
 test('a beam aimed at a surface that is not in the window is a no-op, not a throw', () => {
@@ -249,45 +251,63 @@ test('a beam aimed at a surface that is not in the window is a no-op, not a thro
   world.beam.wait('nothing-here', true);
 });
 
-test('a hold lights the surface and hangs a scan on it', () => {
+test('a hold lights the surface and sets the seat light live, and hangs nothing on the panel', () => {
   const world = build();
   const panel = world.el('holdings-basic');
+  const seat = world.el('agent-status');
   world.beam.hold('holdings');
   assert.equal(panel.getAttribute('data-glow'), 'on');
-  assert.equal(panel.children.length, 1);
-  assert.equal(panel.children[0].className, 'surface-scan');
-  assert.equal(panel.children[0].styles['--scan-h'], '220px');
+  assert.equal(panel.children.length, 0, 'the hold appended something to the surface');
+  assert.equal(seat.getAttribute('data-live'), 'true', 'the seat light did not come on');
 });
 
-test('a failed tool releases rose and takes the scan with it', () => {
+test('a failed tool releases rose and the seat light settles with it', () => {
   const world = build();
   const panel = world.el('holdings-basic');
+  const seat = world.el('agent-status');
   world.beam.hold('holdings');
   world.beam.release('holdings', false);
   assert.equal(panel.getAttribute('data-glow-tone'), 'down');
   assert.equal(panel.getAttribute('data-glow'), null, 'the glow is still held after a release');
-  assert.equal(panel.children.length, 0, 'the scan outlived the tool call');
+  assert.equal(seat.getAttribute('data-live'), null, 'the seat light outlived the tool call');
 });
 
-test('two tools on one surface keep one scan, and the last one out ends it', () => {
+test('two tools keep one seat light, on any surfaces, and the last one out ends it', () => {
   const world = build();
-  const panel = world.el('holdings-basic');
+  const seat = world.el('agent-status');
   world.beam.hold('holdings');
+  world.beam.hold('chart');
+  assert.equal(seat.getAttribute('data-live'), 'true');
+  world.beam.release('holdings', true);
+  assert.equal(seat.getAttribute('data-live'), 'true', 'a tool still in flight lost the seat light');
+  world.beam.release('chart', true);
+  assert.equal(seat.getAttribute('data-live'), null);
+  /* A release with nothing held is a no-op that cannot push the count below zero. */
+  world.beam.release('chart', true);
   world.beam.hold('holdings');
-  assert.equal(panel.children.length, 1);
+  assert.equal(seat.getAttribute('data-live'), 'true', 'a stray release left the count negative');
   world.beam.release('holdings', true);
-  assert.equal(panel.children.length, 1, 'a tool still in flight lost its scan');
+  assert.equal(seat.getAttribute('data-live'), null);
+});
+
+test('a window with no seat light in it takes a hold without a throw', () => {
+  const world = build();
+  const seat = world.el('agent-status');
+  seat.parentNode.removeChild(seat);
+  world.doc.getElementById = (id: string) => (id === 'agent-status' ? null : world.el(id) || null);
+  world.beam.hold('holdings');
+  assert.equal(world.el('holdings-basic').getAttribute('data-glow'), 'on');
   world.beam.release('holdings', true);
-  assert.equal(panel.children.length, 0);
 });
 
 test('an amber wait is held until it is turned off', () => {
   const world = build();
   const panel = world.el('holdings-basic');
+  const seat = world.el('agent-status');
   world.beam.wait('holdings', true);
   assert.equal(panel.getAttribute('data-glow'), 'on');
   assert.equal(panel.getAttribute('data-glow-tone'), 'wait');
-  assert.equal(panel.children.length, 0, 'a wait is not a tool in flight and draws no scan');
+  assert.equal(seat.getAttribute('data-live'), null, 'a wait is not a tool in flight and does not light the seat');
   world.beam.wait('holdings', false);
   assert.equal(panel.getAttribute('data-glow'), null);
 });
@@ -321,7 +341,7 @@ test('the flight reads geometry once and the loop reads none of it', () => {
   assert.ok(world.draws() > 0, 'the loop painted nothing');
 });
 
-test('the surface work reads no layout at all beyond the scan height', () => {
+test('the surface work reads no layout at all', () => {
   const world = build();
   rectReads = 0;
   world.beam.hold('holdings');

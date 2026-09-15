@@ -143,93 +143,20 @@
   background: var(--bg-2);
 }
 
-/* ---------- policy ----------
+/* ---------- limits ---------- */
 
-   The Policy card is a list of .rule rows (components.css, the money grammar):
-   a glyph, a sentence, and the one figure a rule may carry. What this section
-   adds is the one row that opens (the destinations rule, onto its addresses),
-   the fold under it, and the tone of a rule that refuses everything. */
-
-/* The rows sit in a region that scrolls inside itself; the rules between them
-   are the rows' own top borders, so the list needs no gap. */
-.rules {
-  display: flex;
-  flex-direction: column;
+.limit-row {
+  padding: var(--s-2) 0;
+  border-top: 1px solid var(--line);
 }
 
-/* The one rule that opens is a button, and it is drawn as the Money rows are
-   drawn: the hover ground sits on the row's own box and the rule above it
-   goes under the ground, so a lit row is one clean slab rather than a slab
-   with a line through its top edge. .opens gives it all four borders; only
-   the top one is a rule. */
-button.rule {
-  width: 100%;
-  text-align: left;
-  color: inherit;
-  font: inherit;
-  border-left: 0;
-  border-right: 0;
-  border-bottom: 0;
+.limit-row:first-of-type {
+  border-top: 0;
 }
 
-@media (hover: hover) and (pointer: fine) {
-  button.rule.opens:hover {
-    border-radius: var(--radius-sm);
-    border-top-color: transparent;
-  }
-}
-
-button.rule.opens:focus-visible {
-  border-radius: var(--radius-sm);
-}
-
-button.rule.opens[data-open="true"] .chev { transform: rotate(135deg); }
-
-@media (hover: hover) and (pointer: fine) {
-  button.rule.opens[data-open="true"]:hover .chev { transform: translateY(2px) rotate(135deg); }
-}
-
-.rule > .chev {
-  align-self: center;
-  margin-right: 2px;
-}
-
-/* A rule that refuses everything is a state, and it is the one rule drawn in
-   a state colour. */
-.rule[data-tone="down"] > .rule-glyph,
-.rule[data-tone="down"] > .rule-text { color: var(--down); }
-
-/* The meter under the daily rule takes a line of its own with its figure at
-   the right end, so the sentence keeps the whole width and never wraps
-   around the figure. Nothing spent draws a line with no fill, and something
-   spent is drawn as something spent: against a $25,000 cap a real $22.84 is
-   a sub-pixel sliver otherwise, which reads as a fault. */
-.rule[data-rule="daily"] { row-gap: var(--s-1); }
-
-.rule[data-rule="daily"] > .rule-text { grid-column: 2 / span 2; }
-
-.rule[data-rule="daily"] > .rule-meter {
-  grid-column: 2;
-  grid-row: 2;
-  align-self: center;
-  margin-top: 0;
-}
-
-.rule[data-rule="daily"] > .rule-figure {
-  grid-column: 3;
-  grid-row: 2;
-  align-self: center;
-  padding-top: 0;
-}
-
-.rule-meter[data-spent="true"] > i { min-width: 3px; }
-
-/* The addresses behind the destinations rule, folded under it and indented
-   to its sentence. */
 .allowlist {
   max-height: 168px;
   overflow-y: auto;
-  margin: 0 0 var(--s-2) 28px;
   padding: var(--s-3);
   border-radius: var(--radius-sm);
   background: var(--bg-2);
@@ -247,7 +174,9 @@ button.rule.opens[data-open="true"] .chev { transform: rotate(135deg); }
    itself, and the first row keeps the rule that separates it from the head. */
 .tx.receipt-row {
   width: 100%;
-  padding: var(--s-2) var(--s-4);
+  text-align: left;
+  background: transparent;
+  transition: background-color var(--dur-press) var(--ease-out);
 }
 
 .activity-list > .tx.receipt-row:first-child {
@@ -266,16 +195,9 @@ button.rule.opens[data-open="true"] .chev { transform: rotate(135deg); }
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   overflow: hidden;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
-
-/* A time that is really an outcome ("Did not go through") reads in the warning
-   tone; the grammar's own 12 px stays. */
-.receipt-row > .tx-when.warn { color: var(--warn); }
-
-/* A move that did not go through left nothing, so its amount is unsigned and
-   quiet: the same weight as the time, not a number that means money. */
-.receipt-row > .tx-amount.dim { color: var(--text-3); }
 
 /* The rail's own words, on the opened receipt. Wrapped rather than clamped, because here the
    whole thing is the point, and broken anywhere because an intent hash is one 44 character
@@ -306,29 +228,37 @@ button.rule.opens[data-open="true"] .chev { transform: rotate(135deg); }
 /* ---------- the conversation column ---------- */
 
 .agent-head {
-  align-items: center;
+  align-items: flex-start;
   flex: 0 0 auto;
   gap: var(--s-3);
   min-height: 30px;
 }
 
-/* The name and the seat light on one line. The light shrinks before the
-   name does, and its verb trims with an ellipsis rather than wrapping, so a
-   long tool phrase beside two buttons never pushes the head to two rows. */
+/* The name and the seat light on one line while the light has one word to
+   say ("Assistant  . Ready"). At work the verb is a tool phrase and the two
+   stop buttons take the right of the row, so the line drops under the name
+   and gets the full width rather than trimming "Reading the chart" to three
+   letters beside them. The wrap is the flex row's own: nothing is measured. */
 .agent-title {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--s-3);
+  gap: var(--s-1) var(--s-3);
   min-width: 0;
   flex: 1 1 auto;
 }
 
+/* The name stands as tall as the small buttons on its right, so the two sit
+   on one centre line whether or not the light has dropped to a second row. */
 .agent-title > .title-sm {
   flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
 }
 
 .agent-status {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -347,6 +277,14 @@ button.rule.opens[data-open="true"] .chev { transform: rotate(135deg); }
 .agent-status[data-state="off"] > .status-dot { background: var(--text-3); }
 .agent-status[data-state="starting"] > .status-dot { background: color-mix(in srgb, var(--beam) 60%, var(--text-3)); }
 .agent-status[data-state="error"] > .status-dot { background: var(--down); }
+/* A time that is really an outcome ("Did not go through") reads in the warning
+   tone; the grammar's own 12 px stays. */
+.receipt-row > .tx-when.warn { color: var(--warn); }
+
+/* A move that did not go through left nothing, so its amount is unsigned and
+   quiet: the same weight as the time, not a number that means money. */
+.receipt-row > .tx-amount.dim { color: var(--text-3); }
+
 .agent-status[data-state="stopped"] > .status-dot {
   background: transparent;
   box-shadow: inset 0 0 0 1.5px var(--text-3);
@@ -894,67 +832,25 @@ button.rule.opens[data-open="true"] .chev { transform: rotate(135deg); }
 
 /* THE TURN BAR. One line between the transcript and the composer, present only
    while the assistant is answering, saying what it is doing right now and how
-   long it has been at it. It sits outside the scroll on purpose: a person who
-   has scrolled back to read something still has to be able to tell a working
-   agent from a dead one. */
+   long it has been at it. It is heard and not seen since 2026-09-14: the seat
+   light in the head says the same words with the same clock and never
+   scrolls away either, and two lines with two dots and two clocks fought
+   each other. The bar stays in the tree as the live region it always was,
+   so a screen reader still hears "thinking", "working" and "writing the
+   answer", and the transcript tests still read it. Clipped to a pixel
+   rather than display: none, because display: none takes it out of the
+   accessibility tree too. */
 .turn-bar {
-  display: grid;
-  grid-template-columns: 6px 1fr auto;
-  gap: var(--s-2);
-  align-items: center;
-  min-height: 30px;
-  padding: 0 var(--s-4);
-  font-size: var(--fs-13);
-  color: var(--text-2);
-  border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
-  background: color-mix(in srgb, var(--bg-0) 92%, transparent);
-  animation: turnin var(--dur-enter) var(--ease-out) both;
-}
-
-@keyframes turnin {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-.turn-what {
-  min-width: 0;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
   white-space: nowrap;
-}
-
-.turn-time {
-  font-family: var(--font-mono);
-  font-size: var(--fs-12);
-  color: var(--text-3);
-  font-feature-settings: "tnum" 1;
-}
-
-/* THE STRIKE, and it is the one piece of motion in this window that is not
-   borrowed from somewhere else. A phosphor pixel is hit and then decays, so the
-   dot does that: it comes up in a tenth of a second and falls away over the
-   rest of the cycle. A dot that eases up and down at the same rate is a
-   breathing dot, which is what every other app's spinner does. */
-.turn-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--beam);
-  box-shadow: 0 0 8px -1px var(--beam);
-  animation: strike 1500ms linear infinite;
-}
-
-@keyframes strike {
-  0% { opacity: 0.18; }
-  6% { opacity: 1; }
-  100% { opacity: 0.18; }
-}
-
-/* Writing is the one state that is not a wait: the answer is arriving, so the
-   dot holds rather than pulsing. */
-.turn-bar[data-state="writing"] .turn-dot {
-  animation: none;
-  opacity: 1;
+  border: 0;
 }
 
 /* THE COMPOSER. One field on the column's own ground under a hairline, and
@@ -2209,9 +2105,23 @@ body[data-locked="true"] #page {
   border-top: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
 }
 
+/* The rules, as lines rather than as rows with a button each. */
+.limit-line {
+  padding: var(--s-2) 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 45%, transparent);
+  gap: var(--s-4);
+}
 
+/* The gas line is a label and four figures. The label is short and fixed and
+   the figures are the part that has to wrap, so the label is told not to, and
+   it sits on the first of the lines it names rather than floating in the
+   middle of three of them. */
+.limit-line { align-items: flex-start; }
+.limit-line > .body { flex: 0 0 auto; }
+.limit-line > .meta { text-align: right; min-width: 0; }
 /* ---------- the assistant column, reduced motion (2026-09-14) ---------- */
 
+.limit-line:last-of-type { border-bottom: 0; }
 /* The seat light stops breathing and holds a still ring, the verb stops
    shimmering and stays in the first text tone, the settle ring never runs
    (agent.js checks), and the first moves fade in with no travel and no blur.
@@ -2221,6 +2131,16 @@ body[data-locked="true"] #page {
   from { opacity: 0; }
 }
 
+.allow-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-2);
+  border-radius: var(--radius-sm);
+  text-align: left;
+  color: inherit;
+  font: inherit;
 @media (prefers-reduced-motion: reduce) {
   .agent-status[data-state="working"] > .status-dot,
   .agent-status[data-state="starting"] > .status-dot {

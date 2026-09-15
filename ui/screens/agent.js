@@ -224,7 +224,12 @@
      it names what is happening now in the same words the step rows use, and it
      carries the turn's own clock. Three states, each one an event rather than a
      guess: `thinking` (sent, nothing back yet), `calling` (a tool is open) and
-     `writing` (text has arrived and no tool is open). */
+     `writing` (text has arrived and no tool is open).
+
+     Since 2026-09-14 the seat light in the head shows the same thing (the
+     verb and the clock come from this same record), so the bar is clipped
+     out of sight by the stylesheet and kept as the live region a screen
+     reader hears. The record is the source for both. */
   var turn = null;
 
   /* WHICH CONVERSATION THIS COLUMN IS. The stream carries every chat's events
@@ -288,13 +293,15 @@
     return STATE_WORDS.working;
   }
 
-  /* When the work being shown began: the open call, else the turn, else
-     nothing, because a clock with no start would have to invent one. */
+  /* When the work being shown began: the turn, so the head's clock is how
+     long the whole answer has taken (each step row already carries its own),
+     else the open call, else nothing, because a clock with no start would
+     have to invent one. */
   function statusStartedAt() {
     if (phase !== 'working') return 0;
+    if (turn) return turn.startedAt;
     var step = liveStep();
     if (step) return step.startedAt;
-    if (turn) return turn.startedAt;
     return 0;
   }
 
