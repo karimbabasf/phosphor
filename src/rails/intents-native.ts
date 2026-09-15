@@ -74,6 +74,7 @@ import type { NearSendOutcome, NearSendParams } from '../chain/near.ts';
 import { venueWriteTimeout } from '../net.ts';
 import { MAX_SLIPPAGE_BPS, floorTooLow } from './slippage.ts';
 import { describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids } from './oneclick-words.ts';
+import { submitSignedIntent } from './intents-submit.ts';
 
 // The verifier contract. This is the whole point of the rail: one fixed account that goes on
 // the policy allowlist once and stays there, unlike a deposit address minted per quote.
@@ -1210,15 +1211,15 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     const signature = await signer.signErc191(keysPath, payload);
     tell(hooks, { handle: depositAddress, deadline });
 
-    // Nothing throws from here on. The signature is released, so a submit that does not answer
-    // is an intent that may be live at 1Click, and the executor has to hear that as a fact
-    // about the money rather than as a rail that threw.
-    let submitted: SubmittedIntent;
-    try {
-      submitted = await client.submitIntent({ payload, signature });
-    } catch (err) {
-      return describeUnconfirmedSubmit({ error: errText(err), handle: depositAddress, deadline });
+    // Nothing throws from here on, and the key is never used again for this move: the rule and
+    // the one safe retry are described at the top of src/rails/intents-spend.ts. A submit that
+    // does not answer is an intent that may be live at 1Click, and the executor has to hear
+    // that as a fact about the money rather than as a rail that threw.
+    const sent = await submitSignedIntent(client, { payload, signature });
+    if (!sent.submitted) {
+      return describeUnconfirmedSubmit({ error: sent.error, handle: depositAddress, deadline });
     }
+    const submitted: SubmittedIntent = sent.intent;
     tell(hooks, { txids: [submitted.intentHash], handle: depositAddress, deadline });
     const evidence = `intent ${submitted.intentHash}, quote handle ${oneLine(depositAddress, 80)}`;
 

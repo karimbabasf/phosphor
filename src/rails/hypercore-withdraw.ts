@@ -495,18 +495,34 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
       movedToSpot = true;
     }
 
-    const sent = await spotSend(hl, { destination: depositAddress, amount: draft.amount });
-    if (!sent.ok) {
-      if (sent.ambiguous) {
+    // One nonce per move, whatever happens. The venue dedupes on the nonce and on nothing
+    // else, so a send it did not answer is retried once with the SAME nonce (the same send
+    // again, or a refused duplicate) and never with a fresh one, which would be a second real
+    // payout. The ledger is read first: a send that landed shows there under its nonce, and
+    // then there is nothing to retry. The rule is written out at the top of intents-spend.ts.
+    const first = await spotSend(hl, { destination: depositAddress, amount: draft.amount });
+    let sent = first;
+    let ledger: string | null = null;
+    if (!first.ok && first.ambiguous && first.nonce !== undefined) {
+      ledger = await ledgerHash(owner, first.nonce, depositAddress);
+      if (ledger === null) sent = await spotSend(hl, { destination: depositAddress, amount: draft.amount, nonce: first.nonce });
+    }
+    const landed = sent.ok || ledger !== null;
+    if (!landed) {
+      if (first.ambiguous) {
         // The nonce is the identity of the action on this venue and the only thing a retry can
-        // reuse, so it is the evidence; there is no hash to record and none is invented.
+        // reuse, so it is the evidence; there is no hash to record and none is invented. A
+        // refusal of the same nonce on the retry is not proof either way: the venue refuses a
+        // nonce it has already taken, and it refuses a send it cannot fund.
+        const again = sent === first ? '' : ` The same nonce was sent once more and the venue answered: ${oneLine(sent.detail, 160)}.`;
         return {
           ok: false,
           detail:
-            `${sent.detail} The send was to ${handle} for 1Click quote of ${oneLine(quote.amountOutFormatted, 40)} USDC; ` +
-            `read the Hyperliquid ledger for nonce ${String(sent.nonce)} and 1Click status for that address before proposing again.`,
+            `${first.detail}${again} The send was to ${handle} for 1Click quote of ${oneLine(quote.amountOutFormatted, 40)} USDC, ` +
+            `so it is unconfirmed: read the Hyperliquid ledger for nonce ${String(first.nonce)} and 1Click status for that address ` +
+            'before proposing again.',
           txids: [],
-          evidence: { handle, ...(sent.nonce !== undefined ? { nonce: String(sent.nonce) } : {}) },
+          evidence: { handle, ...(first.nonce !== undefined ? { nonce: String(first.nonce) } : {}) },
         };
       }
       return {
@@ -517,10 +533,10 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
         txids: [],
       };
     }
-    const nonce = sent.nonce ?? now();
+    const nonce = first.nonce ?? sent.nonce ?? now();
     // The venue's ledger hash when it has one. When it has not shown the send yet the row keeps
     // the nonce and no hash: an invented id in txids reaches Activity as a transaction.
-    const ledger = await ledgerHash(owner, nonce, depositAddress);
+    if (ledger === null) ledger = await ledgerHash(owner, nonce, depositAddress);
     const evidence = `sent ${draft.amount} USDC to ${handle} (nonce ${String(nonce)}, ledger ${ledger ?? 'not found yet'})`;
     const railEvidence = (status: OneClickStatus) => ({ ...settledEvidence(status, handle), nonce: String(nonce) });
     const hash = ledger ?? '';

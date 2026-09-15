@@ -147,6 +147,7 @@ type Harness = {
   quotes: unknown[];
   generated: Array<{ signerId: string; depositAddress: string }>;
   submitted: Array<{ payload: string; signature: string }>;
+  submitAttempts: Array<{ payload: string; signature: string }>;
   signedPayloads: string[];
   statusCalls: string[];
   verifierBalance: VerifierBalancePort;
@@ -186,6 +187,8 @@ function harness(
     verifierAfterReads?: Array<bigint | null>;
     quoteError?: string;
     submitError?: string;
+    // How many submit calls get no reply (a TimeoutError) before one answers.
+    submitNoReply?: number;
     intent?: Partial<GeneratedIntent>;
     payload?: string;
     statuses?: Array<{ status: string; swapDetails?: Record<string, unknown> } | null>;
@@ -194,6 +197,7 @@ function harness(
   const quotes: unknown[] = [];
   const generated: Array<{ signerId: string; depositAddress: string }> = [];
   const submitted: Array<{ payload: string; signature: string }> = [];
+  const submitAttempts: Array<{ payload: string; signature: string }> = [];
   const signedPayloads: string[] = [];
   const statusCalls: string[] = [];
   const statuses = options.statuses ?? [{ status: 'SUCCESS', swapDetails: {} }];
@@ -218,7 +222,13 @@ function harness(
       };
     },
     async submitIntent(signed) {
+      submitAttempts.push(signed);
       if (options.submitError !== undefined) throw new Error(options.submitError);
+      if ((options.submitNoReply ?? 0) >= submitAttempts.length) {
+        const err = new Error('The operation was aborted due to timeout');
+        err.name = 'TimeoutError';
+        throw err;
+      }
       submitted.push(signed);
       return { intentHash: INTENT_HASH, correlationId: 'test-correlation' };
     },
@@ -255,7 +265,7 @@ function harness(
     return afterReads[Math.min(verifierReads.length - 2, afterReads.length - 1)] ?? null;
   };
 
-  return { api, signer, quotes, generated, submitted, signedPayloads, statusCalls, verifierBalance, verifierReads };
+  return { api, signer, quotes, generated, submitted, submitAttempts, signedPayloads, statusCalls, verifierBalance, verifierReads };
 }
 
 function railOf(h: Harness) {
@@ -677,6 +687,37 @@ test('a submit that throws after the signature is reported as signed and unconfi
   assert.deepEqual(result.txids, []);
   assert.equal(result.evidence?.handle, HANDLE);
   assert.equal(result.evidence?.deadline, DEADLINE);
+});
+
+test('a submit with no reply is resent once with the same bytes, and the key is used exactly once', async () => {
+  const h = harness({ submitNoReply: 1 });
+  const result = await railOf(h).execute(draftOf());
+  assert.equal(result.ok, true, result.detail);
+  assert.equal(h.submitAttempts.length, 2);
+  assert.deepEqual(h.submitAttempts[0], h.submitAttempts[1], 'the identical signed bytes');
+  assert.equal(h.generated.length, 1, 'generate-intent once');
+  assert.equal(h.signedPayloads.length, 1, 'signErc191 exactly once');
+});
+
+test('two submits with no reply end unconfirmed with the handle, and nothing is signed again', async () => {
+  const h = harness({ submitNoReply: 2 });
+  const result = await railOf(h).execute(draftOf());
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /unconfirmed/);
+  assert.equal(result.evidence?.handle, HANDLE);
+  assert.equal(h.submitAttempts.length, 2, 'never a third');
+  assert.equal(h.generated.length, 1);
+  assert.equal(h.signedPayloads.length, 1);
+  assert.equal(h.statusCalls.length, 0);
+});
+
+test('a submit the venue answered with an error is not resent, and the key is used exactly once', async () => {
+  const h = harness({ submitError: 'submit-intent failed: 502' });
+  const result = await railOf(h).execute(draftOf());
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /unconfirmed/);
+  assert.equal(h.submitAttempts.length, 1);
+  assert.equal(h.signedPayloads.length, 1);
 });
 
 test('the executor hears the handle after the signature and the hash after the submit, before any poll', async () => {

@@ -81,13 +81,16 @@ type Overrides = {
   destinationTxHashes?: string[];
   statusThrows?: boolean;
   submitThrows?: boolean;
+  // One outcome per submit call, the last one repeating. 'timeout' and 'reset' are a call that
+  // got no reply; 'reply' is the venue answering with an error.
+  submitOutcomes?: Array<'ok' | 'timeout' | 'reset' | 'reply'>;
 };
 
 // Every call in the order it happened, so a test can say what came before what.
-type Calls = { quotes: IntentsQuoteParams[]; generated: unknown[]; submitted: unknown[]; signed: string[]; polls: number; order: string[] };
+type Calls = { quotes: IntentsQuoteParams[]; generated: unknown[]; submitted: unknown[]; submitAttempts: number; signed: string[]; polls: number; order: string[] };
 
 function harness(over: Overrides = {}): { api: IntentsApiPort; signer: IntentsSignerPort; calls: Calls } {
-  const calls: Calls = { quotes: [], generated: [], submitted: [], signed: [], polls: 0, order: [] };
+  const calls: Calls = { quotes: [], generated: [], submitted: [], submitAttempts: 0, signed: [], polls: 0, order: [] };
   const api: IntentsApiPort = {
     tokens: async () => apiTokens,
     async quote(params) {
@@ -103,6 +106,16 @@ function harness(over: Overrides = {}): { api: IntentsApiPort; signer: IntentsSi
     async submitIntent(signed) {
       calls.order.push('submit');
       if (over.submitThrows) throw new Error('submit-intent timed out after 30s');
+      const outcomes = over.submitOutcomes ?? ['ok'];
+      const outcome = outcomes[Math.min(calls.submitAttempts, outcomes.length - 1)] ?? 'ok';
+      calls.submitAttempts += 1;
+      if (outcome === 'timeout') {
+        const err = new Error('The operation was aborted due to timeout');
+        err.name = 'TimeoutError';
+        throw err;
+      }
+      if (outcome === 'reset') throw new TypeError('fetch failed', { cause: Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }) });
+      if (outcome === 'reply') throw new Error('submit-intent failed: 502');
       calls.submitted.push(signed);
       return { intentHash: 'HASH1', correlationId: 'c1' };
     },
@@ -320,4 +333,61 @@ test('a hook that throws costs nothing: the money is already moving and the rail
   });
   assert.ok(out.submitted);
   assert.equal(out.watch.status, 'SUCCESS');
+});
+
+// ---------- never sign again after an ambiguous outcome ----------
+//
+// The verifier dedupes on the nonce inside the signed bytes and on nothing else. A second
+// generate-intent or a second signature is a second nonce, and a second real balance move.
+// The tests below count the signer: one call per move, whatever the submit or the watch did.
+
+test('a submit that got no reply is sent once more with the identical bytes, and the key is not touched again', async () => {
+  const h = harness({ submitOutcomes: ['timeout', 'ok'] });
+  const out = await spendFromIntents(depsOf(h), requestOf());
+  assert.ok(out.submitted, 'the second attempt answered');
+  assert.equal(out.intentHash, 'HASH1');
+  assert.equal(h.calls.submitAttempts, 2);
+  assert.equal(h.calls.generated.length, 1, 'generate-intent once');
+  assert.equal(h.calls.signed.length, 1, 'signErc191 exactly once');
+  assert.deepEqual(h.calls.submitted, [{ payload: payloadOf(), signature: 'SIG' }], 'the bytes that landed are the bytes signed once');
+});
+
+test('a socket that dropped counts as no reply and gets the same one resend', async () => {
+  const h = harness({ submitOutcomes: ['reset', 'ok'] });
+  const out = await spendFromIntents(depsOf(h), requestOf());
+  assert.ok(out.submitted);
+  assert.equal(h.calls.submitAttempts, 2);
+  assert.equal(h.calls.signed.length, 1);
+});
+
+test('two calls with no reply end as unconfirmed: never a third, never a new signature', async () => {
+  const h = harness({ submitOutcomes: ['timeout', 'timeout'] });
+  const out = await spendFromIntents(depsOf(h), requestOf());
+  assert.equal(out.submitted, false);
+  assert.ok(!out.submitted);
+  assert.match(out.error, /timeout/);
+  assert.equal(out.depositAddress, HANDLE);
+  assert.equal(h.calls.submitAttempts, 2);
+  assert.equal(h.calls.generated.length, 1);
+  assert.equal(h.calls.signed.length, 1, 'signErc191 exactly once');
+  assert.equal(h.calls.polls, 0);
+});
+
+test('a submit the venue answered with an error is not resent: the answer may mean the intent was taken', async () => {
+  const h = harness({ submitOutcomes: ['reply'] });
+  const out = await spendFromIntents(depsOf(h), requestOf());
+  assert.equal(out.submitted, false);
+  assert.equal(h.calls.submitAttempts, 1);
+  assert.equal(h.calls.generated.length, 1);
+  assert.equal(h.calls.signed.length, 1);
+});
+
+test('a watch that runs out signs nothing more either', async () => {
+  const h = harness({ status: 'PROCESSING' });
+  const out = await spendFromIntents(depsOf(h), requestOf());
+  assert.ok(out.submitted);
+  assert.equal(out.watch.status, 'PROCESSING');
+  assert.equal(h.calls.generated.length, 1);
+  assert.equal(h.calls.signed.length, 1);
+  assert.equal(h.calls.submitAttempts, 1);
 });

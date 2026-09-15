@@ -145,18 +145,31 @@ function fakeClient(over: ClientOverrides = {}): { client: OneClickClient; quote
 // answers with the send the rail made, keyed on its nonce, once the exchange has seen it.
 type Shape = { available: number; spot: number; perp: number; positions?: number; marginUsed?: number; unified?: boolean };
 
-type HlOverrides = { role?: string; exchange?: unknown; exchangeThrows?: boolean; ledgerMissing?: boolean; refuseSend?: boolean };
+type HlOverrides = {
+  role?: string;
+  exchange?: unknown;
+  exchangeThrows?: boolean;
+  // The first exchange call gets no reply; later ones are answered.
+  exchangeThrowsOnce?: boolean;
+  ledgerMissing?: boolean;
+  // The ledger already shows a send under the clock nonce, whether or not the fake exchange
+  // recorded one: the venue took a send whose reply was lost.
+  ledgerKnowsNonce?: boolean;
+  refuseSend?: boolean;
+};
 
-function fakeHl(shapes: Shape[], over: HlOverrides = {}): { hl: HlUserSignedDeps; signed: HlTypedData[]; exchange: any[]; infoTypes: string[] } {
+function fakeHl(shapes: Shape[], over: HlOverrides = {}): { hl: HlUserSignedDeps; signed: HlTypedData[]; exchange: any[]; infoTypes: string[]; posts: any[] } {
   const signed: HlTypedData[] = [];
   const exchange: any[] = [];
+  const posts: any[] = [];
   const infoTypes: string[] = [];
   let reads = 0;
   const fetchImpl: typeof fetch = async (url, init) => {
     const body = JSON.parse(String(init?.body)) as Record<string, any>;
     const json = (v: unknown) => new Response(JSON.stringify(v), { headers: { 'content-type': 'application/json' } });
     if (String(url).endsWith('/exchange')) {
-      if (over.exchangeThrows) {
+      posts.push(body);
+      if (over.exchangeThrows || (over.exchangeThrowsOnce && posts.length === 1)) {
         const err = new Error('The operation was aborted due to timeout');
         err.name = 'TimeoutError';
         throw err;
@@ -180,6 +193,9 @@ function fakeHl(shapes: Shape[], over: HlOverrides = {}): { hl: HlUserSignedDeps
     if (body.type === 'userAbstraction') return json(unified ? 'unifiedAccount' : 'standard');
     if (body.type === 'userRole') return json({ role: over.role ?? 'missing' });
     if (body.type === 'userNonFundingLedgerUpdates') {
+      if (over.ledgerKnowsNonce) {
+        return json([{ time: NOW, hash: '0xledgerhash', delta: { type: 'spotTransfer', token: 'USDC', amount: '8', user: ACCOUNT, destination: DEPOSIT.toLowerCase(), fee: '1.0', nonce: NOW, feeToken: 'USDC' } }]);
+      }
       if (over.ledgerMissing || exchange.length === 0) return json([]);
       const sent = exchange[exchange.length - 1];
       return json([
@@ -203,7 +219,7 @@ function fakeHl(shapes: Shape[], over: HlOverrides = {}): { hl: HlUserSignedDeps
       return { r: `0x${'1'.repeat(64)}`, s: `0x${'2'.repeat(64)}`, v: 27 };
     },
   };
-  return { hl: { keysPath: KEYS, fetchImpl, sign, now: () => NOW }, signed, exchange, infoTypes };
+  return { hl: { keysPath: KEYS, fetchImpl, sign, now: () => NOW }, signed, exchange, infoTypes, posts };
 }
 
 function rail(
@@ -227,7 +243,7 @@ function rail(
     pollTimeoutMs: 3,
     ...over,
   });
-  return { rail: r, quotes, submitted, signed: hl.signed, exchange: hl.exchange, infoTypes: hl.infoTypes };
+  return { rail: r, quotes, submitted, signed: hl.signed, exchange: hl.exchange, infoTypes: hl.infoTypes, posts: hl.posts };
 }
 
 // ---------- the shape refusals, before any quote ----------
@@ -479,16 +495,40 @@ test('a send the venue refuses is reported with nothing moved', async () => {
 });
 
 test('a send whose reply is lost is reported as ambiguous with its nonce, never as nothing happened', async () => {
-  const { rail: r } = rail({}, undefined, { exchangeThrows: true });
+  const { rail: r, posts } = rail({}, undefined, { exchangeThrows: true });
   const out = await r.execute(draft());
   assert.equal(out.ok, false);
   assert.match(out.detail, /MAY HAVE BEEN ACCEPTED/);
+  assert.match(out.detail, /unconfirmed/);
   assert.match(out.detail, /1786600000000/);
   assert.match(out.detail, new RegExp(DEPOSIT.toLowerCase()));
   assert.doesNotMatch(out.detail, /Nothing was sent/);
   assert.deepEqual(out.txids, []);
   assert.equal(out.evidence?.nonce, '1786600000000', 'the nonce is the identity of the action and the only handle a retry has');
   assert.equal(out.evidence?.handle, DEPOSIT.toLowerCase());
+  // Sent twice, both with the one nonce, and never a third time.
+  assert.equal(posts.length, 2);
+  assert.deepEqual(posts.map((p) => p.nonce), [NOW, NOW], 'the same nonce both times, never a fresh one');
+});
+
+test('a send with no reply is retried once with the same nonce, and a reply the second time is the send', async () => {
+  const { rail: r, signed, posts } = rail({}, [{ available: 20, spot: 20, perp: 0 }, { available: 11, spot: 11, perp: 0 }], { exchangeThrowsOnce: true });
+  const out = await r.execute(draft());
+  assert.equal(out.ok, true, out.detail);
+  assert.equal(posts.length, 2);
+  assert.deepEqual(posts.map((p) => p.nonce), [NOW, NOW]);
+  assert.equal(signed.length, 2, 'the same typed data signed again, which is the same bytes');
+  assert.equal((signed[0].message as Record<string, unknown>).time, (signed[1].message as Record<string, unknown>).time);
+  assert.match(out.detail, /nonce 1786600000000/);
+  assert.deepEqual(out.txids, ['0xledgerhash', '0xdest']);
+});
+
+test('a send with no reply that the ledger already shows is not sent again at all', async () => {
+  const { rail: r, posts } = rail({}, [{ available: 20, spot: 20, perp: 0 }, { available: 11, spot: 11, perp: 0 }], { exchangeThrowsOnce: true, ledgerKnowsNonce: true });
+  const out = await r.execute(draft());
+  assert.equal(out.ok, true, out.detail);
+  assert.equal(posts.length, 1, 'the ledger answered, so nothing was resent');
+  assert.match(out.detail, /ledger 0xledgerhash/);
 });
 
 test('a send the ledger has not shown yet keeps its nonce as evidence and never a made up hash', async () => {
