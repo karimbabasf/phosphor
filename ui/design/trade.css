@@ -1309,18 +1309,22 @@ body[data-view="trade"] .stage {
 
 /* ---------- Pro: the Trading panel's positions ----------
 
-   The same row as the trade screen's open rows, cut to what the panel has
-   room for: the coin with its logo and side, then size, entry, mark and the
-   profit, in columns. */
+   The same row as the trade screen's open rows, folded for a panel a third as
+   wide: the coin with its logo and side on the first line with the profit at
+   the right, the size, entry and mark in mono under them. */
 .pro-pos {
   display: grid;
-  grid-template-columns: minmax(120px, 1.4fr) repeat(4, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
   column-gap: var(--s-3);
+  row-gap: 2px;
   align-items: center;
   font-size: var(--fs-13);
 }
 
 .pro-pos-asset {
+  grid-column: 1;
+  grid-row: 1;
   display: flex;
   align-items: center;
   gap: var(--s-2);
@@ -1340,12 +1344,23 @@ body[data-view="trade"] .stage {
   color: var(--text-3);
 }
 
-.pro-pos > .mono {
+.pro-pos-pnl {
+  grid-column: 2;
+  grid-row: 1;
   justify-self: end;
   white-space: nowrap;
 }
 
-.pro-pos-size { color: var(--text-2); }
+.pro-pos-meta {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--s-3);
+  padding-left: 28px;
+  font-size: var(--fs-12);
+  color: var(--text-2);
+}
 
 /* ---------- narrow worlds ---------- */
 

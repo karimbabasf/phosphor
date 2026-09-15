@@ -782,9 +782,9 @@
     host.appendChild(block);
   }
 
-  /* The same grammar as the trade screen's open rows: the coin with its
-     logo, the side as a pill, then size, entry, mark and the profit in mono,
-     every number in its column. */
+  /* The same grammar as the trade screen's open rows, folded for a panel a
+     third as wide: the coin with its logo and side, the profit at the right,
+     and under them the size, the entry and the mark in mono. */
   function positionLine(position) {
     var coin = String(position.coin || '').toUpperCase();
     var short = position.side === 'short';
@@ -799,10 +799,6 @@
     if (typeof position.leverage === 'number') asset.appendChild(dom.el('span', 'pro-pos-lev mono', position.leverage + 'x'));
     row.appendChild(asset);
 
-    row.appendChild(dom.el('span', 'pro-pos-size mono', typeof position.sizeCoin === 'number' ? dom.qty(position.sizeCoin) : '--'));
-    row.appendChild(dom.el('span', 'pro-pos-px mono', typeof position.entryPx === 'number' ? dom.usd(position.entryPx) : '--'));
-    row.appendChild(dom.el('span', 'pro-pos-px mono', typeof position.markPx === 'number' ? dom.usd(position.markPx) : '--'));
-
     var pnl = dom.el('span', 'pro-pos-pnl mono');
     if (typeof position.unrealisedUsd === 'number') {
       dom.setText(pnl, (position.unrealisedUsd >= 0 ? '+' : '') + dom.usd(position.unrealisedUsd));
@@ -811,6 +807,12 @@
       dom.setText(pnl, '--');
     }
     row.appendChild(pnl);
+
+    var meta = dom.el('span', 'pro-pos-meta mono');
+    meta.appendChild(dom.el('span', '', typeof position.sizeCoin === 'number' ? dom.qty(position.sizeCoin) + ' ' + coin : '--'));
+    meta.appendChild(dom.el('span', '', 'entry ' + (typeof position.entryPx === 'number' ? dom.usd(position.entryPx) : '--')));
+    meta.appendChild(dom.el('span', '', 'mark ' + (typeof position.markPx === 'number' ? dom.usd(position.markPx) : '--')));
+    row.appendChild(meta);
     return row;
   }
 
