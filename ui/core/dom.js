@@ -67,21 +67,102 @@
     node.__keyed = null;
   }
 
-  /* A number that changes crossfades rather than snapping, so a total that
-     ticks does not read as a repaint. No digit scrolling. */
+  /* A number that changes rolls its digits rather than snapping: each digit
+     that differs slides out in the direction the number moved and the new one
+     slides in behind it, with a short blur to hide the overlap, so a price that
+     ticks reads as a price ticking and a total that grows is seen to grow.
+
+     Only digits roll; the currency sign, the separators and the spaces stay
+     as plain text so the width and the baseline never move. When the browser
+     cannot animate (the unit harness, reduced motion) the old crossfade
+     through data-ticking runs instead, and the node's textContent is the whole
+     contract either way: it always reads as the plain value. */
+  var ROLL_MS = 380;
+
   function setNumber(node, text) {
     if (!node) return;
     var value = text === undefined || text === null ? '' : String(text);
     if (node.textContent === value) return;
-    if (!node.textContent || window.PhosphorMotion.reduced()) {
+    if (!node.textContent || window.PhosphorMotion.reduced() || !canRoll(node)) {
       node.textContent = value;
       return;
     }
-    node.dataset.ticking = 'true';
-    window.setTimeout(function () {
-      node.textContent = value;
-      node.dataset.ticking = 'false';
-    }, 140);
+    roll(node, node.textContent, value);
+  }
+
+  function canRoll(node) {
+    return typeof node.animate === 'function'
+      && typeof document !== 'undefined'
+      && typeof document.createElement === 'function';
+  }
+
+  function numeric(text) {
+    var n = parseFloat(String(text).replace(/[^0-9.\-]/g, ''));
+    return isFinite(n) ? n : null;
+  }
+
+  function roll(node, from, to) {
+    var was = numeric(from);
+    var now = numeric(to);
+    /* Up when the number grew, down when it shrank, and up for anything that
+       is not a number at all. */
+    var dir = was !== null && now !== null && now < was ? -1 : 1;
+    var token = (node.__roll || 0) + 1;
+    node.__roll = token;
+
+    var ease = window.PhosphorMotion && window.PhosphorMotion.spring
+      ? window.PhosphorMotion.spring()
+      : 'cubic-bezier(0.23, 1, 0.32, 1)';
+    while (node.firstChild) node.removeChild(node.firstChild);
+    var pending = [];
+    var changed = 0;
+    for (var i = 0; i < to.length; i += 1) {
+      var ch = to.charAt(i);
+      var old = i < from.length ? from.charAt(i) : '';
+      if (!/[0-9]/.test(ch) || ch === old) {
+        node.appendChild(document.createTextNode(ch));
+        continue;
+      }
+      var cell = document.createElement('span');
+      cell.className = 'rd';
+      cell.textContent = ch;
+      if (/[0-9]/.test(old)) {
+        var out = document.createElement('span');
+        out.className = 'rd-out';
+        out.setAttribute('aria-hidden', 'true');
+        out.textContent = old;
+        cell.appendChild(out);
+        pending.push(out.animate([
+          { transform: 'translateY(0)', opacity: 1, filter: 'blur(0)' },
+          { transform: 'translateY(' + (dir * -0.6) + 'em)', opacity: 0, filter: 'blur(2px)' }
+        ], { duration: ROLL_MS, easing: ease, delay: changed * 14, fill: 'forwards' }));
+      }
+      pending.push(cell.animate([
+        { transform: 'translateY(' + (dir * 0.6) + 'em)', opacity: 0, filter: 'blur(2px)' },
+        { transform: 'translateY(0)', opacity: 1, filter: 'blur(0)' }
+      ], { duration: ROLL_MS, easing: ease, delay: changed * 14, fill: 'backwards' }));
+      changed += 1;
+      node.appendChild(cell);
+    }
+    /* Back to plain text once the roll has settled, so the node the next
+       comparison reads is the value and nothing else. A roll that starts
+       before this one settles takes the token with it and this cleanup
+       stands down. */
+    function settle() {
+      if (node.__roll !== token) return;
+      node.textContent = to;
+    }
+    var done = 0;
+    if (!pending.length) { settle(); return; }
+    for (var k = 0; k < pending.length; k += 1) {
+      var animation = pending[k];
+      var finish = function () { done += 1; if (done === pending.length) settle(); };
+      if (animation && animation.finished && typeof animation.finished.then === 'function') {
+        animation.finished.then(finish, finish);
+      } else {
+        window.setTimeout(finish, ROLL_MS + changed * 14 + 20);
+      }
+    }
   }
 
   /* Reconcile a list against keyed data. `create(item)` builds a node once,
