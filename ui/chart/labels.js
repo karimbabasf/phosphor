@@ -38,7 +38,11 @@ function labelLayout(items, top, bottom) {
   if (wanted.length > LABEL_MAX) {
     more = wanted.length - LABEL_MAX;
     wanted = wanted.slice(0, LABEL_MAX);
-    wanted.push({ y: Infinity, text: '+' + more + ' more', tone: 'text2', overflow: true });
+    /* The count line wants the last kept label's y, so the pitch below places
+       it one line under. Wanting Infinity, as it used to, made the overflow
+       correction below Infinity too, and the whole column left the canvas the
+       moment a ninth label was asked for. */
+    wanted.push({ y: wanted[wanted.length - 1].y, text: '+' + more + ' more', tone: 'text2', overflow: true });
   }
   var lastY = -Infinity;
   var floor = top + LABEL_TOP;

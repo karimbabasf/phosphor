@@ -66,6 +66,12 @@ test('past eight labels the column says how many more rather than printing a wal
   assert.equal(last.text, '+4 more');
   assert.equal(last.overflow, true);
   assert.equal(out.placed[0].text, 'l0', 'the first labels by y are the ones kept');
+  // The count line sits one pitch under the last kept label, and every label stays on the
+  // canvas. It used to want y Infinity, which made the lift-back correction Infinity too and
+  // sent the whole column off the top the moment a ninth label was asked for.
+  const ys = out.placed.map((p: { labelY: number }) => p.labelY);
+  assert.ok(ys.every((y: number) => Number.isFinite(y) && y >= 16), JSON.stringify(ys));
+  assert.equal(ys[8] - ys[7], 13);
 });
 
 test('drawing a column pads, paints in the tone asked for, and rings the spotlighted one', () => {
