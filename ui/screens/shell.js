@@ -25,10 +25,8 @@
   function boot() {
     refs.page = document.getElementById('page');
     refs.topbar = document.getElementById('topbar');
-    refs.glyph = document.getElementById('wordmark-glyph');
     refs.wordmark = document.getElementById('wordmark');
     refs.colourways = document.getElementById('colourways');
-    refs.colourwayToggle = document.getElementById('colourway-toggle');
     refs.stage = document.getElementById('stage');
     refs.conversation = document.getElementById('conversation');
     refs.conversationBody = document.getElementById('conversation-body');
@@ -76,9 +74,8 @@
 
   /* ---------- the one page-load moment ---------- */
 
-  /* A single beam sweeps the topbar's hairline and the glyph lights. Once,
-     after first paint, never again in the session, and not under reduced
-     motion, where the glyph simply is what it is. */
+  /* A single beam sweeps the topbar's hairline. Once, after first paint, never
+     again in the session, and not under reduced motion. */
   function bootSweep() {
     if (!refs.topbar || window.PhosphorMotion.reduced()) return;
     window.requestAnimationFrame(function () {
@@ -126,7 +123,6 @@
     } else if (window.PhosphorAgent && window.PhosphorAgent.isWorking()) {
       next = 'working';
     }
-    renderGlyph();
     if (next === patternState) return;
     patternState = next;
     if (field) field.setState(next);
@@ -137,18 +133,6 @@
     return state.proposals.filter(function (p) {
       return p && (p.status === 'pending' || p.status === 'pending_unlock');
     });
-  }
-
-  /* The glyph in the wordmark is the smallest phosphor in the window and it
-     carries the assistant's state: off, ready, working, or could not start. */
-  function renderGlyph() {
-    if (!refs.glyph || !window.PhosphorAgent) return;
-    var phase = typeof window.PhosphorAgent.phase === 'function' ? window.PhosphorAgent.phase() : 'idle';
-    var word = 'off';
-    if (phase === 'working' || phase === 'starting') word = 'working';
-    else if (phase === 'connected') word = 'ready';
-    else if (phase === 'error') word = 'error';
-    dom.setAttr(refs.glyph, 'data-state', word);
   }
 
   /* ---------- the colourway menu ----------
@@ -189,18 +173,6 @@
       closeColourways();
     });
 
-    /* The bar's toggle: one press, the other colourway. It reads the current
-       one off the same theme the menu does, so the two never disagree. */
-    if (refs.colourwayToggle) {
-      dom.on(refs.colourwayToggle, 'click', function () {
-        var next = refs.colourwayToggle.dataset.next;
-        if (!next) return;
-        api.colourway(next).catch(function (err) {
-          window.PhosphorToast.show(net.readable(err), 'down');
-        });
-      });
-    }
-
     store.select('theme', renderColourway);
   }
 
@@ -234,25 +206,14 @@
     });
   }
 
-  var COLOURWAY_LABEL = { 'green-on-black': 'Green on black', 'black-on-white': 'Black on white' };
-
   /* The checked row is whatever the server says the window is, never what was
-     last clicked here; the toggle shows the one it would go to. */
+     last clicked here. */
   function renderColourway(theme) {
     var current = theme && typeof theme.profile === 'string' ? theme.profile : 'green-on-black';
-    if (refs.colourways) {
-      var rows = refs.colourways.querySelectorAll('[data-profile]');
-      for (var i = 0; i < rows.length; i += 1) {
-        dom.setAttr(rows[i], 'aria-checked', rows[i].dataset.profile === current ? 'true' : 'false');
-      }
-    }
-    if (refs.colourwayToggle) {
-      var next = current === 'black-on-white' ? 'green-on-black' : 'black-on-white';
-      refs.colourwayToggle.dataset.next = next;
-      dom.setAttr(refs.colourwayToggle, 'aria-label', 'Switch to ' + COLOURWAY_LABEL[next].toLowerCase());
-      dom.setAttr(refs.colourwayToggle, 'title', COLOURWAY_LABEL[next]);
-      var tile = refs.colourwayToggle.querySelector('.colourway-toggle-tile');
-      if (tile) dom.setAttr(tile, 'data-profile', next);
+    if (!refs.colourways) return;
+    var rows = refs.colourways.querySelectorAll('[data-profile]');
+    for (var i = 0; i < rows.length; i += 1) {
+      dom.setAttr(rows[i], 'aria-checked', rows[i].dataset.profile === current ? 'true' : 'false');
     }
   }
 
@@ -369,9 +330,10 @@
       if (offline) startHealthPoll(connection);
       else stopHealthPoll();
       if (refs.feedChip) {
-        dom.setAttr(refs.feedChip, 'data-tone', connection === 'live' ? 'up' : 'warn');
+        var tone = connection === 'live' ? 'up' : (connection === 'offline' ? 'off' : 'warn');
+        dom.setAttr(refs.feedChip, 'data-tone', tone);
         dom.setText(refs.feedChip.querySelector('[data-role="feed-text"]'),
-          connection === 'live' ? 'Live' : 'Offline');
+          tone === 'up' ? 'Live' : (tone === 'off' ? 'Offline' : 'Delayed'));
       }
     });
 
@@ -380,6 +342,10 @@
     events.on('lock', function (frame) {
       var state = store.get() || {};
       if (frame && frame.state) {
+      /* Three words for the stream, each with its own dot: live, delayed
+         (connecting, reconnecting, or a stream that has gone quiet and is
+         being replaced), and offline, which is the app not answering at all.
+         The bar under this one carries the sentence; this is the glance. */
         store.put(Object.assign({}, state, { lock: { state: frame.state, idleLocksInSec: null } }));
       }
     });

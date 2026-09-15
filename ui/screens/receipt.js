@@ -9,7 +9,6 @@
   var dom = window.PhosphorDom;
   var net = window.PhosphorNet;
   var api = window.PhosphorApi;
-  var marks = window.PhosphorMarks;
 
   var CHAIN_NAMES = {
     eth: 'Ethereum',
@@ -167,69 +166,41 @@
     host.appendChild(row);
   }
 
-  /* An Activity row, drawn as a transaction (the .tx grammar in components.css):
-     the mark of the coin that left, the sentence, the time under it, and on the
-     right the amount that left, signed, with the fee under it. Karim,
-     2026-09-14: "I want these to look like actual transactions." The coin comes
-     from the receipt's own fields, never parsed out of the sentence. */
+  /* An Activity row. Newest first, one row per executed action, and the fee is
+     on the row rather than behind a modal. */
   function row(receipt) {
-    var node = dom.el('button', 'tx receipt-row');
+    var node = dom.el('button', 'row row-hover receipt-row');
     node.type = 'button';
-    node.appendChild(marks.disc(''));
-    node.appendChild(dom.el('span', 'tx-title', ''));
-    node.appendChild(dom.el('span', 'tx-when', ''));
-    node.appendChild(dom.el('span', 'tx-amount', ''));
-    node.appendChild(dom.el('span', 'tx-sub', ''));
+    var main = dom.el('div', 'row-main stack-2');
+    main.appendChild(dom.el('span', 'body', ''));
+    main.appendChild(dom.el('span', 'meta', ''));
+    var side = dom.el('div', 'row-side stack-2');
+    side.appendChild(dom.el('span', 'body mono', ''));
+    side.appendChild(dom.el('span', 'meta mono', ''));
+    node.appendChild(main);
+    node.appendChild(side);
     return node;
   }
 
   function updateRow(node, receipt) {
-    var mark = node.children[0];
-    var title = node.children[1];
-    var when = node.children[2];
-    var amount = node.children[3];
-    var sub = node.children[4];
-
-    var symbol = receipt.symbol ? String(receipt.symbol) : '';
-    if (mark.dataset.symbol !== symbol) {
-      mark.dataset.symbol = symbol;
-      marks.paint(mark, symbol);
-    }
-
+    var main = node.children[0];
+    var side = node.children[1];
     /* The headline, not the rail's sentence. `summary` carries an intent hash and a quote
        handle: six lines of it as a row title buried the fee and the time underneath, and ran
        under the amount column on the right. It is still on the opened receipt, which is where
-       evidence belongs. The row clamps to one line, so the whole sentence rides on the title. */
-    var headline = receipt.headline || receipt.summary || 'Something moved';
-    dom.setText(title, headline);
-    dom.setAttr(title, 'title', headline);
-
+       evidence belongs. */
+    dom.setText(main.children[0], receipt.headline || receipt.summary || 'Something moved');
     var note = dom.ago(receipt.at);
     if (receipt.status === 'needs_reconciliation') note = 'We cannot tell what happened';
     else if (receipt.status === 'failed') note = 'Did not go through';
-    dom.setText(when, note);
-    dom.setAttr(when, 'class', receipt.status === 'executed' ? 'tx-when' : 'tx-when warn');
-
-    /* Money that left is signed and red. A move that did not go through left
-       nothing, so its amount is unsigned and quiet rather than a minus that
-       was never taken. */
-    var left = typeof receipt.amount === 'number';
-    var failed = receipt.status === 'failed';
-    dom.setText(amount, left
-      ? (failed ? '' : '-') + dom.qty(receipt.amount) + (symbol ? ' ' + symbol : '')
+    dom.setText(main.children[1], note);
+    dom.setAttr(main.children[1], 'class', receipt.status === 'executed' ? 'meta' : 'meta warn');
+    dom.setText(side.children[0], typeof receipt.amount === 'number'
+      ? dom.qty(receipt.amount) + ' ' + (receipt.symbol || '')
       : '');
-    dom.setAttr(amount, 'data-dir', left && !failed ? 'out' : null);
-    dom.setAttr(amount, 'class', left && failed ? 'tx-amount dim' : 'tx-amount');
-
-    /* What arrived, when the receipt carries it, then the fee. One summed fee is
-       one fee. */
-    var parts = [];
-    var got = receipt.received;
-    if (got && typeof got.amount === 'number' && got.symbol) {
-      parts.push('+' + dom.qty(got.amount) + ' ' + String(got.symbol));
-    }
-    if (typeof receipt.feesUsd === 'number') parts.push(dom.fee(receipt.feesUsd) + ' fee');
-    dom.setText(sub, parts.join(', '));
+    dom.setText(side.children[1], typeof receipt.feesUsd === 'number'
+      ? dom.fee(receipt.feesUsd) + ' fees'
+      : '');
   }
 
   window.PhosphorReceipt = {

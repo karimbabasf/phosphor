@@ -57,9 +57,9 @@ html, body {
   flex: 0 0 auto;
 }
 
-/* The one page-load moment: a beam sweeps the topbar's hairline once and
-   lights the glyph. The shell adds data-boot after first paint and removes it
-   when the sweep is done, so nothing repeats. */
+/* The one page-load moment: a beam sweeps the topbar's hairline once. The
+   shell adds data-boot after first paint and removes it when the sweep is
+   done, so nothing repeats. */
 .topbar::after {
   content: "";
   position: absolute;
@@ -84,9 +84,10 @@ html, body {
   100% { opacity: 0; transform: translateX(460%); }
 }
 
-/* The wordmark is the mark and the word, and it is the one control in the bar
-   that is about the window itself: it opens the colourway menu. It sits in a
-   wrap so the menu can hang off its corner. */
+/* The wordmark is the word alone, and it is the one control in the bar that is
+   about the window itself: it opens the colourway menu. It sits in a wrap so
+   the menu can hang off its corner. The mark itself lives on the first screen,
+   the splash and the dock icon, not in the bar. */
 .wordmark-wrap {
   position: relative;
   flex: 0 0 auto;
@@ -119,36 +120,6 @@ html, body {
 .wordmark:focus-visible {
   outline: 2px solid var(--ink);
   outline-offset: -2px;
-}
-
-/* The glyph is the mark, and it carries the assistant's state: dim when off,
-   lit when ready, breathing while working. It is the smallest phosphor in the
-   window. The glow is a drop shadow rather than a box shadow so it follows the
-   mark's own edge; the light colourways turn it off, because a dark halo
-   under a dark mark is a shadow, not a light. */
-.wordmark-glyph {
-  width: 14px;
-  height: 16px;
-  color: var(--beam);
-  opacity: 0.35;
-  transition: opacity var(--dur-enter) var(--ease-out);
-}
-
-.wordmark-glyph[data-state="ready"] {
-  opacity: 1;
-  filter: drop-shadow(var(--beam-glow));
-}
-
-.wordmark-glyph[data-state="working"] {
-  opacity: 1;
-  filter: drop-shadow(var(--beam-glow));
-  animation: breathe 1600ms var(--ease-in-out) infinite;
-}
-
-.wordmark-glyph[data-state="error"] {
-  opacity: 1;
-  color: var(--down);
-  filter: none;
 }
 
 /* ---------- the colourway menu ----------
@@ -215,9 +186,9 @@ html, body {
 }
 
 /* A tile is the mark on its own ground: a colourway as the brand sheet shows
-   it, not a swatch. The menu rows and the bar's toggle both draw one, and the
-   colours are the brand's, fixed, never the window's tokens: a tile shows
-   what a colourway IS, whichever one is up. */
+   it, not a swatch. The menu rows draw one each, and the colours are the
+   brand's, fixed, never the window's tokens: a tile shows what a colourway
+   IS, whichever one is up. */
 .mark-tile {
   flex: 0 0 auto;
   width: 20px;
@@ -237,45 +208,8 @@ html, body {
   box-shadow: 0 0 0 1px var(--bg-1), 0 0 0 2px var(--ink);
 }
 
-/* ---------- the colourway toggle ----------
-
-   One button in the bar, beside the chips: the tile of the colourway the
-   window is NOT in, so the button shows what a press does rather than what
-   already is. With two colourways that is the whole control; the menu under
-   the wordmark is the same choice with its names on. */
-.colourway-toggle {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-sm);
-  color: var(--text-2);
-  transition: background-color var(--dur-press) var(--ease-out),
-              transform var(--dur-press) var(--ease-out);
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .colourway-toggle:hover { background: var(--bg-2); }
-  .colourway-toggle:hover .colourway-toggle-tile { box-shadow: 0 0 0 1px var(--line-strong), 0 0 0 3px var(--ink-wash); }
-}
-
-.colourway-toggle:active { transform: scale(0.94); }
-
-.colourway-toggle:focus-visible {
-  outline: 2px solid var(--ink);
-  outline-offset: -2px;
-}
-
-.colourway-toggle-tile {
-  width: 18px;
-  height: 18px;
-  padding: 3px;
-  border-radius: 5px;
-  transition: box-shadow var(--dur-press) var(--ease-out),
-              background-color var(--dur-swap) var(--ease-out),
-              color var(--dur-swap) var(--ease-out);
-}
-
+/* The breath the conversation column's seat takes while the assistant comes
+   up (screens.css). */
 @keyframes breathe {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.45; }
@@ -345,12 +279,89 @@ html, body {
   }
 }
 
+/* The bar's right side: one quiet line of state, then the brake. Sixteen
+   between the pieces, because they are words in a line rather than a row of
+   controls, and the one control among them is the last thing. */
 .status-cluster {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: var(--s-2);
+  gap: var(--s-4);
   min-width: 0;
+}
+
+/* The stream and a pending ask are status lines: a dot and a word, no pill.
+   The dot is the state. Live is up, delayed is the warning colour, offline is
+   the quietest grey; a pending ask is the warning colour too, because it is
+   the person the window is waiting on. */
+.bar-state {
+  font-size: var(--fs-12);
+  font-weight: 500;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.bar-state[data-tone="up"] > .status-dot { background: var(--up); }
+.bar-state[data-tone="warn"] > .status-dot { background: var(--warn); }
+.bar-state[data-tone="off"] > .status-dot { background: var(--text-3); }
+
+/* The lock: a lock and a word, at the same size as the state beside it. A
+   locked wallet reads in the warning colour, which the shell writes as the
+   same data-tone the chip carried. */
+.bar-lock {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 20px;
+  font-size: var(--fs-12);
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.bar-lock-glyph {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  color: var(--text-3);
+}
+
+.bar-lock[data-tone="warn"] { color: var(--warn); }
+.bar-lock[data-tone="warn"] .bar-lock-glyph { color: var(--warn); }
+
+/* Freeze everything: the safety control, so it keeps its words, and a solid
+   quiet button rather than an outlined red one. The wash deepens on hover and
+   the whole thing presses; frozen, it fills, because a frozen app is a state
+   the bar has to show, not a button waiting to be pressed. */
+.btn.freeze {
+  --btn-bg: var(--down-wash);
+  --btn-fg: var(--down);
+  --btn-edge: transparent;
+  min-height: 28px;
+  height: 28px;
+  padding: 0 var(--s-3);
+  border: 0;
+  border-radius: 8px;
+  font-size: var(--fs-13);
+  font-weight: 500;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .btn.freeze:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--down) 22%, transparent);
+  }
+}
+
+.btn.freeze[data-frozen="true"] {
+  --btn-bg: var(--down);
+  --btn-fg: var(--on-ink);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .btn.freeze[data-frozen="true"]:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--down) 88%, var(--bg-0));
+  }
 }
 
 /* ---------- The stage ---------- */
@@ -667,45 +678,39 @@ body[data-view="trade"] .stage {
   .pro-grid .scrolls { overflow-y: visible; }
 }
 
-/* ---------- Trade: the chart across the top, the deck under it ---------- */
+/* ---------- Trade: chart left, 320 px rail ---------- */
 
-/* The world has a definite height, so the chart takes the room above the
-   handle and the deck holds its own height under it: 236 px by default, or
-   whatever the handle was dragged to (--deck, written on the wrap by
-   ui/split.js). Karim, 2026-09-14: "this trade panel on the side I want to
-   be below the chart, so the whole chart horizontally". */
+/* The world has a definite height now, so the chart takes exactly the room
+   there is and the rail scrolls inside itself. */
 .trade-wrap {
   flex: 1 1 auto;
   display: grid;
-  grid-template-rows: minmax(0, 1fr) 6px var(--deck, 236px);
+  grid-template-columns: minmax(0, 1fr) 6px var(--rail, var(--rail-w));
   height: 100%;
   min-height: 0;
 }
 
 /* Its own container, because the bar above the chart lays out against the room
-   the CHART has rather than against the window: the conversation column takes
-   from it and is not in a media query. */
+   the CHART has rather than against the window: the conversation column and the
+   rail both take from it and neither is in a media query. */
 .trade-main {
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  border-bottom: 1px solid var(--line);
+  border-right: 1px solid var(--line);
   container-type: inline-size;
   container-name: trade;
 }
 
-/* THE DECK: ONE STRIP, THREE COLUMNS, READ LEFT TO RIGHT. Status at a fixed
-   240 px, then Open stacked over Waiting, then Done with a little more room
-   because the tape is the zone that fills. Hairline rules between the
-   columns and between Open and Waiting, no boxes. The deck itself never
-   scrolls: every zone body scrolls inside itself with the fade at the cut.
-   The class name is still trade-rail because the spotlight and the tests
-   read it; what it names is the deck. */
+/* ONE SURFACE DOWN THE SIDE, NOT A STACK OF CARDS. Three zones, hairline ruled,
+   and only the last of them grows. Four bordered panels made an empty answer
+   cost a heading, a centred title, a sentence and two paddings, so three empty
+   ones pushed the one zone carrying real data off the bottom of the rail. The
+   rail itself never scrolls: the zone that outgrows its box scrolls inside it. */
 .trade-rail {
-  display: grid;
-  grid-template-columns: 240px minmax(0, 1fr) minmax(0, 1.15fr);
-  grid-template-rows: minmax(0, auto) minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -717,29 +722,39 @@ body[data-view="trade"] .stage {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  padding: var(--s-2) var(--s-4) var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  border-top: 1px solid var(--line);
 }
 
-.trade-status { grid-column: 1; grid-row: 1 / span 2; padding-top: var(--s-3); }
-.trade-open { grid-column: 2; grid-row: 1; }
-.trade-waiting { grid-column: 2; grid-row: 2; border-top: 1px solid var(--line); }
-.trade-done { grid-column: 3; grid-row: 1 / span 2; }
+.trade-zone:first-child {
+  border-top: 0;
+  padding-top: var(--s-4);
+}
 
-.trade-open,
-.trade-waiting,
-.trade-done { border-left: 1px solid var(--line); }
+.trade-status { flex: 0 0 auto; }
+.trade-open { flex: 0 0 auto; }
 
-/* OPEN IS AS TALL AS ITS ROWS, WAITING TAKES THE REST. The first row of the
-   middle column sizes to Open's content and the second takes what is left,
-   so one position leaves most of the column to the plans under it. Open is
-   capped at six tenths of the deck so a second position cannot push Waiting
-   to a heading with nothing under it; past the cap Open scrolls inside
-   itself like every other zone. */
-.trade-open { max-height: calc(var(--deck, 236px) * 0.6); }
+/* EVERY ZONE IS AS TALL AS WHAT IS IN IT. Waiting is bounded rather than free:
+   a page of plans must not take the tape's room, so past the cap it scrolls
+   inside itself with a fade at the cut. Done takes what it needs and gives way
+   first when the rail is short, scrolling inside itself rather than pushing
+   anything off the bottom. Neither grows to fill: the room left under the last
+   zone is the rail's own ground, not a box. */
+.trade-waiting {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 40%;
+}
+
+.trade-done {
+  flex: 0 1 auto;
+  min-height: 0;
+}
 
 .trade-zone-head {
   display: flex;
   align-items: baseline;
+  justify-content: space-between;
   gap: var(--s-2);
   flex: 0 0 auto;
   padding-bottom: var(--s-2);
@@ -749,7 +764,6 @@ body[data-view="trade"] .stage {
   display: flex;
   flex-direction: column;
   gap: var(--s-3);
-  flex: 0 1 auto;
   min-height: 0;
 }
 
@@ -757,6 +771,7 @@ body[data-view="trade"] .stage {
    It shrinks with its zone, which is what lets a long tape scroll in place. */
 .trade-done .trade-zone-body {
   gap: 0;
+  flex: 0 1 auto;
 }
 
 /* ONE ROW. The segment (market and timeframes), the indicator command, Layers,
@@ -858,70 +873,48 @@ body[data-view="trade"] .stage {
   min-height: 0;
 }
 
-/* Under 760 px the deck's three columns do not each hold a sentence, so they
-   stack into one column, Status, Open, Waiting, Done, ruled between, and the
-   deck reads top to bottom. This width is always inside the stacked world
-   below, so the world is already scrolling and the deck is as tall as what
-   is in it. */
-@container world (max-width: 759px) {
-  .trade-rail {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: none;
-  }
-  .trade-status,
-  .trade-open,
-  .trade-waiting,
-  .trade-done {
-    grid-column: 1;
-    grid-row: auto;
-    border-left: 0;
-    border-top: 1px solid var(--line);
-    max-height: none;
-  }
-  .trade-status { border-top: 0; }
-}
+/* When the chart can no longer hold a usable plot beside a 320 px rail, the two
+   stack and the world scrolls, which is the fallback the brief allows.
 
-/* When the chart can no longer hold a usable plot at the world's width, the
-   world scrolls and the deck sits under the chart at its own height, which is
-   the fallback the brief allows. The threshold is the width at which the
-   chart drops under about 530 px beside the conversation column. */
+   The threshold was 1000 px, which stacked a 1280 x 720 laptop: the world there
+   is 914 px, the chart would have had 588 of it, and the page scrolled for no
+   reason. It is the width at which the chart drops under about 530 px. */
 @container world (max-width: 859px) {
   /* flex: 0 0 auto, not the base row's 1 1: stacked, the wrap is taller than the
      world and must say so. Shrinking to fit put a 1,700 px column inside a
-     400 px box, so the deck's own ground stopped under the first zone and the
-     rest painted on the world. The chart row takes the room the world has
-     to spare; the deck row is as tall as its zones. */
+     400 px box, so the rail's own ground stopped under the first zone and the
+     two below it painted on the world. */
   .trade-wrap {
     flex: 0 0 auto;
-    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr);
     height: auto;
     min-height: 100%;
   }
-  /* Stacked, the world scrolls again, so nothing in the deck holds a height of
+  /* Stacked, the world scrolls again, so nothing in the rail holds a height of
      its own: every zone is as tall as what is in it. */
-  .trade-rail { overflow: visible; }
-  .trade-open { max-height: none; }
+  .trade-rail { overflow: visible; max-height: none; }
+  .trade-waiting { max-height: none; }
+  .trade-done { flex: 0 0 auto; }
   .trade-zone .trade-zone-body { overflow: visible; }
+  .trade-main { border-right: 0; border-bottom: 1px solid var(--line); }
   .split-h { display: none; }
 }
 
-/* ---------- The deck handle inside trade ---------- */
+/* ---------- The rail resizer inside trade ---------- */
 
-/* A horizontal bar between the chart and the deck, dragged up and down. */
 .split-h {
-  cursor: row-resize;
+  cursor: col-resize;
   background: transparent;
   border: 0;
-  border-top: 1px solid transparent;
+  border-left: 1px solid transparent;
   transition: background-color var(--dur-press) var(--ease-out);
-  touch-action: none;
 }
 
 @media (hover: hover) and (pointer: fine) {
   .split-h:hover { background: var(--line-strong); }
 }
 
-.split-h:focus-visible { background: var(--ink); outline: none; }
+.split-h:focus-visible { background: var(--ink); }
 
 /* ---------- Stacked: the world above, the conversation docked below ---------- */
 

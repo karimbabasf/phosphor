@@ -33,7 +33,6 @@
   <header class="topbar" id="topbar">
     <div class="wordmark-wrap">
       <button class="wordmark" id="wordmark" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="colourways" title="Colourway">
-        <svg class="wordmark-glyph" id="wordmark-glyph" data-state="off" aria-hidden="true"><use href="#phosphor-mark"/></svg>
         <span>Phosphor</span>
       </button>
       <div class="colourways" id="colourways" role="menu" aria-label="Colourway" tabindex="-1">
@@ -55,23 +54,23 @@
       <button class="tab" role="tab" data-tab="trade" data-surface="tab-trade" aria-selected="false">Trade</button>
     </nav>
 
+    <!-- The bar's right side: one quiet line of state, and one real control. A pending ask and
+         the stream are status lines (a dot and a word), the lock is a lock glyph and a word, and
+         Freeze everything is the brake: the one button, and the last thing in the bar. -->
     <div class="status-cluster">
-      <span class="chip" id="chip-waiting" data-tone="warn" hidden>
-        <span class="dot" aria-hidden="true"></span>
+      <span class="status-line bar-state" id="chip-waiting" data-tone="warn" hidden>
+        <span class="status-dot" aria-hidden="true"></span>
         <span data-role="waiting-text">1 waiting</span>
       </span>
-      <span class="chip" id="chip-lock">
-        <span class="dot" aria-hidden="true"></span>
+      <span class="bar-lock" id="chip-lock">
+        <svg class="bar-lock-glyph" viewBox="0 0 16 16" focusable="false" aria-hidden="true"><path d="M5.5 7V5.25a2.5 2.5 0 0 1 5 0V7M3.75 7h8.5a1 1 0 0 1 1 1v4.5a1 1 0 0 1-1 1h-8.5a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
         <span data-role="lock-text">Unlocked</span>
       </span>
-      <span class="chip" id="chip-feed" hidden>
-        <span class="dot" aria-hidden="true"></span>
+      <span class="status-line bar-state" id="chip-feed" hidden>
+        <span class="status-dot" aria-hidden="true"></span>
         <span data-role="feed-text">Live</span>
       </span>
-      <button class="colourway-toggle" id="colourway-toggle" type="button" aria-label="Switch to black on white" title="Black on white">
-        <svg class="mark-tile colourway-toggle-tile" data-profile="black-on-white" aria-hidden="true"><use href="#phosphor-mark"/></svg>
-      </button>
-      <button class="btn btn-danger" id="btn-freeze">
+      <button class="btn freeze" id="btn-freeze">
         <span class="btn-label">Freeze everything</span>
       </button>
     </div>

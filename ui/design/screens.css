@@ -169,31 +169,20 @@
   border-top: 1px solid var(--line);
 }
 
-/* A receipt is a .tx (components.css, the money grammar) that opens. The list
-   it sits in is flush with the panel, so the row carries the side padding
-   itself, and the first row keeps the rule that separates it from the head. */
-.tx.receipt-row {
+.receipt-row {
   width: 100%;
   text-align: left;
   background: transparent;
   transition: background-color var(--dur-press) var(--ease-out);
 }
 
-.activity-list > .tx.receipt-row:first-child {
-  border-top: 1px solid var(--line);
-}
-
-/* The title is the headline, clamped at two lines. It used to be the rail's verbatim
-   sentence, which wrapped to six lines, buried the time under itself and ran across the
-   amount on the right, so two receipts filled the whole panel; that sentence now lives on the
-   opened receipt. The headline is one sentence, and on Pro's half-width panel one line cut it
-   before the coin it changed into, which is the half of the sentence that says what happened.
-   Two lines hold the whole sentence at that width; anything longer ends in an ellipsis, and
-   the whole sentence rides on the title attribute. */
-.receipt-row > .tx-title {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+/* A row is one line of what happened and one line of when. The title used to be the rail's
+   verbatim sentence, which wrapped to six lines, buried the time under itself and ran across
+   the amount on the right, so two receipts filled the whole panel. The sentence now lives on
+   the opened receipt and the row's title is clamped, so a long one ends in an ellipsis instead
+   of rewriting the layout. */
+.receipt-row .row-main > .body {
+  display: block;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -269,14 +258,6 @@
 .agent-status[data-state="off"] > .status-dot { background: var(--text-3); }
 .agent-status[data-state="starting"] > .status-dot { background: color-mix(in srgb, var(--beam) 60%, var(--text-3)); }
 .agent-status[data-state="error"] > .status-dot { background: var(--down); }
-/* A time that is really an outcome ("Did not go through") reads in the warning
-   tone; the grammar's own 12 px stays. */
-.receipt-row > .tx-when.warn { color: var(--warn); }
-
-/* A move that did not go through left nothing, so its amount is unsigned and
-   quiet: the same weight as the time, not a number that means money. */
-.receipt-row > .tx-amount.dim { color: var(--text-3); }
-
 .agent-status[data-state="stopped"] > .status-dot {
   background: transparent;
   box-shadow: inset 0 0 0 1.5px var(--text-3);
@@ -1541,12 +1522,11 @@
   .agent-seat[data-seat="coming"] { animation: none; opacity: 0.7; }
 }
 
-/* ---------- the deck ----------
+/* ---------- the rail ----------
 
    Three zone headings, all quiet, in sentence case and untracked: a label is a
-   word, not a stamp. Beside each, in mono, how many rows the zone holds, and
-   nothing when it holds none. The deck has exactly one loud thing on it and
-   it is the price tag. */
+   word, not a stamp. The rail has exactly one loud thing in it and it is the
+   mark price. */
 .trade-zone-head h2 {
   font-size: var(--fs-12);
   font-weight: 500;
@@ -1554,24 +1534,13 @@
   letter-spacing: 0;
 }
 
-.trade-zone-count {
-  font-family: var(--font-mono);
-  font-size: var(--fs-12);
-  color: var(--text-3);
-  font-feature-settings: "tnum" 1;
-  font-variant-numeric: tabular-nums;
-}
-
-/* THE PRICE TAG. The coin above as a name in the text face, then the price
-   as the money grammar's .tag: mono on a wash tinted by the last tick, the
-   change since the window opened beside it. It used to be a bare 28 px
-   number, which read as a balance; a tag on the market is a smaller number
-   in a tinted box, the same thing the chart's own axis label is. */
+/* The mark price is what a person looks at first, so it is the biggest type on
+   this surface by a clear step and everything else sits at 12 to 15 px under
+   it. The coin above it is a name, so it is set in the text face. */
 .trade-mark {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: var(--s-2);
+  gap: var(--s-1);
 }
 
 .trade-mark-coin {
@@ -1582,52 +1551,15 @@
   letter-spacing: 0;
 }
 
-.trade-mark .tag { max-width: 100%; }
-
 .trade-mark-price {
   font-family: var(--font-mono);
+  font-size: var(--fs-28);
+  line-height: 1.05;
   color: var(--text);
+  letter-spacing: -0.02em;
   font-feature-settings: "tnum" 1;
-  font-variant-numeric: tabular-nums;
   font-optical-sizing: auto;
-  white-space: nowrap;
 }
-
-/* THE FIGURES, under the tag: the grammar's stats, tightened to the column,
-   and a 2 px line under them for how much of the money is behind plans. The
-   fill is a transform, not a width, so it costs no layout as it moves; warn
-   once three quarters is committed, because that is the point a person
-   should notice before the next plan is approved. */
-.trade-status .stats {
-  margin-top: var(--s-4);
-  gap: var(--s-2) var(--s-4);
-}
-
-.trade-status .trade-line {
-  margin-top: var(--s-3);
-}
-
-.trade-risk {
-  position: relative;
-  height: 2px;
-  margin-top: var(--s-3);
-  border-radius: 1px;
-  background: var(--line);
-  overflow: hidden;
-}
-
-.trade-risk > i {
-  display: block;
-  height: 100%;
-  width: 100%;
-  border-radius: 1px;
-  background: var(--text-2);
-  transform: scaleX(var(--used, 0));
-  transform-origin: left center;
-  transition: transform var(--dur-number) var(--ease-out);
-}
-
-.trade-risk[data-tone="warn"] > i { background: var(--warn); }
 
 /* A routine empty answer is one line. It used to be a heading, a centred title
    and an explanatory sentence in a bordered card, which cost an empty zone as
@@ -1760,68 +1692,21 @@
   --btn-edge: color-mix(in srgb, var(--warn) 40%, transparent);
 }
 
-/* THE OPEN ROW ON THE DECK. The column is short, so the row lays out as a
-   grid: the title and the profit on the first line with Close at its right,
-   and the four facts two to a line under them (the facts grid is the shared
-   label and value pair; here it takes four columns so Size and Entry share a
-   line and Stop and Target the next). The markup is the same row the rail
-   drew; only its shape on the deck changes. */
-.trade-open .trade-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  column-gap: var(--s-3);
-  row-gap: var(--s-2);
-  align-items: center;
-}
-
-.trade-open .trade-row > .trade-row-head { grid-column: 1; grid-row: 1; min-width: 0; }
-.trade-open .trade-row > .trade-row-foot { grid-column: 2; grid-row: 1; }
-.trade-open .trade-row > .facts {
-  grid-column: 1 / -1;
-  grid-row: 2;
-  grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr);
-  gap: var(--s-1) var(--s-3);
-}
-.trade-open .trade-row > .trade-callout { grid-column: 1 / -1; }
-
-/* THE TAPE: the money grammar's dense transaction row, one per fill or ended
-   plan. The grammar hides the time in dense rows; the tape shows it, because
-   a tape is when things happened: the clock sits between the mark and the
-   sentence in 12 px mono, the sentence takes the room and truncates, the
-   amount trails. An ended plan's id sits where the amount would be, dimmed. */
+/* The tape: one line per fill or ended plan, dense. It wraps only for the
+   callout a highlight puts under it. */
 .done-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-1) var(--s-3);
+  padding: var(--s-1) 0;
+  font-size: var(--fs-13);
+  border-radius: var(--radius-sm);
   transition: opacity 200ms var(--ease-out);
 }
 
-.done-row[data-dense="true"] {
-  grid-template-columns: 22px auto minmax(0, 1fr) auto;
-  column-gap: var(--s-2);
-}
-
-.done-row[data-dense="true"] > .tx-when {
-  display: block;
-  grid-column: 2;
-  grid-row: 1;
-  font-family: var(--font-mono);
-  font-size: var(--fs-12);
-  line-height: 1.4;
-  color: var(--text-3);
-  font-feature-settings: "tnum" 1;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.done-row[data-dense="true"] > .tx-title {
-  grid-column: 3;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.done-row[data-dense="true"] > .tx-amount { grid-column: 4; }
-.done-row[data-dense="true"] > .tx-amount.dimmer { color: var(--text-3); }
-.done-row[data-dense="true"] > .tx-mark svg { width: 12px; height: 12px; }
-.done-row > .trade-callout { grid-column: 1 / -1; grid-row: 2; margin-top: var(--s-1); }
+.done-row .trade-callout { flex-basis: 100%; }
 
 /* ---------- the spotlight ----------
 
