@@ -49,7 +49,7 @@ const NEAR_DEPOSIT = 'aec6b4afd08c0ace0f392c4d1b8aa9c44ce9bbd558903c4b702ce1cb1e
 const NEAR_TX_HASH = 'GzRhr7585nMoskGxv5judyQTaCg1TZzaXULuyoCaQiSm';
 
 const tokensFixture: TokensFile = {
-  eth: {},
+  eth: { USDC: { tokenId: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', decimals: 6 } },
   base: { USDC: { tokenId: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', decimals: 6 } },
   arb: { USDT: { tokenId: '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9', decimals: 6 } },
   sol: {},
@@ -57,6 +57,13 @@ const tokensFixture: TokensFile = {
 };
 
 const oneClickTokens: OneClickToken[] = [
+  {
+    assetId: 'nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near',
+    decimals: 6,
+    blockchain: 'eth',
+    symbol: 'USDC',
+    contractAddress: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
+  },
   {
     assetId: 'nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near',
     decimals: 6,
@@ -116,6 +123,10 @@ function quoteBody(over: Record<string, unknown> = {}): Record<string, unknown> 
       refundFee: '2400',
       withdrawFee: '300000',
       depositAddress: DEPOSIT,
+      // A live quote carries both stamps. The rail's clock in these tests starts at 0, so a
+      // real date is days away and the deadline rule never bites unless a test moves it.
+      deadline: '2026-08-15T01:42:11.047Z',
+      timeWhenInactive: '2026-08-15T01:42:11.047Z',
       ...over,
     },
   };
@@ -310,8 +321,8 @@ test('simulate asks for a dry quote, so no deposit address is ever minted', asyn
   const body = h.quoteBodies[0];
   assert.equal(body.dry, true);
   assert.equal(body.amount, '100000000');
-  assert.equal(body.originAsset, oneClickTokens[0].assetId);
-  assert.equal(body.destinationAsset, oneClickTokens[1].assetId);
+  assert.equal(body.originAsset, oneClickTokens[1].assetId);
+  assert.equal(body.destinationAsset, oneClickTokens[2].assetId);
   assert.equal(body.swapType, 'EXACT_INPUT');
   assert.equal(body.depositType, 'ORIGIN_CHAIN');
   assert.equal(body.refundType, 'ORIGIN_CHAIN');
@@ -969,4 +980,60 @@ test('a signed quote passes, and the record 1Click signed lands in the evidence,
   assert.equal(early.length, 1);
   assert.deepEqual(early[0].txids, [TX_HASH]);
   assert.deepEqual(early[0].quote, quote);
+});
+
+// ---------- the deposit deadline ----------
+//
+// A deposit that lands after the quote's deadline goes to an address 1Click has retired, and the
+// docs say the funds may be lost. The rail reads the deadline off the live quote and refuses to
+// broadcast when now, plus the time the origin chain takes to confirm, plus a two minute margin,
+// is past it: eth needs seven minutes of room, base three. It also asks 1Click for a longer
+// deadline on eth in the first place, so the rule is a backstop and not the normal path.
+
+const MINUTE = 60_000;
+
+function ethDraft(): SwapDraft {
+  return draftOf({ chain: 'eth', toChain: 'arb', fromSymbol: 'USDC', toSymbol: 'USDT' });
+}
+
+test('a quote too close to its deadline for the origin chain to confirm is refused before any send, and the chain decides how close', async () => {
+  // Six and a half minutes out: thirty seconds short of what eth needs, plenty for base.
+  const soon = new Date(6.5 * MINUTE).toISOString();
+  const eth = harness({ quote: quoteBody({ deadline: soon, timeWhenInactive: soon }) });
+  await assert.rejects(() => railOf(eth).execute(ethDraft()), /deadline/);
+  assert.equal(eth.sends.length, 0, 'nothing was signed');
+  assert.equal(eth.depositSubmits.length, 0);
+
+  const base = harness({ quote: quoteBody({ deadline: soon, timeWhenInactive: soon }) });
+  const out = await railOf(base).execute(draftOf());
+  assert.equal(out.ok, true, out.detail);
+  assert.equal(base.sends.length, 1);
+  assert.equal(out.evidence?.deadline, soon, 'the deadline the deposit had to meet is on the row');
+});
+
+test('a quote thirty seconds from its deadline is refused on every origin chain, and one with no deadline is refused too', async () => {
+  const soon = new Date(30_000).toISOString();
+  for (const draft of [draftOf(), ethDraft()]) {
+    const h = harness({ quote: quoteBody({ deadline: soon, timeWhenInactive: soon }) });
+    await assert.rejects(() => railOf(h).execute(draft), /deadline/, draft.chain);
+    assert.equal(h.sends.length, 0, `${draft.chain}: nothing was signed`);
+  }
+  const bare = harness({ quote: quoteBody({ deadline: undefined, timeWhenInactive: undefined }) });
+  await assert.rejects(() => railOf(bare).execute(draftOf()), /deadline/);
+  assert.equal(bare.sends.length, 0);
+});
+
+test('the live quote request on eth asks 1Click for a longer deadline than the default ten minutes', async () => {
+  const eth = harness();
+  await railOf(eth).execute(ethDraft());
+  const live = eth.quoteBodies.find((b) => b.dry === false);
+  assert.ok(live !== undefined);
+  const asked = Date.parse(String(live.deadline)) - Date.now();
+  assert.ok(asked > 25 * MINUTE && asked <= 31 * MINUTE, `eth asked for ${Math.round(asked / MINUTE)} min`);
+
+  const base = harness();
+  await railOf(base).execute(draftOf());
+  const baseLive = base.quoteBodies.find((b) => b.dry === false);
+  const baseAsked = Date.parse(String(baseLive?.deadline)) - Date.now();
+  assert.ok(baseAsked > 8 * MINUTE && baseAsked <= 11 * MINUTE, `base asked for ${Math.round(baseAsked / MINUTE)} min`);
 });

@@ -38,7 +38,7 @@ import {
 import type { NearSendOutcome, NearSendParams } from '../chain/near.ts';
 import { MAX_SLIPPAGE_BPS, floorTooLow } from './slippage.ts';
 import { addressProblem } from './intents-withdraw.ts';
-import type { ChainId, Rail, RailHooks, RailResult, SimulationResult, SwapDraft } from '../types.ts';
+import type { ChainId, Rail, RailEvidence, RailHooks, RailResult, SimulationResult, SwapDraft } from '../types.ts';
 import {
   ONECLICK_TERMINAL,
   assetIdFor,
@@ -50,7 +50,7 @@ import {
 } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickStatus, TokensFile } from '../intents.ts';
 import { quoteSignatureProblems, signedQuoteRecord } from '../quote-signature.ts';
-import { deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, settledEvidence, tell, uniqueTxids, withQuote } from './oneclick-words.ts';
+import { deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, settledEvidence, tell, uniqueTxids } from './oneclick-words.ts';
 
 // The chains this rail can deposit from, by signer family.
 //
@@ -65,6 +65,62 @@ const NEAR_ORIGINS: ChainId[] = ['near'];
 function originFamily(chain: ChainId): 'evm' | 'near' | null {
   if (EVM_ORIGINS.includes(chain)) return 'evm';
   if (NEAR_ORIGINS.includes(chain)) return 'near';
+  return null;
+}
+
+/* How long a deposit takes to confirm on each origin, generously, and the room a broadcast has to
+   have before the quote's deadline. A live quote names a `deadline` after which its deposit
+   address is retired and, in the docs' words, funds may be lost, and a `timeWhenInactive` after
+   which the address goes cold and the swap slows. Nothing read either before this: the rail
+   quoted and sent at once, and a transfer under-priced into a slow mempool could confirm after
+   the address it was sent to had gone. src/chain/evm.ts alone will wait 120 s for a receipt and
+   retry the send three times, so the figures are the chain's ordinary confirmation plus that.
+   The rule, applied before anything is signed: now + confirmation + margin must sit inside the
+   earlier of the two stamps, or the quote is refused and the human re-quotes. On eth the live
+   request also asks 1Click for a longer deadline in the first place, so the rule is a backstop
+   there and not the normal path. */
+export const DEPOSIT_CONFIRMATION_MS: Record<ChainId, number> = {
+  eth: 5 * 60_000,
+  base: 60_000,
+  arb: 60_000,
+  sol: 60_000,
+  near: 60_000,
+};
+export const DEPOSIT_DEADLINE_MARGIN_MS = 2 * 60_000;
+
+// What the live quote asks 1Click for. Ten minutes is the API default and enough on a chain
+// that confirms in one; Ethereum gets thirty so a slow block or a repriced send still lands well
+// inside the window the address stays live.
+export function quoteDeadlineMsFor(chain: ChainId): number {
+  return chain === 'eth' ? 30 * 60_000 : 10 * 60_000;
+}
+
+/* The sentence that refuses a live quote whose deposit could land after its address is retired,
+   or null when there is room. A live quote with no deadline at all is refused too: the docs say a
+   non-dry quote carries one, so its absence is a quote this rail cannot bound. */
+export function depositDeadlineProblem(chain: ChainId, quote: OneClickQuote, nowMs: number): string | null {
+  const stamps = [
+    ['deadline', quote.deadline],
+    ['timeWhenInactive', quote.timeWhenInactive],
+  ] as const;
+  const parsed = stamps.map(([name, value]) => ({ name, at: typeof value === 'string' ? Date.parse(value) : Number.NaN }));
+  const deadline = parsed[0];
+  if (deadline === undefined || Number.isNaN(deadline.at)) {
+    return `the live quote carries no readable deadline (got ${oneLine(quote.deadline, 40)}), so this rail cannot tell whether a deposit would land in time`;
+  }
+  const needMs = DEPOSIT_CONFIRMATION_MS[chain] + DEPOSIT_DEADLINE_MARGIN_MS;
+  for (const stamp of parsed) {
+    if (Number.isNaN(stamp.at)) continue;
+    const roomMs = stamp.at - nowMs;
+    if (roomMs < needMs) {
+      return (
+        `the quote's ${stamp.name} is ${Math.round(roomMs / 1000)} s away and a deposit on ${chain} needs ` +
+        `${Math.round(needMs / 60_000)} min to confirm with a margin (${Math.round(DEPOSIT_CONFIRMATION_MS[chain] / 60_000)} min ` +
+        `plus ${Math.round(DEPOSIT_DEADLINE_MARGIN_MS / 60_000)} min); past the deadline the deposit address is retired and the ` +
+        'funds may be lost, so nothing was sent: quote again'
+      );
+    }
+  }
   return null;
 }
 
@@ -485,6 +541,7 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
       amount: p.amountBase.toString(),
       refundTo: draft.from,
       recipient: draft.to,
+      deadlineMs: quoteDeadlineMsFor(draft.chain),
     });
     const quote = response.quote;
 
@@ -506,10 +563,17 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
 
     const depositAddress = checkDepositAddress(p.family, quote.depositAddress);
     const signed = signedQuoteRecord(response);
+
+    // Last look at the clock before anything is signed: see DEPOSIT_CONFIRMATION_MS.
+    const late = depositDeadlineProblem(draft.chain, quote, now());
+    if (late !== null) throw new Error(late);
+    // What every answer from here on keeps: the signed quote, and the deadline the deposit had to meet.
+    const keep = (evidence: RailEvidence = {}): RailEvidence => ({ ...evidence, quote: signed, deadline: quote.deadline });
+
     const sent = await depositTransfer(draft, p, depositAddress);
     // The hash and the signed quote reach the row the moment the transfer is on the wire, ahead
     // of the watch loop, so a process that dies polling still has both.
-    if (sent.hash !== undefined) tell(hooks, { txids: [sent.hash], handle: depositAddress, quote: signed });
+    if (sent.hash !== undefined) tell(hooks, { txids: [sent.hash], ...keep({ handle: depositAddress }) });
 
     if (!sent.ok) {
       /* Two different sentences, because they are two different facts and the difference is
@@ -527,14 +591,14 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
             `${oneLine(sent.error ?? 'unknown error', 120)}. THE FUNDS MAY ALREADY HAVE LEFT THE WALLET. ` +
             `Check ${sent.hash} and the deposit address ${depositAddress} before sending again.`,
           txids: [sent.hash],
-          evidence: { handle: depositAddress, quote: signed },
+          evidence: keep({ handle: depositAddress }),
         };
       }
       return {
         ok: false,
         detail: `deposit transfer failed: ${oneLine(sent.error ?? 'unknown error')}. No funds left the wallet.`,
         txids: [],
-        evidence: { quote: signed },
+        evidence: keep(),
       };
     }
 
@@ -556,27 +620,29 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
           `(${deliveredNote(watch)}); ${evidence}` +
           (destination.length > 0 ? `, destination tx ${destination.join(', ')}` : ''),
         txids: uniqueTxids(txHash, watch),
-        evidence: { ...settledEvidence(watch, depositAddress), quote: signed },
+        evidence: keep(settledEvidence(watch, depositAddress)),
       };
     }
 
     if (watch.status === 'REFUNDED' || watch.status === 'FAILED') {
-      return withQuote(describeRefund(watch, depositAddress, {
+      const refund = describeRefund(watch, depositAddress, {
         symbol: draft.fromSymbol,
         refundTarget: `our ${draft.chain} wallet ${draft.from}`,
         evidence,
         primaryTxid: txHash,
-      }), signed);
+      });
+      return { ...refund, evidence: keep(refund.evidence) };
     }
 
     if (watch.status === 'INCOMPLETE_DEPOSIT') {
-      return withQuote(describeIncompleteDeposit(watch, depositAddress, {
+      const short = describeIncompleteDeposit(watch, depositAddress, {
         symbol: draft.fromSymbol,
         quotedIn: oneLine(quote.amountInFormatted, 40),
         refundTarget: `our ${draft.chain} wallet ${draft.from}`,
         evidence,
         primaryTxid: txHash,
-      }), signed);
+      });
+      return { ...short, evidence: keep(short.evidence) };
     }
 
     // Timed out. The transfer confirmed, so the money is already gone from our wallet and
@@ -590,7 +656,7 @@ export function oneClickRail(deps: OneClickRailDeps): OneClickRail {
         `(last status ${watch.reported}); ${evidence}. THE FUNDS WERE SENT and the swap may still complete, so it is ` +
         'unconfirmed: check the deposit address before retrying.',
       txids: uniqueTxids(txHash, watch),
-      evidence: { handle: depositAddress, quote: signed },
+      evidence: keep({ handle: depositAddress }),
     };
   }
 

@@ -41,6 +41,7 @@ const USDC_ASSET = 'nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.n
 
 const apiTokens: OneClickToken[] = [
   { assetId: ETH_ASSET, decimals: 18, blockchain: 'eth', symbol: 'ETH' },
+  { assetId: 'nep141:base.omft.near', decimals: 18, blockchain: 'base', symbol: 'ETH' },
   {
     assetId: USDC_ASSET,
     decimals: 6,
@@ -94,6 +95,9 @@ function quoteOf(over: Record<string, unknown> = {}): OneClickQuote {
     minAmountOut: '5260663507109003',
     timeEstimate: 45,
     depositAddress: DEPOSIT_ADDRESS,
+    // A live quote carries both stamps; a day out, so the deadline rule bites only when a test moves it.
+    deadline: new Date(NOW + 24 * 60 * 60_000).toISOString(),
+    timeWhenInactive: new Date(NOW + 24 * 60 * 60_000).toISOString(),
     ...over,
   } as OneClickQuote;
 }
@@ -633,4 +637,51 @@ test('an unsigned quote is refused before any send, and a signed one lands its r
   assert.equal(early.length, 1, 'the executor heard about the hash before the watch loop');
   assert.deepEqual(early[0].txids, ['0xdeadbeef']);
   assert.deepEqual(early[0].quote, quote);
+});
+
+// ---------- the deposit deadline ----------
+//
+// A deposit that lands after the quote's deadline goes to an address 1Click has retired, and the
+// docs say the funds may be lost. The rail reads the deadline off the live quote and refuses to
+// broadcast when now, plus the time the origin chain takes to confirm, plus a two minute margin,
+// is past it: eth needs seven minutes of room, base three. See DEPOSIT_CONFIRMATION_MS.
+
+const MINUTE = 60_000;
+
+test('a quote too close to its deadline for the origin chain to confirm is refused before any send, and the chain decides how close', async () => {
+  // Six and a half minutes out: thirty seconds short of what eth needs, plenty for base.
+  const soon = new Date(NOW + 6.5 * MINUTE).toISOString();
+  const eth = harness({ quote: quoteOf({ deadline: soon, timeWhenInactive: soon }) });
+  await assert.rejects(() => railOf(eth).execute(draftOf()), /deadline/);
+  assert.equal(eth.sends.length, 0, 'nothing was signed');
+
+  const base = harness({ quote: quoteOf({ deadline: soon, timeWhenInactive: soon }) });
+  const out = await railOf(base).execute(draftOf({ chain: 'base' }));
+  assert.equal(out.ok, true, out.detail);
+  assert.equal(base.sends.length, 1);
+  assert.equal(out.evidence?.deadline, soon, 'the deadline the deposit had to meet is on the row');
+});
+
+test('a quote thirty seconds from its deadline is refused on every origin chain, and one with no deadline is refused too', async () => {
+  const soon = new Date(NOW + 30_000).toISOString();
+  for (const chain of ['eth', 'base'] as const) {
+    const h = harness({ quote: quoteOf({ deadline: soon, timeWhenInactive: soon }) });
+    await assert.rejects(() => railOf(h).execute(draftOf({ chain })), /deadline/, chain);
+    assert.equal(h.sends.length, 0, `${chain}: nothing was signed`);
+  }
+  const bare = harness({ quote: quoteOf({ deadline: undefined, timeWhenInactive: undefined }) });
+  await assert.rejects(() => railOf(bare).execute(draftOf()), /deadline/);
+  assert.equal(bare.sends.length, 0);
+});
+
+test('the live quote request on eth asks 1Click for a longer deadline than the default ten minutes', async () => {
+  const eth = harness();
+  await railOf(eth).execute(draftOf());
+  const live = eth.quotes.find((q) => q.dry === false);
+  assert.equal(live?.deadlineMs, 30 * MINUTE);
+
+  const base = harness();
+  await railOf(base).execute(draftOf({ chain: 'base' }));
+  const baseLive = base.quotes.find((q) => q.dry === false);
+  assert.equal(baseLive?.deadlineMs, 10 * MINUTE);
 });

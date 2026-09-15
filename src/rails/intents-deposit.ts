@@ -31,7 +31,7 @@ import { formatUnits, getAddress, isAddress } from 'viem';
 import type { Address } from 'viem';
 import { erc20TransferData, evmAddress, reader, sendTx } from '../chain/evm.ts';
 import type { SendOutcome, SendParams } from '../chain/evm.ts';
-import type { ChainId, IntentsDepositDraft, Rail, RailHooks, RailResult, SimulationResult } from '../types.ts';
+import type { ChainId, IntentsDepositDraft, Rail, RailEvidence, RailHooks, RailResult, SimulationResult } from '../types.ts';
 import {
   NATIVE_ASSET,
   NATIVE_TOKEN_ID,
@@ -46,8 +46,8 @@ import {
 } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickStatus, TokensFile } from '../intents.ts';
 import { quoteSignatureProblems, signedQuoteRecord } from '../quote-signature.ts';
-import { deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, settledEvidence, tell, uniqueTxids, withQuote } from './oneclick-words.ts';
-import { ONECLICK_COUNTERPARTY } from './oneclick.ts';
+import { deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, settledEvidence, tell, uniqueTxids } from './oneclick-words.ts';
+import { ONECLICK_COUNTERPARTY, depositDeadlineProblem, quoteDeadlineMsFor } from './oneclick.ts';
 
 // The chains src/chain/evm.ts can sign for. 1Click accepts Solana and NEAR origins too;
 // Phosphor has no signer for them, so a draft naming one is refused rather than attempted.
@@ -411,6 +411,9 @@ export function intentsDepositRail(deps: IntentsDepositRailDeps): IntentsDeposit
       recipient: draft.intentsAccount,
       recipientType: 'INTENTS',
       depositType: 'ORIGIN_CHAIN',
+      // Longer on eth, so a slow confirmation lands while the address is still live. See
+      // DEPOSIT_CONFIRMATION_MS in oneclick.ts, which this rail shares.
+      deadlineMs: quoteDeadlineMsFor(draft.chain),
     });
     const quote = response.quote;
 
@@ -431,6 +434,13 @@ export function intentsDepositRail(deps: IntentsDepositRailDeps): IntentsDeposit
     const depositAddress = getAddress(quote.depositAddress);
     const signed = signedQuoteRecord(response);
 
+    // A deposit that would confirm after the address is retired is refused here, before the
+    // key is touched: the rule and the per-chain figures are DEPOSIT_CONFIRMATION_MS in oneclick.ts.
+    const late = depositDeadlineProblem(draft.chain, quote, now());
+    if (late !== null) throw new Error(late);
+    // What every answer from here on keeps: the signed quote, and the deadline the deposit had to meet.
+    const keep = (evidence: RailEvidence = {}): RailEvidence => ({ ...evidence, quote: signed, deadline: quote.deadline });
+
     // Last gate before the key is touched, re-estimated against the real destination.
     const reserve = await checkNativeReserve(draft, p, depositAddress);
     if (reserve !== null) throw new Error(reserve);
@@ -442,7 +452,7 @@ export function intentsDepositRail(deps: IntentsDepositRailDeps): IntentsDeposit
     );
     // The hash and the signed quote reach the row the moment the transfer is on the wire, ahead
     // of the watch loop, so a process that dies polling still has both.
-    if (sent.hash !== undefined) tell(hooks, { txids: [sent.hash], handle: depositAddress, quote: signed });
+    if (sent.hash !== undefined) tell(hooks, { txids: [sent.hash], ...keep({ handle: depositAddress }) });
 
     if (!sent.ok) {
       /* Two different sentences, because they are two different facts and the difference is
@@ -460,14 +470,14 @@ export function intentsDepositRail(deps: IntentsDepositRailDeps): IntentsDeposit
             `${oneLine(sent.error ?? 'unknown error', 120)}. THE FUNDS MAY ALREADY HAVE LEFT THE WALLET. ` +
             `Check ${sent.hash} and the deposit address ${depositAddress} before sending again.`,
           txids: [sent.hash],
-          evidence: { handle: depositAddress, quote: signed },
+          evidence: keep({ handle: depositAddress }),
         };
       }
       return {
         ok: false,
         detail: `deposit transfer failed: ${oneLine(sent.error ?? 'unknown error')}. No funds left the wallet.`,
         txids: [],
-        evidence: { quote: signed },
+        evidence: keep(),
       };
     }
 
@@ -487,27 +497,29 @@ export function intentsDepositRail(deps: IntentsDepositRailDeps): IntentsDeposit
           `${deliveredAmount(watch, quote.amountOutFormatted)} ${draft.symbol} now credited to ${draft.intentsAccount} ` +
           `(${deliveredNote(watch)}) and spendable by the intents-native swap rail; ${evidence}`,
         txids: uniqueTxids(txHash, watch),
-        evidence: { ...settledEvidence(watch, depositAddress), quote: signed },
+        evidence: keep(settledEvidence(watch, depositAddress)),
       };
     }
 
     if (watch.status === 'REFUNDED' || watch.status === 'FAILED') {
-      return withQuote(describeRefund(watch, depositAddress, {
+      const refund = describeRefund(watch, depositAddress, {
         symbol: draft.symbol,
         refundTarget: `our ${draft.chain} wallet ${draft.from}`,
         evidence,
         primaryTxid: txHash,
-      }), signed);
+      });
+      return { ...refund, evidence: keep(refund.evidence) };
     }
 
     if (watch.status === 'INCOMPLETE_DEPOSIT') {
-      return withQuote(describeIncompleteDeposit(watch, depositAddress, {
+      const short = describeIncompleteDeposit(watch, depositAddress, {
         symbol: draft.symbol,
         quotedIn: oneLine(quote.amountInFormatted, 40),
         refundTarget: `our ${draft.chain} wallet ${draft.from}`,
         evidence,
         primaryTxid: txHash,
-      }), signed);
+      });
+      return { ...short, evidence: keep(short.evidence) };
     }
 
     // Timed out. The transfer confirmed, so the money is already gone from the wallet and the
@@ -521,7 +533,7 @@ export function intentsDepositRail(deps: IntentsDepositRailDeps): IntentsDeposit
         `(last status ${watch.reported}); ${evidence}. THE FUNDS WERE SENT and the credit may still land, so it is ` +
         'unconfirmed: check the balance inside intents.near before retrying.',
       txids: uniqueTxids(txHash, watch),
-      evidence: { handle: depositAddress, quote: signed },
+      evidence: keep({ handle: depositAddress }),
     };
   }
 
