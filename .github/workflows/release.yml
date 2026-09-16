@@ -204,9 +204,21 @@ jobs:
           # so a failure here leaves GitHub on the new version and the site on the old one:
           # that is why the token is required and the step is loud.
           : "${BLOB_READ_WRITE_TOKEN:?BLOB_READ_WRITE_TOKEN secret is not set, the site download still serves the previous version}"
-          npx --yes vercel@54.20.1 blob put "$RELEASE_DIR/Phosphor-macOS-arm64.dmg" \
-            --access public \
-            --pathname Phosphor-macOS-arm64.dmg \
-            --allow-overwrite \
-            --cache-control-max-age 60 \
-            --content-type application/x-apple-diskimage
+          # Through the Blob SDK, which needs the store token alone. The Vercel CLI (`vercel blob
+          # put`) refuses to start without a Vercel account login even when handed the token,
+          # which is where the v0.5.1 run died, and on a runner there is no account to log in.
+          npm install --no-save --ignore-scripts --no-audit --no-fund @vercel/blob@2.8.0
+          node --input-type=module -e '
+            import { put } from "@vercel/blob";
+            import { createReadStream } from "node:fs";
+            const out = await put("Phosphor-macOS-arm64.dmg", createReadStream(process.argv[1]), {
+              access: "public",
+              addRandomSuffix: false,
+              allowOverwrite: true,
+              cacheControlMaxAge: 60,
+              contentType: "application/x-apple-diskimage",
+              multipart: true,
+              token: process.env.BLOB_READ_WRITE_TOKEN,
+            });
+            console.log("site download now serves", out.url);
+          ' "$RELEASE_DIR/Phosphor-macOS-arm64.dmg"
