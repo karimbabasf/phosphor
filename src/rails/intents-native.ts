@@ -72,6 +72,8 @@ import {
 } from '../chain/near.ts';
 import type { NearSendOutcome, NearSendParams } from '../chain/near.ts';
 import { venueWriteTimeout } from '../net.ts';
+import { INTENTS_SETTLE, SETTLING_SENTENCE, watchRise } from '../ledger/settle.ts';
+import type { RiseSchedule } from '../ledger/settle.ts';
 import { MAX_SLIPPAGE_BPS, floorTooLow } from './slippage.ts';
 import { describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids, withQuote } from './oneclick-words.ts';
 import { quoteSignatureProblems, signedQuoteRecord } from '../quote-signature.ts';
@@ -866,6 +868,9 @@ export type IntentsNativeRailDeps = {
   // The key 1Click signs quotes with. Left unset it is the production key; a test hands the
   // key its own fake signs with, and nothing else ever sets it.
   quoteKey?: string;
+  // How long, and how often, the after-read is repeated once 1Click says SUCCESS. Defaults to
+  // INTENTS_SETTLE; the tests shorten it.
+  settleSchedule?: RiseSchedule;
 };
 
 /* The default reader, over the same view calls the ledger uses. It never throws: a verifier that
@@ -892,12 +897,6 @@ export function liveVerifierBalance(fetchImpl?: typeof fetch): VerifierBalancePo
 
 export type IntentsNativeRail = Rail<SwapDraft>;
 
-// How long the after-check waits for the verifier to show the credit once 1Click has said
-// SUCCESS: six reads, 2.5 s apart, 15 s in all. The read is at finality, so it can trail the
-// solver's settlement by a block or two; on 2026-09-15 one read a second after SUCCESS saw
-// the old balance and a swap that had delivered 19.801706 USDC was recorded as failed.
-export const SETTLE_READS = 6;
-export const SETTLE_WAIT_MS = 2500;
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -930,6 +929,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
   const firstPollMs = deps.firstPollMs ?? 250;
   const maxDeadlineMs = deps.maxDeadlineMs ?? MAX_DEADLINE_MS;
   const quoteKey = deps.quoteKey;
+  const settleSchedule = deps.settleSchedule ?? INTENTS_SETTLE;
 
   // The key is optional: it selects a fee tier, it does not authorise the calls. See the
   // comment on INTENTS_NO_API_KEY_REASON for what was re-tested and when.
@@ -1238,27 +1238,54 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
          and until now it never did: the detail reported `quote.amountOutFormatted`, which is the
          solver's PROMISE, over a payload that is a transfer and names no output. So a swap that
          credited less than the approved floor, or nothing at all, was reported as a success at
-         the promised size. */
-      let afterBase = await verifierBalance(owner.toLowerCase(), p.destinationAsset);
-      // Read again while the verifier still shows the old balance, or will not answer, until
-      // the budget is spent. With no before-read there is nothing to compare, so no waiting.
-      for (let read = 1; read < SETTLE_READS && beforeBase !== null && (afterBase === null || afterBase <= beforeBase); read += 1) {
-        await sleep(SETTLE_WAIT_MS);
-        afterBase = await verifierBalance(owner.toLowerCase(), p.destinationAsset);
-      }
+         the promised size.
+
+         READ UNTIL IT SHOWS, not once. 1Click says SUCCESS the instant the solver executes, and
+         the verifier read asks NEAR at finality 'final', a block or two behind. One read taken
+         right then saw the balance from before the swap, so a swap that had settled was
+         reported as "rose by 0, below the floor, do not sign another". The loop stops at the
+         first read that shows the floor; only the window running out is a decision. */
+      const account = owner.toLowerCase();
+      const settle =
+        beforeBase === null
+          ? { last: await verifierBalance(account, p.destinationAsset), rose: false, reads: 1, waitedMs: 0 }
+          : await watchRise({
+              read: () => verifierBalance(account, p.destinationAsset),
+              rose: (after) => after - beforeBase >= p.minOutBase,
+              schedule: settleSchedule,
+              sleep,
+              now,
+            });
+      const afterBase = settle.last;
       const txids = uniqueTxids(submitted.intentHash, watch);
       const railEvidence = { ...settledEvidence(watch, depositAddress), quote: signedQuote };
+      const pocket =
+        beforeBase === null
+          ? undefined
+          : {
+              venue: 'intents' as const,
+              account,
+              assetId: p.destinationAsset,
+              symbol: draft.toSymbol,
+              decimals: p.destDecimals,
+              before: beforeBase.toString(),
+              after: afterBase === null ? null : afterBase.toString(),
+              floor: p.minOutBase.toString(),
+            };
 
       if (beforeBase !== null && afterBase !== null) {
         const delta = afterBase - beforeBase;
         if (delta <= 0n) {
+          // Not shown inside the window. The venue's word stands, the balance has not caught up,
+          // and the one thing that must not happen now is a second signature.
           return {
             ok: false,
+            settling: true,
             detail:
-              `1click reported SUCCESS but the balance inside ${INTENTS_VERIFIER} had not risen within ` +
-              `${Math.round(((SETTLE_READS - 1) * SETTLE_WAIT_MS) / 1000)}s (${SETTLE_READS} reads), so the swap is ` +
-              `unconfirmed; ${evidence}. Read the balance for ${owner} before signing another.`,
+              `${SETTLING_SENTENCE} Watched ${draft.toSymbol} for ${owner} inside ${INTENTS_VERIFIER} for ` +
+              `${Math.round(settle.waitedMs / 1000)}s over ${settle.reads} reads; ${evidence}.`,
             txids,
+            pocket,
             evidence: railEvidence,
           };
         }
@@ -1267,10 +1294,11 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
             ok: false,
             detail:
               `1click reported SUCCESS, and the balance inside ${INTENTS_VERIFIER} rose by ` +
-              `${formatUnits(delta < 0n ? 0n : delta, p.destDecimals)} ${draft.toSymbol}, below the ` +
+              `${formatUnits(delta, p.destDecimals)} ${draft.toSymbol}, below the ` +
               `${draft.minAmountOut} ${draft.toSymbol} floor this swap was approved with; ${evidence}. ` +
               `Read the balance for ${owner} before signing another.`,
             txids,
+            pocket,
             evidence: railEvidence,
           };
         }
@@ -1282,6 +1310,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
             `from the quote; ${evidence}. Nothing was transferred on any chain and the proceeds are ` +
             `credited to ${owner} inside the verifier.`,
           txids,
+          pocket,
           evidence: railEvidence,
         };
       }
@@ -1296,6 +1325,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
           `back, so the amount out is the solver's figure rather than an observed one. Nothing was transferred ` +
           `on any chain and the proceeds are credited to ${owner} inside the verifier.`,
         txids,
+        ...(pocket === undefined ? {} : { pocket }),
         evidence: railEvidence,
       };
     }

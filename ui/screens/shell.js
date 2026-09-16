@@ -33,11 +33,15 @@
     refs.backupChip = document.getElementById('chip-backup');
     refs.feedChip = document.getElementById('chip-feed');
     refs.freeze = document.getElementById('btn-freeze');
+    refs.layoutButton = document.getElementById('btn-layout');
+    refs.layoutPop = document.getElementById('bar-layout');
+    refs.layoutRows = document.getElementById('bar-layout-rows');
     refs.offline = document.getElementById('offline-bar');
 
     mountConversation();
     wireTabs();
     wireFreeze();
+    wireLayout();
     wireBackupChip();
     wireStream();
 
@@ -181,6 +185,7 @@
        screens and steps off this one. */
     dom.setHidden(refs.feedChip, name === 'trade');
     placeIndicator();
+    renderLayout();
 
     /* Nothing animates on a keyboard-initiated action, and a swap the server
        asked for is not something the person triggered either. */
@@ -395,6 +400,79 @@
       }
       doFreeze(false);
     });
+  }
+
+  /* ---------- Layout ----------
+
+     Every pane the mode that is up can hide, as a check row: on means on
+     screen. The state is ui/split.js's; this menu only mirrors it, and it
+     re-reads it each time it opens, each time a pane changes and each time
+     the view changes, so an eye-off press in a header and a press here never
+     disagree. It is on the bar rather than on the trade strip because the bar
+     is on every mode: the assistant hidden on Basic has to come back from
+     Basic (Karim, 2026-09-15: "when i hide the chat thing, i cant bring it
+     back"). */
+  function wireLayout() {
+    if (!refs.layoutButton || !refs.layoutPop || !refs.layoutRows) return;
+    var wrap = refs.layoutButton.parentNode;
+    var button = refs.layoutButton;
+    var pop = refs.layoutPop;
+
+    function open() {
+      renderLayout();
+      dom.setAttr(pop, 'data-open', 'true');
+      dom.setAttr(button, 'aria-expanded', 'true');
+      var first = refs.layoutRows.children[0];
+      if (first && first.focus) first.focus();
+    }
+    function close() {
+      dom.setAttr(pop, 'data-open', null);
+      dom.setAttr(button, 'aria-expanded', 'false');
+      if (button.focus) button.focus();
+    }
+    dom.on(button, 'click', function () {
+      if (pop.dataset.open === 'true') close();
+      else open();
+    });
+    dom.on(document, 'keydown', function (event) {
+      if (event.key !== 'Escape' || pop.dataset.open !== 'true') return;
+      event.preventDefault();
+      close();
+    });
+    dom.on(document, 'click', function (event) {
+      if (pop.dataset.open !== 'true') return;
+      for (var at = event.target; at; at = at.parentNode) {
+        if (at === wrap) return;
+      }
+      close();
+    });
+    window.addEventListener('phosphor:pane', renderLayout);
+    renderLayout();
+  }
+
+  function renderLayout() {
+    if (!refs.layoutRows || !window.PhosphorSplit) return;
+    dom.reconcile(refs.layoutRows, window.PhosphorSplit.panes(currentView), function (pane) {
+      return pane.name;
+    }, function (pane) {
+      var row = dom.el('button', 'check-row layers-row');
+      row.type = 'button';
+      row.setAttribute('role', 'menuitemcheckbox');
+      row.dataset.pane = pane.name;
+      row.appendChild(dom.el('i', 'check layers-check'));
+      row.appendChild(dom.el('span', '', pane.label));
+      dom.on(row, 'click', onPaneRow);
+      return row;
+    }, function (row, pane) {
+      dom.setAttr(row, 'aria-checked', pane.hidden ? 'false' : 'true');
+    });
+  }
+
+  function onPaneRow(event) {
+    var row = event.currentTarget;
+    var on = row.getAttribute('aria-checked') !== 'true';
+    dom.setAttr(row, 'aria-checked', on ? 'true' : 'false');
+    window.PhosphorSplit.setPane(row.dataset.pane, on);
   }
 
   function doFreeze(on) {

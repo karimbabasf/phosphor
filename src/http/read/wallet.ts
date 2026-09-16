@@ -11,6 +11,8 @@ import { LOG_LIMIT_MAX } from '../context.ts';
 import type { ReadTable } from '../context.ts';
 import { sentencesOf } from '../state.ts';
 import { vaultStatus } from '../vault.ts';
+import { outcomeOf } from '../../proposals/lifecycle.ts';
+import type { PlanFate } from '../../proposals/lifecycle.ts';
 import type { ChainId } from '../../types.ts';
 
 /* An address for the agent's eyes: enough to say "check it ends in 9Xk2" and not enough to
@@ -149,7 +151,9 @@ export const walletReads: ReadTable = {
       chain,
       network: EXCHANGE_NETWORK[chain],
       asset: token.symbol,
-      minDeposit: token.minDeposit,
+      // In the token's own unit ("0.001"), never the bridge's base units ("1000"): the agent
+      // relays this number to a person about to type an amount.
+      minDeposit: token.minDepositHuman,
       addressFingerprint: fingerprint(network.address),
       addressVerified: report.verified,
       memo: network.memo,
@@ -191,6 +195,19 @@ export const walletReads: ReadTable = {
       fail(res, 404, `unknown proposal id: ${id}`);
       return;
     }
-    sendJson(res, 200, proposal);
+    /* `outcome` is the one word the agent may repeat about this row (confirmed, settling,
+       failed, unconfirmed, pending) with a plain sentence and the pocket's before and after,
+       so a settling swap is never reported as failed. A trade proposal's fate is its plan's:
+       the entry is confirmed, unconfirmed or ended on the runner's row, not on this one. */
+    let plan: PlanFate | null = null;
+    if (proposal.kind === 'trade') {
+      try {
+        const plans = (ctx.trade.payload() as { plans?: Array<PlanFate & { proposalId?: string }> }).plans ?? [];
+        plan = plans.find((row) => row.proposalId === proposal.id) ?? null;
+      } catch {
+        plan = null;
+      }
+    }
+    sendJson(res, 200, { ...proposal, outcome: outcomeOf(proposal, plan) });
   },
 };

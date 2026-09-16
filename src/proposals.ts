@@ -31,7 +31,7 @@ import {
 } from './proposals/lifecycle.ts';
 import type { PCtx, ProposalDeps } from './proposals/lifecycle.ts';
 import { finishTouch } from './proposals/lifecycle.ts';
-import { executeApproved, land } from './proposals/execute.ts';
+import { executeApproved, land, watchSettling } from './proposals/execute.ts';
 import { acknowledge, chainTxLookup, reconcileOnBoot, reconcileOpen, reconcileProposal } from './proposals/reconcile.ts';
 import { proposeConsolidate, proposePolicyChange } from './proposals/draft.ts';
 import { proposeHlDeposit, proposeHlWithdraw, proposeIntentsDeposit, proposeIntentsWithdraw, proposeSwap } from './proposals/rails.ts';
@@ -56,6 +56,8 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
   };
 
   const serialise = createSerialiser();
+  // Rows left settling by a process that stopped are re-judged on the ledger's next refresh.
+  watchSettling(ctx);
 
   return {
     proposeConsolidate: (p) => serialise(() => proposeConsolidate(ctx, p)),

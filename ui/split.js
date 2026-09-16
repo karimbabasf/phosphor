@@ -28,9 +28,11 @@
  * `phosphor:pane` fires when a pane is hidden or shown, with the pane's name and state.
  *
  * PANES CAN BE HIDDEN, NOT DRAGGED SHUT. Hiding is a separate act from sizing: a checkbox in
- * the Layout menu or the eye-off control in the pane's own header, never the handle. A hidden
- * pane is a data attribute on its host and the stylesheet reflows the grid; the handle beside
- * it goes with it, and the neighbours take the room. The choice persists on its own key.
+ * the bar's Layout menu or the eye-off control in the pane's own header, never the handle. A
+ * hidden pane is a data attribute on its host and the stylesheet reflows the grid; the handle
+ * beside it goes with it, and the neighbours take the room. The choice persists on its own key.
+ * The way back is the Layout menu, and the menu is on the bar because the bar is on every
+ * mode: a pane hidden on Basic has to be reachable from Basic.
  */
 
 'use strict';
@@ -366,7 +368,9 @@ function splitBoot() {
  * The three panes a person may take off the screen, and the only place they are written
  * down. `host` is where the state is written, as `data-pane-<name>="hidden"`; the stylesheet
  * (ui/design/trade.css) keys the grid template off it, so the pane's track and its handle
- * drop out and the neighbours take the room. Nothing here measures anything.
+ * drop out and the neighbours take the room. `view` is the one mode that draws the pane; a
+ * pane without one is on every mode. The Layout menu lists by it, so a mode never offers a
+ * checkbox for a pane it does not draw. Nothing here measures anything.
  *
  *   conversation   the assistant column, on every mode. Written on the stage.
  *   chart          the chart with its bar, on trade. Written on the trade wrap.
@@ -379,8 +383,8 @@ function splitBoot() {
  */
 var SPLIT_PANES = {
   conversation: { host: '.stage', label: 'Assistant', gate: '#overlay' },
-  chart: { host: '.trade-wrap', label: 'Chart' },
-  deck: { host: '.trade-wrap', label: 'Positions and fills' },
+  chart: { host: '.trade-wrap', label: 'Chart', view: 'trade' },
+  deck: { host: '.trade-wrap', label: 'Positions and fills', view: 'trade' },
 };
 
 function splitPaneKey(name) {
@@ -446,12 +450,15 @@ function splitPaneToggle(name) {
   return splitPaneSet(name, splitPaneHidden(name));
 }
 
-/* Every pane with its word and its state, for a menu to list. */
-function splitPaneList() {
+/* Every pane with its word and its state, for a menu to list. Given a view, only the panes
+   that view draws; given nothing, all of them. */
+function splitPaneList(view) {
   var out = [];
   for (var name in SPLIT_PANES) {
     if (!Object.prototype.hasOwnProperty.call(SPLIT_PANES, name)) continue;
-    out.push({ name: name, label: SPLIT_PANES[name].label, hidden: splitPaneHidden(name) });
+    var conf = SPLIT_PANES[name];
+    if (view && conf.view && conf.view !== view) continue;
+    out.push({ name: name, label: conf.label, hidden: splitPaneHidden(name) });
   }
   return out;
 }

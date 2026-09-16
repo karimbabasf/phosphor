@@ -251,6 +251,44 @@ html, body {
 .bar-lock[data-tone="warn"] { color: var(--warn); }
 .bar-lock[data-tone="warn"] .bar-lock-glyph { color: var(--warn); }
 
+/* Layout: which panes are on screen, as a menu of check rows. On the bar
+   because the bar is on every mode, so a pane hidden anywhere comes back from
+   anywhere. An icon and a word on the opening grammar, at the brake's height;
+   the sheet (trade.css draws .pop and the check rows) hangs off the bar's right
+   edge, so it opens to the left. */
+.layout-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.layout {
+  --opens-line: var(--line);
+  --opens-bg: var(--bg-1);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 var(--s-3) 0 var(--s-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-12);
+  font-weight: 500;
+  color: var(--text);
+}
+
+.layout .icon {
+  width: 16px;
+  height: 16px;
+  color: var(--text-2);
+}
+
+/* Two classes deep, because trade.css draws .pop after this file and would
+   otherwise put the sheet back on the left. */
+.layout-wrap > .layout-pop {
+  left: auto;
+  right: 0;
+  transform-origin: top right;
+}
+
 /* Freeze everything: the safety control, so it keeps its words, and a solid
    quiet button rather than an outlined red one. The wash deepens on hover and
    the whole thing presses; frozen, it fills, because a frozen app is a state

@@ -333,5 +333,22 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   };
   base.listen = localOnlyListen as unknown as typeof base.listen;
 
+  /* Close hangs up on the window instead of waiting for it. Node's close calls back only once
+     every connection has ended, and the window holds /api/events open for as long as it
+     exists. On a quit the shell sends SIGTERM and then blocks until node exits, so the window
+     outlives the wait, the stream never ends and the close never calls back: each side was
+     waiting on the other, and SHUTDOWN_GRACE in src-tauri/src/backend.rs (35 s) ended it with
+     a SIGKILL. Every quit took half a minute. So the clients are ended here, at the moment
+     close is asked for, and not in the 'close' handler above, which cannot run until they are
+     gone. Writes in flight were already settled by src/shutdown.ts before close is reached; a
+     read cut off here is a window that is being torn down anyway. */
+  const nativeClose = base.close.bind(base);
+  base.close = ((cb?: (err?: Error) => void): http.Server => {
+    const closing = nativeClose(cb);
+    sse.stop();
+    base.closeAllConnections();
+    return closing;
+  }) as typeof base.close;
+
   return Object.assign(base, { broadcastState, broadcastCandles, broadcastCandle, broadcastTrade, charts });
 }

@@ -88,8 +88,8 @@ async function boot(opts: { mode?: AppConfig['mode'] } = {}) {
         verified: report.verified,
         tampered: report.tampered,
         networks: [
-          { id: 'sol', name: 'Solana', address: 'Dep0s1tSoLaNaAddre55', memo: null, unavailable: null, accepts: [{ symbol: 'SOL', minDeposit: '0.01', decimals: 9 }], warning: 'Solana only.' },
-          { id: 'base', name: 'Base', address: '0xbridge', memo: null, unavailable: null, accepts: [{ symbol: 'USDC', minDeposit: '1', decimals: 6 }], warning: 'Base only.' },
+          { id: 'sol', name: 'Solana', address: 'Dep0s1tSoLaNaAddre55', memo: null, unavailable: null, accepts: [{ symbol: 'SOL', minDeposit: '10000000', minDepositHuman: '0.01', decimals: 9, contract: null }], warning: 'Solana only.' },
+          { id: 'base', name: 'Base', address: '0xbridge', memo: null, unavailable: null, accepts: [{ symbol: 'USDC', minDeposit: '1000000', minDepositHuman: '1', decimals: 6, contract: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913' }], warning: 'Base only.' },
         ],
       };
     },

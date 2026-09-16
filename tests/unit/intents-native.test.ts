@@ -32,7 +32,6 @@ import {
   INTENTS_NATIVE_COUNTERPARTY,
   INTENTS_NATIVE_VENUE,
   INTENTS_VERIFIER,
-  SETTLE_READS,
   base58Encode,
   checkIntentPayload,
   erc191SignatureField,
@@ -44,6 +43,7 @@ import {
 import type {
   GeneratedIntent,
   IntentsApiPort,
+  IntentsNativeRailDeps,
   IntentsNearPort,
   VerifierBalancePort,
   IntentsSignerPort,
@@ -183,9 +183,9 @@ function harness(
        one. The default is a swap that credits exactly the quoted amount. */
     verifierBefore?: bigint | null;
     verifierAfter?: bigint | null;
-    // The reads after the first, in order, the last one repeating: a verifier that shows the
-    // old balance for a while before the credit lands, which is what it does at finality.
-    verifierAfterReads?: Array<bigint | null>;
+    /* The verifier's answers in order, one per read, the last one repeating; overrides the
+       before/after pair. For the reads after SUCCESS, which are now a loop. */
+    verifierSequence?: Array<bigint | null>;
     quoteError?: string;
     submitError?: string;
     // How many submit calls get no reply (a TimeoutError) before one answers.
@@ -266,17 +266,17 @@ function harness(
   const verifierReads: string[] = [];
   const before = options.verifierBefore === undefined ? 0n : options.verifierBefore;
   const after = options.verifierAfter === undefined ? 99_000_000n : options.verifierAfter;
-  const afterReads = options.verifierAfterReads ?? [after];
   const verifierBalance: VerifierBalancePort = async (accountId, assetId) => {
     verifierReads.push(`${accountId}:${assetId}`);
-    if (verifierReads.length === 1) return before;
-    return afterReads[Math.min(verifierReads.length - 2, afterReads.length - 1)] ?? null;
+    const sequence = options.verifierSequence;
+    if (sequence !== undefined) return sequence[Math.min(verifierReads.length - 1, sequence.length - 1)] ?? null;
+    return verifierReads.length === 1 ? before : after;
   };
 
   return { api, signer, quotes, generated, submitted, submitAttempts, signedPayloads, statusCalls, verifierBalance, verifierReads };
 }
 
-function railOf(h: Harness) {
+function railOf(h: Harness, over: Partial<IntentsNativeRailDeps> = {}) {
   return intentsNativeRail({
     keysPath: '/nonexistent/keys.json', // never read: the signer port is stubbed
     quoteKey: TEST_QUOTE_KEY,
@@ -289,8 +289,12 @@ function railOf(h: Harness) {
     sleepImpl: async () => {},
     pollIntervalMs: 1,
     pollTimeoutMs: 5,
+    ...over,
   });
 }
+
+// A settlement window of a few short waits, so a read that never rises gives up fast.
+const SHORT_SETTLE = { firstMs: 1, maxMs: 2, timeoutMs: 6 };
 
 // ---------- guard 1: mainnet only ----------
 
@@ -1170,27 +1174,51 @@ test('a SUCCESS that credited the floor reports the amount it actually read', as
   assert.match(out.detail, /read back from the verifier/);
 });
 
-test('the floor check waits for the verifier to show the credit before it judges the amount', async () => {
-  // The incident of 2026-09-15: 1Click reported SUCCESS, 19.801706 USDC had landed, and the
-  // check read the verifier one second later at finality, saw the old balance, and marked
-  // the swap failed. The verifier is read again until it moves.
-  const h = harness({ verifierBefore: 5_000_000n, verifierAfterReads: [5_000_000n, 5_000_000n, 104_500_000n] });
-  const out = await railOf(h).execute(draftOf());
+test('an after-read that lags the solver by two reads is still a settled swap', async () => {
+  // SUCCESS arrives before the verifier's 'final' view has the block. The first two reads after
+  // it show the old balance; the third shows the credit. This used to be reported as "rose by
+  // 0, below the floor, do not sign another" off the one read it took.
+  const h = harness({ verifierSequence: [5_000_000n, 5_000_000n, 5_000_000n, 104_500_000n] });
+  const out = await railOf(h, { settleSchedule: SHORT_SETTLE }).execute(draftOf());
   assert.equal(out.ok, true, out.detail);
-  assert.match(out.detail, /for 99\.5 USDT/);
-  assert.equal(h.verifierReads.length, 4, 'one read before, three after, stopping as soon as it rose');
+  assert.match(out.detail, /for 99.5 USDT/, 'the amount the fourth read showed');
+  assert.equal(h.verifierReads.length, 4, 'one before-read, then reads until the rise showed, and none after');
+  assert.equal(h.signedPayloads.length, 1);
+  assert.deepEqual(out.pocket, {
+    venue: 'intents',
+    account: OWNER.toLowerCase(),
+    assetId: DEST_ASSET,
+    symbol: 'USDT',
+    decimals: 6,
+    before: '5000000',
+    after: '104500000',
+    floor: '99000000',
+  });
 });
 
-test('a credit the verifier never shows is unconfirmed with its hash, not a failed swap', async () => {
-  const h = harness({ verifierBefore: 5_000_000n, verifierAfterReads: [5_000_000n], statuses: [{ status: 'SUCCESS', swapDetails: { nearTxHashes: ['nearSettle'] } }] });
-  const out = await railOf(h).execute(draftOf());
+test('a balance that never rises inside the window is settling, not failed, and nothing is signed twice', async () => {
+  const h = harness({ verifierSequence: [5_000_000n] });
+  const out = await railOf(h, { settleSchedule: SHORT_SETTLE }).execute(draftOf());
   assert.equal(out.ok, false);
-  assert.match(out.detail, /1click reported SUCCESS/);
-  assert.match(out.detail, /unconfirmed/);
-  assert.doesNotMatch(out.detail, /below the/);
-  assert.deepEqual(out.txids, [INTENT_HASH, 'nearSettle']);
-  assert.equal(out.evidence?.handle, HANDLE);
-  assert.equal(h.verifierReads.length, 1 + SETTLE_READS, 'every read the budget allows, then it gives up');
+  assert.equal(out.settling, true, 'needs_reconciliation, for the executor to land it as');
+  assert.match(out.detail, /The solver reports the swap settled and the balance has not shown it yet/);
+  assert.match(out.detail, /Nothing more will be signed until the next balance read confirms it/);
+  assert.doesNotMatch(out.detail, /fail/i);
+  assert.ok(h.verifierReads.length > 2, `the read was repeated inside the window (${h.verifierReads.length} reads)`);
+  assert.equal(h.signedPayloads.length, 1, 'signed exactly once');
+  assert.equal(h.submitted.length, 1, 'submitted exactly once');
+  assert.deepEqual(out.txids, [INTENT_HASH]);
+  assert.equal(out.evidence?.handle, HANDLE, 'the handle rides on a settling row for the re-check');
+  assert.equal(out.pocket?.after, '5000000', 'the last read is recorded for the re-check');
+});
+
+test('a rise that stays under the floor for the whole window is still the short-fill failure', async () => {
+  const h = harness({ verifierSequence: [0n, 1_000_000n] });
+  const out = await railOf(h, { settleSchedule: SHORT_SETTLE }).execute(draftOf());
+  assert.equal(out.ok, false);
+  assert.notEqual(out.settling, true);
+  assert.match(out.detail, /rose by 1 USDT, below the 99 USDT floor/);
+  assert.equal(h.signedPayloads.length, 1);
 });
 
 test('a verifier that will not answer costs the check and not the swap', async () => {

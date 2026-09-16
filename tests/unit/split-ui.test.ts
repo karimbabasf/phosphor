@@ -376,6 +376,21 @@ test('every pane starts on screen, and the three are the conversation, the chart
   assert.equal(s.splitPaneHidden('nothing'), false, 'a pane that does not exist is not hidden either');
 });
 
+test('asked for one view, the list holds the panes that view has: the assistant everywhere, the chart and the deck on trade', () => {
+  // The Layout menu is on the bar and the bar is on every mode, so a row for a pane the
+  // mode does not draw would be a checkbox that does nothing. Karim, 2026-09-15: the
+  // assistant hidden on Basic had no way back, because the menu lived on the trade strip.
+  const s = load();
+  const names = (view?: string) => JSON.parse(JSON.stringify(s.splitPaneList(view).map((p: Any) => p.name)));
+  assert.deepEqual(names('trade'), ['conversation', 'chart', 'deck']);
+  assert.deepEqual(names('basic'), ['conversation']);
+  assert.deepEqual(names('pro'), ['conversation']);
+  assert.deepEqual(names('vault'), ['conversation']);
+  assert.deepEqual(names(), ['conversation', 'chart', 'deck'], 'no view asked for means every pane');
+  assert.deepEqual(JSON.parse(JSON.stringify(s.PhosphorSplit.panes('basic').map((p: Any) => p.name))), ['conversation'],
+    'the window API takes the view too');
+});
+
 test('hiding a pane writes the attribute the stylesheet reads, tells the page, and comes back after a reload', () => {
   const storage = makeStorage();
   const first = loadWithHosts(storage);
@@ -427,7 +442,7 @@ test('a stored word that is not "hidden" leaves the pane on screen', () => {
   assert.equal(s.splitPaneHidden('chart'), false);
 });
 
-test('the pane API is on the window under one name, for the headers and the Layout menu', () => {
+test('the pane API is on the window under one name, for the headers and the bar\'s Layout menu', () => {
   const s = load();
   assert.equal(typeof s.PhosphorSplit.paneHidden, 'function');
   assert.equal(typeof s.PhosphorSplit.setPane, 'function');

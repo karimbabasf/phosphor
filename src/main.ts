@@ -26,7 +26,7 @@ import { renderSentences } from './policy/render.ts';
 import { missingVenues, proposeVenueGap } from './policy/venues.ts';
 import { createRails, venueAllowlist } from './rails/index.ts';
 import { usdcCreditedSince } from './rails/hl-user-signed.ts';
-import { createLedger } from './ledger/index.ts';
+import { createLedger, intentsAccountId } from './ledger/index.ts';
 import { oneClickClient, oneClickQuoter, syntheticQuoter, stubSigner, type OneClickStatus, type TokensFile } from './intents.ts';
 import { createMarketData } from './market/index.ts';
 import { lineAt } from './analysis/trendline.ts';
@@ -395,7 +395,14 @@ const HL_WS_URL = 'wss://api.hyperliquid.xyz/ws';
    then a plan cannot be priced, which is the honest answer before the venue has spoken. */
 let tradeService: TradeService | null = null;
 const tradeInfo = createInfoClient({ baseUrl: HL_BASE_URL });
-const hlUser = cfg.addresses.evm[0] ?? '';
+/* The trading account is the wallet's own address, read from the keystore on every ask, the
+   same way the ledger names the intents account. It used to be the config address book, read
+   once at boot: a fresh install has neither, so the feed asked the venue about user '' on every
+   spot poll, the venue answered 422, and the Trade tab said "No route to the venue" until a
+   restart. The config address is the fallback for an install that only reads. */
+function hlUser(): string {
+  return intentsAccountId(cfg) ?? cfg.addresses.evm[0] ?? '';
+}
 
 function productFor(coin: string): string {
   return cfg.candleProducts.find((p) => p.split('-')[0].toUpperCase() === coin.toUpperCase()) ?? `${coin.toUpperCase()}-USD`;
@@ -432,8 +439,9 @@ const runner = createRunnerHost({
      be made, and the venue's own refusal of the order is what follows. */
   agentApproved: async () => {
     const address = readApiWallet(cfg.keysPath).address;
-    if (address === null || hlUser === '') return true;
-    const agents = await tradeInfo.post<{ address?: string }[]>({ type: 'extraAgents', user: hlUser });
+    const user = hlUser();
+    if (address === null || user === '') return true;
+    const agents = await tradeInfo.post<{ address?: string }[]>({ type: 'extraAgents', user });
     return Array.isArray(agents) && agents.some((a) => String(a.address ?? '').toLowerCase() === address.toLowerCase());
   },
   onEvent: (e) => {

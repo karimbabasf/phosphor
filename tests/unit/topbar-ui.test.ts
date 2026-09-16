@@ -56,3 +56,25 @@ test('the stream has three words and the shell writes all three', () => {
   assert.ok(SHELL.includes("'off'") && SHELL.includes("'warn'") && SHELL.includes("'up'"),
     'the three dot tones are not all written');
 });
+
+test('the Layout menu is on the bar, before the brake, and the shell lists the panes of the mode that is up', () => {
+  // Karim, 2026-09-15: "when i hide the chat thing, i cant bring it back". The one control
+  // that put a pane back lived on the trade strip, so the assistant hidden on Basic, Pro or
+  // Vault had no way back. The menu is the bar's now, and the bar is on every mode.
+  const right = cluster();
+  const menu = right.indexOf('id="btn-layout"');
+  assert.ok(menu >= 0, 'the bar has no Layout button');
+  assert.ok(right.indexOf('id="btn-freeze"') > menu, 'the brake is not after the Layout menu');
+  const button = right.slice(right.lastIndexOf('<button', menu), right.indexOf('</button>', menu));
+  assert.ok(/class="layout opens"/.test(button), 'the Layout button is not on the opening grammar');
+  assert.ok(button.includes('aria-haspopup="menu"') && button.includes('aria-controls="bar-layout"'), 'the button does not name its menu');
+  assert.ok(button.includes('>Layout<'), 'the button lost its word');
+  assert.ok(/id="bar-layout"[^>]*role="menu"/.test(right) || /role="menu"[^>]*id="bar-layout"/.test(right), 'the sheet is not a menu');
+  assert.ok(right.includes('id="bar-layout-rows"'), 'the sheet has nowhere to put its rows');
+  // The shell fills it from the split script, by the view that is up, and hands a press back.
+  assert.ok(SHELL.includes("PhosphorSplit.panes(currentView)"), 'the shell does not list the panes of the current view');
+  assert.ok(SHELL.includes("PhosphorSplit.setPane("), 'a press in the menu reaches nothing');
+  assert.ok(SHELL.includes("'phosphor:pane'"), 'an eye-off press in a header would leave the menu stale');
+  assert.equal(readFileSync(new URL('../../ui/screens/trade.js', import.meta.url), 'utf8').includes('layoutControl'),
+    false, 'the strip still draws its own Layout menu');
+});

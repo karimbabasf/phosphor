@@ -17,7 +17,7 @@ import type { ChainId, Proposal, RailEvidence, WriteDraft } from '../types.ts';
 import type { OneClickStatus } from '../intents.ts';
 import { depositHandleOf } from '../transactions.ts';
 import { errText, nowIso, persist } from './lifecycle.ts';
-import { balanceAfter } from './execute.ts';
+import { balanceAfter, judgeSettlingNow, settleProposal } from './execute.ts';
 import type { PCtx } from './lifecycle.ts';
 
 // What the chain says about one hash. `unknown` is a real answer and the most important one:
@@ -208,17 +208,16 @@ export function liftFailedWithHandle(ctx: PCtx): Proposal[] {
    Reconcile. Per-row errors are swallowed into the audit log: one unreachable order must not
    stop the sweep reaching the next. Returns how many rows changed status. */
 export async function reconcileOpen(ctx: PCtx): Promise<number> {
-  if (ctx.oneClickStatus === undefined) return 0;
   const now = Date.now();
   const open = ctx.store
     .list()
-    .filter((p) => p.status === 'needs_reconciliation' && typeof p.result?.evidence?.handle === 'string')
+    .filter((p) => p.status === 'needs_reconciliation' && (typeof p.result?.evidence?.handle === 'string' || p.pocket !== undefined))
     .filter((p) => now - Date.parse(p.settledAt ?? p.decidedAt ?? p.createdAt) < ONECLICK_SWEEP_MAX_AGE_MS);
   let changed = 0;
   for (const p of open) {
     try {
       const before = p.status;
-      const after = await reconcileProposal(ctx, p.id);
+      const after = await reconcileProposal(ctx, p.id, true);
       if (after.status !== before) changed += 1;
     } catch (err) {
       ctx.audit.append('error', `${p.id}: the scheduled reconcile could not re-check it: ${errText(err)}`, { id: p.id });
@@ -328,6 +327,18 @@ async function reconcileByHandle(ctx: PCtx, p: Proposal, handle: string): Promis
 
   if (status.status === 'SUCCESS') {
     const settled = status.settledAmountOut !== undefined ? `1click settled this: ${status.settledAmountOut} arrived.` : '1click reports this settled.';
+    /* A ROW WITH A POCKET IS SETTLED BY ITS BALANCE, not by this word. The rail read the balance
+       either side of the move and the executor re-judges it on every ledger refresh
+       (src/proposals/execute.ts judgeSettling); 1Click's SUCCESS is recorded beside that and the
+       row settles itself the moment the balance shows the rise. A Hyperliquid deposit keeps the
+       venue read below instead, which names the credit rather than a figure trading also moves. */
+    if (p.pocket !== undefined && p.kind !== 'hl_deposit') {
+      return write(
+        'needs_reconciliation',
+        false,
+        `${settled} The balance has not shown the rise yet; it is re-read on every refresh and this settles itself when it does.`,
+      );
+    }
     /* 1CLICK'S WORD IS NOT THE VENUE'S. The rail had read the Hyperliquid account and found no
        credit; this used to overwrite that observation with the solver's promise ten minutes
        later and write executed, ok true, which is the sentence rule this branch exists for. The
@@ -373,7 +384,7 @@ async function reconcileByHandle(ctx: PCtx, p: Proposal, handle: string): Promis
    for a `failed` row that carries a 1Click handle: a FAILED order can still be refunded at its
    deadline, so the handle is worth re-asking even after the row was called failed. Anything else
    already has a settled answer and re-checking it would be re-deciding it. */
-export async function reconcileProposal(ctx: PCtx, id: string): Promise<Proposal> {
+export async function reconcileProposal(ctx: PCtx, id: string, quiet = false): Promise<Proposal> {
   const p = ctx.store.get(id);
   if (p === undefined) throw new Error(`unknown proposal ${id}`);
   const handle = p.result?.evidence?.handle;
@@ -382,7 +393,20 @@ export async function reconcileProposal(ctx: PCtx, id: string): Promise<Proposal
     throw new Error(`proposal ${id} is ${p.status}, and only a proposal waiting to be reconciled can be re-checked`);
   }
 
-  /* THE VENUE, BY THE HANDLE, FIRST. A 1Click order settles on NEAR for an INTENTS swap, which
+  /* A ROW THE RAIL LEFT SETTLING IS JUDGED BY ITS BALANCE FIRST. An intent hash is nothing a
+     block explorer can answer for, and the balance the rail read either side of the move is
+     what "done" is defined by (see settleProposal). Only a row the balance has not settled goes
+     on to the venue: its handle can still say REFUNDED or FAILED, which no balance read will.
+     `quiet` is the scheduled sweep: it takes the read and the judgment without the stamped
+     "re-read at" sentence a click gets, so a row nothing has changed on is not rewritten. */
+  if (p.pocket !== undefined) {
+    const judged = quiet ? await judgeSettlingNow(ctx, id) : await settleProposal(ctx, id);
+    if (judged.status !== 'needs_reconciliation') return judged;
+    if (typeof handle === 'string' && ctx.oneClickStatus !== undefined) return reconcileByHandle(ctx, judged, handle);
+    return judged;
+  }
+
+  /* THE VENUE, BY THE HANDLE, NEXT. A 1Click order settles on NEAR for an INTENTS swap, which
      chainTxLookup answers `unknown` for, so the quote handle is the only thing that can tell a
      SUCCESS from a REFUND. Only when there is no handle, or no client wired, does this fall back
      to reading the chain by hash. */
@@ -437,7 +461,7 @@ export async function reconcileProposal(ctx: PCtx, id: string): Promise<Proposal
      and inventing one would be worse than the blank. */
   const balances =
     outcome.status === 'executed' && p.balances !== undefined
-      ? { ...p.balances, afterUsd: await balanceAfter(ctx) }
+      ? { ...p.balances, afterUsd: await balanceAfter(ctx, p.draft) }
       : p.balances;
 
   return persist(ctx, {

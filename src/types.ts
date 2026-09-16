@@ -2,6 +2,7 @@
 // Erasable TypeScript only: this repo runs on Node 24 type stripping with no build step.
 // No enums, no namespaces, no parameter properties. Relative imports use explicit .ts extensions.
 
+import type { PocketRead } from './ledger/settle.ts';
 import type { Plan } from './trade/plan.ts';
 import type { PlanRisk } from './trade/risk.ts';
 
@@ -367,7 +368,18 @@ export type RailEvidence = {
   quote?: { correlationId: string; timestamp: string; signature: string; depositAddress: string };
 };
 
-export type RailResult = { ok: boolean; detail: string; txids?: string[]; evidence?: RailEvidence };
+export type RailResult = {
+  ok: boolean;
+  detail: string;
+  txids?: string[];
+  evidence?: RailEvidence;
+  // The venue confirmed the move and the balance has not shown it inside the rail's window.
+  // Neither executed nor failed: the proposal lands as needs_reconciliation and the next
+  // balance read that shows the rise settles it (src/proposals/execute.ts).
+  settling?: boolean;
+  // The balance the rail read either side of the move, for the receipt and for that re-check.
+  pocket?: PocketRead;
+};
 
 // Called by a rail the moment something irreversible exists: a signature released, a
 // transaction broadcast, an intent submitted. The executor persists it before the rail's
@@ -463,15 +475,18 @@ export type Proposal = {
   // Activity; only the dock stops asking. Cleared the moment a re-check changes what the venue
   // says, so the card comes back when there is something new to read.
   acknowledgedAt?: string;
-  /* What the wallet was worth either side of this action, in USD, as the app knew it.
-     `before` is the snapshot as execution began. `after` is taken once the ledger has re-read
-     the chains, so it reflects the move rather than the stale numbers that were on screen a
-     moment earlier; null means that re-read failed or timed out, which is a different fact from
-     a balance of zero and is rendered as "not re-read" rather than as a number. `before` is null
-     for the same reason when a pocket's read had failed as execution began.
+  /* What the pocket this action moved money through was worth either side of it, in USD:
+     the intents balance for an intents rail, the trading account for a Hyperliquid rail, the
+     wallet total for a chain-side move. `before` is the ledger's last read as execution began,
+     or the rail's own read where it took one. `after` is the rail's own after-read where it
+     took one, else the ledger re-read once the move landed; null means no read answered,
+     which is a different fact from a balance of zero and is rendered as "not re-read".
      These are what make a receipt answer "did my money change", which is the question a person
      actually has and which no amount of transaction hashes answers on its own. */
   balances?: { beforeUsd: number | null; afterUsd: number | null };
+  // The rail's own before and after in the pocket the asset moved through, when the rail
+  // read one. What `balances` is priced from, and what a settling row is re-judged against.
+  pocket?: PocketRead;
 };
 
 // ---------- Basic view ----------

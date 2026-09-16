@@ -15,7 +15,6 @@ import {
   HYPERCORE_SLIPPAGE_BPS,
   HYPERCORE_USDC_ASSET_ID,
   HYPERCORE_USDC_DECIMALS,
-  HL_SETTLE_READS,
   MAX_FEE_PCT,
   MIN_DEPOSIT_USDC,
   hypercoreDepositRail,
@@ -544,48 +543,49 @@ test('a unified account is not asked to move money between books that do not exi
   assert.equal(exchange.length, 0);
 });
 
-test('a credit the venue never shows is unconfirmed with its hashes, neither a loss nor a funded account', async () => {
-  const { rail: r, hlCalls } = rail({}, [{ perp: 0, spot: 0 }, { perp: 0, spot: 0 }]);
+// ---------- the read-back after SUCCESS, which is a loop now ----------
+//
+// A credit to HyperCore crosses a bridge after 1Click says SUCCESS, so one read taken right
+// then saw the account from before the deposit. The rail reads until the account shows the
+// floor, up to two minutes; a rise under the floor after that is the short fill; no rise is
+// settling, a third answer beside ok and failed, and never the word failed.
+
+const SHORT_SETTLE = { firstMs: 1, maxMs: 2, timeoutMs: 6 };
+
+test('a credit the venue has not shown yet is settling, not a loss and not a success', async () => {
+  const { rail: r, calls, hlCalls } = rail({}, [{ perp: 0, spot: 0 }, { perp: 0, spot: 0 }], { settleSchedule: SHORT_SETTLE });
   const out = await r.execute(draft());
   assert.equal(out.ok, false);
-  assert.match(out.detail, /1click reported SUCCESS/);
-  assert.match(out.detail, /unconfirmed/);
+  assert.equal(out.settling, true, 'needs_reconciliation, for the executor to land it as');
+  assert.match(out.detail, /The solver reports the swap settled and the balance has not shown it yet/);
+  assert.match(out.detail, /Nothing more will be signed until the next balance read confirms it/);
+  assert.match(out.detail, /intent HASH1/);
   assert.doesNotMatch(out.detail, /fail/i);
-  assert.doesNotMatch(out.detail, /^funded Hyperliquid/);
+  assert.equal(calls.signed.length, 1, 'signed exactly once');
+  assert.equal(calls.submitted.length, 1);
+  assert.ok(hlCalls.filter((t) => t === 'spotClearinghouseState').length > 3, 'the account was re-read through the window');
   assert.deepEqual(out.txids, ['HASH1', '0xdest']);
-  assert.equal(out.evidence?.handle, HANDLE);
-  assert.equal(hlCalls.filter((t) => t === 'clearinghouseState').length, 1 + HL_SETTLE_READS, 'one read before, then every read the budget allows');
+  assert.equal(out.evidence?.handle, HANDLE, 'the handle rides on a settling row for the re-check');
+  assert.equal(out.pocket?.venue, 'hyperliquid');
+  assert.equal(out.pocket?.before, '0');
+  assert.equal(out.pocket?.after, '0');
+  assert.equal(out.pocket?.decimals, HYPERCORE_USDC_DECIMALS);
 });
 
-test('a unified account that never shows the rise is unconfirmed too', async () => {
-  const { rail: r } = rail({}, [{ perp: 0, spot: 0, unifiedAvailable: 0 }, { perp: 0, spot: 0, unifiedAvailable: 0 }]);
+test('an account that cannot be read after the deposit is settling, never "the deposit itself completed"', async () => {
+  const { rail: r } = rail({}, [{ perp: 0, spot: 0, unifiedAvailable: 0 }], { settleSchedule: SHORT_SETTLE }, { failReadsAfter: 1 });
   const out = await r.execute(draft());
   assert.equal(out.ok, false);
+  assert.equal(out.settling, true);
   assert.match(out.detail, /unconfirmed/);
-  assert.match(out.detail, /unified/);
-  assert.deepEqual(out.txids, ['HASH1', '0xdest']);
-});
-
-test('the credit is confirmed as soon as one of the re-reads shows it', async () => {
-  const { rail: r, hlCalls } = rail({}, [{ perp: 0, spot: 0, unifiedAvailable: 0 }, { perp: 0, spot: 0, unifiedAvailable: 0 }, { perp: 0, spot: 0, unifiedAvailable: 0 }, { perp: 0, spot: 9.66, unifiedAvailable: 9.66 }]);
-  const out = await r.execute(draft());
-  assert.equal(out.ok, true, out.detail);
-  assert.match(out.detail, /rose by 9\.66/);
-  assert.equal(hlCalls.filter((t) => t === 'clearinghouseState').length, 4);
-});
-
-test('an account that cannot be read after the deposit is unconfirmed, never "the deposit itself completed"', async () => {
-  const { rail: r } = rail({}, [{ perp: 0, spot: 0, unifiedAvailable: 0 }], {}, { failReadsAfter: 1 });
-  const out = await r.execute(draft());
-  assert.equal(out.ok, false);
-  assert.match(out.detail, /unconfirmed/);
-  assert.match(out.detail, /info endpoint down/);
   assert.doesNotMatch(out.detail, /the deposit itself completed/);
   assert.deepEqual(out.txids, ['HASH1', '0xdest']);
+  assert.equal(out.evidence?.handle, HANDLE);
+  assert.equal(out.pocket?.after, null, 'no after-read to record');
 });
 
 test('collateral stuck on the spot side is named, and nobody is told to deposit again', async () => {
-  const { rail: r, exchange } = rail({}, [{ perp: 0, spot: 0 }, { perp: 0, spot: 9.6594 }], {}, { transferRefused: true });
+  const { rail: r, exchange } = rail({}, [{ perp: 0, spot: 0 }, { perp: 0, spot: 9.6594 }], { settleSchedule: SHORT_SETTLE }, { transferRefused: true });
   const out = await r.execute(draft());
   assert.equal(out.ok, true, out.detail);
   assert.equal(exchange.length, 1);
@@ -593,6 +593,33 @@ test('collateral stuck on the spot side is named, and nobody is told to deposit 
   assert.match(out.detail, /do not deposit again/);
   assert.doesNotMatch(out.detail, /for nothing/);
   assert.doesNotMatch(out.detail, /propose the deposit again/);
+});
+
+test('an account that shows the credit only on the third read after SUCCESS is a funded deposit', async () => {
+  // Read 1 is the before. Reads 2 and 3 still show the old account; read 4 shows the credit.
+  const shapes: AccountShape[] = [
+    { perp: 0, spot: 0, unifiedAvailable: 0 },
+    { perp: 0, spot: 0, unifiedAvailable: 0 },
+    { perp: 0, spot: 0, unifiedAvailable: 0 },
+    { perp: 0, spot: 9.6594, unifiedAvailable: 9.6594 },
+  ];
+  const { rail: r, calls, hlCalls } = rail({}, shapes, { settleSchedule: SHORT_SETTLE });
+  const out = await r.execute(draft());
+  assert.equal(out.ok, true, out.detail);
+  assert.match(out.detail, /rose by 9\.6594/);
+  assert.equal(hlCalls.filter((t) => t === 'spotClearinghouseState').length, 4, 'stopped at the read that showed it');
+  assert.equal(calls.signed.length, 1);
+  assert.equal(out.pocket?.after, String(Math.round(9.6594 * 10 ** HYPERCORE_USDC_DECIMALS)));
+});
+
+test('a credit under the floor for the whole window is the short fill, with the floor named', async () => {
+  const { rail: r, calls } = rail({}, [{ perp: 0, spot: 0, unifiedAvailable: 0 }, { perp: 0, spot: 1, unifiedAvailable: 1 }], { settleSchedule: SHORT_SETTLE });
+  const out = await r.execute(draft());
+  assert.equal(out.ok, false);
+  assert.notEqual(out.settling, true);
+  assert.match(out.detail, /rose by 1\.0000 USDC, below the .* USDC floor/);
+  assert.match(out.detail, /before signing another/);
+  assert.equal(calls.signed.length, 1);
 });
 
 // ---------- the floor, against the measured fee ----------

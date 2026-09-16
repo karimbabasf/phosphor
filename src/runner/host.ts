@@ -27,6 +27,11 @@ import { SIGNING_SESSION_DEFAULT_MS } from '../keystore/session.ts';
 import type { Session } from '../keystore/session.ts';
 import { aggregate } from '../market/aggregate.ts';
 import { cloidFor } from '../hl/exchange.ts';
+import { confirmOrder } from '../hl/confirm.ts';
+import type { OrderConfirm } from '../hl/confirm.ts';
+import { createInfoClient } from '../hl/info.ts';
+import type { InfoClient } from '../hl/info.ts';
+import type { RiseSchedule } from '../ledger/settle.ts';
 import { planHash, TIMEFRAME_SEC, validatePlanInput } from '../trade/plan.ts';
 import type { Plan, PlanInput, Timeframe } from '../trade/plan.ts';
 import { bookkeepingOf } from '../trade/plans.ts';
@@ -55,6 +60,12 @@ export type RunnerEvent =
   | { type: 'armed'; id: string; symbol: string; signingExpiresAt: string }
   | { type: 'fired'; id: string; symbol: string }
   | { type: 'placed'; id: string; symbol: string; filledSz: number; venueMs: number }
+  // The venue's own word on the entry, read back by id after placing (src/hl/confirm.ts).
+  | { type: 'confirmed'; id: string; symbol: string; state: OrderConfirm['state']; detail: string }
+  // The venue did not answer for the entry inside the window. The order may exist, so the row
+  // stays where it is and the venue's own answer (a fill, a resting order, or neither at the
+  // next reconcile) settles it; nothing places a second one.
+  | { type: 'unconfirmed'; id: string; symbol: string; detail: string }
   | { type: 'protected'; id: string; symbol: string; sz: number; venueMs: number }
   | { type: 'changed'; id: string; detail: string; venueMs: number }
   | { type: 'done'; id: string; symbol: string; reason: EndReason; venueMs?: number }
@@ -79,7 +90,9 @@ export type HostDeps = {
      wallet key. Optional so a test can build a host without one. */
   session?: Session;
   baseUrl: string;
-  user: string;
+  // The trading account. A function is asked when a child is forked and on every read the host
+  // makes itself, so a wallet created after boot is the account from then on.
+  user: string | (() => string);
   onEvent: (e: RunnerEvent) => void;
   killSwitch: () => boolean;
   store: PlanStore;
@@ -102,6 +115,11 @@ export type HostDeps = {
   forkImpl?: typeof fork;
   now?: () => number;
   replyMs?: number;
+  // The /info door for the read-back after placing. Defaults to a client on baseUrl; a test
+  // hands in a stub. `confirmSchedule` shortens the twenty-second window in tests.
+  info?: InfoClient;
+  confirmSchedule?: RiseSchedule;
+  sleep?: (ms: number) => Promise<void>;
 };
 
 export type PlanRunner = ReturnType<typeof createRunnerHost>;
@@ -129,6 +147,8 @@ function nowIso(ms: number): string {
 export function createRunnerHost(deps: HostDeps) {
   const now = deps.now ?? (() => Date.now());
   const replyMs = deps.replyMs ?? DEFAULT_REPLY_MS;
+  const user = (): string => (typeof deps.user === 'function' ? deps.user() : deps.user);
+  const info = deps.info ?? createInfoClient({ baseUrl: deps.baseUrl });
 
   let child: ChildProcess | null = null;
   /* THE FORK IN FLIGHT, and there is exactly one of it.
@@ -247,7 +267,7 @@ export function createRunnerHost(deps: HostDeps) {
        of any process this user owns, which is the attacker this app is built against. A pipe
        has two ends and no third reader. */
     const spawned = (deps.forkImpl ?? fork)(entry, [], {
-      env: runnerChildEnv(deps.baseUrl, deps.user),
+      env: runnerChildEnv(deps.baseUrl, user()),
       stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
     });
     child = spawned;
@@ -450,6 +470,10 @@ export function createRunnerHost(deps: HostDeps) {
         delete row.blind;
         persist(row);
         record({ type: 'placed', id: row.id, symbol: row.symbol, filledSz: reply.filledSz, venueMs: reply.venueMs });
+        // Detached, and after the firing flag drops below: a fill that arrives on the feed
+        // during the read-back must still get its exits placed (protect) at once.
+        const entryId = reply.oids.entry ?? row.cloids.entry;
+        if (entryId !== undefined) void confirmEntry(row, entryId);
         return;
       }
       if (reply.ev === 'refused') {
@@ -457,16 +481,25 @@ export function createRunnerHost(deps: HostDeps) {
         return;
       }
       if (reply.ev === 'error' && (reply.ambiguous === true || /did not answer|exited/.test(reply.message))) {
-        // Ambiguous: the venue may hold the entry. The child flags a transport throw, a 5xx or a
-        // 429 with `ambiguous`; the host itself generates the "did not answer" and "exited"
-        // messages, which carry no flag but are the same case. Treated as placed under the id the
-        // child would have used, so the venue's own answer (a fill, a resting order, or nothing)
-        // is what settles it rather than a second fire.
+        /* Ambiguous: the venue may hold the entry. The child flags a transport throw, a 5xx or a
+           429 with `ambiguous`; the host itself generates the "did not answer" and "exited"
+           messages, which carry no flag but are the same case. UNCONFIRMED, never placed: the
+           row keeps the id the child would have used and nothing fires it again, and the venue
+           is asked by that id. Its own answer (a fill, a resting order, or neither at the next
+           reconcile, which reads the open orders and the position before deciding) is what
+           settles the row rather than a second fire. */
         row.gen += 1;
         row.cloids = { ...row.cloids, entry: cloidFor({ plan: row.id, leg: 'entry', gen: row.gen }) };
         row.status = 'placed';
+        row.confirm = { state: 'unconfirmed', venueStatus: null, oid: null, reads: 0, at: nowIso(now()) };
         persist(row);
-        record({ type: 'error', id: row.id, message: `${reply.message}; ${row.id} is treated as placed until the venue says otherwise` });
+        record({
+          type: 'unconfirmed',
+          id: row.id,
+          symbol: row.symbol,
+          detail: `${reply.message}; the entry for ${row.id} is unconfirmed and is read back from the venue by its client order id before anything else is placed`,
+        });
+        void confirmEntry(row, row.cloids.entry ?? '');
         return;
       }
       finish(row, `failed:${reply.ev === 'error' ? reply.message : 'the runner answered with something else'}`);
@@ -475,6 +508,54 @@ export function createRunnerHost(deps: HostDeps) {
     } finally {
       firing.delete(row.id);
     }
+  }
+
+  /* The read-back. Runs after the fire has answered and outside its flag, for up to twenty
+     seconds, and writes what the venue said onto the row. A fill or a resting order confirms
+     the row where it stands; the canceled and rejected families end a row that never got a
+     fill (a partial IOC is canceled for its remainder and is a fill); silence for the whole
+     window leaves the row unconfirmed, which is a state and not a verdict. */
+  async function confirmEntry(row: PlanRow, entryId: number | string): Promise<void> {
+    if (entryId === '') return;
+    let confirm: OrderConfirm;
+    try {
+      confirm = await confirmOrder({
+        info,
+        user: user(),
+        oid: entryId,
+        ...(deps.confirmSchedule !== undefined ? { schedule: deps.confirmSchedule } : {}),
+        ...(deps.sleep !== undefined ? { sleep: deps.sleep } : {}),
+        now,
+      });
+    } catch (err) {
+      confirm = { state: 'unconfirmed', venueStatus: null, oid: null, reads: 0, at: nowIso(now()) };
+      record({ type: 'error', id: row.id, message: `read-back of ${row.id} threw: ${err instanceof Error ? err.message : String(err)}` });
+    }
+    const current = rows.get(row.id);
+    if (current === undefined || !live(current)) return;
+    const hadFill = current.status === 'open' || (current.exitSz ?? 0) > 0;
+    const state = (confirm.state === 'canceled' || confirm.state === 'rejected') && hadFill ? 'filled' : confirm.state;
+    /* Onto the row in memory, where the payload and the reads take it from, and NOT written to
+       disk here. The store's write is synchronous, and a write landing while the next fire's
+       order was on its way sat in front of that venue post: 30 ms at p50 under load, against
+       a path that is otherwise 2 ms. The audit line below is the durable record of what the
+       venue said; the row carries the annotation to disk on its next write (a fill, a
+       protect, a cancel, the expiry sweep), and a restart re-reads the venue anyway. The two
+       answers that end a row go through finish, which writes. */
+    current.confirm = { ...confirm, state };
+    if (state === 'unconfirmed') {
+      record({
+        type: 'unconfirmed',
+        id: current.id,
+        symbol: current.symbol,
+        detail: `the venue did not answer for the entry inside ${Math.round((deps.confirmSchedule ?? { timeoutMs: 20_000 }).timeoutMs / 1000)}s (${confirm.reads} reads); the order may exist and nothing places a second one`,
+      });
+      return;
+    }
+    const word = confirm.venueStatus ?? state;
+    record({ type: 'confirmed', id: current.id, symbol: current.symbol, state, detail: `the venue reports the entry ${word}` });
+    if (state === 'rejected') finish(current, `failed:the venue rejected the entry (${word})`);
+    if (state === 'canceled') finish(current, 'cancelled');
   }
 
   // ---------- the account ----------

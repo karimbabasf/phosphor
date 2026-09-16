@@ -1,13 +1,14 @@
 // The deposit card's three checks, run for real.
 //
-// The card is the one place in the window an address is drawn, and each check
-// is asserted by running ui/screens/deposit.js over a small DOM with the real
+// The card draws ui/screens/netpick.js at its address step, and each check is
+// asserted by running deposit.js and netpick.js over a small DOM with the real
 // ui/core/dom.js, the real state store, the real vendored QR encoder and the
 // real vendored decoder. The canvas below is a pixel buffer, so the QR the
 // card draws is the QR the decoder reads back: a decoder swapped for one that
 // answers a different string has to leave the card blank.
 //
 // Nothing here starts the app. Every route is a stub that records the call.
+// The acknowledgement is remembered on this "Mac" unless a test says not.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -21,6 +22,7 @@ const DOM = read('../../ui/core/dom.js');
 const STATE = read('../../ui/core/state.js');
 const QR = read('../../ui/vendor/qrcode.js');
 const JSQR = read('../../ui/vendor/jsqr.js');
+const NETPICK = read('../../ui/screens/netpick.js');
 const SOURCE = read('../../ui/screens/deposit.js');
 
 /* ---------- a DOM small enough to read ---------- */
@@ -180,8 +182,8 @@ function report(overrides: Any = {}): Any {
     verified: true,
     tampered: false,
     networks: [
-      { id: 'eth', name: 'Ethereum', address: ADDRESS, memo: null, unavailable: null, accepts: [{ symbol: 'USDC', minDeposit: '1', decimals: 6 }, { symbol: 'ETH', minDeposit: '0.001', decimals: 18 }], warning: WARNING },
-      { id: 'sol', name: 'Solana', address: '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin', memo: null, unavailable: null, accepts: [{ symbol: 'USDC', minDeposit: '1', decimals: 6 }], warning: 'Solana only. Anything sent here from another network is lost.' },
+      { id: 'eth', name: 'Ethereum', address: ADDRESS, memo: null, unavailable: null, accepts: [{ symbol: 'USDC', minDeposit: '1000000', minDepositHuman: '1', decimals: 6, contract: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48' }, { symbol: 'ETH', minDeposit: '1000000000000000', minDepositHuman: '0.001', decimals: 18, contract: null }], warning: WARNING },
+      { id: 'sol', name: 'Solana', address: '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin', memo: null, unavailable: null, accepts: [{ symbol: 'USDC', minDeposit: '1000000', minDepositHuman: '1', decimals: 6, contract: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' }], warning: 'Solana only. Anything sent here from another network is lost.' },
     ],
     note: 'These addresses belong to the NEAR Intents bridge. It forwards what it receives to your intents balance.',
   }, overrides);
@@ -199,13 +201,14 @@ type World = {
   card: () => Any | null;
 };
 
-function build(options: { report?: Any; vault?: Any; decoder?: (data: unknown) => Any | null } = {}): World {
+function build(options: { report?: Any; vault?: Any; decoder?: (data: unknown) => Any | null; ack?: boolean } = {}): World {
   const body = makeNode('body');
   const page = makeNode('div');
   const calls: Any[] = [];
   const toasts: string[] = [];
   const clipboard = { held: '', readable: true };
   const cards: Any[] = [];
+  const stored: Record<string, string> = options.ack === false ? {} : { 'phosphor.depositAck': '1' };
 
   const doc: Any = {
     body,
@@ -222,6 +225,10 @@ function build(options: { report?: Any; vault?: Any; decoder?: (data: unknown) =
     setInterval: () => 1,
     clearInterval() {},
     devicePixelRatio: 1,
+    localStorage: {
+      getItem: (key: string) => (key in stored ? stored[key] : null),
+      setItem: (key: string, value: string) => { stored[key] = String(value); },
+    },
     navigator: {
       clipboard: {
         writeText: (text: string) => { clipboard.held = text; return Promise.resolve(); },
@@ -258,6 +265,7 @@ function build(options: { report?: Any; vault?: Any; decoder?: (data: unknown) =
   runInContext(QR, sandbox, { filename: 'ui/vendor/qrcode.js' });
   runInContext(JSQR, sandbox, { filename: 'ui/vendor/jsqr.js' });
   if (options.decoder) sandbox.jsQR = options.decoder;
+  runInContext(NETPICK, sandbox, { filename: 'ui/screens/netpick.js' });
   runInContext(SOURCE, sandbox, { filename: 'ui/screens/deposit.js' });
 
   const store = sandbox.PhosphorState;
@@ -285,15 +293,17 @@ function frame(overrides: Any = {}): Any {
 /* ---------- the source ---------- */
 
 test('no string reaches the DOM as markup', () => {
-  assert.equal(/\.innerHTML\s*=/.test(SOURCE), false, 'deposit.js assigns innerHTML');
-  assert.equal(/insertAdjacentHTML|outerHTML|document\.write/.test(SOURCE), false);
+  for (const [name, text] of [['deposit.js', SOURCE], ['netpick.js', NETPICK]]) {
+    assert.equal(/\.innerHTML\s*=/.test(text), false, name + ' assigns innerHTML');
+    assert.equal(/insertAdjacentHTML|outerHTML|document\.write/.test(text), false, name);
+  }
 });
 
 test('the address is fetched, never taken from the frame alone', () => {
   // The frame that opens the card names the watch; the address it draws comes
   // off /api/intents-receive and the frame's copy has to agree with it.
-  assert.ok(SOURCE.includes('api.intentsReceive()'), 'the card does not fetch the report');
-  assert.ok(SOURCE.includes("'The address the watcher holds is not the one this wallet reports."), 'a frame address that disagrees is not refused');
+  assert.ok(NETPICK.includes('api.intentsReceive()'), 'the component does not fetch the report');
+  assert.ok(NETPICK.includes("'The address the watcher holds is not the one this wallet reports."), 'a frame address that disagrees is not refused');
 });
 
 /* ---------- check 2: the QR reads back ---------- */
@@ -307,12 +317,15 @@ test('the QR is drawn, decoded back off the same pixels, and matches the address
   const bodyNode = find(dialog, '.deposit-body')[0];
   assert.equal(bodyNode.dataset.state, 'shown');
   assert.equal(find(dialog, 'canvas').length, 1, 'no QR on the card');
+  assert.equal(find(dialog, '.addr-prefix')[0].textContent, '0x', 'the 0x is not its own quiet token');
   const ends = find(dialog, '.addr-end').map((n: Any) => n.textContent);
-  assert.deepEqual(ends, ['0x7d', '0e1d'], 'the first and last four are not the large ones');
+  assert.deepEqual(ends, ['7d4e', '0e1d'], 'the first and last group are not the ones in the text colour');
   const whole = find(dialog, '.sr-only')[0];
   assert.equal(whole.textContent, ADDRESS, 'the whole address is not there for a screen reader');
-  const mid = find(dialog, '.addr-mid').map((n: Any) => n.textContent).join('');
-  assert.equal('0x7d' + mid + '0e1d', ADDRESS, 'the chunks do not add back up to the address');
+  const mids = find(dialog, '.addr-mid').map((n: Any) => n.textContent);
+  assert.equal(mids.length, 8, 'ten groups of four, two of them the ends');
+  assert.ok(mids.every((m: string) => m.length === 4), 'a group that is not four characters: ' + mids.join(' '));
+  assert.equal('0x7d4e' + mids.join('') + '0e1d', ADDRESS, 'the chunks do not add back up to the address');
 });
 
 test('a QR that reads back as anything else draws nothing and says so', async () => {
@@ -415,15 +428,19 @@ test('an unverified report shows one button, which posts /api/vault/unlock with 
 
 /* ---------- the words on the card ---------- */
 
-test('the network is named in exchange words, the minimum is stated, and the warning is verbatim', async () => {
+test('the card says the network once, plainly, and the minimum in the unit a person types', async () => {
   const world = build();
   world.deposit.onFrame(frame());
   await flush();
-  const text = textOf(world.dialog());
-  assert.ok(text.includes('Deposit USDC on Ethereum (ERC-20)'), 'the title does not name the network the way an exchange does');
-  assert.ok(text.some((t) => t.includes('choose the network "Ethereum (ERC-20)"')));
-  assert.ok(text.some((t) => t.includes('Minimum 1 USDC')));
-  assert.ok(text.includes(WARNING), 'the warning line is not the report\'s, word for word');
+  const dialog = world.dialog();
+  const text = textOf(dialog);
+  assert.ok(text.includes('Send on Ethereum only.'), 'the address step does not name the network');
+  assert.ok(text.some((t) => t.includes('Ethereum, Base and Arbitrum use this same address.')), 'the EVM line is missing');
+  assert.ok(text.some((t) => t.includes('choose Ethereum on the sending side')), 'the sending-side sentence is missing');
+  const min = find(dialog, '.deposit-min')[0];
+  assert.ok(min.textContent.startsWith('Minimum 1 USDC.'), min.textContent);
+  assert.equal(text.some((t) => t.includes('1000000')), false, 'the raw base units reached the screen');
+  assert.equal(find(dialog, 'button.chip').length, 0, 'a chip on the card: the network was picked and a token does not change the address');
   assert.equal(world.deposit.networkWords('sol'), 'Solana (SPL)');
   assert.equal(world.deposit.networkWords('arb'), 'Arbitrum One');
   assert.equal(world.deposit.networkWords('near'), 'NEAR Protocol');
@@ -543,23 +560,56 @@ test('money that lands after the card was closed is said once, as a toast', asyn
   assert.equal(world.toasts.length, 1, 'the same landing was said twice');
 });
 
-test('an EVM card offers the other two EVM networks as chips, and a chip starts a fresh watch there', async () => {
-  const base = { id: 'base', name: 'Base', address: '0x1111111111111111111111111111111111111111', memo: null, unavailable: null, accepts: [{ symbol: 'USDC', minDeposit: '1', decimals: 6 }], warning: WARNING };
+test('Change network goes back to the tiles, and a different network is a fresh watch', async () => {
+  const base = { id: 'base', name: 'Base', address: '0x1111111111111111111111111111111111111111', memo: null, unavailable: null, accepts: [{ symbol: 'USDC', minDeposit: '1000000', minDepositHuman: '1', decimals: 6, contract: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913' }], warning: WARNING };
   const world = build({ report: report({ networks: report().networks.concat([base]) }) });
   world.deposit.onFrame(frame());
   await flush();
   const dialog = world.dialog();
-  const chips = find(dialog, 'button.chip').filter((c: Any) => /Ethereum|Base|Arbitrum/.test(c.textContent));
-  assert.deepEqual(chips.map((c: Any) => c.textContent), ['Ethereum (ERC-20)', 'Base']);
-  assert.deepEqual(chips.map((c: Any) => c.getAttribute('aria-pressed')), ['true', 'false']);
-  chips[1].click();
+  const pick = find(dialog, '.netpick')[0];
+  assert.equal(pick.dataset.stage, 'address');
+  const back = find(dialog, '.netpick-back')[0];
+  assert.ok(back, 'no way back to the network tiles');
+  back.click();
+  assert.equal(pick.dataset.stage, 'network');
+  const tiles = find(dialog, '.net-tile');
+  assert.deepEqual(tiles.map((t: Any) => t.dataset.network), ['eth', 'base', 'arb', 'sol', 'near']);
+  (tiles[1] as Any).click();
   await flush();
+  assert.equal(pick.dataset.stage, 'tokens');
+  // The acknowledgement is remembered on this Mac, so the list ends in one small button.
+  assert.equal(find(dialog, '.ack-input').length, 0, 'the acknowledgement was asked for again');
+  const go = find(dialog, 'button').find((b: Any) => b.textContent === 'Show the address') as Any;
+  go.click();
+  await flush();
+  assert.equal(pick.dataset.stage, 'address');
   const show = world.calls.find((c) => c.route === '/api/deposit/show');
   assert.deepEqual(show, { route: '/api/deposit/show', chain: 'base', symbol: 'USDC', address: base.address });
+  assert.equal(find(dialog, '.sr-only')[0].textContent, base.address, 'the address drawn is not Base\'s');
+});
 
-  // Solana offers no network chips: there is nothing to choose.
-  const sol = build();
-  sol.deposit.onFrame(frame({ chain: 'sol', address: '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin' }));
+test('with no acknowledgement on this Mac the card opens on the token list, and the address waits for the tick', async () => {
+  const world = build({ ack: false });
+  world.deposit.onFrame(frame());
   await flush();
-  assert.equal(find(sol.dialog(), 'button.chip').filter((c: Any) => /Ethereum|Base|Arbitrum|Solana/.test(c.textContent)).length, 0);
+  const dialog = world.dialog();
+  const pick = find(dialog, '.netpick')[0];
+  assert.equal(pick.dataset.stage, 'tokens');
+  assert.equal(find(dialog, 'canvas').length, 0, 'the address was drawn before the acknowledgement');
+  const rows = find(dialog, '.token-row');
+  assert.deepEqual(rows.map((r: Any) => r.dataset.symbol), ['ETH', 'USDC'], 'the chain\'s own coin is not first');
+  assert.deepEqual(find(dialog, '.token-min').map((n: Any) => n.textContent), ['min 0.001 ETH', 'min 1 USDC']);
+  const go = find(dialog, 'button').find((b: Any) => b.textContent === 'Show the address') as Any;
+  assert.equal(go.disabled, true, 'the address button is live before the box is ticked');
+  const box = find(dialog, '.ack-input')[0];
+  box.checked = true;
+  box.dispatch('change');
+  assert.equal(go.disabled, false);
+  go.click();
+  await flush();
+  assert.equal(pick.dataset.stage, 'address');
+  assert.equal(find(dialog, 'canvas').length, 1, 'no QR after the acknowledgement');
+  // Remembered: the same watch again opens straight on the address.
+  assert.equal(world.sandbox.localStorage.getItem('phosphor.depositAck'), '1');
+  assert.equal(world.calls.filter((c) => c.route === '/api/deposit/show').length, 0, 'the card started a second watch for the watch it was opened with');
 });
