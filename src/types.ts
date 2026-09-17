@@ -383,12 +383,47 @@ export type RailResult = {
   settling?: boolean;
   // The balance the rail read either side of the move, for the receipt and for that re-check.
   pocket?: PocketRead;
+  // The preflight said hold and nothing was signed. The executor keeps the row approved and
+  // runs the rail again in a while; `detail` is the hold reason (src/proposals/execute.ts).
+  held?: boolean;
+  // What the preflight found on this run, held or not, for the row and the receipt.
+  preflight?: Preflight;
 };
 
 // Called by a rail the moment something irreversible exists: a signature released, a
 // transaction broadcast, an intent submitted. The executor persists it before the rail's
 // watch loop, so a process that dies inside the wait still has the hash on the row.
-export type RailHooks = { onEvidence?: (evidence: { txids?: string[] } & RailEvidence) => void };
+// `onPreflight` is told the moment the checks have run and before anything is signed, so
+// the row carries what was read even if the rail dies in the wait that follows.
+export type RailHooks = {
+  onEvidence?: (evidence: { txids?: string[] } & RailEvidence) => void;
+  onPreflight?: (preflight: Preflight) => void;
+};
+
+// ---------- preflight ----------
+// What the app reads for itself a moment before a 1Click intent is signed (src/preflight/):
+// the chain the payout lands on, the fee against the payout's cost, the venue, the balance and
+// the quote's deadline. A `hold` signs nothing and is retried by the executor; a `fail` signs
+// nothing and stops. The card and the receipt draw the checks as a folded rail
+// (ui/screens/checks.js), never as text.
+export type PreflightCheckId = 'gas' | 'coverage' | 'venue' | 'balance' | 'deadline';
+
+export type PreflightCheck = {
+  id: PreflightCheckId;
+  label: string; // plain English: "Arbitrum gas", "Fee covers the payout"
+  state: 'ok' | 'warn' | 'fail';
+  value: string; // the number, as the receipt prints it: "145,392 / 300,000", "2.3x"
+  detail: string; // one sentence under it
+  series?: number[]; // the hour of readings behind the gas check, oldest first
+  limit?: number; // the line the sparkline dashes: the vendor's gas limit, when there is one
+};
+
+export type Preflight = {
+  at: string; // ISO, when the checks ran
+  checks: PreflightCheck[];
+  verdict: 'ok' | 'hold' | 'fail';
+  holdReason?: string; // the sentence the card shows while held or once failed
+};
 
 export type Rail<D extends WriteDraft = WriteDraft> = {
   kind: D['kind'];
@@ -506,6 +541,12 @@ export type Proposal = {
   // The rail's own before and after in the pocket the asset moved through, when the rail
   // read one. What `balances` is priced from, and what a settling row is re-judged against.
   pocket?: PocketRead;
+  // Every preflight this row ran, oldest first: one per attempt, so a row held and retried
+  // carries each reading. The card and the receipt draw the last one.
+  preflight?: Preflight[];
+  // Set when the preflight first said hold: the row stays approved, nothing is signed, and the
+  // executor retries on its own until the checks clear or the hold runs out.
+  heldSince?: string;
 };
 
 // ---------- Basic view ----------
@@ -655,6 +696,10 @@ export type LogEvent = {
     // is needs_reconciliation rather than failed. Its own kind so a reader scanning for what
     // left the wallet sees it beside 'executed', not filed under failures.
     | 'execution_unconfirmed'
+    // The preflight said hold: nothing was signed, the row stays approved and the executor will
+    // try again. And the hold that ran out: still nothing signed, the row is failed.
+    | 'execution_held'
+    | 'execution_held_expired'
     // A person filed an unconfirmed row from the dock. Nothing about the money changed.
     | 'acknowledged'
     // A rail handed the executor its evidence (a hash, a handle, a nonce) before its watch loop,
