@@ -291,8 +291,17 @@ test('a 1d window across a year boundary shows the months and the year where it 
   const s = loadChartUi();
   // Daily bars are the venue's days, so the calendar here is UTC: 1 Nov 2025 to 28 Feb 2026.
   const labels = axisLabels(s, utcBars('2025-11-01T00:00:00Z', 86400, 120), 86400);
-  assert.equal(labels[0], 'Nov 2025', 'the first tick carries the year when the window spans two');
-  assert.deepEqual(labels.slice(1), ['Dec', '2026', 'Feb']);
+  assert.equal(labels[0], '1 Nov 2025', 'the first tick carries the year when the window spans two');
+  // Fortnightly Monday ticks at this width: the month where it turns, the year where it does.
+  assert.equal(labels.filter((l) => l === '2026').length, 1, labels.join(' | '));
+  assert.ok(labels.includes('Dec') && labels.includes('Feb'), labels.join(' | '));
+  assert.ok(!labels.includes('Jan'), 'January is named by its year, not twice');
+  for (const label of labels.slice(1)) assert.match(label, /^(\d+ [A-Z][a-z]{2}|[A-Z][a-z]{2}|\d{4})$/, label);
+
+  // Squeezed to a bar a pixel, two years of days climb to the quarter rung.
+  const tight = axisLabels(s, utcBars('2025-11-01T00:00:00Z', 86400, 700), 86400);
+  assert.equal(tight[0], 'Nov 2025');
+  assert.deepEqual(tight.slice(1, 5), ['2026', 'Apr', 'Jul', 'Oct']);
 });
 
 test('a 1w window ticks on Mondays and a squeezed one on the first bar of each year', () => {

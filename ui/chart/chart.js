@@ -174,6 +174,10 @@ var PANE_MAX = 96;
 var PRICE_PAD = 0.06; // headroom above and below the auto-fitted range
 var GRID_PRICE_GAP = 46; // target pixels between price grid lines
 var GRID_TIME_GAP = 96;
+/* A date is a short label (`16 Sep` is six characters) and a day tick is worth having a little
+   closer than a clock tick: a five day chart in a half width pane used to climb to the week
+   rung at 90 px a day and print one Monday. */
+var GRID_DATE_GAP = 72;
 
 /* The server's sentinel for a calendar month: the mean Gregorian month in seconds. A month is
    not a fixed number of seconds, so it travels as this number and every place that buckets by
@@ -1293,7 +1297,7 @@ function timeTicks(L) {
   var rung = null;
   for (var r = 0; r < TIME_RUNGS.length; r++) {
     if (TIME_RUNGS[r].sec < granularity) continue;
-    if ((TIME_RUNGS[r].sec / granularity) * L.slot >= GRID_TIME_GAP) {
+    if ((TIME_RUNGS[r].sec / granularity) * L.slot >= (TIME_RUNGS[r].unit ? GRID_DATE_GAP : GRID_TIME_GAP)) {
       rung = TIME_RUNGS[r];
       break;
     }

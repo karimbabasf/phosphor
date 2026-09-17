@@ -153,9 +153,10 @@ export function createProviders(deps: ProviderDeps) {
      `provider` is the venue the store keyed this series under, so the routing here has to
      agree with it exactly: resolving the product freely and landing somewhere else would
      write one venue's bars under another venue's key, which is the splice the store's own
-     keyOf comment exists to prevent. */
-  async function fetchWindow(product: string, baseSec: number, bars: number, provider: string): Promise<Candle[]> {
-    const nowSec = Math.floor(now() / 1000);
+     keyOf comment exists to prevent. `endSec` is where the window ends, for the store's
+     backfill behind the oldest bar it holds; absent, it ends now. */
+  async function fetchWindow(product: string, baseSec: number, bars: number, provider: string, endSec?: number): Promise<Candle[]> {
+    const nowSec = endSec ?? Math.floor(now() / 1000);
     const ref =
       provider === 'coinbase' || provider === 'hyperliquid'
         ? deps.catalog.resolveOn(product, provider)

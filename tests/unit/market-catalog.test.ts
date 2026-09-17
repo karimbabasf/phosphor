@@ -4,9 +4,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import os from 'node:os';
+import path from 'node:path';
+
 import type { Candle } from '../../src/types.ts';
 import { createCatalog, normalizeQuery } from '../../src/market/catalog.ts';
-import { pageBackward, planBase, COINBASE_NATIVES, HYPERLIQUID_NATIVES } from '../../src/market/providers.ts';
+import { createProviders, pageBackward, planBase, COINBASE_NATIVES, HYPERLIQUID_NATIVES } from '../../src/market/providers.ts';
 
 const HL_META = {
   universe: [{ name: 'BTC' }, { name: 'ETH' }, { name: 'SOL' }, { name: 'HYPE' }, { name: 'WIF' }, { name: 'OLD', isDelisted: true }],
@@ -167,4 +170,52 @@ test('paging stops when the venue runs out of history instead of looping', async
 
   assert.ok(calls <= 2, `should stop as soon as history stops moving, took ${calls}`);
   assert.equal(got.length, 1);
+});
+
+test('a window asked for behind a moment ends there on both venues, not at now', async () => {
+  // The store's backfill asks fetchWindow for the bars before the oldest it holds. A venue call
+  // anchored at now would answer with the newest window again, and the store would read the
+  // overlap as "the venue has no more": measured 2026-09-16, every backfill on the real venue
+  // came back 1850 bars short and marked every series bottomed after one page.
+  const asked: { venue: string; start: number; end: number }[] = [];
+  const fetchImpl = (async (input: string | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.includes('hyperliquid')) {
+      const body = JSON.parse(String(init?.body)) as { type: string; req: { startTime: number; endTime: number } };
+      if (body.type !== 'candleSnapshot') return { ok: true, json: async () => HL_META, text: async () => '', headers: new Headers() };
+      asked.push({ venue: 'hyperliquid', start: body.req.startTime / 1000, end: body.req.endTime / 1000 });
+      const rows: { t: number; o: string; h: string; l: string; c: string; v: string }[] = [];
+      for (let t = Math.ceil(body.req.startTime / 1000 / 3600) * 3600; t <= body.req.endTime / 1000; t += 3600) rows.push({ t: t * 1000, o: '1', h: '1', l: '1', c: '1', v: '1' });
+      return { ok: true, json: async () => rows, text: async () => '', headers: new Headers() };
+    }
+    if (url.includes('/candles')) {
+      const u = new URL(url);
+      const start = Date.parse(u.searchParams.get('start') as string) / 1000;
+      const end = Date.parse(u.searchParams.get('end') as string) / 1000;
+      asked.push({ venue: 'coinbase', start, end });
+      const rows: number[][] = [];
+      for (let t = Math.ceil(start / 3600) * 3600; t <= end; t += 3600) rows.push([t, 1, 1, 1, 1, 1]);
+      return { ok: true, json: async () => rows.reverse(), text: async () => '', headers: new Headers() };
+    }
+    return { ok: true, json: async () => CB_PRODUCTS, text: async () => '', headers: new Headers() };
+  }) as unknown as typeof fetch;
+  const catalog = createCatalog({ fetchImpl, cachePath: path.join(os.tmpdir(), `phosphor-catalog-${process.pid}-${Date.now()}.json`) });
+  await catalog.refresh();
+  const providers = createProviders({ catalog, fetchImpl, now: () => 1_800_000_000_000 });
+
+  const endSec = 1_790_000_000 - (1_790_000_000 % 3600);
+  const hl = await providers.fetchWindow('BTC-USD', 3600, 100, 'hyperliquid', endSec);
+  assert.equal(asked[0]?.venue, 'hyperliquid');
+  assert.equal(asked[0]?.end, endSec, 'the venue window ends at the moment asked for');
+  assert.ok(hl.length >= 100 && (hl[hl.length - 1] as Candle).t <= endSec, `${hl.length} bars, newest ${(hl[hl.length - 1] as Candle).t}`);
+
+  asked.length = 0;
+  const cb = await providers.fetchWindow('PEPE-USD', 3600, 100, 'coinbase', endSec);
+  assert.equal(asked[0]?.venue, 'coinbase');
+  assert.equal(asked[0]?.end, endSec);
+  assert.ok(cb.length >= 100 && (cb[cb.length - 1] as Candle).t <= endSec);
+
+  asked.length = 0;
+  await providers.fetchWindow('BTC-USD', 3600, 10, 'hyperliquid');
+  assert.equal(asked[0]?.end, 1_800_000_000, 'without a moment the window ends now');
 });
