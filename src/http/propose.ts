@@ -321,17 +321,28 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
       await respond(await ctx.proposals.proposeHlWithdraw({ amount, clientKey }));
       return;
     }
-    if (kind === 'intents_send') {
-      // The one propose kind with a destination field. It is a string the policy engine holds
-      // to the destination allowlist; the builder decodes it and refuses our own account.
+    if (kind === 'send') {
+      // The one propose kind with a destination field, and the one with a confirmation field.
+      // `where` has no default: a send with no place named is a send the agent has not
+      // understood, and the wrong guess is a total loss on a chain. `confirmed` is the agent's
+      // statement that the human read the exact address and the landing place back and said
+      // yes; the schema at src/mcp.ts holds it to the literal true and so does this door, so a
+      // raw post cannot skip the read-back either. The builder decodes `to` for the place it is
+      // going, and the card and the Touch ID sentence are the gate.
       const to = strField(params, 'to', problems);
       const symbol = strField(params, 'symbol', problems);
       const amount = positiveField(params, 'amount', problems);
+      const where = strField(params, 'where', problems);
+      if (params.confirmed !== true) {
+        problems.push('confirmed must be true, and only after the human confirmed the exact address and where it lands in this conversation');
+      }
+      if (params.note !== undefined && typeof params.note !== 'string') problems.push('note must be a string');
+      const note = typeof params.note === 'string' && params.note.trim() !== '' ? params.note.trim() : undefined;
       if (problems.length > 0) {
         fail(res, 400, problems.join('; '));
         return;
       }
-      await respond(await ctx.proposals.proposeIntentsSend({ to, symbol, amount, clientKey }));
+      await respond(await ctx.proposals.proposeSend({ to, symbol, amount, where, note, clientKey }));
       return;
     }
     if (kind === 'policy_change') {

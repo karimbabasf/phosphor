@@ -50,7 +50,7 @@ test('the greeting rules are the persona rules, not a second copy', () => {
 });
 
 test('the always-click tools are named once and the rule names them', () => {
-  assert.deepEqual([...ALWAYS_CLICK_TOOLS].sort(), ['propose_hl_withdraw', 'propose_intents_send', 'propose_policy_change']);
+  assert.deepEqual([...ALWAYS_CLICK_TOOLS].sort(), ['propose_hl_withdraw', 'propose_policy_change', 'propose_send']);
   const rule = OPERATING_RULES.find((r) => r.includes('may execute immediately'));
   assert.ok(rule !== undefined);
   for (const tool of ALWAYS_CLICK_TOOLS) assert.ok(rule.includes(tool), `${tool} is missing from the threshold rule`);

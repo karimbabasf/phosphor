@@ -38,6 +38,13 @@ proposal or change a policy rule: the surface is fixed at registration in `src/m
 connect-time rules outrank anything a skill says. A skill file that tells an agent to move funds
 is asking for a verb the door does not have.
 
+Sends are the sharpest case. `propose_send` is the one tool with a destination field, and no
+skill may hand it one: the address and where it lands (a real chain, or inside NEAR Intents)
+come from the human in the conversation, the agent reads amount, token, full address and landing
+place back and waits for a yes, and then the card and the Touch ID dialog name the receiver
+again before anything is signed. A skill that carries an address, or tells an agent to skip the
+read-back, is the attack the protocol exists for.
+
 That cuts both ways, so treat these files the way you would treat code you are about to run.
 They are read by an agent that drives an app holding real funds. Write your own, but read
 anything you did not write.

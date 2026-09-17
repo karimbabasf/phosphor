@@ -11,6 +11,7 @@ import path from 'node:path';
 import type {
   HlDepositDraft,
   HlWithdrawDraft,
+  IntentsPayDraft,
   IntentsSendDraft,
   Policy,
   RiskRow,
@@ -109,6 +110,24 @@ function intentsSend(over: Partial<IntentsSendDraft> = {}): IntentsSendDraft {
   };
 }
 
+function intentsPay(over: Partial<IntentsPayDraft> = {}): IntentsPayDraft {
+  return {
+    kind: 'intents_pay',
+    symbol: 'USDC',
+    originAsset: 'nep141:usdc.near',
+    network: 'ethereum',
+    amount: 20,
+    amountUsd: 20,
+    minReceived: 19.4,
+    from: SELF_EVM.toLowerCase(),
+    to: FRIEND,
+    toChecksum: 'lowercase',
+    counterparty: VENUE,
+    recipient: { known: false, count: 0, lastAt: null, activity: null, ownAddress: false },
+    ...over,
+  };
+}
+
 function hlWithdraw(over: Partial<HlWithdrawDraft> = {}): HlWithdrawDraft {
   return {
     kind: 'hl_withdraw',
@@ -128,6 +147,7 @@ const ALL = [
   ['hl_deposit', hlDeposit()],
   ['hl_withdraw', hlWithdraw()],
   ['intents_send', intentsSend({ to: SELF_EVM })],
+  ['intents_pay', intentsPay()],
 ] as const;
 
 // ---------- the rails are reachable at all ----------
@@ -173,23 +193,33 @@ test('a Hyperliquid withdrawal crediting an intents account that is not ours is 
   assert.match(v.outcome === 'refuse' ? v.reasons.join(' ') : '', /proceeds/);
 });
 
-// The send is the one draft MEANT to name another account, so the destination rule is the whole
-// fence: a receiver the human never allowlisted is refused whatever the size, and one they did
-// is decided like every other rail (the always-click rule sits in execute.ts, not here).
-test('an intents send to an account that is neither ours nor on the allowlist is refused', () => {
-  const v = evaluate(intentsSend({ to: FRIEND }), ctxWith());
-  assert.equal(v.outcome, 'refuse');
-  assert.equal(v.outcome === 'refuse' ? v.rule : '', 'destination_not_allowed');
-  assert.match(v.reasons[v.reasons.length - 1] ?? '', /intents_send would deliver the proceeds to 0x3333/);
+// The two sends are the drafts MEANT to name somebody else, and since 2026-09-17 the destination
+// rule does not bind them (decision 3 of the new-user pass): the gate is the card and the Touch
+// ID sentence that name the receiver, and the always-click rule in execute.ts holds every send
+// to that click. What still binds here is everything else: the counterparty has to be the
+// verifier, the size caps, the composition rules.
+test('a send to a fresh address is never refused for its destination, on either rail', () => {
+  const inside = evaluate(intentsSend({ to: FRIEND }), ctxWith());
+  assert.notEqual(inside.outcome, 'refuse', JSON.stringify(inside));
+  assert.equal(inside.outcome === 'refuse' ? inside.rule : '', '');
+  const out = evaluate(intentsPay({ to: FRIEND }), ctxWith());
+  assert.notEqual(out.outcome, 'refuse', JSON.stringify(out));
+  const own = evaluate(intentsPay({ to: SELF_EVM }), ctxWith());
+  assert.notEqual(own.outcome, 'refuse', 'our own wallet on a chain is a payout like any other here');
 });
 
-test('an intents send to an allowlisted account passes the destination rule, and the allowlist match ignores case', () => {
-  const p = policyAllowing(VENUE);
-  p.outbound.destinationAllowlist = [VENUE, FRIEND.toUpperCase().replace('0X', '0x')];
-  const v = evaluate(intentsSend({ to: FRIEND }), ctxWith({ policy: p }));
-  assert.notEqual(v.outcome, 'refuse', JSON.stringify(v));
-  const own = evaluate(intentsSend({ to: SELF_EVM }), ctxWith());
-  assert.notEqual(own.outcome, 'refuse', 'our own account counts as allowed without being listed');
+test('a send still has to pass through the verifier: any other counterparty is refused by name', () => {
+  const v = evaluate(intentsPay({ to: FRIEND, counterparty: '0x4444444444444444444444444444444444444444' }), ctxWith());
+  assert.equal(v.outcome, 'refuse');
+  assert.equal(v.outcome === 'refuse' ? v.rule : '', 'destination_not_allowed');
+  assert.match(v.reasons[v.reasons.length - 1] ?? '', /intents_pay sends funds to 0x4444/);
+});
+
+test('the engine stays pure about a send: a small one is allow here and the executor turns it into a click', () => {
+  const small = evaluate(intentsPay({ to: FRIEND, amountUsd: 20, amount: 20 }), ctxWith());
+  assert.equal(small.outcome, 'allow', 'the always-click downgrade lives in src/proposals/execute.ts land(), tested in send-gate.test.ts');
+  const big = evaluate(intentsPay({ to: FRIEND, amountUsd: 5000, amount: 5000 }), ctxWith());
+  assert.equal(big.outcome, 'needs_approval');
 });
 
 test('a Hyperliquid withdrawal into our own intents account passes the engine on the threshold alone', () => {

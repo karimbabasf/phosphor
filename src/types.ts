@@ -256,6 +256,9 @@ export type SendRecipient = {
   lastAt: string | null;
   activity: AddressActivity | null;
   ownAddress: boolean;
+  // The agent's own words about the receiver, one bounded line. Written to the recipients
+  // book as the row's label on approval and never drawn on the card.
+  note?: string;
 };
 
 // A balance inside intents.near moving to ANOTHER account inside the same verifier: the one of
@@ -764,8 +767,6 @@ export type HlWithdrawParams = { amount: number; clientKey?: ClientKey };
 // never drawn on the card, because the agent does not get to label the address it is paying.
 export type SendParams = { to: string; symbol: string; amount: number; where: string; note?: string; clientKey?: ClientKey };
 
-export type IntentsSendParams = { to: string; symbol: string; amount: number; clientKey?: ClientKey };
-
 // No address, no recipient, no contract. The agent sends a plan or names one it drew, and
 // everything about WHERE the money is resolves from the app's own config and the venue table.
 export type TradeParams = { plan?: unknown; planId?: string; by?: string | null; clientKey?: ClientKey };
@@ -776,7 +777,7 @@ export type ProposalService = {
   proposeSwap(params: SwapParams): Promise<Proposal>;
   proposeHlDeposit(params: HlDepositParams): Promise<Proposal>;
   proposeHlWithdraw(params: HlWithdrawParams): Promise<Proposal>;
-  proposeIntentsSend(params: IntentsSendParams): Promise<Proposal>;
+  proposeSend(params: SendParams): Promise<Proposal>;
   proposeTrade(params: TradeParams): Promise<Proposal>;
   proposeTradeChange(params: TradeChangeParams): Promise<Proposal>;
   approve(id: string): Promise<Proposal>; // human path only; executes on approval

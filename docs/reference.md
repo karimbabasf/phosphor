@@ -88,8 +88,7 @@ custom SMA, EMA, RSI or ATR equals the built-in to the last digit.
 | `propose_trade_change` | Changes an armed plan: a new stop or target, cancel, or close. A change that only takes risk off lands without the wall; one that widens is priced like a new plan |
 | `propose_hl_deposit` | Funds the Hyperliquid perpetuals account from the intents balance: one signed intent, nothing sent on any chain. The account credited is derived from the app's own key |
 | `propose_hl_withdraw` | Brings collateral back from Hyperliquid into the intents balance. One field, the amount; the intents account credited is the app's own. Always waits for a human click and is refused while any position is open |
-| `propose_intents_send` | Pays a balance inside `intents.near` to another intents account, named by `to`: the one tool with a destination field. The receiver is held to the policy allowlist, and the send always waits for a human click |
-| `propose_send` | Coming with the SEND stream: one send tool that replaces `propose_intents_send`, pays out on a real chain or inside NEAR Intents, and always waits for a click and Touch ID |
+| `propose_send` | Sends a balance held inside `intents.near` to somebody else: the one tool with a destination field. `where` is required and has no default: a network id (`ethereum`, `base`, `arbitrum`, `solana`, `near`) pays it out on that real chain through 1Click's bridge (an `intents_pay` draft); `intents` credits another NEAR Intents account (an `intents_send` draft). `to` is decoded for that place (EIP-55 on an EVM chain, base58 on Solana, an account id on NEAR) and a typo is refused before any quote; the app reads the address's public activity and the card says whether it has ever been used. `confirmed` is the literal `true`, allowed only after the agent read the amount, token, full address and landing place back to the human and got a yes. No allowlist: every send waits for the human click and, on an enclave wallet, a Touch ID that names the receiver, whatever the size. A chain payout pays the bridge's flat fee and is refused with the fee named when the fee eats more than 3 percent |
 
 This door now names exactly the set the app can execute. `propose_lp_add`, `propose_lp_remove`,
 `propose_yield_deposit`, `propose_yield_withdraw`, `yield_read` and `yield_auto` were on it or
@@ -238,7 +237,12 @@ venue contract rather than decomposing into transfer legs. They are checked on t
 per-transaction and session caps, the click threshold, the venue contract, and separately on
 where the proceeds land. That branch deliberately does not compute a post-move composition: the
 engine cannot know what a pool or an exchange will hand back, and inventing a post-state would
-be worse than admitting the gap.
+be worse than admitting the gap. The two sends (`intents_send`, `intents_pay`) are the exception
+to the proceeds rule since 2026-09-17: their receiver is meant to be somebody else and no
+allowlist blesses it. The engine still holds a send to the verifier as its counterparty and to
+every cap; the gate on the receiver is the click, and `src/proposals/execute.ts` turns any
+`allow` on a send into `needs_approval` whatever the size, so a send never runs on the policy's
+word alone.
 
 Every amount the engine reads is priced by the app, never supplied by the agent. A token the app
 cannot price is refused rather than assumed to be worth a dollar, because a value it cannot

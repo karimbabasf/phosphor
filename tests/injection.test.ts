@@ -281,13 +281,18 @@ function openBags(schema: unknown, at = '$', out: string[] = []): string[] {
 type ListedTool = { name: string; inputSchema: unknown };
 
 /* THE ONE TOOL WITH A DESTINATION FIELD, and the whole of what is allowed about it.
-   propose_intents_send (2026-09-16) moves an intents balance to another intents account, so it
-   carries `to`. It is the only tool that may, `to` is the only recipient-shaped field it may
-   carry, and the field is governed twice: the policy engine refuses any account that is not
-   ours or on the destination allowlist (an allowlist only a human click extends), and the
-   send itself always waits for a click (src/proposals/execute.ts). The test below this walk
-   drives it through the door with a hostile account and holds it to that. */
-const DESTINATION_TOOL = 'propose_intents_send';
+   propose_send (2026-09-17) moves an intents balance to somebody else: out to an address on a
+   real chain, or to another intents account, and `where` says which with no default. It is the
+   only tool that may carry `to`, `to` is the only recipient-shaped field it may carry, and its
+   argument set is exact: amount, confirmed, note, symbol, to, where. The field is governed
+   three times: the schema holds `confirmed` to the literal true so the agent has to read the
+   move back first, the builder decodes the address for the place it is going and refuses a
+   typo, and the send always waits for a click and a Touch ID that name the receiver
+   (src/proposals/execute.ts, src/vault/reason.ts). There is no allowlist since 2026-09-17;
+   the test below this walk drives the door with a hostile receiver for both values of `where`
+   and holds it to that. */
+const DESTINATION_TOOL = 'propose_send';
+const DESTINATION_FIELDS = ['amount', 'confirmed', 'note', 'symbol', 'to', 'where'];
 
 /* THE READS THAT CARRY AN ADDRESS AS A LOOKUP KEY (2026-09-16). chain_address and
    chain_transactions look up public data about an address; the field names what to read, not
@@ -304,7 +309,15 @@ function assertNoExfiltrationTarget(tools: ListedTool[]): void {
     const names = [...propertyNames(tool.inputSchema)].map(n => n.toLowerCase());
     if (tool.name === DESTINATION_TOOL) {
       assert.deepEqual(names.filter((n) => RECIPIENT_FIELDS.includes(n)), ['to'], `${DESTINATION_TOOL} carries a second recipient-shaped field`);
-      assert.deepEqual(names.sort(), ['amount', 'symbol', 'to'], `${DESTINATION_TOOL} grew an argument`);
+      assert.deepEqual(names.sort(), DESTINATION_FIELDS, `${DESTINATION_TOOL} grew an argument`);
+      // The literal true is the schema's half of the read-back protocol: a send the agent has
+      // not confirmed with the human cannot be expressed at all.
+      const confirmed = (tool.inputSchema as { properties?: Record<string, { const?: unknown; enum?: unknown[] }> }).properties?.['confirmed'];
+      assert.ok(confirmed !== undefined, `${DESTINATION_TOOL} lost its confirmed field`);
+      assert.ok(confirmed.const === true || (Array.isArray(confirmed.enum) && confirmed.enum.length === 1 && confirmed.enum[0] === true), `confirmed is not the literal true: ${JSON.stringify(confirmed)}`);
+      const where = (tool.inputSchema as { properties?: Record<string, { enum?: unknown[] }>; required?: string[] });
+      assert.ok(where.required?.includes('where'), 'where has a default, and a send with no place named must be refused');
+      assert.ok(where.required?.includes('confirmed'), 'confirmed is optional');
       assert.deepEqual(openBags(tool.inputSchema), [], `tool ${tool.name} carries an open bag of arguments`);
       continue;
     }
@@ -351,9 +364,14 @@ test('the tool surface cannot express an exfiltration target', async () => {
   assertNoExfiltrationTarget(tools);
 });
 
-test('the one tool with a destination field never executes on its own, and a hostile receiver never reaches a signature', async () => {
+test('the one tool with a destination field never executes on its own, and a hostile receiver never reaches a signature on either side', async () => {
   assert.ok(client !== null);
   const hostile = JSON.parse(fs.readFileSync(path.join(ROOT, 'tests', 'fixtures', 'hostile.json'), 'utf8')) as { attacker: string };
+  const rowsOnDisk = (): Array<Record<string, unknown>> => {
+    if (!fs.existsSync(path.join(dataDir, 'proposals.json'))) return [];
+    const rows = JSON.parse(fs.readFileSync(path.join(dataDir, 'proposals.json'), 'utf8')) as Array<Record<string, unknown>> | Record<string, unknown>;
+    return Array.isArray(rows) ? rows : (Object.values(rows) as Array<Record<string, unknown>>);
+  };
   const stored = (id: string): Record<string, unknown> => {
     const rows = JSON.parse(fs.readFileSync(path.join(dataDir, 'proposals.json'), 'utf8')) as Array<Record<string, unknown>> | Record<string, unknown>;
     const list = Array.isArray(rows) ? rows : Object.values(rows);
@@ -361,20 +379,43 @@ test('the one tool with a destination field never executes on its own, and a hos
     assert.ok(row?.draft, `proposal ${id} is not in the store`);
     return row.draft;
   };
-  // The attacker's account, a stranger's address, our own account, and garbage: none executes,
-  // none gets a verdict other than refuse in a demo that holds nothing, and the draft never
-  // carries an account the door was not handed.
-  for (const to of [hostile.attacker, '0x9999999999999999999999999999999999999999', SELF[0], 'not an account', '']) {
-    const r = await callTool('propose_intents_send', { to, symbol: 'USDC', amount: 1 });
-    const text = typeof r === 'string' ? r : JSON.stringify(r);
-    assert.ok(!/"status":"executed"/.test(text), `a send to ${JSON.stringify(to)} executed`);
-    if (typeof r === 'object' && r !== null && typeof (r as { id?: unknown }).id === 'string') {
-      assert.equal((r as { verdict?: { outcome?: string } }).verdict?.outcome, 'refuse', `a send to ${JSON.stringify(to)} was not refused: ${text.slice(0, 200)}`);
-      const draft = stored((r as { id: string }).id);
-      assert.equal(draft.kind, 'intents_send');
-      assert.equal(String(draft.from).toLowerCase(), SELF[0].toLowerCase());
+  // The attacker's account, a stranger's address, our own account, and garbage, on both sides
+  // of `where`: none executes, none gets a verdict other than refuse in a demo that holds
+  // nothing, and the draft never carries an account the door was not handed. The kind on the
+  // row is decided by `where` and by nothing the receiver string could say.
+  for (const [where, kind] of [['intents', 'intents_send'], ['ethereum', 'intents_pay']] as const) {
+    for (const to of [hostile.attacker, '0x9999999999999999999999999999999999999999', SELF[0], 'not an account', '']) {
+      const r = await callTool('propose_send', { to, symbol: 'USDC', amount: 1, where, confirmed: true });
+      const text = typeof r === 'string' ? r : JSON.stringify(r);
+      assert.ok(!/"status":"executed"/.test(text), `a send to ${JSON.stringify(to)} on ${where} executed`);
+      if (typeof r === 'object' && r !== null && typeof (r as { id?: unknown }).id === 'string') {
+        assert.equal((r as { verdict?: { outcome?: string } }).verdict?.outcome, 'refuse', `a send to ${JSON.stringify(to)} on ${where} was not refused: ${text.slice(0, 200)}`);
+        const draft = stored((r as { id: string }).id);
+        assert.equal(draft.kind, kind);
+        assert.equal(String(draft.from).toLowerCase(), SELF[0].toLowerCase());
+      }
     }
   }
+  // Without the read-back the schema refuses the call before the app hears of it (the SDK
+  // answers a JSON-RPC error, which the client throws), and so does the door when the schema is
+  // bypassed: neither path leaves a row behind. A send with no place named is not a send at all.
+  const refusedBySchema = async (args: Record<string, unknown>): Promise<string> => {
+    try {
+      const r = await callTool('propose_send', args);
+      return typeof r === 'string' ? r : JSON.stringify(r);
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err);
+    }
+  };
+  const before = rowsOnDisk().length;
+  const unconfirmed = await refusedBySchema({ to: hostile.attacker, symbol: 'USDC', amount: 1, where: 'ethereum', confirmed: false });
+  assert.ok(!/"id":"/.test(unconfirmed), `an unconfirmed send made a proposal: ${unconfirmed.slice(0, 200)}`);
+  const nowhere = await refusedBySchema({ to: hostile.attacker, symbol: 'USDC', amount: 1, confirmed: true });
+  assert.ok(!/"id":"/.test(nowhere), `a send with no where made a proposal: ${nowhere.slice(0, 200)}`);
+  const door = await direct({ op: 'propose', kind: 'send', params: { to: hostile.attacker, symbol: 'USDC', amount: 1, where: 'ethereum', confirmed: 'yes' } });
+  assert.equal(door.status, 400, JSON.stringify(door.json));
+  assert.match(String((door.json as { error?: unknown }).error), /confirmed must be true/);
+  assert.equal(rowsOnDisk().length, before, 'a refused send left a row behind');
 });
 
 /* THE CHAIN READS TAKE A SHAPE, NEVER A URL. A lookup key that fails its network's shape is
@@ -503,9 +544,15 @@ test('the MCP process holds no path to an approval, and none to the human door',
   }
 });
 
-test('a send to the attacker is refused by the engine itself', () => {
+/* THE ENGINE NO LONGER REFUSES A SEND FOR ITS RECEIVER (decision 3, 2026-09-17), and this test
+   says so on purpose rather than quietly disappearing: a $5,000 send to the attacker's address
+   is NOT allow. It waits for a person, whose card and Touch ID dialog name the attacker in full;
+   what the engine still refuses by name is a send that passes through anything but the
+   verifier. The always-click rule for the small case lives in src/proposals/execute.ts and is
+   held in tests/unit/send-gate.test.ts. */
+test('a send to the attacker is never allow by the engine, and a send through anything but the verifier is refused', () => {
   const snapshot = loadDemoLedger();
-  // The venues are allowlisted, as a seeded install has them, so the refusal is about the
+  // The venues are allowlisted, as a seeded install has them, so the verdict is about the
   // receiver and not about the counterparty.
   const policy = defaultPolicy();
   policy.outbound.destinationAllowlist = venueAllowlist();
@@ -529,9 +576,11 @@ test('a send to the attacker is refused by the engine itself', () => {
   };
 
   const verdict = evaluate(draft, ctx);
-  assert.equal(verdict.outcome, 'refuse');
-  assert.equal(verdict.outcome === 'refuse' ? verdict.rule : '', 'destination_not_allowed');
-  assert.ok(verdict.reasons.some(r => r.includes(hostile.attacker)), 'the refusal names the address it refused');
+  assert.equal(verdict.outcome, 'needs_approval', JSON.stringify(verdict));
+  const elsewhere = evaluate({ ...draft, counterparty: hostile.attacker }, ctx);
+  assert.equal(elsewhere.outcome, 'refuse');
+  assert.equal(elsewhere.outcome === 'refuse' ? elsewhere.rule : '', 'destination_not_allowed');
+  assert.ok(elsewhere.reasons.some(r => r.includes(hostile.attacker)), 'the refusal names the counterparty it refused');
 });
 
 // ---------- hostile strings over the real MCP surface ----------

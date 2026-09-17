@@ -271,7 +271,10 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
         does: 'bring collateral back from Hyperliquid into the NEAR Intents balance. Always a human click, refused while a position is open, and it costs a flat 1.2 USDC on top of 25 bp, so say the percentage first.',
       },
       { tool: 'propose_swap', does: 'swap inside NEAR Intents by signing an intent. Nothing moves on chain.' },
-      { tool: 'propose_intents_send', does: 'pay an allowlisted intents account; always a click.' },
+      {
+        tool: 'propose_send',
+        does: "send to somebody: where = a network id pays out on that real chain, where = 'intents' credits another NEAR Intents account. Read the amount, token, full address and landing place back and wait for a yes first; always a click and a Touch ID that names the receiver.",
+      },
       { tool: 'propose_policy_change', does: 'change the rules themselves. Always waits for a human click.' },
     ],
   },

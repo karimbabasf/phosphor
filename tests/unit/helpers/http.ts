@@ -48,7 +48,7 @@ export function serviceThatAnswers(row: Proposal, settledRow: Proposal = row): P
     proposeSwap: answer,
     proposeHlDeposit: answer,
     proposeHlWithdraw: answer,
-    proposeIntentsSend: answer,
+    proposeSend: answer,
     proposeTrade: answer,
     proposeTradeChange: answer,
     approve: answer,

@@ -1,5 +1,6 @@
 // The drafts that move money from one place to another: a swap inside the verifier, the
-// Hyperliquid deposit and withdrawal, and the send to another intents account.
+// Hyperliquid deposit and withdrawal, and the two sends: to another intents account, or out
+// to an address on a real chain.
 //
 // Each one resolves its own addresses and amounts from what the app already knows, never from
 // the caller, and then hands the draft to proposeRail, which evaluates, simulates and lands it.
@@ -9,9 +10,11 @@ import type {
   HlDepositParams,
   HlWithdrawDraft,
   HlWithdrawParams,
+  IntentsPayDraft,
   IntentsSendDraft,
-  IntentsSendParams,
   Proposal,
+  SendParams,
+  SendRecipient,
   SwapDraft,
   SwapParams,
 } from '../types.ts';
@@ -22,6 +25,11 @@ import {
 import { HL_WITHDRAW_COUNTERPARTY, minReceivedForHlWithdraw } from '../rails/hypercore-withdraw.ts';
 import { INTENTS_NATIVE_COUNTERPARTY } from '../rails/intents-native.ts';
 import { INTENTS_SEND_COUNTERPARTY, intentsAccountProblem, minReceivedForSend } from '../rails/intents-send.ts';
+import { INTENTS_PAY_COUNTERPARTY, minReceivedForPay } from '../rails/intents-pay.ts';
+import { isChainNetwork, validateAddress } from '../chainscan/index.ts';
+import type { ChainNetwork } from '../chainscan/index.ts';
+import { recipientFor } from '../recipients.ts';
+import { oneLine } from '../intents.ts';
 import { ourEvmAddress, ourIntentsAddress, proposeRail, refuseDraft, usdOf } from './draft.ts';
 import type { PCtx } from './lifecycle.ts';
 
@@ -155,70 +163,138 @@ export async function proposeHlWithdraw(ctx: PCtx, params: HlWithdrawParams): Pr
   return problems.length > 0 ? refuseDraft(ctx, 'hl_withdraw', draft, problems, params.clientKey) : proposeRail(ctx, 'hl_withdraw', draft, params.clientKey);
 }
 
-// "Send 3.78 USDC to 0xd7b2...5050 inside NEAR Intents." The balance moves to another account
-// inside the verifier and nowhere else: no chain, no wallet, the same asset arriving less the
-// solver's fee. `to` is the ONE field on the propose surface that names where money ends up,
-// and it is not resolved here from anything the app knows: it is decoded, refused if it is
-// ours, and then held to the destination allowlist by the policy engine, which refuses any
-// account a human has not put there with a click. The send itself always waits for a second
-// click (src/proposals/execute.ts). See the header of src/rails/intents-send.ts.
-export async function proposeIntentsSend(ctx: PCtx, params: IntentsSendParams): Promise<Proposal> {
+// The flavor of `symbol` the verifier holds for us: the largest matching balance. It refuses
+// where it is certain and lets the contract answer otherwise, for the reason the deposit
+// builder gives. Shared by both send drafts.
+function heldFlavor(ctx: PCtx, from: string, symbol: string, amount: number, verb: string, problems: string[]): string {
+  const read = ctx.ledger.intents();
+  if (read === undefined || !read.ok) {
+    problems.push(
+      `The balance inside intents.near could not be read${read?.error ? ` (${read.error})` : ''}, so this cannot tell ` +
+        `which ${symbol} it would ${verb}. Read the wallet again and propose once it shows.`,
+    );
+    return '';
+  }
+  const held = read.holdings
+    .filter((h) => h.symbol.toUpperCase() === symbol && h.amount > 0)
+    .sort((a, b) => b.amount - a.amount);
+  if (held.length === 0) {
+    problems.push(`intents.near holds no ${symbol} for ${from}, so there is nothing to ${verb}.`);
+    return '';
+  }
+  if (held[0].amount < amount) {
+    problems.push(
+      `intents.near holds ${held[0].amount} ${symbol} (from ${held[0].originChain}) for ${from}, which is less ` +
+        `than the ${amount} this would ${verb}.`,
+    );
+  }
+  return held[0].assetId;
+}
+
+// What the book and the chain know about the receiver. The book is read here, on the app's
+// own disk; the chain read is the injected `recipientActivity` (chainscan in live mode, nothing
+// in demo mode and in tests), bounded, and a failure is null: an address the chain would not
+// answer about is still a send the person can decide, with the card saying it was not checked.
+async function recipientOf(ctx: PCtx, where: string, address: string, network: ChainNetwork | null, ownAddress: boolean, note: unknown): Promise<SendRecipient> {
+  const row = recipientFor(ctx.dataDir, where, address);
+  let activity: SendRecipient['activity'] = null;
+  if (network !== null && ctx.recipientActivity !== undefined) {
+    try {
+      activity = await ctx.recipientActivity(network, address);
+    } catch {
+      activity = null;
+    }
+  }
+  const clean = typeof note === 'string' ? oneLine(note, 64) : '';
+  return {
+    known: row !== null,
+    count: row === null ? 0 : row.count,
+    lastAt: row === null ? null : row.lastAt,
+    activity,
+    ownAddress,
+    ...(clean === '' ? {} : { note: clean }),
+  };
+}
+
+// "Send 3.78 USDC to 0xd7b2...5050 inside NEAR Intents", or "Pay 0.01 ETH to 0xd7b2...5050 on
+// Ethereum". One door, two drafts, and `where` decides which with no default: 'intents' keeps
+// the money inside the verifier (an intents_send draft, the same asset arriving in another
+// intents account), a network id pays it out on that chain (an intents_pay draft, the money
+// leaving the verifier for good). `to` is the ONE field on the propose surface that names where
+// money ends up, and it is not resolved here from anything the app knows: it is decoded for the
+// place it is going (an intents account id, or an address as that chain spells it), never
+// allowlisted, and shown in full on the card and in the Touch ID sentence, which are the gate.
+// Both drafts always wait for that click (src/proposals/execute.ts). See the headers of
+// src/rails/intents-send.ts and src/rails/intents-pay.ts.
+export async function proposeSend(ctx: PCtx, params: SendParams): Promise<Proposal> {
   const snapshot = ctx.ledger.snapshot();
   const problems: string[] = [];
   const symbol = String(params.symbol ?? '').trim().toUpperCase();
   if (symbol === '') problems.push('The send has to name a symbol: which balance inside intents.near to move.');
+  const where = String(params.where ?? '').trim();
 
   const from = ourIntentsAddress(ctx, problems).toLowerCase();
 
-  const receiver = intentsAccountProblem(params.to);
-  let to = '';
-  if (!receiver.ok) {
-    problems.push(`The receiving account is unusable: ${receiver.problem}.`);
-  } else if (receiver.id === from) {
-    problems.push(`${receiver.id} is this app's own intents account; a send to ourselves pays a fee to move nothing.`);
-  } else {
-    to = receiver.id;
-  }
-
-  // The flavor spent: the largest matching balance the verifier holds. It refuses where it is
-  // certain and lets the contract answer otherwise, for the reason the deposit builder gives.
-  const read = ctx.ledger.intents();
-  let originAsset = '';
-  if (read === undefined || !read.ok) {
-    problems.push(
-      `The balance inside intents.near could not be read${read?.error ? ` (${read.error})` : ''}, so this cannot tell ` +
-        `which ${symbol} it would send. Read the wallet again and propose once it shows.`,
-    );
-  } else {
-    const held = read.holdings
-      .filter((h) => h.symbol.toUpperCase() === symbol && h.amount > 0)
-      .sort((a, b) => b.amount - a.amount);
-    if (held.length === 0) {
-      problems.push(`intents.near holds no ${symbol} for ${from}, so there is nothing to send.`);
+  if (where === 'intents') {
+    const receiver = intentsAccountProblem(params.to);
+    let to = '';
+    if (!receiver.ok) {
+      problems.push(`The receiving account is unusable: ${receiver.problem}.`);
+    } else if (receiver.id === from) {
+      problems.push(`${receiver.id} is this app's own intents account; a send to ourselves pays a fee to move nothing.`);
     } else {
-      originAsset = held[0].assetId;
-      if (held[0].amount < params.amount) {
-        problems.push(
-          `intents.near holds ${held[0].amount} ${symbol} (from ${held[0].originChain}) for ${from}, which is less ` +
-            `than the ${params.amount} this would send.`,
-        );
-      }
+      to = receiver.id;
     }
+    const originAsset = heldFlavor(ctx, from, symbol, params.amount, 'send', problems);
+    const draft: IntentsSendDraft = {
+      kind: 'intents_send',
+      symbol,
+      originAsset,
+      amount: params.amount,
+      amountUsd: usdOf(ctx, symbol, params.amount, snapshot),
+      minReceived: minReceivedForSend(params.amount),
+      from,
+      to,
+      counterparty: INTENTS_SEND_COUNTERPARTY,
+      recipient: await recipientOf(ctx, 'intents', to, null, false, params.note),
+    };
+    return problems.length > 0
+      ? refuseDraft(ctx, 'intents_send', draft, problems, params.clientKey)
+      : proposeRail(ctx, 'intents_send', draft, params.clientKey);
   }
 
-  const draft: IntentsSendDraft = {
-    kind: 'intents_send',
+  if (!isChainNetwork(where)) {
+    problems.push(`"${where.slice(0, 40)}" is not a place this app can send to: say 'intents', or a network id such as ethereum, base, arbitrum, solana or near.`);
+  }
+  const network: ChainNetwork = isChainNetwork(where) ? where : 'ethereum';
+  const checked = validateAddress(network, String(params.to ?? ''));
+  let to = '';
+  let toChecksum: IntentsPayDraft['toChecksum'] = null;
+  if (!checked.ok) {
+    problems.push(`The receiving address is unusable: ${checked.reason}.`);
+  } else {
+    to = checked.normalized;
+    toChecksum = checked.checksum ?? null;
+  }
+  // Our own wallet on that chain is allowed (it is what the old withdraw did) and named as
+  // such. The comparison is EVM only: the key signs on no other chain.
+  const ownAddress = to !== '' && /^0x/i.test(to) && to.toLowerCase() === from;
+  const originAsset = heldFlavor(ctx, from, symbol, params.amount, 'pay out', problems);
+  const draft: IntentsPayDraft = {
+    kind: 'intents_pay',
     symbol,
     originAsset,
+    network,
     amount: params.amount,
     amountUsd: usdOf(ctx, symbol, params.amount, snapshot),
-    minReceived: minReceivedForSend(params.amount),
+    minReceived: minReceivedForPay(params.amount),
     from,
     to,
-    counterparty: INTENTS_SEND_COUNTERPARTY,
+    toChecksum,
+    counterparty: INTENTS_PAY_COUNTERPARTY,
+    recipient: await recipientOf(ctx, network, to, to === '' ? null : network, ownAddress, params.note),
   };
-
   return problems.length > 0
-    ? refuseDraft(ctx, 'intents_send', draft, problems, params.clientKey)
-    : proposeRail(ctx, 'intents_send', draft, params.clientKey);
+    ? refuseDraft(ctx, 'intents_pay', draft, problems, params.clientKey)
+    : proposeRail(ctx, 'intents_pay', draft, params.clientKey);
 }

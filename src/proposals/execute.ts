@@ -30,14 +30,16 @@ export async function land(ctx: PCtx, p: Proposal): Promise<Proposal> {
       },
     };
   }
-  // A balance leaving for another account, likewise: the allowlist says the account may be
-  // paid, the click says this payment is wanted, and neither stands in for the other.
-  if (p.kind === 'intents_send' && p.verdict.outcome === 'allow') {
+  // A balance leaving for somebody else, likewise, whether it stays inside the verifier
+  // (intents_send) or is paid out on a chain (intents_pay). There is no allowlist for a
+  // receiver since 2026-09-17: the click and the Touch ID sentence that name the address ARE
+  // the gate, so nothing here may execute on the policy's word alone, at any size.
+  if ((p.kind === 'intents_send' || p.kind === 'intents_pay') && p.verdict.outcome === 'allow') {
     p = {
       ...p,
       verdict: {
         outcome: 'needs_approval',
-        reasons: [...p.verdict.reasons, 'Money leaving for another account always needs a human click, whatever the size.'],
+        reasons: [...p.verdict.reasons, 'Money leaving for another address always needs a human click, whatever the size.'],
       },
     };
   }
@@ -123,6 +125,7 @@ function pocketOf(draft: WriteDraft | undefined): 'intents' | 'hyperliquid' | nu
   switch (draft?.kind) {
     case 'swap':
     case 'intents_send':
+    case 'intents_pay':
       return 'intents';
     case 'hl_deposit':
     case 'hl_withdraw':

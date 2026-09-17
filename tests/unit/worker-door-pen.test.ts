@@ -38,7 +38,7 @@ test('a worker seat cannot propose: every kind is refused at the propose door by
   const h = await bootChartServer();
   try {
     h.agents.markAnalyst('worker-2');
-    for (const kind of ['trade', 'trade_change', 'swap', 'policy_change', 'hl_deposit', 'hl_withdraw', 'intents_send']) {
+    for (const kind of ['trade', 'trade_change', 'swap', 'policy_change', 'hl_deposit', 'hl_withdraw', 'send']) {
       const out = await h.mcp({ op: 'propose', kind, session: 'worker-2', params: { plan: { symbol: 'ETH', side: 'long', sizeUsd: 20, leverage: 1, entry: { type: 'market' }, stop: 1 } } });
       assert.equal(out.status, 403, `${kind}: ${JSON.stringify(out.json)}`);
       assert.match(String(out.json.error), /worker/, kind);

@@ -158,7 +158,7 @@ export async function bootChartServer(
       proposeSwap: async () => { throw new Error('unused'); },
       proposeHlDeposit: async () => { throw new Error('unused'); },
       proposeHlWithdraw: async () => { throw new Error('unused'); },
-      proposeIntentsSend: async () => { throw new Error('unused'); },
+      proposeSend: async () => { throw new Error('unused'); },
       proposeTrade: async () => { throw new Error('unused'); },
       proposeTradeChange: async () => { throw new Error('unused'); },
       approve: async () => { throw new Error('unused'); },

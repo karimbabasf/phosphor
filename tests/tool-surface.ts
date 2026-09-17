@@ -52,10 +52,13 @@ export const EXPECTED_TOOLS: readonly string[] = [
   // Brings collateral back into the intents balance. One argument, the amount; the intents
   // account credited is our own, derived from the key, and every withdrawal is a click.
   'propose_hl_withdraw',
-  // A balance moving to ANOTHER intents account (2026-09-16): the one tool with a destination
-  // field. The field is held to the destination allowlist by the policy engine, an allowlist a
-  // human extends only by a click, and the send itself always waits for a second click.
-  'propose_intents_send',
+  // A balance leaving for somebody else (2026-09-17): the one tool with a destination field,
+  // and the one with a confirmation field. `where` picks a real chain payout or a credit to
+  // another intents account, with no default; `to` is decoded for that place; `confirmed` is
+  // the literal true the schema holds the agent to after the read-back. No allowlist: the card
+  // and the Touch ID sentence that name the receiver are the gate, and the send always waits
+  // for that click, whatever the size.
+  'propose_send',
   // A trade: one plan, whole, priced at the collateral it puts at stake. The venue holds the
   // entry, the stop and the target, so the click threshold is the only wall.
   'propose_trade',
