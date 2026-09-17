@@ -371,7 +371,6 @@ server.registerTool(
 // reassurance in a comment beside a fund-moving tool is worse than no comment, because the next
 // person sizes the threshold believing there is a second wall behind it.
 type ProposeKind =
-  | 'consolidate'
   | 'policy_change'
   | 'swap'
   | 'intents_deposit'
@@ -1001,17 +1000,6 @@ registerLeadView(
   },
 );
 
-registerPropose(
-  'propose_consolidate',
-  'consolidate',
-  `Proposes consolidating a stablecoin's scattered balances onto one chain. NOTE: this path has never been run on a live chain. The only execution in the audit log was in demo mode, and its one real attempt refused with nothing_to_move. Treat a clean simulation as untested rather than as proven, and say so when you propose it. ${CANNOT_APPROVE}`,
-  {
-    toChain: CHAIN,
-    symbol: z.string(),
-    fromChains: z.array(CHAIN).optional(),
-    maxTotalUsd: z.number().optional(),
-  },
-);
 registerPropose('propose_policy_change', 'policy_change', `Proposes a change to the app's policy rules. ${ALWAYS_CLICK}`, {
   patch: z.object({}).passthrough(),
   sentence: z.string(),

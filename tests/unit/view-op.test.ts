@@ -65,10 +65,24 @@ function snapshot(): LedgerSnapshot {
 function pendingProposal(id = 'p-pending'): Proposal {
   return {
     id,
-    kind: 'consolidate',
+    kind: 'swap',
     createdAt: new Date().toISOString(),
     status: 'pending',
-    draft: { kind: 'consolidate', legs: [], totalUsd: 250, toChain: 'arb', symbol: 'USDC' },
+    draft: {
+      kind: 'swap',
+      venue: 'intents-native',
+      chain: 'arb',
+      toChain: 'eth',
+      fromSymbol: 'USDC',
+      toSymbol: 'ETH',
+      amountIn: 250,
+      amountUsd: 250,
+      minAmountOut: 0.05,
+      from: '0xself',
+      to: '0xself',
+      counterparty: 'intents.near',
+      quote: null,
+    },
     simulation: null,
     verdict: { outcome: 'needs_approval', reasons: ['above the click threshold'] },
   };
@@ -93,7 +107,6 @@ async function boot(opts: { view?: ViewMode; proposals?: Proposal[] } = {}): Pro
     mode: 'demo',
     port: 0,
     addresses: { evm: ['0xself'], solana: [], near: [] },
-    economicTransferUsd: 10,
     candleProducts: ['BTC-USD'],
     dataDir,
     keysPath: path.join(dataDir, 'keys.json'),
@@ -110,13 +123,11 @@ async function boot(opts: { view?: ViewMode; proposals?: Proposal[] } = {}): Pro
       intents: () => undefined,
       hyperliquid: () => undefined,
       refresh: async () => snapshot(),
-      applyDemoTransfer: () => {},
     },
     // A market layer with no venue behind it: the store answers from an empty cache and
     // never reaches the network, which is what this test wants.
     market: createMarketData({ fetchImpl: (async () => ({ ok: true, json: async () => [], text: async () => '', headers: new Headers() })) as unknown as typeof fetch }),
     proposals: {
-      proposeConsolidate: async () => pendingProposal(),
       proposePolicyChange: async () => pendingProposal(),
       proposeSwap: async () => pendingProposal(),
       proposeHlDeposit: async () => pendingProposal(),

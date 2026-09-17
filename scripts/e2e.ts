@@ -292,28 +292,17 @@ async function run(): Promise<void> {
   await callTool(client, 'switch', { mode: 'pro' });
   check('it flips back', (await getJson('/api/state')).view === 'pro');
 
-  // ---- the stranded chain refusal is a feature, not a bug ----
-  // Default fromChains sweeps every chain, which includes NEAR, and NEAR deliberately holds
-  // 0.001 NEAR of gas in the demo fixture. The engine refuses the whole proposal rather than
-  // quietly dropping the leg it cannot fund: a partial sweep the human did not ask for is a
-  // worse answer than no sweep at all.
-  const stranded = await callTool(client, 'propose_consolidate', { toChain: 'eth', symbol: 'USDT' });
-  check(
-    'default fromChains refuses the whole sweep on the stranded NEAR leg',
-    stranded.status === 'policy_refused' && stranded.verdict?.rule === 'min_native_gas',
-    `status=${stranded.status} rule=${stranded.verdict?.rule}`,
-  );
-
   // ---- propose, approve, execute ----
+  // A rule change: the one kind demo mode can land, since every money rail is off there, and
+  // it always waits for the click, which is the arc this run has to show end to end.
 
-  const proposal = await callTool(client, 'propose_consolidate', {
-    toChain: 'eth',
-    symbol: 'USDT',
-    fromChains: ['arb', 'sol'],
+  const proposal = await callTool(client, 'propose_policy_change', {
+    patch: { outbound: { humanClickAboveUsd: 90 } },
+    sentence: 'Ask me before anything above $90.',
   });
   const proposalId: string = proposal.id;
   check(
-    'propose_consolidate arb+sol to eth lands pending with a simulation',
+    'propose_policy_change lands pending with a simulation',
     proposal.status === 'pending' && proposal.verdict?.outcome === 'needs_approval' && proposal.simulation?.ok === true,
     `id=${proposalId} status=${proposal.status} verdict=${proposal.verdict?.outcome}`,
   );
@@ -336,16 +325,16 @@ async function run(): Promise<void> {
   check('and the window is where it was asked to be', stillPro.view === 'pro', `view=${stillPro.view}`);
 
   const basicAsk = (stillPro.basic as Json)?.ask as Json | null;
-  const draftUsd = Number((proposal.simulation as Json)?.ok === true ? basicAsk?.amountUsd : NaN);
   check(
-    'the basic view carries the live proposal amount, not just a label',
-    basicAsk !== null && Number.isFinite(draftUsd) && draftUsd > 0 && String(basicAsk?.headline ?? '').includes('$'),
-    `amountUsd=${basicAsk?.amountUsd} headline=${String(basicAsk?.headline ?? '').slice(0, 80)}`,
+    'the basic view carries the live proposal, not just a label',
+    basicAsk !== null && basicAsk?.kind === 'policy_change' && String(basicAsk?.headline ?? '').length > 0,
+    `kind=${basicAsk?.kind} headline=${String(basicAsk?.headline ?? '').slice(0, 80)}`,
   );
 
   const before = await getJson('/api/state');
   const ethUsdtBefore = holdingAmount(before.ledger, 'eth', 'USDT');
   const pending = (before.proposals as Json[]).find(p => p.id === proposalId);
+  const versionBefore = Number((before.policy as Json)?.version);
   check(
     'app state shows it pending and nothing has moved',
     pending?.status === 'pending' && Math.abs(ethUsdtBefore - DEMO_ETH_USDT) < 1e-9,
@@ -358,17 +347,17 @@ async function run(): Promise<void> {
 
   const approved = await postJson('/api/approve', { id: proposalId, token });
   check(
-    'the human click executes the consolidation',
+    'the human click applies the rule change',
     approved.status === 200 && approved.json?.status === 'executed',
     `http ${approved.status} status=${approved.json?.status}`,
   );
 
   const after = await getJson('/api/state');
-  const ethUsdtAfter = holdingAmount(after.ledger, 'eth', 'USDT');
+  const versionAfter = Number((after.policy as Json)?.version);
   check(
-    'eth USDT increased after execution',
-    ethUsdtAfter > ethUsdtBefore,
-    `${ethUsdtBefore} to ${ethUsdtAfter.toFixed(2)}`,
+    'the policy version moved after execution, and the money did not',
+    versionAfter === versionBefore + 1 && Math.abs(holdingAmount(after.ledger, 'eth', 'USDT') - ethUsdtBefore) < 1e-9,
+    `version ${versionBefore} to ${versionAfter}`,
   );
 
   // The audit log is the product's memory. Order matters as much as content: an executed event
@@ -381,8 +370,8 @@ async function run(): Promise<void> {
     e =>
       e.type === 'tool_call' &&
       e.data?.op === 'propose' &&
-      e.data?.kind === 'consolidate' &&
-      Array.isArray(e.data?.params?.fromChains),
+      e.data?.kind === 'policy_change' &&
+      e.data?.params?.sentence === 'Ask me before anything above $90.',
   );
   const iCreated = at(e => e.type === 'proposal_created' && e.data?.id === proposalId);
   const iApproved = at(e => e.type === 'approved' && e.data?.id === proposalId);
@@ -424,10 +413,9 @@ async function run(): Promise<void> {
   const killOn = await postJson('/api/kill', { on: true, token });
   check('kill switch on', killOn.status === 200 && killOn.json?.killSwitch === true, `http ${killOn.status}`);
 
-  const whileKilled = await callTool(client, 'propose_consolidate', {
-    toChain: 'eth',
-    symbol: 'USDT',
-    fromChains: ['arb', 'sol'],
+  const whileKilled = await callTool(client, 'propose_policy_change', {
+    patch: { outbound: { humanClickAboveUsd: 80 } },
+    sentence: 'Ask me before anything above $80.',
   });
   check(
     'kill switch refuses every write',
@@ -453,7 +441,7 @@ async function run(): Promise<void> {
 
   // ---- the gas report, over the history this run just made ----
   //
-  // The consolidation above executed, so there is a real movement in the store by now. In
+  // The rule change above executed, so there is a real row in the store by now. In
   // demo mode it has no chain hash to read a receipt from, which is exactly the case the
   // remainder counters exist for: the total is zero dollars and the report has to say WHY
   // rather than presenting zero as a measured figure.

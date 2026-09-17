@@ -52,6 +52,8 @@ const configSchema = z
     mode: z.enum(['live', 'demo']).optional(),
     port: z.number().int().positive().optional(),
     addresses: addressBookSchema.optional(),
+    // Retired with the consolidate path (2026-09-16). Accepted so a config.local.json written
+    // before then still loads; nothing reads it.
     economicTransferUsd: z.number().finite().nonnegative().optional(),
     candleProducts: z.array(z.string()).optional(),
     dataDir: z.string().optional(),
@@ -297,7 +299,6 @@ export function loadConfig(root?: string): AppConfig {
       solana: parsed.addresses?.solana ?? [],
       near: parsed.addresses?.near ?? [],
     },
-    economicTransferUsd: parsed.economicTransferUsd ?? 0,
     candleProducts: parsed.candleProducts ?? [],
     dataDir,
     keysPath,

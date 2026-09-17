@@ -63,7 +63,6 @@ async function boot(): Promise<Harness> {
     mode: 'demo',
     port: 0,
     addresses: { evm: ['0xself'], solana: [], near: [] },
-    economicTransferUsd: 10,
     candleProducts: ['BTC-USD'],
     dataDir,
     keysPath: path.join(dataDir, 'keys.json'),
@@ -75,12 +74,11 @@ async function boot(): Promise<Harness> {
     audit,
     store: createStore(dataDir),
     riskRows: [],
-    ledger: { snapshot, intents: () => undefined, refresh: async () => snapshot(), applyDemoTransfer: () => {}, hyperliquid: () => undefined },
+    ledger: { snapshot, intents: () => undefined, refresh: async () => snapshot(), hyperliquid: () => undefined },
     market: createMarketData({
       fetchImpl: (async () => ({ ok: true, json: async () => [], text: async () => '', headers: new Headers() })) as unknown as typeof fetch,
     }),
     proposals: {
-      proposeConsolidate: async () => { throw new Error('unused'); },
       proposePolicyChange: async () => { throw new Error('unused'); },
       proposeSwap: async () => { throw new Error('unused'); },
       proposeHlDeposit: async () => { throw new Error('unused'); },

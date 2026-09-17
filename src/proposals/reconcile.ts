@@ -82,12 +82,10 @@ const ONECLICK_SWEEP_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 const EVM_CHAINS: ChainId[] = ['eth', 'base', 'arb'];
 
-// Which chains a draft's origin transaction could be on. Consolidate and transfer name their
-// legs; every rail draft carries the origin chain in `chain`. Nothing here guesses beyond what
-// the draft says, so a hash with no candidate chain reads as unknown rather than absent.
+// Which chains a draft's origin transaction could be on: every rail draft carries the origin
+// chain in `chain`. Nothing here guesses beyond what the draft says, so a hash with no
+// candidate chain reads as unknown rather than absent.
 export function chainsOf(draft: WriteDraft): ChainId[] {
-  if (draft.kind === 'consolidate') return [...new Set(draft.legs.map(l => l.fromChain))];
-  if (draft.kind === 'transfer') return [draft.leg.fromChain];
   if (draft.kind === 'policy_change') return [];
   const chain = (draft as { chain?: ChainId }).chain;
   return chain === undefined ? [] : [chain];

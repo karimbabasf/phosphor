@@ -181,16 +181,18 @@ function newestUnconfirmed(proposals: Proposal[]): Proposal | null {
 // ---------- the ask ----------
 
 /* THE KINDS THIS APP NO LONGER BUILDS, AND WHY EVERY SWITCH BELOW STILL ANSWERS FOR THEM.
-   lp_add, lp_remove, yield_deposit and yield_withdraw were real rails. state/proposals.json
-   holds executed and refused rows naming them, and the money they moved was real. This screen
-   renders that history, so a row it dropped or threw on would be this app telling its owner
-   something did not happen when it did. Nothing can propose one of these again; every one of
-   them can still be read back.
+   lp_add, lp_remove, yield_deposit and yield_withdraw were real rails, and consolidate and
+   transfer were the chain-era fund moves. state/proposals.json holds executed and refused rows
+   naming them, and the money they moved was real. This screen renders that history, so a row it
+   dropped or threw on would be this app telling its owner something did not happen when it did.
+   Nothing can propose one of these again; every one of them can still be read back.
    `kindOf` exists because draft.kind no longer includes the retired names, so TypeScript calls
    the comparison unreachable and refuses it. Reading the same field as a string is the honest
    way to say "this value is wider at rest than the live type is". `retired` is the matching
    read for the fields those drafts carried. */
-const RETIRED_KINDS = ['lp_add', 'lp_remove', 'yield_deposit', 'yield_withdraw', 'mandate_arm'];
+const RETIRED_KINDS = ['lp_add', 'lp_remove', 'yield_deposit', 'yield_withdraw', 'mandate_arm', 'consolidate', 'transfer'];
+
+type RetiredLeg = { fromChain?: ChainId; toChain?: ChainId; symbol?: string; amountUsd?: number; to?: string };
 
 type RetiredDraft = {
   chain?: ChainId;
@@ -201,6 +203,11 @@ type RetiredDraft = {
   counterparty?: string;
   maxNotionalUsd?: number;
   maxLossUsd?: number;
+  // consolidate and transfer, the chain-era fund moves.
+  toChain?: ChainId;
+  totalUsd?: number;
+  legs?: RetiredLeg[];
+  leg?: RetiredLeg;
 };
 
 function kindOf(draft: WriteDraft): string {
@@ -216,8 +223,8 @@ function isRetired(draft: WriteDraft): boolean {
 }
 
 export function amountUsdOf(draft: WriteDraft): number {
-  if (draft.kind === 'consolidate') return draft.totalUsd;
-  if (draft.kind === 'transfer') return draft.leg.amountUsd;
+  if (kindOf(draft) === 'consolidate') return retired(draft).totalUsd ?? 0;
+  if (kindOf(draft) === 'transfer') return retired(draft).leg?.amountUsd ?? 0;
   if (draft.kind === 'policy_change') return 0;
   // Every retired kind carried amountUsd too, so the same read serves them.
   return (draft as { amountUsd?: number }).amountUsd ?? 0;
@@ -232,10 +239,9 @@ function symbolsOf(draft: WriteDraft): string[] {
     out.push(draft.symbol);
   else if (kindOf(draft) === 'lp_add')
     out.push(retired(draft).token0?.symbol ?? '', retired(draft).token1?.symbol ?? '');
-  else if (kindOf(draft) === 'yield_deposit' || kindOf(draft) === 'yield_withdraw')
+  else if (kindOf(draft) === 'yield_deposit' || kindOf(draft) === 'yield_withdraw' || kindOf(draft) === 'consolidate')
     out.push(retired(draft).symbol ?? '');
-  else if (draft.kind === 'consolidate') out.push(draft.symbol);
-  else if (draft.kind === 'transfer') out.push(draft.leg.symbol);
+  else if (kindOf(draft) === 'transfer') out.push(retired(draft).leg?.symbol ?? '');
   return [...new Set(out.filter((s) => (s ?? '').length > 0))];
 }
 
@@ -245,9 +251,9 @@ function chainsOf(draft: WriteDraft): string[] {
   else if (draft.kind === 'intents_deposit' || draft.kind === 'intents_withdraw') out.push(draft.chain);
   // A Hyperliquid deposit starts inside the verifier and lands on the venue; neither is a
   // chain the wallet reads, and both are named in the headline, so the chain line stays empty.
+  else if (kindOf(draft) === 'consolidate') out.push(retired(draft).toChain ?? '', ...(retired(draft).legs ?? []).map((l) => l.fromChain ?? ''));
+  else if (kindOf(draft) === 'transfer') out.push(retired(draft).leg?.fromChain ?? '', retired(draft).leg?.toChain ?? '');
   else if (isRetired(draft)) out.push(retired(draft).chain ?? '');
-  else if (draft.kind === 'consolidate') out.push(draft.toChain, ...draft.legs.map((l) => l.fromChain));
-  else if (draft.kind === 'transfer') out.push(draft.leg.fromChain, draft.leg.toChain);
   return [...new Set(out)];
 }
 
@@ -287,12 +293,12 @@ function destinationsOf(proposal: Proposal, selfAddresses: string[]): BasicDesti
     // The one draft MEANT to name somebody else's account. It is said as exactly that, so
     // the person clicking reads the whole account they are paying and knows it is not theirs.
     push(draft.to, isSelf(draft.to, selfAddresses) ? 'your own NEAR Intents balance' : 'the NEAR Intents account you are sending to, on your approved list', 'app');
-  } else if (draft.kind === 'transfer') {
-    const to = draft.leg.to;
+  } else if (kindOf(draft) === 'transfer') {
+    const to = retired(draft).leg?.to ?? '';
     push(to, isSelf(to, selfAddresses) ? 'your own wallet' : NOT_YOURS, 'app');
-  } else if (draft.kind === 'consolidate') {
-    for (const leg of draft.legs) {
-      push(leg.to, isSelf(leg.to, selfAddresses) ? 'your own wallet' : NOT_YOURS, 'app');
+  } else if (kindOf(draft) === 'consolidate') {
+    for (const leg of retired(draft).legs ?? []) {
+      push(leg.to ?? '', isSelf(leg.to ?? '', selfAddresses) ? 'your own wallet' : NOT_YOURS, 'app');
     }
   }
 
@@ -341,11 +347,11 @@ function askHeadline(draft: WriteDraft, amountUsd: number): string {
     const worth = amountUsd > 0 ? `, worth about ${money(amountUsd)}` : '';
     return `It wants to take ${pct}% of one of your pool positions back out${worth}.`;
   }
-  if (draft.kind === 'consolidate') {
-    return `It wants to gather ${amountClause(amountUsd)}your ${plainSymbol(draft.symbol)} onto ${plainChain(draft.toChain)}.`;
+  if (kindOf(draft) === 'consolidate') {
+    return `It wants to gather ${amountClause(amountUsd)}your ${plainSymbol(retired(draft).symbol ?? '')} onto ${plainChain(retired(draft).toChain ?? '')}.`;
   }
-  if (draft.kind === 'transfer') {
-    return `It wants to send ${amountClause(amountUsd)}your ${plainSymbol(draft.leg.symbol)} to another address.`;
+  if (kindOf(draft) === 'transfer') {
+    return `It wants to send ${amountClause(amountUsd)}your ${plainSymbol(retired(draft).leg?.symbol ?? '')} to another address.`;
   }
   // A trade puts collateral at stake and names the loss that ends it. Those two numbers are
   // the whole ask, so they are the sentence.
@@ -401,7 +407,7 @@ function askAfterLine(draft: WriteDraft, totalUsd: number | null, amountUsd: num
   if (kindOf(draft) === 'yield_deposit')
     return `${money(amountUsd)} moves into a lending pool and starts earning. It is still yours and there is no lock: you can take it back whenever you want.`;
   if (kindOf(draft) === 'yield_withdraw') return 'The money comes back into your own wallet, with whatever it earned.';
-  if (draft.kind === 'consolidate') return 'The money stays yours. It moves onto one chain.';
+  if (kindOf(draft) === 'consolidate') return 'The money stays yours. It moves onto one chain.';
   if (draft.kind === 'trade') return 'The money stays in your trading account. Only the amount at stake can be lost, and the stop is on the exchange itself.';
   if (kindOf(draft) === 'mandate_arm') return 'This was standing permission from an older build. Nothing moves now.';
   // A transfer is the only kind that genuinely leaves, so it is the only one allowed to
@@ -614,8 +620,8 @@ export function didHeadline(draft: WriteDraft, amountUsd: number): string {
   if (kindOf(draft) === 'lp_remove') return 'Took money back out of a pool.';
   if (kindOf(draft) === 'yield_deposit') return `Put ${amt}your money somewhere it earns interest.`;
   if (kindOf(draft) === 'yield_withdraw') return 'Brought your money back out of the place it was earning interest.';
-  if (draft.kind === 'consolidate') return `Gathered ${amt}your ${plainSymbol(draft.symbol)} onto ${plainChain(draft.toChain)}.`;
-  if (draft.kind === 'transfer') return `Sent ${amt}your ${plainSymbol(draft.leg.symbol)} to another address.`;
+  if (kindOf(draft) === 'consolidate') return `Gathered ${amt}your ${plainSymbol(retired(draft).symbol ?? '')} onto ${plainChain(retired(draft).toChain ?? '')}.`;
+  if (kindOf(draft) === 'transfer') return `Sent ${amt}your ${plainSymbol(retired(draft).leg?.symbol ?? '')} to another address.`;
   /* The venue rows. An approved plan is a bot from the moment the click lands: the runner
      places the entry and manages the exits without asking again, so the receipt says what
      was armed, in the plan's own figures. The fill is not here, because the proposal never
@@ -691,8 +697,8 @@ function wantedPhrase(draft: WriteDraft, amountUsd: number): string {
   if (kindOf(draft) === 'lp_remove') return 'taking money back out of a pool';
   if (kindOf(draft) === 'yield_deposit') return `putting ${amt}your money somewhere it earns interest`;
   if (kindOf(draft) === 'yield_withdraw') return 'bringing your money back out of the place it was earning interest';
-  if (draft.kind === 'consolidate') return `gathering ${amt}your ${plainSymbol(draft.symbol)} onto ${plainChain(draft.toChain)}`;
-  if (draft.kind === 'transfer') return `sending ${amt}your ${plainSymbol(draft.leg.symbol)} to another address`;
+  if (kindOf(draft) === 'consolidate') return `gathering ${amt}your ${plainSymbol(retired(draft).symbol ?? '')} onto ${plainChain(retired(draft).toChain ?? '')}`;
+  if (kindOf(draft) === 'transfer') return `sending ${amt}your ${plainSymbol(retired(draft).leg?.symbol ?? '')} to another address`;
   return 'changing one of your safety rules';
 }
 

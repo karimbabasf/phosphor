@@ -46,7 +46,6 @@ test('the balances read op totals what the verifier and the venue hold, not the 
         unified: true,
       }),
       refresh: async () => snapshot,
-      applyDemoTransfer: () => {},
     },
     riskRows: [],
   } as unknown as Ctx;
@@ -75,7 +74,6 @@ test('the wallet read op carries the Hyperliquid row the ledger read', async () 
         unified: true,
       }),
       refresh: async () => snapshot,
-      applyDemoTransfer: () => {},
     },
     keystore: { custody: () => null, enclave: () => null, state: () => 'no_wallet', header: () => null },
     vault: { attached: () => false, enclaveReady: () => false, capability: () => null, waiting: () => null },

@@ -41,8 +41,8 @@ export type { RailDraft, RailKind };
 export { isRailDraft, isRailKind, RAIL_KINDS };
 
 export type RailRegistry = {
-  // The rail that owns this draft, or null when none does: consolidate, transfer and
-  // policy_change ride their own paths, and demo mode owns no rails at all.
+  // The rail that owns this draft, or null when none does: policy_change rides its own path,
+  // and demo mode owns no rails at all.
   for(draft: WriteDraft): Rail | null;
   kinds(): RailKind[];
 };

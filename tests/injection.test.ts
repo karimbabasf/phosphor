@@ -27,11 +27,12 @@ import type { EngineCtx } from '../src/policy/engine.ts';
 import { CAPABILITIES } from '../src/greeting.ts';
 import { seatSecretPath } from '../src/agents.ts';
 import { EXPECTED_TOOLS_SORTED, EXPECTED_WORKER_TOOLS_SORTED, WORKER_WITHHELD } from './tool-surface.ts';
-import type { LogEvent, RiskRow, TransferLeg, WriteDraft } from '../src/types.ts';
+import type { LogEvent, RiskRow, WriteDraft } from '../src/types.ts';
 import { evaluate } from '../src/policy/engine.ts';
 import { classify } from '../src/composition.ts';
 import { defaultPolicy } from '../src/policy/file.ts';
 import { loadDemoLedger } from '../src/ledger/demo.ts';
+import { venueAllowlist } from '../src/rails/index.ts';
 
 type Json = any;
 
@@ -54,8 +55,8 @@ const riskRows = (
 // Demo fixture accounts (data/demo-state.json). eth, base and arb share the evm address.
 const SELF = ['0x1111111111111111111111111111111111111111', '11111111111111111111111111111111', 'karim-demo.near'];
 
-// Argument names that would let an agent name where the money goes. propose_consolidate's only
-// address-shaped argument is toChain, an enum of the five chain ids, and the app resolves that
+// Argument names that would let an agent name where the money goes. A rail tool's only
+// address-shaped argument is a chain, an enum of the five chain ids, and the app resolves that
 // to one of our own addresses. There is no free-text destination anywhere on the surface.
 const RECIPIENT_FIELDS = ['to', 'recipient', 'destination', 'address', 'toaddress', 'dest', 'payee'];
 
@@ -450,27 +451,30 @@ test('the MCP process holds no path to an approval, and none to the human door',
   }
 });
 
-test('a transfer to the attacker is refused by the engine itself', () => {
+test('a send to the attacker is refused by the engine itself', () => {
   const snapshot = loadDemoLedger();
+  // The venues are allowlisted, as a seeded install has them, so the refusal is about the
+  // receiver and not about the counterparty.
+  const policy = defaultPolicy();
+  policy.outbound.destinationAllowlist = venueAllowlist();
   const ctx: EngineCtx = {
-    policy: defaultPolicy(),
+    policy,
     composition: classify(snapshot, riskRows),
     ledger: snapshot,
     sessionSpentUsd: 0,
     selfAddresses: SELF,
   };
-  const leg: TransferLeg = {
-    fromChain: 'eth',
-    toChain: 'eth',
+  const draft: WriteDraft = {
+    kind: 'intents_send',
     symbol: 'USDT',
+    originAsset: 'nep141:eth-0xdac17f958d2ee523a2206206994597c13d831ec7.omft.near',
     amount: 5000,
     amountUsd: 5000,
+    minReceived: 4950,
     from: SELF[0],
     to: hostile.attacker,
-    quote: { amountOut: 4999.5, feeUsd: 0.5, timeEstimateSec: 8 },
-    gasNativeUsd: 0.705,
+    counterparty: 'intents.near',
   };
-  const draft: WriteDraft = { kind: 'transfer', leg };
 
   const verdict = evaluate(draft, ctx);
   assert.equal(verdict.outcome, 'refuse');
@@ -533,9 +537,9 @@ for (const [index, sentence] of hostile.sentences.entries()) {
 
 test('hostile token names move nothing', async () => {
   for (const symbol of hostile.tokenNames) {
-    const proposed = await callTool('propose_consolidate', { toChain: 'eth', symbol });
+    const proposed = await callTool('propose_swap', { venue: 'intents-native', chain: 'eth', fromSymbol: symbol, toSymbol: 'USDC', amountIn: 1, minAmountOut: 0.5 });
     assert.equal(proposed.status, 'policy_refused', `symbol ${JSON.stringify(symbol)} was not refused`);
-    assert.equal(proposed.verdict.rule, 'nothing_to_move');
+    assert.equal(proposed.verdict.outcome, 'refuse');
     assert.notEqual(proposed.status, 'executed');
   }
 });
@@ -617,30 +621,20 @@ test('a forged approval blob is not a policy patch', async () => {
 
 // ---------- the audit chain ----------
 
-test('both execution arcs happen, so the scan below has something to scan', async () => {
-  // Arc 1: above the click threshold, so a human has to click.
-  const needsClick = await callTool('propose_consolidate', { toChain: 'eth', symbol: 'USDT', fromChains: ['arb'] });
-  assert.equal(needsClick.status, 'pending');
+test('an execution happens, so the scan below has something to scan', async () => {
+  // A rule change always waits for a click, and it is the one kind demo mode can land: every
+  // money rail is off there. The human arc is the one this run can produce; the policy-allow
+  // arc (a sub-threshold move executing on the policy's own say-so) is driven in process by
+  // tests/unit/proposals.test.ts over a scripted rail.
+  const needsClick = await callTool('propose_policy_change', {
+    patch: { outbound: { humanClickAboveUsd: 90 } },
+    sentence: 'Ask me before anything above $90.',
+  });
+  assert.equal(needsClick.status, 'pending', JSON.stringify(needsClick.verdict));
   const approved = await postJson('/api/approve', { id: needsClick.id, token });
   assert.equal(approved.status, 200);
   assert.equal(approved.json.status, 'executed');
   assert.equal(approved.json.decidedBy, 'human');
-
-  // Arc 2: at or below the click threshold, so the policy itself is the decision maker and the
-  // app executes without a human. This is the only legitimate execution without an approval,
-  // and the scan below has to be able to tell it apart from an unauthorised one.
-  // USDT rather than the fixture's XUSD. XUSD is deliberately absent from the risk table, and
-  // since 2026-08-12 an unpriceable symbol is refused as invalid_amount rather than assumed to
-  // be worth a dollar a token. That refusal is the correct behaviour and has its own test
-  // below; this one is about the audit chain, so it uses a symbol the app can actually price.
-  const autoAllowed = await callTool('propose_consolidate', {
-    toChain: 'eth',
-    symbol: 'USDT',
-    fromChains: ['sol'],
-    maxTotalUsd: 100,
-  });
-  assert.equal(autoAllowed.verdict.outcome, 'allow');
-  assert.equal(autoAllowed.status, 'executed');
 });
 
 test('no execution in the audit log lacks a prior approval', () => {
@@ -648,7 +642,7 @@ test('no execution in the audit log lacks a prior approval', () => {
 
   const idOf = (e: LogEvent): string => String((e.data as Json)?.id ?? '');
   const executed = audit.filter(e => e.type === 'executed');
-  assert.ok(executed.length >= 2, 'expected both execution arcs in the log');
+  assert.ok(executed.length >= 1, 'expected an execution in the log');
 
   let humanApproved = 0;
   let policyAllowed = 0;
@@ -678,7 +672,7 @@ test('no execution in the audit log lacks a prior approval', () => {
   }
 
   assert.ok(humanApproved >= 1, 'expected at least one human-approved execution');
-  assert.ok(policyAllowed >= 1, 'expected at least one allow-outcome auto-execution');
+  assert.equal(humanApproved + policyAllowed, executed.length, 'every execution is one of the two arcs');
 
   // Nothing was executed off the back of a refusal either.
   for (const event of audit) {
@@ -691,24 +685,22 @@ test('no execution in the audit log lacks a prior approval', () => {
   }
 });
 
-// The behaviour the arc-2 change above depends on, asserted here rather than assumed. XUSD is
-// in the demo fixture and deliberately absent from the risk table, so the app has no price for
-// it. Before 2026-08-12 it was priced at a dollar a token, which is how a 10 WETH consolidation
+// XUSD is in the demo fixture and deliberately absent from the risk table, so the app has no
+// price for it. Before 2026-08-12 it was priced at a dollar a token, which is how a 10 WETH move
 // came to be governed as $10. An unpriceable token is one the dollar caps cannot bound, so it
 // is refused rather than guessed at.
 test('a token the app cannot price is refused, not assumed to be worth a dollar', async () => {
-  const refused = await callTool('propose_consolidate', {
-    toChain: 'eth',
-    symbol: 'XUSD',
-    fromChains: ['arb'],
-    maxTotalUsd: 100,
+  const refused = await callTool('propose_swap', {
+    venue: 'intents-native',
+    chain: 'arb',
+    fromSymbol: 'XUSD',
+    toSymbol: 'USDC',
+    amountIn: 100,
+    minAmountOut: 1,
   });
 
   assert.equal(refused.verdict.outcome, 'refuse');
-  // 'invalid_leg' rather than the rail path's 'invalid_amount': a consolidation carries legs,
-  // and legNumbersAreSane() catches the non-finite value one check earlier. Different rule,
-  // same fail-closed outcome, and the rule name is the more accurate of the two here.
-  assert.equal(refused.verdict.rule, 'invalid_leg');
+  assert.equal(refused.verdict.rule, 'invalid_amount');
 });
 
 // ---------- the trade surface, attacked from both sides of the proxy ----------
@@ -750,7 +742,7 @@ test('a POST with the right Origin and no seat secret is refused on hello, read 
   const ops: Array<Record<string, unknown>> = [
     { op: 'hello', client: 'no-secret', intervalMs: 5000 },
     { op: 'read', tool: 'balances' },
-    { op: 'propose', kind: 'consolidate', params: { toChain: 'arb', symbol: 'USDC' } },
+    { op: 'propose', kind: 'policy_change', params: { patch: { outbound: { humanClickAboveUsd: 90 } }, sentence: 'Ask me above $90.' } },
   ];
   for (const secret of [undefined, 'not-the-secret', seatSecret().slice(0, -1)]) {
     for (const op of ops) {

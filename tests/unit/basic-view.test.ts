@@ -524,10 +524,10 @@ test('the most recent decision wins, not the most alarming one', () => {
 });
 
 test('a zero amount is never rendered as a money figure', () => {
-  // A consolidate with nothing left to gather prices at 0 and gets refused. "tried to
-  // gather $0.00 of your dollars" tells this reader nothing at all.
-  const draft: WriteDraft = { kind: 'consolidate', legs: [], totalUsd: 0, toChain: 'eth', symbol: 'USDT' };
-  const view = buildBasic(baseInput({ proposals: [proposal({ draft, kind: 'consolidate', status: 'policy_refused', decidedAt: T1 })] }));
+  // A refused row with nothing priced (here a consolidate an older build wrote) prices at 0.
+  // "tried to gather $0.00 of your dollars" tells this reader nothing at all.
+  const draft = retired({ kind: 'consolidate', legs: [], totalUsd: 0, toChain: 'eth', symbol: 'USDT' });
+  const view = buildBasic(baseInput({ proposals: [proposal({ draft, kind: draft.kind, status: 'policy_refused', decidedAt: T1 })] }));
   assert.ok(!view.headline.includes('$0.00'), `headline still prints a zero figure: ${view.headline}`);
   assert.match(view.headline, /Phosphor stopped it/);
   assert.match(view.headline, /USDT/);

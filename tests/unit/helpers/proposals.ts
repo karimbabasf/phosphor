@@ -20,7 +20,6 @@ import { createStore } from '../../../src/store.ts';
 import { loadDemoLedger } from '../../../src/ledger/demo.ts';
 import { defaultPolicy, savePolicy } from '../../../src/policy/file.ts';
 import { renderSentences } from '../../../src/policy/render.ts';
-import { syntheticQuoter, stubSigner } from '../../../src/intents.ts';
 import { createProposalService } from '../../../src/proposals.ts';
 import type { ProposalDeps } from '../../../src/proposals.ts';
 import { isRailKind, venueAllowlist } from '../../../src/rails/index.ts';
@@ -111,7 +110,6 @@ export function makeCtx(over: HarnessOptions = {}): Harness {
     mode: 'live',
     port: 4177,
     addresses: { evm: [SELF_EVM], solana: [], near: [] },
-    economicTransferUsd: 10,
     candleProducts: [],
     dataDir,
     keysPath: path.join(dataDir, 'keys.json'),
@@ -142,9 +140,6 @@ export function makeCtx(over: HarnessOptions = {}): Harness {
     intents,
     hyperliquid: () => undefined,
     refresh: async () => snapshot,
-    applyDemoTransfer: () => {
-      throw new Error('applyDemoTransfer must never be called in live mode');
-    },
   };
 
   savePolicy(dataDir, over.policy ?? seededPolicy());
@@ -158,8 +153,6 @@ export function makeCtx(over: HarnessOptions = {}): Harness {
     store,
     ledger,
     riskRows,
-    quoter: syntheticQuoter(),
-    signer: stubSigner(),
     rails: { for: (draft) => table.get(draft.kind) ?? null, kinds: () => [...table.keys()].filter(isRailKind) },
     dataDir,
     ...over.deps,

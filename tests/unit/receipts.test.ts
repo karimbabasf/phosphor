@@ -79,7 +79,6 @@ async function boot(proposals: Proposal[]): Promise<{ url: string; close: () => 
     mode: 'demo',
     port: 0,
     addresses: { evm: [SELF], solana: [], near: [] },
-    economicTransferUsd: 10,
     candleProducts: ['BTC-USD'],
     dataDir,
     keysPath: path.join(dataDir, 'keys.json'),
@@ -94,13 +93,11 @@ async function boot(proposals: Proposal[]): Promise<{ url: string; close: () => 
       intents: () => undefined,
       hyperliquid: () => undefined,
       refresh: async () => snapshot(),
-      applyDemoTransfer: () => {},
     },
     market: createMarketData({
       fetchImpl: (async () => ({ ok: true, json: async () => [], text: async () => '', headers: new Headers() })) as unknown as typeof fetch,
     }),
     proposals: {
-      proposeConsolidate: async () => settled('x', 'executed'),
       proposePolicyChange: async () => settled('x', 'executed'),
       proposeSwap: async () => settled('x', 'executed'),
       proposeHlDeposit: async () => settled('x', 'executed'),

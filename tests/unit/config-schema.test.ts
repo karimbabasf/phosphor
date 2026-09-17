@@ -77,14 +77,19 @@ test('every key the app actually reads still loads', () => {
     mode: 'demo',
     port: 4200,
     addresses: { evm: [EVM], solana: [SOL], near: ['phosphor.near'] },
-    economicTransferUsd: 10,
     candleProducts: ['ETH-USD'],
     dataDir: 'state',
     skills: ['phosphor-analysis'],
     driver: { autostart: false },
   });
   assert.equal(cfg.port, 4200);
-  assert.equal(cfg.economicTransferUsd, 10);
+  assert.deepEqual(cfg.candleProducts, ['ETH-USD']);
+});
+
+test('a config written before the consolidate path went still loads', () => {
+  const cfg = load({ port: 4200, economicTransferUsd: 10 });
+  assert.equal(cfg.port, 4200);
+  assert.equal('economicTransferUsd' in cfg, false, 'the retired key is accepted and not carried');
 });
 
 test('a key of the wrong type is refused rather than coerced', () => {

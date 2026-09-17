@@ -48,10 +48,6 @@ function describe(draft: WriteDraft): string {
       return `Move ${amount(draft.amount, draft.symbol)} into Hyperliquid (${usd(draft.amountUsd)})`;
     case 'hl_withdraw':
       return `Withdraw ${amount(draft.amount, draft.symbol)} out of Hyperliquid (${usd(draft.amountUsd)})`;
-    case 'consolidate':
-      return `Consolidate ${clean(draft.symbol)} onto ${clean(draft.toChain)} (${usd(draft.totalUsd)})`;
-    case 'transfer':
-      return `Transfer ${amount(draft.leg.amount, draft.leg.symbol)} (${usd(draft.leg.amountUsd)})`;
     case 'policy_change':
       return 'Change the policy that limits what the agent may do';
     case 'trade':

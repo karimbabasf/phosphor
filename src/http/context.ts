@@ -62,7 +62,6 @@ export const CHAINS: readonly string[] = ['eth', 'base', 'arb', 'sol', 'near'];
 // kind missing here is a misleading error rather than a dead tool. Keep it in step with the
 // if-chain in the propose handler anyway, since the message is how a caller finds the typo.
 export const PROPOSE_KINDS: readonly string[] = [
-  'consolidate',
   'policy_change',
   'swap',
   'hl_deposit',

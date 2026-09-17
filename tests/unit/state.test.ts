@@ -71,10 +71,10 @@ test('audit subscribe notifies on append; the returned unsubscribe stops it', ()
 function makeProposal(id: string): Proposal {
   return {
     id,
-    kind: 'consolidate',
+    kind: 'policy_change',
     createdAt: new Date().toISOString(),
     status: 'pending',
-    draft: { kind: 'consolidate', legs: [], totalUsd: 0, toChain: 'eth', symbol: 'USDC' },
+    draft: { kind: 'policy_change', patch: {}, sentence: 'test' },
     simulation: null,
     verdict: { outcome: 'needs_approval', reasons: [] },
   };
@@ -192,7 +192,6 @@ test('loadConfig reads config.json, applies no overrides, and creates dataDir', 
       mode: 'demo',
       port: 4177,
       addresses: { evm: [], solana: [], near: [] },
-      economicTransferUsd: 10,
       candleProducts: ['BTC-USD'],
       dataDir: 'state',
     }),
@@ -213,7 +212,6 @@ test('loadConfig applies ACC_PORT, ACC_MODE, ACC_DATA_DIR env overrides', () => 
       mode: 'demo',
       port: 4177,
       addresses: { evm: [], solana: [], near: [] },
-      economicTransferUsd: 10,
       candleProducts: [],
       dataDir: 'state',
     }),

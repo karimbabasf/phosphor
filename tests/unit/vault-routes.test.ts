@@ -88,7 +88,6 @@ async function boot(opts: { mode?: AppConfig['mode'] } = {}) {
     mode: opts.mode ?? 'demo',
     port: 0,
     addresses: { evm: [], solana: [], near: [] },
-    economicTransferUsd: 10,
     candleProducts: ['BTC-USD'],
     dataDir,
     keysPath,
@@ -116,12 +115,11 @@ async function boot(opts: { mode?: AppConfig['mode'] } = {}) {
     store: createStore(dataDir),
     keystore,
     riskRows: [],
-    ledger: { snapshot, intents: () => undefined, hyperliquid: () => undefined, refresh: async () => snapshot(), applyDemoTransfer: () => {} },
+    ledger: { snapshot, intents: () => undefined, hyperliquid: () => undefined, refresh: async () => snapshot() },
     market: createMarketData({
       fetchImpl: (async () => ({ ok: true, json: async () => [], text: async () => '', headers: new Headers() })) as unknown as typeof fetch,
     }),
     proposals: {
-      proposeConsolidate: async () => { throw new Error('unused'); },
       proposePolicyChange: async () => { throw new Error('unused'); },
       proposeSwap: async () => { throw new Error('unused'); },
       proposeHlDeposit: async () => { throw new Error('unused'); },
@@ -519,7 +517,7 @@ test('with no shell relaying, the enclave verbs say so and the password path is 
   const keysPath = path.join(dataDir, 'keys', 'keys.json');
   const keystore = createKeystore({ keysPath, kdf: fast });
   const token = crypto.randomBytes(32).toString('hex');
-  const cfg: AppConfig = { mode: 'demo', port: 0, addresses: { evm: [], solana: [], near: [] }, economicTransferUsd: 10, candleProducts: [], dataDir, keysPath };
+  const cfg: AppConfig = { mode: 'demo', port: 0, addresses: { evm: [], solana: [], near: [] }, candleProducts: [], dataDir, keysPath };
   const server = createServer({
     cfg,
     token,
@@ -527,10 +525,9 @@ test('with no shell relaying, the enclave verbs say so and the password path is 
     store: createStore(dataDir),
     keystore,
     riskRows: [],
-    ledger: { snapshot, intents: () => undefined, hyperliquid: () => undefined, refresh: async () => snapshot(), applyDemoTransfer: () => {} },
+    ledger: { snapshot, intents: () => undefined, hyperliquid: () => undefined, refresh: async () => snapshot() },
     market: createMarketData({ fetchImpl: (async () => ({ ok: true, json: async () => [], text: async () => '', headers: new Headers() })) as unknown as typeof fetch }),
     proposals: {
-      proposeConsolidate: async () => { throw new Error('unused'); },
       proposePolicyChange: async () => { throw new Error('unused'); },
       proposeSwap: async () => { throw new Error('unused'); },
       proposeHlDeposit: async () => { throw new Error('unused'); },

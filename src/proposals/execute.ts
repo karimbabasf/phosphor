@@ -1,18 +1,13 @@
 // Execution: the single exit for a freshly evaluated proposal, the one route from approved to
-// the thing that runs it, and the four ways a proposal actually moves.
-//
-// The deposit-address check in here is the one that closes the gap between approval and
-// signing: proposals persist to disk as JSON in between, so the quote a leg carries at send
-// time is not necessarily the one the human saw.
+// the thing that runs it, and the two ways a proposal actually moves (a rail, or a policy file).
 
-import type { Proposal, Rail, RailEvidence, RailHooks, RailResult, TransferLeg, WriteDraft } from '../types.ts';
+import type { Proposal, Rail, RailEvidence, RailHooks, RailResult, WriteDraft } from '../types.ts';
 import type { PocketRead } from '../ledger/settle.ts';
 import { SETTLING_SENTENCE } from '../ledger/settle.ts';
 import { loadPolicy, savePolicy } from '../policy/file.ts';
 import { renderSentences } from '../policy/render.ts';
-import { isRailKind } from '../rails/index.ts';
 import { isLocked } from '../keystore/index.ts';
-import { errText, mergePatch, money, nowIso, persist, totalUsdOf, enclaveGated } from './lifecycle.ts';
+import { errText, mergePatch, nowIso, persist, totalUsdOf, enclaveGated } from './lifecycle.ts';
 import { reservationMade } from './reservation.ts';
 import { within } from '../shutdown.ts';
 import { buildWallet } from '../wallet.ts';
@@ -114,21 +109,17 @@ export async function executeApproved(ctx: PCtx, p: Proposal): Promise<Proposal>
   const rail = ctx.rails.for(p.draft);
   if (rail !== null) return executeRail(ctx, p, rail);
 
-  if (isRailKind(p.draft.kind)) {
-    // A rail draft with no rail behind it. Reachable when a proposal outlives the process
-    // that made it and the app comes back up in a mode that owns no rails; running it as a
-    // fund move would report a zero-leg success and move nothing.
-    const detail = `no ${p.draft.kind} rail is wired in ${ctx.cfg.mode} mode, so nothing was sent`;
-    ctx.audit.append('execution_failed', `${p.id}: ${detail}`, { id: p.id });
-    return persist(ctx, { ...p, status: 'failed', result: { ok: false, detail } });
-  }
-
-  return executeFundMove(ctx, p);
+  // A rail draft with no rail behind it. Reachable when a proposal outlives the process that
+  // made it and the app comes back up in a mode that owns no rails (demo), and for any kind
+  // still on disk that no rail answers for any more. Nothing is sent.
+  const detail = `no ${p.draft.kind} rail is wired in ${ctx.cfg.mode} mode, so nothing was sent`;
+  ctx.audit.append('execution_failed', `${p.id}: ${detail}`, { id: p.id });
+  return persist(ctx, { ...p, status: 'failed', result: { ok: false, detail } });
 }
 
 /* Which pocket a draft moves money through. The intents rails read the verifier, the
-   Hyperliquid rails the trading account; a chain-side move (the oneclick swap, consolidate,
-   transfer) has no pocket the live ledger reads and is valued as the wallet total. */
+   Hyperliquid rails the trading account; a chain-side move (the oneclick swap) has no pocket
+   the live ledger reads and is valued as the wallet total. */
 function pocketOf(draft: WriteDraft | undefined): 'intents' | 'hyperliquid' | null {
   switch (draft?.kind) {
     case 'swap':
@@ -321,9 +312,8 @@ async function runRail(ctx: PCtx, p: Proposal, rail: Rail, executing: Proposal, 
   /* A FAILURE WITH A HASH IS NOT A FAILURE. On 2026-09-15 two $10 deposits came back ok:false
      from 1Click with the intent hash on each, landed `failed`, charged nothing to the day, and
      the receipt said nothing had left the wallet while about $40 had. A hash is evidence that
-     money moved; the honest row for it is needs_reconciliation, the same state a partly sent
-     fund move lands in (executeFundMove below), which counts against the cap and can be
-     re-checked. `failed` is kept for the answer that carries no evidence at all. */
+     money moved; the honest row for it is needs_reconciliation, which counts against the cap
+     and can be re-checked. `failed` is kept for the answer that carries no evidence at all. */
   // Merged with what the hooks already wrote: a rail that handed over its handle early and
   // answers with the hash alone has not withdrawn the handle.
   const early = ctx.store.get(p.id)?.result;
@@ -519,145 +509,6 @@ export async function settleProposal(ctx: PCtx, id: string): Promise<Proposal> {
       ...(judged.result?.evidence === undefined ? {} : { evidence: judged.result.evidence }),
     },
   });
-}
-
-function legKey(leg: TransferLeg): string {
-  return `${leg.fromChain}->${leg.toChain}:${leg.symbol}`;
-}
-
-// Where a leg's funds are ACTUALLY sent. For a 1Click quote this is a deposit address the
-// solver minted, not leg.to: the solver takes delivery here and pays out to leg.to itself.
-// That is inherent to intent bridging and is not the bug. The bug was that the policy
-// engine's destination rule checks leg.to while this value is what gets signed, so the
-// control reported a guarantee about an address nobody looked at.
-export function depositAddressFor(leg: TransferLeg): string {
-  const raw = leg.quote?.raw as { quote?: { depositAddress?: string } } | undefined;
-  return raw?.quote?.depositAddress ?? leg.to;
-}
-
-// Captured at propose time so the human approves a concrete destination, and so execution
-// has something to compare against. Only legs that actually have a venue-chosen address
-// appear: a leg falling back to leg.to is already governed by the allowlist.
-export function depositAddressesOf(legs: TransferLeg[]): Array<{ leg: string; address: string }> {
-  const out: Array<{ leg: string; address: string }> = [];
-  for (const leg of legs) {
-    const address = depositAddressFor(leg);
-    if (address !== leg.to) out.push({ leg: legKey(leg), address });
-  }
-  return out;
-}
-
-// The check that closes the gap. Proposals persist to disk as JSON between approval and
-// execution, so the quote a leg carries at send time is not necessarily the one the human
-// saw. Anything that edits that file, or any refetch, would otherwise redirect the funds
-// silently. Compare what we are about to sign against what was recorded when the proposal
-// was made, and refuse on any difference rather than guessing which one is right.
-function depositAddressMismatch(p: Proposal, legs: TransferLeg[]): string | null {
-  const approved = p.simulation?.depositAddresses;
-  if (approved === undefined) return null; // nothing venue-chosen in this proposal
-
-  const now = depositAddressesOf(legs);
-  if (now.length !== approved.length) {
-    return `deposit addresses changed since approval: ${approved.length} recorded, ${now.length} now`;
-  }
-  for (const record of approved) {
-    const current = now.find(n => n.leg === record.leg);
-    if (current === undefined) return `leg ${record.leg} no longer carries the approved deposit address`;
-    if (current.address.toLowerCase() !== record.address.toLowerCase()) {
-      return `leg ${record.leg} would now send to a different address than the one approved`;
-    }
-  }
-  return null;
-}
-
-async function executeFundMove(ctx: PCtx, p: Proposal): Promise<Proposal> {
-  const legs = p.draft.kind === 'consolidate' ? p.draft.legs : p.draft.kind === 'transfer' ? [p.draft.leg] : [];
-  const beforeUsd = pocketUsd(ctx, p.draft);
-  const executing = persist(ctx, { ...p, status: 'executing', balances: { beforeUsd, afterUsd: null } });
-  // As executeRail: reserved, so the queue moves on and the sends below run outside it.
-  reservationMade();
-  /* AND BEHIND THE REPLY, AS A RAIL RUNS. The legs and the two balance re-reads below ran
-     inline, so a consolidate of three legs could hold the propose open past the proxy's thirty
-     seconds the way the rail did on 2026-09-15, and the fix for that (the executing row is the
-     answer) stopped at the rails. The same map now, so the propose cap, the settled wait and
-     the shutdown drain all cover a fund move. */
-  return behind(ctx, executing, runFundMove(ctx, p, legs, executing, beforeUsd));
-}
-
-async function runFundMove(ctx: PCtx, p: Proposal, legs: TransferLeg[], executing: Proposal, beforeUsd: number | null): Promise<Proposal> {
-  if (ctx.cfg.mode === 'demo') {
-    for (const leg of legs) ctx.ledger.applyDemoTransfer(leg);
-    const detail = `moved ${money(totalUsdOf(p.draft))} across ${legs.length} leg(s) in demo mode`;
-    ctx.audit.append('executed', `${p.id}: ${detail}`, { id: p.id, legs: legs.length });
-    /* The demo ledger has already moved, so the receipt can say what it moved to. This branch
-       returned without balances and kept { beforeUsd, afterUsd: null } off the executing row, so
-       every demo receipt read "balance after: unknown" about a transfer that plainly happened. */
-    const settledAt = nowIso();
-    const balances = { beforeUsd, afterUsd: await balanceAfter(ctx, p.draft, settledAt) };
-    return persist(ctx, { ...executing, status: 'executed', settledAt, balances, result: { ok: true, detail } });
-  }
-
-  if (!ctx.signer.ready) {
-    // The auth step Karim does last. Nothing is signed, nothing is lost.
-    const detail = ctx.signer.describe();
-    ctx.audit.append('execution_failed', `${p.id}: ${detail}`, { id: p.id });
-    return persist(ctx, { ...executing, status: 'failed', result: { ok: false, detail } });
-  }
-
-  // Refuse before signing anything if the destination is no longer what was approved.
-  const mismatch = depositAddressMismatch(p, legs);
-  if (mismatch !== null) {
-    ctx.audit.append('execution_failed', `${p.id}: ${mismatch}`, { id: p.id });
-    return persist(ctx, { ...executing, status: 'failed', result: { ok: false, detail: mismatch } });
-  }
-
-  const failures: string[] = [];
-  const txids: string[] = [];
-  let row = executing;
-  for (const leg of legs) {
-    try {
-      const res = await ctx.signer.send(leg, depositAddressFor(leg));
-      if (res.ok) txids.push(res.txid ?? '(no txid)');
-      else failures.push(`${leg.fromChain} -> ${leg.toChain}: ${res.error ?? 'unknown error'}`);
-    } catch (err) {
-      failures.push(`${leg.fromChain} -> ${leg.toChain}: ${errText(err)}`);
-    }
-    /* AFTER EVERY LEG, not once at the end. Nothing used to be written between legs, so a
-       three-leg consolidation that died on the third lost the hashes of the first two along with
-       the one still in flight. The row stays `executing` until the loop finishes, which is what
-       it is; what changes is that the hashes it has already collected are on disk. */
-    row = persist(ctx, { ...row, result: { ok: failures.length === 0, detail: `${txids.length} of ${legs.length} leg(s) sent`, txids } });
-  }
-
-  /* A PARTLY SUCCESSFUL SEND IS NOT A FAILURE, and calling it one cost the 24 hour cap.
-     Three legs totalling $3,000, a gas shortfall on the third: the first two broadcast, their
-     hashes were recorded, and the row was written `failed`. `failed` counts nothing against the
-     rolling spend, so $2,000 left the wallet and the budget said $0 had. The agent then retried
-     against a cap that had forgotten it.
-     `needs_reconciliation` is the honest name for a row where some money moved and the rest did
-     not: it is the state the boot sweep already writes for a send interrupted halfway, it has a
-     screen of its own, and the human can re-check it against the chain. It counts against the
-     cap, because a hash is evidence that funds left. All legs failing is still a plain failure,
-     because nothing moved and holding a day's budget for it would be the opposite mistake. */
-  const ok = failures.length === 0;
-  const partial = !ok && txids.length > 0;
-  const detail = ok
-    ? `sent ${legs.length} leg(s): ${txids.join(', ')}`
-    : partial
-      ? `${txids.length} of ${legs.length} leg(s) sent (${txids.join(', ')}); the rest failed: ${failures.join('; ')}`
-      : failures.join('; ');
-  ctx.audit.append(ok ? 'executed' : 'execution_failed', `${p.id}: ${detail}`, { id: p.id, txids });
-  const settledAt = nowIso();
-  const recorded = persist(ctx, {
-    ...row,
-    status: ok ? 'executed' : partial ? 'needs_reconciliation' : 'failed',
-    settledAt,
-    result: { ok, detail, txids },
-  });
-
-  // The balance last, as a second update. It is a receipt decoration and it costs up to fifteen
-  // seconds; the hashes above are the record and they are already durable.
-  return persist(ctx, { ...recorded, balances: { beforeUsd, afterUsd: await balanceAfter(ctx, p.draft, settledAt) } });
 }
 
 async function applyPolicyChange(ctx: PCtx, p: Proposal): Promise<Proposal> {

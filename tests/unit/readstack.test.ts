@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-import type { AppConfig, RiskRow, TransferLeg } from '../../src/types.ts';
+import type { AppConfig, RiskRow } from '../../src/types.ts';
 import { loadDemoLedger } from '../../src/ledger/demo.ts';
 import { createLedger } from '../../src/ledger/index.ts';
 import { classify } from '../../src/composition.ts';
@@ -21,7 +21,6 @@ const demoConfig: AppConfig = {
   keysPath: '/tmp/phosphor-test-keys.json',
   port: 4177,
   addresses: { evm: [], solana: [], near: [] },
-  economicTransferUsd: 10,
   candleProducts: ['BTC-USD'],
   dataDir: 'state',
 };
@@ -79,7 +78,7 @@ test('composition: rows are sorted by share descending', () => {
   }
 });
 
-// ---------- ledger/index.ts: demo-mode wiring + applyDemoTransfer ----------
+// ---------- ledger/index.ts: demo-mode wiring ----------
 
 test('createLedger demo mode: snapshot matches loadDemoLedger totals', () => {
   const ledger = createLedger(demoConfig);
@@ -98,36 +97,6 @@ test('createLedger demo mode: refresh() resolves without changing balances', asy
   closeTo(totalAfter, totalBefore, 0.0001);
 });
 
-test('applyDemoTransfer moves balance from source chain to destination chain, net of gas', () => {
-  const ledger = createLedger(demoConfig);
-  const before = ledger.snapshot();
-  const nearUsdtBefore = before.holdings.find(h => h.chain === 'near' && h.symbol === 'USDT')!.amount;
-  const ethUsdtBefore = before.holdings.find(h => h.chain === 'eth' && h.symbol === 'USDT')!.amount;
-  const nearNativeBefore = before.holdings.find(h => h.chain === 'near' && h.native)!.amount;
-
-  const leg: TransferLeg = {
-    fromChain: 'near',
-    toChain: 'eth',
-    symbol: 'USDT',
-    amount: nearUsdtBefore,
-    amountUsd: nearUsdtBefore,
-    from: 'karim-demo.near',
-    to: '0x1111111111111111111111111111111111111111',
-    quote: { amountOut: 949.5, feeUsd: 0.5, timeEstimateSec: 8 },
-    gasNativeUsd: before.gas.near.transferCostUsd,
-  };
-  ledger.applyDemoTransfer(leg);
-  const after = ledger.snapshot();
-
-  closeTo(after.holdings.find(h => h.chain === 'near' && h.symbol === 'USDT')!.amount, 0, 1e-9);
-  closeTo(
-    after.holdings.find(h => h.chain === 'eth' && h.symbol === 'USDT')!.amount,
-    ethUsdtBefore + 949.5,
-    1e-9,
-  );
-  assert.ok(after.holdings.find(h => h.chain === 'near' && h.native)!.amount < nearNativeBefore);
-});
-
 // ---------- ledger/index.ts: live mode failure handling ----------
 
 const liveConfig: AppConfig = {
@@ -139,7 +108,6 @@ const liveConfig: AppConfig = {
     solana: ['11111111111111111111111111111111'],
     near: ['karim-demo.near'],
   },
-  economicTransferUsd: 10,
   candleProducts: ['BTC-USD'],
   dataDir: 'state',
 };

@@ -16,7 +16,6 @@ import { createLedger } from '../../src/ledger/index.ts';
 import { loadDemoLedger } from '../../src/ledger/demo.ts';
 import { defaultPolicy, savePolicy } from '../../src/policy/file.ts';
 import { renderSentences } from '../../src/policy/render.ts';
-import { syntheticQuoter, stubSigner } from '../../src/intents.ts';
 import { createProposalService } from '../../src/proposals.ts';
 import { chainsOf, looksLikeEvmHash } from '../../src/proposals/reconcile.ts';
 import type { TxState } from '../../src/proposals/reconcile.ts';
@@ -47,7 +46,6 @@ function setup(lookup: Record<string, TxState> = {}): Harness {
     port: 0,
     keysPath: path.join(dir, 'keys.json'),
     addresses: { evm: ['0x1111111111111111111111111111111111111111'], solana: [], near: [] },
-    economicTransferUsd: 5,
     candleProducts: ['BTC-USD'],
   } as unknown as AppConfig;
 
@@ -58,8 +56,6 @@ function setup(lookup: Record<string, TxState> = {}): Harness {
     store,
     ledger: createLedger(cfg),
     riskRows: RISK_ROWS,
-    quoter: syntheticQuoter(),
-    signer: stubSigner(),
     dataDir: dir,
     txLookup: async (chain, hash) => {
       asked.push({ chain, hash });
@@ -223,15 +219,13 @@ test('a lookup that throws reads as unknown rather than as absent', async () => 
   // Rebuild the service with a lookup that fails the way an RPC outage does.
   const store = createStore(dir);
   const audit = createAudit(dir);
-  const cfg = { mode: 'demo', dataDir: dir, port: 0, keysPath: path.join(dir, 'keys.json'), addresses: { evm: [], solana: [], near: [] }, economicTransferUsd: 5, candleProducts: ['BTC-USD'] } as unknown as AppConfig;
+  const cfg = { mode: 'demo', dataDir: dir, port: 0, keysPath: path.join(dir, 'keys.json'), addresses: { evm: [], solana: [], near: [] }, candleProducts: ['BTC-USD'] } as unknown as AppConfig;
   const svc2 = createProposalService({
     cfg,
     audit,
     store,
     ledger: createLedger(cfg),
     riskRows: RISK_ROWS,
-    quoter: syntheticQuoter(),
-    signer: stubSigner(),
     dataDir: dir,
     txLookup: async () => {
       throw new Error('RPC unreachable');
@@ -244,10 +238,8 @@ test('a lookup that throws reads as unknown rather than as absent', async () => 
 test('chainsOf reads the origin chain the draft actually names', () => {
   assert.deepEqual(chainsOf({ kind: 'intents_deposit', chain: 'base' } as never), ['base']);
   assert.deepEqual(chainsOf({ kind: 'policy_change' } as never), []);
-  assert.deepEqual(
-    chainsOf({ kind: 'consolidate', legs: [{ fromChain: 'arb' }, { fromChain: 'sol' }, { fromChain: 'arb' }] } as never),
-    ['arb', 'sol'],
-  );
+  // A chain-era consolidate row names no origin chain any more: unknown, never guessed.
+  assert.deepEqual(chainsOf({ kind: 'consolidate', legs: [{ fromChain: 'arb' }] } as never), []);
 });
 
 test('only a 32-byte hex string is treated as an EVM hash', () => {

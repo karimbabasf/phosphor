@@ -77,9 +77,9 @@
     intents_send: 'Send',
     hl_deposit: 'Fund trading',
     hl_withdraw: 'Collateral back',
+    policy_change: 'Rule change',
     consolidate: 'Consolidate',
     transfer: 'Transfer',
-    policy_change: 'Rule change',
     lp_add: 'Add to a pool',
     lp_remove: 'Leave a pool',
     yield_deposit: 'Put to work',
@@ -627,9 +627,6 @@
     } else if (kind === 'hl_withdraw') {
       move.from = { symbol: 'USDC', place: 'hyperliquid', amount: num(d.amount !== undefined ? d.amount : args.amount) };
       move.to = { symbol: 'USDC', place: 'intents', amount: num(d.minReceived) };
-    } else if (kind === 'consolidate') {
-      move.from = { symbol: d.symbol || args.symbol, place: '', amount: num(d.totalUsd !== undefined ? d.totalUsd : args.maxTotalUsd), usd: true };
-      move.to = { symbol: d.symbol || args.symbol, place: d.toChain || args.toChain, amount: null };
     } else if (kind === 'trade' || kind === 'trade_change') {
       var plan = isObject(d.plan) ? d.plan : (isObject(args.plan) ? args.plan : null);
       if (plan) {

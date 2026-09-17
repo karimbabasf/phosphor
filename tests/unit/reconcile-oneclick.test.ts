@@ -19,7 +19,6 @@ import { createStore } from '../../src/store.ts';
 import { createLedger } from '../../src/ledger/index.ts';
 import { defaultPolicy, savePolicy } from '../../src/policy/file.ts';
 import { renderSentences } from '../../src/policy/render.ts';
-import { syntheticQuoter, stubSigner } from '../../src/intents.ts';
 import type { OneClickStatus } from '../../src/intents.ts';
 import { createProposalService } from '../../src/proposals.ts';
 import { hlDepositCredited } from '../../src/proposals/reconcile.ts';
@@ -54,7 +53,6 @@ function setup(
     port: 0,
     keysPath: path.join(dir, 'keys.json'),
     addresses: { evm: ['0x1111111111111111111111111111111111111111'], solana: [], near: [] },
-    economicTransferUsd: 5,
     candleProducts: ['BTC-USD'],
   } as unknown as AppConfig;
   const asked: string[] = [];
@@ -65,8 +63,6 @@ function setup(
     store: createStore(dir),
     ledger: createLedger(cfg),
     riskRows: RISK_ROWS,
-    quoter: syntheticQuoter(),
-    signer: stubSigner(),
     dataDir: dir,
     ...(wireClient
       ? {

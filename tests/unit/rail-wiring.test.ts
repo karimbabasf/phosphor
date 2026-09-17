@@ -44,7 +44,6 @@ import { createStore } from '../../src/store.ts';
 import { loadDemoLedger } from '../../src/ledger/demo.ts';
 import { defaultPolicy, savePolicy } from '../../src/policy/file.ts';
 import { renderSentences } from '../../src/policy/render.ts';
-import { syntheticQuoter, stubSigner } from '../../src/intents.ts';
 import { createProposalService } from '../../src/proposals.ts';
 import { createRails, venueAllowlist } from '../../src/rails/index.ts';
 import { HYPERCORE_COUNTERPARTY } from '../../src/rails/hypercore-deposit.ts';
@@ -139,7 +138,6 @@ function setup(over: { policy?: Policy; rails?: Spy; intents?: IntentsRead | nul
     mode: 'live', // demo mode owns no rails at all; that is its own test below
     port: 4177,
     addresses: { evm: [SELF_EVM], solana: [], near: [] },
-    economicTransferUsd: 10,
     candleProducts: [],
     dataDir,
     keysPath: '/tmp/phosphor-rail-wiring-keys.json', // never read: the spy rail signs nothing
@@ -170,9 +168,6 @@ function setup(over: { policy?: Policy; rails?: Spy; intents?: IntentsRead | nul
         : over.intents ?? undefined,
     hyperliquid: () => undefined,
     refresh: async () => snapshot,
-    applyDemoTransfer: () => {
-      throw new Error('applyDemoTransfer must never be called in live mode');
-    },
   };
 
   savePolicy(dataDir, over.policy ?? seededPolicy());
@@ -185,8 +180,6 @@ function setup(over: { policy?: Policy; rails?: Spy; intents?: IntentsRead | nul
     store: createStore(dataDir),
     ledger,
     riskRows,
-    quoter: syntheticQuoter(),
-    signer: stubSigner(),
     rails: rails.registry,
     dataDir,
   });
@@ -566,7 +559,6 @@ function cfgFor(mode: AppConfig['mode']): AppConfig {
     mode,
     port: 4177,
     addresses: { evm: [SELF_EVM], solana: [], near: [] },
-    economicTransferUsd: 10,
     candleProducts: [],
     dataDir: '/tmp/phosphor-rail-wiring-cfg',
     keysPath: '/tmp/phosphor-rail-wiring-keys.json',
@@ -678,11 +670,8 @@ test('demo mode owns no rails, and a rail proposal there refuses instead of reac
       intents: () => undefined,
       hyperliquid: () => undefined,
       refresh: async () => snapshot,
-      applyDemoTransfer: () => {},
     },
     riskRows,
-    quoter: syntheticQuoter(),
-    signer: stubSigner(),
     dataDir, // no rails passed
   });
 

@@ -369,34 +369,6 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
       await respond(await ctx.proposals.proposeIntentsSend({ to, symbol, amount, clientKey }));
       return;
     }
-    if (kind === 'consolidate') {
-      const toChain = String(params.toChain ?? '');
-      const symbol = typeof params.symbol === 'string' ? params.symbol.trim() : '';
-      if (!CHAINS.includes(toChain)) {
-        fail(res, 400, `toChain must be one of: ${CHAINS.join(', ')}`);
-        return;
-      }
-      if (symbol.length === 0) {
-        fail(res, 400, 'symbol is required');
-        return;
-      }
-      const fromChains = Array.isArray(params.fromChains)
-        ? (params.fromChains.filter((c) => typeof c === 'string' && CHAINS.includes(c)) as ChainId[])
-        : undefined;
-      const maxTotalUsd = typeof params.maxTotalUsd === 'number' && Number.isFinite(params.maxTotalUsd)
-        ? params.maxTotalUsd
-        : undefined;
-      await respond(
-        await ctx.proposals.proposeConsolidate({
-          toChain: toChain as ChainId,
-          symbol,
-          ...(fromChains !== undefined && fromChains.length > 0 ? { fromChains } : {}),
-          ...(maxTotalUsd !== undefined ? { maxTotalUsd } : {}),
-          clientKey,
-        }),
-      );
-      return;
-    }
     if (kind === 'policy_change') {
       // patch and sentence are passed through as authored: the engine validates
       // the patch, and the sentence is stored as data, never read as instruction.

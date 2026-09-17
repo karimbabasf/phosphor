@@ -183,23 +183,13 @@ export type Verdict =
 
 // ---------- Writes ----------
 
+// The venue's own figures for a quoted leg. A swap draft carries the slot and every builder
+// leaves it null: the quote is taken at simulate time and lives on the simulation.
 export type LegQuote = {
   amountOut: number;
   feeUsd: number;
   timeEstimateSec: number;
   raw?: unknown;
-};
-
-export type TransferLeg = {
-  fromChain: ChainId;
-  toChain: ChainId;
-  symbol: string;
-  amount: number;
-  amountUsd: number;
-  from: string; // owner address on fromChain
-  to: string; // recipient address on toChain
-  quote: LegQuote | null;
-  gasNativeUsd: number; // est. origin-chain gas to fund the deposit
 };
 
 // The three features Karim asked for, each one draft kind. Every draft carries amountUsd
@@ -351,8 +341,6 @@ export type TradeDraft =
     };
 
 export type WriteDraft =
-  | { kind: 'consolidate'; legs: TransferLeg[]; totalUsd: number; toChain: ChainId; symbol: string }
-  | { kind: 'transfer'; leg: TransferLeg } // engine supports it; no MCP tool exposes it in v1
   | { kind: 'policy_change'; patch: PolicyPatch; sentence: string }
   | SwapDraft
   | HlDepositDraft
@@ -688,24 +676,12 @@ export type LogEvent = {
 
 export type Candle = { t: number; o: number; h: number; l: number; c: number; v: number };
 
-export type Quoter = {
-  name: string;
-  quoteLeg(leg: TransferLeg): Promise<LegQuote>; // throws on failure; caller treats throw as refusal
-};
-
-export type Signer = {
-  ready: boolean;
-  describe(): string;
-  send(leg: TransferLeg, depositAddress: string): Promise<{ ok: boolean; txid?: string; error?: string }>;
-};
-
 // ---------- Config ----------
 
 export type AppConfig = {
   mode: Mode;
   port: number;
   addresses: { evm: string[]; solana: string[]; near: string[] };
-  economicTransferUsd: number; // below this a balance is dust regardless of gas
   candleProducts: string[];
   dataDir: string; // state dir: policy.json, proposals.json, audit.jsonl
   keysPath: string; // absolute path OUTSIDE the working copy; never inside the repo
@@ -777,13 +753,6 @@ export type TradeParams = { plan?: unknown; planId?: string; by?: string | null;
 export type TradeChangeParams = { id: string; stop?: number; target?: number; cancel?: boolean; close?: boolean; clientKey?: ClientKey };
 
 export type ProposalService = {
-  proposeConsolidate(params: {
-    toChain: ChainId;
-    symbol: string;
-    fromChains?: ChainId[];
-    maxTotalUsd?: number;
-    clientKey?: ClientKey;
-  }): Promise<Proposal>;
   proposePolicyChange(params: { patch: PolicyPatch; sentence: string; clientKey?: ClientKey }): Promise<Proposal>;
   proposeSwap(params: SwapParams): Promise<Proposal>;
   proposeHlDeposit(params: HlDepositParams): Promise<Proposal>;

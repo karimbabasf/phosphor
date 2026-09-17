@@ -17,7 +17,7 @@
 // address is used (src/quote-signature.ts), and lets the policy engine cap what is at stake.
 
 import { parseUnits } from 'viem';
-import type { ChainId, TransferLeg, LegQuote, Quoter, Signer } from './types.ts';
+import type { ChainId } from './types.ts';
 import { readTimeout, venueWriteTimeout } from './net.ts';
 
 export const ONECLICK_BASE = 'https://1click.chaindefuser.com';
@@ -583,70 +583,4 @@ export function oneClickClient(deps: OneClickDeps = {}): OneClickClient {
   }
 
   return { tokens, quote, submitDeposit, status };
-}
-
-// ---------- the Quoter used to price a consolidation ----------
-
-export function oneClickQuoter(tokens: TokensFile, deps?: { fetchImpl?: typeof fetch }): Quoter {
-  const client = oneClickClient({ fetchImpl: deps?.fetchImpl });
-
-  async function quoteLeg(leg: TransferLeg): Promise<LegQuote> {
-    const originInfo = tokens[leg.fromChain]?.[leg.symbol];
-    const destInfo = tokens[leg.toChain]?.[leg.symbol];
-    if (!originInfo) throw new Error(`no token registry entry for ${leg.symbol} on ${leg.fromChain}`);
-    if (!destInfo) throw new Error(`no token registry entry for ${leg.symbol} on ${leg.toChain}`);
-
-    const list = await client.tokens();
-    const originAsset = assetIdFor(leg.fromChain, originInfo.tokenId, list, originInfo.decimals);
-    const destinationAsset = assetIdFor(leg.toChain, destInfo.tokenId, list, destInfo.decimals);
-    if (!originAsset) throw new Error(`no 1click asset id for ${leg.symbol} on ${leg.fromChain}`);
-    if (!destinationAsset) throw new Error(`no 1click asset id for ${leg.symbol} on ${leg.toChain}`);
-
-    // dry:true always. This path prices a proposal; it must never mint a deposit address.
-    const response = await client.quote({
-      dry: true,
-      originAsset,
-      destinationAsset,
-      amount: toBaseUnits(leg.amount, originInfo.decimals).toString(),
-      refundTo: leg.from,
-      recipient: leg.to,
-    });
-
-    const quote = response.quote;
-    const amountInUsd = Number(quote.amountInUsd);
-    const amountOutUsd = Number(quote.amountOutUsd);
-
-    return {
-      amountOut: Number(quote.amountOutFormatted),
-      feeUsd: amountInUsd - amountOutUsd,
-      timeEstimateSec: Number(quote.timeEstimate),
-      raw: response.raw,
-    };
-  }
-
-  return { name: 'oneclick', quoteLeg };
-}
-
-export function syntheticQuoter(): Quoter {
-  return {
-    name: 'synthetic',
-    async quoteLeg(leg: TransferLeg): Promise<LegQuote> {
-      return {
-        amountOut: leg.amount * 0.9999 - 0.02,
-        feeUsd: leg.amount * 0.0001 + 0.02,
-        timeEstimateSec: 8,
-      };
-    },
-  };
-}
-
-export function stubSigner(): Signer {
-  const describe = () => 'No signer configured. Add keys via config to enable live execution (auth step).';
-  return {
-    ready: false,
-    describe,
-    async send() {
-      return { ok: false, error: describe() };
-    },
-  };
 }

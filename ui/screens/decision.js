@@ -122,12 +122,6 @@
 
   function headlineOf(proposal) {
     var draft = proposal.draft || {};
-    if (draft.kind === 'consolidate') {
-      return 'Gather ' + draft.symbol + ' onto ' + draft.toChain;
-    }
-    if (draft.kind === 'transfer' && draft.leg) {
-      return 'Move ' + draft.leg.symbol + ' from ' + draft.leg.fromChain + ' to ' + draft.leg.toChain;
-    }
     if (draft.kind === 'swap') {
       var where = draft.chain === draft.toChain
         ? 'on ' + draft.chain
@@ -137,6 +131,12 @@
     if (draft.kind === 'trade') return tradeHeadline(draft);
     /* Rows an older build wrote. Nothing proposes these any more; they still
        have to read as a sentence when the store hands one back. */
+    if (draft.kind === 'consolidate') {
+      return 'Gather ' + draft.symbol + ' onto ' + draft.toChain;
+    }
+    if (draft.kind === 'transfer' && draft.leg) {
+      return 'Move ' + draft.leg.symbol + ' from ' + draft.leg.fromChain + ' to ' + draft.leg.toChain;
+    }
     if (draft.kind === 'mandate_arm') {
       return draft.symbol ? 'Arm a trading rule on ' + draft.symbol : 'Arm a trading rule';
     }

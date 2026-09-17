@@ -14,9 +14,7 @@ import type {
   Policy,
   PolicyPatch,
   Proposal,
-  Quoter,
   RiskRow,
-  Signer,
   SimulationResult,
   Verdict,
   WriteDraft,
@@ -51,8 +49,6 @@ export type ProposalDeps = {
   store: Store;
   ledger: Ledger;
   riskRows: RiskRow[];
-  quoter: Quoter;
-  signer: Signer;
   dataDir: string;
   rails?: RailRegistry; // src/rails/index.ts; absent means no rail can execute
   // The plan runner and the venue facts a plan is priced against. Absent means no trade can
@@ -99,8 +95,6 @@ export function errText(err: unknown): string {
 }
 
 export function totalUsdOf(draft: WriteDraft): number {
-  if (draft.kind === 'consolidate') return draft.totalUsd;
-  if (draft.kind === 'transfer') return draft.leg.amountUsd;
   if (draft.kind === 'policy_change') return 0;
   // Every rail draft carries its own amountUsd, which is what the engine budgets on. A
   // non-finite one never executes (the engine refuses it), so it contributes nothing here.
@@ -111,13 +105,6 @@ export function totalUsdOf(draft: WriteDraft): number {
 // what a dollar stable is, so this reads it rather than keeping a second list to drift.
 export function stableSymbols(rows: RiskRow[]): Set<string> {
   return new Set(rows.map(r => r.symbol.toUpperCase()));
-}
-
-// Same dust rule as cost.ts: below the economic transfer size, or below 3x what it costs to
-// move anything off that chain. Kept local because cost.ts does not export the predicate.
-export function dustThreshold(snapshot: LedgerSnapshot, chain: ChainId, cfg: AppConfig): number {
-  const transferCostUsd = snapshot.gas[chain]?.transferCostUsd ?? 0;
-  return Math.max(cfg.economicTransferUsd, 3 * transferCostUsd);
 }
 
 // Copies only the fields a PolicyPatch is allowed to carry. A spread would let a hostile patch
@@ -165,8 +152,6 @@ export type PCtx = {
   store: Store;
   ledger: Ledger;
   riskRows: RiskRow[];
-  quoter: Quoter;
-  signer: Signer;
   dataDir: string;
   rails: RailRegistry;
   trade?: TradeDeps;
@@ -365,8 +350,8 @@ export function selfAddresses(ctx: PCtx, snapshot: LedgerSnapshot): string[] {
   return [...set];
 }
 
-// Where a consolidation lands. eth, base and arb share one evm address, so a holding on any
-// of them names the recipient on the others.
+// The address this app owns on a chain. eth, base and arb share one evm address, so a holding
+// on any of them names the recipient on the others.
 export function recipientFor(ctx: PCtx, chain: ChainId, snapshot: LedgerSnapshot): string | null {
   const onChain = snapshot.holdings.find(h => h.chain === chain);
   if (onChain) return onChain.address;

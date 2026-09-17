@@ -78,7 +78,6 @@ async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
     mode: 'demo',
     port: 0,
     addresses: { evm: ['0xself'], solana: [], near: [] },
-    economicTransferUsd: 10,
     candleProducts: ['BTC-USD'],
     dataDir,
     keysPath: path.join(dataDir, 'keys.json'),
@@ -93,13 +92,11 @@ async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
       intents: () => undefined,
       hyperliquid: () => undefined,
       refresh: async () => snapshot(),
-      applyDemoTransfer: () => {},
     },
     market: createMarketData({
       fetchImpl: (async () => ({ ok: true, json: async () => [], text: async () => '', headers: new Headers() })) as unknown as typeof fetch,
     }),
     proposals: {
-      proposeConsolidate: async () => builtSwap(),
       proposePolicyChange: async () => builtSwap(),
       // Only reached when the swap guards pass. A bad venue or amount is refused before here.
       proposeSwap: async () => builtSwap(),

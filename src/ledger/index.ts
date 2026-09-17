@@ -1,5 +1,4 @@
-// Ledger orchestrator. Demo mode wraps the static fixture in mutable state so an executed
-// consolidation stays visible across refreshes.
+// Ledger orchestrator. Demo mode serves the static fixture; live mode reads the venues.
 //
 // LIVE MODE READS ONE PLACE, and that is the whole shape of this app now. This app holds money
 // in two venues, NEAR Intents and Hyperliquid, and neither of them is a chain balance: an
@@ -9,7 +8,7 @@
 // is not held there. So there is no per-chain balance fan-out any more, and chainStatus and gas
 // stay on the snapshot only because every reader of a LedgerSnapshot expects one entry per
 // chain (see the note on emptyChainStatus).
-import type { AppConfig, ChainId, ChainStatus, Holding, LedgerSnapshot, TransferLeg } from '../types.ts';
+import type { AppConfig, ChainId, ChainStatus, Holding, LedgerSnapshot } from '../types.ts';
 import { loadDemoLedger } from './demo.ts';
 import { fetchIntentsHoldings, type IntentsRead } from './intents.ts';
 import { fetchHyperliquidRead, type HlRead } from './hyperliquid.ts';
@@ -37,7 +36,6 @@ export type Ledger = {
   // What the Hyperliquid account holds. Same contract as intents(): undefined when never asked.
   hyperliquid(): HlRead | undefined;
   refresh(): Promise<LedgerSnapshot>;
-  applyDemoTransfer(leg: TransferLeg): void;
   // Told after every refresh lands, so a proposal waiting to see a balance move can judge the
   // same read the panel is about to show instead of making a read of its own. Returns the
   // unsubscribe. Optional because the tests build many small ledgers by hand and none of them
@@ -86,42 +84,6 @@ function createDemoLedger(): Ledger {
   let current: LedgerSnapshot = loadDemoLedger();
   const listeners = refreshListeners();
 
-  function applyDemoTransfer(leg: TransferLeg): void {
-    const holdings = current.holdings.map(h => ({ ...h }));
-
-    const from = holdings.find(h => h.chain === leg.fromChain && h.symbol === leg.symbol && !h.native);
-    if (from) from.amount = Math.max(0, from.amount - leg.amount);
-
-    const gasHolding = holdings.find(h => h.chain === leg.fromChain && h.native);
-    if (gasHolding) {
-      const nativePrice = current.prices[gasHolding.symbol] ?? 0;
-      const gasUsd = current.gas[leg.fromChain]?.transferCostUsd ?? 0;
-      const gasNativeUnits = nativePrice > 0 ? gasUsd / nativePrice : 0;
-      gasHolding.amount = Math.max(0, gasHolding.amount - gasNativeUnits);
-    }
-
-    const amountOut = leg.quote?.amountOut ?? leg.amount;
-    let to = holdings.find(h => h.chain === leg.toChain && h.symbol === leg.symbol && !h.native);
-    if (!to) {
-      to = {
-        chain: leg.toChain,
-        address: from?.address ?? leg.to,
-        symbol: leg.symbol,
-        tokenId: from?.tokenId ?? leg.symbol,
-        amount: 0,
-        usd: 0,
-        native: false,
-      };
-      holdings.push(to);
-    }
-    to.amount += amountOut;
-
-    for (const h of holdings) {
-      h.usd = h.native ? h.amount * (current.prices[h.symbol] ?? 0) : h.amount;
-    }
-    current = { ...current, holdings };
-  }
-
   return {
     snapshot: () => current,
     intents: () => undefined, // demo mode signs nothing and deposits nothing
@@ -134,7 +96,6 @@ function createDemoLedger(): Ledger {
       listeners.tell();
       return current;
     },
-    applyDemoTransfer,
     onRefresh: listeners.add,
   };
 }
@@ -307,9 +268,6 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch): Ledger {
     intents: () => liveIntents,
     hyperliquid: () => liveHl,
     refresh,
-    applyDemoTransfer: () => {
-      throw new Error('applyDemoTransfer is demo-mode only');
-    },
     onRefresh: listeners.add,
   };
 }

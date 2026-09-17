@@ -155,9 +155,9 @@ const ACTIONS: Record<string, TxEntry['action'] | null | undefined> = {
   intents_deposit: 'deposit',
   intents_withdraw: 'withdraw',
   intents_send: 'transfer',
+  // Retired rails, kept for the rows already on disk.
   transfer: 'transfer',
   consolidate: 'consolidate',
-  // Retired rails, kept for the rows already on disk.
   lp_add: 'lp add',
   lp_remove: 'lp remove',
   // Money leaving the wallet for a lending pool, and coming back from one. Deliberately the
@@ -302,9 +302,9 @@ type Sides = {
 };
 
 /* The shape a retired draft has on disk. Not a live type: nothing builds one of these any
-   more, and this exists so the four kinds the rail table dropped can still be rendered off
-   the rows already written. Every field is optional because it is being read back out of
-   JSON rather than off a draft the type system saw built. */
+   more, and this exists so the kinds the rail table dropped can still be rendered off the
+   rows already written. Every field is optional because it is being read back out of JSON
+   rather than off a draft the type system saw built. */
 type RetiredDraft = {
   kind: string;
   chain?: TxPlace;
@@ -312,14 +312,23 @@ type RetiredDraft = {
   symbol?: string;
   amount?: number;
   amountBase?: string | null;
+  amountUsd?: number;
   liquidityPct?: number;
   token0?: { symbol: string; amount: number };
   token1?: { symbol: string };
   from?: string;
   counterparty?: string;
+  // The chain-era fund moves (gone 2026-09-16): a consolidation gathered one symbol across
+  // legs onto toChain, a transfer was one leg.
+  toChain?: TxPlace;
+  totalUsd?: number;
+  legs?: RetiredLeg[];
+  leg?: RetiredLeg;
 };
 
-const RETIRED_KINDS = ['lp_add', 'lp_remove', 'yield_deposit', 'yield_withdraw'];
+type RetiredLeg = { fromChain?: TxPlace; toChain?: TxPlace; symbol?: string; amount?: number; amountUsd?: number; from?: string; to?: string };
+
+const RETIRED_KINDS = ['lp_add', 'lp_remove', 'yield_deposit', 'yield_withdraw', 'consolidate', 'transfer'];
 
 /* Historic rows, rendered off what the retired draft actually carries.
    These used to fall through to `default`, which is a quiet way to be wrong: the fallback
@@ -334,6 +343,33 @@ const RETIRED_KINDS = ['lp_add', 'lp_remove', 'yield_deposit', 'yield_withdraw']
    `amount` still holds what was quoted, so it is the honest thing to show, and a full exit
    says so in `note` rather than printing a figure that was already stale when written. */
 function retiredSidesOf(draft: RetiredDraft): Sides {
+  // The chain-era fund moves: every field off the legs the row carries, nothing guessed.
+  if (draft.kind === 'transfer') {
+    const leg = draft.leg ?? {};
+    return {
+      place: leg.fromChain ?? 'eth',
+      toPlace: leg.toChain ?? leg.fromChain ?? 'eth',
+      venue: null,
+      sent: leg.symbol === undefined || leg.amount === undefined ? null : { symbol: leg.symbol, amount: leg.amount },
+      from: leg.from,
+      to: leg.to,
+      counterparty: undefined,
+    };
+  }
+  if (draft.kind === 'consolidate') {
+    const legs = draft.legs ?? [];
+    const first = legs[0];
+    const toPlace = draft.toChain ?? 'eth';
+    return {
+      place: first?.fromChain ?? toPlace,
+      toPlace,
+      venue: null,
+      sent: draft.symbol === undefined ? null : { symbol: draft.symbol, amount: legs.reduce((sum, leg) => sum + (leg.amount ?? 0), 0) },
+      from: first?.from,
+      to: first?.to,
+      counterparty: undefined,
+    };
+  }
   const place = draft.chain ?? 'eth';
   const base = { place, toPlace: place, venue: draft.venue ?? null, counterparty: draft.counterparty };
   if (draft.kind === 'lp_add') {
@@ -445,28 +481,6 @@ function sidesOf(draft: WriteDraft): Sides {
         to: draft.to,
         counterparty: draft.counterparty,
       };
-    case 'transfer':
-      return {
-        place: draft.leg.fromChain,
-        toPlace: draft.leg.toChain,
-        venue: null,
-        sent: { symbol: draft.leg.symbol, amount: draft.leg.amount },
-        from: draft.leg.from,
-        to: draft.leg.to,
-        counterparty: undefined,
-      };
-    case 'consolidate': {
-      const first = draft.legs[0];
-      return {
-        place: first?.fromChain ?? draft.toChain,
-        toPlace: draft.toChain,
-        venue: null,
-        sent: { symbol: draft.symbol, amount: draft.legs.reduce((sum, leg) => sum + leg.amount, 0) },
-        from: first?.from,
-        to: first?.to,
-        counterparty: undefined,
-      };
-    }
     default:
       return { place: 'eth', toPlace: 'eth', venue: null, sent: null, from: undefined, to: undefined, counterparty: undefined };
   }
@@ -514,8 +528,10 @@ function round(n: number): number {
 
 function usdOf(draft: WriteDraft): number {
   if (draft.kind === 'policy_change') return 0;
-  if (draft.kind === 'consolidate') return draft.totalUsd;
-  if (draft.kind === 'transfer') return draft.leg.amountUsd;
+  if (RETIRED_KINDS.includes(draft.kind)) {
+    const retired = draft as unknown as RetiredDraft;
+    return retired.totalUsd ?? retired.leg?.amountUsd ?? retired.amountUsd ?? 0;
+  }
   return draft.amountUsd;
 }
 

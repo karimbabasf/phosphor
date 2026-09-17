@@ -13,18 +13,8 @@
 // accumulate so the UI can show the whole chain of reasoning, not just the last line.
 
 import { z } from 'zod';
-import { classify } from '../composition.ts';
 import { isRailKind } from '../rails/kinds.ts';
-import type {
-  CompositionView,
-  LedgerSnapshot,
-  Policy,
-  PolicyPatch,
-  RiskRow,
-  TransferLeg,
-  Verdict,
-  WriteDraft,
-} from '../types.ts';
+import type { CompositionView, LedgerSnapshot, Policy, PolicyPatch, Verdict, WriteDraft } from '../types.ts';
 
 export type EngineCtx = {
   policy: Policy | null;
@@ -233,45 +223,14 @@ function money(usd: number): string {
   return '$' + usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function pct(share: number): string {
-  return (share * 100).toFixed(2) + '%';
-}
-
 function refusal(reasons: string[], rule: string, line: string): Verdict {
   return { outcome: 'refuse', reasons: [...reasons, line], rule };
 }
 
-// Every stable in this app is priced at 1.0 (see ledger and composition), so a leg claiming a
-// usd value below its token amount is understating itself. Take the larger of the two.
-function legUsd(leg: TransferLeg): number {
-  const declared = Number.isFinite(leg.amountUsd) ? leg.amountUsd : 0;
-  const amount = Number.isFinite(leg.amount) ? leg.amount : 0;
-  return Math.max(declared, amount);
-}
-
-// Amounts on the wire are claims by the agent, and a non-finite or negative one slips past
-// every cap below: comparisons against NaN are always false, and a negative amount understates
-// the move it is asking for. Such a leg is refused before any cap is consulted.
-function legNumbersAreSane(leg: TransferLeg): boolean {
-  const positive = (n: number) => Number.isFinite(n) && n > 0;
-  const nonNegative = (n: number) => Number.isFinite(n) && n >= 0;
-  if (!positive(leg.amount)) return false;
-  if (!nonNegative(leg.amountUsd) || !nonNegative(leg.gasNativeUsd)) return false;
-  if (leg.quote && !nonNegative(leg.quote.amountOut)) return false;
-  return true;
-}
-
-function legsOf(draft: WriteDraft): TransferLeg[] {
-  if (draft.kind === 'consolidate') return draft.legs;
-  if (draft.kind === 'transfer') return [draft.leg];
-  return [];
-}
-
-// The rail kinds (swap, hyperliquid deposit, LP add/remove) do not decompose into
-// TransferLegs: they hand funds to a contract and get something else back, so there is
-// no from-chain/to-chain pair to walk. They still have to be governed, and the honest
-// way is their own branch rather than a fake leg. Anything with no legs and no branch
-// falls through to 'nothing_to_move', which is fail-closed by design.
+// The rail kinds (a swap, the Hyperliquid and intents moves, a trade) hand funds to a
+// venue and get something else back, so there is no from-chain/to-chain pair to walk.
+// They are governed on their own branch. Anything with no branch is refused as
+// 'unknown_kind', which is fail-closed by design.
 type RailDraft = Extract<WriteDraft, { counterparty: string } | { kind: 'hl_deposit' }>;
 
 // The kind list is not repeated here, and it does not come from the rail registry either.
@@ -333,104 +292,6 @@ function destinationOf(draft: RailDraft): string | null {
   // rail ran, and the reason a withdraw tool with no destination field is still governed.
   if (draft.kind === 'hl_withdraw') return draft.to;
   return null;
-}
-
-function symbolOf(draft: WriteDraft): string {
-  if (draft.kind === 'consolidate') return draft.symbol;
-  if (draft.kind === 'transfer') return draft.leg.symbol;
-  return '';
-}
-
-// Issuer for a symbol, read off the composition the human is looking at. A symbol we hold
-// nothing of, or hold unclassified, is 'unclassified' (same pessimism as composition.ts).
-function issuerOf(symbol: string, comp: CompositionView): string {
-  const row = comp.rows.find(r => r.symbol === symbol);
-  return row ? row.issuer : 'unclassified';
-}
-
-// A cap keyed 'circle' must still bind an issuer named 'Circle'; a silently unapplied cap is a
-// money bug. Exact key first, then a case-insensitive scan, then the catch-all.
-function issuerCap(issuer: string, caps: Record<string, number>): number {
-  if (caps[issuer] !== undefined) return caps[issuer];
-  const hit = Object.keys(caps).find(k => k !== 'default' && lower(k) === lower(issuer));
-  if (hit !== undefined) return caps[hit];
-  return caps.default ?? 1;
-}
-
-// classify() needs issuer and freeze power per symbol, which the current composition already
-// carries. Rebuilding the rows from it keeps one share formula in the codebase instead of two.
-// Genuinely unclassified symbols are left out so classify() applies its own pessimistic path.
-function riskRowsFromComposition(comp: CompositionView): RiskRow[] {
-  const bySymbol = new Map<string, RiskRow>();
-  for (const row of comp.rows) {
-    if (!row.classified || bySymbol.has(row.symbol)) continue;
-    bySymbol.set(row.symbol, {
-      symbol: row.symbol,
-      issuer: row.issuer,
-      freezable: row.freezable,
-      // Descriptive fields, never read by classify().
-      freezeMechanism: '',
-      reserveType: 'unknown',
-      depegWorstUsd: 0,
-      depegNote: '',
-      sourceUrl: '',
-    });
-  }
-  return [...bySymbol.values()];
-}
-
-// Post-state of the portfolio if every leg lands. Clones, never mutates.
-// Funds are credited on the destination chain only when the recipient is an address we own:
-// money sent anywhere else has left the portfolio and must stop counting toward our shares.
-export function applyLegs(snapshot: LedgerSnapshot, legs: TransferLeg[], selfAddresses?: string[]): LedgerSnapshot {
-  const holdings = snapshot.holdings.map(h => ({ ...h }));
-  const owned = new Set<string>([
-    ...snapshot.holdings.map(h => lower(h.address)),
-    ...(selfAddresses ?? []).map(lower),
-  ]);
-
-  for (const leg of legs) {
-    const onFrom = holdings.filter(h => h.chain === leg.fromChain && !h.native && h.symbol === leg.symbol);
-    const from = onFrom.find(h => lower(h.address) === lower(leg.from)) ?? onFrom[0];
-    if (from) from.amount = Math.max(0, from.amount - leg.amount);
-
-    const natives = holdings.filter(h => h.chain === leg.fromChain && h.native);
-    const gasHolding = natives.find(h => lower(h.address) === lower(leg.from)) ?? natives[0];
-    if (gasHolding) {
-      const price = snapshot.prices[gasHolding.symbol] ?? 0;
-      const units = price > 0 ? leg.gasNativeUsd / price : 0;
-      gasHolding.amount = Math.max(0, gasHolding.amount - units);
-    }
-
-    if (!owned.has(lower(leg.to))) continue;
-    const amountOut = leg.quote?.amountOut ?? leg.amount;
-    const onTo = holdings.filter(h => h.chain === leg.toChain && !h.native && h.symbol === leg.symbol);
-    let to = onTo.find(h => lower(h.address) === lower(leg.to)) ?? onTo[0];
-    if (!to) {
-      to = {
-        chain: leg.toChain,
-        address: leg.to,
-        symbol: leg.symbol,
-        tokenId: from?.tokenId ?? leg.symbol,
-        amount: 0,
-        usd: 0,
-        native: false,
-      };
-      holdings.push(to);
-    }
-    to.amount += amountOut;
-  }
-
-  // Same pricing rule as the ledger: stables at 1.0, natives at spot.
-  for (const h of holdings) h.usd = h.native ? h.amount * (snapshot.prices[h.symbol] ?? 0) : h.amount;
-
-  return {
-    ...snapshot,
-    holdings,
-    chainStatus: { ...snapshot.chainStatus },
-    prices: { ...snapshot.prices },
-    gas: { ...snapshot.gas },
-  };
 }
 
 // Rule 3. A policy change is the one draft that can never be auto-executed.
@@ -568,118 +429,13 @@ export function evaluate(draft: WriteDraft, ctx: EngineCtx): Verdict {
   // 3. Policy changes.
   if (draft.kind === 'policy_change') return evaluatePolicyChange(draft, policy, reasons);
 
-  // 3b. Rails: swap, hyperliquid deposit, LP add/remove.
+  // 3b. Rails: a swap, the Hyperliquid moves, the intents moves, a trade.
   if (isRailDraft(draft)) return evaluateRail(draft, policy, ctx, reasons);
 
-  // ---- fund moves ----
-  const legs = legsOf(draft);
-  reasons.push(`${legs.length} leg(s) of ${symbolOf(draft)}.`);
-
-  // 4. Nothing to move, no unreadable numbers, and nothing at all without a simulation.
-  if (legs.length === 0) {
-    return refusal(reasons, 'nothing_to_move', 'Draft has no legs: there is nothing to execute.');
-  }
-  const badLeg = legs.find(l => !legNumbersAreSane(l));
-  if (badLeg) {
-    return refusal(
-      reasons,
-      'invalid_leg',
-      `Leg ${badLeg.fromChain} -> ${badLeg.toChain} asks to move ${badLeg.amount} ${badLeg.symbol}, which is not an amount that can be checked against a limit.`,
-    );
-  }
-  const unquoted = legs.filter(l => l.quote === null);
-  if (unquoted.length > 0) {
-    return refusal(
-      reasons,
-      'simulation_required',
-      `${unquoted.length} of ${legs.length} leg(s) have no quote: every leg must be simulated before it can be signed.`,
-    );
-  }
-
-  const declaredTotal = draft.kind === 'consolidate' ? draft.totalUsd : draft.leg.amountUsd;
-  const legTotal = legs.reduce((sum, l) => sum + legUsd(l), 0);
-  const totalUsd = Math.max(Number.isFinite(declaredTotal) ? declaredTotal : 0, legTotal);
-  reasons.push(`Moving ${money(totalUsd)} in total.`);
-
-  // 5. Destination. Self addresses are implicitly allowed, everything else must be listed.
-  const allowedDestinations = addressSet(ctx.selfAddresses, [
-    ...ctx.ledger.holdings.map((h) => h.address),
-    ...policy.outbound.destinationAllowlist,
-  ]);
-  const badDestination = legs.find(l => !isOurs(allowedDestinations, l.to));
-  if (badDestination) {
-    return refusal(
-      reasons,
-      'destination_not_allowed',
-      `Destination ${badDestination.to} is neither one of our own addresses nor on the allowlist.`,
-    );
-  }
-
-  // 6. Per-transaction cap, measured per leg.
-  const overCap = legs.find(l => legUsd(l) > policy.outbound.maxPerTransactionUsd);
-  if (overCap) {
-    return refusal(
-      reasons,
-      'max_per_transaction',
-      `Leg of ${money(legUsd(overCap))} is above the ${money(policy.outbound.maxPerTransactionUsd)} per-transaction limit.`,
-    );
-  }
-
-  // 7. Rolling session cap.
-  if (ctx.sessionSpentUsd + totalUsd > policy.outbound.maxPerSessionUsd) {
-    return refusal(
-      reasons,
-      'max_per_session',
-      `${money(ctx.sessionSpentUsd)} already moved this session plus ${money(totalUsd)} is above the ${money(policy.outbound.maxPerSessionUsd)} session limit.`,
-    );
-  }
-
-  // 8. Forbidden issuer for the symbol being moved.
-  const issuer = issuerOf(symbolOf(draft), ctx.composition);
-  const forbidden = policy.composition.forbiddenIssuers.find(f => lower(f) === lower(issuer));
-  if (forbidden !== undefined) {
-    return refusal(reasons, 'forbidden_issuer', `${symbolOf(draft)} is issued by ${issuer}, which the policy forbids.`);
-  }
-
-  // 9. Post-state composition. The engine judges the resulting state, not the delta: a
-  // portfolio already past a cap cannot make further fund moves until a human changes the
-  // policy or the caps stop being breached.
-  const post = applyLegs(ctx.ledger, legs, ctx.selfAddresses);
-  const postComp = classify(post, riskRowsFromComposition(ctx.composition));
-
-  for (const [postIssuer, share] of Object.entries(postComp.byIssuer)) {
-    const cap = issuerCap(postIssuer, policy.composition.maxIssuerShare);
-    if (share > cap) {
-      return refusal(
-        reasons,
-        'max_issuer_share',
-        `After this move ${postIssuer} would hold ${pct(share)} of the portfolio, above its ${pct(cap)} cap.`,
-      );
-    }
-  }
-
-  if (postComp.freezableShare > policy.composition.maxFreezableShare) {
-    return refusal(
-      reasons,
-      'max_freezable_share',
-      `After this move ${pct(postComp.freezableShare)} of the portfolio would be freezable, above the ${pct(policy.composition.maxFreezableShare)} cap.`,
-    );
-  }
-
-  reasons.push(`Post-move composition stays inside every cap.`);
-
-  // 10 and 11.
-  if (totalUsd > policy.outbound.humanClickAboveUsd) {
-    reasons.push(`${money(totalUsd)} is above the ${money(policy.outbound.humanClickAboveUsd)} click threshold, so a human has to approve it.`);
-    return { outcome: 'needs_approval', reasons };
-  }
-  const ceiling = autoApproveCeilingReason(policy, ctx, totalUsd);
-  if (ceiling !== null) {
-    reasons.push(ceiling);
-    return { outcome: 'needs_approval', reasons };
-  }
-  reasons.push(`${money(totalUsd)} is at or below the ${money(policy.outbound.humanClickAboveUsd)} click threshold.`);
-  return { outcome: 'allow', reasons };
+  // Nothing else moves money. A kind this engine does not know (a row from an older build, or
+  // a draft no rail answers for) is refused rather than guessed at.
+  const kind = (draft as { kind: string }).kind;
+  return refusal(reasons, 'unknown_kind', `${kind} is not a kind this app moves money for.`);
 }
 
 /* The auto-approved daily ceiling, checked only for a move that would otherwise be allowed (a

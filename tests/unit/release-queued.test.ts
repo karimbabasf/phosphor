@@ -22,7 +22,6 @@ import { createAudit } from '../../src/audit.ts';
 import { createStore } from '../../src/store.ts';
 import { defaultPolicy, savePolicy } from '../../src/policy/file.ts';
 import { renderSentences } from '../../src/policy/render.ts';
-import { syntheticQuoter, stubSigner } from '../../src/intents.ts';
 import { NO_RAILS, releaseQueued } from '../../src/proposals/lifecycle.ts';
 import type { PCtx } from '../../src/proposals/lifecycle.ts';
 
@@ -42,10 +41,20 @@ function snapshot(): LedgerSnapshot {
 function queued(usd: number, createdAt: string): Proposal {
   return {
     id: crypto.randomUUID(),
-    kind: 'consolidate',
+    kind: 'hl_deposit',
     createdAt,
     status: 'pending_unlock',
-    draft: { kind: 'consolidate', toChain: 'eth', symbol: 'USDT', totalUsd: usd, legs: [] },
+    draft: {
+      kind: 'hl_deposit',
+      symbol: 'USDC',
+      originAsset: 'nep141:eth-usdc.omft.near',
+      amount: usd,
+      amountUsd: usd,
+      minCredited: usd * 0.99,
+      from: '0x1111111111111111111111111111111111111111',
+      hlAccount: '0x1111111111111111111111111111111111111111',
+      counterparty: 'hyperliquid-perps',
+    },
     simulation: null,
     verdict: { outcome: 'allow', reasons: ['queued while the wallet was locked'] },
   } as Proposal;
@@ -70,7 +79,6 @@ function setup() {
       mode: 'demo',
       port: 4177,
       addresses: { evm: [], solana: [], near: [] },
-      economicTransferUsd: 10,
       candleProducts: [],
       dataDir,
       keysPath: path.join(dataDir, 'keys.json'),
@@ -81,11 +89,8 @@ function setup() {
       snapshot,
       intents: () => undefined,
       refresh: async () => snapshot(),
-      applyDemoTransfer: () => {},
     },
     riskRows: [] as RiskRow[],
-    quoter: syntheticQuoter(),
-    signer: stubSigner(),
     dataDir,
     rails: NO_RAILS,
     stables: new Set<string>(),

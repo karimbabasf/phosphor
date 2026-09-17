@@ -83,7 +83,6 @@ custom SMA, EMA, RSI or ATR equals the built-in to the last digit.
 | `propose_swap` | Swaps one token for another. Venue `oneclick` across chains from the wallet, or `intents-native` inside `intents.near` over an already-deposited balance. Omitting the venue means `oneclick` |
 | `propose_intents_deposit` | Moves funds from this wallet into NEAR Intents, where they become a balance `intents.near` holds under this app's own account. Funds the `intents-native` swap venue. Deposits the chain's gas asset (native ETH) unless a symbol is given |
 | `propose_intents_withdraw` | Brings a balance back out of `intents.near` into one of this app's own wallets on `eth`, `base` or `arb`. The way out of the `intents-native` venue. Withdraws the chain's gas asset unless a symbol is given. Which wallet is ours comes from `config.local.json`, never from the call |
-| `propose_consolidate` | Gathers a token's scattered balances onto one chain. Unproven: this path has never run on a live chain, and the tool description says so, so a clean simulation is not evidence it works |
 | `propose_policy_change` | Proposes a patch to the policy rules. Always waits for a human click |
 | `propose_trade` | Arms a plan on Hyperliquid perpetuals, whole or by the id of one drawn with `trade_plan`. Priced at the collateral it puts at stake: the click threshold is the only wall |
 | `propose_trade_change` | Changes an armed plan: a new stop or target, cancel, or close. A change that only takes risk off lands without the wall; one that widens is priced like a new plan |

@@ -54,7 +54,6 @@ async function boot() {
     mode: 'demo',
     port: 0,
     addresses: { evm: [], solana: [], near: [] },
-    economicTransferUsd: 10,
     candleProducts: ['BTC-USD'],
     dataDir,
     keysPath,
@@ -74,13 +73,11 @@ async function boot() {
       intents: () => undefined,
       hyperliquid: () => undefined,
       refresh: async () => snapshot(),
-      applyDemoTransfer: () => {},
     },
     market: createMarketData({
       fetchImpl: (async () => ({ ok: true, json: async () => [], text: async () => '', headers: new Headers() })) as unknown as typeof fetch,
     }),
     proposals: {
-      proposeConsolidate: async () => { throw new Error('unused'); },
       proposePolicyChange: async () => { throw new Error('unused'); },
       proposeSwap: async () => { throw new Error('unused'); },
       proposeHlDeposit: async () => { throw new Error('unused'); },

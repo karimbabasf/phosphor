@@ -26,7 +26,6 @@ import { createStore } from '../../src/store.ts';
 import { loadDemoLedger } from '../../src/ledger/demo.ts';
 import { defaultPolicy, savePolicy } from '../../src/policy/file.ts';
 import { renderSentences } from '../../src/policy/render.ts';
-import { syntheticQuoter, stubSigner } from '../../src/intents.ts';
 import { createProposalService } from '../../src/proposals.ts';
 import { venueAllowlist } from '../../src/rails/index.ts';
 
@@ -96,9 +95,6 @@ function fakeLedger(): Ledger & { setUsdt(amountBase: string | null): void; refr
       for (const fn of listeners) fn();
       return snapshot;
     },
-    applyDemoTransfer: () => {
-      throw new Error('live mode');
-    },
     onRefresh: (fn: () => void) => {
       listeners.add(fn);
       return () => {
@@ -129,7 +125,6 @@ function setup(result: RailResult | ((ledger: ReturnType<typeof fakeLedger>) => 
     mode: 'live',
     port: 4177,
     addresses: { evm: [SELF_EVM], solana: [], near: [] },
-    economicTransferUsd: 10,
     candleProducts: [],
     dataDir,
     keysPath: path.join(dataDir, 'keys.json'),
@@ -140,7 +135,7 @@ function setup(result: RailResult | ((ledger: ReturnType<typeof fakeLedger>) => 
   for (const p of seed) store.put(p);
   const ledger = fakeLedger();
   const rails = spyRail(typeof result === 'function' ? () => result(ledger) : result);
-  const svc = createProposalService({ cfg, audit, store, ledger, riskRows, quoter: syntheticQuoter(), signer: stubSigner(), rails: rails.registry, dataDir });
+  const svc = createProposalService({ cfg, audit, store, ledger, riskRows, rails: rails.registry, dataDir });
   return { svc, store, ledger, rails, audit, lines: () => audit.tail(50).reverse() };
 }
 

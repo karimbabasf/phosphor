@@ -27,11 +27,9 @@ import { createStore } from '../../src/store.ts';
 import { createLedger } from '../../src/ledger/index.ts';
 import { defaultPolicy, savePolicy } from '../../src/policy/file.ts';
 import { renderSentences } from '../../src/policy/render.ts';
-import { syntheticQuoter, stubSigner } from '../../src/intents.ts';
 import { createProposalService } from '../../src/proposals.ts';
-import { loadDemoLedger } from '../../src/ledger/demo.ts';
-import type { Ledger } from '../../src/ledger/index.ts';
-import type { AppConfig, LedgerSnapshot, Policy, Proposal, ProposalService, ProposalStatus, RiskRow } from '../../src/types.ts';
+import type { AppConfig, Policy, Proposal, ProposalService, ProposalStatus, RiskRow } from '../../src/types.ts';
+import { makeCtx, railThat, seededPolicy } from './helpers/proposals.ts';
 
 const RISK_ROWS: RiskRow[] = [{ symbol: 'USDC', issuer: 'Circle', freezable: true, tier: 'A' } as unknown as RiskRow];
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -52,7 +50,6 @@ function serviceOn(dir: string, policy?: Policy): ProposalService {
     port: 0,
     keysPath: path.join(dir, 'keys.json'),
     addresses: { evm: ['0x1111111111111111111111111111111111111111'], solana: [], near: [] },
-    economicTransferUsd: 5,
     candleProducts: ['BTC-USD'],
   } as unknown as AppConfig;
   return createProposalService({
@@ -61,31 +58,12 @@ function serviceOn(dir: string, policy?: Policy): ProposalService {
     store: createStore(dir),
     ledger: createLedger(cfg),
     riskRows: RISK_ROWS,
-    quoter: syntheticQuoter(),
-    signer: stubSigner(),
     dataDir: dir,
   });
 }
 
-/* A live-mode ledger over the demo fixture, so the signer path runs with no RPC. Same shape as
-   the one in proposals.test.ts and for the same reason. */
-function liveLedgerOn(_dir: string): Ledger {
-  const snap: LedgerSnapshot = { ...loadDemoLedger(), mode: 'live' };
-  return {
-    snapshot: () => snap,
-    intents: () => undefined,
-    hyperliquid: () => undefined,
-    refresh: async () => snap,
-    applyDemoTransfer: () => {
-      throw new Error('applyDemoTransfer must never be called in live mode');
-    },
-  };
-}
-
 function permissivePolicy(): Policy {
-  const p = defaultPolicy();
-  p.sentences = renderSentences(p);
-  return p;
+  return seededPolicy();
 }
 
 // Written straight to the store, so the fixture states the row rather than the route that made it.
@@ -214,7 +192,7 @@ test('the cap comes from the caller, so the screen and the policy cannot drift',
 // fixture that drifts from that contract tests the fixture.
 
 function capPolicy(dir: string, clickAboveUsd: number, sessionUsd: number): Policy {
-  const policy = defaultPolicy();
+  const policy = seededPolicy();
   policy.outbound.maxPerTransactionUsd = 10_000;
   policy.outbound.maxPerSessionUsd = sessionUsd;
   policy.outbound.humanClickAboveUsd = clickAboveUsd;
@@ -224,17 +202,19 @@ function capPolicy(dir: string, clickAboveUsd: number, sessionUsd: number): Poli
 }
 
 test('a released queue is decided one at a time against one cap, not all against zero', async () => {
-  const dir = tmpDir();
+  // Three Hyperliquid deposits over a rail that credits at once, and a verifier balance that
+  // covers all three, so the cap is the only thing that can stop one.
+  const h = makeCtx({ rails: [railThat('hl_deposit', async () => ({ ok: true, detail: 'credited', txids: ['h1'] }))], intentsUsdc: 20_000 });
+  const { svc, dataDir: dir } = h;
   // Nothing may execute on its own while these are being made, so each lands pending.
   capPolicy(dir, 0, 100_000);
-  const svc = serviceOn(dir, defaultPolicy());
 
   const made = [
-    await svc.proposeConsolidate({ toChain: 'arb', symbol: 'USDC', maxTotalUsd: 4_000 }),
-    await svc.proposeConsolidate({ toChain: 'base', symbol: 'USDC', maxTotalUsd: 4_000 }),
-    await svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDC', maxTotalUsd: 4_000 }),
+    await svc.proposeHlDeposit({ amount: 4_000 }),
+    await svc.proposeHlDeposit({ amount: 4_000 }),
+    await svc.proposeHlDeposit({ amount: 4_000 }),
   ];
-  assert.deepEqual(made.map(p => p.status), ['pending', 'pending', 'pending']);
+  assert.deepEqual(made.map(p => p.status), ['pending', 'pending', 'pending'], made.map(p => JSON.stringify(p.verdict)).join('\n'));
 
   // What custody writes when the wallet is locked while an agent proposes.
   const store = createStore(dir);
@@ -275,49 +255,21 @@ test('a released queue is decided one at a time against one cap, not all against
 
 // ---------- a send that half worked ----------
 //
-// Three legs totalling $3,000 and a gas shortfall on the third: the first two broadcast, their
-// hashes were recorded, and the row was written `failed`. `failed` charges nothing, so $2,000
-// left the wallet against a budget that recorded $0, and the agent's retry was evaluated against
-// a cap that had forgotten it. The honest state for that row is needs_reconciliation, which the
-// human can re-check against the chain, and it counts.
+// A rail that answers ok:false with a hash on it: the intent was signed and submitted and the
+// venue did not confirm it inside the window. Written `failed` that charged nothing, so the money
+// that had most likely left was evaluated against a budget that recorded $0, and the agent's
+// retry signed a second copy. The honest state for that row is needs_reconciliation, which the
+// human can re-check against the venue, and it counts.
 
 test('a send that partly succeeded lands as an unknown outcome rather than a failure', async () => {
-  const dir = tmpDir();
-  let sent = 0;
-  const svc = createProposalService({
-    cfg: {
-      mode: 'live',
-      dataDir: dir,
-      port: 0,
-      keysPath: path.join(dir, 'keys.json'),
-      addresses: { evm: ['0x1111111111111111111111111111111111111111'], solana: [], near: [] },
-      economicTransferUsd: 5,
-      candleProducts: ['BTC-USD'],
-    } as unknown as AppConfig,
-    audit: createAudit(dir),
-    store: createStore(dir),
-    ledger: liveLedgerOn(dir),
-    riskRows: RISK_ROWS,
-    quoter: syntheticQuoter(),
-    // The first leg broadcasts, the second one does not.
-    signer: {
-      ready: true,
-      describe: () => 'one leg then a gas shortfall',
-      async send() {
-        sent += 1;
-        return sent === 1 ? { ok: true, txid: '0xleg1' } : { ok: false, error: 'not enough gas on that chain' };
-      },
-    },
-    dataDir: dir,
-  });
-  savePolicy(dir, permissivePolicy());
+  const rail = railThat('hl_deposit', async () => ({ ok: false, detail: 'submitted, not yet credited', txids: ['0xleg1'] }));
+  const { svc } = makeCtx({ rails: [rail], policy: permissivePolicy() });
 
-  const p = await svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDC' });
-  assert.ok(p.draft.kind === 'consolidate' && p.draft.legs.length > 1, 'this needs more than one leg to mean anything');
+  const p = await svc.proposeHlDeposit({ amount: 40 });
   const decided = p.status === 'pending' ? await svc.approve(p.id) : p;
   const done = await svc.settled(decided.id, 5000);
 
-  assert.equal(done.status, 'needs_reconciliation', 'money left on one leg, so this is not a failure');
+  assert.equal(done.status, 'needs_reconciliation', 'a hash is evidence money left, so this is not a failure');
   assert.deepEqual(done.result?.txids, ['0xleg1']);
   assert.ok(svc.sessionSpentUsd() > 0, 'and the dollars that left are charged against the day');
   assert.equal(svc.dailyLimit(25_000).spentUsd, svc.sessionSpentUsd(), 'screen and engine agree, as always');

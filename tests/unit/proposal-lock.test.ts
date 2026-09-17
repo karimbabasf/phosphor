@@ -1,8 +1,8 @@
 // The one-at-a-time queue, and where it now ends.
 //
 // It has to exist. "Read the spend, decide, reserve" is only a budget if it is indivisible: five
-// concurrent $10,000 consolidations moved $50,000 against a $25,000 cap before this chain, each
-// one reading a spend of zero.
+// concurrent $10,000 moves went through against a $25,000 cap before this chain, each one
+// reading a spend of zero.
 //
 // It used to cover the whole job, and a job ends in a rail. A rail sitting in watchStatus held
 // the chain for up to five minutes, and for those five minutes nobody could approve, refuse or
@@ -24,7 +24,6 @@ import { createStore } from '../../src/store.ts';
 import { createLedger } from '../../src/ledger/index.ts';
 import { defaultPolicy, savePolicy } from '../../src/policy/file.ts';
 import { renderSentences } from '../../src/policy/render.ts';
-import { syntheticQuoter, stubSigner } from '../../src/intents.ts';
 import { createProposalService } from '../../src/proposals.ts';
 import { venueAllowlist } from '../../src/rails/index.ts';
 import { createSerialiser } from '../../src/proposals/lifecycle.ts';
@@ -139,7 +138,6 @@ function setup(rail: Rail | null, clickAboveUsd = 1_000_000): { svc: ProposalSer
     port: 0,
     keysPath: path.join(dir, 'keys.json'),
     addresses: { evm: ['0x1111111111111111111111111111111111111111'], solana: [], near: [] },
-    economicTransferUsd: 5,
     candleProducts: ['BTC-USD'],
   } as unknown as AppConfig;
 
@@ -149,8 +147,6 @@ function setup(rail: Rail | null, clickAboveUsd = 1_000_000): { svc: ProposalSer
     store: createStore(dir),
     ledger: createLedger({ ...cfg, mode: 'demo' } as AppConfig),
     riskRows: RISK_ROWS,
-    quoter: syntheticQuoter(),
-    signer: stubSigner(),
     dataDir: dir,
     rails: {
       for: (draft: WriteDraft) => (rail !== null && draft.kind === rail.kind ? rail : null),
@@ -176,11 +172,12 @@ test('a rail whose status poll hangs does not hold a refuse on another proposal'
     },
   } as unknown as Rail;
 
-  // $50: the $1 deposit executes and reaches the hung rail, the $100 consolidate waits.
+  // $50: the $1 deposit executes and reaches the hung rail; the rule change always waits.
   const { svc } = setup(rail, 50);
 
   // One proposal that will sit pending, so there is something to refuse.
-  const pending = await svc.proposeConsolidate({ toChain: 'arb', symbol: 'USDC', maxTotalUsd: 100 });
+  const pending = await svc.proposePolicyChange({ patch: { outbound: { humanClickAboveUsd: 60 } }, sentence: 'ask me above sixty' });
+  assert.equal(pending.status, 'pending');
 
   // And one that goes straight into the hung rail. Not awaited: it never finishes.
   const stuck = svc.proposeIntentsDeposit({ chain: 'arb', symbol: 'USDC', amount: 1 });
@@ -217,7 +214,7 @@ test('a rail whose status poll hangs does not hold the next propose either', asy
   await new Promise((r) => setTimeout(r, 100));
 
   const started = Date.now();
-  await svc.proposeConsolidate({ toChain: 'arb', symbol: 'USDC', maxTotalUsd: 100 });
+  await svc.proposePolicyChange({ patch: { outbound: { humanClickAboveUsd: 60 } }, sentence: 'ask me above sixty' });
   const elapsed = Date.now() - started;
   assert.ok(elapsed < 1_000, `propose took ${elapsed}ms behind a hung rail`);
 

@@ -1,5 +1,5 @@
-// Task D proposal service: plan, simulate, evaluate, persist, execute. No network (synthetic
-// quoter), no keys (stub signer), every case against a throwaway dataDir.
+// The proposal service: price, evaluate, simulate, persist, execute. A scripted rail stands in
+// for the venue, no network, no keys, every case against a throwaway dataDir.
 //
 // The property under test throughout: a proposal reaches execution only via verdict `allow`
 // (auto-execute below the click threshold) or a recorded human approval. There is no third way
@@ -7,105 +7,36 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-import type { AppConfig, LedgerSnapshot, Policy, PolicyPatch, Proposal, Quoter, RiskRow, Signer } from '../../src/types.ts';
+import type { LedgerSnapshot, Policy, PolicyPatch, Proposal, RailResult } from '../../src/types.ts';
 import type { Ledger } from '../../src/ledger/index.ts';
-import { createAudit } from '../../src/audit.ts';
 import { createStore } from '../../src/store.ts';
-import { createLedger } from '../../src/ledger/index.ts';
-import { loadDemoLedger } from '../../src/ledger/demo.ts';
-import { defaultPolicy, loadPolicy, savePolicy } from '../../src/policy/file.ts';
+import { loadPolicy, savePolicy } from '../../src/policy/file.ts';
 import { renderSentences } from '../../src/policy/render.ts';
-import { syntheticQuoter, stubSigner } from '../../src/intents.ts';
-import { createProposalService } from '../../src/proposals.ts';
-import { landed } from './helpers/proposals.ts';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const riskRows = JSON.parse(
-  readFile(path.join(__dirname, '..', '..', 'data', 'risk-table.json')),
-).rows as RiskRow[];
-
-function readFile(p: string): string {
-  return fs.readFileSync(p, 'utf8');
-}
+import { ETH_USDC_FLAVOR, SELF_EVM, landed, makeCtx, railThat, seededPolicy, slowRail } from './helpers/proposals.ts';
+import type { HarnessOptions } from './helpers/proposals.ts';
 
 function happyPolicy(): Policy {
-  const p = defaultPolicy();
-  p.sentences = renderSentences(p);
-  return p;
+  return seededPolicy();
 }
 
-type Harness = {
-  dataDir: string;
-  cfg: AppConfig;
-  audit: ReturnType<typeof createAudit>;
-  store: ReturnType<typeof createStore>;
-  ledger: Ledger;
-  svc: ReturnType<typeof createProposalService>;
-  eventTypes(): string[];
-  usdtOn(chain: string): number;
-};
-
-function setup(over: { mode?: AppConfig['mode']; policy?: Policy | 'none'; quoter?: Quoter; signer?: Signer; ledger?: Ledger } = {}): Harness {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'acc-proposals-'));
-  const cfg: AppConfig = {
-    mode: over.mode ?? 'demo',
-    keysPath: '/tmp/phosphor-test-keys.json',
-    port: 4177,
-    addresses: { evm: [], solana: [], near: [] },
-    economicTransferUsd: 10,
-    candleProducts: [],
-    dataDir,
-  };
-  const audit = createAudit(dataDir);
-  const store = createStore(dataDir);
-  const ledger = over.ledger ?? createLedger(cfg);
-  if (over.policy !== 'none') savePolicy(dataDir, over.policy ?? happyPolicy());
-
-  const svc = createProposalService({
-    cfg,
-    audit,
-    store,
-    ledger,
-    riskRows,
-    quoter: over.quoter ?? syntheticQuoter(),
-    signer: over.signer ?? stubSigner(),
-    dataDir,
+// A deposit rail that credits at once and counts how often it ran, so a test can say whether
+// money moved rather than guess from a status.
+function creditingRail(): { rail: ReturnType<typeof railThat>; runs: () => number } {
+  let runs = 0;
+  const rail = railThat('hl_deposit', async (): Promise<RailResult> => {
+    runs += 1;
+    return { ok: true, detail: 'credited', txids: ['0xtest'] };
   });
-
-  return {
-    dataDir,
-    cfg,
-    audit,
-    store,
-    ledger,
-    svc,
-    eventTypes: () => audit.tail(200).map(e => e.type).reverse(), // oldest first
-    usdtOn: (chain: string) =>
-      ledger.snapshot().holdings.filter(h => h.chain === chain && h.symbol === 'USDT' && !h.native).reduce((s, h) => s + h.amount, 0),
-  };
+  return { rail, runs: () => runs };
 }
 
-function amountOutTotal(p: Proposal): number {
-  if (p.draft.kind !== 'consolidate') return 0;
-  return p.draft.legs.reduce((sum, l) => sum + (l.quote?.amountOut ?? 0), 0);
-}
-
-// A live-mode ledger over the same fixture, so the signer path can be exercised without RPCs.
-function fakeLiveLedger(): Ledger {
-  const snap: LedgerSnapshot = { ...loadDemoLedger(), mode: 'live' };
-  return {
-    snapshot: () => snap,
-    intents: () => undefined,
-    hyperliquid: () => undefined,
-    refresh: async () => snap,
-    applyDemoTransfer: () => {
-      throw new Error('applyDemoTransfer must never be called in live mode');
-    },
-  };
+// The service over that rail, with enough in the verifier for a large move.
+function setup(over: HarnessOptions = {}) {
+  const credit = creditingRail();
+  const h = makeCtx({ rails: [credit.rail], intentsUsdc: 100_000, ...over });
+  return { ...h, runs: credit.runs };
 }
 
 // ---------- pricing a non-stable, found by executing a real swap ----------
@@ -115,14 +46,14 @@ function fakeLiveLedger(): Ledger {
 // (~$18,800) would have passed a $10,000 per-transaction cap. Caught live on 2026-08-12.
 
 test('a non-stable is priced at spot, not at the ledger stablecoin assumption', async () => {
-  const h = setup({ mode: 'live', ledger: fakeLiveLedger() });
+  const h = setup();
   const snap = h.ledger.snapshot();
   // The reader's assumption, reproduced: a WETH holding whose usd equals its amount.
   snap.holdings.push({ chain: 'arb', address: '0x1', symbol: 'WETH', tokenId: '0xweth', amount: 2, usd: 2, native: false });
   snap.prices.ETH = 1880;
 
   const p = await h.svc.proposeSwap({
-    venue: 'oneclick', chain: 'arb', fromSymbol: 'WETH', toSymbol: 'USDC',
+    venue: 'intents-native', chain: 'arb', fromSymbol: 'WETH', toSymbol: 'USDC',
     amountIn: 0.01, minAmountOut: 1,
   });
 
@@ -132,12 +63,12 @@ test('a non-stable is priced at spot, not at the ledger stablecoin assumption', 
 });
 
 test('a token the app cannot price is refused rather than guessed at 1.0', async () => {
-  const h = setup({ mode: 'live', ledger: fakeLiveLedger() });
+  const h = setup();
   const snap = h.ledger.snapshot();
   snap.holdings.push({ chain: 'arb', address: '0x1', symbol: 'MYSTERY', tokenId: '0xm', amount: 5, usd: 5, native: false });
 
   const p = await h.svc.proposeSwap({
-    venue: 'oneclick', chain: 'arb', fromSymbol: 'MYSTERY', toSymbol: 'USDC',
+    venue: 'intents-native', chain: 'arb', fromSymbol: 'MYSTERY', toSymbol: 'USDC',
     amountIn: 1000, minAmountOut: 1,
   });
 
@@ -145,95 +76,6 @@ test('a token the app cannot price is refused rather than guessed at 1.0', async
   // comparison against a cap false and sail through all of them.
   assert.equal(p.verdict.outcome, 'refuse');
   assert.equal(p.verdict.outcome === 'refuse' ? p.verdict.rule : '', 'invalid_amount');
-});
-
-// ---------- the venue-chosen deposit address (security audit F2) ----------
-// 1Click takes delivery at an address IT mints and pays out to leg.to itself. The engine's
-// destination rule checks leg.to, so the address actually signed for was governed by nothing
-// and never shown to the human. These cover both halves: it is now visible at approval time,
-// and execution refuses if it changes between approval and signing.
-
-const SOLVER_DEPOSIT = '0xdeadbeef00000000000000000000000000000001';
-
-// A quoter whose response carries a solver-chosen deposit address, the way 1Click's does.
-function depositQuoter(address = SOLVER_DEPOSIT): Quoter {
-  return {
-    name: 'fake-1click',
-    async quoteLeg(leg) {
-      return {
-        amountOut: leg.amount * 0.999,
-        feeUsd: leg.amount * 0.001,
-        timeEstimateSec: 8,
-        raw: { quote: { depositAddress: address } },
-      };
-    },
-  };
-}
-
-// Records where it was told to send, so a test can assert on the real destination rather
-// than on a claim about it.
-function recordingSigner(): Signer & { sentTo: string[] } {
-  const sentTo: string[] = [];
-  return {
-    sentTo,
-    ready: true,
-    describe: () => 'recording test signer',
-    async send(_leg, depositAddress) {
-      sentTo.push(depositAddress);
-      return { ok: true, txid: '0xtest' };
-    },
-  };
-}
-
-test('a solver-chosen deposit address is recorded and shown at approval time', async () => {
-  const h = setup({ mode: 'live', quoter: depositQuoter(), ledger: fakeLiveLedger() });
-  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
-
-  assert.ok(p.simulation?.depositAddresses, 'the addresses must be recorded on the proposal');
-  assert.ok(p.simulation.depositAddresses.every(d => d.address === SOLVER_DEPOSIT));
-  // Recorded is not enough: the gate renders the summary, so it has to be visible there.
-  assert.match(p.simulation.summary, /funds go to 0xdeadbeef00000000000000000000000000000001/);
-  assert.match(p.simulation.summary, /chosen by fake-1click, not by us/);
-});
-
-test('execution refuses when the deposit address changed after approval', async () => {
-  const signer = recordingSigner();
-  const h = setup({ mode: 'live', quoter: depositQuoter(), signer, ledger: fakeLiveLedger() });
-  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
-
-  // Proposals persist to disk as JSON between approval and execution. Simulate anything that
-  // rewrites the stored quote: a tampered file, a refetch, a compromised solver reply.
-  const stored = h.store.get(p.id) as Proposal;
-  assert.ok(stored.draft.kind === 'consolidate');
-  for (const leg of stored.draft.legs) {
-    (leg.quote as { raw?: unknown }).raw = { quote: { depositAddress: '0xattacker000000000000000000000000000000ff' } };
-  }
-  h.store.put(stored);
-
-  const executed = await landed(h, h.svc.approve(p.id));
-
-  assert.equal(executed.status, 'failed');
-  assert.match(executed.result?.detail ?? '', /different address than the one approved/);
-  assert.deepEqual(signer.sentTo, [], 'nothing may be signed once the destination moved');
-});
-
-test('an unchanged deposit address still executes, so the check is not just a blocker', async () => {
-  const signer = recordingSigner();
-  const h = setup({ mode: 'live', quoter: depositQuoter(), signer, ledger: fakeLiveLedger() });
-  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
-
-  const executed = await landed(h, h.svc.approve(p.id));
-
-  assert.equal(executed.status, 'executed');
-  assert.ok(signer.sentTo.length > 0);
-  assert.ok(signer.sentTo.every(a => a === SOLVER_DEPOSIT), 'and it went where the human approved');
-});
-
-test('a quote with no deposit address records nothing and is governed by the allowlist alone', async () => {
-  const h = setup({ mode: 'live', ledger: fakeLiveLedger() }); // syntheticQuoter, no raw payload
-  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
-
-  assert.equal(p.simulation?.depositAddresses, undefined);
 });
 
 // ---------- the approval gate, which has no exemption ----------
@@ -244,17 +86,18 @@ test('a quote with no deposit address records nothing and is governed by the all
 
 test('a proposal above the click threshold parks as pending and nothing decides it', async () => {
   const h = setup();
-  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
+  const p = await h.svc.proposeHlDeposit({ amount: 200 });
 
-  assert.equal(p.verdict.outcome, 'needs_approval');
+  assert.equal(p.verdict.outcome, 'needs_approval', JSON.stringify(p.verdict));
   assert.equal(p.status, 'pending');
   assert.equal(p.decidedBy, undefined);
   assert.equal(p.decidedAt, undefined);
+  assert.equal(h.runs(), 0, 'a pending proposal moves nothing');
 });
 
 test('no path writes the retired gate_disabled decision', async () => {
   const h = setup();
-  await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
+  await h.svc.proposeHlDeposit({ amount: 200 });
   await h.svc.proposePolicyChange({
     patch: { outbound: { maxPerTransactionUsd: 999999 } },
     sentence: 'Refuse any single transaction above $999,999.',
@@ -302,104 +145,56 @@ test('the gate being off does not turn a refusal into an approval', async () => 
   const policy = happyPolicy();
   policy.killSwitch = true;
   const h = setup({ policy });
-  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
+  const p = await h.svc.proposeHlDeposit({ amount: 200 });
 
   assert.equal(p.status, 'policy_refused');
   assert.equal(p.decidedBy, 'policy');
+  assert.equal(h.runs(), 0);
 });
 
-// ---------- planning and the approval gate ----------
-
-test('proposeConsolidate plans one leg per non-dust chain and parks it pending', async () => {
-  const h = setup();
-  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
-
-  assert.equal(p.status, 'pending');
-  assert.equal(p.verdict.outcome, 'needs_approval');
-  assert.equal(p.kind, 'consolidate');
-  assert.ok(p.draft.kind === 'consolidate');
-  assert.deepEqual(p.draft.legs.map(l => l.fromChain).sort(), ['arb', 'near', 'sol']);
-  assert.ok(p.draft.legs.every(l => l.toChain === 'eth' && l.quote !== null));
-  assert.ok(Math.abs(p.draft.totalUsd - (6100 + 3500 + 950)) < 0.01);
-
-  assert.ok(p.simulation);
-  assert.equal(p.simulation.ok, true);
-  assert.ok(p.simulation.summary.includes('arb -> eth'));
-  assert.ok(p.simulation.summary.includes('USDT'));
-  assert.ok(p.simulation.postComposition, 'a fund move simulation carries the post-move composition');
-
-  assert.ok(h.eventTypes().includes('proposal_created'));
-  assert.equal(h.usdtOn('eth'), 9200, 'a pending proposal moves nothing');
-  assert.equal(h.usdtOn('arb'), 6100);
-});
+// ---------- the approval gate and the rail ----------
 
 test('a pending proposal executes only after a human approves it', async () => {
   const h = setup();
-  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
-  const expected = 9200 + amountOutTotal(p);
+  const p = await h.svc.proposeHlDeposit({ amount: 200 });
+  assert.equal(p.status, 'pending');
+  assert.equal(h.runs(), 0, 'nothing ran while it waited');
 
-  // The click answers with the executing row; the demo legs land behind it.
+  // The click answers with the executing row; the rail lands behind it.
   const approved = await landed(h, h.svc.approve(p.id));
   assert.equal(approved.status, 'executed');
   assert.equal(approved.decidedBy, 'human');
   assert.ok(approved.decidedAt);
   assert.equal(approved.result?.ok, true);
-  assert.ok(Math.abs(h.usdtOn('eth') - expected) < 0.1, `eth USDT ${h.usdtOn('eth')} vs expected ${expected}`);
-  assert.equal(h.usdtOn('arb'), 0, 'the source balance is drained');
+  assert.equal(h.runs(), 1, 'the rail ran exactly once, after the click');
 
   const types = h.eventTypes();
   assert.ok(types.indexOf('approved') < types.indexOf('executed'), 'approval is logged before execution');
   assert.ok(types.includes('proposal_created'));
 });
 
-test('refuse leaves the balances alone', async () => {
+test('refuse leaves the money alone', async () => {
   const h = setup();
-  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
+  const p = await h.svc.proposeHlDeposit({ amount: 200 });
 
   const refused = await h.svc.refuse(p.id);
   assert.equal(refused.status, 'refused');
   assert.equal(refused.decidedBy, 'human');
-  assert.equal(h.usdtOn('eth'), 9200);
-  assert.equal(h.usdtOn('arb'), 6100);
+  assert.equal(h.runs(), 0);
   assert.ok(h.eventTypes().includes('refused'));
   assert.ok(!h.eventTypes().includes('executed'));
 });
 
 test('a move below the click threshold is allowed and executes with no pending state', async () => {
   const h = setup();
-  const p = await landed(h, h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT', maxTotalUsd: 40 }));
+  const p = await landed(h, h.svc.proposeHlDeposit({ amount: 40 }));
 
   assert.equal(p.verdict.outcome, 'allow');
   assert.equal(p.status, 'executed');
   assert.equal(p.decidedBy, 'policy');
-  assert.ok(p.draft.kind === 'consolidate');
-  assert.equal(p.draft.legs.length, 1, 'the budget trims the plan to a single leg');
-  assert.equal(p.draft.legs[0].amount, 40);
-  assert.ok(Math.abs(h.usdtOn('arb') - 6060) < 0.01);
+  assert.equal(h.runs(), 1);
   assert.equal(h.store.list().filter(x => x.status === 'pending').length, 0);
   assert.ok(Math.abs(h.svc.sessionSpentUsd() - 40) < 0.01);
-});
-
-test('fromChains narrows the plan and dust never becomes a leg', async () => {
-  const h = setup();
-  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT', fromChains: ['arb'] });
-  assert.ok(p.draft.kind === 'consolidate');
-  assert.deepEqual(p.draft.legs.map(l => l.fromChain), ['arb']);
-
-  // DAI sits at $4.30 on arb and $2.10 on base, both under the $10 economic transfer size.
-  const dust = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'DAI' });
-  assert.equal(dust.status, 'policy_refused');
-  assert.ok(dust.verdict.outcome === 'refuse' && dust.verdict.rule === 'nothing_to_move');
-});
-
-test('an unusable budget plans nothing instead of planning garbage legs', async () => {
-  const h = setup();
-  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT', maxTotalUsd: NaN });
-
-  assert.equal(p.status, 'policy_refused');
-  assert.ok(p.verdict.outcome === 'refuse' && p.verdict.rule === 'nothing_to_move');
-  assert.equal(h.usdtOn('eth'), 9200);
-  assert.equal(h.usdtOn('arb'), 6100);
 });
 
 // ---------- fail-closed paths ----------
@@ -408,7 +203,7 @@ test('a corrupt policy file refuses every propose', async () => {
   const h = setup();
   fs.writeFileSync(path.join(h.dataDir, 'policy.json'), '{ not json at all');
 
-  const move = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
+  const move = await h.svc.proposeHlDeposit({ amount: 200 });
   assert.equal(move.status, 'policy_refused');
   assert.ok(move.verdict.outcome === 'refuse' && move.verdict.rule === 'policy_unreadable');
 
@@ -418,40 +213,9 @@ test('a corrupt policy file refuses every propose', async () => {
   assert.ok(h.eventTypes().filter(t => t === 'policy_refused').length >= 2);
 });
 
-test('a quoter failure becomes a refusal carrying the solver message verbatim', async () => {
-  const angry: Quoter = {
-    name: 'angry',
-    async quoteLeg() {
-      throw new Error('insufficient liquidity');
-    },
-  };
-  const h = setup({ quoter: angry });
-  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
-
-  assert.equal(p.status, 'policy_refused');
-  assert.ok(p.verdict.outcome === 'refuse' && p.verdict.rule === 'simulation_required');
-  assert.equal(p.simulation?.ok, false);
-  assert.equal(p.simulation?.error, 'insufficient liquidity');
-  assert.ok(p.verdict.reasons.join(' ').includes('insufficient liquidity'));
-  assert.equal(h.usdtOn('eth'), 9200);
-});
-
-test('no address of ours on the destination chain refuses before anything is quoted', async () => {
-  const solOnly: LedgerSnapshot = (() => {
-    const base = loadDemoLedger();
-    return { ...base, holdings: base.holdings.filter(hh => hh.chain === 'sol') };
-  })();
-  const ledger: Ledger = { snapshot: () => solOnly, intents: () => undefined, hyperliquid: () => undefined, refresh: async () => solOnly, applyDemoTransfer: () => {} };
-  const h = setup({ ledger });
-
-  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
-  assert.equal(p.status, 'policy_refused');
-  assert.ok(p.verdict.outcome === 'refuse' && p.verdict.rule === 'destination_not_allowed');
-});
-
 test('the kill switch stops a proposal that was already pending', async () => {
   const h = setup();
-  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
+  const p = await h.svc.proposeHlDeposit({ amount: 200 });
   assert.equal(p.status, 'pending');
 
   const killed = loadPolicy(h.dataDir) as Policy;
@@ -461,13 +225,13 @@ test('the kill switch stops a proposal that was already pending', async () => {
   const after = await h.svc.approve(p.id);
   assert.equal(after.status, 'policy_refused');
   assert.ok(after.verdict.outcome === 'refuse' && after.verdict.rule === 'kill_switch');
-  assert.equal(h.usdtOn('eth'), 9200, 'nothing moved');
+  assert.equal(h.runs(), 0, 'nothing moved');
   assert.ok(!h.eventTypes().includes('executed'));
 });
 
 test('approve is rejected for anything that is not pending', async () => {
   const h = setup();
-  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
+  const p = await h.svc.proposeHlDeposit({ amount: 200 });
   await h.svc.approve(p.id);
 
   await assert.rejects(() => h.svc.approve(p.id), /not pending|executed/i);
@@ -476,19 +240,25 @@ test('approve is rejected for anything that is not pending', async () => {
   assert.ok(h.eventTypes().includes('approve_attempt_rejected'));
 });
 
-test('live mode with no signer lands the approved proposal in failed with the auth step', async () => {
-  const h = setup({ mode: 'live', ledger: fakeLiveLedger() });
-  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
-  assert.equal(p.status, 'pending');
+test('a proposal from an older build that no rail answers for fails on approval and moves nothing', async () => {
+  const h = setup();
+  // The shape a consolidate row had on disk. Nothing builds one any more; approve() still has
+  // to answer for it, and the engine refuses it by name before any rail is looked up.
+  const row = {
+    id: 'old-consolidate',
+    kind: 'consolidate',
+    createdAt: new Date().toISOString(),
+    status: 'pending',
+    draft: { kind: 'consolidate', legs: [], totalUsd: 250, toChain: 'eth', symbol: 'USDT' },
+    simulation: null,
+    verdict: { outcome: 'needs_approval', reasons: ['from an older build'] },
+  } as unknown as Proposal;
+  h.store.put(row);
 
-  const done = await landed(h, h.svc.approve(p.id));
-  assert.equal(done.status, 'failed');
-  assert.equal(done.result?.ok, false);
-  assert.match(done.result?.detail ?? '', /No signer configured/);
-  const types = h.eventTypes();
-  assert.ok(types.includes('approved'));
-  assert.ok(types.includes('execution_failed'));
-  assert.ok(!types.includes('executed'));
+  const after = await h.svc.approve(row.id);
+  assert.equal(after.status, 'policy_refused');
+  assert.ok(after.verdict.outcome === 'refuse' && after.verdict.rule === 'unknown_kind', JSON.stringify(after.verdict));
+  assert.equal(h.runs(), 0);
 });
 
 // ---------- policy changes ----------
@@ -547,15 +317,15 @@ test('a patch aimed at the kill switch is refused and never persisted', async ()
 
 // ---------- bookkeeping ----------
 
-test('sessionSpentUsd counts executed fund moves and ignores refused ones and policy changes', async () => {
+test('sessionSpentUsd counts executed moves and ignores refused ones and policy changes', async () => {
   const h = setup();
   assert.equal(h.svc.sessionSpentUsd(), 0);
 
-  const small = await landed(h, h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT', maxTotalUsd: 40 }));
+  const small = await landed(h, h.svc.proposeHlDeposit({ amount: 40 }));
   assert.equal(small.status, 'executed');
   assert.ok(Math.abs(h.svc.sessionSpentUsd() - 40) < 0.01);
 
-  const refused = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT', fromChains: ['sol'] });
+  const refused = await h.svc.proposeHlDeposit({ amount: 200 });
   await h.svc.refuse(refused.id);
   assert.ok(Math.abs(h.svc.sessionSpentUsd() - 40) < 0.01);
 
@@ -566,7 +336,7 @@ test('sessionSpentUsd counts executed fund moves and ignores refused ones and po
 
 test('a stale proposal in the store survives a fresh service and stays gettable', async () => {
   const h = setup();
-  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
+  const p = await h.svc.proposeHlDeposit({ amount: 200 });
 
   assert.equal(h.svc.get(p.id)?.id, p.id);
   assert.equal(h.svc.list().length, 1);
@@ -575,68 +345,25 @@ test('a stale proposal in the store survives a fresh service and stays gettable'
 });
 
 test('onChange fires on every state transition', async () => {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'acc-proposals-'));
-  const cfg: AppConfig = { mode: 'demo', keysPath: '/tmp/phosphor-test-keys.json', port: 4177, addresses: { evm: [], solana: [], near: [] }, economicTransferUsd: 10, candleProducts: [], dataDir };
-  savePolicy(dataDir, happyPolicy());
   let changes = 0;
-  const svc = createProposalService({
-    cfg,
-    audit: createAudit(dataDir),
-    store: createStore(dataDir),
-    ledger: createLedger(cfg),
-    riskRows,
-    quoter: syntheticQuoter(),
-    signer: stubSigner(),
-    dataDir,
-    onChange: () => {
-      changes += 1;
+  const h = setup({
+    deps: {
+      onChange: () => {
+        changes += 1;
+      },
     },
   });
 
-  const p = await svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
+  const p = await h.svc.proposeHlDeposit({ amount: 200 });
   const afterPropose = changes;
   assert.ok(afterPropose >= 1);
-  await svc.approve(p.id);
+  await h.svc.approve(p.id);
   assert.ok(changes > afterPropose);
 });
 
-// ---------- the two blockers the final review found (C1, C2) ----------
-
-// C1. priceOf() and priceHoldings() were fixed for the rail paths, but planLegs still set a
-// leg's amountUsd to its TOKEN COUNT under the comment "stables are priced 1.0 everywhere in
-// this app". That stopped being true in this branch: the wallet holds WETH and the candidate
-// filter is only `!h.native && symbol matches`. A 10 WETH consolidation was governed as $10.
-test('a consolidation of a non-stable is priced at spot, not at its token count', async () => {
-  const h = setup({ mode: 'live', ledger: fakeLiveLedger() });
-  const snap = h.ledger.snapshot();
-  snap.holdings.push({ chain: 'arb', address: '0x1111111111111111111111111111111111111111', symbol: 'WETH', tokenId: '0xweth', amount: 10, usd: 18800, native: false });
-  snap.prices.ETH = 1880;
-
-  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'WETH' });
-
-  assert.ok(p.draft.kind === 'consolidate');
-  assert.ok(p.draft.totalUsd > 18000, `totalUsd was ${p.draft.totalUsd}, expected ~18800`);
-  // And therefore it is over the click threshold instead of sailing under it.
-  assert.notEqual(p.verdict.outcome, 'allow');
-});
-
-test('a maxTotalUsd budget on a non-stable buys dollars, not tokens', async () => {
-  const h = setup({ mode: 'live', ledger: fakeLiveLedger() });
-  const snap = h.ledger.snapshot();
-  snap.holdings.push({ chain: 'arb', address: '0x1111111111111111111111111111111111111111', symbol: 'WETH', tokenId: '0xweth', amount: 10, usd: 18800, native: false });
-  snap.prices.ETH = 1880;
-
-  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'WETH', maxTotalUsd: 1880 });
-
-  assert.ok(p.draft.kind === 'consolidate');
-  // $1,880 of WETH is 1 token, not 1,880 of them.
-  assert.ok(p.draft.totalUsd <= 1880.01, `totalUsd was ${p.draft.totalUsd}`);
-  assert.ok(Math.abs(p.draft.legs.reduce((s, l) => s + l.amount, 0) - 1) < 0.01);
-});
-
 // C2. sessionSpentUsd() counted only 'executed', and nothing serialised proposal handling, so
-// concurrent proposals each evaluated against a spend of 0. Five $10,000 consolidations moved
-// $50,000 against a $25,000 cap. The width of the window tracked send latency.
+// concurrent proposals each evaluated against a spend of 0. Five $10,000 moves went through
+// against a $25,000 cap. The width of the window tracked send latency.
 test('concurrent proposals cannot exceed the session cap between them', async () => {
   const policy = happyPolicy();
   policy.outbound.maxPerTransactionUsd = 10000;
@@ -645,13 +372,11 @@ test('concurrent proposals cannot exceed the session cap between them', async ()
   policy.outbound.autoApproveDailyUsd = 25000; // and the auto-approved ceiling too: this is the session cap's test
   const h = setup({ policy });
 
-  const results = await Promise.all(
-    [1, 2, 3, 4, 5].map(() => h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT', maxTotalUsd: 10000 })),
-  );
+  const results = await Promise.all([1, 2, 3, 4, 5].map(() => h.svc.proposeHlDeposit({ amount: 10000 })));
 
   const movedUsd = results
     .filter(p => p.status === 'executed' || p.status === 'executing')
-    .reduce((sum, p) => sum + (p.draft.kind === 'consolidate' ? p.draft.totalUsd : 0), 0);
+    .reduce((sum, p) => sum + (p.draft.kind === 'hl_deposit' ? p.draft.amountUsd : 0), 0);
 
   assert.ok(movedUsd <= 25000, `moved $${movedUsd} against a $25,000 session cap`);
   assert.ok(results.some(p => p.status === 'policy_refused'), 'something has to have been refused');
@@ -661,74 +386,61 @@ test('an in-flight proposal counts against the cap while it is still executing',
   const policy = happyPolicy();
   policy.outbound.humanClickAboveUsd = 1_000_000; // take the click out of the picture
   policy.outbound.autoApproveDailyUsd = 1_000_000; // and the auto-approved ceiling out of the picture too
-  const h = setup({ policy });
+  const slow = slowRail('hl_deposit');
+  const h = makeCtx({ rails: [slow.rail], policy, intentsUsdc: 100_000 });
   const before = h.svc.sessionSpentUsd();
-  await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
-  assert.ok(h.svc.sessionSpentUsd() > before, 'a completed move must register');
+  const p = await h.svc.proposeHlDeposit({ amount: 200 });
+  assert.equal(p.status, 'executing');
+  assert.ok(h.svc.sessionSpentUsd() > before, 'a move still out registers');
+  slow.release({ ok: true, detail: 'credited', txids: ['0xtest'] });
+  await h.svc.settle(2000);
 });
 
 // ---------- the hash is the record, the balance is a decoration ----------
 //
 // Both used to be written together, after `balanceAfter`, which waits up to fifteen seconds for
-// five chains of RPC reads. A process ending inside that window had broadcast a transaction and
-// recorded nothing about it, and there is no drain that covers it: SETTLE_CAP_MS is 32s while a
-// 30s venue write plus a 15s refresh is 45s. reconcileOnBoot then found an `executing` row with
-// no txids, could only say "this may or may not have sent", and reconcileProposal had nothing to
-// look it up by. Money moved and no hash existed anywhere.
+// a ledger read. A process ending inside that window had broadcast a transaction and recorded
+// nothing about it, and there is no drain that covers it: SETTLE_CAP_MS is 32s while a 30s venue
+// write plus a 15s refresh is 45s. reconcileOnBoot then found an `executing` row with no txids,
+// could only say "this may or may not have sent", and reconcileProposal had nothing to look it up
+// by. Money moved and no hash existed anywhere.
 
 // A ledger whose refresh never settles: exactly the fifteen seconds the old code spent between
 // the broadcast and the durable write, held open forever so the assertion is deterministic.
-function stuckLedger(): Ledger {
-  const snap: LedgerSnapshot = { ...loadDemoLedger(), mode: 'live' };
+function stuckLedger(base: Ledger): Ledger {
   return {
-    snapshot: () => snap,
-    intents: () => undefined,
+    snapshot: () => base.snapshot(),
+    intents: () => base.intents(),
     hyperliquid: () => undefined,
     refresh: () => new Promise<LedgerSnapshot>(() => {}),
-    applyDemoTransfer: () => {
-      throw new Error('applyDemoTransfer must never be called in live mode');
-    },
   };
 }
 
 test('the transaction hash is on disk before the balance refresh has even answered', async () => {
-  const signer = recordingSigner();
-  const h = setup({ mode: 'live', quoter: depositQuoter(), signer, ledger: stuckLedger() });
-  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
+  const probe = makeCtx({ intentsUsdc: 100_000 });
+  const h = setup({ deps: { ledger: stuckLedger(probe.ledger) } });
+  const p = await h.svc.proposeHlDeposit({ amount: 200 });
+  assert.equal(p.status, 'pending', JSON.stringify(p.verdict));
 
-  // Deliberately NOT awaited: the refresh inside never settles, so awaiting approve() would
-  // hang. What matters is the state of the file while it is still in there.
+  // Deliberately NOT awaited: the refresh inside never settles, so awaiting the settled row
+  // would hang. What matters is the state of the file while it is still in there.
   const running = h.svc.approve(p.id);
-  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setTimeout(resolve, 50));
 
   const stored = h.store.get(p.id) as Proposal;
-  assert.ok((stored.result?.txids ?? []).includes('0xtest'), 'the hash the signer returned is durable already');
+  assert.ok((stored.result?.txids ?? []).includes('0xtest'), 'the hash the rail returned is durable already');
   assert.equal(stored.status, 'executed', 'and so is the outcome');
   assert.equal(stored.balances?.afterUsd, null, 'while the balance is still being read');
   void running;
 });
 
-test('a multi-leg send records each hash as it lands, not once at the end', async () => {
-  let sent = 0;
-  const signer: Signer = {
-    ready: true,
-    describe: () => 'one leg then a wall',
-    async send() {
-      sent += 1;
-      if (sent === 1) return { ok: true, txid: '0xleg1' };
-      // Never settles, exactly as a chain that has stopped answering does.
-      return new Promise<{ ok: boolean; txid?: string }>(() => {});
-    },
-  };
-  const h = setup({ mode: 'live', signer, ledger: fakeLiveLedger() });
-  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
-  assert.ok(p.draft.kind === 'consolidate' && p.draft.legs.length > 1, 'this needs more than one leg to mean anything');
-
-  const running = h.svc.approve(p.id);
-  await new Promise((resolve) => setImmediate(resolve));
-
-  const stored = h.store.get(p.id) as Proposal;
-  assert.ok((stored.result?.txids ?? []).includes('0xleg1'), 'the first leg is recorded while the second is still in flight');
-  assert.equal(stored.status, 'executing', 'and the row still says what it is');
-  void running;
+// The addresses the builders resolve are the app's own, never the caller's: the same account
+// that the ledger reads is the one a deposit spends from.
+test('a deposit spends from the app account the ledger reads, lowercased, and credits its own trading account', async () => {
+  const h = setup();
+  const p = await h.svc.proposeHlDeposit({ amount: 40 });
+  assert.ok(p.draft.kind === 'hl_deposit');
+  assert.equal(p.draft.from, SELF_EVM.toLowerCase());
+  assert.equal(p.draft.hlAccount.toLowerCase(), SELF_EVM.toLowerCase());
+  assert.equal(p.draft.originAsset, ETH_USDC_FLAVOR);
 });

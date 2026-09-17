@@ -34,7 +34,6 @@ export const EXPECTED_TOOLS: readonly string[] = [
   // four remainders (pending, unknown, unpriced, intent-settled). A total that drops what it could
   // not count is a smaller number than the truth, said confidently.
   'gas_report',
-  'propose_consolidate',
   'propose_policy_change',
   // The rails. Each moves funds through a contract and none takes an address: the property
   // walk in tests/injection.test.ts is what holds that to be true.
