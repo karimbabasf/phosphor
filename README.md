@@ -1,6 +1,6 @@
 # Phosphor
 
-Phosphor is a local Mac app that holds your keys, your chain connections and your rules. Any MCP
+Phosphor is a local Mac app that holds your keys, your venue connections and your rules. Any MCP
 agent (Claude Code, Codex, anything that speaks MCP) drives it: the agent reads your money, prices
 a move and proposes it. The agent can never approve. Every execution takes a click in the app
 window, and the policy engine runs your rules with no model in the path. Two venues, and only two:

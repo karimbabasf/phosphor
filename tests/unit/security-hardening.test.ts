@@ -250,12 +250,9 @@ test('a body that is not application/json is refused with 415', async () => {
   }
 });
 
-/* S3, the reported bug, and its ending. A cross-chain swap that named no venue used to be
-   refused: the default was an on-chain DEX that could not cross chains, so the caller was told
-   to name one and try again. There is no on-chain venue left, the default crosses chains, and
-   the same call now builds. The refusal is gone because the condition that caused it is gone,
-   not because the guard was loosened. */
-test('a cross-chain swap that names no venue now builds, because the default venue crosses chains', async () => {
+/* A swap between two assets whose home chains differ (USDC from arb into SOL) is an ordinary
+   swap inside NEAR Intents: nothing crosses a chain, and the door builds it. */
+test('a swap between assets from two home chains builds: both legs sit inside NEAR Intents', async () => {
   const h = await boot();
   try {
     const out = await raw(h.url, '/api/mcp', {

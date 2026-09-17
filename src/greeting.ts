@@ -44,7 +44,7 @@ const RESET = '\x1b[0m';
 export type GreetingFacts = {
   view: ViewMode;
   totalUsd: number | null;
-  chainCount: number;
+  pocketCount: number; // how many of the two pockets hold something
   pendingCount: number;
   clickThresholdUsd: number | null;
   killSwitch: boolean;
@@ -71,7 +71,7 @@ function factLines(f: GreetingFacts): string[] {
   const wallet =
     f.totalUsd === null
       ? 'unknown'
-      : `${money(f.totalUsd)} across ${f.chainCount} ${f.chainCount === 1 ? 'chain' : 'chains'}`;
+      : `${money(f.totalUsd)} across ${f.pocketCount} ${f.pocketCount === 1 ? 'pocket' : 'pockets'}`;
   const pending =
     f.pendingCount === 0
       ? 'nothing waiting'

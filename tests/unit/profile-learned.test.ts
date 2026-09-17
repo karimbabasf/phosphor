@@ -251,7 +251,7 @@ test('the start answer carries the profile block for the terminal path', () => {
   const facts = {
     view: 'trade' as const,
     totalUsd: 0,
-    chainCount: 0,
+    pocketCount: 0,
     pendingCount: 0,
     clickThresholdUsd: 100,
     killSwitch: false,

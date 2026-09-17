@@ -69,8 +69,8 @@ custom SMA, EMA, RSI or ATR equals the built-in to the last digit.
 | Read tool | Returns |
 |---|---|
 | `start` | The greeting, the live state and the index of everything this door opens onto, grouped by intent. `screen` is `{ view, since, by }`: which screen the window is on, since when, and whether a human tab or an agent `switch` put it there. Call it again after a long gap: the network, the wallet and the pending decisions all move |
-| `wallet` | Everything held, one row per balance: place, quantity, price, value, share. Only what is actually held; how many configured tokens came back empty is reported as a count |
-| `composition` | Shares by issuer and chain, freezable share, unclassified holdings |
+| `wallet` | Everything held, one row per balance in the two pockets (the NEAR Intents balance and the Hyperliquid collateral): place, quantity, price, value, share. Only what is actually held; how many pockets came back empty is reported as a count |
+| `composition` | Shares by issuer and pocket, freezable share, unclassified holdings |
 | `policy_show` | Current policy as plain-English sentences, or a notice that the file is unreadable |
 | `log_tail` | Most recent audit lines, newest first |
 | `proposal_status` | Status, verdict and simulation result for a proposal id |
@@ -84,12 +84,16 @@ custom SMA, EMA, RSI or ATR equals the built-in to the last digit.
 | `propose_trade_change` | Changes an armed plan: a new stop or target, cancel, or close. A change that only takes risk off lands without the wall; one that widens is priced like a new plan |
 | `propose_hl_deposit` | Funds the Hyperliquid perpetuals account from the intents balance: one signed intent, nothing sent on any chain. The account credited is derived from the app's own key |
 | `propose_hl_withdraw` | Brings collateral back from Hyperliquid into the intents balance. One field, the amount; the intents account credited is the app's own. Always waits for a human click and is refused while any position is open |
+| `propose_intents_send` | Pays a balance inside `intents.near` to another intents account, named by `to`: the one tool with a destination field. The receiver is held to the policy allowlist, and the send always waits for a human click |
+| `propose_send` | Coming with the SEND stream: one send tool that replaces `propose_intents_send`, pays out on a real chain or inside NEAR Intents, and always waits for a click and Touch ID |
 
 This door now names exactly the set the app can execute. `propose_lp_add`, `propose_lp_remove`,
 `propose_yield_deposit`, `propose_yield_withdraw`, `yield_read` and `yield_auto` were on it or
-behind it at various points; the rails under all six were removed when the app cut to two venues,
-so there is nothing left to register. What went with them: an on-chain DEX swap venue, both
-liquidity-pool moves and the whole lending loop.
+behind it at various points; the rails under all six were removed when the app cut to two venues.
+`propose_consolidate`, `propose_intents_deposit`, `propose_intents_withdraw`, the `oneclick`
+swap venue, `balances` and `gas_report` went on 2026-09-16 with the chain wallets: nothing is
+held on a chain any more, so there is nothing to gather, deposit from, withdraw to, or pay gas
+for. Rows those tools wrote still render as history.
 
 `propose_hl_deposit` was on that list until 2026-08-20 and is back because the rail underneath it
 changed shape rather than because it was tested more. It used to transfer USDC to Hyperliquid's
@@ -299,16 +303,18 @@ live chain, and there is no setting that points them anywhere else. Nothing here
 
 `mode` is the only axis:
 
-- `live` reads real balances over public RPCs and needs no keys to read.
-- `demo` uses a fixture portfolio and a synthetic quoter, so the whole propose, approve, execute
-  loop runs offline with nothing at stake. It is not a practice mode for real money: it moves
-  nothing, anywhere, ever.
+- `live` reads the two pockets, the NEAR Intents verifier and the Hyperliquid account, and needs
+  no key to read: the account is the address in the keystore's plaintext header.
+- `demo` serves a fixture (ETH, USDC and SOL inside NEAR Intents, 50 USDC of Hyperliquid
+  collateral) and runs no rail, so a proposal there is drafted, priced and ruled on offline with
+  nothing at stake, and refuses at the rail step. It is not a practice mode for real money: it
+  moves nothing, anywhere, ever.
 
 Shipped `config.json` is `mode: "live"`. Demo is no longer the default anywhere. It stays in the
 codebase because the test suite and the e2e proof run against it offline.
 
 `config.json` is a committed template. It carries structure and safe defaults only: port, mode,
-empty address arrays, candle products. No addresses, ever. `config.local.json` carries yours, is
+an empty address book, candle products. No addresses, ever. `config.local.json` carries yours, is
 gitignored, and merges over the template key by key. The environment variables `PHOSPHOR_MODE`,
 `PHOSPHOR_PORT`, `PHOSPHOR_DATA_DIR` and `PHOSPHOR_KEYS` override both.
 
@@ -390,26 +396,17 @@ ships `sha3-256`, which is NIST FIPS 202: the same permutation with a different 
 returns a different digest and an address nobody holds the key to. Nothing about the wrong address
 looks wrong, and funds sent there are gone.
 
-There are two signers, one per chain family, and each is the only place its family is signed for:
-`src/chain/evm.ts` and `src/chain/near.ts`. NEAR is a different curve (ed25519), a different
-serialization (borsh), and a different transaction shape, so it does not fit behind the EVM one.
-It hand-rolls borsh where the EVM signer took a dependency, and the reason the answer differs is
-the failure mode rather than the effort: a wrong keccak silently derives an address nobody owns,
-while a wrong borsh produces a signature that does not verify against the body, so the RPC rejects
-the transaction and nothing moves. `near.ts` self-checks on the same principle as `keygen`, with
-RFC 8032 vector 1, two base58 vectors, sha256 of the empty string, and the borsh integer widths.
+One key signs, and it signs no chain transaction. The EVM key signs ERC-191 intents for the
+NEAR Intents rails (`src/rails/intents-native.ts`, `intents-send.ts`, `intents-spend.ts`) and
+EIP-712 actions for Hyperliquid (`src/rails/hl-user-signed.ts`). The chain signers that used to
+live in `src/chain/evm.ts` and `src/chain/near.ts` went with the chain wallets on 2026-09-16;
+those files now hold the EVM readers and explorer prefixes, the NEAR RPC, base58 and the account
+id rules. A wallet's mnemonic still derives the Solana and NEAR keys into the sealed file, for
+recovery in another wallet, and nothing here reads them.
 
-Two NEAR bugs were found by signing four real transactions rather than by any vector, both the
-same root cause: `send_tx` returns at `EXECUTED_OPTIMISTIC`, which is ahead of finality, so a read
-at `finality: final` straight afterwards returns the state from before the transaction. It made a
-successful wrap look like a silent failure, and it made a second send reuse a nonce the first had
-already spent. `src/chain/near.ts` carries both fixes and the comments explaining them.
-
-`keygen` therefore checks itself before it generates anything, on every run: the canonical
-Ethereum test key `0x4c0883a6...362318` must derive `0x2c7536E3605D9C16a7a3D7b1898e529396a65c23`,
-RFC 8032 ed25519 vector 1 must derive its published public key, and base58 must reproduce two
-published vectors. Any mismatch stops the program instead of printing an address that no private
-key opens.
+`keygen` checks itself before it generates anything, on every run: the canonical Ethereum test
+key `0x4c0883a6...362318` must derive `0x2c7536E3605D9C16a7a3D7b1898e529396a65c23`. A mismatch
+stops the program instead of printing an address that no private key opens.
 
 ### Code signing, which is configured and not performed
 

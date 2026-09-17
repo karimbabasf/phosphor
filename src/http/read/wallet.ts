@@ -94,7 +94,7 @@ export const walletReads: ReadTable = {
         totalUsd: wallet.totalUsd,
         // Places actually holding something, which is what "across N chains" means to a
         // reader. Counting configured chains instead would say 5 while 2 hold the money.
-        chainCount: Object.values(wallet.byChain).filter((usd) => usd > 0).length,
+        pocketCount: Object.values(wallet.byChain).filter((usd) => usd > 0).length,
         pendingCount: pending.length,
         clickThresholdUsd: policy?.outbound.humanClickAboveUsd ?? null,
         killSwitch: policy?.killSwitch ?? false,
