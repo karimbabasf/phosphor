@@ -617,8 +617,10 @@ function tailOf(address: string): string {
 }
 
 /* Hold every row with an address to its pin: a first sight is pinned, a match is left alone,
-   and a change keeps the pinned address on the row with the sentence beside it. Returns the
-   rows as the window should draw them. */
+   and a change draws NO address, with the sentence beside the empty row. The pin is a
+   comparison key and never a destination: a file any process running as this user can write
+   must not be able to put an address in front of a person, so a mismatch shows neither the
+   bridge's answer nor the pinned one. Returns the rows as the window should draw them. */
 function pinAddresses(dataDir: string | null, account: string, networks: IntentsReceiveNetwork[]): IntentsReceiveNetwork[] {
   if (dataDir === null) return networks;
   const pins = readPins(dataDir);
@@ -636,11 +638,11 @@ function pinAddresses(dataDir: string | null, account: string, networks: Intents
     if (held.address === row.address && held.memo === row.memo) return row;
     return {
       ...row,
-      address: held.address,
-      memo: held.memo,
+      address: null,
+      memo: null,
       changed:
-        `The bridge now answers a different address for ${row.name} (ending ${tailOf(row.address)}) than the one shown before. ` +
-        'The address shown is the one shown before. A bridge address does not change on its own, so do not send anything until you know why this one did.',
+        `The bridge now answers a different address for ${row.name} (ending ${tailOf(row.address)}) than the one shown before (ending ${tailOf(held.address)}). ` +
+        'A bridge address does not change on its own, so no address is shown: do not send anything until you know why this one did.',
     };
   });
   if (dirty) {

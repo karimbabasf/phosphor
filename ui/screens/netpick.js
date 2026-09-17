@@ -1220,7 +1220,12 @@
         return refuse(body, 'No deposit address on ' + n.name + ' right now: ' + network.unavailable);
       }
       if (typeof network.address !== 'string' || !network.address.length) {
-        return refuse(body, 'No deposit address on ' + n.name + ' right now.');
+        /* A row the report marks changed carries no address on purpose: the
+           bridge's answer and the one pinned on disk disagree, and neither
+           is drawn. The sentence takes the address's place. */
+        return refuse(body, typeof network.changed === 'string' && network.changed
+          ? network.changed
+          : 'No deposit address on ' + n.name + ' right now.');
       }
       var token = tokenOf(network, state.symbol) || tokenOf(network, defaultSymbol(network.accepts, n.native));
       if (state.symbol && !tokenOf(network, state.symbol)) {

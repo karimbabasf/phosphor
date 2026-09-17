@@ -297,6 +297,13 @@ Every ambiguous state resolves toward moving nothing.
 - **Stale pocket reads**: a verifier or venue read that failed keeps the last good rows and is
   marked stale rather than shown as zero, because a zero balance silently makes every share
   calculation wrong in the permissive direction.
+- **A deposit address that changed**: the bridge is asked twice and both answers must agree and
+  have the shape of an address on that network, and the address last shown is pinned per account
+  and network in `deposit-addresses.json`. When the bridge's answer and the pin disagree the card
+  draws no address at all, only the sentence saying so. The pin is a comparison key and never a
+  destination: the data directory is writable by any process running as this user, so a pinned
+  string is never put in front of a person, and neither is a bridge answer the pin does not vouch
+  for.
 
 ## The browser surface
 

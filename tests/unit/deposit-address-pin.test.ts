@@ -4,7 +4,7 @@
 // person sending from an exchange had nothing to notice. Three things hold it now
 // (src/http/wallet.ts): the answer has to have the shape of an address on that network, two
 // answers in a row have to agree, and the address last shown is pinned on disk per (account,
-// network), so a later answer that differs is drawn as the pinned one plus a sentence, never as
+// network), so a later answer that differs is drawn as no address plus a sentence, never as
 // a new QR code.
 
 import test from 'node:test';
@@ -105,7 +105,7 @@ test('every network is asked twice, and two answers that differ draw nothing', a
   }
 });
 
-test('the address shown is pinned on disk per account and network, and a later answer that differs is drawn as the pinned one with a sentence', async () => {
+test('the address shown is pinned on disk per account and network, and a later answer that differs is drawn as no address with a sentence', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-pin-'));
   let swap = false;
   const b = bridge((chain) => (swap && chain === 'eth:1' ? OTHER_EVM : shaped(chain)));
@@ -119,14 +119,17 @@ test('the address shown is pinned on disk per account and network, and a later a
     assert.equal(pins[`${account}|sol:mainnet`].address, shaped('sol:mainnet'));
     assert.equal(fs.statSync(depositPinsPath(dir)).mode & 0o777, 0o600);
 
-    // The bridge changes its answer for Ethereum. The row keeps the pinned address, says so,
-    // and the pin is left as it was. Base still answers the same address and is untouched.
+    // The bridge changes its answer for Ethereum. The row shows NO address (the pin is a
+    // comparison key, never a destination: a file another local process can write must not
+    // put an address in front of a person), says so, and the pin is left as it was. Base still
+    // answers the same address and is untouched.
     swap = true;
     const second = await intentsReceiveReport(ctx, { force: true });
     const eth = row(second, 'eth');
-    assert.equal(eth.address, EVM, 'the changed answer replaced the pinned address');
+    assert.equal(eth.address, null, 'neither the changed answer nor the pinned address is drawn');
     assert.equal(eth.unavailable, null);
-    assert.match(String(eth.changed), /^The bridge now answers a different address for Ethereum \(ending \.\.\.999999\) than the one shown before\./);
+    assert.match(String(eth.changed), /^The bridge now answers a different address for Ethereum \(ending \.\.\.999999\) than the one shown before \(ending \.\.\.[0-9a-fA-F]{6}\)\./);
+    assert.match(String(eth.changed), /no address is shown/);
     assert.match(String(eth.changed), /do not send anything until you know why/);
     assert.equal(row(second, 'base').changed, null);
     assert.equal(row(second, 'base').address, EVM);
@@ -185,4 +188,25 @@ test('depositAddressProblem rules by the chain where it knows one and by plainne
   assert.equal(depositAddressProblem(xrp, 'rN7n7otQDd6FczFgLdSqtcsAUxDkw6fzRH'), null);
   assert.match(String(depositAddressProblem(xrp, 'send it here please')), /no spaces/);
   assert.match(String(depositAddressProblem(xrp, 'short')), /10 to 128/);
+});
+
+test('a pin file rewritten by another process cannot put its address on the card: the mismatch draws no address', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-pin-'));
+  const b = bridge((chain) => shaped(chain));
+  const { ctx, account } = ctxFor(dir);
+  try {
+    const first = await intentsReceiveReport(ctx);
+    assert.equal(row(first, 'eth').address, EVM);
+    // Any process running as this user can write the data dir. It writes the attacker's
+    // address as the pin for Ethereum.
+    fs.writeFileSync(depositPinsPath(dir), JSON.stringify({ [`${account}|eth:1`]: { address: OTHER_EVM, memo: null, shownAt: '2026-09-17T00:00:00Z' } }));
+    const poisoned = await intentsReceiveReport(ctx, { force: true });
+    const eth = row(poisoned, 'eth');
+    assert.equal(eth.address, null, 'the poisoned pin is not drawn, and neither is the live answer');
+    assert.match(String(eth.changed), /no address is shown/);
+    assert.equal(row(poisoned, 'base').address, EVM, 'other networks are untouched');
+  } finally {
+    b.restore();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
