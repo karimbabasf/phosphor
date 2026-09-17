@@ -319,7 +319,9 @@ export function outcomeOf(p: Proposal, plan?: PlanFate | null): ProposalOutcome 
       break;
     default:
       state = 'pending';
-      sentence = `${LEAD.pending} The proposal is ${p.status.replace(/_/g, ' ')}.`;
+      sentence = p.heldSince !== undefined
+        ? `${LEAD.pending} The proposal is approved and held: the checks in front of the signature have not cleared, it is tried again every half minute, and nothing is signed until they do.`
+        : `${LEAD.pending} The proposal is ${p.status.replace(/_/g, ' ')}.`;
   }
   return { state, sentence, ...money };
 }

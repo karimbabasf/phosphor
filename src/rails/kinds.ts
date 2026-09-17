@@ -3,7 +3,7 @@
 // This is a separate module from the registry on purpose, and the reason is a bug that has
 // now been paid for twice from opposite directions.
 //
-// The registry (./index.ts) constructs rails, so it imports oneclick, the intents rails and
+// The registry (./index.ts) constructs rails, so it imports the intents rails and
 // the trade rail, and through them config, RPC hosts and the 1Click token list. The policy
 // engine must not pull any of that in: it is the part that decides whether money is allowed
 // to move, and it stays loadable and testable on its own.

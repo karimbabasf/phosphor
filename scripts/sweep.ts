@@ -107,7 +107,7 @@ const KNOWN_PUBLIC_CONSTANTS = new Map<string, string>([
   // string distinguishes them. This one is public and permanent: it is the deposit whose input
   // decodes to transfer(bridge, 10000000), cited as the evidence that the Hyperliquid bridge
   // takes a plain ERC-20 transfer with no signed payload.
-  // Cited in src/rails/hyperliquid-deposit.ts and tests/unit/oneclick.test.ts.
+  // Cited in src/rails/hypercore-deposit.ts and its tests.
   ['d5a06833f3e299cce32a957e4078d473d14954b3aa9ec55cd966abc527015c03', 'public tx hash, evidence for the HL bridge deposit shape'],
   // The official hyperliquid-python-sdk's own signing fixture, published in that repo at
   // tests/signing_test.py. It is a sequential counting pattern, holds nothing, and is the key
@@ -139,7 +139,7 @@ const KNOWN_PUBLIC_CONSTANTS = new Map<string, string>([
   // of these are public identifiers INSIDE the verifier, not addresses on a chain and not
   // keys: an implicit account id is a public key written as hex, and a deposit handle is the
   // account a solver told us to credit. Neither can spend anything.
-  ['aec6b4afd08c0ace0f392c4d1b8aa9c44ce9bbd558903c4b702ce1cb1ea941b2', 'NEAR implicit account example, tests/unit/near-chain.test.ts and oneclick.test.ts'],
+  ['aec6b4afd08c0ace0f392c4d1b8aa9c44ce9bbd558903c4b702ce1cb1ea941b2', 'NEAR implicit account example, a test fixture'],
   ['a7d101a893efccc5e560badd89b55325c99a4da76f2ec584d6a355415e388058', 'deposit handle from a live 1Click quote, tests/unit/intents-withdraw.test.ts'],
 ]);
 

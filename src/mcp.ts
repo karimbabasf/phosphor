@@ -638,7 +638,7 @@ registerRead(
     'trendline_touches (every bar that came within a tolerance of it).',
     'Drawing: draw (trendline or zone), drawings_list, drawings_remove, drawings_clear.',
     '',
-    'Anything drawn appears on the human chart tagged [agent] and keeps a stable id.',
+    'Anything drawn appears on the human chart marked as the agent\'s and keeps a stable id.',
     'Every result is a MEASUREMENT with the parameters that produced it. This tool returns no',
     'signals, scores or trade suggestions: you do the reading, it does the measuring.',
     'Omit product or granularitySec to measure whatever the chart is currently showing.',
@@ -781,7 +781,7 @@ registerLeadView(
     'Three sub-panes and eight overlays are the maximum, and a request past that is refused with the reason.',
     'levels: horizontal price lines. marks: moments on the time axis. lines: sloped lines through two',
     '(time, price) anchors, extended onwards. zones: a price band, optionally bounded in time.',
-    'Every label is shown to the human tagged [agent] and every object keeps a stable id.',
+    'Every label is shown to the human marked as the agent\'s and every object keeps a stable id.',
     'chart: which of the charts, 0 to 3; omit for the primary. chart_layout puts the others up.',
   ].join(' '),
   {

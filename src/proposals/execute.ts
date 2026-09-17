@@ -5,9 +5,10 @@ import type { Preflight, Proposal, Rail, RailEvidence, RailHooks, RailResult, Wr
 import type { PocketRead } from '../ledger/settle.ts';
 import { SETTLING_SENTENCE } from '../ledger/settle.ts';
 import { loadPolicy, savePolicy } from '../policy/file.ts';
+import { evaluate } from '../policy/engine.ts';
 import { renderSentences } from '../policy/render.ts';
 import { isLocked } from '../keystore/index.ts';
-import { errText, mergePatch, nowIso, persist, totalUsdOf, enclaveGated } from './lifecycle.ts';
+import { buildCtx, errText, mergePatch, nowIso, persist, totalUsdOf, enclaveGated } from './lifecycle.ts';
 import { reservationMade } from './reservation.ts';
 import { within } from '../shutdown.ts';
 import { buildWallet } from '../wallet.ts';
@@ -455,10 +456,26 @@ export function expireHold(ctx: PCtx, row: Proposal, detail: string, checks: { p
 function retryHeld(ctx: PCtx, id: string, rail: Rail): void {
   const row = ctx.store.get(id);
   if (row === undefined || row.status !== 'approved' || row.heldSince === undefined) return;
+  // A hold lasts minutes, and the seal that guards the click guards the retry: the row the
+  // rail runs must be the row the human approved, not one rewritten on disk meanwhile. Nothing
+  // is written back, and no timer is set again, so the boot sweep is what closes it.
+  if (!ctx.store.intact(id)) {
+    ctx.audit.append('approve_attempt_rejected', `retry for proposal ${id}, whose row on disk is not the row this app wrote`, { id, action: 'retry', changedOnDisk: true });
+    return;
+  }
   // The key it would sign with is behind a lock now. Waiting on a person to unlock it is a
   // question, and a hold is not one: the row closes and the ask can be made again.
   if (isLocked()) {
     expireHold(ctx, row, 'The wallet locked while this was waiting for the checks to clear. Nothing was signed; ask again once it is unlocked.');
+    return;
+  }
+  // The policy, the kill switch and the balances can all have moved during the hold, and the
+  // click was given against the world as it was then: the engine runs again, as it does at the
+  // click itself.
+  const verdict = evaluate(row.draft, buildCtx(ctx, ctx.ledger.snapshot(), loadPolicy(ctx.dataDir)));
+  if (verdict.outcome === 'refuse') {
+    ctx.audit.append('policy_refused', `${id} refused while held: ${verdict.rule}`, { id, rule: verdict.rule, reasons: verdict.reasons });
+    persist(ctx, { ...withoutHold(row), verdict, status: 'policy_refused', decidedBy: 'policy', decidedAt: nowIso() });
     return;
   }
   void executeRail(ctx, row, rail);

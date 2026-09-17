@@ -311,3 +311,33 @@ test('no wallet yet means nothing is asked, and the watch picks up when the wall
   assert.equal(watch.current()?.phase, 'stopped');
   assert.equal(frames[frames.length - 1]?.phase, 'stopped');
 });
+
+test('a card left open polls eagerly for ten minutes, then one tick in five, and gives up after two hours', async () => {
+  const world = fakeWorld();
+  let clock = 1_000_000;
+  const frames: DepositState[] = [];
+  const watch = createDepositWatch({
+    ledger: ledgerWith(undefined),
+    sse: { broadcast: (frame) => frames.push(frame as DepositState) },
+    account: () => ACCOUNT,
+    refresh: async () => undefined,
+    fetchImpl: world.fetchImpl,
+    pollMs: 5,
+    now: () => clock,
+  });
+  watch.show('eth', 'USDC', null, TOKEN);
+  await ticks(6);
+  const eager = world.calls.length;
+  assert.ok(eager >= 4, `eager polling asked the bridge: ${eager}`);
+
+  clock += 11 * 60 * 1000;
+  const before = world.calls.length;
+  await ticks(10);
+  const slow = world.calls.length - before;
+  assert.ok(slow >= 2 && slow <= 6, `one poll in five after ten minutes: ${slow} calls over 10 ticks`);
+
+  clock += 2 * 60 * 60 * 1000;
+  await ticks(8);
+  assert.equal(watch.current()?.phase, 'stopped');
+  watch.stop();
+});

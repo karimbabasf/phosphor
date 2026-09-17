@@ -3,7 +3,7 @@
 //
 // WHICH RAIL DO I WANT? Read this paragraph and you will know.
 //
-// src/rails/oneclick.ts swaps money that lives in your wallet. It asks 1Click for a quote,
+// The retired chain-side swap rail moved money that lived in a chain wallet. It asked 1Click for a quote,
 // 1Click mints a brand new deposit address for that one quote, and the app sends an ERC-20
 // transfer to it. That address is chosen by a remote server, exists only for a few days, and
 // is different every time, so it can never appear on a policy allowlist written in advance.
@@ -31,7 +31,7 @@
 // before the key is touched. A server that returns a payload swapping a different asset, or
 // a payload carrying a withdrawal to somebody else's account, is refused unsigned.
 //
-// IT ALSO NEEDS A PARTNER API KEY, which oneclick.ts does not. Quoting is unauthenticated,
+// IT ALSO NEEDS A PARTNER API KEY, which a chain-side swap did not. Quoting is unauthenticated,
 // but POST /v0/generate-intent and POST /v0/submit-intent both require an X-API-Key, and
 // those two calls are the entire rail. A missing key is therefore refused at simulate()
 // time, naming what to obtain, rather than surfacing as a confusing 401 at the moment of

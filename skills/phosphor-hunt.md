@@ -21,7 +21,7 @@ the human. It is the reason this skill exists.
 
 What is in scope, and is the point:
 - Every read tool. `chart_*`, `trade_read`, `trade_batch`, `market_search`, `research`,
-  `balances`, `composition`, `policy_show`, `agent_*`.
+  `wallet`, `composition`, `policy_show`, `agent_*`.
 - Drawing on the chart. Levels, lines, marks, zones, overlays, highlights, and a plan drawn as an
   idea with `trade_plan`. Drawing is how the human and you end up looking at the same object.
 - Naming a trigger, an entry price, an invalidation, a stop distance, targets and a size in R.

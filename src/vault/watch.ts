@@ -74,7 +74,12 @@ export type DepositWatch = {
 };
 
 const POLL_MS = 3_000;
-const MAX_WATCH_MS = 24 * 60 * 60 * 1000;
+// Eager for the ten minutes a person stands at the card, then one poll in five (15 s at the
+// default tick) until the watch gives up: a card left open must not ask the bridge and the
+// verifier 57,000 times a day. Showing the card again starts a fresh eager window.
+const EAGER_MS = 10 * 60 * 1000;
+const SLOW_EVERY = 5;
+const MAX_WATCH_MS = 2 * 60 * 60 * 1000;
 // A minute more of balance reads after credited, so a second tranche is caught, then quiet.
 const AFTER_CREDITED_MS = 60_000;
 
@@ -208,6 +213,7 @@ export function createDepositWatch(deps: Deps): DepositWatch {
   let firstPoll = true;
   let creditedAt = 0;
   let inFlight = false;
+  let ticks = 0;
 
   function announce(): void {
     if (state !== null) deps.sse.broadcast({ type: 'deposit', ...state });
@@ -266,6 +272,9 @@ export function createDepositWatch(deps: Deps): DepositWatch {
       stopTimer();
       commit({ ...current, phase: 'stopped' });
       return;
+    } else if (current.phase === 'watching' && now() - started > EAGER_MS) {
+      ticks += 1;
+      if (ticks % SLOW_EVERY !== 0) return;
     }
     // No wallet yet is not an error: the card can go up before the wallet is made, and the
     // next tick asks again. The account is resolved per tick for exactly that reason.
@@ -365,6 +374,7 @@ export function createDepositWatch(deps: Deps): DepositWatch {
       stopTimer();
       generation += 1;
       started = now();
+      ticks = 0;
       token = tok !== undefined && tok.assetId !== '' ? tok : null;
       history = new Set();
       firstPoll = true;
