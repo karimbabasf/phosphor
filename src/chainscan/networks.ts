@@ -83,7 +83,7 @@ export type AddressCheck = { ok: true; normalized: string; checksum?: 'valid' | 
 export type HashCheck = { ok: true; normalized: string } | { ok: false; reason: string };
 
 function evmAddressCheck(address: string, label: string): AddressCheck {
-  if (!EVM_ADDRESS.test(address)) return { ok: false, reason: `not a ${label} address: expected 0x followed by 40 hex characters` };
+  if (!EVM_ADDRESS.test(address)) return { ok: false, reason: `not an address on ${label}: expected 0x followed by 40 hex characters` };
   const checksummed = getAddress(address.toLowerCase());
   // No capitals at all means no checksum was offered, so there is nothing to verify. Any
   // capital means one was, and then it has to match: a mixed-case address with the wrong

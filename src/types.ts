@@ -718,6 +718,10 @@ export type AppConfig = {
   // app opens on the globe and starting one is a press. Setting it true opens the window with
   // an agent already running, and stopping the agent by hand never restarts it either way.
   driver?: { claudeBin?: string; systemPrompt?: string; autostart?: boolean; model?: string };
+  // Optional keys for the chain lookups (src/chainscan). Keyless works; a key raises the rate
+  // limit. Read by the read handler on every call, sent only to the host each was issued for,
+  // and never written to a log or an error.
+  chainscan?: { blockscoutApiKey?: string; nearblocksApiKey?: string };
 };
 
 // ---------- Service interfaces (wired in main.ts) ----------

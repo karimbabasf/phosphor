@@ -15,6 +15,7 @@ import { sameOrigin } from './auth.ts';
 import { asRecord, capLabel, fail, readBody, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
 import { agentReads } from './read/agents.ts';
+import { chainReads } from './read/chain.ts';
 import { chartReads } from './read/chart.ts';
 import { gasReads } from './read/gas.ts';
 import { marketReads } from './read/market.ts';
@@ -37,6 +38,7 @@ const READS: ReadTable = {
   ...agentReads,
   ...gasReads,
   ...tradeReads,
+  ...chainReads,
 };
 
 // The table's own keys, for the test that holds READ_TOOLS and this in step. A tool listed in

@@ -82,6 +82,9 @@ export const TOOL_DATA_TOOLS: ReadonlySet<string> = new Set([
   'watch',
   'receipts',
   'proposal_status',
+  // An address lookup, so the window can draw what the agent just read about a receiver. Its
+  // strings are already stripped and capped by src/chainscan before they get here.
+  'chain_address',
 ]);
 export const TOOL_DATA_CAP = 32 * 1024;
 const TOOL_PREFIX = 'mcp__phosphor__';

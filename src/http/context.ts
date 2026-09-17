@@ -95,7 +95,7 @@ export const READ_TOOLS: readonly string[] = [
   'chart_snapshot',
   'chart_batch',
   'market_search',
-  // The one tool that leaves this machine. It is a read like the others because that is all it
+  // The first tool that leaves this machine. It is a read like the others because that is all it
   // is: the APP fetches from a fixed allowlist and hands back text. The agent never gets a URL
   // it can point anywhere, which is the whole reason this is a Phosphor tool and not WebFetch.
   'research',
@@ -109,6 +109,13 @@ export const READ_TOOLS: readonly string[] = [
   // What this app has spent on gas, grouped. A pure aggregation over the history the
   // HISTORY overlay already derives, so it reaches no chain of its own.
   'gas_report',
+  // Public chain data: an address, its transactions, one transaction, an account's intents
+  // ledger. Reads that leave the machine the way research does: fixed hosts, a closed network
+  // enum, an address or hash that passes its shape before a URL exists, answers that are data.
+  'chain_address',
+  'chain_transactions',
+  'chain_transaction',
+  'intents_activity',
 ];
 // Chart writes. They move no money, so they never reach the proposal path and never wait on
 // an approval. They are still audited like every other op: an agent that can change what the

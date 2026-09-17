@@ -159,7 +159,7 @@ test('when both the indexer and the RPC fail the EVM summary is a named failure,
 
   const bad = await addressActivity('ethereum', 'https://evil.tld/0x?', both);
   assert.equal(bad.ok, false);
-  assert.match(bad.error ?? '', /not a Ethereum address|not an Ethereum address/);
+  assert.match(bad.error ?? '', /not an address on Ethereum/);
   assert.equal(seen.length, 2, 'the bad address made no request');
 });
 
