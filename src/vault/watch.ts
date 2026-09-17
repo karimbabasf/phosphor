@@ -53,6 +53,9 @@ type Deps = {
   sse: { broadcast: (payload: unknown) => void };
   /** The intents account the bridge credits: the wallet's EVM address, lowercased. */
   account: () => string | null;
+  /** The one refresh seam (refreshNow in src/main.ts). Never ledger.refresh() from here: two
+   *  loops refreshing the same ledger raced each other into a flashing warning. */
+  refresh: () => Promise<void>;
   recent?: (account: string, chain: string) => Promise<PoaDeposit[]>;
   now?: () => number;
   pollMs?: number;
@@ -95,7 +98,7 @@ export function createDepositWatch(deps: Deps): DepositWatch {
     // Landed wins over seen: the verifier's balance is the settled truth.
     let landedAmount: number | null = null;
     try {
-      await deps.ledger.refresh();
+      await deps.refresh();
     } catch {
       // A failed refresh is a stale read, not a lost deposit; the next tick asks again.
     }

@@ -136,7 +136,9 @@ export type WalletView = {
   rows: WalletRow[]; // value descending; only things actually held
   totalUsd: number; // everything: tokens, natives and intents balances
   byChain: Record<string, number>; // place -> usd
-  stale: WalletPlace[]; // places whose last read failed; never silently zero
+  stale: WalletPlace[]; // places whose reads have failed; never silently zero
+  // Why each stale place is stale, in the reader's words, where the read said.
+  staleWhy?: Partial<Record<WalletPlace, string>>;
   // How many configured tokens came back with nothing in them. The rows are gone from
   // the list (a wallet lists what you hold), but the number stays: "we looked at 19
   // tokens and 14 were empty" and "we only looked at 5" are different facts.
@@ -145,6 +147,9 @@ export type WalletView = {
   // The count and the sum let a card say "1 tiny balance, not listed" instead of hiding money.
   dustCount: number;
   dustUsd: number;
+  // The trading account, when it was read: funded or not. Unfunded is where a new account
+  // starts, so it is never counted as an empty holding.
+  hyperliquid?: { funded: boolean };
 };
 
 // ---------- Policy ----------

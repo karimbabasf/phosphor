@@ -139,6 +139,7 @@ test('the deposit watch lands a deposit for a wallet created after the ledger wa
     sse: { broadcast: (frame) => frames.push(frame as { phase: string; amount: number | null }) },
     // The same resolver src/server.ts hands the watch: the keystore's header, per call.
     account: () => walletAddresses().evm?.toLowerCase() ?? null,
+    refresh: () => ledger.refresh().then(() => undefined),
     recent: async () => [],
     pollMs: 5,
   });

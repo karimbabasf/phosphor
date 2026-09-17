@@ -11,7 +11,7 @@
 // chain (see the note on emptyChainStatus).
 import type { AppConfig, ChainId, ChainStatus, Holding, LedgerSnapshot, TransferLeg } from '../types.ts';
 import { loadDemoLedger } from './demo.ts';
-import { fetchIntentsHoldings, type IntentsRead } from './intents.ts';
+import { fetchIntentsHoldings, REFRESH_PERIOD_MS, type IntentsRead } from './intents.ts';
 import { fetchHyperliquidRead, type HlRead } from './hyperliquid.ts';
 import { oneClickClient } from '../intents.ts';
 import { evmAddress } from '../chain/evm.ts';
@@ -220,12 +220,18 @@ export function intentsAccountId(cfg: AppConfig): string | null {
   }
 }
 
-function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch): Ledger {
+function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch, log: (line: string) => void): Ledger {
   // Shared client so the 186-entry token list is fetched once per process, not per refresh.
   const oneClick = oneClickClient({ fetchImpl });
   const listeners = refreshListeners();
   let liveIntents: IntentsRead | undefined;
   let liveHl: HlRead | undefined;
+  // Reads started and the newest one written, so a slow read that answers after a newer one
+  // has written is dropped at the write: the last answer to arrive is not the newest read, and
+  // a read that failed on its 10 s deadline used to land on top of a good one that came after
+  // it, marking the verifier stale when it had just answered.
+  let started = 0;
+  let written = 0;
   let current: LedgerSnapshot = {
     holdings: [],
     chainStatus: emptyChainStatus(),
@@ -235,9 +241,10 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch): Ledger {
     gas: Object.fromEntries(ALL_CHAINS.map(c => [c, { transferCostUsd: 0 }])) as Record<ChainId, { transferCostUsd: number }>,
   };
 
-  // A verifier read that fails keeps the last good holdings, exactly as a chain read does,
-  // and carries ok:false so the panel can mark it stale. Blanking the row would say the
-  // deposit is gone.
+  // A verifier read that fails keeps the last good holdings AND their stamp, counts the miss,
+  // and says why, once, in the log. Blanking the row would say the deposit is gone; marking it
+  // stale on the first miss flashed a warning over a readable balance (the wallet report waits
+  // for two in a row, see intentsUnreadWhy). The reason used to be captured here and dropped.
   async function refreshIntents(account: string | null): Promise<IntentsRead | undefined> {
     if (account === null) return undefined;
     const read = await fetchIntentsHoldings({
@@ -246,10 +253,11 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch): Ledger {
       tokenList: () => oneClick.tokens(),
       fetchImpl,
     });
-    if (!read.ok && liveIntents !== undefined) {
-      return { ...read, holdings: liveIntents.holdings };
-    }
-    return read;
+    if (read.ok) return { ...read, failures: 0 };
+    const failures = (liveIntents?.failures ?? 0) + 1;
+    log(`phosphor: the verifier read failed (${read.error ?? 'no reason given'}), ${failures} in a row`);
+    if (liveIntents === undefined) return { ...read, failures };
+    return { ...read, holdings: liveIntents.holdings, fetchedAt: liveIntents.fetchedAt, failures };
   }
 
   // The trading account is the same address the verifier credits, checksummed by the venue's
@@ -271,6 +279,7 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch): Ledger {
        rather than after them because a read that started before a fill can only carry the
        balance from before it, whatever the clock said when the answer came back. */
     const chainStatus = emptyChainStatus();
+    const seq = ++started;
     // Started, not awaited: the verifier read does not depend on a price to happen, only to
     // be valued, so the two run together and meet at the end.
     const livePrices = resolveLivePrices(fetchImpl, current.prices, current.priceAsOf ?? {});
@@ -279,6 +288,9 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch): Ledger {
     // refresh on. See intentsAccountId for the bug this closes.
     const account = intentsAccountId(cfg);
     const [intentsRead, hlRead, priced] = await Promise.all([refreshIntents(account), refreshHyperliquid(account), livePrices]);
+    // A newer read has already written: this answer is older than what is on screen.
+    if (seq < written) return current;
+    written = seq;
     liveIntents = intentsRead;
     liveHl = hlRead;
 
@@ -314,9 +326,13 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch): Ledger {
   };
 }
 
-export function createLedger(cfg: AppConfig, deps?: { fetchImpl?: typeof fetch }): Ledger {
+// `log` is where a failed verifier read says why (the process log, by default); a test hands in
+// a collector so the line can be checked and the run stays quiet.
+export function createLedger(cfg: AppConfig, deps?: { fetchImpl?: typeof fetch; log?: (line: string) => void }): Ledger {
   const fetchImpl = deps?.fetchImpl ?? fetch;
-  return cfg.mode === 'demo' ? createDemoLedger() : createLiveLedger(cfg, fetchImpl);
+  const log = deps?.log ?? ((line: string) => console.error(line));
+  return cfg.mode === 'demo' ? createDemoLedger() : createLiveLedger(cfg, fetchImpl, log);
 }
 
+export { REFRESH_PERIOD_MS };
 export type { Holding };

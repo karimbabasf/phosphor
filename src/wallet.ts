@@ -7,7 +7,7 @@
 // verifier reader own fetching, this owns presentation.
 
 import type { ChainId, LedgerSnapshot, WalletPlace, WalletRow, WalletView } from './types.ts';
-import type { IntentsRead } from './ledger/intents.ts';
+import { intentsUnreadWhy, type IntentsRead } from './ledger/intents.ts';
 import type { HlRead } from './ledger/hyperliquid.ts';
 
 // Price per unit, derived from what the ledger already priced rather than re-fetched.
@@ -19,7 +19,8 @@ function unitPrice(amount: number, usd: number): number {
 // Below this a balance renders as $0.00, which is where a row stops carrying information.
 const DUST_USD = 0.005;
 
-export function buildWallet(snapshot: LedgerSnapshot, intents?: IntentsRead, hyperliquid?: HlRead): WalletView {
+// `now` is only for the age of the verifier read (see intentsUnreadWhy); a test pins it.
+export function buildWallet(snapshot: LedgerSnapshot, intents?: IntentsRead, hyperliquid?: HlRead, now: number = Date.now()): WalletView {
   // Symbol -> unit price, learned from the holdings themselves and topped up from the
   // snapshot's native price table for symbols held only inside a pool.
   //
@@ -133,7 +134,9 @@ export function buildWallet(snapshot: LedgerSnapshot, intents?: IntentsRead, hyp
       : [];
 
   const held = [...tokenRows, ...intentsRows, ...hlRows].filter(r => r.quantity > 0 || r.valueUsd > 0);
-  const emptyCount = tokenRows.length + intentsRows.length + hlRows.length - held.length;
+  // The trading account at $0 is where a new account starts, not an empty holding to count:
+  // "1 empty, not listed" on a fresh wallet was this row. The report says unfunded instead.
+  const emptyCount = tokenRows.length + intentsRows.length - held.filter(r => r.kind !== 'hyperliquid').length;
 
   // Dust. A priced balance that rounds to $0.00 (0.001 USDC left on a venue after a withdrawal)
   // is money, so the total and the place keep it, but a row reading "$0.00" beside a real one
@@ -156,11 +159,22 @@ export function buildWallet(snapshot: LedgerSnapshot, intents?: IntentsRead, hyp
   const stale: WalletPlace[] = (Object.entries(snapshot.chainStatus) as Array<[ChainId, { ok: boolean }]>)
     .filter(([, status]) => !status.ok)
     .map(([chain]) => chain);
-  // A verifier read that failed is stale for the same reason a chain read that failed is:
-  // showing no intents row would claim the deposit is gone. Only ever added when a read was
-  // actually attempted, so demo mode does not sprout a permanent STALE badge.
-  if (intents !== undefined && !intents.ok) stale.push('intents');
-  if (hyperliquid !== undefined && !hyperliquid.ok) stale.push('hyperliquid');
+  // A verifier read that failed twice in a row, or holdings nobody has re-read for two idle
+  // periods, are stale for the same reason a chain read that failed is: showing no intents
+  // row would claim the deposit is gone. One miss is not (intentsUnreadWhy says why). Only
+  // ever added when a read was actually attempted, so demo mode does not sprout a permanent
+  // STALE badge. The reason goes out beside the place, so the card can say more than "unknown".
+  const staleWhy: Partial<Record<WalletPlace, string>> = {};
+  const intentsWhy = intents === undefined ? null : intentsUnreadWhy(intents, now);
+  if (intentsWhy !== null) {
+    stale.push('intents');
+    staleWhy.intents = intentsWhy;
+  }
+  if (hyperliquid !== undefined && !hyperliquid.ok) {
+    stale.push('hyperliquid');
+    if (hyperliquid.error !== undefined) staleWhy.hyperliquid = hyperliquid.error;
+  }
+  const hl = hyperliquid !== undefined && hyperliquid.ok ? { funded: hyperliquid.collateralUsdc > 0 } : undefined;
 
-  return { rows, totalUsd, byChain, stale, emptyCount, dustCount, dustUsd };
+  return { rows, totalUsd, byChain, stale, staleWhy, emptyCount, dustCount, dustUsd, hyperliquid: hl };
 }
