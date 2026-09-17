@@ -322,6 +322,96 @@ test('the crosshair stamp carries the date on an intraday chart', () => {
   assert.equal(s.crosshairStamp(Date.parse('2026-09-01T00:00:00Z') / 1000, s.MONTH_SEC), 'Sep 2026');
 });
 
+// ---------- the labels ----------
+
+/* A 2d context that records every string and every dot drawn, with the ink each went down in. */
+function recorder(): { ctx: Record<string, unknown>; texts: { text: string; x: number; ink: string }[]; dots: { x: number; ink: string }[]; strokes: string[] } {
+  const texts: { text: string; x: number; ink: string }[] = [];
+  const dots: { x: number; ink: string }[] = [];
+  const strokes: string[] = [];
+  const ctx: Record<string, unknown> = {
+    font: '',
+    fillStyle: '',
+    strokeStyle: '',
+    lineWidth: 1,
+    textAlign: 'left',
+    measureText: (text: string) => ({ width: String(text).length * 6 }),
+    fillText: (text: string, x: number) => texts.push({ text: String(text), x, ink: String(ctx.fillStyle) }),
+    fillRect: () => {},
+    strokeRect: () => {},
+    beginPath: () => {},
+    moveTo: () => {},
+    lineTo: () => {},
+    closePath: () => {},
+    arc: (x: number) => dots.push({ x, ink: String(ctx.fillStyle) }),
+    fill: () => {},
+    stroke: () => strokes.push(`${String(ctx.strokeStyle)} w${String(ctx.lineWidth)}`),
+    setLineDash: () => {},
+    save: () => {},
+    restore: () => {},
+    clip: () => {},
+    rect: () => {},
+    translate: () => {},
+    rotate: () => {},
+  };
+  return { ctx, texts, dots, strokes };
+}
+
+test('a level the agent drew shows no [agent] word: its dot is drawn in the agent tone before the label', () => {
+  const s = loadChartUi();
+  ready(s, { levels: [{ id: 'level-1', price: 101, label: '[agent] ceiling', source: 'agent' }] });
+  const L = s.buildLayout(900, 600, fakeCtx);
+  s.CHART_SCENE_LABELS = [];
+  const scene = recorder();
+  s.drawLevels(scene.ctx, L);
+  const hud = recorder();
+  s.drawLegend(hud.ctx, L);
+  const printed = hud.texts.map((t) => t.text);
+  assert.ok(!printed.some((t) => /\[agent\]/.test(t)), `no bracketed word on the canvas: ${printed.join(' | ')}`);
+  const label = hud.texts.find((t) => /^ceiling /.test(t.text));
+  assert.ok(label, `the level is labelled by its name and price: ${printed.join(' | ')}`);
+  assert.equal(label?.ink, s.chartInk('agent', 0.9), 'in the agent tone');
+  assert.equal(hud.dots.length, 1, 'one dot, for the one agent object');
+  assert.equal(hud.dots[0]?.ink, s.chartInk('agent', 0.9), 'the dot is in the agent tone');
+  assert.ok((hud.dots[0]?.x ?? 0) < (label?.x ?? 0), 'and it sits before the label');
+});
+
+test('the four prices of the head line sit in equal columns, so a tick moves nothing beside it', () => {
+  const s = loadChartUi();
+  ready(s);
+  const L = s.buildLayout(900, 600, fakeCtx);
+  const hud = recorder();
+  s.drawLegend(hud.ctx, L);
+  const letters = ['O', 'H', 'L', 'C'].map((k) => hud.texts.find((t) => t.text === k)?.x ?? NaN);
+  const gaps = [letters[1]! - letters[0]!, letters[2]! - letters[1]!, letters[3]! - letters[2]!];
+  assert.ok(gaps.every((g) => g === gaps[0]), `the columns are one width: ${gaps.join(', ')}`);
+  const widest = Math.max(s.priceText(L.high, L.decimals).length, s.priceText(L.low, L.decimals).length) * 6;
+  assert.equal(gaps[0], 6 + 6 + widest + 6, 'a letter, a gap, a column as wide as the widest price on the axis, a gap');
+  assert.equal(hud.texts[0]?.x, 8, 'the column starts eight pixels in');
+});
+
+test('the cross that removes a study shows under the pointer and nowhere else', () => {
+  const s = loadChartUi();
+  ready(s, {
+    indicators: [{ id: 'ema-1', type: 'ema', label: '[agent] ema 21', pane: 'price', source: 'agent', plots: [{ key: 'ema', values: new Array(40).fill(100) }] }],
+  });
+  const L = s.buildLayout(900, 600, fakeCtx);
+  s.CHART_SCENE_LABELS = [];
+  s.CHART_HOVER = null;
+  const away = recorder();
+  s.drawLegend(away.ctx, L);
+  assert.ok(!away.strokes.some((st) => /w1\.5/.test(st)), 'no cross while the pointer is away');
+  assert.ok(!s.CHART_HITS.some((h: { remove: string }) => h.remove === 'ema-1'), 'and nothing to hit');
+  const box = s.CHART_LABEL_BOXES['ema-1'];
+  assert.ok(box, 'the row remembers where it was drawn');
+  s.CHART_HOVER = { x: box.x + 4, y: box.y + 4, index: 39 };
+  const over = recorder();
+  s.drawLegend(over.ctx, L);
+  assert.ok(over.strokes.some((st) => /w1\.5/.test(st)), 'the cross is drawn under the pointer');
+  assert.ok(s.CHART_HITS.some((h: { remove: string }) => h.remove === 'ema-1'), 'and it can be hit');
+  assert.ok(!over.texts.some((t) => /\[agent\]/.test(t.text)));
+});
+
 // ---------- the face ----------
 
 test('every number on the canvas is set in Geist Mono at 11 px, the face the rail uses', () => {

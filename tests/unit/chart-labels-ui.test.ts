@@ -2,8 +2,8 @@
 //
 // Three writers used to put text down the left edge of the plot with three ideas of where the
 // next line goes, and two of them printing on one y is a number nobody can read. The column is
-// one pass with four promises: a 13 px pitch from y 16, order kept, lifted back on screen when
-// the stack runs off the bottom, and cut at eight with a line that says how many more.
+// one pass with four promises: a 13 px pitch from y 16 and 8 px in, order kept, lifted back on
+// screen when the stack runs off the bottom, and cut at eight with a line that says how many more.
 //
 // ui/chart/labels.js is a browser script: running it in a context makes its functions the test
 // surface, the same harness the engine's own tests use.
@@ -90,7 +90,7 @@ test('drawing a column pads, paints in the tone asked for, and rings the spotlig
   const placed = s.labelLayout([{ y: 20, text: 'Stop 63,200', tone: 'down', ring: true }], 0, 400).placed;
   const boxes = s.labelDraw(ctx, placed, inkOf, 'pad');
   assert.ok(calls[0].startsWith('rect pad '), 'the ground goes down before the text');
-  assert.ok(calls.some((c) => c.startsWith('text down@0.9 Stop 63,200 5,20')), calls.join('\n'));
+  assert.ok(calls.some((c) => c.startsWith('text down@0.9 Stop 63,200 8,20')), calls.join('\n'));
   assert.ok(calls.some((c) => c.startsWith('ring warn@0.95')), 'no ring on the spotlighted label');
   assert.equal(boxes.length, 1);
   assert.equal(boxes[0].item.text, 'Stop 63,200');
@@ -136,12 +136,52 @@ test('a part can be a drawn shape: the cross is a 1.5 px stroke, an arrow a fill
   ], 0, 400).placed;
   const boxes = s.labelDraw(ctx, placed, inkOf, null);
   assert.deepEqual(calls, [
-    'path', 'fill ink@0.6', 'text ink@0.6 Entry 63,200 @19',
-    'text text@0.9 EMA 20 @5', 'path', 'stroke text2@0.7 w1.5',
+    'path', 'fill ink@0.6', 'text ink@0.6 Entry 63,200 @22',
+    'text text@0.9 EMA 20 @8', 'path', 'stroke text2@0.7 w1.5',
   ]);
   assert.equal(ctx.lineWidth, 1, 'the cross left its stroke width on the context');
   // A glyph advances eight pixels, so the box (and the hit at its tail) still covers it.
   assert.equal(boxes[0].w, 8 + 6 + 'Entry 63,200'.length * 6 + 6);
   assert.equal(boxes[1].w, 'EMA 20'.length * 6 + 6 + 8 + 6);
   assert.ok(!calls.some((c) => /[×↑↓]/.test(c)), 'a glyph was typed rather than drawn');
+});
+
+test('a part with a width advances by it, so a column of prices holds still while the digits tick', () => {
+  const s = load();
+  const xs: number[] = [];
+  const ctx = {
+    fillStyle: '',
+    measureText: (t: string) => ({ width: t.length * 6 }),
+    fillRect: () => {},
+    fillText: (_t: string, x: number) => xs.push(x),
+    strokeRect: () => {},
+  };
+  const parts = [{ text: 'O', tone: 'text2' }, { text: '99.9', tone: 'up', width: 60 }, { text: 'H', tone: 'text2' }, { text: '1,000.1', tone: 'up', width: 60 }, { text: 'L', tone: 'text2' }];
+  const placed = s.labelLayout([{ y: 16, parts }], 0, 400).placed;
+  const boxes = s.labelDraw(ctx, placed, (tone: string) => tone, null);
+  assert.deepEqual(xs, [8, 20, 86, 98, 164], 'each price column is sixty wide whatever it holds');
+  assert.equal(boxes[0].w, 6 + 6 + 60 + 6 + 6 + 6 + 60 + 6 + 6 + 6);
+  // A value wider than its column still gets its room rather than running into the next part.
+  const wide = s.labelLayout([{ y: 16, parts: [{ text: '123,456,789.00', tone: 'up', width: 20 }, { text: 'H', tone: 'text2' }] }], 0, 400).placed;
+  xs.length = 0;
+  s.labelDraw(ctx, wide, (tone: string) => tone, null);
+  assert.deepEqual(xs, [8, 8 + 14 * 6 + 6]);
+});
+
+test('the agent dot is a filled circle in the ink asked for, drawn where the word used to be typed', () => {
+  const s = load();
+  const calls: string[] = [];
+  const ctx = {
+    fillStyle: '',
+    measureText: (t: string) => ({ width: t.length * 6 }),
+    fillRect: () => {},
+    fillText: (t: string, x: number) => calls.push(`text ${ctx.fillStyle} ${t} @${x}`),
+    strokeRect: () => {},
+    beginPath: () => calls.push('path'),
+    arc: (x: number, y: number, r: number) => calls.push(`arc ${x},${y} r${r}`),
+    fill: () => calls.push(`fill ${ctx.fillStyle}`),
+  };
+  const placed = s.labelLayout([{ y: 16, parts: [{ glyph: 'agent', tone: 'agent', alpha: 0.9 }, { text: 'ceiling 2,450.00', tone: 'agent' }] }], 0, 400).placed;
+  s.labelDraw(ctx, placed, (tone: string, alpha: number) => `${tone}@${alpha}`, null);
+  assert.deepEqual(calls, ['path', 'arc 12,12 r2.5', 'fill agent@0.9', 'text agent@0.9 ceiling 2,450.00 @22']);
 });

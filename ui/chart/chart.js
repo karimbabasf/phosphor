@@ -367,6 +367,38 @@ function chartSpotOn(kind, id) {
   return typeof window.chartSpotActive === 'function' && window.chartSpotActive(kind, id) === true;
 }
 
+/* The label as the human reads it. The server tags everything an agent draws with a literal
+   `[agent] ` it cannot write its way out of (src/chart.ts), and that tag is what the agent
+   reads back; on the canvas the word became a wall of brackets down the left edge. Here the
+   word comes off and the agent's own ink and a drawn dot say the same thing (labelGlyph
+   'agent'). The bare label is what is drawn; the source field is what decides the dot. */
+function labelText(label) {
+  var text = String(label || '');
+  if (text.indexOf('[agent] ') === 0) text = text.slice(8);
+  else if (text.indexOf('[agent]') === 0) text = text.slice(7).replace(/^\s+/, '');
+  if (text.slice(-8) === ' [agent]') text = text.slice(0, -8);
+  return text;
+}
+
+/* The parts that open every label of an object: the agent's dot when the agent drew it. */
+function labelLead(source, alpha) {
+  return source === 'agent' ? [{ glyph: 'agent', tone: 'agent', alpha: alpha === undefined ? 0.9 : alpha }] : [];
+}
+
+/* The boxes the label column drew last frame, by the id of the object a cross would remove,
+   so the cross can be shown only under the pointer: a column of crosses beside every study
+   read as controls where the reader wanted the numbers. The hit target is the cross, and the
+   cross is there when the pointer is on the label; the box is widened by the cross's own
+   advance so reaching for it does not make it vanish. */
+var CHART_LABEL_BOXES = {};
+
+function labelHovered(id) {
+  if (!CHART_HOVER || !id) return false;
+  var box = CHART_LABEL_BOXES[id];
+  if (!box) return false;
+  return CHART_HOVER.x >= box.x && CHART_HOVER.x <= box.x + box.w + 20 && CHART_HOVER.y >= box.y && CHART_HOVER.y <= box.y + box.h;
+}
+
 function clampNum(value, low, high) {
   return Math.min(high, Math.max(low, value));
 }
@@ -1632,10 +1664,9 @@ function drawLevels(ctx, L) {
       // which way (labels.js labelGlyph), and it joins the column like every other label.
       chartLabel({
         y: y < top ? top + 6 : bottom - 6,
-        parts: [
-          { glyph: y < top ? 'up' : 'down', tone: tone, alpha: 0.6 },
-          { text: level.label + ' ' + priceText(level.price, L.decimals), tone: tone, alpha: 0.6 }
-        ],
+        parts: [{ glyph: y < top ? 'up' : 'down', tone: tone, alpha: 0.6 }]
+          .concat(labelLead(level.source, 0.6))
+          .concat([{ text: labelText(level.label) + ' ' + priceText(level.price, L.decimals), tone: tone, alpha: 0.6 }]),
         ring: ring
       });
       continue;
@@ -1649,7 +1680,11 @@ function drawLevels(ctx, L) {
     ctx.lineTo(L.plotWidth, hair(y));
     ctx.stroke();
     ctx.setLineDash([]);
-    chartLabel({ y: y - 7, text: level.label + ' ' + priceText(level.price, L.decimals), tone: tone, ring: ring });
+    chartLabel({
+      y: y - 7,
+      parts: labelLead(level.source).concat([{ text: labelText(level.label) + ' ' + priceText(level.price, L.decimals), tone: tone }]),
+      ring: ring
+    });
   }
 }
 
@@ -1686,9 +1721,8 @@ function drawDrawings(ctx, L) {
     var d = list[i];
     var fromAgent = d.source === 'agent';
     // The server tags an agent's drawing "[agent] trend" as it lands (tagLabel in
-    // src/http/view.ts). Adding the word here as well printed it twice on one label.
-    var label = String(d.label || '');
-    if (fromAgent && label.indexOf('[agent]') < 0) label += ' [agent]';
+    // src/http/view.ts); on the canvas the word comes off and the dot says it.
+    var label = labelText(d.label);
 
     if (d.kind === 'zone' && d.zone) {
       var yHigh = L.yOf(d.zone.high);
@@ -1698,14 +1732,10 @@ function drawDrawings(ctx, L) {
       if (boxBottom <= top || boxTop >= bottom) continue;
       ctx.fillStyle = accent(0.14);
       ctx.fillRect(0, boxTop, L.plotWidth, boxBottom - boxTop);
-      ctx.fillStyle = accent(fromAgent ? 0.6 : 0.85);
       // Right-aligned, like the trend line labels. Left-aligning collided with the OHLC
       // legend whenever a zone reached the top of the plot, which is exactly what a wide
       // zone does, so the collision was the common case rather than an edge one.
-      ctx.textAlign = 'right';
-      ctx.fillText(label, L.plotWidth - 4, boxTop + 11);
-      ctx.textAlign = 'left';
-      drawSpotRing(ctx, L.plotWidth - 4 - ctx.measureText(label).width, boxTop + 11, ctx.measureText(label).width, chartSpotOn('line', d.id));
+      drawEdgeLabel(ctx, label, fromAgent, L.plotWidth - 4, boxTop + 11, chartSpotOn('line', d.id));
       continue;
     }
 
@@ -1734,12 +1764,24 @@ function drawDrawings(ctx, L) {
 
     // The label rides the right end, where the line is heading.
     var labelY = Math.max(top + 10, Math.min(bottom - 3, y1 - 5));
-    ctx.fillStyle = accent(fromAgent ? 0.6 : 0.85);
-    ctx.textAlign = 'right';
-    ctx.fillText(label, L.plotWidth - 4, labelY);
-    ctx.textAlign = 'left';
-    drawSpotRing(ctx, L.plotWidth - 4 - ctx.measureText(label).width, labelY, ctx.measureText(label).width, chartSpotOn('line', d.id));
+    drawEdgeLabel(ctx, label, fromAgent, L.plotWidth - 4, labelY, chartSpotOn('line', d.id));
   }
+}
+
+/* A label against the right edge of the plot, for a line or a zone: right-aligned text in the
+   accent, the agent's dot in front when the agent drew it, the spotlight ring around both. */
+function drawEdgeLabel(ctx, label, fromAgent, right, y, spot) {
+  ctx.fillStyle = accent(fromAgent ? 0.6 : 0.85);
+  ctx.textAlign = 'right';
+  ctx.fillText(label, right, y);
+  ctx.textAlign = 'left';
+  var width = ctx.measureText(label).width;
+  var left = right - width;
+  if (fromAgent) {
+    left -= LABEL_GLYPH_W + 2;
+    labelGlyph(ctx, 'agent', left, y, agentInk(0.85));
+  }
+  drawSpotRing(ctx, left, y, right - left, spot);
 }
 
 /* The spotlight on a label drawn outside the column: the same amber ring the column draws. */
@@ -1762,7 +1804,7 @@ function drawMarks(ctx, L) {
     if (index < L.start - 1 || index > L.end + 1) continue;
     var x = L.xOf(index);
     if (x < 0 || x > L.plotWidth) continue;
-    var markInk = mark.source === 'agent' ? agentInk : green;
+    var markInk = mark.source === 'agent' ? agentInk : accent;
     ctx.strokeStyle = markInk(0.34);
     ctx.setLineDash([2, 4]);
     ctx.beginPath();
@@ -1774,7 +1816,7 @@ function drawMarks(ctx, L) {
     ctx.translate(x - 3, L.axisTop - 4);
     ctx.rotate(-Math.PI / 2);
     ctx.fillStyle = markInk(0.55);
-    ctx.fillText(mark.label, 0, 0);
+    ctx.fillText(labelText(mark.label), 0, 0);
     ctx.restore();
   }
 }
@@ -1947,24 +1989,26 @@ function drawLegend(ctx, L) {
 
   /* The legend is the head of the one label column: the market line first, then one line per
      price overlay, then everything the scene collected (levels, the account's lines, plans),
-     placed together so no two of them can print on one y. Sub-pane lines stay in their panes. */
+     placed together so no two of them can print on one y. Sub-pane lines stay in their panes.
+
+     The four prices sit in columns as wide as the widest price on the axis, so a close that
+     ticks from 999.99 to 1,000.01 moves nothing to its right: a legend that jittered on every
+     tick was the one thing on the surface that looked cheaper than the numbers on it. */
   var items = [];
+  var valueW = Math.max(ctx.measureText(priceText(L.high, L.decimals)).width, ctx.measureText(priceText(L.low, L.decimals)).width);
   var head = [
     { text: identity.product, tone: 'hi' },
-    { text: timeframeOf(identity.granularitySec), tone: 'text2', alpha: 0.85 },
-    { text: 'O', tone: 'text2', alpha: 0.7 },
-    { text: priceText(candle.o, L.decimals), tone: dir, alpha: 1 },
-    { text: 'H', tone: 'text2', alpha: 0.7 },
-    { text: priceText(candle.h, L.decimals), tone: dir, alpha: 1 },
-    { text: 'L', tone: 'text2', alpha: 0.7 },
-    { text: priceText(candle.l, L.decimals), tone: dir, alpha: 1 },
-    { text: 'C', tone: 'text2', alpha: 0.7 },
-    { text: priceText(candle.c, L.decimals), tone: dir, alpha: 1 }
+    { text: timeframeOf(identity.granularitySec), tone: 'text2', alpha: 0.85 }
   ];
+  var ohlc = [['O', candle.o], ['H', candle.h], ['L', candle.l], ['C', candle.c]];
+  for (var v = 0; v < ohlc.length; v++) {
+    head.push({ text: ohlc[v][0], tone: 'text2', alpha: 0.7 });
+    head.push({ text: priceText(ohlc[v][1], L.decimals), tone: dir, alpha: 1, width: valueW });
+  }
   // Round before choosing the sign, or a bar that moved a hundredth of a percent down
   // prints "-0.00%", which reads as a rendering fault rather than as a flat bar.
   var rounded = Math.abs(change) < 0.005 ? 0 : change;
-  head.push({ text: (rounded > 0 ? '+' : rounded < 0 ? '' : ' ') + rounded.toFixed(2) + '%', tone: dir, alpha: 1 });
+  head.push({ text: (rounded > 0 ? '+' : rounded < 0 ? '' : ' ') + rounded.toFixed(2) + '%', tone: dir, alpha: 1, width: ctx.measureText('+00.00%').width });
   items.push({ y: LABEL_TOP, parts: head, legend: true });
 
   for (var o = 0; o < L.overlays.length; o++) {
@@ -1976,30 +2020,47 @@ function drawLegend(ctx, L) {
   var boxes = labelDraw(ctx, laid.placed, chartInk, chartLabelPad());
   for (var b = 0; b < boxes.length; b++) {
     var placed = boxes[b].item;
+    if (!placed.id) continue;
+    CHART_LABEL_BOXES[placed.id] = boxes[b];
     if (!placed.remove) continue;
     // The cross is the last part of the line, so the hit is the tail of the box.
     CHART_HITS.push({ x: boxes[b].x + boxes[b].w - 16, y: boxes[b].y, w: 18, h: boxes[b].h, remove: placed.remove });
   }
 
   for (var p = 0; p < L.panes.length; p++) {
-    drawIndicatorLine(ctx, L, L.panes[p].indicator, 3, L.panes[p].top + 9, index);
+    drawIndicatorLine(ctx, L, L.panes[p].indicator, L.panes[p].top + 9, index);
   }
 
   drawChartNotes(ctx, L);
 }
 
-/* One legend line for a price overlay: its label, its values at the hovered bar, and the cross
-   that removes it, as one item in the column. */
-function legendItem(L, indicator, index, y) {
-  var parts = [{ text: indicator.label, tone: indicator.source === 'agent' ? 'agent' : 'text', alpha: 0.85 }];
+/* One legend line for a study: the agent's dot when the agent added it, the label, its values
+   at the hovered bar, and, under the pointer only, the cross that removes it. The same line
+   serves a price overlay in the column and a sub-pane at the top of its pane. */
+function studyParts(L, indicator, index) {
+  var parts = labelLead(indicator.source, 0.85);
+  parts.push({ text: labelText(indicator.label), tone: indicator.source === 'agent' ? 'agent' : 'text', alpha: 0.85 });
   var plots = indicator.plots || [];
   for (var i = 0; i < plots.length; i++) {
     var value = plots[i].values[index];
     if (value === null || value === undefined || !isFinite(value)) continue;
-    parts.push({ text: priceText(value, L.decimals), tone: 'text2', alpha: 0.9 });
+    parts.push({ text: indicator.pane === 'price' ? priceText(value, L.decimals) : paneText(value), tone: 'text2', alpha: 0.9 });
   }
-  parts.push({ glyph: 'close', tone: 'text2', alpha: 0.7 });
-  return { y: y, parts: parts, remove: indicator.id, ring: chartSpotOn('indicator', indicator.id), legend: true };
+  var hovered = labelHovered(indicator.id);
+  if (hovered) parts.push({ glyph: 'close', tone: 'text2', alpha: 0.7 });
+  return { parts: parts, hovered: hovered };
+}
+
+function legendItem(L, indicator, index, y) {
+  var study = studyParts(L, indicator, index);
+  return {
+    y: y,
+    parts: study.parts,
+    id: indicator.id,
+    remove: study.hovered ? indicator.id : null,
+    ring: chartSpotOn('indicator', indicator.id),
+    legend: true
+  };
 }
 
 /* The bottom rule of the plot, where the chart says what it could not do and offers back the
@@ -2010,7 +2071,7 @@ function legendItem(L, indicator, index, y) {
    while the row they sat on grew into a toolbar. They are here now, in the same ink as the
    legend, next to the bars they are about. */
 function drawChartNotes(ctx, L) {
-  var x = 3;
+  var x = LABEL_X;
   var y = L.axisTop - 6;
 
   if (!VOLUME_ON) {
@@ -2041,25 +2102,18 @@ function drawChartNotes(ctx, L) {
   ctx.fillText(notes.join('   '), x, y);
 }
 
-/* One line per indicator, with the values at the hovered bar and a cross that removes it.
-   The cross is the human's way out of anything an agent put on the chart. */
-function drawIndicatorLine(ctx, L, indicator, x, y, index) {
-  ctx.fillStyle = indicator.source === 'agent' ? agentInk(0.85) : textInk(0.85);
-  ctx.fillText(indicator.label, x, y);
-  var cursor = x + ctx.measureText(indicator.label).width + 8;
-  var plots = indicator.plots || [];
-  for (var i = 0; i < plots.length; i++) {
-    var value = plots[i].values[index];
-    if (value === null || value === undefined || !isFinite(value)) continue;
-    var text = indicator.pane === 'price' ? priceText(value, L.decimals) : paneText(value);
-    ctx.fillStyle = text2(0.9);
-    ctx.fillText(text, cursor, y);
-    cursor += ctx.measureText(text).width + 7;
-  }
-  // The cross is drawn, not typed (labels.js labelGlyph), inside the same hit box as before.
-  labelGlyph(ctx, 'close', cursor, y, text2(0.7));
-  CHART_HITS.push({ x: cursor - 4, y: y - 7, w: 14, h: 14, remove: indicator.id });
-  return y + 13;
+/* The title line of a sub-pane: the same line a price overlay gets in the column, drawn at
+   the top of its own pane through the same column painter, so the two cannot drift in style.
+   The cross is the human's way out of anything an agent put on the chart, and it shows under
+   the pointer. */
+function drawIndicatorLine(ctx, L, indicator, y, index) {
+  var study = studyParts(L, indicator, index);
+  var boxes = labelDraw(ctx, [{ labelY: y, parts: study.parts, ring: chartSpotOn('indicator', indicator.id) }], chartInk, chartLabelPad());
+  var box = boxes[0];
+  if (!box) return y + LABEL_PITCH;
+  CHART_LABEL_BOXES[indicator.id] = box;
+  if (study.hovered) CHART_HITS.push({ x: box.x + box.w - 16, y: box.y, w: 18, h: box.h, remove: indicator.id });
+  return y + LABEL_PITCH;
 }
 
 function timeframeOf(sec) {
