@@ -31,6 +31,13 @@
 
 /* ---------- head ---------- */
 
+/* The hold line: what the app is waiting for, in amber, under the head. */
+.sendcard-hold {
+  font-size: var(--fs-13);
+  line-height: 1.45;
+  color: var(--warn);
+}
+
 .sendcard-head {
   display: flex;
   align-items: flex-start;

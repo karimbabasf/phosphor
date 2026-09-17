@@ -13,7 +13,7 @@
 
 import type http from 'node:http';
 
-import type { Proposal } from '../types.ts';
+import type { Preflight, Proposal } from '../types.ts';
 import type { TxEntry } from '../transactions.ts';
 import { fail, intParam, sendJson } from './respond.ts';
 import { transactionsPayload } from './state.ts';
@@ -104,6 +104,9 @@ export type Receipt = {
   balanceBefore: number | null;
   balanceAfter: number | null;
   status: 'executed' | 'failed' | 'needs_reconciliation';
+  // The checks the app ran before it signed (src/preflight/), the newest attempt's, for the
+  // folded rail under the card. null for a row that never ran them.
+  preflight: Preflight | null;
 };
 
 // The three outcomes a receipt can describe. `executing` is not one of them: a card for an
@@ -194,6 +197,7 @@ function buildReceipts(ctx: Ctx): Receipt[] {
       balanceBefore: balances?.beforeUsd ?? null,
       balanceAfter: balances?.afterUsd ?? null,
       status,
+      preflight: proposal?.preflight?.[proposal.preflight.length - 1] ?? null,
     });
   }
   return out;

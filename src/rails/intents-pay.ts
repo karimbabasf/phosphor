@@ -50,7 +50,8 @@ import type { OneClickClient, OneClickQuote, OneClickToken, QuoteEcho, TokensFil
 import { INTENTS_VERIFIER, intentsApi, liveIntentsSigner } from './intents-native.ts';
 import type { IntentsApiPort, IntentsSignerPort } from './intents-native.ts';
 import { spendFromIntents } from './intents-spend.ts';
-import { deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids, withQuote } from './oneclick-words.ts';
+import type { PreflightRunner } from '../preflight/live.ts';
+import { describeHeld, deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids, withQuote } from './oneclick-words.ts';
 import { NETWORKS, addressSummary, createChainFetchState, explorerAddressUrl, explorerTxUrl, validateAddress } from '../chainscan/index.ts';
 import type { AddressSummary, ChainNetwork } from '../chainscan/index.ts';
 
@@ -143,6 +144,9 @@ export type IntentsPayRailDeps = {
   // to the chainscan read on a fresh cache, so the after-read is not the before-read served
   // twice; a test hands in its own. A failed read is null, never a throw.
   receiverRead?: (network: ChainNetwork, address: string) => Promise<AddressSummary | null>;
+  // The checks run on the live quote before the intent is generated (src/preflight/). The
+  // registry wires the live one; absent means none, which is the tests of the rail itself.
+  preflight?: PreflightRunner;
 };
 
 export type IntentsPayRail = Rail<IntentsPayDraft>;
@@ -431,8 +435,20 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
     // The four shared steps: live quote, echo check, generated intent checked and signed,
     // submitted and watched. Every refusal before the signature throws out of here; after it
     // nothing does, and a submit that did not answer comes back as signed and unsubmitted.
+    const preflight = deps.preflight;
     const spent = await spendFromIntents(
-      { api, signer, keysPath, now, sleep, pollIntervalMs, pollTimeoutMs, maxDeadlineMs, quoteKey: deps.quoteKey },
+      {
+        api,
+        signer,
+        keysPath,
+        now,
+        sleep,
+        pollIntervalMs,
+        pollTimeoutMs,
+        maxDeadlineMs,
+        quoteKey: deps.quoteKey,
+        ...(preflight === undefined ? {} : { preflight: (quote, port) => preflight.run('intents_pay', draft, quote, port) }),
+      },
       {
         owner,
         originAsset: p.originAsset,
@@ -447,6 +463,7 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
       },
       hooks,
     );
+    if (!spent.signed) return describeHeld(spent.preflight);
     if (!spent.submitted) {
       return withQuote(describeUnconfirmedSubmit({ error: spent.error, handle: spent.depositAddress, deadline: spent.deadline }), spent.signedQuote);
     }

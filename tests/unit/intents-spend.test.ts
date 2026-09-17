@@ -375,7 +375,7 @@ test('two calls with no reply end as unconfirmed: never a third, never a new sig
   const h = harness({ submitOutcomes: ['timeout', 'timeout'] });
   const out = await spendFromIntents(depsOf(h), requestOf());
   assert.equal(out.submitted, false);
-  assert.ok(!out.submitted);
+  assert.ok(out.signed && !out.submitted);
   assert.match(out.error, /timeout/);
   assert.equal(out.depositAddress, HANDLE);
   assert.equal(h.calls.submitAttempts, 2);
@@ -422,6 +422,7 @@ test('an unsigned quote is refused, and a signed one carries its record through 
 
   const h = harness();
   const out = await spendFromIntents(depsOf(h), requestOf());
+  assert.ok(out.signed);
   assert.equal(out.signedQuote.depositAddress, HANDLE);
   assert.match(out.signedQuote.signature, /^ed25519:/);
   assert.match(out.signedQuote.correlationId, /^test-quote-/);
@@ -429,5 +430,87 @@ test('an unsigned quote is refused, and a signed one carries its record through 
   const noReply = harness({ submitOutcomes: ['timeout'] });
   const stuck = await spendFromIntents(depsOf(noReply), requestOf());
   assert.equal(stuck.submitted, false);
+  assert.ok(stuck.signed);
   assert.equal(stuck.signedQuote.depositAddress, HANDLE, 'an unconfirmed submit keeps the signed quote too');
+});
+
+// ---------- the preflight ----------
+//
+// Between the live quote and generate-intent the rail can run the app's own checks
+// (src/preflight/). A hold or a fail returns before the key is touched: no intent generated,
+// no signature, and the venue probe the checks ran used the same request as the live quote.
+
+import type { Preflight } from '../../src/types.ts';
+import type { PreflightPort } from '../../src/rails/intents-spend.ts';
+
+function preflightOf(verdict: Preflight['verdict'], holdReason?: string): Preflight {
+  return {
+    at: new Date(NOW).toISOString(),
+    checks: [{ id: 'gas', label: 'Arbitrum gas', state: verdict === 'ok' ? 'ok' : 'fail', value: '300,024 / 300,000', detail: 'the 09-15 shape' }],
+    verdict,
+    ...(holdReason === undefined ? {} : { holdReason }),
+  };
+}
+
+test('a preflight that says hold signs nothing: no intent generated, no signature, the outcome is held with the checks on it', async () => {
+  const h = harness();
+  const told: Preflight[] = [];
+  let seen: PreflightPort | null = null;
+  const out = await spendFromIntents(
+    { ...depsOf(h), preflight: async (_quote, port) => { seen = port; return preflightOf('hold', 'Waiting for Arbitrum gas to settle'); } },
+    requestOf(),
+    { onPreflight: (p) => told.push(p) },
+  );
+  assert.equal(out.signed, false);
+  assert.equal(out.submitted, false);
+  assert.ok(!out.signed && out.held, 'the outcome says held');
+  assert.equal(out.preflight.holdReason, 'Waiting for Arbitrum gas to settle');
+  assert.equal(h.calls.generated.length, 0, 'no intent was generated');
+  assert.equal(h.calls.signed.length, 0, 'nothing was signed');
+  assert.equal(h.calls.submitAttempts, 0);
+  assert.equal(told.length, 1, 'the executor was told the checks before anything else');
+  assert.equal(h.calls.quotes.length, 1, 'the live quote was taken before the checks');
+  // The port: whose balance, which asset, and a venue probe over the same request and handle.
+  const port = seen as PreflightPort | null;
+  assert.ok(port !== null);
+  assert.equal(port.owner, OWNER);
+  assert.equal(port.originAsset, ORIGIN);
+  await port.venue.dryQuote();
+  assert.equal(h.calls.quotes.length, 2);
+  const dry = h.calls.quotes[1]!;
+  assert.equal(dry.dry, true);
+  assert.equal(dry.recipient, HL_ACCOUNT);
+  assert.equal(dry.recipientType, 'DESTINATION_CHAIN');
+  assert.equal(dry.amount, AMOUNT_BASE.toString());
+  await port.venue.status();
+  assert.equal(h.calls.polls, 1, 'the status probe asks about the live quote\'s handle');
+});
+
+test('a preflight that says ok is recorded through the hook before the signature and the spend goes on', async () => {
+  const h = harness();
+  const order: string[] = [];
+  const out = await spendFromIntents(
+    { ...depsOf(h), preflight: async () => { order.push('preflight'); return preflightOf('ok'); } },
+    requestOf(),
+    { onPreflight: () => order.push('told'), onEvidence: () => order.push('evidence') },
+  );
+  assert.ok(out.signed && out.submitted);
+  assert.equal(h.calls.signed.length, 1);
+  assert.deepEqual(order.slice(0, 3), ['preflight', 'told', 'evidence']);
+  assert.ok(h.calls.order.indexOf('sign') >= 0);
+});
+
+test('a preflight that says fail signs nothing either, and is not a hold', async () => {
+  const h = harness();
+  const out = await spendFromIntents({ ...depsOf(h), preflight: async () => preflightOf('fail', 'The balance inside NEAR Intents does not cover this move') }, requestOf());
+  assert.equal(out.signed, false);
+  assert.ok(!out.signed && !out.held);
+  assert.equal(h.calls.signed.length, 0);
+  assert.equal(h.calls.generated.length, 0);
+});
+
+test('a preflight that throws is a refusal before the signature, not a signed move', async () => {
+  const h = harness();
+  await assert.rejects(() => spendFromIntents({ ...depsOf(h), preflight: async () => { throw new Error('arbitrum rpc down'); } }, requestOf()), /arbitrum rpc down/);
+  assert.equal(h.calls.signed.length, 0);
 });

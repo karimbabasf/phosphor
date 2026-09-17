@@ -196,9 +196,14 @@ function cardFor(proposal: Record<string, any>, state: Record<string, any> = {})
     },
     console,
   };
+  sandbox.document.createElementNS = (_ns: string, tag: string) => makeNode(tag);
   createContext(sandbox);
   runInContext(readFileSync(new URL('../../ui/core/dom.js', import.meta.url), 'utf8'), sandbox,
     { filename: 'ui/core/dom.js' });
+  runInContext(readFileSync(new URL('../../ui/screens/checks.js', import.meta.url), 'utf8'), sandbox,
+    { filename: 'ui/screens/checks.js' });
+  runInContext(readFileSync(new URL('../../ui/screens/sendcard.js', import.meta.url), 'utf8'), sandbox,
+    { filename: 'ui/screens/sendcard.js' });
   runInContext(SOURCE, sandbox, { filename: 'ui/screens/decision.js' });
   sandbox.window.PhosphorDecision.boot();
   sandbox.window.PhosphorDecision.render();
@@ -585,4 +590,45 @@ test('a row with no sentence still gets the stock line rather than an empty bann
     verdict: { outcome: 'allow', reasons: [] },
   });
   assert.ok(textOf(card).some((t) => t.includes('cannot read what happened')));
+});
+
+// The held row. A HyperCore deposit whose preflight said hold is approved with heldSince and
+// nothing signed; the executor retries on its own. The dock shows it so the person who just
+// clicked can see what it is waiting for: the headline, the hold line in amber, the checks
+// folded, and no button, because there is nothing to decide.
+test('a held deposit shows what it is waiting for and the checks, and offers nothing to press', () => {
+  const card = cardFor({
+    id: 'p-held',
+    kind: 'hl_deposit',
+    status: 'approved',
+    createdAt: '2026-09-17T10:00:00.000Z',
+    decidedBy: 'human',
+    decidedAt: '2026-09-17T10:05:00.000Z',
+    heldSince: '2026-09-17T10:05:00.000Z',
+    draft: { kind: 'hl_deposit', symbol: 'USDC', amount: 10, amountUsd: 10, minCredited: 9.5, from: '0x1111111111111111111111111111111111111111', hlAccount: '0x1111111111111111111111111111111111111111', counterparty: 'intents.near' },
+    simulation: { ok: true, summary: 'hypercore deposit: 10 USDC' },
+    verdict: { outcome: 'needs_approval', reasons: ['above the click threshold'] },
+    preflight: [{
+      at: '2026-09-17T10:05:00.000Z',
+      verdict: 'hold',
+      holdReason: 'Waiting for Arbitrum gas to settle',
+      checks: [
+        { id: 'gas', label: 'Arbitrum gas', state: 'fail', value: '300,024 / 300,000', detail: 'the sweep would run out of gas', series: [145392, 300024], limit: 300000 },
+        { id: 'coverage', label: 'Fee covers the payout', state: 'ok', value: '4.6x', detail: 'fine' },
+        { id: 'venue', label: 'Venue answering', state: 'ok', value: '212 ms', detail: 'fine' },
+        { id: 'balance', label: 'Balance', state: 'ok', value: '50 USDC', detail: 'fine' },
+        { id: 'deadline', label: 'Quote still valid', state: 'ok', value: '10 min', detail: 'fine' },
+      ],
+    }],
+  });
+  const words = textOf(card);
+  assert.equal(words[0], 'Holding');
+  const hold = find(card, 'dock-hold')[0];
+  assert.ok(hold, 'the hold line is on the card');
+  assert.match(hold.textContent, /^Waiting for Arbitrum gas to settle \((\d+ min|under a minute)\)\. Nothing is signed until it clears\.$/);
+  assert.equal(hold.getAttribute('data-tone'), 'warn');
+  assert.equal(find(card, 'checks').length, 1, 'the checks are folded on the card');
+  assert.equal(find(card, 'checks-node').length, 5);
+  assert.equal(find(card, 'dock-actions').length, 0, 'no Yes, no No');
+  assert.ok(!words.includes('Yes') && !words.includes('No'));
 });

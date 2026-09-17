@@ -13,7 +13,9 @@
 
    What the card reads off a receipt (src/http/receipts.ts): kind, status, at,
    amount and symbol (what left), received (what arrived), feesUsd, valueUsd,
-   venue, fromChain and toChain, wallet, txids [{chain, hash, url, explorer}].
+   venue, fromChain and toChain, wallet, txids [{chain, hash, url, explorer}],
+   and preflight, the checks the app ran before it signed, drawn folded under
+   the card by ui/screens/checks.js when the row carries them.
    A fill mapped to this shape by the trade screen adds `side` ('buy'|'sell')
    and `closed` (true when the fill closed a position) so the kind word can say
    Bought, Sold or Trade closed. */
@@ -385,6 +387,14 @@
         foot.appendChild(actions);
       }
       card.appendChild(foot);
+    }
+
+    /* The checks, folded, under everything else: a person who wants to see
+       what the app read before it signed opens them; nobody else is shown a
+       wall of numbers. */
+    var checks = window.PhosphorChecks;
+    if (receipt.preflight && checks && typeof checks.fold === 'function') {
+      checks.fold(card, receipt.preflight, { open: options.checksOpen === true });
     }
     return card;
   }

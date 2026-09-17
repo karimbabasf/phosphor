@@ -470,7 +470,7 @@ const tradeDeps: TradeDeps = {
 // The dispatch table for swap, hyperliquid deposit and LP add/remove. Empty in demo
 // mode, where there is a fixture and no chain, so a rail proposal refuses rather than
 // reaching for an RPC and a private key.
-const rails = createRails({ cfg, tokens, trade: tradeDeps });
+const rails = createRails({ cfg, tokens, trade: tradeDeps, prices: () => ledger.snapshot().prices });
 
 /* How reconcile re-checks a 1Click order by the quote handle a rail recorded. The same client
    the rails hold; only the read is used here, and it never signs. Absent in demo mode, where

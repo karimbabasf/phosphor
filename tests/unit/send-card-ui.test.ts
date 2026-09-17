@@ -18,6 +18,7 @@ const read = (p: string): string => readFileSync(new URL(p, import.meta.url), 'u
 const SENDCARD = read('../../ui/screens/sendcard.js');
 const DECISION = read('../../ui/screens/decision.js');
 const CARDS = read('../../ui/screens/cards.js');
+const CHECKS = read('../../ui/screens/checks.js');
 
 type Node = {
   tag: string;
@@ -155,6 +156,12 @@ function fire(n: Node, type: string): void {
   for (const fn of n.listeners[type] ?? []) fn();
 }
 
+function byTag(n: Node, tag: string, out: Node[] = []): Node[] {
+  if (n.tag === tag) out.push(n);
+  for (const c of n.children) byTag(c, tag, out);
+  return out;
+}
+
 /* The dock and the card in one sandbox, the way index.html loads them, over the proposals and
    the vault slice the test hands in. The clipboard is a stub that records what was written. */
 function loadDock(proposals: unknown[], vault: Record<string, unknown> = {}) {
@@ -191,6 +198,7 @@ function loadDock(proposals: unknown[], vault: Record<string, unknown> = {}) {
     console,
   };
   createContext(sandbox);
+  runInContext(CHECKS, sandbox, { filename: 'ui/screens/checks.js' });
   runInContext(SENDCARD, sandbox, { filename: 'ui/screens/sendcard.js' });
   runInContext(DECISION, sandbox, { filename: 'ui/screens/decision.js' });
   const win = sandbox.window as { PhosphorDecision: { boot: () => void; render: () => void }; PhosphorSendCard: Record<string, (...a: unknown[]) => unknown> };
@@ -463,4 +471,81 @@ test('the thread draws the send card from the reply\'s send facts, not from the 
   assert.equal(all(root!, 'sendcard-recipient-line')[0]?.getAttribute('data-first'), 'true');
   assert.equal(all(card, 'btn-primary').length, 0, 'the thread card grew a deciding button');
   assert.equal(all(card, 'tcard-title')[0]?.textContent, 'Pay');
+});
+
+// ---------- the checks and the hold ----------
+//
+// Once a row has run, it carries the checks the app made before signing (src/preflight/), and
+// the card draws them folded in the slot. A row the preflight is holding is approved with
+// heldSince: the pill says Holding, a line under the head says what for and how long, and the
+// dock shows it with no button, because there is nothing to decide.
+
+const PREFLIGHT = {
+  at: '2026-09-17T10:05:00.000Z',
+  verdict: 'hold',
+  holdReason: 'Waiting for Ethereum gas to settle',
+  checks: [
+    { id: 'gas', label: 'Ethereum gas', state: 'fail', value: '5.0 gwei', detail: 'The base fee on Ethereum is 5.00 gwei, 5.0x the hourly average.', series: [1, 1.1, 0.9, 5] },
+    { id: 'coverage', label: 'Fee covers the payout', state: 'ok', value: '2.3x', detail: '$0.15 fee against about $0.07 of gas on Ethereum.' },
+    { id: 'venue', label: 'Venue answering', state: 'ok', value: '180 ms', detail: 'A dry quote answered in 180 ms and the status endpoint is reachable.' },
+    { id: 'balance', label: 'Balance', state: 'ok', value: '0.2 ETH', detail: 'ETH inside NEAR Intents reads 0.2 ETH, and this move needs 0.01 ETH.' },
+    { id: 'deadline', label: 'Quote still valid', state: 'ok', value: '10 min', detail: 'The quote is good until 2026-09-17T10:15:00.000Z.' },
+  ],
+};
+
+test('a row that ran its checks draws them folded in the slot, closed, with the five nodes inside', () => {
+  const ui = loadDock([payProposal({ status: 'pending', preflight: [PREFLIGHT] })]);
+  ui.render();
+  const root = all(ui.card, 'sendcard')[0]!;
+  const slot = byAttr(root, 'data-checks')[0]!;
+  const fold = all(slot, 'checks')[0];
+  assert.ok(fold, 'the checks fold is in the slot');
+  assert.equal(fold.getAttribute('data-open'), 'false', 'closed by default');
+  assert.equal(all(fold, 'checks-node').length, 5);
+  assert.equal(all(fold, 'checks-summary')[0]?.textContent, 'Waiting on 1 of 5');
+  assert.equal(all(fold, 'checks-spark').length, 1, 'the gas node has its sparkline');
+  // The newest attempt is the one drawn.
+  const older = { ...PREFLIGHT, at: '2026-09-17T10:04:00.000Z', verdict: 'ok', checks: PREFLIGHT.checks.map((c) => ({ ...c, state: 'ok' })) };
+  const twice = loadDock([payProposal({ status: 'pending', preflight: [older, PREFLIGHT] })]);
+  twice.render();
+  assert.equal(all(twice.card, 'checks-summary')[0]?.textContent, 'Waiting on 1 of 5');
+});
+
+test('a held row says Holding, what it waits for and for how long, and the dock shows it without a button', () => {
+  const now = Date.parse('2026-09-17T10:07:30.000Z');
+  const held = payProposal({ status: 'approved', heldSince: '2026-09-17T10:05:00.000Z', decidedBy: 'human', decidedAt: '2026-09-17T10:05:00.000Z', preflight: [PREFLIGHT] });
+  const ui = loadDock([held]);
+  ui.render();
+  const root = all(ui.card, 'sendcard')[0];
+  assert.ok(root, 'the dock draws the held send');
+  assert.equal(root.getAttribute('data-status'), 'held');
+  const pill = all(root, 'sendcard-status')[0];
+  assert.equal(pill?.textContent, 'Holding');
+  assert.equal(pill?.getAttribute('data-tone'), 'warn');
+  const line = all(root, 'sendcard-hold')[0];
+  assert.ok(line, 'the hold line is under the head');
+  assert.match(line.textContent, /^Waiting for Ethereum gas to settle \((\d+ min|under a minute)\)\. Nothing is signed until it clears\.$/);
+  assert.equal(root.children[1], line, 'right under the head');
+  const deciding = byTag(ui.card, 'button').filter((b) => /^(Yes|No|Approve|Approve, then Touch ID)$/.test(all(b, 'btn-label')[0]?.textContent ?? ''));
+  assert.equal(deciding.length, 0, 'no Yes or No: nothing to decide');
+  assert.equal(all(ui.card, 'dock-actions').length, 0);
+  assert.equal(all(ui.card, 'checks').length, 1, 'the checks are on the card');
+
+  // Built directly with a clock: two and a half minutes in reads as 2 min.
+  const view = ui.sendCard.viewOf(held) as Record<string, unknown>;
+  const host = node('div');
+  ui.sendCard.build(host, view, { now });
+  assert.equal(all(host, 'sendcard-hold')[0]?.textContent, 'Waiting for Ethereum gas to settle (2 min). Nothing is signed until it clears.');
+  assert.equal(ui.sendCard.heldLine(held, now), 'Waiting for Ethereum gas to settle (2 min). Nothing is signed until it clears.');
+});
+
+test('an approved row that is not held is Sending, with no hold line', () => {
+  const ui = loadDock([payProposal({ status: 'approved' })]);
+  ui.render();
+  const view = ui.sendCard.viewOf(payProposal({ status: 'approved' })) as Record<string, unknown>;
+  const host = node('div');
+  ui.sendCard.build(host, view, {});
+  assert.equal(all(host, 'sendcard-status')[0]?.textContent, 'Sending');
+  assert.equal(all(host, 'sendcard-hold').length, 0);
+  assert.equal(all(ui.card, 'sendcard').length, 0, 'the dock has nothing to show for a row that is sending');
 });

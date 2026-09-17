@@ -68,6 +68,7 @@ export type ProposalDeps = {
      wallet is opened by password and a click is a click. */
   vault?: VaultRelay;
   keystore?: Keystore;
+  held?: { retryMs: number; maxMs: number };
   /* The public chain read a send builder makes about the receiver (transaction count, balance,
      whether it is a contract), so the card can say "never used on Ethereum, check it twice".
      src/main.ts wires chainscan in live mode; absent means no read and a card that says the
@@ -179,6 +180,9 @@ export type PCtx = {
      returns the `executing` row and this is how a caller who wants the settled one waits for it
      with a cap (settled, below), and how the shutdown drain knows a rail is still out. */
   inflight: Map<string, Promise<Proposal>>;
+  // How often a held row is retried and for how long (src/proposals/execute.ts). The tests
+  // shorten it; the app takes the defaults.
+  held?: { retryMs: number; maxMs: number };
 };
 
 /* The row once it is terminal, or the row as it stands when `capMs` runs out. The caller reads
@@ -603,6 +607,9 @@ type DailyLimit = { capUsd: number; spentUsd: number; resetsAt: string | null };
 function countsAgainstCap(p: Proposal): boolean {
   if (p.kind === 'policy_change') return false;
   if (p.status === 'executed' || p.status === 'executing') return true;
+  // A held row is a person's decision waiting on the chain: the app will move it on its own
+  // the moment the checks clear, so the budget holds it while it waits.
+  if (p.status === 'approved' && p.heldSince !== undefined) return true;
   if (p.status !== 'needs_reconciliation') return false;
   // A hash, or the evidence a rail leaves when it never got one: a handle for a signed intent
   // or an ambiguous venue send, a nonce for an ambiguous Hyperliquid action. Each is money that

@@ -61,7 +61,8 @@ import type { OneClickClient, OneClickQuote, OneClickToken, QuoteEcho } from '..
 import { INTENTS_VERIFIER, intentsApi, liveIntentsSigner } from './intents-native.ts';
 import type { IntentsApiPort, IntentsSignerPort } from './intents-native.ts';
 import { spendFromIntents } from './intents-spend.ts';
-import { deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids, withQuote } from './oneclick-words.ts';
+import type { PreflightRunner } from '../preflight/live.ts';
+import { describeHeld, deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids, withQuote } from './oneclick-words.ts';
 import { accountSummary, usdClassTransfer } from './hl-user-signed.ts';
 import type { HlAccountSummary, HlUserSignedDeps } from './hl-user-signed.ts';
 import { HYPERLIQUID_SETTLE, SETTLING_SENTENCE, watchRise } from '../ledger/settle.ts';
@@ -147,6 +148,9 @@ export type HypercoreDepositDeps = {
   // How long, and how often, the account is re-read once 1Click says SUCCESS. Defaults to
   // HYPERLIQUID_SETTLE (two minutes); the tests shorten it.
   settleSchedule?: RiseSchedule;
+  // The checks run on the live quote before the intent is generated (src/preflight/): the
+  // Arbitrum sweep this route ends in, above all. The registry wires the live one.
+  preflight?: PreflightRunner;
 };
 
 export type HypercoreDepositRail = Rail<HlDepositDraft> & {
@@ -588,9 +592,21 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     // and is reported here as exactly that; after the signature nothing throws, and a submit
     // that did not answer comes back as signed and unsubmitted.
     let spent;
+    const preflight = deps.preflight;
     try {
       spent = await spendFromIntents(
-        { api, signer, keysPath, now, sleep, pollIntervalMs, pollTimeoutMs, maxDeadlineMs, quoteKey: deps.quoteKey },
+        {
+          api,
+          signer,
+          keysPath,
+          now,
+          sleep,
+          pollIntervalMs,
+          pollTimeoutMs,
+          maxDeadlineMs,
+          quoteKey: deps.quoteKey,
+          ...(preflight === undefined ? {} : { preflight: (quote, port) => preflight.run('hl_deposit', draft, quote, port) }),
+        },
         {
           owner,
           originAsset: p.originAsset,
@@ -608,6 +624,7 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     } catch (err) {
       return { ok: false, detail: `${errText(err)}. Nothing was signed.` };
     }
+    if (!spent.signed) return describeHeld(spent.preflight);
     if (!spent.submitted) {
       return withQuote(describeUnconfirmedSubmit({ error: spent.error, handle: spent.depositAddress, deadline: spent.deadline }), spent.signedQuote);
     }

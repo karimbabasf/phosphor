@@ -9,6 +9,9 @@
 //
 // THE SEQUENCE, one signature, nothing sent on any chain by us:
 //   1. POST /v0/quote with depositType INTENTS -> a deposit handle inside the verifier
+//      then the PREFLIGHT (src/preflight/), when the rail wired one: the chain the payout lands
+//      on, the fee against the payout's cost, the venue, the balance, the quote's deadline. A
+//      hold or a fail returns here, before step 2, with nothing generated and nothing signed.
 //   2. POST /v0/generate-intent -> an erc191 payload transferring our balance to that handle
 //   3. check the payload, sign it with the EVM key, POST /v0/submit-intent
 //   4. GET /v0/status until SUCCESS, REFUNDED or FAILED
@@ -45,7 +48,8 @@
 
 import { ONECLICK_TERMINAL, oneLine, quoteEchoProblems } from '../intents.ts';
 import type { OneClickEndpointType, OneClickQuote, OneClickStatus, QuoteEcho } from '../intents.ts';
-import type { RailHooks } from '../types.ts';
+import type { Preflight, RailHooks } from '../types.ts';
+import type { VenueProbe } from '../preflight/index.ts';
 import { quoteSignatureProblems, signedQuoteRecord } from '../quote-signature.ts';
 import type { QuoteRecord } from '../quote-signature.ts';
 import { INTENTS_SIGNING_STANDARD, checkIntentPayload, intentDeadline } from './intents-native.ts';
@@ -64,7 +68,16 @@ export type IntentsSpendDeps = {
   // The key 1Click signs quotes with. Left unset it is the production key; a test hands the
   // key its own fake signs with, and nothing else ever sets it.
   quoteKey?: string;
+  // The app's own checks, run on the live quote before generate-intent. The rail binds its
+  // draft into this closure; the spend path adds the venue probe and the balance's owner.
+  // Absent means no checks, which is demo mode and the tests of the sequence itself.
+  preflight?: PreflightHook;
 };
+
+// What the checks are handed beyond the quote: whose balance, which asset, and the two venue
+// reads built from the same client and request as the live quote.
+export type PreflightPort = { owner: string; originAsset: string; venue: VenueProbe };
+export type PreflightHook = (quote: OneClickQuote, port: PreflightPort) => Promise<Preflight>;
 
 export type IntentsSpendRequest = {
   owner: string; // our account id inside the verifier: the EVM address, lowercased
@@ -82,9 +95,17 @@ export type IntentsSpendRequest = {
   checkQuote?: (quote: OneClickQuote) => string[];
 };
 
-// Always signed by the time this exists: everything before the signature throws. Whether the
-// submit answered is the discriminant, and a caller has to look at it before reading a hash.
+// Signed by the time this exists, or held back by the preflight with nothing signed at all:
+// `signed` is the first discriminant, then whether the submit answered, and a caller has to
+// look at both before reading a hash. Everything else before the signature throws.
 export type IntentsSpendOutcome =
+  | {
+      signed: false;
+      submitted: false;
+      held: boolean; // hold: the executor tries again later; fail: it stops
+      preflight: Preflight;
+      quote: OneClickQuote;
+    }
   | {
       signed: true;
       submitted: true;
@@ -119,6 +140,14 @@ function tell(hooks: RailHooks | undefined, evidence: Parameters<NonNullable<Rai
   }
 }
 
+function tellPreflight(hooks: RailHooks | undefined, preflight: Preflight): void {
+  try {
+    hooks?.onPreflight?.(preflight);
+  } catch {
+    // same: the row is the executor's to write
+  }
+}
+
 export async function spendFromIntents(deps: IntentsSpendDeps, req: IntentsSpendRequest, hooks?: RailHooks): Promise<IntentsSpendOutcome> {
   const response = await deps.api.quote({
     dry: false,
@@ -146,6 +175,33 @@ export async function spendFromIntents(deps: IntentsSpendDeps, req: IntentsSpend
     throw new Error(`the quote carries no deposit handle to attach an intent to (got ${oneLine(depositAddress, 60)})`);
   }
   const signedQuote = signedQuoteRecord(response);
+
+  // The checks, on the quote that will be spent through, and before the intent exists. Told
+  // to the executor first so the row carries them even if the hold is the last thing that
+  // happens; a hold or a fail returns with the key untouched and nothing to retry but this
+  // whole sequence, which is what the executor does.
+  if (deps.preflight !== undefined) {
+    const preflight = await deps.preflight(quote, {
+      owner: req.owner,
+      originAsset: req.originAsset,
+      venue: {
+        dryQuote: () =>
+          deps.api.quote({
+            dry: true,
+            originAsset: req.originAsset,
+            destinationAsset: req.destinationAsset,
+            amount: req.amountBase.toString(),
+            account: req.owner,
+            recipient: req.recipient,
+            recipientType: req.recipientType,
+            ...(req.slippageToleranceBps !== undefined ? { slippageToleranceBps: req.slippageToleranceBps } : {}),
+          }),
+        status: () => deps.api.status(depositAddress),
+      },
+    });
+    tellPreflight(hooks, preflight);
+    if (preflight.verdict !== 'ok') return { signed: false, submitted: false, held: preflight.verdict === 'hold', preflight, quote };
+  }
 
   const generated = await deps.api.generateIntent({ signerId: req.owner, depositAddress });
 
