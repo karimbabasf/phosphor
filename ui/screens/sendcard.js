@@ -49,6 +49,7 @@
     pending: ['Waiting for you', 'warn'],
     pending_unlock: ['Unlock to decide', 'warn'],
     awaiting_touch: ['Touch ID', 'warn'],
+    held: ['Holding', 'warn'],
     approved: ['Sending', 'ink'],
     executing: ['Sending', 'ink'],
     needs_reconciliation: ['Unconfirmed', 'warn'],
@@ -70,6 +71,25 @@
     return typeof value === 'number' && isFinite(value) ? value : null;
   }
 
+  /* The last preflight the row ran, or null. Every attempt appends one; the
+     card draws the newest. */
+  function preflightOf(p) {
+    var list = Array.isArray(p.preflight) ? p.preflight : [];
+    for (var i = list.length - 1; i >= 0; i -= 1) if (isObject(list[i])) return list[i];
+    return null;
+  }
+
+  /* A row the preflight is holding: approved, nothing signed, stamped with
+     when the hold began. The reason is the newest preflight's. */
+  function heldOf(p, preflight) {
+    if (p.status !== 'approved' || typeof p.heldSince !== 'string') return null;
+    var since = Date.parse(p.heldSince);
+    return {
+      since: isFinite(since) ? since : null,
+      reason: preflight && preflight.holdReason ? text(preflight.holdReason) : 'Waiting for the checks to clear'
+    };
+  }
+
   /* ---------- what the card draws ---------- */
 
   /* The card's fields from a proposal as the store holds it: draft, simulation,
@@ -83,9 +103,11 @@
     var kind = text(draft.kind || p.kind);
     var recipient = isObject(draft.recipient) ? draft.recipient : null;
     var network = kind === 'intents_pay' ? text(draft.network) : 'intents';
+    var preflight = preflightOf(p);
+    var held = heldOf(p, preflight);
     return {
       kind: kind,
-      status: text(p.status || 'pending'),
+      status: held ? 'held' : text(p.status || 'pending'),
       symbol: text(draft.symbol),
       amount: num(draft.amount),
       amountUsd: num(draft.amountUsd),
@@ -95,7 +117,9 @@
       send: send,
       simulated: sim !== null,
       refusedWhy: refusedWhy(p),
-      result: isObject(p.result) ? p.result : null
+      result: isObject(p.result) ? p.result : null,
+      preflight: preflight,
+      held: held
     };
   }
 
@@ -121,7 +145,9 @@
       send: sim && isObject(sim.send) ? sim.send : null,
       simulated: sim !== null,
       refusedWhy: refusedWhy(d),
-      result: isObject(d.result) ? d.result : null
+      result: isObject(d.result) ? d.result : null,
+      preflight: preflightOf(d),
+      held: null
     };
   }
 
@@ -176,6 +202,14 @@
     if (s === null) return '';
     if (s < 60) return 'about ' + Math.max(1, Math.round(s)) + ' s';
     return 'about ' + Math.round(s / 60) + ' min';
+  }
+
+  /* How long the row has been held, in whole minutes, for the hold line. */
+  function heldWords(held, now) {
+    var reason = held.reason;
+    if (held.since === null) return reason + '.';
+    var minutes = Math.max(0, Math.floor(((num(now) !== null ? now : Date.now()) - held.since) / 60000));
+    return reason + ' (' + (minutes < 1 ? 'under a minute' : minutes + ' min') + ').';
   }
 
   function dayWords(iso) {
@@ -412,7 +446,8 @@
   /* ---------- the card ---------- */
 
   /* Builds the card into `host` and returns the root. `opts.width` is the
-     column width when the caller knows it. */
+     column width when the caller knows it; `opts.now` the clock for the hold
+     line, and `opts.checksOpen` starts the checks unfolded (proofs only). */
   function build(host, view, opts) {
     var o = opts || {};
     var root = dom.el('section', 'sendcard');
@@ -421,6 +456,15 @@
     dom.setAttr(root, 'aria-label', verbOf(view) + ' ' + (view.amount === null ? '' : dom.qty(view.amount) + ' ') + view.symbol + ', ' + statusOf(view).word);
 
     root.appendChild(head(view));
+
+    /* Held: the person already decided and the app is waiting for the chain.
+       The line says what for and how long, and asks nothing. */
+    if (view.held) {
+      var hold = dom.el('p', 'sendcard-hold', heldWords(view.held, o.now) + ' Nothing is signed until it clears.');
+      dom.setAttr(hold, 'data-tone', 'warn');
+      root.appendChild(hold);
+    }
+
     root.appendChild(route(view));
     root.appendChild(facts(view));
     root.appendChild(recipientLine(view));
@@ -431,10 +475,13 @@
       root.appendChild(why);
     }
 
-    /* The preflight checks slot: the stream after this one fills it. Empty
-       until then, and the stylesheet gives an empty slot no height. */
+    /* The checks the app ran before signing, folded. Empty until the row has
+       run once, and the stylesheet gives an empty slot no height. */
     var checks = dom.el('div', 'sendcard-checks');
     dom.setAttr(checks, 'data-checks', '');
+    if (view.preflight && window.PhosphorChecks && typeof window.PhosphorChecks.fold === 'function') {
+      window.PhosphorChecks.fold(checks, view.preflight, { open: o.checksOpen === true });
+    }
     root.appendChild(checks);
 
     var width = typeof o.width === 'number' ? o.width : (typeof host.clientWidth === 'number' ? host.clientWidth : 0);
@@ -444,9 +491,19 @@
     return root;
   }
 
+  /* The hold sentence for a row that is not a send (the dock draws it under a
+     HyperCore deposit that is holding): the same words as the card's own line. */
+  function heldLine(proposal, now) {
+    var p = isObject(proposal) ? proposal : {};
+    var held = heldOf(p, preflightOf(p));
+    return held ? heldWords(held, now) + ' Nothing is signed until it clears.' : '';
+  }
+
   window.PhosphorSendCard = {
     build: build,
     viewOf: viewOf,
+    heldLine: heldLine,
+    preflightOf: preflightOf,
     viewOfToolData: viewOfToolData,
     layout: layout,
     groupsOf: groupsOf,

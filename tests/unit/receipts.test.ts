@@ -171,6 +171,9 @@ test('a receipt carries every field the contract fixes', async () => {
       'headline',
       'id',
       'kind',
+      // Added 2026-09-17: the checks the app ran before it signed (src/preflight/), the newest
+      // attempt's, for the folded rail under the card. null for a row that never ran them.
+      'preflight',
       // Added 2026-09-14: the conversation's receipt card and the Activity row say what
       // arrived, and both read it off the receipt rather than off the rail's sentence.
       'received',

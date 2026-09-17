@@ -18,6 +18,7 @@ type Any = Record<string, any>;
 const DOM = readFileSync(new URL('../../ui/core/dom.js', import.meta.url), 'utf8');
 const MARKS = readFileSync(new URL('../../ui/design/marks.js', import.meta.url), 'utf8');
 const RECEIPT = readFileSync(new URL('../../ui/screens/receipt.js', import.meta.url), 'utf8');
+const CHECKS = readFileSync(new URL('../../ui/screens/checks.js', import.meta.url), 'utf8');
 
 function makeStyle(): Any {
   const props: Record<string, string> = {};
@@ -104,7 +105,9 @@ function makeNode(tagName: string): Any {
 }
 
 function withClass(node: Any, name: string, out: Any[] = []): Any[] {
-  if (String(node.className).split(' ').includes(name)) out.push(node);
+  // An svg sets its class through setAttribute, the way a browser needs it to.
+  const cls = String(node.className || node.getAttribute('class') || '');
+  if (cls.split(' ').includes(name)) out.push(node);
   for (const child of node.childNodes) withClass(child, name, out);
   return out;
 }
@@ -184,6 +187,7 @@ function boot(over: { reduced?: boolean; motion?: boolean } = {}): Rig {
   const ctx = createContext({ window, document, navigator, console, Promise, URL });
   runInContext(DOM, ctx);
   runInContext(MARKS, ctx);
+  runInContext(CHECKS, ctx);
   runInContext(RECEIPT, ctx);
   return { window, body, timers, clipboard, animated, bus };
 }
@@ -520,4 +524,57 @@ test('the row leads with the logo pair for a swap, one logo for a move, the kind
   // A failed swap has no arrival to pair with, so it shows the coin that would have left.
   R.updateRow(row, swap({ status: 'failed', received: null }));
   assert.equal(slot.getAttribute('data-shape'), 'logo');
+});
+
+// ---------- the checks under the receipt ----------
+//
+// A row that ran its preflight (src/preflight/) carries the newest attempt's checks on the
+// receipt, and the card draws them folded under everything else: the last child, closed, five
+// nodes inside, the gas node with its sparkline. A row without them draws nothing.
+
+const PREFLIGHT = {
+  at: '2026-09-15T19:15:40.000Z',
+  verdict: 'ok',
+  checks: [
+    { id: 'gas', label: 'Arbitrum gas', state: 'warn', value: '245,000 / 300,000', detail: "1Click's relayer sweeps the payout with a 300,000 gas limit. Right now the sweep needs about 245,000, 100,000 of it L1 data, 1.7x the hourly average.", series: [145392, 145401, 160210, 245000], limit: 300000 },
+    { id: 'coverage', label: 'Fee covers the payout', state: 'ok', value: '4.6x', detail: '$0.34 fee against about $0.07 of gas on Arbitrum.' },
+    { id: 'venue', label: 'Venue answering', state: 'ok', value: '212 ms', detail: 'A dry quote answered in 212 ms and the status endpoint is reachable.' },
+    { id: 'balance', label: 'Balance', state: 'ok', value: '50 USDC', detail: 'USDC inside NEAR Intents reads 50 USDC, and this move needs 10 USDC.' },
+    { id: 'deadline', label: 'Quote still valid', state: 'ok', value: '10 min', detail: 'The quote is good until 2026-09-15T19:25:00.000Z.' },
+  ],
+};
+
+test('a receipt with checks draws them folded under the card, closed, and one without draws nothing', () => {
+  const rig = boot();
+  const card = rig.window.PhosphorReceipt.card(swap({ kind: 'hl_deposit', preflight: PREFLIGHT }));
+  const fold = withClass(card, 'checks');
+  assert.equal(fold.length, 1, 'one checks fold');
+  assert.equal(card.childNodes[card.childNodes.length - 1], fold[0], 'under everything else');
+  assert.equal(fold[0].getAttribute('data-open'), 'false');
+  assert.equal(fold[0].getAttribute('data-verdict'), 'ok');
+  assert.equal(text(withClass(fold[0], 'checks-summary')[0]), '5 checks, 1 to watch');
+  const nodes = withClass(fold[0], 'checks-node');
+  assert.equal(nodes.length, 5);
+  assert.deepEqual(nodes.map((n: Any) => n.getAttribute('data-state')), ['warn', 'ok', 'ok', 'ok', 'ok']);
+  assert.equal(withClass(nodes[0], 'checks-spark').length, 1, 'the gas node carries the hour');
+  assert.equal(withClass(nodes[0], 'checks-spark-limit').length, 1, 'with the vendor limit dashed across it');
+  // The toggle opens it.
+  const toggle = withClass(fold[0], 'checks-toggle')[0];
+  toggle.fire('click');
+  assert.equal(fold[0].getAttribute('data-open'), 'true');
+
+  const plain = rig.window.PhosphorReceipt.card(swap());
+  assert.equal(withClass(plain, 'checks').length, 0);
+  const none = rig.window.PhosphorReceipt.card(swap({ preflight: null }));
+  assert.equal(withClass(none, 'checks').length, 0);
+});
+
+test('the popover carries the checks too, and a proof can open them', () => {
+  const rig = boot();
+  rig.window.PhosphorReceipt.open(swap({ kind: 'hl_deposit', preflight: PREFLIGHT }));
+  const dialog = rig.body.childNodes[rig.body.childNodes.length - 1];
+  const fold = withClass(dialog, 'checks');
+  assert.equal(fold.length, 1);
+  assert.equal(fold[0].getAttribute('data-open'), 'false');
+  rig.window.PhosphorReceipt.close();
 });

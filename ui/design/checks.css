@@ -1,0 +1,232 @@
+/* The checks fold (ui/screens/checks.js): what the app read before it signed,
+   under the receipt and inside the send card.
+
+   Closed it is one quiet line: the word, the count, a chevron. Open it is five
+   dots on a hairline, each with its label in Sora 13, its number in Geist Mono
+   13 on the right and one sentence in --text-2 12 under it. The colour is the
+   dot and the number, nothing else: green ok, amber to watch, red the one that
+   stopped it. The gas node adds a 120 by 28 sparkline with the vendor's limit
+   dashed across it. The 4 px grid throughout; the fold runs through a grid
+   track the way the thread cards do, so it opens as a motion. */
+
+.checks {
+  border-top: 1px solid var(--line);
+  padding-top: var(--s-2);
+}
+
+.checks-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+  min-height: 32px;
+  padding: var(--s-1) 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-13);
+  font-weight: 500;
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+}
+
+.checks-toggle:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.checks-summary {
+  color: var(--text-2);
+  font-size: var(--fs-12);
+  font-weight: 400;
+}
+
+.checks[data-verdict="hold"] .checks-summary {
+  color: var(--warn);
+}
+
+.checks[data-verdict="fail"] .checks-summary {
+  color: var(--down);
+}
+
+.checks-chevron {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-left: auto;
+  color: var(--text-3);
+  transition: transform 200ms var(--ease-out);
+}
+
+.checks[data-open="true"] .checks-chevron {
+  transform: rotate(90deg);
+}
+
+/* The fold. Height runs through a grid track, 0fr to 1fr, so the rail opens
+   and closes as a motion rather than a jump. */
+.checks-fold {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 200ms var(--ease-out);
+}
+
+.checks[data-open="false"] .checks-fold {
+  grid-template-rows: 0fr;
+}
+
+.checks-fold-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.checks-body {
+  padding: var(--s-2) 0 var(--s-1);
+}
+
+/* ---------- the rail ---------- */
+
+.checks-rail {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.checks-node {
+  position: relative;
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr);
+  gap: var(--s-3);
+  align-items: start;
+}
+
+/* The hairline between one dot and the next, drawn per node from under its
+   dot to just above the following one, so it needs no halo to hide behind the
+   dots and sits right on any ground the fold lands on. */
+.checks-node::before {
+  content: "";
+  position: absolute;
+  top: 16px;
+  bottom: -10px;
+  left: 4.5px;
+  width: 1px;
+  background: var(--line-strong);
+}
+
+.checks-node:last-child::before {
+  display: none;
+}
+
+.checks-dot {
+  width: 10px;
+  height: 10px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: var(--up);
+}
+
+.checks-node[data-state="warn"] .checks-dot {
+  background: var(--warn);
+}
+
+.checks-node[data-state="fail"] .checks-dot {
+  background: var(--down);
+}
+
+.checks-main {
+  min-width: 0;
+}
+
+.checks-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+
+.checks-label {
+  font-size: var(--fs-13);
+  line-height: 1.4;
+  color: var(--text);
+}
+
+.checks-value {
+  flex: 0 0 auto;
+  font-size: var(--fs-13);
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.checks-node[data-state="warn"] .checks-value {
+  color: var(--warn);
+}
+
+.checks-node[data-state="fail"] .checks-value {
+  color: var(--down);
+}
+
+.checks-detail {
+  margin-top: 2px;
+  font-size: var(--fs-12);
+  line-height: 1.45;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.checks-when {
+  margin-top: var(--s-3);
+  font-size: var(--fs-11);
+  line-height: 1.4;
+  color: var(--text-3);
+}
+
+/* ---------- the sparkline ---------- */
+
+.checks-spark {
+  display: block;
+  width: 120px;
+  height: 28px;
+  margin-top: var(--s-2);
+  overflow: visible;
+}
+
+.checks-spark-line {
+  fill: none;
+  stroke: var(--text-2);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.checks-spark-limit {
+  stroke: var(--down);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  opacity: 0.8;
+}
+
+.checks-spark-now {
+  fill: var(--up);
+}
+
+.checks-spark-now[data-state="warn"] {
+  fill: var(--warn);
+}
+
+.checks-spark-now[data-state="fail"] {
+  fill: var(--down);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .checks-chevron,
+  .checks-fold {
+    transition: none;
+  }
+}

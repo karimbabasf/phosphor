@@ -257,6 +257,13 @@
     return p && p.status === 'needs_reconciliation' && !p.acknowledgedAt;
   }
 
+  /* A row the preflight is holding: approved, nothing signed, the app retrying
+     on its own. The dock shows it so the person who just clicked can see what
+     it is waiting for; it asks nothing and offers no button. */
+  function isHeld(p) {
+    return p && p.status === 'approved' && typeof p.heldSince === 'string';
+  }
+
   /* Newest on top. A request the assistant filed a second ago is the one the
      person is looking for; an older one that has waited this long can wait for
      the next click. */
@@ -270,7 +277,7 @@
     /* An answer already given owns the dock until its own timer runs out, and a
        receipt or a recovery card is something a person is reading. */
     if (flashTimer) return;
-    if (showing && showing.kind !== 'ask' && showing.kind !== 'unread') return;
+    if (showing && showing.kind !== 'ask' && showing.kind !== 'unread' && showing.kind !== 'held') return;
 
     var state = store.get() || {};
     var list = Array.isArray(state.proposals) ? state.proposals : [];
@@ -278,6 +285,12 @@
     var waiting = newestFirst(list.filter(isWaiting));
     if (waiting.length) {
       open({ kind: 'ask', proposal: waiting[0], queued: waiting.length - 1 });
+      return;
+    }
+
+    var held = newestFirst(list.filter(isHeld));
+    if (held.length) {
+      open({ kind: 'held', proposal: held[0], queued: 0 });
       return;
     }
 
@@ -301,7 +314,9 @@
        leave a person reading a card that had since learned where the money goes. */
     var deposits = Array.isArray(sim.depositAddresses) ? sim.depositAddresses.length : 0;
     var diff = sim.policyDiff ? (sim.policyDiff.after || []).length : 0;
-    return [entry.kind, p.id, p.status, entry.queued, sim.feeUsd, sim.gasUsd,
+    /* A held row redraws on every retry: each one appends its checks. */
+    var checks = Array.isArray(p.preflight) ? p.preflight.length : 0;
+    return [entry.kind, p.id, p.status, entry.queued, sim.feeUsd, sim.gasUsd, p.heldSince || '', checks,
       sim.priceImpact, sim.amountOut, deposits, diff, sim.summary || '',
       (Array.isArray(p.verdict && p.verdict.reasons) ? p.verdict.reasons.join(' ') : ''),
       (p.verdict && p.verdict.reason) || '',
@@ -317,12 +332,13 @@
   }
 
   function open(next) {
-    var keyed = next.kind === 'ask' || next.kind === 'unread';
+    var keyed = next.kind === 'ask' || next.kind === 'unread' || next.kind === 'held';
     if (keyed && showing && showing.signature === signature(next)) return;
     next.signature = keyed ? signature(next) : null;
     showing = next;
     dom.clear(refs.card);
     if (next.kind === 'ask') buildAsk(next);
+    else if (next.kind === 'held') buildHeld(next.proposal);
     else if (next.kind === 'unread') buildUnread(next.proposal);
     else if (next.kind === 'receipt') buildReceipt(next.receipt);
     else if (next.kind === 'card') next.build(refs.card, close);
@@ -335,7 +351,7 @@
   }
 
   function dockState(kind) {
-    if (kind === 'receipt' || kind === 'card') return 'read';
+    if (kind === 'receipt' || kind === 'card' || kind === 'held') return 'read';
     return null;
   }
 
@@ -550,6 +566,29 @@
       }
       refs.card.appendChild(dwrap);
     }
+  }
+
+  /* ---------- the held row ---------- */
+
+  /* A send draws its own card, which already carries the hold line and the
+     folded checks. Any other kind gets the headline, the same hold line, and
+     the checks under it. No buttons: there is nothing to decide. */
+  function buildHeld(proposal) {
+    var draft = proposal.draft || {};
+    var sendCard = window.PhosphorSendCard;
+    if (isSend(draft)) {
+      sendCard.build(refs.card, sendCard.viewOf(proposal), { width: refs.card.clientWidth });
+      return;
+    }
+    refs.card.appendChild(dom.el('p', 'label', 'Holding'));
+    refs.card.appendChild(dom.el('h2', 'title', headlineOf(proposal)));
+    var line = dom.el('p', 'body dock-hold');
+    dom.setAttr(line, 'data-tone', 'warn');
+    dom.setText(line, sendCard && typeof sendCard.heldLine === 'function' ? sendCard.heldLine(proposal) : 'Waiting for the checks to clear. Nothing is signed until they do.');
+    refs.card.appendChild(line);
+    var checks = window.PhosphorChecks;
+    var preflight = sendCard && typeof sendCard.preflightOf === 'function' ? sendCard.preflightOf(proposal) : null;
+    if (preflight && checks && typeof checks.fold === 'function') checks.fold(refs.card, preflight, {});
   }
 
   /* ---------- the unread outcome ---------- */

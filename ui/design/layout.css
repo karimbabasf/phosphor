@@ -559,6 +559,13 @@ html, body {
   outline-offset: -2px;
 }
 
+/* What a held row is waiting for, in amber: a status, with nothing to press. */
+.dock-hold {
+  color: var(--warn);
+  font-size: var(--fs-13);
+  line-height: 1.45;
+}
+
 /* The rail's own report, which arrives as lines rather than a paragraph. */
 .dock-summary {
   white-space: pre-wrap;
