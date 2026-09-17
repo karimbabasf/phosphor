@@ -35,6 +35,7 @@ import {
   INTENTS_VERIFIER,
   base58Encode,
   checkIntentPayload,
+  duplicateJsonKey,
   erc191SignatureField,
   intentsApi,
   intentsNativeRail,
@@ -453,6 +454,30 @@ const expectation = {
 
 test('checkIntentPayload accepts the payload that matches the draft', () => {
   assert.deepEqual(checkIntentPayload(payloadOf(), expectation), []);
+});
+
+/* A payload that names one key twice reads two ways: JSON.parse keeps the last, a strict parser
+   refuses, a first-wins parser takes the other. The signature covers the text, so the text is
+   what is judged: any key twice in one object, at any depth, spelled plainly or by escape, and
+   the payload is refused before the checks below get to compare the copy this app saw. */
+test('checkIntentPayload refuses a payload that names a key twice in one object, however it is spelled', () => {
+  const evil = { intent: 'transfer', receiver_id: 'evil-solver.near', tokens: { [ORIGIN_ASSET]: '100000000' } };
+  const legit = JSON.stringify([{ intent: 'token_diff', diff: { [ORIGIN_ASSET]: '-100000000', [DEST_ASSET]: '99850000' } }]);
+  const doubled = payloadOf().replace('"intents":', `"intents":${JSON.stringify([evil])},"intents":`);
+  assert.deepEqual((JSON.parse(doubled) as { intents: unknown[] }).intents, JSON.parse(legit), 'JSON.parse keeps the last copy, the one every other check reads');
+  const problems = checkIntentPayload(doubled, expectation);
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /names intents twice in one object/);
+
+  const escaped = payloadOf().replace('"intents":', `"\\u0069ntents":${JSON.stringify([evil])},"intents":`);
+  assert.match(checkIntentPayload(escaped, expectation)[0], /names intents twice/);
+
+  const deep = payloadOf().replace(`"diff":{`, `"diff":{"${ORIGIN_ASSET}":"-1",`);
+  assert.match(checkIntentPayload(deep, expectation)[0], /names nep141:base-0x833589fcd6edb6e08f4c7c32d4\.\.\. twice in one object/);
+
+  assert.equal(duplicateJsonKey('{"a":{"a":1},"b":[{"a":1},{"a":2}],"c":"a\\"a"}'), null, 'the same key in different objects is not a repeat');
+  assert.equal(duplicateJsonKey('{"a":1,"b":{"x":1,"x":2}}'), 'x');
+  assert.equal(duplicateJsonKey('{"k\\"ey":1,"k\\"ey":2}'), 'k"ey');
 });
 
 test('checkIntentPayload refuses a payload that swaps a different amount', () => {
