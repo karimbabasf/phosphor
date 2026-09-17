@@ -16,7 +16,8 @@ import type {
   RiskRow,
   SwapDraft,
 } from '../../src/types.ts';
-import { loadDemoLedger } from '../../src/ledger/demo.ts';
+import { loadDemoLedger, loadDemoReads } from '../../src/ledger/demo.ts';
+import { buildWallet } from '../../src/wallet.ts';
 import { classify } from '../../src/composition.ts';
 import { defaultPolicy } from '../../src/policy/file.ts';
 import { evaluate } from '../../src/policy/engine.ts';
@@ -31,8 +32,12 @@ const SELF_EVM = '0x1111111111111111111111111111111111111111';
 const VENUE = '0x2222222222222222222222222222222222222222';
 const UNKNOWN_VENUE = '0x9999999999999999999999999999999999999999';
 
-const snapshot = loadDemoLedger();
-const composition = classify(snapshot, riskRows);
+// The demo pockets, as the wallet shows them: what the engine's composition is built from.
+function demoWallet() {
+  const reads = loadDemoReads();
+  return buildWallet(loadDemoLedger(), reads.intents, reads.hyperliquid);
+}
+const composition = classify(demoWallet().rows, riskRows);
 
 // The allowlist is what blesses a venue. Every happy-path case here needs it, which is
 // itself the point: a rail pointed at an unvetted contract must not run.
@@ -47,7 +52,6 @@ function ctxWith(over: Partial<EngineCtx> = {}): EngineCtx {
   return {
     policy: policyAllowing(VENUE),
     composition,
-    ledger: snapshot,
     sessionSpentUsd: 0,
     selfAddresses: [SELF_EVM],
     ...over,
@@ -317,4 +321,60 @@ test('the ceiling binds a hyperliquid deposit the same way it binds a swap', () 
   const v = evaluate(hlDeposit({ amountUsd: 60 }), ctxWith({ policy, autoApprovedSpentUsd: 200 }));
   assert.equal(v.outcome, 'needs_approval');
   assert.match(v.reasons.join(' '), /auto-approved moves/i);
+});
+
+// ---------- the composition rules, over the two pockets ----------
+//
+// The demo pockets hold USDC inside NEAR Intents and USDC on Hyperliquid, both Circle and
+// freezable, plus ETH and SOL, which have no issuer and sit outside the composition. The rules
+// judge the state a move would leave behind, valued at the dollars the app priced it at.
+
+test('a swap into a coin from a forbidden issuer is refused', () => {
+  const policy = policyAllowing(VENUE);
+  policy.composition.forbiddenIssuers = ['tether'];
+  const v = evaluate(swap({ fromSymbol: 'USDC', toSymbol: 'USDT', amountUsd: 20, amountIn: 20 }), ctxWith({ policy, riskRows }));
+  assert.equal(v.outcome, 'refuse');
+  assert.equal(v.outcome === 'refuse' ? v.rule : '', 'forbidden_issuer');
+  assert.match(v.reasons[v.reasons.length - 1] ?? '', /USDT is issued by Tether/);
+});
+
+test('the issuer cap judges the state a swap leaves behind, over an intents-only portfolio', () => {
+  const policy = policyAllowing(VENUE, { maxPerTransactionUsd: 100_000, maxPerSessionUsd: 100_000 });
+  policy.composition.maxIssuerShare = { default: 1, Circle: 0.5 };
+  // $1,900 of USDC is held (1,850 inside the verifier, 50 on the venue). Swapping $100 of it
+  // into USDT leaves Circle at 1,800 of 1,900, above the cap.
+  const small = evaluate(swap({ fromSymbol: 'USDC', toSymbol: 'USDT', amountUsd: 100, amountIn: 100 }), ctxWith({ policy, riskRows }));
+  assert.equal(small.outcome, 'refuse', JSON.stringify(small));
+  assert.equal(small.outcome === 'refuse' ? small.rule : '', 'max_issuer_share');
+  assert.match(small.reasons[small.reasons.length - 1] ?? '', /Circle would hold 94\.74%/);
+  // Swapping $1,000 leaves Circle at 900 of 1,900, inside it.
+  const large = evaluate(swap({ fromSymbol: 'USDC', toSymbol: 'USDT', amountUsd: 1000, amountIn: 1000 }), ctxWith({ policy, riskRows }));
+  assert.notEqual(large.outcome, 'refuse', JSON.stringify(large));
+});
+
+test('the freezable cap reads the state after a swap into a coin nobody can freeze', () => {
+  const policy = policyAllowing(VENUE, { maxPerTransactionUsd: 100_000, maxPerSessionUsd: 100_000 });
+  policy.composition.maxFreezableShare = 0.5;
+  // Everything issued is freezable today, so a swap that keeps it that way is refused and one
+  // into DAI (Sky, not freezable) for more than half of it passes.
+  const stays = evaluate(swap({ fromSymbol: 'USDC', toSymbol: 'USDT', amountUsd: 1000, amountIn: 1000 }), ctxWith({ policy, riskRows }));
+  assert.equal(stays.outcome === 'refuse' ? stays.rule : '', 'max_freezable_share');
+  const out = evaluate(swap({ fromSymbol: 'USDC', toSymbol: 'DAI', amountUsd: 1000, amountIn: 1000 }), ctxWith({ policy, riskRows }));
+  assert.notEqual(out.outcome, 'refuse', JSON.stringify(out));
+});
+
+test('a send leaves the portfolio, so the shares of what stays are judged', () => {
+  const policy = policyAllowing(VENUE, { maxPerTransactionUsd: 100_000, maxPerSessionUsd: 100_000 });
+  policy.composition.maxIssuerShare = { default: 1, Circle: 0.5 };
+  // Nothing but Circle is held, so however much leaves, Circle is all of what stays.
+  const v = evaluate(intentsSend({ to: SELF_EVM, amountUsd: 50, amount: 50 }), ctxWith({ policy, riskRows }));
+  assert.equal(v.outcome === 'refuse' ? v.rule : '', 'max_issuer_share');
+});
+
+test('a move between our own pockets changes no share: a Hyperliquid deposit passes every composition cap', () => {
+  const policy = policyAllowing(VENUE);
+  policy.composition.maxIssuerShare = { default: 1, Circle: 1 };
+  policy.composition.maxFreezableShare = 1;
+  const v = evaluate(hlDeposit({ amountUsd: 25 }), ctxWith({ policy, riskRows }));
+  assert.notEqual(v.outcome, 'refuse', JSON.stringify(v));
 });

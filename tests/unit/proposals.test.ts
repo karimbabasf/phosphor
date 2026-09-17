@@ -40,16 +40,14 @@ function setup(over: HarnessOptions = {}) {
 }
 
 // ---------- pricing a non-stable, found by executing a real swap ----------
-// This app started as a stablecoin tool, so the EVM reader sets usd = amount for every
-// non-native token. Correct for USDC, wrong for WETH. amountUsd is what every budget in the
-// engine reads, so a 0.01 WETH swap was governed as $0.01 rather than ~$18.80, and 10 WETH
-// (~$18,800) would have passed a $10,000 per-transaction cap. Caught live on 2026-08-12.
+// This app started as a stablecoin tool and priced every token at a dollar. Correct for USDC,
+// wrong for WETH. amountUsd is what every budget in the engine reads, so a 0.01 WETH swap was
+// governed as $0.01 rather than ~$18.80, and 10 WETH (~$18,800) would have passed a $10,000
+// per-transaction cap. Caught live on 2026-08-12.
 
-test('a non-stable is priced at spot, not at the ledger stablecoin assumption', async () => {
+test('a non-stable is priced at spot, not at the stablecoin assumption', async () => {
   const h = setup();
   const snap = h.ledger.snapshot();
-  // The reader's assumption, reproduced: a WETH holding whose usd equals its amount.
-  snap.holdings.push({ chain: 'arb', address: '0x1', symbol: 'WETH', tokenId: '0xweth', amount: 2, usd: 2, native: false });
   snap.prices.ETH = 1880;
 
   const p = await h.svc.proposeSwap({
@@ -64,8 +62,6 @@ test('a non-stable is priced at spot, not at the ledger stablecoin assumption', 
 
 test('a token the app cannot price is refused rather than guessed at 1.0', async () => {
   const h = setup();
-  const snap = h.ledger.snapshot();
-  snap.holdings.push({ chain: 'arb', address: '0x1', symbol: 'MYSTERY', tokenId: '0xm', amount: 5, usd: 5, native: false });
 
   const p = await h.svc.proposeSwap({
     chain: 'arb', fromSymbol: 'MYSTERY', toSymbol: 'USDC',

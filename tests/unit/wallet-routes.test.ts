@@ -22,25 +22,17 @@ import { defaultPolicy } from '../../src/policy/file.ts';
 import { createMarketData } from '../../src/market/index.ts';
 import { createKeystore } from '../../src/keystore/index.ts';
 import { defaultParams } from '../../src/keystore/kdf.ts';
-import type { AppConfig, ChainId, ChainStatus, LedgerSnapshot } from '../../src/types.ts';
+import type { AppConfig, LedgerSnapshot } from '../../src/types.ts';
 
 // The seat secret every op on /api/mcp carries (src/http/mcp.ts).
 const SEAT = 's'.repeat(64);
 
-const CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 const VECTOR = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 const VECTOR_EVM = '0x9858EfFD232B4033E47d90003D41EC34EcaEda94';
 const PASSWORD = 'a long enough password';
 
 function snapshot(): LedgerSnapshot {
-  const status: ChainStatus = { ok: true, fetchedAt: new Date().toISOString() };
-  return {
-    holdings: [],
-    chainStatus: Object.fromEntries(CHAINS.map((c) => [c, status])) as Record<ChainId, ChainStatus>,
-    mode: 'demo',
-    prices: {},
-    gas: Object.fromEntries(CHAINS.map((c) => [c, { transferCostUsd: 0.1 }])) as LedgerSnapshot['gas'],
-  };
+  return { mode: 'demo', fetchedAt: new Date().toISOString(), prices: {} };
 }
 
 function fast(): ReturnType<typeof defaultParams> {
@@ -574,7 +566,7 @@ test('the beacon moves the lock countdown and an agent call does not', async () 
     // Twenty agent reads, back to back. Every one is audited, every one answers, and the
     // countdown must be no further away afterwards than it was before.
     for (let i = 0; i < 20; i += 1) {
-      const out = await b.post('/api/mcp', { op: 'read', tool: 'balances', session: 'agent-1', client: 'test', secret: SEAT });
+      const out = await b.post('/api/mcp', { op: 'read', tool: 'wallet', session: 'agent-1', client: 'test', secret: SEAT });
       assert.equal(out.status, 200, 'the agent can still work while this is being asserted');
     }
     const afterAgent = (await b.get('/api/state')).json.lock.idleLocksInSec as number;

@@ -19,7 +19,8 @@ import type { Address, Hex } from 'viem';
 import { privateKeyToAccount, signMessage } from 'viem/accounts';
 
 import { classify } from '../../src/composition.ts';
-import { loadDemoLedger } from '../../src/ledger/demo.ts';
+import { loadDemoLedger, loadDemoReads } from '../../src/ledger/demo.ts';
+import { buildWallet } from '../../src/wallet.ts';
 import { defaultPolicy } from '../../src/policy/file.ts';
 import { evaluate } from '../../src/policy/engine.ts';
 import type { EngineCtx } from '../../src/policy/engine.ts';
@@ -873,10 +874,10 @@ function engineCtx(): EngineCtx {
   const policy = defaultPolicy();
   // Seeded exactly the way main.ts seeds it, from the registry rather than by hand.
   policy.outbound.destinationAllowlist = venueAllowlist();
+  const reads = loadDemoReads();
   return {
     policy,
-    composition: classify(snapshot, riskRows),
-    ledger: snapshot,
+    composition: classify(buildWallet(snapshot, reads.intents, reads.hyperliquid).rows, riskRows),
     sessionSpentUsd: 0,
     selfAddresses: [OWNER],
   };

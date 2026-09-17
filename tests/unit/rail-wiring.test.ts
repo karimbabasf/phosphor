@@ -542,16 +542,10 @@ test('the policy engine recognises every kind the registry can dispatch', () => 
     // the engine already routed into evaluateRail. That is the discriminator this test wants.
     const verdict = evaluate({ kind, amountUsd: 0 } as WriteDraft, {
       policy: defaultPolicy(),
-      composition: classify(
-        { holdings: [], chainStatus: {}, mode: 'live', prices: {}, gas: {} } as never,
-        [],
-      ),
-      holdings: [],
+      composition: classify([], []),
       selfAddresses: [],
       sessionSpentUsd: 0,
-      risk: [],
-      prices: {},
-    } as never);
+    });
 
     // The draft is a bare {kind} with no amount, so every kind must refuse. What matters is
     // WHICH refusal: 'nothing_to_move' means the engine never recognised it as a rail at all.

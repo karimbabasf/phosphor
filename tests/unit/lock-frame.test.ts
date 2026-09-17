@@ -29,20 +29,12 @@ import { createMarketData } from '../../src/market/index.ts';
 import { createKeystore } from '../../src/keystore/index.ts';
 import { createSession } from '../../src/keystore/session.ts';
 import { defaultParams } from '../../src/keystore/kdf.ts';
-import type { AppConfig, ChainId, ChainStatus, LedgerSnapshot } from '../../src/types.ts';
+import type { AppConfig, LedgerSnapshot } from '../../src/types.ts';
 
-const CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 const PASSWORD = 'a long enough password';
 
 function snapshot(): LedgerSnapshot {
-  const status: ChainStatus = { ok: true, fetchedAt: new Date().toISOString() };
-  return {
-    holdings: [],
-    chainStatus: Object.fromEntries(CHAINS.map((c) => [c, status])) as Record<ChainId, ChainStatus>,
-    mode: 'demo',
-    prices: {},
-    gas: Object.fromEntries(CHAINS.map((c) => [c, { transferCostUsd: 0.1 }])) as LedgerSnapshot['gas'],
-  };
+  return { mode: 'demo', fetchedAt: new Date().toISOString(), prices: {} };
 }
 
 async function boot() {

@@ -1,6 +1,6 @@
 // The basic screen after a fill. Karim, 2026-09-14: "when a trade happens, basic mode doesnt
 // update the balance". The hero read "checking your new balance" in the balance type and never
-// stopped, because the ledger stamped chainStatus.fetchedAt once at boot and every refresh
+// stopped, because the ledger stamped fetchedAt once at boot and every refresh
 // carried the stamp forward, so from the first fill after boot the read was older than the
 // execution for the life of the process. These tests hold the ledger to re-stamping every read.
 
@@ -10,13 +10,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { AppConfig, ChainStatus } from '../../src/types.ts';
+import type { AppConfig } from '../../src/types.ts';
 import { createLedger } from '../../src/ledger/index.ts';
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-function newestStamp(status: Record<string, ChainStatus>): number {
-  return Math.max(...Object.values(status).map((s) => Date.parse(s.fetchedAt)));
+function stampOf(readAt: string): number {
+  return Date.parse(readAt);
 }
 
 function cfgFor(mode: AppConfig['mode'], dataDir: string): AppConfig {
@@ -33,10 +33,10 @@ function cfgFor(mode: AppConfig['mode'], dataDir: string): AppConfig {
 test('the demo ledger re-stamps its read on every refresh', async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-after-fill-'));
   const ledger = createLedger(cfgFor('demo', dataDir));
-  const first = newestStamp(ledger.snapshot().chainStatus);
+  const first = stampOf(ledger.snapshot().fetchedAt);
   await sleep(5);
   await ledger.refresh();
-  assert.ok(newestStamp(ledger.snapshot().chainStatus) > first);
+  assert.ok(stampOf(ledger.snapshot().fetchedAt) > first);
 });
 
 test('the live ledger stamps the read when it starts, and again on every refresh', async () => {
@@ -48,12 +48,12 @@ test('the live ledger stamps the read when it starts, and again on every refresh
     throw new Error('offline');
   }) as unknown as typeof fetch;
   const ledger = createLedger(cfgFor('live', dataDir), { fetchImpl: slowOffline });
-  const first = newestStamp(ledger.snapshot().chainStatus);
+  const first = stampOf(ledger.snapshot().fetchedAt);
   await sleep(5);
 
   const started = Date.now();
   await ledger.refresh();
-  const stamp = newestStamp(ledger.snapshot().chainStatus);
+  const stamp = stampOf(ledger.snapshot().fetchedAt);
   assert.ok(stamp > first, 'the stamp moved');
   assert.ok(stamp >= started, 'the stamp is not older than the refresh');
   // Taken before the reads, not after: a read that started before a fill can only carry the
@@ -62,5 +62,5 @@ test('the live ledger stamps the read when it starts, and again on every refresh
 
   await sleep(5);
   await ledger.refresh();
-  assert.ok(newestStamp(ledger.snapshot().chainStatus) > stamp, 'and it moves again on the next pass');
+  assert.ok(stampOf(ledger.snapshot().fetchedAt) > stamp, 'and it moves again on the next pass');
 });

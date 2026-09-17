@@ -22,9 +22,8 @@ import { createMarketData } from '../../src/market/index.ts';
 import { createMarketStore } from '../../src/market/store.ts';
 import type { LiveSocket } from '../../src/market/live.ts';
 import type { Catalog, MarketRef, Provider } from '../../src/market/catalog.ts';
-import type { AppConfig, Candle, ChainId, ChainStatus, LedgerSnapshot, ViewMode } from '../../src/types.ts';
+import type { AppConfig, Candle, LedgerSnapshot, ViewMode } from '../../src/types.ts';
 
-const CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 const COINS = ['BTC', 'ETH', 'SOL'];
 
 function ref(symbol: string, provider: Provider = 'hyperliquid'): MarketRef {
@@ -85,15 +84,7 @@ export type ChartHarness = {
 };
 
 function snapshot(): LedgerSnapshot {
-  const fetchedAt = new Date().toISOString();
-  const status: ChainStatus = { ok: true, fetchedAt };
-  return {
-    holdings: [],
-    chainStatus: Object.fromEntries(CHAINS.map((c) => [c, status])) as Record<ChainId, ChainStatus>,
-    mode: 'demo',
-    prices: {},
-    gas: Object.fromEntries(CHAINS.map((c) => [c, { transferCostUsd: 0.1 }])) as LedgerSnapshot['gas'],
-  };
+  return { mode: 'demo', fetchedAt: new Date().toISOString(), prices: {} };
 }
 
 export async function bootChartServer(

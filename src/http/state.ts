@@ -122,9 +122,9 @@ export function sentencesOf(policy: Policy | null): string[] {
 
 export function buildState(ctx: Ctx): unknown {
   const snapshot = ctx.ledger.snapshot();
-  const composition = classify(snapshot, ctx.riskRows);
-  const policy = ctx.getPolicy();
   const wallet = buildWallet(snapshot, ctx.ledger.intents(), ctx.ledger.hyperliquid());
+  const composition = classify(wallet.rows, ctx.riskRows);
+  const policy = ctx.getPolicy();
   const list = ctx.proposals.list();
   const lockAddresses = ctx.keystore.addressReport();
   return {
@@ -212,7 +212,7 @@ export function buildState(ctx: Ctx): unknown {
       policyReadable: policy !== null,
       killSwitch: policy?.killSwitch ?? false,
       agentsConnected: ctx.agents.connected(),
-      chainStatus: snapshot.chainStatus,
+      readAt: snapshot.fetchedAt,
       selfAddresses: [...ctx.cfg.addresses.evm, ...ctx.cfg.addresses.solana, ...ctx.cfg.addresses.near],
       prices: ctx.prices.readings,
       // The assistant's half of the history: the same events the pro screen's log

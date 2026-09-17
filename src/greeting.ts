@@ -138,8 +138,7 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
     items: [
       { tool: 'wallet', does: 'every balance held, with quantity, price, USD value and share.' },
       { tool: 'deposit', does: 'opens the deposit card in the window for one asset on one network and watches for it to land; you get a fingerprint of the address, never the address.' },
-      { tool: 'balances', does: 'holdings per chain with staleness. Use wallet unless you need the raw per-chain view.' },
-      { tool: 'composition', does: 'stablecoin exposure by issuer and chain, including the freezable share.' },
+      { tool: 'composition', does: 'stablecoin exposure by issuer and pocket, including the freezable share.' },
       { tool: 'policy_show', does: 'the rules currently enforced, as plain-English sentences.' },
       { tool: 'log_tail', does: 'the audit log, newest first: everything attempted, executed and refused.' },
       { tool: 'proposal_status', does: 'what happened to one proposal id.' },

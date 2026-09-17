@@ -22,8 +22,6 @@ import { readViewMode } from '../../src/view/mode.ts';
 import { createMarketData } from '../../src/market/index.ts';
 import type {
   AppConfig,
-  ChainId,
-  ChainStatus,
   LedgerSnapshot,
   Proposal,
   ViewMode,
@@ -32,7 +30,6 @@ import type {
 // The seat secret every op on /api/mcp carries (src/http/mcp.ts).
 const SEAT = 's'.repeat(64);
 
-const CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 
 function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-viewop-'));
@@ -51,15 +48,7 @@ function seatedAgents() {
 }
 
 function snapshot(): LedgerSnapshot {
-  const fetchedAt = new Date().toISOString();
-  const status: ChainStatus = { ok: true, fetchedAt };
-  return {
-    holdings: [{ chain: 'arb', address: '0xself', symbol: 'USDC', tokenId: '0xusdc', amount: 500, usd: 500, native: false }],
-    chainStatus: Object.fromEntries(CHAINS.map((c) => [c, status])) as Record<ChainId, ChainStatus>,
-    mode: 'demo',
-    prices: {},
-    gas: Object.fromEntries(CHAINS.map((c) => [c, { transferCostUsd: 0.1 }])) as LedgerSnapshot['gas'],
-  };
+  return { mode: 'demo', fetchedAt: new Date().toISOString(), prices: {} };
 }
 
 function pendingProposal(id = 'p-pending'): Proposal {

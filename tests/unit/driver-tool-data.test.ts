@@ -42,7 +42,7 @@ test('a tool_result is matched to its tool_use by id, so the step it closes carr
   const results = events.filter((e): e is Extract<DriverEvent, { kind: 'tool_result' }> => e.kind === 'tool_result');
   assert.deepEqual(
     results.map((e) => [e.name, e.ok]),
-    [['mcp__phosphor__balances', true], ['mcp__phosphor__policy_show', true]],
+    [['mcp__phosphor__wallet', true], ['mcp__phosphor__policy_show', true]],
     'the result was not named after the call that opened it',
   );
   const order = events.filter((e) => e.kind === 'tool' || e.kind === 'tool_result' || e.kind === 'tool_data').map((e) => e.kind);
@@ -64,14 +64,14 @@ test('a whitelisted read reaches the window as data, and a tool off the list sen
 
   const data = events.filter((e): e is Extract<DriverEvent, { kind: 'tool_data' }> => e.kind === 'tool_data');
   assert.equal(data.length, 1, 'policy_show is not on the list and must send nothing');
-  assert.equal(data[0].name, 'mcp__phosphor__balances');
+  assert.equal(data[0].name, 'mcp__phosphor__wallet');
   const answer = data[0].data as { totalUsd: number; holdings: Array<{ symbol: string }> };
   assert.equal(answer.totalUsd, 12.5);
   assert.equal(answer.holdings[0].symbol, 'USDC');
 });
 
 test('the list is an allow list: the vault, the keys and every unknown tool are off it', () => {
-  for (const name of ['wallet', 'balances', 'trade_read', 'trade_batch', 'deposit', 'watch', 'receipts', 'proposal_status']) {
+  for (const name of ['wallet', 'trade_read', 'trade_batch', 'deposit', 'watch', 'receipts', 'proposal_status']) {
     assert.ok(isToolDataTool(`mcp__phosphor__${name}`), `${name} is on the list`);
   }
   assert.ok(isToolDataTool('mcp__phosphor__propose_swap'));
@@ -96,10 +96,10 @@ test('a key-shaped field never leaves the process, whatever tool carried it', ()
 });
 
 test('a failed call, a sentence and a picture all send nothing', () => {
-  assert.equal(toolDataFor('mcp__phosphor__balances', {}, wrapped({ totalUsd: 1 }), false), null, 'an error result');
-  assert.equal(toolDataFor('mcp__phosphor__balances', {}, 'Phosphor is not running.'), null, 'a sentence');
-  assert.equal(toolDataFor('mcp__phosphor__balances', {}, [{ type: 'image', data: 'AAAA', mimeType: 'image/jpeg' }]), null, 'a picture');
-  assert.equal(toolDataFor('mcp__phosphor__balances', {}, wrapped(42)), null, 'a bare number');
+  assert.equal(toolDataFor('mcp__phosphor__wallet', {}, wrapped({ totalUsd: 1 }), false), null, 'an error result');
+  assert.equal(toolDataFor('mcp__phosphor__wallet', {}, 'Phosphor is not running.'), null, 'a sentence');
+  assert.equal(toolDataFor('mcp__phosphor__wallet', {}, [{ type: 'image', data: 'AAAA', mimeType: 'image/jpeg' }]), null, 'a picture');
+  assert.equal(toolDataFor('mcp__phosphor__wallet', {}, wrapped(42)), null, 'a bare number');
 });
 
 test('an answer over the cap is cut by its longest arrays, each cut marked, until it fits', () => {

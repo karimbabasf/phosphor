@@ -26,22 +26,12 @@ import { defaultPolicy } from '../../src/policy/file.ts';
 import { createMarketData } from '../../src/market/index.ts';
 import { RECEIPT_LIMIT_DEFAULT, RECEIPT_LIMIT_MAX } from '../../src/http/receipts.ts';
 import type { Receipt } from '../../src/http/receipts.ts';
-import type { AppConfig, ChainId, ChainStatus, LedgerSnapshot, Proposal, ProposalStatus } from '../../src/types.ts';
+import type { AppConfig, LedgerSnapshot, Proposal, ProposalStatus } from '../../src/types.ts';
 
-const CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 const SELF = '0x1111111111111111111111111111111111111111';
 
 function snapshot(): LedgerSnapshot {
-  const chainStatus = Object.fromEntries(
-    CHAINS.map((c) => [c, { ok: true, fetchedAt: new Date().toISOString() } as unknown as ChainStatus]),
-  ) as Record<ChainId, ChainStatus>;
-  return {
-    holdings: [],
-    prices: {},
-    gas: {} as LedgerSnapshot['gas'],
-    chainStatus,
-    fetchedAt: new Date().toISOString(),
-  } as unknown as LedgerSnapshot;
+  return { mode: 'demo', fetchedAt: new Date().toISOString(), prices: {} };
 }
 
 function settled(id: string, status: ProposalStatus, over: Partial<Proposal> = {}): Proposal {

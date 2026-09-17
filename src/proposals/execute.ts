@@ -175,11 +175,11 @@ function pocketPriced(ctx: PCtx, pocket: PocketRead, base: string | null): numbe
 }
 
 // When the ledger's newest read started: the verifier and venue reads carry their own stamp,
-// and the chain status carries the pass's.
+// and the snapshot carries the pass's.
 function readStamp(ctx: PCtx): number {
   const snapshot = ctx.ledger.snapshot();
   const stamps = [
-    ...Object.values(snapshot.chainStatus).map((s) => Date.parse(s.fetchedAt)),
+    Date.parse(snapshot.fetchedAt),
     Date.parse(ctx.ledger.intents()?.fetchedAt ?? ''),
     Date.parse(ctx.ledger.hyperliquid()?.fetchedAt ?? ''),
   ].filter((n) => Number.isFinite(n));

@@ -75,7 +75,6 @@ export const READ_TOOLS: readonly string[] = [
   // prints beside it, and the index of everything it can do. A read like any other, so it
   // joins the roster and gets audited exactly as every other call does.
   'start',
-  'balances',
   'composition',
   'wallet',
   // Where money comes IN. Opens the deposit card in the window for one asset on one network and

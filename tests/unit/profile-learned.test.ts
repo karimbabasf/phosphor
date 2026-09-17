@@ -26,26 +26,18 @@ import { CAPABILITIES, buildGreeting } from '../../src/greeting.ts';
 import { VIEW_TOOLS } from '../../src/http/context.ts';
 import { EXPECTED_TOOLS, WORKER_WITHHELD } from '../tool-surface.ts';
 import { bootDriverServer } from '../fixtures/driver-server.ts';
-import type { AppConfig, ChainId, ChainStatus, LedgerSnapshot } from '../../src/types.ts';
+import type { AppConfig, LedgerSnapshot } from '../../src/types.ts';
 
 // The seat secret every op on /api/mcp carries (src/http/mcp.ts).
 const SEAT = 's'.repeat(64);
 
-const CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 
 const HOSTILE = JSON.parse(
   fs.readFileSync(new URL('../fixtures/hostile.json', import.meta.url), 'utf8'),
 ) as { sentences: string[]; profileLines: string[] };
 
 function snapshot(): LedgerSnapshot {
-  const status: ChainStatus = { ok: true, fetchedAt: new Date().toISOString() };
-  return {
-    holdings: [],
-    chainStatus: Object.fromEntries(CHAINS.map((c) => [c, status])) as Record<ChainId, ChainStatus>,
-    mode: 'demo',
-    prices: {},
-    gas: Object.fromEntries(CHAINS.map((c) => [c, { transferCostUsd: 0.1 }])) as LedgerSnapshot['gas'],
-  };
+  return { mode: 'demo', fetchedAt: new Date().toISOString(), prices: {} };
 }
 
 type Harness = {

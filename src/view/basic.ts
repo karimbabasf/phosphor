@@ -31,7 +31,6 @@ import type {
   BasicTone,
   BasicView,
   ChainId,
-  ChainStatus,
   LogEvent,
   Proposal,
   SimulationResult,
@@ -54,7 +53,8 @@ export type BasicInput = {
   policyReadable: boolean;
   killSwitch: boolean;
   agentsConnected: number;
-  chainStatus: Record<ChainId, ChainStatus>;
+  // When the ledger's last read started, ISO. Held against the newest executed proposal.
+  readAt: string;
   // Needed to tell "your own wallet" from any other address without guessing.
   // Guessing is what F2 did.
   selfAddresses: string[];
@@ -131,13 +131,9 @@ function isSelf(address: string, selfAddresses: string[]): boolean {
 
 // ---------- freshness ----------
 
-function newestFetchAt(chainStatus: Record<ChainId, ChainStatus>): number {
-  let newest = 0;
-  for (const status of Object.values(chainStatus ?? {})) {
-    const t = Date.parse(status?.fetchedAt ?? '');
-    if (Number.isFinite(t) && t > newest) newest = t;
-  }
-  return newest;
+function readAtMs(readAt: string): number {
+  const t = Date.parse(readAt ?? '');
+  return Number.isFinite(t) ? t : 0;
 }
 
 // A row after which the balance may differ from the last read: anything that went through,
@@ -863,7 +859,7 @@ export function buildBasic(input: BasicInput): BasicView {
   // --- what we are willing to say about the balance ---
   const staleChains = wallet.stale ?? [];
   const lastExecution = newestExecutionAt(proposals);
-  const staleAfterWrite = lastExecution > 0 && newestFetchAt(input.chainStatus) < lastExecution;
+  const staleAfterWrite = lastExecution > 0 && readAtMs(input.readAt) < lastExecution;
 
   /* The number and the sentence are two fields, because they land in two places. The hero's
      own slot is set in the balance type, and a sentence there ("checking your new balance", in

@@ -22,21 +22,13 @@ import { createAudit } from '../../src/audit.ts';
 import { createStore } from '../../src/store.ts';
 import { defaultPolicy } from '../../src/policy/file.ts';
 import { createMarketData } from '../../src/market/index.ts';
-import type { AppConfig, ChainId, ChainStatus, LedgerSnapshot } from '../../src/types.ts';
+import type { AppConfig, LedgerSnapshot } from '../../src/types.ts';
 import type { DriverState } from '../../src/driver.ts';
 
-const CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 const FETCHED_AT = '2026-08-20T00:00:00.000Z';
 
 function snapshot(): LedgerSnapshot {
-  const status: ChainStatus = { ok: true, fetchedAt: FETCHED_AT };
-  return {
-    holdings: [],
-    chainStatus: Object.fromEntries(CHAINS.map((c) => [c, status])) as Record<ChainId, ChainStatus>,
-    mode: 'demo',
-    prices: {},
-    gas: Object.fromEntries(CHAINS.map((c) => [c, { transferCostUsd: 0.1 }])) as LedgerSnapshot['gas'],
-  };
+  return { mode: 'demo', fetchedAt: FETCHED_AT, prices: {} };
 }
 
 // What the fake agent was asked to do, in order. Assertions read this instead of guessing from

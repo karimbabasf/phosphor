@@ -35,22 +35,17 @@ export type Screen = { view: ViewMode; since: string; by: ScreenBy };
 
 // ---------- Ledger ----------
 
-export type Holding = {
-  chain: ChainId;
-  address: string; // owner address
-  symbol: string; // 'USDC', 'USDT', ... ; native gas assets use 'ETH' | 'SOL' | 'NEAR'
-  tokenId: string; // contract address / mint / NEAR contract id; 'native' for the gas asset
-  amount: number; // UI units
-  usd: number; // amount * price (stables priced 1.0, natives via spot)
-  native: boolean;
-};
-
-export type ChainStatus = { ok: boolean; fetchedAt: string; error?: string };
-
+/* What a refresh leaves behind beside the two pocket reads (src/ledger/index.ts: the verifier
+   through intents(), the trading account through hyperliquid()). Nothing is held on a chain, so
+   there is no holding here and no chain to mark stale: the pocket reads carry their own ok
+   flags and stamps, and this carries the prices they are valued at and when the pass began. */
 export type LedgerSnapshot = {
-  holdings: Holding[];
-  chainStatus: Record<ChainId, ChainStatus>; // a failed chain is marked stale, never silently zero
   mode: Mode;
+  /* When the reads that built this snapshot started, once per refresh. src/view/basic.ts holds
+     it against the newest executed proposal to decide whether the total on screen already
+     counts the last fill, and src/proposals/execute.ts waits for a read stamped later than a
+     settlement before it prints the balance after a move. */
+  fetchedAt: string;
   prices: Record<string, number>; // native symbol -> usd used for pricing
   /* When each of those prices was fetched, in epoch ms. Present on a live snapshot and absent on
      a demo or fixture one, and the difference is real: a live price is a reading off one endpoint
@@ -60,7 +55,6 @@ export type LedgerSnapshot = {
      no map at all carries a static table rather than a reading, and there is no fetch time to be
      old. See PRICE_STALENESS_MS in src/proposals/draft.ts for the bound. */
   priceAsOf?: Record<string, number>;
-  gas: Record<ChainId, { transferCostUsd: number }>; // est. cost of one stable transfer out of this chain
 };
 
 // ---------- Composition ----------
@@ -79,7 +73,7 @@ export type RiskRow = {
 export type CompositionRow = {
   issuer: string; // 'unclassified' when the symbol has no risk table row
   symbol: string;
-  chain: ChainId;
+  chain: WalletPlace; // the pocket the balance sits in: 'intents' or 'hyperliquid'
   amount: number;
   usd: number;
   share: number; // 0..1 of total stable usd
@@ -89,7 +83,7 @@ export type CompositionRow = {
 
 export type CompositionView = {
   rows: CompositionRow[]; // sorted by share descending
-  totalUsd: number; // stables only, natives excluded
+  totalUsd: number; // issued coins only; ETH, SOL, NEAR and BTC have no issuer and are excluded
   byIssuer: Record<string, number>; // issuer -> share 0..1
   freezableShare: number;
   unclassified: string[]; // symbols with no risk row
@@ -100,16 +94,14 @@ export type CompositionView = {
 // CompositionView above does NOT go away; it stops being the UI's source and stays the
 // policy engine's input (byIssuer, freezableShare are what the composition rules read).
 
-// Where a wallet row physically sits. A balance inside the intents.near verifier is on no
-// chain: it is an entry on that contract's own ledger, and calling it 'near' would tell a
-// reader to look for it on NEAR where nothing will be found.
-//
-// Deliberately a DISPLAY axis only. LedgerSnapshot.chainStatus and everything the policy
-// engine reads stay strictly ChainId, so adding this cannot reach the outbound rules. See the header of src/ledger/index.ts on adding an axis.
+// Where a wallet row sits. A balance inside the intents.near verifier is on no chain: it is
+// an entry on that contract's own ledger, and calling it 'near' would tell a reader to look
+// for it on NEAR where nothing will be found. The chain ids stay in the union for the rows
+// older builds wrote and the receipts that still name them.
 export type WalletPlace = ChainId | 'intents' | 'hyperliquid';
 
 export type WalletRow = {
-  kind: 'token' | 'intents' | 'hyperliquid';
+  kind: 'intents' | 'hyperliquid';
   chain: WalletPlace;
   symbol: string; // 'USDC' or 'ETH'
   tokenId: string;
@@ -133,12 +125,12 @@ export type WalletRow = {
 
 export type WalletView = {
   rows: WalletRow[]; // value descending; only things actually held
-  totalUsd: number; // everything: tokens, natives and intents balances
+  totalUsd: number; // everything: the intents balances and the trading account
   byChain: Record<string, number>; // place -> usd
   stale: WalletPlace[]; // places whose last read failed; never silently zero
-  // How many configured tokens came back with nothing in them. The rows are gone from
-  // the list (a wallet lists what you hold), but the number stays: "we looked at 19
-  // tokens and 14 were empty" and "we only looked at 5" are different facts.
+  // How many pockets came back with nothing in them. The rows are gone from the list (a
+  // wallet lists what you hold), but the number stays: "we looked and it was empty" and "we
+  // did not look" are different facts.
   emptyCount: number;
   // Priced balances that round to $0.00, kept out of the rows but inside totalUsd and byChain.
   // The count and the sum let a card say "1 tiny balance, not listed" instead of hiding money.

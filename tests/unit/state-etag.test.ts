@@ -25,27 +25,19 @@ import { createAudit } from '../../src/audit.ts';
 import { createStore } from '../../src/store.ts';
 import { defaultPolicy } from '../../src/policy/file.ts';
 import { createMarketData } from '../../src/market/index.ts';
-import type { AppConfig, ChainId, ChainStatus, Holding, LedgerSnapshot } from '../../src/types.ts';
-
-const CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
+import type { AppConfig, LedgerSnapshot } from '../../src/types.ts';
+import type { IntentsRead } from '../../src/ledger/intents.ts';
 
 // Fixed, unlike the fixture in security-hardening.test.ts, which stamps a fresh timestamp on
 // every call. A moving timestamp would change the bytes on every request and make an ETag
 // useless, which is exactly the property the real payload was checked for before this was built.
 const FETCHED_AT = '2026-08-19T00:00:00.000Z';
 
-// What test 4 mutates to prove a real change still gets a full 200.
-let holdings: Holding[] = [];
+// What test 4 mutates to prove a real change still gets a full 200: the verifier read.
+let intents: IntentsRead | undefined;
 
 function snapshot(): LedgerSnapshot {
-  const status: ChainStatus = { ok: true, fetchedAt: FETCHED_AT };
-  return {
-    holdings,
-    chainStatus: Object.fromEntries(CHAINS.map((c) => [c, status])) as Record<ChainId, ChainStatus>,
-    mode: 'demo',
-    prices: {},
-    gas: Object.fromEntries(CHAINS.map((c) => [c, { transferCostUsd: 0.1 }])) as LedgerSnapshot['gas'],
-  };
+  return { mode: 'demo', fetchedAt: FETCHED_AT, prices: {} };
 }
 
 async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
@@ -65,7 +57,7 @@ async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
     riskRows: [],
     ledger: {
       snapshot,
-      intents: () => undefined,
+      intents: () => intents,
       hyperliquid: () => undefined,
       refresh: async () => snapshot(),
     },
@@ -176,20 +168,24 @@ test('a stale ETag still gets the full body, so a client can never be stuck on o
 
 test('a real change moves the ETag and delivers the new state', async () => {
   const h = await boot();
-  holdings = [];
+  intents = undefined;
   try {
     const before = await raw(h.url, '/api/state', { Host: '127.0.0.1' });
     const etag = String(before.headers.etag);
 
     // Money arrives. The next conditional request must not be told nothing happened.
-    holdings = [{ chain: 'arb', symbol: 'USDC', amount: 25, usd: 25 } as unknown as Holding];
+    intents = {
+      ok: true,
+      fetchedAt: FETCHED_AT,
+      holdings: [{ accountId: '0xself', assetId: 'nep141:arb-usdc.omft.near', symbol: 'USDC', originChain: 'arb', amount: 25, decimals: 6 }],
+    };
 
     const after = await raw(h.url, '/api/state', { Host: '127.0.0.1', 'If-None-Match': etag });
     assert.equal(after.status, 200, 'a changed state must never answer 304');
     assert.notEqual(String(after.headers.etag), etag, 'the ETag must move when the state moves');
     assert.ok(after.body.includes('USDC'), 'the new holding must be in the body');
   } finally {
-    holdings = [];
+    intents = undefined;
     await h.close();
   }
 });

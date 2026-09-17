@@ -8,7 +8,8 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 import type { HlDepositDraft, Policy, PolicyPatch, RiskRow, Verdict, WriteDraft } from '../../src/types.ts';
-import { loadDemoLedger } from '../../src/ledger/demo.ts';
+import { loadDemoLedger, loadDemoReads } from '../../src/ledger/demo.ts';
+import { buildWallet } from '../../src/wallet.ts';
 import { classify } from '../../src/composition.ts';
 import { defaultPolicy } from '../../src/policy/file.ts';
 import { evaluate } from '../../src/policy/engine.ts';
@@ -27,14 +28,17 @@ const SELF_SOL = '11111111111111111111111111111111';
 const SELF_NEAR = 'karim-demo.near';
 const SELF = [SELF_EVM, SELF_SOL, SELF_NEAR];
 
-const snapshot = loadDemoLedger();
-const composition = classify(snapshot, riskRows);
+// The demo pockets, as the wallet shows them: what the engine's composition is built from.
+function demoWallet() {
+  const reads = loadDemoReads();
+  return buildWallet(loadDemoLedger(), reads.intents, reads.hyperliquid);
+}
+const composition = classify(demoWallet().rows, riskRows);
 
 function ctxWith(over: Partial<EngineCtx> = {}): EngineCtx {
   return {
     policy: defaultPolicy(),
     composition,
-    ledger: snapshot,
     sessionSpentUsd: 0,
     selfAddresses: SELF,
     ...over,

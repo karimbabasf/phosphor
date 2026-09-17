@@ -38,7 +38,7 @@ export async function proposeSwap(ctx: PCtx, params: SwapParams): Promise<Propos
   // chain. Deriving an address from either used to author a SOL-in-intents draft for a
   // Solana address the app never signed with, so the pair was unsellable; the account is the
   // EVM address for every asset.
-  const from = ourIntentsAddress(ctx, snapshot, problems);
+  const from = ourIntentsAddress(ctx, problems);
 
   const draft: SwapDraft = {
     kind: 'swap',
@@ -70,13 +70,13 @@ export async function proposeHlDeposit(ctx: PCtx, params: HlDepositParams): Prom
 
   // The account whose balance is spent inside the verifier: our own EVM address lowercased,
   // the way the verifier names it.
-  const from = ourIntentsAddress(ctx, snapshot, problems).toLowerCase();
+  const from = ourIntentsAddress(ctx, problems).toLowerCase();
 
   // The trading account is the app's own EVM address. Hyperliquid identifies an account by
   // the address that signs for it, so crediting anything else funds a book this app cannot
   // trade. Derived here, never taken from a caller: the whole point of the propose surface
   // is that an agent cannot name where money goes.
-  const hlAccount = ourEvmAddress(ctx, snapshot, problems);
+  const hlAccount = ourEvmAddress(ctx, problems);
 
   // Which flavor of the asset to spend. A balance inside intents.near is keyed by the bridged
   // asset it arrived as (USDC from eth and USDC from arb are two ids), so the builder reads
@@ -136,7 +136,7 @@ export async function proposeHlWithdraw(ctx: PCtx, params: HlWithdrawParams): Pr
   const snapshot = ctx.ledger.snapshot();
   const problems: string[] = [];
 
-  const from = ourEvmAddress(ctx, snapshot, problems);
+  const from = ourEvmAddress(ctx, problems);
   const to = from.toLowerCase();
 
   const draft: HlWithdrawDraft = {
@@ -168,7 +168,7 @@ export async function proposeIntentsSend(ctx: PCtx, params: IntentsSendParams): 
   const symbol = String(params.symbol ?? '').trim().toUpperCase();
   if (symbol === '') problems.push('The send has to name a symbol: which balance inside intents.near to move.');
 
-  const from = ourIntentsAddress(ctx, snapshot, problems).toLowerCase();
+  const from = ourIntentsAddress(ctx, problems).toLowerCase();
 
   const receiver = intentsAccountProblem(params.to);
   let to = '';

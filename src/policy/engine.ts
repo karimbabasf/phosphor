@@ -14,12 +14,19 @@
 
 import { z } from 'zod';
 import { isRailKind } from '../rails/kinds.ts';
-import type { CompositionView, LedgerSnapshot, Policy, PolicyPatch, Verdict, WriteDraft } from '../types.ts';
+import { classify } from '../composition.ts';
+import type { Position } from '../composition.ts';
+import type { CompositionView, Policy, PolicyPatch, RiskRow, Verdict, WriteDraft } from '../types.ts';
 
 export type EngineCtx = {
   policy: Policy | null;
+  // What is held now, by issuer and freeze power, over the intents balances and the trading
+  // account. The composition rules judge the state a move would leave behind, built from this.
   composition: CompositionView;
-  ledger: LedgerSnapshot;
+  // The risk table, for classifying an asset a move would bring in that nothing holds yet.
+  // Optional so every hand-built context stays valid; absent, an unknown asset is unclassified
+  // and counts as freezable, which is the pessimistic answer.
+  riskRows?: RiskRow[];
   sessionSpentUsd: number;
   // Auto-approved fund-moving usd in the same 24h window: only rows a policy 'allow' executed,
   // never a human click. Optional so every existing EngineCtx literal stays valid; absent is 0.
@@ -321,10 +328,125 @@ function evaluatePolicyChange(draft: Extract<WriteDraft, { kind: 'policy_change'
   return { outcome: 'needs_approval', reasons };
 }
 
-// A rail hands funds to a venue contract. What can be checked is the size of the move and
-// who is receiving it; what cannot be checked is a post-move composition, because the
-// engine does not know what a pool or an exchange will hand back. So this branch enforces
-// the money rules strictly and is honest about the rest rather than inventing a post-state.
+// Issuer for a symbol: what the composition says it holds, else the risk table, else
+// 'unclassified' (the same pessimism as composition.ts).
+function issuerOf(symbol: string, ctx: EngineCtx): string {
+  const held = ctx.composition.rows.find(r => r.symbol === symbol);
+  if (held !== undefined) return held.issuer;
+  const risk = (ctx.riskRows ?? []).find(r => r.symbol === symbol);
+  return risk ? risk.issuer : 'unclassified';
+}
+
+// A cap keyed 'circle' must still bind an issuer named 'Circle'; a silently unapplied cap is a
+// money bug. Exact key first, then a case-insensitive scan, then the catch-all.
+function issuerCap(issuer: string, caps: Record<string, number>): number {
+  if (caps[issuer] !== undefined) return caps[issuer];
+  const hit = Object.keys(caps).find(k => k !== 'default' && lower(k) === lower(issuer));
+  if (hit !== undefined) return caps[hit];
+  return caps.default ?? 1;
+}
+
+// classify() needs issuer and freeze power per symbol. The composition already carries them
+// for what is held, and the risk table covers an asset a move brings in; a symbol in neither
+// is left out so classify() applies its own pessimistic path.
+function riskRowsFor(ctx: EngineCtx): RiskRow[] {
+  const bySymbol = new Map<string, RiskRow>();
+  for (const row of ctx.riskRows ?? []) bySymbol.set(row.symbol, row);
+  for (const row of ctx.composition.rows) {
+    if (!row.classified || bySymbol.has(row.symbol)) continue;
+    bySymbol.set(row.symbol, {
+      symbol: row.symbol,
+      issuer: row.issuer,
+      freezable: row.freezable,
+      // Descriptive fields, never read by classify().
+      freezeMechanism: '',
+      reserveType: 'unknown',
+      depegWorstUsd: 0,
+      depegNote: '',
+      sourceUrl: '',
+    });
+  }
+  return [...bySymbol.values()];
+}
+
+/* The issued coins the portfolio would hold if this move landed, in dollars. Every rail draft
+   moves a value the app priced (amountUsd), and what comes back is priced at the same dollars,
+   which is what a cap on a share of the portfolio needs: a swap is value-neutral up to slippage,
+   a send leaves for good, a Hyperliquid move keeps USDC as USDC in a pocket we own, and a trade
+   moves nothing off the venue. Clones, never mutates. */
+function postPositions(draft: RailDraft, ctx: EngineCtx): Position[] {
+  const positions: Position[] = ctx.composition.rows.map(r => ({ symbol: r.symbol, chain: r.chain, quantity: r.amount, valueUsd: r.usd }));
+  const take = (symbol: string, usd: number): void => {
+    let left = usd;
+    for (const p of positions) {
+      if (p.symbol !== symbol || left <= 0) continue;
+      const taken = Math.min(p.valueUsd, left);
+      p.valueUsd -= taken;
+      left -= taken;
+    }
+  };
+  const give = (symbol: string, chain: Position['chain'], usd: number): void => {
+    const existing = positions.find(p => p.symbol === symbol && p.chain === chain) ?? positions.find(p => p.symbol === symbol);
+    if (existing !== undefined) existing.valueUsd += usd;
+    else positions.push({ symbol, chain, quantity: 0, valueUsd: usd });
+  };
+  if (draft.kind === 'swap') {
+    take(draft.fromSymbol, draft.amountUsd);
+    give(draft.toSymbol, 'intents', draft.amountUsd);
+  } else if (draft.kind === 'intents_send') {
+    take(draft.symbol, draft.amountUsd);
+  }
+  return positions;
+}
+
+// What a draft brings in or moves, for the forbidden issuer rule: a swap is judged on what it
+// buys, every other move on the asset it carries.
+function symbolOf(draft: RailDraft): string {
+  if (draft.kind === 'swap') return draft.toSymbol;
+  if (draft.kind === 'trade') return '';
+  return draft.symbol;
+}
+
+function pct(share: number): string {
+  return (share * 100).toFixed(2) + '%';
+}
+
+// The composition rules, over the state a move would leave behind. The engine judges the
+// resulting state rather than the delta: a portfolio already past a cap cannot make further
+// moves until a human changes the policy or the caps stop being breached.
+function compositionProblem(draft: RailDraft, policy: Policy, ctx: EngineCtx, reasons: string[]): Verdict | null {
+  const symbol = symbolOf(draft);
+  if (symbol !== '') {
+    const issuer = issuerOf(symbol, ctx);
+    const forbidden = policy.composition.forbiddenIssuers.find(f => lower(f) === lower(issuer));
+    if (forbidden !== undefined) {
+      return refusal(reasons, 'forbidden_issuer', `${symbol} is issued by ${issuer}, which the policy forbids.`);
+    }
+  }
+
+  const post = classify(postPositions(draft, ctx), riskRowsFor(ctx));
+  for (const [issuer, share] of Object.entries(post.byIssuer)) {
+    const cap = issuerCap(issuer, policy.composition.maxIssuerShare);
+    if (share > cap) {
+      return refusal(
+        reasons,
+        'max_issuer_share',
+        `After this move ${issuer} would hold ${pct(share)} of the portfolio, above its ${pct(cap)} cap.`,
+      );
+    }
+  }
+  if (post.freezableShare > policy.composition.maxFreezableShare) {
+    return refusal(
+      reasons,
+      'max_freezable_share',
+      `After this move ${pct(post.freezableShare)} of the portfolio would be freezable, above the ${pct(policy.composition.maxFreezableShare)} cap.`,
+    );
+  }
+  return null;
+}
+
+// A rail hands funds to a venue. What is checked is the size of the move, who is receiving
+// it, and the composition it leaves behind, in that order.
 function evaluateRail(draft: RailDraft, policy: Policy, ctx: EngineCtx, reasons: string[]): Verdict {
   const usd = draft.amountUsd;
   const counterparty = counterpartyOf(draft);
@@ -337,10 +459,7 @@ function evaluateRail(draft: RailDraft, policy: Policy, ctx: EngineCtx, reasons:
   // The venue must be explicitly blessed. Unlike a transfer, the recipient here is a
   // contract the app chose, so an unknown one means either a misconfiguration or a
   // rail pointed somewhere it should not be. Both are refusals.
-  const allowed = addressSet(ctx.selfAddresses, [
-    ...ctx.ledger.holdings.map((h) => h.address),
-    ...policy.outbound.destinationAllowlist,
-  ]);
+  const allowed = addressSet(ctx.selfAddresses, policy.outbound.destinationAllowlist);
   if (!isOurs(allowed, counterparty)) {
     return refusal(
       reasons,
@@ -379,6 +498,9 @@ function evaluateRail(draft: RailDraft, policy: Policy, ctx: EngineCtx, reasons:
       `${money(ctx.sessionSpentUsd)} already moved this session plus ${money(usd)} is above the ${money(policy.outbound.maxPerSessionUsd)} session limit.`,
     );
   }
+
+  const composition = compositionProblem(draft, policy, ctx, reasons);
+  if (composition !== null) return composition;
 
   if (usd > policy.outbound.humanClickAboveUsd) {
     reasons.push(`${money(usd)} is above the ${money(policy.outbound.humanClickAboveUsd)} click threshold.`);

@@ -23,6 +23,7 @@ import type { Audit } from '../audit.ts';
 import type { Store } from '../store.ts';
 import type { Ledger } from '../ledger/index.ts';
 import { classify } from '../composition.ts';
+import { buildWallet } from '../wallet.ts';
 import { evaluate } from '../policy/engine.ts';
 import type { EngineCtx } from '../policy/engine.ts';
 import { loadPolicy } from '../policy/file.ts';
@@ -333,26 +334,24 @@ export function ownBook(ctx: PCtx): AppConfig['addresses'] {
   };
 }
 
-// Addresses we own: whatever the ledger reports holdings for, plus the book above.
-export function selfAddresses(ctx: PCtx, snapshot: LedgerSnapshot): string[] {
+// Addresses we own: the book above, plus the account the verifier read names, which is how a
+// demo ledger (no keystore, no config) still knows whose money it shows.
+export function selfAddresses(ctx: PCtx): string[] {
   const set = new Set<string>();
-  for (const h of snapshot.holdings) set.add(h.address.toLowerCase());
   const book = ownBook(ctx);
   for (const a of [...book.evm, ...book.solana, ...book.near]) set.add(a.toLowerCase());
+  const read = ctx.ledger.intents();
+  for (const h of read?.holdings ?? []) set.add(h.accountId.toLowerCase());
   return [...set];
 }
 
-// The address this app owns on a chain. eth, base and arb share one evm address, so a holding
-// on any of them names the recipient on the others.
-export function recipientFor(ctx: PCtx, chain: ChainId, snapshot: LedgerSnapshot): string | null {
-  const onChain = snapshot.holdings.find(h => h.chain === chain);
-  if (onChain) return onChain.address;
-
+// The address this app owns on a chain. eth, base and arb share one evm address; the verifier
+// read's account is the same address and stands in when neither the keystore nor config has
+// one (demo mode).
+export function recipientFor(ctx: PCtx, chain: ChainId): string | null {
   const book = ownBook(ctx);
   if (EVM_CHAINS.includes(chain)) {
-    const sibling = snapshot.holdings.find(h => EVM_CHAINS.includes(h.chain));
-    if (sibling) return sibling.address;
-    return book.evm[0] ?? null;
+    return book.evm[0] ?? ctx.ledger.intents()?.holdings[0]?.accountId ?? null;
   }
   if (chain === 'sol') return book.solana[0] ?? null;
   return book.near[0] ?? null;
@@ -361,11 +360,11 @@ export function recipientFor(ctx: PCtx, chain: ChainId, snapshot: LedgerSnapshot
 export function buildCtx(ctx: PCtx, snapshot: LedgerSnapshot, policy: Policy | null): EngineCtx {
   return {
     policy,
-    composition: classify(snapshot, ctx.riskRows),
-    ledger: snapshot,
+    composition: classify(buildWallet(snapshot, ctx.ledger.intents(), ctx.ledger.hyperliquid()).rows, ctx.riskRows),
+    riskRows: ctx.riskRows,
     sessionSpentUsd: sessionSpentUsd(ctx),
     autoApprovedSpentUsd: autoApprovedSpentUsd(ctx),
-    selfAddresses: selfAddresses(ctx, snapshot),
+    selfAddresses: selfAddresses(ctx),
   };
 }
 

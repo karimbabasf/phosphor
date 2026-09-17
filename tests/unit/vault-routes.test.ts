@@ -28,20 +28,11 @@ import { seUnwrapWithSoftwareKey } from '../../src/keystore/sewrap.ts';
 import { createVaultRelay } from '../../src/vault/relay.ts';
 import { receiveNetworkOf } from '../../src/rails/intents-address.ts';
 import type { IntentsReceiveNetwork } from '../../src/http/wallet.ts';
-import type { AppConfig, ChainId, ChainStatus, LedgerSnapshot } from '../../src/types.ts';
+import type { AppConfig, LedgerSnapshot } from '../../src/types.ts';
 
-const CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 
 function snapshot(): LedgerSnapshot {
-  const fetchedAt = new Date().toISOString();
-  const status: ChainStatus = { ok: true, fetchedAt };
-  return {
-    holdings: [],
-    chainStatus: Object.fromEntries(CHAINS.map((c) => [c, status])) as Record<ChainId, ChainStatus>,
-    mode: 'demo',
-    prices: {},
-    gas: Object.fromEntries(CHAINS.map((c) => [c, { transferCostUsd: 0.1 }])) as LedgerSnapshot['gas'],
-  };
+  return { mode: 'demo', fetchedAt: new Date().toISOString(), prices: {} };
 }
 
 function fast(): ReturnType<typeof defaultParams> {

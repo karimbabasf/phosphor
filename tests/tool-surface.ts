@@ -18,7 +18,6 @@ export const EXPECTED_TOOLS: readonly string[] = [
   // capability it has. It is the first thing an agent reads and therefore the highest-leverage
   // place to put a lie, which is why it is asserted like everything else.
   'start',
-  'balances',
   'composition',
   'wallet',
   // Where money comes in. It opens the deposit card in the window and hands the agent a

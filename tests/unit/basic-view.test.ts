@@ -12,8 +12,6 @@ import { readFileSync } from 'node:fs';
 import { buildBasic } from '../../src/view/basic.ts';
 import type { BasicInput, PriceReading } from '../../src/view/basic.ts';
 import type {
-  ChainId,
-  ChainStatus,
   LogEvent,
   Proposal,
   SwapDraft,
@@ -31,10 +29,6 @@ const T0 = '2026-08-12T10:00:00.000Z';
 const T1 = '2026-08-12T11:00:00.000Z';
 const T2 = '2026-08-12T12:00:00.000Z';
 
-function chainStatus(fetchedAt = T2): Record<ChainId, ChainStatus> {
-  const one: ChainStatus = { ok: true, fetchedAt };
-  return { eth: one, base: one, arb: one, sol: one, near: one };
-}
 
 function baseInput(over: Partial<BasicInput> = {}): BasicInput {
   return {
@@ -44,7 +38,7 @@ function baseInput(over: Partial<BasicInput> = {}): BasicInput {
     killSwitch: false,
 
     agentsConnected: 1,
-    chainStatus: chainStatus(),
+    readAt: T2,
     selfAddresses: [SELF],
     prices: [],
     events: [],
@@ -175,7 +169,7 @@ test('a balance read before the last execution is not stated as fact', () => {
   const view = buildBasic(
     baseInput({
       proposals: [proposal({ status: 'executed', decidedAt: T2 })],
-      chainStatus: chainStatus(T0), // fetched an hour BEFORE the execution
+      readAt: T0, // fetched an hour BEFORE the execution
     }),
   );
   assert.equal(view.totalUsd, null);
@@ -190,7 +184,7 @@ test('a balance read after the last execution is stated normally', () => {
   const view = buildBasic(
     baseInput({
       proposals: [proposal({ status: 'executed', decidedAt: T0 })],
-      chainStatus: chainStatus(T2),
+      readAt: T2,
     }),
   );
   assert.equal(view.totalUsd, 2341.08);
@@ -205,7 +199,7 @@ test('the stale check judges by when the money moved, not by when the click land
   const view = buildBasic(
     baseInput({
       proposals: [proposal({ status: 'executed', decidedAt: T0, settledAt: T2 })],
-      chainStatus: chainStatus(T1),
+      readAt: T1,
     }),
   );
   assert.equal(view.totalUsd, null);
@@ -214,11 +208,11 @@ test('the stale check judges by when the money moved, not by when the click land
 
 test('a move the app could not confirm keeps the balance unstated until the ledger has read past it', () => {
   const unconfirmed = proposal({ status: 'needs_reconciliation', decidedAt: T2, result: { ok: false, detail: 'unconfirmed', txids: ['h1'] } });
-  const stale = buildBasic(baseInput({ proposals: [unconfirmed], chainStatus: chainStatus(T1) }));
+  const stale = buildBasic(baseInput({ proposals: [unconfirmed], readAt: T1 }));
   assert.equal(stale.totalUsd, null, 'money may have left');
   assert.equal(stale.checkingLine, 'Checking your new balance.');
 
-  const fresh = buildBasic(baseInput({ proposals: [unconfirmed], chainStatus: chainStatus('2026-08-12T13:00:00.000Z') }));
+  const fresh = buildBasic(baseInput({ proposals: [unconfirmed], readAt: '2026-08-12T13:00:00.000Z' }));
   assert.equal(fresh.totalUsd, 2341.08);
   assert.match(fresh.headline, /not confirmed/i);
   assert.doesNotMatch(fresh.headline, /Done\. You now have/);
@@ -228,7 +222,7 @@ test('a failed row with no hash moved nothing, so it never puts the balance in q
   const view = buildBasic(
     baseInput({
       proposals: [proposal({ status: 'failed', decidedAt: T2, result: { ok: false, detail: 'refused before the key', txids: [] } })],
-      chainStatus: chainStatus(T1),
+      readAt: T1,
     }),
   );
   assert.equal(view.totalUsd, 2341.08);
@@ -620,10 +614,10 @@ test('nothing claims "all normal" while a warning is on screen', () => {
 
 function walletRow(over: Partial<WalletRow> = {}): WalletRow {
   return {
-    kind: 'token',
-    chain: 'base',
+    kind: 'intents',
+    chain: 'intents',
     symbol: 'USDC',
-    tokenId: 'base:usdc',
+    tokenId: 'nep141:base-usdc.omft.near',
     quantity: 100,
     priceUsd: 1,
     valueUsd: 100,

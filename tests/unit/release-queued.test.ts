@@ -17,7 +17,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { ChainId, ChainStatus, LedgerSnapshot, Proposal, RiskRow } from '../../src/types.ts';
+import type { LedgerSnapshot, Proposal, RiskRow } from '../../src/types.ts';
 import { createAudit } from '../../src/audit.ts';
 import { createStore } from '../../src/store.ts';
 import { defaultPolicy, savePolicy } from '../../src/policy/file.ts';
@@ -25,17 +25,9 @@ import { renderSentences } from '../../src/policy/render.ts';
 import { NO_RAILS, releaseQueued } from '../../src/proposals/lifecycle.ts';
 import type { PCtx } from '../../src/proposals/lifecycle.ts';
 
-const CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 
 function snapshot(): LedgerSnapshot {
-  const status: ChainStatus = { ok: true, fetchedAt: new Date().toISOString() };
-  return {
-    holdings: [],
-    chainStatus: Object.fromEntries(CHAINS.map((c) => [c, status])) as Record<ChainId, ChainStatus>,
-    mode: 'demo',
-    prices: {},
-    gas: Object.fromEntries(CHAINS.map((c) => [c, { transferCostUsd: 0.1 }])) as LedgerSnapshot['gas'],
-  };
+  return { mode: 'demo', fetchedAt: new Date().toISOString(), prices: {} };
 }
 
 function queued(usd: number, createdAt: string): Proposal {
@@ -88,6 +80,7 @@ function setup() {
     ledger: {
       snapshot,
       intents: () => undefined,
+      hyperliquid: () => undefined,
       refresh: async () => snapshot(),
     },
     riskRows: [] as RiskRow[],

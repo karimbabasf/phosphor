@@ -1,7 +1,7 @@
 // One live-mode proposal service over a scripted rail, for the executor tests.
 //
 // The same shape tests/unit/rail-wiring.test.ts builds by hand: a live ledger over the demo
-// fixture so addresses and prices resolve without an RPC, a verifier read with enough USDC of
+// fixture's prices so a draft can be valued without an RPC, a verifier read with enough USDC of
 // one flavor for a deposit, the venue allowlist seeded, and a rail that runs whatever script the
 // test hands it. Nothing here touches a key or a network.
 
@@ -97,9 +97,6 @@ export type HarnessOptions = {
   intentsUsdc?: number;
   // null: the ledger has no verifier read at all.
   intents?: IntentsRead | null;
-  // The chain holdings the snapshot carries: the demo fixture's, or none, which is what a live
-  // refresh writes (src/ledger/index.ts keeps chain wallets as transit and reads nothing).
-  holdings?: 'demo' | 'none';
   // Extra deps handed straight to the service.
   deps?: Partial<ProposalDeps>;
 };
@@ -115,8 +112,7 @@ export function makeCtx(over: HarnessOptions = {}): Harness {
     keysPath: path.join(dataDir, 'keys.json'),
   };
 
-  const demo = loadDemoLedger();
-  const snapshot: LedgerSnapshot = { ...demo, mode: 'live', holdings: over.holdings === 'none' ? [] : demo.holdings };
+  const snapshot: LedgerSnapshot = { ...loadDemoLedger(), mode: 'live' };
   const intents = (): IntentsRead | undefined => {
     if (over.intents === null) return undefined;
     if (over.intents !== undefined) return over.intents;

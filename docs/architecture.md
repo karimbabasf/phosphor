@@ -71,8 +71,8 @@ brief was written by another model, and nothing in that chain is a human.
 | `src/server.ts` | HTTP surface: the UI, the read APIs, `/api/mcp`, and the token-gated decision routes. |
 | `src/mcp.ts` | The stdio MCP server. A proxy, nothing else. |
 | `src/ledger/` | `intents.ts` reads the NEAR Intents verifier, `hyperliquid.ts` reads the trading account, `demo.ts` holds the fixtures, and `index.ts` is the one interface over them. Read-only by construction. Live mode reads TWO places, the verifier and the venue, and nothing on any chain. |
-| `src/wallet.ts` | The wallet view: one row per token on a chain, one per balance inside NEAR Intents, one for the Hyperliquid account, with quantity, unit price, USD value and share. Natives included. |
-| `src/composition.ts` | Classifies holdings against `data/risk-table.json`: issuer, freeze power, shares. Natives excluded, because composition rules are about stablecoin issuer concentration. |
+| `src/wallet.ts` | The wallet view: one row per balance inside NEAR Intents and one for the Hyperliquid account, with quantity, unit price, USD value and share. ETH and SOL included. |
+| `src/composition.ts` | Classifies the issued coins the two pockets hold against `data/risk-table.json`: issuer, freeze power, shares. ETH, SOL, NEAR and BTC have no issuer and are left out, because composition rules are about stablecoin issuer concentration. |
 | `src/policy/engine.ts` | Pure. Takes a draft and a context, returns one of three verdicts. No IO, no clock, no network. |
 | `src/policy/file.ts` | Load, validate and save `state/policy.json`. Returns null on anything it cannot trust. |
 | `src/policy/render.ts` | Policy to plain English. Pure and deterministic. |

@@ -31,7 +31,8 @@ import type { LogEvent, RiskRow, WriteDraft } from '../src/types.ts';
 import { evaluate } from '../src/policy/engine.ts';
 import { classify } from '../src/composition.ts';
 import { defaultPolicy } from '../src/policy/file.ts';
-import { loadDemoLedger } from '../src/ledger/demo.ts';
+import { loadDemoLedger, loadDemoReads } from '../src/ledger/demo.ts';
+import { buildWallet } from '../src/wallet.ts';
 import { venueAllowlist } from '../src/rails/index.ts';
 
 type Json = any;
@@ -457,10 +458,10 @@ test('a send to the attacker is refused by the engine itself', () => {
   // receiver and not about the counterparty.
   const policy = defaultPolicy();
   policy.outbound.destinationAllowlist = venueAllowlist();
+  const reads = loadDemoReads();
   const ctx: EngineCtx = {
     policy,
-    composition: classify(snapshot, riskRows),
-    ledger: snapshot,
+    composition: classify(buildWallet(snapshot, reads.intents, reads.hyperliquid).rows, riskRows),
     sessionSpentUsd: 0,
     selfAddresses: SELF,
   };
@@ -741,7 +742,7 @@ test('a POST with the right Origin and no seat secret is refused on hello, read 
   const before = auditLines().length;
   const ops: Array<Record<string, unknown>> = [
     { op: 'hello', client: 'no-secret', intervalMs: 5000 },
-    { op: 'read', tool: 'balances' },
+    { op: 'read', tool: 'wallet' },
     { op: 'propose', kind: 'policy_change', params: { patch: { outbound: { humanClickAboveUsd: 90 } }, sentence: 'Ask me above $90.' } },
   ];
   for (const secret of [undefined, 'not-the-secret', seatSecret().slice(0, -1)]) {

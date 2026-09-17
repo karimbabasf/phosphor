@@ -108,8 +108,8 @@ export function resolve<T>(fn: () => T, problems: string[], fallback: T): T {
 // is the truth, config.local.json second for an install that only reads, and the ledger's
 // own rows last (demo mode). No wallet means nothing can be proposed, and the refusal says
 // the one thing to do about it.
-export function ourEvmAddress(ctx: PCtx, snapshot: LedgerSnapshot, problems: string[]): string {
-  const found = ownBook(ctx).evm[0] ?? recipientFor(ctx, 'eth', snapshot);
+export function ourEvmAddress(ctx: PCtx, problems: string[]): string {
+  const found = ownBook(ctx).evm[0] ?? recipientFor(ctx, 'eth');
   if (found === null) {
     problems.push('Make a wallet first.');
     return '';
@@ -120,8 +120,8 @@ export function ourEvmAddress(ctx: PCtx, snapshot: LedgerSnapshot, problems: str
 // Who owns a balance held inside intents.near: the same EVM address. A SOL balance in there
 // is owned by the EVM account, not by any Solana address, and the callers lowercase it the
 // way the verifier does.
-export function ourIntentsAddress(ctx: PCtx, snapshot: LedgerSnapshot, problems: string[]): string {
-  return ourEvmAddress(ctx, snapshot, problems);
+export function ourIntentsAddress(ctx: PCtx, problems: string[]): string {
+  return ourEvmAddress(ctx, problems);
 }
 
 export function refuseDraft(ctx: PCtx, kind: RailKind, draft: RailDraft, reasons: string[], clientKey?: ClientKey): Promise<Proposal> {

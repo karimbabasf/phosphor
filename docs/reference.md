@@ -70,7 +70,6 @@ custom SMA, EMA, RSI or ATR equals the built-in to the last digit.
 |---|---|
 | `start` | The greeting, the live state and the index of everything this door opens onto, grouped by intent. `screen` is `{ view, since, by }`: which screen the window is on, since when, and whether a human tab or an agent `switch` put it there. Call it again after a long gap: the network, the wallet and the pending decisions all move |
 | `wallet` | Everything held, one row per balance: place, quantity, price, value, share. Only what is actually held; how many configured tokens came back empty is reported as a count |
-| `balances` | The raw snapshot behind the wallet, with staleness |
 | `composition` | Shares by issuer and chain, freezable share, unclassified holdings |
 | `policy_show` | Current policy as plain-English sentences, or a notice that the file is unreadable |
 | `log_tail` | Most recent audit lines, newest first |

@@ -450,13 +450,8 @@ registerRead(
   {},
 );
 registerRead(
-  'balances',
-  'Returns current holdings across every configured chain, with per-chain staleness. Read-only, changes nothing.',
-  {},
-);
-registerRead(
   'wallet',
-  'Returns everything held the way a wallet shows it: one row per token on a chain, one per balance inside NEAR Intents, and one for the Hyperliquid trading account (free collateral, margin in use, open positions), with quantity, unit price, USD value and share of the total. The three pockets in one read. Read-only, changes nothing.',
+  'Returns everything held the way a wallet shows it: one row per balance inside NEAR Intents and one for the Hyperliquid trading account (free collateral, margin in use, open positions), with quantity, unit price, USD value and share of the total. Both pockets in one read. Read-only, changes nothing.',
   {},
 );
 registerLeadRead(

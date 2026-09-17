@@ -614,7 +614,9 @@
     for (var j = 0; j < coins.length; j += 1) places += coins[j].places.length;
     if (!common && places > coins.length) parts.push(places + ' places');
     if (Array.isArray(wallet.stale) && wallet.stale.length) {
-      parts.push(wallet.stale.length === 1 ? '1 chain unread' : wallet.stale.length + ' chains unread');
+      var unreadNames = [];
+      for (var u = 0; u < wallet.stale.length; u += 1) unreadNames.push(chainName(wallet.stale[u]));
+      parts.push(unreadNames.join(', ') + ' unread');
     }
     if (unpriced.length) parts.push(unpriced.join(', ') + ' not priced');
     return parts.join(', ');

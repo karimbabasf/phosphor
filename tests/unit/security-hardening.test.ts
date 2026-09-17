@@ -21,24 +21,15 @@ import { createAudit } from '../../src/audit.ts';
 import { createStore } from '../../src/store.ts';
 import { defaultPolicy } from '../../src/policy/file.ts';
 import { createMarketData } from '../../src/market/index.ts';
-import type { AppConfig, ChainId, ChainStatus, LedgerSnapshot, Proposal } from '../../src/types.ts';
+import type { AppConfig, LedgerSnapshot, Proposal } from '../../src/types.ts';
 
 // The seat secret every op on /api/mcp carries (src/http/mcp.ts); a test about the door's other
 // walls (Origin, Host, the body type) leaves it out on purpose, because those walls come first.
 const SEAT = 's'.repeat(64);
 
-const CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 
 function snapshot(): LedgerSnapshot {
-  const fetchedAt = new Date().toISOString();
-  const status: ChainStatus = { ok: true, fetchedAt };
-  return {
-    holdings: [],
-    chainStatus: Object.fromEntries(CHAINS.map((c) => [c, status])) as Record<ChainId, ChainStatus>,
-    mode: 'demo',
-    prices: {},
-    gas: Object.fromEntries(CHAINS.map((c) => [c, { transferCostUsd: 0.1 }])) as LedgerSnapshot['gas'],
-  };
+  return { mode: 'demo', fetchedAt: new Date().toISOString(), prices: {} };
 }
 
 function builtSwap(): Proposal {
